@@ -9,7 +9,7 @@
   "snowpack": {
     "install": [
       "d3",
-      "gl-matrix"
+      "gl-matrix",
     ]
   },
   "dependencies": {

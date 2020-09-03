@@ -1,18 +1,64 @@
-import * as helios from "../Core/heliosTest"
+import {Helios} from "../../src/core/Helios"
 
 
-// floatArray[index] = floatArray[index] + v1x - v1y + v1z;
-// index = (index + 1) % defaultCount;
-
-let v1 = new helios.CVec(1,2,3);
-let v2 = new helios.CVec(4,5,6);
-
-v1.add(v2);
-v1.normalize();
-v1.cross(v2);
 
 
-console.log(`${v1.x} ${v1.y} ${v1.z}`)
-// floatArray[index] = floatArray[index] + v1.x - v1.y + v1.z;
-// index = (index + 1) % defaultCount;
+const nodes = {
+  "0":{
+    "name": "node0",
+  },
+  "1":{
+    "name": "node1",
+  },
+  "2":{
+    "name": "node2",
+  },
+  "3":{
+    "name": "node3",
+  },
+  "4":{
+    "name": "node4",
+  },
+  "5":{
+    "name": "node5",
+  },
+  "6":{
+    "name": "node6",
+  }
+}
+const edges = [
+  {
+    "source": "0",
+    "target": "1",
+  },
+  {
+    "source": "1",
+    "target": "2",
+  },
+  {
+    "source": "2",
+    "target": "3",
+  },
+  {
+    "source": "3",
+    "target": "4",
+  },
+  {
+    "source": "4",
+    "target": "5",
+  },
+  {
+    "source": "5",
+    "target": "6",
+  },
+  {
+    "source": "6",
+    "target": "0",
+  },
+  {
+    "source": "0",
+    "target": "3",
+  },
+]
 
+let helios = new Helios("netviz");
