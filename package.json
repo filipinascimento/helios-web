@@ -9,10 +9,12 @@
   "snowpack": {
     "install": [
       "d3",
-      "gl-matrix",
+      "gl-matrix"
     ]
   },
   "dependencies": {
+    "@colormap/core": "^0.2.0",
+    "@colormap/presets": "^0.2.0",
     "d3": "^5.16.0",
     "gl-matrix": "^3.3.0"
   },

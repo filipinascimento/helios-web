@@ -1,64 +1,37 @@
-import {Helios} from "../../src/core/Helios"
+import {Helios,xnet} from "../../src/core/Helios"
 
+// xnet.loadXNETFile("AI_Bardosova_positions-3D.xnet")
+xnet.loadXNETFile("WS_10000_10_001.xnet")
+.then(network=>{
+  console.log(network)
 
-
-
-const nodes = {
-  "0":{
-    "name": "node0",
-  },
-  "1":{
-    "name": "node1",
-  },
-  "2":{
-    "name": "node2",
-  },
-  "3":{
-    "name": "node3",
-  },
-  "4":{
-    "name": "node4",
-  },
-  "5":{
-    "name": "node5",
-  },
-  "6":{
-    "name": "node6",
+  let nodeCount = network.nodesCount;
+  
+  let nodes = {};
+  let edges = [];
+  
+  for (let index = 0; index < nodeCount; index++) {
+    nodes[""+index] = {
+      name:""+index,
+      position:network.verticesProperties["Position"][index],
+      color:network.verticesProperties["Color"][index],
+    };
   }
-}
-const edges = [
-  {
-    "source": "0",
-    "target": "1",
-  },
-  {
-    "source": "1",
-    "target": "2",
-  },
-  {
-    "source": "2",
-    "target": "3",
-  },
-  {
-    "source": "3",
-    "target": "4",
-  },
-  {
-    "source": "4",
-    "target": "5",
-  },
-  {
-    "source": "5",
-    "target": "6",
-  },
-  {
-    "source": "6",
-    "target": "0",
-  },
-  {
-    "source": "0",
-    "target": "3",
-  },
-]
+  
+  for (let index = 0; index < network.edges.length; index++) {
+    let fromIndex,toIndex;
 
-let helios = new Helios("netviz");
+    edges.push({
+        "source": ""+network.edges[index][0],
+        "target": ""+network.edges[index][1]
+      });
+  }
+  
+  let helios = new Helios({
+    elementID:"netviz",
+    nodes:nodes,
+    edges:edges
+  });
+
+});
+

@@ -232,4 +232,60 @@ function makeSphere(ctx, radius, lats, longs)
 }
 
 
-export {makeSphere,getShader,ShaderProgram,requestAnimationFrame,cancelAnimationFrame,createWebGLContext}
+
+
+
+function makePlane(ctx,generateNormal=true,generateTexCoord=true){
+    let geometryData = [
+			-1.0, 1.0,0.0,
+			-1.0,-1.0,0.0,
+			 1.0, 1.0,0.0,
+			 1.0,-1.0,0.0,
+		];
+    let normalData = [
+			 0.0, 0.0, 1.0,
+			 0.0, 0.0, 1.0,
+			 0.0, 0.0, 1.0,
+			 0.0, 0.0, 1.0,
+		];
+    let texCoordData = [
+			0.0, 1.0, 0.0,
+			1.0, 0.0, 0.0,
+			1.0, 1.0, 0.0,
+			0.0, 0.0, 0.0,
+	 ];
+
+    let retval = { };
+
+	 if(generateTexCoord){
+    retval.texCoordObject = ctx.createBuffer();
+    ctx.bindBuffer(ctx.ARRAY_BUFFER, retval.texCoordObject);
+    ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(texCoordData), ctx.STATIC_DRAW);
+	 }
+
+	 if(generateNormal){
+    retval.normalObject = ctx.createBuffer();
+    ctx.bindBuffer(ctx.ARRAY_BUFFER, retval.normalObject);
+		ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(normalData), ctx.STATIC_DRAW);
+	 }
+
+	 retval.vertexObject = ctx.createBuffer();
+	 ctx.bindBuffer(ctx.ARRAY_BUFFER, retval.vertexObject);
+	 ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(geometryData), ctx.STATIC_DRAW);
+		retval.numIndices = 4;
+
+    // retval.numIndices = indexData.length;
+    // retval.indexObject = ctx.createBuffer();
+    // ctx.bindBuffer(ctx.ELEMENT_ARRAY_BUFFER, retval.indexObject);
+    // ctx.bufferData(ctx.ELEMENT_ARRAY_BUFFER, new Uint16Array(indexData), ctx.STREAM_DRAW);
+    // retval.indexType = ctx.UNSIGNED_SHORT;
+
+    return retval;
+}
+
+// Degrees to Radians convert function
+function degToRad(degrees) {
+	return degrees * Math.PI / 180;
+}
+
+export {makeSphere,makePlane,getShader,ShaderProgram,requestAnimationFrame,cancelAnimationFrame,createWebGLContext,degToRad}

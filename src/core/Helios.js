@@ -2,16 +2,28 @@ import * as d3 from "d3"
 import * as glm from "gl-matrix"
 import { Network } from "./Network"
 import * as glUtils from "../utils/webglutils"
+import * as xnet from "../utils/xnet"
 
+// //dictionary
+// elementID,
+// nodes = {},
+// edges = [],
+// // use settings
+// // displayOptions inside settings
+// onNodeClick = null,
+// onEdgeClick = null,
+// display = [],
 export class Helios {
-	constructor(
+	constructor({
 		elementID,
-		nodes = [],
+		nodes = {},
 		edges = [],
+		// use settings
+		// displayOptions inside settings
 		onNodeClick = null,
 		onEdgeClick = null,
 		display = [],
-	) {
+	}) {
 		this.element = document.getElementById(elementID);
 		this.element.innerHTML = '';
 		this.canvasElement = document.createElement("canvas");
@@ -23,62 +35,150 @@ export class Helios {
 
 		this.rotationMatrix = glm.mat4.create();
 		this.translatePosition = glm.vec3.create();
+		this.mouseDown  = false;
+		this.lastMouseX = null;
+		this.lastMouseY = null;
+		this.redrawingFromMouseWheelEvent = false;
+		this.fastEdges = false;
+		this.animate = false;
 
+		glm.mat4.identity(this.rotationMatrix);
+		var translatePosition = [0,0,0];
 		this.gl = glUtils.createWebGLContext(this.canvasElement, {
 			antialias: true,
 			powerPreference: "high-performance",
 			desynchronized: true
 		});
+
 		console.log(this.gl);
 		this.initialize();
+		window.onresize = event => {
+			this.willResizeEvent(event);
+		};
 	}
 
 	async initialize(){
 		await this._setupShaders();
 		await this._buildGeometry();
+		await this._buildEdgesGeometry();
 		await this.willResizeEvent(0);
 
-		await this.redraw()
+		await this.redraw();
+		await this._setupCamera();
 	}
+
 	async _setupShaders() {
 		let edgesShaderVertex = await glUtils.getShader(this.gl, "edges-vertex");
 		let edgesShaderFragment = await glUtils.getShader(this.gl, "edges-fragment");
-		console.log(edgesShaderFragment)
+		
 		this.edgesShaderProgram = new glUtils.ShaderProgram(
 				edgesShaderVertex,
 				edgesShaderFragment,
 				["projectionViewMatrix","nearFar","linesIntensity"],
 				["vertex","color"],
 				this.gl);
+
 		//Initializing vertices shaders
 		let verticesShaderVertex = await glUtils.getShader(this.gl, "vertices-vertex");
 		let verticesShaderFragment = await glUtils.getShader(this.gl, "vertices-fragment");
 		
 		this.verticesShaderProgram = new glUtils.ShaderProgram(verticesShaderVertex,verticesShaderFragment,
-										["viewMatrix","projectionMatrix","normalMatrix",
-										"position","color","intensity","scale"],
-										["vertex","normal"],this.gl);
+										["viewMatrix","projectionMatrix","normalMatrix"],
+										["vertex","position","color","intensity","scale"],this.gl);
 			
 	}
 
 	async _buildGeometry(){
 		let gl = this.gl;
 		let sphereQuality=15;
-		this.vertexGeometry = glUtils.makeSphere(gl, 1.0, sphereQuality, sphereQuality);
-		//vertexShape = makeBox(gl);
+		// this.nodesGeometry = glUtils.makeSphere(gl, 1.0, sphereQuality, sphereQuality);
+		this.nodesGeometry = glUtils.makePlane(gl,false,false);
+		// //vertexShape = makeBox(gl);
 		
-		//Depth test is essential for the desired effects
+		let positions = this.network.positions;
+		let colors = this.network.colors;
+		let scales = this.network.scales;
+		let intensities = this.network.intensities;
+
+		this.nodesPositionBuffer = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesPositionBuffer);
+		gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+
+		this.nodesColorBuffer = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesColorBuffer);
+		gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
+		
+		this.nodesScaleBuffer = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesScaleBuffer);
+		gl.bufferData(gl.ARRAY_BUFFER, scales, gl.STATIC_DRAW);
+
+		this.nodesIntensityBuffer = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesIntensityBuffer);
+		gl.bufferData(gl.ARRAY_BUFFER, intensities, gl.STATIC_DRAW);
+		
+		// //Depth test is essential for the desired effects
+
 		gl.enable(gl.DEPTH_TEST);
-		gl.enable(gl.CULL_FACE);
-		gl.frontFace(gl.CW);
+		// gl.disable(gl.CULL_FACE);
+		// gl.frontFace(gl.CCW);
+	}
+	
+	async _buildEdgesGeometry(){
+		let gl = this.gl;
+		let edges = this.network.indexedEdges;
+		let positions = this.network.positions;
+		let colors = this.network.colors;
+		
+		let newGeometry = new Object();
+		let indicesArray;
+		
+		//FIXME: If num of vertices > 65k, we need to store the geometry in two different indices objects
+		if(positions.length<64000){
+			indicesArray = new Uint16Array(edges);
+			newGeometry.indexType = gl.UNSIGNED_SHORT;
+		}else{
+			var uints_for_indices = gl.getExtension("OES_element_index_uint");
+			if(uints_for_indices==null){
+				indicesArray = new Uint16Array(edges);
+				newGeometry.indexType = gl.UNSIGNED_SHORT;
+			}else{
+				indicesArray = new Uint32Array(edges);
+				newGeometry.indexType = gl.UNSIGNED_INT;
+			}
+		}
+		
+		// create the lines buffer 2 vertices per geometry.
+		newGeometry.vertexObject = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, newGeometry.vertexObject);
+		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+		
+		newGeometry.colorObject = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, newGeometry.colorObject);
+		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors), gl.STATIC_DRAW);
+
+		newGeometry.numIndices = indicesArray.length;
+		
+		newGeometry.indexObject = gl.createBuffer();
+		gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, newGeometry.indexObject);
+		gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indicesArray, gl.STREAM_DRAW);
+		this.edgesGeometry = newGeometry;
 	}
 
 	async resizeGL(newWidth, newHeight){
 		this.gl.viewport(0, 0, newWidth, newHeight);
-		this.redraw()
+		window.requestAnimationFrame(()=>this.redraw());
 	}
 
+
+
 	
+	async _setupCamera(){
+		this.canvasElement.onmousedown = event=>this.handleMouseDown(event);
+		document.onmouseup = event=>this.handleMouseUp(event);
+		document.onmousemove = event=>this.handleMouseMove(event);
+		document.onclick = void(0);
+		this.canvasElement.onclick = void(0);
+	}
 
 	willResizeEvent(event){
 		//requestAnimFrame(function(){
@@ -90,9 +190,84 @@ export class Helios {
 			this.resizeGL(this.canvasElement.width,this.canvasElement.height);
 		//});
 	}
+	//mouse events
+
+
+
+//mouse down handler (stores the last Mouse X and Y
+ handleMouseDown(event) {
+	event.preventDefault();
+	this.mouseDown = true;
+	let curX,curY;
+	if(event.originalEvent!==undefined){
+		curX = event.originalEvent.pageX;
+		curY = event.originalEvent.pageY;
+	}else{
+		curX = event.pageX;
+		curY = event.pageY;
+	}
+	
+	this.lastMouseX = curX;
+	this.lastMouseY = curY;
+}
+
+
+// update mouse state
+handleMouseUp(event) {
+	event.preventDefault();
+	this.mouseDown = false;
+		if(!this.animate){
+			window.requestAnimationFrame(()=>this.redraw());
+			}
+}
+
+//Handle mouse move when pressed
+handleMouseMove(event) {
+	event.preventDefault();
+	if (!this.mouseDown) {
+		return;
+	}
+	let newX;
+	let newY;
+	let curX,curY;
+	if(event.originalEvent!==undefined){
+		curX = event.originalEvent.pageX;
+		curY = event.originalEvent.pageY;
+	}else{
+		curX = event.pageX;
+		curY = event.pageY;
+	}
+	newX = curX;
+	newY = curY;
+	
+	// x-axis differences rotates the matrix around y-axis
+	// y-axis differences rotates the matrix around x-axis
+	let deltaX = newX - this.lastMouseX
+	let newRotationMatrix = glm.mat4.create();
+	
+	glm.mat4.identity(newRotationMatrix);
+	glm.mat4.rotate(newRotationMatrix,newRotationMatrix, glUtils.degToRad(deltaX / 2), [0, 1, 0]);
+
+	let deltaY = newY - this.lastMouseY;
+	glm.mat4.rotate(newRotationMatrix,newRotationMatrix, glUtils.degToRad(deltaY / 2), [1, 0, 0]);
+
+	glm.mat4.multiply(this.rotationMatrix,newRotationMatrix, this.rotationMatrix);
+
+	this.lastMouseX = newX
+	this.lastMouseY = newY;
+	
+	// FIXME: Doing lazy redraw here because of performance issues.
+	//requestAnimFrame(function(){
+	if(!this.animate){
+		window.requestAnimationFrame(()=>this.redraw());
+	}
+	//});
+}
+
 
 	async redraw(){
 		let gl = this.gl;
+		let ext = gl.getExtension("ANGLE_instanced_arrays");
 		let cameraDistance = 6;
 
 		gl.depthMask(true);
@@ -101,36 +276,47 @@ export class Helios {
 		
 		gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 		
-		gl.lineWidth(1.0);
+		gl.lineWidth(4.0);
 	
 		this.projectionMatrix = glm.mat4.create();
 		this.viewMatrix = glm.mat4.create();
 		
-		glm.mat4.perspective(this.projectionMatrix, 60, this.canvasElement.width / this.canvasElement.height, 0.005, 100.0);
+		glm.mat4.perspective(this.projectionMatrix, Math.PI*2/360*70, this.canvasElement.width / this.canvasElement.height, 0.005, 100.0);
 		glm.mat4.identity(this.viewMatrix);
 		glm.mat4.translate(this.viewMatrix,this.viewMatrix, [0, 0, -cameraDistance]);
-
 		
 		glm.mat4.multiply(this.viewMatrix,this.viewMatrix, this.rotationMatrix);
 		glm.mat4.scale(this.viewMatrix,this.viewMatrix,[0.01,0.01,0.01]);
 		glm.mat4.translate(this.viewMatrix,this.viewMatrix,this.translatePosition);
 		
-
-		console.log(this.verticesShaderProgram);
+		// console.log(this.verticesShaderProgram);
 		this.verticesShaderProgram.use(gl);
 		this.verticesShaderProgram.attributes.enable("vertex");
-		this.verticesShaderProgram.attributes.enable("normal");
-			
-		gl.disable(gl.BLEND);
+		// this.verticesShaderProgram.attributes.enable("normal");
+		this.verticesShaderProgram.attributes.enable("position");
+		this.verticesShaderProgram.attributes.enable("scale");
+		this.verticesShaderProgram.attributes.enable("intensity");
 		
-		gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexGeometry.vertexObject);
+		gl.enable(gl.BLEND);
+		// 	if(useDarkBackground){
+			// gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+			// 	}else{
+					// gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+					gl.blendFuncSeparate( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA,
+						gl.ZERO, gl.ONE );
+// 	}
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesGeometry.vertexObject);
 		gl.vertexAttribPointer(this.verticesShaderProgram.attributes.vertex, 3, gl.FLOAT, false, 0, 0);
-		
-		gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexGeometry.normalObject);
-		gl.vertexAttribPointer(this.verticesShaderProgram.attributes.normal, 3, gl.FLOAT, false, 0, 0);
-		
-		gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.vertexGeometry.indexObject);
-	
+		ext.vertexAttribDivisorANGLE(this.verticesShaderProgram.attributes.vertex, 0);
+
+		// gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesGeometry.normalObject);
+		// gl.vertexAttribPointer(this.verticesShaderProgram.attributes.normal, 3, gl.FLOAT, false, 0, 0);
+		// ext.vertexAttribDivisorANGLE(this.verticesShaderProgram.attributes.normal, 0); 
+
+		if(this.nodesGeometry.indexObject){
+			gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.nodesGeometry.indexObject);
+		}
+
 		gl.uniformMatrix4fv(this.verticesShaderProgram.uniforms.projectionMatrix, false, this.projectionMatrix);
 		gl.uniformMatrix4fv(this.verticesShaderProgram.uniforms.viewMatrix, false, this.viewMatrix);
 		
@@ -139,35 +325,113 @@ export class Helios {
 		glm.mat3.normalFromMat4(normalMatrix,this.viewMatrix);
 		gl.uniformMatrix3fv(this.verticesShaderProgram.uniforms.normalMatrix, false, normalMatrix);
 			
-			// Geometry Mutators and colors obtained from the network properties
+		// Geometry Mutators and colors obtained from the network properties
 		let colorsArray = this.network.colors;
 		let positionsArray = this.network.positions;
 		let scaleValue = this.network.scales;
 		let intensityValue = this.network.intensities;
 
-		//Positions
-		for(let i=0;i<this.network.positions.length;i+=3){
-			let color = [colorsArray[i],colorsArray[i+1],colorsArray[i+2]];
-			let position = [positionsArray[i],positionsArray[i+1],positionsArray[i+2]];
-			let scale = scaleValue[i/3];
-			let intensity = scaleValue[i/3];
-			
-			gl.uniform1f(this.verticesShaderProgram.uniforms.scale,scale);
-			gl.uniform1f(this.verticesShaderProgram.uniforms.intensity,intensity);
+		// Bind the instance position data
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesPositionBuffer);
+		gl.enableVertexAttribArray(this.verticesShaderProgram.attributes.position);
+		gl.vertexAttribPointer(this.verticesShaderProgram.attributes.position, 3, gl.FLOAT, false, 0, 0);
+		ext.vertexAttribDivisorANGLE(this.verticesShaderProgram.attributes.position, 1); // This makes it instanced!
 
-			gl.uniform3fv(this.verticesShaderProgram.uniforms.color,color);
-			gl.uniform3fv(this.verticesShaderProgram.uniforms.position,position);
-			//draw the geometry for every position 
-			//FIXME: drawElement overhead is very critical on javascript (needs to reduce drawElements calling)
-			gl.drawElements(gl.TRIANGLES, this.vertexGeometry.numIndices, this.vertexGeometry.indexType, 0);
+		// Bind the instance color data
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesColorBuffer);
+		gl.enableVertexAttribArray(this.verticesShaderProgram.attributes.color);
+		gl.vertexAttribPointer(this.verticesShaderProgram.attributes.color, 3, gl.FLOAT, false, 0, 0);
+		ext.vertexAttribDivisorANGLE(this.verticesShaderProgram.attributes.color, 1); // This makes it instanced!
+
+		// Bind the instance color data
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesScaleBuffer);
+		gl.enableVertexAttribArray(this.verticesShaderProgram.attributes.scale);
+		gl.vertexAttribPointer(this.verticesShaderProgram.attributes.scale, 1, gl.FLOAT, false, 0, 0);
+		ext.vertexAttribDivisorANGLE(this.verticesShaderProgram.attributes.scale, 1); // This makes it instanced!
+
+		// Bind the instance color data
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesIntensityBuffer);
+		gl.enableVertexAttribArray(this.verticesShaderProgram.attributes.intensity);
+		gl.vertexAttribPointer(this.verticesShaderProgram.attributes.intensity, 1, gl.FLOAT, false, 0, 0);
+		ext.vertexAttribDivisorANGLE(this.verticesShaderProgram.attributes.intensity, 1); // This makes it instanced!
+
+		// console.log(this.network.positions.length/3)
+		// Draw the instanced meshes
+		if(this.nodesGeometry.indexObject){
+			ext.drawElementsInstancedANGLE(gl.TRIANGLES, this.nodesGeometry.numIndices, this.nodesGeometry.indexType, 0, this.network.positions.length/3);
+		}else{
+			ext.drawArraysInstancedANGLE(gl.TRIANGLE_STRIP, 0, this.nodesGeometry.numIndices, this.network.positions.length/3);
 		}
+		// //Positions
+		// for(let i=0;i<this.network.positions.length;i+=3){
+		// 	// console.log(i);
+		// 	let color = [colorsArray[i],colorsArray[i+1],colorsArray[i+2]];
+		// 	let position = [positionsArray[i],positionsArray[i+1],positionsArray[i+2]];
+		// 	let scale = scaleValue[i/3]*0.25;
+		// 	let intensity = scaleValue[i/3]*0.25;
+			
+		// 	gl.uniform1f(this.verticesShaderProgram.uniforms.scale,scale);
+		// 	gl.uniform1f(this.verticesShaderProgram.uniforms.intensity,intensity);
+
+		// 	gl.uniform3fv(this.verticesShaderProgram.uniforms.color,color);
+		// 	gl.uniform3fv(this.verticesShaderProgram.uniforms.position,position);
+		// 	//draw the geometry for every position 
+		// 	//FIXME: drawElement overhead is very critical on javascript (needs to reduce drawElements calling)
+		// 	gl.drawElements(gl.TRIANGLES, this.vertexGeometry.numIndices, this.vertexGeometry.indexType, 0);
+		// }
+
 			// Disable attributes
-		this.verticesShaderProgram.attributes.disable("vertex");
-		this.verticesShaderProgram.attributes.disable("normal");
-		
-		
-		// projectionViewMatrix = mat4.create(projectionMatrix);
-		// mat4.multiply(projectionViewMatrix,viewMatrix);
+			this.verticesShaderProgram.attributes.disable("vertex");
+			// this.verticesShaderProgram.attributes.disable("normal");
+			this.verticesShaderProgram.attributes.disable("position");
+			this.verticesShaderProgram.attributes.disable("scale");
+			this.verticesShaderProgram.attributes.disable("intensity");
+
+			if(!((this.mouseDown||this.redrawingFromMouseWheelEvent) && this.fastEdges)){
+			// console.log(this.edgesShaderProgram)
+			this.edgesShaderProgram.use(gl);
+			this.edgesShaderProgram.attributes.enable("vertex");
+			this.edgesShaderProgram.attributes.enable("color");
+			gl.enable(gl.BLEND);
+			// 	if(useDarkBackground){
+			// gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+			// 	}else{
+					//gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+					// gl.blendFuncSeparate( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA,
+					// 									gl.ZERO, gl.ONE );
+			// 	}
+			// 	// Enables the use of EdgesDepth (NOTE: edges are not sorted when depth is enabled. Visual artefacts may occurs.)
+			// 	if(!useEdgesDepth){
+			// gl.depthMask(false);
+			// 	}else{
+					gl.depthMask(true);
+			// 	}
+			this.projectionViewMatrix = glm.mat4.create();
+			glm.mat4.multiply(this.projectionViewMatrix,this.projectionMatrix,this.viewMatrix);
+
+			//bind attributes and unions
+			gl.bindBuffer(gl.ARRAY_BUFFER, this.edgesGeometry.vertexObject);
+			gl.vertexAttribPointer(this.edgesShaderProgram.attributes.vertex, 3, gl.FLOAT, false, 0, 0);
+			ext.vertexAttribDivisorANGLE(this.edgesShaderProgram.attributes.vertex, 0); // This makes it instanced!
+
+			gl.bindBuffer(gl.ARRAY_BUFFER, this.edgesGeometry.colorObject);
+			gl.vertexAttribPointer(this.edgesShaderProgram.attributes.color, 3, gl.FLOAT, false, 0, 0);
+			ext.vertexAttribDivisorANGLE(this.edgesShaderProgram.attributes.color, 0); // This makes it instanced!
+
+			gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.edgesGeometry.indexObject);
+			
+			gl.uniformMatrix4fv(this.edgesShaderProgram.uniforms.projectionViewMatrix, false, this.projectionViewMatrix);
+			
+			//gl.uniform2fv(edgesShaderProgram.uniforms.nearFar,[0.1,10.0]);
+			gl.uniform1f(this.edgesShaderProgram.uniforms.linesIntensity,100/255);
+			
+			//drawElements is called only 1 time. no overhead from javascript
+			gl.drawElements(gl.LINES, this.edgesGeometry.numIndices, this.edgesGeometry.indexType, 0);
+			
+			//disabling attributes
+			this.edgesShaderProgram.attributes.disable("vertex");
+			this.edgesShaderProgram.attributes.disable("color");
+		}
 		
 		// //draw of the edges as lines
 		// if(edgesGeometry&&linesIntensity>0.0 && showEdges && !((mouseDown||redrawingFromMouseWheelEvent) && fastEdges)){
@@ -328,3 +592,6 @@ export class Helios {
 	
 	}
 }
+
+// Helios.xnet = xnet;
+export {xnet};
