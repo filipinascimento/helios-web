@@ -9,6 +9,7 @@
   "dependencies": {
     "@colormap/core": "^0.2.0",
     "@colormap/presets": "^0.2.0",
+    "d3": "^7.0.1",
     "d3-force-3d": "^3.0.2",
     "gl-matrix": "^3.3.0",
     "ngraph.forcelayout": "^3.1.0",

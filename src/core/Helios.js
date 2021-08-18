@@ -2,6 +2,9 @@ import * as glm from "gl-matrix"
 import { Network } from "./Network"
 import * as glUtils from "../utils/webglutils"
 import * as xnet from "../utils/xnet"
+import {select as d3Select} from "d3-selection";
+import {zoom as d3Zoom, zoomTransform as d3ZoomTransform, zoomIdentity as d3ZoomIdentity} from "d3-zoom";
+import {drag as d3Drag} from "d3-drag";
 import {default as createGraph} from "ngraph.graph"
 import {default as createLayout} from "ngraph.forcelayout"
 import {forceSimulation,forceManyBody,forceLink,forceCenter} from "d3-force-3d";
@@ -47,7 +50,11 @@ export class Helios {
 		this.redrawingFromMouseWheelEvent = false;
 		this.fastEdges = false;
 		this.animate = false;
+		this.cameraDistance = 3;
+		this.rotateLinearX = 0;
+		this.rotateLinearY = 0;
 
+		
 		glm.mat4.identity(this.rotationMatrix);
 		var translatePosition = [0,0,0];
 		this.gl = glUtils.createWebGLContext(this.canvasElement, {
@@ -89,7 +96,7 @@ export class Helios {
 				// 	this._updateEdgesGeometry();
 				// 	this.redraw();
 				// });
-				console.log("receiving positions...");
+				// console.log("receiving positions...");
 				if(this.positionInterpolator == null){
 					let maxDisplacement = 0;
 						for (let index = 0; index < this.network.positions.length; index++) {
@@ -97,7 +104,7 @@ export class Helios {
 							maxDisplacement = Math.max(Math.abs(displacement), maxDisplacement);
 						};
 						if(maxDisplacement > 1){
-							console.log("Interpolator Started...");
+							// console.log("Interpolator Started...");
 							this.positionInterpolator = setInterval(() => {
 								let maxDisplacement = 0;
 								for (let index = 0; index < this.network.positions.length; index++) {
@@ -252,11 +259,33 @@ export class Helios {
 
 	
 	async _setupCamera(){
-		this.canvasElement.onmousedown = event=>this.handleMouseDown(event);
-		document.onmouseup = event=>this.handleMouseUp(event);
-		document.onmousemove = event=>this.handleMouseMove(event);
-		document.onclick = void(0);
-		this.canvasElement.onclick = void(0);
+		// this.canvasElement.onmousedown = event=>this.handleMouseDown(event);
+		// document.onmouseup = event=>this.handleMouseUp(event);
+		// document.onmousemove = event=>this.handleMouseMove(event);
+		// document.onclick = void(0);
+		// this.canvasElement.onclick = void(0);
+		this.zoom = d3Zoom().on("zoom", event=>{
+			this.cameraDistance = event.transform.k;
+			if(!this.positionInterpolator){
+				window.requestAnimationFrame(()=>this.redraw());
+			}
+			event => event.preventDefault();
+		})
+		this.drag = d3Drag().on("drag", event=>{
+			let newRotationMatrix = glm.mat4.create();
+	
+			glm.mat4.identity(newRotationMatrix);
+			glm.mat4.rotate(newRotationMatrix,newRotationMatrix, glUtils.degToRad(event.dx / 2), [0, 1, 0]);
+			glm.mat4.rotate(newRotationMatrix,newRotationMatrix, glUtils.degToRad(event.dy / 2), [1, 0, 0]);
+
+			glm.mat4.multiply(this.rotationMatrix,newRotationMatrix, this.rotationMatrix);
+			if(!this.positionInterpolator){
+				window.requestAnimationFrame(()=>this.redraw());
+			}
+			event => event.preventDefault();
+		})
+		d3Select(this.canvasElement).call(this.drag)
+		.call(d3ZoomTransform, d3ZoomIdentity.translate(0, 0).scale(this.cameraDistance)).call(this.zoom);
 	}
 
 	willResizeEvent(event){
@@ -347,7 +376,6 @@ handleMouseMove(event) {
 	async redraw(){
 		let gl = this.gl;
 		let ext = gl.getExtension("ANGLE_instanced_arrays");
-		let cameraDistance = 3;
 
 		gl.depthMask(true);
 		gl.clearColor(0.5, 0.5, 0.5, 1.0);
@@ -362,8 +390,12 @@ handleMouseMove(event) {
 		
 		glm.mat4.perspective(this.projectionMatrix, Math.PI*2/360*70, this.canvasElement.width / this.canvasElement.height, 0.005, 100.0);
 		glm.mat4.identity(this.viewMatrix);
-		glm.mat4.translate(this.viewMatrix,this.viewMatrix, [0, 0, -cameraDistance]);
+		glm.mat4.translate(this.viewMatrix,this.viewMatrix, [0, 0, -this.cameraDistance]);
 		
+
+
+
+
 		glm.mat4.multiply(this.viewMatrix,this.viewMatrix, this.rotationMatrix);
 		glm.mat4.scale(this.viewMatrix,this.viewMatrix,[0.01,0.01,0.01]);
 		glm.mat4.translate(this.viewMatrix,this.viewMatrix,this.translatePosition);
