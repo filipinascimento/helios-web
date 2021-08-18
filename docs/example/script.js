@@ -1,6 +1,7 @@
 import {Helios,xnet} from "../../src/core/Helios"
 
-// xnet.loadXNETFile("AI_Bardosova_positions-3D.xnet")
+
+
 xnet.loadXNETFile("WS_10000_10_001.xnet")
 .then(network=>{
   console.log(network)

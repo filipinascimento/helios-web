@@ -58,7 +58,7 @@ export class Network{
       }
     }
     for (let index = 0; index < this.scales.length; index++) {
-      this.scales[index] = 0.25+Math.random()*0.5;
+      this.scales[index] = 0.50+Math.random()*1.0;
       this.intensities[index] = 1.0;
     }
   }

@@ -1,8 +1,0 @@
-{
-  "mount": {
-    "public": "/",
-    "src": "/_dist_",
-    "lib": "/_dist_"
-  },
-  "plugins": []
-}

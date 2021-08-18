@@ -1,8 +1,14 @@
-import * as d3 from "d3"
 import * as glm from "gl-matrix"
 import { Network } from "./Network"
 import * as glUtils from "../utils/webglutils"
 import * as xnet from "../utils/xnet"
+import {default as createGraph} from "ngraph.graph"
+import {default as createLayout} from "ngraph.forcelayout"
+import {forceSimulation,forceManyBody,forceLink,forceCenter} from "d3-force-3d";
+
+
+// You can associate arbitrary objects with node:
+
 
 // //dictionary
 // elementID,
@@ -55,6 +61,8 @@ export class Helios {
 		window.onresize = event => {
 			this.willResizeEvent(event);
 		};
+
+
 	}
 
 	async initialize(){
@@ -65,6 +73,58 @@ export class Helios {
 
 		await this.redraw();
 		await this._setupCamera();
+		// this.layoutWorker = new Worker(new URL('../layouts/ngraphLayoutWorker.js', import.meta.url));
+		this.layoutWorker = new Worker(new URL('../layouts/d3force3dLayoutWorker.js', import.meta.url));
+		this.newPositions = this.network.positions.slice(0);
+		this.positionInterpolator = null;
+		this.layoutWorker.onmessage = (msg)=>{
+			if(msg.data.type=="layoutStep"){
+				this.newPositions = msg.data.positions;
+				// let newPositions = msg.data.positions;
+				// for (let index = 0; index < this.network.positions.length; index++) {
+				// 	this.network.positions[index] = newPositions[index];
+				// };
+				// requestAnimationFrame(()=>{	
+				// 	this._updateGeometry();
+				// 	this._updateEdgesGeometry();
+				// 	this.redraw();
+				// });
+				console.log("receiving positions...");
+				if(this.positionInterpolator == null){
+					let maxDisplacement = 0;
+						for (let index = 0; index < this.network.positions.length; index++) {
+							let displacement = this.newPositions[index]-this.network.positions[index];
+							maxDisplacement = Math.max(Math.abs(displacement), maxDisplacement);
+						};
+						if(maxDisplacement > 1){
+							console.log("Interpolator Started...");
+							this.positionInterpolator = setInterval(() => {
+								let maxDisplacement = 0;
+								for (let index = 0; index < this.network.positions.length; index++) {
+									let displacement = this.newPositions[index]-this.network.positions[index];
+									this.network.positions[index] += 0.025*(displacement);
+									maxDisplacement = Math.max(Math.abs(displacement), maxDisplacement);
+								};
+								requestAnimationFrame(()=>{
+									this._updateGeometry();
+									this._updateEdgesGeometry();
+									this.redraw();
+								});
+								if(maxDisplacement <1){
+									console.log("Interpolator Stopped...");
+									clearInterval(this.positionInterpolator);
+									this.positionInterpolator = null;
+								}
+							}, 1000/60);
+					}
+				}
+			}else{
+				console.log("Received message", msg);
+			}
+		}
+		this.layoutWorker.postMessage({type:"import",location: import.meta.url});
+		this.layoutWorker.postMessage({type:"init", network: this.network});
+		
 	}
 
 	async _setupShaders() {
@@ -95,24 +155,33 @@ export class Helios {
 		this.nodesGeometry = glUtils.makePlane(gl,false,false);
 		// //vertexShape = makeBox(gl);
 		
+
+
+		this.nodesPositionBuffer = gl.createBuffer();
+		this.nodesColorBuffer = gl.createBuffer();
+		this.nodesScaleBuffer = gl.createBuffer();
+		this.nodesIntensityBuffer = gl.createBuffer();
+		
+		await this._updateGeometry();
+	}
+
+	async _updateGeometry(){
+		let gl = this.gl;
+
 		let positions = this.network.positions;
 		let colors = this.network.colors;
 		let scales = this.network.scales;
 		let intensities = this.network.intensities;
 
-		this.nodesPositionBuffer = gl.createBuffer();
 		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesPositionBuffer);
 		gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
 
-		this.nodesColorBuffer = gl.createBuffer();
 		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesColorBuffer);
 		gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
 		
-		this.nodesScaleBuffer = gl.createBuffer();
 		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesScaleBuffer);
 		gl.bufferData(gl.ARRAY_BUFFER, scales, gl.STATIC_DRAW);
 
-		this.nodesIntensityBuffer = gl.createBuffer();
 		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesIntensityBuffer);
 		gl.bufferData(gl.ARRAY_BUFFER, intensities, gl.STATIC_DRAW);
 		
@@ -121,6 +190,7 @@ export class Helios {
 		gl.enable(gl.DEPTH_TEST);
 		// gl.disable(gl.CULL_FACE);
 		// gl.frontFace(gl.CCW);
+
 	}
 	
 	async _buildEdgesGeometry(){
@@ -149,19 +219,28 @@ export class Helios {
 		
 		// create the lines buffer 2 vertices per geometry.
 		newGeometry.vertexObject = gl.createBuffer();
-		gl.bindBuffer(gl.ARRAY_BUFFER, newGeometry.vertexObject);
-		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
-		
 		newGeometry.colorObject = gl.createBuffer();
-		gl.bindBuffer(gl.ARRAY_BUFFER, newGeometry.colorObject);
-		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors), gl.STATIC_DRAW);
-
 		newGeometry.numIndices = indicesArray.length;
-		
 		newGeometry.indexObject = gl.createBuffer();
-		gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, newGeometry.indexObject);
-		gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indicesArray, gl.STREAM_DRAW);
+
 		this.edgesGeometry = newGeometry;
+		this.indicesArray = indicesArray;
+		await this._updateEdgesGeometry()
+	}
+
+	async _updateEdgesGeometry(){
+		let gl = this.gl;
+		let edges = this.network.indexedEdges;
+		let positions = this.network.positions;
+		let colors = this.network.colors;
+
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.edgesGeometry.vertexObject);
+		gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.edgesGeometry.colorObject);
+		gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
+		gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.edgesGeometry.indexObject);
+		gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, this.indicesArray, gl.STREAM_DRAW);
+
 	}
 
 	async resizeGL(newWidth, newHeight){
@@ -268,7 +347,7 @@ handleMouseMove(event) {
 	async redraw(){
 		let gl = this.gl;
 		let ext = gl.getExtension("ANGLE_instanced_arrays");
-		let cameraDistance = 6;
+		let cameraDistance = 3;
 
 		gl.depthMask(true);
 		gl.clearColor(0.5, 0.5, 0.5, 1.0);
@@ -276,7 +355,7 @@ handleMouseMove(event) {
 		
 		gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 		
-		gl.lineWidth(4.0);
+		gl.lineWidth(3.0);
 	
 		this.projectionMatrix = glm.mat4.create();
 		this.viewMatrix = glm.mat4.create();
@@ -423,7 +502,7 @@ handleMouseMove(event) {
 			gl.uniformMatrix4fv(this.edgesShaderProgram.uniforms.projectionViewMatrix, false, this.projectionViewMatrix);
 			
 			//gl.uniform2fv(edgesShaderProgram.uniforms.nearFar,[0.1,10.0]);
-			gl.uniform1f(this.edgesShaderProgram.uniforms.linesIntensity,100/255);
+			gl.uniform1f(this.edgesShaderProgram.uniforms.linesIntensity,30/255);
 			
 			//drawElements is called only 1 time. no overhead from javascript
 			gl.drawElements(gl.LINES, this.edgesGeometry.numIndices, this.edgesGeometry.indexType, 0);
