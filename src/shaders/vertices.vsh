@@ -36,6 +36,7 @@ attribute vec3 position;
 attribute vec3 color;
 attribute float scale;
 attribute float intensity;
+attribute vec4 encodedIndex;
 
 varying vec3 vNormal;
 varying vec3 vEye;
@@ -43,6 +44,7 @@ varying vec3 vColor;
 varying vec2 vOffset;
 varying float vScale;
 varying float vIntensity;
+varying vec4 vEncodedIndex;
 
 void main(void){
 	float BoxCorrection = 1.5;
@@ -61,6 +63,7 @@ void main(void){
 	vNormal = vec3(0.0,0.0,1.0); //normalMatrix * normal;
 	vEye = -vec3(offset,0.0);
 	vIntensity = intensity;
+	vEncodedIndex = encodedIndex;
 	vColor = color;
 	vOffset = vertex;
 	vScale = scale;

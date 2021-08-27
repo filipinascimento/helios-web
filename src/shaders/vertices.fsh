@@ -1,8 +1,11 @@
-#ifdef GL_ES
-	precision highp float;
-#endif
+// #ifdef GL_ES
+// 	precision highp float;
+// #endif
+
+precision mediump float;
 varying vec3 vColor;
 varying float vIntensity;
+varying vec4 vEncodedIndex;
 varying vec3 vNormal;
 varying vec3 vEye;
 varying float vScale;
@@ -68,6 +71,6 @@ void main(){
 	}else{
 		gl_FragColor = vec4(1.0,1.0,1.0,vIntensity);
 	}
-  // gl_FragDepthEXT = 0.5; 
+	// gl_FragDepthEXT = 0.5; 
 }
 

@@ -10,6 +10,7 @@
     <script id="edges-fragment" type="text/glsl-fragment" src="../../src/shaders/edges.fsh"></script>
     <script id="vertices-vertex" type="text/glsl-vertex" src="../../src/shaders/vertices.vsh"></script>
     <script id="vertices-fragment" type="text/glsl-fragment" src="../../src/shaders/vertices.fsh"></script>
+    <script id="vertices-fragment-picking" type="text/glsl-fragment" src="../../src/shaders/verticesPicking.fsh"></script>
     <style>
       html, body {
           position: fixed;
@@ -26,10 +27,28 @@
           bottom:0;
           background: #f0e68c;
       }
+      #tooltip {
+          position: absolute;
+          display: none;
+          margin-left: 15px;
+          padding: 3px;
+          position: absolute;
+          z-index: 1000;
+          font-family: -apple-system, 'Helvetica Neue', "Arial", BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', sans-serif;
+          text-shadow:
+              -1px -1px 0 #FFF,  
+               1px -1px 0 #FFF,
+              -1px  1px 0 #FFF,
+               1px  1px 0 #FFF;
+          /* width:200px;
+          height:100px; */
+      }
+
     </style>
   </head>  
   <body>
     <script type="module" src="script.js" defer></script>
     <div id="netviz"></div>
+    <div id="tooltip">Tooltip</div>
   </body>
 </html>

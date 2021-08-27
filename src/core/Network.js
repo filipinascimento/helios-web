@@ -28,6 +28,7 @@ export class Network{
     this.colors = new Float32Array(3*this.index2node.length);
     this.scales = new Float32Array(this.index2node.length);
     this.intensities = new Float32Array(this.index2node.length);
+
     // for (let index = 0; index < this.positions.length; index++) {
     //   this.positions[index] = (Math.random()-0.5)*2*200;
     //   this.colors[index] = Math.random()*0.8+0.2;
@@ -46,7 +47,7 @@ export class Network{
         this.positions[index*3+1] = (Math.random()-0.5)*2*200;
         this.positions[index*3+2] = (Math.random()-0.5)*2*200;
       }
-      if(false && node.hasOwnProperty("color")){
+      if(node.hasOwnProperty("color")){
         this.colors[index*3+0] = node["color"][0];
         this.colors[index*3+1] = node["color"][1];
         this.colors[index*3+2] = node["color"][2];
@@ -56,9 +57,14 @@ export class Network{
         this.colors[index*3+1] = color[1];
         this.colors[index*3+2] = color[2];
       }
+
+      if(node.hasOwnProperty("scale")){
+        this.scales[index] = node["scale"];
+      }else{
+        this.scales[index] = 1.0;
+      }
     }
     for (let index = 0; index < this.scales.length; index++) {
-      this.scales[index] = 0.50+Math.random()*1.0;
       this.intensities[index] = 1.0;
     }
   }

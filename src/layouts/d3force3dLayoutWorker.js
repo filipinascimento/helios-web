@@ -8,9 +8,6 @@ importScripts("https://unpkg.com/d3-force-3d");
 
 "use strict"
 
-
-
-"use strict"
 self.onmessage = function (msg) {
 	console.log("RECEIVED:", msg.data.type);
 	if (msg.data.type == "import") {

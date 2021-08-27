@@ -60,7 +60,27 @@ async function getShader(gl, id) {
 	} else {
 		return null;
 	}
-	console.log(str);
+	// console.log(str);
+
+	gl.shaderSource(shader, str);
+	gl.compileShader(shader);
+	
+	if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+		console.log(gl.getShaderInfoLog(shader));
+		return null;
+	}
+
+	return shader;
+}
+
+//new URL('fancy-button.css', import.meta.url)
+async function getShaderFromURL(gl,url,type){ //gl.FRAGMENT_SHADER or gl.VERTEX_SHADER
+	let str = await fetch(url).then(r => r.text());
+	
+	let shader;
+	shader = gl.createShader(type);
+	
+	// console.log(str);
 
 	gl.shaderSource(shader, str);
 	gl.compileShader(shader);
@@ -288,4 +308,4 @@ function degToRad(degrees) {
 	return degrees * Math.PI / 180;
 }
 
-export {makeSphere,makePlane,getShader,ShaderProgram,requestAnimationFrame,cancelAnimationFrame,createWebGLContext,degToRad}
+export {makeSphere,makePlane,getShader,getShaderFromURL,ShaderProgram,requestAnimationFrame,cancelAnimationFrame,createWebGLContext,degToRad}
