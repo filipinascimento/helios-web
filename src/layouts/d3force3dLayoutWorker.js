@@ -10,6 +10,7 @@ importScripts("https://unpkg.com/d3-force-3d");
 
 self.onmessage = function (msg) {
 	console.log("RECEIVED:", msg.data.type);
+	let use2D = false;
 	if (msg.data.type == "import") {
 		// self.importScripts(new URL('../layouts/libs/ngraph.graph.min.js', msg.data.location));
 		// self.importScripts(new URL('../layouts/libs/ngraph.forcelayout.min.js', msg.data.location));
@@ -17,6 +18,9 @@ self.onmessage = function (msg) {
 	} else if (msg.data.type == "init") {
 		console.log("INIT");
 		let network = msg.data.network;
+		if(msg.data.use2D) {
+			use2D = true;
+		}
 		let nodes = [];
 		let links = [];
 
@@ -44,7 +48,7 @@ self.onmessage = function (msg) {
 		}
 
 		const simulation = d3.forceSimulation(nodes)
-			.numDimensions(3)
+			.numDimensions(use2D?2:3)
 			.force("charge", d3.forceManyBody())
 			.force("link", d3.forceLink(links)
 				// .id(d => d.index)
@@ -55,7 +59,11 @@ self.onmessage = function (msg) {
 					const node = nodes[vertexIndex];
 					network.positions[vertexIndex * 3 + 0] = node.x / 10;
 					network.positions[vertexIndex * 3 + 1] = node.y / 10;
-					network.positions[vertexIndex * 3 + 2] = node.z / 10;
+					if(!use2D) {
+						network.positions[vertexIndex * 3 + 2] = node.z / 10;
+					}else{
+						network.positions[vertexIndex * 3 + 2] = 0;
+					}
 				}
 				self.postMessage({ type: "layoutStep", positions: network.positions });
 			});

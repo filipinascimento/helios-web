@@ -42,7 +42,8 @@ xnet.loadXNETFile("WS_10000_10_001.xnet")
 	let helios = new Helios({
 		elementID:"netviz",
 		nodes:nodes,
-		edges:edges
+		edges:edges,
+		use2D:false,
 	})
 	.onNodeHoverStart((node,event) => {
 		if(event){

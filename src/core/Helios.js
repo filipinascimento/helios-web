@@ -32,7 +32,7 @@ export class Helios {
 		// onNodeHover = null,
 		// onEdgeHover = null,
 		// onDraw  (Maybe)
-
+		use2D = false,
 		display = [],
 	}) {
 		this.element = document.getElementById(elementID);
@@ -50,13 +50,22 @@ export class Helios {
 		this.redrawingFromMouseWheelEvent = false;
 		this.fastEdges = false;
 		this.animate = false;
-		this.cameraDistance = 1;
+		this.cameraDistance = 150;
 		this.zoomFactor = 1;
 		this.rotateLinearX = 0;
 		this.rotateLinearY = 0;
+		this.panX = 0;
+		this.panY = 0;
 		this.saveResolutionRatio = 1.0;
 		this.pickingResolutionRatio = 0.25;
 		this._edgesIntensity = 1.0;
+		this._use2D = use2D;
+
+		if(this._use2D){
+			for (let vertexIndex = 0; vertexIndex < this.network.positions.length; vertexIndex++) {
+				this.network.positions[vertexIndex * 3 + 2] = 0;
+			}
+		}
 
 
 
@@ -167,7 +176,7 @@ export class Helios {
 			}
 		}
 		this.layoutWorker.postMessage({ type: "import", location: import.meta.url });
-		this.layoutWorker.postMessage({ type: "init", network: this.network });
+		this.layoutWorker.postMessage({ type: "init", network: this.network, use2D: this._use2D });
 	}
 
 
@@ -213,8 +222,8 @@ export class Helios {
 		let gl = this.gl;
 		gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickingFramebuffer);
 		gl.readPixels(
-			Math.round(pixelX),            // x
-			Math.round(pixelY),            // y
+			pixelX,            // x
+			pixelY,            // y
 			1,                 // width
 			1,                 // height
 			gl.RGBA,           // format
@@ -242,10 +251,10 @@ export class Helios {
 		}
 	}
 	async _setupShaders() {
-		// let edgesShaderVertex = await glUtils.getShader(this.gl, "edges-vertex");
-		// let edgesShaderFragment = await glUtils.getShader(this.gl, "edges-fragment");
-		let edgesShaderVertex = await glUtils.getShaderFromURL(this.gl, new URL('../shaders/edges.vsh', import.meta.url), this.gl.VERTEX_SHADER)
-		let edgesShaderFragment = await glUtils.getShaderFromURL(this.gl, new URL('../shaders/edges.fsh', import.meta.url), this.gl.FRAGMENT_SHADER) //gl.FRAGMENT_SHADER or 
+		let edgesShaderVertex = await glUtils.getShader(this.gl, "edges-vertex");
+		let edgesShaderFragment = await glUtils.getShader(this.gl, "edges-fragment");
+		// let edgesShaderVertex = await glUtils.getShaderFromURL(this.gl, new URL('../shaders/edges.vsh', import.meta.url), this.gl.VERTEX_SHADER)
+		// let edgesShaderFragment = await glUtils.getShaderFromURL(this.gl, new URL('../shaders/edges.fsh', import.meta.url), this.gl.FRAGMENT_SHADER) //gl.FRAGMENT_SHADER or 
 
 
 
@@ -257,13 +266,13 @@ export class Helios {
 			this.gl);
 
 		//Initializing vertices shaders
-		// let verticesShaderVertex = await glUtils.getShader(this.gl, "vertices-vertex");
-		// let verticesShaderFragment = await glUtils.getShader(this.gl, "vertices-fragment");
-		// let pickingShaderFragment = await glUtils.getShader(this.gl, "vertices-fragment-picking");
+		let verticesShaderVertex = await glUtils.getShader(this.gl, "vertices-vertex");
+		let verticesShaderFragment = await glUtils.getShader(this.gl, "vertices-fragment");
+		let pickingShaderFragment = await glUtils.getShader(this.gl, "vertices-fragment-picking");
 
-		let verticesShaderVertex = await glUtils.getShaderFromURL(this.gl, new URL('../shaders/vertices.vsh', import.meta.url), this.gl.VERTEX_SHADER)
-		let verticesShaderFragment = await glUtils.getShaderFromURL(this.gl, new URL('../shaders/vertices.fsh', import.meta.url), this.gl.FRAGMENT_SHADER) //gl.FRAGMENT_SHADER or 
-		let pickingShaderFragment = await glUtils.getShaderFromURL(this.gl, new URL('../shaders/verticesPicking.fsh', import.meta.url), this.gl.FRAGMENT_SHADER) //gl.FRAGMENT_SHADER or 
+		// let verticesShaderVertex = await glUtils.getShaderFromURL(this.gl, new URL('../shaders/vertices.vsh', import.meta.url), this.gl.VERTEX_SHADER)
+		// let verticesShaderFragment = await glUtils.getShaderFromURL(this.gl, new URL('../shaders/vertices.fsh', import.meta.url), this.gl.FRAGMENT_SHADER) //gl.FRAGMENT_SHADER or 
+		// let pickingShaderFragment = await glUtils.getShaderFromURL(this.gl, new URL('../shaders/verticesPicking.fsh', import.meta.url), this.gl.FRAGMENT_SHADER) //gl.FRAGMENT_SHADER or 
 
 		this.verticesShaderProgram = new glUtils.ShaderProgram(verticesShaderVertex, verticesShaderFragment,
 			["viewMatrix", "projectionMatrix", "normalMatrix"],
@@ -324,8 +333,8 @@ export class Helios {
 			const format = gl.RGBA;
 			const type = gl.UNSIGNED_BYTE;
 			const data = null;
-			const fbWidth = Math.round(width * this.pickingResolutionRatio);
-			const fbHeight = Math.round(height * this.pickingResolutionRatio);
+			const fbWidth = width * this.pickingResolutionRatio;
+			const fbHeight = height * this.pickingResolutionRatio;
 			gl.texImage2D(gl.TEXTURE_2D, level, internalFormat,
 				fbWidth, fbHeight, border, format, type, data);
 			gl.bindRenderbuffer(gl.RENDERBUFFER, this.pickingDepthBuffer);
@@ -369,7 +378,6 @@ export class Helios {
 
 		// //Depth test is essential for the desired effects
 
-		gl.enable(gl.DEPTH_TEST);
 		// gl.disable(gl.CULL_FACE);
 		// gl.frontFace(gl.CCW);
 
@@ -438,23 +446,34 @@ export class Helios {
 		// document.onclick = void(0);
 
 		this.zoom = d3Zoom().on("zoom", event => {
-			this.zoomFactor = 1.0 / event.transform.k;
+			this.zoomFactor = event.transform.k;
+			this.triggerHoverEvents(event);
 			if (!this.positionInterpolator) {
-				window.requestAnimationFrame(() => this.redraw());
+				this.update();
+				this.render();
 			}
 			event => event.preventDefault();
 		})
 		this.drag = d3Drag().on("drag", event => {
 			let newRotationMatrix = glm.mat4.create();
 
-			glm.mat4.identity(newRotationMatrix);
-			glm.mat4.rotate(newRotationMatrix, newRotationMatrix, glUtils.degToRad(event.dx / 2), [0, 1, 0]);
-			glm.mat4.rotate(newRotationMatrix, newRotationMatrix, glUtils.degToRad(event.dy / 2), [1, 0, 0]);
+			if(!this._use2D){
+				glm.mat4.identity(newRotationMatrix);
+				glm.mat4.rotate(newRotationMatrix, newRotationMatrix, glUtils.degToRad(event.dx / 2), [0, 1, 0]);
+				glm.mat4.rotate(newRotationMatrix, newRotationMatrix, glUtils.degToRad(event.dy / 2), [1, 0, 0]);
 
-			glm.mat4.multiply(this.rotationMatrix, newRotationMatrix, this.rotationMatrix);
-			if (!this.positionInterpolator) {
-				window.requestAnimationFrame(() => this.redraw());
+				glm.mat4.multiply(this.rotationMatrix, newRotationMatrix, this.rotationMatrix);
+			}else{//pan
+				let perspectiveFactor = this.cameraDistance * this.zoomFactor;
+				let aspectRatio = this.canvasElement.width / this.canvasElement.height;
+				// this.panX = this.panX + event.dx * perspectiveFactor/Math.sqrt(this.canvasElement.width)/2;
+				// this.panY = this.panY - event.dy * perspectiveFactor/400;
 			}
+			if (!this.positionInterpolator) {
+				this.update();
+				this.render();
+			}
+			this.triggerHoverEvents(event);
 			event => event.preventDefault();
 		})
 		d3Select(this.canvasElement).call(this.drag)
@@ -465,7 +484,7 @@ export class Helios {
 
 	willResizeEvent(event) {
 		//requestAnimFrame(function(){
-		let dpr = 0.5 * window.devicePixelRatio || 1;
+		let dpr =  window.devicePixelRatio || 1;
 		this.canvasElement.style.width = this.element.clientWidth + "px";
 		this.canvasElement.style.height = this.element.clientHeight + "px";
 		this.canvasElement.width = dpr * this.element.clientWidth;
@@ -495,40 +514,41 @@ export class Helios {
 		}
 	}
 
-	async _redrawAll(isPicking) {
+
+	_redrawPrepare(isPicking){
 		let gl = this.gl;
-		let ext = gl.getExtension("ANGLE_instanced_arrays");
 
 		if (!isPicking) {
 			gl.viewport(0, 0, this.canvasElement.width, this.canvasElement.height);
 			gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 			gl.clearColor(...this._backgroundColor);
 		} else {
-			const fbWidth = Math.round(this.canvasElement.width * this.pickingResolutionRatio);
-			const fbHeight = Math.round(this.canvasElement.height * this.pickingResolutionRatio);
+			const fbWidth = this.canvasElement.width * this.pickingResolutionRatio;
+			const fbHeight = this.canvasElement.height * this.pickingResolutionRatio;
 			gl.viewport(0, 0, fbWidth, fbHeight);
 			gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickingFramebuffer);
 			gl.clearColor(0.0, 0.0, 0.0, 0.0);
 		}
 
-
-
 		gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-		gl.depthMask(true);
-		gl.lineWidth(3.0);
 
 		this.projectionMatrix = glm.mat4.create();
 		this.viewMatrix = glm.mat4.create();
 
-		glm.mat4.perspective(this.projectionMatrix, Math.PI * 2 / 360 * 70, this.canvasElement.width / this.canvasElement.height, 0.005, 100.0);
+		glm.mat4.perspective(this.projectionMatrix, Math.PI * 2 / 360 * 70, this.canvasElement.width / this.canvasElement.height, 0.1, 2000.0);
 		glm.mat4.identity(this.viewMatrix);
-		glm.mat4.translate(this.viewMatrix, this.viewMatrix, [0, 0, -this.cameraDistance * this.zoomFactor]);
-
+		glm.mat4.translate(this.viewMatrix, this.viewMatrix, [this.panX, this.panY, -this.cameraDistance/this.zoomFactor]);
+		
 
 		glm.mat4.multiply(this.viewMatrix, this.viewMatrix, this.rotationMatrix);
-		glm.mat4.scale(this.viewMatrix, this.viewMatrix, [0.01, 0.01, 0.01]);
+		// glm.mat4.scale(this.viewMatrix, this.viewMatrix, [this.zoomFactor, this.zoomFactor, this.zoomFactor]);
 		glm.mat4.translate(this.viewMatrix, this.viewMatrix, this.translatePosition);
+
+
+	}
+	_redrawNodes(isPicking){
+		let gl = this.gl;
+		let ext = gl.getExtension("ANGLE_instanced_arrays");
 
 
 		let currentShaderProgram;
@@ -548,6 +568,7 @@ export class Helios {
 			// console.log(this.verticesShaderProgram);
 			currentShaderProgram = this.verticesPickingShaderProgram;
 		}
+		// gl.depthMask(false);
 
 		currentShaderProgram.use(gl);
 		currentShaderProgram.attributes.enable("vertex");
@@ -621,24 +642,7 @@ export class Helios {
 		} else {
 			ext.drawArraysInstancedANGLE(gl.TRIANGLE_STRIP, 0, this.nodesGeometry.numIndices, this.network.positions.length / 3);
 		}
-		// //Positions
-		// for(let i=0;i<this.network.positions.length;i+=3){
-		// 	// console.log(i);
-		// 	let color = [colorsArray[i],colorsArray[i+1],colorsArray[i+2]];
-		// 	let position = [positionsArray[i],positionsArray[i+1],positionsArray[i+2]];
-		// 	let scale = scaleValue[i/3]*0.25;
-		// 	let intensity = scaleValue[i/3]*0.25;
-
-		// 	gl.uniform1f(this.verticesShaderProgram.uniforms.scale,scale);
-		// 	gl.uniform1f(this.verticesShaderProgram.uniforms.intensity,intensity);
-
-		// 	gl.uniform3fv(this.verticesShaderProgram.uniforms.color,color);
-		// 	gl.uniform3fv(this.verticesShaderProgram.uniforms.position,position);
-		// 	//draw the geometry for every position 
-		// 	//FIXME: drawElement overhead is very critical on javascript (needs to reduce drawElements calling)
-		// 	gl.drawElements(gl.TRIANGLES, this.vertexGeometry.numIndices, this.vertexGeometry.indexType, 0);
-		// }
-
+		
 		// Disable attributes
 		currentShaderProgram.attributes.disable("vertex");
 		// this.verticesShaderProgram.attributes.disable("normal");
@@ -647,24 +651,35 @@ export class Helios {
 		currentShaderProgram.attributes.disable("intensity");
 		currentShaderProgram.attributes.disable("encodedIndex");
 
+		// gl.depthMask(true);
+
+	}
+
+	_redrawEdges(isPicking){
+		let gl = this.gl;
+		// gl.depthMask(false);
+		let ext = gl.getExtension("ANGLE_instanced_arrays");
 		if (!isPicking && !((this.mouseDown || this.redrawingFromMouseWheelEvent) && this.fastEdges)) {
 			// console.log(this.edgesShaderProgram)
 			this.edgesShaderProgram.use(gl);
 			this.edgesShaderProgram.attributes.enable("vertex");
 			this.edgesShaderProgram.attributes.enable("color");
 			gl.enable(gl.BLEND);
-			// 	if(useDarkBackground){
-			// gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
-			// 	}else{
-			//gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-			// gl.blendFuncSeparate( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA,
-			// 									gl.ZERO, gl.ONE );
-			// 	}
-			// 	// Enables the use of EdgesDepth (NOTE: edges are not sorted when depth is enabled. Visual artefacts may occurs.)
-			// 	if(!useEdgesDepth){
-			// gl.depthMask(false);
-			// 	}else{
-			gl.depthMask(true);
+		// 	//Edges are rendered with additive blending.
+		// 	gl.enable(gl.BLEND);
+		// 	if(useDarkBackground){
+		// 		gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+		// 	}else{
+		// 		//gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+		// 		gl.blendFuncSeparate( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA,
+		// 											 gl.ZERO, gl.ONE );
+		// 	}
+		// 	// Enables the use of EdgesDepth (NOTE: edges are not sorted when depth is enabled. Visual artefacts may occurs.)
+		// 	if(!useEdgesDepth){
+		// 		gl.depthMask(false);
+		// 	}else{
+		// 		gl.depthMask(true);
+		// 	}
 			// 	}
 			this.projectionViewMatrix = glm.mat4.create();
 			glm.mat4.multiply(this.projectionViewMatrix, this.projectionMatrix, this.viewMatrix);
@@ -692,164 +707,17 @@ export class Helios {
 			this.edgesShaderProgram.attributes.disable("vertex");
 			this.edgesShaderProgram.attributes.disable("color");
 		}
+	}
+	_redrawAll(isPicking) {
+		let gl = this.gl;
 
-		// //draw of the edges as lines
-		// if(edgesGeometry&&linesIntensity>0.0 && showEdges && !((mouseDown||redrawingFromMouseWheelEvent) && fastEdges)){
-		// 	edgesShaderProgram.use();
-
-		// 	//Edges are rendered with additive blending.
-		// 	gl.enable(gl.BLEND);
-		// 	if(useDarkBackground){
-		// 		gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
-		// 	}else{
-		// 		//gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-		// 		gl.blendFuncSeparate( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA,
-		// 											 gl.ZERO, gl.ONE );
-		// 	}
-		// 	// Enables the use of EdgesDepth (NOTE: edges are not sorted when depth is enabled. Visual artefacts may occurs.)
-		// 	if(!useEdgesDepth){
-		// 		gl.depthMask(false);
-		// 	}else{
-		// 		gl.depthMask(true);
-		// 	}
-
-		// 	//Enable attributes (vertex and color)
-		// 	edgesShaderProgram.attributes.enable("vertex");
-		// 	edgesShaderProgram.attributes.enable("color");
-
-		// 	//bind attributes and unions
-		// 	gl.bindBuffer(gl.ARRAY_BUFFER, edgesGeometry.vertexObject);
-		// 	gl.vertexAttribPointer(edgesShaderProgram.attributes.vertex, 3, gl.FLOAT, false, 0, 0);
-
-		// 	gl.bindBuffer(gl.ARRAY_BUFFER, edgesGeometry.colorObjects[currentEdgesColorKey]);
-		// 	gl.vertexAttribPointer(edgesShaderProgram.attributes.color, 3, gl.FLOAT, false, 0, 0);
-
-		// 	gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, edgesGeometry.indexObject);
-
-		// 	gl.uniformMatrix4fv(edgesShaderProgram.uniforms.projectionViewMatrix, false, projectionViewMatrix);
-
-		// 	//gl.uniform2fv(edgesShaderProgram.uniforms.nearFar,[0.1,10.0]);
-		// 	gl.uniform1f(edgesShaderProgram.uniforms.linesIntensity,linesIntensity/255);
-
-		// 	//drawElements is called only 1 time. no overhead from javascript
-		// 	gl.drawElements(gl.LINES, edgesGeometry.numIndices, edgesGeometry.indexType, 0);
-
-		// 	//disabling attributes
-		// 	edgesShaderProgram.attributes.disable("vertex");
-		// 	edgesShaderProgram.attributes.disable("color");
-		// }
-
-		// 	context2d.clearRect(0, 0, networkCanvas2D.width, networkCanvas2D.height);
-		// if(displayNames.length>0||displayIndices.length>0){
-		// 	context2d.save();
-		// 	context2d.strokeStyle = "rgba(255, 255, 255, 0.25)";
-		// 	context2d.fillStyle = "rgba(255, 255, 255, 0.25)";
-		// 	w2d = networkCanvas2D.width;
-		// 	h2d = networkCanvas2D.height;
-		// 	/*context2d.shadowBlur=0;
-		// 	context2d.shadowColor="rgba(255, 255, 255, 0.5)";
-		// 	context2d.shadowOffsetX= 1;
-		// 	context2d.shadowOffsetY= 1;
-
-		// 	context2d.shadowColor = "#000000";
-		// 	context2d.shadowOffsetX= 0;
-		// 	context2d.shadowOffsetY= 0;
-		// 	*/
-		// 	context2d.font = labelsFont;
-
-		// 	var allDisplayIndices = [];
-		// 	/*for(var nexti=0;nexti<displayNames.length;nexti++){
-		// 		var i = network.indexNameMap[displayNames[nexti]];
-		// 		if(i != undefined && i>=0 && i < network.names.length){
-		// 			allDisplayIndices.push(i);
-		// 		}
-		// 	}
-		// 	*/
-		// 	var allDisplaysSet = new NSet();
-		// 	for(var nexti=0;nexti<displayNames.length;nexti++){
-		// 		allDisplaysSet.add(displayNames[nexti]);
-		// 	}
-
-		// 	for(var i=0;i<network.names.length;i++){
-		// 		if(network.names[i] in allDisplaysSet){
-		// 			allDisplayIndices.push(i);
-		// 		}
-		// 	}
-
-		// 	for(var nexti=0;nexti<allDisplayIndices.length;nexti++){
-		// 		var i = allDisplayIndices[nexti];
-
-		// 		var color = [colorsArray[i*3],colorsArray[i*3+1],colorsArray[i*3+2]];
-		// 		var position = [positionsArray[i*3],positionsArray[i*3+1],positionsArray[i*3+2],1.0];
-		// 		var scale = Math.pow(5*scaleValue[i]/maxScale,scalePropertyCoeff)*verticesScale;
-		// 		var dest = [0.0,0.0,0.0,0.0];
-		// 		mat4.multiplyVec4(projectionViewMatrix, position, dest);
-		// 		if(dest[2]<0){//behind the camera
-		// 			continue;
-		// 		}
-		// 		var x = w2d/2 + dest[0]*w2d/2.0/dest[3];
-		// 		var y = h2d/2 - dest[1]*h2d/2.0/dest[3];
-		// 		context2d.translate(x,y);
-
-
-		// 		if(useDarkBackground){
-		// 			context2d.strokeStyle = rgba(color[0]*255, color[1]*255, color[2]*255, 0.4);
-		// 		}else{
-		// 			context2d.strokeStyle = rgba(color[0]*50+205, color[1]*50+205, color[2]*50+205, 0.80);
-		// 		}
-		// 		context2d.lineWidth = 3;
-		// 		context2d.beginPath();
-		// 		context2d.arc(0,0,1.0/dest[2]*scale*15*labelSymbolSize,0,2*Math.PI);
-		// 		context2d.stroke();
-
-		// 		if(useDarkBackground){
-		// 			context2d.strokeStyle = rgba(color[0]*200+55, color[1]*200+55, color[2]*200+55, 0.75);
-		// 		}else{
-		// 			context2d.strokeStyle = rgba(color[0]*100, color[1]*100, color[2]*100, 0.75);
-		// 		}
-
-		// 		context2d.beginPath();
-		// 		context2d.arc(0,0,1.0/dest[2]*scale*7.5*labelSymbolSize,0,2*Math.PI);
-		// 		context2d.stroke();
-
-		// 		if(useDarkBackground){
-		// 			context2d.strokeStyle = rgba(color[0]*200+55, color[1]*200+55, color[2]*200+55, 0.65);
-		// 		}else{
-		// 			context2d.strokeStyle = rgba(color[0]*50+205, color[1]*50+205, color[2]*50+205, 0.80);
-		// 		}
-
-		// 		context2d.beginPath();
-		// 		context2d.arc(0,0,1.0/dest[2]*scale*20*labelSymbolSize,0,2*Math.PI);
-		// 		context2d.stroke();
-
-		// 		var theName = network.names[i];
-		// 		var textSize = context2d.measureText(theName);
-
-		// 		if(useDarkBackground){
-		// 			context2d.fillStyle = rgba(color[0]*100, color[1]*100, color[2]*100, 0.75);
-		// 			context2d.strokeStyle = rgba(color[0]*255, color[1]*255, color[2]*255, 0.7);
-		// 		}else{
-		// 			context2d.fillStyle = rgba(color[0]*50+205, color[1]*50+205, color[2]*50+205, 0.80);
-		// 			context2d.strokeStyle = rgba(color[0]*50+205, color[1]*50+205, color[2]*50+205, 0.80);
-		// 		}
-		// 		context2d.fillRect(2,-(labelsBoxSize),textSize.width+6,labelsBoxSize);
-		// 		context2d.lineWidth = 1;
-		// 		context2d.strokeRect(2,-(labelsBoxSize),textSize.width+6,labelsBoxSize);
-
-		// 		if(useDarkBackground){
-		// 			context2d.fillStyle = "rgba(255, 255, 255, 0.6)";
-		// 		}else{
-		// 			context2d.fillStyle = "rgba(0, 0, 0, 0.9)";
-		// 		}
-
-		// 		context2d.fillText(theName,5,-5);
-		// 		context2d.translate(-x,-y);
-		// 	}
-		// 	context2d.restore();
-		// }
-
-		// 	redrawingFromMouseWheelEvent=false;
-
+		gl.enable(gl.DEPTH_TEST);
+		gl.depthFunc(gl.LEQUAL);
+		this._redrawPrepare(isPicking);
+		gl.depthMask(false);
+		this._redrawEdges(isPicking);
+		gl.depthMask(true);
+		this._redrawNodes(isPicking);
 	}
 
 
