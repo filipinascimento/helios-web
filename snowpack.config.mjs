@@ -5,8 +5,8 @@ export default {
     target: 'es2020',
     entrypoints:[
       "src/helios.js",
+      "docs/example/script.js"
     ],
-    splitting: true
   },
   devOptions: {
     openUrl: "docs/example/",
