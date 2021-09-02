@@ -1,0 +1,40 @@
+{
+  "scripts": {
+    "start": "snowpack dev",
+    "build": "snowpack build",
+    "test": "echo \"This template does not include a test runner by default.\" && exit 1",
+    "format": "prettier --write \"Core/**/*.js\"",
+    "lint": "prettier --check \"Core/**/*.js\""
+  },
+  "dependencies": {
+    "@colormap/core": "^0.2.0",
+    "@colormap/presets": "^0.2.0",
+    "custom-d3-zoom-center": "^3.0.0",
+    "d3": "^7.0.1",
+    "d3-force-3d": "^3.0.2",
+    "fast-png": "^5.0.4",
+    "gl-matrix": "^3.3.0",
+    "ngraph.forcelayout": "^3.1.0",
+    "ngraph.graph": "^19.1.0",
+    "pica": "^7.1.0",
+    "tar": ">=6.1.9",
+    "@npmcli/arborist": ">=2.8.2"
+  },
+  "devDependencies": {
+    "prettier": "^2.3.2",
+    "snowpack": "^3.8.6"
+  },
+  "name": "helios-web",
+  "description": "Repository for experiemental Helios-Web",
+  "version": "0.1.0",
+  "main": "docs/example/index.html",
+  "directories": {
+    "doc": "docs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git@github.iu.edu:IUNI/helios-web.git"
+  },
+  "author": "Filipi Nascimento Silva",
+  "license": "MIT"
+}
