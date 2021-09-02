@@ -17,16 +17,16 @@ self.onmessage = function(msg){
 		Object.entries(network.nodes).forEach(entry => {
 			// console.log(entry);
 			let [key, node] = entry;
-			// node.id = value;
+			// node.ID = value;
 
 			node.x = 400*(Math.random()*1.0-0.5);
 			node.y = 400*(Math.random()*1.0-0.5);
 			node.z = 400*(Math.random()*1.0-0.5);
 			node.vz = 0;
-			node.index = network.node2index[key];
+			node.index = network.ID2index[key];
 			// console.log(node.index,node);
 			self.ngraph.addNode(""+node.index,node);
-			// console.log(node,this.network.node2index[node])
+			// console.log(node,this.network.ID2index[node])
 			nodes.push(key);
 		});
 		
@@ -47,7 +47,7 @@ self.onmessage = function(msg){
 			// Do whatever
 			self.layout.step();
 			self.ngraph.forEachNode((node)=>{
-				let nodePosition = self.layout.getNodePosition(node.id);
+				let nodePosition = self.layout.getNodePosition(node.ID);
 				let vertexIndex = node.data.index;
 				network.positions[vertexIndex*3+0] = nodePosition.x;
 				network.positions[vertexIndex*3+1] = nodePosition.y;

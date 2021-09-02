@@ -8,8 +8,10 @@ varying float vIntensity;
 varying vec4 vEncodedIndex;
 varying vec3 vNormal;
 varying vec3 vEye;
-varying float vScale;
+varying float vSize;
 varying vec2 vOffset;
+varying float vOutlineThreshold;
+varying vec3 vOutlineColor;
 
 void main(){
 	float lensqr = dot(vOffset, vOffset);

@@ -12,9 +12,11 @@
     "custom-d3-zoom-center": "^3.0.0",
     "d3": "^7.0.1",
     "d3-force-3d": "^3.0.2",
+    "fast-png": "^5.0.4",
     "gl-matrix": "^3.3.0",
     "ngraph.forcelayout": "^3.1.0",
-    "ngraph.graph": "^19.1.0"
+    "ngraph.graph": "^19.1.0",
+    "pica": "^7.1.0"
   },
   "devDependencies": {
     "prettier": "^2.3.2",

@@ -8,6 +8,10 @@ import { drag as d3Drag } from "d3-drag";
 import { default as createGraph } from "ngraph.graph"
 import { default as createLayout } from "ngraph.forcelayout"
 import { forceSimulation, forceManyBody, forceLink, forceCenter } from "d3-force-3d";
+import {default as Pica} from "pica";
+
+
+let isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
 
 
 // You can associate arbitrary objects with node:
@@ -50,7 +54,7 @@ export class Helios {
 		this.redrawingFromMouseWheelEvent = false;
 		this.fastEdges = false;
 		this.animate = false;
-		this.cameraDistance = 150;
+		this.cameraDistance = 450;
 		this.zoomFactor = 1;
 		this.rotateLinearX = 0;
 		this.rotateLinearY = 0;
@@ -61,7 +65,7 @@ export class Helios {
 		this._edgesIntensity = 1.0;
 		this._use2D = use2D;
 
-		if(this._use2D){
+		if (this._use2D) {
 			for (let vertexIndex = 0; vertexIndex < this.network.positions.length; vertexIndex++) {
 				this.network.positions[vertexIndex * 3 + 2] = 0;
 			}
@@ -95,6 +99,8 @@ export class Helios {
 		this.onLayoutFinishCallback = null;
 		this.onDrawCallback = null;
 		this._backgroundColor = [0.5, 0.5, 0.5, 1.0];
+		this.onReadyCallback = null;
+		this.isReady=false;
 	}
 
 	// d3-like function Set/Get
@@ -120,6 +126,9 @@ export class Helios {
 		await this._setupLayout();
 
 		await this.redraw();
+		this.onReadyCallback?.(this);
+		this.onReadyCallback = null;
+		this.isReady = true;
 	}
 
 	_setupLayout() {
@@ -177,6 +186,18 @@ export class Helios {
 		}
 		this.layoutWorker.postMessage({ type: "import", location: import.meta.url });
 		this.layoutWorker.postMessage({ type: "init", network: this.network, use2D: this._use2D });
+		this.layoutRunning = true;
+		document.addEventListener('keyup', event => {
+			if (event.code === 'Space') {
+				if(this.layoutRunning){
+					this.layoutWorker.postMessage({ type: "stop"});
+					this.layoutRunning=false;
+				}else{
+					this.layoutWorker.postMessage({ type: "restart" });
+					this.layoutRunning=true;
+				}
+			}
+		})
 	}
 
 
@@ -191,9 +212,9 @@ export class Helios {
 
 			this.lastMouseX = e.clientX;
 			this.lastMouseY = e.clientY;
-			const nodeID = this.pickPoint(this.lastMouseX - rect.left, this.lastMouseY - rect.top);
-			if (nodeID >= 0) {
-				this.onNodeClickCallback?.(this.network.nodes[this.network.index2node[nodeID]], e);
+			const nodeIndex = this.pickPoint(this.lastMouseX - rect.left, this.lastMouseY - rect.top);
+			if (nodeIndex >= 0) {
+				this.onNodeClickCallback?.(this.network.index2Node[nodeIndex], e);
 			}
 		};
 
@@ -203,50 +224,224 @@ export class Helios {
 			this.triggerHoverEvents(event);
 		});
 
-		this.canvasElement.addEventListener('mouseout', (e) => {
+		this.canvasElement.addEventListener('mouseleave', (e) => {
 			if (this.currentHoverIndex >= 0) {
-				this.onNodeHoverEndCallback?.(this.network.nodes[this.network.index2node[this.currentHoverIndex]], e);
+				this.onNodeHoverEndCallback?.(this.network.index2Node[this.currentHoverIndex], e);
 				this.currentHoverIndex = -1;
-				// this.lastMouseX = -1;
-				// this.lastMouseY = -1;
+				this.lastMouseX = -1;
+				this.lastMouseY = -1;
 			}
+			
+		});
+		document.body.addEventListener('mouseout', (e) => {
+				if (!e.relatedTarget && !e.toElement) {
+					if (this.currentHoverIndex >= 0) {
+						this.onNodeHoverEndCallback?.(this.network.index2Node[this.currentHoverIndex], e);
+						this.currentHoverIndex = -1;
+						this.lastMouseX = -1;
+						this.lastMouseY = -1;
+					}
+				}
 		});
 	}
 
-	pickPoint(x, y) {
-		const fbWidth = this.canvasElement.width * this.pickingResolutionRatio;
-		const fbHeight = this.canvasElement.height * this.pickingResolutionRatio;
-		const pixelX = x * fbWidth / this.canvasElement.clientWidth;
-		const pixelY = fbHeight - y * fbHeight / this.canvasElement.clientHeight - 1;
-		const data = new Uint8Array(4);
+	async _downloadImageData(imagedata, filename, supersampleFactor,fileFormat) {
+		// let canvas = document.getElementById('SUPERCANVAS');
+		let pica = new Pica({
+			// features:["all"],
+		})
+		let canvas = document.createElement('canvas');
+		let canvasFullSize = document.createElement('canvas');
+		let ctx = canvas.getContext('2d');
+		let ctxFullSize = canvasFullSize.getContext('2d');
+		canvasFullSize.width = imagedata.width;
+		canvasFullSize.height = imagedata.height;
+		canvas.width = imagedata.width/supersampleFactor;
+		canvas.height = imagedata.height/supersampleFactor;
+		ctx.imageSmoothingEnabled = true;
+		ctxFullSize.imageSmoothingEnabled = true;
+		if(typeof ctx.imageSmoothingQuality !== 'undefined'){
+			ctx.imageSmoothingQuality = 'high';
+		}
+		if(typeof ctxFullSize.imageSmoothingQuality !== 'undefined'){
+			ctxFullSize.imageSmoothingQuality = 'high';
+		}
+
+		// let dpr = window.devicePixelRatio || 1;
+		// canvas.style.width =  canvas.width/dpr/10 + "px";
+		// canvas.style.height = canvas.height/dpr/10 + "px";
+
+
+		ctxFullSize.putImageData(imagedata, 0, 0);
+		
+		await pica.resize(canvasFullSize,canvas,{
+			alpha:true,
+		});
+
+		// ctxFullSize.drawImage(canvasFullSize, 0, 0,canvasFullSize.width*0.5,canvasFullSize.height*0.5,0,0,
+		// 	imagedata.width/supersampleFactor,
+		// 	imagedata.height/supersampleFactor);
+		// ctx.drawImage(canvasFullSize, 0, 0,canvasFullSize.width,canvasFullSize.height,0,0,
+		// 	imagedata.width/supersampleFactor,
+		// 	imagedata.height/supersampleFactor);
+		
+		
+		// let image = new Image();
+		// let imageSRC = canvas.toDataURL()
+		// image.src = imageSRC;
+		let downloadLink = document.createElement('a');
+		// console.log(["CANVAS",imageSRC]);
+
+					
+		if(isSafari){
+			// BUG in Safari
+			console.log("Fixing Safari bug...");
+			canvas.toDataURL();
+		}
+
+		downloadLink.setAttribute('download', filename);
+		let blob = await pica.toBlob(canvas,"image/png");
+		if(blob){
+			if(filename.endsWith("svg")){
+				let svgText = `
+				<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+				width="${canvas.width}" height="${canvas.width}"
+				>
+				<image
+						width="${canvas.width}" height="${canvas.width}"
+						xlink:href="${blob}"
+						/>
+				</svg>`
+				downloadLink.setAttribute('download', filename);
+				let blobSVG = new Blob([svgText], {type: 'image/svg+xml'});
+				let url = URL.createObjectURL(blobSVG);
+				downloadLink.setAttribute('href', url);
+				downloadLink.click();
+			}else{
+				let url = URL.createObjectURL(blob);
+				downloadLink.setAttribute('href', url);
+				downloadLink.click();
+			}
+		}else{
+			window.alert(`An error occured while trying to download the image. Please try again. (Error: blob is null.)`);
+			// console.log("BLOB IS NULL");
+		}
+
+		if(filename.endsWith("svg")){
+			let svgText = `
+			<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+			width="${canvas.width}" height="${canvas.width}"
+			>
+			<image
+					width="${canvas.width}" height="${canvas.width}"
+					xlink:href="${canvas.toDataURL()}"
+					/>
+			</svg>`
+			downloadLink.setAttribute('download', filename);
+			let blob = new Blob([svgText], {type: 'image/svg+xml'});
+			let url = URL.createObjectURL(blob);
+			downloadLink.setAttribute('href', url);
+			downloadLink.click();
+		}else if (false){
+			downloadLink.setAttribute('download', filename);
+			downloadLink.setAttribute('href', canvas.toDataURL("image/png").replace("image/png", "image/octet-stream"));
+			downloadLink.click();
+		}else{
+
+			// canvas.toBlob(function(blob) {
+			// 	console.log(["CANVAS",blob]);
+			// 	let trials = 3;
+			// 	let success = false;
+			// 	let lastError = null;
+			// 	while(trials>0 && !success){
+			// 		// FIXME: Safari BUG
+			// 		try {
+			// 			let url = URL.createObjectURL(blob);
+			// 			downloadLink.setAttribute('href', url);
+			// 			downloadLink.click();
+			// 			success=true;
+			// 		} catch (error) {
+			// 			lastError = error;
+			// 		}
+			// 		trials--;
+			// 	}
+			// 	if(!success){
+			// 		window.alert(`An error occured while trying to download the image. Please try again. (Error: ${lastError})`)
+			// 	}
+			// });
+		}
+	}
+
+	framebufferImage(framebuffer) { 
+		const fbWidth = framebuffer.size.width;
+		const fbHeight = framebuffer.size.height;
+		const data = new Uint8ClampedArray(4*fbWidth*fbHeight);
 		let gl = this.gl;
-		gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickingFramebuffer);
+		gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
 		gl.readPixels(
-			pixelX,            // x
-			pixelY,            // y
-			1,                 // width
-			1,                 // height
+			0,            // x
+			0,            // y
+			fbWidth,                 // width
+			fbHeight,                 // height
 			gl.RGBA,           // format
 			gl.UNSIGNED_BYTE,  // type
 			data);             // typed array to hold result
-		const id = (data[0] + (data[1] << 8) + (data[2] << 16) + (data[3] << 24)) - 1;
-		return id;
+
+		return new ImageData(data, fbWidth, fbHeight);
+	}
+
+	exportFigure(filename,{
+			scale=1.0,
+			supersampleFactor=4.0,
+			width=null,
+			height=null,
+			backgroundColor = null,
+		}) {
+		if(typeof(scale)==='undefined'){
+			scale=1.0;
+		}
+		if(typeof(supersampleFactor)==='undefined'){
+			supersampleFactor=2.0;
+		}
+		let framebuffer = this.createOffscreenFramebuffer();
+		if(width==null && height==null){
+			width = this.canvasElement.width;
+			height = this.canvasElement.height;
+		}else if(width==null){
+			width = Math.round(height * this.canvasElement.width/this.canvasElement.height);
+		}else if(height==null){
+			height = Math.round(width * this.canvasElement.height/this.canvasElement.width);
+		}
+		if(backgroundColor==null){
+			backgroundColor = this.backgroundColor;
+		}
+		framebuffer.setSize(width*scale*supersampleFactor, height*scale*supersampleFactor);
+		framebuffer.backgroundColor = backgroundColor;
+		this._redrawAll(framebuffer);
+		let image = this.framebufferImage(framebuffer);
+		this._downloadImageData(image,filename,supersampleFactor);
+		
+		framebuffer.discard();
 	}
 
 	triggerHoverEvents(event) {
+		if(this.lastMouseX==-1 || this.lastMouseY==-1){
+			return;
+		}
 		const rect = this.canvasElement.getBoundingClientRect();
 		const nodeID = this.pickPoint(this.lastMouseX - rect.left, this.lastMouseY - rect.top);
 		if (nodeID >= 0 && this.currentHoverIndex == -1) {
 			this.currentHoverIndex = nodeID;
-			this.onNodeHoverStartCallback?.(this.network.nodes[this.network.index2node[nodeID]], event);
+			this.onNodeHoverStartCallback?.(this.network.index2Node[nodeID], event);
 		} else if (nodeID >= 0 && this.currentHoverIndex == nodeID) {
-			this.onNodeHoverMoveCallback?.(this.network.nodes[this.network.index2node[nodeID]], event);
+			// console.log("mouse: ",this.lastMouseX,this.lastMouseY)
+			this.onNodeHoverMoveCallback?.(this.network.index2Node[nodeID], event);
 		} else if (nodeID >= 0 && this.currentHoverIndex != nodeID) {
-			this.onNodeHoverEndCallback?.(this.network.nodes[this.network.index2node[this.currentHoverIndex]], event);
+			this.onNodeHoverEndCallback?.(this.network.index2Node[this.currentHoverIndex], event);
 			this.currentHoverIndex = nodeID;
-			this.onNodeHoverStartCallback?.(this.network.nodes[this.network.index2node[nodeID]], event);
+			this.onNodeHoverStartCallback?.(this.network.index2Node[nodeID], event);
 		} else if (nodeID == -1 && this.currentHoverIndex != nodeID) {
-			this.onNodeHoverEndCallback?.(this.network.nodes[this.network.index2node[this.currentHoverIndex]], event);
+			this.onNodeHoverEndCallback?.(this.network.index2Node[this.currentHoverIndex], event);
 			this.currentHoverIndex = -1;
 		}
 	}
@@ -276,11 +471,11 @@ export class Helios {
 
 		this.verticesShaderProgram = new glUtils.ShaderProgram(verticesShaderVertex, verticesShaderFragment,
 			["viewMatrix", "projectionMatrix", "normalMatrix"],
-			["vertex", "position", "color", "intensity", "scale", "encodedIndex"], this.gl);
+			["vertex", "position", "color", "intensity", "size","outlineWidth","outlineColor", "encodedIndex"], this.gl);
 
 		this.verticesPickingShaderProgram = new glUtils.ShaderProgram(verticesShaderVertex, pickingShaderFragment,
 			["viewMatrix", "projectionMatrix", "normalMatrix"],
-			["vertex", "position", "color", "intensity", "scale", "encodedIndex"], this.gl);
+			["vertex", "position", "color", "intensity", "size","outlineWidth","outlineColor", "encodedIndex"], this.gl);
 
 	}
 
@@ -295,17 +490,19 @@ export class Helios {
 
 		this.nodesPositionBuffer = gl.createBuffer();
 		this.nodesColorBuffer = gl.createBuffer();
-		this.nodesScaleBuffer = gl.createBuffer();
+		this.nodesSizeBuffer = gl.createBuffer();
 		this.nodesIntensityBuffer = gl.createBuffer();
+		this.nodesOutlineWidthBuffer = gl.createBuffer();
+		this.nodesOutlineColorBuffer = gl.createBuffer();
 		this.nodesIndexBuffer = gl.createBuffer();
 
 		//encodedIndex
-		this.nodesIndexArray = new Float32Array(this.network.index2node.length * 4);
-		for (let id = 0; id < this.network.index2node.length; id++) {
-			this.nodesIndexArray[4 * id] = (((id + 1) >> 0) & 0xFF) / 0xFF;
-			this.nodesIndexArray[4 * id + 1] = (((id + 1) >> 8) & 0xFF) / 0xFF;
-			this.nodesIndexArray[4 * id + 2] = (((id + 1) >> 16) & 0xFF) / 0xFF;
-			this.nodesIndexArray[4 * id + 3] = (((id + 1) >> 24) & 0xFF) / 0xFF;
+		this.nodesIndexArray = new Float32Array(this.network.index2Node.length * 4);
+		for (let ID = 0; ID < this.network.index2Node.length; ID++) {
+			this.nodesIndexArray[4 * ID] = (((ID + 1) >> 0) & 0xFF) / 0xFF;
+			this.nodesIndexArray[4 * ID + 1] = (((ID + 1) >> 8) & 0xFF) / 0xFF;
+			this.nodesIndexArray[4 * ID + 2] = (((ID + 1) >> 16) & 0xFF) / 0xFF;
+			this.nodesIndexArray[4 * ID + 3] = (((ID + 1) >> 24) & 0xFF) / 0xFF;
 		}
 
 		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesIndexBuffer);
@@ -314,18 +511,33 @@ export class Helios {
 
 		await this._updateGeometry();
 	}
+
 	async _buildPickingBuffers() {
 		let gl = this.gl;
-		this.pickingTargetTexture = gl.createTexture();
-		gl.bindTexture(gl.TEXTURE_2D, this.pickingTargetTexture);
+		this.pickingFramebuffer = this.createOffscreenFramebuffer();
+	}
+
+	createOffscreenFramebuffer() {
+		let gl = this.gl;
+		let framebuffer = gl.createFramebuffer();
+		framebuffer.texture = gl.createTexture();
+		gl.bindTexture(gl.TEXTURE_2D, framebuffer.texture);
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-		this.pickingDepthBuffer = gl.createRenderbuffer();
-		gl.bindRenderbuffer(gl.RENDERBUFFER, this.pickingDepthBuffer);
 
-		this.setFramebufferAttachmentSizes = (width, height) => {
-			gl.bindTexture(gl.TEXTURE_2D, this.pickingTargetTexture);
+		framebuffer.depthBuffer = gl.createRenderbuffer();
+		gl.bindRenderbuffer(gl.RENDERBUFFER, framebuffer.depthBuffer);
+
+		// Create and bind the framebuffer
+		gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+		framebuffer.size = {
+			width: 0,
+			height: 0,
+		};
+
+		framebuffer.setSize = (width, height) => {
+			gl.bindTexture(gl.TEXTURE_2D, framebuffer.texture);
 			// define size and format of level 0
 			const level = 0;
 			const internalFormat = gl.RGBA;
@@ -333,27 +545,31 @@ export class Helios {
 			const format = gl.RGBA;
 			const type = gl.UNSIGNED_BYTE;
 			const data = null;
-			const fbWidth = width * this.pickingResolutionRatio;
-			const fbHeight = height * this.pickingResolutionRatio;
+			const fbWidth = width;
+			const fbHeight = height;
 			gl.texImage2D(gl.TEXTURE_2D, level, internalFormat,
 				fbWidth, fbHeight, border, format, type, data);
-			gl.bindRenderbuffer(gl.RENDERBUFFER, this.pickingDepthBuffer);
+			gl.bindRenderbuffer(gl.RENDERBUFFER, framebuffer.depthBuffer);
 			gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, fbWidth, fbHeight);
+			framebuffer.size.width = width;
+			framebuffer.size.height = height;
 		};
 
-		// Create and bind the framebuffer
-		this.pickingFramebuffer = gl.createFramebuffer();
-		gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickingFramebuffer);
-
+		framebuffer.discard = () =>{
+			gl.deleteRenderbuffer(framebuffer.depthBuffer);
+			gl.deleteTexture(framebuffer.texture);
+			gl.deleteFramebuffer(framebuffer);
+		}
 		// attach the texture as the first color attachment
 		const attachmentPoint = gl.COLOR_ATTACHMENT0;
 		const level = 0;
-		gl.framebufferTexture2D(gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, this.pickingTargetTexture, level);
+		gl.framebufferTexture2D(gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, framebuffer.texture, level);
 
 		// make a depth buffer and the same size as the targetTexture
-		gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, this.pickingDepthBuffer);
-
+		gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, framebuffer.depthBuffer);
+		return framebuffer;
 	}
+
 
 	async _updateGeometry() {
 		let gl = this.gl;
@@ -367,13 +583,21 @@ export class Helios {
 		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesColorBuffer);
 		gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
 
-		let scales = this.network.scales;
-		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesScaleBuffer);
-		gl.bufferData(gl.ARRAY_BUFFER, scales, gl.STATIC_DRAW);
+		let sizes = this.network.sizes;
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesSizeBuffer);
+		gl.bufferData(gl.ARRAY_BUFFER, sizes, gl.STATIC_DRAW);
 
 		let intensities = this.network.intensities;
 		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesIntensityBuffer);
 		gl.bufferData(gl.ARRAY_BUFFER, intensities, gl.STATIC_DRAW);
+
+		let outlineWidths = this.network.outlineWidths;
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesOutlineWidthBuffer);
+		gl.bufferData(gl.ARRAY_BUFFER, outlineWidths, gl.STATIC_DRAW);
+		
+		let outlineColors = this.network.outlineColors;
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesOutlineColorBuffer);
+		gl.bufferData(gl.ARRAY_BUFFER, outlineColors, gl.STATIC_DRAW);
 
 
 		// //Depth test is essential for the desired effects
@@ -434,7 +658,7 @@ export class Helios {
 	}
 
 	async resizeGL(newWidth, newHeight) {
-		this.setFramebufferAttachmentSizes(newWidth, newHeight);
+		this.pickingFramebuffer.setSize(newWidth*this.pickingResolutionRatio, newHeight*this.pickingResolutionRatio);
 		window.requestAnimationFrame(() => this.redraw());
 	}
 
@@ -457,17 +681,17 @@ export class Helios {
 		this.drag = d3Drag().on("drag", event => {
 			let newRotationMatrix = glm.mat4.create();
 
-			if(!this._use2D){
+			if (!this._use2D) {
 				glm.mat4.identity(newRotationMatrix);
 				glm.mat4.rotate(newRotationMatrix, newRotationMatrix, glUtils.degToRad(event.dx / 2), [0, 1, 0]);
 				glm.mat4.rotate(newRotationMatrix, newRotationMatrix, glUtils.degToRad(event.dy / 2), [1, 0, 0]);
 
 				glm.mat4.multiply(this.rotationMatrix, newRotationMatrix, this.rotationMatrix);
-			}else{//pan
+			} else {//pan
 				let perspectiveFactor = this.cameraDistance * this.zoomFactor;
 				let aspectRatio = this.canvasElement.width / this.canvasElement.height;
-				// this.panX = this.panX + event.dx * perspectiveFactor/Math.sqrt(this.canvasElement.width)/2;
-				// this.panY = this.panY - event.dy * perspectiveFactor/400;
+				this.panX = this.panX + event.dx / perspectiveFactor*400;///400;
+				this.panY = this.panY - event.dy / perspectiveFactor*400;///400;
 			}
 			if (!this.positionInterpolator) {
 				this.update();
@@ -484,7 +708,7 @@ export class Helios {
 
 	willResizeEvent(event) {
 		//requestAnimFrame(function(){
-		let dpr =  window.devicePixelRatio || 1;
+		let dpr = window.devicePixelRatio || 1;
 		this.canvasElement.style.width = this.element.clientWidth + "px";
 		this.canvasElement.style.height = this.element.clientHeight + "px";
 		this.canvasElement.width = dpr * this.element.clientWidth;
@@ -496,49 +720,63 @@ export class Helios {
 
 
 	redraw() {
-		this._redrawAll(false);
-		this._redrawAll(true);
+		this._redrawAll(null,false); // Normal
+		this._redrawAll(this.pickingFramebuffer,true); // Picking
 		this.onDrawCallback?.();
 		this.triggerHoverEvents(null);
 	}
 
-	update(){
+	update() {
 		if (!this.positionInterpolator) {
 			this._updateGeometry();
 			this._updateEdgesGeometry();
 		}
 	}
-	render(){
+	render() {
 		if (!this.positionInterpolator) {
 			window.requestAnimationFrame(() => this.redraw());
 		}
 	}
 
 
-	_redrawPrepare(isPicking){
+	//destination null = normal
+
+	_redrawPrepare(destination,isPicking, viewport) {
 		let gl = this.gl;
 
-		if (!isPicking) {
-			gl.viewport(0, 0, this.canvasElement.width, this.canvasElement.height);
+		const fbWidth = destination?.size.width || this.canvasElement.width;
+		const fbHeight = destination?.size.height || this.canvasElement.height;
+		if (destination==null) {
 			gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 			gl.clearColor(...this._backgroundColor);
-		} else {
-			const fbWidth = this.canvasElement.width * this.pickingResolutionRatio;
-			const fbHeight = this.canvasElement.height * this.pickingResolutionRatio;
-			gl.viewport(0, 0, fbWidth, fbHeight);
-			gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickingFramebuffer);
+		} else if (isPicking){
+			gl.bindFramebuffer(gl.FRAMEBUFFER, destination);
 			gl.clearColor(0.0, 0.0, 0.0, 0.0);
+		} else {
+			gl.bindFramebuffer(gl.FRAMEBUFFER, destination);
+			if(typeof destination.backgroundColor === "undefined"){
+				gl.clearColor(...this._backgroundColor);
+			}else{
+				gl.clearColor(...destination.backgroundColor);
+			}
+		}
+
+		if(typeof viewport=== "undefined"){
+			gl.viewport(0, 0, fbWidth, fbHeight);
+		}else{
+			gl.viewport(...viewport);
 		}
 
 		gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+		gl.depthFunc(gl.LEQUAL);
 
 		this.projectionMatrix = glm.mat4.create();
 		this.viewMatrix = glm.mat4.create();
 
-		glm.mat4.perspective(this.projectionMatrix, Math.PI * 2 / 360 * 70, this.canvasElement.width / this.canvasElement.height, 0.1, 2000.0);
+		glm.mat4.perspective(this.projectionMatrix, Math.PI * 2 / 360 * 70, fbWidth / fbHeight, 1.0, 3000.0);
 		glm.mat4.identity(this.viewMatrix);
-		glm.mat4.translate(this.viewMatrix, this.viewMatrix, [this.panX, this.panY, -this.cameraDistance/this.zoomFactor]);
-		
+		glm.mat4.translate(this.viewMatrix, this.viewMatrix, [this.panX, this.panY, -this.cameraDistance / this.zoomFactor]);
+
 
 		glm.mat4.multiply(this.viewMatrix, this.viewMatrix, this.rotationMatrix);
 		// glm.mat4.scale(this.viewMatrix, this.viewMatrix, [this.zoomFactor, this.zoomFactor, this.zoomFactor]);
@@ -546,7 +784,8 @@ export class Helios {
 
 
 	}
-	_redrawNodes(isPicking){
+	
+	_redrawNodes(destination,isPicking) {
 		let gl = this.gl;
 		let ext = gl.getExtension("ANGLE_instanced_arrays");
 
@@ -558,9 +797,9 @@ export class Helios {
 			// 	if(useDarkBackground){
 			// gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
 			// 	}else{
-			// gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-			gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA,
-				gl.ZERO, gl.ONE);
+			gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+			// gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA,
+			// 	gl.ZERO, gl.ONE);
 			// 	}
 			currentShaderProgram = this.verticesShaderProgram;
 		} else {
@@ -568,14 +807,15 @@ export class Helios {
 			// console.log(this.verticesShaderProgram);
 			currentShaderProgram = this.verticesPickingShaderProgram;
 		}
-		// gl.depthMask(false);
 
 		currentShaderProgram.use(gl);
 		currentShaderProgram.attributes.enable("vertex");
 		// currentShaderProgram.attributes.enable("normal");
 		currentShaderProgram.attributes.enable("position");
-		currentShaderProgram.attributes.enable("scale");
+		currentShaderProgram.attributes.enable("size");
 		currentShaderProgram.attributes.enable("intensity");
+		currentShaderProgram.attributes.enable("outlineWidth");
+		currentShaderProgram.attributes.enable("outlineColor");
 		currentShaderProgram.attributes.enable("encodedIndex");
 
 
@@ -602,8 +842,9 @@ export class Helios {
 		// Geometry Mutators and colors obtained from the network properties
 		let colorsArray = this.network.colors;
 		let positionsArray = this.network.positions;
-		let scaleValue = this.network.scales;
+		let sizeValue = this.network.sizes;
 		let intensityValue = this.network.intensities;
+		let outlineWidthValue = this.network.outlineWidths;
 
 		// Bind the instance position data
 		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesPositionBuffer);
@@ -618,10 +859,22 @@ export class Helios {
 		ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.color, 1); // This makes it instanced!
 
 		// Bind the instance color data
-		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesScaleBuffer);
-		gl.enableVertexAttribArray(currentShaderProgram.attributes.scale);
-		gl.vertexAttribPointer(currentShaderProgram.attributes.scale, 1, gl.FLOAT, false, 0, 0);
-		ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.scale, 1); // This makes it instanced!
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesSizeBuffer);
+		gl.enableVertexAttribArray(currentShaderProgram.attributes.size);
+		gl.vertexAttribPointer(currentShaderProgram.attributes.size, 1, gl.FLOAT, false, 0, 0);
+		ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.size, 1); // This makes it instanced!
+
+		// Bind the instance color data
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesOutlineColorBuffer);
+		gl.enableVertexAttribArray(currentShaderProgram.attributes.outlineColor);
+		gl.vertexAttribPointer(currentShaderProgram.attributes.outlineColor, 3, gl.FLOAT, false, 0, 0);
+		ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.outlineColor, 1); // This makes it instanced!
+
+		// Bind the instance color data
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesOutlineWidthBuffer);
+		gl.enableVertexAttribArray(currentShaderProgram.attributes.outlineWidth);
+		gl.vertexAttribPointer(currentShaderProgram.attributes.outlineWidth, 1, gl.FLOAT, false, 0, 0);
+		ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.outlineWidth, 1); // This makes it instanced!
 
 		// Bind the instance color data
 		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesIntensityBuffer);
@@ -642,45 +895,39 @@ export class Helios {
 		} else {
 			ext.drawArraysInstancedANGLE(gl.TRIANGLE_STRIP, 0, this.nodesGeometry.numIndices, this.network.positions.length / 3);
 		}
-		
+
 		// Disable attributes
 		currentShaderProgram.attributes.disable("vertex");
 		// this.verticesShaderProgram.attributes.disable("normal");
 		currentShaderProgram.attributes.disable("position");
-		currentShaderProgram.attributes.disable("scale");
+		currentShaderProgram.attributes.disable("size");
 		currentShaderProgram.attributes.disable("intensity");
+		currentShaderProgram.attributes.disable("outlineWidth");
+		currentShaderProgram.attributes.disable("outlineColor");
 		currentShaderProgram.attributes.disable("encodedIndex");
 
-		// gl.depthMask(true);
 
 	}
 
-	_redrawEdges(isPicking){
+	_redrawEdges(destination,isPicking) {
 		let gl = this.gl;
-		// gl.depthMask(false);
 		let ext = gl.getExtension("ANGLE_instanced_arrays");
-		if (!isPicking && !((this.mouseDown || this.redrawingFromMouseWheelEvent) && this.fastEdges)) {
+		if ((!isPicking) && !((this.mouseDown || this.redrawingFromMouseWheelEvent) && this.fastEdges)) {
 			// console.log(this.edgesShaderProgram)
 			this.edgesShaderProgram.use(gl);
 			this.edgesShaderProgram.attributes.enable("vertex");
 			this.edgesShaderProgram.attributes.enable("color");
 			gl.enable(gl.BLEND);
-		// 	//Edges are rendered with additive blending.
-		// 	gl.enable(gl.BLEND);
-		// 	if(useDarkBackground){
-		// 		gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
-		// 	}else{
-		// 		//gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-		// 		gl.blendFuncSeparate( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA,
-		// 											 gl.ZERO, gl.ONE );
-		// 	}
-		// 	// Enables the use of EdgesDepth (NOTE: edges are not sorted when depth is enabled. Visual artefacts may occurs.)
-		// 	if(!useEdgesDepth){
-		// 		gl.depthMask(false);
-		// 	}else{
-		// 		gl.depthMask(true);
-		// 	}
-			// 	}
+			// 	//Edges are rendered with additive blending.
+			// 	gl.enable(gl.BLEND);
+			// 	if(useDarkBackground){
+					// gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+			// 	}else{
+			// gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+			// gl.blendFuncSeparate( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+			// gl.blendFuncSeparate( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE ); //Original from Networks 3D
+			gl.blendFuncSeparate( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE ); // New (works for transparent background)
+
 			this.projectionViewMatrix = glm.mat4.create();
 			glm.mat4.multiply(this.projectionViewMatrix, this.projectionMatrix, this.viewMatrix);
 
@@ -708,16 +955,26 @@ export class Helios {
 			this.edgesShaderProgram.attributes.disable("color");
 		}
 	}
-	_redrawAll(isPicking) {
+	_redrawAll(destination,isPicking) {
+		if(typeof isPicking === 'undefined'){
+			isPicking = false;
+		}
 		let gl = this.gl;
-
-		gl.enable(gl.DEPTH_TEST);
-		gl.depthFunc(gl.LEQUAL);
-		this._redrawPrepare(isPicking);
-		gl.depthMask(false);
-		this._redrawEdges(isPicking);
+		// isPicking=true;
+		this._redrawPrepare(destination,isPicking);
 		gl.depthMask(true);
-		this._redrawNodes(isPicking);
+		if(this._use2D){
+			gl.disable(gl.DEPTH_TEST);
+			gl.depthMask(false);
+			this._redrawEdges(destination,isPicking);
+			this._redrawNodes(destination,isPicking);
+		}else{
+			gl.enable(gl.DEPTH_TEST);
+			this._redrawNodes(destination,isPicking);
+			gl.depthMask(false);
+			this._redrawEdges(destination,isPicking);
+			gl.depthMask(true);
+		}
 	}
 
 
@@ -773,10 +1030,17 @@ export class Helios {
 		this.onDrawCallback = callback;
 		return this;
 	}
+	onReady(callback){
+		if(this.isReady){
+			callback?.(this);
+		}else{
+			this.onReadyCallback = callback;
+		}
+	}
 
 	backgroundColor(color) {
 		// check if color is defined
-		if (color === undefined) {
+		if (typeof color === "undefined") {
 			return this._backgroundColor;
 		} else {
 			this._backgroundColor = color;
@@ -785,24 +1049,24 @@ export class Helios {
 	}
 
 
-	nodeColor(colorInput, nodeName) {
-		if (nodeName === undefined) {
-			if (colorInput === undefined) {
+	nodeColor(colorInput, nodeID) {
+		if (typeof nodeID === "undefined") {
+			if (typeof colorInput === "undefined") {
 				return this.network.colors;
 			} else if (typeof colorInput === "function") {
-				for (const [nodeName, node] of Object.entries(this.network.nodes)) {
-					let nodeIndex = this.network.node2index[nodeName];
+				for (const [nodeID, node] of Object.entries(this.network.nodes)) {
+					let nodeIndex = this.network.ID2index[nodeID];
 					let aColor = colorInput(node, nodeIndex, this.network);
 					this.network.colors[nodeIndex * 3 + 0] = aColor[0];
 					this.network.colors[nodeIndex * 3 + 1] = aColor[1];
 					this.network.colors[nodeIndex * 3 + 2] = aColor[2];
 				}
-			} else if (colorInput === "number") {
+			} else if (typeof colorInput === "number") {
 				//index
-				return this.network.colors[this.network.node2index[colorInput]];
+				return this.network.colors[this.network.ID2index[colorInput]];
 			} else {
-				for (const [nodeName, node] of Object.entries(this.network.nodes)) {
-					let nodeIndex = this.network.node2index[nodeName];
+				for (const [nodeID, node] of Object.entries(this.network.nodes)) {
+					let nodeIndex = this.network.ID2index[nodeID];
 					this.network.colors[nodeIndex * 3 + 0] = colorInput[0];
 					this.network.colors[nodeIndex * 3 + 1] = colorInput[1];
 					this.network.colors[nodeIndex * 3 + 2] = colorInput[2];
@@ -810,13 +1074,13 @@ export class Helios {
 			}
 		} else {
 			if (typeof colorInput === "function") {
-				let nodeIndex = this.network.node2index[nodeName];
-				let aColor = colorInput(this.network.nodes[nodeName], nodeIndex, this.network);
+				let nodeIndex = this.network.ID2index[nodeID];
+				let aColor = colorInput(nodeID, nodeIndex, this.network);
 				this.network.colors[nodeIndex * 3 + 0] = aColor[0];
 				this.network.colors[nodeIndex * 3 + 1] = aColor[1];
 				this.network.colors[nodeIndex * 3 + 2] = aColor[2];
 			} else {
-				let nodeIndex = this.network.node2index[nodeName];
+				let nodeIndex = this.network.ID2index[nodeID];
 				this.network.colors[nodeIndex * 3 + 0] = colorInput[0];
 				this.network.colors[nodeIndex * 3 + 1] = colorInput[1];
 				this.network.colors[nodeIndex * 3 + 2] = colorInput[2];
@@ -826,41 +1090,127 @@ export class Helios {
 	}
 
 
-	nodeScale(scaleInput, nodeName) {
-		if (nodeName === undefined) {
-			if (scaleInput === undefined) {
-				return this.network.scales;
-			} else if (typeof scaleInput === "function") {
-				for (const [nodeName, node] of Object.entries(this.network.nodes)) {
-					let aScale = scaleInput(node, this.network);
-					let nodeIndex = this.network.node2index[nodeName];
-					this.network.scales[nodeIndex] = aScale;
+	nodeSize(sizeInput, nodeID) {
+		if (typeof nodeID === "undefined") {
+			if (typeof sizeInput === "undefined") {
+				return this.network.sizes;
+			} else if (typeof sizeInput === "function") {
+				for (const [nodeID, node] of Object.entries(this.network.nodes)) {
+					let aSize = sizeInput(node, this.network);
+					this.network.sizes[node.index] = aSize;
 				}
-			} else if (scaleInput === "number") {
-				//index
-				return this.network.scales[this.network.node2index[scaleInput]];
 			} else {
-				for (const [nodeName, node] of Object.entries(this.network.nodes)) {
-					let nodeIndex = this.network.node2index[nodeName];
-					this.network.scales[nodeIndex] = scaleInput;
+				for (const [nodeID, node] of Object.entries(this.network.nodes)) {
+					this.network.sizes[node.index] = sizeInput;
 				}
 			}
 		} else {
-			if (typeof scaleInput === "function") {
-				let aScale = scaleInput(this.network.nodes[nodeName], this.network);
-				let nodeIndex = this.network.node2index[nodeName];
-				this.network.scales[nodeIndex] = aScale;
+			if (typeof sizeInput === "function") {
+				let aSize = sizeInput(nodeID, this.network);
+				let nodeIndex = this.network.ID2index[nodeID];
+				this.network.sizes[nodeIndex] = aSize;
 			} else {
-				let nodeIndex = this.network.node2index[nodeName];
-				this.network.scales[nodeIndex] = scaleInput;
+				let nodeIndex = this.network.ID2index[nodeID];
+				this.network.sizes[nodeIndex] = sizeInput;
 			}
 		}
 		return this;
 	}
 
-	edgesIntensity(intensity){
+
+	nodeOutlineColor(colorInput, nodeID) {
+		if (typeof nodeID === "undefined") {
+			if (typeof colorInput === "undefined") {
+				return this.network.outlineColors;
+			} else if (typeof colorInput === "function") {
+				for (const [nodeID, node] of Object.entries(this.network.nodes)) {
+					let nodeIndex = this.network.ID2index[nodeID];
+					let aColor = colorInput(node, nodeIndex, this.network);
+					this.network.outlineColors[nodeIndex * 3 + 0] = aColor[0];
+					this.network.outlineColors[nodeIndex * 3 + 1] = aColor[1];
+					this.network.outlineColors[nodeIndex * 3 + 2] = aColor[2];
+				}
+			} else if (typeof colorInput === "number") {
+				//index
+				return this.network.outlineColors[this.network.ID2index[colorInput]];
+			} else {
+				for (const [nodeID, node] of Object.entries(this.network.nodes)) {
+					let nodeIndex = this.network.ID2index[nodeID];
+					this.network.outlineColors[nodeIndex * 3 + 0] = colorInput[0];
+					this.network.outlineColors[nodeIndex * 3 + 1] = colorInput[1];
+					this.network.outlineColors[nodeIndex * 3 + 2] = colorInput[2];
+				}
+			}
+		} else {
+			if (typeof colorInput === "function") {
+				let nodeIndex = this.network.ID2index[nodeID];
+				let aColor = colorInput(nodeID, nodeIndex, this.network);
+				this.network.outlineColors[nodeIndex * 3 + 0] = aColor[0];
+				this.network.outlineColors[nodeIndex * 3 + 1] = aColor[1];
+				this.network.outlineColors[nodeIndex * 3 + 2] = aColor[2];
+			} else {
+				let nodeIndex = this.network.ID2index[nodeID];
+				this.network.outlineColors[nodeIndex * 3 + 0] = colorInput[0];
+				this.network.outlineColors[nodeIndex * 3 + 1] = colorInput[1];
+				this.network.outlineColors[nodeIndex * 3 + 2] = colorInput[2];
+			}
+		}
+		return this;
+	}
+
+
+	nodeOutlineWidth(widthInput, nodeID) {
+		if (typeof nodeID === "undefined") {
+			if (typeof widthInput === "undefined") {
+				return this.network.outlineWidths;
+			} else if (typeof widthInput === "function") {
+				for (const [nodeID, node] of Object.entries(this.network.nodes)) {
+					let aWidth = widthInput(node, this.network);
+					this.network.outlineWidths[node.index] = aWidth;
+				}
+			} else {
+				for (const [nodeID, node] of Object.entries(this.network.nodes)) {
+					this.network.outlineWidths[node.index] = widthInput;
+				}
+			}
+		} else {
+			if (typeof widthInput === "function") {
+				let aWidth = widthInput(nodeID, this.network);
+				let nodeIndex = this.network.ID2index[nodeID];
+				this.network.outlineWidths[nodeIndex] = aWidth;
+			} else {
+				let nodeIndex = this.network.ID2index[nodeID];
+				this.network.outlineWidths[nodeIndex] = widthInput;
+			}
+		}
+		return this;
+	}
+
+
+
+	pickPoint(x, y) {
+		const fbWidth = this.canvasElement.width * this.pickingResolutionRatio;
+		const fbHeight = this.canvasElement.height * this.pickingResolutionRatio;
+		const pixelX = x * fbWidth / this.canvasElement.clientWidth;
+		const pixelY = fbHeight - y * fbHeight / this.canvasElement.clientHeight - 1;
+		const data = new Uint8Array(4);
+		let gl = this.gl;
+		gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickingFramebuffer);
+		gl.readPixels(
+			pixelX,            // x
+			pixelY,            // y
+			1,                 // width
+			1,                 // height
+			gl.RGBA,           // format
+			gl.UNSIGNED_BYTE,  // type
+			data);             // typed array to hold result
+		const ID = (data[0] + (data[1] << 8) + (data[2] << 16) + (data[3] << 24)) - 1;
+		return ID;
+	}
+
+	edgesIntensity(intensity) {
 		// check if color is defined
-		if (intensity === undefined) {
+		if (typeof intensity === "undefined") {
 			return this._edgesIntensity;
 		} else {
 			this._edgesIntensity = intensity;

@@ -8,8 +8,10 @@ varying float vIntensity;
 varying vec4 vEncodedIndex;
 varying vec3 vNormal;
 varying vec3 vEye;
-varying float vScale;
+varying float vSize;
 varying vec2 vOffset;
+varying float vOutlineThreshold;
+varying vec3 vOutlineColor;
 
 
 
@@ -44,7 +46,7 @@ void main(){
 	// 		discard;
 		
 	// cameraNormal = vec3(vOffset, sqrt(1.0 - lensqr));
-	// cameraPos = (cameraNormal * scale) + cameraSpherePos;
+	// cameraPos = (cameraNormal * size) + cameraSpherePos;
 
 	// float len = length(point);
 	// // VTK Fake Spheres
@@ -66,10 +68,10 @@ void main(){
 	if(lensqr > 1.0)
 			discard;
 	
-	if(lensqr < 1.0){
+	if(lensqr < 1.0-vOutlineThreshold){
 		gl_FragColor = vec4(vColor,vIntensity);
 	}else{
-		gl_FragColor = vec4(1.0,1.0,1.0,vIntensity);
+		gl_FragColor = vec4(vOutlineColor.xyz,vIntensity);
 	}
 	// gl_FragDepthEXT = 0.5; 
 }

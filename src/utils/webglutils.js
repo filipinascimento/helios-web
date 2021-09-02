@@ -33,8 +33,8 @@ function createWebGLContext(canvas, opt_attribs) {
 //GetShader function obtained from
 //https://developer.mozilla.org/en/WebGL/Adding_2D_content_to_a_WebGL_context
 // under public domain.
-async function getShader(gl, id) {
-	let shaderScript = document.getElementById(id);
+async function getShader(gl, ID) {
+	let shaderScript = document.getElementById(ID);
 	if (!shaderScript) {
 		return null;
 	}
@@ -66,6 +66,7 @@ async function getShader(gl, id) {
 	gl.compileShader(shader);
 	
 	if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+		console.log("ERROR with script: ",ID);
 		console.log(gl.getShaderInfoLog(shader));
 		return null;
 	}
@@ -86,6 +87,7 @@ async function getShaderFromURL(gl,url,type){ //gl.FRAGMENT_SHADER or gl.VERTEX_
 	gl.compileShader(shader);
 	
 	if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+		console.log("ERROR with script: ",url);
 		console.log(gl.getShaderInfoLog(shader));
 		return null;
 	}
@@ -102,18 +104,18 @@ function ShaderProgram(vertexShader,fragmentShader, uniforms, attributes, glCont
 	
 	
 	if (!glContext.getProgramParameter(shaderProgram, glContext.LINK_STATUS)) {
-		alert("Shader Compilation Error.");
+		alert("Shader Compilation Error."+glContext.getProgramInfoLog(shaderProgram));
 		 return;
 	}
 	
-	this.id = shaderProgram;
+	this.ID = shaderProgram;
 	
 	this.uniforms = new Object();
 	this.attributes = new Object();
 	
 	if(uniforms){
 		for(let i=0;i<uniforms.length;i++){
-			this.uniforms[uniforms[i]] = glContext.getUniformLocation(this.id, uniforms[i]);
+			this.uniforms[uniforms[i]] = glContext.getUniformLocation(this.ID, uniforms[i]);
 		}
 	}
 	
@@ -127,12 +129,12 @@ function ShaderProgram(vertexShader,fragmentShader, uniforms, attributes, glCont
 	
 	if(attributes){
 		for(let i=0;i<attributes.length;i++){
-			this.attributes[attributes[i]] = glContext.getAttribLocation(this.id, attributes[i]);
+			this.attributes[attributes[i]] = glContext.getAttribLocation(this.ID, attributes[i]);
 		}
 	}
 	
 	this.use = function(glContext){
-    glContext.useProgram(this.id);
+    glContext.useProgram(this.ID);
 	}
 }
 

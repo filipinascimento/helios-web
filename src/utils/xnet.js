@@ -53,8 +53,8 @@ let readXNETVerticesHeader = (status) => {
 	return nodeCount;
 };
 
-let readXNETNames = (status) => {
-	let names = [];
+let readXNETLabels = (status) => {
+	let labels = [];
 	while (status.lineIndex < status.lines.length) {
 		let currentLine = status.lines[status.lineIndex];
 		let lineLength = currentLine.length;
@@ -65,14 +65,14 @@ let readXNETNames = (status) => {
 		if (currentLine[0] == "#") {
 			break;
 		}
-		var name = currentLine;
+		var label = currentLine;
 		if (currentLine[0] == "\"" && currentLine[lineLength - 1] == "\"") {
-			name = currentLine.slice(1, -1);
+			label = currentLine.slice(1, -1);
 		}
-		names.push(name);
+		labels.push(label);
 		status.lineIndex++;
 	}
-	return names;
+	return labels;
 };
 
 let readXNETEdgesHeader = (status) => {
@@ -150,12 +150,12 @@ let readXNETPropertyHeader = (status) => {
 		throw `Malformed xnet data [line: ${status.lineIndex}]\n\t> ${status.lines[status.lineIndex]}`;
 	}
 	let propertyType = headerEntries[1];
-	let propertyName = headerEntries[2];
+	let propertyKey = headerEntries[2];
 	let propertyFormat = headerEntries[3];
 
 	status.lineIndex++;
 
-	return { type: propertyType, name: propertyName, format: propertyFormat };
+	return { type: propertyType, key: propertyKey, format: propertyFormat };
 };
 
 
@@ -188,15 +188,15 @@ let readXNETProperty = (status, propertyHeader) => {
 let loadXNET = (data) => {
 	let status = { lineIndex:0, lines: data.split("\n") };
 	let nodesCount = readXNETVerticesHeader(status);
-	let names = readXNETNames(status);
+	let labels = readXNETLabels(status);
 
 	let network = { nodesCount: nodesCount, verticesProperties: {}, edgesProperties: {} }
 
-	if (names.length > 0) {
-		if (names.length < nodesCount) {
+	if (labels.length > 0) {
+		if (labels.length < nodesCount) {
 			throw `Malformed xnet data [line: ${status.lineIndex}]\n\t> ${status.lines[status.lineIndex]}`;
 		} else {
-			network.names = names;
+			network.labels = labels;
 		}
 	}
 	let edgesHeader = readXNETEdgesHeader(status);
@@ -220,9 +220,9 @@ let loadXNET = (data) => {
 		let propertyData = readXNETProperty(status, propertyHeader);
 		//console.log(propertyHeader);
 		if (propertyHeader.type == "e") {
-			network.edgesProperties[propertyHeader.name] = propertyData;
+			network.edgesProperties[propertyHeader.key] = propertyData;
 		} else if (propertyHeader.type == "v") {
-			network.verticesProperties[propertyHeader.name] = propertyData;
+			network.verticesProperties[propertyHeader.key] = propertyData;
 		}
 		// status.lineIndex++;
 	}while (status.lineIndex < status.lines.length);

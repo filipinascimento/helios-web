@@ -15,6 +15,10 @@ self.onmessage = function (msg) {
 		// self.importScripts(new URL('../layouts/libs/ngraph.graph.min.js', msg.data.location));
 		// self.importScripts(new URL('../layouts/libs/ngraph.forcelayout.min.js', msg.data.location));
 		console.log("IMPORTING...")
+	} else if (msg.data.type == "stop") {
+		this.simulation.stop();
+	} else if (msg.data.type == "restart") {
+		this.simulation.restart();
 	} else if (msg.data.type == "init") {
 		console.log("INIT");
 		let network = msg.data.network;
@@ -27,13 +31,13 @@ self.onmessage = function (msg) {
 		Object.entries(network.nodes).forEach(entry => {
 			// console.log(entry);
 			let [key, node] = entry;
-			node.id = key;
+			node.ID = key;
 
 			node.x = 400 * (Math.random() * 1.0 - 0.5);
 			node.y = 400 * (Math.random() * 1.0 - 0.5);
 			node.z = 400 * (Math.random() * 1.0 - 0.5);
 			node.vz = 0;
-			node.index = network.node2index[key];
+			node.index = network.ID2index[key];
 			nodes.push(node);
 		});
 
@@ -47,13 +51,13 @@ self.onmessage = function (msg) {
 			links.push(edgeObject);
 		}
 
-		const simulation = d3.forceSimulation(nodes)
+		this.simulation = d3.forceSimulation(nodes)
 			.numDimensions(use2D?2:3)
 			.force("charge", d3.forceManyBody())
-			.force("link", d3.forceLink(links)
-				// .id(d => d.index)
-			)
+			.force("link", d3.forceLink(links))
 			.force("center", d3.forceCenter())
+			// .force("collide", d3.forceCollide(d => d.size*4))
+			.velocityDecay(0.05)
 			.on("tick", async () => {
 				for (let vertexIndex = 0; vertexIndex < nodes.length; vertexIndex++) {
 					const node = nodes[vertexIndex];
