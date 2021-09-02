@@ -9,6 +9,7 @@ import { default as createGraph } from "ngraph.graph"
 import { default as createLayout } from "ngraph.forcelayout"
 import { forceSimulation, forceManyBody, forceLink, forceCenter } from "d3-force-3d";
 import {default as Pica} from "pica";
+import {workerURL as d3force3dLayoutURL} from "../layouts/d3force3dLayoutWorker.js"
 
 
 let isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
@@ -134,7 +135,9 @@ export class Helios {
 	_setupLayout() {
 
 		// this.layoutWorker = new Worker(new URL('../layouts/ngraphLayoutWorker.js', import.meta.url));
-		this.layoutWorker = new Worker(new URL('../layouts/d3force3dLayoutWorker.js', import.meta.url));
+		// this.layoutWorker = new Worker(new URL('../layouts/d3force3dLayoutWorker.js', import.meta.url));
+		this.layoutWorker = new Worker(d3force3dLayoutURL);
+		
 		this.newPositions = this.network.positions.slice(0);
 		this.positionInterpolator = null;
 		this.layoutWorker.onmessage = (msg) => {

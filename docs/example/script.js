@@ -1,4 +1,4 @@
-import { Helios, xnet } from "../../src/core/Helios"
+import { Helios, xnet } from "../../src/helios"
 import * as d3Chromatic from "d3-scale-chromatic"
 import { scaleOrdinal as d3ScaleOrdinal, scaleSequential as d3ScaleSequential} from "d3-scale"
 import { select as d3Select } from "d3-selection"
