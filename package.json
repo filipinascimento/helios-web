@@ -4,7 +4,8 @@
     "build": "snowpack build",
     "test": "echo \"This template does not include a test runner by default.\" && exit 1",
     "format": "prettier --write \"Core/**/*.js\"",
-    "lint": "prettier --check \"Core/**/*.js\""
+    "lint": "prettier --check \"Core/**/*.js\"",
+    "prepublishOnly": "node scripts/prePublish.cjs && snowpack build"
   },
   "dependencies": {
     "@colormap/core": "^0.2.0",
@@ -27,14 +28,38 @@
   "name": "helios-web",
   "description": "Repository for experiemental Helios-Web",
   "version": "0.1.0",
-  "main": "docs/example/index.html",
-  "directories": {
-    "doc": "docs"
+  "main": "./src/helios.js",
+  "type": "module",
+  "module": "src/helios.js",
+  "jsdelivr": "./build/src/helios.js",
+  "unpkg": "./build/src/helios.js",
+  "exports": {
+    "umd": "./build/src/helios.js",
+    "default": "./src/helios.js"
   },
+  "files": [
+    "build/**/*.js",
+    "src/**/*.js",
+    "src/**/*.vsh",
+    "src/**/*.fsh"
+  ],
   "repository": {
     "type": "git",
-    "url": "git@github.iu.edu:IUNI/helios-web.git"
+    "url": "git@github.com:filipinascimento/helios-web.git"
   },
-  "author": "Filipi Nascimento Silva",
-  "license": "MIT"
+  "author": {
+    "name": "Filipi N. Silva",
+    "url": "https://filipinascimento.github.io"
+  },
+  "license": "MIT",
+  "keywords": [
+    "network",
+    "visualization",
+    "webgl",
+    "interactive",
+    "3d"
+  ],
+  "engines": {
+    "node": ">=12"
+  }
 }
