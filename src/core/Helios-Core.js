@@ -1,7 +1,7 @@
 import * as glm from "gl-matrix"
-import { Network } from "./Network"
-import * as glUtils from "../utils/webglutils"
-import * as xnet from "../utils/xnet"
+import { Network } from "./Network.js"
+import * as glUtils from "../utils/webglutils.js"
+import * as xnet from "../utils/xnet.js"
 import { select as d3Select } from "d3-selection";
 import { zoom as d3Zoom, zoomTransform as d3ZoomTransform, zoomIdentity as d3ZoomIdentity } from "d3-zoom";
 import { drag as d3Drag } from "d3-drag";
@@ -187,7 +187,7 @@ export class Helios {
 				console.log("Received message", msg);
 			}
 		}
-		this.layoutWorker.postMessage({ type: "import", location: import.meta.url });
+		// this.layoutWorker.postMessage({ type: "import", location: import.meta.url });
 		this.layoutWorker.postMessage({ type: "init", network: this.network, use2D: this._use2D });
 		this.layoutRunning = true;
 		document.addEventListener('keyup', event => {
