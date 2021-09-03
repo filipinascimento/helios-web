@@ -1,6 +1,5 @@
-# Helios-Web
-
-![alt text](https://github.com/filipinascimento/helios-web/raw/main/media/WS_very_low.gif?s=226 "Helios")
+# Helios Web
+<img width="226" alt="Helios Web demo" src="https://github.com/filipinascimento/helios-web/raw/main/media/WS_very_low.gif">
 
 Helios Web is a web-based library to visualize dynamic networks in real-time. Currently under development it aims to provide a simple API and optimized implementation to be integrated in other systems and render and layout large networks. This is the sucessor of the [Networks 3D project](https://filipinascimento.github.io/networks3d/) and the [Networks Web project](https://filipinascimento.github.io/software/networksweb/).
 
