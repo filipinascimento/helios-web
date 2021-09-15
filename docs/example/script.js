@@ -336,7 +336,8 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 		.classed("overlay",true)
 		.attr("id", "legendView")
 		.style("left","10px")
-		.style("top","10px");
+		.style("top","10px")
+		.style("pointer-events:","none");
 	let updateLegendCategorical = (property2color)=>{
 		legendView.selectAll("*").remove();
 		let legendItems = legendView.selectAll(".legend").data(property2color.keys());
