@@ -61,6 +61,21 @@ let use2D = false;
 if(urlParams.has("use2d")){
 	use2D = true;
 }
+
+let darkBackground = false;
+let backgroundColor = [1.0,1.0,1.0,1.0]
+
+if(urlParams.has("dark")){
+	darkBackground = true;
+	backgroundColor = [0.0,0.0,0.0,1.0]
+}
+
+let additiveBlending = false;
+if(urlParams.has("additive") && darkBackground){
+	additiveBlending = true;
+}
+
+
 xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 	let colorProperty = "index";
 	let sequencialColormap = "interpolateInferno";
@@ -177,7 +192,7 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 		})
 		// .onLayoutStart(()=>console.log("Layout start"))
 		// .onLayoutFinish(()=>console.log("Layout end"))
-		.backgroundColor([1.0, 1.0, 1.0, 1.0]) // set background color
+		.backgroundColor(backgroundColor) // set background color
 		// .nodeColor(node=>{ // Example on how to define colors
 		// 	let color = d3rgb(colorScale(node.ID));
 		// 	// console.log(""+[color.r,color.g,color.b])
@@ -188,7 +203,8 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 		// })
 		.edgesIntensity(1.0) // set edges intensity);
 		.nodeOutlineWidth(node=>node.size*defaultOutline)
-		// .nodeOutlineColor([1.0,0.0,0.0,1.0]);
+		.nodeOutlineColor(backgroundColor)
+		.additiveBlending(additiveBlending);
 
 		function downloadText(filename, text) {
 			var element = document.createElement('a');
@@ -224,7 +240,7 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 						// width: 2048,
 						// height: 2048,
 						supersampleFactor: 2.0,
-						backgroundColor: [1.0, 1.0, 1.0, 1.0],
+						backgroundColor: backgroundColor,
 					});
 				}
 			},
@@ -337,7 +353,7 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 		.attr("id", "legendView")
 		.style("left","10px")
 		.style("top","10px")
-		.style("pointer-events:","none");
+		.style("pointer-events:","none")
 	let updateLegendCategorical = (property2color)=>{
 		legendView.selectAll("*").remove();
 		let legendItems = legendView.selectAll(".legend").data(property2color.keys());
@@ -368,6 +384,7 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 			.append('tspan')
 			.style("alignment-baseline", "central")
 			.text(d => d)
+			.attr("fill",darkBackground?"white":"black")
 			.each(wrapText)
 	}
 
@@ -508,9 +525,9 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 
 		helios.onReady(() => {
 			updateColorSelection();
-			if(helios.network.nodes.length>100000){
+			if(helios.network.index2Node.length>100000){
 				helios.stopLayout();
-				helios.zoomFactor(0.25);
+				helios.zoomFactor(0.35);
 			}else{
 				helios.zoomFactor(0.05);
 				helios.zoomFactor(0.75,1000);

@@ -65,6 +65,7 @@ export class Helios {
 		this.pickingResolutionRatio = 0.25;
 		this._edgesIntensity = 1.0;
 		this._use2D = use2D;
+		this.useAdditiveBlending = false;
 
 		if (this._use2D) {
 			for (let vertexIndex = 0; vertexIndex < this.network.positions.length; vertexIndex++) {
@@ -871,7 +872,7 @@ export class Helios {
 		if (!isPicking) {
 			// console.log(this.verticesShaderProgram);
 			gl.enable(gl.BLEND);
-			// 	if(useDarkBackground){
+				// if(this.useAdditiveBLending){
 			// gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
 			// 	}else{
 			gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -997,14 +998,14 @@ export class Helios {
 			gl.enable(gl.BLEND);
 			// 	//Edges are rendered with additive blending.
 			// 	gl.enable(gl.BLEND);
-			// 	if(useDarkBackground){
-					// gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
-			// 	}else{
+				if(this.useAdditiveBlending) {
+					gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+				}else{
 			// gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 			// gl.blendFuncSeparate( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 			// gl.blendFuncSeparate( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE ); //Original from Networks 3D
-			gl.blendFuncSeparate( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE ); // New (works for transparent background)
-
+				gl.blendFuncSeparate( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE ); // New (works for transparent background)
+				}
 			this.projectionViewMatrix = glm.mat4.create();
 			glm.mat4.multiply(this.projectionViewMatrix, this.projectionMatrix, this.viewMatrix);
 
@@ -1294,6 +1295,18 @@ export class Helios {
 			return this;
 		}
 	}
+
+	additiveBlending(enableAdditiveBlending) {
+		// check if color is defined
+		if (typeof enableAdditiveBlending === "undefined") {
+			return this.useAdditiveBlending;
+		} else {
+			this.useAdditiveBlending = enableAdditiveBlending;
+			return this;
+		}
+	}
+
+
 }
 
 // Helios.xnet = xnet;
