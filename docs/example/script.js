@@ -9933,6 +9933,7 @@ var Helios = class {
     this.pickingResolutionRatio = 0.25;
     this._edgesIntensity = 1;
     this._use2D = use2D2;
+    this.useAdditiveBlending = false;
     if (this._use2D) {
       for (let vertexIndex = 0; vertexIndex < this.network.positions.length; vertexIndex++) {
         this.network.positions[vertexIndex * 3 + 2] = 0;
@@ -10165,7 +10166,7 @@ var Helios = class {
     supersampleFactor = 4,
     width = null,
     height = null,
-    backgroundColor = null
+    backgroundColor: backgroundColor2 = null
   }) {
     if (typeof scale === "undefined") {
       scale = 1;
@@ -10182,11 +10183,11 @@ var Helios = class {
     } else if (height == null) {
       height = Math.round(width * this.canvasElement.height / this.canvasElement.width);
     }
-    if (backgroundColor == null) {
-      backgroundColor = this.backgroundColor;
+    if (backgroundColor2 == null) {
+      backgroundColor2 = this.backgroundColor;
     }
     framebuffer.setSize(width * scale * supersampleFactor, height * scale * supersampleFactor);
-    framebuffer.backgroundColor = backgroundColor;
+    framebuffer.backgroundColor = backgroundColor2;
     this._redrawAll(framebuffer);
     let image = this.framebufferImage(framebuffer);
     this._downloadImageData(image, filename, supersampleFactor);
@@ -10557,7 +10558,11 @@ var Helios = class {
       this.edgesShaderProgram.attributes.enable("vertex");
       this.edgesShaderProgram.attributes.enable("color");
       gl.enable(gl.BLEND);
-      gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE);
+      if (this.useAdditiveBlending) {
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+      } else {
+        gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE);
+      }
       this.projectionViewMatrix = mat4.create();
       mat4.multiply(this.projectionViewMatrix, this.projectionMatrix, this.viewMatrix);
       gl.bindBuffer(gl.ARRAY_BUFFER, this.edgesGeometry.vertexObject);
@@ -10794,6 +10799,14 @@ var Helios = class {
       return this._edgesIntensity;
     } else {
       this._edgesIntensity = intensity;
+      return this;
+    }
+  }
+  additiveBlending(enableAdditiveBlending) {
+    if (typeof enableAdditiveBlending === "undefined") {
+      return this.useAdditiveBlending;
+    } else {
+      this.useAdditiveBlending = enableAdditiveBlending;
       return this;
     }
   }
@@ -11640,6 +11653,16 @@ var use2D = false;
 if (urlParams.has("use2d")) {
   use2D = true;
 }
+var darkBackground = false;
+var backgroundColor = [1, 1, 1, 1];
+if (urlParams.has("dark")) {
+  darkBackground = true;
+  backgroundColor = [0, 0, 0, 1];
+}
+var additiveBlending = false;
+if (urlParams.has("additive") && darkBackground) {
+  additiveBlending = true;
+}
 xnet_exports.loadXNETFile("networks/" + networkName + ".xnet").then(async (network) => {
   let colorProperty = "index";
   let sequencialColormap = "interpolateInferno";
@@ -11731,7 +11754,7 @@ xnet_exports.loadXNETFile("networks/" + networkName + ".xnet").then(async (netwo
     }
     tooltipElement.style.display = "none";
   }).onNodeClick((node, event) => {
-  }).backgroundColor([1, 1, 1, 1]).edgesIntensity(1).nodeOutlineWidth((node) => node.size * defaultOutline);
+  }).backgroundColor(backgroundColor).edgesIntensity(1).nodeOutlineWidth((node) => node.size * defaultOutline).nodeOutlineColor(backgroundColor).additiveBlending(additiveBlending);
   function downloadText(filename, text) {
     var element = document.createElement("a");
     element.setAttribute("href", "data:text/plain;charset=utf-8," + encodeURIComponent(text));
@@ -11761,7 +11784,7 @@ xnet_exports.loadXNETFile("networks/" + networkName + ".xnet").then(async (netwo
           helios.exportFigure(networkName + ".png", {
             scale: 2,
             supersampleFactor: 2,
-            backgroundColor: [1, 1, 1, 1]
+            backgroundColor
           });
         }
       },
@@ -11831,7 +11854,7 @@ xnet_exports.loadXNETFile("networks/" + networkName + ".xnet").then(async (netwo
     legendEnter.append("g").append("text");
     legendItems = legendItems.merge(legendEnter);
     legendItems.select("rect").attr("x", 0).attr("y", 0).attr("width", 30).attr("height", 15).attr("fill", (d) => property2color.get(d));
-    legendItems.select("g").attr("transform", (d) => `translate(${35},${15 / 2})`).select("text").style("alignment-baseline", "central").style("font-size", "12px").append("tspan").style("alignment-baseline", "central").text((d) => d).each(wrapText);
+    legendItems.select("g").attr("transform", (d) => `translate(${35},${15 / 2})`).select("text").style("alignment-baseline", "central").style("font-size", "12px").append("tspan").style("alignment-baseline", "central").text((d) => d).attr("fill", darkBackground ? "white" : "black").each(wrapText);
   };
   function updateCategoricalColors() {
     let propertyArray = [];
@@ -11931,9 +11954,9 @@ xnet_exports.loadXNETFile("networks/" + networkName + ".xnet").then(async (netwo
   }).classed("hasAction", true);
   helios.onReady(() => {
     updateColorSelection();
-    if (helios.network.nodes.length > 1e5) {
+    if (helios.network.index2Node.length > 1e5) {
       helios.stopLayout();
-      helios.zoomFactor(0.25);
+      helios.zoomFactor(0.35);
     } else {
       helios.zoomFactor(0.05);
       helios.zoomFactor(0.75, 1e3);

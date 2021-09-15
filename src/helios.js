@@ -9929,6 +9929,7 @@ var Helios = class {
     this.pickingResolutionRatio = 0.25;
     this._edgesIntensity = 1;
     this._use2D = use2D;
+    this.useAdditiveBlending = false;
     if (this._use2D) {
       for (let vertexIndex = 0; vertexIndex < this.network.positions.length; vertexIndex++) {
         this.network.positions[vertexIndex * 3 + 2] = 0;
@@ -10553,7 +10554,11 @@ var Helios = class {
       this.edgesShaderProgram.attributes.enable("vertex");
       this.edgesShaderProgram.attributes.enable("color");
       gl.enable(gl.BLEND);
-      gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE);
+      if (this.useAdditiveBlending) {
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+      } else {
+        gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE);
+      }
       this.projectionViewMatrix = mat4.create();
       mat4.multiply(this.projectionViewMatrix, this.projectionMatrix, this.viewMatrix);
       gl.bindBuffer(gl.ARRAY_BUFFER, this.edgesGeometry.vertexObject);
@@ -10790,6 +10795,14 @@ var Helios = class {
       return this._edgesIntensity;
     } else {
       this._edgesIntensity = intensity;
+      return this;
+    }
+  }
+  additiveBlending(enableAdditiveBlending) {
+    if (typeof enableAdditiveBlending === "undefined") {
+      return this.useAdditiveBlending;
+    } else {
+      this.useAdditiveBlending = enableAdditiveBlending;
       return this;
     }
   }
