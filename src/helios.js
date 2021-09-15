@@ -4517,11 +4517,7 @@ function pointer(event, node) {
   }
   return [event.pageX, event.pageY];
 }
-var nonpassive = {passive: false};
 var nonpassivecapture = {capture: true, passive: false};
-function nopropagation(event) {
-  event.stopImmediatePropagation();
-}
 function noevent(event) {
   event.preventDefault();
   event.stopImmediatePropagation();
@@ -5444,7 +5440,7 @@ function transform(node) {
       return identity$1;
   return node.__zoom;
 }
-function nopropagation2(event) {
+function nopropagation(event) {
   event.stopImmediatePropagation();
 }
 function noevent2(event) {
@@ -5629,7 +5625,7 @@ function zoom() {
       return;
     var currentTarget = event.currentTarget, g = gesture(this, args, true).event(event), v = select(event.view).on("mousemove.zoom", mousemoved, true).on("mouseup.zoom", mouseupped, true), p = pointer(event, currentTarget), x0 = event.clientX, y0 = event.clientY;
     dragDisable(event.view);
-    nopropagation2(event);
+    nopropagation(event);
     g.mouse = [p, this.__zoom.invert(p)];
     interrupt(this);
     g.start();
@@ -5662,7 +5658,7 @@ function zoom() {
     if (!filter2.apply(this, arguments))
       return;
     var touches = event.touches, n = touches.length, g = gesture(this, args, event.changedTouches.length === n).event(event), started, i, t, p;
-    nopropagation2(event);
+    nopropagation(event);
     for (i = 0; i < n; ++i) {
       t = touches[i], p = pointer(t, this);
       p = [p, this.__zoom.invert(p), t.identifier];
@@ -5710,7 +5706,7 @@ function zoom() {
     if (!this.__zooming)
       return;
     var g = gesture(this, args).event(event), touches = event.changedTouches, n = touches.length, i, t;
-    nopropagation2(event);
+    nopropagation(event);
     if (touchending)
       clearTimeout(touchending);
     touchending = setTimeout(function() {
@@ -5780,7 +5776,6 @@ function zoom() {
 }
 
 // build/_snowpack/pkg/d3-drag.js
-var constant4 = (x) => () => x;
 function DragEvent(type, {
   sourceEvent: sourceEvent2,
   subject,
@@ -5811,148 +5806,6 @@ DragEvent.prototype.on = function() {
   var value = this._.on.apply(this._, arguments);
   return value === this._ ? this : value;
 };
-function defaultFilter2(event) {
-  return !event.ctrlKey && !event.button;
-}
-function defaultContainer() {
-  return this.parentNode;
-}
-function defaultSubject(event, d) {
-  return d == null ? {x: event.x, y: event.y} : d;
-}
-function defaultTouchable2() {
-  return navigator.maxTouchPoints || "ontouchstart" in this;
-}
-function drag() {
-  var filter2 = defaultFilter2, container = defaultContainer, subject = defaultSubject, touchable = defaultTouchable2, gestures = {}, listeners = dispatch("start", "drag", "end"), active = 0, mousedownx, mousedowny, mousemoving, touchending, clickDistance2 = 0;
-  function drag2(selection2) {
-    selection2.on("mousedown.drag", mousedowned).filter(touchable).on("touchstart.drag", touchstarted).on("touchmove.drag", touchmoved, nonpassive).on("touchend.drag touchcancel.drag", touchended).style("touch-action", "none").style("-webkit-tap-highlight-color", "rgba(0,0,0,0)");
-  }
-  function mousedowned(event, d) {
-    if (touchending || !filter2.call(this, event, d))
-      return;
-    var gesture = beforestart(this, container.call(this, event, d), event, d, "mouse");
-    if (!gesture)
-      return;
-    select(event.view).on("mousemove.drag", mousemoved, nonpassivecapture).on("mouseup.drag", mouseupped, nonpassivecapture);
-    dragDisable(event.view);
-    nopropagation(event);
-    mousemoving = false;
-    mousedownx = event.clientX;
-    mousedowny = event.clientY;
-    gesture("start", event);
-  }
-  function mousemoved(event) {
-    noevent(event);
-    if (!mousemoving) {
-      var dx = event.clientX - mousedownx, dy = event.clientY - mousedowny;
-      mousemoving = dx * dx + dy * dy > clickDistance2;
-    }
-    gestures.mouse("drag", event);
-  }
-  function mouseupped(event) {
-    select(event.view).on("mousemove.drag mouseup.drag", null);
-    yesdrag(event.view, mousemoving);
-    noevent(event);
-    gestures.mouse("end", event);
-  }
-  function touchstarted(event, d) {
-    if (!filter2.call(this, event, d))
-      return;
-    var touches = event.changedTouches, c = container.call(this, event, d), n = touches.length, i, gesture;
-    for (i = 0; i < n; ++i) {
-      if (gesture = beforestart(this, c, event, d, touches[i].identifier, touches[i])) {
-        nopropagation(event);
-        gesture("start", event, touches[i]);
-      }
-    }
-  }
-  function touchmoved(event) {
-    var touches = event.changedTouches, n = touches.length, i, gesture;
-    for (i = 0; i < n; ++i) {
-      if (gesture = gestures[touches[i].identifier]) {
-        noevent(event);
-        gesture("drag", event, touches[i]);
-      }
-    }
-  }
-  function touchended(event) {
-    var touches = event.changedTouches, n = touches.length, i, gesture;
-    if (touchending)
-      clearTimeout(touchending);
-    touchending = setTimeout(function() {
-      touchending = null;
-    }, 500);
-    for (i = 0; i < n; ++i) {
-      if (gesture = gestures[touches[i].identifier]) {
-        nopropagation(event);
-        gesture("end", event, touches[i]);
-      }
-    }
-  }
-  function beforestart(that, container2, event, d, identifier, touch) {
-    var dispatch2 = listeners.copy(), p = pointer(touch || event, container2), dx, dy, s;
-    if ((s = subject.call(that, new DragEvent("beforestart", {
-      sourceEvent: event,
-      target: drag2,
-      identifier,
-      active,
-      x: p[0],
-      y: p[1],
-      dx: 0,
-      dy: 0,
-      dispatch: dispatch2
-    }), d)) == null)
-      return;
-    dx = s.x - p[0] || 0;
-    dy = s.y - p[1] || 0;
-    return function gesture(type, event2, touch2) {
-      var p0 = p, n;
-      switch (type) {
-        case "start":
-          gestures[identifier] = gesture, n = active++;
-          break;
-        case "end":
-          delete gestures[identifier], --active;
-        case "drag":
-          p = pointer(touch2 || event2, container2), n = active;
-          break;
-      }
-      dispatch2.call(type, that, new DragEvent(type, {
-        sourceEvent: event2,
-        subject: s,
-        target: drag2,
-        identifier,
-        active: n,
-        x: p[0] + dx,
-        y: p[1] + dy,
-        dx: p[0] - p0[0],
-        dy: p[1] - p0[1],
-        dispatch: dispatch2
-      }), d);
-    };
-  }
-  drag2.filter = function(_) {
-    return arguments.length ? (filter2 = typeof _ === "function" ? _ : constant4(!!_), drag2) : filter2;
-  };
-  drag2.container = function(_) {
-    return arguments.length ? (container = typeof _ === "function" ? _ : constant4(_), drag2) : container;
-  };
-  drag2.subject = function(_) {
-    return arguments.length ? (subject = typeof _ === "function" ? _ : constant4(_), drag2) : subject;
-  };
-  drag2.touchable = function(_) {
-    return arguments.length ? (touchable = typeof _ === "function" ? _ : constant4(!!_), drag2) : touchable;
-  };
-  drag2.on = function() {
-    var value = listeners.on.apply(listeners, arguments);
-    return value === listeners ? drag2 : value;
-  };
-  drag2.clickDistance = function(_) {
-    return arguments.length ? (clickDistance2 = (_ = +_) * _, drag2) : Math.sqrt(clickDistance2);
-  };
-  return drag2;
-}
 
 // build/_snowpack/pkg/common/index-06822a64.js
 var ngraph_events = function eventify(subject) {
@@ -7071,7 +6924,7 @@ function createLayout(graph, physicsSettings) {
   var physicsSimulator = createSimulator(physicsSettings);
   if (Array.isArray(physicsSettings))
     throw new Error("Physics settings is expected to be an object");
-  var nodeMass = defaultNodeMass;
+  var nodeMass = graph.version > 19 ? defaultSetNodeMass : defaultArrayNodeMass;
   if (physicsSettings && typeof physicsSettings.nodeMass === "function") {
     nodeMass = physicsSettings.nodeMass;
   }
@@ -7288,11 +7141,17 @@ function createLayout(graph, physicsSettings) {
     }
     return body;
   }
-  function defaultNodeMass(nodeId) {
+  function defaultArrayNodeMass(nodeId) {
     var links = graph.getLinks(nodeId);
     if (!links)
       return 1;
     return 1 + links.length / 3;
+  }
+  function defaultSetNodeMass(nodeId) {
+    var links = graph.getLinks(nodeId);
+    if (!links)
+      return 1;
+    return 1 + links.size / 3;
   }
 }
 function noop2() {
@@ -9999,9 +9858,9 @@ var workerFunction = function() {
       Object.entries(network.nodes).forEach((entry) => {
         let [key, node] = entry;
         node.ID = key;
-        node.x = 400 * (Math.random() * 1 - 0.5);
-        node.y = 400 * (Math.random() * 1 - 0.5);
-        node.z = 400 * (Math.random() * 1 - 0.5);
+        node.x = network.positions[node.index * 3 + 0] * 10;
+        node.y = network.positions[node.index * 3 + 1] * 10;
+        node.z = network.positions[node.index * 3 + 2] * 10;
         node.vz = 0;
         node.index = network.ID2index[key];
         nodes.push(node);
@@ -10061,7 +9920,7 @@ var Helios = class {
     this.fastEdges = false;
     this.animate = false;
     this.cameraDistance = 450;
-    this.zoomFactor = 1;
+    this._zoomFactor = 1;
     this.rotateLinearX = 0;
     this.rotateLinearY = 0;
     this.panX = 0;
@@ -10161,14 +10020,20 @@ var Helios = class {
     document.addEventListener("keyup", (event) => {
       if (event.code === "Space") {
         if (this.layoutRunning) {
-          this.layoutWorker.postMessage({type: "stop"});
-          this.layoutRunning = false;
+          this.stopLayout();
         } else {
-          this.layoutWorker.postMessage({type: "restart"});
-          this.layoutRunning = true;
+          this.resumeLayout();
         }
       }
     });
+  }
+  stopLayout() {
+    this.layoutWorker.postMessage({type: "stop"});
+    this.layoutRunning = false;
+  }
+  resumeLayout() {
+    this.layoutWorker.postMessage({type: "restart"});
+    this.layoutRunning = true;
   }
   _setupEvents() {
     this.lastMouseX = -1;
@@ -10489,38 +10354,63 @@ var Helios = class {
   }
   async _setupCamera() {
     this.zoom = zoom().on("zoom", (event) => {
-      this.zoomFactor = event.transform.k;
+      this._zoomFactor = event.transform.k;
       this.triggerHoverEvents(event);
-      if (!this.positionInterpolator) {
-        this.update();
-        this.render();
+      if (this.prevK === void 0) {
+        this.prevK = event.transform.k;
       }
-      (event2) => event2.preventDefault();
-    });
-    this.drag = drag().on("drag", (event) => {
-      let newRotationMatrix = mat4.create();
-      if (!this._use2D) {
-        mat4.identity(newRotationMatrix);
-        mat4.rotate(newRotationMatrix, newRotationMatrix, degToRad(event.dx / 2), [0, 1, 0]);
-        mat4.rotate(newRotationMatrix, newRotationMatrix, degToRad(event.dy / 2), [1, 0, 0]);
-        mat4.multiply(this.rotationMatrix, newRotationMatrix, this.rotationMatrix);
+      let dx = 0;
+      let dy = 0;
+      if (this.prevK == event.transform.k) {
+        if (this.prevX === void 0) {
+          dx = event.transform.x;
+          dy = event.transform.y;
+        } else {
+          dx = event.transform.x - this.prevX * this._zoomFactor;
+          dy = event.transform.y - this.prevY * this._zoomFactor;
+        }
       } else {
-        let perspectiveFactor = this.cameraDistance * this.zoomFactor;
+      }
+      this.prevX = event.transform.x / this._zoomFactor;
+      this.prevY = event.transform.y / this._zoomFactor;
+      this.prevK = event.transform.k;
+      let newRotationMatrix = mat4.create();
+      if (this._use2D || event.sourceEvent?.shiftKey) {
+        let perspectiveFactor = this.cameraDistance * this._zoomFactor;
         let aspectRatio = this.canvasElement.width / this.canvasElement.height;
-        this.panX = this.panX + event.dx / perspectiveFactor * 400;
-        this.panY = this.panY - event.dy / perspectiveFactor * 400;
+        this.panX = this.panX + dx / perspectiveFactor * 400;
+        this.panY = this.panY - dy / perspectiveFactor * 400;
+      } else {
+        mat4.identity(newRotationMatrix);
+        mat4.rotate(newRotationMatrix, newRotationMatrix, degToRad(dx / 2), [0, 1, 0]);
+        mat4.rotate(newRotationMatrix, newRotationMatrix, degToRad(dy / 2), [1, 0, 0]);
+        mat4.multiply(this.rotationMatrix, newRotationMatrix, this.rotationMatrix);
       }
       if (!this.positionInterpolator) {
         this.update();
         this.render();
       }
-      this.triggerHoverEvents(event);
       (event2) => event2.preventDefault();
     });
-    select(this.canvasElement).call(this.drag).call(this.zoom).on("dblclick.zoom", null);
+    select(this.canvasElement).call(this.zoom).on("dblclick.zoom", null);
+  }
+  zoomFactor(zoomFactor, duration) {
+    if (zoomFactor !== void 0) {
+      if (duration === void 0) {
+        select(this.canvasElement).call(this.zoom.transform, identity$1.translate(0, 0).scale(zoomFactor));
+      } else {
+        select(this.canvasElement).transition().duration(duration).call(this.zoom.transform, identity$1.translate(0, 0).scale(zoomFactor));
+      }
+      return this;
+    } else {
+      return this._zoomFactor;
+    }
   }
   willResizeEvent(event) {
     let dpr = window.devicePixelRatio || 1;
+    if (dpr < 2) {
+      dpr = 2;
+    }
     this.canvasElement.style.width = this.element.clientWidth + "px";
     this.canvasElement.style.height = this.element.clientHeight + "px";
     this.canvasElement.width = dpr * this.element.clientWidth;
@@ -10572,9 +10462,9 @@ var Helios = class {
     gl.depthFunc(gl.LEQUAL);
     this.projectionMatrix = mat4.create();
     this.viewMatrix = mat4.create();
-    mat4.perspective(this.projectionMatrix, Math.PI * 2 / 360 * 70, fbWidth / fbHeight, 1, 3e3);
+    mat4.perspective(this.projectionMatrix, Math.PI * 2 / 360 * 70, fbWidth / fbHeight, 1, 1e4);
     mat4.identity(this.viewMatrix);
-    mat4.translate(this.viewMatrix, this.viewMatrix, [this.panX, this.panY, -this.cameraDistance / this.zoomFactor]);
+    mat4.translate(this.viewMatrix, this.viewMatrix, [this.panX, this.panY, -this.cameraDistance / this._zoomFactor]);
     mat4.multiply(this.viewMatrix, this.viewMatrix, this.rotationMatrix);
     mat4.translate(this.viewMatrix, this.viewMatrix, this.translatePosition);
   }
