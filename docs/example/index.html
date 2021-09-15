@@ -24,6 +24,14 @@
           width: 100%;
           margin: 0px;
           overflow: hidden;
+          -webkit-touch-callout: none; /* iOS Safari */
+          -webkit-user-select: none; /* Safari */
+          -khtml-user-select: none; /* Konqueror HTML */
+            -moz-user-select: none; /* Old versions of Firefox */
+              -ms-user-select: none; /* Internet Explorer/Edge */
+                  user-select: none; /* Non-prefixed version, currently
+                                        supported by Chrome, Edge, Opera and Firefox */
+
       }
       #netviz {
           position: absolute;
@@ -32,6 +40,13 @@
           left:0;
           bottom:0;
           background: #f0e68c;
+      }
+      .overlay{
+        position: absolute;
+        top:0;
+        right:0;
+        left:0;
+        bottom:0;
       }
       #tooltip {
           position: absolute;
@@ -47,7 +62,6 @@
                1px  1px 0 #FFF;
           pointer-events: none;
       }
-
         
     #selectionmenu {
       position: absolute;
@@ -225,14 +239,14 @@
     .selector + label {
       margin-top: 2rem;
     }
-    #SUPERCANVAS{
+    /* #SUPERCANVAS{
       position: absolute;
       top:0px;
       left:0px;
       z-index: 1000;
       background:black;
 
-    }
+    } */
     </style>
   </head>  
   <body>

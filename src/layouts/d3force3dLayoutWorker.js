@@ -38,10 +38,16 @@ let workerFunction = (function (){
 				let [key, node] = entry;
 				node.ID = key;
 
-				node.x = 400 * (Math.random() * 1.0 - 0.5);
-				node.y = 400 * (Math.random() * 1.0 - 0.5);
-				node.z = 400 * (Math.random() * 1.0 - 0.5);
+				// node.x = 400 * (Math.random() * 1.0 - 0.5);
+				// node.y = 400 * (Math.random() * 1.0 - 0.5);
+				// node.z = 400 * (Math.random() * 1.0 - 0.5);
+				// node.vz = 0;
+				
+				node.x = network.positions[node.index*3+0]*10;//400 * (Math.random() * 1.0 - 0.5);
+				node.y = network.positions[node.index*3+1]*10;//400 * (Math.random() * 1.0 - 0.5);
+				node.z = network.positions[node.index*3+2]*10;//400 * (Math.random() * 1.0 - 0.5);
 				node.vz = 0;
+
 				node.index = network.ID2index[key];
 				nodes.push(node);
 			});
@@ -66,10 +72,10 @@ let workerFunction = (function (){
 				.on("tick", async () => {
 					for (let vertexIndex = 0; vertexIndex < nodes.length; vertexIndex++) {
 						const node = nodes[vertexIndex];
-						network.positions[vertexIndex * 3 + 0] = node.x / 10;
-						network.positions[vertexIndex * 3 + 1] = node.y / 10;
+						network.positions[vertexIndex * 3 + 0] = node.x/10;
+						network.positions[vertexIndex * 3 + 1] = node.y/10;
 						if(!use2D) {
-							network.positions[vertexIndex * 3 + 2] = node.z / 10;
+							network.positions[vertexIndex * 3 + 2] = node.z/10;
 						}else{
 							network.positions[vertexIndex * 3 + 2] = 0;
 						}

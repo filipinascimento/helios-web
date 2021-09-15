@@ -43,18 +43,30 @@ function sortByCount(anArray){
 // 	"USairport_2010",
 // ]
 ////
-let networkName = "WS_10000_10_001";
+const queryString = window.location.search;
+const urlParams = new URLSearchParams(queryString);
+//let networkName = "COVID_CommunititesTrigrams";
 // let networkName = "Simple"
 // let networkName = "lynyrdskynyrd__freebird"
 // let networkName = "Simple"
 // let networkName = "latticeToroidalBC"
 // let networkName = "net_Olivetti_cosine_k_5"
-xnet.loadXNETFile(networkName + ".xnet").then(async network => {
+// let networkName = "wosAPS-Ok"
+
+let networkName = "WS_10000_10_001"
+if(urlParams.has("network")){
+	networkName = urlParams.get("network");
+}
+let use2D = false;
+if(urlParams.has("use2d")){
+	use2D = true;
+}
+xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 	let colorProperty = "index";
 	let sequencialColormap = "interpolateInferno";
 	let categoricalColormap = "schemeCategory10";
 	let useCategoricalColormap = false;
-	let defaultOutline = 0.20;
+	let defaultOutline = 0.25;
 	console.log(network)
 
 	let nodeCount = network.nodesCount;
@@ -97,7 +109,7 @@ xnet.loadXNETFile(networkName + ".xnet").then(async network => {
 		elementID: "netviz",
 		nodes: nodes,
 		edges: edges,
-		use2D: false,
+		use2D: use2D,
 	})
 		.onNodeHoverStart((node, event) => {
 			if (event) {
@@ -106,8 +118,14 @@ xnet.loadXNETFile(networkName + ".xnet").then(async network => {
 			}
 			if (node) {
 				tooltipElement.style.display = "block";
-				tooltipElement.style.color = d3rgb(node.color[0] * 255, node.color[1] * 255, node.color[2] * 255).darker(1).formatRgb();
-				tooltipElement.textContent = node.ID;
+				tooltipElement.style.color = d3rgb(node.color[0] * 255, node.color[1] * 255, node.color[2] * 255).darker(2).formatRgb();
+				if (node.label) {
+					tooltipElement.textContent = node.label;
+				}else if (node.title) {
+					tooltipElement.textContent = node.title;
+				}else{
+					tooltipElement.textContent = node.ID;
+				}
 				node.originalSize = node.size;
 				node.size = 2.0 * node.originalSize;
 				node.outlineWidth = 0.25 * node.originalSize;
@@ -126,7 +144,13 @@ xnet.loadXNETFile(networkName + ".xnet").then(async network => {
 			}
 			if (node) {
 				// tooltipElement.style.display = "block";
-				tooltipElement.textContent = node.ID;
+				if (node.label) {
+					tooltipElement.textContent = node.label;
+				}else if (node.title) {
+					tooltipElement.textContent = node.title;
+				}else{
+					tooltipElement.textContent = node.ID;
+				}
 			} else {
 				tooltipElement.style.display = "none";
 			}
@@ -166,22 +190,43 @@ xnet.loadXNETFile(networkName + ".xnet").then(async network => {
 		.nodeOutlineWidth(node=>node.size*defaultOutline)
 		// .nodeOutlineColor([1.0,0.0,0.0,1.0]);
 
-
+		function downloadText(filename, text) {
+			var element = document.createElement('a');
+			element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(text));
+			element.setAttribute('download', filename);
+		
+			element.style.display = 'none';
+			document.body.appendChild(element);
+		
+			element.click();
+		
+			document.body.removeChild(element);
+		}
+		
 	let buttonInformation = {
 		"Export": {
 			name: "Export",
 			mapColor: "#B1C3B6",
 			color: "#008758",
-			action: selection => {
-				console.log("Action!");
-				let dpr = window.devicePixelRatio || 1;
-				helios.exportFigure(networkName + ".png", {
-					scale: 2.0,
-					// width: 2048,
-					// height: 2048,
-					supersampleFactor: 2.0,
-					backgroundColor: [1.0, 1.0, 1.0, 1.0],
-				});
+			action: (selection,d,event) => {
+				if(event.shiftKey){
+					let pos = helios.network.positions;
+					let postext = "" ;
+					for(let i=0;i<pos.length;i+=3){
+						postext+= `${pos[i]} ${pos[i+1]} ${pos[i+2]}\n`;
+					}
+					downloadText(networkName+"_positions.txt",postext);
+				}else{
+					console.log("Action!");
+					let dpr = window.devicePixelRatio || 1;
+					helios.exportFigure(networkName + ".png", {
+						scale: 2.0,
+						// width: 2048,
+						// height: 2048,
+						supersampleFactor: 2.0,
+						backgroundColor: [1.0, 1.0, 1.0, 1.0],
+					});
+				}
 			},
 			extra: selection => {
 
@@ -274,14 +319,64 @@ xnet.loadXNETFile(networkName + ".xnet").then(async network => {
 			}
 		},
 	}
-	// window.d3Chromatic = d3Chromatic;
+	
+	function wrapText() {
+		let width=300;
+		let padding = 10
+			let self = d3Select(this),
+					textLength = self.node().getComputedTextLength(),
+					text = self.text();
+			while (textLength > (width - 2 * padding) && text.length > 0) {
+					text = text.slice(0, -1);
+					self.text(text + '...');
+					textLength = self.node().getComputedTextLength();
+			}
+	}
+	let legendView = d3Select("body").append("svg")
+		.classed("overlay",true)
+		.attr("id", "legendView")
+		.style("left","10px")
+		.style("top","10px");
+	let updateLegendCategorical = (property2color)=>{
+		legendView.selectAll("*").remove();
+		let legendItems = legendView.selectAll(".legend").data(property2color.keys());
+		
+		legendView
+		.style("width", 350 + 'px')
+		.style("height", (property2color.size+1)*20 + 'px');
+		let legendEnter = legendItems.enter().append("g")
+			.classed("legend", true)
+			.attr("transform", (d, i) => ("translate(0," + (i * 20) + ")"));
+
+		legendEnter.append("rect");
+		legendEnter.append("g").append("text");
+		legendItems = legendItems.merge(legendEnter)
+
+		legendItems.select("rect")
+			.attr("x", 0)
+			.attr("y", 0)
+			.attr("width", 30)
+			.attr("height", 15)
+			.attr("fill", d => property2color.get(d));
+
+		legendItems.select("g")
+			.attr("transform", (d) => (`translate(${35},${15 / 2})`))
+			.select("text")
+			.style("alignment-baseline", "central")
+			.style("font-size", "12px")
+			.append('tspan')
+			.style("alignment-baseline", "central")
+			.text(d => d)
+			.each(wrapText)
+	}
+
 	function updateCategoricalColors(){
 		let propertyArray = [];
 		for (let [key, node] of Object.entries(helios.network.nodes)) {
 			propertyArray.push(node[colorProperty]);
 		}
 		let sortedItems = sortByCount(propertyArray);
-		console.log(sortedItems);
+		// console.log(sortedItems);
 		let scheme = d3Chromatic[categoricalColormap];
 		let arraysCount = scheme.filter(Array.isArray).length;
 
@@ -300,13 +395,18 @@ xnet.loadXNETFile(networkName + ".xnet").then(async network => {
 		// let maxColors = const [lastItem] = arr.slice(-1)
 		let colorMap = d3ScaleOrdinal(scheme);
 		let property2color = new Map();
+		let categoricalMap = new Map();
 		sortedItems.forEach((d, i) => {
 			if(i<scheme.length){
 				property2color.set(d,colorMap(d));
+				categoricalMap.set(d,scheme[i]);
 			}else{
 				property2color.set(d,"#bbbbbb");;
 			}
 		});
+		if(categoricalMap.size<sortedItems.length){
+			categoricalMap.set("Other","#bbbbbb")
+		}
 		helios.nodeColor(node => {
 			let color = d3rgb(property2color.get(node[colorProperty]));
 			// console.log(""+[color.r,color.g,color.b])
@@ -314,10 +414,12 @@ xnet.loadXNETFile(networkName + ".xnet").then(async network => {
 		});
 		helios.update();
 		helios.render();
+		updateLegendCategorical(categoricalMap)
 	}
 
 
 	function updateSequencialColors(){
+		updateLegendCategorical(new Map());
 		let propertyArray = [];
 		let maxValue = -Infinity;
 		let minValue = Infinity;
@@ -393,12 +495,31 @@ xnet.loadXNETFile(networkName + ".xnet").then(async network => {
 		.filter(d => buttonInformation[d].action != null)
 		.on("click", (event, d) => {
 			if (buttonInformation[d].action) {
-				buttonInformation[d].action(d3Select(this), d);
+				buttonInformation[d].action(d3Select(this), d, event);
 			}
 		})
 		.classed("hasAction", true);
 
-		helios.onReady(() => updateColorSelection());
+
+
+
+
+
+		helios.onReady(() => {
+			updateColorSelection();
+			if(helios.network.nodes.length>100000){
+				helios.stopLayout();
+				helios.zoomFactor(0.25);
+			}else{
+				helios.zoomFactor(0.05);
+				helios.zoomFactor(0.75,1000);
+			}
+		});
+
+
+
+		window.helios=helios;
+
 });
 
 // d3Select("#selectionmenu")

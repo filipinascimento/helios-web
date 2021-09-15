@@ -56,7 +56,7 @@ export class Helios {
 		this.fastEdges = false;
 		this.animate = false;
 		this.cameraDistance = 450;
-		this.zoomFactor = 1;
+		this._zoomFactor = 1;
 		this.rotateLinearX = 0;
 		this.rotateLinearY = 0;
 		this.panX = 0;
@@ -193,17 +193,24 @@ export class Helios {
 		document.addEventListener('keyup', event => {
 			if (event.code === 'Space') {
 				if(this.layoutRunning){
-					this.layoutWorker.postMessage({ type: "stop"});
-					this.layoutRunning=false;
+					this.stopLayout();
 				}else{
-					this.layoutWorker.postMessage({ type: "restart" });
-					this.layoutRunning=true;
+					this.resumeLayout();
 				}
 			}
 		})
 	}
 
+	stopLayout(){
+		this.layoutWorker.postMessage({ type: "stop"});
+		this.layoutRunning=false;
+	}
 
+	resumeLayout(){
+		this.layoutWorker.postMessage({ type: "restart" });
+		this.layoutRunning=true;
+	}
+	
 	_setupEvents() {
 		this.lastMouseX = -1;
 		this.lastMouseY = -1;
@@ -666,52 +673,119 @@ export class Helios {
 	}
 
 
+
 	async _setupCamera() {
 		// this.canvasElement.onmousedown = event=>this.handleMouseDown(event);
 		// document.onmouseup = event=>this.handleMouseUp(event);
 		// document.onmousemove = event=>this.handleMouseMove(event);
 		// document.onclick = void(0);
-
+		
+		
 		this.zoom = d3Zoom().on("zoom", event => {
-			this.zoomFactor = event.transform.k;
+			this._zoomFactor = event.transform.k;
 			this.triggerHoverEvents(event);
-			if (!this.positionInterpolator) {
-				this.update();
-				this.render();
+			// check if prevX is undefined
+			if(this.prevK=== undefined){
+				this.prevK = event.transform.k;
 			}
-			event => event.preventDefault();
-		})
-		this.drag = d3Drag().on("drag", event => {
-			let newRotationMatrix = glm.mat4.create();
+			let dx = 0;
+			let dy = 0;
+			if(this.prevK == event.transform.k){
+				if(this.prevX=== undefined){
+					dx = event.transform.x;
+					dy = event.transform.y;
+				}else{
+					dx = event.transform.x - this.prevX*this._zoomFactor;
+					dy = event.transform.y - this.prevY*this._zoomFactor;
+				}
+			}else{
+			}
+			
 
-			if (!this._use2D) {
+			this.prevX = event.transform.x/this._zoomFactor;
+			this.prevY = event.transform.y/this._zoomFactor;
+			this.prevK = event.transform.k;
+			
+		// 	if (!this.positionInterpolator) {
+		// 		this.update();
+		// 		this.render();
+		// 	}
+		// 	// event => event.preventDefault();
+		// })
+		// // this.drag = d3Drag().on("drag", event => {
+		// // 	let dx = event.dx;
+		// // 	let dy = event.dy;
+		
+		// this.zoom2 = d3Zoom().scaleExtent([1.0,1.0]).on("zoom", event => {
+		// 	console.log("ZOOM 2")
+		// 	// let dx = event.dx;
+		// 	// let dy = event.dy;
+			// let dx = 0;
+			// let dy = 0;
+			// if(this.prevX=== undefined){
+			// 	dx = event.transform.x;
+			// 	dy = event.transform.y;
+			// }else{
+			// 	dx = event.transform.x - this.prevX;
+			// 	dy = event.transform.y - this.prevY;
+			// }
+			
+			let newRotationMatrix = glm.mat4.create();
+			// console.log(event.sourceEvent.shiftKey)
+			if (this._use2D || event.sourceEvent?.shiftKey) {
+				let perspectiveFactor = this.cameraDistance * this._zoomFactor;
+				let aspectRatio = this.canvasElement.width / this.canvasElement.height;
+				this.panX = this.panX + dx / perspectiveFactor*400;///400;
+				this.panY = this.panY - dy / perspectiveFactor*400;///400;
+			} else {//pan
 				glm.mat4.identity(newRotationMatrix);
-				glm.mat4.rotate(newRotationMatrix, newRotationMatrix, glUtils.degToRad(event.dx / 2), [0, 1, 0]);
-				glm.mat4.rotate(newRotationMatrix, newRotationMatrix, glUtils.degToRad(event.dy / 2), [1, 0, 0]);
+				glm.mat4.rotate(newRotationMatrix, newRotationMatrix, glUtils.degToRad( dx/ 2), [0, 1, 0]);
+				glm.mat4.rotate(newRotationMatrix, newRotationMatrix, glUtils.degToRad(dy / 2), [1, 0, 0]);
 
 				glm.mat4.multiply(this.rotationMatrix, newRotationMatrix, this.rotationMatrix);
-			} else {//pan
-				let perspectiveFactor = this.cameraDistance * this.zoomFactor;
-				let aspectRatio = this.canvasElement.width / this.canvasElement.height;
-				this.panX = this.panX + event.dx / perspectiveFactor*400;///400;
-				this.panY = this.panY - event.dy / perspectiveFactor*400;///400;
 			}
 			if (!this.positionInterpolator) {
 				this.update();
 				this.render();
 			}
-			this.triggerHoverEvents(event);
+			// this.triggerHoverEvents(event);
 			event => event.preventDefault();
 		})
-		d3Select(this.canvasElement).call(this.drag)
+		
+		d3Select(this.canvasElement)//
 			// .call(d3ZoomTransform, d3ZoomIdentity.translate(0, 0).scale(this.cameraDistance))
+			// .call(this.drag)
 			.call(this.zoom)
+			// .on("mousedown.drag", null)
+			// .on("touchstart.drag", null)
+			// .on("touchmove.drag", null)
+			// .on("touchend.drag", null)
 			.on("dblclick.zoom", null);
+
+
+		// this.zoomFactor(0.05)
+		// this.zoomFactor(1.0,500);
+	}
+	
+	zoomFactor(zoomFactor,duration){
+		if(zoomFactor !== undefined){
+			if(duration === undefined){
+				d3Select(this.canvasElement).call(this.zoom.transform, d3ZoomIdentity.translate(0, 0).scale(zoomFactor))
+			}else{
+				d3Select(this.canvasElement).transition().duration(duration).call(this.zoom.transform, d3ZoomIdentity.translate(0, 0).scale(zoomFactor))
+			}
+			return this;
+		}else{
+			return this._zoomFactor;
+		}
 	}
 
 	willResizeEvent(event) {
 		//requestAnimFrame(function(){
 		let dpr = window.devicePixelRatio || 1;
+		if(dpr<2.0){
+			dpr=2.0;
+		}
 		this.canvasElement.style.width = this.element.clientWidth + "px";
 		this.canvasElement.style.height = this.element.clientHeight + "px";
 		this.canvasElement.width = dpr * this.element.clientWidth;
@@ -776,13 +850,13 @@ export class Helios {
 		this.projectionMatrix = glm.mat4.create();
 		this.viewMatrix = glm.mat4.create();
 
-		glm.mat4.perspective(this.projectionMatrix, Math.PI * 2 / 360 * 70, fbWidth / fbHeight, 1.0, 3000.0);
+		glm.mat4.perspective(this.projectionMatrix, Math.PI * 2 / 360 * 70, fbWidth / fbHeight, 1.0, 10000.0);
 		glm.mat4.identity(this.viewMatrix);
-		glm.mat4.translate(this.viewMatrix, this.viewMatrix, [this.panX, this.panY, -this.cameraDistance / this.zoomFactor]);
+		glm.mat4.translate(this.viewMatrix, this.viewMatrix, [this.panX, this.panY, -this.cameraDistance / this._zoomFactor]);
 
 
 		glm.mat4.multiply(this.viewMatrix, this.viewMatrix, this.rotationMatrix);
-		// glm.mat4.scale(this.viewMatrix, this.viewMatrix, [this.zoomFactor, this.zoomFactor, this.zoomFactor]);
+		// glm.mat4.scale(this.viewMatrix, this.viewMatrix, [this._zoomFactor, this._zoomFactor, this._zoomFactor]);
 		glm.mat4.translate(this.viewMatrix, this.viewMatrix, this.translatePosition);
 
 
