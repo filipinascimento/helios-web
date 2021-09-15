@@ -11709,7 +11709,13 @@ xnet_exports.loadXNETFile("networks/" + networkName + ".xnet").then(async (netwo
     }
     if (node) {
       tooltipElement.style.display = "block";
-      tooltipElement.style.color = rgb(node.color[0] * 255, node.color[1] * 255, node.color[2] * 255).darker(2).formatRgb();
+      if (darkBackground) {
+        tooltipElement.style.color = rgb(node.color[0] * 255, node.color[1] * 255, node.color[2] * 255).brighter(2).formatRgb();
+        tooltipElement.style["text-shadow"] = "-1px -1px 0 black, 1px -1px 0 black, -1px 1px 0 black, 1px 1px 0 black";
+      } else {
+        tooltipElement.style.color = rgb(node.color[0] * 255, node.color[1] * 255, node.color[2] * 255).darker(2).formatRgb();
+        tooltipElement.style["text-shadow"] = "-1px -1px 0 white, 1px -1px 0 white, -1px 1px 0 white, 1px 1px 0 white";
+      }
       if (node.label) {
         tooltipElement.textContent = node.label;
       } else if (node.title) {
