@@ -22,11 +22,6 @@ More demos:
 
 \* huge, may need a good CPU/GPU  (press space to enable the layout algorithm)
 
-| First Header  | Second Header |
-| -------- | ------------- |
-| Conte | Content Cell  |
-| Content Cell | Content Cell  |
-
 
 ## Building
 
