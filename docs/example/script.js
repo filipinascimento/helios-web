@@ -1330,7 +1330,7 @@ function frustum(out, left, right, bottom, top, near, far) {
   out[15] = 0;
   return out;
 }
-function perspective(out, fovy, aspect, near, far) {
+function perspectiveNO(out, fovy, aspect, near, far) {
   var f = 1 / Math.tan(fovy / 2), nf;
   out[0] = f / aspect;
   out[1] = 0;
@@ -1353,6 +1353,33 @@ function perspective(out, fovy, aspect, near, far) {
   } else {
     out[10] = -1;
     out[14] = -2 * near;
+  }
+  return out;
+}
+var perspective = perspectiveNO;
+function perspectiveZO(out, fovy, aspect, near, far) {
+  var f = 1 / Math.tan(fovy / 2), nf;
+  out[0] = f / aspect;
+  out[1] = 0;
+  out[2] = 0;
+  out[3] = 0;
+  out[4] = 0;
+  out[5] = f;
+  out[6] = 0;
+  out[7] = 0;
+  out[8] = 0;
+  out[9] = 0;
+  out[11] = -1;
+  out[12] = 0;
+  out[13] = 0;
+  out[15] = 0;
+  if (far != null && far !== Infinity) {
+    nf = 1 / (near - far);
+    out[10] = far * nf;
+    out[14] = far * near * nf;
+  } else {
+    out[10] = -1;
+    out[14] = -near;
   }
   return out;
 }
@@ -1381,7 +1408,7 @@ function perspectiveFromFieldOfView(out, fov, near, far) {
   out[15] = 0;
   return out;
 }
-function ortho(out, left, right, bottom, top, near, far) {
+function orthoNO(out, left, right, bottom, top, near, far) {
   var lr = 1 / (left - right);
   var bt = 1 / (bottom - top);
   var nf = 1 / (near - far);
@@ -1400,6 +1427,29 @@ function ortho(out, left, right, bottom, top, near, far) {
   out[12] = (left + right) * lr;
   out[13] = (top + bottom) * bt;
   out[14] = (far + near) * nf;
+  out[15] = 1;
+  return out;
+}
+var ortho = orthoNO;
+function orthoZO(out, left, right, bottom, top, near, far) {
+  var lr = 1 / (left - right);
+  var bt = 1 / (bottom - top);
+  var nf = 1 / (near - far);
+  out[0] = -2 * lr;
+  out[1] = 0;
+  out[2] = 0;
+  out[3] = 0;
+  out[4] = 0;
+  out[5] = -2 * bt;
+  out[6] = 0;
+  out[7] = 0;
+  out[8] = 0;
+  out[9] = 0;
+  out[10] = nf;
+  out[11] = 0;
+  out[12] = (left + right) * lr;
+  out[13] = (top + bottom) * bt;
+  out[14] = near * nf;
   out[15] = 1;
   return out;
 }
@@ -1638,9 +1688,13 @@ var mat4 = /* @__PURE__ */ Object.freeze({
   fromRotationTranslationScaleOrigin,
   fromQuat: fromQuat$1,
   frustum,
+  perspectiveNO,
   perspective,
+  perspectiveZO,
   perspectiveFromFieldOfView,
+  orthoNO,
   ortho,
+  orthoZO,
   lookAt,
   targetTo,
   str: str$3,
@@ -11101,7 +11155,7 @@ function intern_set({_intern, _key}, value) {
 function intern_delete({_intern, _key}, value) {
   const key = _key(value);
   if (_intern.has(key)) {
-    value = _intern.get(value);
+    value = _intern.get(key);
     _intern.delete(key);
   }
   return value;
