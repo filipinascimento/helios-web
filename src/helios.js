@@ -8925,7 +8925,6 @@ var pica = createCommonjsModule(function(module, exports) {
         var mathLib;
         onmessage = function onmessage2(ev) {
           var tileOpts = ev.data.opts;
-          var returnBitmap = false;
           if (!tileOpts.src && tileOpts.srcBitmap) {
             var canvas = new OffscreenCanvas(tileOpts.width, tileOpts.height);
             var ctx = canvas.getContext("2d", {
@@ -8937,24 +8936,11 @@ var pica = createCommonjsModule(function(module, exports) {
             canvas = null;
             tileOpts.srcBitmap.close();
             tileOpts.srcBitmap = null;
-            returnBitmap = true;
           }
           if (!mathLib)
             mathLib = new MathLib(ev.data.features);
           var data = mathLib.resizeAndUnsharp(tileOpts);
-          if (returnBitmap) {
-            var toImageData = new ImageData(new Uint8ClampedArray(data), tileOpts.toWidth, tileOpts.toHeight);
-            var _canvas = new OffscreenCanvas(tileOpts.toWidth, tileOpts.toHeight);
-            var _ctx = _canvas.getContext("2d", {
-              alpha: Boolean(tileOpts.alpha)
-            });
-            _ctx.putImageData(toImageData, 0, 0);
-            createImageBitmap(_canvas).then(function(bitmap) {
-              postMessage({
-                bitmap
-              }, [bitmap]);
-            });
-          } else {
+          {
             postMessage({
               data
             }, [data.buffer]);
