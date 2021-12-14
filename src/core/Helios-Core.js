@@ -5,9 +5,9 @@ import * as xnet from "../utils/xnet.js"
 import { select as d3Select } from "d3-selection";
 import {HeliosScheduler} from "./Scheduler.js";
 import { zoom as d3Zoom, zoomTransform as d3ZoomTransform, zoomIdentity as d3ZoomIdentity } from "d3-zoom";
-import { drag as d3Drag } from "d3-drag";
-import { default as createGraph } from "ngraph.graph"
-import { default as createLayout } from "ngraph.forcelayout"
+// import { drag as d3Drag } from "d3-drag";
+// import { default as createGraph } from "ngraph.graph"
+// import { default as createLayout } from "ngraph.forcelayout"
 import { forceSimulation, forceManyBody, forceLink, forceCenter } from "d3-force-3d";
 import {default as Pica} from "pica";
 import {workerURL as d3force3dLayoutURL} from "../layouts/d3force3dLayoutWorker.js"
