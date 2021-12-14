@@ -74,10 +74,6 @@ class Node{
     let nodeIndex = this.index;
     return [this._network.positions[nodeIndex*3+0],this._network.positions[nodeIndex*3+1],this._network.positions[nodeIndex*3+2]];
   }
-
-
-
-  
 }
 
 
@@ -109,7 +105,15 @@ export class Network{
     this.intensities = new Float32Array(this.index2Node.length);
     this.outlineColors = new Float32Array(3*this.index2Node.length);
     this.outlineWidths = new Float32Array(this.index2Node.length);
-
+    
+    
+    this.edgePositions = new Float32Array(3*this.indexedEdges.length);
+    this.edgeColors = new Float32Array(3*this.indexedEdges.length);
+    this.widths = new Float32Array(this.indexedEdges.length);
+    
+    // this.intensities = new Float32Array(this.indexedEdges.length);
+    // this.outlineColors = new Float32Array(3*this.indexedEdges.length);
+    // this.outlineWidths = new Float32Array(this.indexedEdges.length);
 
     // for (let index = 0; index < this.positions.length; index++) {
     //   this.positions[index] = (Math.random()-0.5)*2*200;
@@ -174,4 +178,9 @@ export class Network{
       this.nodes[node.ID] = newNode;
     }
   }
+
+  get nodeCount(){
+    return this.index2Node.length;
+  }
+
 }

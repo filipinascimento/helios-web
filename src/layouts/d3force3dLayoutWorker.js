@@ -26,14 +26,17 @@ let workerFunction = (function (){
 			this.simulation.restart();
 		} else if (msg.data.type == "init") {
 			console.log("INIT");
-			let network = msg.data.network;
+			let inputNodes = msg.data.nodes;
+			let inputNodesPositions = msg.data.positions;
+			let inputEdges = msg.data.edges;
+			// let inputEdgeWeights = msg.data.weights;
 			if(msg.data.use2D) {
 				use2D = true;
 			}
 			let nodes = [];
 			let links = [];
 
-			Object.entries(network.nodes).forEach(entry => {
+			Object.entries(inputNodes).forEach(entry => {
 				// console.log(entry);
 				let [key, node] = entry;
 				node.ID = key;
@@ -43,18 +46,18 @@ let workerFunction = (function (){
 				// node.z = 400 * (Math.random() * 1.0 - 0.5);
 				// node.vz = 0;
 				
-				node.x = network.positions[node.index*3+0]*10;//400 * (Math.random() * 1.0 - 0.5);
-				node.y = network.positions[node.index*3+1]*10;//400 * (Math.random() * 1.0 - 0.5);
-				node.z = network.positions[node.index*3+2]*10;//400 * (Math.random() * 1.0 - 0.5);
+				node.x = inputNodesPositions[node.index*3+0]*10;//400 * (Math.random() * 1.0 - 0.5);
+				node.y = inputNodesPositions[node.index*3+1]*10;//400 * (Math.random() * 1.0 - 0.5);
+				node.z = inputNodesPositions[node.index*3+2]*10;//400 * (Math.random() * 1.0 - 0.5);
 				node.vz = 0;
 
-				node.index = network.ID2index[key];
+				// node.index = network.ID2index[key];
 				nodes.push(node);
 			});
 
-			for (let index = 0; index < network.indexedEdges.length / 2; index++) {
-				let edgeFrom = (network.indexedEdges[index * 2]);
-				let edgeTo = (network.indexedEdges[index * 2 + 1]);
+			for (let index = 0; index < inputEdges.length / 2; index++) {
+				let edgeFrom = (inputEdges[index * 2]);
+				let edgeTo = (inputEdges[index * 2 + 1]);
 				let edgeObject = {
 					source: edgeFrom,
 					target: edgeTo,
@@ -72,15 +75,15 @@ let workerFunction = (function (){
 				.on("tick", async () => {
 					for (let vertexIndex = 0; vertexIndex < nodes.length; vertexIndex++) {
 						const node = nodes[vertexIndex];
-						network.positions[vertexIndex * 3 + 0] = node.x/10;
-						network.positions[vertexIndex * 3 + 1] = node.y/10;
+						inputNodesPositions[vertexIndex * 3 + 0] = node.x/10;
+						inputNodesPositions[vertexIndex * 3 + 1] = node.y/10;
 						if(!use2D) {
-							network.positions[vertexIndex * 3 + 2] = node.z/10;
+							inputNodesPositions[vertexIndex * 3 + 2] = node.z/10;
 						}else{
-							network.positions[vertexIndex * 3 + 2] = 0;
+							inputNodesPositions[vertexIndex * 3 + 2] = 0;
 						}
 					}
-					self.postMessage({ type: "layoutStep", positions: network.positions });
+					self.postMessage({ type: "layoutStep", positions: inputNodesPositions });
 				});
 		}
 	}

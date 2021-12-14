@@ -3,8 +3,13 @@ import * as d3Chromatic from "d3-scale-chromatic"
 import { scaleOrdinal as d3ScaleOrdinal, scaleSequential as d3ScaleSequential} from "d3-scale"
 import { select as d3Select } from "d3-selection"
 import { rgb as d3rgb } from "d3-color"
+import * as extraColors from "./extraColors"
 
 
+let allColors = {}
+Object.assign(allColors, d3Chromatic);
+Object.assign(allColors, extraColors);
+console.log(allColors)
 
 function sortByCount(anArray){
 	let map = anArray.reduce((p, c)=>{
@@ -118,8 +123,9 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 
 	let tooltipElement = document.getElementById("tooltip");
 
-	console.log(Object.entries(d3Chromatic));
-	let colorScale = d3ScaleOrdinal(d3Chromatic.schemeCategory10);
+	// console.log(Object.entries(d3Chromatic));
+	
+	let colorScale = d3ScaleOrdinal(allColors.schemeCategory10);
 	let helios = new Helios({
 		elementID: "netviz",
 		nodes: nodes,
@@ -197,6 +203,10 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 		})
 		.onNodeClick((node, event) => {
 			// console.log(`Clicked: ${node.ID}`);
+		})
+		.onNodeDoubleClick((node, event) => {
+			console.log(`Double Clicked: ${node.ID}`);
+			helios.centerOnNode(node.ID);
 		})
 		// .onLayoutStart(()=>console.log("Layout start"))
 		// .onLayoutFinish(()=>console.log("Layout end"))
@@ -403,13 +413,14 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 		}
 		let sortedItems = sortByCount(propertyArray);
 		// console.log(sortedItems);
-		let scheme = d3Chromatic[categoricalColormap];
+		let scheme = allColors[categoricalColormap];
+		// console.log("Scheme",scheme);
 		let arraysCount = scheme.filter(Array.isArray).length;
-
+		
 		if(arraysCount>0){
 			let firstIndex = scheme.findIndex(d=> (typeof d!=="undefined"));
 			if(typeof scheme[sortedItems.length-1] !== "undefined"){
-				scheme = scheme[sortedItems.length-1];
+				scheme = scheme[sortedItems.length];
 			}else{
 				if(sortedItems.length-1<firstIndex){
 					scheme = scheme[firstIndex];
@@ -419,6 +430,7 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 			}
 		}
 		// let maxColors = const [lastItem] = arr.slice(-1)
+		// console.log(scheme)
 		let colorMap = d3ScaleOrdinal(scheme);
 		let property2color = new Map();
 		let categoricalMap = new Map();
@@ -454,7 +466,7 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 			maxValue = Math.max(maxValue, node[colorProperty]);
 			minValue = Math.min(minValue, node[colorProperty]);
 		}
-		let scheme = d3Chromatic[sequencialColormap];
+		let scheme = allColors[sequencialColormap];
 		let cScale = d3ScaleSequential(scheme)
 		.domain([minValue,maxValue]);
 		helios.nodeColor(node => {
@@ -473,7 +485,7 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 		} else {
 			sequencialColormap = d3Select("#colormapSelector").property("value");
 			updateSequencialColors();
-		}		
+		}
 	}
 
 	let updateColorSelection = () => {
@@ -495,7 +507,7 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 				updateColormapSelection();
 			})
 			.selectAll("option")
-			.data(Object.entries(d3Chromatic).filter(d => d[0].startsWith(categorical ? "scheme" : "interpolate")))
+			.data(Object.entries(allColors).filter(d => d[0].startsWith(categorical ? "scheme" : "interpolate")))
 			.join("option")
 			.attr("value", d => d[0])
 			.property("selected", d => d[0] == (categorical ? categoricalColormap : sequencialColormap))

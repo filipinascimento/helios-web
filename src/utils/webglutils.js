@@ -95,6 +95,25 @@ async function getShaderFromURL(gl,url,type){ //gl.FRAGMENT_SHADER or gl.VERTEX_
 	return shader;
 }
 
+function getShaderFromString(gl,str,type){ //gl.FRAGMENT_SHADER or gl.VERTEX_SHADER
+	let shader;
+	// console.log(str);
+	shader = gl.createShader(type);
+	
+	// console.log(str);
+
+	gl.shaderSource(shader, str);
+	gl.compileShader(shader);
+	
+	if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+		console.log("ERROR with script: ",str);
+		console.log(gl.getShaderInfoLog(shader));
+		return null;
+	}
+
+	return shader;
+}
+
 
 function ShaderProgram(vertexShader,fragmentShader, uniforms, attributes, glContext){
   let shaderProgram = glContext.createProgram();
@@ -310,4 +329,15 @@ function degToRad(degrees) {
 	return degrees * Math.PI / 180;
 }
 
-export {makeSphere,makePlane,getShader,getShaderFromURL,ShaderProgram,requestAnimationFrame,cancelAnimationFrame,createWebGLContext,degToRad}
+export {
+	makeSphere,
+	makePlane,
+	getShader,
+	getShaderFromURL,
+	getShaderFromString,
+	ShaderProgram,
+	requestAnimationFrame,
+	cancelAnimationFrame,
+	createWebGLContext,
+	degToRad
+};
