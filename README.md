@@ -90,6 +90,7 @@ let helios = new Helios({
 
 </script>
 ```
+You can find a bare-minimal example at https://jsfiddle.net/yatk8jcb/14/
 
 Helios web is also available as a npm package:
 

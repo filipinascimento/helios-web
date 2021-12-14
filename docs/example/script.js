@@ -3397,9 +3397,9 @@ function selection_join(onenter, onupdate, onexit) {
 function selection_merge(context) {
   var selection2 = context.selection ? context.selection() : context;
   for (var groups0 = this._groups, groups1 = selection2._groups, m0 = groups0.length, m1 = groups1.length, m = Math.min(m0, m1), merges = new Array(m0), j = 0; j < m; ++j) {
-    for (var group0 = groups0[j], group1 = groups1[j], n = group0.length, merge2 = merges[j] = new Array(n), node, i = 0; i < n; ++i) {
+    for (var group0 = groups0[j], group1 = groups1[j], n = group0.length, merge = merges[j] = new Array(n), node, i = 0; i < n; ++i) {
       if (node = group0[i] || group1[i]) {
-        merge2[i] = node;
+        merge[i] = node;
       }
     }
   }
@@ -4168,7 +4168,7 @@ var HeliosScheduler = class {
   }
 };
 
-// build/_snowpack/pkg/common/dispatch-a4cc9f48.js
+// build/_snowpack/pkg/common/timer-53ba7821.js
 var noop = {value: () => {
 }};
 function dispatch() {
@@ -4253,8 +4253,6 @@ function set(type, name, callback) {
     type.push({name, value: callback});
   return type;
 }
-
-// build/_snowpack/pkg/common/timer-0f89e737.js
 var frame = 0;
 var timeout = 0;
 var interval = 0;
@@ -4823,62 +4821,6 @@ function rgbSpline(spline) {
 }
 var rgbBasis = rgbSpline(basis$1);
 
-// build/_snowpack/pkg/common/nodrag-5a51286e.js
-function sourceEvent(event) {
-  let sourceEvent2;
-  while (sourceEvent2 = event.sourceEvent)
-    event = sourceEvent2;
-  return event;
-}
-function pointer(event, node) {
-  event = sourceEvent(event);
-  if (node === void 0)
-    node = event.currentTarget;
-  if (node) {
-    var svg = node.ownerSVGElement || node;
-    if (svg.createSVGPoint) {
-      var point = svg.createSVGPoint();
-      point.x = event.clientX, point.y = event.clientY;
-      point = point.matrixTransform(node.getScreenCTM().inverse());
-      return [point.x, point.y];
-    }
-    if (node.getBoundingClientRect) {
-      var rect = node.getBoundingClientRect();
-      return [event.clientX - rect.left - node.clientLeft, event.clientY - rect.top - node.clientTop];
-    }
-  }
-  return [event.pageX, event.pageY];
-}
-var nonpassivecapture = {capture: true, passive: false};
-function noevent(event) {
-  event.preventDefault();
-  event.stopImmediatePropagation();
-}
-function dragDisable(view) {
-  var root2 = view.document.documentElement, selection2 = select(view).on("dragstart.drag", noevent, nonpassivecapture);
-  if ("onselectstart" in root2) {
-    selection2.on("selectstart.drag", noevent, nonpassivecapture);
-  } else {
-    root2.__noselect = root2.style.MozUserSelect;
-    root2.style.MozUserSelect = "none";
-  }
-}
-function yesdrag(view, noclick) {
-  var root2 = view.document.documentElement, selection2 = select(view).on("dragstart.drag", null);
-  if (noclick) {
-    selection2.on("click.drag", noevent, nonpassivecapture);
-    setTimeout(function() {
-      selection2.on("click.drag", null);
-    }, 0);
-  }
-  if ("onselectstart" in root2) {
-    selection2.on("selectstart.drag", null);
-  } else {
-    root2.style.MozUserSelect = root2.__noselect;
-    delete root2.__noselect;
-  }
-}
-
 // build/_snowpack/pkg/d3-zoom.js
 function timeout2(callback, delay, time) {
   var t = new Timer();
@@ -5032,6 +4974,60 @@ var interpolateZoom = function zoomRho(rho, rho2, rho4) {
   };
   return zoom2;
 }(Math.SQRT2, 2, 4);
+function sourceEvent(event) {
+  let sourceEvent2;
+  while (sourceEvent2 = event.sourceEvent)
+    event = sourceEvent2;
+  return event;
+}
+function pointer(event, node) {
+  event = sourceEvent(event);
+  if (node === void 0)
+    node = event.currentTarget;
+  if (node) {
+    var svg = node.ownerSVGElement || node;
+    if (svg.createSVGPoint) {
+      var point = svg.createSVGPoint();
+      point.x = event.clientX, point.y = event.clientY;
+      point = point.matrixTransform(node.getScreenCTM().inverse());
+      return [point.x, point.y];
+    }
+    if (node.getBoundingClientRect) {
+      var rect = node.getBoundingClientRect();
+      return [event.clientX - rect.left - node.clientLeft, event.clientY - rect.top - node.clientTop];
+    }
+  }
+  return [event.pageX, event.pageY];
+}
+var nonpassivecapture = {capture: true, passive: false};
+function noevent(event) {
+  event.preventDefault();
+  event.stopImmediatePropagation();
+}
+function dragDisable(view) {
+  var root2 = view.document.documentElement, selection2 = select(view).on("dragstart.drag", noevent, nonpassivecapture);
+  if ("onselectstart" in root2) {
+    selection2.on("selectstart.drag", noevent, nonpassivecapture);
+  } else {
+    root2.__noselect = root2.style.MozUserSelect;
+    root2.style.MozUserSelect = "none";
+  }
+}
+function yesdrag(view, noclick) {
+  var root2 = view.document.documentElement, selection2 = select(view).on("dragstart.drag", null);
+  if (noclick) {
+    selection2.on("click.drag", noevent, nonpassivecapture);
+    setTimeout(function() {
+      selection2.on("click.drag", null);
+    }, 0);
+  }
+  if ("onselectstart" in root2) {
+    selection2.on("selectstart.drag", null);
+  } else {
+    root2.style.MozUserSelect = root2.__noselect;
+    delete root2.__noselect;
+  }
+}
 var emptyOn = dispatch("start", "end", "cancel", "interrupt");
 var emptyTween = [];
 var CREATED = 0;
@@ -5400,9 +5396,9 @@ function transition_merge(transition) {
   if (transition._id !== this._id)
     throw new Error();
   for (var groups0 = this._groups, groups1 = transition._groups, m0 = groups0.length, m1 = groups1.length, m = Math.min(m0, m1), merges = new Array(m0), j = 0; j < m; ++j) {
-    for (var group0 = groups0[j], group1 = groups1[j], n = group0.length, merge2 = merges[j] = new Array(n), node, i = 0; i < n; ++i) {
+    for (var group0 = groups0[j], group1 = groups1[j], n = group0.length, merge = merges[j] = new Array(n), node, i = 0; i < n; ++i) {
       if (node = group0[i] || group1[i]) {
-        merge2[i] = node;
+        merge[i] = node;
       }
     }
   }
@@ -5775,7 +5771,7 @@ function transform(node) {
 function nopropagation(event) {
   event.stopImmediatePropagation();
 }
-function noevent2(event) {
+function noevent$1(event) {
   event.preventDefault();
   event.stopImmediatePropagation();
 }
@@ -5944,7 +5940,7 @@ function zoom() {
       interrupt(this);
       g.start();
     }
-    noevent2(event);
+    noevent$1(event);
     g.wheel = setTimeout(wheelidled, wheelDelay);
     g.zoom("mouse", constrain(translate(scale(t, k), g.mouse[0], g.mouse[1]), g.extent, translateExtent));
     function wheelidled() {
@@ -5962,7 +5958,7 @@ function zoom() {
     interrupt(this);
     g.start();
     function mousemoved(event2) {
-      noevent2(event2);
+      noevent$1(event2);
       if (!g.moved) {
         var dx = event2.clientX - x0, dy = event2.clientY - y0;
         g.moved = dx * dx + dy * dy > clickDistance2;
@@ -5972,7 +5968,7 @@ function zoom() {
     function mouseupped(event2) {
       v.on("mousemove.zoom mouseup.zoom", null);
       yesdrag(event2.view, g.moved);
-      noevent2(event2);
+      noevent$1(event2);
       g.event(event2).end();
     }
   }
@@ -5980,7 +5976,7 @@ function zoom() {
     if (!filter2.apply(this, arguments))
       return;
     var t0 = this.__zoom, p0 = pointer(event.changedTouches ? event.changedTouches[0] : event, this), p1 = t0.invert(p0), k1 = t0.k * (event.shiftKey ? 0.5 : 2), t1 = constrain(translate(scale(t0, k1), p0, p1), extent.apply(this, args), translateExtent);
-    noevent2(event);
+    noevent$1(event);
     if (duration > 0)
       select(this).transition().duration(duration).call(schedule2, t1, p0, event);
     else
@@ -6014,7 +6010,7 @@ function zoom() {
     if (!this.__zooming)
       return;
     var g = gesture(this, args).event(event), touches = event.changedTouches, n = touches.length, i, t, p, l;
-    noevent2(event);
+    noevent$1(event);
     for (i = 0; i < n; ++i) {
       t = touches[i], p = pointer(t, this);
       if (g.touch0 && g.touch0[2] === t.identifier)
@@ -6106,1389 +6102,6 @@ function zoom() {
   };
   return zoom2;
 }
-
-// build/_snowpack/pkg/d3-drag.js
-function DragEvent(type, {
-  sourceEvent: sourceEvent2,
-  subject,
-  target,
-  identifier,
-  active,
-  x,
-  y,
-  dx,
-  dy,
-  dispatch: dispatch2
-}) {
-  Object.defineProperties(this, {
-    type: {value: type, enumerable: true, configurable: true},
-    sourceEvent: {value: sourceEvent2, enumerable: true, configurable: true},
-    subject: {value: subject, enumerable: true, configurable: true},
-    target: {value: target, enumerable: true, configurable: true},
-    identifier: {value: identifier, enumerable: true, configurable: true},
-    active: {value: active, enumerable: true, configurable: true},
-    x: {value: x, enumerable: true, configurable: true},
-    y: {value: y, enumerable: true, configurable: true},
-    dx: {value: dx, enumerable: true, configurable: true},
-    dy: {value: dy, enumerable: true, configurable: true},
-    _: {value: dispatch2}
-  });
-}
-DragEvent.prototype.on = function() {
-  var value = this._.on.apply(this._, arguments);
-  return value === this._ ? this : value;
-};
-
-// build/_snowpack/pkg/common/index-06822a64.js
-var ngraph_events = function eventify(subject) {
-  validateSubject(subject);
-  var eventsStorage = createEventsStorage(subject);
-  subject.on = eventsStorage.on;
-  subject.off = eventsStorage.off;
-  subject.fire = eventsStorage.fire;
-  return subject;
-};
-function createEventsStorage(subject) {
-  var registeredEvents = Object.create(null);
-  return {
-    on: function(eventName, callback, ctx) {
-      if (typeof callback !== "function") {
-        throw new Error("callback is expected to be a function");
-      }
-      var handlers = registeredEvents[eventName];
-      if (!handlers) {
-        handlers = registeredEvents[eventName] = [];
-      }
-      handlers.push({callback, ctx});
-      return subject;
-    },
-    off: function(eventName, callback) {
-      var wantToRemoveAll = typeof eventName === "undefined";
-      if (wantToRemoveAll) {
-        registeredEvents = Object.create(null);
-        return subject;
-      }
-      if (registeredEvents[eventName]) {
-        var deleteAllCallbacksForEvent = typeof callback !== "function";
-        if (deleteAllCallbacksForEvent) {
-          delete registeredEvents[eventName];
-        } else {
-          var callbacks = registeredEvents[eventName];
-          for (var i = 0; i < callbacks.length; ++i) {
-            if (callbacks[i].callback === callback) {
-              callbacks.splice(i, 1);
-            }
-          }
-        }
-      }
-      return subject;
-    },
-    fire: function(eventName) {
-      var callbacks = registeredEvents[eventName];
-      if (!callbacks) {
-        return subject;
-      }
-      var fireArguments;
-      if (arguments.length > 1) {
-        fireArguments = Array.prototype.splice.call(arguments, 1);
-      }
-      for (var i = 0; i < callbacks.length; ++i) {
-        var callbackInfo = callbacks[i];
-        callbackInfo.callback.apply(callbackInfo.ctx, fireArguments);
-      }
-      return subject;
-    }
-  };
-}
-function validateSubject(subject) {
-  if (!subject) {
-    throw new Error("Eventify cannot use falsy object as events subject");
-  }
-  var reservedWords = ["on", "fire", "off"];
-  for (var i = 0; i < reservedWords.length; ++i) {
-    if (subject.hasOwnProperty(reservedWords[i])) {
-      throw new Error("Subject cannot be eventified, since it already has property '" + reservedWords[i] + "'");
-    }
-  }
-}
-
-// build/_snowpack/pkg/common/_commonjsHelpers-edfea8af.js
-function createCommonjsModule(fn, basedir, module) {
-  return module = {
-    path: basedir,
-    exports: {},
-    require: function(path, base) {
-      return commonjsRequire(path, base === void 0 || base === null ? module.path : base);
-    }
-  }, fn(module, module.exports), module.exports;
-}
-function commonjsRequire() {
-  throw new Error("Dynamic requires are not currently supported by @rollup/plugin-commonjs");
-}
-
-// build/_snowpack/pkg/ngraph.forcelayout.js
-var getVariableName = function getVariableName2(index) {
-  if (index === 0)
-    return "x";
-  if (index === 1)
-    return "y";
-  if (index === 2)
-    return "z";
-  return "c" + (index + 1);
-};
-var createPatternBuilder = function createPatternBuilder2(dimension) {
-  return pattern;
-  function pattern(template, config) {
-    let indent = config && config.indent || 0;
-    let join = config && config.join !== void 0 ? config.join : "\n";
-    let indentString = Array(indent + 1).join(" ");
-    let buffer = [];
-    for (let i = 0; i < dimension; ++i) {
-      let variableName = getVariableName(i);
-      let prefix = i === 0 ? "" : indentString;
-      buffer.push(prefix + template.replace(/{var}/g, variableName));
-    }
-    return buffer.join(join);
-  }
-};
-var generateCreateBody = generateCreateBodyFunction;
-var generateCreateBodyFunctionBody_1 = generateCreateBodyFunctionBody;
-var getVectorCode_1 = getVectorCode;
-var getBodyCode_1 = getBodyCode;
-function generateCreateBodyFunction(dimension, debugSetters) {
-  let code = generateCreateBodyFunctionBody(dimension, debugSetters);
-  let {Body} = new Function(code)();
-  return Body;
-}
-function generateCreateBodyFunctionBody(dimension, debugSetters) {
-  let code = `
-${getVectorCode(dimension, debugSetters)}
-${getBodyCode(dimension)}
-return {Body: Body, Vector: Vector};
-`;
-  return code;
-}
-function getBodyCode(dimension) {
-  let pattern = createPatternBuilder(dimension);
-  let variableList = pattern("{var}", {join: ", "});
-  return `
-function Body(${variableList}) {
-  this.isPinned = false;
-  this.pos = new Vector(${variableList});
-  this.force = new Vector();
-  this.velocity = new Vector();
-  this.mass = 1;
-
-  this.springCount = 0;
-  this.springLength = 0;
-}
-
-Body.prototype.reset = function() {
-  this.force.reset();
-  this.springCount = 0;
-  this.springLength = 0;
-}
-
-Body.prototype.setPosition = function (${variableList}) {
-  ${pattern("this.pos.{var} = {var} || 0;", {indent: 2})}
-};`;
-}
-function getVectorCode(dimension, debugSetters) {
-  let pattern = createPatternBuilder(dimension);
-  let setters = "";
-  if (debugSetters) {
-    setters = `${pattern("\n   var v{var};\nObject.defineProperty(this, '{var}', {\n  set: function(v) { \n    if (!Number.isFinite(v)) throw new Error('Cannot set non-numbers to {var}');\n    v{var} = v; \n  },\n  get: function() { return v{var}; }\n});")}`;
-  }
-  let variableList = pattern("{var}", {join: ", "});
-  return `function Vector(${variableList}) {
-  ${setters}
-    if (typeof arguments[0] === 'object') {
-      // could be another vector
-      let v = arguments[0];
-      ${pattern('if (!Number.isFinite(v.{var})) throw new Error("Expected value is not a finite number at Vector constructor ({var})");', {indent: 4})}
-      ${pattern("this.{var} = v.{var};", {indent: 4})}
-    } else {
-      ${pattern('this.{var} = typeof {var} === "number" ? {var} : 0;', {indent: 4})}
-    }
-  }
-  
-  Vector.prototype.reset = function () {
-    ${pattern("this.{var} = ", {join: ""})}0;
-  };`;
-}
-generateCreateBody.generateCreateBodyFunctionBody = generateCreateBodyFunctionBody_1;
-generateCreateBody.getVectorCode = getVectorCode_1;
-generateCreateBody.getBodyCode = getBodyCode_1;
-var generateQuadTree = generateQuadTreeFunction;
-var generateQuadTreeFunctionBody_1 = generateQuadTreeFunctionBody;
-var getInsertStackCode_1 = getInsertStackCode;
-var getQuadNodeCode_1 = getQuadNodeCode;
-var isSamePosition_1 = isSamePosition;
-var getChildBodyCode_1 = getChildBodyCode;
-var setChildBodyCode_1 = setChildBodyCode;
-function generateQuadTreeFunction(dimension) {
-  let code = generateQuadTreeFunctionBody(dimension);
-  return new Function(code)();
-}
-function generateQuadTreeFunctionBody(dimension) {
-  let pattern = createPatternBuilder(dimension);
-  let quadCount = Math.pow(2, dimension);
-  let code = `
-${getInsertStackCode()}
-${getQuadNodeCode(dimension)}
-${isSamePosition(dimension)}
-${getChildBodyCode(dimension)}
-${setChildBodyCode(dimension)}
-
-function createQuadTree(options, random) {
-  options = options || {};
-  options.gravity = typeof options.gravity === 'number' ? options.gravity : -1;
-  options.theta = typeof options.theta === 'number' ? options.theta : 0.8;
-
-  var gravity = options.gravity;
-  var updateQueue = [];
-  var insertStack = new InsertStack();
-  var theta = options.theta;
-
-  var nodesCache = [];
-  var currentInCache = 0;
-  var root = newNode();
-
-  return {
-    insertBodies: insertBodies,
-
-    /**
-     * Gets root node if it is present
-     */
-    getRoot: function() {
-      return root;
-    },
-
-    updateBodyForce: update,
-
-    options: function(newOptions) {
-      if (newOptions) {
-        if (typeof newOptions.gravity === 'number') {
-          gravity = newOptions.gravity;
-        }
-        if (typeof newOptions.theta === 'number') {
-          theta = newOptions.theta;
-        }
-
-        return this;
-      }
-
-      return {
-        gravity: gravity,
-        theta: theta
-      };
-    }
-  };
-
-  function newNode() {
-    // To avoid pressure on GC we reuse nodes.
-    var node = nodesCache[currentInCache];
-    if (node) {
-${assignQuads("      node.")}
-      node.body = null;
-      node.mass = ${pattern("node.mass_{var} = ", {join: ""})}0;
-      ${pattern("node.min_{var} = node.max_{var} = ", {join: ""})}0;
-    } else {
-      node = new QuadNode();
-      nodesCache[currentInCache] = node;
-    }
-
-    ++currentInCache;
-    return node;
-  }
-
-  function update(sourceBody) {
-    var queue = updateQueue;
-    var v;
-    ${pattern("var d{var};", {indent: 4})}
-    var r; 
-    ${pattern("var f{var} = 0;", {indent: 4})}
-    var queueLength = 1;
-    var shiftIdx = 0;
-    var pushIdx = 1;
-
-    queue[0] = root;
-
-    while (queueLength) {
-      var node = queue[shiftIdx];
-      var body = node.body;
-
-      queueLength -= 1;
-      shiftIdx += 1;
-      var differentBody = (body !== sourceBody);
-      if (body && differentBody) {
-        // If the current node is a leaf node (and it is not source body),
-        // calculate the force exerted by the current node on body, and add this
-        // amount to body's net force.
-        ${pattern("d{var} = body.pos.{var} - sourceBody.pos.{var};", {indent: 8})}
-        r = Math.sqrt(${pattern("d{var} * d{var}", {join: " + "})});
-
-        if (r === 0) {
-          // Poor man's protection against zero distance.
-          ${pattern("d{var} = (random.nextDouble() - 0.5) / 50;", {indent: 10})}
-          r = Math.sqrt(${pattern("d{var} * d{var}", {join: " + "})});
-        }
-
-        // This is standard gravitation force calculation but we divide
-        // by r^3 to save two operations when normalizing force vector.
-        v = gravity * body.mass * sourceBody.mass / (r * r * r);
-        ${pattern("f{var} += v * d{var};", {indent: 8})}
-      } else if (differentBody) {
-        // Otherwise, calculate the ratio s / r,  where s is the width of the region
-        // represented by the internal node, and r is the distance between the body
-        // and the node's center-of-mass
-        ${pattern("d{var} = node.mass_{var} / node.mass - sourceBody.pos.{var};", {indent: 8})}
-        r = Math.sqrt(${pattern("d{var} * d{var}", {join: " + "})});
-
-        if (r === 0) {
-          // Sorry about code duplication. I don't want to create many functions
-          // right away. Just want to see performance first.
-          ${pattern("d{var} = (random.nextDouble() - 0.5) / 50;", {indent: 10})}
-          r = Math.sqrt(${pattern("d{var} * d{var}", {join: " + "})});
-        }
-        // If s / r < θ, treat this internal node as a single body, and calculate the
-        // force it exerts on sourceBody, and add this amount to sourceBody's net force.
-        if ((node.max_${getVariableName(0)} - node.min_${getVariableName(0)}) / r < theta) {
-          // in the if statement above we consider node's width only
-          // because the region was made into square during tree creation.
-          // Thus there is no difference between using width or height.
-          v = gravity * node.mass * sourceBody.mass / (r * r * r);
-          ${pattern("f{var} += v * d{var};", {indent: 10})}
-        } else {
-          // Otherwise, run the procedure recursively on each of the current node's children.
-
-          // I intentionally unfolded this loop, to save several CPU cycles.
-${runRecursiveOnChildren()}
-        }
-      }
-    }
-
-    ${pattern("sourceBody.force.{var} += f{var};", {indent: 4})}
-  }
-
-  function insertBodies(bodies) {
-    ${pattern("var {var}min = Number.MAX_VALUE;", {indent: 4})}
-    ${pattern("var {var}max = Number.MIN_VALUE;", {indent: 4})}
-    var i = bodies.length;
-
-    // To reduce quad tree depth we are looking for exact bounding box of all particles.
-    while (i--) {
-      var pos = bodies[i].pos;
-      ${pattern("if (pos.{var} < {var}min) {var}min = pos.{var};", {indent: 6})}
-      ${pattern("if (pos.{var} > {var}max) {var}max = pos.{var};", {indent: 6})}
-    }
-
-    // Makes the bounds square.
-    var maxSideLength = -Infinity;
-    ${pattern("if ({var}max - {var}min > maxSideLength) maxSideLength = {var}max - {var}min ;", {indent: 4})}
-
-    currentInCache = 0;
-    root = newNode();
-    ${pattern("root.min_{var} = {var}min;", {indent: 4})}
-    ${pattern("root.max_{var} = {var}min + maxSideLength;", {indent: 4})}
-
-    i = bodies.length - 1;
-    if (i >= 0) {
-      root.body = bodies[i];
-    }
-    while (i--) {
-      insert(bodies[i], root);
-    }
-  }
-
-  function insert(newBody) {
-    insertStack.reset();
-    insertStack.push(root, newBody);
-
-    while (!insertStack.isEmpty()) {
-      var stackItem = insertStack.pop();
-      var node = stackItem.node;
-      var body = stackItem.body;
-
-      if (!node.body) {
-        // This is internal node. Update the total mass of the node and center-of-mass.
-        ${pattern("var {var} = body.pos.{var};", {indent: 8})}
-        node.mass += body.mass;
-        ${pattern("node.mass_{var} += body.mass * {var};", {indent: 8})}
-
-        // Recursively insert the body in the appropriate quadrant.
-        // But first find the appropriate quadrant.
-        var quadIdx = 0; // Assume we are in the 0's quad.
-        ${pattern("var min_{var} = node.min_{var};", {indent: 8})}
-        ${pattern("var max_{var} = (min_{var} + node.max_{var}) / 2;", {indent: 8})}
-
-${assignInsertionQuadIndex(8)}
-
-        var child = getChild(node, quadIdx);
-
-        if (!child) {
-          // The node is internal but this quadrant is not taken. Add
-          // subnode to it.
-          child = newNode();
-          ${pattern("child.min_{var} = min_{var};", {indent: 10})}
-          ${pattern("child.max_{var} = max_{var};", {indent: 10})}
-          child.body = body;
-
-          setChild(node, quadIdx, child);
-        } else {
-          // continue searching in this quadrant.
-          insertStack.push(child, body);
-        }
-      } else {
-        // We are trying to add to the leaf node.
-        // We have to convert current leaf into internal node
-        // and continue adding two nodes.
-        var oldBody = node.body;
-        node.body = null; // internal nodes do not cary bodies
-
-        if (isSamePosition(oldBody.pos, body.pos)) {
-          // Prevent infinite subdivision by bumping one node
-          // anywhere in this quadrant
-          var retriesCount = 3;
-          do {
-            var offset = random.nextDouble();
-            ${pattern("var d{var} = (node.max_{var} - node.min_{var}) * offset;", {indent: 12})}
-
-            ${pattern("oldBody.pos.{var} = node.min_{var} + d{var};", {indent: 12})}
-            retriesCount -= 1;
-            // Make sure we don't bump it out of the box. If we do, next iteration should fix it
-          } while (retriesCount > 0 && isSamePosition(oldBody.pos, body.pos));
-
-          if (retriesCount === 0 && isSamePosition(oldBody.pos, body.pos)) {
-            // This is very bad, we ran out of precision.
-            // if we do not return from the method we'll get into
-            // infinite loop here. So we sacrifice correctness of layout, and keep the app running
-            // Next layout iteration should get larger bounding box in the first step and fix this
-            return;
-          }
-        }
-        // Next iteration should subdivide node further.
-        insertStack.push(node, oldBody);
-        insertStack.push(node, body);
-      }
-    }
-  }
-}
-return createQuadTree;
-
-`;
-  return code;
-  function assignInsertionQuadIndex(indentCount) {
-    let insertionCode = [];
-    let indent = Array(indentCount + 1).join(" ");
-    for (let i = 0; i < dimension; ++i) {
-      insertionCode.push(indent + `if (${getVariableName(i)} > max_${getVariableName(i)}) {`);
-      insertionCode.push(indent + `  quadIdx = quadIdx + ${Math.pow(2, i)};`);
-      insertionCode.push(indent + `  min_${getVariableName(i)} = max_${getVariableName(i)};`);
-      insertionCode.push(indent + `  max_${getVariableName(i)} = node.max_${getVariableName(i)};`);
-      insertionCode.push(indent + `}`);
-    }
-    return insertionCode.join("\n");
-  }
-  function runRecursiveOnChildren() {
-    let indent = Array(11).join(" ");
-    let recursiveCode = [];
-    for (let i = 0; i < quadCount; ++i) {
-      recursiveCode.push(indent + `if (node.quad${i}) {`);
-      recursiveCode.push(indent + `  queue[pushIdx] = node.quad${i};`);
-      recursiveCode.push(indent + `  queueLength += 1;`);
-      recursiveCode.push(indent + `  pushIdx += 1;`);
-      recursiveCode.push(indent + `}`);
-    }
-    return recursiveCode.join("\n");
-  }
-  function assignQuads(indent) {
-    let quads = [];
-    for (let i = 0; i < quadCount; ++i) {
-      quads.push(`${indent}quad${i} = null;`);
-    }
-    return quads.join("\n");
-  }
-}
-function isSamePosition(dimension) {
-  let pattern = createPatternBuilder(dimension);
-  return `
-  function isSamePosition(point1, point2) {
-    ${pattern("var d{var} = Math.abs(point1.{var} - point2.{var});", {indent: 2})}
-  
-    return ${pattern("d{var} < 1e-8", {join: " && "})};
-  }  
-`;
-}
-function setChildBodyCode(dimension) {
-  var quadCount = Math.pow(2, dimension);
-  return `
-function setChild(node, idx, child) {
-  ${setChildBody()}
-}`;
-  function setChildBody() {
-    let childBody = [];
-    for (let i = 0; i < quadCount; ++i) {
-      let prefix = i === 0 ? "  " : "  else ";
-      childBody.push(`${prefix}if (idx === ${i}) node.quad${i} = child;`);
-    }
-    return childBody.join("\n");
-  }
-}
-function getChildBodyCode(dimension) {
-  return `function getChild(node, idx) {
-${getChildBody()}
-  return null;
-}`;
-  function getChildBody() {
-    let childBody = [];
-    let quadCount = Math.pow(2, dimension);
-    for (let i = 0; i < quadCount; ++i) {
-      childBody.push(`  if (idx === ${i}) return node.quad${i};`);
-    }
-    return childBody.join("\n");
-  }
-}
-function getQuadNodeCode(dimension) {
-  let pattern = createPatternBuilder(dimension);
-  let quadCount = Math.pow(2, dimension);
-  var quadNodeCode = `
-function QuadNode() {
-  // body stored inside this node. In quad tree only leaf nodes (by construction)
-  // contain bodies:
-  this.body = null;
-
-  // Child nodes are stored in quads. Each quad is presented by number:
-  // 0 | 1
-  // -----
-  // 2 | 3
-${assignQuads("  this.")}
-
-  // Total mass of current node
-  this.mass = 0;
-
-  // Center of mass coordinates
-  ${pattern("this.mass_{var} = 0;", {indent: 2})}
-
-  // bounding box coordinates
-  ${pattern("this.min_{var} = 0;", {indent: 2})}
-  ${pattern("this.max_{var} = 0;", {indent: 2})}
-}
-`;
-  return quadNodeCode;
-  function assignQuads(indent) {
-    let quads = [];
-    for (let i = 0; i < quadCount; ++i) {
-      quads.push(`${indent}quad${i} = null;`);
-    }
-    return quads.join("\n");
-  }
-}
-function getInsertStackCode() {
-  return `
-/**
- * Our implementation of QuadTree is non-recursive to avoid GC hit
- * This data structure represent stack of elements
- * which we are trying to insert into quad tree.
- */
-function InsertStack () {
-    this.stack = [];
-    this.popIdx = 0;
-}
-
-InsertStack.prototype = {
-    isEmpty: function() {
-        return this.popIdx === 0;
-    },
-    push: function (node, body) {
-        var item = this.stack[this.popIdx];
-        if (!item) {
-            // we are trying to avoid memory pressure: create new element
-            // only when absolutely necessary
-            this.stack[this.popIdx] = new InsertStackElement(node, body);
-        } else {
-            item.node = node;
-            item.body = body;
-        }
-        ++this.popIdx;
-    },
-    pop: function () {
-        if (this.popIdx > 0) {
-            return this.stack[--this.popIdx];
-        }
-    },
-    reset: function () {
-        this.popIdx = 0;
-    }
-};
-
-function InsertStackElement(node, body) {
-    this.node = node; // QuadTree node
-    this.body = body; // physical body which needs to be inserted to node
-}
-`;
-}
-generateQuadTree.generateQuadTreeFunctionBody = generateQuadTreeFunctionBody_1;
-generateQuadTree.getInsertStackCode = getInsertStackCode_1;
-generateQuadTree.getQuadNodeCode = getQuadNodeCode_1;
-generateQuadTree.isSamePosition = isSamePosition_1;
-generateQuadTree.getChildBodyCode = getChildBodyCode_1;
-generateQuadTree.setChildBodyCode = setChildBodyCode_1;
-var generateBounds = generateBoundsFunction;
-var generateFunctionBody = generateBoundsFunctionBody;
-function generateBoundsFunction(dimension) {
-  let code = generateBoundsFunctionBody(dimension);
-  return new Function("bodies", "settings", "random", code);
-}
-function generateBoundsFunctionBody(dimension) {
-  let pattern = createPatternBuilder(dimension);
-  let code = `
-  var boundingBox = {
-    ${pattern("min_{var}: 0, max_{var}: 0,", {indent: 4})}
-  };
-
-  return {
-    box: boundingBox,
-
-    update: updateBoundingBox,
-
-    reset: resetBoundingBox,
-
-    getBestNewPosition: function (neighbors) {
-      var ${pattern("base_{var} = 0", {join: ", "})};
-
-      if (neighbors.length) {
-        for (var i = 0; i < neighbors.length; ++i) {
-          let neighborPos = neighbors[i].pos;
-          ${pattern("base_{var} += neighborPos.{var};", {indent: 10})}
-        }
-
-        ${pattern("base_{var} /= neighbors.length;", {indent: 8})}
-      } else {
-        ${pattern("base_{var} = (boundingBox.min_{var} + boundingBox.max_{var}) / 2;", {indent: 8})}
-      }
-
-      var springLength = settings.springLength;
-      return {
-        ${pattern("{var}: base_{var} + (random.nextDouble() - 0.5) * springLength,", {indent: 8})}
-      };
-    }
-  };
-
-  function updateBoundingBox() {
-    var i = bodies.length;
-    if (i === 0) return; // No bodies - no borders.
-
-    ${pattern("var max_{var} = -Infinity;", {indent: 4})}
-    ${pattern("var min_{var} = Infinity;", {indent: 4})}
-
-    while(i--) {
-      // this is O(n), it could be done faster with quadtree, if we check the root node bounds
-      var bodyPos = bodies[i].pos;
-      ${pattern("if (bodyPos.{var} < min_{var}) min_{var} = bodyPos.{var};", {indent: 6})}
-      ${pattern("if (bodyPos.{var} > max_{var}) max_{var} = bodyPos.{var};", {indent: 6})}
-    }
-
-    ${pattern("boundingBox.min_{var} = min_{var};", {indent: 4})}
-    ${pattern("boundingBox.max_{var} = max_{var};", {indent: 4})}
-  }
-
-  function resetBoundingBox() {
-    ${pattern("boundingBox.min_{var} = boundingBox.max_{var} = 0;", {indent: 4})}
-  }
-`;
-  return code;
-}
-generateBounds.generateFunctionBody = generateFunctionBody;
-var generateCreateDragForce = generateCreateDragForceFunction;
-var generateCreateDragForceFunctionBody_1 = generateCreateDragForceFunctionBody;
-function generateCreateDragForceFunction(dimension) {
-  let code = generateCreateDragForceFunctionBody(dimension);
-  return new Function("options", code);
-}
-function generateCreateDragForceFunctionBody(dimension) {
-  let pattern = createPatternBuilder(dimension);
-  let code = `
-  if (!Number.isFinite(options.dragCoefficient)) throw new Error('dragCoefficient is not a finite number');
-
-  return {
-    update: function(body) {
-      ${pattern("body.force.{var} -= options.dragCoefficient * body.velocity.{var};", {indent: 6})}
-    }
-  };
-`;
-  return code;
-}
-generateCreateDragForce.generateCreateDragForceFunctionBody = generateCreateDragForceFunctionBody_1;
-var generateCreateSpringForce = generateCreateSpringForceFunction;
-var generateCreateSpringForceFunctionBody_1 = generateCreateSpringForceFunctionBody;
-function generateCreateSpringForceFunction(dimension) {
-  let code = generateCreateSpringForceFunctionBody(dimension);
-  return new Function("options", "random", code);
-}
-function generateCreateSpringForceFunctionBody(dimension) {
-  let pattern = createPatternBuilder(dimension);
-  let code = `
-  if (!Number.isFinite(options.springCoefficient)) throw new Error('Spring coefficient is not a number');
-  if (!Number.isFinite(options.springLength)) throw new Error('Spring length is not a number');
-
-  return {
-    /**
-     * Updates forces acting on a spring
-     */
-    update: function (spring) {
-      var body1 = spring.from;
-      var body2 = spring.to;
-      var length = spring.length < 0 ? options.springLength : spring.length;
-      ${pattern("var d{var} = body2.pos.{var} - body1.pos.{var};", {indent: 6})}
-      var r = Math.sqrt(${pattern("d{var} * d{var}", {join: " + "})});
-
-      if (r === 0) {
-        ${pattern("d{var} = (random.nextDouble() - 0.5) / 50;", {indent: 8})}
-        r = Math.sqrt(${pattern("d{var} * d{var}", {join: " + "})});
-      }
-
-      var d = r - length;
-      var coefficient = ((spring.coefficient > 0) ? spring.coefficient : options.springCoefficient) * d / r;
-
-      ${pattern("body1.force.{var} += coefficient * d{var}", {indent: 6})};
-      body1.springCount += 1;
-      body1.springLength += r;
-
-      ${pattern("body2.force.{var} -= coefficient * d{var}", {indent: 6})};
-      body2.springCount += 1;
-      body2.springLength += r;
-    }
-  };
-`;
-  return code;
-}
-generateCreateSpringForce.generateCreateSpringForceFunctionBody = generateCreateSpringForceFunctionBody_1;
-var generateIntegrator = generateIntegratorFunction;
-var generateIntegratorFunctionBody_1 = generateIntegratorFunctionBody;
-function generateIntegratorFunction(dimension) {
-  let code = generateIntegratorFunctionBody(dimension);
-  return new Function("bodies", "timeStep", "adaptiveTimeStepWeight", code);
-}
-function generateIntegratorFunctionBody(dimension) {
-  let pattern = createPatternBuilder(dimension);
-  let code = `
-  var length = bodies.length;
-  if (length === 0) return 0;
-
-  ${pattern("var d{var} = 0, t{var} = 0;", {indent: 2})}
-
-  for (var i = 0; i < length; ++i) {
-    var body = bodies[i];
-    if (body.isPinned) continue;
-
-    if (adaptiveTimeStepWeight && body.springCount) {
-      timeStep = (adaptiveTimeStepWeight * body.springLength/body.springCount);
-    }
-
-    var coeff = timeStep / body.mass;
-
-    ${pattern("body.velocity.{var} += coeff * body.force.{var};", {indent: 4})}
-    ${pattern("var v{var} = body.velocity.{var};", {indent: 4})}
-    var v = Math.sqrt(${pattern("v{var} * v{var}", {join: " + "})});
-
-    if (v > 1) {
-      // We normalize it so that we move within timeStep range. 
-      // for the case when v <= 1 - we let velocity to fade out.
-      ${pattern("body.velocity.{var} = v{var} / v;", {indent: 6})}
-    }
-
-    ${pattern("d{var} = timeStep * body.velocity.{var};", {indent: 4})}
-
-    ${pattern("body.pos.{var} += d{var};", {indent: 4})}
-
-    ${pattern("t{var} += Math.abs(d{var});", {indent: 4})}
-  }
-
-  return (${pattern("t{var} * t{var}", {join: " + "})})/length;
-`;
-  return code;
-}
-generateIntegrator.generateIntegratorFunctionBody = generateIntegratorFunctionBody_1;
-var spring = Spring;
-function Spring(fromBody, toBody, length2, springCoefficient) {
-  this.from = fromBody;
-  this.to = toBody;
-  this.length = length2;
-  this.coefficient = springCoefficient;
-}
-var ngraph_merge = merge;
-function merge(target, options) {
-  var key;
-  if (!target) {
-    target = {};
-  }
-  if (options) {
-    for (key in options) {
-      if (options.hasOwnProperty(key)) {
-        var targetHasIt = target.hasOwnProperty(key), optionsValueType = typeof options[key], shouldReplace = !targetHasIt || typeof target[key] !== optionsValueType;
-        if (shouldReplace) {
-          target[key] = options[key];
-        } else if (optionsValueType === "object") {
-          target[key] = merge(target[key], options[key]);
-        }
-      }
-    }
-  }
-  return target;
-}
-var ngraph_random = createCommonjsModule(function(module) {
-  module.exports = random2;
-  module.exports.random = random2, module.exports.randomIterator = randomIterator;
-  function random2(inputSeed) {
-    var seed = typeof inputSeed === "number" ? inputSeed : +new Date();
-    return new Generator(seed);
-  }
-  function Generator(seed) {
-    this.seed = seed;
-  }
-  Generator.prototype.next = next;
-  Generator.prototype.nextDouble = nextDouble;
-  Generator.prototype.uniform = nextDouble;
-  Generator.prototype.gaussian = gaussian;
-  function gaussian() {
-    var r, x, y;
-    do {
-      x = this.nextDouble() * 2 - 1;
-      y = this.nextDouble() * 2 - 1;
-      r = x * x + y * y;
-    } while (r >= 1 || r === 0);
-    return x * Math.sqrt(-2 * Math.log(r) / r);
-  }
-  Generator.prototype.levy = levy;
-  function levy() {
-    var beta = 3 / 2;
-    var sigma = Math.pow(gamma2(1 + beta) * Math.sin(Math.PI * beta / 2) / (gamma2((1 + beta) / 2) * beta * Math.pow(2, (beta - 1) / 2)), 1 / beta);
-    return this.gaussian() * sigma / Math.pow(Math.abs(this.gaussian()), 1 / beta);
-  }
-  function gamma2(z) {
-    return Math.sqrt(2 * Math.PI / z) * Math.pow(1 / Math.E * (z + 1 / (12 * z - 1 / (10 * z))), z);
-  }
-  function nextDouble() {
-    var seed = this.seed;
-    seed = seed + 2127912214 + (seed << 12) & 4294967295;
-    seed = (seed ^ 3345072700 ^ seed >>> 19) & 4294967295;
-    seed = seed + 374761393 + (seed << 5) & 4294967295;
-    seed = (seed + 3550635116 ^ seed << 9) & 4294967295;
-    seed = seed + 4251993797 + (seed << 3) & 4294967295;
-    seed = (seed ^ 3042594569 ^ seed >>> 16) & 4294967295;
-    this.seed = seed;
-    return (seed & 268435455) / 268435456;
-  }
-  function next(maxValue) {
-    return Math.floor(this.nextDouble() * maxValue);
-  }
-  function randomIterator(array2, customRandom) {
-    var localRandom = customRandom || random2();
-    if (typeof localRandom.next !== "function") {
-      throw new Error("customRandom does not match expected API: next() function is missing");
-    }
-    return {
-      forEach: forEach2,
-      shuffle
-    };
-    function shuffle() {
-      var i, j, t;
-      for (i = array2.length - 1; i > 0; --i) {
-        j = localRandom.next(i + 1);
-        t = array2[j];
-        array2[j] = array2[i];
-        array2[i] = t;
-      }
-      return array2;
-    }
-    function forEach2(callback) {
-      var i, j, t;
-      for (i = array2.length - 1; i > 0; --i) {
-        j = localRandom.next(i + 1);
-        t = array2[j];
-        array2[j] = array2[i];
-        array2[i] = t;
-        callback(t);
-      }
-      if (array2.length) {
-        callback(array2[0]);
-      }
-    }
-  }
-});
-var createPhysicsSimulator_1 = createPhysicsSimulator;
-var dimensionalCache = {};
-function createPhysicsSimulator(settings) {
-  var Spring2 = spring;
-  var merge2 = ngraph_merge;
-  var eventify2 = ngraph_events;
-  if (settings) {
-    if (settings.springCoeff !== void 0)
-      throw new Error("springCoeff was renamed to springCoefficient");
-    if (settings.dragCoeff !== void 0)
-      throw new Error("dragCoeff was renamed to dragCoefficient");
-  }
-  settings = merge2(settings, {
-    springLength: 10,
-    springCoefficient: 0.8,
-    gravity: -12,
-    theta: 0.8,
-    dragCoefficient: 0.9,
-    timeStep: 0.5,
-    adaptiveTimeStepWeight: 0,
-    dimensions: 2,
-    debug: false
-  });
-  var factory = dimensionalCache[settings.dimensions];
-  if (!factory) {
-    var dimensions = settings.dimensions;
-    factory = {
-      Body: generateCreateBody(dimensions, settings.debug),
-      createQuadTree: generateQuadTree(dimensions),
-      createBounds: generateBounds(dimensions),
-      createDragForce: generateCreateDragForce(dimensions),
-      createSpringForce: generateCreateSpringForce(dimensions),
-      integrate: generateIntegrator(dimensions)
-    };
-    dimensionalCache[dimensions] = factory;
-  }
-  var Body = factory.Body;
-  var createQuadTree = factory.createQuadTree;
-  var createBounds = factory.createBounds;
-  var createDragForce = factory.createDragForce;
-  var createSpringForce = factory.createSpringForce;
-  var integrate = factory.integrate;
-  var createBody = (pos) => new Body(pos);
-  var random2 = ngraph_random.random(42);
-  var bodies = [];
-  var springs = [];
-  var quadTree = createQuadTree(settings, random2);
-  var bounds = createBounds(bodies, settings, random2);
-  var springForce = createSpringForce(settings, random2);
-  var dragForce = createDragForce(settings);
-  var totalMovement = 0;
-  var forces = [];
-  var forceMap = new Map();
-  var iterationNumber = 0;
-  addForce("nbody", nbodyForce);
-  addForce("spring", updateSpringForce);
-  var publicApi = {
-    bodies,
-    quadTree,
-    springs,
-    settings,
-    addForce,
-    removeForce,
-    getForces,
-    step: function() {
-      for (var i = 0; i < forces.length; ++i) {
-        forces[i](iterationNumber);
-      }
-      var movement = integrate(bodies, settings.timeStep, settings.adaptiveTimeStepWeight);
-      iterationNumber += 1;
-      return movement;
-    },
-    addBody: function(body) {
-      if (!body) {
-        throw new Error("Body is required");
-      }
-      bodies.push(body);
-      return body;
-    },
-    addBodyAt: function(pos) {
-      if (!pos) {
-        throw new Error("Body position is required");
-      }
-      var body = createBody(pos);
-      bodies.push(body);
-      return body;
-    },
-    removeBody: function(body) {
-      if (!body) {
-        return;
-      }
-      var idx = bodies.indexOf(body);
-      if (idx < 0) {
-        return;
-      }
-      bodies.splice(idx, 1);
-      if (bodies.length === 0) {
-        bounds.reset();
-      }
-      return true;
-    },
-    addSpring: function(body1, body2, springLength, springCoefficient) {
-      if (!body1 || !body2) {
-        throw new Error("Cannot add null spring to force simulator");
-      }
-      if (typeof springLength !== "number") {
-        springLength = -1;
-      }
-      var spring2 = new Spring2(body1, body2, springLength, springCoefficient >= 0 ? springCoefficient : -1);
-      springs.push(spring2);
-      return spring2;
-    },
-    getTotalMovement: function() {
-      return totalMovement;
-    },
-    removeSpring: function(spring2) {
-      if (!spring2) {
-        return;
-      }
-      var idx = springs.indexOf(spring2);
-      if (idx > -1) {
-        springs.splice(idx, 1);
-        return true;
-      }
-    },
-    getBestNewBodyPosition: function(neighbors) {
-      return bounds.getBestNewPosition(neighbors);
-    },
-    getBBox: getBoundingBox,
-    getBoundingBox,
-    invalidateBBox: function() {
-      console.warn("invalidateBBox() is deprecated, bounds always recomputed on `getBBox()` call");
-    },
-    gravity: function(value) {
-      if (value !== void 0) {
-        settings.gravity = value;
-        quadTree.options({gravity: value});
-        return this;
-      } else {
-        return settings.gravity;
-      }
-    },
-    theta: function(value) {
-      if (value !== void 0) {
-        settings.theta = value;
-        quadTree.options({theta: value});
-        return this;
-      } else {
-        return settings.theta;
-      }
-    },
-    random: random2
-  };
-  expose(settings, publicApi);
-  eventify2(publicApi);
-  return publicApi;
-  function getBoundingBox() {
-    bounds.update();
-    return bounds.box;
-  }
-  function addForce(forceName, forceFunction) {
-    if (forceMap.has(forceName))
-      throw new Error("Force " + forceName + " is already added");
-    forceMap.set(forceName, forceFunction);
-    forces.push(forceFunction);
-  }
-  function removeForce(forceName) {
-    var forceIndex = forces.indexOf(forceMap.get(forceName));
-    if (forceIndex < 0)
-      return;
-    forces.splice(forceIndex, 1);
-    forceMap.delete(forceName);
-  }
-  function getForces() {
-    return forceMap;
-  }
-  function nbodyForce() {
-    if (bodies.length === 0)
-      return;
-    quadTree.insertBodies(bodies);
-    var i = bodies.length;
-    while (i--) {
-      var body = bodies[i];
-      if (!body.isPinned) {
-        body.reset();
-        quadTree.updateBodyForce(body);
-        dragForce.update(body);
-      }
-    }
-  }
-  function updateSpringForce() {
-    var i = springs.length;
-    while (i--) {
-      springForce.update(springs[i]);
-    }
-  }
-}
-function expose(settings, target) {
-  for (var key in settings) {
-    augment(settings, target, key);
-  }
-}
-function augment(source, target, key) {
-  if (!source.hasOwnProperty(key))
-    return;
-  if (typeof target[key] === "function") {
-    return;
-  }
-  var sourceIsNumber = Number.isFinite(source[key]);
-  if (sourceIsNumber) {
-    target[key] = function(value) {
-      if (value !== void 0) {
-        if (!Number.isFinite(value))
-          throw new Error("Value of " + key + " should be a valid number.");
-        source[key] = value;
-        return target;
-      }
-      return source[key];
-    };
-  } else {
-    target[key] = function(value) {
-      if (value !== void 0) {
-        source[key] = value;
-        return target;
-      }
-      return source[key];
-    };
-  }
-}
-var ngraph_forcelayout = createLayout;
-var simulator = createPhysicsSimulator_1;
-function createLayout(graph, physicsSettings) {
-  if (!graph) {
-    throw new Error("Graph structure cannot be undefined");
-  }
-  var createSimulator = physicsSettings && physicsSettings.createSimulator || createPhysicsSimulator_1;
-  var physicsSimulator = createSimulator(physicsSettings);
-  if (Array.isArray(physicsSettings))
-    throw new Error("Physics settings is expected to be an object");
-  var nodeMass = graph.version > 19 ? defaultSetNodeMass : defaultArrayNodeMass;
-  if (physicsSettings && typeof physicsSettings.nodeMass === "function") {
-    nodeMass = physicsSettings.nodeMass;
-  }
-  var nodeBodies = new Map();
-  var springs = {};
-  var bodiesCount = 0;
-  var springTransform = physicsSimulator.settings.springTransform || noop2;
-  initPhysics();
-  listenToEvents();
-  var wasStable = false;
-  var api = {
-    step: function() {
-      if (bodiesCount === 0) {
-        updateStableStatus(true);
-        return true;
-      }
-      var lastMove = physicsSimulator.step();
-      api.lastMove = lastMove;
-      api.fire("step");
-      var ratio = lastMove / bodiesCount;
-      var isStableNow = ratio <= 0.01;
-      updateStableStatus(isStableNow);
-      return isStableNow;
-    },
-    getNodePosition: function(nodeId) {
-      return getInitializedBody(nodeId).pos;
-    },
-    setNodePosition: function(nodeId) {
-      var body = getInitializedBody(nodeId);
-      body.setPosition.apply(body, Array.prototype.slice.call(arguments, 1));
-    },
-    getLinkPosition: function(linkId) {
-      var spring2 = springs[linkId];
-      if (spring2) {
-        return {
-          from: spring2.from.pos,
-          to: spring2.to.pos
-        };
-      }
-    },
-    getGraphRect: function() {
-      return physicsSimulator.getBBox();
-    },
-    forEachBody,
-    pinNode: function(node, isPinned) {
-      var body = getInitializedBody(node.id);
-      body.isPinned = !!isPinned;
-    },
-    isNodePinned: function(node) {
-      return getInitializedBody(node.id).isPinned;
-    },
-    dispose: function() {
-      graph.off("changed", onGraphChanged);
-      api.fire("disposed");
-    },
-    getBody,
-    getSpring,
-    getForceVectorLength,
-    simulator: physicsSimulator,
-    graph,
-    lastMove: 0
-  };
-  ngraph_events(api);
-  return api;
-  function updateStableStatus(isStableNow) {
-    if (wasStable !== isStableNow) {
-      wasStable = isStableNow;
-      onStableChanged(isStableNow);
-    }
-  }
-  function forEachBody(cb) {
-    nodeBodies.forEach(cb);
-  }
-  function getForceVectorLength() {
-    var fx = 0, fy = 0;
-    forEachBody(function(body) {
-      fx += Math.abs(body.force.x);
-      fy += Math.abs(body.force.y);
-    });
-    return Math.sqrt(fx * fx + fy * fy);
-  }
-  function getSpring(fromId, toId) {
-    var linkId;
-    if (toId === void 0) {
-      if (typeof fromId !== "object") {
-        linkId = fromId;
-      } else {
-        linkId = fromId.id;
-      }
-    } else {
-      var link2 = graph.hasLink(fromId, toId);
-      if (!link2)
-        return;
-      linkId = link2.id;
-    }
-    return springs[linkId];
-  }
-  function getBody(nodeId) {
-    return nodeBodies.get(nodeId);
-  }
-  function listenToEvents() {
-    graph.on("changed", onGraphChanged);
-  }
-  function onStableChanged(isStable) {
-    api.fire("stable", isStable);
-  }
-  function onGraphChanged(changes) {
-    for (var i = 0; i < changes.length; ++i) {
-      var change = changes[i];
-      if (change.changeType === "add") {
-        if (change.node) {
-          initBody(change.node.id);
-        }
-        if (change.link) {
-          initLink(change.link);
-        }
-      } else if (change.changeType === "remove") {
-        if (change.node) {
-          releaseNode(change.node);
-        }
-        if (change.link) {
-          releaseLink(change.link);
-        }
-      }
-    }
-    bodiesCount = graph.getNodesCount();
-  }
-  function initPhysics() {
-    bodiesCount = 0;
-    graph.forEachNode(function(node) {
-      initBody(node.id);
-      bodiesCount += 1;
-    });
-    graph.forEachLink(initLink);
-  }
-  function initBody(nodeId) {
-    var body = nodeBodies.get(nodeId);
-    if (!body) {
-      var node = graph.getNode(nodeId);
-      if (!node) {
-        throw new Error("initBody() was called with unknown node id");
-      }
-      var pos = node.position;
-      if (!pos) {
-        var neighbors = getNeighborBodies(node);
-        pos = physicsSimulator.getBestNewBodyPosition(neighbors);
-      }
-      body = physicsSimulator.addBodyAt(pos);
-      body.id = nodeId;
-      nodeBodies.set(nodeId, body);
-      updateBodyMass(nodeId);
-      if (isNodeOriginallyPinned(node)) {
-        body.isPinned = true;
-      }
-    }
-  }
-  function releaseNode(node) {
-    var nodeId = node.id;
-    var body = nodeBodies.get(nodeId);
-    if (body) {
-      nodeBodies.delete(nodeId);
-      physicsSimulator.removeBody(body);
-    }
-  }
-  function initLink(link2) {
-    updateBodyMass(link2.fromId);
-    updateBodyMass(link2.toId);
-    var fromBody = nodeBodies.get(link2.fromId), toBody = nodeBodies.get(link2.toId), spring2 = physicsSimulator.addSpring(fromBody, toBody, link2.length);
-    springTransform(link2, spring2);
-    springs[link2.id] = spring2;
-  }
-  function releaseLink(link2) {
-    var spring2 = springs[link2.id];
-    if (spring2) {
-      var from = graph.getNode(link2.fromId), to = graph.getNode(link2.toId);
-      if (from)
-        updateBodyMass(from.id);
-      if (to)
-        updateBodyMass(to.id);
-      delete springs[link2.id];
-      physicsSimulator.removeSpring(spring2);
-    }
-  }
-  function getNeighborBodies(node) {
-    var neighbors = [];
-    if (!node.links) {
-      return neighbors;
-    }
-    var maxNeighbors = Math.min(node.links.length, 2);
-    for (var i = 0; i < maxNeighbors; ++i) {
-      var link2 = node.links[i];
-      var otherBody = link2.fromId !== node.id ? nodeBodies.get(link2.fromId) : nodeBodies.get(link2.toId);
-      if (otherBody && otherBody.pos) {
-        neighbors.push(otherBody);
-      }
-    }
-    return neighbors;
-  }
-  function updateBodyMass(nodeId) {
-    var body = nodeBodies.get(nodeId);
-    body.mass = nodeMass(nodeId);
-    if (Number.isNaN(body.mass)) {
-      throw new Error("Node mass should be a number");
-    }
-  }
-  function isNodeOriginallyPinned(node) {
-    return node && (node.isPinned || node.data && node.data.isPinned);
-  }
-  function getInitializedBody(nodeId) {
-    var body = nodeBodies.get(nodeId);
-    if (!body) {
-      initBody(nodeId);
-      body = nodeBodies.get(nodeId);
-    }
-    return body;
-  }
-  function defaultArrayNodeMass(nodeId) {
-    var links = graph.getLinks(nodeId);
-    if (!links)
-      return 1;
-    return 1 + links.length / 3;
-  }
-  function defaultSetNodeMass(nodeId) {
-    var links = graph.getLinks(nodeId);
-    if (!links)
-      return 1;
-    return 1 + links.size / 3;
-  }
-}
-function noop2() {
-}
-ngraph_forcelayout.simulator = simulator;
 
 // build/_snowpack/pkg/d3-force-3d.js
 function tree_add(d) {
@@ -8468,6 +7081,18 @@ var initialAngleRoll = Math.PI * (3 - Math.sqrt(5));
 var initialAngleYaw = Math.PI * 20 / (9 + Math.sqrt(221));
 
 // build/_snowpack/pkg/pica.js
+function createCommonjsModule(fn, basedir, module) {
+  return module = {
+    path: basedir,
+    exports: {},
+    require: function(path, base) {
+      return commonjsRequire(path, base === void 0 || base === null ? module.path : base);
+    }
+  }, fn(module, module.exports), module.exports;
+}
+function commonjsRequire() {
+  throw new Error("Dynamic requires are not currently supported by @rollup/plugin-commonjs");
+}
 var pica = createCommonjsModule(function(module, exports) {
   /*!
   
