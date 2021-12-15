@@ -1,6 +1,6 @@
+
 // Temporary fix for
 // https://github.com/evanw/esbuild/issues/312
-console.log("IMPORTING");
 let workerFunction = (function (){
 
 	importScripts("https://cdn.jsdelivr.net/npm/d3-dispatch@3");
@@ -14,18 +14,14 @@ let workerFunction = (function (){
 	"use strict"
 
 	self.onmessage = function (msg) {
-		console.log("RECEIVED:", msg.data.type);
+		// console.log("RECEIVED:", msg.data.type);
 		let use2D = false;
-		if (msg.data.type == "import") {
-			// self.importScripts(new URL('../layouts/libs/ngraph.graph.min.js', msg.data.location));
-			// self.importScripts(new URL('../layouts/libs/ngraph.forcelayout.min.js', msg.data.location));
-			console.log("IMPORTING...")
-		} else if (msg.data.type == "stop") {
+		if (msg.data.type == "pause") {
+			// console.log("PAUSING!!!!")
 			this.simulation.stop();
-		} else if (msg.data.type == "restart") {
+		} else if (msg.data.type == "resume") {
 			this.simulation.restart();
-		} else if (msg.data.type == "init") {
-			console.log("INIT");
+		} else if (msg.data.type == "start") {
 			let inputNodes = msg.data.nodes;
 			let inputNodesPositions = msg.data.positions;
 			let inputEdges = msg.data.edges;
@@ -65,11 +61,14 @@ let workerFunction = (function (){
 				links.push(edgeObject);
 			}
 
+			this.repulsiveforce = d3.forceManyBody();
+			this.attractiveforce = d3.forceLink(links);
+			this.centralForce = d3.forceCenter();
 			this.simulation = d3.forceSimulation(nodes)
 				.numDimensions(use2D?2:3)
-				.force("charge", d3.forceManyBody())
-				.force("link", d3.forceLink(links))
-				.force("center", d3.forceCenter())
+				.force("charge", this.repulsiveforce)
+				.force("link", this.attractiveforce)
+				.force("center", centralForce)
 				// .force("collide", d3.forceCollide(d => d.size*4))
 				.velocityDecay(0.05)
 				.on("tick", async () => {
@@ -83,14 +82,111 @@ let workerFunction = (function (){
 							inputNodesPositions[vertexIndex * 3 + 2] = 0;
 						}
 					}
-					self.postMessage({ type: "layoutStep", positions: inputNodesPositions });
+					self.postMessage({ type: "update", positions: inputNodesPositions });
+				}).on("end", () => {
+					self.postMessage({ type: "stop" });
 				});
 		}
 	}
 })
 
 let workerFunctionString = workerFunction.toString();
-console.log(workerFunctionString)
 let workerURL = URL.createObjectURL(new Blob([`(${workerFunctionString})()`], {type:'text/javascript'}));
 
-export {workerURL};
+
+class d3ForceLayoutWorker {
+	constructor({
+		network=null,
+		onUpdate=null,
+		onStop=null,
+		onStart=null,
+		use2D=false
+	}) {
+		this._network = network;
+		this._onUpdate = onUpdate;
+		this._onStop = onStop;
+		this._onStart = onStart;
+		this._use2D = use2D;
+
+		this._layoutWorker = null;
+	}
+
+	start(){
+		if(!this._layoutWorker){
+			this._layoutWorker = new Worker(workerURL);
+			this._layoutWorker.onmessage = (msg) => {
+				if (msg.data.type == "update") {
+					this._onUpdate?.(msg.data);
+				}else if (msg.data.type == "stop") {
+					this._onStop?.(msg.data);
+					this._layoutRunning = false;
+				} else {
+					console.log("Layout received Unknown msg: ", msg);
+				}
+			};
+
+			this._layoutRunning = true;
+			this._onStart?.();
+			this._layoutWorker.postMessage({
+				 type: "start",
+				// network: this.network,
+				nodes:this._network.nodes,
+				positions:this._network.positions,
+				edges:this._network.indexedEdges, 
+				use2D: this._use2D
+			});
+		}
+	}
+
+	restart(){
+		this.stop();
+		this.start();
+	}
+
+	stop(){
+		if(this._layoutRunning){
+			this._onStop?.();
+		}
+		this._layoutWorker.terminate();
+		this._layoutRunning = false;
+		delete this._layoutWorker;
+		this._layoutWorker = null;
+	}
+
+	resume() {
+		this.start();
+		if(!this._layoutRunning){
+			this._onStart?.();
+		}
+		this._layoutWorker.postMessage({ type: "resume" });
+		this._layoutRunning=true;
+	}
+
+	pause(){
+		this._layoutWorker.postMessage({ type: "pause"});
+		this._layoutRunning=false;
+		this._onStop?.();
+	}
+
+	onUpdate(callback) {
+		this._onUpdate = callback;
+	}
+	
+	onStop(callback) {
+		this._onStop = callback;
+	}
+	
+	onStart(callback) {
+		this._onStart = callback;
+	}
+
+	isRunning() {
+		return this._layoutRunning;
+	}
+	
+	cleanup() {
+		this.stop();
+	}
+}
+
+export {d3ForceLayoutWorker as layoutWorker};

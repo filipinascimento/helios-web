@@ -92,7 +92,7 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 	console.log(network)
 
 	let nodeCount = network.nodesCount;
-
+	let bigNetwork = nodeCount > 100000;
 	let nodes = {};
 	let edges = [];
 	for (let index = 0; index < nodeCount; index++) {
@@ -133,6 +133,7 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 		nodes: nodes,
 		edges: edges,
 		use2D: use2D,
+		autoStartLayout: !bigNetwork,
 	})
 		.onNodeHoverStart((node, event) => {
 			if (event) {
@@ -210,8 +211,8 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 			console.log(`Double Clicked: ${node.ID}`);
 			helios.centerOnNode(node.ID);
 		})
-		// .onLayoutStart(()=>console.log("Layout start"))
-		// .onLayoutFinish(()=>console.log("Layout end"))
+		.onLayoutStart(()=>console.log("Layout start"))
+		.onLayoutStop(()=>console.log("Layout end"))
 		.backgroundColor(backgroundColor) // set background color
 		// .nodeColor(node=>{ // Example on how to define colors
 		// 	let color = d3rgb(colorScale(node.ID));
@@ -544,16 +545,25 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 
 
 
-
+		document.addEventListener('keyup', event => {
+			if (event.code === 'Space') {
+				if(helios.layoutWorker.isRunning()){
+					helios.pauseLayout();
+				}else{
+					helios.resumeLayout();
+				}
+			}
+		});
+		
 		helios.onReady(() => {
 			updateColorSelection();
-			if(helios.network.index2Node.length>100000){
-				helios.stopLayout();
+			if(bigNetwork){
 				helios.zoomFactor(0.35);
 			}else{
 				helios.zoomFactor(0.05);
 				helios.zoomFactor(0.75,1000);
 			}
+			
 		});
 
 

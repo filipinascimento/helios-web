@@ -10,7 +10,7 @@ import { zoom as d3Zoom, zoomTransform as d3ZoomTransform, zoomIdentity as d3Zoo
 // import { default as createLayout } from "ngraph.forcelayout"
 import { forceSimulation, forceManyBody, forceLink, forceCenter } from "d3-force-3d";
 import {default as Pica} from "pica";
-import {workerURL as d3force3dLayoutURL} from "../layouts/d3force3dLayoutWorker.js"
+import {layoutWorker as d3ForceLayoutWorker} from "../layouts/d3force3dLayoutWorker.js"
 import * as edgesShaders from "../shaders/edges.js"
 import * as nodesShaders from "../shaders/nodes.js"
 let isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
@@ -42,6 +42,7 @@ export class Helios {
 		shadedNodes = false,
 		fastEdges = true,
 		forceSupersample = false,
+		autoStartLayout = true,
 		// display = [],
 	}) {
 		this.element = document.getElementById(elementID);
@@ -63,6 +64,7 @@ export class Helios {
 		this.forceSupersample = forceSupersample;
 		this.cameraDistance = 450;
 		this._zoomFactor = 1;
+		this.interacting = false;
 		this.rotateLinearX = 0;
 		this.rotateLinearY = 0;
 		this.panX = 0;
@@ -71,6 +73,7 @@ export class Helios {
 		this.pickingResolutionRatio = 0.25;
 		this._edgesIntensity = 1.0;
 		this._use2D = use2D;
+		this._autoStartLayout = autoStartLayout;
 		this.useAdditiveBlending = false;
 		this.scheduler = new HeliosScheduler(this,{throttle:false});
 		if (this._use2D) {
@@ -113,7 +116,7 @@ export class Helios {
 		this.onRotationCallback = null;
 		this.onResizeCallback = null;
 		this.onLayoutStartCallback = null;
-		this.onLayoutFinishCallback = null;
+		this.onLayoutStopCallback = null;
 		this.onDrawCallback = null;
 		this._backgroundColor = [0.5, 0.5, 0.5, 1.0];
 		this.onReadyCallback = null;
@@ -156,131 +159,89 @@ export class Helios {
 
 		// this.layoutWorker = new Worker(new URL('../layouts/ngraphLayoutWorker.js', import.meta.url));
 		// this.layoutWorker = new Worker(new URL('../layouts/d3force3dLayoutWorker.js', import.meta.url));
-		this.layoutWorker = new Worker(d3force3dLayoutURL);
-		
 		this.newPositions = this.network.positions.slice(0);
 		this.positionInterpolator = null;
-		this.layoutWorker.onmessage = (msg) => {
-			if (msg.data.type == "layoutStep") {
-				this.newPositions = msg.data.positions;
-				// let newPositions = msg.data.positions;
-				// for (let index = 0; index < this.network.positions.length; index++) {
-				// 	this.network.positions[index] = newPositions[index];
-				// };
-				// requestAnimationFrame(()=>{	
-				// 	this.updateNodesGeometry();
-				// 	this.updateEdgesGeometry();
-				// 	this.redraw();
-				// });
-				// console.log("receiving positions...");
+		let onlayoutUpdate = (data) => {
+			this.newPositions = data.positions;
+			let interpolatorTask = {
+				name: "1.1.positionInterpolator",
+				callback: (elapsedTime,task)=>{
+					let maxDisplacement = 0;
+					for (let index = 0; index < this.network.positions.length; index++) {
+						let displacement = this.newPositions[index] - this.network.positions[index];
+						this.network.positions[index] += 0.01 * (displacement)*elapsedTime/10;
+						
+						maxDisplacement = Math.max(Math.abs(displacement), maxDisplacement);
+					};
+					// console.log(this.scheduler._averageFPS);
 
-
-				let interpolatorTask = {
-					name: "1.1.positionInterpolator",
-					callback: (elapsedTime,task)=>{
-						let maxDisplacement = 0;
-						for (let index = 0; index < this.network.positions.length; index++) {
-							let displacement = this.newPositions[index] - this.network.positions[index];
-							this.network.positions[index] += 0.01 * (displacement)*elapsedTime/10;
-							
-							maxDisplacement = Math.max(Math.abs(displacement), maxDisplacement);
-						};
-						// console.log(this.scheduler._averageFPS);
-
-						if (maxDisplacement < 1) {
-							this.scheduler.unschedule("1.1.positionInterpolator");
-						}
-					},
-					delay:0,
-					repeat:true,
-					synchronized:true,
-					immediateUpdates:false,
-					redraw: true,
-					updateNodesGeometry: true,
-					updateEdgesGeometry: true,
-				}
-
-				this.scheduler.schedule({
-					name: "1.0.positionChange",
-					callback: (elapsedTime,task)=>{
-						let maxDisplacement = 0;
-						for (let index = 0; index < this.network.positions.length; index++) {
-							let displacement = this.newPositions[index] - this.network.positions[index];
-							maxDisplacement = Math.max(Math.abs(displacement), maxDisplacement);
-						};
-						this.scheduler.schedule(interpolatorTask);
-						// console.log(this.scheduler._averageFPS);
-					},
-					delay:0,
-					repeat:false,
-					synchronized:true,
-					immediateUpdates:false,
-					redraw: false,
-					updateNodesGeometry: false,
-					updateEdgesGeometry: false,
-				});
-
-				// if (this.positionInterpolator == null) {
-				// 	let maxDisplacement = 0;
-				// 	for (let index = 0; index < this.network.positions.length; index++) {
-				// 		let displacement = this.newPositions[index] - this.network.positions[index];
-				// 		maxDisplacement = Math.max(Math.abs(displacement), maxDisplacement);
-				// 	};
-				// 	if (maxDisplacement > 1) {
-				// 		// console.log("Interpolator Started...");
-				// 		this.onLayoutStartCallback?.();
-				// 		this.positionInterpolator = setInterval(() => {
-				// 			let maxDisplacement = 0;
-				// 			for (let index = 0; index < this.network.positions.length; index++) {
-				// 				let displacement = this.newPositions[index] - this.network.positions[index];
-				// 				this.network.positions[index] += 0.025 * (displacement);
-				// 				maxDisplacement = Math.max(Math.abs(displacement), maxDisplacement);
-				// 			};
-				// 			this.updateNodesGeometry();
-				// 			this.updateEdgesGeometry();
-				// 			requestAnimationFrame(() => {
-				// 				this.redraw();
-				// 			});
-				// 			if (maxDisplacement < 1) {
-				// 				// console.log("Interpolator Stopped...");
-				// 				this.onLayoutFinishCallback?.();
-				// 				clearInterval(this.positionInterpolator);
-				// 				this.positionInterpolator = null;
-				// 			}
-				// 		}, 1000 / 60);
-				// 	}
-				// }
-			} else {
-				console.log("Received message", msg);
+					if (maxDisplacement < 1) {
+						this.scheduler.unschedule("1.1.positionInterpolator");
+					}
+				},
+				delay:0,
+				repeat:true,
+				synchronized:true,
+				immediateUpdates:false,
+				redraw: true,
+				updateNodesGeometry: true,
+				updateEdgesGeometry: true,
 			}
+			this.scheduler.schedule({
+				name: "1.0.positionChange",
+				callback: (elapsedTime,task)=>{
+					// let maxDisplacement = 0;
+					// for (let index = 0; index < this.network.positions.length; index++) {
+					// 	let displacement = this.newPositions[index] - this.network.positions[index];
+					// 	maxDisplacement = Math.max(Math.abs(displacement), maxDisplacement);
+					// };
+					this.scheduler.schedule(interpolatorTask);
+					// console.log(this.scheduler._averageFPS);
+				},
+				delay:0,
+				repeat:false,
+				synchronized:true,
+				immediateUpdates:false,
+				redraw: false,
+				updateNodesGeometry: false,
+				updateEdgesGeometry: false,
+			});
+		};
+		
+		let onLayoutStop = () =>{
+			this.onLayoutStopCallback?.();
 		}
-		// this.layoutWorker.postMessage({ type: "import", location: import.meta.url });
-		this.layoutWorker.postMessage({ type: "init",
-			// network: this.network,
-			nodes:this.network.nodes,
-			positions:this.network.positions,
-			edges:this.network.indexedEdges, 
-			use2D: this._use2D });
-		this.layoutRunning = true;
-		document.addEventListener('keyup', event => {
-			if (event.code === 'Space') {
-				if(this.layoutRunning){
-					this.stopLayout();
-				}else{
-					this.resumeLayout();
-				}
-			}
-		})
+
+		let onLayoutStart = () =>{
+			this.onLayoutStartCallback?.();
+		}
+
+
+		this.layoutWorker = new d3ForceLayoutWorker({
+			network:this.network,
+			onUpdate: onlayoutUpdate,
+			onStop: onLayoutStop,
+			onStart: onLayoutStart,
+			use2D: this._use2D
+		});
+
+		if(this._autoStartLayout){
+			this.layoutWorker.start();
+		}
+
+		
 	}
 
-	stopLayout(){
-		this.layoutWorker.postMessage({ type: "stop"});
-		this.layoutRunning=false;
+	pauseLayout(){
+		// this.layoutWorker.postMessage({ type: "stop"});
+		// this.layoutRunning=false;
+		this.layoutWorker.pause();
 	}
 
 	resumeLayout(){
-		this.layoutWorker.postMessage({ type: "restart" });
-		this.layoutRunning=true;
+		// this.layoutWorker.postMessage({ type: "restart" });
+		// this.layoutRunning=true;
+		this.layoutWorker.resume();
 	}
 	
 	_setupEvents() {
@@ -537,12 +498,16 @@ export class Helios {
 		framebuffer.discard();
 	}
 
-	triggerHoverEvents(event) {
+	triggerHoverEvents(event,shallCancel) {
 		if(this.lastMouseX==-1 || this.lastMouseY==-1){
 			return;
 		}
-		const rect = this.canvasElement.getBoundingClientRect();
-		const nodeID = this.pickPoint(this.lastMouseX - rect.left, this.lastMouseY - rect.top);
+
+		let nodeID = -1;
+		if(!this.interacting){
+			const rect = this.canvasElement.getBoundingClientRect();
+			nodeID = this.pickPoint(this.lastMouseX - rect.left, this.lastMouseY - rect.top);
+		}
 		if (nodeID >= 0 && this.currentHoverIndex == -1) {
 			this.currentHoverIndex = nodeID;
 			this.onNodeHoverStartCallback?.(this.network.index2Node[nodeID], event);
@@ -558,6 +523,9 @@ export class Helios {
 			this.currentHoverIndex = -1;
 		}
 	}
+
+
+
 	async _setupShaders() {
 		let gl = this.gl;
 
@@ -898,7 +866,7 @@ export class Helios {
 			}
 			// this.triggerHoverEvents(event);
 			event => event.preventDefault();
-		})
+		}).on("start", event => {this.interacting=true;}).on("end", event =>{this.interacting=false;});
 		
 		d3Select(this.canvasElement)//
 			// .call(d3ZoomTransform, d3ZoomIdentity.translate(0, 0).scale(this.cameraDistance))
@@ -1161,6 +1129,9 @@ export class Helios {
 	}
 
 	_redrawEdges(destination,isPicking) {
+		if(this.fastEdges && isPicking) {
+			return;
+		}
 		let gl = this.gl;
 		let ext = gl.getExtension("ANGLE_instanced_arrays");
 
@@ -1315,8 +1286,8 @@ export class Helios {
 		this.onLayoutStartCallback = callback;
 		return this;
 	}
-	onLayoutFinish(callback) {
-		this.onLayoutFinishCallback = callback;
+	onLayoutStop(callback) {
+		this.onLayoutStopCallback = callback;
 		return this;
 	}
 	onDraw(callback) {
