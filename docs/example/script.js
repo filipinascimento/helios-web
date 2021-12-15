@@ -2311,15 +2311,15 @@ function findIndex(nodes, value, start2, stop) {
   if (stop <= start2) {
     return start2;
   }
-  const index = Math.floor(start2 + (stop - start2) / 2);
-  const delta = value - nodes[index].value;
-  const delta1 = value - nodes[index + 1].value;
+  const index2 = Math.floor(start2 + (stop - start2) / 2);
+  const delta = value - nodes[index2].value;
+  const delta1 = value - nodes[index2 + 1].value;
   if (delta < 0) {
-    return findIndex(nodes, value, start2, index - 1);
+    return findIndex(nodes, value, start2, index2 - 1);
   } else if (delta1 < 0) {
-    return index;
+    return index2;
   } else {
-    return findIndex(nodes, value, index + 1, stop);
+    return findIndex(nodes, value, index2 + 1, stop);
   }
 }
 var linearMixer = (value, lowerNodeValue, upperNodeValue) => {
@@ -2356,14 +2356,14 @@ function createMapFromNodes(nodes, scale, mixer, linearCombination) {
   const sortedNodes = nodes.sort((a, b) => a.value < b.value ? -1 : 1);
   return function(value) {
     const scaledValue = scale(value);
-    const index = findIndex(sortedNodes, scaledValue, 0, sortedNodes.length - 1);
-    if (index == 0 && scaledValue < sortedNodes[0].value) {
-      return sortedNodes[index].mapped;
-    } else if (index == sortedNodes.length - 1) {
-      return sortedNodes[index].mapped;
+    const index2 = findIndex(sortedNodes, scaledValue, 0, sortedNodes.length - 1);
+    if (index2 == 0 && scaledValue < sortedNodes[0].value) {
+      return sortedNodes[index2].mapped;
+    } else if (index2 == sortedNodes.length - 1) {
+      return sortedNodes[index2].mapped;
     }
-    const [coeff0, coeff1] = mixer(scaledValue, sortedNodes[index].value, sortedNodes[index + 1].value);
-    return linearCombination(coeff0, sortedNodes[index].mapped, coeff1, sortedNodes[index + 1].mapped);
+    const [coeff0, coeff1] = mixer(scaledValue, sortedNodes[index2].value, sortedNodes[index2 + 1].value);
+    return linearCombination(coeff0, sortedNodes[index2].mapped, coeff1, sortedNodes[index2 + 1].mapped);
   };
 }
 function createMapFromArray(arr, scale, mixer, linearCombination) {
@@ -2375,9 +2375,9 @@ function createMapFromArray(arr, scale, mixer, linearCombination) {
     } else if (indexFloat >= arr.length - 1) {
       return arr[arr.length - 1];
     }
-    const index = Math.floor(indexFloat);
-    const [coeff0, coeff1] = mixer(indexFloat, index, index + 1);
-    return linearCombination(coeff0, arr[index], coeff1, arr[index + 1]);
+    const index2 = Math.floor(indexFloat);
+    const [coeff0, coeff1] = mixer(indexFloat, index2, index2 + 1);
+    return linearCombination(coeff0, arr[index2], coeff1, arr[index2 + 1]);
   };
 }
 function noColorMap(_value) {
@@ -2656,7 +2656,7 @@ var colors$2 = [
 
 // build/src/core/Network.js
 var Node = class {
-  constructor(originalObject, ID, index, network) {
+  constructor(originalObject, ID, index2, network) {
     for (const [nodeProperty, value] of Object.entries(originalObject)) {
       if (nodeProperty == "color" || nodeProperty == "size" || nodeProperty == "position" || nodeProperty == "outlineColor" || nodeProperty == "outlineWidth") {
         continue;
@@ -2665,7 +2665,7 @@ var Node = class {
     }
     this._network = network;
     this.ID = ID;
-    this.index = index;
+    this.index = index2;
   }
   set color(newColor) {
     let nodeIndex = this.index;
@@ -2738,63 +2738,116 @@ var Network = class {
     this.intensities = new Float32Array(this.index2Node.length);
     this.outlineColors = new Float32Array(3 * this.index2Node.length);
     this.outlineWidths = new Float32Array(this.index2Node.length);
-    this.edgePositions = new Float32Array(3 * this.indexedEdges.length);
-    this.edgeColors = new Float32Array(3 * this.indexedEdges.length);
-    this.widths = new Float32Array(this.indexedEdges.length);
+    this.edgePositions = null;
+    this.edgeColors = null;
+    this.edgeSizes = null;
+    this.edgeIntensities = null;
     this.nodes = {};
     let colorScale = linearScale([0, this.index2Node.length], [0, 1]);
     let colorMap = createColorMap(colors$2, colorScale);
-    for (let index = 0; index < this.index2Node.length; index++) {
-      let node = this.index2Node[index];
+    for (let index2 = 0; index2 < this.index2Node.length; index2++) {
+      let node = this.index2Node[index2];
       if (node.hasOwnProperty("position")) {
-        this.positions[index * 3] = node["position"][0];
-        this.positions[index * 3 + 1] = node["position"][1];
-        this.positions[index * 3 + 2] = node["position"][2];
+        this.positions[index2 * 3] = node["position"][0];
+        this.positions[index2 * 3 + 1] = node["position"][1];
+        this.positions[index2 * 3 + 2] = node["position"][2];
       } else {
-        this.positions[index * 3 + 0] = (Math.random() - 0.5) * 2 * 200;
-        this.positions[index * 3 + 1] = (Math.random() - 0.5) * 2 * 200;
-        this.positions[index * 3 + 2] = (Math.random() - 0.5) * 2 * 200;
+        this.positions[index2 * 3 + 0] = (Math.random() - 0.5) * 2 * 200;
+        this.positions[index2 * 3 + 1] = (Math.random() - 0.5) * 2 * 200;
+        this.positions[index2 * 3 + 2] = (Math.random() - 0.5) * 2 * 200;
       }
       if (node.hasOwnProperty("color")) {
-        if (index == 0) {
+        if (index2 == 0) {
           console.log("NODE COLOR:", node["color"]);
         }
-        this.colors[index * 3 + 0] = node["color"][0];
-        this.colors[index * 3 + 1] = node["color"][1];
-        this.colors[index * 3 + 2] = node["color"][2];
+        this.colors[index2 * 3 + 0] = node["color"][0];
+        this.colors[index2 * 3 + 1] = node["color"][1];
+        this.colors[index2 * 3 + 2] = node["color"][2];
       } else {
-        let color2 = colorMap(index);
-        this.colors[index * 3 + 0] = color2[0];
-        this.colors[index * 3 + 1] = color2[1];
-        this.colors[index * 3 + 2] = color2[2];
+        let color2 = colorMap(index2);
+        this.colors[index2 * 3 + 0] = color2[0];
+        this.colors[index2 * 3 + 1] = color2[1];
+        this.colors[index2 * 3 + 2] = color2[2];
       }
       if (node.hasOwnProperty("size")) {
-        this.sizes[index] = node["size"];
+        this.sizes[index2] = node["size"];
       } else {
-        this.sizes[index] = 1;
+        this.sizes[index2] = 1;
       }
       if (node.hasOwnProperty("outlineColor")) {
-        this.outlineColors[index * 3 + 0] = node["outlineColor"][0];
-        this.outlineColors[index * 3 + 1] = node["outlineColor"][1];
-        this.outlineColors[index * 3 + 2] = node["outlineColor"][2];
+        this.outlineColors[index2 * 3 + 0] = node["outlineColor"][0];
+        this.outlineColors[index2 * 3 + 1] = node["outlineColor"][1];
+        this.outlineColors[index2 * 3 + 2] = node["outlineColor"][2];
       } else {
-        this.outlineColors[index * 3 + 0] = 255;
-        this.outlineColors[index * 3 + 1] = 255;
-        this.outlineColors[index * 3 + 2] = 255;
+        this.outlineColors[index2 * 3 + 0] = 255;
+        this.outlineColors[index2 * 3 + 1] = 255;
+        this.outlineColors[index2 * 3 + 2] = 255;
       }
       if (node.hasOwnProperty("outlineWidth")) {
-        this.outlineWidths[index] = node["outlineWidth"];
+        this.outlineWidths[index2] = node["outlineWidth"];
       } else {
-        this.outlineWidths[index] = 0;
+        this.outlineWidths[index2] = 0;
       }
-      this.intensities[index] = 1;
-      let newNode = new Node(node, node.ID, index, this);
-      this.index2Node[index] = newNode;
+      this.intensities[index2] = 1;
+      let newNode = new Node(node, node.ID, index2, this);
+      this.index2Node[index2] = newNode;
       this.nodes[node.ID] = newNode;
     }
   }
   get nodeCount() {
     return this.index2Node.length;
+  }
+  updateEdgePositions() {
+    if (this.edgePositions == null) {
+      this.edgePositions = new Float32Array(3 * this.indexedEdges.length);
+    }
+    for (let edgeIndex = 0; edgeIndex < this.indexedEdges.length / 2; index++) {
+      let fromIndex = this.indexedEdges[edgeIndex * 2];
+      let toIndex = this.indexedEdges[edgeIndex * 2 + 1];
+      this.edgePositions[edgeIndex * 2 * 3] = this.positions[fromIndex * 3];
+      this.edgePositions[edgeIndex * 2 * 3 + 1] = this.positions[fromIndex * 3 + 1];
+      this.edgePositions[edgeIndex * 2 * 3 + 2] = this.positions[fromIndex * 3 + 2];
+      this.edgePositions[(edgeIndex * 2 + 1) * 3] = this.positions[toIndex * 3];
+      this.edgePositions[(edgeIndex * 2 + 1) * 3 + 1] = this.positions[toIndex * 3 + 1];
+      this.edgePositions[(edgeIndex * 2 + 1) * 3 + 2] = this.positions[toIndex * 3 + 2];
+    }
+  }
+  updateEdgeColors() {
+    if (this.edgeColors == null) {
+      this.edgeColors = new Float32Array(3 * this.indexedEdges.length);
+    }
+    for (let edgeIndex = 0; edgeIndex < this.indexedEdges.length / 2; index++) {
+      let fromIndex = this.indexedEdges[edgeIndex * 2];
+      let toIndex = this.indexedEdges[edgeIndex * 2 + 1];
+      this.edgeColors[edgeIndex * 2 * 3] = this.colors[fromIndex * 3];
+      this.edgeColors[edgeIndex * 2 * 3 + 1] = this.colors[fromIndex * 3 + 1];
+      this.edgeColors[edgeIndex * 2 * 3 + 2] = this.colors[fromIndex * 3 + 2];
+      this.edgeColors[(edgeIndex * 2 + 1) * 3] = this.colors[toIndex * 3];
+      this.edgeColors[(edgeIndex * 2 + 1) * 3 + 1] = this.colors[toIndex * 3 + 1];
+      this.edgeColors[(edgeIndex * 2 + 1) * 3 + 2] = this.colors[toIndex * 3 + 2];
+    }
+  }
+  updateEdgeSizes() {
+    if (this.edgeSizes == null) {
+      this.edgeSizes = new Float32Array(this.indexedEdges.length);
+    }
+    for (let edgeIndex = 0; edgeIndex < this.indexedEdges.length / 2; index++) {
+      let fromIndex = this.indexedEdges[edgeIndex * 2];
+      let toIndex = this.indexedEdges[edgeIndex * 2 + 1];
+      this.edgeSizes[edgeIndex * 2] = this.sizes[fromIndex];
+      this.edgeSizes[edgeIndex * 2 + 1] = this.sizes[toIndex];
+    }
+  }
+  updateEdgeIntensities() {
+    if (this.edgeIntensities == null) {
+      this.edgeIntensities = new Float32Array(this.indexedEdges.length);
+    }
+    for (let edgeIndex = 0; edgeIndex < this.indexedEdges.length / 2; index++) {
+      let fromIndex = this.indexedEdges[edgeIndex * 2];
+      let toIndex = this.indexedEdges[edgeIndex * 2 + 1];
+      this.edgeIntensities[edgeIndex * 2] = this.intensities[fromIndex];
+      this.edgeIntensities[edgeIndex * 2 + 1] = this.intensities[toIndex];
+    }
   }
 };
 
@@ -5037,7 +5090,7 @@ var STARTED = 3;
 var RUNNING = 4;
 var ENDING = 5;
 var ENDED = 6;
-function schedule(node, name, id2, index, group, timing) {
+function schedule(node, name, id2, index2, group, timing) {
   var schedules = node.__transition;
   if (!schedules)
     node.__transition = {};
@@ -5045,7 +5098,7 @@ function schedule(node, name, id2, index, group, timing) {
     return;
   create(node, id2, {
     name,
-    index,
+    index: index2,
     group,
     on: emptyOn,
     tween: emptyTween,
@@ -8771,7 +8824,6 @@ var pica = createCommonjsModule(function(module, exports) {
 var pica_default = pica;
 
 // build/src/layouts/d3force3dLayoutWorker.js
-console.log("IMPORTING");
 var workerFunction = function() {
   importScripts("https://cdn.jsdelivr.net/npm/d3-dispatch@3");
   importScripts("https://cdn.jsdelivr.net/npm/d3-quadtree@3");
@@ -8782,16 +8834,12 @@ var workerFunction = function() {
   importScripts("https://unpkg.com/d3-force-3d");
   "use strict";
   self.onmessage = function(msg) {
-    console.log("RECEIVED:", msg.data.type);
     let use2D2 = false;
-    if (msg.data.type == "import") {
-      console.log("IMPORTING...");
-    } else if (msg.data.type == "stop") {
+    if (msg.data.type == "pause") {
       this.simulation.stop();
-    } else if (msg.data.type == "restart") {
+    } else if (msg.data.type == "resume") {
       this.simulation.restart();
-    } else if (msg.data.type == "init") {
-      console.log("INIT");
+    } else if (msg.data.type == "start") {
       let inputNodes = msg.data.nodes;
       let inputNodesPositions = msg.data.positions;
       let inputEdges = msg.data.edges;
@@ -8809,16 +8857,19 @@ var workerFunction = function() {
         node.vz = 0;
         nodes.push(node);
       });
-      for (let index = 0; index < inputEdges.length / 2; index++) {
-        let edgeFrom = inputEdges[index * 2];
-        let edgeTo = inputEdges[index * 2 + 1];
+      for (let index2 = 0; index2 < inputEdges.length / 2; index2++) {
+        let edgeFrom = inputEdges[index2 * 2];
+        let edgeTo = inputEdges[index2 * 2 + 1];
         let edgeObject = {
           source: edgeFrom,
           target: edgeTo
         };
         links.push(edgeObject);
       }
-      this.simulation = d3.forceSimulation(nodes).numDimensions(use2D2 ? 2 : 3).force("charge", d3.forceManyBody()).force("link", d3.forceLink(links)).force("center", d3.forceCenter()).velocityDecay(0.05).on("tick", async () => {
+      this.repulsiveforce = d3.forceManyBody();
+      this.attractiveforce = d3.forceLink(links);
+      this.centralForce = d3.forceCenter();
+      this.simulation = d3.forceSimulation(nodes).numDimensions(use2D2 ? 2 : 3).force("charge", this.repulsiveforce).force("link", this.attractiveforce).force("center", centralForce).velocityDecay(0.05).on("tick", async () => {
         for (let vertexIndex = 0; vertexIndex < nodes.length; vertexIndex++) {
           const node = nodes[vertexIndex];
           inputNodesPositions[vertexIndex * 3 + 0] = node.x / 10;
@@ -8829,14 +8880,96 @@ var workerFunction = function() {
             inputNodesPositions[vertexIndex * 3 + 2] = 0;
           }
         }
-        self.postMessage({type: "layoutStep", positions: inputNodesPositions});
+        self.postMessage({type: "update", positions: inputNodesPositions});
+      }).on("end", () => {
+        self.postMessage({type: "stop"});
       });
     }
   };
 };
 var workerFunctionString = workerFunction.toString();
-console.log(workerFunctionString);
 var workerURL = URL.createObjectURL(new Blob([`(${workerFunctionString})()`], {type: "text/javascript"}));
+var d3ForceLayoutWorker = class {
+  constructor({
+    network = null,
+    onUpdate = null,
+    onStop = null,
+    onStart = null,
+    use2D: use2D2 = false
+  }) {
+    this._network = network;
+    this._onUpdate = onUpdate;
+    this._onStop = onStop;
+    this._onStart = onStart;
+    this._use2D = use2D2;
+    this._layoutWorker = null;
+  }
+  start() {
+    if (!this._layoutWorker) {
+      this._layoutWorker = new Worker(workerURL);
+      this._layoutWorker.onmessage = (msg) => {
+        if (msg.data.type == "update") {
+          this._onUpdate?.(msg.data);
+        } else if (msg.data.type == "stop") {
+          this._onStop?.(msg.data);
+          this._layoutRunning = false;
+        } else {
+          console.log("Layout received Unknown msg: ", msg);
+        }
+      };
+      this._layoutRunning = true;
+      this._onStart?.();
+      this._layoutWorker.postMessage({
+        type: "start",
+        nodes: this._network.nodes,
+        positions: this._network.positions,
+        edges: this._network.indexedEdges,
+        use2D: this._use2D
+      });
+    }
+  }
+  restart() {
+    this.stop();
+    this.start();
+  }
+  stop() {
+    if (this._layoutRunning) {
+      this._onStop?.();
+    }
+    this._layoutWorker.terminate();
+    this._layoutRunning = false;
+    delete this._layoutWorker;
+    this._layoutWorker = null;
+  }
+  resume() {
+    this.start();
+    if (!this._layoutRunning) {
+      this._onStart?.();
+    }
+    this._layoutWorker.postMessage({type: "resume"});
+    this._layoutRunning = true;
+  }
+  pause() {
+    this._layoutWorker.postMessage({type: "pause"});
+    this._layoutRunning = false;
+    this._onStop?.();
+  }
+  onUpdate(callback) {
+    this._onUpdate = callback;
+  }
+  onStop(callback) {
+    this._onStop = callback;
+  }
+  onStart(callback) {
+    this._onStart = callback;
+  }
+  isRunning() {
+    return this._layoutRunning;
+  }
+  cleanup() {
+    this.stop();
+  }
+};
 
 // build/src/shaders/edges.js
 var fragmentShader = `
@@ -9184,7 +9317,8 @@ var Helios = class {
     use2D: use2D2 = false,
     shadedNodes = false,
     fastEdges = true,
-    forceSupersample = false
+    forceSupersample = false,
+    autoStartLayout = true
   }) {
     this.element = document.getElementById(elementID);
     this.element.innerHTML = "";
@@ -9203,6 +9337,7 @@ var Helios = class {
     this.forceSupersample = forceSupersample;
     this.cameraDistance = 450;
     this._zoomFactor = 1;
+    this.interacting = false;
     this.rotateLinearX = 0;
     this.rotateLinearY = 0;
     this.panX = 0;
@@ -9211,6 +9346,7 @@ var Helios = class {
     this.pickingResolutionRatio = 0.25;
     this._edgesIntensity = 1;
     this._use2D = use2D2;
+    this._autoStartLayout = autoStartLayout;
     this.useAdditiveBlending = false;
     this.scheduler = new HeliosScheduler(this, {throttle: false});
     if (this._use2D) {
@@ -9244,7 +9380,7 @@ var Helios = class {
     this.onRotationCallback = null;
     this.onResizeCallback = null;
     this.onLayoutStartCallback = null;
-    this.onLayoutFinishCallback = null;
+    this.onLayoutStopCallback = null;
     this.onDrawCallback = null;
     this._backgroundColor = [0.5, 0.5, 0.5, 1];
     this.onReadyCallback = null;
@@ -9266,82 +9402,68 @@ var Helios = class {
     this.scheduler.start();
   }
   _setupLayout() {
-    this.layoutWorker = new Worker(workerURL);
     this.newPositions = this.network.positions.slice(0);
     this.positionInterpolator = null;
-    this.layoutWorker.onmessage = (msg) => {
-      if (msg.data.type == "layoutStep") {
-        this.newPositions = msg.data.positions;
-        let interpolatorTask = {
-          name: "1.1.positionInterpolator",
-          callback: (elapsedTime, task) => {
-            let maxDisplacement = 0;
-            for (let index = 0; index < this.network.positions.length; index++) {
-              let displacement = this.newPositions[index] - this.network.positions[index];
-              this.network.positions[index] += 0.01 * displacement * elapsedTime / 10;
-              maxDisplacement = Math.max(Math.abs(displacement), maxDisplacement);
-            }
-            ;
-            if (maxDisplacement < 1) {
-              this.scheduler.unschedule("1.1.positionInterpolator");
-            }
-          },
-          delay: 0,
-          repeat: true,
-          synchronized: true,
-          immediateUpdates: false,
-          redraw: true,
-          updateNodesGeometry: true,
-          updateEdgesGeometry: true
-        };
-        this.scheduler.schedule({
-          name: "1.0.positionChange",
-          callback: (elapsedTime, task) => {
-            let maxDisplacement = 0;
-            for (let index = 0; index < this.network.positions.length; index++) {
-              let displacement = this.newPositions[index] - this.network.positions[index];
-              maxDisplacement = Math.max(Math.abs(displacement), maxDisplacement);
-            }
-            ;
-            this.scheduler.schedule(interpolatorTask);
-          },
-          delay: 0,
-          repeat: false,
-          synchronized: true,
-          immediateUpdates: false,
-          redraw: false,
-          updateNodesGeometry: false,
-          updateEdgesGeometry: false
-        });
-      } else {
-        console.log("Received message", msg);
-      }
+    let onlayoutUpdate = (data) => {
+      this.newPositions = data.positions;
+      let interpolatorTask = {
+        name: "1.1.positionInterpolator",
+        callback: (elapsedTime, task) => {
+          let maxDisplacement = 0;
+          for (let index2 = 0; index2 < this.network.positions.length; index2++) {
+            let displacement = this.newPositions[index2] - this.network.positions[index2];
+            this.network.positions[index2] += 0.01 * displacement * elapsedTime / 10;
+            maxDisplacement = Math.max(Math.abs(displacement), maxDisplacement);
+          }
+          ;
+          if (maxDisplacement < 1) {
+            this.scheduler.unschedule("1.1.positionInterpolator");
+          }
+        },
+        delay: 0,
+        repeat: true,
+        synchronized: true,
+        immediateUpdates: false,
+        redraw: true,
+        updateNodesGeometry: true,
+        updateEdgesGeometry: true
+      };
+      this.scheduler.schedule({
+        name: "1.0.positionChange",
+        callback: (elapsedTime, task) => {
+          this.scheduler.schedule(interpolatorTask);
+        },
+        delay: 0,
+        repeat: false,
+        synchronized: true,
+        immediateUpdates: false,
+        redraw: false,
+        updateNodesGeometry: false,
+        updateEdgesGeometry: false
+      });
     };
-    this.layoutWorker.postMessage({
-      type: "init",
-      nodes: this.network.nodes,
-      positions: this.network.positions,
-      edges: this.network.indexedEdges,
+    let onLayoutStop = () => {
+      this.onLayoutStopCallback?.();
+    };
+    let onLayoutStart = () => {
+      this.onLayoutStartCallback?.();
+    };
+    this.layoutWorker = new d3ForceLayoutWorker({
+      network: this.network,
+      onUpdate: onlayoutUpdate,
+      onStop: onLayoutStop,
+      onStart: onLayoutStart,
       use2D: this._use2D
     });
-    this.layoutRunning = true;
-    document.addEventListener("keyup", (event) => {
-      if (event.code === "Space") {
-        if (this.layoutRunning) {
-          this.stopLayout();
-        } else {
-          this.resumeLayout();
-        }
-      }
-    });
+    if (this._autoStartLayout) {
+      this.layoutWorker.start();
+    }
   }
-  stopLayout() {
-    this.layoutWorker.postMessage({type: "stop"});
-    this.layoutRunning = false;
+  pauseLayout() {
+    this.layoutWorker.pause();
   }
   resumeLayout() {
-    this.layoutWorker.postMessage({type: "restart"});
-    this.layoutRunning = true;
+    this.layoutWorker.resume();
   }
   _setupEvents() {
     this.lastMouseX = -1;
@@ -9525,12 +9647,15 @@ var Helios = class {
     this._downloadImageData(image, filename, supersampleFactor);
     framebuffer.discard();
   }
-  triggerHoverEvents(event) {
+  triggerHoverEvents(event, shallCancel) {
     if (this.lastMouseX == -1 || this.lastMouseY == -1) {
       return;
     }
-    const rect = this.canvasElement.getBoundingClientRect();
-    const nodeID = this.pickPoint(this.lastMouseX - rect.left, this.lastMouseY - rect.top);
+    let nodeID = -1;
+    if (!this.interacting) {
+      const rect = this.canvasElement.getBoundingClientRect();
+      nodeID = this.pickPoint(this.lastMouseX - rect.left, this.lastMouseY - rect.top);
+    }
     if (nodeID >= 0 && this.currentHoverIndex == -1) {
       this.currentHoverIndex = nodeID;
       this.onNodeHoverStartCallback?.(this.network.index2Node[nodeID], event);
@@ -9753,6 +9878,10 @@ var Helios = class {
         this.render();
       }
       (event2) => event2.preventDefault();
+    }).on("start", (event) => {
+      this.interacting = true;
+    }).on("end", (event) => {
+      this.interacting = false;
     });
     select(this.canvasElement).call(this.zoom).on("dblclick.zoom", null);
   }
@@ -9924,6 +10053,9 @@ var Helios = class {
     currentShaderProgram.attributes.disable("encodedIndex");
   }
   _redrawEdges(destination, isPicking) {
+    if (this.fastEdges && isPicking) {
+      return;
+    }
     let gl = this.gl;
     let ext = gl.getExtension("ANGLE_instanced_arrays");
     let currentShaderProgram;
@@ -10036,8 +10168,8 @@ var Helios = class {
     this.onLayoutStartCallback = callback;
     return this;
   }
-  onLayoutFinish(callback) {
-    this.onLayoutFinishCallback = callback;
+  onLayoutStop(callback) {
+    this.onLayoutStopCallback = callback;
     return this;
   }
   onDraw(callback) {
@@ -10601,24 +10733,24 @@ function initInterpolator(domain, interpolator) {
 }
 var implicit = Symbol("implicit");
 function ordinal() {
-  var index = new InternMap(), domain = [], range = [], unknown = implicit;
+  var index2 = new InternMap(), domain = [], range = [], unknown = implicit;
   function scale(d) {
-    let i = index.get(d);
+    let i = index2.get(d);
     if (i === void 0) {
       if (unknown !== implicit)
         return unknown;
-      index.set(d, i = domain.push(d) - 1);
+      index2.set(d, i = domain.push(d) - 1);
     }
     return range[i % range.length];
   }
   scale.domain = function(_) {
     if (!arguments.length)
       return domain.slice();
-    domain = [], index = new InternMap();
+    domain = [], index2 = new InternMap();
     for (const value of _) {
-      if (index.has(value))
+      if (index2.has(value))
         continue;
-      index.set(value, domain.push(value) - 1);
+      index2.set(value, domain.push(value) - 1);
     }
     return scale;
   };
@@ -11106,27 +11238,28 @@ xnet_exports.loadXNETFile("networks/" + networkName + ".xnet").then(async (netwo
   let defaultOutline = 0.25;
   console.log(network);
   let nodeCount = network.nodesCount;
+  let bigNetwork = nodeCount > 1e5;
   let nodes = {};
   let edges = [];
-  for (let index = 0; index < nodeCount; index++) {
-    nodes["" + index] = {
-      ID: "" + index,
+  for (let index2 = 0; index2 < nodeCount; index2++) {
+    nodes["" + index2] = {
+      ID: "" + index2,
       rand: "" + Math.round(Math.random() * 10)
     };
     if (network.labels) {
-      nodes["" + index].label = network.labels[index];
+      nodes["" + index2].label = network.labels[index2];
     }
   }
   for (const [key, value] of Object.entries(network.verticesProperties)) {
-    for (let index = 0; index < nodeCount; index++) {
-      nodes["" + index][key.toLowerCase()] = value[index];
+    for (let index2 = 0; index2 < nodeCount; index2++) {
+      nodes["" + index2][key.toLowerCase()] = value[index2];
     }
   }
-  for (let index = 0; index < network.edges.length; index++) {
+  for (let index2 = 0; index2 < network.edges.length; index2++) {
     let fromIndex, toIndex;
     edges.push({
-      source: "" + network.edges[index][0],
-      target: "" + network.edges[index][1]
+      source: "" + network.edges[index2][0],
+      target: "" + network.edges[index2][1]
     });
   }
   let tooltipElement = document.getElementById("tooltip");
@@ -11135,7 +11268,8 @@ xnet_exports.loadXNETFile("networks/" + networkName + ".xnet").then(async (netwo
     elementID: "netviz",
     nodes,
     edges,
-    use2D
+    use2D,
+    autoStartLayout: !bigNetwork
   }).onNodeHoverStart((node, event) => {
     if (event) {
       tooltipElement.style.left = event.pageX + "px";
@@ -11197,7 +11331,7 @@ xnet_exports.loadXNETFile("networks/" + networkName + ".xnet").then(async (netwo
   }).onNodeDoubleClick((node, event) => {
     console.log(`Double Clicked: ${node.ID}`);
     helios.centerOnNode(node.ID);
-  }).backgroundColor(backgroundColor).edgesIntensity(1).nodeOutlineWidth((node) => node.size * defaultOutline).nodeOutlineColor(backgroundColor).additiveBlending(additiveBlending);
+  }).onLayoutStart(() => console.log("Layout start")).onLayoutStop(() => console.log("Layout end")).backgroundColor(backgroundColor).edgesIntensity(1).nodeOutlineWidth((node) => node.size * defaultOutline).nodeOutlineColor(backgroundColor).additiveBlending(additiveBlending);
   function downloadText(filename, text) {
     var element = document.createElement("a");
     element.setAttribute("href", "data:text/plain;charset=utf-8," + encodeURIComponent(text));
@@ -11395,10 +11529,18 @@ xnet_exports.loadXNETFile("networks/" + networkName + ".xnet").then(async (netwo
       buttonInformation[d].action(select(void 0), d, event);
     }
   }).classed("hasAction", true);
+  document.addEventListener("keyup", (event) => {
+    if (event.code === "Space") {
+      if (helios.layoutWorker.isRunning()) {
+        helios.pauseLayout();
+      } else {
+        helios.resumeLayout();
+      }
+    }
+  });
   helios.onReady(() => {
     updateColorSelection();
-    if (helios.network.index2Node.length > 1e5) {
-      helios.stopLayout();
+    if (bigNetwork) {
       helios.zoomFactor(0.35);
     } else {
       helios.zoomFactor(0.05);
