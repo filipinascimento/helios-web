@@ -27,6 +27,37 @@
                                         supported by Chrome, Edge, Opera and Firefox */
 
       }
+
+      #loading {
+        display: none;
+        position: absolute;
+        bottom:5px;
+        right:5px;
+        width: 20px;
+        height: 20px;
+        border: 3px solid rgba(125,125,125,.3);
+        border-radius: 50%;
+        border-top-color: rgba(125,125,125,1.0);
+        animation: spin 1s ease-in-out infinite;
+        -webkit-animation: spin 1s ease-in-out infinite;
+      }
+
+      @keyframes spin {
+        to { -webkit-transform: rotate(360deg); }
+      }
+      @-webkit-keyframes spin {
+        to { -webkit-transform: rotate(360deg); }
+      }
+
+      #message{
+        position:absolute;
+        bottom:5px;
+        right:5px;
+        text-align: right;
+        font-size:small;
+        color: rgba(125,125,125,.75);
+      }
+
       #netviz {
           position: absolute;
           top:0;
@@ -248,6 +279,8 @@
     <div id="netviz"></div>
     <div id="tooltip">Tooltip</div>
     <div id="selectionmenu"></div>
+    <div id="loading"></div>
+    <div id="message">press space to start the layout</div>
 
     <!-- <canvas id="saveCanvas"></canvas> -->
   </body>

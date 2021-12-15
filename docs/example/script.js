@@ -11331,7 +11331,15 @@ xnet_exports.loadXNETFile("networks/" + networkName + ".xnet").then(async (netwo
   }).onNodeDoubleClick((node, event) => {
     console.log(`Double Clicked: ${node.ID}`);
     helios.centerOnNode(node.ID);
-  }).onLayoutStart(() => console.log("Layout start")).onLayoutStop(() => console.log("Layout end")).backgroundColor(backgroundColor).edgesIntensity(1).nodeOutlineWidth((node) => node.size * defaultOutline).nodeOutlineColor(backgroundColor).additiveBlending(additiveBlending);
+  }).onLayoutStart(() => {
+    console.log("Layout start");
+    select("#loading").style("display", "block");
+    select("#message").style("display", "none");
+  }).onLayoutStop(() => {
+    console.log("Layout end");
+    select("#loading").style("display", "none");
+    select("#message").style("display", "block");
+  }).backgroundColor(backgroundColor).edgesIntensity(1).nodeOutlineWidth((node) => node.size * defaultOutline).nodeOutlineColor(backgroundColor).additiveBlending(additiveBlending);
   function downloadText(filename, text) {
     var element = document.createElement("a");
     element.setAttribute("href", "data:text/plain;charset=utf-8," + encodeURIComponent(text));
