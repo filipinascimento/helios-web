@@ -211,8 +211,16 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 			console.log(`Double Clicked: ${node.ID}`);
 			helios.centerOnNode(node.ID);
 		})
-		.onLayoutStart(()=>console.log("Layout start"))
-		.onLayoutStop(()=>console.log("Layout end"))
+		.onLayoutStart(()=>{
+			console.log("Layout start");
+			d3Select("#loading").style("display", "block");
+			d3Select("#message").style("display", "none");
+		})
+		.onLayoutStop(()=>{
+			console.log("Layout end");
+			d3Select("#loading").style("display", "none");
+			d3Select("#message").style("display", "block");
+		})
 		.backgroundColor(backgroundColor) // set background color
 		// .nodeColor(node=>{ // Example on how to define colors
 		// 	let color = d3rgb(colorScale(node.ID));
