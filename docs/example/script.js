@@ -11546,14 +11546,14 @@ xnet_exports.loadXNETFile("networks/" + networkName + ".xnet").then(async (netwo
       }
     }
   });
+  if (bigNetwork) {
+    helios.zoomFactor(0.35);
+  } else {
+    helios.zoomFactor(0.05);
+    helios.zoomFactor(0.75, 1e3);
+  }
   helios.onReady(() => {
     updateColorSelection();
-    if (bigNetwork) {
-      helios.zoomFactor(0.35);
-    } else {
-      helios.zoomFactor(0.05);
-      helios.zoomFactor(0.75, 1e3);
-    }
   });
   window.helios = helios;
 });
