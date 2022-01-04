@@ -9356,10 +9356,6 @@ var Helios = class {
       powerPreference: "high-performance",
       desynchronized: true
     });
-    this.initialize();
-    window.onresize = (event) => {
-      this.willResizeEvent(event);
-    };
     this.centerNode = null;
     this.centerNodeTransition = null;
     this.previousTranslatePosition = null;
@@ -9378,24 +9374,27 @@ var Helios = class {
     this.onLayoutStartCallback = null;
     this.onLayoutStopCallback = null;
     this.onDrawCallback = null;
-    this._backgroundColor = [0.5, 0.5, 0.5, 1];
     this.onReadyCallback = null;
     this.isReady = false;
+    this._backgroundColor = [0.5, 0.5, 0.5, 1];
+    this.initialize();
+    window.onresize = (event) => {
+      this.willResizeEvent(event);
+    };
   }
-  async initialize() {
-    await this._setupShaders();
-    await this._buildNodesGeometry();
-    await this._buildPickingBuffers();
-    await this._buildEdgesGeometry();
-    await this.willResizeEvent(0);
-    await this._setupCamera();
-    await this._setupEvents();
-    await this._setupLayout();
-    await this.redraw();
+  initialize() {
+    this._setupShaders();
+    this._buildNodesGeometry();
+    this._buildPickingBuffers();
+    this._buildEdgesGeometry();
+    this.willResizeEvent(0);
+    this._setupCamera();
+    this._setupEvents();
+    this._setupLayout();
+    this.scheduler.start();
     this.onReadyCallback?.(this);
     this.onReadyCallback = null;
     this.isReady = true;
-    this.scheduler.start();
   }
   _setupLayout() {
     this.newPositions = this.network.positions.slice(0);
@@ -9666,7 +9665,7 @@ var Helios = class {
       this.currentHoverIndex = -1;
     }
   }
-  async _setupShaders() {
+  _setupShaders() {
     let gl = this.gl;
     this.edgesShaderProgram = new ShaderProgram(getShaderFromString(gl, vertexShader, gl.VERTEX_SHADER), getShaderFromString(gl, fragmentShader, gl.FRAGMENT_SHADER), ["projectionViewMatrix", "nearFar", "linesIntensity"], ["vertex", "color", "encodedIndex"], this.gl);
     this.edgesFastShaderProgram = new ShaderProgram(getShaderFromString(gl, fastVertexShader, gl.VERTEX_SHADER), getShaderFromString(gl, fastFragmentShader, gl.FRAGMENT_SHADER), ["projectionViewMatrix", "nearFar", "linesIntensity"], ["vertex", "color", "encodedIndex"], this.gl);
@@ -9675,7 +9674,7 @@ var Helios = class {
     this.nodesFastShaderProgram = new ShaderProgram(getShaderFromString(gl, fastVertexShader2, gl.VERTEX_SHADER), getShaderFromString(gl, fastFragmentShader2, gl.FRAGMENT_SHADER), ["viewMatrix", "projectionMatrix", "normalMatrix"], ["vertex", "position", "color", "intensity", "size", "outlineWidth", "outlineColor", "encodedIndex"], this.gl);
     this.nodesPickingShaderProgram = new ShaderProgram(getShaderFromString(gl, vertexShader2, gl.VERTEX_SHADER), getShaderFromString(gl, pickingShader2, gl.FRAGMENT_SHADER), ["viewMatrix", "projectionMatrix", "normalMatrix"], ["vertex", "position", "color", "intensity", "size", "outlineWidth", "outlineColor", "encodedIndex"], this.gl);
   }
-  async _buildPickingBuffers() {
+  _buildPickingBuffers() {
     let gl = this.gl;
     this.pickingFramebuffer = this.createOffscreenFramebuffer();
   }
@@ -9721,7 +9720,7 @@ var Helios = class {
     gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, framebuffer.depthBuffer);
     return framebuffer;
   }
-  async _buildNodesGeometry() {
+  _buildNodesGeometry() {
     let gl = this.gl;
     let sphereQuality = 20;
     this.nodesGeometry = makePlane(gl, false, false);
@@ -9764,7 +9763,7 @@ var Helios = class {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesOutlineColorBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, outlineColors, gl.STATIC_DRAW);
   }
-  async _buildEdgesGeometry() {
+  _buildEdgesGeometry() {
     let gl = this.gl;
     let edges = this.network.indexedEdges;
     let positions = this.network.positions;
@@ -9794,23 +9793,22 @@ var Helios = class {
       this.fastEdgesGeometry = newGeometry;
       this.fastEdgesIndicesArray = indicesArray;
     } else {
-      this.nodesGeometry = makePlane(gl, false, false);
-      this.nodesPositionBuffer = gl.createBuffer();
-      this.nodesColorBuffer = gl.createBuffer();
-      this.nodesSizeBuffer = gl.createBuffer();
-      this.nodesIntensityBuffer = gl.createBuffer();
-      this.nodesOutlineWidthBuffer = gl.createBuffer();
-      this.nodesOutlineColorBuffer = gl.createBuffer();
-      this.nodesIndexBuffer = gl.createBuffer();
-      this.nodesIndexArray = new Float32Array(this.network.index2Node.length * 4);
-      for (let ID = 0; ID < this.network.index2Node.length; ID++) {
-        this.nodesIndexArray[4 * ID] = (ID + 1 >> 0 & 255) / 255;
-        this.nodesIndexArray[4 * ID + 1] = (ID + 1 >> 8 & 255) / 255;
-        this.nodesIndexArray[4 * ID + 2] = (ID + 1 >> 16 & 255) / 255;
-        this.nodesIndexArray[4 * ID + 3] = (ID + 1 >> 24 & 255) / 255;
+      this.edgesGeometry = makePlane(gl, false, false);
+      this.edgesPositionBuffer = gl.createBuffer();
+      this.edgesColorBuffer = gl.createBuffer();
+      this.edgesSizeBuffer = gl.createBuffer();
+      this.edgesIntensityBuffer = gl.createBuffer();
+      this.edgesIndexBuffer = gl.createBuffer();
+      this.edgesIndexArray = new Float32Array(this.network.indexedEdges.length * 4);
+      for (let ID = 0; ID < this.network.indexedEdges.length; ID++) {
+        let edgeID = this.network.index2Node.length + ID;
+        this.edgesIndexArray[4 * edgeID] = (edgeID + 1 >> 0 & 255) / 255;
+        this.edgesIndexArray[4 * edgeID + 1] = (edgeID + 1 >> 8 & 255) / 255;
+        this.edgesIndexArray[4 * edgeID + 2] = (edgeID + 1 >> 16 & 255) / 255;
+        this.edgesIndexArray[4 * edgeID + 3] = (edgeID + 1 >> 24 & 255) / 255;
       }
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesIndexBuffer);
-      gl.bufferData(gl.ARRAY_BUFFER, this.nodesIndexArray, gl.STATIC_DRAW);
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.edgesIndexBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, this.edgesIndexArray, gl.STATIC_DRAW);
     }
     this.updateEdgesGeometry();
   }
@@ -9831,11 +9829,11 @@ var Helios = class {
       gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, this.fastEdgesIndicesArray, gl.STREAM_DRAW);
     }
   }
-  async resizeGL(newWidth, newHeight) {
+  resizeGL(newWidth, newHeight) {
     this.pickingFramebuffer.setSize(newWidth * this.pickingResolutionRatio, newHeight * this.pickingResolutionRatio);
     this.render(true);
   }
-  async _setupCamera() {
+  _setupCamera() {
     this.zoom = zoom().on("zoom", (event) => {
       this._zoomFactor = event.transform.k;
       this.triggerHoverEvents(event);
