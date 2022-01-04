@@ -563,15 +563,14 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 			}
 		});
 		
+		if(bigNetwork){
+			helios.zoomFactor(0.35);
+		}else{
+			helios.zoomFactor(0.05);
+			helios.zoomFactor(0.75,1000);
+		}
 		helios.onReady(() => {
 			updateColorSelection();
-			if(bigNetwork){
-				helios.zoomFactor(0.35);
-			}else{
-				helios.zoomFactor(0.05);
-				helios.zoomFactor(0.75,1000);
-			}
-			
 		});
 
 
