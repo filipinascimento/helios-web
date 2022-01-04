@@ -202,6 +202,7 @@ export class Network{
 		// this.edgeColors = null; //new Float32Array(3*this.indexedEdges.length);
 		// this.sizes = null; //new Float32Array(this.indexedEdges.length);
 	}
+	
 	updateEdgeColors(){
 		if(this.edgeColors == null){
 			this.edgeColors = new Float32Array(3*this.indexedEdges.length);
@@ -218,6 +219,7 @@ export class Network{
 			this.edgeColors[(edgeIndex*2+1)*3+2] = this.colors[toIndex*3+2];
 		}
 	}
+	
 	updateEdgeSizes(){
 		if(this.edgeSizes == null){
 			this.edgeSizes = new Float32Array(this.indexedEdges.length);

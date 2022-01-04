@@ -91,12 +91,6 @@ export class Helios {
 			desynchronized: true
 		})
 
-		// console.log(this.gl);
-		this.initialize();
-		window.onresize = event => {
-			this.willResizeEvent(event);
-		}
-
 		this.centerNode = null;
 		this.centerNodeTransition = null;
 		this.previousTranslatePosition = null;
@@ -118,9 +112,16 @@ export class Helios {
 		this.onLayoutStartCallback = null;
 		this.onLayoutStopCallback = null;
 		this.onDrawCallback = null;
-		this._backgroundColor = [0.5, 0.5, 0.5, 1.0];
 		this.onReadyCallback = null;
 		this.isReady=false;
+		this._backgroundColor = [0.5, 0.5, 0.5, 1.0];
+
+		// console.log(this.gl);
+		this.initialize();
+		window.onresize = event => {
+			this.willResizeEvent(event);
+		}
+
 
 
 	}
@@ -137,22 +138,21 @@ export class Helios {
 
 
 
-	async initialize() {
-		await this._setupShaders();
-		await this._buildNodesGeometry();
-		await this._buildPickingBuffers();
-		await this._buildEdgesGeometry();
-		await this.willResizeEvent(0);
+	initialize() {
+		this._setupShaders();
+		this._buildNodesGeometry();
+		this._buildPickingBuffers();
+		this._buildEdgesGeometry();
+		this.willResizeEvent(0);
 
-		await this._setupCamera();
-		await this._setupEvents();
-		await this._setupLayout();
-
-		await this.redraw();
+		this._setupCamera();
+		this._setupEvents();
+		this._setupLayout();
+		this.scheduler.start();
 		this.onReadyCallback?.(this);
+		// this.redraw();
 		this.onReadyCallback = null;
 		this.isReady = true;
-		this.scheduler.start();
 	}
 
 	_setupLayout() {
@@ -526,7 +526,7 @@ export class Helios {
 
 
 
-	async _setupShaders() {
+	_setupShaders() {
 		let gl = this.gl;
 
 		this.edgesShaderProgram = new glUtils.ShaderProgram(
@@ -571,7 +571,7 @@ export class Helios {
 
 	}
 
-	async _buildPickingBuffers() {
+	_buildPickingBuffers() {
 		let gl = this.gl;
 		this.pickingFramebuffer = this.createOffscreenFramebuffer();
 	}
@@ -629,7 +629,7 @@ export class Helios {
 		return framebuffer;
 	}
 
-	async _buildNodesGeometry() {
+	_buildNodesGeometry() {
 		let gl = this.gl;
 		let sphereQuality = 20;
 		// this.nodesGeometry = glUtils.makeSphere(gl, 1.0, sphereQuality, sphereQuality);
@@ -699,7 +699,7 @@ export class Helios {
 
 	}
 
-	async _buildEdgesGeometry() {
+	_buildEdgesGeometry() {
 		let gl = this.gl;
 		let edges = this.network.indexedEdges;
 		let positions = this.network.positions;
@@ -736,28 +736,27 @@ export class Helios {
 			this.fastEdgesIndicesArray = indicesArray;
 
 		}else{
-			this.nodesGeometry = glUtils.makePlane(gl, false, false);
+			this.edgesGeometry = glUtils.makePlane(gl, false, false);
 			// //vertexShape = makeBox(gl);
 
-			this.nodesPositionBuffer = gl.createBuffer();
-			this.nodesColorBuffer = gl.createBuffer();
-			this.nodesSizeBuffer = gl.createBuffer();
-			this.nodesIntensityBuffer = gl.createBuffer();
-			this.nodesOutlineWidthBuffer = gl.createBuffer();
-			this.nodesOutlineColorBuffer = gl.createBuffer();
-			this.nodesIndexBuffer = gl.createBuffer();
+			this.edgesPositionBuffer = gl.createBuffer();
+			this.edgesColorBuffer = gl.createBuffer();
+			this.edgesSizeBuffer = gl.createBuffer();
+			this.edgesIntensityBuffer = gl.createBuffer();
+			this.edgesIndexBuffer = gl.createBuffer();
 	
 			//encodedIndex
-			this.nodesIndexArray = new Float32Array(this.network.index2Node.length * 4);
-			for (let ID = 0; ID < this.network.index2Node.length; ID++) {
-				this.nodesIndexArray[4 * ID] = (((ID + 1) >> 0) & 0xFF) / 0xFF;
-				this.nodesIndexArray[4 * ID + 1] = (((ID + 1) >> 8) & 0xFF) / 0xFF;
-				this.nodesIndexArray[4 * ID + 2] = (((ID + 1) >> 16) & 0xFF) / 0xFF;
-				this.nodesIndexArray[4 * ID + 3] = (((ID + 1) >> 24) & 0xFF) / 0xFF;
+			this.edgesIndexArray = new Float32Array(this.network.indexedEdges.length * 4);
+			for (let ID = 0; ID < this.network.indexedEdges.length; ID++) {
+				let edgeID = this.network.index2Node.length + ID;
+				this.edgesIndexArray[4 * edgeID] = (((edgeID + 1) >> 0) & 0xFF) / 0xFF;
+				this.edgesIndexArray[4 * edgeID + 1] = (((edgeID + 1) >> 8) & 0xFF) / 0xFF;
+				this.edgesIndexArray[4 * edgeID + 2] = (((edgeID + 1) >> 16) & 0xFF) / 0xFF;
+				this.edgesIndexArray[4 * edgeID + 3] = (((edgeID + 1) >> 24) & 0xFF) / 0xFF;
 			}
 	
-			gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesIndexBuffer);
-			gl.bufferData(gl.ARRAY_BUFFER, this.nodesIndexArray, gl.STATIC_DRAW);
+			gl.bindBuffer(gl.ARRAY_BUFFER, this.edgesIndexBuffer);
+			gl.bufferData(gl.ARRAY_BUFFER, this.edgesIndexArray, gl.STATIC_DRAW);
 	
 		}
 		this.updateEdgesGeometry()
@@ -782,7 +781,7 @@ export class Helios {
 		
 	}
 
-	async resizeGL(newWidth, newHeight) {
+	resizeGL(newWidth, newHeight) {
 		this.pickingFramebuffer.setSize(newWidth*this.pickingResolutionRatio, newHeight*this.pickingResolutionRatio);
 		// window.requestAnimationFrame(() => this.redraw());
 		this.render(true);
@@ -790,7 +789,7 @@ export class Helios {
 
 
 
-	async _setupCamera() {
+	_setupCamera() {
 		// this.canvasElement.onmousedown = event=>this.handleMouseDown(event);
 		// document.onmouseup = event=>this.handleMouseUp(event);
 		// document.onmousemove = event=>this.handleMouseMove(event);
