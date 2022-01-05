@@ -30,8 +30,8 @@ function createWebGLContext(canvas, opt_attribs) {
 }
 
 
-//GetShader function obtained from
-//https://developer.mozilla.org/en/WebGL/Adding_2D_content_to_a_WebGL_context
+// GetShader function obtained from
+// https://developer.mozilla.org/en/WebGL/Adding_2D_content_to_a_WebGL_context
 // under public domain.
 async function getShader(gl, ID) {
 	let shaderScript = document.getElementById(ID);

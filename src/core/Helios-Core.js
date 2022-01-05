@@ -35,9 +35,6 @@ export class Helios {
 		edges = [],
 		// use settings
 		// displayOptions inside settings
-		// onNodeHover = null,
-		// onEdgeHover = null,
-		// onDraw  (Maybe)
 		use2D = false,
 		shadedNodes = false,
 		fastEdges = true,
@@ -71,7 +68,8 @@ export class Helios {
 		this.panY = 0;
 		this.saveResolutionRatio = 1.0;
 		this.pickingResolutionRatio = 0.25;
-		this._edgesIntensity = 1.0;
+		this._edgesGlobalOpacity = 1.0;
+		this._nodesGlobalOpacity = 1.0;
 		this._use2D = use2D;
 		this._autoStartLayout = autoStartLayout;
 		this.useAdditiveBlending = false;
@@ -532,43 +530,42 @@ export class Helios {
 		this.edgesShaderProgram = new glUtils.ShaderProgram(
 			glUtils.getShaderFromString(gl,edgesShaders.vertexShader,gl.VERTEX_SHADER),
 			glUtils.getShaderFromString(gl,edgesShaders.fragmentShader,gl.FRAGMENT_SHADER),
-			["projectionViewMatrix", "nearFar", "linesIntensity"],
-			["vertex", "color","encodedIndex"],
+			["projectionViewMatrix", "nearFar", "globalOpacity"],
+			["vertex", "color", "sizes", "encodedIndex"],
 			this.gl);
 
 		this.edgesFastShaderProgram = new glUtils.ShaderProgram(
 			glUtils.getShaderFromString(gl,edgesShaders.fastVertexShader,gl.VERTEX_SHADER),
 			glUtils.getShaderFromString(gl,edgesShaders.fastFragmentShader,gl.FRAGMENT_SHADER),
-			["projectionViewMatrix", "nearFar", "linesIntensity"],
-			["vertex", "color","encodedIndex"],
+			["projectionViewMatrix", "nearFar", "globalOpacity"],
+			["vertex", "color"],
 			this.gl);
 
 		this.edgesPickingShaderProgram = new glUtils.ShaderProgram(
 			glUtils.getShaderFromString(gl,edgesShaders.vertexShader,gl.VERTEX_SHADER),
 			glUtils.getShaderFromString(gl,edgesShaders.pickingShader,gl.FRAGMENT_SHADER),
-			["projectionViewMatrix", "nearFar", "linesIntensity"],
-			["vertex", "color","encodedIndex"],
+			["projectionViewMatrix", "nearFar", "globalOpacity"],
+			["vertex", "color", "sizes", "encodedIndex"],
 			this.gl);
 
 
 		this.nodesShaderProgram = new glUtils.ShaderProgram(
 			glUtils.getShaderFromString(gl,nodesShaders.vertexShader,gl.VERTEX_SHADER),
 			glUtils.getShaderFromString(gl,nodesShaders.fragmentShader,gl.FRAGMENT_SHADER),
-			["viewMatrix", "projectionMatrix", "normalMatrix"],
-			["vertex", "position", "color", "intensity", "size","outlineWidth","outlineColor", "encodedIndex"], this.gl);
+			["viewMatrix", "projectionMatrix", "normalMatrix","globalOpacity"],
+			["vertex", "position", "color", "size", "outlineWidth", "outlineColor", "encodedIndex"], this.gl);
 
 		this.nodesFastShaderProgram = new glUtils.ShaderProgram(
 			glUtils.getShaderFromString(gl,nodesShaders.fastVertexShader,gl.VERTEX_SHADER),
 			glUtils.getShaderFromString(gl,nodesShaders.fastFragmentShader,gl.FRAGMENT_SHADER),
-			["viewMatrix", "projectionMatrix", "normalMatrix"],
-			["vertex", "position", "color", "intensity", "size","outlineWidth","outlineColor", "encodedIndex"], this.gl);
+			["viewMatrix", "projectionMatrix", "normalMatrix","globalOpacity"],
+			["vertex", "position", "color", "size", "outlineWidth", "outlineColor", "encodedIndex"], this.gl);
 	
 		this.nodesPickingShaderProgram = new glUtils.ShaderProgram(
 			glUtils.getShaderFromString(gl,nodesShaders.vertexShader,gl.VERTEX_SHADER),
 			glUtils.getShaderFromString(gl,nodesShaders.pickingShader,gl.FRAGMENT_SHADER),
 			["viewMatrix", "projectionMatrix", "normalMatrix"],
-			["vertex", "position", "color", "intensity", "size","outlineWidth","outlineColor", "encodedIndex"], this.gl);
-
+			["vertex", "position", "color", "size", "outlineWidth", "outlineColor", "encodedIndex"], this.gl);
 	}
 
 	_buildPickingBuffers() {
@@ -641,7 +638,6 @@ export class Helios {
 		this.nodesPositionBuffer = gl.createBuffer();
 		this.nodesColorBuffer = gl.createBuffer();
 		this.nodesSizeBuffer = gl.createBuffer();
-		this.nodesIntensityBuffer = gl.createBuffer();
 		this.nodesOutlineWidthBuffer = gl.createBuffer();
 		this.nodesOutlineColorBuffer = gl.createBuffer();
 		this.nodesIndexBuffer = gl.createBuffer();
@@ -678,10 +674,6 @@ export class Helios {
 		let sizes = this.network.sizes;
 		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesSizeBuffer);
 		gl.bufferData(gl.ARRAY_BUFFER, sizes, gl.STATIC_DRAW);
-
-		let intensities = this.network.intensities;
-		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesIntensityBuffer);
-		gl.bufferData(gl.ARRAY_BUFFER, intensities, gl.STATIC_DRAW);
 
 		let outlineWidths = this.network.outlineWidths;
 		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesOutlineWidthBuffer);
@@ -742,7 +734,6 @@ export class Helios {
 			this.edgesPositionBuffer = gl.createBuffer();
 			this.edgesColorBuffer = gl.createBuffer();
 			this.edgesSizeBuffer = gl.createBuffer();
-			this.edgesIntensityBuffer = gl.createBuffer();
 			this.edgesIndexBuffer = gl.createBuffer();
 	
 			//encodedIndex
@@ -1033,7 +1024,6 @@ export class Helios {
 		// currentShaderProgram.attributes.enable("normal");
 		currentShaderProgram.attributes.enable("position");
 		currentShaderProgram.attributes.enable("size");
-		currentShaderProgram.attributes.enable("intensity");
 		currentShaderProgram.attributes.enable("outlineWidth");
 		currentShaderProgram.attributes.enable("outlineColor");
 		currentShaderProgram.attributes.enable("encodedIndex");
@@ -1054,6 +1044,7 @@ export class Helios {
 		gl.uniformMatrix4fv(currentShaderProgram.uniforms.projectionMatrix, false, this.projectionMatrix);
 		gl.uniformMatrix4fv(currentShaderProgram.uniforms.viewMatrix, false, this.viewMatrix);
 
+		gl.uniform1f(currentShaderProgram.uniforms.globalOpacity, this._nodesGlobalOpacity);
 
 		let normalMatrix = glm.mat3.create();
 		glm.mat3.normalFromMat4(normalMatrix, this.viewMatrix);
@@ -1063,7 +1054,6 @@ export class Helios {
 		let colorsArray = this.network.colors;
 		let positionsArray = this.network.positions;
 		let sizeValue = this.network.sizes;
-		let intensityValue = this.network.intensities;
 		let outlineWidthValue = this.network.outlineWidths;
 
 		// Bind the instance position data
@@ -1075,7 +1065,7 @@ export class Helios {
 		// Bind the instance color data
 		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesColorBuffer);
 		gl.enableVertexAttribArray(currentShaderProgram.attributes.color);
-		gl.vertexAttribPointer(currentShaderProgram.attributes.color, 3, gl.FLOAT, false, 0, 0);
+		gl.vertexAttribPointer(currentShaderProgram.attributes.color, 4, gl.FLOAT, false, 0, 0);
 		ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.color, 1); // This makes it instanced!
 
 		// Bind the instance color data
@@ -1087,7 +1077,7 @@ export class Helios {
 		// Bind the instance color data
 		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesOutlineColorBuffer);
 		gl.enableVertexAttribArray(currentShaderProgram.attributes.outlineColor);
-		gl.vertexAttribPointer(currentShaderProgram.attributes.outlineColor, 3, gl.FLOAT, false, 0, 0);
+		gl.vertexAttribPointer(currentShaderProgram.attributes.outlineColor, 4, gl.FLOAT, false, 0, 0);
 		ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.outlineColor, 1); // This makes it instanced!
 
 		// Bind the instance color data
@@ -1097,12 +1087,6 @@ export class Helios {
 		ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.outlineWidth, 1); // This makes it instanced!
 
 		// Bind the instance color data
-		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesIntensityBuffer);
-		gl.enableVertexAttribArray(currentShaderProgram.attributes.intensity);
-		gl.vertexAttribPointer(currentShaderProgram.attributes.intensity, 1, gl.FLOAT, false, 0, 0);
-		ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.intensity, 1); // This makes it instanced!
-		// Bind the instance color data
-
 		gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesIndexBuffer);
 		gl.enableVertexAttribArray(currentShaderProgram.attributes.encodedIndex);
 		gl.vertexAttribPointer(currentShaderProgram.attributes.encodedIndex, 4, gl.FLOAT, false, 0, 0);
@@ -1121,7 +1105,6 @@ export class Helios {
 		// this.nodesShaderProgram.attributes.disable("normal");
 		currentShaderProgram.attributes.disable("position");
 		currentShaderProgram.attributes.disable("size");
-		currentShaderProgram.attributes.disable("intensity");
 		currentShaderProgram.attributes.disable("outlineWidth");
 		currentShaderProgram.attributes.disable("outlineColor");
 		currentShaderProgram.attributes.disable("encodedIndex");
@@ -1172,7 +1155,7 @@ export class Helios {
 			ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.vertex, 0); // This makes it instanced!
 
 			gl.bindBuffer(gl.ARRAY_BUFFER, this.fastEdgesGeometry.colorObject);
-			gl.vertexAttribPointer(currentShaderProgram.attributes.color, 3, gl.FLOAT, false, 0, 0);
+			gl.vertexAttribPointer(currentShaderProgram.attributes.color, 4, gl.FLOAT, false, 0, 0);
 			ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.color, 0); // This makes it instanced!
 
 			gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.fastEdgesGeometry.indexObject);
@@ -1180,7 +1163,7 @@ export class Helios {
 			gl.uniformMatrix4fv(currentShaderProgram.uniforms.projectionViewMatrix, false, this.projectionViewMatrix);
 
 			//gl.uniform2fv(edgesShaderProgram.uniforms.nearFar,[0.1,10.0]);
-			gl.uniform1f(currentShaderProgram.uniforms.linesIntensity, this._edgesIntensity);
+			gl.uniform1f(currentShaderProgram.uniforms.globalOpacity, this._edgesGlobalOpacity);
 
 			//drawElements is called only 1 time. no overhead from javascript
 			gl.drawElements(gl.LINES, this.fastEdgesGeometry.numIndices, this.fastEdgesGeometry.indexType, 0);
@@ -1320,9 +1303,13 @@ export class Helios {
 				for (const [nodeID, node] of Object.entries(this.network.nodes)) {
 					let nodeIndex = this.network.ID2index[nodeID];
 					let aColor = colorInput(node, nodeIndex, this.network);
-					this.network.colors[nodeIndex * 3 + 0] = aColor[0];
-					this.network.colors[nodeIndex * 3 + 1] = aColor[1];
-					this.network.colors[nodeIndex * 3 + 2] = aColor[2];
+					this.network.colors[nodeIndex * 4 + 0] = aColor[0];
+					this.network.colors[nodeIndex * 4 + 1] = aColor[1];
+					this.network.colors[nodeIndex * 4 + 2] = aColor[2];
+					if(aColor.length > 3){
+						this.network.colors[nodeIndex * 4 + 3] = aColor[3];
+					}
+
 				}
 			} else if (typeof colorInput === "number") {
 				//index
@@ -1330,23 +1317,32 @@ export class Helios {
 			} else {
 				for (const [nodeID, node] of Object.entries(this.network.nodes)) {
 					let nodeIndex = this.network.ID2index[nodeID];
-					this.network.colors[nodeIndex * 3 + 0] = colorInput[0];
-					this.network.colors[nodeIndex * 3 + 1] = colorInput[1];
-					this.network.colors[nodeIndex * 3 + 2] = colorInput[2];
+					this.network.colors[nodeIndex * 4 + 0] = colorInput[0];
+					this.network.colors[nodeIndex * 4 + 1] = colorInput[1];
+					this.network.colors[nodeIndex * 4 + 2] = colorInput[2];
+					if(colorInput.length > 3){
+						this.network.colors[nodeIndex * 4 + 3] = colorInput[3];
+					}
 				}
 			}
 		} else {
 			if (typeof colorInput === "function") {
 				let nodeIndex = this.network.ID2index[nodeID];
 				let aColor = colorInput(nodeID, nodeIndex, this.network);
-				this.network.colors[nodeIndex * 3 + 0] = aColor[0];
-				this.network.colors[nodeIndex * 3 + 1] = aColor[1];
-				this.network.colors[nodeIndex * 3 + 2] = aColor[2];
+				this.network.colors[nodeIndex * 4 + 0] = aColor[0];
+				this.network.colors[nodeIndex * 4 + 1] = aColor[1];
+				this.network.colors[nodeIndex * 4 + 2] = aColor[2];
+				if(aColor.length > 3){
+					this.network.colors[nodeIndex * 4 + 3] = aColor[3];
+				}
 			} else {
 				let nodeIndex = this.network.ID2index[nodeID];
-				this.network.colors[nodeIndex * 3 + 0] = colorInput[0];
-				this.network.colors[nodeIndex * 3 + 1] = colorInput[1];
-				this.network.colors[nodeIndex * 3 + 2] = colorInput[2];
+				this.network.colors[nodeIndex * 4 + 0] = colorInput[0];
+				this.network.colors[nodeIndex * 4 + 1] = colorInput[1];
+				this.network.colors[nodeIndex * 4 + 2] = colorInput[2];
+				if(colorInput.length > 3){
+					this.network.colors[nodeIndex * 4 + 3] = colorInput[3];
+				}
 			}
 		}
 		return this;
@@ -1471,12 +1467,22 @@ export class Helios {
 		return ID;
 	}
 
-	edgesIntensity(intensity) {
+	edgesOpacity(opacity) {
 		// check if color is defined
-		if (typeof intensity === "undefined") {
-			return this._edgesIntensity;
+		if (typeof opacity === "undefined") {
+			return this._edgesGlobalOpacity;
 		} else {
-			this._edgesIntensity = intensity;
+			this._edgesGlobalOpacity = opacity;
+			return this;
+		}
+	}
+
+	nodeOpacity(opacity) {
+		// check if color is defined
+		if (typeof opacity === "undefined") {
+			return this._nodesGlobalOpacity;
+		} else {
+			this._nodesGlobalOpacity = opacity;
 			return this;
 		}
 	}

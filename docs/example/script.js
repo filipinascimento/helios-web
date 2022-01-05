@@ -230,7 +230,7 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 		// .nodeSize(node=>{ // Example on how to define size
 		// 	return Math.random()*5+1.0;
 		// })
-		.edgesIntensity(1.0) // set edges intensity);
+		.edgesOpacity(1.0) // set edges intensity);
 		.nodeOutlineWidth(node=>node.size*defaultOutline)
 		.nodeOutlineColor(backgroundColor)
 		.additiveBlending(additiveBlending);
@@ -331,7 +331,7 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 				// .classed("slider",true)
 				// 
 				// .on("input", (event,d)=>{
-				// 	helios.edgesIntensity(Math.pow(10,parseFloat(d3Select("#edgeOpacitySlider").property("value"))));
+				// 	helios.edgesOpacity(Math.pow(10,parseFloat(d3Select("#edgeOpacitySlider").property("value"))));
 				// 	helios.update();
 				// 	helios.render();
 				// 	event.stopPropagation();
@@ -355,8 +355,8 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 					.classed("slider", true)
 					.style("min-width", "60px")
 					.on("input", (event, d) => {
-						// helios.edgesIntensity(Math.pow(10,parseFloat(d3Select("#edgeOpacitySlider").property("value"))));
-						helios.edgesIntensity(parseFloat(d3Select("#edgeOpacitySlider").property("value")));
+						// helios.edgesOpacity(Math.pow(10,parseFloat(d3Select("#edgeOpacitySlider").property("value"))));
+						helios.edgesOpacity(parseFloat(d3Select("#edgeOpacitySlider").property("value")));
 						helios.update();
 						helios.render();
 						event.stopPropagation();

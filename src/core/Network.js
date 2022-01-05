@@ -22,14 +22,17 @@ class Node{
 
 	set color(newColor){
 		let nodeIndex = this.index;
-		this._network.colors[nodeIndex*3+0] = newColor[0];
-		this._network.colors[nodeIndex*3+1] = newColor[1];
-		this._network.colors[nodeIndex*3+2] = newColor[2];
+		this._network.colors[nodeIndex*4+0] = newColor[0];
+		this._network.colors[nodeIndex*4+1] = newColor[1];
+		this._network.colors[nodeIndex*4+2] = newColor[2];
+		if(newColor.length > 3){
+			this._network.colors[nodeIndex*4+3] = newColor[3];
+		}
 	}
 
 	get color(){
 		let nodeIndex = this.index;
-		return [this._network.colors[nodeIndex*3+0],this._network.colors[nodeIndex*3+1],this._network.colors[nodeIndex*3+2]];
+		return [this._network.colors[nodeIndex*4+0],this._network.colors[nodeIndex*4+1],this._network.colors[nodeIndex*4+2],this._network.colors[nodeIndex*4+3]];
 	}
 
 	set size(newSize){
@@ -42,14 +45,17 @@ class Node{
 
 	set outlineColor(newColor){
 		let nodeIndex = this.index;
-		this._network.outlineColors[nodeIndex*3+0] = newColor[0];
-		this._network.outlineColors[nodeIndex*3+1] = newColor[1];
-		this._network.outlineColors[nodeIndex*3+2] = newColor[2];
+		this._network.outlineColors[nodeIndex*4+0] = newColor[0];
+		this._network.outlineColors[nodeIndex*4+1] = newColor[1];
+		this._network.outlineColors[nodeIndex*4+2] = newColor[2];
+		if(newColor.length > 3){
+			this._network.outlineColors[nodeIndex*4+3] = newColor[3];
+		}
 	}
 
 	get outlineColor(){
 		let nodeIndex = this.index;
-		return [this._network.outlineColors[nodeIndex*3+0],this._network.outlineColors[nodeIndex*3+1],this._network.outlineColors[nodeIndex*3+2]];
+		return [this._network.outlineColors[nodeIndex*4+0],this._network.outlineColors[nodeIndex*4+1],this._network.outlineColors[nodeIndex*4+2],this._network.outlineColors[nodeIndex*4+3]];
 	}
 
 	set outlineWidth(newWidth){
@@ -100,17 +106,20 @@ export class Network{
 		}
 		
 		this.positions = new Float32Array(3*this.index2Node.length);
-		this.colors = new Float32Array(3*this.index2Node.length);
+		this.colors = new Float32Array(4*this.index2Node.length);
 		this.sizes = new Float32Array(this.index2Node.length);
-		this.intensities = new Float32Array(this.index2Node.length);
-		this.outlineColors = new Float32Array(3*this.index2Node.length);
+		this.outlineColors = new Float32Array(4*this.index2Node.length);
+		//set intensities to 1.0
+		for (let nodeIndex=0; nodeIndex<this.index2Node.length;nodeIndex++){
+			this.colors[nodeIndex*4+3] = 1.0;
+			this.outlineColors[nodeIndex*4+3] = 1.0;
+		}
+
 		this.outlineWidths = new Float32Array(this.index2Node.length);
-		
 		
 		this.edgePositions = null; //new Float32Array(3*this.indexedEdges.length);
 		this.edgeColors = null; //new Float32Array(3*this.indexedEdges.length);
 		this.edgeSizes = null; //new Float32Array(this.indexedEdges.length);
-		this.edgeIntensities = null; //new Float32Array(this.indexedEdges.length);
 		// this.intensities = new Float32Array(this.indexedEdges.length);
 		// this.outlineColors = new Float32Array(3*this.indexedEdges.length);
 		// this.outlineWidths = new Float32Array(this.indexedEdges.length);
@@ -139,14 +148,24 @@ export class Network{
 				if(index==0){
 					console.log("NODE COLOR:",node["color"])
 				}
-				this.colors[index*3+0] = node["color"][0];
-				this.colors[index*3+1] = node["color"][1];
-				this.colors[index*3+2] = node["color"][2];
+				this.colors[index*4+0] = node["color"][0];
+				this.colors[index*4+1] = node["color"][1];
+				this.colors[index*4+2] = node["color"][2];
+				if(node["color"].length > 3){
+					this.colors[index*4+3] = node["color"][3];
+				}else{
+					this.colors[index*4+3]=1.0;
+				}
 			}else{
 				let color = colorMap(index);
-				this.colors[index*3+0] = color[0];
-				this.colors[index*3+1] = color[1];
-				this.colors[index*3+2] = color[2];
+				this.colors[index*4+0] = color[0];
+				this.colors[index*4+1] = color[1];
+				this.colors[index*4+2] = color[2];
+				if(color.length > 3){
+					this.colors[index*4+3] = color[3];
+				}else{
+					this.colors[index*4+3]=1.0;
+				}
 			}
 
 			if(node.hasOwnProperty("size")){
@@ -156,13 +175,19 @@ export class Network{
 			}
 
 			if(node.hasOwnProperty("outlineColor")){
-				this.outlineColors[index*3+0] = node["outlineColor"][0];
-				this.outlineColors[index*3+1] = node["outlineColor"][1];
-				this.outlineColors[index*3+2] = node["outlineColor"][2];
+				this.outlineColors[index*4+0] = node["outlineColor"][0];
+				this.outlineColors[index*4+1] = node["outlineColor"][1];
+				this.outlineColors[index*4+2] = node["outlineColor"][2];
+				if(node["outlineColor"].length > 3){
+					this.outlineColors[index*4+3] = node["outlineColor"][3];
+				}else{
+					this.outlineColors[index*4+3]=1.0;
+				}
 			}else{
-				this.outlineColors[index*3+0] = 255;
-				this.outlineColors[index*3+1] = 255;
-				this.outlineColors[index*3+2] = 255;
+				this.outlineColors[index*4+0] = 1.0;
+				this.outlineColors[index*4+1] = 1.0;
+				this.outlineColors[index*4+2] = 1.0;
+				this.outlineColors[index*4+3] = 1.0;
 			}
 
 			if(node.hasOwnProperty("outlineWidth")){
@@ -170,8 +195,6 @@ export class Network{
 			}else{
 				this.outlineWidths[index] = 0.0;
 			}
-
-			this.intensities[index] = 1.0;
 
 			let newNode = new Node(node,node.ID,index,this);
 			this.index2Node[index] = newNode;
@@ -203,20 +226,28 @@ export class Network{
 		// this.sizes = null; //new Float32Array(this.indexedEdges.length);
 	}
 	
-	updateEdgeColors(){
+	updateEdgeColors(updateOpacity){
 		if(this.edgeColors == null){
-			this.edgeColors = new Float32Array(3*this.indexedEdges.length);
+			this.edgeColors = new Float32Array(4*this.indexedEdges.length);
+		}
+		// if updateColors is not provided:
+		if(typeof updateOpacity === "undefined"){
+			updateOpacity = true;
 		}
 		for (let edgeIndex = 0; edgeIndex < this.indexedEdges.length/2; index++) {
 			let fromIndex = this.indexedEdges[edgeIndex*2];
 			let toIndex = this.indexedEdges[edgeIndex*2+1];
-			this.edgeColors[(edgeIndex*2)*3]   = this.colors[fromIndex*3];
-			this.edgeColors[(edgeIndex*2)*3+1] = this.colors[fromIndex*3+1];
-			this.edgeColors[(edgeIndex*2)*3+2] = this.colors[fromIndex*3+2];
+			this.edgeColors[(edgeIndex*2)*4]   = this.colors[fromIndex*4];
+			this.edgeColors[(edgeIndex*2)*4+1] = this.colors[fromIndex*4+1];
+			this.edgeColors[(edgeIndex*2)*4+2] = this.colors[fromIndex*4+2];
 
-			this.edgeColors[(edgeIndex*2+1)*3]   = this.colors[toIndex*3];
-			this.edgeColors[(edgeIndex*2+1)*3+1] = this.colors[toIndex*3+1];
-			this.edgeColors[(edgeIndex*2+1)*3+2] = this.colors[toIndex*3+2];
+			this.edgeColors[(edgeIndex*2+1)*4]   = this.colors[toIndex*4];
+			this.edgeColors[(edgeIndex*2+1)*4+1] = this.colors[toIndex*4+1];
+			this.edgeColors[(edgeIndex*2+1)*4+2] = this.colors[toIndex*4+2];
+			if(updateOpacity){
+				this.edgeColors[(edgeIndex*2)*4+3] = this.colors[fromIndex*4+3];
+				this.edgeColors[(edgeIndex*2+1)*4+3] = this.colors[toIndex*4+3];
+			}
 		}
 	}
 	
@@ -231,15 +262,17 @@ export class Network{
 			this.edgeSizes[edgeIndex*2+1] = this.sizes[toIndex];
 		}
 	}
-	updateEdgeIntensities(){
-		if(this.edgeIntensities == null){
-			this.edgeIntensities = new Float32Array(this.indexedEdges.length);
+
+
+	updateEdgeOpacity(updateOpacity){
+		if(this.edgeColors == null){
+			this.edgeColors = new Float32Array(4*this.indexedEdges.length);
 		}
 		for (let edgeIndex = 0; edgeIndex < this.indexedEdges.length/2; index++) {
 			let fromIndex = this.indexedEdges[edgeIndex*2];
 			let toIndex = this.indexedEdges[edgeIndex*2+1];
-			this.edgeIntensities[edgeIndex*2] = this.intensities[fromIndex];
-			this.edgeIntensities[edgeIndex*2+1] = this.intensities[toIndex];
+			this.edgeColors[(edgeIndex*2)*4+3] = this.colors[fromIndex*4+3];
+			this.edgeColors[(edgeIndex*2+1)*4+3] = this.colors[toIndex*4+3];
 		}
 	}
 }
