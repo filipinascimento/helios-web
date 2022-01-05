@@ -2669,13 +2669,16 @@ var Node = class {
   }
   set color(newColor) {
     let nodeIndex = this.index;
-    this._network.colors[nodeIndex * 3 + 0] = newColor[0];
-    this._network.colors[nodeIndex * 3 + 1] = newColor[1];
-    this._network.colors[nodeIndex * 3 + 2] = newColor[2];
+    this._network.colors[nodeIndex * 4 + 0] = newColor[0];
+    this._network.colors[nodeIndex * 4 + 1] = newColor[1];
+    this._network.colors[nodeIndex * 4 + 2] = newColor[2];
+    if (newColor.length > 3) {
+      this._network.colors[nodeIndex * 4 + 3] = newColor[3];
+    }
   }
   get color() {
     let nodeIndex = this.index;
-    return [this._network.colors[nodeIndex * 3 + 0], this._network.colors[nodeIndex * 3 + 1], this._network.colors[nodeIndex * 3 + 2]];
+    return [this._network.colors[nodeIndex * 4 + 0], this._network.colors[nodeIndex * 4 + 1], this._network.colors[nodeIndex * 4 + 2], this._network.colors[nodeIndex * 4 + 3]];
   }
   set size(newSize) {
     this._network.sizes[this.index] = newSize;
@@ -2685,13 +2688,16 @@ var Node = class {
   }
   set outlineColor(newColor) {
     let nodeIndex = this.index;
-    this._network.outlineColors[nodeIndex * 3 + 0] = newColor[0];
-    this._network.outlineColors[nodeIndex * 3 + 1] = newColor[1];
-    this._network.outlineColors[nodeIndex * 3 + 2] = newColor[2];
+    this._network.outlineColors[nodeIndex * 4 + 0] = newColor[0];
+    this._network.outlineColors[nodeIndex * 4 + 1] = newColor[1];
+    this._network.outlineColors[nodeIndex * 4 + 2] = newColor[2];
+    if (newColor.length > 3) {
+      this._network.outlineColors[nodeIndex * 4 + 3] = newColor[3];
+    }
   }
   get outlineColor() {
     let nodeIndex = this.index;
-    return [this._network.outlineColors[nodeIndex * 3 + 0], this._network.outlineColors[nodeIndex * 3 + 1], this._network.outlineColors[nodeIndex * 3 + 2]];
+    return [this._network.outlineColors[nodeIndex * 4 + 0], this._network.outlineColors[nodeIndex * 4 + 1], this._network.outlineColors[nodeIndex * 4 + 2], this._network.outlineColors[nodeIndex * 4 + 3]];
   }
   set outlineWidth(newWidth) {
     this._network.outlineWidths[this.index] = newWidth;
@@ -2733,15 +2739,17 @@ var Network = class {
       this.indexedEdges[edgeIndex * 2 + 1] = this.ID2index[edge.target];
     }
     this.positions = new Float32Array(3 * this.index2Node.length);
-    this.colors = new Float32Array(3 * this.index2Node.length);
+    this.colors = new Float32Array(4 * this.index2Node.length);
     this.sizes = new Float32Array(this.index2Node.length);
-    this.intensities = new Float32Array(this.index2Node.length);
-    this.outlineColors = new Float32Array(3 * this.index2Node.length);
+    this.outlineColors = new Float32Array(4 * this.index2Node.length);
+    for (let nodeIndex = 0; nodeIndex < this.index2Node.length; nodeIndex++) {
+      this.colors[nodeIndex * 4 + 3] = 1;
+      this.outlineColors[nodeIndex * 4 + 3] = 1;
+    }
     this.outlineWidths = new Float32Array(this.index2Node.length);
     this.edgePositions = null;
     this.edgeColors = null;
     this.edgeSizes = null;
-    this.edgeIntensities = null;
     this.nodes = {};
     let colorScale = linearScale([0, this.index2Node.length], [0, 1]);
     let colorMap = createColorMap(colors$2, colorScale);
@@ -2760,14 +2768,24 @@ var Network = class {
         if (index2 == 0) {
           console.log("NODE COLOR:", node["color"]);
         }
-        this.colors[index2 * 3 + 0] = node["color"][0];
-        this.colors[index2 * 3 + 1] = node["color"][1];
-        this.colors[index2 * 3 + 2] = node["color"][2];
+        this.colors[index2 * 4 + 0] = node["color"][0];
+        this.colors[index2 * 4 + 1] = node["color"][1];
+        this.colors[index2 * 4 + 2] = node["color"][2];
+        if (node["color"].length > 3) {
+          this.colors[index2 * 4 + 3] = node["color"][3];
+        } else {
+          this.colors[index2 * 4 + 3] = 1;
+        }
       } else {
         let color2 = colorMap(index2);
-        this.colors[index2 * 3 + 0] = color2[0];
-        this.colors[index2 * 3 + 1] = color2[1];
-        this.colors[index2 * 3 + 2] = color2[2];
+        this.colors[index2 * 4 + 0] = color2[0];
+        this.colors[index2 * 4 + 1] = color2[1];
+        this.colors[index2 * 4 + 2] = color2[2];
+        if (color2.length > 3) {
+          this.colors[index2 * 4 + 3] = color2[3];
+        } else {
+          this.colors[index2 * 4 + 3] = 1;
+        }
       }
       if (node.hasOwnProperty("size")) {
         this.sizes[index2] = node["size"];
@@ -2775,20 +2793,25 @@ var Network = class {
         this.sizes[index2] = 1;
       }
       if (node.hasOwnProperty("outlineColor")) {
-        this.outlineColors[index2 * 3 + 0] = node["outlineColor"][0];
-        this.outlineColors[index2 * 3 + 1] = node["outlineColor"][1];
-        this.outlineColors[index2 * 3 + 2] = node["outlineColor"][2];
+        this.outlineColors[index2 * 4 + 0] = node["outlineColor"][0];
+        this.outlineColors[index2 * 4 + 1] = node["outlineColor"][1];
+        this.outlineColors[index2 * 4 + 2] = node["outlineColor"][2];
+        if (node["outlineColor"].length > 3) {
+          this.outlineColors[index2 * 4 + 3] = node["outlineColor"][3];
+        } else {
+          this.outlineColors[index2 * 4 + 3] = 1;
+        }
       } else {
-        this.outlineColors[index2 * 3 + 0] = 255;
-        this.outlineColors[index2 * 3 + 1] = 255;
-        this.outlineColors[index2 * 3 + 2] = 255;
+        this.outlineColors[index2 * 4 + 0] = 1;
+        this.outlineColors[index2 * 4 + 1] = 1;
+        this.outlineColors[index2 * 4 + 2] = 1;
+        this.outlineColors[index2 * 4 + 3] = 1;
       }
       if (node.hasOwnProperty("outlineWidth")) {
         this.outlineWidths[index2] = node["outlineWidth"];
       } else {
         this.outlineWidths[index2] = 0;
       }
-      this.intensities[index2] = 1;
       let newNode = new Node(node, node.ID, index2, this);
       this.index2Node[index2] = newNode;
       this.nodes[node.ID] = newNode;
@@ -2812,19 +2835,26 @@ var Network = class {
       this.edgePositions[(edgeIndex * 2 + 1) * 3 + 2] = this.positions[toIndex * 3 + 2];
     }
   }
-  updateEdgeColors() {
+  updateEdgeColors(updateOpacity) {
     if (this.edgeColors == null) {
-      this.edgeColors = new Float32Array(3 * this.indexedEdges.length);
+      this.edgeColors = new Float32Array(4 * this.indexedEdges.length);
+    }
+    if (typeof updateOpacity === "undefined") {
+      updateOpacity = true;
     }
     for (let edgeIndex = 0; edgeIndex < this.indexedEdges.length / 2; index++) {
       let fromIndex = this.indexedEdges[edgeIndex * 2];
       let toIndex = this.indexedEdges[edgeIndex * 2 + 1];
-      this.edgeColors[edgeIndex * 2 * 3] = this.colors[fromIndex * 3];
-      this.edgeColors[edgeIndex * 2 * 3 + 1] = this.colors[fromIndex * 3 + 1];
-      this.edgeColors[edgeIndex * 2 * 3 + 2] = this.colors[fromIndex * 3 + 2];
-      this.edgeColors[(edgeIndex * 2 + 1) * 3] = this.colors[toIndex * 3];
-      this.edgeColors[(edgeIndex * 2 + 1) * 3 + 1] = this.colors[toIndex * 3 + 1];
-      this.edgeColors[(edgeIndex * 2 + 1) * 3 + 2] = this.colors[toIndex * 3 + 2];
+      this.edgeColors[edgeIndex * 2 * 4] = this.colors[fromIndex * 4];
+      this.edgeColors[edgeIndex * 2 * 4 + 1] = this.colors[fromIndex * 4 + 1];
+      this.edgeColors[edgeIndex * 2 * 4 + 2] = this.colors[fromIndex * 4 + 2];
+      this.edgeColors[(edgeIndex * 2 + 1) * 4] = this.colors[toIndex * 4];
+      this.edgeColors[(edgeIndex * 2 + 1) * 4 + 1] = this.colors[toIndex * 4 + 1];
+      this.edgeColors[(edgeIndex * 2 + 1) * 4 + 2] = this.colors[toIndex * 4 + 2];
+      if (updateOpacity) {
+        this.edgeColors[edgeIndex * 2 * 4 + 3] = this.colors[fromIndex * 4 + 3];
+        this.edgeColors[(edgeIndex * 2 + 1) * 4 + 3] = this.colors[toIndex * 4 + 3];
+      }
     }
   }
   updateEdgeSizes() {
@@ -2838,15 +2868,15 @@ var Network = class {
       this.edgeSizes[edgeIndex * 2 + 1] = this.sizes[toIndex];
     }
   }
-  updateEdgeIntensities() {
-    if (this.edgeIntensities == null) {
-      this.edgeIntensities = new Float32Array(this.indexedEdges.length);
+  updateEdgeOpacity(updateOpacity) {
+    if (this.edgeColors == null) {
+      this.edgeColors = new Float32Array(4 * this.indexedEdges.length);
     }
     for (let edgeIndex = 0; edgeIndex < this.indexedEdges.length / 2; index++) {
       let fromIndex = this.indexedEdges[edgeIndex * 2];
       let toIndex = this.indexedEdges[edgeIndex * 2 + 1];
-      this.edgeIntensities[edgeIndex * 2] = this.intensities[fromIndex];
-      this.edgeIntensities[edgeIndex * 2 + 1] = this.intensities[toIndex];
+      this.edgeColors[edgeIndex * 2 * 4 + 3] = this.colors[fromIndex * 4 + 3];
+      this.edgeColors[(edgeIndex * 2 + 1) * 4 + 3] = this.colors[toIndex * 4 + 3];
     }
   }
 };
@@ -8972,40 +9002,42 @@ var d3ForceLayoutWorker = class {
 };
 
 // build/src/shaders/edges.js
-var fragmentShader = `
-#ifdef GL_ES
-	precision highp float;
-#endif
-//uniform vec2 nearFar;
-uniform float linesIntensity;
-varying vec4 vEncodedIndex;
-
-varying vec3 vColor;
-//varying float vZComponent;
-//gl_DepthRange.near)/gl_DepthRange.diff
-void main(){
-	//float w = (-vZComponent-nearFar[0])/(nearFar[1]-nearFar[0]);
-	gl_FragColor = vec4(vColor,linesIntensity);
-}
-`;
 var vertexShader = `
 uniform mat4 projectionViewMatrix;
 
 attribute vec4 vertex;
-attribute vec3 color;
+attribute vec4 color;
+attribute float size;
 attribute vec4 encodedIndex;
 
-varying vec3 vColor;
-
+varying vec4 vColor;
+varying float vSize;
 varying vec4 vEncodedIndex;
+
 
 //varying float vZComponent;
 
 void main(void){
 	vColor = color;
+	vSize = size;
 	vEncodedIndex = encodedIndex;
 	//vZComponent = viewVertex.z;
 	gl_Position =   projectionViewMatrix * vertex;
+}
+`;
+var fragmentShader = `
+#ifdef GL_ES
+	precision highp float;
+#endif
+//uniform vec2 nearFar;
+uniform float globalOpacity;
+varying vec4 vEncodedIndex;
+varying vec4 vColor;
+//varying float vZComponent;
+//gl_DepthRange.near)/gl_DepthRange.diff
+void main(){
+	//float w = (-vZComponent-nearFar[0])/(nearFar[1]-nearFar[0]);
+	gl_FragColor = vec4(vColor.xyz,globalOpacity*vColor.w);
 }
 `;
 var pickingShader = `
@@ -9014,9 +9046,7 @@ var pickingShader = `
 #endif
 //uniform vec2 nearFar;
 varying vec4 vEncodedIndex;
-uniform float linesIntensity;
-
-varying vec3 vColor;
+varying vec4 vColor;
 //varying float vZComponent;
 //gl_DepthRange.near)/gl_DepthRange.diff
 void main(){
@@ -9025,31 +9055,12 @@ void main(){
 	
 }
 `;
-var fastFragmentShader = `
-#ifdef GL_ES
-	precision highp float;
-#endif
-//uniform vec2 nearFar;
-uniform float linesIntensity;
-varying vec4 vEncodedIndex;
-
-varying vec3 vColor;
-//varying float vZComponent;
-//gl_DepthRange.near)/gl_DepthRange.diff
-void main(){
-	//float w = (-vZComponent-nearFar[0])/(nearFar[1]-nearFar[0]);
-	gl_FragColor = vec4(vColor,linesIntensity);
-	
-}
-
-`;
 var fastVertexShader = `
 uniform mat4 projectionViewMatrix;
 
 attribute vec4 vertex;
-attribute vec3 color;
-
-varying vec3 vColor;
+attribute vec4 color;
+varying vec4 vColor;
 
 varying vec4 vEncodedIndex;
 
@@ -9060,24 +9071,117 @@ void main(void){
 	//vZComponent = viewVertex.z;
 	gl_Position =   projectionViewMatrix * vertex;
 }
+`;
+var fastFragmentShader = `
+#ifdef GL_ES
+	precision highp float;
+#endif
+//uniform vec2 nearFar;
+uniform float globalOpacity;
+varying vec4 vColor;
+//varying float vZComponent;
+//gl_DepthRange.near)/gl_DepthRange.diff
+void main(){
+	//float w = (-vZComponent-nearFar[0])/(nearFar[1]-nearFar[0]);
+	gl_FragColor = vec4(vColor.xyz,globalOpacity*vColor.w);
+}
 
 `;
 
 // build/src/shaders/nodes.js
+var vertexShader2 = `
+// uniform mat4 projectionMatrix;
+// uniform mat4 viewMatrix;
+// uniform mat3 normalMatrix;
+
+
+// attribute vec4 vertex;
+// attribute vec3 normal;
+// attribute vec3 position;
+// attribute vec3 color;
+// attribute float size;
+// attribute float Opacity;
+
+// varying vec3 vNormal;
+// varying vec3 vEye;
+
+// varying vec3 vColor;
+// varying float vSize;
+// varying float vOpacity;
+
+// void main(void){
+// 	vec4 viewVertex = viewMatrix * (vertex*vec4(vec3(size),1.0) + vec4(position,0.0));
+// 	vNormal = normalMatrix * normal;
+// 	vEye = -vec3(viewVertex);
+// 	vOpacity = Opacity;
+// 	vColor = color;
+// 	gl_Position =   projectionMatrix * viewVertex;
+// }
+
+uniform mat4 projectionMatrix;
+uniform mat4 viewMatrix;
+uniform mat3 normalMatrix;
+
+attribute vec2 vertex;
+// attribute vec3 normal;
+attribute vec3 position;
+attribute vec4 color;
+attribute float size;
+attribute float outlineWidth;
+attribute vec4 outlineColor;
+attribute vec4 encodedIndex;
+
+varying vec3 vNormal;
+varying vec3 vEye;
+varying vec4 vColor;
+varying vec2 vOffset;
+varying float vSize;
+varying vec4 vEncodedIndex;
+varying float vOutlineThreshold;
+varying vec4 vOutlineColor;
+varying vec4 vPosition;
+
+void main(void){
+	float BoxCorrection = 1.5;
+	vec2 offset = vertex;
+	float fullSize = size + outlineWidth;
+	// vec4 viewCenters = viewMatrix*vec4(position,1);
+	// vec3 viewCenters = position;
+	// fragCenter = viewCenters
+	// float scalingFactor = 1.0 / abs(centers.x)*0.001;
+	// offset*=scalingFactor;
+	vec3 cameraRight = normalize(vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]));
+	vec3 cameraUp = normalize(vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]));
+
+	// viewCenters.xy += offset*size*CameraRight_worldspace;
+	
+	vec4 viewCenters = viewMatrix*vec4(position+BoxCorrection*fullSize*(cameraRight*offset.x + cameraUp*offset.y),1.0);
+	vNormal = vec3(0.0,0.0,1.0); //normalMatrix * normal;
+	vEye = -vec3(offset,0.0);
+	vEncodedIndex = encodedIndex;
+	vColor = color;
+	vOffset = vertex;
+	vSize = size;
+	vOutlineThreshold = outlineWidth/fullSize;
+	vOutlineColor = outlineColor;
+	vPosition = projectionMatrix * viewCenters;
+	gl_Position = vPosition;
+}
+`;
 var fragmentShader2 = `// #ifdef GL_ES
 // 	precision highp float;
 // #endif
 
 precision mediump float;
-varying vec3 vColor;
-varying float vIntensity;
+uniform float globalOpacity;
+varying vec4 vColor;
 varying vec4 vEncodedIndex;
 varying vec3 vNormal;
 varying vec3 vEye;
 varying float vSize;
 varying vec2 vOffset;
 varying float vOutlineThreshold;
-varying vec3 vOutlineColor;
+varying vec4 vOutlineColor;
 varying vec4 vPosition;
 
 
@@ -9098,9 +9202,9 @@ void main(){
 	// float eyeDotReflection = max(dot(eye, reflection), 0.0);
 	// newColor +=  vec3(0.5)* pow(eyeDotReflection, 60.0);
 	
-	// gl_FragColor = vec4(newColor,vIntensity);
-	// gl_FragColor = vec4(eye,intensity);
-	//gl_FragData[0] = vec4(newColor,intensity);
+	// gl_FragColor = vec4(newColor,vOpacity);
+	// gl_FragColor = vec4(eye,Opacity);
+	//gl_FragData[0] = vec4(newColor,Opacity);
 
 // Renaming variables passed from the Vertex Shader
 
@@ -9144,7 +9248,7 @@ void main(){
 	
 	//Ambient+Diffuse
 	float cosTheta = max(dot(lightDirection,normal),0.0);
-	vec3 newColor = vColor*(ambientFactor+cosTheta);
+	vec3 newColor = vColor.xyz*(ambientFactor+cosTheta);
 	
 	//Specular
 	vec3 reflection = reflect(-lightDirection, normal);
@@ -9154,94 +9258,12 @@ void main(){
 	
 	
 	if(lensqr < 1.0-vOutlineThreshold){
-		// gl_FragColor = vec4(vColor,vIntensity)
-		gl_FragColor = vec4(newColor,vIntensity);;
+		// gl_FragColor = vec4(vColor,vOpacity)
+		gl_FragColor = vec4(newColor,vColor.w*globalOpacity);;
 	}else{
-		gl_FragColor = vec4(vOutlineColor.xyz,vIntensity);
+		gl_FragColor = vec4(vOutlineColor.xyz,vOutlineColor.w*globalOpacity);
 	}
 	// gl_FragDepthEXT = 0.5; 
-}
-`;
-var vertexShader2 = `
-// uniform mat4 projectionMatrix;
-// uniform mat4 viewMatrix;
-// uniform mat3 normalMatrix;
-
-
-// attribute vec4 vertex;
-// attribute vec3 normal;
-// attribute vec3 position;
-// attribute vec3 color;
-// attribute float size;
-// attribute float intensity;
-
-// varying vec3 vNormal;
-// varying vec3 vEye;
-
-// varying vec3 vColor;
-// varying float vSize;
-// varying float vIntensity;
-
-// void main(void){
-// 	vec4 viewVertex = viewMatrix * (vertex*vec4(vec3(size),1.0) + vec4(position,0.0));
-// 	vNormal = normalMatrix * normal;
-// 	vEye = -vec3(viewVertex);
-// 	vIntensity = intensity;
-// 	vColor = color;
-// 	gl_Position =   projectionMatrix * viewVertex;
-// }
-
-uniform mat4 projectionMatrix;
-uniform mat4 viewMatrix;
-uniform mat3 normalMatrix;
-
-attribute vec2 vertex;
-// attribute vec3 normal;
-attribute vec3 position;
-attribute vec3 color;
-attribute float size;
-attribute float outlineWidth;
-attribute vec3 outlineColor;
-attribute float intensity;
-attribute vec4 encodedIndex;
-
-varying vec3 vNormal;
-varying vec3 vEye;
-varying vec3 vColor;
-varying vec2 vOffset;
-varying float vSize;
-varying float vIntensity;
-varying vec4 vEncodedIndex;
-varying float vOutlineThreshold;
-varying vec3 vOutlineColor;
-varying vec4 vPosition;
-
-void main(void){
-	float BoxCorrection = 1.5;
-	vec2 offset = vertex;
-	float fullSize = size + outlineWidth;
-	// vec4 viewCenters = viewMatrix*vec4(position,1);
-	// vec3 viewCenters = position;
-	// fragCenter = viewCenters
-	// float scalingFactor = 1.0 / abs(centers.x)*0.001;
-	// offset*=scalingFactor;
-	vec3 cameraRight = normalize(vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]));
-	vec3 cameraUp = normalize(vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]));
-
-	// viewCenters.xy += offset*size*CameraRight_worldspace;
-	
-	vec4 viewCenters = viewMatrix*vec4(position+BoxCorrection*fullSize*(cameraRight*offset.x + cameraUp*offset.y),1.0);
-	vNormal = vec3(0.0,0.0,1.0); //normalMatrix * normal;
-	vEye = -vec3(offset,0.0);
-	vIntensity = intensity;
-	vEncodedIndex = encodedIndex;
-	vColor = color;
-	vOffset = vertex;
-	vSize = size;
-	vOutlineThreshold = outlineWidth/fullSize;
-	vOutlineColor = outlineColor;
-	vPosition = projectionMatrix * viewCenters;
-	gl_Position = vPosition;
 }
 `;
 var pickingShader2 = `
@@ -9250,15 +9272,14 @@ var pickingShader2 = `
 // #endif
 
 precision mediump float;
-varying vec3 vColor;
-varying float vIntensity;
+varying vec4 vColor;
 varying vec4 vEncodedIndex;
 varying vec3 vNormal;
 varying vec3 vEye;
 varying float vSize;
 varying vec2 vOffset;
 varying float vOutlineThreshold;
-varying vec3 vOutlineColor;
+varying vec4 vOutlineColor;
 
 void main(){
 	float lensqr = dot(vOffset, vOffset);
@@ -9275,15 +9296,15 @@ var fastFragmentShader2 = `
 // #endif
 
 precision mediump float;
-varying vec3 vColor;
-varying float vIntensity;
+uniform float globalOpacity;
+varying vec4 vColor;
 varying vec4 vEncodedIndex;
 varying vec3 vNormal;
 varying vec3 vEye;
 varying float vSize;
 varying vec2 vOffset;
 varying float vOutlineThreshold;
-varying vec3 vOutlineColor;
+varying vec4 vOutlineColor;
 varying vec4 vPosition;
 
 
@@ -9296,10 +9317,10 @@ void main(){
 			discard;
 	
 	if(lensqr < 1.0-vOutlineThreshold){
-		// gl_FragColor = vec4(vColor,vIntensity)
-		gl_FragColor = vec4(vColor,vIntensity);;
+		// gl_FragColor = vec4(vColor,vOpacity)
+		gl_FragColor = vec4(vColor.xyz,vColor.w*globalOpacity);;
 	}else{
-		gl_FragColor = vec4(vOutlineColor.xyz,vIntensity);
+		gl_FragColor = vec4(vOutlineColor.xyz,vOutlineColor.w*globalOpacity);
 	}
 	// gl_FragDepthEXT = 0.5; 
 }
@@ -9344,7 +9365,8 @@ var Helios = class {
     this.panY = 0;
     this.saveResolutionRatio = 1;
     this.pickingResolutionRatio = 0.25;
-    this._edgesIntensity = 1;
+    this._edgesGlobalOpacity = 1;
+    this._nodesGlobalOpacity = 1;
     this._use2D = use2D2;
     this._autoStartLayout = autoStartLayout;
     this.useAdditiveBlending = false;
@@ -9671,12 +9693,12 @@ var Helios = class {
   }
   _setupShaders() {
     let gl = this.gl;
-    this.edgesShaderProgram = new ShaderProgram(getShaderFromString(gl, vertexShader, gl.VERTEX_SHADER), getShaderFromString(gl, fragmentShader, gl.FRAGMENT_SHADER), ["projectionViewMatrix", "nearFar", "linesIntensity"], ["vertex", "color", "encodedIndex"], this.gl);
-    this.edgesFastShaderProgram = new ShaderProgram(getShaderFromString(gl, fastVertexShader, gl.VERTEX_SHADER), getShaderFromString(gl, fastFragmentShader, gl.FRAGMENT_SHADER), ["projectionViewMatrix", "nearFar", "linesIntensity"], ["vertex", "color", "encodedIndex"], this.gl);
-    this.edgesPickingShaderProgram = new ShaderProgram(getShaderFromString(gl, vertexShader, gl.VERTEX_SHADER), getShaderFromString(gl, pickingShader, gl.FRAGMENT_SHADER), ["projectionViewMatrix", "nearFar", "linesIntensity"], ["vertex", "color", "encodedIndex"], this.gl);
-    this.nodesShaderProgram = new ShaderProgram(getShaderFromString(gl, vertexShader2, gl.VERTEX_SHADER), getShaderFromString(gl, fragmentShader2, gl.FRAGMENT_SHADER), ["viewMatrix", "projectionMatrix", "normalMatrix"], ["vertex", "position", "color", "intensity", "size", "outlineWidth", "outlineColor", "encodedIndex"], this.gl);
-    this.nodesFastShaderProgram = new ShaderProgram(getShaderFromString(gl, fastVertexShader2, gl.VERTEX_SHADER), getShaderFromString(gl, fastFragmentShader2, gl.FRAGMENT_SHADER), ["viewMatrix", "projectionMatrix", "normalMatrix"], ["vertex", "position", "color", "intensity", "size", "outlineWidth", "outlineColor", "encodedIndex"], this.gl);
-    this.nodesPickingShaderProgram = new ShaderProgram(getShaderFromString(gl, vertexShader2, gl.VERTEX_SHADER), getShaderFromString(gl, pickingShader2, gl.FRAGMENT_SHADER), ["viewMatrix", "projectionMatrix", "normalMatrix"], ["vertex", "position", "color", "intensity", "size", "outlineWidth", "outlineColor", "encodedIndex"], this.gl);
+    this.edgesShaderProgram = new ShaderProgram(getShaderFromString(gl, vertexShader, gl.VERTEX_SHADER), getShaderFromString(gl, fragmentShader, gl.FRAGMENT_SHADER), ["projectionViewMatrix", "nearFar", "globalOpacity"], ["vertex", "color", "sizes", "encodedIndex"], this.gl);
+    this.edgesFastShaderProgram = new ShaderProgram(getShaderFromString(gl, fastVertexShader, gl.VERTEX_SHADER), getShaderFromString(gl, fastFragmentShader, gl.FRAGMENT_SHADER), ["projectionViewMatrix", "nearFar", "globalOpacity"], ["vertex", "color"], this.gl);
+    this.edgesPickingShaderProgram = new ShaderProgram(getShaderFromString(gl, vertexShader, gl.VERTEX_SHADER), getShaderFromString(gl, pickingShader, gl.FRAGMENT_SHADER), ["projectionViewMatrix", "nearFar", "globalOpacity"], ["vertex", "color", "sizes", "encodedIndex"], this.gl);
+    this.nodesShaderProgram = new ShaderProgram(getShaderFromString(gl, vertexShader2, gl.VERTEX_SHADER), getShaderFromString(gl, fragmentShader2, gl.FRAGMENT_SHADER), ["viewMatrix", "projectionMatrix", "normalMatrix", "globalOpacity"], ["vertex", "position", "color", "size", "outlineWidth", "outlineColor", "encodedIndex"], this.gl);
+    this.nodesFastShaderProgram = new ShaderProgram(getShaderFromString(gl, fastVertexShader2, gl.VERTEX_SHADER), getShaderFromString(gl, fastFragmentShader2, gl.FRAGMENT_SHADER), ["viewMatrix", "projectionMatrix", "normalMatrix", "globalOpacity"], ["vertex", "position", "color", "size", "outlineWidth", "outlineColor", "encodedIndex"], this.gl);
+    this.nodesPickingShaderProgram = new ShaderProgram(getShaderFromString(gl, vertexShader2, gl.VERTEX_SHADER), getShaderFromString(gl, pickingShader2, gl.FRAGMENT_SHADER), ["viewMatrix", "projectionMatrix", "normalMatrix"], ["vertex", "position", "color", "size", "outlineWidth", "outlineColor", "encodedIndex"], this.gl);
   }
   _buildPickingBuffers() {
     let gl = this.gl;
@@ -9731,7 +9753,6 @@ var Helios = class {
     this.nodesPositionBuffer = gl.createBuffer();
     this.nodesColorBuffer = gl.createBuffer();
     this.nodesSizeBuffer = gl.createBuffer();
-    this.nodesIntensityBuffer = gl.createBuffer();
     this.nodesOutlineWidthBuffer = gl.createBuffer();
     this.nodesOutlineColorBuffer = gl.createBuffer();
     this.nodesIndexBuffer = gl.createBuffer();
@@ -9757,9 +9778,6 @@ var Helios = class {
     let sizes = this.network.sizes;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesSizeBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, sizes, gl.STATIC_DRAW);
-    let intensities = this.network.intensities;
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesIntensityBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, intensities, gl.STATIC_DRAW);
     let outlineWidths = this.network.outlineWidths;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesOutlineWidthBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, outlineWidths, gl.STATIC_DRAW);
@@ -9801,7 +9819,6 @@ var Helios = class {
       this.edgesPositionBuffer = gl.createBuffer();
       this.edgesColorBuffer = gl.createBuffer();
       this.edgesSizeBuffer = gl.createBuffer();
-      this.edgesIntensityBuffer = gl.createBuffer();
       this.edgesIndexBuffer = gl.createBuffer();
       this.edgesIndexArray = new Float32Array(this.network.indexedEdges.length * 4);
       for (let ID = 0; ID < this.network.indexedEdges.length; ID++) {
@@ -9989,7 +10006,6 @@ var Helios = class {
     currentShaderProgram.attributes.enable("vertex");
     currentShaderProgram.attributes.enable("position");
     currentShaderProgram.attributes.enable("size");
-    currentShaderProgram.attributes.enable("intensity");
     currentShaderProgram.attributes.enable("outlineWidth");
     currentShaderProgram.attributes.enable("outlineColor");
     currentShaderProgram.attributes.enable("encodedIndex");
@@ -10001,13 +10017,13 @@ var Helios = class {
     }
     gl.uniformMatrix4fv(currentShaderProgram.uniforms.projectionMatrix, false, this.projectionMatrix);
     gl.uniformMatrix4fv(currentShaderProgram.uniforms.viewMatrix, false, this.viewMatrix);
+    gl.uniform1f(currentShaderProgram.uniforms.globalOpacity, this._nodesGlobalOpacity);
     let normalMatrix = mat3.create();
     mat3.normalFromMat4(normalMatrix, this.viewMatrix);
     gl.uniformMatrix3fv(currentShaderProgram.uniforms.normalMatrix, false, normalMatrix);
     let colorsArray = this.network.colors;
     let positionsArray = this.network.positions;
     let sizeValue = this.network.sizes;
-    let intensityValue = this.network.intensities;
     let outlineWidthValue = this.network.outlineWidths;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesPositionBuffer);
     gl.enableVertexAttribArray(currentShaderProgram.attributes.position);
@@ -10015,7 +10031,7 @@ var Helios = class {
     ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.position, 1);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesColorBuffer);
     gl.enableVertexAttribArray(currentShaderProgram.attributes.color);
-    gl.vertexAttribPointer(currentShaderProgram.attributes.color, 3, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribPointer(currentShaderProgram.attributes.color, 4, gl.FLOAT, false, 0, 0);
     ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.color, 1);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesSizeBuffer);
     gl.enableVertexAttribArray(currentShaderProgram.attributes.size);
@@ -10023,16 +10039,12 @@ var Helios = class {
     ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.size, 1);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesOutlineColorBuffer);
     gl.enableVertexAttribArray(currentShaderProgram.attributes.outlineColor);
-    gl.vertexAttribPointer(currentShaderProgram.attributes.outlineColor, 3, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribPointer(currentShaderProgram.attributes.outlineColor, 4, gl.FLOAT, false, 0, 0);
     ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.outlineColor, 1);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesOutlineWidthBuffer);
     gl.enableVertexAttribArray(currentShaderProgram.attributes.outlineWidth);
     gl.vertexAttribPointer(currentShaderProgram.attributes.outlineWidth, 1, gl.FLOAT, false, 0, 0);
     ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.outlineWidth, 1);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesIntensityBuffer);
-    gl.enableVertexAttribArray(currentShaderProgram.attributes.intensity);
-    gl.vertexAttribPointer(currentShaderProgram.attributes.intensity, 1, gl.FLOAT, false, 0, 0);
-    ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.intensity, 1);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesIndexBuffer);
     gl.enableVertexAttribArray(currentShaderProgram.attributes.encodedIndex);
     gl.vertexAttribPointer(currentShaderProgram.attributes.encodedIndex, 4, gl.FLOAT, false, 0, 0);
@@ -10045,7 +10057,6 @@ var Helios = class {
     currentShaderProgram.attributes.disable("vertex");
     currentShaderProgram.attributes.disable("position");
     currentShaderProgram.attributes.disable("size");
-    currentShaderProgram.attributes.disable("intensity");
     currentShaderProgram.attributes.disable("outlineWidth");
     currentShaderProgram.attributes.disable("outlineColor");
     currentShaderProgram.attributes.disable("encodedIndex");
@@ -10079,11 +10090,11 @@ var Helios = class {
       gl.vertexAttribPointer(currentShaderProgram.attributes.vertex, 3, gl.FLOAT, false, 0, 0);
       ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.vertex, 0);
       gl.bindBuffer(gl.ARRAY_BUFFER, this.fastEdgesGeometry.colorObject);
-      gl.vertexAttribPointer(currentShaderProgram.attributes.color, 3, gl.FLOAT, false, 0, 0);
+      gl.vertexAttribPointer(currentShaderProgram.attributes.color, 4, gl.FLOAT, false, 0, 0);
       ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.color, 0);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.fastEdgesGeometry.indexObject);
       gl.uniformMatrix4fv(currentShaderProgram.uniforms.projectionViewMatrix, false, this.projectionViewMatrix);
-      gl.uniform1f(currentShaderProgram.uniforms.linesIntensity, this._edgesIntensity);
+      gl.uniform1f(currentShaderProgram.uniforms.globalOpacity, this._edgesGlobalOpacity);
       gl.drawElements(gl.LINES, this.fastEdgesGeometry.numIndices, this.fastEdgesGeometry.indexType, 0);
       currentShaderProgram.attributes.disable("vertex");
       currentShaderProgram.attributes.disable("color");
@@ -10197,32 +10208,44 @@ var Helios = class {
         for (const [nodeID2, node] of Object.entries(this.network.nodes)) {
           let nodeIndex = this.network.ID2index[nodeID2];
           let aColor = colorInput(node, nodeIndex, this.network);
-          this.network.colors[nodeIndex * 3 + 0] = aColor[0];
-          this.network.colors[nodeIndex * 3 + 1] = aColor[1];
-          this.network.colors[nodeIndex * 3 + 2] = aColor[2];
+          this.network.colors[nodeIndex * 4 + 0] = aColor[0];
+          this.network.colors[nodeIndex * 4 + 1] = aColor[1];
+          this.network.colors[nodeIndex * 4 + 2] = aColor[2];
+          if (aColor.length > 3) {
+            this.network.colors[nodeIndex * 4 + 3] = aColor[3];
+          }
         }
       } else if (typeof colorInput === "number") {
         return this.network.colors[this.network.ID2index[colorInput]];
       } else {
         for (const [nodeID2, node] of Object.entries(this.network.nodes)) {
           let nodeIndex = this.network.ID2index[nodeID2];
-          this.network.colors[nodeIndex * 3 + 0] = colorInput[0];
-          this.network.colors[nodeIndex * 3 + 1] = colorInput[1];
-          this.network.colors[nodeIndex * 3 + 2] = colorInput[2];
+          this.network.colors[nodeIndex * 4 + 0] = colorInput[0];
+          this.network.colors[nodeIndex * 4 + 1] = colorInput[1];
+          this.network.colors[nodeIndex * 4 + 2] = colorInput[2];
+          if (colorInput.length > 3) {
+            this.network.colors[nodeIndex * 4 + 3] = colorInput[3];
+          }
         }
       }
     } else {
       if (typeof colorInput === "function") {
         let nodeIndex = this.network.ID2index[nodeID];
         let aColor = colorInput(nodeID, nodeIndex, this.network);
-        this.network.colors[nodeIndex * 3 + 0] = aColor[0];
-        this.network.colors[nodeIndex * 3 + 1] = aColor[1];
-        this.network.colors[nodeIndex * 3 + 2] = aColor[2];
+        this.network.colors[nodeIndex * 4 + 0] = aColor[0];
+        this.network.colors[nodeIndex * 4 + 1] = aColor[1];
+        this.network.colors[nodeIndex * 4 + 2] = aColor[2];
+        if (aColor.length > 3) {
+          this.network.colors[nodeIndex * 4 + 3] = aColor[3];
+        }
       } else {
         let nodeIndex = this.network.ID2index[nodeID];
-        this.network.colors[nodeIndex * 3 + 0] = colorInput[0];
-        this.network.colors[nodeIndex * 3 + 1] = colorInput[1];
-        this.network.colors[nodeIndex * 3 + 2] = colorInput[2];
+        this.network.colors[nodeIndex * 4 + 0] = colorInput[0];
+        this.network.colors[nodeIndex * 4 + 1] = colorInput[1];
+        this.network.colors[nodeIndex * 4 + 2] = colorInput[2];
+        if (colorInput.length > 3) {
+          this.network.colors[nodeIndex * 4 + 3] = colorInput[3];
+        }
       }
     }
     return this;
@@ -10329,11 +10352,19 @@ var Helios = class {
     const ID = data[0] + (data[1] << 8) + (data[2] << 16) + (data[3] << 24) - 1;
     return ID;
   }
-  edgesIntensity(intensity) {
-    if (typeof intensity === "undefined") {
-      return this._edgesIntensity;
+  edgesOpacity(opacity) {
+    if (typeof opacity === "undefined") {
+      return this._edgesGlobalOpacity;
     } else {
-      this._edgesIntensity = intensity;
+      this._edgesGlobalOpacity = opacity;
+      return this;
+    }
+  }
+  nodeOpacity(opacity) {
+    if (typeof opacity === "undefined") {
+      return this._nodesGlobalOpacity;
+    } else {
+      this._nodesGlobalOpacity = opacity;
       return this;
     }
   }
@@ -11337,7 +11368,7 @@ xnet_exports.loadXNETFile("networks/" + networkName + ".xnet").then(async (netwo
     console.log("Layout end");
     select("#loading").style("display", "none");
     select("#message").style("display", "block");
-  }).backgroundColor(backgroundColor).edgesIntensity(1).nodeOutlineWidth((node) => node.size * defaultOutline).nodeOutlineColor(backgroundColor).additiveBlending(additiveBlending);
+  }).backgroundColor(backgroundColor).edgesOpacity(1).nodeOutlineWidth((node) => node.size * defaultOutline).nodeOutlineColor(backgroundColor).additiveBlending(additiveBlending);
   function downloadText(filename, text) {
     var element = document.createElement("a");
     element.setAttribute("href", "data:text/plain;charset=utf-8," + encodeURIComponent(text));
@@ -11409,7 +11440,7 @@ xnet_exports.loadXNETFile("networks/" + networkName + ".xnet").then(async (netwo
       extra: (selection2) => {
         console.log("CALLED");
         selection2.append("input").attr("type", "range").attr("min", "0").attr("max", "1").attr("step", 1 / 255 + "").attr("value", "1").attr("id", "edgeOpacitySlider").classed("slider", true).style("min-width", "60px").on("input", (event, d) => {
-          helios.edgesIntensity(parseFloat(select("#edgeOpacitySlider").property("value")));
+          helios.edgesOpacity(parseFloat(select("#edgeOpacitySlider").property("value")));
           helios.update();
           helios.render();
           event.stopPropagation();
