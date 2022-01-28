@@ -8,7 +8,6 @@ import { zoom as d3Zoom, zoomTransform as d3ZoomTransform, zoomIdentity as d3Zoo
 // import { drag as d3Drag } from "d3-drag";
 // import { default as createGraph } from "ngraph.graph"
 // import { default as createLayout } from "ngraph.forcelayout"
-import { forceSimulation, forceManyBody, forceLink, forceCenter } from "d3-force-3d";
 import {default as Pica} from "pica";
 import {layoutWorker as d3ForceLayoutWorker} from "../layouts/d3force3dLayoutWorker.js"
 import * as edgesShaders from "../shaders/edges.js"

@@ -45,20 +45,18 @@
     "@colormap/core": "^0.2.0",
     "@colormap/presets": "^0.2.0",
     "@npmcli/arborist": ">=2.8.2",
-    "d3": "^7.0.1",
-    "d3-selection":"^3.0.0",
+    "d3-selection": "^3.0.0",
+    "d3-scale":"^4.0.2",
+    "d3-scale-chromatic": "^3.0.0",
     "d3-zoom": "^3.0.0",
-    "d3-force-3d": "^3.0.2",
     "fast-png": "^5.0.4",
     "gl-matrix": "^3.3.0",
-    "ngraph.forcelayout": "^3.1.0",
-    "ngraph.graph": "^19.1.0",
-    "pica": "^7.1.0",
+    "pica": "^9.0.1",
     "tar": ">=6.1.9"
   },
   "devDependencies": {
     "prettier": "^2.3.2",
-    "snowpack": "^3.8.6",
+    "snowpack": "^3.8.8",
     "snowpack-plugin-glslify": "^1.0.0"
   },
   "engines": {
