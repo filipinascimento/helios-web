@@ -69,6 +69,22 @@ if(urlParams.has("use2d")){
 	use2D = true;
 }
 
+
+let advancedEdges = false;
+if(urlParams.has("advanced")){
+	advancedEdges = true;
+}
+
+let startZoomLevel = null;
+if(urlParams.has("zoom")){
+	startZoomLevel = +urlParams.get("zoom");
+}
+
+let autoStartLayout = null;
+if(urlParams.has("layout")){
+	autoStartLayout = ((+urlParams.get("layout"))!=0)?true:false;
+}
+
 let darkBackground = false;
 let backgroundColor = [1.0,1.0,1.0,1.0]
 
@@ -126,14 +142,19 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 	let tooltipElement = document.getElementById("tooltip");
 
 	// console.log(Object.entries(d3Chromatic));
-	
+	// autostartlayout is not null
+	if(autoStartLayout === null){
+		autoStartLayout = !bigNetwork;
+	}
+
 	let colorScale = d3ScaleOrdinal(allColors.schemeCategory10);
 	let helios = new Helios({
 		elementID: "netviz",
 		nodes: nodes,
 		edges: edges,
 		use2D: use2D,
-		autoStartLayout: !bigNetwork,
+		fastEdges: !advancedEdges,
+		autoStartLayout: autoStartLayout ,
 	})
 		.onNodeHoverStart((node, event) => {
 			if (event) {
@@ -205,11 +226,109 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 			// console.log(`End: ${node.ID}`);
 		})
 		.onNodeClick((node, event) => {
-			// console.log(`Clicked: ${node.ID}`);
+			console.log(`Clicked: ${node.ID}`);
 		})
 		.onNodeDoubleClick((node, event) => {
 			console.log(`Double Clicked: ${node.ID}`);
 			helios.centerOnNode(node.ID);
+		})
+		.onEdgeHoverStart((edge, event) => {
+			if (event) {
+				tooltipElement.style.left = event.pageX + "px";
+				tooltipElement.style.top = event.pageY + "px";
+			}
+			if (edge) {
+				tooltipElement.style.display = "block";
+				if(darkBackground){
+					tooltipElement.style.color = d3rgb(edge.source.color[0] * 255, edge.source.color[1] * 255, edge.source.color[2] * 255).brighter(2).formatRgb();
+					tooltipElement.style["text-shadow"] =
+            "-1px -1px 0 black, 1px -1px 0 black, -1px 1px 0 black, 1px 1px 0 black";
+				}else{
+					tooltipElement.style.color = d3rgb(edge.source.color[0] * 255, edge.source.color[1] * 255, edge.source.color[2] * 255).darker(2).formatRgb();
+					tooltipElement.style["text-shadow"] =
+						"-1px -1px 0 white, 1px -1px 0 white, -1px 1px 0 white, 1px 1px 0 white";
+				}
+				let fromLabel = "";
+				let toLabel = "";
+				if (edge.source.label) {
+					fromLabel = edge.source.label;
+				}else if (edge.source.title) {
+					fromLabel = edge.source.title;
+				}else{
+					fromLabel = edge.source.ID;
+				}
+				if (edge.target.label) {
+					toLabel = edge.target.label;
+				}else if (edge.target.title) {
+					toLabel = edge.target.title;
+				}else{
+					toLabel = edge.target.ID;
+				}
+				tooltipElement.textContent = fromLabel+" - "+toLabel;
+				edge.source.originalSize = edge.source.size;
+				edge.target.originalSize = edge.target.size;
+				edge.source.size = 2.0 * edge.source.originalSize;
+				edge.target.size = 2.0 * edge.target.originalSize;
+				edge.source.outlineWidth = 0.25 * edge.source.originalSize;
+				edge.target.outlineWidth = 0.25 * edge.target.originalSize;
+				// helios.nodeSize(,node.ID);
+				helios.update();
+				helios.render();
+			} else {
+				tooltipElement.style.display = "none";
+			}
+			// console.log(`Start: ${node.ID}`);
+		})
+		.onEdgeHoverMove((edge, event) => {
+			if (event) {
+				tooltipElement.style.left = event.pageX + "px";
+				tooltipElement.style.top = event.pageY + "px";
+			}
+			if (edge) {
+				// tooltipElement.style.display = "block";
+				let fromLabel = "";
+				let toLabel = "";
+				if (edge.source.label) {
+					fromLabel = edge.source.label;
+				}else if (edge.source.title) {
+					fromLabel = edge.source.title;
+				}else{
+					fromLabel = edge.source.ID;
+				}
+				if (edge.target.label) {
+					toLabel = edge.target.label;
+				}else if (edge.target.title) {
+					toLabel = edge.target.title;
+				}else{
+					toLabel = edge.target.ID;
+				}
+				tooltipElement.textContent = fromLabel+" - "+toLabel;
+			} else {
+				tooltipElement.style.display = "none";
+			}
+			// console.log(`Move: ${node.ID}`);
+		})
+		.onEdgeHoverEnd((edge, event) => {
+			if (event) {
+				tooltipElement.style.left = event.pageX + "px";
+				tooltipElement.style.top = event.pageY + "px";
+			}
+			if (edge) {
+				edge.source.size = 1.0 * edge.source.originalSize;
+				edge.target.size = 1.0 * edge.target.originalSize;
+				edge.source.outlineWidth = defaultOutline * edge.source.originalSize;
+				edge.target.outlineWidth = defaultOutline * edge.target.originalSize;
+				
+				helios.update();
+				helios.render();
+			}
+			tooltipElement.style.display = "none";
+
+			// console.log(`End: ${node.ID}`);
+		})
+		.onEdgeClick((edge, event) => {
+			console.log("Edge clicked");
+			console.log(edge);
 		})
 		.onLayoutStart(()=>{
 			console.log("Layout start");
@@ -231,6 +350,7 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 		// 	return Math.random()*5+1.0;
 		// })
 		.edgesOpacity(1.0) // set edges intensity);
+		// .nodeSize(1.0)
 		.nodeOutlineWidth(node=>node.size*defaultOutline)
 		.nodeOutlineColor(backgroundColor)
 		.additiveBlending(additiveBlending);
@@ -563,11 +683,15 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 			}
 		});
 		
-		if(bigNetwork){
-			helios.zoomFactor(0.35);
+		if(startZoomLevel){
+			helios.zoomFactor(startZoomLevel);
 		}else{
-			helios.zoomFactor(0.05);
-			helios.zoomFactor(0.75,1000);
+			if(bigNetwork){
+				helios.zoomFactor(0.35);
+			}else{
+				helios.zoomFactor(0.05);
+				helios.zoomFactor(0.75,1000);
+			}
 		}
 		helios.onReady(() => {
 			updateColorSelection();

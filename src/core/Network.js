@@ -208,9 +208,10 @@ export class Network{
 
 	updateEdgePositions(){
 		if(this.edgePositions == null){
-			this.edgePositions = new Float32Array(3*this.indexedEdges.length);
+			this.edgePositions = new Float32Array(3*(this.indexedEdges.length));
+			// a duplicate entry is needed to obtain from/to 
 		}
-		for (let edgeIndex = 0; edgeIndex < this.indexedEdges.length/2; index++) {
+		for (let edgeIndex = 0; edgeIndex < this.indexedEdges.length/2; edgeIndex++) {
 			let fromIndex = this.indexedEdges[edgeIndex*2];
 			let toIndex = this.indexedEdges[edgeIndex*2+1];
 			this.edgePositions[(edgeIndex*2)*3]   = this.positions[fromIndex*3];
@@ -234,7 +235,7 @@ export class Network{
 		if(typeof updateOpacity === "undefined"){
 			updateOpacity = true;
 		}
-		for (let edgeIndex = 0; edgeIndex < this.indexedEdges.length/2; index++) {
+		for (let edgeIndex = 0; edgeIndex < this.indexedEdges.length/2; edgeIndex++) {
 			let fromIndex = this.indexedEdges[edgeIndex*2];
 			let toIndex = this.indexedEdges[edgeIndex*2+1];
 			this.edgeColors[(edgeIndex*2)*4]   = this.colors[fromIndex*4];
@@ -255,7 +256,7 @@ export class Network{
 		if(this.edgeSizes == null){
 			this.edgeSizes = new Float32Array(this.indexedEdges.length);
 		}
-		for (let edgeIndex = 0; edgeIndex < this.indexedEdges.length/2; index++) {
+		for (let edgeIndex = 0; edgeIndex < this.indexedEdges.length/2; edgeIndex++) {
 			let fromIndex = this.indexedEdges[edgeIndex*2];
 			let toIndex = this.indexedEdges[edgeIndex*2+1];
 			this.edgeSizes[edgeIndex*2] = this.sizes[fromIndex];
@@ -268,7 +269,7 @@ export class Network{
 		if(this.edgeColors == null){
 			this.edgeColors = new Float32Array(4*this.indexedEdges.length);
 		}
-		for (let edgeIndex = 0; edgeIndex < this.indexedEdges.length/2; index++) {
+		for (let edgeIndex = 0; edgeIndex < this.indexedEdges.length/2; edgeIndex++) {
 			let fromIndex = this.indexedEdges[edgeIndex*2];
 			let toIndex = this.indexedEdges[edgeIndex*2+1];
 			this.edgeColors[(edgeIndex*2)*4+3] = this.colors[fromIndex*4+3];

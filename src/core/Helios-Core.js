@@ -37,7 +37,7 @@ export class Helios {
 		// displayOptions inside settings
 		use2D = false,
 		shadedNodes = false,
-		fastEdges = true,
+		fastEdges = false,
 		forceSupersample = false,
 		autoStartLayout = true,
 		// display = [],
@@ -70,6 +70,7 @@ export class Helios {
 		this.pickingResolutionRatio = 0.25;
 		this._edgesGlobalOpacity = 1.0;
 		this._nodesGlobalOpacity = 1.0;
+		this._globalWidthScale = 0.25;
 		this._use2D = use2D;
 		this._autoStartLayout = autoStartLayout;
 		this.useAdditiveBlending = false;
@@ -100,10 +101,12 @@ export class Helios {
 		this.onNodeHoverEndCallback = null;
 
 		this.onEdgeClickCallback = null;
+		this.onEdgeDoubleClickCallback = null;
 		this.onEdgeHoverStartCallback = null;
 		this.onEdgeHoverMoveCallback = null;
 		this.onEdgeHoverEndCallback = null;
-		// this.onEdgeClickCallback = null;
+		
+		
 		this.onZoomCallback = null;
 		this.onRotationCallback = null;
 		this.onResizeCallback = null;
@@ -241,7 +244,80 @@ export class Helios {
 		// this.layoutRunning=true;
 		this.layoutWorker.resume();
 	}
-	
+	_callEventFromPickID(pickID, eventType, event) {
+		let pickObject = null;
+		let isNode = true;
+		if(pickID >= 0){
+			if (pickID <this.network.nodeCount) {
+				isNode = true;
+				pickObject = this.network.index2Node[pickID];
+			}else if(pickID >=this.network.nodeCount){
+				let edgeIndex = pickID - this.network.nodeCount;
+				if(edgeIndex<this.network.indexedEdges.length/2){
+					let edge = {
+						"source": this.network.index2Node[this.network.indexedEdges[2*edgeIndex]],
+						"target": this.network.index2Node[this.network.indexedEdges[2*edgeIndex+1]],
+						"index": edgeIndex
+					}
+					isNode = false;
+					pickObject = edge;
+				}
+			}
+		}
+		// if(eventType!="hoverMove"){
+		// 	console.log({
+		// 		isNode: isNode,
+		// 		eventType: eventType,
+		// 		pickObject: pickObject,
+		// 	})
+		// }
+		if(pickObject){
+			switch (eventType) {
+				case "click":{
+					if(isNode){
+						this.onNodeClickCallback?.(pickObject, event);
+					}else{
+						this.onEdgeClickCallback?.(pickObject, event);
+					}
+					break;
+				}
+				case "doubleClick":{
+					if(isNode){
+						this.onNodeDoubleClickCallback?.(pickObject, event);
+					}else{
+						this.onEdgeDoubleClickCallback?.(pickObject, event);
+					}
+					break;
+				}
+				case "hoverStart":{
+					if(isNode){
+						this.onNodeHoverStartCallback?.(pickObject, event);
+					}else{
+						this.onEdgeHoverStartCallback?.(pickObject, event);
+					}
+					break;
+				}
+				case "hoverMove":{
+					if(isNode){
+						this.onNodeHoverMoveCallback?.(pickObject, event);
+					}else{
+						this.onEdgeHoverMoveCallback?.(pickObject, event);
+					}
+					break;
+				}
+				case "hoverEnd":{
+					if(isNode){
+						this.onNodeHoverEndCallback?.(pickObject, event);
+					}else{
+						this.onEdgeHoverEndCallback?.(pickObject, event);
+					}
+					break;
+				}
+				default:
+					break;
+			}
+		}
+	}
 	_setupEvents() {
 		this.lastMouseX = -1;
 		this.lastMouseY = -1;
@@ -253,20 +329,11 @@ export class Helios {
 			
 			this.lastMouseX = e.clientX;
 			this.lastMouseY = e.clientY;
-			const nodeIndex = this.pickPoint(this.lastMouseX - rect.left, this.lastMouseY - rect.top);
-			if(nodeIndex >= 0){
-				if (nodeIndex <this.network.nodeCount) {
-					this.onNodeClickCallback?.(this.network.index2Node[nodeIndex], e);
-				}else if(nodeIndex >=this.network.nodeCount){
-					let edgeIndex = nodeIndex - this.network.nodeCount;
-					let edge = {
-						"source":this.network.indexedEdges[2*edgeIndex],
-						"target":this.network.indexedEdges[2*edgeIndex+1],
-						"index":edgeIndex
-					}
-					this.onEdgeClickCallback?.(edge, e)
-				}
+			const pickID = this.pickPoint(this.lastMouseX - rect.left, this.lastMouseY - rect.top);
+			if(pickID >= 0){
+				this._callEventFromPickID(pickID, "click", e);
 			}
+			
 		};
 
 		this.canvasElement.ondblclick = e => {
@@ -274,19 +341,9 @@ export class Helios {
 			
 			this.lastMouseX = e.clientX;
 			this.lastMouseY = e.clientY;
-			const nodeIndex = this.pickPoint(this.lastMouseX - rect.left, this.lastMouseY - rect.top);
-			if(nodeIndex >= 0){
-				if (nodeIndex <this.network.nodeCount) {
-					this.onNodeDoubleClickCallback?.(this.network.index2Node[nodeIndex], e);
-				}else if(nodeIndex >=this.network.nodeCount){
-					let edgeIndex = nodeIndex - this.network.nodeCount;
-					let edge = {
-						"source":this.network.indexedEdges[2*edgeIndex],
-						"target":this.network.indexedEdges[2*edgeIndex+1],
-						"index":edgeIndex
-					}
-					this.onEdgeClickCallback?.(edge, e)
-				}
+			const pickID = this.pickPoint(this.lastMouseX - rect.left, this.lastMouseY - rect.top);
+			if(pickID >= 0){
+				this._callEventFromPickID(pickID, "doubleClick", e);
 			}
 		};
 
@@ -298,17 +355,17 @@ export class Helios {
 
 		this.canvasElement.addEventListener('mouseleave', (e) => {
 			if (this.currentHoverIndex >= 0) {
-				this.onNodeHoverEndCallback?.(this.network.index2Node[this.currentHoverIndex], e);
+				this._callEventFromPickID(this.currentHoverIndex, "hoverEnd", e);
 				this.currentHoverIndex = -1;
 				this.lastMouseX = -1;
 				this.lastMouseY = -1;
 			}
-			
 		});
+		
 		document.body.addEventListener('mouseout', (e) => {
 				if (!e.relatedTarget && !e.toElement) {
 					if (this.currentHoverIndex >= 0) {
-						this.onNodeHoverEndCallback?.(this.network.index2Node[this.currentHoverIndex], e);
+						this._callEventFromPickID(this.currentHoverIndex, "hoverEnd", e);
 						this.currentHoverIndex = -1;
 						this.lastMouseX = -1;
 						this.lastMouseY = -1;
@@ -367,7 +424,7 @@ export class Helios {
 					
 		if(isSafari){
 			// BUG in Safari
-			console.log("Fixing Safari bug...");
+			console.log("Workaround safari bug...");
 			canvas.toDataURL();
 		}
 
@@ -501,23 +558,24 @@ export class Helios {
 			return;
 		}
 
-		let nodeID = -1;
+		let pickID = -1;
 		if(!this.interacting){
 			const rect = this.canvasElement.getBoundingClientRect();
-			nodeID = this.pickPoint(this.lastMouseX - rect.left, this.lastMouseY - rect.top);
+			pickID = this.pickPoint(this.lastMouseX - rect.left, this.lastMouseY - rect.top);
 		}
-		if (nodeID >= 0 && this.currentHoverIndex == -1) {
-			this.currentHoverIndex = nodeID;
-			this.onNodeHoverStartCallback?.(this.network.index2Node[nodeID], event);
-		} else if (nodeID >= 0 && this.currentHoverIndex == nodeID) {
+		// let nodesCount = 
+		if (pickID >= 0 && this.currentHoverIndex == -1) {
+			this.currentHoverIndex = pickID;
+			this._callEventFromPickID(pickID, "hoverStart", event);
+		} else if (pickID >= 0 && this.currentHoverIndex == pickID) {
 			// console.log("mouse: ",this.lastMouseX,this.lastMouseY)
-			this.onNodeHoverMoveCallback?.(this.network.index2Node[nodeID], event);
-		} else if (nodeID >= 0 && this.currentHoverIndex != nodeID) {
-			this.onNodeHoverEndCallback?.(this.network.index2Node[this.currentHoverIndex], event);
-			this.currentHoverIndex = nodeID;
-			this.onNodeHoverStartCallback?.(this.network.index2Node[nodeID], event);
-		} else if (nodeID == -1 && this.currentHoverIndex != nodeID) {
-			this.onNodeHoverEndCallback?.(this.network.index2Node[this.currentHoverIndex], event);
+			this._callEventFromPickID(pickID, "hoverMove", event);
+		} else if (pickID >= 0 && this.currentHoverIndex != pickID) {
+			this._callEventFromPickID(this.currentHoverIndex, "hoverEnd", event);
+			this.currentHoverIndex = pickID;
+			this._callEventFromPickID(pickID, "hoverStart", event);
+		} else if (pickID == -1 && this.currentHoverIndex != pickID) {
+			this._callEventFromPickID(this.currentHoverIndex, "hoverEnd", event);
 			this.currentHoverIndex = -1;
 		}
 	}
@@ -530,8 +588,8 @@ export class Helios {
 		this.edgesShaderProgram = new glUtils.ShaderProgram(
 			glUtils.getShaderFromString(gl,edgesShaders.vertexShader,gl.VERTEX_SHADER),
 			glUtils.getShaderFromString(gl,edgesShaders.fragmentShader,gl.FRAGMENT_SHADER),
-			["projectionViewMatrix", "nearFar", "globalOpacity"],
-			["vertex", "color", "sizes", "encodedIndex"],
+			["viewMatrix", "projectionMatrix", "nearFar", "globalOpacity","globalWidthScale","cameraForward"],
+			["fromVertex", "toVertex", "vertexType", "fromColor", "toColor", "fromSize", "toSize", "encodedIndex"],
 			this.gl);
 
 		this.edgesFastShaderProgram = new glUtils.ShaderProgram(
@@ -544,8 +602,8 @@ export class Helios {
 		this.edgesPickingShaderProgram = new glUtils.ShaderProgram(
 			glUtils.getShaderFromString(gl,edgesShaders.vertexShader,gl.VERTEX_SHADER),
 			glUtils.getShaderFromString(gl,edgesShaders.pickingShader,gl.FRAGMENT_SHADER),
-			["projectionViewMatrix", "nearFar", "globalOpacity"],
-			["vertex", "color", "sizes", "encodedIndex"],
+			["viewMatrix", "projectionMatrix", "nearFar", "globalOpacity","globalWidthScale","cameraForward"],
+			["fromVertex", "toVertex", "vertexType", "fromColor", "toColor", "fromSize", "toSize", "encodedIndex"],
 			this.gl);
 
 
@@ -691,64 +749,84 @@ export class Helios {
 
 	}
 
-	_buildEdgesGeometry() {
+	_buildFastEdgesGeometry(){
 		let gl = this.gl;
 		let edges = this.network.indexedEdges;
 		let positions = this.network.positions;
 		let colors = this.network.colors;
 		
-		let newGeometry = new Object();
 		let indicesArray;
 		this.fastEdgesGeometry = null;
 		this.fastEdgesIndicesArray = null;
-
-		if(this.fastEdges){
-			//FIXME: If num of vertices > 65k, we need to store the geometry in two different indices objects
-			if (positions.length < 64000) {
+		let newGeometry = new Object();
+		//FIXME: If num of vertices > 65k, we need to store the geometry in two different indices objects
+		if (positions.length < 65535) {
+			indicesArray = new Uint16Array(edges);
+			newGeometry.indexType = gl.UNSIGNED_SHORT;
+		} else {
+			var uints_for_indices = gl.getExtension("OES_element_index_uint");
+			if (uints_for_indices == null) {
 				indicesArray = new Uint16Array(edges);
 				newGeometry.indexType = gl.UNSIGNED_SHORT;
 			} else {
-				var uints_for_indices = gl.getExtension("OES_element_index_uint");
-				if (uints_for_indices == null) {
-					indicesArray = new Uint16Array(edges);
-					newGeometry.indexType = gl.UNSIGNED_SHORT;
-				} else {
-					indicesArray = new Uint32Array(edges);
-					newGeometry.indexType = gl.UNSIGNED_INT;
-				}
+				indicesArray = new Uint32Array(edges);
+				newGeometry.indexType = gl.UNSIGNED_INT;
 			}
+		}
 
-			// create the lines buffer 2 vertices per geometry.
-			newGeometry.vertexObject = gl.createBuffer();
-			newGeometry.colorObject = gl.createBuffer();
-			newGeometry.numIndices = indicesArray.length;
-			newGeometry.indexObject = gl.createBuffer();
+		// create the lines buffer 2 vertices per geometry.
+		newGeometry.vertexObject = gl.createBuffer();
+		newGeometry.colorObject = gl.createBuffer();
+		newGeometry.numIndices = indicesArray.length;
+		newGeometry.indexObject = gl.createBuffer();
 
-			this.fastEdgesGeometry = newGeometry;
-			this.fastEdgesIndicesArray = indicesArray;
+		this.fastEdgesGeometry = newGeometry;
+		this.fastEdgesIndicesArray = indicesArray;
 
+	}
+
+	_buildAdvancedEdgesGeometry() {
+		let gl = this.gl;
+		let edgeVertexTypeArray = [
+			0,1,
+			0,0,
+			1,1,
+			1,0,
+		];
+		let newGeometry = new Object();
+		newGeometry.edgeVertexTypeBuffer = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, newGeometry.edgeVertexTypeBuffer);
+		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(edgeVertexTypeArray), gl.STATIC_DRAW);
+
+		newGeometry.verticesBuffer = gl.createBuffer();
+		newGeometry.colorBuffer = gl.createBuffer();
+		newGeometry.sizeBuffer = gl.createBuffer();
+		// this.nodesOutlineWidthBuffer = gl.createBuffer();
+		// this.nodesOutlineColorBuffer = gl.createBuffer();
+		newGeometry.indexBuffer = gl.createBuffer();
+
+		//encodedIndex
+		newGeometry.edgesIndexArray = new Float32Array(this.network.indexedEdges.length*4/2);
+		for (let ID = 0; ID < this.network.indexedEdges.length/2; ID++) {
+			let edgeID = this.network.index2Node.length + ID;
+			newGeometry.edgesIndexArray[4 * ID] = (((edgeID + 1) >> 0) & 0xFF) / 0xFF;
+			newGeometry.edgesIndexArray[4 * ID + 1] = (((edgeID + 1) >> 8) & 0xFF) / 0xFF;
+			newGeometry.edgesIndexArray[4 * ID + 2] = (((edgeID + 1) >> 16) & 0xFF) / 0xFF;
+			newGeometry.edgesIndexArray[4 * ID + 3] = (((edgeID + 1) >> 24) & 0xFF) / 0xFF;
+		}
+
+		gl.bindBuffer(gl.ARRAY_BUFFER, newGeometry.indexBuffer);
+		gl.bufferData(gl.ARRAY_BUFFER, newGeometry.edgesIndexArray, gl.STATIC_DRAW);
+		newGeometry.count = this.network.indexedEdges.length/2;
+		this.edgesGeometry = newGeometry;
+		// console.log(this.nodesIndexArray)
+	}
+
+	_buildEdgesGeometry() {
+		if(this.fastEdges){
+			this._buildFastEdgesGeometry();
 		}else{
-			this.edgesGeometry = glUtils.makePlane(gl, false, false);
-			// //vertexShape = makeBox(gl);
-
-			this.edgesPositionBuffer = gl.createBuffer();
-			this.edgesColorBuffer = gl.createBuffer();
-			this.edgesSizeBuffer = gl.createBuffer();
-			this.edgesIndexBuffer = gl.createBuffer();
-	
-			//encodedIndex
-			this.edgesIndexArray = new Float32Array(this.network.indexedEdges.length * 4);
-			for (let ID = 0; ID < this.network.indexedEdges.length; ID++) {
-				let edgeID = this.network.index2Node.length + ID;
-				this.edgesIndexArray[4 * edgeID] = (((edgeID + 1) >> 0) & 0xFF) / 0xFF;
-				this.edgesIndexArray[4 * edgeID + 1] = (((edgeID + 1) >> 8) & 0xFF) / 0xFF;
-				this.edgesIndexArray[4 * edgeID + 2] = (((edgeID + 1) >> 16) & 0xFF) / 0xFF;
-				this.edgesIndexArray[4 * edgeID + 3] = (((edgeID + 1) >> 24) & 0xFF) / 0xFF;
-			}
-	
-			gl.bindBuffer(gl.ARRAY_BUFFER, this.edgesIndexBuffer);
-			gl.bufferData(gl.ARRAY_BUFFER, this.edgesIndexArray, gl.STATIC_DRAW);
-	
+			this._buildAdvancedEdgesGeometry();
 		}
 		this.updateEdgesGeometry()
 	}
@@ -768,6 +846,25 @@ export class Helios {
 			gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
 			gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.fastEdgesGeometry.indexObject);
 			gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, this.fastEdgesIndicesArray, gl.STREAM_DRAW);
+		}else{
+
+			let gl = this.gl;
+			this.network.updateEdgePositions();
+			this.network.updateEdgeColors();
+			this.network.updateEdgeSizes();
+
+			let edgePositions = this.network.positions;
+			gl.bindBuffer(gl.ARRAY_BUFFER, this.edgesGeometry.verticesBuffer);
+			gl.bufferData(gl.ARRAY_BUFFER, this.network.edgePositions, gl.DYNAMIC_DRAW);
+
+			gl.bindBuffer(gl.ARRAY_BUFFER, this.edgesGeometry.colorBuffer);
+			gl.bufferData(gl.ARRAY_BUFFER, this.network.edgeColors, gl.DYNAMIC_DRAW);
+
+			// gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.edgesGeometry.indexBuffer);
+			// gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, this.edgesGeometry.edgesIndexArray, gl.DYNAMIC_DRAW);
+
+			gl.bindBuffer(gl.ARRAY_BUFFER, this.edgesGeometry.sizeBuffer);
+			gl.bufferData(gl.ARRAY_BUFFER, this.network.edgeSizes, gl.DYNAMIC_DRAW);
 		}
 		
 	}
@@ -1043,6 +1140,7 @@ export class Helios {
 
 		gl.uniformMatrix4fv(currentShaderProgram.uniforms.projectionMatrix, false, this.projectionMatrix);
 		gl.uniformMatrix4fv(currentShaderProgram.uniforms.viewMatrix, false, this.viewMatrix);
+		
 
 		gl.uniform1f(currentShaderProgram.uniforms.globalOpacity, this._nodesGlobalOpacity);
 
@@ -1112,11 +1210,11 @@ export class Helios {
 
 	_redrawEdges(destination,isPicking) {
 		if(this.fastEdges && isPicking) {
-			return;
+			return; // No picking in fast edges mode
 		}
 		let gl = this.gl;
 		let ext = gl.getExtension("ANGLE_instanced_arrays");
-
+		
 		let currentShaderProgram;
 		if (!isPicking) {
 			gl.enable(gl.BLEND);
@@ -1130,10 +1228,14 @@ export class Helios {
 			// gl.blendFuncSeparate( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE ); //Original from Networks 3D
 				gl.blendFuncSeparate( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE ); // New (works for transparent background)
 			}
-			currentShaderProgram = this.edgesShaderProgram;
+			if (this.fastEdges) {
+				currentShaderProgram = this.edgesFastShaderProgram;
+			}else{
+				currentShaderProgram = this.edgesShaderProgram;
+			}
 		} else {
 			gl.disable(gl.BLEND);
-			// console.log(this.nodesShaderProgram);
+			// console.log("PICKING EDGESSSS");
 			currentShaderProgram = this.edgesPickingShaderProgram;
 		}
 
@@ -1148,7 +1250,7 @@ export class Helios {
 			
 			this.projectionViewMatrix = glm.mat4.create();
 			glm.mat4.multiply(this.projectionViewMatrix, this.projectionMatrix, this.viewMatrix);
-
+			
 			//bind attributes and unions
 			gl.bindBuffer(gl.ARRAY_BUFFER, this.fastEdgesGeometry.vertexObject);
 			gl.vertexAttribPointer(currentShaderProgram.attributes.vertex, 3, gl.FLOAT, false, 0, 0);
@@ -1172,8 +1274,103 @@ export class Helios {
 			currentShaderProgram.attributes.disable("vertex");
 			currentShaderProgram.attributes.disable("color");
 			// currentShaderProgram.attributes.disable("encodedIndex");
+		}else{
+			currentShaderProgram.use(gl);
+			currentShaderProgram.attributes.enable("fromVertex");
+			currentShaderProgram.attributes.enable("toVertex");
+			currentShaderProgram.attributes.enable("vertexType");
+			currentShaderProgram.attributes.enable("fromColor");
+			currentShaderProgram.attributes.enable("toColor");
+			currentShaderProgram.attributes.enable("fromSize");
+			currentShaderProgram.attributes.enable("toSize");
+			currentShaderProgram.attributes.enable("encodedIndex");
+
+			// newGeometry.edgeVertexTypeBuffer = gl.createBuffer();
+			// newGeometry.verticesBuffer = gl.createBuffer();
+			// newGeometry.colorBuffer = gl.createBuffer();
+			// newGeometry.sizeBuffer = gl.createBuffer();
+			// newGeometry.indexBuffer = gl.createBuffer();
+			// console.log(currentShaderProgram.attributes);
+			this.projectionViewMatrix = glm.mat4.create();
+			glm.mat4.multiply(this.projectionViewMatrix, this.projectionMatrix, this.viewMatrix);
+
+			gl.bindBuffer(gl.ARRAY_BUFFER, this.edgesGeometry.edgeVertexTypeBuffer);
+			gl.vertexAttribPointer(currentShaderProgram.attributes.vertexType, 2, gl.FLOAT, false, 0, 0);
+			ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.vertexType, 0);
+			
+			gl.bindBuffer(gl.ARRAY_BUFFER, this.edgesGeometry.verticesBuffer);
+			gl.vertexAttribPointer(currentShaderProgram.attributes.fromVertex, 3, gl.FLOAT, false, 4*3*2, 0);
+			ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.fromVertex, 1);
+			
+			gl.bindBuffer(gl.ARRAY_BUFFER, this.edgesGeometry.verticesBuffer);
+			gl.vertexAttribPointer(currentShaderProgram.attributes.toVertex, 3, gl.FLOAT, false, 4*3*2, 4*3);
+			ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.toVertex, 1);
+
+			
+			gl.bindBuffer(gl.ARRAY_BUFFER, this.edgesGeometry.colorBuffer);
+			gl.vertexAttribPointer(currentShaderProgram.attributes.fromColor, 4, gl.FLOAT, false, 4*4*2, 0);
+			ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.fromColor, 1);
+			gl.vertexAttribPointer(currentShaderProgram.attributes.toColor, 4, gl.FLOAT, false, 4*4*2, 4*4);
+			ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.toColor, 1);
+
+			gl.bindBuffer(gl.ARRAY_BUFFER, this.edgesGeometry.sizeBuffer);
+			gl.vertexAttribPointer(currentShaderProgram.attributes.fromSize, 1, gl.FLOAT, false, 4*2, 0);
+			ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.fromSize, 1);
+			gl.vertexAttribPointer(currentShaderProgram.attributes.toSize, 1, gl.FLOAT, false, 4*2, 4);
+			ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.toSize, 1);
+
+
+			gl.bindBuffer(gl.ARRAY_BUFFER, this.edgesGeometry.indexBuffer);
+			gl.enableVertexAttribArray(currentShaderProgram.attributes.encodedIndex);
+			gl.vertexAttribPointer(currentShaderProgram.attributes.encodedIndex, 4, gl.FLOAT, false, 0, 0);
+			ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.encodedIndex, 1); // This makes it instanced!
+
+			// gl.bindBuffer(gl.ARRAY_BUFFER, this.nodesGeometry.normalObject);
+			// gl.vertexAttribPointer(currentShaderProgram.attributes.normal, 3, gl.FLOAT, false, 0, 0);
+			// ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.normal, 0); 
+
+
+
+			gl.uniformMatrix4fv(currentShaderProgram.uniforms.projectionMatrix, false, this.projectionMatrix);
+			gl.uniformMatrix4fv(currentShaderProgram.uniforms.viewMatrix, false, this.viewMatrix);
+
+			//gl.uniform2fv(edgesShaderProgram.uniforms.nearFar,[0.1,10.0]);
+			gl.uniform1f(currentShaderProgram.uniforms.globalOpacity, this._edgesGlobalOpacity);
+			gl.uniform1f(currentShaderProgram.uniforms.globalWidthScale, this._globalWidthScale);
+
+			// 01,11,21
+			let cameraUp = glm.vec3.fromValues(this.viewMatrix[1], this.viewMatrix[5], this.viewMatrix[9]);
+			// let cameraUp = glm.vec3.fromValues(0, 1.0, 0);
+			// 00,10,20
+			let cameraRight = glm.vec3.fromValues(this.viewMatrix[0], this.viewMatrix[4], this.viewMatrix[8]);
+			let cameraForward = glm.vec3.fromValues(this.viewMatrix[2], this.viewMatrix[6], this.viewMatrix[10]);
+
+			// console.log(cameraUp);
+			// glm.vec3.normalize(cameraUp, cameraUp);
+			// glm.vec3.normalize(cameraRight, cameraRight);
+			glm.vec3.cross(cameraForward,cameraUp,cameraRight);
+			glm.vec3.normalize(cameraForward, cameraForward);
+			// gl.uniform3fv(currentShaderProgram.uniforms.cameraUp, cameraUp);
+			// gl.uniform3fv(currentShaderProgram.uniforms.cameraRight, cameraRight);
+			gl.uniform3fv(currentShaderProgram.uniforms.cameraForward, cameraForward);
+			// cameraRight;// = normalize(vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]));
+			// cameraUp;// = normalize(vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]));
+			// cameraForward;// = normalize(vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]));
+			
+			ext.drawArraysInstancedANGLE(gl.TRIANGLE_STRIP, 0, 4, this.edgesGeometry.count);
+			
+			currentShaderProgram.attributes.disable("fromVertex");
+			currentShaderProgram.attributes.disable("toVertex");
+			currentShaderProgram.attributes.disable("vertexType");
+			currentShaderProgram.attributes.disable("fromColor");
+			currentShaderProgram.attributes.disable("toColor");
+			currentShaderProgram.attributes.disable("fromSize");
+			currentShaderProgram.attributes.disable("toSize");
+			currentShaderProgram.attributes.disable("encodedIndex");
+			// console.log("PICKING? " + isPicking)
 		}
 	}
+
 	_redrawAll(destination,isPicking) {
 		if(typeof isPicking === 'undefined'){
 			isPicking = false;
@@ -1256,6 +1453,29 @@ export class Helios {
 		this.onNodeHoverMoveCallback = callback;
 		return this;
 	}
+	
+
+	onEdgeClick(callback) {
+		this.onEdgeClickCallback = callback;
+		return this;
+	}
+	onEdgeDoubleClick(callback) {
+		this.onEdgeDoubleClickCallback = callback;
+		return this;
+	}
+	onEdgeHoverStart(callback) {
+		this.onEdgeHoverStartCallback = callback;
+		return this;
+	}
+	onEdgeHoverEnd(callback) {
+		this.onEdgeHoverEndCallback = callback;
+		return this;
+	}
+	onEdgeHoverMove(callback) {
+		this.onEdgeHoverMoveCallback = callback;
+		return this;
+	}
+
 	onZoom(callback) {
 		this.onZoomCallback = callback;
 		return this;
@@ -1385,9 +1605,12 @@ export class Helios {
 				for (const [nodeID, node] of Object.entries(this.network.nodes)) {
 					let nodeIndex = this.network.ID2index[nodeID];
 					let aColor = colorInput(node, nodeIndex, this.network);
-					this.network.outlineColors[nodeIndex * 3 + 0] = aColor[0];
-					this.network.outlineColors[nodeIndex * 3 + 1] = aColor[1];
-					this.network.outlineColors[nodeIndex * 3 + 2] = aColor[2];
+					this.network.outlineColors[nodeIndex * 4 + 0] = aColor[0];
+					this.network.outlineColors[nodeIndex * 4 + 1] = aColor[1];
+					this.network.outlineColors[nodeIndex * 4 + 2] = aColor[2];
+					if(aColor.length > 3){
+						this.network.outlineColors[nodeIndex * 4 + 3] = aColor[3];
+					}
 				}
 			} else if (typeof colorInput === "number") {
 				//index
@@ -1395,23 +1618,32 @@ export class Helios {
 			} else {
 				for (const [nodeID, node] of Object.entries(this.network.nodes)) {
 					let nodeIndex = this.network.ID2index[nodeID];
-					this.network.outlineColors[nodeIndex * 3 + 0] = colorInput[0];
-					this.network.outlineColors[nodeIndex * 3 + 1] = colorInput[1];
-					this.network.outlineColors[nodeIndex * 3 + 2] = colorInput[2];
+					this.network.outlineColors[nodeIndex * 4 + 0] = colorInput[0];
+					this.network.outlineColors[nodeIndex * 4 + 1] = colorInput[1];
+					this.network.outlineColors[nodeIndex * 4 + 2] = colorInput[2];
+					if(colorInput.length > 3){
+						this.network.outlineColors[nodeIndex * 4 + 3] = colorInput[3];
+					}
 				}
 			}
 		} else {
 			if (typeof colorInput === "function") {
 				let nodeIndex = this.network.ID2index[nodeID];
 				let aColor = colorInput(nodeID, nodeIndex, this.network);
-				this.network.outlineColors[nodeIndex * 3 + 0] = aColor[0];
-				this.network.outlineColors[nodeIndex * 3 + 1] = aColor[1];
-				this.network.outlineColors[nodeIndex * 3 + 2] = aColor[2];
+				this.network.outlineColors[nodeIndex * 4 + 0] = aColor[0];
+				this.network.outlineColors[nodeIndex * 4 + 1] = aColor[1];
+				this.network.outlineColors[nodeIndex * 4 + 2] = aColor[2];
+				if(aColor.length > 3){
+					this.network.outlineColors[nodeIndex * 4 + 3] = aColor[3];
+				}
 			} else {
 				let nodeIndex = this.network.ID2index[nodeID];
-				this.network.outlineColors[nodeIndex * 3 + 0] = colorInput[0];
-				this.network.outlineColors[nodeIndex * 3 + 1] = colorInput[1];
-				this.network.outlineColors[nodeIndex * 3 + 2] = colorInput[2];
+				this.network.outlineColors[nodeIndex * 4 + 0] = colorInput[0];
+				this.network.outlineColors[nodeIndex * 4 + 1] = colorInput[1];
+				this.network.outlineColors[nodeIndex * 4 + 2] = colorInput[2];
+				if(colorInput.length > 3){
+					this.network.outlineColors[nodeIndex * 4 + 3] = colorInput[3];
+				}
 			}
 		}
 		return this;
@@ -1473,6 +1705,16 @@ export class Helios {
 			return this._edgesGlobalOpacity;
 		} else {
 			this._edgesGlobalOpacity = opacity;
+			return this;
+		}
+	}
+
+	edgesWidthScale(scale) {
+		// check if color is defined
+		if (typeof scale === "undefined") {
+			return this._globalWidthScale;
+		} else {
+			this._globalWidthScale = scale;
 			return this;
 		}
 	}
