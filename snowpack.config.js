@@ -14,5 +14,8 @@ export default {
   exlude: [
     "**/node_modules/**/*",
     "**/.git/**/*"
-  ]
+  ],
+  packageOptions: {
+    external: []
+  }
 };
