@@ -9498,7 +9498,6 @@ var vertexShader = `
 uniform mat4 projectionMatrix;
 uniform mat4 viewMatrix;
  
-uniform vec3 cameraForward;// = normalize(vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]));
 uniform float globalWidthScale;
 
 attribute vec3 fromVertex;
@@ -9528,41 +9527,18 @@ void main(void){
 	vSize = (fromSize)*vertexType.x + (toSize)*(1.0-vertexType.x);
 	vEncodedIndex = encodedIndex;
 	//vZComponent = viewVertex.z;
-	// vec3 vertexCenter = fromVertex.xyz*vertexType.x + toVertex.xyz*(1.0-vertexType.x);
-
-	// vec3 destinationVertexCenter = fromVertex.xyz*(1.0-vertexType.x) + toVertex.xyz*vertexType.x;
-	// vec3 displacementView = (viewMatrix * vec4(destinationVertexCenter-vertexCenter,1.0)).xyz;
-
-	// vec3 displacement = displacementView.y*cameraRight+displacementView.x*cameraUp;
-	// vec3 perpendicularVector = normalize(cross(displacement, -cameraForward));
-	// vec3 offset = vSize*(vertexType.y-0.5)*(vertexType.x-0.5)*4.0*1.5*perpendicularVector;
-	
-	// vec4 viewVertex = viewMatrix * vec4(vertexCenter.xyz+offset,1.0);
-	
-
 	vec3 vertexCenter = fromVertex.xyz*vertexType.x + toVertex.xyz*(1.0-vertexType.x);
 	vec3 destinationVertexCenter = fromVertex.xyz*(1.0-vertexType.x) + toVertex.xyz*vertexType.x;
 	
-	vec3 displacement = (viewMatrix*vec4((destinationVertexCenter-vertexCenter),1.0)).xyz;
-	vec3 perpendicularVector = normalize(cross(displacement, -vec3(0.0,0.0,1.0)));
-	vec3 offset = globalWidthScale*vSize*(vertexType.y-0.5)*(vertexType.x-0.5)*4.0*1.5*perpendicularVector;
+	vec3 displacement = (viewMatrix*vec4((destinationVertexCenter-vertexCenter),0.0)).xyz;
+	vec3 perpendicularVector = normalize(vec3(-displacement.y, displacement.x, 0.0));
+	vec3 offset = globalWidthScale*vSize*(vertexType.x-0.5)*(vertexType.y-0.5)*4.0*1.5*perpendicularVector;
 	
 	vec4 viewVertex = viewMatrix * vec4(vertexCenter.xyz,1.0)+vec4(offset,0.0);
-
+	float displacementLength = length(displacement);
+	vOffset = vec3(vertexType.x,toSize/displacementLength*1.5,fromSize/displacementLength*1.5);
 	gl_Position = projectionMatrix*viewVertex;
-
-	// vec3 vertexCenter = fromVertex.xyz*vertexType.x + toVertex.xyz*(1.0-vertexType.x);
-	// vec3 destinationVertexCenter = fromVertex.xyz*(1.0-vertexType.x) + toVertex.xyz*vertexType.x;
 	
-	// vec3 displacement = (projectionMatrix*viewMatrix*vec4((destinationVertexCenter-vertexCenter),1.0)).xyz;
-	// vec3 perpendicularVector = normalize(cross(displacement, -vec3(0.0,0.0,1.0)));
-	// vec3 offset = vSize*(vertexType.y-0.5)*(vertexType.x-0.5)*4.0*1.5*perpendicularVector;
-	
-	// vec4 viewVertex = viewMatrix * vec4(vertexCenter.xyz,1.0);
-
-	// vOffset = normalize(offset);
-	// // viewVertex.y +=5.0;
-	// gl_Position = projectionMatrix*viewVertex+vec4(offset,0.0);
 }
 `;
 var fragmentShader = `
@@ -9578,7 +9554,11 @@ varying vec3 vOffset;
 //gl_DepthRange.near)/gl_DepthRange.diff
 void main(){
 	//float w = (-vZComponent-nearFar[0])/(nearFar[1]-nearFar[0]);
-	// gl_FragColor = vec4(vOffset,1.0);//vec4(vColor.xyz,globalOpacity*vColor.w);
+	if(vOffset.x<vOffset.y || vOffset.x>(1.0-vOffset.z)){
+		discard;
+	}
+
+	// gl_FragColor = vec4(vOffset.x,vOffset.x,0,1.0);//vec4(vColor.xyz,globalOpacity*vColor.w);
 	gl_FragColor = vec4(vColor.xyz,globalOpacity*vColor.w);
 }
 `;
@@ -9589,9 +9569,14 @@ var pickingShader = `
 //uniform vec2 nearFar;
 varying vec4 vEncodedIndex;
 varying vec4 vColor;
+varying vec3 vOffset;
 //varying float vZComponent;
 //gl_DepthRange.near)/gl_DepthRange.diff
 void main(){
+
+	if(vOffset.x<vOffset.y*1.1 || vOffset.x>(1.0-vOffset.z*1.1)){
+		discard;
+	}
 	//float w = (-vZComponent-nearFar[0])/(nearFar[1]-nearFar[0]);
 	gl_FragColor = vEncodedIndex;
 	
@@ -10285,9 +10270,9 @@ var Helios = class {
   }
   _setupShaders() {
     let gl = this.gl;
-    this.edgesShaderProgram = new ShaderProgram(getShaderFromString(gl, vertexShader, gl.VERTEX_SHADER), getShaderFromString(gl, fragmentShader, gl.FRAGMENT_SHADER), ["viewMatrix", "projectionMatrix", "nearFar", "globalOpacity", "globalWidthScale", "cameraForward"], ["fromVertex", "toVertex", "vertexType", "fromColor", "toColor", "fromSize", "toSize", "encodedIndex"], this.gl);
+    this.edgesShaderProgram = new ShaderProgram(getShaderFromString(gl, vertexShader, gl.VERTEX_SHADER), getShaderFromString(gl, fragmentShader, gl.FRAGMENT_SHADER), ["viewMatrix", "projectionMatrix", "nearFar", "globalOpacity", "globalWidthScale"], ["fromVertex", "toVertex", "vertexType", "fromColor", "toColor", "fromSize", "toSize", "encodedIndex"], this.gl);
     this.edgesFastShaderProgram = new ShaderProgram(getShaderFromString(gl, fastVertexShader, gl.VERTEX_SHADER), getShaderFromString(gl, fastFragmentShader, gl.FRAGMENT_SHADER), ["projectionViewMatrix", "nearFar", "globalOpacity"], ["vertex", "color"], this.gl);
-    this.edgesPickingShaderProgram = new ShaderProgram(getShaderFromString(gl, vertexShader, gl.VERTEX_SHADER), getShaderFromString(gl, pickingShader, gl.FRAGMENT_SHADER), ["viewMatrix", "projectionMatrix", "nearFar", "globalOpacity", "globalWidthScale", "cameraForward"], ["fromVertex", "toVertex", "vertexType", "fromColor", "toColor", "fromSize", "toSize", "encodedIndex"], this.gl);
+    this.edgesPickingShaderProgram = new ShaderProgram(getShaderFromString(gl, vertexShader, gl.VERTEX_SHADER), getShaderFromString(gl, pickingShader, gl.FRAGMENT_SHADER), ["viewMatrix", "projectionMatrix", "nearFar", "globalOpacity", "globalWidthScale"], ["fromVertex", "toVertex", "vertexType", "fromColor", "toColor", "fromSize", "toSize", "encodedIndex"], this.gl);
     this.nodesShaderProgram = new ShaderProgram(getShaderFromString(gl, vertexShader2, gl.VERTEX_SHADER), getShaderFromString(gl, fragmentShader2, gl.FRAGMENT_SHADER), ["viewMatrix", "projectionMatrix", "normalMatrix", "globalOpacity"], ["vertex", "position", "color", "size", "outlineWidth", "outlineColor", "encodedIndex"], this.gl);
     this.nodesFastShaderProgram = new ShaderProgram(getShaderFromString(gl, fastVertexShader2, gl.VERTEX_SHADER), getShaderFromString(gl, fastFragmentShader2, gl.FRAGMENT_SHADER), ["viewMatrix", "projectionMatrix", "normalMatrix", "globalOpacity"], ["vertex", "position", "color", "size", "outlineWidth", "outlineColor", "encodedIndex"], this.gl);
     this.nodesPickingShaderProgram = new ShaderProgram(getShaderFromString(gl, vertexShader2, gl.VERTEX_SHADER), getShaderFromString(gl, pickingShader2, gl.FRAGMENT_SHADER), ["viewMatrix", "projectionMatrix", "normalMatrix"], ["vertex", "position", "color", "size", "outlineWidth", "outlineColor", "encodedIndex"], this.gl);
@@ -10688,7 +10673,7 @@ var Helios = class {
     currentShaderProgram.attributes.disable("encodedIndex");
   }
   _redrawEdges(destination, isPicking) {
-    if (this.fastEdges && isPicking) {
+    if (this.fastEdges && isPicking || !(this.onEdgeClickCallback || this.onEdgeHoverMoveCallback || this.onEdgeHoverStartCallback || this.onEdgeHoverEndCallback || this.onEdgeDoubleClickCallback || this.onEdgeClickCallback)) {
       return;
     }
     let gl = this.gl;
@@ -10767,12 +10752,6 @@ var Helios = class {
       gl.uniformMatrix4fv(currentShaderProgram.uniforms.viewMatrix, false, this.viewMatrix);
       gl.uniform1f(currentShaderProgram.uniforms.globalOpacity, this._edgesGlobalOpacity);
       gl.uniform1f(currentShaderProgram.uniforms.globalWidthScale, this._globalWidthScale);
-      let cameraUp = vec3.fromValues(this.viewMatrix[1], this.viewMatrix[5], this.viewMatrix[9]);
-      let cameraRight = vec3.fromValues(this.viewMatrix[0], this.viewMatrix[4], this.viewMatrix[8]);
-      let cameraForward = vec3.fromValues(this.viewMatrix[2], this.viewMatrix[6], this.viewMatrix[10]);
-      vec3.cross(cameraForward, cameraUp, cameraRight);
-      vec3.normalize(cameraForward, cameraForward);
-      gl.uniform3fv(currentShaderProgram.uniforms.cameraForward, cameraForward);
       ext.drawArraysInstancedANGLE(gl.TRIANGLE_STRIP, 0, 4, this.edgesGeometry.count);
       currentShaderProgram.attributes.disable("fromVertex");
       currentShaderProgram.attributes.disable("toVertex");
@@ -11059,8 +11038,8 @@ var Helios = class {
   pickPoint(x, y) {
     const fbWidth = this.canvasElement.width * this.pickingResolutionRatio;
     const fbHeight = this.canvasElement.height * this.pickingResolutionRatio;
-    const pixelX = x * fbWidth / this.canvasElement.clientWidth;
-    const pixelY = fbHeight - y * fbHeight / this.canvasElement.clientHeight - 1;
+    const pixelX = Math.round(x * fbWidth / this.canvasElement.clientWidth - 0.5);
+    const pixelY = Math.round(fbHeight - y * fbHeight / this.canvasElement.clientHeight - 0.5);
     const data = new Uint8Array(4);
     let gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickingFramebuffer);
