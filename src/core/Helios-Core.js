@@ -1216,7 +1216,14 @@ export class Helios {
 	}
 
 	_redrawEdges(destination,isPicking) {
-		if(this.fastEdges && isPicking) {
+		if((this.fastEdges && isPicking)
+			|| !(this.onEdgeClickCallback
+				|| this.onEdgeHoverMoveCallback
+				|| this.onEdgeHoverStartCallback
+				|| this.onEdgeHoverEndCallback
+				|| this.onEdgeDoubleClickCallback
+				|| this.onEdgeClickCallback
+				)) {
 			return; // No picking in fast edges mode
 		}
 		let gl = this.gl;
