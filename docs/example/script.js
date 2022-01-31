@@ -10673,7 +10673,8 @@ var Helios = class {
     currentShaderProgram.attributes.disable("encodedIndex");
   }
   _redrawEdges(destination, isPicking) {
-    if (this.fastEdges && isPicking || !(this.onEdgeClickCallback || this.onEdgeHoverMoveCallback || this.onEdgeHoverStartCallback || this.onEdgeHoverEndCallback || this.onEdgeDoubleClickCallback || this.onEdgeClickCallback)) {
+    let hasEdgeCallbacks = this.onEdgeClickCallback || this.onEdgeHoverMoveCallback || this.onEdgeHoverStartCallback || this.onEdgeHoverEndCallback || this.onEdgeDoubleClickCallback || this.onEdgeClickCallback;
+    if (isPicking && (this.fastEdges || !hasEdgeCallbacks)) {
       return;
     }
     let gl = this.gl;
