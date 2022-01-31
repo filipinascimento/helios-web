@@ -154,7 +154,7 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 		edges: edges,
 		use2D: use2D,
 		fastEdges: !advancedEdges,
-		autoStartLayout: autoStartLayout ,
+		autoStartLayout: autoStartLayout,
 	})
 		.onNodeHoverStart((node, event) => {
 			if (event) {

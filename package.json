@@ -1,7 +1,7 @@
 {
   "name": "helios-web",
   "description": "Helios Web is a web-based library to visualize dynamic networks in real-time. Currently under development it aims to provide a simple API and optimized implementation to be integrated in other systems and render and layout large networks",
-  "version": "0.2.5",
+  "version": "0.3.2",
   "main": "./src/helios.js",
   "type": "module",
   "module": "src/helios.js",

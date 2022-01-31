@@ -587,7 +587,7 @@ export class Helios {
 		this.edgesShaderProgram = new glUtils.ShaderProgram(
 			glUtils.getShaderFromString(gl,edgesShaders.vertexShader,gl.VERTEX_SHADER),
 			glUtils.getShaderFromString(gl,edgesShaders.fragmentShader,gl.FRAGMENT_SHADER),
-			["viewMatrix", "projectionMatrix", "nearFar", "globalOpacity","globalWidthScale","cameraForward"],
+			["viewMatrix", "projectionMatrix", "nearFar", "globalOpacity","globalWidthScale"],
 			["fromVertex", "toVertex", "vertexType", "fromColor", "toColor", "fromSize", "toSize", "encodedIndex"],
 			this.gl);
 
@@ -601,7 +601,7 @@ export class Helios {
 		this.edgesPickingShaderProgram = new glUtils.ShaderProgram(
 			glUtils.getShaderFromString(gl,edgesShaders.vertexShader,gl.VERTEX_SHADER),
 			glUtils.getShaderFromString(gl,edgesShaders.pickingShader,gl.FRAGMENT_SHADER),
-			["viewMatrix", "projectionMatrix", "nearFar", "globalOpacity","globalWidthScale","cameraForward"],
+			["viewMatrix", "projectionMatrix", "nearFar", "globalOpacity","globalWidthScale"],
 			["fromVertex", "toVertex", "vertexType", "fromColor", "toColor", "fromSize", "toSize", "encodedIndex"],
 			this.gl);
 
@@ -1077,6 +1077,14 @@ export class Helios {
 		this.viewMatrix = glm.mat4.create();
 
 		glm.mat4.perspective(this.projectionMatrix, Math.PI * 2 / 360 * 70, fbWidth / fbHeight, 1.0, 10000.0);
+		// let orthoRescaleFactor = isPicking?this.pickingResolutionRatio:1.0;
+		// glm.mat4.ortho(this.projectionMatrix,
+		// 	-fbWidth / this._zoomFactor/orthoRescaleFactor,
+		// 	 fbWidth / this._zoomFactor/orthoRescaleFactor,
+		// 	-fbHeight / this._zoomFactor/orthoRescaleFactor,
+		// 	 fbHeight / this._zoomFactor/orthoRescaleFactor,
+		// 	 -10000.0, 10000.0);
+
 		glm.mat4.identity(this.viewMatrix);
 		glm.mat4.translate(this.viewMatrix, this.viewMatrix, [this.panX, this.panY, -this.cameraDistance / this._zoomFactor]);
 
@@ -1328,8 +1336,6 @@ export class Helios {
 			// gl.vertexAttribPointer(currentShaderProgram.attributes.normal, 3, gl.FLOAT, false, 0, 0);
 			// ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.normal, 0); 
 
-
-
 			gl.uniformMatrix4fv(currentShaderProgram.uniforms.projectionMatrix, false, this.projectionMatrix);
 			gl.uniformMatrix4fv(currentShaderProgram.uniforms.viewMatrix, false, this.viewMatrix);
 
@@ -1338,20 +1344,20 @@ export class Helios {
 			gl.uniform1f(currentShaderProgram.uniforms.globalWidthScale, this._globalWidthScale);
 
 			// 01,11,21
-			let cameraUp = glm.vec3.fromValues(this.viewMatrix[1], this.viewMatrix[5], this.viewMatrix[9]);
-			// let cameraUp = glm.vec3.fromValues(0, 1.0, 0);
-			// 00,10,20
-			let cameraRight = glm.vec3.fromValues(this.viewMatrix[0], this.viewMatrix[4], this.viewMatrix[8]);
-			let cameraForward = glm.vec3.fromValues(this.viewMatrix[2], this.viewMatrix[6], this.viewMatrix[10]);
+			// let cameraUp = glm.vec3.fromValues(this.viewMatrix[1], this.viewMatrix[5], this.viewMatrix[9]);
+			// // let cameraUp = glm.vec3.fromValues(0, 1.0, 0);
+			// // 00,10,20
+			// let cameraRight = glm.vec3.fromValues(this.viewMatrix[0], this.viewMatrix[4], this.viewMatrix[8]);
+			// let cameraForward = glm.vec3.fromValues(this.viewMatrix[2], this.viewMatrix[6], this.viewMatrix[10]);
 
 			// console.log(cameraUp);
 			// glm.vec3.normalize(cameraUp, cameraUp);
 			// glm.vec3.normalize(cameraRight, cameraRight);
-			glm.vec3.cross(cameraForward,cameraUp,cameraRight);
-			glm.vec3.normalize(cameraForward, cameraForward);
+			// glm.vec3.cross(cameraForward,cameraUp,cameraRight);
+			// glm.vec3.normalize(cameraForward, cameraForward);
 			// gl.uniform3fv(currentShaderProgram.uniforms.cameraUp, cameraUp);
 			// gl.uniform3fv(currentShaderProgram.uniforms.cameraRight, cameraRight);
-			gl.uniform3fv(currentShaderProgram.uniforms.cameraForward, cameraForward);
+			// gl.uniform3fv(currentShaderProgram.uniforms.cameraForward, cameraForward);
 			// cameraRight;// = normalize(vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]));
 			// cameraUp;// = normalize(vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]));
 			// cameraForward;// = normalize(vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]));
@@ -1681,8 +1687,8 @@ export class Helios {
 	pickPoint(x, y) {
 		const fbWidth = this.canvasElement.width * this.pickingResolutionRatio;
 		const fbHeight = this.canvasElement.height * this.pickingResolutionRatio;
-		const pixelX = x * fbWidth / this.canvasElement.clientWidth;
-		const pixelY = fbHeight - y * fbHeight / this.canvasElement.clientHeight - 1;
+		const pixelX = Math.round(x * fbWidth / this.canvasElement.clientWidth - 0.5);
+		const pixelY = Math.round(fbHeight - y * fbHeight / this.canvasElement.clientHeight - 0.5);
 		const data = new Uint8Array(4);
 		let gl = this.gl;
 		gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickingFramebuffer);

@@ -10,7 +10,6 @@ let vertexShader = /*glsl*/`
 uniform mat4 projectionMatrix;
 uniform mat4 viewMatrix;
  
-uniform vec3 cameraForward;// = normalize(vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]));
 uniform float globalWidthScale;
 
 attribute vec3 fromVertex;
@@ -40,41 +39,18 @@ void main(void){
 	vSize = (fromSize)*vertexType.x + (toSize)*(1.0-vertexType.x);
 	vEncodedIndex = encodedIndex;
 	//vZComponent = viewVertex.z;
-	// vec3 vertexCenter = fromVertex.xyz*vertexType.x + toVertex.xyz*(1.0-vertexType.x);
-
-	// vec3 destinationVertexCenter = fromVertex.xyz*(1.0-vertexType.x) + toVertex.xyz*vertexType.x;
-	// vec3 displacementView = (viewMatrix * vec4(destinationVertexCenter-vertexCenter,1.0)).xyz;
-
-	// vec3 displacement = displacementView.y*cameraRight+displacementView.x*cameraUp;
-	// vec3 perpendicularVector = normalize(cross(displacement, -cameraForward));
-	// vec3 offset = vSize*(vertexType.y-0.5)*(vertexType.x-0.5)*4.0*1.5*perpendicularVector;
-	
-	// vec4 viewVertex = viewMatrix * vec4(vertexCenter.xyz+offset,1.0);
-	
-
 	vec3 vertexCenter = fromVertex.xyz*vertexType.x + toVertex.xyz*(1.0-vertexType.x);
 	vec3 destinationVertexCenter = fromVertex.xyz*(1.0-vertexType.x) + toVertex.xyz*vertexType.x;
 	
-	vec3 displacement = (viewMatrix*vec4((destinationVertexCenter-vertexCenter),1.0)).xyz;
-	vec3 perpendicularVector = normalize(cross(displacement, -vec3(0.0,0.0,1.0)));
-	vec3 offset = globalWidthScale*vSize*(vertexType.y-0.5)*(vertexType.x-0.5)*4.0*1.5*perpendicularVector;
+	vec3 displacement = (viewMatrix*vec4((destinationVertexCenter-vertexCenter),0.0)).xyz;
+	vec3 perpendicularVector = normalize(vec3(-displacement.y, displacement.x, 0.0));
+	vec3 offset = globalWidthScale*vSize*(vertexType.x-0.5)*(vertexType.y-0.5)*4.0*1.5*perpendicularVector;
 	
 	vec4 viewVertex = viewMatrix * vec4(vertexCenter.xyz,1.0)+vec4(offset,0.0);
-
+	float displacementLength = length(displacement);
+	vOffset = vec3(vertexType.x,toSize/displacementLength*1.5,fromSize/displacementLength*1.5);
 	gl_Position = projectionMatrix*viewVertex;
-
-	// vec3 vertexCenter = fromVertex.xyz*vertexType.x + toVertex.xyz*(1.0-vertexType.x);
-	// vec3 destinationVertexCenter = fromVertex.xyz*(1.0-vertexType.x) + toVertex.xyz*vertexType.x;
 	
-	// vec3 displacement = (projectionMatrix*viewMatrix*vec4((destinationVertexCenter-vertexCenter),1.0)).xyz;
-	// vec3 perpendicularVector = normalize(cross(displacement, -vec3(0.0,0.0,1.0)));
-	// vec3 offset = vSize*(vertexType.y-0.5)*(vertexType.x-0.5)*4.0*1.5*perpendicularVector;
-	
-	// vec4 viewVertex = viewMatrix * vec4(vertexCenter.xyz,1.0);
-
-	// vOffset = normalize(offset);
-	// // viewVertex.y +=5.0;
-	// gl_Position = projectionMatrix*viewVertex+vec4(offset,0.0);
 }
 `;
 
@@ -96,7 +72,11 @@ varying vec3 vOffset;
 //gl_DepthRange.near)/gl_DepthRange.diff
 void main(){
 	//float w = (-vZComponent-nearFar[0])/(nearFar[1]-nearFar[0]);
-	// gl_FragColor = vec4(vOffset,1.0);//vec4(vColor.xyz,globalOpacity*vColor.w);
+	if(vOffset.x<vOffset.y || vOffset.x>(1.0-vOffset.z)){
+		discard;
+	}
+
+	// gl_FragColor = vec4(vOffset.x,vOffset.x,0,1.0);//vec4(vColor.xyz,globalOpacity*vColor.w);
 	gl_FragColor = vec4(vColor.xyz,globalOpacity*vColor.w);
 }
 `;
@@ -114,9 +94,14 @@ let pickingShader = /*glsl*/`
 //uniform vec2 nearFar;
 varying vec4 vEncodedIndex;
 varying vec4 vColor;
+varying vec3 vOffset;
 //varying float vZComponent;
 //gl_DepthRange.near)/gl_DepthRange.diff
 void main(){
+
+	if(vOffset.x<vOffset.y*1.1 || vOffset.x>(1.0-vOffset.z*1.1)){
+		discard;
+	}
 	//float w = (-vZComponent-nearFar[0])/(nearFar[1]-nearFar[0]);
 	gl_FragColor = vEncodedIndex;
 	
