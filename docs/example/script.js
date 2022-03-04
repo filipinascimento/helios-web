@@ -230,7 +230,11 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 		})
 		.onNodeDoubleClick((node, event) => {
 			console.log(`Double Clicked: ${node.ID}`);
-			helios.centerOnNode(node.ID);
+			if("mag id" in node){
+				window.open(`https://explore.openalex.org/works/W${node["mag id"]}`, "helios_mag");
+			}else{
+				helios.centerOnNode(node.ID);
+			}
 		})
 		.onEdgeHoverStart((edge, event) => {
 			if (event) {
