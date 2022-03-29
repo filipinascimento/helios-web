@@ -10127,14 +10127,12 @@ var Helios = class {
       this._mutationObserver = new MutationObserver((events) => {
         for (let index = 0; index < events.length; index++) {
           let event = events[index];
-          console.log(event);
           if (event.type == "childList") {
             if (event.removedNodes.length > 0) {
               for (let index2 = 0; index2 < event.removedNodes.length; index2++) {
                 let element = event.removedNodes[index2];
                 if (element == this.canvasElement || element == this.element) {
                   this._mutationObserver.disconnect();
-                  console.log("Element removed");
                   this.cleanup();
                   return;
                 }
@@ -11295,10 +11293,7 @@ var Helios = class {
       this._mutationObserver.disconnect();
     }
     if (this.canvasElement) {
-      delete this.canvasElement;
-    }
-    if (this.element) {
-      this.element.innerHTML = "";
+      this.canvasElement.remove();
     }
   }
 };

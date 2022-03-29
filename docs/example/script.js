@@ -10131,14 +10131,12 @@ var Helios = class {
       this._mutationObserver = new MutationObserver((events) => {
         for (let index = 0; index < events.length; index++) {
           let event = events[index];
-          console.log(event);
           if (event.type == "childList") {
             if (event.removedNodes.length > 0) {
               for (let index2 = 0; index2 < event.removedNodes.length; index2++) {
                 let element = event.removedNodes[index2];
                 if (element == this.canvasElement || element == this.element) {
                   this._mutationObserver.disconnect();
-                  console.log("Element removed");
                   this.cleanup();
                   return;
                 }
@@ -11299,10 +11297,7 @@ var Helios = class {
       this._mutationObserver.disconnect();
     }
     if (this.canvasElement) {
-      delete this.canvasElement;
-    }
-    if (this.element) {
-      this.element.innerHTML = "";
+      this.canvasElement.remove();
     }
   }
 };
@@ -12204,439 +12199,442 @@ var additiveBlending = false;
 if (urlParams.has("additive") && darkBackground) {
   additiveBlending = true;
 }
-xnet_exports.loadXNETFile("networks/" + networkName + ".xnet").then(async (network) => {
-  let colorProperty = "index";
-  let sequencialColormap = "interpolateInferno";
-  let categoricalColormap = "schemeCategory10";
-  let useCategoricalColormap = false;
-  let defaultOutline = 0.25;
-  console.log(network);
-  let nodeCount = network.nodesCount;
-  let bigNetwork = nodeCount > 1e5;
-  let nodes = {};
-  let edges = [];
-  for (let index = 0; index < nodeCount; index++) {
-    nodes["" + index] = {
-      ID: "" + index,
-      rand: "" + Math.round(Math.random() * 10)
-    };
-    if (network.labels) {
-      nodes["" + index].label = network.labels[index];
-    }
-  }
-  for (const [key, value] of Object.entries(network.verticesProperties)) {
+var visualizeNetwork = (networkName2) => {
+  xnet_exports.loadXNETFile("networks/" + networkName2 + ".xnet").then(async (network) => {
+    let colorProperty = "index";
+    let sequencialColormap = "interpolateInferno";
+    let categoricalColormap = "schemeCategory10";
+    let useCategoricalColormap = false;
+    let defaultOutline = 0.25;
+    console.log(network);
+    let nodeCount = network.nodesCount;
+    let bigNetwork = nodeCount > 1e5;
+    let nodes = {};
+    let edges = [];
     for (let index = 0; index < nodeCount; index++) {
-      nodes["" + index][key.toLowerCase()] = value[index];
-    }
-  }
-  for (let index = 0; index < network.edges.length; index++) {
-    let fromIndex, toIndex;
-    edges.push({
-      source: "" + network.edges[index][0],
-      target: "" + network.edges[index][1]
-    });
-  }
-  let tooltipElement = document.getElementById("tooltip");
-  if (autoStartLayout === null) {
-    autoStartLayout = !bigNetwork;
-  }
-  let colorScale = ordinal(allColors.schemeCategory10);
-  let helios = new Helios({
-    elementID: "netviz",
-    nodes,
-    edges,
-    use2D,
-    shadedNodes: shaded,
-    fastEdges: !advancedEdges,
-    autoStartLayout
-  }).onNodeHoverStart((node, event) => {
-    if (event) {
-      tooltipElement.style.left = event.pageX + "px";
-      tooltipElement.style.top = event.pageY + "px";
-    }
-    if (node) {
-      tooltipElement.style.display = "block";
-      if (darkBackground) {
-        tooltipElement.style.color = rgb(node.color[0] * 255, node.color[1] * 255, node.color[2] * 255).brighter(2).formatRgb();
-        tooltipElement.style["text-shadow"] = "-1px -1px 0 black, 1px -1px 0 black, -1px 1px 0 black, 1px 1px 0 black";
-      } else {
-        tooltipElement.style.color = rgb(node.color[0] * 255, node.color[1] * 255, node.color[2] * 255).darker(2).formatRgb();
-        tooltipElement.style["text-shadow"] = "-1px -1px 0 white, 1px -1px 0 white, -1px 1px 0 white, 1px 1px 0 white";
+      nodes["" + index] = {
+        ID: "" + index,
+        rand: "" + Math.round(Math.random() * 10)
+      };
+      if (network.labels) {
+        nodes["" + index].label = network.labels[index];
       }
-      if (node.label) {
-        tooltipElement.textContent = node.label;
-      } else if (node.title) {
-        tooltipElement.textContent = node.title;
-      } else {
-        tooltipElement.textContent = node.ID;
+    }
+    for (const [key, value] of Object.entries(network.verticesProperties)) {
+      for (let index = 0; index < nodeCount; index++) {
+        nodes["" + index][key.toLowerCase()] = value[index];
       }
-      node.originalSize = node.size;
-      node.size = 2 * node.originalSize;
-      node.outlineWidth = 0.25 * node.originalSize;
-      helios.update();
-      helios.render();
-    } else {
-      tooltipElement.style.display = "none";
     }
-  }).onNodeHoverMove((node, event) => {
-    if (event) {
-      tooltipElement.style.left = event.pageX + "px";
-      tooltipElement.style.top = event.pageY + "px";
+    for (let index = 0; index < network.edges.length; index++) {
+      let fromIndex, toIndex;
+      edges.push({
+        source: "" + network.edges[index][0],
+        target: "" + network.edges[index][1]
+      });
     }
-    if (node) {
-      if (node.label) {
-        tooltipElement.textContent = node.label;
-      } else if (node.title) {
-        tooltipElement.textContent = node.title;
-      } else {
-        tooltipElement.textContent = node.ID;
+    let tooltipElement = document.getElementById("tooltip");
+    if (autoStartLayout === null) {
+      autoStartLayout = !bigNetwork;
+    }
+    let colorScale = ordinal(allColors.schemeCategory10);
+    let helios = new Helios({
+      elementID: "netviz",
+      nodes,
+      edges,
+      use2D,
+      shadedNodes: shaded,
+      fastEdges: !advancedEdges,
+      autoStartLayout
+    }).onNodeHoverStart((node, event) => {
+      if (event) {
+        tooltipElement.style.left = event.pageX + "px";
+        tooltipElement.style.top = event.pageY + "px";
       }
-    } else {
-      tooltipElement.style.display = "none";
-    }
-  }).onNodeHoverEnd((node, event) => {
-    if (event) {
-      tooltipElement.style.left = event.pageX + "px";
-      tooltipElement.style.top = event.pageY + "px";
-    }
-    if (node) {
-      node.size = 1 * node.originalSize;
-      node.outlineWidth = defaultOutline * node.originalSize;
-      helios.update();
-      helios.render();
-    }
-    tooltipElement.style.display = "none";
-  }).onNodeClick((node, event) => {
-    if (node) {
-      console.log(`Clicked: ${node.ID}`);
-    } else {
-      console.log(`Clicked on background`);
-    }
-  }).onNodeDoubleClick((node, event) => {
-    if (node) {
-      console.log(`Double Clicked: ${node.ID}`);
-      if ("mag id" in node) {
-        window.open(`https://explore.openalex.org/works/W${node["mag id"]}`, "helios_mag");
-      } else {
-        helios.centerOnNodes([node.ID], 500);
-      }
-    } else {
-      console.log(`Double clicked on background`);
-      helios.centerOnNodes([], 500);
-    }
-  }).onEdgeHoverStart((edge, event) => {
-    if (event) {
-      tooltipElement.style.left = event.pageX + "px";
-      tooltipElement.style.top = event.pageY + "px";
-    }
-    if (edge) {
-      tooltipElement.style.display = "block";
-      if (darkBackground) {
-        tooltipElement.style.color = rgb(edge.source.color[0] * 255, edge.source.color[1] * 255, edge.source.color[2] * 255).brighter(2).formatRgb();
-        tooltipElement.style["text-shadow"] = "-1px -1px 0 black, 1px -1px 0 black, -1px 1px 0 black, 1px 1px 0 black";
-      } else {
-        tooltipElement.style.color = rgb(edge.source.color[0] * 255, edge.source.color[1] * 255, edge.source.color[2] * 255).darker(2).formatRgb();
-        tooltipElement.style["text-shadow"] = "-1px -1px 0 white, 1px -1px 0 white, -1px 1px 0 white, 1px 1px 0 white";
-      }
-      let fromLabel = "";
-      let toLabel = "";
-      if (edge.source.label) {
-        fromLabel = edge.source.label;
-      } else if (edge.source.title) {
-        fromLabel = edge.source.title;
-      } else {
-        fromLabel = edge.source.ID;
-      }
-      if (edge.target.label) {
-        toLabel = edge.target.label;
-      } else if (edge.target.title) {
-        toLabel = edge.target.title;
-      } else {
-        toLabel = edge.target.ID;
-      }
-      tooltipElement.textContent = fromLabel + " - " + toLabel;
-      edge.source.originalSize = edge.source.size;
-      edge.target.originalSize = edge.target.size;
-      edge.source.size = 2 * edge.source.originalSize;
-      edge.target.size = 2 * edge.target.originalSize;
-      edge.source.outlineWidth = 0.25 * edge.source.originalSize;
-      edge.target.outlineWidth = 0.25 * edge.target.originalSize;
-      helios.update();
-      helios.render();
-    } else {
-      tooltipElement.style.display = "none";
-    }
-  }).onEdgeHoverMove((edge, event) => {
-    if (event) {
-      tooltipElement.style.left = event.pageX + "px";
-      tooltipElement.style.top = event.pageY + "px";
-    }
-    if (edge) {
-      let fromLabel = "";
-      let toLabel = "";
-      if (edge.source.label) {
-        fromLabel = edge.source.label;
-      } else if (edge.source.title) {
-        fromLabel = edge.source.title;
-      } else {
-        fromLabel = edge.source.ID;
-      }
-      if (edge.target.label) {
-        toLabel = edge.target.label;
-      } else if (edge.target.title) {
-        toLabel = edge.target.title;
-      } else {
-        toLabel = edge.target.ID;
-      }
-      tooltipElement.textContent = fromLabel + " - " + toLabel;
-    } else {
-      tooltipElement.style.display = "none";
-    }
-  }).onEdgeHoverEnd((edge, event) => {
-    if (event) {
-      tooltipElement.style.left = event.pageX + "px";
-      tooltipElement.style.top = event.pageY + "px";
-    }
-    if (edge) {
-      edge.source.size = 1 * edge.source.originalSize;
-      edge.target.size = 1 * edge.target.originalSize;
-      edge.source.outlineWidth = defaultOutline * edge.source.originalSize;
-      edge.target.outlineWidth = defaultOutline * edge.target.originalSize;
-      helios.update();
-      helios.render();
-    }
-    tooltipElement.style.display = "none";
-  }).onEdgeClick((edge, event) => {
-    console.log("Edge clicked");
-    console.log(edge);
-  }).onLayoutStart(() => {
-    console.log("Layout start");
-    select("#loading").style("display", "block");
-    select("#message").style("display", "none");
-  }).onLayoutStop(() => {
-    console.log("Layout end");
-    select("#loading").style("display", "none");
-    select("#message").style("display", "block");
-  }).backgroundColor(backgroundColor).edgesOpacity(1).nodeOutlineWidth((node) => node.size * defaultOutline).nodeOutlineColor(backgroundColor).additiveBlending(additiveBlending);
-  function downloadText(filename, text) {
-    var element = document.createElement("a");
-    element.setAttribute("href", "data:text/plain;charset=utf-8," + encodeURIComponent(text));
-    element.setAttribute("download", filename);
-    element.style.display = "none";
-    document.body.appendChild(element);
-    element.click();
-    document.body.removeChild(element);
-  }
-  let buttonInformation = {
-    Export: {
-      name: "Export",
-      mapColor: "#B1C3B6",
-      color: "#008758",
-      action: (selection2, d, event) => {
-        if (event.shiftKey) {
-          let pos = helios.network.positions;
-          let postext = "";
-          for (let i = 0; i < pos.length; i += 3) {
-            postext += `${pos[i]} ${pos[i + 1]} ${pos[i + 2]}
-`;
-          }
-          downloadText(networkName + "_positions.txt", postext);
+      if (node) {
+        tooltipElement.style.display = "block";
+        if (darkBackground) {
+          tooltipElement.style.color = rgb(node.color[0] * 255, node.color[1] * 255, node.color[2] * 255).brighter(2).formatRgb();
+          tooltipElement.style["text-shadow"] = "-1px -1px 0 black, 1px -1px 0 black, -1px 1px 0 black, 1px 1px 0 black";
         } else {
-          console.log("Action!");
-          let dpr = window.devicePixelRatio || 1;
-          helios.exportFigure(networkName + ".png", {
-            scale: 2,
-            supersampleFactor: 2,
-            backgroundColor
+          tooltipElement.style.color = rgb(node.color[0] * 255, node.color[1] * 255, node.color[2] * 255).darker(2).formatRgb();
+          tooltipElement.style["text-shadow"] = "-1px -1px 0 white, 1px -1px 0 white, -1px 1px 0 white, 1px 1px 0 white";
+        }
+        if (node.label) {
+          tooltipElement.textContent = node.label;
+        } else if (node.title) {
+          tooltipElement.textContent = node.title;
+        } else {
+          tooltipElement.textContent = node.ID;
+        }
+        node.originalSize = node.size;
+        node.size = 2 * node.originalSize;
+        node.outlineWidth = 0.25 * node.originalSize;
+        helios.update();
+        helios.render();
+      } else {
+        tooltipElement.style.display = "none";
+      }
+    }).onNodeHoverMove((node, event) => {
+      if (event) {
+        tooltipElement.style.left = event.pageX + "px";
+        tooltipElement.style.top = event.pageY + "px";
+      }
+      if (node) {
+        if (node.label) {
+          tooltipElement.textContent = node.label;
+        } else if (node.title) {
+          tooltipElement.textContent = node.title;
+        } else {
+          tooltipElement.textContent = node.ID;
+        }
+      } else {
+        tooltipElement.style.display = "none";
+      }
+    }).onNodeHoverEnd((node, event) => {
+      if (event) {
+        tooltipElement.style.left = event.pageX + "px";
+        tooltipElement.style.top = event.pageY + "px";
+      }
+      if (node) {
+        node.size = 1 * node.originalSize;
+        node.outlineWidth = defaultOutline * node.originalSize;
+        helios.update();
+        helios.render();
+      }
+      tooltipElement.style.display = "none";
+    }).onNodeClick((node, event) => {
+      if (node) {
+        console.log(`Clicked: ${node.ID}`);
+      } else {
+        console.log(`Clicked on background`);
+      }
+    }).onNodeDoubleClick((node, event) => {
+      if (node) {
+        console.log(`Double Clicked: ${node.ID}`);
+        if ("mag id" in node) {
+          window.open(`https://explore.openalex.org/works/W${node["mag id"]}`, "helios_mag");
+        } else {
+          helios.centerOnNodes([node.ID], 500);
+        }
+      } else {
+        console.log(`Double clicked on background`);
+        helios.centerOnNodes([], 500);
+      }
+    }).onEdgeHoverStart((edge, event) => {
+      if (event) {
+        tooltipElement.style.left = event.pageX + "px";
+        tooltipElement.style.top = event.pageY + "px";
+      }
+      if (edge) {
+        tooltipElement.style.display = "block";
+        if (darkBackground) {
+          tooltipElement.style.color = rgb(edge.source.color[0] * 255, edge.source.color[1] * 255, edge.source.color[2] * 255).brighter(2).formatRgb();
+          tooltipElement.style["text-shadow"] = "-1px -1px 0 black, 1px -1px 0 black, -1px 1px 0 black, 1px 1px 0 black";
+        } else {
+          tooltipElement.style.color = rgb(edge.source.color[0] * 255, edge.source.color[1] * 255, edge.source.color[2] * 255).darker(2).formatRgb();
+          tooltipElement.style["text-shadow"] = "-1px -1px 0 white, 1px -1px 0 white, -1px 1px 0 white, 1px 1px 0 white";
+        }
+        let fromLabel = "";
+        let toLabel = "";
+        if (edge.source.label) {
+          fromLabel = edge.source.label;
+        } else if (edge.source.title) {
+          fromLabel = edge.source.title;
+        } else {
+          fromLabel = edge.source.ID;
+        }
+        if (edge.target.label) {
+          toLabel = edge.target.label;
+        } else if (edge.target.title) {
+          toLabel = edge.target.title;
+        } else {
+          toLabel = edge.target.ID;
+        }
+        tooltipElement.textContent = fromLabel + " - " + toLabel;
+        edge.source.originalSize = edge.source.size;
+        edge.target.originalSize = edge.target.size;
+        edge.source.size = 2 * edge.source.originalSize;
+        edge.target.size = 2 * edge.target.originalSize;
+        edge.source.outlineWidth = 0.25 * edge.source.originalSize;
+        edge.target.outlineWidth = 0.25 * edge.target.originalSize;
+        helios.update();
+        helios.render();
+      } else {
+        tooltipElement.style.display = "none";
+      }
+    }).onEdgeHoverMove((edge, event) => {
+      if (event) {
+        tooltipElement.style.left = event.pageX + "px";
+        tooltipElement.style.top = event.pageY + "px";
+      }
+      if (edge) {
+        let fromLabel = "";
+        let toLabel = "";
+        if (edge.source.label) {
+          fromLabel = edge.source.label;
+        } else if (edge.source.title) {
+          fromLabel = edge.source.title;
+        } else {
+          fromLabel = edge.source.ID;
+        }
+        if (edge.target.label) {
+          toLabel = edge.target.label;
+        } else if (edge.target.title) {
+          toLabel = edge.target.title;
+        } else {
+          toLabel = edge.target.ID;
+        }
+        tooltipElement.textContent = fromLabel + " - " + toLabel;
+      } else {
+        tooltipElement.style.display = "none";
+      }
+    }).onEdgeHoverEnd((edge, event) => {
+      if (event) {
+        tooltipElement.style.left = event.pageX + "px";
+        tooltipElement.style.top = event.pageY + "px";
+      }
+      if (edge) {
+        edge.source.size = 1 * edge.source.originalSize;
+        edge.target.size = 1 * edge.target.originalSize;
+        edge.source.outlineWidth = defaultOutline * edge.source.originalSize;
+        edge.target.outlineWidth = defaultOutline * edge.target.originalSize;
+        helios.update();
+        helios.render();
+      }
+      tooltipElement.style.display = "none";
+    }).onEdgeClick((edge, event) => {
+      console.log("Edge clicked");
+      console.log(edge);
+    }).onLayoutStart(() => {
+      console.log("Layout start");
+      select("#loading").style("display", "block");
+      select("#message").style("display", "none");
+    }).onLayoutStop(() => {
+      console.log("Layout end");
+      select("#loading").style("display", "none");
+      select("#message").style("display", "block");
+    }).backgroundColor(backgroundColor).edgesOpacity(1).nodeOutlineWidth((node) => node.size * defaultOutline).nodeOutlineColor(backgroundColor).additiveBlending(additiveBlending);
+    function downloadText(filename, text) {
+      var element = document.createElement("a");
+      element.setAttribute("href", "data:text/plain;charset=utf-8," + encodeURIComponent(text));
+      element.setAttribute("download", filename);
+      element.style.display = "none";
+      document.body.appendChild(element);
+      element.click();
+      document.body.removeChild(element);
+    }
+    let buttonInformation = {
+      Export: {
+        name: "Export",
+        mapColor: "#B1C3B6",
+        color: "#008758",
+        action: (selection2, d, event) => {
+          if (event.shiftKey) {
+            let pos = helios.network.positions;
+            let postext = "";
+            for (let i = 0; i < pos.length; i += 3) {
+              postext += `${pos[i]} ${pos[i + 1]} ${pos[i + 2]}
+`;
+            }
+            downloadText(networkName2 + "_positions.txt", postext);
+          } else {
+            console.log("Action!");
+            let dpr = window.devicePixelRatio || 1;
+            helios.exportFigure(networkName2 + ".png", {
+              scale: 2,
+              supersampleFactor: 2,
+              backgroundColor
+            });
+          }
+        },
+        extra: (selection2) => {
+        }
+      },
+      Size: {
+        name: "Size",
+        mapColor: "#AFB9C9",
+        color: "#1E6099",
+        action: null,
+        extra: (selection2) => {
+          selection2.append("input").attr("type", "range").attr("min", "-1").attr("max", "1").attr("step", "0.1").attr("value", "0").attr("id", "nodeSizeSlider").classed("slider", true).style("min-width", "60px").on("input", (event, d) => {
+            helios.nodeSize(Math.pow(10, parseFloat(select("#nodeSizeSlider").property("value"))));
+            helios.nodeOutlineWidth((node) => node.size * defaultOutline);
+            helios.update();
+            helios.render();
+            event.stopPropagation();
           });
         }
       },
-      extra: (selection2) => {
-      }
-    },
-    Size: {
-      name: "Size",
-      mapColor: "#AFB9C9",
-      color: "#1E6099",
-      action: null,
-      extra: (selection2) => {
-        selection2.append("input").attr("type", "range").attr("min", "-1").attr("max", "1").attr("step", "0.1").attr("value", "0").attr("id", "nodeSizeSlider").classed("slider", true).style("min-width", "60px").on("input", (event, d) => {
-          helios.nodeSize(Math.pow(10, parseFloat(select("#nodeSizeSlider").property("value"))));
-          helios.nodeOutlineWidth((node) => node.size * defaultOutline);
-          helios.update();
-          helios.render();
-          event.stopPropagation();
-        });
-      }
-    },
-    Color: {
-      name: "Color",
-      mapColor: "#AFB9C9",
-      color: "#1E6099",
-      action: null,
-      extra: (selection2) => {
-        selection2.append("select").attr("id", "colorSelector").classed("selector", true).style("min-width", "60px").on("change", (event, d) => {
-          updateColorSelection();
-        }).selectAll("option").data(Object.entries(helios.network.index2Node[0])).enter().filter((d) => !d[0].startsWith("_")).filter((d) => d[0] != "ID").append("option").attr("value", (d) => d[0]).property("selected", (d) => d[0] == colorProperty).text((d) => d[0]);
-        selection2.append("select").attr("id", "colormapSelector").classed("selector", true).style("min-width", "60px");
-      }
-    },
-    Edges: {
-      name: "Edges",
-      mapColor: "#B1A58C",
-      color: "#903C22",
-      action: null,
-      extra: (selection2) => {
-        console.log("CALLED");
-        selection2.append("input").attr("type", "range").attr("min", "0").attr("max", "1").attr("step", 1 / 255 + "").attr("value", "1").attr("id", "edgeOpacitySlider").classed("slider", true).style("min-width", "60px").on("input", (event, d) => {
-          helios.edgesOpacity(parseFloat(select("#edgeOpacitySlider").property("value")));
-          helios.update();
-          helios.render();
-          event.stopPropagation();
-        });
-      }
-    }
-  };
-  function wrapText() {
-    let width = 300;
-    let padding = 10;
-    let self2 = select(this), textLength = self2.node().getComputedTextLength(), text = self2.text();
-    while (textLength > width - 2 * padding && text.length > 0) {
-      text = text.slice(0, -1);
-      self2.text(text + "...");
-      textLength = self2.node().getComputedTextLength();
-    }
-  }
-  let legendView = select("body").append("svg").classed("overlay", true).attr("id", "legendView").style("left", "10px").style("top", "10px").style("pointer-events:", "none");
-  let updateLegendCategorical = (property2color) => {
-    legendView.selectAll("*").remove();
-    let legendItems = legendView.selectAll(".legend").data(property2color.keys());
-    legendView.style("width", 350 + "px").style("height", (property2color.size + 1) * 20 + "px");
-    let legendEnter = legendItems.enter().append("g").classed("legend", true).attr("transform", (d, i) => "translate(0," + i * 20 + ")");
-    legendEnter.append("rect");
-    legendEnter.append("g").append("text");
-    legendItems = legendItems.merge(legendEnter);
-    legendItems.select("rect").attr("x", 0).attr("y", 0).attr("width", 30).attr("height", 15).attr("fill", (d) => property2color.get(d));
-    legendItems.select("g").attr("transform", (d) => `translate(${35},${15 / 2})`).select("text").style("alignment-baseline", "central").style("font-size", "12px").append("tspan").style("alignment-baseline", "central").text((d) => d).attr("fill", darkBackground ? "white" : "black").each(wrapText);
-  };
-  function updateCategoricalColors() {
-    let propertyArray = [];
-    for (let [key, node] of Object.entries(helios.network.nodes)) {
-      propertyArray.push(node[colorProperty]);
-    }
-    let sortedItems = sortByCount(propertyArray);
-    let scheme2 = allColors[categoricalColormap];
-    let arraysCount = scheme2.filter(Array.isArray).length;
-    if (arraysCount > 0) {
-      let firstIndex = scheme2.findIndex((d) => typeof d !== "undefined");
-      if (typeof scheme2[sortedItems.length - 1] !== "undefined") {
-        scheme2 = scheme2[sortedItems.length];
-      } else {
-        if (sortedItems.length - 1 < firstIndex) {
-          scheme2 = scheme2[firstIndex];
-        } else {
-          scheme2 = scheme2[scheme2.length - 1];
+      Color: {
+        name: "Color",
+        mapColor: "#AFB9C9",
+        color: "#1E6099",
+        action: null,
+        extra: (selection2) => {
+          selection2.append("select").attr("id", "colorSelector").classed("selector", true).style("min-width", "60px").on("change", (event, d) => {
+            updateColorSelection();
+          }).selectAll("option").data(Object.entries(helios.network.index2Node[0])).enter().filter((d) => !d[0].startsWith("_")).filter((d) => d[0] != "ID").append("option").attr("value", (d) => d[0]).property("selected", (d) => d[0] == colorProperty).text((d) => d[0]);
+          selection2.append("select").attr("id", "colormapSelector").classed("selector", true).style("min-width", "60px");
+        }
+      },
+      Edges: {
+        name: "Edges",
+        mapColor: "#B1A58C",
+        color: "#903C22",
+        action: null,
+        extra: (selection2) => {
+          console.log("CALLED");
+          selection2.append("input").attr("type", "range").attr("min", "0").attr("max", "1").attr("step", 1 / 255 + "").attr("value", "1").attr("id", "edgeOpacitySlider").classed("slider", true).style("min-width", "60px").on("input", (event, d) => {
+            helios.edgesOpacity(parseFloat(select("#edgeOpacitySlider").property("value")));
+            helios.update();
+            helios.render();
+            event.stopPropagation();
+          });
         }
       }
+    };
+    function wrapText() {
+      let width = 300;
+      let padding = 10;
+      let self2 = select(this), textLength = self2.node().getComputedTextLength(), text = self2.text();
+      while (textLength > width - 2 * padding && text.length > 0) {
+        text = text.slice(0, -1);
+        self2.text(text + "...");
+        textLength = self2.node().getComputedTextLength();
+      }
     }
-    let colorMap = ordinal(scheme2);
-    let property2color = new Map();
-    let categoricalMap = new Map();
-    sortedItems.forEach((d, i) => {
-      if (i < scheme2.length) {
-        property2color.set(d, colorMap(d));
-        categoricalMap.set(d, scheme2[i]);
+    let legendView = select("body").append("svg").classed("overlay", true).attr("id", "legendView").style("left", "10px").style("top", "10px").style("pointer-events:", "none");
+    let updateLegendCategorical = (property2color) => {
+      legendView.selectAll("*").remove();
+      let legendItems = legendView.selectAll(".legend").data(property2color.keys());
+      legendView.style("width", 350 + "px").style("height", (property2color.size + 1) * 20 + "px");
+      let legendEnter = legendItems.enter().append("g").classed("legend", true).attr("transform", (d, i) => "translate(0," + i * 20 + ")");
+      legendEnter.append("rect");
+      legendEnter.append("g").append("text");
+      legendItems = legendItems.merge(legendEnter);
+      legendItems.select("rect").attr("x", 0).attr("y", 0).attr("width", 30).attr("height", 15).attr("fill", (d) => property2color.get(d));
+      legendItems.select("g").attr("transform", (d) => `translate(${35},${15 / 2})`).select("text").style("alignment-baseline", "central").style("font-size", "12px").append("tspan").style("alignment-baseline", "central").text((d) => d).attr("fill", darkBackground ? "white" : "black").each(wrapText);
+    };
+    function updateCategoricalColors() {
+      let propertyArray = [];
+      for (let [key, node] of Object.entries(helios.network.nodes)) {
+        propertyArray.push(node[colorProperty]);
+      }
+      let sortedItems = sortByCount(propertyArray);
+      let scheme2 = allColors[categoricalColormap];
+      let arraysCount = scheme2.filter(Array.isArray).length;
+      if (arraysCount > 0) {
+        let firstIndex = scheme2.findIndex((d) => typeof d !== "undefined");
+        if (typeof scheme2[sortedItems.length - 1] !== "undefined") {
+          scheme2 = scheme2[sortedItems.length];
+        } else {
+          if (sortedItems.length - 1 < firstIndex) {
+            scheme2 = scheme2[firstIndex];
+          } else {
+            scheme2 = scheme2[scheme2.length - 1];
+          }
+        }
+      }
+      let colorMap = ordinal(scheme2);
+      let property2color = new Map();
+      let categoricalMap = new Map();
+      sortedItems.forEach((d, i) => {
+        if (i < scheme2.length) {
+          property2color.set(d, colorMap(d));
+          categoricalMap.set(d, scheme2[i]);
+        } else {
+          property2color.set(d, "#bbbbbb");
+          ;
+        }
+      });
+      if (categoricalMap.size < sortedItems.length) {
+        categoricalMap.set("Other", "#bbbbbb");
+      }
+      helios.nodeColor((node) => {
+        let color2 = rgb(property2color.get(node[colorProperty]));
+        return [color2.r / 255, color2.g / 255, color2.b / 255];
+      });
+      helios.update();
+      helios.render();
+      updateLegendCategorical(categoricalMap);
+    }
+    function updateSequencialColors() {
+      updateLegendCategorical(new Map());
+      let propertyArray = [];
+      let maxValue = -Infinity;
+      let minValue = Infinity;
+      for (let [key, node] of Object.entries(helios.network.nodes)) {
+        propertyArray.push(node[colorProperty]);
+        maxValue = Math.max(maxValue, node[colorProperty]);
+        minValue = Math.min(minValue, node[colorProperty]);
+      }
+      let scheme2 = allColors[sequencialColormap];
+      let cScale = sequential(scheme2).domain([minValue, maxValue]);
+      helios.nodeColor((node) => {
+        let color2 = rgb(cScale(node[colorProperty]));
+        return [color2.r / 255, color2.g / 255, color2.b / 255];
+      });
+      helios.update();
+      helios.render();
+    }
+    let updateColormapSelection = () => {
+      if (useCategoricalColormap) {
+        categoricalColormap = select("#colormapSelector").property("value");
+        updateCategoricalColors();
       } else {
-        property2color.set(d, "#bbbbbb");
-        ;
+        sequencialColormap = select("#colormapSelector").property("value");
+        updateSequencialColors();
       }
-    });
-    if (categoricalMap.size < sortedItems.length) {
-      categoricalMap.set("Other", "#bbbbbb");
-    }
-    helios.nodeColor((node) => {
-      let color2 = rgb(property2color.get(node[colorProperty]));
-      return [color2.r / 255, color2.g / 255, color2.b / 255];
-    });
-    helios.update();
-    helios.render();
-    updateLegendCategorical(categoricalMap);
-  }
-  function updateSequencialColors() {
-    updateLegendCategorical(new Map());
-    let propertyArray = [];
-    let maxValue = -Infinity;
-    let minValue = Infinity;
-    for (let [key, node] of Object.entries(helios.network.nodes)) {
-      propertyArray.push(node[colorProperty]);
-      maxValue = Math.max(maxValue, node[colorProperty]);
-      minValue = Math.min(minValue, node[colorProperty]);
-    }
-    let scheme2 = allColors[sequencialColormap];
-    let cScale = sequential(scheme2).domain([minValue, maxValue]);
-    helios.nodeColor((node) => {
-      let color2 = rgb(cScale(node[colorProperty]));
-      return [color2.r / 255, color2.g / 255, color2.b / 255];
-    });
-    helios.update();
-    helios.render();
-  }
-  let updateColormapSelection = () => {
-    if (useCategoricalColormap) {
-      categoricalColormap = select("#colormapSelector").property("value");
-      updateCategoricalColors();
-    } else {
-      sequencialColormap = select("#colormapSelector").property("value");
-      updateSequencialColors();
-    }
-  };
-  let updateColorSelection = () => {
-    colorProperty = select("#colorSelector").property("value");
-    let categorical = false;
-    for (let [key, node] of Object.entries(helios.network.nodes)) {
-      if (typeof node[colorProperty] !== "number") {
-        categorical = true;
-        break;
+    };
+    let updateColorSelection = () => {
+      colorProperty = select("#colorSelector").property("value");
+      let categorical = false;
+      for (let [key, node] of Object.entries(helios.network.nodes)) {
+        if (typeof node[colorProperty] !== "number") {
+          categorical = true;
+          break;
+        }
       }
-    }
-    useCategoricalColormap = categorical;
-    console.log(categorical ? "categorical" : "continuous");
-    let colormapSelector = select("#colormapSelector").classed("selector", true).style("min-width", "60px").on("change", (event, d) => {
+      useCategoricalColormap = categorical;
+      console.log(categorical ? "categorical" : "continuous");
+      let colormapSelector = select("#colormapSelector").classed("selector", true).style("min-width", "60px").on("change", (event, d) => {
+        updateColormapSelection();
+      }).selectAll("option").data(Object.entries(allColors).filter((d) => d[0].startsWith(categorical ? "scheme" : "interpolate"))).join("option").attr("value", (d) => d[0]).property("selected", (d) => d[0] == (categorical ? categoricalColormap : sequencialColormap)).text((d) => d[0].replace("interpolate", "").replace("scheme", ""));
       updateColormapSelection();
-    }).selectAll("option").data(Object.entries(allColors).filter((d) => d[0].startsWith(categorical ? "scheme" : "interpolate"))).join("option").attr("value", (d) => d[0]).property("selected", (d) => d[0] == (categorical ? categoricalColormap : sequencialColormap)).text((d) => d[0].replace("interpolate", "").replace("scheme", ""));
-    updateColormapSelection();
-  };
-  let buttonOrder = ["Export", "Size", "Color", "Edges"];
-  select("#selectionmenu").selectAll("span.menuEntry").data(buttonOrder).enter().append("span").classed("menuEntry", true).style("--color", (d) => buttonInformation[d].color).text((d) => buttonInformation[d].name).each(function(d) {
-    select(this).call(buttonInformation[d].extra);
-  });
-  select("#selectionmenu").selectAll("span.menuEntry").filter((d) => buttonInformation[d].action != null).on("click", (event, d) => {
-    if (buttonInformation[d].action) {
-      buttonInformation[d].action(select(void 0), d, event);
-    }
-  }).classed("hasAction", true);
-  document.addEventListener("keyup", (event) => {
-    if (event.code === "Space") {
-      if (helios.layoutWorker.isRunning()) {
-        helios.pauseLayout();
+    };
+    let buttonOrder = ["Export", "Size", "Color", "Edges"];
+    select("#selectionmenu").selectAll("span.menuEntry").data(buttonOrder).enter().append("span").classed("menuEntry", true).style("--color", (d) => buttonInformation[d].color).text((d) => buttonInformation[d].name).each(function(d) {
+      select(this).call(buttonInformation[d].extra);
+    });
+    select("#selectionmenu").selectAll("span.menuEntry").filter((d) => buttonInformation[d].action != null).on("click", (event, d) => {
+      if (buttonInformation[d].action) {
+        buttonInformation[d].action(select(void 0), d, event);
+      }
+    }).classed("hasAction", true);
+    document.addEventListener("keyup", (event) => {
+      if (event.code === "Space") {
+        if (helios.layoutWorker.isRunning()) {
+          helios.pauseLayout();
+        } else {
+          helios.resumeLayout();
+        }
+      }
+    });
+    if (startZoomLevel) {
+      helios.zoomFactor(startZoomLevel);
+    } else {
+      if (bigNetwork) {
+        helios.zoomFactor(0.35);
       } else {
-        helios.resumeLayout();
+        helios.zoomFactor(0.05);
+        helios.zoomFactor(0.75, 1e3);
       }
     }
+    helios.onReady(() => {
+      updateColorSelection();
+    });
+    window.helios = helios;
   });
-  if (startZoomLevel) {
-    helios.zoomFactor(startZoomLevel);
-  } else {
-    if (bigNetwork) {
-      helios.zoomFactor(0.35);
-    } else {
-      helios.zoomFactor(0.05);
-      helios.zoomFactor(0.75, 1e3);
-    }
-  }
-  helios.onReady(() => {
-    updateColorSelection();
-  });
-  window.helios = helios;
-});
+};
+visualizeNetwork(networkName);
 //# sourceMappingURL=script.js.map
