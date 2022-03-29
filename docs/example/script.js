@@ -5792,7 +5792,7 @@ function interpolateString(a, b) {
   });
 }
 
-// build/_snowpack/pkg/common/color-a4ab9cc4.js
+// build/_snowpack/pkg/common/color-14529d8a.js
 function define2(constructor, factory, prototype) {
   constructor.prototype = factory.prototype = prototype;
   prototype.constructor = constructor;
@@ -5808,15 +5808,15 @@ function Color() {
 var darker = 0.7;
 var brighter = 1 / darker;
 var reI = "\\s*([+-]?\\d+)\\s*";
-var reN = "\\s*([+-]?\\d*\\.?\\d+(?:[eE][+-]?\\d+)?)\\s*";
-var reP = "\\s*([+-]?\\d*\\.?\\d+(?:[eE][+-]?\\d+)?)%\\s*";
+var reN = "\\s*([+-]?(?:\\d*\\.)?\\d+(?:[eE][+-]?\\d+)?)\\s*";
+var reP = "\\s*([+-]?(?:\\d*\\.)?\\d+(?:[eE][+-]?\\d+)?)%\\s*";
 var reHex = /^#([0-9a-f]{3,8})$/;
-var reRgbInteger = new RegExp("^rgb\\(" + [reI, reI, reI] + "\\)$");
-var reRgbPercent = new RegExp("^rgb\\(" + [reP, reP, reP] + "\\)$");
-var reRgbaInteger = new RegExp("^rgba\\(" + [reI, reI, reI, reN] + "\\)$");
-var reRgbaPercent = new RegExp("^rgba\\(" + [reP, reP, reP, reN] + "\\)$");
-var reHslPercent = new RegExp("^hsl\\(" + [reN, reP, reP] + "\\)$");
-var reHslaPercent = new RegExp("^hsla\\(" + [reN, reP, reP, reN] + "\\)$");
+var reRgbInteger = new RegExp(`^rgb\\(${reI},${reI},${reI}\\)$`);
+var reRgbPercent = new RegExp(`^rgb\\(${reP},${reP},${reP}\\)$`);
+var reRgbaInteger = new RegExp(`^rgba\\(${reI},${reI},${reI},${reN}\\)$`);
+var reRgbaPercent = new RegExp(`^rgba\\(${reP},${reP},${reP},${reN}\\)$`);
+var reHslPercent = new RegExp(`^hsl\\(${reN},${reP},${reP}\\)$`);
+var reHslaPercent = new RegExp(`^hsla\\(${reN},${reP},${reP},${reN}\\)$`);
 var named = {
   aliceblue: 15792383,
   antiquewhite: 16444375,
@@ -5968,20 +5968,24 @@ var named = {
   yellowgreen: 10145074
 };
 define2(Color, color, {
-  copy: function(channels) {
+  copy(channels) {
     return Object.assign(new this.constructor(), this, channels);
   },
-  displayable: function() {
+  displayable() {
     return this.rgb().displayable();
   },
   hex: color_formatHex,
   formatHex: color_formatHex,
+  formatHex8: color_formatHex8,
   formatHsl: color_formatHsl,
   formatRgb: color_formatRgb,
   toString: color_formatRgb
 });
 function color_formatHex() {
   return this.rgb().formatHex();
+}
+function color_formatHex8() {
+  return this.rgb().formatHex8();
 }
 function color_formatHsl() {
   return hslConvert(this).formatHsl();
@@ -6020,35 +6024,47 @@ function Rgb(r, g, b, opacity) {
   this.opacity = +opacity;
 }
 define2(Rgb, rgb, extend(Color, {
-  brighter: function(k) {
+  brighter(k) {
     k = k == null ? brighter : Math.pow(brighter, k);
     return new Rgb(this.r * k, this.g * k, this.b * k, this.opacity);
   },
-  darker: function(k) {
+  darker(k) {
     k = k == null ? darker : Math.pow(darker, k);
     return new Rgb(this.r * k, this.g * k, this.b * k, this.opacity);
   },
-  rgb: function() {
+  rgb() {
     return this;
   },
-  displayable: function() {
+  clamp() {
+    return new Rgb(clampi(this.r), clampi(this.g), clampi(this.b), clampa(this.opacity));
+  },
+  displayable() {
     return -0.5 <= this.r && this.r < 255.5 && (-0.5 <= this.g && this.g < 255.5) && (-0.5 <= this.b && this.b < 255.5) && (0 <= this.opacity && this.opacity <= 1);
   },
   hex: rgb_formatHex,
   formatHex: rgb_formatHex,
+  formatHex8: rgb_formatHex8,
   formatRgb: rgb_formatRgb,
   toString: rgb_formatRgb
 }));
 function rgb_formatHex() {
-  return "#" + hex(this.r) + hex(this.g) + hex(this.b);
+  return `#${hex(this.r)}${hex(this.g)}${hex(this.b)}`;
+}
+function rgb_formatHex8() {
+  return `#${hex(this.r)}${hex(this.g)}${hex(this.b)}${hex((isNaN(this.opacity) ? 1 : this.opacity) * 255)}`;
 }
 function rgb_formatRgb() {
-  var a = this.opacity;
-  a = isNaN(a) ? 1 : Math.max(0, Math.min(1, a));
-  return (a === 1 ? "rgb(" : "rgba(") + Math.max(0, Math.min(255, Math.round(this.r) || 0)) + ", " + Math.max(0, Math.min(255, Math.round(this.g) || 0)) + ", " + Math.max(0, Math.min(255, Math.round(this.b) || 0)) + (a === 1 ? ")" : ", " + a + ")");
+  const a = clampa(this.opacity);
+  return `${a === 1 ? "rgb(" : "rgba("}${clampi(this.r)}, ${clampi(this.g)}, ${clampi(this.b)}${a === 1 ? ")" : `, ${a})`}`;
+}
+function clampa(opacity) {
+  return isNaN(opacity) ? 1 : Math.max(0, Math.min(1, opacity));
+}
+function clampi(value) {
+  return Math.max(0, Math.min(255, Math.round(value) || 0));
 }
 function hex(value) {
-  value = Math.max(0, Math.min(255, Math.round(value) || 0));
+  value = clampi(value);
   return (value < 16 ? "0" : "") + value.toString(16);
 }
 function hsla(h, s, l, a) {
@@ -6095,32 +6111,41 @@ function Hsl(h, s, l, opacity) {
   this.opacity = +opacity;
 }
 define2(Hsl, hsl, extend(Color, {
-  brighter: function(k) {
+  brighter(k) {
     k = k == null ? brighter : Math.pow(brighter, k);
     return new Hsl(this.h, this.s, this.l * k, this.opacity);
   },
-  darker: function(k) {
+  darker(k) {
     k = k == null ? darker : Math.pow(darker, k);
     return new Hsl(this.h, this.s, this.l * k, this.opacity);
   },
-  rgb: function() {
+  rgb() {
     var h = this.h % 360 + (this.h < 0) * 360, s = isNaN(h) || isNaN(this.s) ? 0 : this.s, l = this.l, m2 = l + (l < 0.5 ? l : 1 - l) * s, m1 = 2 * l - m2;
     return new Rgb(hsl2rgb(h >= 240 ? h - 240 : h + 120, m1, m2), hsl2rgb(h, m1, m2), hsl2rgb(h < 120 ? h + 240 : h - 120, m1, m2), this.opacity);
   },
-  displayable: function() {
+  clamp() {
+    return new Hsl(clamph(this.h), clampt(this.s), clampt(this.l), clampa(this.opacity));
+  },
+  displayable() {
     return (0 <= this.s && this.s <= 1 || isNaN(this.s)) && (0 <= this.l && this.l <= 1) && (0 <= this.opacity && this.opacity <= 1);
   },
-  formatHsl: function() {
-    var a = this.opacity;
-    a = isNaN(a) ? 1 : Math.max(0, Math.min(1, a));
-    return (a === 1 ? "hsl(" : "hsla(") + (this.h || 0) + ", " + (this.s || 0) * 100 + "%, " + (this.l || 0) * 100 + "%" + (a === 1 ? ")" : ", " + a + ")");
+  formatHsl() {
+    const a = clampa(this.opacity);
+    return `${a === 1 ? "hsl(" : "hsla("}${clamph(this.h)}, ${clampt(this.s) * 100}%, ${clampt(this.l) * 100}%${a === 1 ? ")" : `, ${a})`}`;
   }
 }));
+function clamph(value) {
+  value = (value || 0) % 360;
+  return value < 0 ? value + 360 : value;
+}
+function clampt(value) {
+  return Math.max(0, Math.min(1, value || 0));
+}
 function hsl2rgb(h, m1, m2) {
   return (h < 60 ? m1 + (m2 - m1) * h / 60 : h < 180 ? m2 : h < 240 ? m1 + (m2 - m1) * (240 - h) / 60 : m1) * 255;
 }
 
-// build/_snowpack/pkg/common/rgb-90dc4bb7.js
+// build/_snowpack/pkg/common/rgb-40d9d9da.js
 function basis(t1, v0, v1, v2, v3) {
   var t2 = t1 * t1, t3 = t2 * t1;
   return ((1 - 3 * t1 + 3 * t2 - t3) * v0 + (4 - 6 * t2 + 3 * t3) * v1 + (1 + 3 * t1 + 3 * t2 - 3 * t3) * v2 + t3 * v3) / 6;
@@ -9876,6 +9901,10 @@ var Helios = class {
     this.network = new Network(nodes, edges);
     this.rotationMatrix = mat4.create();
     this.translatePosition = vec3.create();
+    this.lastTranslatePosition = vec3.create();
+    this.targetTranslatePosition = vec3.create();
+    this.translateTime = 0;
+    this.translateDuration = 0;
     this.mouseDown = false;
     this.lastMouseX = null;
     this.lastMouseY = null;
@@ -9911,9 +9940,8 @@ var Helios = class {
       powerPreference: "high-performance",
       desynchronized: true
     });
-    this.centerNode = null;
-    this.centerNodeTransition = null;
-    this.previousTranslatePosition = null;
+    this.centerNodes = null;
+    this.centerNodesTransition = null;
     this.onNodeClickCallback = null;
     this.onNodeDoubleClickCallback = null;
     this.onNodeHoverStartCallback = null;
@@ -9954,7 +9982,6 @@ var Helios = class {
   }
   _setupLayout() {
     this.newPositions = this.network.positions.slice(0);
-    this.positionInterpolator = null;
     let onlayoutUpdate = (data) => {
       this.newPositions = data.positions;
       let interpolatorTask = {
@@ -9967,6 +9994,8 @@ var Helios = class {
             maxDisplacement = Math.max(Math.abs(displacement), maxDisplacement);
           }
           ;
+          this._updateCenterNodesPosition();
+          this.updateCameraInterpolation();
           if (maxDisplacement < 1) {
             this.scheduler.unschedule("1.1.positionInterpolator");
           }
@@ -10094,6 +10123,9 @@ var Helios = class {
       const pickID = this.pickPoint(this.lastMouseX - rect.left, this.lastMouseY - rect.top);
       if (pickID >= 0) {
         this._callEventFromPickID(pickID, "click", e);
+      } else {
+        this.onNodeClickCallback?.(null, e);
+        this.onEdgeClickCallback?.(null, e);
       }
     };
     this.canvasElement.ondblclick = (e) => {
@@ -10103,6 +10135,9 @@ var Helios = class {
       const pickID = this.pickPoint(this.lastMouseX - rect.left, this.lastMouseY - rect.top);
       if (pickID >= 0) {
         this._callEventFromPickID(pickID, "doubleClick", e);
+      } else {
+        this.onNodeDoubleClickCallback?.(null, e);
+        this.onEdgeDoubleClickCallback?.(null, e);
       }
     };
     this.canvasElement.addEventListener("mousemove", (event) => {
@@ -10499,10 +10534,8 @@ var Helios = class {
         mat4.rotate(newRotationMatrix, newRotationMatrix, degToRad(dy / 2), [1, 0, 0]);
         mat4.multiply(this.rotationMatrix, newRotationMatrix, this.rotationMatrix);
       }
-      if (!this.positionInterpolator) {
-        this.update();
-        this.render();
-      }
+      this.update();
+      this.render();
       (event2) => event2.preventDefault();
     }).on("start", (event) => {
       this.interacting = true;
@@ -10784,26 +10817,100 @@ var Helios = class {
       gl.depthMask(true);
     }
   }
-  _updateCenterNodePosition() {
-    if (this.centerNode) {
-      let pos = this.centerNode.position;
-      this.translatePosition[0] = -pos[0];
-      this.translatePosition[1] = -pos[1];
-      this.translatePosition[2] = -pos[2];
+  _updateCenterNodesPosition() {
+    this.targetTranslatePosition[0] = 0;
+    this.targetTranslatePosition[1] = 0;
+    this.targetTranslatePosition[2] = 0;
+    if (this.centerNodes && this.centerNodes.length > 0) {
+      for (let i = 0; i < this.centerNodes.length; i++) {
+        let node = this.centerNodes[i];
+        let pos = node.position;
+        this.targetTranslatePosition[0] -= pos[0];
+        this.targetTranslatePosition[1] -= pos[1];
+        this.targetTranslatePosition[2] -= pos[2];
+      }
+      let lengthSize = this.centerNodes.length;
+      this.targetTranslatePosition[0] /= lengthSize;
+      this.targetTranslatePosition[1] /= lengthSize;
+      this.targetTranslatePosition[2] /= lengthSize;
     }
   }
-  centerOnNode(nodeID, duration) {
-    let node = this.network.nodes[nodeID];
-    if (node) {
-      this.centerNode = node;
+  centerOnNodes(nodes, duration) {
+    this.centerNodes = [];
+    for (let i = 0; i < nodes.length; i++) {
+      let node = nodes[i];
+      if (node.id === void 0) {
+        node = this.network.nodes[node];
+      }
+      this.centerNodes.push(node);
+    }
+    this.lastTranslatePosition[0] = this.translatePosition[0];
+    this.lastTranslatePosition[1] = this.translatePosition[1];
+    this.lastTranslatePosition[2] = this.translatePosition[2];
+    if (duration === void 0 || duration <= 0) {
+      this.translateDuration = 0;
+      this.translateStartTime = null;
     } else {
-      this.centerNode = null;
+      this.translateDuration = duration;
+      this.translateStartTime = performance.now();
     }
-    if (duration === void 0 || duration == 0) {
-      this._updateCenterNodePosition();
-      this.update();
-      this.render();
+    this.scheduleCameraInterpolation();
+  }
+  updateCameraInterpolation() {
+    if (this.translateDuration == 0) {
+      this.translatePosition[0] = this.targetTranslatePosition[0];
+      this.translatePosition[1] = this.targetTranslatePosition[1];
+      this.translatePosition[2] = this.targetTranslatePosition[2];
+      return false;
+    } else {
+      let elapsedTime = performance.now() - this.translateStartTime;
+      let alpha = elapsedTime / this.translateDuration;
+      if (alpha > 1) {
+        alpha = 1;
+      }
+      this.translatePosition[0] = (1 - alpha) * this.lastTranslatePosition[0];
+      this.translatePosition[1] = (1 - alpha) * this.lastTranslatePosition[1];
+      this.translatePosition[2] = (1 - alpha) * this.lastTranslatePosition[2];
+      this.translatePosition[0] += alpha * this.targetTranslatePosition[0];
+      this.translatePosition[1] += alpha * this.targetTranslatePosition[1];
+      this.translatePosition[2] += alpha * this.targetTranslatePosition[2];
+      if (alpha >= 1) {
+        return false;
+      } else {
+        return true;
+      }
     }
+  }
+  scheduleCameraInterpolation() {
+    let cameraInterpolatorTask = {
+      name: "1.1.cameraInterpolator",
+      callback: (elapsedTime, task) => {
+        this._updateCenterNodesPosition();
+        if (!this.updateCameraInterpolation()) {
+          this.scheduler.unschedule("1.1.cameraInterpolator");
+        }
+      },
+      delay: 0,
+      repeat: true,
+      synchronized: true,
+      immediateUpdates: false,
+      redraw: true,
+      updateNodesGeometry: false,
+      updateEdgesGeometry: false
+    };
+    this.scheduler.schedule({
+      name: "1.0.cameraInterpolator",
+      callback: (elapsedTime, task) => {
+        this.scheduler.schedule(cameraInterpolatorTask);
+      },
+      delay: 0,
+      repeat: false,
+      synchronized: true,
+      immediateUpdates: false,
+      redraw: false,
+      updateNodesGeometry: false,
+      updateEdgesGeometry: false
+    });
   }
   onResize(callback) {
     this.onResizeCallback = callback;
@@ -11189,15 +11296,15 @@ function Cubehelix(h, s, l, opacity) {
   this.opacity = +opacity;
 }
 define2(Cubehelix, cubehelix, extend(Color, {
-  brighter: function(k) {
+  brighter(k) {
     k = k == null ? brighter : Math.pow(brighter, k);
     return new Cubehelix(this.h, this.s, this.l * k, this.opacity);
   },
-  darker: function(k) {
+  darker(k) {
     k = k == null ? darker : Math.pow(darker, k);
     return new Cubehelix(this.h, this.s, this.l * k, this.opacity);
   },
-  rgb: function() {
+  rgb() {
     var h = isNaN(this.h) ? 0 : (this.h + 120) * radians, l = +this.l, a = isNaN(this.s) ? 0 : this.s * l * (1 - l), cosh2 = Math.cos(h), sinh2 = Math.sin(h);
     return new Rgb(255 * (l + a * (A * cosh2 + B * sinh2)), 255 * (l + a * (C * cosh2 + D * sinh2)), 255 * (l + a * (E * cosh2)), this.opacity);
   }
@@ -11953,6 +12060,10 @@ var use2D = false;
 if (urlParams.has("use2d")) {
   use2D = true;
 }
+var shaded = false;
+if (urlParams.has("shaded")) {
+  shaded = true;
+}
 var advancedEdges = false;
 if (urlParams.has("advanced")) {
   advancedEdges = true;
@@ -12017,6 +12128,7 @@ xnet_exports.loadXNETFile("networks/" + networkName + ".xnet").then(async (netwo
     nodes,
     edges,
     use2D,
+    shadedNodes: shaded,
     fastEdges: !advancedEdges,
     autoStartLayout
   }).onNodeHoverStart((node, event) => {
@@ -12077,13 +12189,22 @@ xnet_exports.loadXNETFile("networks/" + networkName + ".xnet").then(async (netwo
     }
     tooltipElement.style.display = "none";
   }).onNodeClick((node, event) => {
-    console.log(`Clicked: ${node.ID}`);
-  }).onNodeDoubleClick((node, event) => {
-    console.log(`Double Clicked: ${node.ID}`);
-    if ("mag id" in node) {
-      window.open(`https://explore.openalex.org/works/W${node["mag id"]}`, "helios_mag");
+    if (node) {
+      console.log(`Clicked: ${node.ID}`);
     } else {
-      helios.centerOnNode(node.ID);
+      console.log(`Clicked on background`);
+    }
+  }).onNodeDoubleClick((node, event) => {
+    if (node) {
+      console.log(`Double Clicked: ${node.ID}`);
+      if ("mag id" in node) {
+        window.open(`https://explore.openalex.org/works/W${node["mag id"]}`, "helios_mag");
+      } else {
+        helios.centerOnNodes([node.ID], 500);
+      }
+    } else {
+      console.log(`Double clicked on background`);
+      helios.centerOnNodes([], 500);
     }
   }).onEdgeHoverStart((edge, event) => {
     if (event) {
