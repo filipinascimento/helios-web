@@ -43,10 +43,12 @@ export class Helios {
 		autoCleanup = true, // cleanup helios if canvas or element are removed
 		// display = [],
 	}) {
+		
 		this.element = document.getElementById(elementID);
 		this.element.innerHTML = '';
 		this.canvasElement = document.createElement("canvas");
 		this.element.appendChild(this.canvasElement);
+
 		this.network = new Network(nodes, edges);
 		this._autoCleanup = autoCleanup;
 		// this.display = display;
@@ -58,7 +60,6 @@ export class Helios {
 		this.targetTranslatePosition = glm.vec3.create();
 		this.translateTime = 0;
 		this.translateDuration = 0;
-
 		this.mouseDown = false;
 		this.lastMouseX = null;
 		this.lastMouseY = null;
@@ -333,19 +334,17 @@ export class Helios {
 		this.lastMouseY = -1;
 
 		this.currentHoverIndex = -1;
-		
+
 		if(this._autoCleanup){
 			this._mutationObserver = new MutationObserver((events) => {
 				for (let index = 0; index < events.length; index++) {
 					let event = events[index];
-					console.log(event);
 					if(event.type=="childList"){
 						if(event.removedNodes.length>0){
 							for (let index = 0; index < event.removedNodes.length; index++) {
 								let element = event.removedNodes[index];
 								if(element == this.canvasElement || element == this.element){
 									this._mutationObserver.disconnect();
-									console.log("Element removed");
 									this.cleanup();
 									return;
 								}
@@ -1972,10 +1971,7 @@ export class Helios {
 			this._mutationObserver.disconnect();
 		}
 		if(this.canvasElement){
-			delete this.canvasElement;
-		}
-		if(this.element){
-			this.element.innerHTML = '';
+			this.canvasElement.remove();
 		}
 	}
 }
