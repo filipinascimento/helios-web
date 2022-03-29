@@ -69,6 +69,11 @@ if(urlParams.has("use2d")){
 	use2D = true;
 }
 
+let shaded = false;
+if(urlParams.has("shaded")){
+	shaded = true;
+}
+
 
 let advancedEdges = false;
 if(urlParams.has("advanced")){
@@ -153,6 +158,7 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 		nodes: nodes,
 		edges: edges,
 		use2D: use2D,
+		shadedNodes: shaded,
 		fastEdges: !advancedEdges,
 		autoStartLayout: autoStartLayout,
 	})
@@ -226,14 +232,23 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 			// console.log(`End: ${node.ID}`);
 		})
 		.onNodeClick((node, event) => {
-			console.log(`Clicked: ${node.ID}`);
+			if(node){
+				console.log(`Clicked: ${node.ID}`);
+			}else{
+				console.log(`Clicked on background`);
+			}
 		})
 		.onNodeDoubleClick((node, event) => {
-			console.log(`Double Clicked: ${node.ID}`);
-			if("mag id" in node){
-				window.open(`https://explore.openalex.org/works/W${node["mag id"]}`, "helios_mag");
+			if(node){
+				console.log(`Double Clicked: ${node.ID}`);
+				if("mag id" in node){
+					window.open(`https://explore.openalex.org/works/W${node["mag id"]}`, "helios_mag");
+				}else{
+					helios.centerOnNodes([node.ID],500);
+				}
 			}else{
-				helios.centerOnNode(node.ID);
+				console.log(`Double clicked on background`);
+				helios.centerOnNodes([],500);
 			}
 		})
 		.onEdgeHoverStart((edge, event) => {
@@ -690,12 +705,28 @@ xnet.loadXNETFile("networks/"+networkName + ".xnet").then(async network => {
 		if(startZoomLevel){
 			helios.zoomFactor(startZoomLevel);
 		}else{
+
+			// let logK = Math.log10(helios.network.indexedEdges.length/helios.network.index2Node.length);
+			// let logN = Math.log10(helios.network.index2Node.length);
+			// let estimatedZoom = Math.pow(10,1.2817+0.2302*logK+-0.3620*logN);
+			// let estimatedOpacity = Math.pow(10,1.9105+-0.5789*logK+-0.5012*logN);
+			// let logZoom =  Math.log10(estimatedZoom); // You can use the current zoom factor here, or the estimatedZoom
+			// let estimatedSize = Math.pow(10,0.6168+0.0606*logK+-0.2028*logN+-0.6922*logZoom);
+			
 			if(bigNetwork){
+				// helios.zoomFactor(estimatedZoom);
 				helios.zoomFactor(0.35);
 			}else{
 				helios.zoomFactor(0.05);
+				// helios.zoomFactor(estimatedZoom,1000);
+						
 				helios.zoomFactor(0.75,1000);
 			}
+				
+			// helios.nodeSize(estimatedSize);
+			// helios.nodeOutlineWidth(node=>node.size*defaultOutline);
+			// helios.edgesOpacity(estimatedOpacity);
+
 		}
 		helios.onReady(() => {
 			updateColorSelection();

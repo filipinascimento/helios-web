@@ -49,7 +49,13 @@ export class Helios {
 		// this.display = display;
 
 		this.rotationMatrix = glm.mat4.create();
+		
 		this.translatePosition = glm.vec3.create();
+		this.lastTranslatePosition = glm.vec3.create();
+		this.targetTranslatePosition = glm.vec3.create();
+		this.translateTime = 0;
+		this.translateDuration = 0;
+
 		this.mouseDown = false;
 		this.lastMouseX = null;
 		this.lastMouseY = null;
@@ -89,9 +95,8 @@ export class Helios {
 			desynchronized: true
 		})
 
-		this.centerNode = null;
-		this.centerNodeTransition = null;
-		this.previousTranslatePosition = null;
+		this.centerNodes = null;
+		this.centerNodesTransition = null;
 
 		this.onNodeClickCallback = null;
 		this.onNodeDoubleClickCallback = null;
@@ -160,7 +165,6 @@ export class Helios {
 		// this.layoutWorker = new Worker(new URL('../layouts/ngraphLayoutWorker.js', import.meta.url));
 		// this.layoutWorker = new Worker(new URL('../layouts/d3force3dLayoutWorker.js', import.meta.url));
 		this.newPositions = this.network.positions.slice(0);
-		this.positionInterpolator = null;
 		let onlayoutUpdate = (data) => {
 			this.newPositions = data.positions;
 			let interpolatorTask = {
@@ -173,6 +177,8 @@ export class Helios {
 						
 						maxDisplacement = Math.max(Math.abs(displacement), maxDisplacement);
 					};
+					this._updateCenterNodesPosition();
+					this.updateCameraInterpolation()
 					// console.log(this.scheduler._averageFPS);
 
 					if (maxDisplacement < 1) {
@@ -331,8 +337,10 @@ export class Helios {
 			const pickID = this.pickPoint(this.lastMouseX - rect.left, this.lastMouseY - rect.top);
 			if(pickID >= 0){
 				this._callEventFromPickID(pickID, "click", e);
+			}else{
+				this.onNodeClickCallback?.(null, e);
+				this.onEdgeClickCallback?.(null, e);
 			}
-			
 		};
 
 		this.canvasElement.ondblclick = e => {
@@ -343,6 +351,9 @@ export class Helios {
 			const pickID = this.pickPoint(this.lastMouseX - rect.left, this.lastMouseY - rect.top);
 			if(pickID >= 0){
 				this._callEventFromPickID(pickID, "doubleClick", e);
+			}else{
+				this.onNodeDoubleClickCallback?.(null, e);
+				this.onEdgeDoubleClickCallback?.(null, e);
 			}
 		};
 
@@ -903,7 +914,6 @@ export class Helios {
 			}else{
 			}
 			
-
 			this.prevX = event.transform.x/this._zoomFactor;
 			this.prevY = event.transform.y/this._zoomFactor;
 			this.prevK = event.transform.k;
@@ -946,10 +956,9 @@ export class Helios {
 
 				glm.mat4.multiply(this.rotationMatrix, newRotationMatrix, this.rotationMatrix);
 			}
-			if (!this.positionInterpolator) {
-				this.update();
-				this.render();
-			}
+			
+			this.update();
+			this.render();
 			// this.triggerHoverEvents(event);
 			event => event.preventDefault();
 		}).on("start", event => {this.interacting=true;}).on("end", event =>{this.interacting=false;});
@@ -1148,7 +1157,6 @@ export class Helios {
 		gl.uniformMatrix4fv(currentShaderProgram.uniforms.projectionMatrix, false, this.projectionMatrix);
 		gl.uniformMatrix4fv(currentShaderProgram.uniforms.viewMatrix, false, this.viewMatrix);
 		
-
 		gl.uniform1f(currentShaderProgram.uniforms.globalOpacity, this._nodesGlobalOpacity);
 
 		let normalMatrix = glm.mat3.create();
@@ -1407,8 +1415,6 @@ export class Helios {
 		}
 	}
 
-
-
 	// onResizeCallback
 	// onNodeClickCallback
 	// onNodeHoverStartCallback 
@@ -1420,27 +1426,108 @@ export class Helios {
 	// onLayoutFinishCallback
 	// onDrawCallback
 	
-	_updateCenterNodePosition(){
-		if(this.centerNode){
-			let pos = this.centerNode.position;
-			this.translatePosition[0] = -pos[0];
-			this.translatePosition[1] = -pos[1];
-			this.translatePosition[2] = -pos[2];
+	_updateCenterNodesPosition(){
+		this.targetTranslatePosition[0] = 0;
+		this.targetTranslatePosition[1] = 0;
+		this.targetTranslatePosition[2] = 0;
+		if(this.centerNodes && this.centerNodes.length > 0){
+			for (let i = 0; i < this.centerNodes.length; i++) {
+				let node = this.centerNodes[i];
+				// if node is not of type node, get node by id
+				let pos = node.position;
+				this.targetTranslatePosition[0] -= pos[0];
+				this.targetTranslatePosition[1] -= pos[1];
+				this.targetTranslatePosition[2] -= pos[2];
+			}
+			let lengthSize = this.centerNodes.length;
+			this.targetTranslatePosition[0] /= lengthSize;
+			this.targetTranslatePosition[1] /= lengthSize;
+			this.targetTranslatePosition[2] /= lengthSize;
 		}
 	}
 
-	centerOnNode(nodeID, duration) {
-		let node = this.network.nodes[nodeID];
-		if (node) {
-			this.centerNode = node;
+	centerOnNodes(nodes, duration) {
+		//
+		this.centerNodes = [];
+		for(let i = 0; i < nodes.length; i++){
+			let node = nodes[i];
+			if (node.id === undefined) {
+				node = this.network.nodes[node];
+			}
+			this.centerNodes.push(node);
+		}
+		
+		this.lastTranslatePosition[0] = this.translatePosition[0];
+		this.lastTranslatePosition[1] = this.translatePosition[1];
+		this.lastTranslatePosition[2] = this.translatePosition[2];
+		if(duration === undefined || duration<=0){
+			this.translateDuration = 0;
+			this.translateStartTime = null;
+			// this.update(); No need to update?
+			// this.render();
 		}else{
-			this.centerNode = null;
+			this.translateDuration = duration;
+			this.translateStartTime = performance.now();
 		}
-		if(duration === undefined || duration==0){
-			this._updateCenterNodePosition();
-			this.update();
-			this.render();
+		this.scheduleCameraInterpolation();
+	}
+
+	updateCameraInterpolation(){
+		if(this.translateDuration==0){
+			this.translatePosition[0] = this.targetTranslatePosition[0];
+			this.translatePosition[1] = this.targetTranslatePosition[1];
+			this.translatePosition[2] = this.targetTranslatePosition[2];
+			return false; //no need to continue
+		}else{
+			let elapsedTime = performance.now()-this.translateStartTime;
+			let alpha = elapsedTime/this.translateDuration;
+			if(alpha>1){
+				alpha=1.0;
+			}
+			this.translatePosition[0] = (1.0-alpha)*this.lastTranslatePosition[0];
+			this.translatePosition[1] = (1.0-alpha)*this.lastTranslatePosition[1];
+			this.translatePosition[2] = (1.0-alpha)*this.lastTranslatePosition[2];
+			this.translatePosition[0] += alpha*this.targetTranslatePosition[0];
+			this.translatePosition[1] += alpha*this.targetTranslatePosition[1];
+			this.translatePosition[2] += alpha*this.targetTranslatePosition[2];
+			if(alpha>=1.0){
+				return false;
+			}else{
+				return true;
+			}
 		}
+	}
+
+	scheduleCameraInterpolation(){
+		let cameraInterpolatorTask = {
+			name: "1.1.cameraInterpolator",
+			callback: (elapsedTime,task)=>{
+				this._updateCenterNodesPosition();
+				if (!this.updateCameraInterpolation()) {
+					this.scheduler.unschedule("1.1.cameraInterpolator");
+				}
+			},
+			delay:0,
+			repeat:true,
+			synchronized:true,
+			immediateUpdates:false,
+			redraw: true,
+			updateNodesGeometry: false,
+			updateEdgesGeometry: false,
+		}
+		this.scheduler.schedule({
+			name: "1.0.cameraInterpolator",
+			callback: (elapsedTime,task)=>{
+				this.scheduler.schedule(cameraInterpolatorTask);
+			},
+			delay:0,
+			repeat:false,
+			synchronized:true,
+			immediateUpdates:false,
+			redraw: false,
+			updateNodesGeometry: false,
+			updateEdgesGeometry: false,
+		});
 	}
 
 	onResize(callback) {
