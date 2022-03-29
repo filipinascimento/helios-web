@@ -23,6 +23,7 @@ export class HeliosScheduler {
 		this._timeout = null;
 		this._times = [];
 		this._lastRepeatInterval = 0;
+		this._shouldCleanup = false;
 	}
 
 	FPS(value) {
@@ -139,6 +140,9 @@ export class HeliosScheduler {
 	}
 
 	runSyncTasks() {
+		if(this._shouldCleanup){
+			return;
+		}
 		let allTasksCurrentTimestamp = window.performance.now();
 		for (let taskName of Object.keys(this._tasks).sort()) {
 			let task = this._tasks[taskName];
@@ -223,6 +227,9 @@ export class HeliosScheduler {
 
 		cancelAnimationFrame(this.lastRequestFrameID);
 		this.lastRequestFrameID = requestAnimationFrame(() => {
+			if(this._shouldCleanup){
+				return;
+			}
 			const now = performance.now();
 			while (this._times.length > 0 && this._times[0] <= now - 1000) {
 				this._times.shift();
@@ -287,6 +294,7 @@ export class HeliosScheduler {
 
 
 	stop() {
+		this._shouldCleanup = true;
 		clearTimeout(this._timeout);
 		this.paused = false;
 		this.started = false;
