@@ -5467,6 +5467,7 @@ var HeliosScheduler = class {
     this._timeout = null;
     this._times = [];
     this._lastRepeatInterval = 0;
+    this._shouldCleanup = false;
   }
   FPS(value) {
     if (value === void 0) {
@@ -5573,6 +5574,9 @@ var HeliosScheduler = class {
     }, delay);
   }
   runSyncTasks() {
+    if (this._shouldCleanup) {
+      return;
+    }
     let allTasksCurrentTimestamp = window.performance.now();
     for (let taskName of Object.keys(this._tasks).sort()) {
       let task = this._tasks[taskName];
@@ -5651,6 +5655,9 @@ var HeliosScheduler = class {
     }
     cancelAnimationFrame(this.lastRequestFrameID);
     this.lastRequestFrameID = requestAnimationFrame(() => {
+      if (this._shouldCleanup) {
+        return;
+      }
       const now2 = performance.now();
       while (this._times.length > 0 && this._times[0] <= now2 - 1e3) {
         this._times.shift();
@@ -5706,6 +5713,7 @@ var HeliosScheduler = class {
     return this;
   }
   stop() {
+    this._shouldCleanup = true;
     clearTimeout(this._timeout);
     this.paused = false;
     this.started = false;
@@ -9888,13 +9896,15 @@ var Helios = class {
     shadedNodes = false,
     fastEdges = false,
     forceSupersample = false,
-    autoStartLayout = true
+    autoStartLayout = true,
+    autoCleanup = true
   }) {
     this.element = document.getElementById(elementID);
     this.element.innerHTML = "";
     this.canvasElement = document.createElement("canvas");
     this.element.appendChild(this.canvasElement);
     this.network = new Network(nodes, edges);
+    this._autoCleanup = autoCleanup;
     this.rotationMatrix = mat4.create();
     this.translatePosition = vec3.create();
     this.lastTranslatePosition = vec3.create();
@@ -9958,9 +9968,10 @@ var Helios = class {
     this.isReady = false;
     this._backgroundColor = [0.5, 0.5, 0.5, 1];
     this.initialize();
-    window.onresize = (event) => {
+    this._onresizeEvent = (event) => {
       this.willResizeEvent(event);
     };
+    window.addEventListener("resize", this._onresizeEvent);
   }
   initialize() {
     this._setupShaders();
@@ -10112,53 +10123,81 @@ var Helios = class {
     this.lastMouseX = -1;
     this.lastMouseY = -1;
     this.currentHoverIndex = -1;
-    this.canvasElement.onclick = (e) => {
+    if (this._autoCleanup) {
+      this._mutationObserver = new MutationObserver((events) => {
+        for (let index = 0; index < events.length; index++) {
+          let event = events[index];
+          console.log(event);
+          if (event.type == "childList") {
+            if (event.removedNodes.length > 0) {
+              for (let index2 = 0; index2 < event.removedNodes.length; index2++) {
+                let element = event.removedNodes[index2];
+                if (element == this.canvasElement || element == this.element) {
+                  this._mutationObserver.disconnect();
+                  console.log("Element removed");
+                  this.cleanup();
+                  return;
+                }
+              }
+            }
+          }
+        }
+      });
+      this._mutationObserver.observe(this.element, {childList: true});
+      this._mutationObserver.observe(this.element.parentNode, {childList: true});
+    }
+    this._clickEventListener = (event) => {
       const rect = this.canvasElement.getBoundingClientRect();
-      this.lastMouseX = e.clientX;
-      this.lastMouseY = e.clientY;
+      this.lastMouseX = event.clientX;
+      this.lastMouseY = event.clientY;
       const pickID = this.pickPoint(this.lastMouseX - rect.left, this.lastMouseY - rect.top);
       if (pickID >= 0) {
-        this._callEventFromPickID(pickID, "click", e);
+        this._callEventFromPickID(pickID, "click", event);
       } else {
-        this.onNodeClickCallback?.(null, e);
-        this.onEdgeClickCallback?.(null, e);
+        this.onNodeClickCallback?.(null, event);
+        this.onEdgeClickCallback?.(null, event);
       }
     };
-    this.canvasElement.ondblclick = (e) => {
+    this._doubleClickEventListener = (event) => {
       const rect = this.canvasElement.getBoundingClientRect();
-      this.lastMouseX = e.clientX;
-      this.lastMouseY = e.clientY;
+      this.lastMouseX = event.clientX;
+      this.lastMouseY = event.clientY;
       const pickID = this.pickPoint(this.lastMouseX - rect.left, this.lastMouseY - rect.top);
       if (pickID >= 0) {
-        this._callEventFromPickID(pickID, "doubleClick", e);
+        this._callEventFromPickID(pickID, "doubleClick", event);
       } else {
-        this.onNodeDoubleClickCallback?.(null, e);
-        this.onEdgeDoubleClickCallback?.(null, e);
+        this.onNodeDoubleClickCallback?.(null, event);
+        this.onEdgeDoubleClickCallback?.(null, event);
       }
     };
-    this.canvasElement.addEventListener("mousemove", (event) => {
+    this._hoverMoveEventListener = (event) => {
       this.lastMouseX = event.clientX;
       this.lastMouseY = event.clientY;
       this.triggerHoverEvents(event);
-    });
-    this.canvasElement.addEventListener("mouseleave", (e) => {
+    };
+    this._hoverLeaveEventListener = (event) => {
       if (this.currentHoverIndex >= 0) {
-        this._callEventFromPickID(this.currentHoverIndex, "hoverEnd", e);
+        this._callEventFromPickID(this.currentHoverIndex, "hoverEnd", event);
         this.currentHoverIndex = -1;
         this.lastMouseX = -1;
         this.lastMouseY = -1;
       }
-    });
-    document.body.addEventListener("mouseout", (e) => {
-      if (!e.relatedTarget && !e.toElement) {
+    };
+    this._hoverLeaveWindowEventListener = (event) => {
+      if (!event.relatedTarget && !event.toElement) {
         if (this.currentHoverIndex >= 0) {
-          this._callEventFromPickID(this.currentHoverIndex, "hoverEnd", e);
+          this._callEventFromPickID(this.currentHoverIndex, "hoverEnd", event);
           this.currentHoverIndex = -1;
           this.lastMouseX = -1;
           this.lastMouseY = -1;
         }
       }
-    });
+    };
+    this.canvasElement.addEventListener("click", this._clickEventListener);
+    this.canvasElement.addEventListener("dblclick", this._doubleClickEventListener);
+    this.canvasElement.addEventListener("mousemove", this._hoverMoveEventListener);
+    this.canvasElement.addEventListener("mouseleave", this._hoverLeaveEventListener);
+    document.body.addEventListener("mouseout", this._hoverLeaveWindowEventListener);
   }
   async _downloadImageData(imagedata, filename, supersampleFactor, fileFormat) {
     let pica2 = new pica_default({});
@@ -10277,6 +10316,9 @@ var Helios = class {
     framebuffer.discard();
   }
   triggerHoverEvents(event, shallCancel) {
+    if (!this.isReady) {
+      return;
+    }
     if (this.lastMouseX == -1 || this.lastMouseY == -1) {
       return;
     }
@@ -11181,6 +11223,82 @@ var Helios = class {
     } else {
       this.useAdditiveBlending = enableAdditiveBlending;
       return this;
+    }
+  }
+  cleanup(keepGLContext) {
+    console.log("Cleanup started");
+    this.isReady = false;
+    this.layoutWorker.cleanup();
+    this.scheduler.stop();
+    this.layoutWorker = null;
+    let gl = this.gl;
+    this.onReadyCallback = null;
+    this.onNodeClickCallback = null;
+    this.onNodeDoubleClickCallback = null;
+    this.onNodeHoverStartCallback = null;
+    this.onNodeHoverMoveCallback = null;
+    this.onNodeHoverEndCallback = null;
+    this.onEdgeClickCallback = null;
+    this.onEdgeDoubleClickCallback = null;
+    this.onEdgeHoverStartCallback = null;
+    this.onEdgeHoverMoveCallback = null;
+    this.onEdgeHoverEndCallback = null;
+    this.onZoomCallback = null;
+    this.onRotationCallback = null;
+    this.onResizeCallback = null;
+    this.onLayoutStartCallback = null;
+    this.onLayoutStopCallback = null;
+    this.onDrawCallback = null;
+    this.onReadyCallback = null;
+    this.isReady = false;
+    window.removeEventListener("resize", this._onresizeEvent);
+    if (this.canvasElement) {
+      this.canvasElement.removeEventListener("click", this._clickEventListener);
+      this.canvasElement.removeEventListener("dblclick", this._doubleClickEventListener);
+      this.canvasElement.removeEventListener("mousemove", this._hoverMoveEventListener);
+      this.canvasElement.removeEventListener("mouseleave", this._hoverLeaveEventListener);
+      document.body.removeEventListener("mouseout", this._hoverLeaveWindowEventListener);
+    }
+    if (!keepGLContext && gl) {
+      let numTextureUnits = gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS);
+      this.pickingFramebuffer?.discard();
+      for (let unit = 0; unit < numTextureUnits; ++unit) {
+        gl.activeTexture(gl.TEXTURE0 + unit);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        gl.bindTexture(gl.TEXTURE_CUBE_MAP, null);
+      }
+      gl.bindBuffer(gl.ARRAY_BUFFER, null);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+      gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.deleteBuffer(this.nodesPositionBuffer);
+      gl.deleteBuffer(this.nodesColorBuffer);
+      gl.deleteBuffer(this.nodesSizeBuffer);
+      gl.deleteBuffer(this.nodesSizeBuffer);
+      gl.deleteBuffer(this.nodesOutlineWidthBuffer);
+      gl.deleteBuffer(this.nodesOutlineColorBuffer);
+      gl.deleteBuffer(this.nodesIndexBuffer);
+      if (this.edgesGeometry) {
+        gl.deleteBuffer(this.edgesGeometry.edgeVertexTypeBuffer);
+        gl.deleteBuffer(this.edgesGeometry.verticesBuffer);
+        gl.deleteBuffer(this.edgesGeometry.colorBuffer);
+        gl.deleteBuffer(this.edgesGeometry.sizeBuffer);
+      }
+      if (this.fastEdgesGeometry) {
+        gl.deleteBuffer(this.fastEdgesGeometry.indexBuffer);
+        gl.deleteBuffer(this.fastEdgesGeometry.vertexObject);
+        gl.deleteBuffer(this.fastEdgesGeometry.colorObject);
+        gl.deleteBuffer(this.fastEdgesGeometry.indexObject);
+      }
+    }
+    if (this._autoCleanup) {
+      this._mutationObserver.disconnect();
+    }
+    if (this.canvasElement) {
+      delete this.canvasElement;
+    }
+    if (this.element) {
+      this.element.innerHTML = "";
     }
   }
 };
