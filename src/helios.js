@@ -10216,6 +10216,10 @@ var Helios = class {
       ctxFullSize.imageSmoothingQuality = "high";
     }
     ctxFullSize.putImageData(imagedata, 0, 0);
+    ctxFullSize.transform(1, 0, 0, -1, 0, canvasFullSize.height);
+    ctxFullSize.globalCompositeOperation = "copy";
+    ctxFullSize.drawImage(ctxFullSize.canvas, 0, 0);
+    ctxFullSize.globalCompositeOperation = "source-over";
     await pica2.resize(canvasFullSize, canvas, {
       alpha: true
     });
