@@ -458,7 +458,11 @@ export class Helios {
 
 
 		ctxFullSize.putImageData(imagedata, 0, 0);
-		
+		ctxFullSize.transform(1, 0, 0, -1, 0, canvasFullSize.height)
+		ctxFullSize.globalCompositeOperation = "copy"; // if you have transparent pixels
+		ctxFullSize.drawImage(ctxFullSize.canvas,0,0);
+		ctxFullSize.globalCompositeOperation = "source-over"; // reset to default
+
 		await pica.resize(canvasFullSize,canvas,{
 			alpha:true,
 		});
