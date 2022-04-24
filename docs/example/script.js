@@ -127,7 +127,9 @@ let visualizeNetwork = (networkName) => {
 		}
 
 		// Zoom level for the whole network
-		let defaultZoomLevel = 1.0;
+		let defaultZoomLevel = 0.75;
+		let defaultZoomLevelBigNetworks = 0.35;
+
 		// Zoom level for centered nodes
 		let minCenteredNodeZoomLevel = 4.0;
 		
@@ -439,8 +441,17 @@ let visualizeNetwork = (networkName) => {
 
 		let estimatedZoom = Math.pow(10,1.2601+0.2488*logK+-0.3631*logN+0.0000*logDensity)
 		let estimatedOpacity = Math.pow(10,1.9968+-0.6822*logK+-0.4954*logN+0.0000*logDensity)
+		
+		// Not using estimated zoom
+		if (!bigNetwork) {
+			estimatedZoom = defaultZoomLevel;
+		}else{
+			estimatedZoom = defaultZoomLevelBigNetworks;
+		}
+
 		let logZoom =  Math.log10(estimatedZoom);
 		// let estimatedSize = Math.pow(10,-0.2833+-0.0520*logK+0.0347*logN+0.0000*logDensity)
+
 		let estimatedSize = Math.pow(10,0.8744+0.1766*logK+-0.2989*logN+-0.9187*logZoom+0.0000*logDensity)
 
 		// estimatedZoom = Math.pow(10,1.2771+0.2415*logK+-0.3629*logN+0.0000*logDensity)
@@ -875,11 +886,12 @@ let visualizeNetwork = (networkName) => {
 				helios.zoomFactor(0.05);
 				helios.zoomFactor(defaultZoomLevel, 1000);
 			}
-
-			helios.nodesGlobalSizeScale(currentGlobalNodeSizeScale);
-			helios.nodesGlobalOutlineWidthScale(currentGlobalNodeSizeScale)
-			helios.edgesGlobalOpacityScale(currentGlobalEdgeOpacityScale);
 		}
+
+		helios.nodesGlobalSizeScale(currentGlobalNodeSizeScale);
+		helios.nodesGlobalOutlineWidthScale(currentGlobalNodeSizeScale);
+		helios.edgesGlobalOpacityScale(currentGlobalEdgeOpacityScale);
+
 		
 		helios.onReady(() => {
 			updateColorSelection();
