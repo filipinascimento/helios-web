@@ -1359,7 +1359,6 @@ var require_d3force3dLayoutWorker = __commonJS((exports, module) => {
       } else if (msg.data.type == "resume") {
         this.simulation.restart();
       } else if (msg.data.type == "start") {
-        let inputNodes = msg.data.nodes;
         let inputNodesPositions = msg.data.positions;
         let inputEdges = msg.data.edges;
         if (msg.data.use2D) {
@@ -1367,15 +1366,13 @@ var require_d3force3dLayoutWorker = __commonJS((exports, module) => {
         }
         let nodes = [];
         let links = [];
-        Object.entries(inputNodes).forEach((entry) => {
-          let [key, node] = entry;
-          node.ID = key;
-          node.x = inputNodesPositions[node.index * 3 + 0] * 10;
-          node.y = inputNodesPositions[node.index * 3 + 1] * 10;
-          node.z = inputNodesPositions[node.index * 3 + 2] * 10;
-          node.vz = 0;
-          nodes.push(node);
-        });
+        for (let nodeIndex = 0; nodeIndex < inputNodesPositions.length / 3; nodeIndex++) {
+          let x = inputNodesPositions[nodeIndex * 3 + 0] * 10;
+          let y = inputNodesPositions[nodeIndex * 3 + 1] * 10;
+          let z = inputNodesPositions[nodeIndex * 3 + 2] * 10;
+          let vz = 0;
+          nodes.push({x, y, z, vz, ID: nodeIndex});
+        }
         for (let index = 0; index < inputEdges.length / 2; index++) {
           let edgeFrom = inputEdges[index * 2];
           let edgeTo = inputEdges[index * 2 + 1];
@@ -1440,7 +1437,6 @@ var require_d3force3dLayoutWorker = __commonJS((exports, module) => {
         this._onStart?.();
         this._layoutWorker.postMessage({
           type: "start",
-          nodes: this._network.nodes,
           positions: this._network.positions,
           edges: this._network.indexedEdges,
           use2D: this._use2D
@@ -1905,8 +1901,8 @@ function exactEquals$2(a, b) {
 }
 function equals$3(a, b) {
   var a0 = a[0], a1 = a[1], a2 = a[2], a3 = a[3], a4 = a[4], a5 = a[5], a6 = a[6], a7 = a[7], a8 = a[8];
-  var b0 = b[0], b1 = b[1], b2 = b[2], b3 = b[3], b4 = b[4], b5 = b[5], b6 = b[6], b7 = b[7], b8 = b[8];
-  return Math.abs(a0 - b0) <= EPSILON * Math.max(1, Math.abs(a0), Math.abs(b0)) && Math.abs(a1 - b1) <= EPSILON * Math.max(1, Math.abs(a1), Math.abs(b1)) && Math.abs(a2 - b2) <= EPSILON * Math.max(1, Math.abs(a2), Math.abs(b2)) && Math.abs(a3 - b3) <= EPSILON * Math.max(1, Math.abs(a3), Math.abs(b3)) && Math.abs(a4 - b4) <= EPSILON * Math.max(1, Math.abs(a4), Math.abs(b4)) && Math.abs(a5 - b5) <= EPSILON * Math.max(1, Math.abs(a5), Math.abs(b5)) && Math.abs(a6 - b6) <= EPSILON * Math.max(1, Math.abs(a6), Math.abs(b6)) && Math.abs(a7 - b7) <= EPSILON * Math.max(1, Math.abs(a7), Math.abs(b7)) && Math.abs(a8 - b8) <= EPSILON * Math.max(1, Math.abs(a8), Math.abs(b8));
+  var b02 = b[0], b12 = b[1], b22 = b[2], b32 = b[3], b42 = b[4], b52 = b[5], b62 = b[6], b72 = b[7], b82 = b[8];
+  return Math.abs(a0 - b02) <= EPSILON * Math.max(1, Math.abs(a0), Math.abs(b02)) && Math.abs(a1 - b12) <= EPSILON * Math.max(1, Math.abs(a1), Math.abs(b12)) && Math.abs(a2 - b22) <= EPSILON * Math.max(1, Math.abs(a2), Math.abs(b22)) && Math.abs(a3 - b32) <= EPSILON * Math.max(1, Math.abs(a3), Math.abs(b32)) && Math.abs(a4 - b42) <= EPSILON * Math.max(1, Math.abs(a4), Math.abs(b42)) && Math.abs(a5 - b52) <= EPSILON * Math.max(1, Math.abs(a5), Math.abs(b52)) && Math.abs(a6 - b62) <= EPSILON * Math.max(1, Math.abs(a6), Math.abs(b62)) && Math.abs(a7 - b72) <= EPSILON * Math.max(1, Math.abs(a7), Math.abs(b72)) && Math.abs(a8 - b82) <= EPSILON * Math.max(1, Math.abs(a8), Math.abs(b82));
 }
 var mul$2 = multiply$2;
 var sub$2 = subtract$2;
@@ -2188,35 +2184,35 @@ function multiply$3(out, a, b) {
   var a10 = a[4], a11 = a[5], a12 = a[6], a13 = a[7];
   var a20 = a[8], a21 = a[9], a22 = a[10], a23 = a[11];
   var a30 = a[12], a31 = a[13], a32 = a[14], a33 = a[15];
-  var b0 = b[0], b1 = b[1], b2 = b[2], b3 = b[3];
-  out[0] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
-  out[1] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
-  out[2] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
-  out[3] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
-  b0 = b[4];
-  b1 = b[5];
-  b2 = b[6];
-  b3 = b[7];
-  out[4] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
-  out[5] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
-  out[6] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
-  out[7] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
-  b0 = b[8];
-  b1 = b[9];
-  b2 = b[10];
-  b3 = b[11];
-  out[8] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
-  out[9] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
-  out[10] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
-  out[11] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
-  b0 = b[12];
-  b1 = b[13];
-  b2 = b[14];
-  b3 = b[15];
-  out[12] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
-  out[13] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
-  out[14] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
-  out[15] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+  var b02 = b[0], b12 = b[1], b22 = b[2], b32 = b[3];
+  out[0] = b02 * a00 + b12 * a10 + b22 * a20 + b32 * a30;
+  out[1] = b02 * a01 + b12 * a11 + b22 * a21 + b32 * a31;
+  out[2] = b02 * a02 + b12 * a12 + b22 * a22 + b32 * a32;
+  out[3] = b02 * a03 + b12 * a13 + b22 * a23 + b32 * a33;
+  b02 = b[4];
+  b12 = b[5];
+  b22 = b[6];
+  b32 = b[7];
+  out[4] = b02 * a00 + b12 * a10 + b22 * a20 + b32 * a30;
+  out[5] = b02 * a01 + b12 * a11 + b22 * a21 + b32 * a31;
+  out[6] = b02 * a02 + b12 * a12 + b22 * a22 + b32 * a32;
+  out[7] = b02 * a03 + b12 * a13 + b22 * a23 + b32 * a33;
+  b02 = b[8];
+  b12 = b[9];
+  b22 = b[10];
+  b32 = b[11];
+  out[8] = b02 * a00 + b12 * a10 + b22 * a20 + b32 * a30;
+  out[9] = b02 * a01 + b12 * a11 + b22 * a21 + b32 * a31;
+  out[10] = b02 * a02 + b12 * a12 + b22 * a22 + b32 * a32;
+  out[11] = b02 * a03 + b12 * a13 + b22 * a23 + b32 * a33;
+  b02 = b[12];
+  b12 = b[13];
+  b22 = b[14];
+  b32 = b[15];
+  out[12] = b02 * a00 + b12 * a10 + b22 * a20 + b32 * a30;
+  out[13] = b02 * a01 + b12 * a11 + b22 * a21 + b32 * a31;
+  out[14] = b02 * a02 + b12 * a12 + b22 * a22 + b32 * a32;
+  out[15] = b02 * a03 + b12 * a13 + b22 * a23 + b32 * a33;
   return out;
 }
 function translate$2(out, a, v) {
@@ -3133,11 +3129,11 @@ function equals$4(a, b) {
   var a4 = a[4], a5 = a[5], a6 = a[6], a7 = a[7];
   var a8 = a[8], a9 = a[9], a10 = a[10], a11 = a[11];
   var a12 = a[12], a13 = a[13], a14 = a[14], a15 = a[15];
-  var b0 = b[0], b1 = b[1], b2 = b[2], b3 = b[3];
-  var b4 = b[4], b5 = b[5], b6 = b[6], b7 = b[7];
-  var b8 = b[8], b9 = b[9], b10 = b[10], b11 = b[11];
-  var b12 = b[12], b13 = b[13], b14 = b[14], b15 = b[15];
-  return Math.abs(a0 - b0) <= EPSILON * Math.max(1, Math.abs(a0), Math.abs(b0)) && Math.abs(a1 - b1) <= EPSILON * Math.max(1, Math.abs(a1), Math.abs(b1)) && Math.abs(a2 - b2) <= EPSILON * Math.max(1, Math.abs(a2), Math.abs(b2)) && Math.abs(a3 - b3) <= EPSILON * Math.max(1, Math.abs(a3), Math.abs(b3)) && Math.abs(a4 - b4) <= EPSILON * Math.max(1, Math.abs(a4), Math.abs(b4)) && Math.abs(a5 - b5) <= EPSILON * Math.max(1, Math.abs(a5), Math.abs(b5)) && Math.abs(a6 - b6) <= EPSILON * Math.max(1, Math.abs(a6), Math.abs(b6)) && Math.abs(a7 - b7) <= EPSILON * Math.max(1, Math.abs(a7), Math.abs(b7)) && Math.abs(a8 - b8) <= EPSILON * Math.max(1, Math.abs(a8), Math.abs(b8)) && Math.abs(a9 - b9) <= EPSILON * Math.max(1, Math.abs(a9), Math.abs(b9)) && Math.abs(a10 - b10) <= EPSILON * Math.max(1, Math.abs(a10), Math.abs(b10)) && Math.abs(a11 - b11) <= EPSILON * Math.max(1, Math.abs(a11), Math.abs(b11)) && Math.abs(a12 - b12) <= EPSILON * Math.max(1, Math.abs(a12), Math.abs(b12)) && Math.abs(a13 - b13) <= EPSILON * Math.max(1, Math.abs(a13), Math.abs(b13)) && Math.abs(a14 - b14) <= EPSILON * Math.max(1, Math.abs(a14), Math.abs(b14)) && Math.abs(a15 - b15) <= EPSILON * Math.max(1, Math.abs(a15), Math.abs(b15));
+  var b02 = b[0], b12 = b[1], b22 = b[2], b32 = b[3];
+  var b42 = b[4], b52 = b[5], b62 = b[6], b72 = b[7];
+  var b82 = b[8], b92 = b[9], b10 = b[10], b11 = b[11];
+  var b122 = b[12], b13 = b[13], b14 = b[14], b15 = b[15];
+  return Math.abs(a0 - b02) <= EPSILON * Math.max(1, Math.abs(a0), Math.abs(b02)) && Math.abs(a1 - b12) <= EPSILON * Math.max(1, Math.abs(a1), Math.abs(b12)) && Math.abs(a2 - b22) <= EPSILON * Math.max(1, Math.abs(a2), Math.abs(b22)) && Math.abs(a3 - b32) <= EPSILON * Math.max(1, Math.abs(a3), Math.abs(b32)) && Math.abs(a4 - b42) <= EPSILON * Math.max(1, Math.abs(a4), Math.abs(b42)) && Math.abs(a5 - b52) <= EPSILON * Math.max(1, Math.abs(a5), Math.abs(b52)) && Math.abs(a6 - b62) <= EPSILON * Math.max(1, Math.abs(a6), Math.abs(b62)) && Math.abs(a7 - b72) <= EPSILON * Math.max(1, Math.abs(a7), Math.abs(b72)) && Math.abs(a8 - b82) <= EPSILON * Math.max(1, Math.abs(a8), Math.abs(b82)) && Math.abs(a9 - b92) <= EPSILON * Math.max(1, Math.abs(a9), Math.abs(b92)) && Math.abs(a10 - b10) <= EPSILON * Math.max(1, Math.abs(a10), Math.abs(b10)) && Math.abs(a11 - b11) <= EPSILON * Math.max(1, Math.abs(a11), Math.abs(b11)) && Math.abs(a12 - b122) <= EPSILON * Math.max(1, Math.abs(a12), Math.abs(b122)) && Math.abs(a13 - b13) <= EPSILON * Math.max(1, Math.abs(a13), Math.abs(b13)) && Math.abs(a14 - b14) <= EPSILON * Math.max(1, Math.abs(a14), Math.abs(b14)) && Math.abs(a15 - b15) <= EPSILON * Math.max(1, Math.abs(a15), Math.abs(b15));
 }
 var mul$3 = multiply$3;
 var sub$3 = subtract$3;
@@ -3489,8 +3485,8 @@ function exactEquals$4(a, b) {
 }
 function equals$5(a, b) {
   var a0 = a[0], a1 = a[1], a2 = a[2];
-  var b0 = b[0], b1 = b[1], b2 = b[2];
-  return Math.abs(a0 - b0) <= EPSILON * Math.max(1, Math.abs(a0), Math.abs(b0)) && Math.abs(a1 - b1) <= EPSILON * Math.max(1, Math.abs(a1), Math.abs(b1)) && Math.abs(a2 - b2) <= EPSILON * Math.max(1, Math.abs(a2), Math.abs(b2));
+  var b02 = b[0], b12 = b[1], b22 = b[2];
+  return Math.abs(a0 - b02) <= EPSILON * Math.max(1, Math.abs(a0), Math.abs(b02)) && Math.abs(a1 - b12) <= EPSILON * Math.max(1, Math.abs(a1), Math.abs(b12)) && Math.abs(a2 - b22) <= EPSILON * Math.max(1, Math.abs(a2), Math.abs(b22));
 }
 var sub$4 = subtract$4;
 var mul$4 = multiply$4;
@@ -4167,6 +4163,14 @@ var Node = class {
     let nodeIndex = this.index;
     return [this._network.colors[nodeIndex * 4 + 0], this._network.colors[nodeIndex * 4 + 1], this._network.colors[nodeIndex * 4 + 2], this._network.colors[nodeIndex * 4 + 3]];
   }
+  set opacity(newOpacity) {
+    let nodeIndex = this.index;
+    this._network.colors[nodeIndex * 4 + 3] = newOpacity;
+  }
+  get opacity() {
+    let nodeIndex = this.index;
+    return this._network.colors[nodeIndex * 4 + 3];
+  }
   set size(newSize) {
     this._network.sizes[this.index] = newSize;
   }
@@ -4217,13 +4221,19 @@ var Network = class {
         node.index = nodeIndex;
         node.ID = nodeID;
         this.index2Node.push(node);
+        node.neighbors = [];
+        node.edges = [];
       }
     }
     this.indexedEdges = new Int32Array(edges.length * 2);
     for (let edgeIndex = 0; edgeIndex < edges.length; edgeIndex++) {
       const edge = edges[edgeIndex];
-      this.indexedEdges[edgeIndex * 2] = this.ID2index[edge.source];
-      this.indexedEdges[edgeIndex * 2 + 1] = this.ID2index[edge.target];
+      let fromIndex = this.ID2index[edge.source];
+      let toIndex = this.ID2index[edge.target];
+      let fromNode = this.index2Node[fromIndex];
+      let toNode = this.index2Node[toIndex];
+      this.indexedEdges[edgeIndex * 2] = fromIndex;
+      this.indexedEdges[edgeIndex * 2 + 1] = toIndex;
     }
     this.positions = new Float32Array(3 * this.index2Node.length);
     this.colors = new Float32Array(4 * this.index2Node.length);
@@ -4302,6 +4312,17 @@ var Network = class {
       let newNode = new Node(node, node.ID, index, this);
       this.index2Node[index] = newNode;
       this.nodes[node.ID] = newNode;
+    }
+    for (let edgeIndex = 0; edgeIndex < edges.length; edgeIndex++) {
+      const edge = edges[edgeIndex];
+      let fromIndex = this.ID2index[edge.source];
+      let toIndex = this.ID2index[edge.target];
+      let fromNode = this.index2Node[fromIndex];
+      let toNode = this.index2Node[toIndex];
+      fromNode.neighbors.push(toNode);
+      toNode.neighbors.push(fromNode);
+      fromNode.edges.push(edgeIndex);
+      toNode.edges.push(edgeIndex);
     }
   }
   get nodeCount() {
@@ -6227,6 +6248,11 @@ function rgbSpline(spline) {
 }
 var rgbBasis = rgbSpline(basis$1);
 
+// build/_snowpack/pkg/common/cubic-45dfa0d1.js
+function cubicInOut(t) {
+  return ((t *= 2) <= 1 ? t * t * t : (t -= 2) * t * t + 2) / 2;
+}
+
 // build/_snowpack/pkg/d3-zoom.js
 var degrees = 180 / Math.PI;
 var identity = {
@@ -6351,7 +6377,7 @@ var interpolateZoom = function zoomRho(rho, rho2, rho4) {
         ];
       };
     } else {
-      var d1 = Math.sqrt(d2), b0 = (w1 * w1 - w0 * w0 + rho4 * d2) / (2 * w0 * rho2 * d1), b1 = (w1 * w1 - w0 * w0 - rho4 * d2) / (2 * w1 * rho2 * d1), r0 = Math.log(Math.sqrt(b0 * b0 + 1) - b0), r1 = Math.log(Math.sqrt(b1 * b1 + 1) - b1);
+      var d1 = Math.sqrt(d2), b02 = (w1 * w1 - w0 * w0 + rho4 * d2) / (2 * w0 * rho2 * d1), b12 = (w1 * w1 - w0 * w0 - rho4 * d2) / (2 * w1 * rho2 * d1), r0 = Math.log(Math.sqrt(b02 * b02 + 1) - b02), r1 = Math.log(Math.sqrt(b12 * b12 + 1) - b12);
       S = (r1 - r0) / rho;
       i = function(t) {
         var s = t * S, coshr0 = cosh(r0), u = w0 / (rho2 * d1) * (coshr0 * tanh(rho * s + r0) - sinh(r0));
@@ -7269,9 +7295,6 @@ Transition.prototype = {
   end: transition_end,
   [Symbol.iterator]: selection_prototype[Symbol.iterator]
 };
-function cubicInOut(t) {
-  return ((t *= 2) <= 1 ? t * t * t : (t -= 2) * t * t + 2) / 2;
-}
 var defaultTiming = {
   time: null,
   delay: 0,
@@ -7703,6 +7726,116 @@ function zoom() {
   };
   return zoom2;
 }
+
+// build/_snowpack/pkg/d3-ease.js
+var linear2 = (t) => +t;
+var exponent = 3;
+var polyIn = function custom(e) {
+  e = +e;
+  function polyIn2(t) {
+    return Math.pow(t, e);
+  }
+  polyIn2.exponent = custom;
+  return polyIn2;
+}(exponent);
+var polyOut = function custom2(e) {
+  e = +e;
+  function polyOut2(t) {
+    return 1 - Math.pow(1 - t, e);
+  }
+  polyOut2.exponent = custom2;
+  return polyOut2;
+}(exponent);
+var polyInOut = function custom3(e) {
+  e = +e;
+  function polyInOut2(t) {
+    return ((t *= 2) <= 1 ? Math.pow(t, e) : 2 - Math.pow(2 - t, e)) / 2;
+  }
+  polyInOut2.exponent = custom3;
+  return polyInOut2;
+}(exponent);
+var pi = Math.PI;
+var halfPi = pi / 2;
+function tpmt(x) {
+  return (Math.pow(2, -10 * x) - 9765625e-10) * 1.0009775171065494;
+}
+var b1 = 4 / 11;
+var b2 = 6 / 11;
+var b3 = 8 / 11;
+var b4 = 3 / 4;
+var b5 = 9 / 11;
+var b6 = 10 / 11;
+var b7 = 15 / 16;
+var b8 = 21 / 22;
+var b9 = 63 / 64;
+var b0 = 1 / b1 / b1;
+var overshoot = 1.70158;
+var backIn = function custom4(s) {
+  s = +s;
+  function backIn2(t) {
+    return (t = +t) * t * (s * (t - 1) + t);
+  }
+  backIn2.overshoot = custom4;
+  return backIn2;
+}(overshoot);
+var backOut = function custom5(s) {
+  s = +s;
+  function backOut2(t) {
+    return --t * t * ((t + 1) * s + t) + 1;
+  }
+  backOut2.overshoot = custom5;
+  return backOut2;
+}(overshoot);
+var backInOut = function custom6(s) {
+  s = +s;
+  function backInOut2(t) {
+    return ((t *= 2) < 1 ? t * t * ((s + 1) * t - s) : (t -= 2) * t * ((s + 1) * t + s) + 2) / 2;
+  }
+  backInOut2.overshoot = custom6;
+  return backInOut2;
+}(overshoot);
+var tau = 2 * Math.PI;
+var amplitude = 1;
+var period = 0.3;
+var elasticIn = function custom7(a, p) {
+  var s = Math.asin(1 / (a = Math.max(1, a))) * (p /= tau);
+  function elasticIn2(t) {
+    return a * tpmt(- --t) * Math.sin((s - t) / p);
+  }
+  elasticIn2.amplitude = function(a2) {
+    return custom7(a2, p * tau);
+  };
+  elasticIn2.period = function(p2) {
+    return custom7(a, p2);
+  };
+  return elasticIn2;
+}(amplitude, period);
+var elasticOut = function custom8(a, p) {
+  var s = Math.asin(1 / (a = Math.max(1, a))) * (p /= tau);
+  function elasticOut2(t) {
+    return 1 - a * tpmt(t = +t) * Math.sin((t + s) / p);
+  }
+  elasticOut2.amplitude = function(a2) {
+    return custom8(a2, p * tau);
+  };
+  elasticOut2.period = function(p2) {
+    return custom8(a, p2);
+  };
+  return elasticOut2;
+}(amplitude, period);
+var elasticInOut = function custom9(a, p) {
+  var s = Math.asin(1 / (a = Math.max(1, a))) * (p /= tau);
+  function elasticInOut2(t) {
+    return ((t = t * 2 - 1) < 0 ? a * tpmt(-t) * Math.sin((s - t) / p) : 2 - a * tpmt(t) * Math.sin((s + t) / p)) / 2;
+  }
+  elasticInOut2.amplitude = function(a2) {
+    return custom9(a2, p * tau);
+  };
+  elasticInOut2.period = function(p2) {
+    return custom9(a, p2);
+  };
+  return elasticInOut2;
+}(amplitude, period);
 
 // build/_snowpack/pkg/pica.js
 function createCommonjsModule(fn, basedir, module) {
@@ -8620,7 +8753,7 @@ var pica = createCommonjsModule(function(module, exports) {
         };
       };
     }, {"./mathlib": 1}], 18: [function(_dereq_, module2, exports2) {
-      var a0, a1, a2, a3, b1, b2, left_corner, right_corner;
+      var a0, a1, a2, a3, b12, b22, left_corner, right_corner;
       function gaussCoef(sigma) {
         if (sigma < 0.5) {
           sigma = 0.5;
@@ -8630,11 +8763,11 @@ var pica = createCommonjsModule(function(module, exports) {
         a1 = k * (a - 1) * g1;
         a2 = k * (a + 1) * g1;
         a3 = -k * g2;
-        b1 = 2 * g1;
-        b2 = -g2;
-        left_corner = (a0 + a1) / (1 - b1 - b2);
-        right_corner = (a2 + a3) / (1 - b1 - b2);
-        return new Float32Array([a0, a1, a2, a3, b1, b2, left_corner, right_corner]);
+        b12 = 2 * g1;
+        b22 = -g2;
+        left_corner = (a0 + a1) / (1 - b12 - b22);
+        right_corner = (a2 + a3) / (1 - b12 - b22);
+        return new Float32Array([a0, a1, a2, a3, b12, b22, left_corner, right_corner]);
       }
       function convolveMono16(src, out, line, coeff, width, height) {
         var prev_src, curr_src, curr_out, prev_out, prev_prev_out;
@@ -9531,7 +9664,13 @@ var vertexShader = `
 uniform mat4 projectionMatrix;
 uniform mat4 viewMatrix;
  
+uniform float globalSizeScale;
+uniform float globalSizeBase;
 uniform float globalWidthScale;
+uniform float globalWidthBase;
+
+uniform float globalOpacityScale;
+uniform float globalOpacityBase;
 
 attribute vec3 fromVertex;
 attribute vec3 toVertex;
@@ -9548,7 +9687,6 @@ attribute float toSize;
 attribute vec4 encodedIndex;
 
 varying vec4 vColor;
-varying float vSize;
 varying vec3 vOffset;
 varying vec4 vEncodedIndex;
 
@@ -9557,7 +9695,11 @@ varying vec4 vEncodedIndex;
 
 void main(void){
 	vColor = (fromColor)*vertexType.x + (toColor)*(1.0-vertexType.x);
-	vSize = (fromSize)*vertexType.x + (toSize)*(1.0-vertexType.x);
+	vColor.w = clamp(globalOpacityBase+globalOpacityScale*vColor.w,0.0,1.0);
+	float updatedFromSize = globalSizeScale*fromSize+globalSizeBase;
+	float updatedToSize = globalSizeScale*toSize+globalSizeBase;
+
+	float width = globalWidthBase+globalWidthScale*((updatedFromSize)*vertexType.x + (updatedToSize)*(1.0-vertexType.x));
 	vEncodedIndex = encodedIndex;
 	//vZComponent = viewVertex.z;
 	vec3 vertexCenter = fromVertex.xyz*vertexType.x + toVertex.xyz*(1.0-vertexType.x);
@@ -9565,11 +9707,11 @@ void main(void){
 	
 	vec3 displacement = (viewMatrix*vec4((destinationVertexCenter-vertexCenter),0.0)).xyz;
 	vec3 perpendicularVector = normalize(vec3(-displacement.y, displacement.x, 0.0));
-	vec3 offset = globalWidthScale*vSize*(vertexType.x-0.5)*(vertexType.y-0.5)*4.0*1.5*perpendicularVector;
+	vec3 offset = width*(vertexType.x-0.5)*(vertexType.y-0.5)*4.0*1.5*perpendicularVector;
 	
 	vec4 viewVertex = viewMatrix * vec4(vertexCenter.xyz,1.0)+vec4(offset,0.0);
 	float displacementLength = length(displacement);
-	vOffset = vec3(vertexType.x,toSize/displacementLength*1.5,fromSize/displacementLength*1.5);
+	vOffset = vec3(vertexType.x,updatedToSize/displacementLength*1.5,updatedFromSize/displacementLength*1.5);
 	gl_Position = projectionMatrix*viewVertex;
 	
 }
@@ -9579,7 +9721,6 @@ var fragmentShader = `
 	precision highp float;
 #endif
 //uniform vec2 nearFar;
-uniform float globalOpacity;
 varying vec4 vEncodedIndex;
 varying vec4 vColor;
 varying vec3 vOffset;
@@ -9592,7 +9733,7 @@ void main(){
 	}
 
 	// gl_FragColor = vec4(vOffset.x,vOffset.x,0,1.0);//vec4(vColor.xyz,globalOpacity*vColor.w);
-	gl_FragColor = vec4(vColor.xyz,globalOpacity*vColor.w);
+	gl_FragColor = vColor;
 }
 `;
 var pickingShader = `
@@ -9607,7 +9748,7 @@ varying vec3 vOffset;
 //gl_DepthRange.near)/gl_DepthRange.diff
 void main(){
 
-	if(vOffset.x<vOffset.y*1.1 || vOffset.x>(1.0-vOffset.z*1.1)){
+	if(vOffset.x<vOffset.y*1.1 || vOffset.x>(1.0-vOffset.z*1.1) || (vEncodedIndex.x+vEncodedIndex.y+vEncodedIndex.z+vEncodedIndex.w)<=0.0){
 		discard;
 	}
 	//float w = (-vZComponent-nearFar[0])/(nearFar[1]-nearFar[0]);
@@ -9617,17 +9758,21 @@ void main(){
 `;
 var fastVertexShader = `
 uniform mat4 projectionViewMatrix;
+uniform float globalOpacityScale;
+uniform float globalOpacityBase;
 
 attribute vec3 vertex;
 attribute vec4 color;
-varying vec4 vColor;
 
+
+varying vec4 vColor;
 varying vec4 vEncodedIndex;
 
 //varying float vZComponent;
 
 void main(void){
 	vColor = color;
+	vColor.w = clamp(globalOpacityBase+globalOpacityScale*vColor.w,0.0,1.0);
 	//vZComponent = viewVertex.z;
 	gl_Position =   projectionViewMatrix * vec4(vertex,1.0);
 }
@@ -9637,13 +9782,12 @@ var fastFragmentShader = `
 	precision highp float;
 #endif
 //uniform vec2 nearFar;
-uniform float globalOpacity;
 varying vec4 vColor;
 //varying float vZComponent;
 //gl_DepthRange.near)/gl_DepthRange.diff
 void main(){
 	//float w = (-vZComponent-nearFar[0])/(nearFar[1]-nearFar[0]);
-	gl_FragColor = vec4(vColor.xyz,globalOpacity*vColor.w);
+	gl_FragColor = vColor;
 	// gl_FragColor = vec4(vEncodedIndex.x/10,0,0,1.0);
 }
 
@@ -9683,6 +9827,14 @@ uniform mat4 projectionMatrix;
 uniform mat4 viewMatrix;
 uniform mat3 normalMatrix;
 
+uniform float globalOpacityScale;
+uniform float globalSizeScale;
+uniform float globalOutlineWidthScale;
+
+uniform float globalOpacityBase;
+uniform float globalSizeBase;
+uniform float globalOutlineWidthBase;
+
 attribute vec2 vertex;
 // attribute vec3 normal;
 attribute vec3 position;
@@ -9705,7 +9857,9 @@ varying vec4 vPosition;
 void main(void){
 	float BoxCorrection = 1.5;
 	vec2 offset = vertex;
-	float fullSize = size + outlineWidth;
+	float updatedSize = globalSizeScale*size+globalSizeBase;
+	float updatedOutlineWidth = globalOutlineWidthScale*outlineWidth+globalOutlineWidthBase;
+	float fullSize = updatedSize + updatedOutlineWidth;
 	// vec4 viewCenters = viewMatrix*vec4(position,1);
 	// vec3 viewCenters = position;
 	// fragCenter = viewCenters
@@ -9714,16 +9868,18 @@ void main(void){
 	vec3 cameraRight = normalize(vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]));
 	vec3 cameraUp = normalize(vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]));
 
-	// viewCenters.xy += offset*size*CameraRight_worldspace;
+	// viewCenters.xy += offset*updatedSize*CameraRight_worldspace;
 	
 	vec4 viewCenters = viewMatrix*vec4(position+BoxCorrection*fullSize*(cameraRight*offset.x + cameraUp*offset.y),1.0);
 	vNormal = vec3(0.0,0.0,1.0); //normalMatrix * normal;
 	vEye = -vec3(offset,0.0);
 	vEncodedIndex = encodedIndex;
 	vColor = color;
+	vColor.w = clamp(globalOpacityBase+globalOpacityScale*vColor.w,0.0,1.0);
+	vOutlineColor.w = clamp(globalOpacityBase+globalOpacityScale*vOutlineColor.w,0.0,1.0);
 	vOffset = vertex;
-	vSize = size;
-	vOutlineThreshold = outlineWidth/fullSize;
+	vSize = updatedSize;
+	vOutlineThreshold = updatedOutlineWidth/fullSize;
 	vOutlineColor = outlineColor;
 	vPosition = projectionMatrix * viewCenters;
 	gl_Position = vPosition;
@@ -9734,7 +9890,6 @@ var fragmentShader2 = `// #ifdef GL_ES
 // #endif
 
 precision mediump float;
-uniform float globalOpacity;
 varying vec4 vColor;
 varying vec4 vEncodedIndex;
 varying vec3 vNormal;
@@ -9797,7 +9952,7 @@ void main(){
 	float lensqr = dot(vOffset, vOffset);
 
 	if(lensqr > 1.0)
-			discard;
+		discard;
 	
 
 	vec3 normalizedPoint = normalize(vec3(vOffset.xy, sqrt(1. - lensqr)));
@@ -9820,9 +9975,9 @@ void main(){
 	
 	if(lensqr < 1.0-vOutlineThreshold){
 		// gl_FragColor = vec4(vColor,vOpacity)
-		gl_FragColor = vec4(newColor,vColor.w*globalOpacity);;
+		gl_FragColor = vec4(newColor,vColor.w);;
 	}else{
-		gl_FragColor = vec4(vOutlineColor.xyz,vOutlineColor.w*globalOpacity);
+		gl_FragColor = vec4(vOutlineColor.xyz,vOutlineColor.w);
 	}
 	// gl_FragDepthEXT = 0.5; 
 }
@@ -9857,7 +10012,6 @@ var fastFragmentShader2 = `
 // #endif
 
 precision mediump float;
-uniform float globalOpacity;
 varying vec4 vColor;
 varying vec4 vEncodedIndex;
 varying vec3 vNormal;
@@ -9879,9 +10033,9 @@ void main(){
 	
 	if(lensqr < 1.0-vOutlineThreshold){
 		// gl_FragColor = vec4(vColor,vOpacity)
-		gl_FragColor = vec4(vColor.xyz,vColor.w*globalOpacity);;
+		gl_FragColor = vColor;
 	}else{
-		gl_FragColor = vec4(vOutlineColor.xyz,vOutlineColor.w*globalOpacity);
+		gl_FragColor = vOutlineColor;
 	}
 	// gl_FragDepthEXT = 0.5; 
 }
@@ -9893,17 +10047,21 @@ import.meta.env = env_exports;
 var isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
 var Helios = class {
   constructor({
-    elementID,
+    element = null,
+    elementID = null,
     nodes = {},
     edges = [],
     use2D: use2D2 = false,
-    shadedNodes = false,
     fastEdges = false,
     forceSupersample = false,
     autoStartLayout: autoStartLayout2 = true,
     autoCleanup = true
   }) {
-    this.element = document.getElementById(elementID);
+    if (element == null) {
+      this.element = document.getElementById(elementID);
+    } else {
+      this.element = element;
+    }
     this.element.innerHTML = "";
     this.canvasElement = document.createElement("canvas");
     this.element.appendChild(this.canvasElement);
@@ -9913,6 +10071,12 @@ var Helios = class {
     this.translatePosition = vec3.create();
     this.lastTranslatePosition = vec3.create();
     this.targetTranslatePosition = vec3.create();
+    this.lastPanX = 0;
+    this.lastPanY = 0;
+    this.panX = 0;
+    this.panY = 0;
+    this.targetPanX = 0;
+    this.targetPanY = 0;
     this.translateTime = 0;
     this.translateDuration = 0;
     this.mouseDown = false;
@@ -9921,37 +10085,45 @@ var Helios = class {
     this.redrawingFromMouseWheelEvent = false;
     this.fastEdges = fastEdges;
     this.animate = false;
-    this.shadedNodes = shadedNodes;
+    this.useShadedNodes = false;
     this.forceSupersample = forceSupersample;
     this.cameraDistance = 450;
     this._zoomFactor = 1;
     this.interacting = false;
     this.rotateLinearX = 0;
     this.rotateLinearY = 0;
-    this.panX = 0;
-    this.panY = 0;
     this.saveResolutionRatio = 1;
     this.pickingResolutionRatio = 0.25;
-    this._edgesGlobalOpacity = 1;
-    this._nodesGlobalOpacity = 1;
-    this._globalWidthScale = 0.25;
+    this._nodesGlobalOpacityScale = 1;
+    this._nodesGlobalOpacityBase = 0;
+    this._nodesGlobalSizeScale = 1;
+    this._nodesGlobalSizeBase = 0;
+    this._edgesGlobalOpacityScale = 1;
+    this._edgesGlobalOpacityBase = 0;
+    this._edgesGlobalWidthScale = 0.25;
+    this._edgesGlobalWidthBase = 0;
+    this._nodesGlobalOutlineWidthScale = 1;
+    this._nodesGlobalOutlineWidthBase = 0;
+    this._backgroundColor = [0.5, 0.5, 0.5, 1];
     this._use2D = use2D2;
     this._autoStartLayout = autoStartLayout2;
     this.useAdditiveBlending = false;
+    this._pickeableEdges = new Set();
     this.scheduler = new HeliosScheduler(this, {throttle: false});
     if (this._use2D) {
       for (let vertexIndex = 0; vertexIndex < this.network.positions.length; vertexIndex++) {
         this.network.positions[vertexIndex * 3 + 2] = 0;
       }
     }
+    this._edgeIndicesUpdate = true;
     mat4.identity(this.rotationMatrix);
     this.gl = createWebGLContext(this.canvasElement, {
       antialias: true,
       powerPreference: "high-performance",
       desynchronized: true
     });
-    this.centerNodes = null;
-    this.centerNodesTransition = null;
+    this._centerNodes = [];
+    this._centerNodesTransition = null;
     this.onNodeClickCallback = null;
     this.onNodeDoubleClickCallback = null;
     this.onNodeHoverStartCallback = null;
@@ -9970,7 +10142,6 @@ var Helios = class {
     this.onDrawCallback = null;
     this.onReadyCallback = null;
     this.isReady = false;
-    this._backgroundColor = [0.5, 0.5, 0.5, 1];
     this.initialize();
     this._onresizeEvent = (event) => {
       this.willResizeEvent(event);
@@ -10006,7 +10177,7 @@ var Helios = class {
           }
           ;
           this._updateCenterNodesPosition();
-          this.updateCameraInterpolation();
+          this.updateCameraInterpolation(true);
           if (maxDisplacement < 1) {
             this.scheduler.unschedule("1.1.positionInterpolator");
           }
@@ -10229,7 +10400,6 @@ var Helios = class {
     });
     let downloadLink = document.createElement("a");
     if (isSafari) {
-      console.log("Workaround safari bug...");
       canvas.toDataURL();
     }
     downloadLink.setAttribute("download", filename);
@@ -10349,12 +10519,62 @@ var Helios = class {
   }
   _setupShaders() {
     let gl = this.gl;
-    this.edgesShaderProgram = new ShaderProgram(getShaderFromString(gl, vertexShader, gl.VERTEX_SHADER), getShaderFromString(gl, fragmentShader, gl.FRAGMENT_SHADER), ["viewMatrix", "projectionMatrix", "nearFar", "globalOpacity", "globalWidthScale"], ["fromVertex", "toVertex", "vertexType", "fromColor", "toColor", "fromSize", "toSize", "encodedIndex"], this.gl);
-    this.edgesFastShaderProgram = new ShaderProgram(getShaderFromString(gl, fastVertexShader, gl.VERTEX_SHADER), getShaderFromString(gl, fastFragmentShader, gl.FRAGMENT_SHADER), ["projectionViewMatrix", "nearFar", "globalOpacity"], ["vertex", "color"], this.gl);
-    this.edgesPickingShaderProgram = new ShaderProgram(getShaderFromString(gl, vertexShader, gl.VERTEX_SHADER), getShaderFromString(gl, pickingShader, gl.FRAGMENT_SHADER), ["viewMatrix", "projectionMatrix", "nearFar", "globalOpacity", "globalWidthScale"], ["fromVertex", "toVertex", "vertexType", "fromColor", "toColor", "fromSize", "toSize", "encodedIndex"], this.gl);
-    this.nodesShaderProgram = new ShaderProgram(getShaderFromString(gl, vertexShader2, gl.VERTEX_SHADER), getShaderFromString(gl, fragmentShader2, gl.FRAGMENT_SHADER), ["viewMatrix", "projectionMatrix", "normalMatrix", "globalOpacity"], ["vertex", "position", "color", "size", "outlineWidth", "outlineColor", "encodedIndex"], this.gl);
-    this.nodesFastShaderProgram = new ShaderProgram(getShaderFromString(gl, fastVertexShader2, gl.VERTEX_SHADER), getShaderFromString(gl, fastFragmentShader2, gl.FRAGMENT_SHADER), ["viewMatrix", "projectionMatrix", "normalMatrix", "globalOpacity"], ["vertex", "position", "color", "size", "outlineWidth", "outlineColor", "encodedIndex"], this.gl);
-    this.nodesPickingShaderProgram = new ShaderProgram(getShaderFromString(gl, vertexShader2, gl.VERTEX_SHADER), getShaderFromString(gl, pickingShader2, gl.FRAGMENT_SHADER), ["viewMatrix", "projectionMatrix", "normalMatrix"], ["vertex", "position", "color", "size", "outlineWidth", "outlineColor", "encodedIndex"], this.gl);
+    this.edgesShaderProgram = new ShaderProgram(getShaderFromString(gl, vertexShader, gl.VERTEX_SHADER), getShaderFromString(gl, fragmentShader, gl.FRAGMENT_SHADER), [
+      "viewMatrix",
+      "projectionMatrix",
+      "nearFar",
+      "globalOpacityScale",
+      "globalWidthScale",
+      "globalSizeScale",
+      "globalOpacityBase",
+      "globalWidthBase",
+      "globalSizeBase"
+    ], ["fromVertex", "toVertex", "vertexType", "fromColor", "toColor", "fromSize", "toSize", "encodedIndex"], this.gl);
+    this.edgesFastShaderProgram = new ShaderProgram(getShaderFromString(gl, fastVertexShader, gl.VERTEX_SHADER), getShaderFromString(gl, fastFragmentShader, gl.FRAGMENT_SHADER), ["projectionViewMatrix", "nearFar", "globalOpacityScale", "globalOpacityBase"], ["vertex", "color"], this.gl);
+    this.edgesPickingShaderProgram = new ShaderProgram(getShaderFromString(gl, vertexShader, gl.VERTEX_SHADER), getShaderFromString(gl, pickingShader, gl.FRAGMENT_SHADER), [
+      "viewMatrix",
+      "projectionMatrix",
+      "nearFar",
+      "globalOpacityScale",
+      "globalWidthScale",
+      "globalSizeScale",
+      "globalOpacityBase",
+      "globalWidthBase",
+      "globalSizeBase"
+    ], ["fromVertex", "toVertex", "vertexType", "fromColor", "toColor", "fromSize", "toSize", "encodedIndex"], this.gl);
+    this.nodesShaderProgram = new ShaderProgram(getShaderFromString(gl, vertexShader2, gl.VERTEX_SHADER), getShaderFromString(gl, fragmentShader2, gl.FRAGMENT_SHADER), [
+      "viewMatrix",
+      "projectionMatrix",
+      "normalMatrix",
+      "globalOpacityScale",
+      "globalSizeScale",
+      "globalOutlineWidthScale",
+      "globalOpacityBase",
+      "globalSizeBase",
+      "globalOutlineWidthBase"
+    ], ["vertex", "position", "color", "size", "outlineWidth", "outlineColor", "encodedIndex"], this.gl);
+    this.nodesFastShaderProgram = new ShaderProgram(getShaderFromString(gl, fastVertexShader2, gl.VERTEX_SHADER), getShaderFromString(gl, fastFragmentShader2, gl.FRAGMENT_SHADER), [
+      "viewMatrix",
+      "projectionMatrix",
+      "normalMatrix",
+      "globalOpacityScale",
+      "globalSizeScale",
+      "globalOutlineWidthScale",
+      "globalOpacityBase",
+      "globalSizeBase",
+      "globalOutlineWidthBase"
+    ], ["vertex", "position", "color", "size", "outlineWidth", "outlineColor", "encodedIndex"], this.gl);
+    this.nodesPickingShaderProgram = new ShaderProgram(getShaderFromString(gl, vertexShader2, gl.VERTEX_SHADER), getShaderFromString(gl, pickingShader2, gl.FRAGMENT_SHADER), [
+      "viewMatrix",
+      "projectionMatrix",
+      "normalMatrix",
+      "globalOpacityScale",
+      "globalSizeScale",
+      "globalOutlineWidthScale",
+      "globalOpacityBase",
+      "globalSizeBase",
+      "globalOutlineWidthBase"
+    ], ["vertex", "position", "color", "size", "outlineWidth", "outlineColor", "encodedIndex"], this.gl);
   }
   _buildPickingBuffers() {
     let gl = this.gl;
@@ -10490,18 +10710,10 @@ var Helios = class {
     newGeometry.colorBuffer = gl.createBuffer();
     newGeometry.sizeBuffer = gl.createBuffer();
     newGeometry.indexBuffer = gl.createBuffer();
-    newGeometry.edgesIndexArray = new Float32Array(this.network.indexedEdges.length * 4 / 2);
-    for (let ID = 0; ID < this.network.indexedEdges.length / 2; ID++) {
-      let edgeID = this.network.index2Node.length + ID;
-      newGeometry.edgesIndexArray[4 * ID] = (edgeID + 1 >> 0 & 255) / 255;
-      newGeometry.edgesIndexArray[4 * ID + 1] = (edgeID + 1 >> 8 & 255) / 255;
-      newGeometry.edgesIndexArray[4 * ID + 2] = (edgeID + 1 >> 16 & 255) / 255;
-      newGeometry.edgesIndexArray[4 * ID + 3] = (edgeID + 1 >> 24 & 255) / 255;
-    }
-    gl.bindBuffer(gl.ARRAY_BUFFER, newGeometry.indexBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, newGeometry.edgesIndexArray, gl.STATIC_DRAW);
-    newGeometry.count = this.network.indexedEdges.length / 2;
     this.edgesGeometry = newGeometry;
+    this.edgesGeometry.count = this.network.indexedEdges.length / 2;
+    this.edgesGeometry.edgesIndexArray = new Float32Array(this.network.indexedEdges.length * 4 / 2);
+    this._edgeIndicesUpdate = true;
   }
   _buildEdgesGeometry() {
     if (this.fastEdges) {
@@ -10510,6 +10722,28 @@ var Helios = class {
       this._buildAdvancedEdgesGeometry();
     }
     this.updateEdgesGeometry();
+  }
+  _updateEdgeIndices() {
+    if (this._edgeIndicesUpdate) {
+      let gl = this.gl;
+      for (let ID = 0; ID < this.network.indexedEdges.length / 2; ID++) {
+        let edgeID = this.network.index2Node.length + ID;
+        if (this._pickeableEdges.has(ID)) {
+          this.edgesGeometry.edgesIndexArray[4 * ID] = (edgeID + 1 >> 0 & 255) / 255;
+          this.edgesGeometry.edgesIndexArray[4 * ID + 1] = (edgeID + 1 >> 8 & 255) / 255;
+          this.edgesGeometry.edgesIndexArray[4 * ID + 2] = (edgeID + 1 >> 16 & 255) / 255;
+          this.edgesGeometry.edgesIndexArray[4 * ID + 3] = (edgeID + 1 >> 24 & 255) / 255;
+        } else {
+          this.edgesGeometry.edgesIndexArray[4 * ID] = 0;
+          this.edgesGeometry.edgesIndexArray[4 * ID + 1] = 0;
+          this.edgesGeometry.edgesIndexArray[4 * ID + 2] = 0;
+          this.edgesGeometry.edgesIndexArray[4 * ID + 3] = 0;
+        }
+      }
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.edgesGeometry.indexBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, this.edgesGeometry.edgesIndexArray, gl.DYNAMIC_DRAW);
+      this._edgeIndicesUpdate = false;
+    }
   }
   updateEdgesGeometry() {
     let gl = this.gl;
@@ -10531,6 +10765,7 @@ var Helios = class {
       this.network.updateEdgePositions();
       this.network.updateEdgeColors();
       this.network.updateEdgeSizes();
+      this._updateEdgeIndices();
       let edgePositions = this.network.positions;
       gl2.bindBuffer(gl2.ARRAY_BUFFER, this.edgesGeometry.verticesBuffer);
       gl2.bufferData(gl2.ARRAY_BUFFER, this.network.edgePositions, gl2.DYNAMIC_DRAW);
@@ -10546,6 +10781,7 @@ var Helios = class {
   }
   _setupCamera() {
     this.zoom = zoom().on("zoom", (event) => {
+      this.interacting = true;
       this._zoomFactor = event.transform.k;
       this.triggerHoverEvents(event);
       if (this.prevK === void 0) {
@@ -10570,8 +10806,10 @@ var Helios = class {
       if (this._use2D || event.sourceEvent?.shiftKey) {
         let perspectiveFactor = this.cameraDistance * this._zoomFactor;
         let aspectRatio = this.canvasElement.width / this.canvasElement.height;
-        this.panX = this.panX + dx / this._zoomFactor;
-        this.panY = this.panY - dy / this._zoomFactor;
+        if (this._centerNodes.length == 0) {
+          this.panX = this.panX + dx / this._zoomFactor;
+          this.panY = this.panY - dy / this._zoomFactor;
+        }
       } else {
         mat4.identity(newRotationMatrix);
         mat4.rotate(newRotationMatrix, newRotationMatrix, degToRad(dx / 2), [0, 1, 0]);
@@ -10581,8 +10819,6 @@ var Helios = class {
       this.update();
       this.render();
       (event2) => event2.preventDefault();
-    }).on("start", (event) => {
-      this.interacting = true;
     }).on("end", (event) => {
       this.interacting = false;
     });
@@ -10593,7 +10829,7 @@ var Helios = class {
       if (duration === void 0) {
         select(this.canvasElement).call(this.zoom.transform, identity$1.translate(0, 0).scale(zoomFactor));
       } else {
-        select(this.canvasElement).transition().duration(duration).call(this.zoom.transform, identity$1.translate(0, 0).scale(zoomFactor));
+        select(this.canvasElement).transition().ease(linear2).duration(duration).call(this.zoom.transform, identity$1.translate(0, 0).scale(zoomFactor));
       }
       return this;
     } else {
@@ -10617,8 +10853,9 @@ var Helios = class {
     this._redrawAll(this.pickingFramebuffer, true);
     this.onDrawCallback?.();
     this.triggerHoverEvents(null);
+    return this;
   }
-  update(immediate = false) {
+  update(immediate = false, nodes = true, edges = true) {
     this.scheduler.schedule({
       name: "9.0.update",
       callback: null,
@@ -10626,9 +10863,10 @@ var Helios = class {
       repeat: false,
       synchronized: true,
       immediateUpdates: immediate,
-      updateNodesGeometry: true,
-      updateEdgesGeometry: true
+      updateNodesGeometry: nodes,
+      updateEdgesGeometry: edges
     });
+    return this;
   }
   render(immediate = false) {
     this.scheduler.schedule({
@@ -10640,6 +10878,7 @@ var Helios = class {
       immediateUpdates: immediate,
       redraw: true
     });
+    return this;
   }
   _redrawPrepare(destination, isPicking, viewport) {
     let gl = this.gl;
@@ -10681,7 +10920,7 @@ var Helios = class {
     if (!isPicking) {
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-      if (this.shadedNodes) {
+      if (this.useShadedNodes) {
         currentShaderProgram = this.nodesShaderProgram;
       } else {
         currentShaderProgram = this.nodesFastShaderProgram;
@@ -10705,7 +10944,12 @@ var Helios = class {
     }
     gl.uniformMatrix4fv(currentShaderProgram.uniforms.projectionMatrix, false, this.projectionMatrix);
     gl.uniformMatrix4fv(currentShaderProgram.uniforms.viewMatrix, false, this.viewMatrix);
-    gl.uniform1f(currentShaderProgram.uniforms.globalOpacity, this._nodesGlobalOpacity);
+    gl.uniform1f(currentShaderProgram.uniforms.globalOpacityScale, this._nodesGlobalOpacityScale);
+    gl.uniform1f(currentShaderProgram.uniforms.globalOpacityBase, this._nodesGlobalOpacityBase);
+    gl.uniform1f(currentShaderProgram.uniforms.globalSizeScale, this._nodesGlobalSizeScale);
+    gl.uniform1f(currentShaderProgram.uniforms.globalSizeBase, this._nodesGlobalSizeBase);
+    gl.uniform1f(currentShaderProgram.uniforms.globalOutlineWidthScale, this._nodesGlobalOutlineWidthScale);
+    gl.uniform1f(currentShaderProgram.uniforms.globalOutlineWidthBase, this._nodesGlobalOutlineWidthBase);
     let normalMatrix = mat3.create();
     mat3.normalFromMat4(normalMatrix, this.viewMatrix);
     gl.uniformMatrix3fv(currentShaderProgram.uniforms.normalMatrix, false, normalMatrix);
@@ -10787,7 +11031,8 @@ var Helios = class {
       ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.color, 0);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.fastEdgesGeometry.indexObject);
       gl.uniformMatrix4fv(currentShaderProgram.uniforms.projectionViewMatrix, false, this.projectionViewMatrix);
-      gl.uniform1f(currentShaderProgram.uniforms.globalOpacity, this._edgesGlobalOpacity);
+      gl.uniform1f(currentShaderProgram.uniforms.globalOpacityScale, this._edgesGlobalOpacityScale);
+      gl.uniform1f(currentShaderProgram.uniforms.globalOpacityBase, this._edgesGlobalOpacityBase);
       gl.drawElements(gl.LINES, this.fastEdgesGeometry.numIndices, this.fastEdgesGeometry.indexType, 0);
       currentShaderProgram.attributes.disable("vertex");
       currentShaderProgram.attributes.disable("color");
@@ -10828,8 +11073,12 @@ var Helios = class {
       ext.vertexAttribDivisorANGLE(currentShaderProgram.attributes.encodedIndex, 1);
       gl.uniformMatrix4fv(currentShaderProgram.uniforms.projectionMatrix, false, this.projectionMatrix);
       gl.uniformMatrix4fv(currentShaderProgram.uniforms.viewMatrix, false, this.viewMatrix);
-      gl.uniform1f(currentShaderProgram.uniforms.globalOpacity, this._edgesGlobalOpacity);
-      gl.uniform1f(currentShaderProgram.uniforms.globalWidthScale, this._globalWidthScale);
+      gl.uniform1f(currentShaderProgram.uniforms.globalOpacityScale, this._edgesGlobalOpacityScale);
+      gl.uniform1f(currentShaderProgram.uniforms.globalOpacityBase, this._edgesGlobalOpacityBase);
+      gl.uniform1f(currentShaderProgram.uniforms.globalWidthScale, this._edgesGlobalWidthScale);
+      gl.uniform1f(currentShaderProgram.uniforms.globalWidthBase, this._edgesGlobalWidthBase);
+      gl.uniform1f(currentShaderProgram.uniforms.globalSizeScale, this._nodesGlobalSizeScale);
+      gl.uniform1f(currentShaderProgram.uniforms.globalSizeBase, this._nodesGlobalSizeBase);
       ext.drawArraysInstancedANGLE(gl.TRIANGLE_STRIP, 0, 4, this.edgesGeometry.count);
       currentShaderProgram.attributes.disable("fromVertex");
       currentShaderProgram.attributes.disable("toVertex");
@@ -10865,32 +11114,34 @@ var Helios = class {
     this.targetTranslatePosition[0] = 0;
     this.targetTranslatePosition[1] = 0;
     this.targetTranslatePosition[2] = 0;
-    if (this.centerNodes && this.centerNodes.length > 0) {
-      for (let i = 0; i < this.centerNodes.length; i++) {
-        let node = this.centerNodes[i];
+    if (this._centerNodes && this._centerNodes.length > 0) {
+      for (let i = 0; i < this._centerNodes.length; i++) {
+        let node = this._centerNodes[i];
         let pos = node.position;
         this.targetTranslatePosition[0] -= pos[0];
         this.targetTranslatePosition[1] -= pos[1];
         this.targetTranslatePosition[2] -= pos[2];
       }
-      let lengthSize = this.centerNodes.length;
+      let lengthSize = this._centerNodes.length;
       this.targetTranslatePosition[0] /= lengthSize;
       this.targetTranslatePosition[1] /= lengthSize;
       this.targetTranslatePosition[2] /= lengthSize;
     }
   }
   centerOnNodes(nodes, duration) {
-    this.centerNodes = [];
+    this._centerNodes = [];
     for (let i = 0; i < nodes.length; i++) {
       let node = nodes[i];
-      if (node.id === void 0) {
+      if (node.ID === void 0) {
         node = this.network.nodes[node];
       }
-      this.centerNodes.push(node);
+      this._centerNodes.push(node);
     }
     this.lastTranslatePosition[0] = this.translatePosition[0];
     this.lastTranslatePosition[1] = this.translatePosition[1];
     this.lastTranslatePosition[2] = this.translatePosition[2];
+    this.lastPanX = this.panX;
+    this.lastPanY = this.panY;
     if (duration === void 0 || duration <= 0) {
       this.translateDuration = 0;
       this.translateStartTime = null;
@@ -10899,12 +11150,20 @@ var Helios = class {
       this.translateStartTime = performance.now();
     }
     this.scheduleCameraInterpolation();
+    return this;
   }
-  updateCameraInterpolation() {
+  centeredNodes() {
+    return this._centerNodes;
+  }
+  updateCameraInterpolation(ignoreInstantaneousUpdate = false) {
     if (this.translateDuration == 0) {
-      this.translatePosition[0] = this.targetTranslatePosition[0];
-      this.translatePosition[1] = this.targetTranslatePosition[1];
-      this.translatePosition[2] = this.targetTranslatePosition[2];
+      if (!ignoreInstantaneousUpdate) {
+        this.translatePosition[0] = this.targetTranslatePosition[0];
+        this.translatePosition[1] = this.targetTranslatePosition[1];
+        this.translatePosition[2] = this.targetTranslatePosition[2];
+        this.panX = 0;
+        this.panY = 0;
+      }
       return false;
     } else {
       let elapsedTime = performance.now() - this.translateStartTime;
@@ -10918,6 +11177,10 @@ var Helios = class {
       this.translatePosition[0] += alpha * this.targetTranslatePosition[0];
       this.translatePosition[1] += alpha * this.targetTranslatePosition[1];
       this.translatePosition[2] += alpha * this.targetTranslatePosition[2];
+      this.panX = (1 - alpha) * this.lastPanX;
+      this.panY = (1 - alpha) * this.lastPanY;
+      this.panX += alpha * this.targetPanX;
+      this.panY += alpha * this.targetPanY;
       if (alpha >= 1) {
         return false;
       } else {
@@ -11040,8 +11303,9 @@ var Helios = class {
       if (typeof colorInput === "undefined") {
         return this.network.colors;
       } else if (typeof colorInput === "function") {
-        for (const [nodeID2, node] of Object.entries(this.network.nodes)) {
-          let nodeIndex = this.network.ID2index[nodeID2];
+        let allNodes2 = this.network.index2Node;
+        for (let nodeIndex = 0; nodeIndex < allNodes2.length; nodeIndex++) {
+          let node = allNodes2[nodeIndex];
           let aColor = colorInput(node, nodeIndex, this.network);
           this.network.colors[nodeIndex * 4 + 0] = aColor[0];
           this.network.colors[nodeIndex * 4 + 1] = aColor[1];
@@ -11053,8 +11317,8 @@ var Helios = class {
       } else if (typeof colorInput === "number") {
         return this.network.colors[this.network.ID2index[colorInput]];
       } else {
-        for (const [nodeID2, node] of Object.entries(this.network.nodes)) {
-          let nodeIndex = this.network.ID2index[nodeID2];
+        let allNodes2 = this.network.index2Node;
+        for (let nodeIndex = 0; nodeIndex < allNodes2.length; nodeIndex++) {
           this.network.colors[nodeIndex * 4 + 0] = colorInput[0];
           this.network.colors[nodeIndex * 4 + 1] = colorInput[1];
           this.network.colors[nodeIndex * 4 + 2] = colorInput[2];
@@ -11090,13 +11354,16 @@ var Helios = class {
       if (typeof sizeInput === "undefined") {
         return this.network.sizes;
       } else if (typeof sizeInput === "function") {
-        for (const [nodeID2, node] of Object.entries(this.network.nodes)) {
+        let allNodes2 = this.network.index2Node;
+        for (let nodeIndex = 0; nodeIndex < allNodes2.length; nodeIndex++) {
+          let node = allNodes2[nodeIndex];
           let aSize = sizeInput(node, this.network);
-          this.network.sizes[node.index] = aSize;
+          this.network.sizes[nodeIndex] = aSize;
         }
       } else {
-        for (const [nodeID2, node] of Object.entries(this.network.nodes)) {
-          this.network.sizes[node.index] = sizeInput;
+        let allNodes2 = this.network.index2Node;
+        for (let nodeIndex = 0; nodeIndex < allNodes2.length; nodeIndex++) {
+          this.network.sizes[nodeIndex] = sizeInput;
         }
       }
     } else {
@@ -11116,8 +11383,9 @@ var Helios = class {
       if (typeof colorInput === "undefined") {
         return this.network.outlineColors;
       } else if (typeof colorInput === "function") {
-        for (const [nodeID2, node] of Object.entries(this.network.nodes)) {
-          let nodeIndex = this.network.ID2index[nodeID2];
+        let allNodes2 = this.network.index2Node;
+        for (let nodeIndex = 0; nodeIndex < allNodes2.length; nodeIndex++) {
+          let node = allNodes2[nodeIndex];
           let aColor = colorInput(node, nodeIndex, this.network);
           this.network.outlineColors[nodeIndex * 4 + 0] = aColor[0];
           this.network.outlineColors[nodeIndex * 4 + 1] = aColor[1];
@@ -11129,8 +11397,8 @@ var Helios = class {
       } else if (typeof colorInput === "number") {
         return this.network.outlineColors[this.network.ID2index[colorInput]];
       } else {
-        for (const [nodeID2, node] of Object.entries(this.network.nodes)) {
-          let nodeIndex = this.network.ID2index[nodeID2];
+        let allNodes2 = this.network.index2Node;
+        for (let nodeIndex = 0; nodeIndex < allNodes2.length; nodeIndex++) {
           this.network.outlineColors[nodeIndex * 4 + 0] = colorInput[0];
           this.network.outlineColors[nodeIndex * 4 + 1] = colorInput[1];
           this.network.outlineColors[nodeIndex * 4 + 2] = colorInput[2];
@@ -11166,13 +11434,16 @@ var Helios = class {
       if (typeof widthInput === "undefined") {
         return this.network.outlineWidths;
       } else if (typeof widthInput === "function") {
-        for (const [nodeID2, node] of Object.entries(this.network.nodes)) {
+        let allNodes2 = this.network.index2Node;
+        for (let nodeIndex = 0; nodeIndex < allNodes2.length; nodeIndex++) {
+          let node = allNodes2[nodeIndex];
           let aWidth = widthInput(node, this.network);
           this.network.outlineWidths[node.index] = aWidth;
         }
       } else {
-        for (const [nodeID2, node] of Object.entries(this.network.nodes)) {
-          this.network.outlineWidths[node.index] = widthInput;
+        let allNodes2 = this.network.index2Node;
+        for (let nodeIndex = 0; nodeIndex < allNodes2.length; nodeIndex++) {
+          this.network.outlineWidths[nodeIndex] = widthInput;
         }
       }
     } else {
@@ -11199,29 +11470,102 @@ var Helios = class {
     const ID = data[0] + (data[1] << 8) + (data[2] << 16) + (data[3] << 24) - 1;
     return ID;
   }
-  edgesOpacity(opacity) {
+  edgesGlobalOpacityScale(opacity) {
     if (typeof opacity === "undefined") {
-      return this._edgesGlobalOpacity;
+      return this._edgesGlobalOpacityScale;
     } else {
-      this._edgesGlobalOpacity = opacity;
+      this._edgesGlobalOpacityScale = opacity;
       return this;
     }
   }
-  edgesWidthScale(scale) {
-    if (typeof scale === "undefined") {
-      return this._globalWidthScale;
+  edgesGlobalOpacityBase(opacity) {
+    if (typeof opacity === "undefined") {
+      return this._edgesGlobalOpacityBase;
     } else {
-      this._globalWidthScale = scale;
+      this._edgesGlobalOpacityBase = opacity;
       return this;
     }
   }
-  nodeOpacity(opacity) {
-    if (typeof opacity === "undefined") {
-      return this._nodesGlobalOpacity;
+  edgesGlobalWidthScale(width) {
+    if (typeof width === "undefined") {
+      return this._edgesGlobalWidthScale;
     } else {
-      this._nodesGlobalOpacity = opacity;
+      this._edgesGlobalWidthScale = width;
       return this;
     }
+  }
+  edgesGlobalWidthBase(width) {
+    if (typeof width === "undefined") {
+      return this._edgesGlobalWidthBase;
+    } else {
+      this._edgesGlobalWidthBase = width;
+      return this;
+    }
+  }
+  nodesGlobalOpacityScale(opacity) {
+    if (typeof opacity === "undefined") {
+      return this._nodesGlobalOpacityScale;
+    } else {
+      this._nodesGlobalOpacityScale = opacity;
+      return this;
+    }
+  }
+  nodesGlobalOpacityBase(opacity) {
+    if (typeof opacity === "undefined") {
+      return this._nodesGlobalOpacityBase;
+    } else {
+      this._nodesGlobalOpacityBase = opacity;
+      return this;
+    }
+  }
+  nodesGlobalSizeScale(size) {
+    if (typeof size === "undefined") {
+      return this._nodesGlobalSizeScale;
+    } else {
+      this._nodesGlobalSizeScale = size;
+      return this;
+    }
+  }
+  nodesGlobalSizeBase(size) {
+    if (typeof size === "undefined") {
+      return this._nodesGlobalSizeBase;
+    } else {
+      this._nodesGlobalSizeBase = size;
+      return this;
+    }
+  }
+  nodesGlobalOutlineWidthScale(width) {
+    if (typeof width === "undefined") {
+      return this._nodesGlobalOutlineWidthScale;
+    } else {
+      this._nodesGlobalOutlineWidthScale = width;
+      return this;
+    }
+  }
+  nodesGlobalOutlineWidthBase(width) {
+    if (typeof width === "undefined") {
+      return this._nodesGlobalOutlineWidthBase;
+    } else {
+      this._nodesGlobalOutlineWidthBase = width;
+      return this;
+    }
+  }
+  nodeOpacity(colorInput) {
+    if (typeof colorInput === "undefined") {
+      return this.network.colors.map((color2) => color2[3]);
+    } else if (typeof colorInput === "function") {
+      let allNodes2 = this.network.index2Node;
+      for (let nodeIndex = 0; nodeIndex < allNodes2.length; nodeIndex++) {
+        let node = allNodes2[nodeIndex];
+        let anOpacity = colorInput(node, nodeIndex, this.network);
+        this.network.colors[nodeIndex * 4 + 3] = anOpacity;
+      }
+    } else {
+      for (let nodeIndex = 0; nodeIndex < allNodes.length; nodeIndex++) {
+        this.network.colors[nodeIndex * 4 + 3] = colorInput;
+      }
+    }
+    return this;
   }
   additiveBlending(enableAdditiveBlending) {
     if (typeof enableAdditiveBlending === "undefined") {
@@ -11231,8 +11575,28 @@ var Helios = class {
       return this;
     }
   }
+  shadedNodes(enableShadedNodes) {
+    if (typeof enableShadedNodes === "undefined") {
+      return this.useShadedNodes;
+    } else {
+      this.useShadedNodes = enableShadedNodes;
+      return this;
+    }
+  }
+  pickeableEdges(pickables) {
+    if (typeof pickables === "undefined") {
+      return this._pickeableEdges;
+    } else {
+      if (pickables == "all") {
+      } else {
+        this._pickeableEdges = new Set(pickables);
+        this._edgeIndicesUpdate = true;
+        this.update();
+      }
+      return this;
+    }
+  }
   cleanup(keepGLContext) {
-    console.log("Cleanup started");
     this.isReady = false;
     this.layoutWorker.cleanup();
     this.scheduler.stop();
@@ -11797,7 +12161,7 @@ function formatDecimalParts(x, p) {
     +x.slice(i + 1)
   ];
 }
-function exponent(x) {
+function exponent2(x) {
   return x = formatDecimalParts(Math.abs(x)), x ? x[1] : NaN;
 }
 function formatGroup(grouping, thousands) {
@@ -11882,15 +12246,15 @@ function formatPrefixAuto(x, p) {
   var d = formatDecimalParts(x, p);
   if (!d)
     return x + "";
-  var coefficient = d[0], exponent2 = d[1], i = exponent2 - (prefixExponent = Math.max(-8, Math.min(8, Math.floor(exponent2 / 3))) * 3) + 1, n = coefficient.length;
+  var coefficient = d[0], exponent3 = d[1], i = exponent3 - (prefixExponent = Math.max(-8, Math.min(8, Math.floor(exponent3 / 3))) * 3) + 1, n = coefficient.length;
   return i === n ? coefficient : i > n ? coefficient + new Array(i - n + 1).join("0") : i > 0 ? coefficient.slice(0, i) + "." + coefficient.slice(i) : "0." + new Array(1 - i).join("0") + formatDecimalParts(x, Math.max(0, p + i - 1))[0];
 }
 function formatRounded(x, p) {
   var d = formatDecimalParts(x, p);
   if (!d)
     return x + "";
-  var coefficient = d[0], exponent2 = d[1];
-  return exponent2 < 0 ? "0." + new Array(-exponent2).join("0") + coefficient : coefficient.length > exponent2 + 1 ? coefficient.slice(0, exponent2 + 1) + "." + coefficient.slice(exponent2 + 1) : coefficient + new Array(exponent2 - coefficient.length + 2).join("0");
+  var coefficient = d[0], exponent3 = d[1];
+  return exponent3 < 0 ? "0." + new Array(-exponent3).join("0") + coefficient : coefficient.length > exponent3 + 1 ? coefficient.slice(0, exponent3 + 1) + "." + coefficient.slice(exponent3 + 1) : coefficient + new Array(exponent3 - coefficient.length + 2).join("0");
 }
 var formatTypes = {
   "%": (x, p) => (x * 100).toFixed(p),
@@ -11979,7 +12343,7 @@ function formatLocale(locale2) {
     return format2;
   }
   function formatPrefix2(specifier, value) {
-    var f = newFormat((specifier = formatSpecifier(specifier), specifier.type = "f", specifier)), e = Math.max(-8, Math.min(8, Math.floor(exponent(value) / 3))) * 3, k = Math.pow(10, -e), prefix = prefixes[8 + e / 3];
+    var f = newFormat((specifier = formatSpecifier(specifier), specifier.type = "f", specifier)), e = Math.max(-8, Math.min(8, Math.floor(exponent2(value) / 3))) * 3, k = Math.pow(10, -e), prefix = prefixes[8 + e / 3];
     return function(value2) {
       return f(k * value2) + prefix;
     };
@@ -12004,14 +12368,14 @@ function defaultLocale(definition) {
   return locale;
 }
 function precisionFixed(step) {
-  return Math.max(0, -exponent(Math.abs(step)));
+  return Math.max(0, -exponent2(Math.abs(step)));
 }
 function precisionPrefix(step, value) {
-  return Math.max(0, Math.max(-8, Math.min(8, Math.floor(exponent(value) / 3))) * 3 - exponent(Math.abs(step)));
+  return Math.max(0, Math.max(-8, Math.min(8, Math.floor(exponent2(value) / 3))) * 3 - exponent2(Math.abs(step)));
 }
 function precisionRound(step, max2) {
   step = Math.abs(step), max2 = Math.abs(max2) - step;
-  return Math.max(0, exponent(max2) - exponent(step)) + 1;
+  return Math.max(0, exponent2(max2) - exponent2(step)) + 1;
 }
 function tickFormat(start2, stop, count, specifier) {
   var step = tickStep(start2, stop, count), precision;
@@ -12159,6 +12523,7 @@ var allColors = {};
 Object.assign(allColors, d3_scale_chromatic_exports);
 Object.assign(allColors, extraColors_exports);
 console.log(allColors);
+var ignoredProperties = new Set(["ID", "edges", "neighbors"]);
 function sortByCount(anArray) {
   let map2 = anArray.reduce((p, c2) => {
     p.set(c2, (p.get(c2) || 0) + 1);
@@ -12166,6 +12531,25 @@ function sortByCount(anArray) {
   }, new Map());
   let newArray = Array.from(map2.keys()).sort((a, b) => map2.get(b) - map2.get(a));
   return newArray;
+}
+function downloadText(filename, text) {
+  var element = document.createElement("a");
+  element.setAttribute("href", "data:text/plain;charset=utf-8," + encodeURIComponent(text));
+  element.setAttribute("download", filename);
+  element.style.display = "none";
+  document.body.appendChild(element);
+  element.click();
+  document.body.removeChild(element);
+}
+function wrapText() {
+  let width = 300;
+  let padding = 10;
+  let self2 = select(this), textLength = self2.node().getComputedTextLength(), text = self2.text();
+  while (textLength > width - 2 * padding && text.length > 0) {
+    text = text.slice(0, -1);
+    self2.text(text + "...");
+    textLength = self2.node().getComputedTextLength();
+  }
 }
 var queryString = window.location.search;
 var urlParams = new URLSearchParams(queryString);
@@ -12206,19 +12590,43 @@ if (urlParams.has("additive") && darkBackground) {
 var visualizeNetwork = (networkName2) => {
   xnet_exports.loadXNETFile("networks/" + networkName2 + ".xnet").then(async (network) => {
     let colorProperty = "index";
+    let defaultNodeScale = 1;
+    let defaultNodeOpacity = 1;
+    let defaultOutlineColor = backgroundColor;
+    let defaultOutlineWidthFactor = 0.25;
+    if (shaded) {
+      defaultOutlineWidthFactor = 0;
+    }
+    let defaultZoomLevel = 0.75;
+    let defaultZoomLevelBigNetworks = 0.35;
+    let minCenteredNodeZoomLevel = 4;
+    let currentGlobalNodeSizeScale = 1;
+    let currentGlobalEdgeOpacityScale = 1;
+    let highlightNodeScale = 2;
+    let highlightNodeOpacityScale = 1e10;
+    let selectedNodeScale = 3;
+    let selectedNodeOpacityScale = 1e10;
+    let selectedNeighborNodeSizeScale = 2;
+    let selectedNeighborNodeOpacityScale = 1.5;
+    let selectedOutlineColor = [0.9, 0.9, 0];
+    let nonSelectedNodeOpacityScale = 0.95;
+    let nonSelectedNodeSizeScale = 0.5;
+    let nonSelectedDarkerColorFactor = 1.5;
+    let nonSelectedBrighterColorFactor = 0.5;
+    let onHighlightChangeColorsEnabled = false;
+    let onSelectionChangeColorsEnabled = true;
     let sequencialColormap = "interpolateInferno";
     let categoricalColormap = "schemeCategory10";
     let useCategoricalColormap = false;
-    let defaultOutline = 0.25;
-    console.log(network);
+    let tooltipElement = document.getElementById("tooltip");
     let nodeCount = network.nodesCount;
     let bigNetwork = nodeCount > 1e5;
+    console.log(network);
     let nodes = {};
     let edges = [];
     for (let index = 0; index < nodeCount; index++) {
       nodes["" + index] = {
-        ID: "" + index,
-        rand: "" + Math.round(Math.random() * 10)
+        ID: "" + index
       };
       if (network.labels) {
         nodes["" + index].label = network.labels[index];
@@ -12236,197 +12644,266 @@ var visualizeNetwork = (networkName2) => {
         target: "" + network.edges[index][1]
       });
     }
-    let tooltipElement = document.getElementById("tooltip");
     if (autoStartLayout === null) {
       autoStartLayout = !bigNetwork;
     }
-    let colorScale = ordinal(allColors.schemeCategory10);
     let helios = new Helios({
       elementID: "netviz",
       nodes,
       edges,
       use2D,
-      shadedNodes: shaded,
-      fastEdges: !advancedEdges,
+      fastEdges: !advancedEdges && bigNetwork,
       autoStartLayout
-    }).onNodeHoverStart((node, event) => {
-      if (event) {
-        tooltipElement.style.left = event.pageX + "px";
-        tooltipElement.style.top = event.pageY + "px";
+    });
+    let updateNodeSelectionStyle = (node) => {
+      if (typeof node.highlighted === "undefined") {
+        node.highlighted = false;
       }
-      if (node) {
-        tooltipElement.style.display = "block";
-        if (darkBackground) {
-          tooltipElement.style.color = rgb(node.color[0] * 255, node.color[1] * 255, node.color[2] * 255).brighter(2).formatRgb();
-          tooltipElement.style["text-shadow"] = "-1px -1px 0 black, 1px -1px 0 black, -1px 1px 0 black, 1px 1px 0 black";
-        } else {
-          tooltipElement.style.color = rgb(node.color[0] * 255, node.color[1] * 255, node.color[2] * 255).darker(2).formatRgb();
-          tooltipElement.style["text-shadow"] = "-1px -1px 0 white, 1px -1px 0 white, -1px 1px 0 white, 1px 1px 0 white";
-        }
-        if (node.label) {
-          tooltipElement.textContent = node.label;
-        } else if (node.title) {
-          tooltipElement.textContent = node.title;
-        } else {
-          tooltipElement.textContent = node.ID;
-        }
-        node.originalSize = node.size;
-        node.size = 2 * node.originalSize;
-        node.outlineWidth = 0.25 * node.originalSize;
-        helios.update();
-        helios.render();
+      if (typeof node.selected === "undefined") {
+        node.selected = false;
+      }
+      if (typeof node.selectedNeighbor === "undefined") {
+        node.selectedNeighbor = false;
+      }
+      let nodeSize = defaultNodeScale;
+      let nodeOutlineWidth = defaultOutlineWidthFactor;
+      let nodeOpacity = defaultNodeOpacity;
+      if (node.selected) {
+        nodeSize *= selectedNodeScale;
+        nodeOpacity *= selectedNodeOpacityScale;
+        node.outlineColor = selectedOutlineColor;
+        nodeOutlineWidth *= selectedNodeScale;
+      } else if (node.selectedNeighbor) {
+        nodeSize *= selectedNeighborNodeSizeScale;
+        nodeOpacity *= selectedNeighborNodeOpacityScale;
+        node.outlineColor = defaultOutlineColor;
+        nodeOutlineWidth *= selectedNeighborNodeSizeScale;
       } else {
-        tooltipElement.style.display = "none";
+        node.outlineColor = defaultOutlineColor;
       }
-    }).onNodeHoverMove((node, event) => {
-      if (event) {
-        tooltipElement.style.left = event.pageX + "px";
-        tooltipElement.style.top = event.pageY + "px";
+      if (node.highlighted) {
+        nodeSize *= highlightNodeScale;
+        nodeOpacity *= highlightNodeOpacityScale;
+        nodeOutlineWidth *= highlightNodeScale;
       }
-      if (node) {
-        if (node.label) {
-          tooltipElement.textContent = node.label;
-        } else if (node.title) {
-          tooltipElement.textContent = node.title;
+      node.size = nodeSize;
+      node.opacity = nodeOpacity;
+      node.outlineWidth = nodeOutlineWidth;
+    };
+    let nodesHighlight = (nodes2, shallHighlight, shallUpdate = true) => {
+      nodes2.forEach((node) => {
+        node.highlighted = shallHighlight;
+        updateNodeSelectionStyle(node);
+      });
+      if (onHighlightChangeColorsEnabled) {
+        if (nodes2?.length && shallHighlight) {
+          updateNodeSelectionOrHighlightedColors(true);
         } else {
-          tooltipElement.textContent = node.ID;
+          updateNodeSelectionOrHighlightedColors();
         }
-      } else {
-        tooltipElement.style.display = "none";
       }
-    }).onNodeHoverEnd((node, event) => {
-      if (event) {
-        tooltipElement.style.left = event.pageX + "px";
-        tooltipElement.style.top = event.pageY + "px";
-      }
-      if (node) {
-        node.size = 1 * node.originalSize;
-        node.outlineWidth = defaultOutline * node.originalSize;
+      if (shallUpdate) {
         helios.update();
         helios.render();
       }
-      tooltipElement.style.display = "none";
-    }).onNodeClick((node, event) => {
+    };
+    let nodesSelect = (nodes2, shallSelect, shallUpdate = true) => {
+      nodes2.forEach((node) => {
+        node.selected = shallSelect;
+        node.selectedNeighbor = shallSelect;
+        node.neighbors.forEach((neighNode) => {
+          neighNode.selectedNeighbor = shallSelect;
+          updateNodeSelectionStyle(neighNode);
+        });
+        updateNodeSelectionStyle(node);
+      });
+      if (nodes2?.length && shallSelect) {
+        updateNodeSelectionGlobalStyle(true);
+        if (onSelectionChangeColorsEnabled) {
+          updateNodeSelectionOrHighlightedColors(true);
+        }
+      } else {
+        updateNodeSelectionGlobalStyle();
+        if (onSelectionChangeColorsEnabled) {
+          updateNodeSelectionOrHighlightedColors();
+        }
+      }
+      if (shallUpdate) {
+        helios.update();
+        helios.render();
+      }
+    };
+    let centerOnNodes = (nodes2) => {
+      if (!nodes2 || nodes2.length > 0) {
+        if (helios.zoomFactor() < minCenteredNodeZoomLevel) {
+          helios.zoomFactor(minCenteredNodeZoomLevel, 500);
+        }
+        nodesSelect(helios.centeredNodes(), false, false);
+        nodesSelect(nodes2, true, false);
+        helios.centerOnNodes(nodes2, 500);
+        nodes2.forEach((node) => {
+          helios.pickeableEdges(node.edges);
+        });
+        helios.update();
+        helios.render();
+      } else {
+        nodesSelect(helios.centeredNodes(), false, false);
+        helios.zoomFactor(defaultZoomLevel, 500);
+        helios.centerOnNodes([], 500);
+        helios.pickeableEdges([]);
+        helios.update();
+        helios.render();
+      }
+    };
+    let stylizeTooltip = (label, color2, x, y, isnew) => {
+      if (label) {
+        tooltipElement.style.left = x + "px";
+        tooltipElement.style.top = y + "px";
+        if (isnew) {
+          tooltipElement.style.display = "block";
+          if (darkBackground) {
+            tooltipElement.style.color = rgb(color2[0] * 255, color2[1] * 255, color2[2] * 255).brighter(2).formatRgb();
+            tooltipElement.style["text-shadow"] = "-1px -1px 0 black, 1px -1px 0 black, -1px 1px 0 black, 1px 1px 0 black";
+          } else {
+            tooltipElement.style.color = rgb(color2[0] * 255, color2[1] * 255, color2[2] * 255).darker(2).formatRgb();
+            tooltipElement.style["text-shadow"] = "-1px -1px 0 white, 1px -1px 0 white, -1px 1px 0 white, 1px 1px 0 white";
+          }
+        }
+        tooltipElement.textContent = label;
+      } else {
+        tooltipElement.style.display = "none";
+      }
+    };
+    let showTooltipForNode = (node, x, y, isNew) => {
+      if (node) {
+        let label = node.label ?? node.title ?? node.ID;
+        stylizeTooltip(label, node.color, x, y, isNew);
+      } else {
+        stylizeTooltip(null);
+      }
+    };
+    let showTooltipForEdge = (edge, x, y, isNew) => {
+      if (edge) {
+        let fromLabel = edge.source.label ?? edge.source.title ?? edge.source.ID;
+        let toLabel = edge.target.label ?? edge.target.title ?? edge.target.ID;
+        let label = fromLabel + " - " + toLabel;
+        stylizeTooltip(label, edge.source.color, x, y, isNew);
+      } else {
+        stylizeTooltip(null);
+      }
+    };
+    let updateNodeSelectionGlobalStyle = (hasSelection) => {
+      if (typeof hasSelection === "undefined") {
+        hasSelection = helios.network.index2Node.some((node) => node.selected);
+      }
+      if (hasSelection) {
+        helios.nodesGlobalOpacityScale(nonSelectedNodeOpacityScale);
+        helios.nodesGlobalSizeScale(nonSelectedNodeSizeScale * currentGlobalNodeSizeScale);
+        helios.nodesGlobalOutlineWidthScale(nonSelectedNodeSizeScale * currentGlobalNodeSizeScale);
+        helios.edgesGlobalOpacityScale(currentGlobalEdgeOpacityScale * nonSelectedNodeOpacityScale);
+      } else {
+        helios.nodesGlobalOpacityScale(defaultNodeOpacity);
+        helios.nodesGlobalSizeScale(currentGlobalNodeSizeScale);
+        helios.nodesGlobalOutlineWidthScale(currentGlobalNodeSizeScale);
+        helios.edgesGlobalOpacityScale(currentGlobalEdgeOpacityScale);
+      }
+    };
+    let updateNodeSelectionOrHighlightedColors = (hasSelection) => {
+      if (typeof hasSelection === "undefined") {
+        hasSelection = helios.network.index2Node.some((node) => node.selected || node.highlighted || node.selectedNeighbor);
+      }
+      if (hasSelection) {
+        helios.nodeColor((node) => {
+          if (node.selected || node.highlighted || node.selectedNeighbor) {
+            return node.originalColor;
+          } else {
+            return darkBackground ? node.darkerColor : node.brighterColor;
+          }
+        });
+      } else {
+        helios.nodeColor((node) => {
+          return node.originalColor;
+        });
+      }
+    };
+    let logK = Math.log10(helios.network.indexedEdges.length / helios.network.index2Node.length);
+    let logN = Math.log10(helios.network.index2Node.length);
+    let logDensity = Math.log10(2 * helios.network.indexedEdges.length / helios.network.index2Node.length / (helios.network.index2Node.length - 1));
+    let estimatedZoom = Math.pow(10, 1.2601 + 0.2488 * logK + -0.3631 * logN + 0 * logDensity);
+    let estimatedOpacity = Math.pow(10, 1.9968 + -0.6822 * logK + -0.4954 * logN + 0 * logDensity);
+    if (!bigNetwork) {
+      estimatedZoom = defaultZoomLevel;
+    } else {
+      estimatedZoom = defaultZoomLevelBigNetworks;
+    }
+    let logZoom = Math.log10(estimatedZoom);
+    let estimatedSize = Math.pow(10, 0.8744 + 0.1766 * logK + -0.2989 * logN + -0.9187 * logZoom + 0 * logDensity);
+    currentGlobalNodeSizeScale = estimatedSize;
+    currentGlobalEdgeOpacityScale = estimatedOpacity;
+    defaultZoomLevel = estimatedZoom;
+    helios.onNodeHoverStart((node, event) => {
+      showTooltipForNode(node, event?.clientX, event?.clientY, true);
+      nodesHighlight([node], true);
+    });
+    helios.onNodeHoverMove((node, event) => {
+      showTooltipForNode(node, event?.clientX, event?.clientY, false);
+    });
+    helios.onNodeHoverEnd((node, event) => {
+      if (node) {
+        nodesHighlight([node], false);
+      }
+      showTooltipForNode(null);
+    });
+    helios.onNodeClick((node, event) => {
       if (node) {
         console.log(`Clicked: ${node.ID}`);
       } else {
         console.log(`Clicked on background`);
       }
-    }).onNodeDoubleClick((node, event) => {
+    });
+    helios.onNodeDoubleClick((node, event) => {
       if (node) {
         console.log(`Double Clicked: ${node.ID}`);
         if ("mag id" in node) {
           window.open(`https://explore.openalex.org/works/W${node["mag id"]}`, "helios_mag");
         } else {
-          helios.centerOnNodes([node.ID], 500);
+          centerOnNodes([node]);
         }
       } else {
         console.log(`Double clicked on background`);
-        helios.centerOnNodes([], 500);
+        centerOnNodes([]);
       }
-    }).onEdgeHoverStart((edge, event) => {
-      if (event) {
-        tooltipElement.style.left = event.pageX + "px";
-        tooltipElement.style.top = event.pageY + "px";
-      }
+    });
+    helios.onEdgeHoverStart((edge, event) => {
+      showTooltipForEdge(edge, event?.clientX, event?.clientY, true);
       if (edge) {
-        tooltipElement.style.display = "block";
-        if (darkBackground) {
-          tooltipElement.style.color = rgb(edge.source.color[0] * 255, edge.source.color[1] * 255, edge.source.color[2] * 255).brighter(2).formatRgb();
-          tooltipElement.style["text-shadow"] = "-1px -1px 0 black, 1px -1px 0 black, -1px 1px 0 black, 1px 1px 0 black";
-        } else {
-          tooltipElement.style.color = rgb(edge.source.color[0] * 255, edge.source.color[1] * 255, edge.source.color[2] * 255).darker(2).formatRgb();
-          tooltipElement.style["text-shadow"] = "-1px -1px 0 white, 1px -1px 0 white, -1px 1px 0 white, 1px 1px 0 white";
-        }
-        let fromLabel = "";
-        let toLabel = "";
-        if (edge.source.label) {
-          fromLabel = edge.source.label;
-        } else if (edge.source.title) {
-          fromLabel = edge.source.title;
-        } else {
-          fromLabel = edge.source.ID;
-        }
-        if (edge.target.label) {
-          toLabel = edge.target.label;
-        } else if (edge.target.title) {
-          toLabel = edge.target.title;
-        } else {
-          toLabel = edge.target.ID;
-        }
-        tooltipElement.textContent = fromLabel + " - " + toLabel;
-        edge.source.originalSize = edge.source.size;
-        edge.target.originalSize = edge.target.size;
-        edge.source.size = 2 * edge.source.originalSize;
-        edge.target.size = 2 * edge.target.originalSize;
-        edge.source.outlineWidth = 0.25 * edge.source.originalSize;
-        edge.target.outlineWidth = 0.25 * edge.target.originalSize;
-        helios.update();
-        helios.render();
-      } else {
-        tooltipElement.style.display = "none";
+        nodesHighlight([edge.source, edge.target].filter((node) => !node.selected), true);
       }
-    }).onEdgeHoverMove((edge, event) => {
-      if (event) {
-        tooltipElement.style.left = event.pageX + "px";
-        tooltipElement.style.top = event.pageY + "px";
-      }
+    });
+    helios.onEdgeHoverMove((edge, event) => {
+      showTooltipForEdge(edge, event?.clientX, event?.clientY, false);
+    });
+    helios.onEdgeHoverEnd((edge, event) => {
       if (edge) {
-        let fromLabel = "";
-        let toLabel = "";
-        if (edge.source.label) {
-          fromLabel = edge.source.label;
-        } else if (edge.source.title) {
-          fromLabel = edge.source.title;
-        } else {
-          fromLabel = edge.source.ID;
-        }
-        if (edge.target.label) {
-          toLabel = edge.target.label;
-        } else if (edge.target.title) {
-          toLabel = edge.target.title;
-        } else {
-          toLabel = edge.target.ID;
-        }
-        tooltipElement.textContent = fromLabel + " - " + toLabel;
-      } else {
-        tooltipElement.style.display = "none";
+        nodesHighlight([edge.source, edge.target].filter((node) => !node.selected), false);
       }
-    }).onEdgeHoverEnd((edge, event) => {
-      if (event) {
-        tooltipElement.style.left = event.pageX + "px";
-        tooltipElement.style.top = event.pageY + "px";
-      }
-      if (edge) {
-        edge.source.size = 1 * edge.source.originalSize;
-        edge.target.size = 1 * edge.target.originalSize;
-        edge.source.outlineWidth = defaultOutline * edge.source.originalSize;
-        edge.target.outlineWidth = defaultOutline * edge.target.originalSize;
-        helios.update();
-        helios.render();
-      }
-      tooltipElement.style.display = "none";
-    }).onEdgeClick((edge, event) => {
+      showTooltipForEdge(null);
+    });
+    helios.onEdgeClick((edge, event) => {
       console.log("Edge clicked");
       console.log(edge);
-    }).onLayoutStart(() => {
+    });
+    helios.onLayoutStart(() => {
       console.log("Layout start");
       select("#loading").style("display", "block");
       select("#message").style("display", "none");
-    }).onLayoutStop(() => {
+    });
+    helios.onLayoutStop(() => {
       console.log("Layout end");
       select("#loading").style("display", "none");
       select("#message").style("display", "block");
-    }).backgroundColor(backgroundColor).edgesOpacity(1).nodeOutlineWidth((node) => node.size * defaultOutline).nodeOutlineColor(backgroundColor).additiveBlending(additiveBlending);
-    function downloadText(filename, text) {
-      var element = document.createElement("a");
-      element.setAttribute("href", "data:text/plain;charset=utf-8," + encodeURIComponent(text));
-      element.setAttribute("download", filename);
-      element.style.display = "none";
-      document.body.appendChild(element);
-      element.click();
-      document.body.removeChild(element);
-    }
+    });
+    helios.backgroundColor(backgroundColor).edgesGlobalOpacityScale(1).nodeSize(defaultNodeScale).nodeOutlineWidth(defaultOutlineWidthFactor).nodeOutlineColor(backgroundColor).additiveBlending(additiveBlending).shadedNodes(shaded);
     let buttonInformation = {
       Export: {
         name: "Export",
@@ -12460,9 +12937,9 @@ var visualizeNetwork = (networkName2) => {
         color: "#1E6099",
         action: null,
         extra: (selection2) => {
-          selection2.append("input").attr("type", "range").attr("min", "-1").attr("max", "1").attr("step", "0.1").attr("value", "0").attr("id", "nodeSizeSlider").classed("slider", true).style("min-width", "60px").on("input", (event, d) => {
-            helios.nodeSize(Math.pow(10, parseFloat(select("#nodeSizeSlider").property("value"))));
-            helios.nodeOutlineWidth((node) => node.size * defaultOutline);
+          selection2.append("input").attr("type", "range").attr("min", "-1").attr("max", "1").attr("step", "0.1").attr("value", "" + Math.log10(currentGlobalNodeSizeScale)).attr("id", "nodeSizeSlider").classed("slider", true).style("min-width", "60px").on("input", (event, d) => {
+            currentGlobalNodeSizeScale = Math.pow(10, parseFloat(select("#nodeSizeSlider").property("value")));
+            updateNodeSelectionGlobalStyle();
             helios.update();
             helios.render();
             event.stopPropagation();
@@ -12477,7 +12954,7 @@ var visualizeNetwork = (networkName2) => {
         extra: (selection2) => {
           selection2.append("select").attr("id", "colorSelector").classed("selector", true).style("min-width", "60px").on("change", (event, d) => {
             updateColorSelection();
-          }).selectAll("option").data(Object.entries(helios.network.index2Node[0])).enter().filter((d) => !d[0].startsWith("_")).filter((d) => d[0] != "ID").append("option").attr("value", (d) => d[0]).property("selected", (d) => d[0] == colorProperty).text((d) => d[0]);
+          }).selectAll("option").data(Object.entries(helios.network.index2Node[0])).enter().filter((d) => !d[0].startsWith("_")).filter((d) => !ignoredProperties.has(d[0])).append("option").attr("value", (d) => d[0]).property("selected", (d) => d[0] == colorProperty).text((d) => d[0]);
           selection2.append("select").attr("id", "colormapSelector").classed("selector", true).style("min-width", "60px");
         }
       },
@@ -12488,8 +12965,9 @@ var visualizeNetwork = (networkName2) => {
         action: null,
         extra: (selection2) => {
           console.log("CALLED");
-          selection2.append("input").attr("type", "range").attr("min", "0").attr("max", "1").attr("step", 1 / 255 + "").attr("value", "1").attr("id", "edgeOpacitySlider").classed("slider", true).style("min-width", "60px").on("input", (event, d) => {
-            helios.edgesOpacity(parseFloat(select("#edgeOpacitySlider").property("value")));
+          selection2.append("input").attr("type", "range").attr("min", "0").attr("max", "1").attr("step", 1 / 255 + "").attr("value", "" + Math.round(255 * currentGlobalEdgeOpacityScale) / 255).attr("id", "edgeOpacitySlider").classed("slider", true).style("min-width", "60px").on("input", (event, d) => {
+            currentGlobalEdgeOpacityScale = parseFloat(select("#edgeOpacitySlider").property("value"));
+            helios.edgesGlobalOpacityScale(currentGlobalEdgeOpacityScale);
             helios.update();
             helios.render();
             event.stopPropagation();
@@ -12497,16 +12975,6 @@ var visualizeNetwork = (networkName2) => {
         }
       }
     };
-    function wrapText() {
-      let width = 300;
-      let padding = 10;
-      let self2 = select(this), textLength = self2.node().getComputedTextLength(), text = self2.text();
-      while (textLength > width - 2 * padding && text.length > 0) {
-        text = text.slice(0, -1);
-        self2.text(text + "...");
-        textLength = self2.node().getComputedTextLength();
-      }
-    }
     let legendView = select("body").append("svg").classed("overlay", true).attr("id", "legendView").style("left", "10px").style("top", "10px").style("pointer-events:", "none");
     let updateLegendCategorical = (property2color) => {
       legendView.selectAll("*").remove();
@@ -12554,10 +13022,15 @@ var visualizeNetwork = (networkName2) => {
       if (categoricalMap.size < sortedItems.length) {
         categoricalMap.set("Other", "#bbbbbb");
       }
-      helios.nodeColor((node) => {
+      for (let [key, node] of Object.entries(helios.network.nodes)) {
         let color2 = rgb(property2color.get(node[colorProperty]));
-        return [color2.r / 255, color2.g / 255, color2.b / 255];
-      });
+        let darkerColor = color2.darker(nonSelectedDarkerColorFactor);
+        let brighterColor = color2.brighter(nonSelectedBrighterColorFactor);
+        node.originalColor = [color2.r / 255, color2.g / 255, color2.b / 255];
+        node.darkerColor = [darkerColor.r / 255, darkerColor.g / 255, darkerColor.b / 255];
+        node.brighterColor = [brighterColor.r / 255, brighterColor.g / 255, brighterColor.b / 255];
+      }
+      updateNodeSelectionOrHighlightedColors();
       helios.update();
       helios.render();
       updateLegendCategorical(categoricalMap);
@@ -12574,10 +13047,15 @@ var visualizeNetwork = (networkName2) => {
       }
       let scheme2 = allColors[sequencialColormap];
       let cScale = sequential(scheme2).domain([minValue, maxValue]);
-      helios.nodeColor((node) => {
+      for (let [key, node] of Object.entries(helios.network.nodes)) {
         let color2 = rgb(cScale(node[colorProperty]));
-        return [color2.r / 255, color2.g / 255, color2.b / 255];
-      });
+        let darkerColor = color2.darker(nonSelectedDarkerColorFactor);
+        let brighterColor = color2.brighter(nonSelectedBrighterColorFactor);
+        node.originalColor = [color2.r / 255, color2.g / 255, color2.b / 255];
+        node.darkerColor = [darkerColor.r / 255, darkerColor.g / 255, darkerColor.b / 255];
+        node.brighterColor = [brighterColor.r / 255, brighterColor.g / 255, brighterColor.b / 255];
+      }
+      updateNodeSelectionOrHighlightedColors();
       helios.update();
       helios.render();
     }
@@ -12625,15 +13103,19 @@ var visualizeNetwork = (networkName2) => {
       }
     });
     if (startZoomLevel) {
-      helios.zoomFactor(startZoomLevel);
+      defaultZoomLevel = startZoomLevel;
+      helios.zoomFactor(defaultZoomLevel);
     } else {
       if (bigNetwork) {
-        helios.zoomFactor(0.35);
+        helios.zoomFactor(defaultZoomLevel);
       } else {
         helios.zoomFactor(0.05);
-        helios.zoomFactor(0.75, 1e3);
+        helios.zoomFactor(defaultZoomLevel, 1e3);
       }
     }
+    helios.nodesGlobalSizeScale(currentGlobalNodeSizeScale);
+    helios.nodesGlobalOutlineWidthScale(currentGlobalNodeSizeScale);
+    helios.edgesGlobalOpacityScale(currentGlobalEdgeOpacityScale);
     helios.onReady(() => {
       updateColorSelection();
     });
