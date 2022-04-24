@@ -45,6 +45,8 @@ Then go to `http://localhost:8080/docs/example/` in your browser (or use the pro
 # Usage
 To use it in your project you can load it as a module in modern browsers via skypack:
 
+**Note: MAJOR changes in version 0.5!** Check [0.5 API Changes](#apichanges)
+
 ```html
 <script type="module">
 
@@ -105,3 +107,19 @@ import {Helios} from "helios-web";
 
 ```
 
+# 0.5 API changes<a id='apichanges'></a>
+ - Added support for selectable edge picking via `pickeableEdges`
+ - Zoom functtion now uses the same easing as the camera interpolator
+   (this will be fixed when camera object is implemented)
+ - now, an DOM element can be used as input
+   for helios (`element`), `elementID` can still be used.
+ - Shaded nodes can be enabled/disabled on demand (`shadedNodes()`)
+ - Global Opacity, Size and width (for edges) can be changed  via:
+   `nodesGlobalOpacityScale*`, `nodesGlobalSizeScale*`,
+   `nodesGlobalOutlineWidthScale*`,
+   `edgesGlobalOpacityScale*`, and `edgesGlobalWidthScale*`.
+   * can be `Scale` corresponding to a multiplicative factor,
+   or `Base`, corresponding to additive factor
+ - `nodeOpacity` now sets opacity for individual nodes instead
+  of all nodes (works like `nodeColor`).
+  
