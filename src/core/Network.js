@@ -35,6 +35,18 @@ class Node{
 		return [this._network.colors[nodeIndex*4+0],this._network.colors[nodeIndex*4+1],this._network.colors[nodeIndex*4+2],this._network.colors[nodeIndex*4+3]];
 	}
 
+
+	set opacity(newOpacity){
+		let nodeIndex = this.index;
+		this._network.colors[nodeIndex*4+3] = newOpacity;
+	}
+
+	get opacity(){
+		let nodeIndex = this.index;
+		return this._network.colors[nodeIndex*4+3];
+	}
+
+
 	set size(newSize){
 		this._network.sizes[this.index] = newSize;
 	}
@@ -94,6 +106,8 @@ export class Network{
 				node.index = nodeIndex;
 				node.ID = nodeID;
 				this.index2Node.push(node);
+				node.neighbors = [];
+				node.edges = [];
 			}
 		}
 
@@ -101,8 +115,12 @@ export class Network{
 		for (let edgeIndex = 0; edgeIndex < edges.length; edgeIndex++) {
 			const edge = edges[edgeIndex];
 			// console.log(this.index2Node)
-			this.indexedEdges[edgeIndex*2] = this.ID2index[edge.source];
-			this.indexedEdges[edgeIndex*2+1] = this.ID2index[edge.target];
+			let fromIndex =this.ID2index[edge.source];
+			let toIndex = this.ID2index[edge.target];
+			let fromNode = this.index2Node[fromIndex];
+			let toNode = this.index2Node[toIndex];
+			this.indexedEdges[edgeIndex*2] = fromIndex;
+			this.indexedEdges[edgeIndex*2+1] = toIndex;
 		}
 		
 		this.positions = new Float32Array(3*this.index2Node.length);
@@ -199,6 +217,18 @@ export class Network{
 			let newNode = new Node(node,node.ID,index,this);
 			this.index2Node[index] = newNode;
 			this.nodes[node.ID] = newNode;
+		}
+		for (let edgeIndex = 0; edgeIndex < edges.length; edgeIndex++) {
+			const edge = edges[edgeIndex];
+			// console.log(this.index2Node)
+			let fromIndex =this.ID2index[edge.source];
+			let toIndex = this.ID2index[edge.target];
+			let fromNode = this.index2Node[fromIndex];
+			let toNode = this.index2Node[toIndex];
+			fromNode.neighbors.push(toNode);
+			toNode.neighbors.push(fromNode);
+			fromNode.edges.push(edgeIndex);
+			toNode.edges.push(edgeIndex);
 		}
 	}
 

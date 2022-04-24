@@ -37,6 +37,14 @@ uniform mat4 projectionMatrix;
 uniform mat4 viewMatrix;
 uniform mat3 normalMatrix;
 
+uniform float globalOpacityScale;
+uniform float globalSizeScale;
+uniform float globalOutlineWidthScale;
+
+uniform float globalOpacityBase;
+uniform float globalSizeBase;
+uniform float globalOutlineWidthBase;
+
 attribute vec2 vertex;
 // attribute vec3 normal;
 attribute vec3 position;
@@ -59,7 +67,9 @@ varying vec4 vPosition;
 void main(void){
 	float BoxCorrection = 1.5;
 	vec2 offset = vertex;
-	float fullSize = size + outlineWidth;
+	float updatedSize = globalSizeScale*size+globalSizeBase;
+	float updatedOutlineWidth = globalOutlineWidthScale*outlineWidth+globalOutlineWidthBase;
+	float fullSize = updatedSize + updatedOutlineWidth;
 	// vec4 viewCenters = viewMatrix*vec4(position,1);
 	// vec3 viewCenters = position;
 	// fragCenter = viewCenters
@@ -68,16 +78,18 @@ void main(void){
 	vec3 cameraRight = normalize(vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]));
 	vec3 cameraUp = normalize(vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]));
 
-	// viewCenters.xy += offset*size*CameraRight_worldspace;
+	// viewCenters.xy += offset*updatedSize*CameraRight_worldspace;
 	
 	vec4 viewCenters = viewMatrix*vec4(position+BoxCorrection*fullSize*(cameraRight*offset.x + cameraUp*offset.y),1.0);
 	vNormal = vec3(0.0,0.0,1.0); //normalMatrix * normal;
 	vEye = -vec3(offset,0.0);
 	vEncodedIndex = encodedIndex;
 	vColor = color;
+	vColor.w = clamp(globalOpacityBase+globalOpacityScale*vColor.w,0.0,1.0);
+	vOutlineColor.w = clamp(globalOpacityBase+globalOpacityScale*vOutlineColor.w,0.0,1.0);
 	vOffset = vertex;
-	vSize = size;
-	vOutlineThreshold = outlineWidth/fullSize;
+	vSize = updatedSize;
+	vOutlineThreshold = updatedOutlineWidth/fullSize;
 	vOutlineColor = outlineColor;
 	vPosition = projectionMatrix * viewCenters;
 	gl_Position = vPosition;
@@ -95,7 +107,6 @@ let fragmentShader = /*glsl*/`// #ifdef GL_ES
 // #endif
 
 precision mediump float;
-uniform float globalOpacity;
 varying vec4 vColor;
 varying vec4 vEncodedIndex;
 varying vec3 vNormal;
@@ -158,7 +169,7 @@ void main(){
 	float lensqr = dot(vOffset, vOffset);
 
 	if(lensqr > 1.0)
-			discard;
+		discard;
 	
 
 	vec3 normalizedPoint = normalize(vec3(vOffset.xy, sqrt(1. - lensqr)));
@@ -181,9 +192,9 @@ void main(){
 	
 	if(lensqr < 1.0-vOutlineThreshold){
 		// gl_FragColor = vec4(vColor,vOpacity)
-		gl_FragColor = vec4(newColor,vColor.w*globalOpacity);;
+		gl_FragColor = vec4(newColor,vColor.w);;
 	}else{
-		gl_FragColor = vec4(vOutlineColor.xyz,vOutlineColor.w*globalOpacity);
+		gl_FragColor = vec4(vOutlineColor.xyz,vOutlineColor.w);
 	}
 	// gl_FragDepthEXT = 0.5; 
 }
@@ -231,7 +242,6 @@ let fastFragmentShader = /*glsl*/`
 // #endif
 
 precision mediump float;
-uniform float globalOpacity;
 varying vec4 vColor;
 varying vec4 vEncodedIndex;
 varying vec3 vNormal;
@@ -253,9 +263,9 @@ void main(){
 	
 	if(lensqr < 1.0-vOutlineThreshold){
 		// gl_FragColor = vec4(vColor,vOpacity)
-		gl_FragColor = vec4(vColor.xyz,vColor.w*globalOpacity);;
+		gl_FragColor = vColor;
 	}else{
-		gl_FragColor = vec4(vOutlineColor.xyz,vOutlineColor.w*globalOpacity);
+		gl_FragColor = vOutlineColor;
 	}
 	// gl_FragDepthEXT = 0.5; 
 }

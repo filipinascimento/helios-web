@@ -5,6 +5,7 @@ import * as xnet from "../utils/xnet.js"
 import { select as d3Select } from "d3-selection";
 import {HeliosScheduler} from "./Scheduler.js";
 import { zoom as d3Zoom, zoomTransform as d3ZoomTransform, zoomIdentity as d3ZoomIdentity } from "d3-zoom";
+import * as d3Ease from "d3-ease";
 // import { drag as d3Drag } from "d3-drag";
 // import { default as createGraph } from "ngraph.graph"
 // import { default as createLayout } from "ngraph.forcelayout"
@@ -30,21 +31,24 @@ let isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
 
 export class Helios {
 	constructor({
-		elementID,
+		element = null,
+		elementID = null,
 		nodes = {},
 		edges = [],
 		// use settings
 		// displayOptions inside settings
 		use2D = false,
-		shadedNodes = false,
 		fastEdges = false,
 		forceSupersample = false,
 		autoStartLayout = true,
 		autoCleanup = true, // cleanup helios if canvas or element are removed
 		// display = [],
 	}) {
-		
-		this.element = document.getElementById(elementID);
+		if(element == null){
+			this.element = document.getElementById(elementID);
+		}else{
+			this.element = element;
+		}
 		this.element.innerHTML = '';
 		this.canvasElement = document.createElement("canvas");
 		this.element.appendChild(this.canvasElement);
@@ -58,6 +62,14 @@ export class Helios {
 		this.translatePosition = glm.vec3.create();
 		this.lastTranslatePosition = glm.vec3.create();
 		this.targetTranslatePosition = glm.vec3.create();
+
+		this.lastPanX = 0;
+		this.lastPanY = 0;
+		this.panX = 0;
+		this.panY = 0;
+		this.targetPanX = 0;
+		this.targetPanY = 0;
+
 		this.translateTime = 0;
 		this.translateDuration = 0;
 		this.mouseDown = false;
@@ -66,31 +78,48 @@ export class Helios {
 		this.redrawingFromMouseWheelEvent = false;
 		this.fastEdges = fastEdges;
 		this.animate = false;
-		this.shadedNodes = shadedNodes;
+		this.useShadedNodes = false;
 		this.forceSupersample = forceSupersample;
 		this.cameraDistance = 450;
 		this._zoomFactor = 1;
 		this.interacting = false;
 		this.rotateLinearX = 0;
 		this.rotateLinearY = 0;
-		this.panX = 0;
-		this.panY = 0;
+
 		this.saveResolutionRatio = 1.0;
 		this.pickingResolutionRatio = 0.25;
-		this._edgesGlobalOpacity = 1.0;
-		this._nodesGlobalOpacity = 1.0;
-		this._globalWidthScale = 0.25;
+
+
+		this._nodesGlobalOpacityScale = 1.0;
+		this._nodesGlobalOpacityBase = 0.0;
+
+		this._nodesGlobalSizeScale = 1.0;
+		this._nodesGlobalSizeBase = 0.0;
+
+		this._edgesGlobalOpacityScale = 1.0;
+		this._edgesGlobalOpacityBase = 0.0;
+		
+		this._edgesGlobalWidthScale = 0.25;
+		this._edgesGlobalWidthBase = 0.0;
+		
+		this._nodesGlobalOutlineWidthScale = 1.0;
+		this._nodesGlobalOutlineWidthBase = 0.0;
+
+		this._backgroundColor = [0.5, 0.5, 0.5, 1.0];
+
 		this._use2D = use2D;
 		this._autoStartLayout = autoStartLayout;
 		this.useAdditiveBlending = false;
+		this._pickeableEdges = new Set();
 		this.scheduler = new HeliosScheduler(this,{throttle:false});
+
 		if (this._use2D) {
 			for (let vertexIndex = 0; vertexIndex < this.network.positions.length; vertexIndex++) {
 				this.network.positions[vertexIndex * 3 + 2] = 0;
 			}
 		}
 
-
+		this._edgeIndicesUpdate = true;
 
 		glm.mat4.identity(this.rotationMatrix);
 		this.gl = glUtils.createWebGLContext(this.canvasElement, {
@@ -99,8 +128,8 @@ export class Helios {
 			desynchronized: true
 		})
 
-		this.centerNodes = null;
-		this.centerNodesTransition = null;
+		this._centerNodes = [];
+		this._centerNodesTransition = null;
 
 		this.onNodeClickCallback = null;
 		this.onNodeDoubleClickCallback = null;
@@ -122,8 +151,7 @@ export class Helios {
 		this.onLayoutStopCallback = null;
 		this.onDrawCallback = null;
 		this.onReadyCallback = null;
-		this.isReady=false;
-		this._backgroundColor = [0.5, 0.5, 0.5, 1.0];
+		this.isReady = false;
 
 		// console.log(this.gl);
 		this.initialize();
@@ -131,9 +159,6 @@ export class Helios {
 			this.willResizeEvent(event);
 		}
 		window.addEventListener('resize', this._onresizeEvent);
-
-
-
 	}
 
 	// d3-like function Set/Get
@@ -142,10 +167,6 @@ export class Helios {
 	//pan()
 	//highlightNodes()
 	//centerNode()
-
-
-
-
 
 
 	initialize() {
@@ -184,7 +205,7 @@ export class Helios {
 						maxDisplacement = Math.max(Math.abs(displacement), maxDisplacement);
 					};
 					this._updateCenterNodesPosition();
-					this.updateCameraInterpolation()
+					this.updateCameraInterpolation(true);
 					// console.log(this.scheduler._averageFPS);
 
 					if (maxDisplacement < 1) {
@@ -255,6 +276,7 @@ export class Helios {
 		// this.layoutRunning=true;
 		this.layoutWorker.resume();
 	}
+
 	_callEventFromPickID(pickID, eventType, event) {
 		let pickObject = null;
 		let isNode = true;
@@ -484,7 +506,7 @@ export class Helios {
 					
 		if(isSafari){
 			// BUG in Safari
-			console.log("Workaround safari bug...");
+			// console.log("Workaround safari bug...");
 			canvas.toDataURL();
 		}
 
@@ -651,21 +673,23 @@ export class Helios {
 		this.edgesShaderProgram = new glUtils.ShaderProgram(
 			glUtils.getShaderFromString(gl,edgesShaders.vertexShader,gl.VERTEX_SHADER),
 			glUtils.getShaderFromString(gl,edgesShaders.fragmentShader,gl.FRAGMENT_SHADER),
-			["viewMatrix", "projectionMatrix", "nearFar", "globalOpacity","globalWidthScale"],
+			["viewMatrix", "projectionMatrix", "nearFar",
+			"globalOpacityScale","globalWidthScale","globalSizeScale","globalOpacityBase","globalWidthBase","globalSizeBase"],
 			["fromVertex", "toVertex", "vertexType", "fromColor", "toColor", "fromSize", "toSize", "encodedIndex"],
 			this.gl);
 
 		this.edgesFastShaderProgram = new glUtils.ShaderProgram(
 			glUtils.getShaderFromString(gl,edgesShaders.fastVertexShader,gl.VERTEX_SHADER),
 			glUtils.getShaderFromString(gl,edgesShaders.fastFragmentShader,gl.FRAGMENT_SHADER),
-			["projectionViewMatrix", "nearFar", "globalOpacity"],
+			["projectionViewMatrix", "nearFar", "globalOpacityScale","globalOpacityBase"],
 			["vertex", "color"],
 			this.gl);
 
 		this.edgesPickingShaderProgram = new glUtils.ShaderProgram(
 			glUtils.getShaderFromString(gl,edgesShaders.vertexShader,gl.VERTEX_SHADER),
 			glUtils.getShaderFromString(gl,edgesShaders.pickingShader,gl.FRAGMENT_SHADER),
-			["viewMatrix", "projectionMatrix", "nearFar", "globalOpacity","globalWidthScale"],
+			["viewMatrix", "projectionMatrix", "nearFar",
+			"globalOpacityScale","globalWidthScale","globalSizeScale","globalOpacityBase","globalWidthBase","globalSizeBase"],
 			["fromVertex", "toVertex", "vertexType", "fromColor", "toColor", "fromSize", "toSize", "encodedIndex"],
 			this.gl);
 
@@ -673,19 +697,22 @@ export class Helios {
 		this.nodesShaderProgram = new glUtils.ShaderProgram(
 			glUtils.getShaderFromString(gl,nodesShaders.vertexShader,gl.VERTEX_SHADER),
 			glUtils.getShaderFromString(gl,nodesShaders.fragmentShader,gl.FRAGMENT_SHADER),
-			["viewMatrix", "projectionMatrix", "normalMatrix","globalOpacity"],
+			["viewMatrix", "projectionMatrix", "normalMatrix",
+			"globalOpacityScale","globalSizeScale","globalOutlineWidthScale","globalOpacityBase","globalSizeBase","globalOutlineWidthBase"],
 			["vertex", "position", "color", "size", "outlineWidth", "outlineColor", "encodedIndex"], this.gl);
 
 		this.nodesFastShaderProgram = new glUtils.ShaderProgram(
 			glUtils.getShaderFromString(gl,nodesShaders.fastVertexShader,gl.VERTEX_SHADER),
 			glUtils.getShaderFromString(gl,nodesShaders.fastFragmentShader,gl.FRAGMENT_SHADER),
-			["viewMatrix", "projectionMatrix", "normalMatrix","globalOpacity"],
+			["viewMatrix", "projectionMatrix", "normalMatrix",
+			"globalOpacityScale","globalSizeScale","globalOutlineWidthScale","globalOpacityBase","globalSizeBase","globalOutlineWidthBase"],
 			["vertex", "position", "color", "size", "outlineWidth", "outlineColor", "encodedIndex"], this.gl);
 	
 		this.nodesPickingShaderProgram = new glUtils.ShaderProgram(
 			glUtils.getShaderFromString(gl,nodesShaders.vertexShader,gl.VERTEX_SHADER),
 			glUtils.getShaderFromString(gl,nodesShaders.pickingShader,gl.FRAGMENT_SHADER),
-			["viewMatrix", "projectionMatrix", "normalMatrix"],
+			["viewMatrix", "projectionMatrix", "normalMatrix",
+			"globalOpacityScale","globalSizeScale","globalOutlineWidthScale","globalOpacityBase","globalSizeBase","globalOutlineWidthBase"],
 			["vertex", "position", "color", "size", "outlineWidth", "outlineColor", "encodedIndex"], this.gl);
 	}
 
@@ -868,20 +895,12 @@ export class Helios {
 		// this.nodesOutlineColorBuffer = gl.createBuffer();
 		newGeometry.indexBuffer = gl.createBuffer();
 
-		//encodedIndex
-		newGeometry.edgesIndexArray = new Float32Array(this.network.indexedEdges.length*4/2);
-		for (let ID = 0; ID < this.network.indexedEdges.length/2; ID++) {
-			let edgeID = this.network.index2Node.length + ID;
-			newGeometry.edgesIndexArray[4 * ID] = (((edgeID + 1) >> 0) & 0xFF) / 0xFF;
-			newGeometry.edgesIndexArray[4 * ID + 1] = (((edgeID + 1) >> 8) & 0xFF) / 0xFF;
-			newGeometry.edgesIndexArray[4 * ID + 2] = (((edgeID + 1) >> 16) & 0xFF) / 0xFF;
-			newGeometry.edgesIndexArray[4 * ID + 3] = (((edgeID + 1) >> 24) & 0xFF) / 0xFF;
-		}
-
-		gl.bindBuffer(gl.ARRAY_BUFFER, newGeometry.indexBuffer);
-		gl.bufferData(gl.ARRAY_BUFFER, newGeometry.edgesIndexArray, gl.STATIC_DRAW);
-		newGeometry.count = this.network.indexedEdges.length/2;
 		this.edgesGeometry = newGeometry;
+		this.edgesGeometry.count = this.network.indexedEdges.length/2;
+
+		//encodedIndex
+		this.edgesGeometry.edgesIndexArray = new Float32Array(this.network.indexedEdges.length*4/2);
+		this._edgeIndicesUpdate = true;
 		// console.log(this.nodesIndexArray)
 	}
 
@@ -892,6 +911,29 @@ export class Helios {
 			this._buildAdvancedEdgesGeometry();
 		}
 		this.updateEdgesGeometry()
+	}
+
+	_updateEdgeIndices(){
+		if(this._edgeIndicesUpdate){
+			let gl = this.gl;
+			for (let ID = 0; ID < this.network.indexedEdges.length/2; ID++) {
+				let edgeID = this.network.index2Node.length + ID;
+				if(this._pickeableEdges.has(ID)){
+					this.edgesGeometry.edgesIndexArray[4 * ID] = (((edgeID + 1) >> 0) & 0xFF) / 0xFF;
+					this.edgesGeometry.edgesIndexArray[4 * ID + 1] = (((edgeID + 1) >> 8) & 0xFF) / 0xFF;
+					this.edgesGeometry.edgesIndexArray[4 * ID + 2] = (((edgeID + 1) >> 16) & 0xFF) / 0xFF;
+					this.edgesGeometry.edgesIndexArray[4 * ID + 3] = (((edgeID + 1) >> 24) & 0xFF) / 0xFF;
+				}else{
+					this.edgesGeometry.edgesIndexArray[4 * ID] = 0;
+					this.edgesGeometry.edgesIndexArray[4 * ID + 1] = 0;
+					this.edgesGeometry.edgesIndexArray[4 * ID + 2] = 0;
+					this.edgesGeometry.edgesIndexArray[4 * ID + 3] = 0;
+				}
+			}
+			gl.bindBuffer(gl.ARRAY_BUFFER, this.edgesGeometry.indexBuffer);
+			gl.bufferData(gl.ARRAY_BUFFER, this.edgesGeometry.edgesIndexArray, gl.DYNAMIC_DRAW);
+			this._edgeIndicesUpdate = false;
+		}
 	}
 
 	updateEdgesGeometry() {
@@ -915,6 +957,7 @@ export class Helios {
 			this.network.updateEdgePositions();
 			this.network.updateEdgeColors();
 			this.network.updateEdgeSizes();
+			this._updateEdgeIndices();
 
 			let edgePositions = this.network.positions;
 			gl.bindBuffer(gl.ARRAY_BUFFER, this.edgesGeometry.verticesBuffer);
@@ -948,6 +991,7 @@ export class Helios {
 		
 		
 		this.zoom = d3Zoom().on("zoom", event => {
+			this.interacting=true;
 			this._zoomFactor = event.transform.k;
 			this.triggerHoverEvents(event);
 			// check if prevX is undefined
@@ -1000,8 +1044,10 @@ export class Helios {
 			if (this._use2D || event.sourceEvent?.shiftKey) {
 				let perspectiveFactor = this.cameraDistance * this._zoomFactor;
 				let aspectRatio = this.canvasElement.width / this.canvasElement.height;
-				this.panX = this.panX + dx/this._zoomFactor;///400;
-				this.panY = this.panY - dy/this._zoomFactor;///400;
+				if(this._centerNodes.length==0){
+					this.panX = this.panX + dx/this._zoomFactor;///400;
+					this.panY = this.panY - dy/this._zoomFactor;///400;
+				}
 			} else {//pan
 				glm.mat4.identity(newRotationMatrix);
 				glm.mat4.rotate(newRotationMatrix, newRotationMatrix, glUtils.degToRad( dx/ 2), [0, 1, 0]);
@@ -1014,7 +1060,11 @@ export class Helios {
 			this.render();
 			// this.triggerHoverEvents(event);
 			event => event.preventDefault();
-		}).on("start", event => {this.interacting=true;}).on("end", event =>{this.interacting=false;});
+		})
+		// .on("start", event => {
+		// 	console.log("start")
+		// })
+		.on("end", event => {this.interacting=false;});
 		
 		d3Select(this.canvasElement)//
 			// .call(d3ZoomTransform, d3ZoomIdentity.translate(0, 0).scale(this.cameraDistance))
@@ -1030,13 +1080,12 @@ export class Helios {
 		// this.zoomFactor(0.05)
 		// this.zoomFactor(1.0,500);
 	}
-	
 	zoomFactor(zoomFactor,duration){
 		if(zoomFactor !== undefined){
 			if(duration === undefined){
 				d3Select(this.canvasElement).call(this.zoom.transform, d3ZoomIdentity.translate(0, 0).scale(zoomFactor))
 			}else{
-				d3Select(this.canvasElement).transition().duration(duration).call(this.zoom.transform, d3ZoomIdentity.translate(0, 0).scale(zoomFactor))
+				d3Select(this.canvasElement).transition().ease(d3Ease.easeLinear).duration(duration).call(this.zoom.transform, d3ZoomIdentity.translate(0, 0).scale(zoomFactor))
 			}
 			return this;
 		}else{
@@ -1066,9 +1115,11 @@ export class Helios {
 		this._redrawAll(this.pickingFramebuffer,true); // Picking
 		this.onDrawCallback?.();
 		this.triggerHoverEvents(null);
+		return this;
 	}
 
-	update(immediate = false) {
+
+	update(immediate = false, nodes=true, edges=true) {
 		this.scheduler.schedule({
 			name: "9.0.update",
 			callback: null,
@@ -1077,10 +1128,10 @@ export class Helios {
 			synchronized:true,
 			immediateUpdates:immediate,
 			// redraw: true,
-			updateNodesGeometry: true,
-			updateEdgesGeometry: true,
+			updateNodesGeometry: nodes,
+			updateEdgesGeometry: edges,
 		});
-
+		return this;
 	}
 	
 
@@ -1100,7 +1151,7 @@ export class Helios {
 			// updateNodesGeometry: true,
 			// updateEdgesGeometry: true,
 		});
-
+		return this;
 	}
 
 
@@ -1174,7 +1225,7 @@ export class Helios {
 			// gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA,
 			// 	gl.ZERO, gl.ONE);
 			// 	}
-			if(this.shadedNodes){
+			if(this.useShadedNodes){
 				currentShaderProgram = this.nodesShaderProgram;
 			}else{
 				currentShaderProgram = this.nodesFastShaderProgram;
@@ -1210,7 +1261,14 @@ export class Helios {
 		gl.uniformMatrix4fv(currentShaderProgram.uniforms.projectionMatrix, false, this.projectionMatrix);
 		gl.uniformMatrix4fv(currentShaderProgram.uniforms.viewMatrix, false, this.viewMatrix);
 		
-		gl.uniform1f(currentShaderProgram.uniforms.globalOpacity, this._nodesGlobalOpacity);
+		gl.uniform1f(currentShaderProgram.uniforms.globalOpacityScale, this._nodesGlobalOpacityScale);
+		gl.uniform1f(currentShaderProgram.uniforms.globalOpacityBase, this._nodesGlobalOpacityBase);
+
+		gl.uniform1f(currentShaderProgram.uniforms.globalSizeScale, this._nodesGlobalSizeScale);
+		gl.uniform1f(currentShaderProgram.uniforms.globalSizeBase, this._nodesGlobalSizeBase);
+
+		gl.uniform1f(currentShaderProgram.uniforms.globalOutlineWidthScale, this._nodesGlobalOutlineWidthScale);
+		gl.uniform1f(currentShaderProgram.uniforms.globalOutlineWidthBase, this._nodesGlobalOutlineWidthBase);
 
 		let normalMatrix = glm.mat3.create();
 		glm.mat3.normalFromMat4(normalMatrix, this.viewMatrix);
@@ -1300,9 +1358,9 @@ export class Helios {
 			if(this.useAdditiveBlending) {
 				gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
 			}else{
-			// gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-			// gl.blendFuncSeparate( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-			// gl.blendFuncSeparate( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE ); //Original from Networks 3D
+				// gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+				// gl.blendFuncSeparate( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+				// gl.blendFuncSeparate( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE ); //Original from Networks 3D
 				gl.blendFuncSeparate( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE ); // New (works for transparent background)
 			}
 			if (this.fastEdges) {
@@ -1342,7 +1400,9 @@ export class Helios {
 			gl.uniformMatrix4fv(currentShaderProgram.uniforms.projectionViewMatrix, false, this.projectionViewMatrix);
 
 			//gl.uniform2fv(edgesShaderProgram.uniforms.nearFar,[0.1,10.0]);
-			gl.uniform1f(currentShaderProgram.uniforms.globalOpacity, this._edgesGlobalOpacity);
+			gl.uniform1f(currentShaderProgram.uniforms.globalOpacityScale, this._edgesGlobalOpacityScale);
+			gl.uniform1f(currentShaderProgram.uniforms.globalOpacityBase, this._edgesGlobalOpacityBase);
+			
 
 			//drawElements is called only 1 time. no overhead from javascript
 			gl.drawElements(gl.LINES, this.fastEdgesGeometry.numIndices, this.fastEdgesGeometry.indexType, 0);
@@ -1410,8 +1470,14 @@ export class Helios {
 			gl.uniformMatrix4fv(currentShaderProgram.uniforms.viewMatrix, false, this.viewMatrix);
 
 			//gl.uniform2fv(edgesShaderProgram.uniforms.nearFar,[0.1,10.0]);
-			gl.uniform1f(currentShaderProgram.uniforms.globalOpacity, this._edgesGlobalOpacity);
-			gl.uniform1f(currentShaderProgram.uniforms.globalWidthScale, this._globalWidthScale);
+			gl.uniform1f(currentShaderProgram.uniforms.globalOpacityScale, this._edgesGlobalOpacityScale);
+			gl.uniform1f(currentShaderProgram.uniforms.globalOpacityBase, this._edgesGlobalOpacityBase);
+			
+			gl.uniform1f(currentShaderProgram.uniforms.globalWidthScale, this._edgesGlobalWidthScale);
+			gl.uniform1f(currentShaderProgram.uniforms.globalWidthBase, this._edgesGlobalWidthBase);
+
+			gl.uniform1f(currentShaderProgram.uniforms.globalSizeScale, this._nodesGlobalSizeScale);
+			gl.uniform1f(currentShaderProgram.uniforms.globalSizeBase, this._nodesGlobalSizeBase);
 
 			// 01,11,21
 			// let cameraUp = glm.vec3.fromValues(this.viewMatrix[1], this.viewMatrix[5], this.viewMatrix[9]);
@@ -1483,16 +1549,17 @@ export class Helios {
 		this.targetTranslatePosition[0] = 0;
 		this.targetTranslatePosition[1] = 0;
 		this.targetTranslatePosition[2] = 0;
-		if(this.centerNodes && this.centerNodes.length > 0){
-			for (let i = 0; i < this.centerNodes.length; i++) {
-				let node = this.centerNodes[i];
+		
+		if(this._centerNodes && this._centerNodes.length > 0){
+			for (let i = 0; i < this._centerNodes.length; i++) {
+				let node = this._centerNodes[i];
 				// if node is not of type node, get node by id
 				let pos = node.position;
 				this.targetTranslatePosition[0] -= pos[0];
 				this.targetTranslatePosition[1] -= pos[1];
 				this.targetTranslatePosition[2] -= pos[2];
 			}
-			let lengthSize = this.centerNodes.length;
+			let lengthSize = this._centerNodes.length;
 			this.targetTranslatePosition[0] /= lengthSize;
 			this.targetTranslatePosition[1] /= lengthSize;
 			this.targetTranslatePosition[2] /= lengthSize;
@@ -1501,18 +1568,20 @@ export class Helios {
 
 	centerOnNodes(nodes, duration) {
 		//
-		this.centerNodes = [];
+		this._centerNodes = [];
 		for(let i = 0; i < nodes.length; i++){
 			let node = nodes[i];
-			if (node.id === undefined) {
+			if (node.ID === undefined) {
 				node = this.network.nodes[node];
 			}
-			this.centerNodes.push(node);
+			this._centerNodes.push(node);
 		}
 		
 		this.lastTranslatePosition[0] = this.translatePosition[0];
 		this.lastTranslatePosition[1] = this.translatePosition[1];
 		this.lastTranslatePosition[2] = this.translatePosition[2];
+		this.lastPanX = this.panX;
+		this.lastPanY = this.panY;
 		if(duration === undefined || duration<=0){
 			this.translateDuration = 0;
 			this.translateStartTime = null;
@@ -1523,13 +1592,22 @@ export class Helios {
 			this.translateStartTime = performance.now();
 		}
 		this.scheduleCameraInterpolation();
+		return this;
 	}
 
-	updateCameraInterpolation(){
+	centeredNodes(){
+		return this._centerNodes;
+	}
+
+	updateCameraInterpolation(ignoreInstantaneousUpdate=false) {
 		if(this.translateDuration==0){
-			this.translatePosition[0] = this.targetTranslatePosition[0];
-			this.translatePosition[1] = this.targetTranslatePosition[1];
-			this.translatePosition[2] = this.targetTranslatePosition[2];
+			if(!ignoreInstantaneousUpdate){
+				this.translatePosition[0] = this.targetTranslatePosition[0];
+				this.translatePosition[1] = this.targetTranslatePosition[1];
+				this.translatePosition[2] = this.targetTranslatePosition[2];
+				this.panX = 0;
+				this.panY = 0;
+			}
 			return false; //no need to continue
 		}else{
 			let elapsedTime = performance.now()-this.translateStartTime;
@@ -1537,12 +1615,20 @@ export class Helios {
 			if(alpha>1){
 				alpha=1.0;
 			}
+			// console.log(elapsedTime);
 			this.translatePosition[0] = (1.0-alpha)*this.lastTranslatePosition[0];
 			this.translatePosition[1] = (1.0-alpha)*this.lastTranslatePosition[1];
 			this.translatePosition[2] = (1.0-alpha)*this.lastTranslatePosition[2];
+
 			this.translatePosition[0] += alpha*this.targetTranslatePosition[0];
 			this.translatePosition[1] += alpha*this.targetTranslatePosition[1];
 			this.translatePosition[2] += alpha*this.targetTranslatePosition[2];
+			
+			this.panX = (1.0-alpha)*this.lastPanX;
+			this.panY = (1.0-alpha)*this.lastPanY;
+			this.panX += alpha*this.targetPanX;
+			this.panY += alpha*this.targetPanY;
+
 			if(alpha>=1.0){
 				return false;
 			}else{
@@ -1557,6 +1643,7 @@ export class Helios {
 			callback: (elapsedTime,task)=>{
 				this._updateCenterNodesPosition();
 				if (!this.updateCameraInterpolation()) {
+
 					this.scheduler.unschedule("1.1.cameraInterpolator");
 				}
 			},
@@ -1674,8 +1761,13 @@ export class Helios {
 			if (typeof colorInput === "undefined") {
 				return this.network.colors;
 			} else if (typeof colorInput === "function") {
-				for (const [nodeID, node] of Object.entries(this.network.nodes)) {
-					let nodeIndex = this.network.ID2index[nodeID];
+				// This may be used in future if we want to have a dynamic nodes
+				// for (const [nodeID, node] of Object.entries(this.network.nodes)) {
+				// 	let nodeIndex = this.network.ID2index[nodeID];
+
+				let allNodes = this.network.index2Node;
+				for (let nodeIndex = 0; nodeIndex < allNodes.length; nodeIndex++) {
+					let node = allNodes[nodeIndex];
 					let aColor = colorInput(node, nodeIndex, this.network);
 					this.network.colors[nodeIndex * 4 + 0] = aColor[0];
 					this.network.colors[nodeIndex * 4 + 1] = aColor[1];
@@ -1689,8 +1781,8 @@ export class Helios {
 				//index
 				return this.network.colors[this.network.ID2index[colorInput]];
 			} else {
-				for (const [nodeID, node] of Object.entries(this.network.nodes)) {
-					let nodeIndex = this.network.ID2index[nodeID];
+				let allNodes = this.network.index2Node;
+				for (let nodeIndex = 0; nodeIndex < allNodes.length; nodeIndex++) {
 					this.network.colors[nodeIndex * 4 + 0] = colorInput[0];
 					this.network.colors[nodeIndex * 4 + 1] = colorInput[1];
 					this.network.colors[nodeIndex * 4 + 2] = colorInput[2];
@@ -1728,13 +1820,16 @@ export class Helios {
 			if (typeof sizeInput === "undefined") {
 				return this.network.sizes;
 			} else if (typeof sizeInput === "function") {
-				for (const [nodeID, node] of Object.entries(this.network.nodes)) {
+				let allNodes = this.network.index2Node;
+				for (let nodeIndex = 0; nodeIndex < allNodes.length; nodeIndex++) {
+					let node = allNodes[nodeIndex];
 					let aSize = sizeInput(node, this.network);
-					this.network.sizes[node.index] = aSize;
+					this.network.sizes[nodeIndex] = aSize;
 				}
 			} else {
-				for (const [nodeID, node] of Object.entries(this.network.nodes)) {
-					this.network.sizes[node.index] = sizeInput;
+				let allNodes = this.network.index2Node;
+				for (let nodeIndex = 0; nodeIndex < allNodes.length; nodeIndex++) {
+					this.network.sizes[nodeIndex] = sizeInput;
 				}
 			}
 		} else {
@@ -1756,8 +1851,9 @@ export class Helios {
 			if (typeof colorInput === "undefined") {
 				return this.network.outlineColors;
 			} else if (typeof colorInput === "function") {
-				for (const [nodeID, node] of Object.entries(this.network.nodes)) {
-					let nodeIndex = this.network.ID2index[nodeID];
+				let allNodes = this.network.index2Node;
+				for (let nodeIndex = 0; nodeIndex < allNodes.length; nodeIndex++) {
+					let node = allNodes[nodeIndex];
 					let aColor = colorInput(node, nodeIndex, this.network);
 					this.network.outlineColors[nodeIndex * 4 + 0] = aColor[0];
 					this.network.outlineColors[nodeIndex * 4 + 1] = aColor[1];
@@ -1770,8 +1866,8 @@ export class Helios {
 				//index
 				return this.network.outlineColors[this.network.ID2index[colorInput]];
 			} else {
-				for (const [nodeID, node] of Object.entries(this.network.nodes)) {
-					let nodeIndex = this.network.ID2index[nodeID];
+				let allNodes = this.network.index2Node;
+				for (let nodeIndex = 0; nodeIndex < allNodes.length; nodeIndex++) {
 					this.network.outlineColors[nodeIndex * 4 + 0] = colorInput[0];
 					this.network.outlineColors[nodeIndex * 4 + 1] = colorInput[1];
 					this.network.outlineColors[nodeIndex * 4 + 2] = colorInput[2];
@@ -1809,13 +1905,16 @@ export class Helios {
 			if (typeof widthInput === "undefined") {
 				return this.network.outlineWidths;
 			} else if (typeof widthInput === "function") {
-				for (const [nodeID, node] of Object.entries(this.network.nodes)) {
+				let allNodes = this.network.index2Node;
+				for (let nodeIndex = 0; nodeIndex < allNodes.length; nodeIndex++) {
+					let node = allNodes[nodeIndex];
 					let aWidth = widthInput(node, this.network);
 					this.network.outlineWidths[node.index] = aWidth;
 				}
 			} else {
-				for (const [nodeID, node] of Object.entries(this.network.nodes)) {
-					this.network.outlineWidths[node.index] = widthInput;
+				let allNodes = this.network.index2Node;
+				for (let nodeIndex = 0; nodeIndex < allNodes.length; nodeIndex++) {
+					this.network.outlineWidths[nodeIndex] = widthInput;
 				}
 			}
 		} else {
@@ -1853,34 +1952,126 @@ export class Helios {
 		return ID;
 	}
 
-	edgesOpacity(opacity) {
+	edgesGlobalOpacityScale(opacity) {
 		// check if color is defined
 		if (typeof opacity === "undefined") {
-			return this._edgesGlobalOpacity;
+			return this._edgesGlobalOpacityScale;
 		} else {
-			this._edgesGlobalOpacity = opacity;
+			this._edgesGlobalOpacityScale = opacity;
 			return this;
 		}
 	}
 
-	edgesWidthScale(scale) {
+	edgesGlobalOpacityBase(opacity) {
 		// check if color is defined
-		if (typeof scale === "undefined") {
-			return this._globalWidthScale;
+		if (typeof opacity === "undefined") {
+			return this._edgesGlobalOpacityBase;
 		} else {
-			this._globalWidthScale = scale;
+			this._edgesGlobalOpacityBase = opacity;
 			return this;
 		}
 	}
 
-	nodeOpacity(opacity) {
+	edgesGlobalWidthScale(width) {
 		// check if color is defined
-		if (typeof opacity === "undefined") {
-			return this._nodesGlobalOpacity;
+		if (typeof width === "undefined") {
+			return this._edgesGlobalWidthScale;
 		} else {
-			this._nodesGlobalOpacity = opacity;
+			this._edgesGlobalWidthScale = width;
 			return this;
 		}
+	}
+
+	edgesGlobalWidthBase(width) {
+		// check if color is defined
+		if (typeof width === "undefined") {
+			return this._edgesGlobalWidthBase;
+		} else {
+			this._edgesGlobalWidthBase = width;
+			return this;
+		}
+	}
+
+
+	nodesGlobalOpacityScale(opacity) {
+		// check if color is defined
+		if (typeof opacity === "undefined") {
+			return this._nodesGlobalOpacityScale;
+		} else {
+			this._nodesGlobalOpacityScale = opacity;
+			return this;
+		}
+	}
+
+	nodesGlobalOpacityBase(opacity) {
+		// check if color is defined
+		if (typeof opacity === "undefined") {
+			return this._nodesGlobalOpacityBase;
+		} else {
+			this._nodesGlobalOpacityBase = opacity;
+			return this;
+		}
+	}
+	
+	nodesGlobalSizeScale(size) {
+		// check if color is defined
+		if (typeof size === "undefined") {
+			return this._nodesGlobalSizeScale;
+		} else {
+			this._nodesGlobalSizeScale = size;
+			return this;
+		}
+	}
+
+	nodesGlobalSizeBase(size) {
+		// check if color is defined
+		if (typeof size === "undefined") {
+			return this._nodesGlobalSizeBase;
+		} else {
+			this._nodesGlobalSizeBase = size;
+			return this;
+		}
+	}
+
+	nodesGlobalOutlineWidthScale(width) {
+		// check if color is defined
+		if (typeof width === "undefined") {
+			return this._nodesGlobalOutlineWidthScale;
+		} else {
+			this._nodesGlobalOutlineWidthScale = width;
+			return this;
+		}
+	}
+
+	nodesGlobalOutlineWidthBase(width) {
+		// check if color is defined
+		if (typeof width === "undefined") {
+			return this._nodesGlobalOutlineWidthBase;
+		} else {
+			this._nodesGlobalOutlineWidthBase = width;
+			return this;
+		}
+	}
+
+
+
+	nodeOpacity(colorInput) {
+		if (typeof colorInput === "undefined") {
+			return this.network.colors.map(color => color[3]);
+		} else if (typeof colorInput === "function") {
+			let allNodes = this.network.index2Node;
+			for (let nodeIndex = 0; nodeIndex < allNodes.length; nodeIndex++) {
+				let node = allNodes[nodeIndex];
+				let anOpacity = colorInput(node, nodeIndex, this.network);
+				this.network.colors[nodeIndex * 4 + 3] = anOpacity;
+			}
+		}else {
+			for (let nodeIndex = 0; nodeIndex < allNodes.length; nodeIndex++) {
+				this.network.colors[nodeIndex * 4 + 3] = colorInput;
+			}
+		}
+	
+		return this;
 	}
 
 	additiveBlending(enableAdditiveBlending) {
@@ -1892,9 +2083,37 @@ export class Helios {
 			return this;
 		}
 	}
+	
+	shadedNodes(enableShadedNodes) {
+		// check if shaded is defined
+		if (typeof enableShadedNodes === "undefined") {
+			return this.useShadedNodes;
+		} else {
+			this.useShadedNodes = enableShadedNodes;
+			return this;
+		}
+	}
+
+
+	pickeableEdges(pickables) {
+		// check if color is defined
+		if (typeof pickables === "undefined") {
+			return this._pickeableEdges;
+		} else {
+			if(pickables=="all"){
+				// this._pickeableEdges = new Set(pickables);
+			}else{
+				this._pickeableEdges = new Set(pickables);
+				// console.log(this._pickeableEdges);
+				this._edgeIndicesUpdate = true;
+				this.update();
+			}
+			return this;
+		}
+	}
 
 	cleanup(keepGLContext){
-		console.log("Cleanup started");
+		// console.log("Cleanup started");
 		this.isReady=false;
 		this.layoutWorker.cleanup();
 		this.scheduler.stop();

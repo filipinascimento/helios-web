@@ -38,7 +38,7 @@ let workerFunction = (function (){
 		} else if (msg.data.type == "resume") {
 			this.simulation.restart();
 		} else if (msg.data.type == "start") {
-			let inputNodes = msg.data.nodes;
+			// let inputNodes = msg.data.nodes;
 			let inputNodesPositions = msg.data.positions;
 			let inputEdges = msg.data.edges;
 			// let inputEdgeWeights = msg.data.weights;
@@ -47,25 +47,25 @@ let workerFunction = (function (){
 			}
 			let nodes = [];
 			let links = [];
-
-			Object.entries(inputNodes).forEach(entry => {
+			for (let nodeIndex = 0; nodeIndex < inputNodesPositions.length/3; nodeIndex++) {
+				
 				// console.log(entry);
-				let [key, node] = entry;
-				node.ID = key;
+				
 
 				// node.x = 400 * (Math.random() * 1.0 - 0.5);
 				// node.y = 400 * (Math.random() * 1.0 - 0.5);
 				// node.z = 400 * (Math.random() * 1.0 - 0.5);
 				// node.vz = 0;
 				
-				node.x = inputNodesPositions[node.index*3+0]*10;//400 * (Math.random() * 1.0 - 0.5);
-				node.y = inputNodesPositions[node.index*3+1]*10;//400 * (Math.random() * 1.0 - 0.5);
-				node.z = inputNodesPositions[node.index*3+2]*10;//400 * (Math.random() * 1.0 - 0.5);
-				node.vz = 0;
+				let x = inputNodesPositions[nodeIndex*3+0]*10;//400 * (Math.random() * 1.0 - 0.5);
+				let y = inputNodesPositions[nodeIndex*3+1]*10;//400 * (Math.random() * 1.0 - 0.5);
+				let z = inputNodesPositions[nodeIndex*3+2]*10;//400 * (Math.random() * 1.0 - 0.5);
+				let vz = 0;
+				
 
 				// node.index = network.ID2index[key];
-				nodes.push(node);
-			});
+				nodes.push({x,y,z,vz,ID:nodeIndex});
+			}
 
 			for (let index = 0; index < inputEdges.length / 2; index++) {
 				let edgeFrom = (inputEdges[index * 2]);
@@ -146,7 +146,7 @@ class d3ForceLayoutWorker {
 			this._layoutWorker.postMessage({
 				 type: "start",
 				// network: this.network,
-				nodes:this._network.nodes,
+				// nodes:this._network.nodes,
 				positions:this._network.positions,
 				edges:this._network.indexedEdges, 
 				use2D: this._use2D
