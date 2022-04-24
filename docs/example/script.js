@@ -492,11 +492,10 @@ let visualizeNetwork = (networkName) => {
 		helios.onNodeDoubleClick((node, event) => {
 			if (node) {
 				console.log(`Double Clicked: ${node.ID}`);
+				centerOnNodes([node]);
 				// Special function for dealing with MAG/Openalex Citation networks
 				if ("mag id" in node) {
 					window.open(`https://explore.openalex.org/works/W${node["mag id"]}`, "helios_mag");
-				} else {
-					centerOnNodes([node]);
 				}
 			} else {
 				console.log(`Double clicked on background`);
