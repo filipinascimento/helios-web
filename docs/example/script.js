@@ -12594,6 +12594,7 @@ var visualizeNetwork = (networkName2) => {
     let defaultNodeOpacity = 1;
     let defaultOutlineColor = backgroundColor;
     let defaultOutlineWidthFactor = 0.25;
+    let updateNodeSize = (node) => node._originalSize;
     if (shaded) {
       defaultOutlineWidthFactor = 0;
     }
@@ -12606,10 +12607,10 @@ var visualizeNetwork = (networkName2) => {
     let highlightNodeOpacityScale = 1e10;
     let selectedNodeScale = 3;
     let selectedNodeOpacityScale = 1e10;
+    let selectedOutlineColor = [0.9, 0.9, 0];
     let selectedNeighborNodeSizeScale = 2;
     let selectedNeighborNodeOpacityScale = 1.5;
-    let selectedOutlineColor = [0.9, 0.9, 0];
-    let nonSelectedNodeOpacityScale = 0.95;
+    let nonSelectedNodeOpacityScale = 1;
     let nonSelectedNodeSizeScale = 0.5;
     let nonSelectedDarkerColorFactor = 1.5;
     let nonSelectedBrighterColorFactor = 0.5;
@@ -12655,25 +12656,29 @@ var visualizeNetwork = (networkName2) => {
       fastEdges: !advancedEdges && bigNetwork,
       autoStartLayout
     });
+    for (let [key, node] of Object.entries(helios.network.nodes)) {
+      let nodeDegree = node.edges.length;
+      node._originalSize = defaultNodeScale * Math.log10(nodeDegree + 1);
+    }
     let updateNodeSelectionStyle = (node) => {
-      if (typeof node.highlighted === "undefined") {
-        node.highlighted = false;
+      if (typeof node._highlighted === "undefined") {
+        node._highlighted = false;
       }
-      if (typeof node.selected === "undefined") {
-        node.selected = false;
+      if (typeof node._selected === "undefined") {
+        node._selected = false;
       }
-      if (typeof node.selectedNeighbor === "undefined") {
-        node.selectedNeighbor = false;
+      if (typeof node._selectedNeighbor === "undefined") {
+        node._selectedNeighbor = false;
       }
-      let nodeSize = defaultNodeScale;
+      let nodeSize = node._originalSize;
       let nodeOutlineWidth = defaultOutlineWidthFactor;
       let nodeOpacity = defaultNodeOpacity;
-      if (node.selected) {
+      if (node._selected) {
         nodeSize *= selectedNodeScale;
         nodeOpacity *= selectedNodeOpacityScale;
         node.outlineColor = selectedOutlineColor;
         nodeOutlineWidth *= selectedNodeScale;
-      } else if (node.selectedNeighbor) {
+      } else if (node._selectedNeighbor) {
         nodeSize *= selectedNeighborNodeSizeScale;
         nodeOpacity *= selectedNeighborNodeOpacityScale;
         node.outlineColor = defaultOutlineColor;
@@ -12681,7 +12686,7 @@ var visualizeNetwork = (networkName2) => {
       } else {
         node.outlineColor = defaultOutlineColor;
       }
-      if (node.highlighted) {
+      if (node._highlighted) {
         nodeSize *= highlightNodeScale;
         nodeOpacity *= highlightNodeOpacityScale;
         nodeOutlineWidth *= highlightNodeScale;
@@ -12692,7 +12697,7 @@ var visualizeNetwork = (networkName2) => {
     };
     let nodesHighlight = (nodes2, shallHighlight, shallUpdate = true) => {
       nodes2.forEach((node) => {
-        node.highlighted = shallHighlight;
+        node._highlighted = shallHighlight;
         updateNodeSelectionStyle(node);
       });
       if (onHighlightChangeColorsEnabled) {
@@ -12709,10 +12714,10 @@ var visualizeNetwork = (networkName2) => {
     };
     let nodesSelect = (nodes2, shallSelect, shallUpdate = true) => {
       nodes2.forEach((node) => {
-        node.selected = shallSelect;
-        node.selectedNeighbor = shallSelect;
+        node._selected = shallSelect;
+        node._selectedNeighbor = shallSelect;
         node.neighbors.forEach((neighNode) => {
-          neighNode.selectedNeighbor = shallSelect;
+          neighNode._selectedNeighbor = shallSelect;
           updateNodeSelectionStyle(neighNode);
         });
         updateNodeSelectionStyle(node);
@@ -12741,6 +12746,7 @@ var visualizeNetwork = (networkName2) => {
         nodesSelect(helios.centeredNodes(), false, false);
         nodesSelect(nodes2, true, false);
         helios.centerOnNodes(nodes2, 500);
+        let pickableSet = new Set();
         nodes2.forEach((node) => {
           helios.pickeableEdges(node.edges);
         });
@@ -12794,7 +12800,7 @@ var visualizeNetwork = (networkName2) => {
     };
     let updateNodeSelectionGlobalStyle = (hasSelection) => {
       if (typeof hasSelection === "undefined") {
-        hasSelection = helios.network.index2Node.some((node) => node.selected);
+        hasSelection = helios.network.index2Node.some((node) => node._selected);
       }
       if (hasSelection) {
         helios.nodesGlobalOpacityScale(nonSelectedNodeOpacityScale);
@@ -12810,19 +12816,19 @@ var visualizeNetwork = (networkName2) => {
     };
     let updateNodeSelectionOrHighlightedColors = (hasSelection) => {
       if (typeof hasSelection === "undefined") {
-        hasSelection = helios.network.index2Node.some((node) => node.selected || node.highlighted || node.selectedNeighbor);
+        hasSelection = helios.network.index2Node.some((node) => node._selected || node._highlighted || node._selectedNeighbor);
       }
       if (hasSelection) {
         helios.nodeColor((node) => {
-          if (node.selected || node.highlighted || node.selectedNeighbor) {
-            return node.originalColor;
+          if (node._selected || node._highlighted || node._selectedNeighbor) {
+            return node._originalColor;
           } else {
-            return darkBackground ? node.darkerColor : node.brighterColor;
+            return darkBackground ? node._darkerColor : node._brighterColor;
           }
         });
       } else {
         helios.nodeColor((node) => {
-          return node.originalColor;
+          return node._originalColor;
         });
       }
     };
@@ -12876,7 +12882,7 @@ var visualizeNetwork = (networkName2) => {
     helios.onEdgeHoverStart((edge, event) => {
       showTooltipForEdge(edge, event?.clientX, event?.clientY, true);
       if (edge) {
-        nodesHighlight([edge.source, edge.target].filter((node) => !node.selected), true);
+        nodesHighlight([edge.source, edge.target].filter((node) => !node._selected), true);
       }
     });
     helios.onEdgeHoverMove((edge, event) => {
@@ -12884,7 +12890,7 @@ var visualizeNetwork = (networkName2) => {
     });
     helios.onEdgeHoverEnd((edge, event) => {
       if (edge) {
-        nodesHighlight([edge.source, edge.target].filter((node) => !node.selected), false);
+        nodesHighlight([edge.source, edge.target].filter((node) => !node._selected), false);
       }
       showTooltipForEdge(null);
     });
@@ -12902,10 +12908,10 @@ var visualizeNetwork = (networkName2) => {
       select("#loading").style("display", "none");
       select("#message").style("display", "block");
     });
-    helios.backgroundColor(backgroundColor).edgesGlobalOpacityScale(1).nodeSize(defaultNodeScale).nodeOutlineWidth(defaultOutlineWidthFactor).nodeOutlineColor(backgroundColor).additiveBlending(additiveBlending).shadedNodes(shaded);
+    helios.backgroundColor(backgroundColor).edgesGlobalOpacityScale(1).nodeSize(updateNodeSize).nodeOutlineWidth(defaultOutlineWidthFactor).nodeOutlineColor(backgroundColor).additiveBlending(additiveBlending).shadedNodes(shaded);
     let buttonInformation = {
       Export: {
-        name: "Export",
+        name: "⬇︎",
         mapColor: "#B1C3B6",
         color: "#008758",
         action: (selection2, d, event) => {
@@ -12939,7 +12945,6 @@ var visualizeNetwork = (networkName2) => {
           selection2.append("input").attr("type", "range").attr("min", "-1").attr("max", "1").attr("step", "0.1").attr("value", "" + Math.log10(currentGlobalNodeSizeScale)).attr("id", "nodeSizeSlider").classed("slider", true).style("min-width", "60px").on("input", (event, d) => {
             currentGlobalNodeSizeScale = Math.pow(10, parseFloat(select("#nodeSizeSlider").property("value")));
             updateNodeSelectionGlobalStyle();
-            helios.update();
             helios.render();
             event.stopPropagation();
           });
@@ -12953,7 +12958,7 @@ var visualizeNetwork = (networkName2) => {
         extra: (selection2) => {
           selection2.append("select").attr("id", "colorSelector").classed("selector", true).style("min-width", "60px").on("change", (event, d) => {
             updateColorSelection();
-          }).selectAll("option").data(Object.entries(helios.network.index2Node[0])).enter().filter((d) => !d[0].startsWith("_")).filter((d) => !ignoredProperties.has(d[0])).append("option").attr("value", (d) => d[0]).property("selected", (d) => d[0] == colorProperty).text((d) => d[0]);
+          }).selectAll("option").data(Object.entries(helios.network.index2Node[0])).enter().filter((d) => !d[0].startsWith("_")).filter((d) => !ignoredProperties.has(d[0]) && !d[0].startsWith("_")).append("option").attr("value", (d) => d[0]).property("selected", (d) => d[0] == colorProperty).text((d) => d[0]);
           selection2.append("select").attr("id", "colormapSelector").classed("selector", true).style("min-width", "60px");
         }
       },
@@ -12967,7 +12972,6 @@ var visualizeNetwork = (networkName2) => {
           selection2.append("input").attr("type", "range").attr("min", "0").attr("max", "1").attr("step", 1 / 255 + "").attr("value", "" + Math.round(255 * currentGlobalEdgeOpacityScale) / 255).attr("id", "edgeOpacitySlider").classed("slider", true).style("min-width", "60px").on("input", (event, d) => {
             currentGlobalEdgeOpacityScale = parseFloat(select("#edgeOpacitySlider").property("value"));
             helios.edgesGlobalOpacityScale(currentGlobalEdgeOpacityScale);
-            helios.update();
             helios.render();
             event.stopPropagation();
           });
@@ -13025,9 +13029,9 @@ var visualizeNetwork = (networkName2) => {
         let color2 = rgb(property2color.get(node[colorProperty]));
         let darkerColor = color2.darker(nonSelectedDarkerColorFactor);
         let brighterColor = color2.brighter(nonSelectedBrighterColorFactor);
-        node.originalColor = [color2.r / 255, color2.g / 255, color2.b / 255];
-        node.darkerColor = [darkerColor.r / 255, darkerColor.g / 255, darkerColor.b / 255];
-        node.brighterColor = [brighterColor.r / 255, brighterColor.g / 255, brighterColor.b / 255];
+        node._originalColor = [color2.r / 255, color2.g / 255, color2.b / 255];
+        node._darkerColor = [darkerColor.r / 255, darkerColor.g / 255, darkerColor.b / 255];
+        node._brighterColor = [brighterColor.r / 255, brighterColor.g / 255, brighterColor.b / 255];
       }
       updateNodeSelectionOrHighlightedColors();
       helios.update();
@@ -13050,9 +13054,9 @@ var visualizeNetwork = (networkName2) => {
         let color2 = rgb(cScale(node[colorProperty]));
         let darkerColor = color2.darker(nonSelectedDarkerColorFactor);
         let brighterColor = color2.brighter(nonSelectedBrighterColorFactor);
-        node.originalColor = [color2.r / 255, color2.g / 255, color2.b / 255];
-        node.darkerColor = [darkerColor.r / 255, darkerColor.g / 255, darkerColor.b / 255];
-        node.brighterColor = [brighterColor.r / 255, brighterColor.g / 255, brighterColor.b / 255];
+        node._originalColor = [color2.r / 255, color2.g / 255, color2.b / 255];
+        node._darkerColor = [darkerColor.r / 255, darkerColor.g / 255, darkerColor.b / 255];
+        node._brighterColor = [brighterColor.r / 255, brighterColor.g / 255, brighterColor.b / 255];
       }
       updateNodeSelectionOrHighlightedColors();
       helios.update();
