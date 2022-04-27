@@ -14,10 +14,10 @@ Object.assign(allColors, extraColors);
 console.log(allColors)
 
 let ignoredProperties = new Set(["ID","edges","neighbors"]);
+
 /*
  * Some auxiliary functions
 */
-
 function sortByCount(anArray) {
 	let map = anArray.reduce((p, c) => {
 		p.set(c, (p.get(c) || 0) + 1);
@@ -121,6 +121,9 @@ let visualizeNetwork = (networkName) => {
 		let defaultNodeOpacity = 1.0;
 		let defaultOutlineColor = backgroundColor;
 		let defaultOutlineWidthFactor = 0.25;
+
+		let updateNodeSize = node=>node._originalSize;
+
 		// shaded mode does not require any outline
 		if(shaded){
 			defaultOutlineWidthFactor = 0.0;
@@ -140,17 +143,18 @@ let visualizeNetwork = (networkName) => {
 		// Scale and Opacity of Highlighted nodes
 		let highlightNodeScale = 2.0;
 		let highlightNodeOpacityScale = 1e10;// as opaque as possible
-
+		
 		// Scale and Opacity of selected nodes
 		let selectedNodeScale = 3.0;
 		let selectedNodeOpacityScale = 1e10; // as opaque as possible
+		let selectedOutlineColor = [0.9,0.9,0.0];
+		
 		let selectedNeighborNodeSizeScale = 2.0;
 		let selectedNeighborNodeOpacityScale = 1.5;
-		let selectedOutlineColor = [0.9,0.9,0.0];
 
 		
 		// Visual properties of non selected and non highlighted nodes
-		let nonSelectedNodeOpacityScale = 0.95;
+		let nonSelectedNodeOpacityScale = 1.0;
 		let nonSelectedNodeSizeScale = 0.5;
 		let nonSelectedDarkerColorFactor = 1.5;
 		let nonSelectedBrighterColorFactor = 0.5;
@@ -224,30 +228,37 @@ let visualizeNetwork = (networkName) => {
 			autoStartLayout: autoStartLayout,
 		});
 
+		// Calculating node degree so that 
+
+		for (let [key, node] of Object.entries(helios.network.nodes)) {
+			let nodeDegree = node.edges.length;
+			node._originalSize = defaultNodeScale*(Math.log10(nodeDegree+1.0));
+		}
+
 		let updateNodeSelectionStyle = (node) => {
 			// Hovering
-			if ((typeof node.highlighted === 'undefined')) { 
-				node.highlighted = false;
+			if ((typeof node._highlighted === 'undefined')) { 
+				node._highlighted = false;
 			}
 			// After double click
-			if ((typeof node.selected === 'undefined')) {
-				node.selected = false;
+			if ((typeof node._selected === 'undefined')) {
+				node._selected = false;
 			}
 			// After double click
-			if ((typeof node.selectedNeighbor === 'undefined')) {
-				node.selectedNeighbor = false;
+			if ((typeof node._selectedNeighbor === 'undefined')) {
+				node._selectedNeighbor = false;
 			}
 
-			let nodeSize = defaultNodeScale;
+			let nodeSize = node._originalSize;
 			let nodeOutlineWidth = defaultOutlineWidthFactor;
 			let nodeOpacity = defaultNodeOpacity;
 			
-			if(node.selected){
+			if(node._selected){
 				nodeSize *= selectedNodeScale;
 				nodeOpacity *= selectedNodeOpacityScale;
 				node.outlineColor = selectedOutlineColor;
 				nodeOutlineWidth *= selectedNodeScale;
-			}else if(node.selectedNeighbor){
+			}else if(node._selectedNeighbor){
 				nodeSize *= selectedNeighborNodeSizeScale;
 				nodeOpacity *= selectedNeighborNodeOpacityScale;
 				node.outlineColor = defaultOutlineColor;
@@ -256,7 +267,7 @@ let visualizeNetwork = (networkName) => {
 				node.outlineColor = defaultOutlineColor;
 			}
 
-			if(node.highlighted){
+			if(node._highlighted){
 				nodeSize *= highlightNodeScale;
 				nodeOpacity *= highlightNodeOpacityScale;
 				nodeOutlineWidth *= highlightNodeScale;
@@ -271,7 +282,7 @@ let visualizeNetwork = (networkName) => {
 		let nodesHighlight = (nodes,shallHighlight,shallUpdate=true) =>{
 			
 			nodes.forEach(node => {
-				node.highlighted = shallHighlight;
+				node._highlighted = shallHighlight;
 				updateNodeSelectionStyle(node);
 			});
 
@@ -291,10 +302,10 @@ let visualizeNetwork = (networkName) => {
 
 		let nodesSelect = (nodes,shallSelect,shallUpdate=true) => {
 			nodes.forEach(node => {
-				node.selected = shallSelect;
-				node.selectedNeighbor = shallSelect;
+				node._selected = shallSelect;
+				node._selectedNeighbor = shallSelect;
 				node.neighbors.forEach(neighNode => {
-					neighNode.selectedNeighbor = shallSelect;
+					neighNode._selectedNeighbor = shallSelect;
 					updateNodeSelectionStyle(neighNode);
 				});
 				updateNodeSelectionStyle(node);
@@ -323,9 +334,12 @@ let visualizeNetwork = (networkName) => {
 				if (helios.zoomFactor() < minCenteredNodeZoomLevel) {
 					helios.zoomFactor(minCenteredNodeZoomLevel, 500);
 				}
+				// resetting node selection
 				nodesSelect(helios.centeredNodes(),false,false);
+				// set selection
 				nodesSelect(nodes,true,false);
 				helios.centerOnNodes(nodes, 500);
+				let pickableSet = new Set();
 				nodes.forEach(node => {
 					helios.pickeableEdges(node.edges);
 				});
@@ -390,7 +404,7 @@ let visualizeNetwork = (networkName) => {
 		let updateNodeSelectionGlobalStyle = (hasSelection) =>{
 			// hasSelection not set 
 			if(typeof hasSelection === 'undefined'){
-				hasSelection = helios.network.index2Node.some(node=>node.selected);
+				hasSelection = helios.network.index2Node.some(node=>node._selected);
 			}
 			if(hasSelection){
 				helios.nodesGlobalOpacityScale(nonSelectedNodeOpacityScale);
@@ -408,20 +422,20 @@ let visualizeNetwork = (networkName) => {
 		let updateNodeSelectionOrHighlightedColors = (hasSelection) =>{
 			// hasSelection not set 
 			if(typeof hasSelection === 'undefined'){
-				hasSelection = helios.network.index2Node.some(node=>node.selected||node.highlighted||node.selectedNeighbor);
+				hasSelection = helios.network.index2Node.some(node=>node._selected||node._highlighted||node._selectedNeighbor);
 			}
 			if(hasSelection){
 				helios.nodeColor(node => {
 					// console.log(""+[color.r,color.g,color.b])
-					if(node.selected || node.highlighted || node.selectedNeighbor){
-						return node.originalColor;
+					if(node._selected || node._highlighted || node._selectedNeighbor){
+						return node._originalColor;
 					}else{
-						return darkBackground?node.darkerColor:node.brighterColor;
+						return darkBackground?node._darkerColor:node._brighterColor;
 					}
 				});
 			}else{
 				helios.nodeColor(node => {
-					return node.originalColor;
+					return node._originalColor;
 				});
 			}
 		}
@@ -508,7 +522,7 @@ let visualizeNetwork = (networkName) => {
 			showTooltipForEdge(edge,event?.clientX,event?.clientY,true);
 			if(edge){
 				// Only the non selected endpoints are highlighted
-				nodesHighlight([edge.source,edge.target].filter(node=>!node.selected),true);
+				nodesHighlight([edge.source,edge.target].filter(node=>!node._selected),true);
 			}
 		});
 
@@ -519,7 +533,7 @@ let visualizeNetwork = (networkName) => {
 		helios.onEdgeHoverEnd((edge, event) => {
 			if (edge) {
 				// Only the non selected endpoints were highlighted
-				nodesHighlight([edge.source,edge.target].filter(node=>!node.selected),false);
+				nodesHighlight([edge.source,edge.target].filter(node=>!node._selected),false);
 			}
 			showTooltipForEdge(null);
 		});
@@ -551,7 +565,7 @@ let visualizeNetwork = (networkName) => {
 			// 	return Math.random()*5+1.0;
 			// })
 			.edgesGlobalOpacityScale(1.0) // set edges intensity);
-			.nodeSize(defaultNodeScale)
+			.nodeSize(updateNodeSize)
 			.nodeOutlineWidth(defaultOutlineWidthFactor)
 			.nodeOutlineColor(backgroundColor)
 			.additiveBlending(additiveBlending)
@@ -560,7 +574,7 @@ let visualizeNetwork = (networkName) => {
 
 		let buttonInformation = {
 			"Export": {
-				name: "Export",
+				name: "⬇︎",
 				mapColor: "#B1C3B6",
 				color: "#008758",
 				action: (selection, d, event) => {
@@ -607,7 +621,7 @@ let visualizeNetwork = (networkName) => {
 							// helios.nodesGlobalSizeScale(currentGlobalNodeSizeScale);
 							// helios.nodesGlobalOutlineWidthScale(currentGlobalNodeSizeScale);
 							updateNodeSelectionGlobalStyle();
-							helios.update();
+							// helios.update();
 							helios.render();
 							event.stopPropagation();
 						});
@@ -630,7 +644,7 @@ let visualizeNetwork = (networkName) => {
 						.data(Object.entries(helios.network.index2Node[0]))
 						.enter()
 						.filter(d => !d[0].startsWith("_"))
-						.filter(d => !ignoredProperties.has(d[0]))
+						.filter(d => !ignoredProperties.has(d[0]) && !d[0].startsWith("_"))
 						.append("option")
 						.attr("value", d => d[0])
 						.property("selected", d => d[0] == colorProperty)
@@ -670,7 +684,7 @@ let visualizeNetwork = (networkName) => {
 							// helios.edgesOpacity(Math.pow(10,parseFloat(d3Select("#edgeOpacitySlider").property("value"))));
 							currentGlobalEdgeOpacityScale = parseFloat(d3Select("#edgeOpacitySlider").property("value"))
 							helios.edgesGlobalOpacityScale(currentGlobalEdgeOpacityScale);
-							helios.update();
+							// helios.update();
 							helios.render();
 							event.stopPropagation();
 						});
@@ -762,9 +776,9 @@ let visualizeNetwork = (networkName) => {
 				let darkerColor = color.darker(nonSelectedDarkerColorFactor);
 				let brighterColor = color.brighter(nonSelectedBrighterColorFactor);
 
-				node.originalColor = [color.r / 255, color.g / 255, color.b / 255];
-				node.darkerColor = [darkerColor.r / 255, darkerColor.g / 255, darkerColor.b / 255];
-				node.brighterColor = [brighterColor.r / 255, brighterColor.g / 255, brighterColor.b / 255];
+				node._originalColor = [color.r / 255, color.g / 255, color.b / 255];
+				node._darkerColor = [darkerColor.r / 255, darkerColor.g / 255, darkerColor.b / 255];
+				node._brighterColor = [brighterColor.r / 255, brighterColor.g / 255, brighterColor.b / 255];
 			}
 			updateNodeSelectionOrHighlightedColors();
 			helios.update();
@@ -792,9 +806,9 @@ let visualizeNetwork = (networkName) => {
 				let darkerColor = color.darker(nonSelectedDarkerColorFactor);
 				let brighterColor = color.brighter(nonSelectedBrighterColorFactor);
 
-				node.originalColor = [color.r / 255, color.g / 255, color.b / 255];
-				node.darkerColor = [darkerColor.r / 255, darkerColor.g / 255, darkerColor.b / 255];
-				node.brighterColor = [brighterColor.r / 255, brighterColor.g / 255, brighterColor.b / 255];
+				node._originalColor = [color.r / 255, color.g / 255, color.b / 255];
+				node._darkerColor = [darkerColor.r / 255, darkerColor.g / 255, darkerColor.b / 255];
+				node._brighterColor = [brighterColor.r / 255, brighterColor.g / 255, brighterColor.b / 255];
 			}
 			updateNodeSelectionOrHighlightedColors();
 			helios.update();
