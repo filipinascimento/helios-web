@@ -55,6 +55,7 @@ import {Helios} from "https://cdn.skypack.dev/helios-web?min";
 // This will be fixed in the next release
 
 // Nodes are dictionaries (any key can be used as node properties)
+
 let nodes = {
   "0": {
     label: "Node 0",
