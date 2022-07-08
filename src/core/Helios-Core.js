@@ -1727,10 +1727,16 @@ export class Helios {
 	}
 	onLayoutStart(callback) {
 		this.onLayoutStartCallback = callback;
+		this?.layoutWorker.onStart(() =>{
+			this.onLayoutStartCallback?.();
+		});
 		return this;
 	}
 	onLayoutStop(callback) {
 		this.onLayoutStopCallback = callback;
+		this?.layoutWorker.onStop(() =>{
+			this.onLayoutStopCallback?.();
+		});
 		return this;
 	}
 	onDraw(callback) {

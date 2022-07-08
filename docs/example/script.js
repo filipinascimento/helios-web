@@ -225,7 +225,7 @@ let visualizeNetwork = (networkName) => {
 			edges: edges,
 			use2D: use2D,
 			fastEdges: !advancedEdges&&bigNetwork,
-			autoStartLayout: autoStartLayout,
+			autoStartLayout: false,
 		});
 
 		// Calculating node degree so that 
@@ -907,6 +907,9 @@ let visualizeNetwork = (networkName) => {
 
 		
 		helios.onReady(() => {
+			if(autoStartLayout){
+				helios.resumeLayout();
+			}
 			updateColorSelection();
 		});
 
