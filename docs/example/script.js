@@ -11273,10 +11273,16 @@ var Helios = class {
   }
   onLayoutStart(callback) {
     this.onLayoutStartCallback = callback;
+    this?.layoutWorker.onStart(() => {
+      this.onLayoutStartCallback?.();
+    });
     return this;
   }
   onLayoutStop(callback) {
     this.onLayoutStopCallback = callback;
+    this?.layoutWorker.onStop(() => {
+      this.onLayoutStopCallback?.();
+    });
     return this;
   }
   onDraw(callback) {
@@ -12654,7 +12660,7 @@ var visualizeNetwork = (networkName2) => {
       edges,
       use2D,
       fastEdges: !advancedEdges && bigNetwork,
-      autoStartLayout
+      autoStartLayout: false
     });
     for (let [key, node] of Object.entries(helios.network.nodes)) {
       let nodeDegree = node.edges.length;
@@ -13120,6 +13126,9 @@ var visualizeNetwork = (networkName2) => {
     helios.nodesGlobalOutlineWidthScale(currentGlobalNodeSizeScale);
     helios.edgesGlobalOpacityScale(currentGlobalEdgeOpacityScale);
     helios.onReady(() => {
+      if (autoStartLayout) {
+        helios.resumeLayout();
+      }
       updateColorSelection();
     });
     window.helios = helios;
