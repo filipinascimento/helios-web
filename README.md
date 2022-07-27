@@ -1,7 +1,7 @@
 # Helios Web
 <img width="226" alt="Helios Web demo" src="https://github.com/filipinascimento/helios-web/raw/main/media/WS_very_low.gif">
 
-Helios Web is a web-based library to visualize dynamic networks in real-time. Currently under development it aims to provide a simple API and optimized implementation to be integrated in other systems and render and layout large networks. This is the sucessor to the [Networks 3D project](https://filipinascimento.github.io/networks3d/) and the [Networks Web project](https://filipinascimento.github.io/software/networksweb/).
+Helios Web is a web-based library to visualize dynamic networks in real-time. Helios-web is under active development and aims to provide a simple API and optimized implementation to be integrated into other systems and render and layout large networks. This is the successor to the [Networks 3D project](https://filipinascimento.github.io/networks3d/) and the [Networks Web project](https://filipinascimento.github.io/software/networksweb/).
 
 Check out the demo https://filipinascimento.github.io/helios-web/docs/example/
 
@@ -92,7 +92,8 @@ let helios = new Helios({
 
 </script>
 ```
-You can find a bare-minimal example at https://jsfiddle.net/yatk8jcb/14/
+You can find a bare-minimal example at https://jsfiddle.net/yatk8jcb/14/ and a more advanced example at https://jsfiddle.net/filsilva/djfomsgw/69/ (Zachary's karate club network).
+
 
 Helios web is also available as a npm package:
 
