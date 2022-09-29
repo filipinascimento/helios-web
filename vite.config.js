@@ -16,7 +16,7 @@ export default defineConfig({
 		sourcemap: true,
 		lib: {
 			entry: resolve(__dirname, 'src/helios.js'),
-			name: 'helios-web-dev',
+			name: 'helios-web',
 			// the proper extensions will be added
 			fileName: 'helios'
 		},
