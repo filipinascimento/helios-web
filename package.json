@@ -36,7 +36,7 @@
   "scripts": {
     "start": "snowpack dev",
     "build": "snowpack build",
-    "test": "echo \"This template does not include a test runner by default.\" && exit 1",
+    "test": "web-test-runner \"test/**/*.test.js\"",
     "format": "prettier --write \"Core/**/*.js\"",
     "lint": "prettier --check \"Core/**/*.js\"",
     "prepublishOnly": "node scripts/prePublish.cjs && snowpack build"
@@ -45,17 +45,20 @@
     "@colormap/core": "^0.2.0",
     "@colormap/presets": "^0.2.0",
     "@npmcli/arborist": ">=2.8.2",
-    "d3-selection": "^3.0.0",
-    "d3-scale":"^4.0.2",
-    "d3-scale-chromatic": "^3.0.0",
-    "d3-zoom": "^3.0.0",
     "d3-ease": "^3.0.0",
+    "d3-scale": "^4.0.2",
+    "d3-scale-chromatic": "^3.0.0",
+    "d3-selection": "^3.0.0",
+    "d3-zoom": "^3.0.0",
     "fast-png": "^5.0.4",
     "gl-matrix": "^3.3.0",
     "pica": "^9.0.1",
     "tar": ">=6.1.9"
   },
   "devDependencies": {
+    "@snowpack/web-test-runner-plugin": "^0.2.2",
+    "@web/test-runner": "^0.14.0",
+    "chai": "^4.3.6",
     "prettier": "^2.3.2",
     "snowpack": "^3.8.8",
     "snowpack-plugin-glslify": "^1.0.0"

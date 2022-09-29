@@ -200,7 +200,7 @@ export class Helios {
 					let maxDisplacement = 0;
 					for (let index = 0; index < this.network.positions.length; index++) {
 						let displacement = this.newPositions[index] - this.network.positions[index];
-						this.network.positions[index] += 0.01 * (displacement)*elapsedTime/10;
+						this.network.positions[index] += 0.05 * (displacement)*elapsedTime/10;
 						
 						maxDisplacement = Math.max(Math.abs(displacement), maxDisplacement);
 					};

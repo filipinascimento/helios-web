@@ -66,6 +66,7 @@ let networkName = "WS_10000_10_001"
 if (urlParams.has("network")) {
 	networkName = urlParams.get("network");
 }
+
 let use2D = false;
 if (urlParams.has("use2d")) {
 	use2D = true;
@@ -80,6 +81,20 @@ let advancedEdges = false;
 if (urlParams.has("advanced")) {
 	advancedEdges = true;
 }
+
+
+let definedSize = null;
+if (urlParams.has("size")) {
+	definedSize = +urlParams.get("size");
+}
+
+
+let definedOpacity = null;
+if (urlParams.has("opacity")) {
+	definedOpacity = +urlParams.get("opacity");
+}
+
+
 
 let startZoomLevel = null;
 if (urlParams.has("zoom")) {
@@ -108,7 +123,7 @@ if (urlParams.has("additive") && darkBackground) {
 
 let visualizeNetwork = (networkName) => {
 	xnet.loadXNETFile("networks/" + networkName + ".xnet").then(async network => {
-
+		window.network = network;
 		/*
 		 * Defining default and initial parameters
 		*/
@@ -465,7 +480,7 @@ let visualizeNetwork = (networkName) => {
 
 		let logZoom =  Math.log10(estimatedZoom);
 		// let estimatedSize = Math.pow(10,-0.2833+-0.0520*logK+0.0347*logN+0.0000*logDensity)
-
+		
 		let estimatedSize = Math.pow(10,0.8744+0.1766*logK+-0.2989*logN+-0.9187*logZoom+0.0000*logDensity)
 
 		// estimatedZoom = Math.pow(10,1.2771+0.2415*logK+-0.3629*logN+0.0000*logDensity)
@@ -473,8 +488,18 @@ let visualizeNetwork = (networkName) => {
 		// estimatedSize = Math.pow(10,-0.3259+-0.0337*logK+0.0343*logN+0.0000*logDensity)
 		// estimatedSize3 = Math.pow(10,0.7583+0.1713*logK+-0.2738*logN+-0.8489*logZoom+0.0000*logDensity)
 		
-		currentGlobalNodeSizeScale = estimatedSize;
-		currentGlobalEdgeOpacityScale = estimatedOpacity;
+		if(definedSize){
+			currentGlobalNodeSizeScale = definedSize;
+		}else{
+			currentGlobalNodeSizeScale = estimatedSize;
+		}
+
+		if(definedOpacity){
+			currentGlobalEdgeOpacityScale = definedOpacity;
+		}else{
+			currentGlobalEdgeOpacityScale = estimatedOpacity;
+		}
+		
 		defaultZoomLevel = estimatedZoom;
 
 		helios.onNodeHoverStart((node, event) => {

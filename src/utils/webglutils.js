@@ -21,7 +21,7 @@ function createWebGLContext(canvas, opt_attribs) {
 	for (let ii = 0; ii < names.length; ++ii) {
 		try {
 			context = canvas.getContext(names[ii], opt_attribs);
-		} catch(e) {}
+		} catch (e) { }
 		if (context) {
 			break;
 		}
@@ -47,11 +47,11 @@ async function getShader(gl, ID) {
 		}
 		k = k.nextSibling;
 	}
-	
-	if(shaderScript.src){
-		str = await fetch(shaderScript.src).then(response=>response.text());
+
+	if (shaderScript.src) {
+		str = await fetch(shaderScript.src).then(response => response.text());
 	}
-	
+
 	let shader;
 	if (shaderScript.type == "text/glsl-fragment") {
 		shader = gl.createShader(gl.FRAGMENT_SHADER);
@@ -64,9 +64,9 @@ async function getShader(gl, ID) {
 
 	gl.shaderSource(shader, str);
 	gl.compileShader(shader);
-	
+
 	if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-		console.log("ERROR with script: ",ID);
+		console.log("ERROR with script: ", ID);
 		console.log(gl.getShaderInfoLog(shader));
 		return null;
 	}
@@ -75,19 +75,19 @@ async function getShader(gl, ID) {
 }
 
 //new URL('fancy-button.css', import.meta.url)
-async function getShaderFromURL(gl,url,type){ //gl.FRAGMENT_SHADER or gl.VERTEX_SHADER
+async function getShaderFromURL(gl, url, type) { //gl.FRAGMENT_SHADER or gl.VERTEX_SHADER
 	let str = await fetch(url).then(r => r.text());
-	
+
 	let shader;
 	shader = gl.createShader(type);
-	
+
 	// console.log(str);
 
 	gl.shaderSource(shader, str);
 	gl.compileShader(shader);
-	
+
 	if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-		console.log("ERROR with script: ",url);
+		console.log("ERROR with script: ", url);
 		console.log(gl.getShaderInfoLog(shader));
 		return null;
 	}
@@ -95,18 +95,18 @@ async function getShaderFromURL(gl,url,type){ //gl.FRAGMENT_SHADER or gl.VERTEX_
 	return shader;
 }
 
-function getShaderFromString(gl,str,type){ //gl.FRAGMENT_SHADER or gl.VERTEX_SHADER
+function getShaderFromString(gl, str, type) { //gl.FRAGMENT_SHADER or gl.VERTEX_SHADER
 	let shader;
 	// console.log(str);
 	shader = gl.createShader(type);
-	
+
 	// console.log(str);
 
 	gl.shaderSource(shader, str);
 	gl.compileShader(shader);
-	
+
 	if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-		console.log("ERROR with script: ",str);
+		console.log("ERROR with script: ", str);
 		console.log(gl.getShaderInfoLog(shader));
 		return null;
 	}
@@ -115,45 +115,45 @@ function getShaderFromString(gl,str,type){ //gl.FRAGMENT_SHADER or gl.VERTEX_SHA
 }
 
 
-function ShaderProgram(vertexShader,fragmentShader, uniforms, attributes, glContext){
-  let shaderProgram = glContext.createProgram();
+function ShaderProgram(vertexShader, fragmentShader, uniforms, attributes, glContext) {
+	let shaderProgram = glContext.createProgram();
 	glContext.attachShader(shaderProgram, vertexShader);
 	glContext.attachShader(shaderProgram, fragmentShader);
 	glContext.linkProgram(shaderProgram);
-	
-	
+
+
 	if (!glContext.getProgramParameter(shaderProgram, glContext.LINK_STATUS)) {
-		alert("Shader Compilation Error."+glContext.getProgramInfoLog(shaderProgram));
-		 return;
+		alert("Shader Compilation Error." + glContext.getProgramInfoLog(shaderProgram));
+		return;
 	}
-	
+
 	this.ID = shaderProgram;
-	
+
 	this.uniforms = new Object();
 	this.attributes = new Object();
-	
-	if(uniforms){
-		for(let i=0;i<uniforms.length;i++){
+
+	if (uniforms) {
+		for (let i = 0; i < uniforms.length; i++) {
 			this.uniforms[uniforms[i]] = glContext.getUniformLocation(this.ID, uniforms[i]);
 		}
 	}
-	
-	this.attributes.enable = function(attributeName){
+
+	this.attributes.enable = function (attributeName) {
 		glContext.enableVertexAttribArray(this[attributeName]);
 	}
-	
-	this.attributes.disable = function(attributeName){
+
+	this.attributes.disable = function (attributeName) {
 		glContext.disableVertexAttribArray(this[attributeName]);
 	}
-	
-	if(attributes){
-		for(let i=0;i<attributes.length;i++){
+
+	if (attributes) {
+		for (let i = 0; i < attributes.length; i++) {
 			this.attributes[attributes[i]] = glContext.getAttribLocation(this.ID, attributes[i]);
 		}
 	}
-	
-	this.use = function(glContext){
-    glContext.useProgram(this.ID);
+
+	this.use = function (glContext) {
+		glContext.useProgram(this.ID);
 	}
 }
 
@@ -185,9 +185,9 @@ function ShaderProgram(vertexShader,fragmentShader, uniforms, attributes, glCont
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
- /*
- 	taken from: https://cvs.khronos.org/svn/repos/registry/trunk/public/webgl/sdk/demos/webkit/resources/J3DI.js
- */
+/*
+	 taken from: https://cvs.khronos.org/svn/repos/registry/trunk/public/webgl/sdk/demos/webkit/resources/J3DI.js
+*/
 
 //
 // makeSphere
@@ -202,132 +202,176 @@ function ShaderProgram(vertexShader,fragmentShader, uniforms, attributes, glCont
 //  indexObject         WebGLBuffer object for indices
 //  numIndices          The number of indices in the indexObject
 //
-function makeSphere(ctx, radius, lats, longs)
-{
-    var geometryData = [ ];
-    var normalData = [ ];
-    var texCoordData = [ ];
-    var indexData = [ ];
+function makeSphere(ctx, radius, lats, longs) {
+	var geometryData = [];
+	var normalData = [];
+	var texCoordData = [];
+	var indexData = [];
 
-    for (var latNumber = 0; latNumber <= lats; ++latNumber) {
-        for (var longNumber = 0; longNumber <= longs; ++longNumber) {
-            var theta = latNumber * Math.PI / lats;
-            var phi = longNumber * 2 * Math.PI / longs;
-            var sinTheta = Math.sin(theta);
-            var sinPhi = Math.sin(phi);
-            var cosTheta = Math.cos(theta);
-            var cosPhi = Math.cos(phi);
+	for (var latNumber = 0; latNumber <= lats; ++latNumber) {
+		for (var longNumber = 0; longNumber <= longs; ++longNumber) {
+			var theta = latNumber * Math.PI / lats;
+			var phi = longNumber * 2 * Math.PI / longs;
+			var sinTheta = Math.sin(theta);
+			var sinPhi = Math.sin(phi);
+			var cosTheta = Math.cos(theta);
+			var cosPhi = Math.cos(phi);
 
-            var x = cosPhi * sinTheta;
-            var y = cosTheta;
-            var z = sinPhi * sinTheta;
-            var u = 1-(longNumber/longs);
-            var v = latNumber/lats;
+			var x = cosPhi * sinTheta;
+			var y = cosTheta;
+			var z = sinPhi * sinTheta;
+			var u = 1 - (longNumber / longs);
+			var v = latNumber / lats;
 
-            normalData.push(x);
-            normalData.push(y);
-            normalData.push(z);
-            texCoordData.push(u);
-            texCoordData.push(v);
-            geometryData.push(radius * x);
-            geometryData.push(radius * y);
-            geometryData.push(radius * z);
-        }
-    }
+			normalData.push(x);
+			normalData.push(y);
+			normalData.push(z);
+			texCoordData.push(u);
+			texCoordData.push(v);
+			geometryData.push(radius * x);
+			geometryData.push(radius * y);
+			geometryData.push(radius * z);
+		}
+	}
 
-    for (var latNumber = 0; latNumber < lats; ++latNumber) {
-        for (var longNumber = 0; longNumber < longs; ++longNumber) {
-            var first = (latNumber * (longs+1)) + longNumber;
-            var second = first + longs + 1;
-            indexData.push(first);
-            indexData.push(second);
-            indexData.push(first+1);
+	for (var latNumber = 0; latNumber < lats; ++latNumber) {
+		for (var longNumber = 0; longNumber < longs; ++longNumber) {
+			var first = (latNumber * (longs + 1)) + longNumber;
+			var second = first + longs + 1;
+			indexData.push(first);
+			indexData.push(second);
+			indexData.push(first + 1);
 
-            indexData.push(second);
-            indexData.push(second+1);
-            indexData.push(first+1);
-        }
-    }
+			indexData.push(second);
+			indexData.push(second + 1);
+			indexData.push(first + 1);
+		}
+	}
 
-    var retval = { };
+	var retval = {};
 
-    retval.normalObject = ctx.createBuffer();
-    ctx.bindBuffer(ctx.ARRAY_BUFFER, retval.normalObject);
-    ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(normalData), ctx.STATIC_DRAW);
+	retval.normalObject = ctx.createBuffer();
+	ctx.bindBuffer(ctx.ARRAY_BUFFER, retval.normalObject);
+	ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(normalData), ctx.STATIC_DRAW);
 
-    retval.texCoordObject = ctx.createBuffer();
-    ctx.bindBuffer(ctx.ARRAY_BUFFER, retval.texCoordObject);
-    ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(texCoordData), ctx.STATIC_DRAW);
+	retval.texCoordObject = ctx.createBuffer();
+	ctx.bindBuffer(ctx.ARRAY_BUFFER, retval.texCoordObject);
+	ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(texCoordData), ctx.STATIC_DRAW);
 
-    retval.vertexObject = ctx.createBuffer();
-    ctx.bindBuffer(ctx.ARRAY_BUFFER, retval.vertexObject);
-    ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(geometryData), ctx.STATIC_DRAW);
+	retval.vertexObject = ctx.createBuffer();
+	ctx.bindBuffer(ctx.ARRAY_BUFFER, retval.vertexObject);
+	ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(geometryData), ctx.STATIC_DRAW);
 
-    retval.numIndices = indexData.length;
-    retval.indexObject = ctx.createBuffer();
-    ctx.bindBuffer(ctx.ELEMENT_ARRAY_BUFFER, retval.indexObject);
-    ctx.bufferData(ctx.ELEMENT_ARRAY_BUFFER, new Uint16Array(indexData), ctx.STREAM_DRAW);
-    retval.indexType = ctx.UNSIGNED_SHORT;
+	retval.numIndices = indexData.length;
+	retval.indexObject = ctx.createBuffer();
+	ctx.bindBuffer(ctx.ELEMENT_ARRAY_BUFFER, retval.indexObject);
+	ctx.bufferData(ctx.ELEMENT_ARRAY_BUFFER, new Uint16Array(indexData), ctx.STREAM_DRAW);
+	retval.indexType = ctx.UNSIGNED_SHORT;
 
-    return retval;
+	return retval;
 }
 
 
 
 
 
-function makePlane(ctx,generateNormal=true,generateTexCoord=true){
-    let geometryData = [
-			-1.0, 1.0,0.0,
-			-1.0,-1.0,0.0,
-			 1.0, 1.0,0.0,
-			 1.0,-1.0,0.0,
-		];
-    let normalData = [
-			 0.0, 0.0, 1.0,
-			 0.0, 0.0, 1.0,
-			 0.0, 0.0, 1.0,
-			 0.0, 0.0, 1.0,
-		];
-    let texCoordData = [
-			0.0, 1.0, 0.0,
-			1.0, 0.0, 0.0,
-			1.0, 1.0, 0.0,
-			0.0, 0.0, 0.0,
-	 ];
+function makePlane(ctx, generateNormal = true, generateTexCoord = true) {
+	let geometryData = [
+		-1.0, 1.0, 0.0,
+		-1.0, -1.0, 0.0,
+		1.0, 1.0, 0.0,
+		1.0, -1.0, 0.0,
+	];
+	let normalData = [
+		0.0, 0.0, 1.0,
+		0.0, 0.0, 1.0,
+		0.0, 0.0, 1.0,
+		0.0, 0.0, 1.0,
+	];
+	let texCoordData = [
+		0.0, 1.0, 0.0,
+		1.0, 0.0, 0.0,
+		1.0, 1.0, 0.0,
+		0.0, 0.0, 0.0,
+	];
 
-    let retval = { };
+	let retval = {};
 
-	 if(generateTexCoord){
-    retval.texCoordObject = ctx.createBuffer();
-    ctx.bindBuffer(ctx.ARRAY_BUFFER, retval.texCoordObject);
-    ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(texCoordData), ctx.STATIC_DRAW);
-	 }
+	if (generateTexCoord) {
+		retval.texCoordObject = ctx.createBuffer();
+		ctx.bindBuffer(ctx.ARRAY_BUFFER, retval.texCoordObject);
+		ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(texCoordData), ctx.STATIC_DRAW);
+	}
 
-	 if(generateNormal){
-    retval.normalObject = ctx.createBuffer();
-    ctx.bindBuffer(ctx.ARRAY_BUFFER, retval.normalObject);
+	if (generateNormal) {
+		retval.normalObject = ctx.createBuffer();
+		ctx.bindBuffer(ctx.ARRAY_BUFFER, retval.normalObject);
 		ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(normalData), ctx.STATIC_DRAW);
-	 }
+	}
 
-	 retval.vertexObject = ctx.createBuffer();
-	 ctx.bindBuffer(ctx.ARRAY_BUFFER, retval.vertexObject);
-	 ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(geometryData), ctx.STATIC_DRAW);
-		retval.numIndices = 4;
+	retval.vertexObject = ctx.createBuffer();
+	ctx.bindBuffer(ctx.ARRAY_BUFFER, retval.vertexObject);
+	ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(geometryData), ctx.STATIC_DRAW);
+	retval.numIndices = 4;
 
-    // retval.numIndices = indexData.length;
-    // retval.indexObject = ctx.createBuffer();
-    // ctx.bindBuffer(ctx.ELEMENT_ARRAY_BUFFER, retval.indexObject);
-    // ctx.bufferData(ctx.ELEMENT_ARRAY_BUFFER, new Uint16Array(indexData), ctx.STREAM_DRAW);
-    // retval.indexType = ctx.UNSIGNED_SHORT;
+	// retval.numIndices = indexData.length;
+	// retval.indexObject = ctx.createBuffer();
+	// ctx.bindBuffer(ctx.ELEMENT_ARRAY_BUFFER, retval.indexObject);
+	// ctx.bufferData(ctx.ELEMENT_ARRAY_BUFFER, new Uint16Array(indexData), ctx.STREAM_DRAW);
+	// retval.indexType = ctx.UNSIGNED_SHORT;
 
-    return retval;
+	return retval;
 }
 
 // Degrees to Radians convert function
 function degToRad(degrees) {
 	return degrees * Math.PI / 180;
 }
+
+function getArrayCapacity(typedArray){
+	const bytesPerElement = typedArray.BYTES_PER_ELEMENT;
+	const originalBuffer = typedArray.buffer;
+	return originalBuffer.byteLength / bytesPerElement;
+}
+
+function createArrayWithCapacity(arrayType, capacity){
+	const bytesPerElement = arrayType.BYTES_PER_ELEMENT;
+	const buffer = new ArrayBuffer(bytesPerElement * capacity);
+	return new arrayType(buffer,0,0);
+}
+
+// Resize typed arrays
+function resizeArrayToCapacity(typedArray, capacity) {
+	const newTypedArray = new typedArray.constructor(capacity);
+	newTypedArray.set(typedArray);
+	return newTypedArray.subarray(0, typedArray.length);
+}
+
+const capacityFactor = 2;
+const capacityIncrement = 1;
+
+function resizeArray(typedArray, newSize) {
+	if (newSize <= typedArray.length){
+		return typedArray.subarray(0,newSize);
+	}
+	const originalCapacity = getArrayCapacity(typedArray);
+	if(newSize <= originalCapacity){ //still fits, but requires a new view
+		return typedArray.constructor(typedArray.buffer,0,newSize);
+	}
+	const newCapacity = newSize*capacityFactor + capacityIncrement;
+	return resizeArrayToCapacity(typedArray, newCapacity);
+}
+
+
+function expandArrayBufferCapacity(typedArray, newCapacity) {
+	const originalCapacity = getArrayCapacity(typedArray);
+	if (newCapacity <= originalCapacity) {
+		return typedArray;
+	}else{
+		return resizeArrayBuffer(typedArray, newCapacity).subarray(0, originalCapacity);
+	}
+}
+
 
 export {
 	makeSphere,
@@ -339,5 +383,10 @@ export {
 	requestAnimationFrame,
 	cancelAnimationFrame,
 	createWebGLContext,
-	degToRad
+	degToRad,
+	resizeArray,
+	expandArrayBufferCapacity,
+	createArrayWithCapacity,
+	getArrayCapacity,
+	resizeArrayToCapacity
 };

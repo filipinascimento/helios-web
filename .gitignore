@@ -162,4 +162,5 @@ build
 web_modules
 node_modules
 ./build
-
+**/networks/extra/
+package-lock.json
