@@ -328,51 +328,6 @@ function degToRad(degrees) {
 	return degrees * Math.PI / 180;
 }
 
-function getArrayCapacity(typedArray){
-	const bytesPerElement = typedArray.BYTES_PER_ELEMENT;
-	const originalBuffer = typedArray.buffer;
-	return originalBuffer.byteLength / bytesPerElement;
-}
-
-function createArrayWithCapacity(arrayType, capacity){
-	const bytesPerElement = arrayType.BYTES_PER_ELEMENT;
-	const buffer = new ArrayBuffer(bytesPerElement * capacity);
-	return new arrayType(buffer,0,0);
-}
-
-// Resize typed arrays
-function resizeArrayToCapacity(typedArray, capacity) {
-	const newTypedArray = new typedArray.constructor(capacity);
-	newTypedArray.set(typedArray);
-	return newTypedArray.subarray(0, typedArray.length);
-}
-
-const capacityFactor = 2;
-const capacityIncrement = 1;
-
-function resizeArray(typedArray, newSize) {
-	if (newSize <= typedArray.length){
-		return typedArray.subarray(0,newSize);
-	}
-	const originalCapacity = getArrayCapacity(typedArray);
-	if(newSize <= originalCapacity){ //still fits, but requires a new view
-		return typedArray.constructor(typedArray.buffer,0,newSize);
-	}
-	const newCapacity = newSize*capacityFactor + capacityIncrement;
-	return resizeArrayToCapacity(typedArray, newCapacity);
-}
-
-
-function expandArrayBufferCapacity(typedArray, newCapacity) {
-	const originalCapacity = getArrayCapacity(typedArray);
-	if (newCapacity <= originalCapacity) {
-		return typedArray;
-	}else{
-		return resizeArrayBuffer(typedArray, newCapacity).subarray(0, originalCapacity);
-	}
-}
-
-
 export {
 	makeSphere,
 	makePlane,
@@ -383,10 +338,5 @@ export {
 	requestAnimationFrame,
 	cancelAnimationFrame,
 	createWebGLContext,
-	degToRad,
-	resizeArray,
-	expandArrayBufferCapacity,
-	createArrayWithCapacity,
-	getArrayCapacity,
-	resizeArrayToCapacity
+	degToRad
 };

@@ -3,6 +3,7 @@
 import { resolve } from 'path'
 import { defineConfig } from 'vite'
 
+
 /** @type {import('vite').UserConfig} */
 export default defineConfig({
 	// optimizeDeps: {
@@ -24,5 +25,11 @@ export default defineConfig({
 	},
 	server: {
 	  open: '/docs/example/index.html'
-	}
+	},
+	test: {
+	/* for example, use global to avoid globals imports (describe, test, expect): */
+	// globals: true,
+	environment: "jsdom"
+	},
 });
+

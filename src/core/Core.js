@@ -1,7 +1,7 @@
 import * as glm from "gl-matrix"
 import { Network } from "./Network.js"
-import * as glUtils from "../utils/webglutils.js"
-import * as xnet from "../utils/xnet.js"
+import * as glUtils from "../utilities/webgl.js"
+import * as xnet from "../utilities/xnet.js"
 import { select as d3Select } from "d3-selection";
 import {HeliosScheduler} from "./Scheduler.js";
 import { zoom as d3Zoom, zoomTransform as d3ZoomTransform, zoomIdentity as d3ZoomIdentity } from "d3-zoom";
