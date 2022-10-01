@@ -38,7 +38,10 @@
     "preview": "vite preview",
     "test": "vitest",
     "coverage": "vitest run --coverage",
-    "docs": "jsdoc -c jsdoc.conf.json src/ -r -R README.md -d docs/api"
+    "docs": "jsdoc -c jsdoc.conf.json src/ -r -R README.md -d docs/api",
+    "dev_example": "vite dev -c vite.config.example.js",
+    "build_example": "vite build -c vite.config.example.js",
+    "preview_example":"vite preview -c vite.config.example.js"
   },
   "dependencies": {
     "@colormap/core": "^0.2.0",

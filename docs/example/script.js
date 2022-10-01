@@ -1,4 +1,4 @@
-import { Helios, xnet } from "../../src/helios"
+import { Helios, xnet } from "../../src/helios.js";
 
 // import {Helios,xnet} from "https://cdn.skypack.dev/helios-web?min";
 import * as d3Chromatic from "d3-scale-chromatic"
