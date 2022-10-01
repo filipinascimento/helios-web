@@ -29,6 +29,17 @@ let workerFunction = (function (){
 
 	"use strict"
 
+	this._handleSetAttribute = (attributeName,value)=>{
+		// example attributeName = "simulation.alpha"
+		// example this.simulation.attributeName?.(value);
+		let attributeNames = attributeName.split(".");
+		let attribute = this;
+		for(let i=0;i<attributeNames.length;i++){
+			attribute = attribute?.[attributeNames[i]];
+		}
+		attribute?.(value);
+	}
+
 	self.onmessage = function (msg) {
 		// console.log("RECEIVED:", msg.data.type);
 		let use2D = false;
@@ -37,14 +48,18 @@ let workerFunction = (function (){
 			this.simulation.stop();
 		} else if (msg.data.type == "resume") {
 			this.simulation.restart();
+		} else if (msg.data.type == "setAttribute") {
+			this._handleSetAttribute(msg.data.attributeName,msg.data.value);
 		} else if (msg.data.type == "start") {
 			// let inputNodes = msg.data.nodes;
 			let inputNodesPositions = msg.data.positions;
 			let inputEdges = msg.data.edges;
 			// let inputEdgeWeights = msg.data.weights;
+			
 			if(msg.data.use2D) {
 				use2D = true;
 			}
+
 			let nodes = [];
 			let links = [];
 			for (let nodeIndex = 0; nodeIndex < inputNodesPositions.length/3; nodeIndex++) {
@@ -76,15 +91,51 @@ let workerFunction = (function (){
 				}
 				links.push(edgeObject);
 			}
+			
+
+		function d3gravityForce() {
+			var nodes, strength = 0.01, softening = 0.1;
+			function force(alpha){
+				const totalStrength = Math.sqrt(nodes.length)*alpha * strength;
+				for (let i = 0, n = nodes.length, node; i < n; ++i) {
+					node = nodes[i];
+					let distance = Math.sqrt(node.x * node.x + node.y * node.y + node.z * node.z + softening);
+					
+					let kinvdistance3 = totalStrength/(distance);
+					node.vx -= node.x * kinvdistance3;
+					node.vy -= node.y * kinvdistance3;
+					node.vz -= node.z * kinvdistance3;
+				}
+			}
+			
+			force.initialize = function(_) {
+				nodes = _;
+			};
+			
+			force.strength = function(_) {
+				return arguments.length ? (strength = +_, force) : strength;
+			};
+
+			force.softening = function(_) {
+				return arguments.length ? (softening = +_, force) : softening;
+			};
+			
+			return force;
+		}
+
+
+
 
 			this.repulsiveforce = d3.forceManyBody();
 			this.attractiveforce = d3.forceLink(links);
 			this.centralForce = d3.forceCenter();
+			this.gravityForce = d3gravityForce();
 			this.simulation = d3.forceSimulation(nodes)
 				.numDimensions(use2D?2:3)
 				.force("charge", this.repulsiveforce)
 				.force("link", this.attractiveforce)
 				.force("center", centralForce)
+				// .force("gravity", this.gravityForce)
 				// .force("collide", d3.forceCollide(d => d.size*4))
 				.velocityDecay(0.05)
 				.on("tick", async () => {
@@ -136,7 +187,9 @@ class d3ForceLayoutWorker {
 				}else if (msg.data.type == "stop") {
 					this._onStop?.(msg.data);
 					this._layoutRunning = false;
-				} else {
+				}else if (msg.data.type == "getAttribute") {
+					this._handleReturnAttribute(msg.data);
+				}else {
 					console.log("Layout received Unknown msg: ", msg);
 				}
 			};
@@ -152,11 +205,13 @@ class d3ForceLayoutWorker {
 				use2D: this._use2D
 			});
 		}
+		return this;
 	}
 
 	restart(){
 		this.stop();
 		this.start();
+		return this;
 	}
 
 	stop(){
@@ -167,6 +222,7 @@ class d3ForceLayoutWorker {
 		this._layoutRunning = false;
 		delete this._layoutWorker;
 		this._layoutWorker = null;
+		return this;
 	}
 
 	resume() {
@@ -176,24 +232,29 @@ class d3ForceLayoutWorker {
 		}
 		this._layoutWorker.postMessage({ type: "resume" });
 		this._layoutRunning=true;
+		return this;
 	}
 
 	pause(){
 		this._layoutWorker.postMessage({ type: "pause"});
 		this._layoutRunning=false;
 		this._onStop?.();
+		return this;
 	}
 
 	onUpdate(callback) {
 		this._onUpdate = callback;
+		return this;
 	}
 	
 	onStop(callback) {
 		this._onStop = callback;
+		return this;
 	}
 	
 	onStart(callback) {
 		this._onStart = callback;
+		return this;
 	}
 
 	isRunning() {
@@ -202,6 +263,39 @@ class d3ForceLayoutWorker {
 	
 	cleanup() {
 		this.stop();
+	}
+
+	async _handleGetAttribute(){
+		//Not implemented yet
+	}
+
+	setAttribute(attributeName,value){
+		this._layoutWorker.postMessage({
+			type: "setAttribute",
+			attributeName: attributeName,
+			value: value
+		});
+		return this;
+	}
+
+	groups(groups) {
+		return this.setAttribute("groups", groups);
+	}
+
+	alpha(alphaValue){
+		return this.setAttribute("alpha", alphaValue);
+	}
+
+	alphaDecay(alphaValue){
+		return this.setAttribute("alphaDecay", alphaValue);
+	}
+
+	alphaTarget(alphaValue){
+		return this.setAttribute("alphaTarget", alphaValue);
+	}
+
+	velocityDecay(velocityDecayValue){
+		return this.setAttribute("velocityDecay", velocityDecayValue);
 	}
 }
 

@@ -1,0 +1,11 @@
+{
+    "plugins": ["node_modules/jsdoc-typeof-plugin"],
+    "opts": {
+        "template": "node_modules/docdash"
+      },
+    "sourceType": "module",
+    "tags": {
+        "allowUnknownTags": true,
+        "dictionaries": ["jsdoc","closure"]
+    }
+}

@@ -1,2 +1,2 @@
-import { Helios, xnet } from "./core/Helios-Core.js";
+import { Helios, xnet } from "./core/Core.js";
 export { Helios, xnet };

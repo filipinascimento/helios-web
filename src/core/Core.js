@@ -1,7 +1,7 @@
 import * as glm from "gl-matrix"
 import { Network } from "./Network.js"
-import * as glUtils from "../utils/webglutils.js"
-import * as xnet from "../utils/xnet.js"
+import * as glUtils from "../utilities/webgl.js"
+import * as xnet from "../utilities/xnet.js"
 import { select as d3Select } from "d3-selection";
 import {HeliosScheduler} from "./Scheduler.js";
 import { zoom as d3Zoom, zoomTransform as d3ZoomTransform, zoomIdentity as d3ZoomIdentity } from "d3-zoom";
@@ -200,7 +200,7 @@ export class Helios {
 					let maxDisplacement = 0;
 					for (let index = 0; index < this.network.positions.length; index++) {
 						let displacement = this.newPositions[index] - this.network.positions[index];
-						this.network.positions[index] += 0.01 * (displacement)*elapsedTime/10;
+						this.network.positions[index] += 0.05 * (displacement)*elapsedTime/10;
 						
 						maxDisplacement = Math.max(Math.abs(displacement), maxDisplacement);
 					};
