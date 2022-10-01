@@ -17,11 +17,11 @@ export default defineConfig({
 		sourcemap: true,
 		lib: {
 			entry: resolve(__dirname, 'src/helios.js'),
-			name: 'helios-web',
+			name: 'helios',
 			// the proper extensions will be added
 			fileName: 'helios'
 		},
-		minify:true
+		minify: true
 	},
 	server: {
 	  open: '/docs/example/index.html'
