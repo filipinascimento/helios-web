@@ -22,6 +22,7 @@ build.assetsDir = "assets"
 
 /** @type {import('vite').UserConfig} */
 export default defineConfig({
+	base: '', // no base, always relative
 	server: {
 	  open: '/docs/example/index.html'
 	},
