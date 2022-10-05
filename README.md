@@ -35,11 +35,11 @@ npm install
 
 Build
 ```bash
-npx snowpack build
+npm run build
 ```
 
 # Development and testing
-To test the environment use `npm start` or `npx snowpack dev`.
+To test the environment use `npm run dev`.
 Then go to `http://localhost:8080/docs/example/` in your browser (or use the provided hostname and port).
 
 # Usage
