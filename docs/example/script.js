@@ -104,6 +104,7 @@ if (urlParams.has("use2d")) {
 	use2D = true;
 }
 
+
 if (urlParams.has("2d")) {
 	use2D = true;
 }
@@ -112,6 +113,12 @@ let searchEnabled = true;
 if (urlParams.has("nosearch")) {
 	searchEnabled = false;
 }
+
+let legendsEnabled = true;
+if (urlParams.has("nolegends")) {
+	legendsEnabled = false;
+}
+
 
 let hyperbolic = false;
 if (urlParams.has("hyperbolic")) {
@@ -982,13 +989,14 @@ let visualizeNetwork = (networkName) => {
 
 		let updateLegendSequencial = (scale,title) => {
 			legendView.selectAll("*").remove();
-
-			d3Legend(scale, {
-				svg: legendView,
-				title: title,
-				orientation: "vertical",
-				themeColors:[darkBackground ? "white" : "black",darkBackground ? "black" : "white"]
-			});
+			if(legendsEnabled){
+				d3Legend(scale, {
+					svg: legendView,
+					title: title,
+					orientation: "vertical",
+					themeColors:[darkBackground ? "white" : "black",darkBackground ? "black" : "white"]
+				});
+			}
 		}
 
 		let updateDensityDiverging = (useDiverging)=>{
@@ -1014,17 +1022,18 @@ let visualizeNetwork = (networkName) => {
 				densityScale = d3ScaleDiverging(scheme).domain([-1,0,1])
 			}
 			densityLegendView.selectAll("*").remove();
-			
-			d3Legend(densityScale, {
-				svg: densityLegendView,
-				title: chosenDensityProperty,
-				titleAlignment:"end",
-				width:150,
-				// ticks:[0,1],
-				tickValues: densityDiverging?[-1,0,1]:[0,1],
-				tickFormat: densityDiverging?d=>["-","0","+"][d+1]:d=>["0","+"][d],
-				themeColors:[darkBackground ? "white" : "black", darkBackground ? "black" : "white"]
-			});
+			if(legendsEnabled){
+				d3Legend(densityScale, {
+					svg: densityLegendView,
+					title: chosenDensityProperty,
+					titleAlignment:"end",
+					width:150,
+					// ticks:[0,1],
+					tickValues: densityDiverging?[-1,0,1]:[0,1],
+					tickFormat: densityDiverging?d=>["-","0","+"][d+1]:d=>["0","+"][d],
+					themeColors:[darkBackground ? "white" : "black", darkBackground ? "black" : "white"]
+				});
+			}
 		}
 
 
