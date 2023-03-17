@@ -1,0 +1,86 @@
+table.params td, table.props td {
+    padding: 3px 6px;
+}
+
+
+table.params td.name code, table.props td.name code {
+    font-size: 13px;
+}
+
+table.params tr.deep-level-1 .name code, table.props tr.deep-level-1 .name code {
+    padding-left: 10px;
+}
+
+table.params tr.deep-level-2 .name code, table.props tr.deep-level-2 .name code {
+    padding-left: 10px;
+    margin-left: 10px;
+}
+
+table.params tr.deep-level-3 .name code, table.props tr.deep-level-3 .name code {
+    padding-left: 10px;
+    margin-left: 20px;
+}
+
+table.params tr.deep-level-4 .name code, table.props tr.deep-level-4 .name code {
+    padding-left: 10px;
+    margin-left: 30px;
+}
+
+table.params tr.deep-level-5 .name code, table.props tr.deep-level-5 .name code {
+    padding-left: 10px;
+    margin-left: 40px;
+}
+
+table.params tr.deep-level-6 .name code, table.props tr.deep-level-6 .name code {
+    padding-left: 10px;
+    margin-left: 50px;
+}
+
+table.params tr.deep-level-7 .name code, table.props tr.deep-level-7 .name code {
+    padding-left: 10px;
+    margin-left: 60px;
+}
+
+table.params tr.deep-level-8 .name code, table.props tr.deep-level-8 .name code {
+    padding-left: 10px;
+    margin-left: 70px;
+}
+
+table.params tr.deep-level-9 .name code, table.props tr.deep-level-9 .name code {
+    padding-left: 10px;
+    margin-left: 80px;
+}
+
+table.params tr.deep-level-10 .name code, table.props tr.deep-level-10 .name code {
+    padding-left: 10px;
+    margin-left: 90px;
+}
+
+
+@media screen and (max-width: 1300px) {
+    .side-nav {
+        display: none;
+    }
+}
+
+
+table.params thead th, table.props thead th {
+    padding: 3px 6px;
+}
+
+.logo {
+    display: flex !important;
+}
+
+
+.logo img {
+    height: 65px;
+    width: auto;
+}
+
+@media screen and (max-width: 768px) {
+    .top-nav .logo {
+        display: flex !important;
+    }
+}
+
