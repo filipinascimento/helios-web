@@ -90,11 +90,129 @@ void main(void){
 	vOffset = vertex;
 	vSize = updatedSize;
 	vOutlineThreshold = updatedOutlineWidth/fullSize;
+
 	vOutlineColor = outlineColor;
 	vPosition = projectionMatrix * viewCenters;
+
+	// vec4 temp_pos = vPosition;
+	// vec4 eye_vec = vec4(0.0,0.0,0.0,0);
+	// float dist = length(eye_vec);
+	// vec4 lookat = eye_vec - temp_pos;
+	// vec4 dir = temp_pos - eye_vec;
+	// vec4 center = normalize(-eye_vec);
+	// vec4 proj = dot(temp_pos, normalize(-lookat)) * normalize(-lookat);
+	// vec4 c = temp_pos - proj;
+	// float magnitude = 1.0-acos(dot(normalize(-eye_vec), normalize(temp_pos)));
+
+	// c = length(c) * magnitude * normalize(c);
+	// vec4 dir2 = normalize(c-lookat);
+	// vPosition.xy = (dir2).xy;
+	// vPosition.z = 0.0;
+	// vPosition.w = 1.0;
 	gl_Position = vPosition;
 }
 `;
+
+
+//
+// NODES VERTEX SHADER HYPERBOLIC
+//
+
+let vertexHyperbolicShader = /*glsl*/`
+uniform mat4 projectionMatrix;
+uniform mat4 viewMatrix;
+uniform mat3 normalMatrix;
+
+uniform float globalOpacityScale;
+uniform float globalSizeScale;
+uniform float globalOutlineWidthScale;
+
+uniform float globalOpacityBase;
+uniform float globalSizeBase;
+uniform float globalOutlineWidthBase;
+
+attribute vec2 vertex;
+// attribute vec3 normal;
+attribute vec3 position;
+attribute vec4 color;
+attribute float size;
+attribute float outlineWidth;
+attribute vec4 outlineColor;
+attribute vec4 encodedIndex;
+
+varying vec3 vNormal;
+varying vec3 vEye;
+varying vec4 vColor;
+varying vec2 vOffset;
+varying float vSize;
+varying vec4 vEncodedIndex;
+varying float vOutlineThreshold;
+varying vec4 vOutlineColor;
+varying vec4 vPosition;
+
+vec2 hyperbolicNormFactor(vec2 vertex, float scaling){
+	vec2 pos = vertex.xy;
+	float r = length(pos.xy);
+	// //polar
+	// vec2 normFactor = (r+scaling)*vec2(1.0,1.0);
+	// catersian
+	vec2 normFactor = sqrt(vertex.xy*vertex.xy+scaling*scaling);
+	return normFactor;
+}
+
+void main(void){
+	float BoxCorrection = 1.5;
+	vec2 offset = vertex;
+	float updatedSize = globalSizeScale*size+globalSizeBase;
+	float updatedOutlineWidth = globalOutlineWidthScale*outlineWidth+globalOutlineWidthBase;
+	float fullSize = updatedSize + updatedOutlineWidth;
+	// vec4 viewCenters = viewMatrix*vec4(position,1);
+	// vec3 viewCenters = position;
+	// fragCenter = viewCenters
+	// float scalingFactor = 1.0 / abs(centers.x)*0.001;
+	// offset*=scalingFactor;
+	vec3 cameraRight = normalize(vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]));
+	vec3 cameraUp = normalize(vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]));
+
+	// viewCenters.xy += offset*updatedSize*CameraRight_worldspace;
+	
+
+
+	// temp_pos.z = 0.0;
+	// temp_pos.w = 1.0;
+
+
+
+	vec4 viewCenters = viewMatrix*vec4(position.xyz,1.0);
+	float scaling = -viewMatrix[3][2];
+	vec4 temp_pos = viewCenters;
+	
+	vec2 normFactor = hyperbolicNormFactor(viewCenters.xy, scaling);
+	// catersian
+	// vec2 normFactor = sqrt(temp_pos.xy*temp_pos.xy+scaling*scaling);
+	temp_pos.xy = temp_pos.xy/normFactor;
+
+	viewCenters.xy = temp_pos.xy/vec2(projectionMatrix[0][0],projectionMatrix[1][1]);
+	viewCenters.xy+=BoxCorrection*fullSize*offset.xy/length(normFactor)*scaling;
+	
+
+	vNormal = vec3(0.0,0.0,1.0); //normalMatrix * normal;
+	vEye = -vec3(offset,0.0);
+	vEncodedIndex = encodedIndex;
+	vColor = color;
+	vColor.w = clamp(globalOpacityBase+globalOpacityScale*vColor.w,0.0,1.0);
+	vOutlineColor.w = clamp(globalOpacityBase+globalOpacityScale*vOutlineColor.w,0.0,1.0);
+	vOffset = vertex;
+	vSize = updatedSize;
+	vOutlineThreshold = updatedOutlineWidth/fullSize;
+
+	vOutlineColor = outlineColor;
+	vPosition = projectionMatrix * viewCenters;
+
+	gl_Position = vPosition;
+}
+`;
+
 
 
 
@@ -273,4 +391,6 @@ void main(){
 
 let fastVertexShader = vertexShader;
 
-export {fragmentShader, vertexShader, pickingShader,fastFragmentShader,fastVertexShader};
+export {fragmentShader, vertexShader,
+		pickingShader,fastFragmentShader,
+		fastVertexShader, vertexHyperbolicShader};
