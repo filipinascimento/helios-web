@@ -1,132 +1,170 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <title>Helios Example</title>
-    <meta charset="utf-8">
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-      *,
-      *::before,
-      *::after {
-        box-sizing: border-box;
-      }
-      html, body {
-          font-family: -apple-system, 'Helvetica Neue', "Arial", BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', sans-serif;
-          position: fixed;
-          height: 100%;
-          width: 100%;
-          margin: 0px;
-          overflow: hidden;
-          -webkit-touch-callout: none; /* iOS Safari */
-          -webkit-user-select: none; /* Safari */
-          -khtml-user-select: none; /* Konqueror HTML */
-            -moz-user-select: none; /* Old versions of Firefox */
-              -ms-user-select: none; /* Internet Explorer/Edge */
-                  user-select: none; /* Non-prefixed version, currently
+
+<head>
+  <title>Helios Example</title>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      font-family: -apple-system, 'Helvetica Neue', "Arial", BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', sans-serif;
+      position: fixed;
+      height: 100%;
+      width: 100%;
+      margin: 0px;
+      overflow: hidden;
+      -webkit-touch-callout: none;
+      /* iOS Safari */
+      -webkit-user-select: none;
+      /* Safari */
+      -khtml-user-select: none;
+      /* Konqueror HTML */
+      -moz-user-select: none;
+      /* Old versions of Firefox */
+      -ms-user-select: none;
+      /* Internet Explorer/Edge */
+      user-select: none;
+      /* Non-prefixed version, currently
                                         supported by Chrome, Edge, Opera and Firefox */
 
-      }
+    }
 
-      #loading {
-        display: none;
-        position: absolute;
-        top:5px;
-        right:5px;
-        width: 12px;
-        height: 12px;
-        border: 2px solid rgba(125,125,125,.3);
-        border-radius: 50%;
-        border-top-color: rgba(125,125,125,1.0);
-        animation: spin 2s linear infinite;
-        -webkit-animation: spin 2s linear infinite;
-      }
+    #centerloading {
+      position: relative;
+      top: 5px;
+      right: 5px;
+      width: 64px;
+      height: 64px;
+      margin: auto;
+      border: 2px solid rgba(125, 125, 125, .3);
+      border-radius: 50%;
+      border-top-color: rgba(125, 125, 125, 1.0);
+      animation: spin 2s linear infinite;
+      -webkit-animation: spin 2s linear infinite;
+    }
 
-      @keyframes spin {
-        to { -webkit-transform: rotate(360deg); }
-      }
-      @-webkit-keyframes spin {
-        to { -webkit-transform: rotate(360deg); }
-      }
+    #loading {
+      display: none;
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      width: 12px;
+      height: 12px;
+      border: 2px solid rgba(125, 125, 125, .3);
+      border-radius: 50%;
+      border-top-color: rgba(125, 125, 125, 1.0);
+      animation: spin 2s linear infinite;
+      -webkit-animation: spin 2s linear infinite;
+    }
 
-      #message{
-        position:absolute;
-        top:5px;
-        right:5px;
-        text-align: right;
-        font-size:small;
-        color: rgba(125,125,125,.75);
+    @keyframes spin {
+      to {
+        -webkit-transform: rotate(360deg);
       }
+    }
 
-      #netviz {
-          position: absolute;
-          top:0;
-          right:0;
-          left:0;
-          bottom:0;
-          background: #f0e68c;
+    @-webkit-keyframes spin {
+      to {
+        -webkit-transform: rotate(360deg);
       }
-      .overlay{
-        position: absolute;
-        top:0;
-        right:0;
-        left:0;
-        bottom:0;
-      }
-      #tooltip {
-          position: absolute;
-          display: none;
-          margin-left: 15px;
-          padding: 3px;
-          position: absolute;
-          z-index: 1000;
-          text-shadow:
-              -1px -1px 0 #FFF,  
-               1px -1px 0 #FFF,
-              -1px  1px 0 #FFF,
-               1px  1px 0 #FFF;
-          pointer-events: none;
-      }
-        
+    }
+
+    #message {
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      text-align: right;
+      font-size: small;
+      color: rgba(125, 125, 125, .75);
+    }
+
+    #netviz {
+      position: absolute;
+      top: 0;
+      right: 0;
+      left: 0;
+      bottom: 0;
+      background: #f0e68c;
+    }
+
+    .overlay {
+      position: absolute;
+      top: 0;
+      right: 0;
+      left: 0;
+      bottom: 0;
+    }
+
+    #tooltip {
+      position: absolute;
+      display: none;
+      margin-left: 15px;
+      padding: 3px;
+      position: absolute;
+      z-index: 1000;
+      text-shadow:
+        -1px -1px 0 #FFF,
+        1px -1px 0 #FFF,
+        -1px 1px 0 #FFF,
+        1px 1px 0 #FFF;
+      pointer-events: none;
+    }
+
     #selectionmenu {
       position: absolute;
       font-family: "Helvetica Neue", Helvetica, "Arial", sans-serif;
-      bottom:0px;
-      left:0px;
+      bottom: 0px;
+      left: 0px;
       display: flex;
       align-items: center;
       justify-content: left;
-      border-bottom-left-radius:10px;
-      -webkit-touch-callout: none; /* iOS Safari */
-        -webkit-user-select: none; /* Safari */
-          -khtml-user-select: none; /* Konqueror HTML */
-            -moz-user-select: none; /* Old versions of Firefox */
-              -ms-user-select: none; /* Internet Explorer/Edge */
-                user-select: none; /* Non-prefixed version, currently
+      border-bottom-left-radius: 10px;
+      -webkit-touch-callout: none;
+      /* iOS Safari */
+      -webkit-user-select: none;
+      /* Safari */
+      -khtml-user-select: none;
+      /* Konqueror HTML */
+      -moz-user-select: none;
+      /* Old versions of Firefox */
+      -ms-user-select: none;
+      /* Internet Explorer/Edge */
+      user-select: none;
+      /* Non-prefixed version, currently
                                   supported by Chrome, Edge, Opera and Firefox */
 
     }
 
-    #selectionmenu .menuEntry{
+    #selectionmenu .menuEntry {
       display: flex;
       align-items: center;
       justify-content: center;
       /* width:70px; */
-      height:25px;
-      padding:3px;
-      padding-left:8px;
-      padding-right:8px;
-      font-size:14px;
-      background-color:var(--color);
-      color:white;
+      height: 25px;
+      padding: 3px;
+      padding-left: 8px;
+      padding-right: 8px;
+      font-size: 14px;
+      background-color: var(--color);
+      color: white;
       text-align: center;
       text-decoration: none;
       transition: width 0.25s, height 0.25s, font-size 0.25s, background-color 0.25s, font-weight 0.25s, color 0.25;
       /* overflow: hidden; */
     }
-    #selectionmenu .hasAction{
+
+    #selectionmenu .hasAction {
       cursor: pointer;
     }
+
     /* #selectionmenu .menuEntry:hover{
       height:30px;
       cursor: pointer;
@@ -138,12 +176,12 @@
       height: 15px;
       background: #d3d3d3;
       outline: none;
-      width:70px;
+      width: 70px;
       /* opacity: 0.7;
       -webkit-transition: .2s;
       transition: opacity .2s; */
-      margin-left:5px;
-      margin-right:5px;
+      margin-left: 5px;
+      margin-right: 5px;
     }
 
     .slider:hover {
@@ -174,8 +212,8 @@
 
     select {
       -webkit-appearance: none;
-        -moz-appearance: none;
-              appearance: none;
+      -moz-appearance: none;
+      appearance: none;
       background-color: transparent;
       border: none;
       padding: 0 1em 0 0;
@@ -188,6 +226,7 @@
       z-index: 1;
       outline: none;
     }
+
     select::-ms-expand {
       display: none;
     }
@@ -205,11 +244,13 @@
       font-size: 0.8rem;
       cursor: pointer;
       line-height: 1.0;
-      margin-left:5px;
-      background-color: rgb(255,255,255,0.8);
+      margin-left: 5px;
+      background-color: rgb(255, 255, 255, 0.8);
       /* background-image: linear-gradient(to top, #f9f9f9, #fff 33%); */
     }
-    .selector select, .selector::after {
+
+    .selector select,
+    .selector::after {
       grid-area: select;
     }
 
@@ -220,10 +261,10 @@
       height: 0.25em;
       background-color: var(--select-arrow);
       -webkit-clip-path: polygon(100% 0%, 0 0%, 50% 100%);
-              clip-path: polygon(100% 0%, 0 0%, 50% 100%);
+      clip-path: polygon(100% 0%, 0 0%, 50% 100%);
     }
 
-    select:focus + .focus {
+    select:focus+.focus {
       position: absolute;
       top: -1px;
       left: -1px;
@@ -249,6 +290,7 @@
       * Not supported crossbrowser
       */
     }
+
     select[multiple] option {
       white-space: normal;
       outline-color: var(--select-focus);
@@ -261,27 +303,90 @@
     }
 
 
-    .selector + label {
+    .selector+label {
       margin-top: 2rem;
     }
-    /* #SUPERCANVAS{
+
+    #densityRegion {
       position: absolute;
-      top:0px;
-      left:0px;
-      z-index: 1000;
-      background:black;
+      top: 0;
+      right: 0;
+      left: 0;
+      bottom: 0;
+      /* z-index: 1000; */
+      background: black;
+    }
 
-    } */
-    </style>
-  </head>  
-  <body>
-    <script type="module" src="script.js" defer></script>
-    <div id="netviz"></div>
-    <div id="loading"></div>
-    <div id="message">press space to start the layout</div>
-    <div id="tooltip">Tooltip</div>
-    <div id="selectionmenu"></div>
+    #filterPanel {
+      position: relative;
+      top: 0;
+      right: 0;
+      left: 0;
+      /* height: 200px; */
+      /* z-index: 1000; */
+      /* background:black; */
+      pointer-events: none;
+      text-align: center;
+    }
 
-    <!-- <canvas id="saveCanvas"></canvas> -->
-  </body>
+    #searchSelector {
+      font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, Roboto, 'Segoe UI', Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol';
+      /* height: 1px; */
+      margin-top: 0px;
+      text-align: center;
+      font-size: 18px;
+      width: 240px;
+      padding-top: 5px;
+      padding-bottom: 5px;
+      border: none;
+      border-bottom: 1px solid rgb(142, 26, 17);
+      border-radius: 0;
+      margin-bottom: 6px;
+      color: rgba(250, 125, 125, 1);
+      background-color: rgba(1, 1, 1, 0);
+
+      text-shadow:
+        -1px -1px 0 rgba(50,50,50,0.333),
+         0   -1px 0 rgba(50,50,50,0.333),
+         1px -1px 0 rgba(50,50,50,0.333),
+         1px  0   0 rgba(50,50,50,0.333),
+         1px  1px 0 rgba(50,50,50,0.333),
+         0    1px 0 rgba(50,50,50,0.333),
+        -1px  1px 0 rgba(50,50,50,0.333),
+        -1px  0   0 rgba(50,50,50,0.333);
+     pointer-events: all !important;
+    }
+
+    #searchSelector:focus {
+      outline: none;
+    }
+
+    #searchSelector::placeholder { /* Chrome, Firefox, Opera, Safari 10.1+ */
+      color: rgb(255, 195, 195);
+      opacity: 1; /* Firefox */
+    }
+  </style>
+  <link href="css/auto-complete.css" rel="stylesheet" type="text/css" media="screen" />
+</head>
+
+<body>
+  <script type="module" src="script.js" defer></script>
+  <!-- <div id="densityRegion"></div> -->
+  <div id="netviz">
+    <div id="centerloading"></div>
+    <div style="padding:5px;text-align:center;margin:auto">Loading Data...<br />
+      (may take a minute or two)</div>
+    </div></div>
+  <div id="loading"></div>
+  <div id="message" style="display:none">press space to start the layout</div>
+  <div id="tooltip">Tooltip</div>
+  <div id="selectionmenu"></div>
+  <div id="filterPanel" style="display:none">
+    <form autocomplete='off' action=''>
+      <input autocomplete='false' name='hidden' type='text' style='display:none;'>
+      <input id='searchSelector' placeholder='Search'>
+    </form>
+  </div>
+</body>
+
 </html>

@@ -1,7 +1,7 @@
 {
   "name": "helios-web",
   "description": "Helios Web is a web-based library to visualize large-scale dynamic networks in real-time. Currently under development, it aims to provide a simple API and optimized implementation to be integrated into other systems.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "type": "module",
   "jsdelivr": "./dist/helios.js",
   "unpkg": "./dist/helios.js",
@@ -40,31 +40,37 @@
     "coverage": "vitest run --coverage",
     "docs": "jsdoc -c jsdoc.conf.json src/ -r -R README.md -d docs/api",
     "dev_example": "vite dev -c vite.config.example.js",
-    "build_example": "vite build -c vite.config.example.js",
-    "preview_example":"vite preview -c vite.config.example.js"
+    "build_example": "vite build -c vite.config.example.js && jsdoc -c jsdoc.conf.json src/ -r -R README.md -d dist_example/docs/api",
+    "preview_example": "vite preview -c vite.config.example.js"
   },
   "dependencies": {
     "@colormap/core": "^0.2.0",
     "@colormap/presets": "^0.2.0",
     "@npmcli/arborist": ">=2.8.2",
+    "d3": "^7.8.2",
     "d3-ease": "^3.0.0",
     "d3-scale": "^4.0.2",
     "d3-scale-chromatic": "^3.0.0",
     "d3-selection": "^3.0.0",
     "d3-zoom": "^3.0.0",
+    "detect-gpu": "^5.0.15",
     "fast-png": "^5.0.4",
     "gl-matrix": "^3.3.0",
+    "json-query": "^2.2.2",
     "pica": "^9.0.1",
+    "sylvester-es6": "github:filipinascimento/sylvester-es6#fix_duplicate_makeortho",
     "tar": ">=6.1.9"
   },
   "devDependencies": {
-    "@vitest/coverage-c8": "^0.23.4",
-    "docdash": "^1.2.0",
-    "jsdoc": "^3.6.11",
+    "@vitest/coverage-c8": "^0.29.2",
+    "better-docs": "github:njetsy/better-docs-jsdoc4#chore/jsdoc4-update",
+    "clean-jsdoc-theme": "^4.2.6",
+    "docdash": "^2.0.1",
+    "jsdoc": "^4.0.2",
     "jsdoc-typeof-plugin": "^1.0.0",
-    "jsdom": "^20.0.0",
-    "vite": "^3.1.3",
-    "vitest": "^0.23.4"
+    "jsdom": "^21.0.0",
+    "vite": "^4.1.4",
+    "vitest": "^0.29.2"
   },
   "engines": {
     "node": ">=14"

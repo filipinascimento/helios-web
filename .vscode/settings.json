@@ -2,4 +2,5 @@
     "npm.exclude": [
         "**/build"
     ],
+    "testing.automaticallyOpenPeekView": "never",
 }
