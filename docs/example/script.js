@@ -1,19 +1,51 @@
 import { Helios, xnet } from "../../src/helios.js";
+import { getGPUTier } from 'detect-gpu';
 
 // import {Helios,xnet} from "https://cdn.skypack.dev/helios-web?min";
 import * as d3Chromatic from "d3-scale-chromatic"
-import { scaleOrdinal as d3ScaleOrdinal, scaleSequential as d3ScaleSequential } from "d3-scale"
+import { scaleLinear as d3ScaleLinear, scaleOrdinal as d3ScaleOrdinal, scaleSequential as d3ScaleSequential, scaleDiverging as d3ScaleDiverging } from "d3-scale"
 import { select as d3Select } from "d3-selection"
-import { rgb as d3rgb } from "d3-color"
-import * as extraColors from "./extraColors"
-
+import { rgb as d3rgb, hsl as d3hsl } from "d3-color"
+import {default as extraColors} from "./extraColors"
+import {default as autocomplete } from "./library/auto-complete_cache-control.js"
+import {default as jsonQuery} from "json-query"
+import {default as d3Legend} from "./library/d3_legends.js"
 
 let allColors = {}
 Object.assign(allColors, d3Chromatic);
 Object.assign(allColors, extraColors);
-console.log(allColors)
+console.log(extraColors);
+//sort colors by name
+allColors = Object.keys(allColors).sort().reduce((r, k) => (r[k] = allColors[k], r), {});
 
+// allColors["interpolateRedBlackBlue"] = d3ScaleLinear().domain([0,0.5,1.0]).range(["red","black", "blue"])
 let ignoredProperties = new Set(["ID","edges","neighbors"]);
+
+function throttle(cb, delay = 250) {
+	let shouldWait = false
+
+	return (...args) => {
+		if (shouldWait) return
+
+		cb(...args)
+		shouldWait = true
+		setTimeout(() => {
+		shouldWait = false
+		}, delay)
+	}
+}
+
+function throttleLast(func, wait, scope) {
+	let timer = null;
+	return function() {
+	  if(timer) clearTimeout(timer);
+	  let args = arguments;
+	  timer = setTimeout(function() {
+		timer = null;
+		func.apply(scope, args);
+	  }, wait);
+	};
+  };
 
 /*
  * Some auxiliary functions
@@ -72,6 +104,20 @@ if (urlParams.has("use2d")) {
 	use2D = true;
 }
 
+if (urlParams.has("2d")) {
+	use2D = true;
+}
+
+let searchEnabled = true;
+if (urlParams.has("nosearch")) {
+	searchEnabled = false;
+}
+
+let hyperbolic = false;
+if (urlParams.has("hyperbolic")) {
+	hyperbolic = true;
+}
+
 let shaded = false;
 if (urlParams.has("shaded")) {
 	shaded = true;
@@ -114,6 +160,11 @@ if (urlParams.has("dark")) {
 	backgroundColor = [0.0, 0.0, 0.0, 1.0]
 }
 
+let densityEnabled = false;
+if (urlParams.has("density")) {
+	densityEnabled = true;
+}
+
 let additiveBlending = false;
 if (urlParams.has("additive") && darkBackground) {
 	additiveBlending = true;
@@ -135,7 +186,7 @@ let visualizeNetwork = (networkName) => {
 		let defaultNodeScale = 1.0;
 		let defaultNodeOpacity = 1.0;
 		let defaultOutlineColor = backgroundColor;
-		let defaultOutlineWidthFactor = 0.25;
+		let defaultOutlineWidthFactor = 0.5;
 
 		let updateNodeSize = node=>node._originalSize;
 
@@ -154,9 +205,13 @@ let visualizeNetwork = (networkName) => {
 		// Default node size and Edge Ooacity
 		let currentGlobalNodeSizeScale = 1.0;
 		let currentGlobalEdgeOpacityScale = 1.0;
+		let currentBandwidth = 35.0;
+		let currentDensityWeight = 2000.0;
+		let chosenDensityProperty = "Uniform";
+		let densityDiverging = true;
 
 		// Scale and Opacity of Highlighted nodes
-		let highlightNodeScale = 2.0;
+		let highlightNodeScale = 1.5;
 		let highlightNodeOpacityScale = 1e10;// as opaque as possible
 		
 		// Scale and Opacity of selected nodes
@@ -184,6 +239,14 @@ let visualizeNetwork = (networkName) => {
 
 		// Initializing other properties
 		let sequencialColormap = "interpolateInferno";
+		let densityColormap = "interpolateOrRd";
+		if(darkBackground){
+			densityColormap = "interpolateInferno";
+		}
+		let densityDivergingColormap = "interpolatePrinsenvlag";
+		if(darkBackground){
+			densityDivergingColormap = "interpolateRedshift";
+		}
 		let categoricalColormap = "schemeCategory10";
 		let useCategoricalColormap = false;
 
@@ -234,26 +297,47 @@ let visualizeNetwork = (networkName) => {
 			autoStartLayout = !bigNetwork;
 		}
 
+		const gpuTier = await getGPUTier();
+
+		const isHighSpeed = !gpuTier.isMobile && gpuTier.tier > 2;
+
 		let helios = new Helios({
 			elementID: "netviz",
+			// densityElementID: "densityRegion",
+			density:densityEnabled,
 			nodes: nodes,
 			edges: edges,
 			use2D: use2D,
+			hyperbolic: hyperbolic,
 			fastEdges: !advancedEdges&&bigNetwork,
+			forceSupersample: isHighSpeed,
 			autoStartLayout: false,
 		});
+		
+		
+		// .edgesColorsFromNodes(false)
+		// .edgeColor((edgeIndex,fromNode,toNode)=>{
+		// 	if (edges[edgeIndex].weight>5000){
+		// 	   return [1,0,0,1]; //red
+		// 	}else{
+		// 	   return [0,0,1,1]; //blue
+		// 	}
+		// }).update();
 
 		// Calculating node degree so that 
 
 		for (let [key, node] of Object.entries(helios.network.nodes)) {
 			let nodeDegree = node.edges.length;
-			node._originalSize = defaultNodeScale*(Math.log10(nodeDegree+1.0));
+			node._originalSize = defaultNodeScale*(1.0+Math.log10(nodeDegree+1.0));
 		}
 
 		let updateNodeSelectionStyle = (node) => {
 			// Hovering
 			if ((typeof node._highlighted === 'undefined')) { 
 				node._highlighted = false;
+			}
+			if ((typeof node._filtered === 'undefined')) { 
+				node._filtered = false;
 			}
 			// After double click
 			if ((typeof node._selected === 'undefined')) {
@@ -288,6 +372,13 @@ let visualizeNetwork = (networkName) => {
 				nodeOutlineWidth *= highlightNodeScale;
 			}
 
+			if(node._filtered){
+				nodeSize *= 0.05;
+				nodeOpacity *= 1.0;
+				nodeOutlineWidth *= 0.1;
+			}
+
+
 			node.size = nodeSize;
 			node.opacity = nodeOpacity;
 			node.outlineWidth = nodeOutlineWidth;
@@ -308,6 +399,27 @@ let visualizeNetwork = (networkName) => {
 					updateNodeSelectionOrHighlightedColors();
 				}
 			}
+
+			if(shallUpdate){
+				helios.update();
+				helios.render();
+			}
+		};
+
+		let nodesFiltered = (nodes,shallFilter,shallUpdate=true) =>{
+			
+			nodes.forEach(node => {
+				node._filtered = shallFilter;
+				updateNodeSelectionStyle(node);
+			});
+
+			// if(onHighlightChangeColorsEnabled){
+			// 	if((nodes?.length) && shallFilter){
+			// 		updateNodeSelectionOrHighlightedColors(true);
+			// 	}else{
+			// 		updateNodeSelectionOrHighlightedColors();
+			// 	}
+			// }
 
 			if(shallUpdate){
 				helios.update();
@@ -377,14 +489,16 @@ let visualizeNetwork = (networkName) => {
 				tooltipElement.style.top = y + "px";
 				if(isnew){
 					tooltipElement.style.display = "block";
-					if (darkBackground) {
-						tooltipElement.style.color = d3rgb(color[0] * 255, color[1] * 255, color[2] * 255).brighter(2).formatRgb();
-						tooltipElement.style["text-shadow"] =
-							"-1px -1px 0 black, 1px -1px 0 black, -1px 1px 0 black, 1px 1px 0 black";
+					let colorRGB = d3rgb(color[0] * 255, color[1] * 255, color[2] * 255);
+					let colorHSL = d3hsl(colorRGB);
+					if (colorHSL.l>0.35) {
+						tooltipElement.style.color = colorRGB.brighter(1.1).formatRgb();
+						tooltipElement.style["text-shadow"] = "-1px -1px 1px black, 1px -1px 1px black, -1px 1px 1px black, 1px 1px 1px black";
+						// tooltipElement.style["-webkit-text-stroke"] = "1px black";
 					} else {
-						tooltipElement.style.color = d3rgb(color[0] * 255, color[1] * 255, color[2] * 255).darker(2).formatRgb();
-						tooltipElement.style["text-shadow"] =
-							"-1px -1px 0 white, 1px -1px 0 white, -1px 1px 0 white, 1px 1px 0 white";
+						tooltipElement.style.color = colorRGB.darker(1.1).formatRgb();
+						tooltipElement.style["text-shadow"] = "-1px -1px 0px rgba(255,255,255,0.75), 1px -1px 0px rgba(255,255,255,0.75), -1px 1px 0px rgba(255,255,255,0.75), 1px 1px 0px rgba(255,255,255,0.75)";
+						// tooltipElement.style["-webkit-text-stroke"] = "1px black";
 					}
 				}
 				tooltipElement.textContent = label;
@@ -481,7 +595,7 @@ let visualizeNetwork = (networkName) => {
 		let logZoom =  Math.log10(estimatedZoom);
 		// let estimatedSize = Math.pow(10,-0.2833+-0.0520*logK+0.0347*logN+0.0000*logDensity)
 		
-		let estimatedSize = Math.pow(10,0.8744+0.1766*logK+-0.2989*logN+-0.9187*logZoom+0.0000*logDensity)
+		let estimatedSize = Math.pow(10,0.8744+0.1766*logK+-0.2989*logN+-0.9187*logZoom+0.0000*logDensity)*0.75;
 
 		// estimatedZoom = Math.pow(10,1.2771+0.2415*logK+-0.3629*logN+0.0000*logDensity)
 		// estimatedOpacity = Math.pow(10,1.8780+-0.6312*logK+-0.4965*logN+0.0000*logDensity)
@@ -614,7 +728,7 @@ let visualizeNetwork = (networkName) => {
 						console.log("Action!");
 						let dpr = window.devicePixelRatio || 1;
 						helios.exportFigure(networkName + ".png", {
-							scale: 2.0,
+							scale: 1.0,
 							// width: 2048,
 							// height: 2048,
 							supersampleFactor: 2.0,
@@ -708,11 +822,109 @@ let visualizeNetwork = (networkName) => {
 						.on("input", (event, d) => {
 							// helios.edgesOpacity(Math.pow(10,parseFloat(d3Select("#edgeOpacitySlider").property("value"))));
 							currentGlobalEdgeOpacityScale = parseFloat(d3Select("#edgeOpacitySlider").property("value"))
+							
 							helios.edgesGlobalOpacityScale(currentGlobalEdgeOpacityScale);
 							// helios.update();
 							helios.render();
 							event.stopPropagation();
 						});
+				}
+			},
+			"Density": {
+				name: "Density",
+				mapColor: "#A1A152",
+				color: "#505005",
+				action: null,
+				extra: selection => {
+					selection.append("select")
+						.attr("id", "densitySelector")
+						.classed("selector", true)
+						.style("min-width", "60px")
+						.on("change", (event, d) => {
+							// updateColorSelection();
+							updateDensityAttributes();
+							event.stopPropagation();
+						})
+						.selectAll("option")
+						.data(Object.entries(helios.network.index2Node[0]).concat([["Uniform",0],["Degree",0]]))
+						.enter()
+						.filter(d => !d[0].startsWith("_"))
+						.filter(d => !ignoredProperties.has(d[0]) && !d[0].startsWith("_"))
+						.filter(d => d[0]!="index")
+						.filter(d => Number.isFinite(d[1]))
+						.append("option")
+						.attr("value", d => d[0])
+						.property("selected", d => d[0] == chosenDensityProperty)
+						.text(d => d[0]);
+				}
+			},
+			"Bandwidth": {
+				name: "Bandwidth",
+				mapColor: "#A1A152",
+				color: "#505005",
+				action: null,
+				extra: selection => {
+					selection.append("input")
+						.attr("type", "range")
+						.attr("min", "-0.9")
+						.attr("max", "2.5")
+						.attr("step", 0.05 + "")
+						.attr("value", ""+Math.log10(currentBandwidth))
+						.attr("id", "densityBandwidthSlider")
+						.classed("slider", true)
+						.style("min-width", "60px")
+						.on("input", (event, d) => {
+							// helios.edgesOpacity(Math.pow(10,parseFloat(d3Select("#edgeOpacitySlider").property("value"))));
+							currentBandwidth = Math.pow(10, parseFloat(d3Select("#densityBandwidthSlider").property("value")))
+							helios.densityMap?.setBandwidth(currentBandwidth);
+							// helios.update();
+							// helios.redrawDensityMap();
+							helios.redraw();
+							event.stopPropagation();
+						});
+				}
+			},
+			"Weight": {
+				name: "Weight",
+				mapColor: "#A1A152",
+				color: "#505005",
+				action: null,
+				extra: selection => {
+					selection.append("input")
+						.attr("type", "range")
+						.attr("min", "0")
+						.attr("max", "10")
+						.attr("step", 0.1 + "")
+						.attr("value", ""+Math.log10(currentDensityWeight))
+						.attr("id", "densityWeightSlider")
+						.classed("slider", true)
+						.style("min-width", "60px")
+						.on("input", (event, d) => {
+							// helios.edgesOpacity(Math.pow(10,parseFloat(d3Select("#edgeOpacitySlider").property("value"))));
+							currentDensityWeight = Math.pow(10, parseFloat(d3Select("#densityWeightSlider").property("value")))
+							helios.densityMap?.setKernelWeightScale(currentDensityWeight);
+							// helios.update();
+							// helios.redrawDensityMap();
+							helios.redraw();
+							event.stopPropagation();
+						});
+					helios.densityMap?.setKernelWeightScale(currentDensityWeight);
+				}
+			},
+			"Map": {
+				name: "Map",
+				mapColor: "#A1A152",
+				color: "#505005",
+				action: null,
+				extra: selection => {
+					selection.append("select")
+						.attr("id", "densityColormapSelector")
+						.classed("selector", true)
+						.style("min-width", "60px")
+						.on("change", (event, d) => {
+							updateDensityColors();
+						});
+						updateDensityColorsList();
 				}
 			},
 		}
@@ -722,7 +934,17 @@ let visualizeNetwork = (networkName) => {
 			.attr("id", "legendView")
 			.style("left", "10px")
 			.style("top", "10px")
-			.style("pointer-events:", "none")
+			.style("pointer-events", "none")
+
+		let densityLegendView = d3Select("body").append("svg")
+			.classed("overlay", true)
+			.attr("id", "densityLegendView")
+			.style("right", "10px")
+			.style("bottom", "25px")
+			.style("top", "auto")
+			.style("left", "auto")
+			.style("pointer-events", "none")
+
 		let updateLegendCategorical = (property2color) => {
 			legendView.selectAll("*").remove();
 			let legendItems = legendView.selectAll(".legend").data(property2color.keys());
@@ -730,6 +952,7 @@ let visualizeNetwork = (networkName) => {
 			legendView
 				.style("width", 350 + 'px')
 				.style("height", (property2color.size + 1) * 20 + 'px');
+			
 			let legendEnter = legendItems.enter().append("g")
 				.classed("legend", true)
 				.attr("transform", (d, i) => ("translate(0," + (i * 20) + ")"));
@@ -756,6 +979,54 @@ let visualizeNetwork = (networkName) => {
 				.attr("fill", darkBackground ? "white" : "black")
 				.each(wrapText)
 		}
+
+		let updateLegendSequencial = (scale,title) => {
+			legendView.selectAll("*").remove();
+
+			d3Legend(scale, {
+				svg: legendView,
+				title: title,
+				orientation: "vertical",
+				themeColors:[darkBackground ? "white" : "black",darkBackground ? "black" : "white"]
+			});
+		}
+
+		let updateDensityDiverging = (useDiverging)=>{
+			if(useDiverging!=densityDiverging){
+				densityDiverging = useDiverging;
+				//set densityColormapSelector to the right colormap
+				let newColormap = densityDiverging?densityDivergingColormap:densityColormap;
+				d3Select("#densityColormapSelector").property("value",newColormap);
+				updateDensityColors();
+			}
+			
+		}
+
+		densityDiverging = false;
+		let updateLegendDensity = () => {
+			let scheme = allColors[densityColormap];
+			if(densityDiverging){
+				scheme = allColors[densityDivergingColormap];
+			}
+			let densityScale = d3ScaleSequential(scheme).domain([0, 1])
+
+			if(densityDiverging){
+				densityScale = d3ScaleDiverging(scheme).domain([-1,0,1])
+			}
+			densityLegendView.selectAll("*").remove();
+			
+			d3Legend(densityScale, {
+				svg: densityLegendView,
+				title: chosenDensityProperty,
+				titleAlignment:"end",
+				width:150,
+				// ticks:[0,1],
+				tickValues: densityDiverging?[-1,0,1]:[0,1],
+				tickFormat: densityDiverging?d=>["-","0","+"][d+1]:d=>["0","+"][d],
+				themeColors:[darkBackground ? "white" : "black", darkBackground ? "black" : "white"]
+			});
+		}
+
 
 		function updateCategoricalColors() {
 			let propertyArray = [];
@@ -813,7 +1084,7 @@ let visualizeNetwork = (networkName) => {
 
 
 		function updateSequencialColors() {
-			updateLegendCategorical(new Map());
+			// updateLegendCategorical(new Map());
 			let propertyArray = [];
 			let maxValue = -Infinity;
 			let minValue = Infinity;
@@ -835,9 +1106,42 @@ let visualizeNetwork = (networkName) => {
 				node._darkerColor = [darkerColor.r / 255, darkerColor.g / 255, darkerColor.b / 255];
 				node._brighterColor = [brighterColor.r / 255, brighterColor.g / 255, brighterColor.b / 255];
 			}
+
+			updateLegendSequencial(cScale, colorProperty);
 			updateNodeSelectionOrHighlightedColors();
 			helios.update();
 			helios.render();
+		}
+
+		function updateDensityColorsList(){
+			let colormapSelector = d3Select("#densityColormapSelector")
+			.classed("selector", true)
+			.style("min-width", "60px")
+			.on("change", (event, d) => {
+				updateDensityColors();
+			})
+			.selectAll("option")
+			.data(Object.entries(allColors).filter(d => d[0].startsWith("interpolate")))
+			.join("option")
+			.attr("value", d => d[0])
+			.property("selected", d => d[0] == (densityDiverging?densityDivergingColormap:densityColormap))
+			.text(d => d[0].replace("interpolate", "").replace("scheme", ""));
+		}
+
+		function updateDensityColors() {
+			if(densityDiverging){
+				densityDivergingColormap = d3Select("#densityColormapSelector").property("value");
+			}else{
+				densityColormap = d3Select("#densityColormapSelector").property("value");
+			}
+			let colormapName = densityDiverging?densityDivergingColormap:densityColormap;
+			
+			console.log(colormapName)
+			let scheme = allColors[colormapName];
+			helios.densityMap.setColormap(scheme);
+
+			updateLegendDensity();
+			helios.render();	
 		}
 
 		let updateColormapSelection = () => {
@@ -877,7 +1181,91 @@ let visualizeNetwork = (networkName) => {
 			updateColormapSelection();
 		}
 
-		let buttonOrder = ["Export", "Size", "Color", "Edges",];
+		function updateDensityAttributes(shallRedraw = true) {
+			if (helios.densityMap) {
+				let maxValue = -Infinity;
+				let minValue = Infinity;
+				chosenDensityProperty = d3Select("#densitySelector").property("value");
+				if (chosenDensityProperty == "Uniform") {
+					for (let index = 0; index < helios.densityWeights.length; index++) {
+						helios.densityWeights[index] = 1.0;
+					}
+					console.log("Uniform");
+				} else if (chosenDensityProperty == "Degree") {
+					for (let [key, node] of Object.entries(helios.network.nodes)) {
+						let value = node["edges"].length;
+						helios.densityWeights[node.index] = value;
+						maxValue = Math.max(maxValue, value);
+						minValue = Math.min(minValue, value);
+					}
+					console.log("Degree");
+					for (let index = 0; index < helios.densityWeights.length; index++) {
+						helios.densityWeights[index] = (helios.densityWeights[index] - minValue) / (maxValue - minValue);
+					}
+				} else {
+					for (let [key, node] of Object.entries(helios.network.nodes)) {
+						let value = node[chosenDensityProperty];
+						helios.densityWeights[node.index] = value;
+						// maxValue = Math.max(maxValue, value);
+						// minValue = Math.min(minValue, value);
+					}
+					// for (let index = 0; index < helios.densityWeights.length; index++) {
+					// 	helios.densityWeights[index] = (helios.densityWeights[index] - minValue) / (maxValue - minValue);
+					// }
+				}
+				// if all values in helios.densityWeights are positive
+				// then we can use the density map as a filter
+				// otherwise we can only use it as a color map
+				let totalWeight = 0;
+				let totalPositive = 0;
+				let totalNegative = 0;
+				for (let [key, node] of Object.entries(helios.network.nodes)) {
+					let value = node._filtered?0.0:1.0;
+					helios.densityWeights[node.index] *= value;
+					let densityWeight = helios.densityWeights[node.index];
+					totalWeight += Math.abs(densityWeight);
+					if(densityWeight<0){
+						totalNegative += densityWeight;
+					}else{
+						totalPositive += densityWeight;
+					}
+				}
+				if(totalWeight>0 && totalNegative==0){
+					for (let [key, node] of Object.entries(helios.network.nodes)) {
+						helios.densityWeights[node.index] /= totalWeight;
+					}
+					helios?.densityMap?.divergingColormap(false);
+					updateDensityDiverging(false);
+				}else{
+					for (let [key, node] of Object.entries(helios.network.nodes)) {
+						let densityWeight = helios.densityWeights[node.index];
+						let totalMax = Math.max(Math.abs(totalNegative),Math.abs(totalPositive));
+						if(densityWeight<0 && totalNegative<0){
+							helios.densityWeights[node.index] = densityWeight/totalMax;
+						}else if(densityWeight>0 && totalPositive>0){
+							helios.densityWeights[node.index] = densityWeight/totalMax;
+						}
+						// helios.densityWeights[node.index] /= totalWeight;
+					}
+					helios?.densityMap?.divergingColormap(true);
+					updateDensityDiverging(true);
+				}
+
+				updateLegendDensity();
+				helios.updateDensityMap();
+				// helios.redrawDensityMap();
+				if(shallRedraw){
+					helios.redraw();
+				}
+			}
+		}
+
+
+		let buttonOrder = ["Export", "Size", "Color", "Edges"];
+		if(densityEnabled){
+			// Add these ["Density","Bandwidth","Weight","Map"] to the buttonOrder
+			buttonOrder = buttonOrder.concat(["Density","Bandwidth","Weight","Map"]);
+		}
 
 		d3Select("#selectionmenu")
 			.selectAll("span.menuEntry")
@@ -901,12 +1289,14 @@ let visualizeNetwork = (networkName) => {
 			.classed("hasAction", true);
 
 
-		document.addEventListener('keyup', event => {
-			if (event.code === 'Space') {
-				if (helios.layoutWorker.isRunning()) {
-					helios.pauseLayout();
-				} else {
-					helios.resumeLayout();
+		document.addEventListener('keypress', event => {
+			if((event.target.nodeName.toLowerCase() !== 'input')){
+				if (event.code === 'Space') {
+					if (helios.layoutWorker.isRunning()) {
+						helios.pauseLayout();
+					} else {
+						helios.resumeLayout();
+					}
 				}
 			}
 		});
@@ -930,13 +1320,54 @@ let visualizeNetwork = (networkName) => {
 		helios.nodesGlobalOutlineWidthScale(currentGlobalNodeSizeScale);
 		helios.edgesGlobalOpacityScale(currentGlobalEdgeOpacityScale);
 
+
+		if(densityEnabled){
+			helios.densityMap.setColormap(allColors[densityDiverging?densityDivergingColormap:densityColormap]);
+			
+		}
 		
 		helios.onReady(() => {
+			d3Select("#centerloading").style("display", "none");
+			if(searchEnabled){
+				d3Select("#filterPanel").style("display", null);
+			}
+
 			if(autoStartLayout){
 				helios.resumeLayout();
 			}
+			updateDensityAttributes(false);
 			updateColorSelection();
 		});
+
+
+		let updateFilteredNodes = throttleLast(() => {
+			let searchTerm = d3Select("#searchSelector").property("value").toLowerCase();
+			let allNodes = helios.network.index2Node;
+			nodesFiltered(allNodes,true,false);
+			console.log("searching for " + searchTerm)
+			// if query
+			if (!searchTerm.startsWith("*")) {
+				if (searchTerm.length > 0) {
+					nodesFiltered(allNodes.filter(d => d.label.toLowerCase().includes(searchTerm)),false,false);
+				}else{
+					nodesFiltered(allNodes,false,false);
+				}
+			}else{
+				let query = "node[*"+searchTerm.substring(1)+"]";
+				let matched = jsonQuery(query, {data: {node:allNodes},
+					allowRegexp: true});
+				console.log(matched);
+				nodesFiltered(matched.value,false,false);
+			}
+			updateDensityAttributes(false);
+			helios.update();
+			helios.render();
+		}, 250);
+
+		d3Select("#searchSelector").on("input", (event, d) => {
+			updateFilteredNodes()
+		})
+
 
 		// Temporarily for debugging
 		window.helios = helios;

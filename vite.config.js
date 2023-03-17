@@ -2,6 +2,23 @@
 
 import { resolve } from 'path'
 import { defineConfig } from 'vite'
+import * as path from 'path';
+import * as fs from 'fs';
+
+function stripDocumentationFromBuild () {
+	return {
+	  name: 'strip-build-docs',
+	  resolveId (source) {
+		return source === 'virtual-module' ? source : null
+	  },
+	  renderStart (outputOptions, inputOptions) {
+		const outDir = outputOptions.dir
+		const docsDir = path.resolve(outDir, 'docs')
+		fs.rm(docsDir, { recursive: true }, () => console.log(`Deleted ${docsDir}`))
+	  }
+	}
+  }
+  
 
 
 /** @type {import('vite').UserConfig} */
@@ -12,6 +29,7 @@ export default defineConfig({
 	// esbuild: {
 	//   target: "es2020"
 	// },
+	plugins: [stripDocumentationFromBuild()],
 	build: {
 		target: "esnext",
 		sourcemap: true,
@@ -21,7 +39,7 @@ export default defineConfig({
 			// the proper extensions will be added
 			fileName: 'helios'
 		},
-		minify: true
+		minify: true,
 	},
 	server: {
 	  open: '/docs/example/index.html'

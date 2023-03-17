@@ -1,9 +1,11 @@
-# Helios Web
+<img style="max-width:450px" alt="Helios-Web" src="helios-web-logo.svg?raw=true">
 <img width="226" alt="Helios Web demo" src="https://github.com/filipinascimento/helios-web/raw/main/media/WS_very_low.gif">
 
 Helios Web is a web-based library to visualize dynamic networks in real-time. Helios-web is under active development and aims to provide a simple API and optimized implementation to be integrated into other systems and render and layout large networks. This is the successor to the [Networks 3D project](https://filipinascimento.github.io/networks3d/) and the [Networks Web project](https://filipinascimento.github.io/software/networksweb/).
 
 Check out the demo https://filipinascimento.github.io/helios-web/docs/example/
+
+Documentation now available at https://filipinascimento.github.io/helios-web/docs/api/
 
 More demos:
 
@@ -44,8 +46,6 @@ Then go to `http://localhost:8080/docs/example/` in your browser (or use the pro
 
 # Usage
 To use it in your project you can load it as a module in modern browsers via skypack:
-
-**Note: MAJOR changes in version 0.5!** Check [0.5 API Changes](#apichanges)
 
 ```html
 <script type="module">
@@ -94,6 +94,7 @@ let helios = new Helios({
 ```
 You can find a bare-minimal example at https://jsfiddle.net/yatk8jcb/14/ and a more advanced example at https://jsfiddle.net/filsilva/djfomsgw/69/ (Zachary's karate club network).
 
+Full documentation is available at https://filipinascimento.github.io/helios-web/docs/api/
 
 Helios web is also available as a npm package:
 
@@ -108,19 +109,4 @@ import {Helios} from "helios-web";
 
 ```
 
-# 0.5 API changes<a id='apichanges'></a>
- - Added support for selectable edge picking via `pickeableEdges`
- - Zoom functtion now uses the same easing as the camera interpolator
-   (this will be fixed when camera object is implemented)
- - now, an DOM element can be used as input
-   for helios (`element`), `elementID` can still be used.
- - Shaded nodes can be enabled/disabled on demand (`shadedNodes()`)
- - Global Opacity, Size and width (for edges) can be changed  via:
-   `nodesGlobalOpacityScale*`, `nodesGlobalSizeScale*`,
-   `nodesGlobalOutlineWidthScale*`,
-   `edgesGlobalOpacityScale*`, and `edgesGlobalWidthScale*`.
-   * can be `Scale` corresponding to a multiplicative factor,
-   or `Base`, corresponding to additive factor
- - `nodeOpacity` now sets opacity for individual nodes instead
-  of all nodes (works like `nodeColor`).
-  
+

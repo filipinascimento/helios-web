@@ -94,7 +94,8 @@ let workerFunction = (function (){
 			
 
 		function d3gravityForce() {
-			var nodes, strength = 0.01, softening = 0.1;
+			// var nodes, strength = 0.20, softening = 0.05;
+			var nodes, strength = 0.10, softening = 0.05;
 			function force(alpha){
 				const totalStrength = Math.sqrt(nodes.length)*alpha * strength;
 				for (let i = 0, n = nodes.length, node; i < n; ++i) {
@@ -129,13 +130,13 @@ let workerFunction = (function (){
 			this.repulsiveforce = d3.forceManyBody();
 			this.attractiveforce = d3.forceLink(links);
 			this.centralForce = d3.forceCenter();
-			this.gravityForce = d3gravityForce();
+			// this.gravityForce = d3gravityForce();
 			this.simulation = d3.forceSimulation(nodes)
 				.numDimensions(use2D?2:3)
 				.force("charge", this.repulsiveforce)
 				.force("link", this.attractiveforce)
 				.force("center", centralForce)
-				// .force("gravity", this.gravityForce)
+				.force("gravity", this.gravityForce)
 				// .force("collide", d3.forceCollide(d => d.size*4))
 				.velocityDecay(0.05)
 				.on("tick", async () => {
