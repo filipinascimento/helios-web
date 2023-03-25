@@ -217,13 +217,21 @@ export class Helios {
 		this.onReadyCallback = null;
 		this.isReady = false;
 
-		// console.log(this.gl);
-		this._initialize();
-		this._onresizeEvent = event => {
-			this._willResizeEvent(event);
+
+
+		this._onresizeEvent = (entries) => {
+			for (let entry of entries) {
+				this._willResizeEvent(entry);
+			}
 		}
-		window.addEventListener('resize', this._onresizeEvent);
+
+		this.resizeObserver = new ResizeObserver(this._onresizeEvent);
+		this.resizeObserver.observe(this.element);
+
+
+		this._initialize();
 	}
+
 
 	// d3-like function Set/Get
 	//zoom()
@@ -366,7 +374,7 @@ export class Helios {
 		}
 	}
 
-	
+
 	/**
 	 * Pauses the layout computation of the network visualization.
 	 * @public
@@ -1133,7 +1141,7 @@ export class Helios {
 		this.fastEdgesIndicesArray = indicesArray;
 
 	}
-	
+
 	/** Initializes the geometry and buffers used for advanced rendering edges.
 	 * @method _buildAdvancedEdgesGeometry
 	 * @memberof Helios
@@ -1277,6 +1285,8 @@ export class Helios {
 	 * @returns {this} Returns the current Helios instance for chaining.
 	 */
 	_resizeGL(newWidth, newHeight) {
+		this.canvasElement.width = newWidth;
+		this.canvasElement.height = newHeight;
 		this.pickingFramebuffer.setSize(newWidth * this.pickingResolutionRatio, newHeight * this.pickingResolutionRatio);
 		// window.requestAnimationFrame(() => this.redraw());
 		if (this.densityPlot) {
@@ -1440,13 +1450,16 @@ export class Helios {
 
 		this.canvasElement.style.width = this.element.clientWidth + "px";
 		this.canvasElement.style.height = this.element.clientHeight + "px";
-		this.canvasElement.width = dpr * this.element.clientWidth;
-		this.canvasElement.height = dpr * this.element.clientHeight;
-		this._resizeGL(this.canvasElement.width, this.canvasElement.height);
+		let newFrameworkWidth = dpr * this.element.clientWidth;
+		let newFrameworkHeight = dpr * this.element.clientHeight;
+
+		requestAnimationFrame(() => {
+			this._resizeGL(newFrameworkWidth, newFrameworkHeight);
+		});
+
 		this.onResizeCallback?.(event);
 		//});
 	}
-
 
 	/** Will hint force Helios to redraw the network.
 	 * @method redraw
@@ -2518,7 +2531,7 @@ export class Helios {
 
 	//#endregion
 
-	
+
 	//#region Style attributes
 
 	/** Set the background color of the graph.
@@ -3064,15 +3077,15 @@ export class Helios {
 	getProjectedPositions(nodes) {
 		// Use the CPU to project the positions
 		// if nodes are provided, use them, otherwise use all nodes
-		if(nodes === undefined) {
+		if (nodes === undefined) {
 			nodes = this.network.nodes;
 		}
 		// if nodes is not empty
-		if(nodes.length > 0) {
+		if (nodes.length > 0) {
 			let gl = this.gl;
 			let nodeIndices = new Uint32Array(nodes.length);
-			if(typeof nodes[0] === "number") {
-				for(let i = 0; i < nodes.length; i++) {
+			if (typeof nodes[0] === "number") {
+				for (let i = 0; i < nodes.length; i++) {
 					nodeIndices[i] = nodes[i];
 				}
 			} else {
@@ -3451,7 +3464,7 @@ export class Helios {
 
 	//#endregion
 
-	
+
 	/** Enables or disables additive blending (Useful for dark backgrounds).
 	 * @method additiveBlending
 	 * @memberof Helios
@@ -3576,7 +3589,11 @@ export class Helios {
 		this.onReadyCallback = null;
 		this.isReady = false;
 
-		window.removeEventListener('resize', this._onresizeEvent);
+		// window.removeEventListener('resize', this._onresizeEvent);
+		if (this._resizeObserver) {
+			this._resizeObserver.disconnect();
+			this._resizeObserver = null;
+		}
 
 		if (this.canvasElement) {
 			this.canvasElement.removeEventListener("click", this._clickEventListener);
@@ -3624,7 +3641,7 @@ export class Helios {
 			}
 		}
 
-		if(this.densityMap) {
+		if (this.densityMap) {
 			this.densityMap.cleanup();
 		}
 
@@ -3645,7 +3662,7 @@ export class Helios {
 	 * @instance
 	 */
 	destroy() {
-		if(!this._hasCleanup) {
+		if (!this._hasCleanup) {
 			this.cleanup();
 		}
 	}
