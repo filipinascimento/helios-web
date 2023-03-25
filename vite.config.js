@@ -15,6 +15,8 @@ function stripDocumentationFromBuild () {
 		const outDir = outputOptions.dir
 		const docsDir = path.resolve(outDir, 'docs')
 		fs.rm(docsDir, { recursive: true }, () => console.log(`Deleted ${docsDir}`))
+		const indexFile = path.resolve(outDir, 'index.html')
+		fs.rm(indexFile, () => console.log(`Deleted ${indexFile}`))
 	  }
 	}
   }
