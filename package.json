@@ -1,7 +1,7 @@
 {
   "name": "helios-web",
   "description": "Helios Web is a web-based library to visualize large-scale dynamic networks in real-time. Currently under development, it aims to provide a simple API and optimized implementation to be integrated into other systems.",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "type": "module",
   "jsdelivr": "./dist/helios.js",
   "unpkg": "./dist/helios.js",
@@ -59,7 +59,8 @@
     "json-query": "^2.2.2",
     "pica": "^9.0.1",
     "sylvester-es6": "github:filipinascimento/sylvester-es6#fix_duplicate_makeortho",
-    "tar": ">=6.1.9"
+    "tar": ">=6.1.9",
+    "pako": "~2.1.0"
   },
   "devDependencies": {
     "@vitest/coverage-c8": "^0.29.2",
