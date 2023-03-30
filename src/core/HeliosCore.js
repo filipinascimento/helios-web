@@ -3257,7 +3257,7 @@ export class Helios {
 		// const elapsed = performance.now() - this.lastUpdateTime;
 		// const coefficient = Math.pow(smoothness,elapsed/25);
 		// console.log(coefficient);
-		coefficient = smoothness;
+		let coefficient = smoothness;
 		if(Object.keys(this.pixelCountsByIndex).length > 0){
 			for (const nodeIndex in this.pixelCountsByIndex) {
 				this.pixelCountsByIndex[nodeIndex] *= coefficient;
