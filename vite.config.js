@@ -41,7 +41,7 @@ export default defineConfig({
 			// the proper extensions will be added
 			fileName: 'helios'
 		},
-		minify: true,
+		minify: "esbuild",
 	},
 	server: {
 	  open: '/docs/example/index.html'

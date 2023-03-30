@@ -79,6 +79,7 @@ export class Helios {
 		use2D = false,
 		hyperbolic = false,
 		fastEdges = false,
+		labelsBuffer = true,
 		forceSupersample = false,
 		autoStartLayout = true,
 		autoCleanup = true, // cleanup helios if canvas or element is removed
@@ -144,6 +145,8 @@ export class Helios {
 
 		this.saveResolutionRatio = 1.0;
 		this.pickingResolutionRatio = 0.25;
+		this._labelsMaxPixels = 5000;
+		this._labelsBufferEnabled = labelsBuffer;
 
 		this._zoomFactor = 1;
 		this._nodesGlobalOpacityScale = 1.0;
@@ -253,6 +256,7 @@ export class Helios {
 		this._setupShaders();
 		this._buildNodesGeometry();
 		this._buildPickingBuffers();
+		this._buildLabelBuffers();
 		this._buildEdgesGeometry();
 		this._willResizeEvent(0);
 
@@ -936,6 +940,21 @@ export class Helios {
 	}
 
 	/**
+	 * Initializes the labels framebuffer used for getting the displayed objects.
+	 * @method _buildLabelBuffers
+	 * @memberof Helios
+	 * @instance
+	 * @private
+	 */
+	_buildLabelBuffers() {
+		let gl = this.gl;
+		if(this._labelsBufferEnabled){
+			this.labelFramebuffer = this._createOffscreenFramebuffer();
+		}
+	}
+
+
+	/**
 	 * Creates and initializes an offscreen framebuffer for rendering operations.
 	 * @method createOffscreenFramebuffer
 	 * @memberof Helios
@@ -1275,19 +1294,34 @@ export class Helios {
 	}
 
 
-	/** Updates the picking and density framebuffers size
+	/** Updates the all the framebuffers
 	 * @method _updatePickingFramebufferSize
 	 * @memberof Helios
 	 * @instance
 	 * @private
-	 * @param {number} newWidth - The new width of the picking framebuffer.
-	 * @param {number} newHeight - The new height of the picking framebuffer.
+	 * @param {number} newWidth - The new width of the framebuffers.
+	 * @param {number} newHeight - The new height of the framebuffers.
 	 * @returns {this} Returns the current Helios instance for chaining.
 	 */
 	_resizeGL(newWidth, newHeight) {
 		this.canvasElement.width = newWidth;
 		this.canvasElement.height = newHeight;
-		this.pickingFramebuffer.setSize(newWidth * this.pickingResolutionRatio, newHeight * this.pickingResolutionRatio);
+		this.pickingFramebuffer.setSize(Math.round(newWidth * this.pickingResolutionRatio), Math.round(newHeight * this.pickingResolutionRatio));
+		// distribute at most this.labelsMaxPixels across the screen (width * height), keeping the aspect ratio
+		let aspectRatio = newWidth / newHeight;
+		if(this._labelsBufferEnabled){
+			let labelsWidth, labelsHeight;
+			// labelsWidth*labelsHeight <= this.labelsMaxPixels
+			if (aspectRatio > 1) {
+				labelsWidth = Math.sqrt(this._labelsMaxPixels * aspectRatio);
+				labelsHeight = this._labelsMaxPixels / labelsWidth;
+			} else {
+				labelsHeight = Math.sqrt(this._labelsMaxPixels / aspectRatio);
+				labelsWidth = this._labelsMaxPixels / labelsHeight;
+			}
+			this.labelFramebuffer.setSize(Math.round(labelsWidth), Math.round(labelsHeight));
+		}
+		// console.log([labelsWidth, labelsHeight]);
 		// window.requestAnimationFrame(() => this.redraw());
 		if (this.densityPlot) {
 			this.densityMap.resize(newWidth, newHeight);
@@ -1445,7 +1479,6 @@ export class Helios {
 		let dpr = window.devicePixelRatio || 1;
 		if (dpr < 2.0 || this.forceSupersample) {
 			dpr = dpr * 2.0;
-			console.log(dpr);
 		}
 
 		this.canvasElement.style.width = this.element.clientWidth + "px";
@@ -1478,8 +1511,11 @@ export class Helios {
 	 * helios.update().redraw();
 	 */
 	redraw() {
-		this._redrawAll(null, false); // Normal
-		this._redrawAll(this.pickingFramebuffer, true); // Picking
+		this._redrawAll(null, "normal"); // Normal
+		this._redrawAll(this.pickingFramebuffer, "picking"); // Picking
+		if(this._labelsBufferEnabled){
+			this._redrawAll(this.labelFramebuffer, "labels"); // Labels buffer
+		}
 		// this.redrawDensityMap();
 		this.onDrawCallback?.();
 		this.triggerHoverEvents(null);
@@ -1562,7 +1598,11 @@ export class Helios {
 	 * @param {boolean} isPicking - If true, the framebuffer is used for picking.
 	 * @param {Object} viewport - The viewport to use.
 	 */
-	_redrawPrepare(destination, isPicking, viewport) {
+	_redrawPrepare(destination, framebufferType, viewport) {
+		// if framebufferType is undefined, set it to "normal"
+		if (typeof framebufferType === "undefined") {
+			framebufferType = "normal";
+		}
 		let gl = this.gl;
 
 		const fbWidth = destination?.size.width || this.canvasElement.width;
@@ -1570,7 +1610,7 @@ export class Helios {
 		if (destination == null) {
 			gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 			gl.clearColor(...this._backgroundColor);
-		} else if (isPicking) {
+		} else if (framebufferType!="normal") {
 			gl.bindFramebuffer(gl.FRAMEBUFFER, destination);
 			gl.clearColor(0.0, 0.0, 0.0, 0.0);
 		} else {
@@ -1593,6 +1633,7 @@ export class Helios {
 
 		this.projectionMatrix = glm.mat4.create();
 		this.viewMatrix = glm.mat4.create();
+		this.projectionViewMatrix = glm.mat4.create();
 
 		// 
 		if (this._use2D) {
@@ -1603,7 +1644,7 @@ export class Helios {
 				fbWidth / this._zoomFactor / orthoRescaleFactor / 10 * scaleFactor,
 				-fbHeight / this._zoomFactor / orthoRescaleFactor / 10 * scaleFactor,
 				fbHeight / this._zoomFactor / orthoRescaleFactor / 10 * scaleFactor,
-				-10000.0, 10000.0);
+				-10000.0, 100000.0);
 			// glm.mat4.perspective(this.projectionMatrix, Math.PI * 2 / 360 * 70, fbWidth / fbHeight, 1.0, 10000.0);
 		} else {
 			glm.mat4.perspective(this.projectionMatrix, Math.PI * 2 / 360 * 70, fbWidth / fbHeight, 1.0, null);
@@ -1616,6 +1657,8 @@ export class Helios {
 		glm.mat4.multiply(this.viewMatrix, this.viewMatrix, this.rotationMatrix);
 		// glm.mat4.scale(this.viewMatrix, this.viewMatrix, [this._zoomFactor, this._zoomFactor, this._zoomFactor]);
 		glm.mat4.translate(this.viewMatrix, this.viewMatrix, this.translatePosition);
+
+		glm.mat4.multiply(this.projectionViewMatrix, this.projectionMatrix, this.viewMatrix);
 	}
 
 	/** Helper method to draw nodes
@@ -1626,13 +1669,16 @@ export class Helios {
 	 * @param {WebGLFramebuffer} destination - The destination framebuffer.
 	 * @param {boolean} isPicking - If true, the framebuffer is used for picking.
 	 */
-	_redrawNodes(destination, isPicking) {
+	_redrawNodes(destination, framebufferType) {
+		if (typeof framebufferType === "undefined") {
+			framebufferType = "normal";
+		}
 		let gl = this.gl;
 		let ext = gl.getExtension("ANGLE_instanced_arrays");
 
 
 		let currentShaderProgram;
-		if (!isPicking) {
+		if (framebufferType == "normal") {
 			// console.log(this.nodesShaderProgram);
 			gl.enable(gl.BLEND);
 			// if(this.useAdditiveBLending){
@@ -1758,10 +1804,13 @@ export class Helios {
 	 * @instance
 	 * @private
 	 * @param {WebGLFramebuffer} destination - The destination framebuffer.
-	 * @param {boolean} isPicking - If true, the framebuffer is used for picking.
+	 * @param {String} framebufferType - The type of framebuffer to render to (normal, picking, or labels).
 	 */
-	_redrawEdges(destination, isPicking) {
+	_redrawEdges(destination, framebufferType) {
 
+		if (typeof framebufferType === "undefined") {
+			framebufferType = "normal";
+		}
 		let hasEdgeCallbacks = this.onEdgeClickCallback
 			|| this.onEdgeHoverMoveCallback
 			|| this.onEdgeHoverStartCallback
@@ -1769,7 +1818,7 @@ export class Helios {
 			|| this.onEdgeDoubleClickCallback
 			|| this.onEdgeClickCallback;
 
-		if (isPicking && (this.fastEdges || !hasEdgeCallbacks)) {
+		if (framebufferType!="normal" && (this.fastEdges || !hasEdgeCallbacks)) {
 			return // no picking for fast edges or no callbacks
 		}
 
@@ -1777,7 +1826,7 @@ export class Helios {
 		let ext = gl.getExtension("ANGLE_instanced_arrays");
 
 		let currentShaderProgram;
-		if (!isPicking) {
+		if (framebufferType == "normal") {
 			gl.enable(gl.BLEND);
 			// 	//Edges are rendered with additive blending.
 			// 	gl.enable(gl.BLEND);
@@ -1809,8 +1858,6 @@ export class Helios {
 			// currentShaderProgram.attributes.enable("encodedIndex");
 
 
-			this.projectionViewMatrix = glm.mat4.create();
-			glm.mat4.multiply(this.projectionViewMatrix, this.projectionMatrix, this.viewMatrix);
 
 			//bind attributes and unions
 			gl.bindBuffer(gl.ARRAY_BUFFER, this.fastEdgesGeometry.vertexObject);
@@ -1854,8 +1901,6 @@ export class Helios {
 			// newGeometry.sizeBuffer = gl.createBuffer();
 			// newGeometry.indexBuffer = gl.createBuffer();
 			// console.log(currentShaderProgram.attributes);
-			this.projectionViewMatrix = glm.mat4.create();
-			glm.mat4.multiply(this.projectionViewMatrix, this.projectionMatrix, this.viewMatrix);
 
 			gl.bindBuffer(gl.ARRAY_BUFFER, this.edgesGeometry.edgeVertexTypeBuffer);
 			gl.vertexAttribPointer(currentShaderProgram.attributes.vertexType, 2, gl.FLOAT, false, 0, 0);
@@ -1944,16 +1989,16 @@ export class Helios {
 	 * @instance
 	 * @private
 	 * @param {Object} destination - The destination to draw to. If undefined, the canvas will be used.
-	 * @param {Boolean} isPicking - Whether or not we are picking.
+	 * @param {String} framebufferType - Type of the framebuffer to draw "normal", "picking", "labels" . Default is "normal"
 	 */
-	_redrawAll(destination, isPicking) {
-		if (typeof isPicking === 'undefined') {
-			isPicking = false;
+	_redrawAll(destination, framebufferType) {
+		if (typeof framebufferType === 'undefined') {
+			framebufferType = "normal";
 		}
 		let gl = this.gl;
-		// isPicking=true;
-		this._redrawPrepare(destination, isPicking);
-		if (!isPicking && this.densityPlot) {
+
+		this._redrawPrepare(destination, framebufferType);
+		if (framebufferType=="normal" && this.densityPlot) {
 
 			// gl.clearColor(0.0, 0.0, 0.0, 1.0);
 			// gl.clearDepth(1.0)
@@ -1971,17 +2016,21 @@ export class Helios {
 			gl.disable(gl.DEPTH_TEST);
 			gl.depthMask(false);
 			// if(edge)
-			if (this._edgesGlobalOpacityScale > 0.0) {
-				this._redrawEdges(destination, isPicking);
+			if (framebufferType!="labels") {
+				if (this._edgesGlobalOpacityScale > 0.0) {
+					this._redrawEdges(destination, framebufferType);
+				}
 			}
-			this._redrawNodes(destination, isPicking);
+			this._redrawNodes(destination, framebufferType);
 		} else {
 			gl.enable(gl.DEPTH_TEST);
-			this._redrawNodes(destination, isPicking);
+			this._redrawNodes(destination, framebufferType);
 			gl.depthMask(false);
 
-			if (this._edgesGlobalOpacityScale > 0.0) {
-				this._redrawEdges(destination, isPicking);
+			if (framebufferType!="labels") {
+				if (this._edgesGlobalOpacityScale > 0.0) {
+					this._redrawEdges(destination, framebufferType);
+				}
 			}
 			gl.depthMask(true);
 		}
@@ -3095,18 +3144,30 @@ export class Helios {
 				}
 			}
 			let nodePositions = this.network.positions;
-			let projectedPositions = new Float32Array(nodes.length * 3);
+			let projectedPositions = new Float32Array(nodes.length * 4);
 			for (let i = 0; i < nodes.length; i++) {
 				let nodeIndex = nodeIndices[i];
-				let nodePosition = [nodePositions[nodeIndex * 3], nodePositions[nodeIndex * 3 + 1], nodePositions[nodeIndex * 3 + 2], 1];
-				let projectedPosition = glm.vec4.transformMat4(nodePosition, this.projectionMatrix);
+				let nodePosition = [nodePositions[nodeIndex * 3], nodePositions[nodeIndex * 3 + 1], nodePositions[nodeIndex * 3 + 2], 1.0];
+
+				let projectedPosition = glm.vec4.create();
+				glm.vec4.transformMat4(projectedPosition, nodePosition, this.projectionViewMatrix);
+				// console.log(projectedPosition)
+				// mat4.multiplyVec4(projectionViewMatrix, position, dest);
+				if(projectedPosition[2]<0){//behind the camera
+					// continue;
+				}
+				let w2d = this.canvasElement.clientWidth;
+				let h2d = this.canvasElement.clientHeight;
+				let x = w2d/2 + projectedPosition[0]*w2d/2.0/projectedPosition[3];
+				let y = h2d/2 - projectedPosition[1]*h2d/2.0/projectedPosition[3];
 				//perspective divide
-				projectedPosition[0] /= projectedPosition[3];
-				projectedPosition[1] /= projectedPosition[3];
-				projectedPosition[2] /= projectedPosition[3];
-				projectedPositions[i * 3] = projectedPosition[0];
-				projectedPositions[i * 3 + 1] = projectedPosition[1];
-				projectedPositions[i * 3 + 2] = projectedPosition[2];
+				// projectedPosition[0] /= projectedPosition[3];
+				// projectedPosition[1] /= projectedPosition[3];
+				// projectedPosition[2] /= projectedPosition[3];
+				projectedPositions[i * 4] = x;
+				projectedPositions[i * 4 + 1] = y;
+				projectedPositions[i * 4 + 2] = projectedPosition[2];
+				projectedPositions[i * 4 + 3] = projectedPosition[3];
 			}
 			return projectedPositions;
 		} else {
@@ -3155,6 +3216,77 @@ export class Helios {
 			data);             // typed array to hold result
 		const ID = (data[0] + (data[1] << 8) + (data[2] << 16) + (data[3] << 24)) - 1;
 		return ID;
+	}
+
+
+	/** Pick a node at the given screen coordinates.
+	 * @method nodesInScreen
+	 * @memberof Helios
+	 * @instance
+	 * @param {number} minProportion - The minimum proportion of the label to be visible to be considered in the screen.
+	 * @param {number} maxLabels - The maximum number of labels to be rendered. Set to -1 to render all labels.
+	 * @return {Object.<Node, Object>} - The nodes being rendered at the screen proportion to the number of pixels in the labelFramebuffer
+	 */
+	nodesInScreen(minProportion = 0.001,maxLabels=100,smoothness=0.5) {
+		if(!this._labelsBufferEnabled){
+			return [];
+		}
+		// const fbWidth = this.canvasElement.width * this.pickingResolutionRatio;
+		// const fbHeight = this.canvasElement.height * this.pickingResolutionRatio;
+		// const pixelX = Math.round(x * fbWidth / this.canvasElement.clientWidth - 0.5);
+		// const pixelY = Math.round(fbHeight - y * fbHeight / this.canvasElement.clientHeight - 0.5);
+
+		let totalPixels = this.labelFramebuffer.size.width*this.labelFramebuffer.size.height;
+		const data = new Uint8Array(4*totalPixels);
+		let gl = this.gl;
+		gl.bindFramebuffer(gl.FRAMEBUFFER, this.labelFramebuffer);
+		gl.readPixels(
+			0,            // x
+			0,            // y
+			this.labelFramebuffer.size.width,                 // width
+			this.labelFramebuffer.size.height,                 // height
+			gl.RGBA,           // format
+			gl.UNSIGNED_BYTE,  // type
+			data);             // typed array to hold result
+		//  if this.pixelCountsByIndex is not defined
+		if(!this.pixelCountsByIndex){
+			this.pixelCountsByIndex = {};
+			this.lastUpdateTime = performance.now();
+		}
+		// if there are any elements in this.pixelCountsByIndex, multiply by 0.9
+		// const elapsed = performance.now() - this.lastUpdateTime;
+		// const coefficient = Math.pow(smoothness,elapsed/25);
+		// console.log(coefficient);
+		coefficient = smoothness;
+		if(Object.keys(this.pixelCountsByIndex).length > 0){
+			for (const nodeIndex in this.pixelCountsByIndex) {
+				this.pixelCountsByIndex[nodeIndex] *= coefficient;
+				if(this.pixelCountsByIndex[nodeIndex]<minProportion){
+					delete this.pixelCountsByIndex[nodeIndex];
+				}
+			}
+		} 
+		for (let i = 0; i < data.length; i+=4) {
+			const nodeIndex = (data[i] + (data[i+1] << 8) + (data[i+2] << 16) + (data[i+3] << 24)) - 1;
+			
+			if (nodeIndex >= 0) {
+				this.pixelCountsByIndex[nodeIndex] = (this.pixelCountsByIndex[nodeIndex] || 0) + 1/totalPixels*(1.0-coefficient);
+			}
+		}
+		// normalize by total pixels
+		let IDProportion = [];
+		for (const nodeIndex in this.pixelCountsByIndex) {
+			let proportion = this.pixelCountsByIndex[nodeIndex];
+			if (proportion > minProportion) {
+				IDProportion.push([+nodeIndex, proportion]);
+			}
+		}
+		//sort by proportion (from highest to lowest)
+		if(maxLabels < 0){
+			maxLabels = IDProportion.length;
+		}
+		this.lastUpdateTime = performance.now();
+		return IDProportion.sort((a, b) => b[1] - a[1]).slice(0,maxLabels);
 	}
 
 	/** Set/get edge global opacity scale. The opacity of each edge is calculated as: opacity = globalBase + globalScale * edgeOpacity
@@ -3525,7 +3657,7 @@ export class Helios {
 	 * helios.pickeableEdges("all");
 	 */
 	pickeableEdges(pickables) {
-		// check if color is defined
+		// check if pickables is defined
 		if (typeof pickables === "undefined") {
 			return this._pickeableEdges;
 		} else {
@@ -3542,6 +3674,28 @@ export class Helios {
 				this._edgeIndicesUpdate = true;
 				this.update();
 			}
+			return this;
+		}
+	}
+
+	/** Get or set labels buffer size
+	 * @method labelsMaxPixels
+	 * @memberof Helios
+	 * @instance
+	 * @chainable
+	 * @param {number} labelsMaxPixels - The maximum number of pixels for the labels buffer.
+	 * @return {Helios|this} - The Helios instance for chaining, or the current value if no argument is provided.
+	 * @example
+	 * // Set the maximum number of pixels for the labels buffer to 10000.
+	 * helios.labelsMaxPixels(10000);
+	 */
+	labelsMaxPixels(labelsMaxPixels) {
+		// check if labelsMaxPixels is defined
+		if (typeof labelsMaxPixels === "undefined") {
+			return this._labelsMaxPixels;
+		} else {
+			this._labelsMaxPixels = labelsMaxPixels;
+			_willResizeEvent(0);
 			return this;
 		}
 	}
@@ -3607,6 +3761,7 @@ export class Helios {
 		if (!keepGLContext && gl) {
 			let numTextureUnits = gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS);
 			this.pickingFramebuffer?.discard();
+			this.labelFramebuffer?.discard();
 			for (let unit = 0; unit < numTextureUnits; ++unit) {
 				gl.activeTexture(gl.TEXTURE0 + unit);
 				gl.bindTexture(gl.TEXTURE_2D, null);
