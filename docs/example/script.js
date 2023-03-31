@@ -509,13 +509,15 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 		let stylizeLabel = (element, color) => {
 			let colorRGB = d3rgb(color[0] * 255, color[1] * 255, color[2] * 255);
 			let colorHSL = d3hsl(colorRGB);
-			if (colorHSL.l > 0.35) {
+			if (colorHSL.l > 0.30) {
 				element.style.color = colorRGB.brighter(0.25).formatRgb();
 				element.style["text-shadow"] = "-1px -1px 1px black, 1px -1px 1px black, -1px 1px 1px black, 1px 1px 1px black";
 				// tooltipElement.style["-webkit-text-stroke"] = "1px black";
 			} else {
 				element.style.color = colorRGB.darker(0.25).formatRgb();
-				element.style["text-shadow"] = "-1px -1px 0px rgba(255,255,255,0.75), 1px -1px 0px rgba(255,255,255,0.75), -1px 1px 0px rgba(255,255,255,0.75), 1px 1px 0px rgba(255,255,255,0.75)";
+				let backgroundColorString = "rgba(255,255,255,1.0)"
+				let outlineWidth = 0.5;
+				element.style["text-shadow"] = `-${outlineWidth}px -${outlineWidth}px 1.0px ${backgroundColorString}, ${outlineWidth}px -${outlineWidth}px 1.0px ${backgroundColorString}, -${outlineWidth}px ${outlineWidth}px 1.0px ${backgroundColorString}, ${outlineWidth}px ${outlineWidth}px 1.0px ${backgroundColorString}`;
 				// tooltipElement.style["-webkit-text-stroke"] = "1px black";
 			}
 		}
@@ -1358,8 +1360,8 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 
 
 
-		let minScreenProportion = 0.0010;
-		let visibleScreenProportion = 0.0040;
+		let minScreenProportion = 0.0009;
+		let visibleScreenProportion = 0.0030;
 		let maxLabels = 1000;
 		let screenLabelsSmoothness = 0.6;
 
@@ -1414,7 +1416,7 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 					let inset = "auto";
 					let projectedNode = helios.getProjectedPositions([nodeIDsProportion[0]]);
 					// if projectedNode[2] is negative, the node is behind the camera
-					if (projectedNode[2] < 0) {
+					if (projectedNode[2] < 0 && !helios._use2D) {
 						return null;
 					}
 					inset = `${projectedNode[1]}px auto auto ${projectedNode[0]}px`;

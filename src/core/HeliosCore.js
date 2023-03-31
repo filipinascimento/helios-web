@@ -94,10 +94,31 @@ export class Helios {
 			this.element = element;
 		}
 		this.element.innerHTML = '';
+		const containerPosition = getComputedStyle(this.element).position;
+
+		if (containerPosition === 'static') {
+			this.container.style.position = 'relative';
+		}
 
 		/** @readonly */
 		this.canvasElement = document.createElement("canvas");
+		// make the canvas element fill the parent element
+		this.canvasElement.style.position = 'absolute';
+		this.canvasElement.style.width = '100%';
+		this.canvasElement.style.height = '100%';
+		this.canvasElement.style.display = 'block';
+		this.canvasElement.style.boxSizing = 'border-box';
 		this.element.appendChild(this.canvasElement);
+
+		this.overlay = document.createElement("div");
+		this.overlay.style.position = 'absolute';
+		this.overlay.style.width = '100%';
+		this.overlay.style.height = '100%';
+		this.overlay.style.display = 'block';
+		this.overlay.style.boxSizing = 'border-box';
+		this.overlay.style.pointerEvents = 'none';
+		this.element.appendChild(this.overlay);
+
 
 		/**
 		 * @public 
@@ -229,7 +250,7 @@ export class Helios {
 		}
 
 		this.resizeObserver = new ResizeObserver(this._onresizeEvent);
-		this.resizeObserver.observe(this.element);
+		this.resizeObserver.observe(this.canvasElement);
 
 
 		this._initialize();
@@ -1481,10 +1502,11 @@ export class Helios {
 			dpr = dpr * 2.0;
 		}
 
-		this.canvasElement.style.width = this.element.clientWidth + "px";
-		this.canvasElement.style.height = this.element.clientHeight + "px";
-		let newFrameworkWidth = dpr * this.element.clientWidth;
-		let newFrameworkHeight = dpr * this.element.clientHeight;
+		// this.canvasElement.style.width = this.element.clientWidth + "px";
+		// this.canvasElement.style.height = this.element.clientHeight + "px";
+		
+		let newFrameworkWidth = dpr * this.canvasElement.clientWidth;
+		let newFrameworkHeight = dpr * this.canvasElement.clientHeight;
 
 		requestAnimationFrame(() => {
 			this._resizeGL(newFrameworkWidth, newFrameworkHeight);
