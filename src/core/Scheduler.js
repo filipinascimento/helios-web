@@ -230,7 +230,7 @@ export class HeliosScheduler {
 			if(this._shouldCleanup){
 				return;
 			}
-			const now = performance.now();
+			const now = window.performance.now();
 			while (this._times.length > 0 && this._times[0] <= now - 1000) {
 				this._times.shift();
 			}
@@ -282,6 +282,10 @@ export class HeliosScheduler {
 		}
 		this._updateTimeout();
 		return this;
+	}
+
+	hasTask(name) {
+		return name in this._tasks;
 	}
 
 
