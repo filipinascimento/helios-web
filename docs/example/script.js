@@ -40,7 +40,7 @@ function throttle(cb, delay = 250) {
 	}
 }
 
-let nodesInScreen = [];
+let nodesOnScreen = [];
 
 function throttleLast(func, wait, scope) {
 	let timer = null;
@@ -264,7 +264,8 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 		let categoricalColormap = "schemeCategory10";
 		let useCategoricalColormap = false;
 
-		let tooltipElement = document.getElementById("tooltip");
+
+		let highlightedNodes = [];
 
 		/*
 		 * Initializing the network
@@ -424,6 +425,7 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 				}
 			}
 
+			highlightedNodes = nodes.filter(node => node._highlighted);
 			if (shallUpdate) {
 				helios.update();
 				helios.render();
@@ -506,33 +508,57 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 			}
 		}
 
-		let stylizeLabel = (element, color) => {
+		let getLabelStyleColorAndOutline = (color) => {
 			let colorRGB = d3rgb(color[0] * 255, color[1] * 255, color[2] * 255);
 			let colorHSL = d3hsl(colorRGB);
-			if (colorHSL.l > 0.30) {
-				element.style.color = colorRGB.brighter(0.25).formatRgb();
-				element.style["text-shadow"] = "-1px -1px 1px black, 1px -1px 1px black, -1px 1px 1px black, 1px 1px 1px black";
-				// tooltipElement.style["-webkit-text-stroke"] = "1px black";
+			let outlineWidth;
+			let outlineColor;
+			let textColor;
+
+			if (colorHSL.l > 0.40) {
+				textColor = colorRGB.brighter(0.25).formatRgb();
+				outlineColor = "rgba(0,0,0,1.0)";
+				outlineWidth = 1.0;
+
 			} else {
-				element.style.color = colorRGB.darker(0.25).formatRgb();
-				let backgroundColorString = "rgba(255,255,255,1.0)"
-				let outlineWidth = 0.5;
-				element.style["text-shadow"] = `-${outlineWidth}px -${outlineWidth}px 1.0px ${backgroundColorString}, ${outlineWidth}px -${outlineWidth}px 1.0px ${backgroundColorString}, -${outlineWidth}px ${outlineWidth}px 1.0px ${backgroundColorString}, ${outlineWidth}px ${outlineWidth}px 1.0px ${backgroundColorString}`;
-				// tooltipElement.style["-webkit-text-stroke"] = "1px black";
+				textColor = colorRGB.darker(0.25).formatRgb();
+				outlineColor = "rgba(255,255,255,1.0)";
+				outlineWidth = 0.75;
 			}
+			return { fill: colorRGB.darker(0.25).formatRgb(), stroke: outlineColor, strokeWidth: outlineWidth };
+		}
+
+		let stylizeLabel = (element, color) => {
+			let colorResult = getLabelStyleColorAndOutline(color);
+			let outlineColor = colorResult.stroke;
+			let outlineWidth = colorResult.strokeWidth;
+			element.style.color = colorResult.fill;
+			element.style["text-shadow"] = `-${outlineWidth}px -${outlineWidth}px 1.0px ${outlineColor}, ${outlineWidth}px -${outlineWidth}px 1.0px ${outlineColor}, -${outlineWidth}px ${outlineWidth}px 1.0px ${outlineColor}, ${outlineWidth}px ${outlineWidth}px 1.0px ${outlineColor}`;
 		}
 
 		let stylizeTooltip = (label, color, x, y, isnew) => {
 			if (label) {
-				tooltipElement.style.left = x + "px";
-				tooltipElement.style.top = y + "px";
-				if (isnew) {
-					tooltipElement.style.display = "block";
-					stylizeLabel(tooltipElement, color);
+				// tooltipElement.style.left = x + "px";
+				// tooltipElement.style.top = y + "px";
+				if (typeof x !== 'undefined' && typeof y !== 'undefined') {
+					tooltipElement.group.style.transform = `translate(${x}px, ${y}px)`;
+					// tooltipElement.setAttribute('x', x);
+					// tooltipElement.setAttribute('y', y);
 				}
-				tooltipElement.textContent = label;
+
+				if (isnew) {
+					// tooltipElement.style.display = "block";
+					let styleData = getLabelStyleColorAndOutline(color);
+					tooltipElement.fillText.setAttribute("fill", styleData.fill);
+					tooltipElement.outlineText.setAttribute("stroke", styleData.stroke);
+					tooltipElement.outlineText.setAttribute("stroke-width", styleData.strokeWidth * 3.0);
+					tooltipElement.group.setAttribute("visibility", "visible");
+				}
+				// set text of the SVG element
+				tooltipElement.fillText.textContent = label;
+				tooltipElement.outlineText.textContent = label;
 			} else {
-				tooltipElement.style.display = "none";
+				tooltipElement.group.setAttribute("visibility", "hidden");
 			}
 		}
 
@@ -756,8 +782,8 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 					} else {
 						console.log("Action!");
 						let dpr = window.devicePixelRatio || 1;
-						helios.exportFigure(networkName + ".png", {
-							scale: 1.0,
+						helios.exportFigure(networkName + ".svg", {
+							scale: dpr,
 							// width: 2048,
 							// height: 2048,
 							supersampleFactor: 2.0,
@@ -958,21 +984,57 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 			},
 		}
 
-		let legendView = d3Select("body").append("svg")
-			.classed("overlay", true)
-			.attr("id", "legendView")
-			.style("left", "10px")
-			.style("top", "10px")
-			.style("pointer-events", "none")
+		// let legendView = d3Select(helios.overlay).append("svg")
+		// 	.attr("id", "legendView")
+		// 	.style("position", "absolute")
+		// 	.style("left", "10px")
+		// 	.style("top", "10px")
+		// 	.style("pointer-events", "none")
 
-		let densityLegendView = d3Select("body").append("svg")
-			.classed("overlay", true)
-			.attr("id", "densityLegendView")
-			.style("right", "10px")
-			.style("bottom", "25px")
-			.style("top", "auto")
-			.style("left", "auto")
-			.style("pointer-events", "none")
+		// let densityLegendView = d3Select(helios.overlay).append("svg")
+		// 	.style("position", "absolute")
+		// 	.attr("id", "densityLegendView")
+		// 	.style("right", "10px")
+		// 	.style("bottom", "25px")
+		// 	.style("top", "auto")
+		// 	.style("left", "auto")
+		// 	.style("pointer-events", "none")
+
+		// now using this.svgLayer instead of overlay and svg creation
+		// svgLayer is already an svg, need to use g instead
+
+
+		let tooltipElement = {
+			group: helios.svgLayer.appendChild(document.createElementNS('http://www.w3.org/2000/svg', 'g'))
+			// .attr("id", "tooltips")
+		};
+
+		tooltipElement.group.setAttribute("id", "tooltips");
+		tooltipElement.outlineText = tooltipElement.group.appendChild(document.createElementNS('http://www.w3.org/2000/svg', 'text'))
+		tooltipElement.fillText = tooltipElement.group.appendChild(document.createElementNS('http://www.w3.org/2000/svg', 'text'))
+
+
+		let legendView = d3Select(helios.svgLayer).append("g")
+			.attr("transform", "translate(10,10)")
+			.attr("id", "legendView");
+
+		let densityLegendView = d3Select(helios.svgLayer).append("g")
+			.attr("id", "densityLegendView");
+
+		let updateDensityLegendsPosition = () => {
+			densityLegendView.attr("transform", "translate(" + (helios.svgLayer.clientWidth - 170) + " " + (helios.svgLayer.clientHeight - 75) + ")")
+		}
+
+		// Update densityLegendView position with observer when svgLayer is resized
+		let densityLegendViewObserver = new ResizeObserver(entries => {
+			for (let entry of entries) {
+				updateDensityLegendsPosition();
+			}
+		});
+
+		densityLegendViewObserver.observe(helios.svgLayer);
+		updateDensityLegendsPosition();
+
 
 		let updateLegendCategorical = (property2color) => {
 			legendView.selectAll("*").remove();
@@ -1000,10 +1062,9 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 			legendItems.select("g")
 				.attr("transform", (d) => (`translate(${35},${15 / 2})`))
 				.select("text")
-				.style("alignment-baseline", "central")
 				.style("font-size", "12px")
 				.append('tspan')
-				.style("alignment-baseline", "central")
+				.attr("dy", "0.33em")
 				.text(d => d)
 				.attr("fill", settings.darkBackground ? "white" : "black")
 				.each(wrapText)
@@ -1360,51 +1421,37 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 
 
 
-		let minScreenProportion = 0.0009;
-		let visibleScreenProportion = 0.0030;
-		let maxLabels = 1000;
-		let screenLabelsSmoothness = 0.6;
+		let minScreenProportion = 0.0001;
+		let visibleScreenProportion = 0.0002;
+		let maxLabels = 25;
+		let screenLabelsSmoothness = 0.80;
 
-		let labelsDiv = d3SelectAll("body").append("div")
-			.attr("id", "labelsDiv")
-			.style("position", "absolute")
-			.style("top", "0px")
-			.style("left", "0px")
-			.style("bottom", "0px")
-			.style("right", "0px")
-			.style("pointer-events", "none");
+
+		let labelsGroup = d3Select(helios.svgLayer).append("g")
+			.attr("id", "labelsGroup")
+			.style("text-anchor", "middle")
+			// .style("dominant-baseline", "central")
+			.style("font-size", 16 + "px")
+			.attr("stroke-linejoin", "round")
+			.style("font-family", "HelveticaNeue,Roboto,Helvetica,Arial,sans-serif")
+			.attr("pointer-events", "none");
 
 		let interpolateProportion = (proportion) => {
 			let a = (proportion - minScreenProportion) / (visibleScreenProportion - minScreenProportion);
 			return Math.max(0, Math.min(1, a));
 		}
+
 		let updateLabelsInScreen = () => {
 			// Create and update labels for nodes in screen
-			labelsDiv.selectAll(".label")
-				.data(nodesInScreen, nodeIDsProportion => nodeIDsProportion[0])
+			labelsGroup.selectAll(".label")
+				.data(nodesOnScreen, nodeIDsProportion => +nodeIDsProportion[0])
 				.join(
 					enter => {
-						let label = enter.append("div")
-							.classed("label", true)
-							.style("position", "absolute")
-							.style("text-align", "center")
-							.style("transform", "translate(-50%,-50%)")
-							.style("opacity", nodeIDsProportion => {
-								return interpolateProportion(nodeIDsProportion[1]);
-							})
-							.style("font-size", nodeIDsProportion => {
-								return interpolateProportion(nodeIDsProportion[1]) * 16 + "px";
-							})
-							.text(nodeIDsProportion => {
-								let node = helios.network.index2Node[nodeIDsProportion[0]];
-								return node.label ?? node.title ?? node.ID;
-							})
-							.each(function (nodeIDsProportion) {
-								let node = helios.network.index2Node[nodeIDsProportion[0]];
-								stylizeLabel(this, node.color);
-							});
-
-						return label;
+						let labelGroup = enter.append("g")
+							.classed("label", true);
+						labelGroup.append("text").classed("labelOutline", true).attr("dy", "0.25em");
+						labelGroup.append("text").classed("labelFill", true).attr("dy", "0.25em");
+						return labelGroup;
 					},
 					update => {
 						// stylizeLabel(update.node(),update);
@@ -1412,36 +1459,66 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 					},
 					exit => exit.remove(),
 				)
-				.style("inset", nodeIDsProportion => {
-					let inset = "auto";
-					let projectedNode = helios.getProjectedPositions([nodeIDsProportion[0]]);
+				.style("opacity", nodeIDsProportion => {
+					return interpolateProportion(nodeIDsProportion[1]);
+				})
+
+				.attr("transform", nodeIDsProportion => {
+					let projectedNode = helios.getProjectedPositions([+nodeIDsProportion[0]]);
 					// if projectedNode[2] is negative, the node is behind the camera
 					if (projectedNode[2] < 0 && !helios._use2D) {
 						return null;
 					}
-					inset = `${projectedNode[1]}px auto auto ${projectedNode[0]}px`;
-					return inset;
-				})
-				.style("transform", "translate(-50%,-50%)")
-				.style("opacity", nodeIDsProportion => {
-					return interpolateProportion(nodeIDsProportion[1]);
-				})
-				.style("font-size", nodeIDsProportion => {
-					return interpolateProportion(nodeIDsProportion[1]) * 16 + "px";
+					let newScale = interpolateProportion(nodeIDsProportion[1]);
+					return `translate(${projectedNode[0]} ${projectedNode[1]}) scale(${newScale})`;
 				})
 				.each(function (nodeIDsProportion) {
-					let node = helios.network.index2Node[nodeIDsProportion[0]];
-					stylizeLabel(this, node.color);
+					let node = helios.network.index2Node[+nodeIDsProportion[0]];
+					// stylizeLabel(this, node.color);
+					let labelSelect = d3Select(this);
+					let labelFillNode = labelSelect.select(".labelFill").node();
+					let labelOutlineNode = labelSelect.select(".labelOutline").node();
+					let styleData = getLabelStyleColorAndOutline(node.color);
+					labelFillNode.style.fill = styleData.fill;
+					labelOutlineNode.style.stroke = styleData.stroke;
+					labelOutlineNode.style.strokeWidth = styleData.strokeWidth * 3.0;
+
+					let labelText = node.label ?? node.title ?? node.ID;
+					labelFillNode.textContent = labelText;
+					labelOutlineNode.textContent = labelText;
 				});
-
-
 
 		}
 		helios.onReady(() => {
-			helios.onDraw(() => {
-				nodesInScreen = helios.nodesInScreen(minScreenProportion, maxLabels, screenLabelsSmoothness);
-				updateLabelsInScreen()
+			helios.trackAttribute("indexTracker", "index", {
+				minProportion: minScreenProportion,
+				smoothness: screenLabelsSmoothness,
+				maxLabels: maxLabels,
+				onTrack: (indices, tracker) => {
+					nodesOnScreen = indices;
+					updateLabelsInScreen();
+				}
 			});
+			// helios.scheduler.schedule({
+			// 	name: "9.0.labelsUpdate",
+			// 	callback: (elapsedTime, task) => {
+
+			// 		nodesInScreen = helios.nodesInScreen(minScreenProportion, maxLabels, screenLabelsSmoothness);
+			// 		updateLabelsInScreen();
+			// 	},
+			// 	delay: 0,
+			// 	repeatInterval: 20,
+			// 	repeat: true,
+			// 	synchronized: true,
+			// 	immediateUpdates: false,
+			// 	redraw: false,
+			// 	updateNodesGeometry: false,
+			// 	updateEdgesGeometry: false,
+			// });
+			// helios.onDraw(() => {
+			// 	nodesInScreen = helios.nodesInScreen(minScreenProportion, maxLabels, screenLabelsSmoothness);
+			// 	updateLabelsInScreen()
+			// });
 
 			d3Select("#centerloading").style("display", "none");
 			if (settings.searchEnabled) {
