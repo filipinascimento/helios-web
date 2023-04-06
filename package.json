@@ -60,7 +60,8 @@
     "pica": "^9.0.1",
     "sylvester-es6": "github:filipinascimento/sylvester-es6#fix_duplicate_makeortho",
     "tar": ">=6.1.9",
-    "pako": "~2.1.0"
+    "pako": "~2.1.0",
+    "avl": "~1.5.3"
   },
   "devDependencies": {
     "@vitest/coverage-c8": "^0.29.2",
