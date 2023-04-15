@@ -37,6 +37,7 @@ export class Helios {
 	 * @param {Object[]} [config.edges=[]] - The edges array of objects. Each object should have source and target attributes.
 	 * 		@see {@link Network#addEdges}
 	 * @param {boolean} [config.use2D=false] - Whether to use 2D mode
+	 * @param {boolean} [config.orthographic=false] - Whether to use orthographic projection instead of perspective
 	 * @param {boolean} [config.hyperbolic=false] - Whether to use hyperbolic mode
 	 * @param {boolean} [config.fastEdges=false] - Whether to use fast edges (edges have always 1 pixel width)
 	 * @param {boolean} [config.forceSupersample=false] - Whether to force supersampling (improves quality of the render even for high density displays)
@@ -78,9 +79,11 @@ export class Helios {
 		nodes = {},
 		edges = [],
 		use2D = false,
+		orthographic = false,
 		hyperbolic = false,
 		fastEdges = false,
 		tracking = true,
+		fieldOfView = 70,
 		forceSupersample = false,
 		autoStartLayout = true,
 		autoCleanup = true, // cleanup helios if canvas or element is removed
@@ -133,6 +136,7 @@ export class Helios {
 		this.element.appendChild(this.overlay);
 
 
+
 		/**
 		 * @public 
 		 * @readonly
@@ -158,6 +162,7 @@ export class Helios {
 		this.lastPanY = 0;
 		this.panX = 0;
 		this.panY = 0;
+		this._fieldOfView = fieldOfView;
 		this.targetPanX = 0;
 		this.targetPanY = 0;
 
@@ -171,7 +176,7 @@ export class Helios {
 		this.animate = false;
 		this.useShadedNodes = false;
 		this.forceSupersample = forceSupersample;
-		this.cameraDistance = 450;
+		this.cameraDistance = 500;
 		this.interacting = false;
 		this.rotateLinearX = 0;
 		this.rotateLinearY = 0;
@@ -186,7 +191,7 @@ export class Helios {
 		this._attributeTrackers = {};
 
 		this._zoomFactor = 1;
-		this._semanticZoomExponent = 0.0;
+		this._semanticZoomExponent = 0.25;
 		this._nodesGlobalOpacityScale = 1.0;
 		this._nodesGlobalOpacityBase = 0.0;
 
@@ -208,6 +213,7 @@ export class Helios {
 		this._backgroundColor = [0.5, 0.5, 0.5, 1.0];
 
 		this._use2D = use2D || hyperbolic;
+		this._orthographic = orthographic || use2D;
 		this._hyperbolic = hyperbolic;
 		this._autoStartLayout = autoStartLayout;
 		this.useAdditiveBlending = false;
@@ -1423,10 +1429,15 @@ export class Helios {
 			}
 			let dx = 0;
 			let dy = 0;
-			if (this.prevK == event.transform.k) {
-				if (this.prevX === undefined) {
-					dx = event.transform.x;
-					dy = event.transform.y;
+			if (this.prevK == event.transform.k || this._use2D) {
+				if (this.prevX === undefined || this._use2D) {
+					if(this._use2D){
+						dx = event.transform.x-this.canvasElement.clientWidth/2;
+						dy = event.transform.y-this.canvasElement.clientHeight/2;
+					}else{
+						dx = event.transform.x;
+						dy = event.transform.y;
+					}
 				} else {
 					dx = event.transform.x - this.prevX * this._zoomFactor;
 					dy = event.transform.y - this.prevY * this._zoomFactor;
@@ -1434,10 +1445,11 @@ export class Helios {
 			} else {
 			}
 
-			this.prevX = event.transform.x / this._zoomFactor;
-			this.prevY = event.transform.y / this._zoomFactor;
+			if(!this._use2D){
+				this.prevX = event.transform.x / this._zoomFactor;
+				this.prevY = event.transform.y / this._zoomFactor;
+			}
 			this.prevK = event.transform.k;
-
 			// 	if (!this.positionInterpolator) {
 			// 		this.update();
 			// 		this.render();
@@ -1465,11 +1477,21 @@ export class Helios {
 			let newRotationMatrix = glm.mat4.create();
 			// console.log(event.sourceEvent.shiftKey)
 			if (this._use2D || event.sourceEvent?.shiftKey) {
-				let perspectiveFactor = this.cameraDistance * this._zoomFactor;
-				let aspectRatio = this.canvasElement.width / this.canvasElement.height;
+				const panelHeight = this.canvasElement.clientHeight;
+				const fovy = Math.PI * 2 / 360 * this._fieldOfView;
+				// FIXME: Maybe use the distance to the objects instead of the camera distance
+				// For the 3D case. The 2D case is fine.
+				const finalCameraDistance = this.cameraDistance / this._zoomFactor;
+				const displacementFactor  = 2 * finalCameraDistance * Math.tan(fovy / 2)/panelHeight;
 				if (this._centerNodes.length == 0) {
-					this.panX = this.panX + dx / this._zoomFactor / 2.0;///400;
-					this.panY = this.panY - dy / this._zoomFactor / 2.0;///400;
+					if(this._use2D){
+						
+						this.panX = dx*displacementFactor;
+						this.panY = -dy*displacementFactor;
+					}else{
+						this.panX = this.panX + dx * displacementFactor;
+						this.panY = this.panY - dy * displacementFactor;
+					}
 				}
 			} else {//pan
 				glm.mat4.identity(newRotationMatrix);
@@ -1525,9 +1547,20 @@ export class Helios {
 	zoomFactor(zoomFactor, duration) {
 		if (zoomFactor !== undefined) {
 			if (duration === undefined) {
-				d3Select(this.canvasElement).call(this.zoom.transform, d3ZoomIdentity.translate(0, 0).scale(zoomFactor))
+				if(this._use2D){
+					d3Select(this.canvasElement).call(this.zoom.transform,
+						 d3ZoomIdentity.translate(this.canvasElement.clientWidth/2, this.canvasElement.clientHeight/2).scale(zoomFactor))
+				}else{
+					d3Select(this.canvasElement).call(this.zoom.transform, d3ZoomIdentity.translate(0, 0).scale(zoomFactor))
+				}
 			} else {
-				d3Select(this.canvasElement).transition().ease(d3Ease.easeLinear).duration(duration).call(this.zoom.transform, d3ZoomIdentity.translate(0, 0).scale(zoomFactor))
+				if(this._use2D){
+					d3Select(this.canvasElement).transition().ease(d3Ease.easeLinear).duration(duration)
+					.call(this.zoom.transform, d3ZoomIdentity.translate(this.canvasElement.clientWidth/2, this.canvasElement.clientHeight/2).scale(zoomFactor))
+					
+				}else{
+					d3Select(this.canvasElement).transition().ease(d3Ease.easeLinear).duration(duration).call(this.zoom.transform, d3ZoomIdentity.translate(0,0).scale(zoomFactor))
+				}
 			}
 			return this;
 		} else {
@@ -1569,9 +1602,10 @@ export class Helios {
 	_willResizeEvent(event) {
 		//requestAnimFrame(function(){
 		let dpr = window.devicePixelRatio || 1;
-		if (dpr < 2.0 || this.forceSupersample) {
-			dpr = dpr * 2.0;
-		}
+		// if (dpr < 2.0 || this.forceSupersample) {
+		// 	dpr = dpr * 2.0;
+		// }
+		dpr = 2.0;
 
 		// this.canvasElement.style.width = this.element.clientWidth + "px";
 		// this.canvasElement.style.height = this.element.clientHeight + "px";
@@ -1583,8 +1617,34 @@ export class Helios {
 			this._resizeGL(newFrameworkWidth, newFrameworkHeight);
 		});
 
+		this._updateCameraInteraction();
+		
 		this.onResizeCallback?.(event);
 		//});
+	}
+
+	/** Update Camera Interaction.
+	 * @method _updateCameraInteraction
+	 * @memberof Helios
+	 * @instance
+	 * @private
+	 * @chainable
+	 * @returns {this} Returns this for chaining.
+	 */
+	_updateCameraInteraction() {
+		if(this.zoom && this._use2D){
+			const panelHeight = this.canvasElement.clientHeight;
+			const fovy = Math.PI * 2 / 360 * this._fieldOfView;
+			// FIXME: Maybe use the distance to the objects instead of the camera distance
+			// For the 3D case. The 2D case is fine.
+			const finalCameraDistance = this.cameraDistance / this._zoomFactor;
+			const displacementFactor  = 2 * finalCameraDistance * Math.tan(fovy / 2)/panelHeight;
+			d3Select(this.canvasElement).property("__zoom",
+				d3ZoomIdentity.translate(
+					this.panX/displacementFactor+this.canvasElement.clientWidth/2,
+					-this.panY/displacementFactor+this.canvasElement.clientHeight/2
+					).scale(this._zoomFactor));
+		}
 	}
 
 	/** Will hint force Helios to redraw the network.
@@ -1700,6 +1760,8 @@ export class Helios {
 
 		const fbWidth = destination?.size.width || this.canvasElement.width;
 		const fbHeight = destination?.size.height || this.canvasElement.height;
+		// let orthogonalScaleFactor = 1.0;
+		// orthogonalScaleFactor = Math.max(this.canvasElement.clientWidth/this.canvasElement.width, this.canvasElement.clientHeight/this.canvasElement.height);
 		if (destination == null) {
 			gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 			gl.clearColor(...this._backgroundColor);
@@ -1729,18 +1791,36 @@ export class Helios {
 		this.projectionViewMatrix = glm.mat4.create();
 
 		// 
-		if (this._use2D) {
-			let orthoRescaleFactor = 1.0;//isPicking ? this.pickingResolutionRatio : 1.0;
-			let scaleFactor = Math.max(this.canvasElement.width / fbWidth, this.canvasElement.height / fbHeight);
+		let fovy = Math.PI * 2 / 360 * this._fieldOfView;
+		let aspectRatio = fbWidth / fbHeight;
+		if (this._use2D||this._orthographic) {
+			const finalCameraDistance = this.cameraDistance / this._zoomFactor;
+			const orthoHeight = 2 * finalCameraDistance * Math.tan(fovy / 2);
+			const orthoWidth = orthoHeight * aspectRatio;
+			const left = -orthoWidth / 2;
+			const right = orthoWidth / 2;
+			const bottom = -orthoHeight / 2;
+			const top = orthoHeight / 2;
+			// orthogonalScaleFactor = 1.0;
+			// console.log("Scale Factor:",orthogonalScaleFactor);
+
 			glm.mat4.ortho(this.projectionMatrix,
-				-fbWidth / this._zoomFactor / orthoRescaleFactor / 10 * scaleFactor,
-				fbWidth / this._zoomFactor / orthoRescaleFactor / 10 * scaleFactor,
-				-fbHeight / this._zoomFactor / orthoRescaleFactor / 10 * scaleFactor,
-				fbHeight / this._zoomFactor / orthoRescaleFactor / 10 * scaleFactor,
-				-10000.0, 100000.0);
+				 left,
+				 right,
+				 bottom,
+				 top,
+				-100+finalCameraDistance, 10000.0+finalCameraDistance);
+
+			// glm.mat4.ortho(this.projectionMatrix,
+			// 	-fbWidth / this._zoomFactor / orthoRescaleFactor * scaleFactor*orthogonalScaleFactor/ scaleHeight,
+			// 	fbWidth / this._zoomFactor / orthoRescaleFactor * scaleFactor*orthogonalScaleFactor / scaleHeight,
+			// 	-fbHeight / this._zoomFactor / orthoRescaleFactor * scaleFactor*orthogonalScaleFactor / scaleHeight,
+			// 	fbHeight / this._zoomFactor / orthoRescaleFactor * scaleFactor*orthogonalScaleFactor / scaleHeight,
+			// 	-10000.0, 100000.0);
 			// glm.mat4.perspective(this.projectionMatrix, Math.PI * 2 / 360 * 70, fbWidth / fbHeight, 1.0, 10000.0);
+			
 		} else {
-			glm.mat4.perspective(this.projectionMatrix, Math.PI * 2 / 360 * 70, fbWidth / fbHeight, 1.0, null);
+			glm.mat4.perspective(this.projectionMatrix, fovy, aspectRatio, 1.0, null);
 		}
 
 		glm.mat4.identity(this.viewMatrix);
@@ -1772,7 +1852,7 @@ export class Helios {
 		let adjustedScaleFactor = 1.0 / Math.pow(this._zoomFactor, this._semanticZoomExponent);
 
 		if (framebufferType != "normal") {
-			adjustedScaleFactor = 1.0 / Math.pow(this._zoomFactor, 0.5 * this._semanticZoomExponent);
+			adjustedScaleFactor = 1.0 / Math.pow(this._zoomFactor, 0.75 * this._semanticZoomExponent);
 		}
 
 		let currentShaderProgram;
@@ -2160,7 +2240,7 @@ export class Helios {
 		this.targetTranslatePosition[0] = 0;
 		this.targetTranslatePosition[1] = 0;
 		this.targetTranslatePosition[2] = 0;
-
+		
 		if (this._centerNodes && this._centerNodes.length > 0) {
 			for (let i = 0; i < this._centerNodes.length; i++) {
 				let node = this._centerNodes[i];
@@ -2205,6 +2285,8 @@ export class Helios {
 			}
 			this._centerNodes.push(node);
 		}
+
+		this._updateCameraInteraction();
 
 		this.lastTranslatePosition[0] = this.translatePosition[0];
 		this.lastTranslatePosition[1] = this.translatePosition[1];
@@ -2254,6 +2336,9 @@ export class Helios {
 				this.translatePosition[2] = this.targetTranslatePosition[2];
 				this.panX = 0;
 				this.panY = 0;
+				if(this._use2D){
+					// this.zoom.translateTo(d3Select(this.canvasElement),this.panX+this.canvasElement.clientWidth/2,this.panY+this.canvasElement.clientHeight/2);
+				}
 			}
 			return false; //no need to continue
 		} else {
@@ -2275,7 +2360,9 @@ export class Helios {
 			this.panY = (1.0 - alpha) * this.lastPanY;
 			this.panX += alpha * this.targetPanX;
 			this.panY += alpha * this.targetPanY;
-
+			if(this._use2D){
+				// this.zoom.translateTo(d3Select(this.canvasElement),this.panX+this.canvasElement.clientWidth/2,this.panY+this.canvasElement.clientHeight/2);
+			}
 			if (alpha >= 1.0) {
 				return false;
 			} else {
@@ -3248,6 +3335,10 @@ export class Helios {
 			}
 			let nodePositions = this.network.positions;
 			let projectedPositions = new Float32Array(nodes.length * 4);
+
+			let w2d = this.canvasElement.clientWidth;
+			let h2d = this.canvasElement.clientHeight;
+
 			for (let i = 0; i < nodes.length; i++) {
 				let nodeIndex = nodeIndices[i];
 				let nodePosition = [nodePositions[nodeIndex * 3], nodePositions[nodeIndex * 3 + 1], nodePositions[nodeIndex * 3 + 2], 1.0];
@@ -3256,17 +3347,18 @@ export class Helios {
 				glm.vec4.transformMat4(projectedPosition, nodePosition, this.projectionViewMatrix);
 				// console.log(projectedPosition)
 				// mat4.multiplyVec4(projectionViewMatrix, position, dest);
-				if (projectedPosition[2] < 0) {//behind the camera
-					// continue;
-				}
-				let w2d = this.canvasElement.clientWidth;
-				let h2d = this.canvasElement.clientHeight;
-				let x = w2d / 2 + projectedPosition[0] * w2d / 2.0 / projectedPosition[3];
-				let y = h2d / 2 - projectedPosition[1] * h2d / 2.0 / projectedPosition[3];
+				// if (projectedPosition[2] < 0) {//behind the camera
+				// 	// continue;
+				// }
+				
+				let perspectiveFactor = 1.0 / projectedPosition[3];
+				
+				// if(!this._orthographic){
+				// 	perspectiveFactor = 1.0 / (projectedPosition[3]);
+				// }
+				let x = w2d / 2 + projectedPosition[0] * w2d * 0.5 * perspectiveFactor;
+				let y = h2d / 2 - projectedPosition[1] * h2d * 0.5 * perspectiveFactor;
 				//perspective divide
-				// projectedPosition[0] /= projectedPosition[3];
-				// projectedPosition[1] /= projectedPosition[3];
-				// projectedPosition[2] /= projectedPosition[3];
 				projectedPositions[i * 4] = x;
 				projectedPositions[i * 4 + 1] = y;
 				projectedPositions[i * 4 + 2] = projectedPosition[2];
@@ -3325,21 +3417,21 @@ export class Helios {
 	_consolidateCentroids(centroids, counts) {
 		for (const [nodeAttribute, centroid] of centroids) {
 			const count = counts.get(nodeAttribute);
-			centroid.x /= count;
-			centroid.y /= count;
+			centroid[0] /= count;
+			centroid[1] /= count;
 		}
 	}
 
 	_calculateCentroidForAttribute(nodeAttribute, xy, centroids, counts) {
 		// const xy = this._pixelXYOnScreen[i];
 		if (!centroids.has(nodeAttribute)) {
-			centroids.set(nodeAttribute, { x: 0, y: 0 });
+			centroids.set(nodeAttribute, [0,0]);
 			counts.set(nodeAttribute, 0);
 		}
 		const centroid = centroids.get(nodeAttribute);
 		centroid[0] += xy[0];
 		centroid[1] += xy[1];
-
+		
 		const count = counts.get(nodeAttribute);
 		counts.set(nodeAttribute, count + 1);
 	}
@@ -3392,8 +3484,8 @@ export class Helios {
 						if (centroidPositions.has(currentKeys[i])) {
 							const centroidPosition = centroidPositions.get(currentKeys[i]);
 							if (centroidPosition) {
-								centroidPosition[0] = centroidPosition[0] * coefficient;
-								centroidPosition[1] = centroidPosition[1] * coefficient;
+								centroidPosition[0] *=  coefficient;
+								centroidPosition[1] *=  coefficient;
 							}
 							// centroidPositions.set(currentKeys[i], centroidPosition);
 						}
@@ -3473,7 +3565,7 @@ export class Helios {
 				for (let i = 0; i < nodesOnScreen.length; i++) {
 					const nodeIndex = nodesOnScreen[i];
 					if (nodeIndex >= 0) {
-						const node = [index2node[nodeIndex]];
+						const node = index2node[nodeIndex];
 						const attributeEntry = node[attribute];
 						const newValue = (pixelCounter.get(attributeEntry) || 0) + 1.0 / totalPixels * (1.0 - coefficient);
 						pixelCounter.set(attributeEntry, newValue);
@@ -3494,8 +3586,11 @@ export class Helios {
 						// add new centroid (1.0 - coefficient)
 						centroidPosition[0] += newCentroidPosition[0] * (1.0 - coefficient);
 						centroidPosition[1] += newCentroidPosition[1] * (1.0 - coefficient);
+						
+						// centroidPosition[0] = newCentroidPosition[0];
+						// centroidPosition[1] = newCentroidPosition[1];
 					} else {
-						centroidPositions.set(key, [value]);
+						centroidPositions.set(key, newCentroidPosition);
 					}
 				}
 			}
@@ -3531,9 +3626,28 @@ export class Helios {
 			const attributeTracker = this._attributeTrackers[trackerName];
 			const pixelCounter = attributeTracker.pixelCounter;
 			// const IDProportion = 
-			return pixelCounter.getSortedPairs();
+			if(attributeTracker.calculateCentroid){
+				const centroidPositions = attributeTracker.centroidPositions;
+				const IDProportion = pixelCounter.getSortedPairs();
+				// add the centroid positions to the array [ID,proportion,x,y]
+				for (let i = 0; i < IDProportion.length; i++) {
+					const ID = IDProportion[i][0];
+					const proportion = IDProportion[i][1];
+					const centroidPosition = centroidPositions.get(ID);
+					IDProportion[i] = [ID, proportion, centroidPosition[0], centroidPosition[1]];
+				}
+				return IDProportion;
+			}else{
+				return pixelCounter.getSortedPairs();
+			}
 		}
+	}
 
+	trackedAttributesCentroids(trackerName) {
+		if (this._trackingBufferEnabled && this._attributeTrackers[trackerName]) {
+			const attributeTracker = this._attributeTrackers[trackerName];
+			return attributeTracker.centroidPositions;
+		}
 	}
 
 	/** Update the attribute trackers.
