@@ -54,8 +54,8 @@
     #loading {
       display: none;
       position: absolute;
-      top: 5px;
-      right: 5px;
+      bottom: 28px;
+      left: 5px;
       width: 12px;
       height: 12px;
       border: 2px solid rgba(125, 125, 125, .3);
@@ -63,6 +63,15 @@
       border-top-color: rgba(125, 125, 125, 1.0);
       animation: spin 2s linear infinite;
       -webkit-animation: spin 2s linear infinite;
+    }
+
+    #message {
+      position: absolute;
+      bottom: 28px;
+      left: 5px;
+      text-align: left;
+      font-size: small;
+      color: rgba(125, 125, 125, .75);
     }
 
     @keyframes spin {
@@ -77,14 +86,6 @@
       }
     }
 
-    #message {
-      position: absolute;
-      top: 5px;
-      right: 5px;
-      text-align: right;
-      font-size: small;
-      color: rgba(125, 125, 125, .75);
-    }
 
     #netviz {
       position: absolute;
@@ -365,6 +366,30 @@
       color: rgb(255, 195, 195);
       opacity: 1; /* Firefox */
     }
+
+  :root {
+    --tp-base-background-color: hsla(0, 0%, 10%, 0.80);
+    --tp-base-shadow-color: hsla(0, 0%, 0%, 0.2);
+    --tp-button-background-color: hsla(0, 0%, 80%, 1.00);
+    --tp-button-background-color-active: hsla(0, 0%, 100%, 1.00);
+    --tp-button-background-color-focus: hsla(0, 0%, 95%, 1.00);
+    --tp-button-background-color-hover: hsla(0, 0%, 85%, 1.00);
+    --tp-button-foreground-color: hsla(0, 0%, 0%, 0.80);
+    --tp-container-background-color: hsla(0, 0%, 0%, 0.30);
+    --tp-container-background-color-active: hsla(0, 0%, 0%, 0.60);
+    --tp-container-background-color-focus: hsla(0, 0%, 0%, 0.50);
+    --tp-container-background-color-hover: hsla(0, 0%, 0%, 0.40);
+    --tp-container-foreground-color: hsla(0, 0%, 100%, 0.50);
+    --tp-groove-foreground-color: hsla(0, 0%, 0%, 0.20);
+    --tp-input-background-color: hsla(0, 0%, 0%, 0.30);
+    --tp-input-background-color-active: hsla(0, 0%, 0%, 0.60);
+    --tp-input-background-color-focus: hsla(0, 0%, 0%, 0.50);
+    --tp-input-background-color-hover: hsla(0, 0%, 0%, 0.40);
+    --tp-input-foreground-color: hsla(0, 0%, 100%, 0.50);
+    --tp-label-foreground-color: hsla(0, 0%, 100%, 0.50);
+    --tp-monitor-background-color: hsla(0, 0%, 0%, 0.30);
+    --tp-monitor-foreground-color: hsla(0, 0%, 100%, 0.30);
+  }
   </style>
   <link href="css/auto-complete.css" rel="stylesheet" type="text/css" media="screen" />
 </head>

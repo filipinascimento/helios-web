@@ -10,6 +10,7 @@ import { default as extraColors } from "./extraColors"
 import { default as autocomplete } from "./library/auto-complete_cache-control.js"
 import { default as jsonQuery } from "json-query"
 import { default as d3Legend } from "./library/d3_legends.js"
+import { default as HeliosUI } from "./library/HeliosUI.js"
 
 import { default as pako } from "pako"
 
@@ -41,6 +42,8 @@ function throttle(cb, delay = 250) {
 }
 
 let nodesOnScreen = [];
+let categoriesOnScreen = [];
+
 
 function throttleLast(func, wait, scope) {
 	let timer = null;
@@ -185,6 +188,17 @@ if (urlParams.has("additive") && startSettings.darkBackground) {
 	startSettings.additiveBlending = true;
 }
 
+startSettings.colorProperty = "index";
+if (urlParams.has("colorProperty")) {
+	startSettings.colorProperty = urlParams.get("colorProperty");
+}
+
+
+startSettings.densityProperty = "Uniform";
+if (urlParams.has("densityProperty")) {
+	startSettings.densityProperty = urlParams.get("densityProperty");
+}
+
 
 let visualizeNetwork = (networkName, settings = startSettings) => {
 	xnet.loadXNETFile("networks/" + networkName + ".xnet").then(async network => {
@@ -194,7 +208,7 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 		*/
 
 		// Initial property used for coloring
-		let colorProperty = "index";
+		let colorProperty = startSettings.colorProperty;
 
 		// Default visual properties
 		let defaultNodeScale = 1.0;
@@ -219,9 +233,9 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 		// Default node size and Edge Ooacity
 		let currentGlobalNodeSizeScale = 1.0;
 		let currentGlobalEdgeOpacityScale = 1.0;
-		let currentBandwidth = 35.0;
-		let currentDensityWeight = 2000.0;
-		let chosenDensityProperty = "Uniform";
+		let currentBandwidth = 28.1;//35.0;
+		let currentDensityWeight = 398.1071705534973;//2000.0;
+		let chosenDensityProperty = startSettings.densityProperty;
 		let densityDiverging = true;
 
 		// Scale and Opacity of Highlighted nodes
@@ -315,7 +329,7 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 		const gpuTier = await getGPUTier();
 
 		const isHighSpeed = !gpuTier.isMobile && gpuTier.tier > 2;
-
+		console.log(gpuTier.tier,gpuTier.isMobile,isHighSpeed)
 		let helios = new Helios({
 			elementID: "netviz",
 			// densityElementID: "densityRegion",
@@ -522,8 +536,8 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 
 			} else {
 				textColor = colorRGB.darker(0.25).formatRgb();
-				outlineColor = "rgba(255,255,255,1.0)";
-				outlineWidth = 0.75;
+				outlineColor = "rgba(200,200,200,1.0)";
+				outlineWidth = 1.5;
 			}
 			return { fill: colorRGB.darker(0.25).formatRgb(), stroke: outlineColor, strokeWidth: outlineWidth };
 		}
@@ -937,6 +951,7 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 							helios.redraw();
 							event.stopPropagation();
 						});
+					helios.densityMap?.setBandwidth(currentBandwidth);
 				}
 			},
 			"Weight": {
@@ -1421,20 +1436,31 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 
 
 
-		let minScreenProportion = 0.0001;
-		let visibleScreenProportion = 0.0002;
+		let minScreenProportion = 0.00015;
+		let visibleScreenProportion = 0.0003;
 		let maxLabels = 25;
 		let screenLabelsSmoothness = 0.80;
 
+
+		let categoricalLabelsGroup = d3Select(helios.svgLayer).append("g")
+			.attr("id", "categoricalLabelsGroup")
+			.style("text-anchor", "middle")
+			// .style("dominant-baseline", "central")
+			.style("font-size", 12 + "px")
+			.attr("stroke-linejoin", "round")
+			.style("font-family", "HelveticaNeue,Roboto,Helvetica,Arial,sans-serif")
+			.attr("pointer-events", "none");
 
 		let labelsGroup = d3Select(helios.svgLayer).append("g")
 			.attr("id", "labelsGroup")
 			.style("text-anchor", "middle")
 			// .style("dominant-baseline", "central")
-			.style("font-size", 16 + "px")
+			.style("font-size", 12 + "px")
 			.attr("stroke-linejoin", "round")
 			.style("font-family", "HelveticaNeue,Roboto,Helvetica,Arial,sans-serif")
 			.attr("pointer-events", "none");
+
+
 
 		let interpolateProportion = (proportion) => {
 			let a = (proportion - minScreenProportion) / (visibleScreenProportion - minScreenProportion);
@@ -1449,7 +1475,8 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 					enter => {
 						let labelGroup = enter.append("g")
 							.classed("label", true);
-						labelGroup.append("text").classed("labelOutline", true).attr("dy", "0.25em");
+						labelGroup.append("text").classed("labelOutline", true).attr("dy", "0.25em")
+						.attr("stroke-linejoin", "round");
 						labelGroup.append("text").classed("labelFill", true).attr("dy", "0.25em");
 						return labelGroup;
 					},
@@ -1489,7 +1516,64 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 				});
 
 		}
+
+
+
+		let updateCategoricalGroups = () => {
+			// Create and update labels for nodes in screen
+			categoricalLabelsGroup.selectAll(".categoryLabel")
+				.data(categoriesOnScreen, nodeIDsProportion => +nodeIDsProportion[0])
+				.join(
+					enter => {
+						let labelGroup = enter.append("g")
+							.classed("categoryLabel", true);
+							labelGroup.append("text").classed("labelOutline", true).attr("dy", "0.25em");
+							labelGroup.append("text").classed("labelFill", true).attr("dy", "0.25em");
+						return labelGroup;
+					},
+					update => {
+						// stylizeLabel(update.node(),update);
+						return update;
+					},
+					exit => exit.remove(),
+				)
+				// .style("opacity", nodeIDsProportion => {
+				// 	return interpolateProportion(nodeIDsProportion[1]);
+				// })
+
+				.attr("transform", nodeIDsProportion => {
+					let projectedNode = [nodeIDsProportion[2],nodeIDsProportion[3]]
+					// if projectedNode[2] is negative, the node is behind the camera
+					let newScale = 1.0;//interpolateProportion(nodeIDsProportion[1]);
+					return `translate(${projectedNode[0]} ${projectedNode[1]}) scale(${newScale})`;
+				})
+				.each(function (nodeIDsProportion) {
+					let category = nodeIDsProportion[0];
+					// stylizeLabel(this, node.color);
+					let labelSelect = d3Select(this);
+
+					let labelFillNode = labelSelect.select(".labelFill").node();
+					let labelOutlineNode = labelSelect.select(".labelOutline").node();
+					// let styleData = getLabelStyleColorAndOutline(node.color);
+					
+					labelFillNode.style.fill = "black";
+					labelOutlineNode.style.stroke = "white";
+					labelOutlineNode.style.strokeWidth = 3.0;
+
+					labelFillNode.textContent = category;
+					labelOutlineNode.textContent = category;
+				});
+
+		}
+
+
+
+		let heliosUI = new HeliosUI(helios,{
+			collapsed:true,
+		});
+		
 		helios.onReady(() => {
+			
 			helios.trackAttribute("indexTracker", "index", {
 				minProportion: minScreenProportion,
 				smoothness: screenLabelsSmoothness,
@@ -1499,6 +1583,21 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 					updateLabelsInScreen();
 				}
 			});
+
+			// helios.trackAttribute("category", "main category", {
+			// 	maxLabels: maxLabels,
+			// 	calculateCentroid:true,
+			// 	minProportion: 0.01,
+			// 	smoothness: 0.999,
+			// 	maxLabels: 5,
+			// 	onTrack: (categoriesData, tracker) => {
+			// 		// tracker.
+			// 		categoriesOnScreen = categoriesData;
+			// 		// console.log(categoriesData);
+			// 		updateCategoricalGroups();
+			// 	}
+			// });
+
 			// helios.scheduler.schedule({
 			// 	name: "9.0.labelsUpdate",
 			// 	callback: (elapsedTime, task) => {
