@@ -10,6 +10,7 @@ export class HeliosScheduler {
 		this.needsUpdateEdgesGeometry = false;
 		this._FPS = FPS;
 		this._throttle = throttle; // will throttle to the requested FPS
+		this._maxQueueLength = maxQueueLength;
 		this._started = false;
 		this._paused = true;
 		this._lastFPS = 0;
@@ -230,7 +231,7 @@ export class HeliosScheduler {
 			if(this._shouldCleanup){
 				return;
 			}
-			const now = performance.now();
+			const now = window.performance.now();
 			while (this._times.length > 0 && this._times[0] <= now - 1000) {
 				this._times.shift();
 			}
@@ -251,13 +252,13 @@ export class HeliosScheduler {
 	_addTaskToQueue(task, name) {
 		let taskQueue = this._tasks[name];
 		taskQueue.push(task);
-		if (taskQueue.length > this.maxQueueLength) {
+		if (taskQueue.length > this._maxQueueLength) {
 			if (taskQueue[0].timeout) {
 				taskQueue[0].shouldBeRemoved = true;
 				clearTimeout(task.taskQueue[0]);
 			}
 			taskQueue.shift();
-			console.warn(`One task was discarded because of too many tasks in the ${name} queue. (maxQueueLength = ${this.maxQueueLength})`);
+			console.warn(`One task was discarded because of too many tasks in the ${name} queue. (maxQueueLength = ${this._maxQueueLength})`);
 		}
 	}
 
@@ -282,6 +283,10 @@ export class HeliosScheduler {
 		}
 		this._updateTimeout();
 		return this;
+	}
+
+	hasTask(name) {
+		return name in this._tasks;
 	}
 
 

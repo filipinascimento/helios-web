@@ -21,14 +21,16 @@ let schemeCategory18 = [
     "#9edae5"
 ];
 
-import {colors as cmasherColorsData} from './cmasherColorsData.js'
+// import {colors as cmasherColorsData} from './cmasherColorsData.js'
+
+import {default as cmasherColorsJSONData} from './cmasherColorsData.json';
 
 let cmasherColors = {}
-for(let name of Object.keys(cmasherColorsData)) {
+for(let name of Object.keys(cmasherColorsJSONData)) {
     //capitalize first letter and add interpolate to name start
     let newName = name.charAt(0).toUpperCase() + name.slice(1)
     newName = "interpolate" + newName
-    let textData = cmasherColorsData[name]
+    let textData = cmasherColorsJSONData[name]
     let process = (d) => d3.dsvFormat(" ").parseRows(d, d => d3.rgb(d[0], d[1], d[2]))
     let process2 = ((l) => (t) => l[Math.floor(t * (l.length - 1e-7))])
     let color = process2(process(textData))

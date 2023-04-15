@@ -254,7 +254,7 @@ function Legend(color, {
 				.tickFormat(typeof tickFormat === "function" ? tickFormat : undefined)
 				.tickSize(tickSize)
 				.tickValues(tickValues))
-			.attr("paint-order", "stroke")
+			// .attr("paint-order", "stroke")
 			.attr("stroke-linecap", "round")
 			.attr("stroke-linejoin", "round")
 			.attr("stroke-dasharray", "0%")
@@ -271,7 +271,10 @@ function Legend(color, {
 					.attr("stroke", themeColors[0])
 
 				g.selectAll("text")
-					.attr("fill", themeColors[0])
+					.attr("stroke", themeColors[1])
+					.clone(true)
+						.attr("fill", themeColors[0])
+						.attr("stroke", "none");
 
 			})
 			.call(g => g.select(".domain").remove())
@@ -279,15 +282,18 @@ function Legend(color, {
 				g.append("text")
 					.attr("x", titleAlignment == "start" ? marginLeft : width - marginRight)
 					.attr("y", marginTop + marginBottom - height - 6)
-					.attr("fill", themeColors[0])
+					.attr("stroke", themeColors[1])
 					.attr("text-anchor", titleAlignment)
 					.attr("font-weight", "bold")
 					.attr("class", "title")
 					.attr("font-size", "14px")
 					.attr("stroke-width", 3)
-					.text(title)
+					.text(title).clone(true)
+					.attr("stroke", "none")
+					.attr("fill", themeColors[0]);
 			});
 	} else {
+		
 		svg.append("g")
 			.attr("transform", `translate(${width - marginRight},0)`)
 			.call(d3.axisRight(x)
@@ -295,7 +301,7 @@ function Legend(color, {
 				.tickFormat(typeof tickFormat === "function" ? tickFormat : undefined)
 				.tickSize(tickSize)
 				.tickValues(tickValues))
-			.attr("paint-order", "stroke")
+			// .attr("paint-order", "stroke")
 			.attr("stroke-linecap", "round")
 			.attr("stroke-linejoin", "round")
 			.attr("stroke-dasharray", "0%")
@@ -311,8 +317,12 @@ function Legend(color, {
 					.attr("stroke-width", 1.5)
 					.attr("stroke", themeColors[0])
 
+				
 				g.selectAll("text")
+				.attr("stroke", themeColors[1])
+				.clone(true)
 					.attr("fill", themeColors[0])
+					.attr("stroke", "none");
 
 			}
 			)
@@ -322,6 +332,7 @@ function Legend(color, {
 					.attr("x", marginTop + marginBottom - height+1)
 					.attr("y", -marginLeft)
 					.attr("fill", themeColors[0])
+					.attr("stroke", themeColors[1])
 					.attr("text-anchor", titleAlignment)
 					.attr("font-weight", "bold")
 					.attr("class", "title")
@@ -329,7 +340,11 @@ function Legend(color, {
 					.attr("stroke-width", 3)
 					//rotate the text by 90 degrees
 					.attr("transform", "rotate(-90)")
-					.text(title)
+					.text(title).clone(true)
+					.attr("stroke", "none")
+					.attr("fill", themeColors[0]);
+					
+				
 			}
 			);
 
