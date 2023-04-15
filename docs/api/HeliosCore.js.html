@@ -126,6 +126,7 @@ import { layoutWorker as d3ForceLayoutWorker } from "../layouts/d3force3dLayoutW
 import * as edgesShaders from "../shaders/edges.js";
 import * as nodesShaders from "../shaders/nodes.js";
 import { DensityGL } from "../utilities/densityGL.js";
+import { SortedValueMap } from "../utilities/SortedMap.js";
 
 
 let isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
@@ -147,6 +148,7 @@ export class Helios {
 	 * @param {Object[]} [config.edges=[]] - The edges array of objects. Each object should have source and target attributes.
 	 * 		@see {@link Network#addEdges}
 	 * @param {boolean} [config.use2D=false] - Whether to use 2D mode
+	 * @param {boolean} [config.orthographic=false] - Whether to use orthographic projection instead of perspective
 	 * @param {boolean} [config.hyperbolic=false] - Whether to use hyperbolic mode
 	 * @param {boolean} [config.fastEdges=false] - Whether to use fast edges (edges have always 1 pixel width)
 	 * @param {boolean} [config.forceSupersample=false] - Whether to force supersampling (improves quality of the render even for high density displays)
@@ -188,8 +190,11 @@ export class Helios {
 		nodes = {},
 		edges = [],
 		use2D = false,
+		orthographic = false,
 		hyperbolic = false,
 		fastEdges = false,
+		tracking = true,
+		fieldOfView = 70,
 		forceSupersample = false,
 		autoStartLayout = true,
 		autoCleanup = true, // cleanup helios if canvas or element is removed
@@ -204,10 +209,44 @@ export class Helios {
 			this.element = element;
 		}
 		this.element.innerHTML = '';
+		const containerPosition = getComputedStyle(this.element).position;
+
+		if (containerPosition === 'static') {
+			this.container.style.position = 'relative';
+		}
 
 		/** @readonly */
 		this.canvasElement = document.createElement("canvas");
+		// make the canvas element fill the parent element
+		this.canvasElement.style.position = 'absolute';
+		this.canvasElement.style.width = '100%';
+		this.canvasElement.style.height = '100%';
+		this.canvasElement.style.display = 'block';
+		this.canvasElement.style.boxSizing = 'border-box';
 		this.element.appendChild(this.canvasElement);
+
+		this.svgLayer = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+		//SVG that takes the entire space of the canvas
+		this.svgLayer.style.position = 'absolute';
+		this.svgLayer.style.width = '100%';
+		this.svgLayer.style.height = '100%';
+		this.svgLayer.style.display = 'block';
+		this.svgLayer.style.boxSizing = 'border-box';
+		this.svgLayer.style.pointerEvents = 'none';
+		// Do I need to setup the svg bounds?
+		this.element.appendChild(this.svgLayer);
+
+
+		this.overlay = document.createElement("div");
+		this.overlay.style.position = 'absolute';
+		this.overlay.style.width = '100%';
+		this.overlay.style.height = '100%';
+		this.overlay.style.display = 'block';
+		this.overlay.style.boxSizing = 'border-box';
+		this.overlay.style.pointerEvents = 'none';
+		this.element.appendChild(this.overlay);
+
+
 
 		/**
 		 * @public 
@@ -234,6 +273,7 @@ export class Helios {
 		this.lastPanY = 0;
 		this.panX = 0;
 		this.panY = 0;
+		this._fieldOfView = fieldOfView;
 		this.targetPanX = 0;
 		this.targetPanY = 0;
 
@@ -247,7 +287,7 @@ export class Helios {
 		this.animate = false;
 		this.useShadedNodes = false;
 		this.forceSupersample = forceSupersample;
-		this.cameraDistance = 450;
+		this.cameraDistance = 500;
 		this.interacting = false;
 		this.rotateLinearX = 0;
 		this.rotateLinearY = 0;
@@ -255,8 +295,14 @@ export class Helios {
 
 		this.saveResolutionRatio = 1.0;
 		this.pickingResolutionRatio = 0.25;
+		this._trackingMaxPixels = 5000;
+		this._trackingBufferEnabled = tracking;
+		this._trackingBuffer = null;
+		this._trackingBufferTexture = null;
+		this._attributeTrackers = {};
 
 		this._zoomFactor = 1;
+		this._semanticZoomExponent = 0.25;
 		this._nodesGlobalOpacityScale = 1.0;
 		this._nodesGlobalOpacityBase = 0.0;
 
@@ -278,6 +324,7 @@ export class Helios {
 		this._backgroundColor = [0.5, 0.5, 0.5, 1.0];
 
 		this._use2D = use2D || hyperbolic;
+		this._orthographic = orthographic || use2D;
 		this._hyperbolic = hyperbolic;
 		this._autoStartLayout = autoStartLayout;
 		this.useAdditiveBlending = false;
@@ -305,6 +352,7 @@ export class Helios {
 
 		this._centerNodes = [];
 		this._centerNodesTransition = null;
+
 
 		this.onNodeClickCallback = null;
 		this.onNodeDoubleClickCallback = null;
@@ -337,7 +385,7 @@ export class Helios {
 		}
 
 		this.resizeObserver = new ResizeObserver(this._onresizeEvent);
-		this.resizeObserver.observe(this.element);
+		this.resizeObserver.observe(this.canvasElement);
 
 
 		this._initialize();
@@ -364,6 +412,7 @@ export class Helios {
 		this._setupShaders();
 		this._buildNodesGeometry();
 		this._buildPickingBuffers();
+		this._buildTrackingBuffers();
 		this._buildEdgesGeometry();
 		this._willResizeEvent(0);
 
@@ -722,7 +771,7 @@ export class Helios {
 	 * @param {number} supersampleFactor - The supersampling factor for resizing the image.
 	 * @returns {Promise&lt;void>} A Promise that resolves when the download is complete.
 	 */
-	async _downloadImageData(imageData, filename, supersampleFactor) {
+	async _downloadImageData(imageData, filename, supersampleFactor, scale = 1.0) {
 		// let canvas = document.getElementById('SUPERCANVAS');
 		let pica = new Pica({
 			// features:["all"],
@@ -733,6 +782,7 @@ export class Helios {
 		let ctxFullSize = canvasFullSize.getContext('2d');
 		canvasFullSize.width = imageData.width;
 		canvasFullSize.height = imageData.height;
+		console.log(imageData.width, imageData.height, supersampleFactor, scale);
 		canvas.width = imageData.width / supersampleFactor;
 		canvas.height = imageData.height / supersampleFactor;
 		ctx.imageSmoothingEnabled = true;
@@ -784,20 +834,34 @@ export class Helios {
 		let blob = await pica.toBlob(canvas, "image/png");
 		if (blob) {
 			if (filename.endsWith("svg")) {
-				let svgText = `
-				&lt;svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
-				width="${canvas.width}" height="${canvas.width}"
-				>
-				&lt;image
-						width="${canvas.width}" height="${canvas.width}"
-						xlink:href="${blob}"
-						/>
-				&lt;/svg>`
+				//Create offscreen
+				// let svgText = `
+				// &lt;svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+				// width="${canvas.width/scale}" height="${canvas.height/scale}"
+				// >
+				// &lt;image
+				// 		width="${canvas.width/scale}" height="${canvas.height/scale}"
+				// 		xlink:href="${canvas.toDataURL()}"
+				// 		/>
+				// `;
+				// generate this svg using code
+				let svgText =
+					`&lt;svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ` +
+					` width="${canvas.width / scale}" height="${canvas.height / scale}"` +
+					` viewBox="0 0 ${canvas.width / scale} ${canvas.height / scale}"` +
+					` >` +
+					`&lt;image width="${canvas.width / scale}" height="${canvas.height / scale}" xlink:href="${canvas.toDataURL()}" />`;
+
+				let svgLayerContent = this.svgLayer.innerHTML;
+				svgText += svgLayerContent;
+
+				svgText += `&lt;/svg>`;
 				downloadLink.setAttribute('download', filename);
 				let blobSVG = new Blob([svgText], { type: 'image/svg+xml' });
 				let url = URL.createObjectURL(blobSVG);
 				downloadLink.setAttribute('href', url);
 				downloadLink.click();
+
 			} else {
 				let url = URL.createObjectURL(blob);
 				downloadLink.setAttribute('href', url);
@@ -808,49 +872,57 @@ export class Helios {
 			// console.log("BLOB IS NULL");
 		}
 
-		if (filename.endsWith("svg")) {
-			let svgText = `
-			&lt;svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
-			width="${canvas.width}" height="${canvas.width}"
-			>
-			&lt;image
-					width="${canvas.width}" height="${canvas.width}"
-					xlink:href="${canvas.toDataURL()}"
-					/>
-			&lt;/svg>`
-			downloadLink.setAttribute('download', filename);
-			let blob = new Blob([svgText], { type: 'image/svg+xml' });
-			let url = URL.createObjectURL(blob);
-			downloadLink.setAttribute('href', url);
-			downloadLink.click();
-		} else if (false) {
-			downloadLink.setAttribute('download', filename);
-			downloadLink.setAttribute('href', canvas.toDataURL("image/png").replace("image/png", "image/octet-stream"));
-			downloadLink.click();
-		} else {
+		// if (filename.endsWith("svg")) {
+		// 	let svgText = `
+		// 	&lt;svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+		// 	width="${canvas.width}" height="${canvas.width}"
+		// 	>
+		// 	&lt;image
+		// 			width="${canvas.width}" height="${canvas.width}"
+		// 			xlink:href="${canvas.toDataURL()}"
+		// 			/>
 
-			// canvas.toBlob(function(blob) {
-			// 	console.log(["CANVAS",blob]);
-			// 	let trials = 3;
-			// 	let success = false;
-			// 	let lastError = null;
-			// 	while(trials>0 &amp;&amp; !success){
-			// 		// FIXME: Safari BUG
-			// 		try {
-			// 			let url = URL.createObjectURL(blob);
-			// 			downloadLink.setAttribute('href', url);
-			// 			downloadLink.click();
-			// 			success=true;
-			// 		} catch (error) {
-			// 			lastError = error;
-			// 		}
-			// 		trials--;
-			// 	}
-			// 	if(!success){
-			// 		window.alert(`An error occured while trying to download the image. Please try again. (Error: ${lastError})`)
-			// 	}
-			// });
-		}
+		// 	`;
+		// 	// add contents of svgLayer to svgText without the svg tag
+		// 	let svgLayerContent = this.svgLayer.innerHTML;
+		// 	svgLayerContent = svgLayerContent.replace(/&lt;svg[^>]*>/, "");
+		// 	svgLayerContent = svgLayerContent.replace(/&lt;\/svg>/, "");
+		// 	svgText += svgLayerContent;
+
+		// 	svgText+=`&lt;/svg>`;
+		// 	downloadLink.setAttribute('download', filename);
+		// 	let blob = new Blob([svgText], { type: 'image/svg+xml' });
+		// 	let url = URL.createObjectURL(blob);
+		// 	downloadLink.setAttribute('href', url);
+		// 	downloadLink.click();
+		// } else if (false) {
+		// 	downloadLink.setAttribute('download', filename);
+		// 	downloadLink.setAttribute('href', canvas.toDataURL("image/png").replace("image/png", "image/octet-stream"));
+		// 	downloadLink.click();
+		// } else {
+
+		// 	// canvas.toBlob(function(blob) {
+		// 	// 	console.log(["CANVAS",blob]);
+		// 	// 	let trials = 3;
+		// 	// 	let success = false;
+		// 	// 	let lastError = null;
+		// 	// 	while(trials>0 &amp;&amp; !success){
+		// 	// 		// FIXME: Safari BUG
+		// 	// 		try {
+		// 	// 			let url = URL.createObjectURL(blob);
+		// 	// 			downloadLink.setAttribute('href', url);
+		// 	// 			downloadLink.click();
+		// 	// 			success=true;
+		// 	// 		} catch (error) {
+		// 	// 			lastError = error;
+		// 	// 		}
+		// 	// 		trials--;
+		// 	// 	}
+		// 	// 	if(!success){
+		// 	// 		window.alert(`An error occured while trying to download the image. Please try again. (Error: ${lastError})`)
+		// 	// 	}
+		// 	// });
+		// }
 	}
 
 
@@ -903,8 +975,8 @@ export class Helios {
 	 * });
 	 */
 	exportFigure(filename, {
-		scale = 1.0,
-		supersampleFactor = 4.0,
+		scale,
+		supersampleFactor,
 		width = null,
 		height = null,
 		backgroundColor = null,
@@ -917,21 +989,21 @@ export class Helios {
 		}
 		let framebuffer = this._createOffscreenFramebuffer();
 		if (width == null &amp;&amp; height == null) {
-			width = this.canvasElement.width;
-			height = this.canvasElement.height;
-		} else if (width == null) {
+			width = this.canvasElement.clientWidth;
+			height = this.canvasElement.clientHeight;
+		} else if (!width) {
 			width = Math.round(height * this.canvasElement.width / this.canvasElement.height);
-		} else if (height == null) {
+		} else if (!height) {
 			height = Math.round(width * this.canvasElement.height / this.canvasElement.width);
 		}
-		if (backgroundColor == null) {
+		if (!backgroundColor) {
 			backgroundColor = this.backgroundColor;
 		}
 		framebuffer.setSize(width * scale * supersampleFactor, height * scale * supersampleFactor);
 		framebuffer.backgroundColor = backgroundColor;
 		this._redrawAll(framebuffer);
 		let image = this._framebufferImage(framebuffer);
-		this._downloadImageData(image, filename, supersampleFactor);
+		this._downloadImageData(image, filename, supersampleFactor, scale);
 
 		framebuffer.discard();
 	}
@@ -1045,6 +1117,22 @@ export class Helios {
 		let gl = this.gl;
 		this.pickingFramebuffer = this._createOffscreenFramebuffer();
 	}
+
+	/**
+	 * Initializes the tracking framebuffer used for getting the displayed objects.
+	 * @method _buildTrackingBuffers
+	 * @memberof Helios
+	 * @instance
+	 * @private
+	 */
+	_buildTrackingBuffers() {
+		let gl = this.gl;
+		if (this._trackingBufferEnabled) {
+			this._trackingFramebuffer = this._createOffscreenFramebuffer();
+			this._nodesOnScreen = Array(this._trackingFramebuffer.size.width * this._trackingFramebuffer.size.height);
+		}
+	}
+
 
 	/**
 	 * Creates and initializes an offscreen framebuffer for rendering operations.
@@ -1386,20 +1474,40 @@ export class Helios {
 	}
 
 
-	/** Updates the picking and density framebuffers size
+	/** Updates the all the framebuffers
 	 * @method _updatePickingFramebufferSize
 	 * @memberof Helios
 	 * @instance
 	 * @private
-	 * @param {number} newWidth - The new width of the picking framebuffer.
-	 * @param {number} newHeight - The new height of the picking framebuffer.
+	 * @param {number} newWidth - The new width of the framebuffers.
+	 * @param {number} newHeight - The new height of the framebuffers.
 	 * @returns {this} Returns the current Helios instance for chaining.
 	 */
 	_resizeGL(newWidth, newHeight) {
 		this.canvasElement.width = newWidth;
 		this.canvasElement.height = newHeight;
-		this.pickingFramebuffer.setSize(newWidth * this.pickingResolutionRatio, newHeight * this.pickingResolutionRatio);
-		// window.requestAnimationFrame(() => this.redraw());
+		this.pickingFramebuffer.setSize(Math.round(newWidth * this.pickingResolutionRatio), Math.round(newHeight * this.pickingResolutionRatio));
+		// distribute at most this.trackingMaxPixels across the screen (width * height), keeping the aspect ratio
+		let aspectRatio = newWidth / newHeight;
+		if (this._trackingBufferEnabled) {
+			let trackingWidth, trackingHeight;
+
+			if (aspectRatio > 1) {
+				trackingWidth = Math.sqrt(this._trackingMaxPixels * aspectRatio);
+				trackingHeight = this._trackingMaxPixels / trackingWidth;
+			} else {
+				trackingHeight = Math.sqrt(this._trackingMaxPixels / aspectRatio);
+				trackingWidth = this._trackingMaxPixels / trackingHeight;
+			}
+			this._trackingFramebuffer.setSize(Math.round(trackingWidth), Math.round(trackingHeight));
+			this._pixelXYOnScreen = Array(this._trackingFramebuffer.size.width * this._trackingFramebuffer.size.height);
+			for (let i = 0; i &lt; this._pixelXYOnScreen.length; i++) {
+				let x = (i % this._trackingFramebuffer.size.width) / this._trackingFramebuffer.size.width * this.canvasElement.clientWidth;
+				let y = (Math.floor(i / this._trackingFramebuffer.size.width)) / this._trackingFramebuffer.size.height * this.canvasElement.clientHeight;
+				this._pixelXYOnScreen[i] = [x, y];
+			}
+		}
+
 		if (this.densityPlot) {
 			this.densityMap.resize(newWidth, newHeight);
 		}
@@ -1432,10 +1540,15 @@ export class Helios {
 			}
 			let dx = 0;
 			let dy = 0;
-			if (this.prevK == event.transform.k) {
-				if (this.prevX === undefined) {
-					dx = event.transform.x;
-					dy = event.transform.y;
+			if (this.prevK == event.transform.k || this._use2D) {
+				if (this.prevX === undefined || this._use2D) {
+					if(this._use2D){
+						dx = event.transform.x-this.canvasElement.clientWidth/2;
+						dy = event.transform.y-this.canvasElement.clientHeight/2;
+					}else{
+						dx = event.transform.x;
+						dy = event.transform.y;
+					}
 				} else {
 					dx = event.transform.x - this.prevX * this._zoomFactor;
 					dy = event.transform.y - this.prevY * this._zoomFactor;
@@ -1443,10 +1556,11 @@ export class Helios {
 			} else {
 			}
 
-			this.prevX = event.transform.x / this._zoomFactor;
-			this.prevY = event.transform.y / this._zoomFactor;
+			if(!this._use2D){
+				this.prevX = event.transform.x / this._zoomFactor;
+				this.prevY = event.transform.y / this._zoomFactor;
+			}
 			this.prevK = event.transform.k;
-
 			// 	if (!this.positionInterpolator) {
 			// 		this.update();
 			// 		this.render();
@@ -1474,11 +1588,21 @@ export class Helios {
 			let newRotationMatrix = glm.mat4.create();
 			// console.log(event.sourceEvent.shiftKey)
 			if (this._use2D || event.sourceEvent?.shiftKey) {
-				let perspectiveFactor = this.cameraDistance * this._zoomFactor;
-				let aspectRatio = this.canvasElement.width / this.canvasElement.height;
+				const panelHeight = this.canvasElement.clientHeight;
+				const fovy = Math.PI * 2 / 360 * this._fieldOfView;
+				// FIXME: Maybe use the distance to the objects instead of the camera distance
+				// For the 3D case. The 2D case is fine.
+				const finalCameraDistance = this.cameraDistance / this._zoomFactor;
+				const displacementFactor  = 2 * finalCameraDistance * Math.tan(fovy / 2)/panelHeight;
 				if (this._centerNodes.length == 0) {
-					this.panX = this.panX + dx / this._zoomFactor;///400;
-					this.panY = this.panY - dy / this._zoomFactor;///400;
+					if(this._use2D){
+						
+						this.panX = dx*displacementFactor;
+						this.panY = -dy*displacementFactor;
+					}else{
+						this.panX = this.panX + dx * displacementFactor;
+						this.panY = this.panY - dy * displacementFactor;
+					}
 				}
 			} else {//pan
 				glm.mat4.identity(newRotationMatrix);
@@ -1534,15 +1658,50 @@ export class Helios {
 	zoomFactor(zoomFactor, duration) {
 		if (zoomFactor !== undefined) {
 			if (duration === undefined) {
-				d3Select(this.canvasElement).call(this.zoom.transform, d3ZoomIdentity.translate(0, 0).scale(zoomFactor))
+				if(this._use2D){
+					d3Select(this.canvasElement).call(this.zoom.transform,
+						 d3ZoomIdentity.translate(this.canvasElement.clientWidth/2, this.canvasElement.clientHeight/2).scale(zoomFactor))
+				}else{
+					d3Select(this.canvasElement).call(this.zoom.transform, d3ZoomIdentity.translate(0, 0).scale(zoomFactor))
+				}
 			} else {
-				d3Select(this.canvasElement).transition().ease(d3Ease.easeLinear).duration(duration).call(this.zoom.transform, d3ZoomIdentity.translate(0, 0).scale(zoomFactor))
+				if(this._use2D){
+					d3Select(this.canvasElement).transition().ease(d3Ease.easeLinear).duration(duration)
+					.call(this.zoom.transform, d3ZoomIdentity.translate(this.canvasElement.clientWidth/2, this.canvasElement.clientHeight/2).scale(zoomFactor))
+					
+				}else{
+					d3Select(this.canvasElement).transition().ease(d3Ease.easeLinear).duration(duration).call(this.zoom.transform, d3ZoomIdentity.translate(0,0).scale(zoomFactor))
+				}
 			}
 			return this;
 		} else {
 			return this._zoomFactor;
 		}
 	}
+
+	/** Set the semantic zoom exponent.
+	 * @method semanticZoomExponent
+	 * @memberof Helios
+	 * @instance
+	 * @chainable
+	 * @param {number} semanticZoomExponent - The semantic zoom exponent.
+	 * @returns {this | number} Returns this for chaining if semanticZoomExponent is defined, otherwise returns the current semantic zoom exponent.
+	 * @example
+	 * // Set the semantic zoom exponent to 0.5
+	 * helios.semanticZoomExponent(0.5);
+	 * @example
+	 * // Get the current semantic zoom exponent
+	 * let semanticZoomExponent = helios.semanticZoomExponent();
+	 */
+	semanticZoomExponent(semanticZoomExponent) {
+		if (semanticZoomExponent !== undefined) {
+			this._semanticZoomExponent = semanticZoomExponent;
+			return this;
+		} else {
+			return this._semanticZoomExponent;
+		}
+	}
+
 
 	/** Will resize event helper function
 	 * @method _willResizeEvent
@@ -1554,22 +1713,49 @@ export class Helios {
 	_willResizeEvent(event) {
 		//requestAnimFrame(function(){
 		let dpr = window.devicePixelRatio || 1;
-		if (dpr &lt; 2.0 || this.forceSupersample) {
-			dpr = dpr * 2.0;
-			console.log(dpr);
-		}
+		// if (dpr &lt; 2.0 || this.forceSupersample) {
+		// 	dpr = dpr * 2.0;
+		// }
+		dpr = 2.0;
 
-		this.canvasElement.style.width = this.element.clientWidth + "px";
-		this.canvasElement.style.height = this.element.clientHeight + "px";
-		let newFrameworkWidth = dpr * this.element.clientWidth;
-		let newFrameworkHeight = dpr * this.element.clientHeight;
+		// this.canvasElement.style.width = this.element.clientWidth + "px";
+		// this.canvasElement.style.height = this.element.clientHeight + "px";
+
+		let newFrameworkWidth = dpr * this.canvasElement.clientWidth;
+		let newFrameworkHeight = dpr * this.canvasElement.clientHeight;
 
 		requestAnimationFrame(() => {
 			this._resizeGL(newFrameworkWidth, newFrameworkHeight);
 		});
 
+		this._updateCameraInteraction();
+		
 		this.onResizeCallback?.(event);
 		//});
+	}
+
+	/** Update Camera Interaction.
+	 * @method _updateCameraInteraction
+	 * @memberof Helios
+	 * @instance
+	 * @private
+	 * @chainable
+	 * @returns {this} Returns this for chaining.
+	 */
+	_updateCameraInteraction() {
+		if(this.zoom &amp;&amp; this._use2D){
+			const panelHeight = this.canvasElement.clientHeight;
+			const fovy = Math.PI * 2 / 360 * this._fieldOfView;
+			// FIXME: Maybe use the distance to the objects instead of the camera distance
+			// For the 3D case. The 2D case is fine.
+			const finalCameraDistance = this.cameraDistance / this._zoomFactor;
+			const displacementFactor  = 2 * finalCameraDistance * Math.tan(fovy / 2)/panelHeight;
+			d3Select(this.canvasElement).property("__zoom",
+				d3ZoomIdentity.translate(
+					this.panX/displacementFactor+this.canvasElement.clientWidth/2,
+					-this.panY/displacementFactor+this.canvasElement.clientHeight/2
+					).scale(this._zoomFactor));
+		}
 	}
 
 	/** Will hint force Helios to redraw the network.
@@ -1589,8 +1775,11 @@ export class Helios {
 	 * helios.update().redraw();
 	 */
 	redraw() {
-		this._redrawAll(null, false); // Normal
-		this._redrawAll(this.pickingFramebuffer, true); // Picking
+		this._redrawAll(null, "normal"); // Normal
+		this._redrawAll(this.pickingFramebuffer, "picking"); // Picking
+		if (this._trackingBufferEnabled) {
+			this._redrawAll(this._trackingFramebuffer, "tracking"); // Labels buffer
+		}
 		// this.redrawDensityMap();
 		this.onDrawCallback?.();
 		this.triggerHoverEvents(null);
@@ -1651,7 +1840,7 @@ export class Helios {
 		// }
 
 		this.scheduler.schedule({
-			name: "9.9.render",
+			name: "9.1.render",
 			callback: null,
 			delay: 0,
 			repeat: false,
@@ -1673,15 +1862,21 @@ export class Helios {
 	 * @param {boolean} isPicking - If true, the framebuffer is used for picking.
 	 * @param {Object} viewport - The viewport to use.
 	 */
-	_redrawPrepare(destination, isPicking, viewport) {
+	_redrawPrepare(destination, framebufferType, viewport) {
+		// if framebufferType is undefined, set it to "normal"
+		if (typeof framebufferType === "undefined") {
+			framebufferType = "normal";
+		}
 		let gl = this.gl;
 
 		const fbWidth = destination?.size.width || this.canvasElement.width;
 		const fbHeight = destination?.size.height || this.canvasElement.height;
+		// let orthogonalScaleFactor = 1.0;
+		// orthogonalScaleFactor = Math.max(this.canvasElement.clientWidth/this.canvasElement.width, this.canvasElement.clientHeight/this.canvasElement.height);
 		if (destination == null) {
 			gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 			gl.clearColor(...this._backgroundColor);
-		} else if (isPicking) {
+		} else if (framebufferType != "normal") {
 			gl.bindFramebuffer(gl.FRAMEBUFFER, destination);
 			gl.clearColor(0.0, 0.0, 0.0, 0.0);
 		} else {
@@ -1704,20 +1899,39 @@ export class Helios {
 
 		this.projectionMatrix = glm.mat4.create();
 		this.viewMatrix = glm.mat4.create();
+		this.projectionViewMatrix = glm.mat4.create();
 
 		// 
-		if (this._use2D) {
-			let orthoRescaleFactor = 1.0;//isPicking ? this.pickingResolutionRatio : 1.0;
-			let scaleFactor = Math.max(this.canvasElement.width / fbWidth, this.canvasElement.height / fbHeight);
+		let fovy = Math.PI * 2 / 360 * this._fieldOfView;
+		let aspectRatio = fbWidth / fbHeight;
+		if (this._use2D||this._orthographic) {
+			const finalCameraDistance = this.cameraDistance / this._zoomFactor;
+			const orthoHeight = 2 * finalCameraDistance * Math.tan(fovy / 2);
+			const orthoWidth = orthoHeight * aspectRatio;
+			const left = -orthoWidth / 2;
+			const right = orthoWidth / 2;
+			const bottom = -orthoHeight / 2;
+			const top = orthoHeight / 2;
+			// orthogonalScaleFactor = 1.0;
+			// console.log("Scale Factor:",orthogonalScaleFactor);
+
 			glm.mat4.ortho(this.projectionMatrix,
-				-fbWidth / this._zoomFactor / orthoRescaleFactor / 10 * scaleFactor,
-				fbWidth / this._zoomFactor / orthoRescaleFactor / 10 * scaleFactor,
-				-fbHeight / this._zoomFactor / orthoRescaleFactor / 10 * scaleFactor,
-				fbHeight / this._zoomFactor / orthoRescaleFactor / 10 * scaleFactor,
-				-10000.0, 10000.0);
+				 left,
+				 right,
+				 bottom,
+				 top,
+				-100+finalCameraDistance, 10000.0+finalCameraDistance);
+
+			// glm.mat4.ortho(this.projectionMatrix,
+			// 	-fbWidth / this._zoomFactor / orthoRescaleFactor * scaleFactor*orthogonalScaleFactor/ scaleHeight,
+			// 	fbWidth / this._zoomFactor / orthoRescaleFactor * scaleFactor*orthogonalScaleFactor / scaleHeight,
+			// 	-fbHeight / this._zoomFactor / orthoRescaleFactor * scaleFactor*orthogonalScaleFactor / scaleHeight,
+			// 	fbHeight / this._zoomFactor / orthoRescaleFactor * scaleFactor*orthogonalScaleFactor / scaleHeight,
+			// 	-10000.0, 100000.0);
 			// glm.mat4.perspective(this.projectionMatrix, Math.PI * 2 / 360 * 70, fbWidth / fbHeight, 1.0, 10000.0);
+			
 		} else {
-			glm.mat4.perspective(this.projectionMatrix, Math.PI * 2 / 360 * 70, fbWidth / fbHeight, 1.0, null);
+			glm.mat4.perspective(this.projectionMatrix, fovy, aspectRatio, 1.0, null);
 		}
 
 		glm.mat4.identity(this.viewMatrix);
@@ -1727,6 +1941,8 @@ export class Helios {
 		glm.mat4.multiply(this.viewMatrix, this.viewMatrix, this.rotationMatrix);
 		// glm.mat4.scale(this.viewMatrix, this.viewMatrix, [this._zoomFactor, this._zoomFactor, this._zoomFactor]);
 		glm.mat4.translate(this.viewMatrix, this.viewMatrix, this.translatePosition);
+
+		glm.mat4.multiply(this.projectionViewMatrix, this.projectionMatrix, this.viewMatrix);
 	}
 
 	/** Helper method to draw nodes
@@ -1737,13 +1953,21 @@ export class Helios {
 	 * @param {WebGLFramebuffer} destination - The destination framebuffer.
 	 * @param {boolean} isPicking - If true, the framebuffer is used for picking.
 	 */
-	_redrawNodes(destination, isPicking) {
+	_redrawNodes(destination, framebufferType) {
+		if (typeof framebufferType === "undefined") {
+			framebufferType = "normal";
+		}
 		let gl = this.gl;
 		let ext = gl.getExtension("ANGLE_instanced_arrays");
 
+		let adjustedScaleFactor = 1.0 / Math.pow(this._zoomFactor, this._semanticZoomExponent);
+
+		if (framebufferType != "normal") {
+			adjustedScaleFactor = 1.0 / Math.pow(this._zoomFactor, 0.75 * this._semanticZoomExponent);
+		}
 
 		let currentShaderProgram;
-		if (!isPicking) {
+		if (framebufferType == "normal") {
 			// console.log(this.nodesShaderProgram);
 			gl.enable(gl.BLEND);
 			// if(this.useAdditiveBLending){
@@ -1792,11 +2016,11 @@ export class Helios {
 		gl.uniform1f(currentShaderProgram.uniforms.globalOpacityScale, this._nodesGlobalOpacityScale);
 		gl.uniform1f(currentShaderProgram.uniforms.globalOpacityBase, this._nodesGlobalOpacityBase);
 
-		gl.uniform1f(currentShaderProgram.uniforms.globalSizeScale, this._nodesGlobalSizeScale);
-		gl.uniform1f(currentShaderProgram.uniforms.globalSizeBase, this._nodesGlobalSizeBase);
+		gl.uniform1f(currentShaderProgram.uniforms.globalSizeScale, this._nodesGlobalSizeScale * adjustedScaleFactor);
+		gl.uniform1f(currentShaderProgram.uniforms.globalSizeBase, this._nodesGlobalSizeBase * adjustedScaleFactor);
 
-		gl.uniform1f(currentShaderProgram.uniforms.globalOutlineWidthScale, this._nodesGlobalOutlineWidthScale);
-		gl.uniform1f(currentShaderProgram.uniforms.globalOutlineWidthBase, this._nodesGlobalOutlineWidthBase);
+		gl.uniform1f(currentShaderProgram.uniforms.globalOutlineWidthScale, this._nodesGlobalOutlineWidthScale * adjustedScaleFactor);
+		gl.uniform1f(currentShaderProgram.uniforms.globalOutlineWidthBase, this._nodesGlobalOutlineWidthBase * adjustedScaleFactor);
 
 		let normalMatrix = glm.mat3.create();
 		glm.mat3.normalFromMat4(normalMatrix, this.viewMatrix);
@@ -1869,10 +2093,13 @@ export class Helios {
 	 * @instance
 	 * @private
 	 * @param {WebGLFramebuffer} destination - The destination framebuffer.
-	 * @param {boolean} isPicking - If true, the framebuffer is used for picking.
+	 * @param {String} framebufferType - The type of framebuffer to render to (normal, picking, or tracking).
 	 */
-	_redrawEdges(destination, isPicking) {
+	_redrawEdges(destination, framebufferType) {
 
+		if (typeof framebufferType === "undefined") {
+			framebufferType = "normal";
+		}
 		let hasEdgeCallbacks = this.onEdgeClickCallback
 			|| this.onEdgeHoverMoveCallback
 			|| this.onEdgeHoverStartCallback
@@ -1880,15 +2107,20 @@ export class Helios {
 			|| this.onEdgeDoubleClickCallback
 			|| this.onEdgeClickCallback;
 
-		if (isPicking &amp;&amp; (this.fastEdges || !hasEdgeCallbacks)) {
+		if (framebufferType != "normal" &amp;&amp; (this.fastEdges || !hasEdgeCallbacks)) {
 			return // no picking for fast edges or no callbacks
 		}
 
+		let adjustedScaleFactor = 1.0 / Math.pow(this._zoomFactor, this._semanticZoomExponent);
+
+		if (framebufferType != "normal") {
+			adjustedScaleFactor = 1.0 / Math.pow(this._zoomFactor, 0.5 * this._semanticZoomExponent);
+		}
 		let gl = this.gl;
 		let ext = gl.getExtension("ANGLE_instanced_arrays");
 
 		let currentShaderProgram;
-		if (!isPicking) {
+		if (framebufferType == "normal") {
 			gl.enable(gl.BLEND);
 			// 	//Edges are rendered with additive blending.
 			// 	gl.enable(gl.BLEND);
@@ -1920,8 +2152,6 @@ export class Helios {
 			// currentShaderProgram.attributes.enable("encodedIndex");
 
 
-			this.projectionViewMatrix = glm.mat4.create();
-			glm.mat4.multiply(this.projectionViewMatrix, this.projectionMatrix, this.viewMatrix);
 
 			//bind attributes and unions
 			gl.bindBuffer(gl.ARRAY_BUFFER, this.fastEdgesGeometry.vertexObject);
@@ -1965,8 +2195,6 @@ export class Helios {
 			// newGeometry.sizeBuffer = gl.createBuffer();
 			// newGeometry.indexBuffer = gl.createBuffer();
 			// console.log(currentShaderProgram.attributes);
-			this.projectionViewMatrix = glm.mat4.create();
-			glm.mat4.multiply(this.projectionViewMatrix, this.projectionMatrix, this.viewMatrix);
 
 			gl.bindBuffer(gl.ARRAY_BUFFER, this.edgesGeometry.edgeVertexTypeBuffer);
 			gl.vertexAttribPointer(currentShaderProgram.attributes.vertexType, 2, gl.FLOAT, false, 0, 0);
@@ -2013,8 +2241,8 @@ export class Helios {
 			gl.uniform1f(currentShaderProgram.uniforms.globalWidthScale, this._edgesGlobalWidthScale);
 			gl.uniform1f(currentShaderProgram.uniforms.globalWidthBase, this._edgesGlobalWidthBase);
 
-			gl.uniform1f(currentShaderProgram.uniforms.globalSizeScale, this._nodesGlobalSizeScale);
-			gl.uniform1f(currentShaderProgram.uniforms.globalSizeBase, this._nodesGlobalSizeBase);
+			gl.uniform1f(currentShaderProgram.uniforms.globalSizeScale, this._nodesGlobalSizeScale * adjustedScaleFactor);
+			gl.uniform1f(currentShaderProgram.uniforms.globalSizeBase, this._nodesGlobalSizeBase * adjustedScaleFactor);
 
 			// 01,11,21
 			// let cameraUp = glm.vec3.fromValues(this.viewMatrix[1], this.viewMatrix[5], this.viewMatrix[9]);
@@ -2055,16 +2283,16 @@ export class Helios {
 	 * @instance
 	 * @private
 	 * @param {Object} destination - The destination to draw to. If undefined, the canvas will be used.
-	 * @param {Boolean} isPicking - Whether or not we are picking.
+	 * @param {String} framebufferType - Type of the framebuffer to draw "normal", "picking", "tracking" . Default is "normal"
 	 */
-	_redrawAll(destination, isPicking) {
-		if (typeof isPicking === 'undefined') {
-			isPicking = false;
+	_redrawAll(destination, framebufferType) {
+		if (typeof framebufferType === 'undefined') {
+			framebufferType = "normal";
 		}
 		let gl = this.gl;
-		// isPicking=true;
-		this._redrawPrepare(destination, isPicking);
-		if (!isPicking &amp;&amp; this.densityPlot) {
+
+		this._redrawPrepare(destination, framebufferType);
+		if (framebufferType == "normal" &amp;&amp; this.densityPlot) {
 
 			// gl.clearColor(0.0, 0.0, 0.0, 1.0);
 			// gl.clearDepth(1.0)
@@ -2082,17 +2310,21 @@ export class Helios {
 			gl.disable(gl.DEPTH_TEST);
 			gl.depthMask(false);
 			// if(edge)
-			if (this._edgesGlobalOpacityScale > 0.0) {
-				this._redrawEdges(destination, isPicking);
+			if (framebufferType != "tracking") {
+				if (this._edgesGlobalOpacityScale > 0.0) {
+					this._redrawEdges(destination, framebufferType);
+				}
 			}
-			this._redrawNodes(destination, isPicking);
+			this._redrawNodes(destination, framebufferType);
 		} else {
 			gl.enable(gl.DEPTH_TEST);
-			this._redrawNodes(destination, isPicking);
+			this._redrawNodes(destination, framebufferType);
 			gl.depthMask(false);
 
-			if (this._edgesGlobalOpacityScale > 0.0) {
-				this._redrawEdges(destination, isPicking);
+			if (framebufferType != "tracking") {
+				if (this._edgesGlobalOpacityScale > 0.0) {
+					this._redrawEdges(destination, framebufferType);
+				}
 			}
 			gl.depthMask(true);
 		}
@@ -2119,7 +2351,7 @@ export class Helios {
 		this.targetTranslatePosition[0] = 0;
 		this.targetTranslatePosition[1] = 0;
 		this.targetTranslatePosition[2] = 0;
-
+		
 		if (this._centerNodes &amp;&amp; this._centerNodes.length > 0) {
 			for (let i = 0; i &lt; this._centerNodes.length; i++) {
 				let node = this._centerNodes[i];
@@ -2164,6 +2396,8 @@ export class Helios {
 			}
 			this._centerNodes.push(node);
 		}
+
+		this._updateCameraInteraction();
 
 		this.lastTranslatePosition[0] = this.translatePosition[0];
 		this.lastTranslatePosition[1] = this.translatePosition[1];
@@ -2213,6 +2447,9 @@ export class Helios {
 				this.translatePosition[2] = this.targetTranslatePosition[2];
 				this.panX = 0;
 				this.panY = 0;
+				if(this._use2D){
+					// this.zoom.translateTo(d3Select(this.canvasElement),this.panX+this.canvasElement.clientWidth/2,this.panY+this.canvasElement.clientHeight/2);
+				}
 			}
 			return false; //no need to continue
 		} else {
@@ -2234,7 +2471,9 @@ export class Helios {
 			this.panY = (1.0 - alpha) * this.lastPanY;
 			this.panX += alpha * this.targetPanX;
 			this.panY += alpha * this.targetPanY;
-
+			if(this._use2D){
+				// this.zoom.translateTo(d3Select(this.canvasElement),this.panX+this.canvasElement.clientWidth/2,this.panY+this.canvasElement.clientHeight/2);
+			}
 			if (alpha >= 1.0) {
 				return false;
 			} else {
@@ -3206,18 +3445,35 @@ export class Helios {
 				}
 			}
 			let nodePositions = this.network.positions;
-			let projectedPositions = new Float32Array(nodes.length * 3);
+			let projectedPositions = new Float32Array(nodes.length * 4);
+
+			let w2d = this.canvasElement.clientWidth;
+			let h2d = this.canvasElement.clientHeight;
+
 			for (let i = 0; i &lt; nodes.length; i++) {
 				let nodeIndex = nodeIndices[i];
-				let nodePosition = [nodePositions[nodeIndex * 3], nodePositions[nodeIndex * 3 + 1], nodePositions[nodeIndex * 3 + 2], 1];
-				let projectedPosition = glm.vec4.transformMat4(nodePosition, this.projectionMatrix);
+				let nodePosition = [nodePositions[nodeIndex * 3], nodePositions[nodeIndex * 3 + 1], nodePositions[nodeIndex * 3 + 2], 1.0];
+
+				let projectedPosition = glm.vec4.create();
+				glm.vec4.transformMat4(projectedPosition, nodePosition, this.projectionViewMatrix);
+				// console.log(projectedPosition)
+				// mat4.multiplyVec4(projectionViewMatrix, position, dest);
+				// if (projectedPosition[2] &lt; 0) {//behind the camera
+				// 	// continue;
+				// }
+				
+				let perspectiveFactor = 1.0 / projectedPosition[3];
+				
+				// if(!this._orthographic){
+				// 	perspectiveFactor = 1.0 / (projectedPosition[3]);
+				// }
+				let x = w2d / 2 + projectedPosition[0] * w2d * 0.5 * perspectiveFactor;
+				let y = h2d / 2 - projectedPosition[1] * h2d * 0.5 * perspectiveFactor;
 				//perspective divide
-				projectedPosition[0] /= projectedPosition[3];
-				projectedPosition[1] /= projectedPosition[3];
-				projectedPosition[2] /= projectedPosition[3];
-				projectedPositions[i * 3] = projectedPosition[0];
-				projectedPositions[i * 3 + 1] = projectedPosition[1];
-				projectedPositions[i * 3 + 2] = projectedPosition[2];
+				projectedPositions[i * 4] = x;
+				projectedPositions[i * 4 + 1] = y;
+				projectedPositions[i * 4 + 2] = projectedPosition[2];
+				projectedPositions[i * 4 + 3] = projectedPosition[3];
 			}
 			return projectedPositions;
 		} else {
@@ -3267,6 +3523,354 @@ export class Helios {
 		const ID = (data[0] + (data[1] &lt;&lt; 8) + (data[2] &lt;&lt; 16) + (data[3] &lt;&lt; 24)) - 1;
 		return ID;
 	}
+
+
+	_consolidateCentroids(centroids, counts) {
+		for (const [nodeAttribute, centroid] of centroids) {
+			const count = counts.get(nodeAttribute);
+			centroid[0] /= count;
+			centroid[1] /= count;
+		}
+	}
+
+	_calculateCentroidForAttribute(nodeAttribute, xy, centroids, counts) {
+		// const xy = this._pixelXYOnScreen[i];
+		if (!centroids.has(nodeAttribute)) {
+			centroids.set(nodeAttribute, [0,0]);
+			counts.set(nodeAttribute, 0);
+		}
+		const centroid = centroids.get(nodeAttribute);
+		centroid[0] += xy[0];
+		centroid[1] += xy[1];
+		
+		const count = counts.get(nodeAttribute);
+		counts.set(nodeAttribute, count + 1);
+	}
+
+	/** Pick a node at the given screen coordinates.
+	 * @method updateAttributeTrackers
+	 * @memberof Helios
+	 * @instance
+	 * @chainable
+	 * @return {Helios|this} - The Helios instance (for chaining).
+	 */
+	updateAttributeTrackers() {
+		if (!this._trackingBufferEnabled || Object.keys(this._attributeTrackers).length === 0) {
+			return this;
+		}
+		const attributeTrackers = this._attributeTrackers;
+		const totalPixels = this._trackingFramebuffer.size.width * this._trackingFramebuffer.size.height;
+		const data = new Uint8Array(4 * totalPixels);
+		const gl = this.gl;
+		gl.bindFramebuffer(gl.FRAMEBUFFER, this._trackingFramebuffer);
+		gl.readPixels(
+			0,            // x
+			0,            // y
+			this._trackingFramebuffer.size.width,                 // width
+			this._trackingFramebuffer.size.height,                 // height
+			gl.RGBA,           // format
+			gl.UNSIGNED_BYTE,  // type
+			data);             // typed array to hold result
+		//  if this.pixelCountsByIndex is not defined
+
+		// for(let trackedAttributeEntry of trackedAttributes){
+		//now for object instead of array:
+		for (let trackedAttributeEntryKey in attributeTrackers) {
+			const trackedAttributeEntry = attributeTrackers[trackedAttributeEntryKey];
+			const pixelCounter = trackedAttributeEntry.pixelCounter;
+			const currentKeys = pixelCounter.getSortedKeys();
+			const coefficient = trackedAttributeEntry.smoothness;
+			const minProportion = trackedAttributeEntry.minProportion;
+			const calculateCentroid = trackedAttributeEntry.calculateCentroid;
+			const centroidPositions = trackedAttributeEntry.centroidPositions;
+
+			// const attribute = trackedAttributeEntry.attribute;
+			// console.log(currentKeys.length);
+			for (let i = 0; i &lt; currentKeys.length; i++) {
+				const currentKey = currentKeys[i];
+				const newValue = pixelCounter.get(currentKeys[i]) * coefficient;
+				if (newValue > minProportion) {
+					pixelCounter.set(currentKeys[i], newValue);
+					if (calculateCentroid) {
+						if (centroidPositions.has(currentKeys[i])) {
+							const centroidPosition = centroidPositions.get(currentKeys[i]);
+							if (centroidPosition) {
+								centroidPosition[0] *=  coefficient;
+								centroidPosition[1] *=  coefficient;
+							}
+							// centroidPositions.set(currentKeys[i], centroidPosition);
+						}
+					}
+				} else {
+					pixelCounter.delete(currentKeys[i]);
+					if (calculateCentroid) {
+						centroidPositions.delete(currentKeys[i]);
+					}
+				}
+			}
+		}
+
+		const nodesOnScreen = this._nodesOnScreen;
+
+		for (let i = 0; i &lt; data.length; i += 4) {
+			const nodeIndex = (data[i] + (data[i + 1] &lt;&lt; 8) + (data[i + 2] &lt;&lt; 16) + (data[i + 3] &lt;&lt; 24)) - 1;
+			nodesOnScreen[i / 4] = nodeIndex;
+		}
+
+		const XYPositions = this._pixelXYOnScreen;
+
+		for (let trackedAttributeEntryKey in attributeTrackers) {
+			const trackedAttributeEntry = attributeTrackers[trackedAttributeEntryKey];
+			const pixelCounter = trackedAttributeEntry.pixelCounter;
+			const coefficient = trackedAttributeEntry.smoothness;
+			const attribute = trackedAttributeEntry.attribute;
+			const maxLabels = trackedAttributeEntry.maxLabels;
+			const calculateCentroid = trackedAttributeEntry.calculateCentroid;
+			const centroidPositions = trackedAttributeEntry.centroidPositions;
+			const centroids = new Map();
+			const counts = new Map();
+			// const totalPixels
+
+			if (attribute == "index") {
+				for (let i = 0; i &lt; nodesOnScreen.length; i++) {
+					const nodeIndex = nodesOnScreen[i];
+					if (nodeIndex >= 0) {
+						const newValue = (pixelCounter.get(nodeIndex) || 0) + 1.0 / totalPixels * (1.0 - coefficient);
+						pixelCounter.set(nodeIndex, newValue);
+						if (calculateCentroid) {
+							this._calculateCentroidForAttribute(nodeIndex, XYPositions[i], centroids, counts);
+						}
+					}
+				}
+				// is a function
+			} else if (attribute == "node") {
+				for (let i = 0; i &lt; nodesOnScreen.length; i++) {
+					const index2node = this.network.index2Node;
+					if (nodeIndex >= 0) {
+						const node = index2node[nodeIndex];
+						const newValue = (pixelCounter.get(node) || 0) + 1.0 / totalPixels * (1.0 - coefficient);
+						pixelCounter.set(node, newValue);
+						if (calculateCentroid) {
+							this._calculateCentroidForAttribute(node, XYPositions[i], centroids, counts);
+						}
+					}
+				}
+				// is a function
+			} else if (typeof attribute === 'function') {
+				const index2node = this.network.index2Node;
+				for (let i = 0; i &lt; nodesOnScreen.length; i++) {
+					const nodeIndex = nodesOnScreen[i];
+					if (nodeIndex >= 0) {
+						const node = index2node[nodeIndex];
+						const attributeEntry = attribute(node, nodeIndex);
+						const newValue = (pixelCounter.get(attributeEntry) || 0) + 1.0 / totalPixels * (1.0 - coefficient);
+						pixelCounter.set(attributeEntry, newValue);
+						if (calculateCentroid) {
+							this._calculateCentroidForAttribute(attributeEntry, XYPositions[i], centroids, counts);
+						}
+					}
+				}
+				// attribute is a string
+			} else {
+				const index2node = this.network.index2Node;
+				for (let i = 0; i &lt; nodesOnScreen.length; i++) {
+					const nodeIndex = nodesOnScreen[i];
+					if (nodeIndex >= 0) {
+						const node = index2node[nodeIndex];
+						const attributeEntry = node[attribute];
+						const newValue = (pixelCounter.get(attributeEntry) || 0) + 1.0 / totalPixels * (1.0 - coefficient);
+						pixelCounter.set(attributeEntry, newValue);
+						if (calculateCentroid) {
+							this._calculateCentroidForAttribute(attributeEntry, XYPositions[i], centroids, counts);
+						}
+					}
+				}
+			}
+
+			if (calculateCentroid) {
+				this._consolidateCentroids(centroids, counts);
+				for (let [key, value] of centroids) {
+					// add to centroidPositions if not null, otherwise set it to the new centroids
+					const centroidPosition = centroidPositions.get(key);
+					const newCentroidPosition = value;
+					if (centroidPosition) {
+						// add new centroid (1.0 - coefficient)
+						centroidPosition[0] += newCentroidPosition[0] * (1.0 - coefficient);
+						centroidPosition[1] += newCentroidPosition[1] * (1.0 - coefficient);
+						
+						// centroidPosition[0] = newCentroidPosition[0];
+						// centroidPosition[1] = newCentroidPosition[1];
+					} else {
+						centroidPositions.set(key, newCentroidPosition);
+					}
+				}
+			}
+
+
+			if (maxLabels >= 0) {
+				// keeping only 10* maxLabels
+				let trackedKeys = pixelCounter.getSortedKeys();
+				let toRemove = trackedKeys.slice(maxLabels, trackedKeys.length);
+				for (let i = 0; i &lt; toRemove.length; i++) {
+					pixelCounter.delete(toRemove[i]);
+					centroidPositions.delete(toRemove[i]);
+				}
+			}
+
+		}
+		return this;
+		// let IDProportion = this.pixelCountsByIndex.getSortedPairs();
+		// return IDProportion.slice(0,maxLabels);
+	}
+
+	/** Returns the attributes on screen
+	 * @method trackedAttributesOnScreen
+	 * @memberof Helios
+	 * @instance
+	 * @private
+	 * @param {string} trackerName - Name of the tracker to get the attributes from.
+	 * @return {Array} - Array of attributes on screen. Each entry is an array of two or four elements. 
+	 * if the tracker saves the centroid, 4 elements are returned: [attribute,proportion, x, y], otherwise [attribute,proportion]
+	 */
+	trackedAttributesOnScreen(trackerName) {
+		if (this._trackingBufferEnabled &amp;&amp; this._attributeTrackers[trackerName]) {
+			const attributeTracker = this._attributeTrackers[trackerName];
+			const pixelCounter = attributeTracker.pixelCounter;
+			// const IDProportion = 
+			if(attributeTracker.calculateCentroid){
+				const centroidPositions = attributeTracker.centroidPositions;
+				const IDProportion = pixelCounter.getSortedPairs();
+				// add the centroid positions to the array [ID,proportion,x,y]
+				for (let i = 0; i &lt; IDProportion.length; i++) {
+					const ID = IDProportion[i][0];
+					const proportion = IDProportion[i][1];
+					const centroidPosition = centroidPositions.get(ID);
+					IDProportion[i] = [ID, proportion, centroidPosition[0], centroidPosition[1]];
+				}
+				return IDProportion;
+			}else{
+				return pixelCounter.getSortedPairs();
+			}
+		}
+	}
+
+	trackedAttributesCentroids(trackerName) {
+		if (this._trackingBufferEnabled &amp;&amp; this._attributeTrackers[trackerName]) {
+			const attributeTracker = this._attributeTrackers[trackerName];
+			return attributeTracker.centroidPositions;
+		}
+	}
+
+	/** Update the attribute trackers.
+	 * @method updateAttributeTrackers
+	 * @memberof Helios
+	 * @instance
+	 * @private
+	 */
+	_updateTrackerScheduleTask() {
+		const trackerTaskName = "9.5.tracker";
+		if (!this._trackingBufferEnabled || Object.keys(this._attributeTrackers).length === 0) {
+			if (this.scheduler.hasTask(trackerTaskName)) {
+				this.scheduler.unschedule(trackerTaskName);
+			}
+		} else if (!this.scheduler.hasTask(trackerTaskName)) {
+			this.scheduler.schedule({
+				name: trackerTaskName,
+				callback: (elapsedTime, task) => {
+					this.updateAttributeTrackers();
+					for (let trackerName in this._attributeTrackers) {
+						const tracker = this._attributeTrackers[trackerName];
+						if (tracker.onTrack) {
+							tracker.onTrack(this.trackedAttributesOnScreen(trackerName), tracker);
+						}
+					}
+				},
+				delay: 0,
+				repeatInterval: 0,
+				repeat: true,
+				synchronized: true,
+				immediateUpdates: false,
+				redraw: false,
+				updateNodesGeometry: false,
+				updateEdgesGeometry: false,
+			});
+		}
+	}
+
+	/** Set the attribute to track.
+	 * @method trackAttribute
+	 * @memberof Helios
+	 * @instance
+	 * @chainable
+	 * @param {string} trackerName - A tracker name so that it can be untracked later.
+	 * @param {string|function} attribute - The attribute to track. If a string, it is the name of the attribute of the node to track (use "index" for index and "node" for the node itself). If a function, it is a function that takes a node and its index as arguments and returns the attribute to track.
+	 * 	 * @param {Object} options - The configuration object
+	 * @param {string} [options.minProportion=0.001] - The minimum proportion of the screen that a node must occupy to be tracked.
+	 * @param {string} [options.smoothness=0.8] - The smoothness of the tracking. The higher the value, the more the tracking is smoothed.
+	 * @param {string} [options.maxLabels=20] - The maximum number of labels to display. If -1, all labels are displayed.
+	 * @param {string} [options.calculateCentroid=false] - If true, the centroid of the tracked nodes is calculated and expored as the 3rd and 4th (x and y) elements of the tracker results.
+	 * @param {function} [options.onTrack=null] - A callback function that is called when a node is tracked. It takes the attribute entries and relative proportions as argument and the tracker (attributeProportions,tracker)=>{} 
+	 * @return {Helios|this} - The Helios instance for chaining.
+	 * @example
+	 * // Track the index of the nodes, with a minimum proportion of 0.001, a smoothness of 0.8 and a maximum of 10 labels.
+	 * helios.trackAttribute("indexTracker","index",{minProportion:0.001,smoothness:0.8,maxLabels:20});
+	 * @example
+	 * // Track the community attribute of the nodes, with a minimum proportion of 0.001, a smoothness of 0.8 and a maximum of 20 labels.
+	 * helios.trackAttribute("communityTracker","community",{minProportion:0.001,smoothness:0.8,maxLabels:20});
+	 */
+	trackAttribute(trackerName, attribute, { minProportion = 0.001, smoothness = 0.8, maxLabels = 20, calculateCentroid = false, onTrack = null } = {}) {
+		if (trackerName in this._attributeTrackers) {
+			this.untrackAttribute(trackerName);
+		}
+		this._attributeTrackers[trackerName] = {
+			attribute: attribute,
+			pixelCounter: new SortedValueMap(false),
+			minProportion: minProportion,
+			smoothness: smoothness,
+			maxLabels: maxLabels,
+			calculateCentroid: calculateCentroid,
+			centroidPositions: new Map(),
+			onTrack: onTrack,
+		};
+
+		this._updateTrackerScheduleTask();
+		return this;
+	}
+
+	/** Untrack the attribute.
+	 * @method untrackAttribute
+	 * @memberof Helios
+	 * @instance
+	 * @chainable
+	 * @param {string|function} attribute - The attribute to untrack. If a string, it is the name of the attribute of the node to untrack (use "index" for index and "node" for the node itself). If a function, it is a function that takes a node and its index as arguments and returns the attribute to untrack.
+	 * @return {Helios|this} - The Helios instance for chaining.
+	 * @example
+	 * // Untrack the index of the nodes.
+	 * helios.untrackAttribute("indexTracker");
+	 */
+	untrackAttribute(attribute) {
+		this._attributeTrackers = this._attributeTrackers.filter((trackedAttribute) => {
+			return trackedAttribute.attribute !== attribute;
+		});
+		this._updateTrackerScheduleTask();
+		return this;
+	}
+
+	/** attributesTrackers getter.
+	 * @method attributesTrackers
+	 * @memberof Helios
+	 * @instance
+	 * @return {Object} - The tracked attributes.
+	 * @example
+	 * // Get the tracked attributes.
+	 * let attributesTrackers = helios.attributesTrackers();
+	 */
+	attributesTrackers() {
+		// copy the _attributeTrackers object
+		return Object.assign({}, this._attributeTrackers);
+	}
+
+
 
 	/** Set/get edge global opacity scale. The opacity of each edge is calculated as: opacity = globalBase + globalScale * edgeOpacity
 	 * @method edgesGlobalOpacityScale
@@ -3636,7 +4240,7 @@ export class Helios {
 	 * helios.pickeableEdges("all");
 	 */
 	pickeableEdges(pickables) {
-		// check if color is defined
+		// check if pickables is defined
 		if (typeof pickables === "undefined") {
 			return this._pickeableEdges;
 		} else {
@@ -3653,6 +4257,28 @@ export class Helios {
 				this._edgeIndicesUpdate = true;
 				this.update();
 			}
+			return this;
+		}
+	}
+
+	/** Get or set labels buffer size
+	 * @method labelsMaxPixels
+	 * @memberof Helios
+	 * @instance
+	 * @chainable
+	 * @param {number} labelsMaxPixels - The maximum number of pixels for the labels buffer.
+	 * @return {Helios|this} - The Helios instance for chaining, or the current value if no argument is provided.
+	 * @example
+	 * // Set the maximum number of pixels for the labels buffer to 10000.
+	 * helios.labelsMaxPixels(10000);
+	 */
+	labelsMaxPixels(labelsMaxPixels) {
+		// check if labelsMaxPixels is defined
+		if (typeof labelsMaxPixels === "undefined") {
+			return this._trackingMaxPixels;
+		} else {
+			this._trackingMaxPixels = labelsMaxPixels;
+			_willResizeEvent(0);
 			return this;
 		}
 	}
@@ -3718,6 +4344,7 @@ export class Helios {
 		if (!keepGLContext &amp;&amp; gl) {
 			let numTextureUnits = gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS);
 			this.pickingFramebuffer?.discard();
+			this._trackingFramebuffer?.discard();
 			for (let unit = 0; unit &lt; numTextureUnits; ++unit) {
 				gl.activeTexture(gl.TEXTURE0 + unit);
 				gl.bindTexture(gl.TEXTURE_2D, null);
