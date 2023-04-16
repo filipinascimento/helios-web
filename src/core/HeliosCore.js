@@ -1602,10 +1602,10 @@ export class Helios {
 	_willResizeEvent(event) {
 		//requestAnimFrame(function(){
 		let dpr = window.devicePixelRatio || 1;
-		// if (dpr < 2.0 || this.forceSupersample) {
-		// 	dpr = dpr * 2.0;
-		// }
-		dpr = 2.0;
+		if (dpr < 2.0 || this.forceSupersample) {
+			dpr = dpr * 2.0;
+		}
+		// dpr = 2.0;
 
 		// this.canvasElement.style.width = this.element.clientWidth + "px";
 		// this.canvasElement.style.height = this.element.clientHeight + "px";
