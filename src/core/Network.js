@@ -236,74 +236,96 @@ export class Network{
 		return this.index2Node.length;
 	}
 
-	updateEdgePositions(){
-		if(this.edgePositions == null){
-			this.edgePositions = new Float32Array(3*(this.indexedEdges.length));
-			// a duplicate entry is needed to obtain from/to 
+	updateEdgePositions() {
+		if (this.edgePositions == null) {
+			this.edgePositions = new Float32Array(3 * this.indexedEdges.length);
 		}
-		for (let edgeIndex = 0; edgeIndex < this.indexedEdges.length/2; edgeIndex++) {
-			let fromIndex = this.indexedEdges[edgeIndex*2];
-			let toIndex = this.indexedEdges[edgeIndex*2+1];
-			this.edgePositions[(edgeIndex*2)*3]   = this.positions[fromIndex*3];
-			this.edgePositions[(edgeIndex*2)*3+1] = this.positions[fromIndex*3+1];
-			this.edgePositions[(edgeIndex*2)*3+2] = this.positions[fromIndex*3+2];
-
-			this.edgePositions[(edgeIndex*2+1)*3]   = this.positions[toIndex*3];
-			this.edgePositions[(edgeIndex*2+1)*3+1] = this.positions[toIndex*3+1];
-			this.edgePositions[(edgeIndex*2+1)*3+2] = this.positions[toIndex*3+2];
+	
+		const edgesLength = this.indexedEdges.length;
+		const nodePositions = this.positions;
+		const edgePositions = this.edgePositions;
+		const indexedEdges = this.indexedEdges;
+		for (let edgeIndex = 0; edgeIndex < edgesLength / 2; edgeIndex++) {
+			const fromIndex = indexedEdges[edgeIndex * 2] * 3;
+			const toIndex = indexedEdges[edgeIndex * 2 + 1] * 3;
+			const edgeFromPositionIndex = edgeIndex * 6;
+			const edgeToPositionIndex = edgeFromPositionIndex + 3;
+	
+			edgePositions[edgeFromPositionIndex] = nodePositions[fromIndex];
+			edgePositions[edgeFromPositionIndex + 1] = nodePositions[fromIndex + 1];
+			edgePositions[edgeFromPositionIndex + 2] = nodePositions[fromIndex + 2];
+	
+			edgePositions[edgeToPositionIndex] = nodePositions[toIndex];
+			edgePositions[edgeToPositionIndex + 1] = nodePositions[toIndex + 1];
+			edgePositions[edgeToPositionIndex + 2] = nodePositions[toIndex + 2];
 		}
-		// this.edgePositions = null; //new Float32Array(3*this.indexedEdges.length);
-		// this.edgeColors = null; //new Float32Array(3*this.indexedEdges.length);
-		// this.sizes = null; //new Float32Array(this.indexedEdges.length);
 	}
 	
-	updateEdgeColors(updateOpacity){
-		if(this.edgeColors == null){
-			this.edgeColors = new Float32Array(4*this.indexedEdges.length);
+	
+	updateEdgeColors(updateOpacity = true) {
+		if (this.edgeColors == null) {
+			this.edgeColors = new Float32Array(4 * this.indexedEdges.length);
 		}
-		// if updateColors is not provided:
-		if(typeof updateOpacity === "undefined"){
-			updateOpacity = true;
-		}
-		for (let edgeIndex = 0; edgeIndex < this.indexedEdges.length/2; edgeIndex++) {
-			let fromIndex = this.indexedEdges[edgeIndex*2];
-			let toIndex = this.indexedEdges[edgeIndex*2+1];
-			this.edgeColors[(edgeIndex*2)*4]   = this.colors[fromIndex*4];
-			this.edgeColors[(edgeIndex*2)*4+1] = this.colors[fromIndex*4+1];
-			this.edgeColors[(edgeIndex*2)*4+2] = this.colors[fromIndex*4+2];
-
-			this.edgeColors[(edgeIndex*2+1)*4]   = this.colors[toIndex*4];
-			this.edgeColors[(edgeIndex*2+1)*4+1] = this.colors[toIndex*4+1];
-			this.edgeColors[(edgeIndex*2+1)*4+2] = this.colors[toIndex*4+2];
-			if(updateOpacity){
-				this.edgeColors[(edgeIndex*2)*4+3] = this.colors[fromIndex*4+3];
-				this.edgeColors[(edgeIndex*2+1)*4+3] = this.colors[toIndex*4+3];
+	
+		const edgesLength = this.indexedEdges.length;
+		const edgeColors = this.edgeColors;
+		const nodeColors = this.colors;
+		const indexedEdges = this.indexedEdges;
+		for (let edgeIndex = 0; edgeIndex < edgesLength / 2; edgeIndex++) {
+			const fromIndex = indexedEdges [edgeIndex * 2] * 4;
+			const toIndex = indexedEdges [edgeIndex * 2 + 1] * 4;
+			const edgeFromColorIndex = edgeIndex * 8;
+			const edgeToColorIndex = edgeFromColorIndex + 4;
+	
+			edgeColors[edgeFromColorIndex]     = nodeColors[fromIndex];
+			edgeColors[edgeFromColorIndex + 1] = nodeColors[fromIndex + 1];
+			edgeColors[edgeFromColorIndex + 2] = nodeColors[fromIndex + 2];
+	
+			edgeColors[edgeToColorIndex]     = nodeColors[toIndex];
+			edgeColors[edgeToColorIndex + 1] = nodeColors[toIndex + 1];
+			edgeColors[edgeToColorIndex + 2] = nodeColors [toIndex + 2];
+	
+			if (updateOpacity) {
+				edgeColors[edgeFromColorIndex + 3] = nodeColors[fromIndex + 3];
+				edgeColors[edgeToColorIndex + 3] = nodeColors[toIndex + 3];
 			}
 		}
 	}
 	
-	updateEdgeSizes(){
-		if(this.edgeSizes == null){
+	updateEdgeSizes() {
+		if (this.edgeSizes == null) {
 			this.edgeSizes = new Float32Array(this.indexedEdges.length);
 		}
-		for (let edgeIndex = 0; edgeIndex < this.indexedEdges.length/2; edgeIndex++) {
-			let fromIndex = this.indexedEdges[edgeIndex*2];
-			let toIndex = this.indexedEdges[edgeIndex*2+1];
-			this.edgeSizes[edgeIndex*2] = this.sizes[fromIndex];
-			this.edgeSizes[edgeIndex*2+1] = this.sizes[toIndex];
+	
+		const edgesLength = this.indexedEdges.length;
+		const edgeSizes  = this.edgeSizes;
+		const nodeSizes = this.sizes;
+		const indexedEdges = this.indexedEdges;
+		for (let edgeIndex = 0; edgeIndex < edgesLength / 2; edgeIndex++) {
+			const fromIndex = indexedEdges[edgeIndex * 2];
+			const toIndex = indexedEdges[edgeIndex * 2 + 1];
+			edgeSizes[edgeIndex * 2] = nodeSizes[fromIndex];
+			edgeSizes[edgeIndex * 2 + 1] = nodeSizes[toIndex];
 		}
 	}
+	
 
 
-	updateEdgeOpacity(updateOpacity){
-		if(this.edgeColors == null){
-			this.edgeColors = new Float32Array(4*this.indexedEdges.length);
+	updateEdgeOpacity(updateOpacity) {
+		if (this.edgeColors == null) {
+			this.edgeColors = new Float32Array(4 * this.indexedEdges.length);
 		}
-		for (let edgeIndex = 0; edgeIndex < this.indexedEdges.length/2; edgeIndex++) {
-			let fromIndex = this.indexedEdges[edgeIndex*2];
-			let toIndex = this.indexedEdges[edgeIndex*2+1];
-			this.edgeColors[(edgeIndex*2)*4+3] = this.colors[fromIndex*4+3];
-			this.edgeColors[(edgeIndex*2+1)*4+3] = this.colors[toIndex*4+3];
+	
+		const edgesLength = this.indexedEdges.length;
+		const edgeColors = this.edgeColors;
+		const nodeColors = this.colors;
+		const indexedEdges = this.indexedEdges;
+		for (let edgeIndex = 0; edgeIndex < edgesLength / 2; edgeIndex++) {
+			const fromIndex = indexedEdges[edgeIndex * 2] * 4;
+			const toIndex = indexedEdges[edgeIndex * 2 + 1] * 4;
+			edgeColors[edgeIndex * 8 + 3] = nodeColors[fromIndex + 3];
+			edgeColors[edgeIndex * 8 + 7] = nodeColors[toIndex + 3];
 		}
 	}
+	
 }
