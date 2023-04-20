@@ -117,8 +117,8 @@ export class Network{
 			// console.log(this.index2Node)
 			let fromIndex =this.ID2index[edge.source];
 			let toIndex = this.ID2index[edge.target];
-			let fromNode = this.index2Node[fromIndex];
-			let toNode = this.index2Node[toIndex];
+			// let fromNode = this.index2Node[fromIndex];
+			// let toNode = this.index2Node[toIndex];
 			this.indexedEdges[edgeIndex*2] = fromIndex;
 			this.indexedEdges[edgeIndex*2+1] = toIndex;
 		}
@@ -260,7 +260,6 @@ export class Network{
 			edgePositions[edgeToPositionIndex + 2] = nodePositions[toIndex + 2];
 		}
 	}
-	
 	
 	updateEdgeColors(updateOpacity = true) {
 		if (this.edgeColors == null) {

@@ -2,7 +2,7 @@
 
 // //dictionary
 export class HeliosScheduler {
-	constructor(helios, { FPS = 60, throttle = true, maxQueueLength = 10 }) {
+	constructor(helios, { FPS = 120, throttle = true, maxQueueLength = 10 }) {
 		// TODO: Check if Weakref is needed
 		this.helios = helios;
 		this.needsRender = false;
@@ -47,11 +47,13 @@ export class HeliosScheduler {
 		immediateUpdates = false,
 		updateNodesGeometry = false,
 		updateEdgesGeometry = false,
+		afterRedraw = false,
 		redraw = true,
 		replace = true
 	}) {
 
 		let newTask = {
+			name,
 			callback,
 			delay,
 			repeat,
@@ -62,6 +64,7 @@ export class HeliosScheduler {
 			immediateUpdates,
 			updateNodesGeometry,
 			updateEdgesGeometry,
+			afterRedraw,
 			redraw,
 			replace,
 			executionCount: 0,
@@ -97,6 +100,7 @@ export class HeliosScheduler {
 	}
 
 	runAsyncTask(newTask, delay = 0) {
+		this._executionCount+=1;
 		newTask.timeout = setTimeout(() => {
 			if (newTask.shouldBeRemoved) {
 				return;
@@ -140,10 +144,29 @@ export class HeliosScheduler {
 		}, delay);
 	}
 
+	_executeTask(task,elapsedTime,currentTimestamp){
+		// console.log("Executing "+task.name+" task at iteration "+task.executionCount+"")
+		task.callback?.(elapsedTime, task);
+		if(task === undefined){
+			return false;
+		}
+		task.executionCount += 1;
+		if (task.repeat && task.executionCount < task.maxRepeatCount) {
+			let newCurrentTimestamp = window.performance.now();
+			task.lastExecutionTime = newCurrentTimestamp - currentTimestamp;
+			task.lastTimestamp = currentTimestamp;
+		} else {
+			task.shouldBeRemoved = true;
+		}
+		return true;
+	}
+
 	runSyncTasks() {
 		if(this._shouldCleanup){
 			return;
 		}
+		this._executionCount+=1;
+		let afterRedrawTasks = [];
 		let allTasksCurrentTimestamp = window.performance.now();
 		for (let taskName of Object.keys(this._tasks).sort()) {
 			let task = this._tasks[taskName];
@@ -160,7 +183,7 @@ export class HeliosScheduler {
 					}
 				}
 
-				if (!task[i].shouldBeRemoved) {
+				if (!task[i]?.shouldBeRemoved) {
 					let currentTimestamp = window.performance.now();
 					let elapsedTime = currentTimestamp - task[i].lastTimestamp + task[i].lastExecutionTime;
 					if (elapsedTime < 0) {
@@ -177,21 +200,21 @@ export class HeliosScheduler {
 						}
 					}
 					if (willExecute) {
-						task[i].callback?.(elapsedTime, task[i]);
-						if(task[i] === undefined){
-							break;
+						if(task[i].afterRedraw){
+							afterRedrawTasks.push({
+								task:task[i],
+								elapsedTime,
+								currentTimestamp,
+							});
+						}else{
+							if(!this._executeTask(task[i],elapsedTime,currentTimestamp)){
+								break;
+							}
 						}
-						task[i].executionCount += 1;
-						if (task[i].repeat && task[i].executionCount < task[i].maxRepeatCount) {
-							let newCurrentTimestamp = window.performance.now();
-							task[i].lastExecutionTime = newCurrentTimestamp - currentTimestamp;
-							task[i].lastTimestamp = currentTimestamp;
-						} else {
-							task[i].shouldBeRemoved = true;
-						}
+
 					}
 				}
-				if (task[i].shouldBeRemoved) {
+				if (task[i]?.shouldBeRemoved) {
 					task.splice(i, 1);
 					i--;
 				}
@@ -200,12 +223,12 @@ export class HeliosScheduler {
 				delete this._tasks[taskName];
 			}
 		}
+		this._updateHelios(this.needsRender, this.needsUpdateNodesGeometry, this.needsUpdateEdgesGeometry, true, afterRedrawTasks);
 		this._lastTimestamp = allTasksCurrentTimestamp;
-		this._updateHelios(this.needsRender, this.needsUpdateNodesGeometry, this.needsUpdateEdgesGeometry, true);
 	}
 
 
-	_updateHelios(needsRender, needsUpdateNodesGeometry, needsUpdateEdgesGeometry, updateTimeoutAfterRender) {
+	_updateHelios(needsRender, needsUpdateNodesGeometry, needsUpdateEdgesGeometry, updateTimeoutAfterRender,afterRedrawTasks) {
 		if (needsRender === undefined) {
 			needsRender = this.needsRender;
 		}
@@ -228,6 +251,7 @@ export class HeliosScheduler {
 
 		cancelAnimationFrame(this.lastRequestFrameID);
 		this.lastRequestFrameID = requestAnimationFrame(() => {
+			// console.log("Executed: "+this.lastRequestFrameID);
 			if(this._shouldCleanup){
 				return;
 			}
@@ -237,16 +261,35 @@ export class HeliosScheduler {
 			}
 			this._times.push(now);
 			this._averageFPS = this._times.length;
-			// console.log(fps);
+			// console.log(this._averageFPS);
+
+			// if (needsUpdateNodesGeometry) {
+			// 	this.helios.updateNodesGeometry();
+			// 	this.needsUpdateNodesGeometry = false;
+			// }
+
+			// if (needsUpdateEdgesGeometry) {
+			// 	this.helios.updateEdgesGeometry();
+			// 	this.needsUpdateEdgesGeometry = false;
+			// }
+
 			if (needsRender) {
 				this.helios.redraw();
 				this.needsRender = false;
+			}
+			if((afterRedrawTasks?.length ||0) > 0){
+				afterRedrawTasks.forEach((task) => {
+					task.task._timeout = setTimeout(() => {
+						this._executeTask(task.task,task.elapsedTime,task.currentTimestamp);
+					}, 0);
+				});
 			}
 			if (updateTimeoutAfterRender) {
 				this._lastExecutionTimestamp = window.performance.now();
 				this._updateTimeout();
 			}
 		});
+		// console.log("Requested: "+this.lastRequestFrameID);
 	}
 
 	_addTaskToQueue(task, name) {
@@ -277,6 +320,7 @@ export class HeliosScheduler {
 	}
 
 	unschedule(name) {
+		
 		if (name in this._tasks) {
 			this._clearTask(name);
 			delete this._tasks[name];
