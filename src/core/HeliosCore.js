@@ -20,6 +20,32 @@ import { SortedValueMap } from "../utilities/SortedMap.js";
 
 let isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
 
+// throttle function
+function _throttle(cb, delay = 250) {
+	let shouldWait = false
+
+	return (...args) => {
+		if (shouldWait) return
+
+		cb(...args)
+		shouldWait = true
+		setTimeout(() => {
+			shouldWait = false
+		}, delay)
+	}
+}
+
+function _throttleLast(func, wait, scope) {
+	let timer = null;
+	return function () {
+		if (timer) clearTimeout(timer);
+		let args = arguments;
+		timer = setTimeout(function () {
+			timer = null;
+			func.apply(scope, args);
+		}, wait);
+	};
+};
 
 
 /**
@@ -184,11 +210,21 @@ export class Helios {
 
 		this.saveResolutionRatio = 1.0;
 		this.pickingResolutionRatio = 0.25;
-		this._trackingMaxPixels = 5000;
+		this._trackingMaxPixels = 20000;
 		this._trackingBufferEnabled = tracking;
 		this._trackingBuffer = null;
 		this._trackingBufferTexture = null;
+		this._trackingBufferPixels = null;
 		this._attributeTrackers = {};
+		this._trackingNodeDataMinimumUpdateInterval = 200;
+		this._trackingNodeMinimumUpdateInterval = 1000/30;
+		
+		
+		this._updateTrackerNodesDataThrottle = _throttle(()=>{
+			this._updateTrackerNodesData();
+		}, this._trackingNodeDataMinimumUpdateInterval);
+
+		this._lastCanvasDimensions = [this.canvasElement.clientWidth, this.canvasElement.clientHeight];
 
 		this._zoomFactor = 1;
 		this._semanticZoomExponent = 0.25;
@@ -323,22 +359,41 @@ export class Helios {
 	 * @instance
 	 */
 	_setupLayout() {
-
+		this._layoutLastUpdate = null;
+		this._alpha=0.001;
 		// this.layoutWorker = new Worker(new URL('../layouts/ngraphLayoutWorker.js', import.meta.url));
 		// this.layoutWorker = new Worker(new URL('../layouts/d3force3dLayoutWorker.js', import.meta.url));
 		this.newPositions = this.network.positions.slice(0);
 		let onlayoutUpdate = (data) => {
 			this.newPositions = data.positions;
+			if(!this._layoutLastUpdate){
+				this._layoutLastUpdate = performance.now();
+			}
+			let layoutElapsedTime = performance.now() - this._layoutLastUpdate;
+			if (layoutElapsedTime<200){
+				layoutElapsedTime=200;
+			}else if(layoutElapsedTime>2500){
+				layoutElapsedTime=2500;
+			}
+
+			this._alpha=1.0/layoutElapsedTime;
+
 			let interpolatorTask = {
 				name: "1.1.positionInterpolator",
 				callback: (elapsedTime, task) => {
 					let maxDisplacement = 0;
-					for (let index = 0; index < this.network.positions.length; index++) {
-						let displacement = this.newPositions[index] - this.network.positions[index];
-						this.network.positions[index] += 0.05 * (displacement) * elapsedTime / 10;
+					const alpha = this._alpha;
+					const positionsLength = this.network.positions.length;
+					const newPositions = this.newPositions;
+					const previousPositions = this.network.positions;
+					for (let index = 0; index < positionsLength; index++) {
+						const displacement = newPositions[index] - previousPositions[index];
 
+						previousPositions[index] += alpha * (displacement) * elapsedTime;
+						
 						maxDisplacement = Math.max(Math.abs(displacement), maxDisplacement);
 					};
+					
 					this._updateCenterNodesPosition();
 					this._updateCameraInterpolation(true);
 					// console.log(this.scheduler._averageFPS);
@@ -381,6 +436,7 @@ export class Helios {
 		}
 
 		let onLayoutStart = () => {
+			this._layoutLastUpdate = null;
 			this.onLayoutStartCallback?.();
 		}
 
@@ -828,7 +884,7 @@ export class Helios {
 		const fbWidth = framebuffer.size.width;
 		const fbHeight = framebuffer.size.height;
 		const data = new Uint8ClampedArray(4 * fbWidth * fbHeight);
-		let gl = this.gl;
+		const gl = this.gl;
 		gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
 		gl.readPixels(
 			0,            // x
@@ -946,7 +1002,7 @@ export class Helios {
 	 * @private
 	 */
 	_setupShaders() {
-		let gl = this.gl;
+		const gl = this.gl;
 
 		this.edgesShaderProgram = new glUtils.ShaderProgram(
 			glUtils.getShaderFromString(gl, this._hyperbolic ? edgesShaders.vertexHyperbolicShader : edgesShaders.vertexShader, gl.VERTEX_SHADER),
@@ -1003,7 +1059,7 @@ export class Helios {
 	 * @private
 	 */
 	_buildPickingBuffers() {
-		let gl = this.gl;
+		const gl = this.gl;
 		this.pickingFramebuffer = this._createOffscreenFramebuffer();
 	}
 
@@ -1015,10 +1071,9 @@ export class Helios {
 	 * @private
 	 */
 	_buildTrackingBuffers() {
-		let gl = this.gl;
+		const gl = this.gl;
 		if (this._trackingBufferEnabled) {
 			this._trackingFramebuffer = this._createOffscreenFramebuffer();
-			this._nodesOnScreen = Array(this._trackingFramebuffer.size.width * this._trackingFramebuffer.size.height);
 		}
 	}
 
@@ -1032,7 +1087,7 @@ export class Helios {
 	 * @private
 	 */
 	_createOffscreenFramebuffer() {
-		let gl = this.gl;
+		const gl = this.gl;
 		let framebuffer = gl.createFramebuffer();
 		framebuffer.texture = gl.createTexture();
 		gl.bindTexture(gl.TEXTURE_2D, framebuffer.texture);
@@ -1092,7 +1147,7 @@ export class Helios {
 	 * @private
 	 */
 	_buildNodesGeometry() {
-		let gl = this.gl;
+		const gl = this.gl;
 		let sphereQuality = 20;
 		// this.nodesGeometry = glUtils.makeSphere(gl, 1.0, sphereQuality, sphereQuality);
 		this.nodesGeometry = glUtils.makePlane(gl, false, false);
@@ -1155,7 +1210,7 @@ export class Helios {
 	 */
 	updateNodesGeometry() {
 
-		let gl = this.gl;
+		const gl = this.gl;
 
 		let positions = this.network.positions;
 
@@ -1195,7 +1250,7 @@ export class Helios {
 	 * @private
 	 */
 	_buildFastEdgesGeometry() {
-		let gl = this.gl;
+		const gl = this.gl;
 		let edges = this.network.indexedEdges;
 		let positions = this.network.positions;
 		let colors = this.network.colors;
@@ -1237,7 +1292,7 @@ export class Helios {
 	 * @private
 	 */
 	_buildAdvancedEdgesGeometry() {
-		let gl = this.gl;
+		const gl = this.gl;
 		let edgeVertexTypeArray = [
 			0, 1,
 			0, 0,
@@ -1289,7 +1344,7 @@ export class Helios {
 	 */
 	_updateEdgeIndices() {
 		if (this._edgeIndicesUpdate) {
-			let gl = this.gl;
+			const gl = this.gl;
 			for (let ID = 0; ID < this.network.indexedEdges.length / 2; ID++) {
 				let edgeID = this.network.index2Node.length + ID;
 				if (this._pickeableEdges.has(ID)) {
@@ -1320,7 +1375,7 @@ export class Helios {
 	 * @returns {this} Returns the current Helios instance for chaining.
 	 */
 	updateEdgesGeometry() {
-		let gl = this.gl;
+		const gl = this.gl;
 		let edges = this.network.indexedEdges;
 		let positions = this.network.positions;
 		let colors = this.network.colors;
@@ -1336,7 +1391,7 @@ export class Helios {
 			gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, this.fastEdgesIndicesArray, gl.STREAM_DRAW);
 		} else {
 
-			let gl = this.gl;
+			const gl = this.gl;
 			this.network.updateEdgePositions();
 			if (this._edgesColorsFromNodes) {
 				this.network.updateEdgeColors();
@@ -1376,6 +1431,7 @@ export class Helios {
 		this.canvasElement.width = newWidth;
 		this.canvasElement.height = newHeight;
 		this.pickingFramebuffer.setSize(Math.round(newWidth * this.pickingResolutionRatio), Math.round(newHeight * this.pickingResolutionRatio));
+		this._lastCanvasDimensions = [this.canvasElement.clientWidth, this.canvasElement.clientHeight];
 		// distribute at most this.trackingMaxPixels across the screen (width * height), keeping the aspect ratio
 		let aspectRatio = newWidth / newHeight;
 		if (this._trackingBufferEnabled) {
@@ -1389,7 +1445,12 @@ export class Helios {
 				trackingWidth = this._trackingMaxPixels / trackingHeight;
 			}
 			this._trackingFramebuffer.setSize(Math.round(trackingWidth), Math.round(trackingHeight));
-			this._pixelXYOnScreen = Array(this._trackingFramebuffer.size.width * this._trackingFramebuffer.size.height);
+			let totalTrackingPixels = this._trackingFramebuffer.size.width * this._trackingFramebuffer.size.height;
+			this._pixelXYOnScreen = Array(totalTrackingPixels);
+			this._trackingBufferPixels = new Uint8Array(4 * totalTrackingPixels);
+			this._nodesOnScreen = Array(totalTrackingPixels);
+			this._nodesOnScreen.fill(-1);
+
 			for (let i = 0; i < this._pixelXYOnScreen.length; i++) {
 				let x = (i % this._trackingFramebuffer.size.width) / this._trackingFramebuffer.size.width * this.canvasElement.clientWidth;
 				let y = (Math.floor(i / this._trackingFramebuffer.size.width)) / this._trackingFramebuffer.size.height * this.canvasElement.clientHeight;
@@ -1641,8 +1702,8 @@ export class Helios {
 			const displacementFactor  = 2 * finalCameraDistance * Math.tan(fovy / 2)/panelHeight;
 			d3Select(this.canvasElement).property("__zoom",
 				d3ZoomIdentity.translate(
-					this.panX/displacementFactor+this.canvasElement.clientWidth/2,
-					-this.panY/displacementFactor+this.canvasElement.clientHeight/2
+					this.panX/displacementFactor+this._lastCanvasDimensions[0]/2,
+					-this.panY/displacementFactor+this._lastCanvasDimensions[1]/2
 					).scale(this._zoomFactor));
 		}
 	}
@@ -1670,8 +1731,9 @@ export class Helios {
 			this._redrawAll(this._trackingFramebuffer, "tracking"); // Labels buffer
 		}
 		// this.redrawDensityMap();
-		this.onDrawCallback?.();
 		this.triggerHoverEvents(null);
+		this._updateTrackerNodesDataThrottle();
+		this.onDrawCallback?.();
 		return this;
 	}
 
@@ -1756,7 +1818,7 @@ export class Helios {
 		if (typeof framebufferType === "undefined") {
 			framebufferType = "normal";
 		}
-		let gl = this.gl;
+		const gl = this.gl;
 
 		const fbWidth = destination?.size.width || this.canvasElement.width;
 		const fbHeight = destination?.size.height || this.canvasElement.height;
@@ -1846,7 +1908,7 @@ export class Helios {
 		if (typeof framebufferType === "undefined") {
 			framebufferType = "normal";
 		}
-		let gl = this.gl;
+		const gl = this.gl;
 		let ext = gl.getExtension("ANGLE_instanced_arrays");
 
 		let adjustedScaleFactor = 1.0 / Math.pow(this._zoomFactor, this._semanticZoomExponent);
@@ -2005,7 +2067,7 @@ export class Helios {
 		if (framebufferType != "normal") {
 			adjustedScaleFactor = 1.0 / Math.pow(this._zoomFactor, 0.5 * this._semanticZoomExponent);
 		}
-		let gl = this.gl;
+		const gl = this.gl;
 		let ext = gl.getExtension("ANGLE_instanced_arrays");
 
 		let currentShaderProgram;
@@ -2178,7 +2240,7 @@ export class Helios {
 		if (typeof framebufferType === 'undefined') {
 			framebufferType = "normal";
 		}
-		let gl = this.gl;
+		const gl = this.gl;
 
 		this._redrawPrepare(destination, framebufferType);
 		if (framebufferType == "normal" && this.densityPlot) {
@@ -3321,7 +3383,7 @@ export class Helios {
 		}
 		// if nodes is not empty
 		if (nodes.length > 0) {
-			let gl = this.gl;
+			const gl = this.gl;
 			let nodeIndices = new Uint32Array(nodes.length);
 			if (typeof nodes[0] === "number") {
 				for (let i = 0; i < nodes.length; i++) {
@@ -3336,8 +3398,7 @@ export class Helios {
 			let nodePositions = this.network.positions;
 			let projectedPositions = new Float32Array(nodes.length * 4);
 
-			let w2d = this.canvasElement.clientWidth;
-			let h2d = this.canvasElement.clientHeight;
+			let [w2d,h2d] = this._lastCanvasDimensions;
 
 			for (let i = 0; i < nodes.length; i++) {
 				let nodeIndex = nodeIndices[i];
@@ -3399,7 +3460,7 @@ export class Helios {
 		const pixelX = Math.round(x * fbWidth / this.canvasElement.clientWidth - 0.5);
 		const pixelY = Math.round(fbHeight - y * fbHeight / this.canvasElement.clientHeight - 0.5);
 		const data = new Uint8Array(4);
-		let gl = this.gl;
+		const gl = this.gl;
 		gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickingFramebuffer);
 		gl.readPixels(
 			pixelX,            // x
@@ -3436,21 +3497,12 @@ export class Helios {
 		counts.set(nodeAttribute, count + 1);
 	}
 
-	/** Pick a node at the given screen coordinates.
-	 * @method updateAttributeTrackers
-	 * @memberof Helios
-	 * @instance
-	 * @chainable
-	 * @return {Helios|this} - The Helios instance (for chaining).
-	 */
-	updateAttributeTrackers() {
-		if (!this._trackingBufferEnabled || Object.keys(this._attributeTrackers).length === 0) {
-			return this;
-		}
-		const attributeTrackers = this._attributeTrackers;
-		const totalPixels = this._trackingFramebuffer.size.width * this._trackingFramebuffer.size.height;
-		const data = new Uint8Array(4 * totalPixels);
+
+	_updateTrackerNodesData(){
 		const gl = this.gl;
+		const data = this._trackingBufferPixels;
+		const nodesOnScreen = this._nodesOnScreen;
+
 		gl.bindFramebuffer(gl.FRAMEBUFFER, this._trackingFramebuffer);
 		gl.readPixels(
 			0,            // x
@@ -3462,23 +3514,73 @@ export class Helios {
 			data);             // typed array to hold result
 		//  if this.pixelCountsByIndex is not defined
 
-		// for(let trackedAttributeEntry of trackedAttributes){
-		//now for object instead of array:
+		for (let i = 0; i < data.length; i += 4) {
+			const nodeIndex = (data[i] + (data[i + 1] << 8) + (data[i + 2] << 16) + (data[i + 3] << 24)) - 1;
+			nodesOnScreen[i / 4] = nodeIndex;
+		}
+
+	}
+
+	/** Pick a node at the given screen coordinates.
+	 * @method updateAttributeTrackers
+	 * @memberof Helios
+	 * @instance
+	 * @chainable
+	 * @return {Helios|this} - The Helios instance (for chaining).
+	 */
+	updateAttributeTrackers(avoidPixelBufferUpdate = false) {
+		if (!this._trackingBufferEnabled || Object.keys(this._attributeTrackers).length === 0) {
+			return this;
+		}
+		const attributeTrackers = this._attributeTrackers;
+		const totalPixels = this._trackingFramebuffer.size.width * this._trackingFramebuffer.size.height;
+		
+
+		const nodesOnScreen = this._nodesOnScreen;
+		const XYPositions = this._pixelXYOnScreen;
+		
+		if(!avoidPixelBufferUpdate){
+			this._updateTrackerNodesData();
+		}
+		
+
 		for (let trackedAttributeEntryKey in attributeTrackers) {
 			const trackedAttributeEntry = attributeTrackers[trackedAttributeEntryKey];
 			const pixelCounter = trackedAttributeEntry.pixelCounter;
 			const currentKeys = pixelCounter.getSortedKeys();
-			const coefficient = trackedAttributeEntry.smoothness;
+			const smoothness = trackedAttributeEntry.smoothness;
 			const minProportion = trackedAttributeEntry.minProportion;
 			const calculateCentroid = trackedAttributeEntry.calculateCentroid;
 			const centroidPositions = trackedAttributeEntry.centroidPositions;
+			const attribute = trackedAttributeEntry.attribute;
+			const maxLabels = trackedAttributeEntry.maxLabels;
+			const centroids = new Map();
+			const counts = new Map();
 
+			// calculate coefficient based on elapsed time of the last update using performance
+			const now = performance.now();
+
+
+			let elapsedTime = now - this._trackingLastTime||now;
+			if(elapsedTime>1000){
+				elapsedTime = 1000;
+			}
+			// const coefficient = Math.exp(- (now - trackedAttributeEntry.lastUpdate) / smoothness);
+			const coefficient = Math.exp(-elapsedTime/300);
+			// const coefficient = smoothness;
+			// console.log(coefficient);
+
+			this._trackingLastTime = now;
+
+			// smoothness = -30/log(0.8)
+			
 			// const attribute = trackedAttributeEntry.attribute;
 			// console.log(currentKeys.length);
 			for (let i = 0; i < currentKeys.length; i++) {
 				const currentKey = currentKeys[i];
 				const newValue = pixelCounter.get(currentKeys[i]) * coefficient;
 				if (newValue > minProportion) {
+					// console.log(newValue);
 					pixelCounter.set(currentKeys[i], newValue);
 					if (calculateCentroid) {
 						if (centroidPositions.has(currentKeys[i])) {
@@ -3497,27 +3599,6 @@ export class Helios {
 					}
 				}
 			}
-		}
-
-		const nodesOnScreen = this._nodesOnScreen;
-
-		for (let i = 0; i < data.length; i += 4) {
-			const nodeIndex = (data[i] + (data[i + 1] << 8) + (data[i + 2] << 16) + (data[i + 3] << 24)) - 1;
-			nodesOnScreen[i / 4] = nodeIndex;
-		}
-
-		const XYPositions = this._pixelXYOnScreen;
-
-		for (let trackedAttributeEntryKey in attributeTrackers) {
-			const trackedAttributeEntry = attributeTrackers[trackedAttributeEntryKey];
-			const pixelCounter = trackedAttributeEntry.pixelCounter;
-			const coefficient = trackedAttributeEntry.smoothness;
-			const attribute = trackedAttributeEntry.attribute;
-			const maxLabels = trackedAttributeEntry.maxLabels;
-			const calculateCentroid = trackedAttributeEntry.calculateCentroid;
-			const centroidPositions = trackedAttributeEntry.centroidPositions;
-			const centroids = new Map();
-			const counts = new Map();
 			// const totalPixels
 
 			if (attribute == "index") {
@@ -3643,6 +3724,17 @@ export class Helios {
 		}
 	}
 
+
+	/** Returns tracked attributes centroids
+	 * @method trackedAttributesCentroids
+	 * @memberof Helios
+	 * @instance
+	 * @private
+	 * @param {string} trackerName - Name of the tracker to get the attributes from.
+	 * 
+	 * @return {Array} - Centroid of trackerName.
+	 * 
+	 */
 	trackedAttributesCentroids(trackerName) {
 		if (this._trackingBufferEnabled && this._attributeTrackers[trackerName]) {
 			const attributeTracker = this._attributeTrackers[trackerName];
@@ -3650,23 +3742,24 @@ export class Helios {
 		}
 	}
 
-	/** Update the attribute trackers.
-	 * @method updateAttributeTrackers
+	/** Update the attribute trackers Schedule.
+	 * @method _updateTrackerScheduleTask
 	 * @memberof Helios
 	 * @instance
 	 * @private
 	 */
 	_updateTrackerScheduleTask() {
-		const trackerTaskName = "9.5.tracker";
+		const trackerTaskName = "9.5.tracker_update";
 		if (!this._trackingBufferEnabled || Object.keys(this._attributeTrackers).length === 0) {
 			if (this.scheduler.hasTask(trackerTaskName)) {
 				this.scheduler.unschedule(trackerTaskName);
+				// this.scheduler.unschedule(trackerNodeUpdateTaskName);
 			}
 		} else if (!this.scheduler.hasTask(trackerTaskName)) {
 			this.scheduler.schedule({
 				name: trackerTaskName,
 				callback: (elapsedTime, task) => {
-					this.updateAttributeTrackers();
+					this.updateAttributeTrackers(true);
 					for (let trackerName in this._attributeTrackers) {
 						const tracker = this._attributeTrackers[trackerName];
 						if (tracker.onTrack) {
@@ -3675,14 +3768,16 @@ export class Helios {
 					}
 				},
 				delay: 0,
-				repeatInterval: 0,
+				repeatInterval: this._trackingNodeMinimumUpdateInterval,
 				repeat: true,
 				synchronized: true,
+				afterRedraw: true,
 				immediateUpdates: false,
 				redraw: false,
 				updateNodesGeometry: false,
 				updateEdgesGeometry: false,
 			});
+
 		}
 	}
 
@@ -3759,6 +3854,57 @@ export class Helios {
 		return Object.assign({}, this._attributeTrackers);
 	}
 
+	/** Set/get tracker node update interval.
+	 * @method trackingNodeUpdateInterval
+	 * @memberof Helios
+	 * @instance
+	 * @chainable
+	 * @param {number} interval - The interval in milliseconds.
+	 * @return {Helios|this} - The Helios instance for chaining, or the current interval if no argument is provided.
+	 * @example
+	 * // Set the tracker node update interval to 200ms.
+	 * helios._trackingBufferUpdateInterval(200);
+	 * @example
+	 * // Get the tracker node update interval.
+	 * let interval = helios._trackingBufferUpdateInterval();
+	 * console.log(interval);
+	 */
+	trackingBufferUpdateInterval(interval) {
+		// check if interval is defined
+		if (typeof interval === "undefined") {
+			return this._trackingBufferUpdateInterval;
+		} else {
+			this._trackingBufferUpdateInterval = interval;
+			this._updateTrackerScheduleTask();
+			return this;
+		}
+	}
+	
+	/** Set/get tracker update interval
+	 * @method trackingUpdateInterval
+	 * @memberof Helios
+	 * @instance
+	 * @chainable
+	 * @param {number} interval - The interval in milliseconds.
+	 * @return {Helios|this} - The Helios instance for chaining, or the current interval if no argument is provided.
+	 * @example
+	 * // Set the tracker update interval to 33ms.
+	 * helios._trackingUpdateInterval(33);
+	 * @example
+	 * // Get the tracker update interval.
+	 * let interval = helios._trackingUpdateInterval();
+	 * console.log(interval);
+	 */
+	trackingUpdateInterval(interval) {
+		// check if interval is defined
+		if (typeof interval === "undefined") {
+			return this._trackingUpdateInterval;
+		} else {
+			this._trackingUpdateInterval = interval;
+			this._updateTrackerScheduleTask();
+			return this;
+		}
+	}
 
 
 	/** Set/get edge global opacity scale. The opacity of each edge is calculated as: opacity = globalBase + globalScale * edgeOpacity
@@ -4190,7 +4336,7 @@ export class Helios {
 		this.layoutWorker.cleanup();
 		this.scheduler.stop();
 		this.layoutWorker = null;
-		let gl = this.gl;
+		const gl = this.gl;
 		this.onReadyCallback = null;
 
 		this.onNodeClickCallback = null;

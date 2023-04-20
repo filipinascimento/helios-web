@@ -27,6 +27,11 @@ let ignoredProperties = new Set(["ID", "edges", "neighbors"]);
 
 
 
+
+
+let nodesOnScreen = [];
+let categoriesOnScreen = [];
+
 function throttle(cb, delay = 250) {
 	let shouldWait = false
 
@@ -40,10 +45,6 @@ function throttle(cb, delay = 250) {
 		}, delay)
 	}
 }
-
-let nodesOnScreen = [];
-let categoriesOnScreen = [];
-
 
 function throttleLast(func, wait, scope) {
 	let timer = null;
@@ -91,7 +92,7 @@ function wrapText() {
 		text = self.text();
 	while (textLength > (width - 2 * padding) && text.length > 0) {
 		text = text.slice(0, -1);
-		self.text(text + '...');
+		self.text(text + '…');
 		textLength = self.node().getComputedTextLength();
 	}
 }
@@ -337,6 +338,7 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 			nodes: nodes,
 			edges: edges,
 			use2D: settings.use2D,
+			tracking: true,
 			hyperbolic: settings.hyperbolic,
 			fastEdges: !settings.advancedEdges && bigNetwork,
 			forceSupersample: isHighSpeed,
@@ -537,7 +539,7 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 			} else {
 				textColor = colorRGB.darker(0.25).formatRgb();
 				outlineColor = "rgba(200,200,200,1.0)";
-				outlineWidth = 1.5;
+				outlineWidth = 1.25;
 			}
 			return { fill: colorRGB.darker(0.25).formatRgb(), stroke: outlineColor, strokeWidth: outlineWidth };
 		}
@@ -1475,9 +1477,25 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 					enter => {
 						let labelGroup = enter.append("g")
 							.classed("label", true);
+						
+						let nodeLabel = (nodeIDsProportion) => {
+							let node = helios.network.index2Node[+nodeIDsProportion[0]];
+							return node.label ?? node.title ?? node.ID;
+						}
 						labelGroup.append("text").classed("labelOutline", true).attr("dy", "0.25em")
-						.attr("stroke-linejoin", "round");
-						labelGroup.append("text").classed("labelFill", true).attr("dy", "0.25em");
+						.attr("stroke-linejoin", "round").text(nodeLabel);
+
+						labelGroup.append("text").classed("labelFill", true).attr("dy", "0.25em")
+						.text(nodeLabel);
+						labelGroup.attr("transform", nodeIDsProportion => {
+							let projectedNode = helios.getProjectedPositions([+nodeIDsProportion[0]]);
+							// if projectedNode[2] is negative, the node is behind the camera
+							if (projectedNode[2] < 0 && !helios._use2D) {
+								return null;
+							}
+							let newScale = interpolateProportion(nodeIDsProportion[1]);
+							return `translate(${projectedNode[0]} ${projectedNode[1]}) scale(${newScale})`;
+						})
 						return labelGroup;
 					},
 					update => {
@@ -1489,16 +1507,6 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 				.style("opacity", nodeIDsProportion => {
 					return interpolateProportion(nodeIDsProportion[1]);
 				})
-
-				.attr("transform", nodeIDsProportion => {
-					let projectedNode = helios.getProjectedPositions([+nodeIDsProportion[0]]);
-					// if projectedNode[2] is negative, the node is behind the camera
-					if (projectedNode[2] < 0 && !helios._use2D) {
-						return null;
-					}
-					let newScale = interpolateProportion(nodeIDsProportion[1]);
-					return `translate(${projectedNode[0]} ${projectedNode[1]}) scale(${newScale})`;
-				})
 				.each(function (nodeIDsProportion) {
 					let node = helios.network.index2Node[+nodeIDsProportion[0]];
 					// stylizeLabel(this, node.color);
@@ -1509,10 +1517,17 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 					labelFillNode.style.fill = styleData.fill;
 					labelOutlineNode.style.stroke = styleData.stroke;
 					labelOutlineNode.style.strokeWidth = styleData.strokeWidth * 3.0;
-
-					let labelText = node.label ?? node.title ?? node.ID;
-					labelFillNode.textContent = labelText;
-					labelOutlineNode.textContent = labelText;
+				})//animate
+				// .transition()
+				// .duration(33)
+				.attr("transform", nodeIDsProportion => {
+					let projectedNode = helios.getProjectedPositions([+nodeIDsProportion[0]]);
+					// if projectedNode[2] is negative, the node is behind the camera
+					if (projectedNode[2] < 0 && !helios._use2D) {
+						return null;
+					}
+					let newScale = interpolateProportion(nodeIDsProportion[1]);
+					return `translate(${projectedNode[0]} ${projectedNode[1]}) scale(${newScale})`;
 				});
 
 		}
@@ -1584,19 +1599,19 @@ let visualizeNetwork = (networkName, settings = startSettings) => {
 				}
 			});
 
-			// helios.trackAttribute("category", "main category", {
-			// 	maxLabels: maxLabels,
-			// 	calculateCentroid:true,
-			// 	minProportion: 0.01,
-			// 	smoothness: 0.999,
-			// 	maxLabels: 5,
-			// 	onTrack: (categoriesData, tracker) => {
-			// 		// tracker.
-			// 		categoriesOnScreen = categoriesData;
-			// 		// console.log(categoriesData);
-			// 		updateCategoricalGroups();
-			// 	}
-			// });
+			helios.trackAttribute("category", "subject category", {
+				maxLabels: maxLabels,
+				calculateCentroid:true,
+				minProportion: 0.01,
+				smoothness: 0.999,
+				maxLabels: 5,
+				onTrack: (categoriesData, tracker) => {
+					// tracker.
+					categoriesOnScreen = categoriesData;
+					// console.log(categoriesData);
+					updateCategoricalGroups();
+				}
+			});
 
 			// helios.scheduler.schedule({
 			// 	name: "9.0.labelsUpdate",
