@@ -237,4 +237,40 @@ async function loadXNETFile(networkFile){
 	return loadXNET(networkData);
 }
 
-export {loadXNET,loadXNETFile}
+function convertXNET2JSON(network){
+
+	let nodeCount = network.nodesCount;
+
+	let nodes = {};
+	let edges = [];
+	for (let index = 0; index < nodeCount; index++) {
+		nodes["" + index] = {
+			ID: "" + index,
+			// position: [0,0,0],//network.verticesProperties["Position"][index],
+			// color:[0.0,0.0,0.0]//[network.verticesProperties["Color"][index]],
+			// size:1
+		};
+		if (network.labels) {
+			nodes["" + index].Label = network.labels[index];
+		}
+	}
+	for (const [key, value] of Object.entries(network.verticesProperties)) {
+		for (let index = 0; index < nodeCount; index++) {
+			nodes["" + index][key] = value[index];
+		}
+	}
+
+	for (let index = 0; index < network.edges.length; index++) {
+		let fromIndex, toIndex;
+
+		edges.push({
+			"source": "" + network.edges[index][0],
+			"target": "" + network.edges[index][1],
+			// directed?
+		});
+	}
+	
+	return {nodes:nodes,edges:edges};
+}
+
+export {loadXNET,loadXNETFile,convertXNET2JSON}
