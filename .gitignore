@@ -167,3 +167,4 @@ package-lock.json
 coverage/
 docs/api/
 dist_example/
+dist*/
