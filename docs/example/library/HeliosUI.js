@@ -35,13 +35,14 @@ export default class HeliosUI {
 		this.toggleButton = document.createElement('div');
 		this.toggleButton.style.position = 'absolute';
 		this.toggleButton.style.top = '0px';
-		this.toggleButton.style.left = '-20px';
-		this.toggleButton.style.width = '20px';
-		this.toggleButton.style.height = '30px';
-		this.toggleButton.style.backgroundColor = 'rgba(75, 75, 75, 0.2)';
+		this.toggleButton.style.fontSize = "12px"
+		this.toggleButton.style.left = '-16px';
+		this.toggleButton.style.width = '16px';
+		this.toggleButton.style.height = '100px';
+		this.toggleButton.style.backgroundColor = 'rgba(75, 75, 75, 0.45)';
 		this.toggleButton.style.color = 'white';
 		this.toggleButton.style.textAlign = 'center';
-		this.toggleButton.style.lineHeight = '30px';
+		this.toggleButton.style.lineHeight = '100px';
 		this.toggleButton.style.cursor = 'pointer';
 		if(this._isCollapsed){
 			this.toggleButton.textContent = '◀';
@@ -96,7 +97,7 @@ export default class HeliosUI {
 			max: 255,
 			step: 1,
 			
-			// format: (v) => v/255.0,
+			format: (v) => v/255.0,
 			label: 'Edge Opacity',
 		});
 	}

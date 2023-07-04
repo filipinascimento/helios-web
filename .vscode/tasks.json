@@ -1,0 +1,35 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "npm",
+			"script": "build",
+			"group": "build",
+			"problemMatcher": [],
+			"label": "npm: build",
+			"detail": "vite build"
+		},
+		{
+			"type": "npm",
+			"script": "build_example",
+			"group": "build",
+			"problemMatcher": [],
+			"label": "npm: build_example",
+			"detail": "vite build -c vite.config.example.js && jsdoc -c jsdoc.conf.json src/ -r -R README.md -d dist_example/docs/api"
+		},
+		{
+			"type": "npm",
+			"script": "preview",
+			"problemMatcher": [],
+			"label": "npm: preview",
+			"detail": "vite preview"
+		},
+		{
+			"type": "npm",
+			"script": "preview_example",
+			"problemMatcher": [],
+			"label": "npm: preview_example",
+			"detail": "vite preview -c vite.config.example.js"
+		}
+	]
+}

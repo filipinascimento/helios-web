@@ -5,6 +5,7 @@ import { zoom as d3Zoom, zoomIdentity as d3ZoomIdentity } from "d3-zoom";
 import * as glm from "gl-matrix";
 import * as glUtils from "../utilities/webgl.js";
 import * as xnet from "../utilities/xnet.js";
+import * as gexf from "../utilities/gexf.js";
 import { Network } from "./Network.js";
 import { HeliosScheduler } from "./Scheduler.js";
 // import { drag as d3Drag } from "d3-drag";
@@ -34,19 +35,6 @@ function _throttle(cb, delay = 250) {
 		}, delay)
 	}
 }
-
-function _throttleLast(func, wait, scope) {
-	let timer = null;
-	return function () {
-		if (timer) clearTimeout(timer);
-		let args = arguments;
-		timer = setTimeout(function () {
-			timer = null;
-			func.apply(scope, args);
-		}, wait);
-	};
-};
-
 
 /**
  * Helios object controls the network visualization visual parameters and layout
@@ -304,8 +292,10 @@ export class Helios {
 
 
 		this._onresizeEvent = (entries) => {
-			for (let entry of entries) {
-				this._willResizeEvent(entry);
+			if(this.canvasElement){
+				for (let entry of entries) {
+					this._willResizeEvent(entry);
+				}
 			}
 		}
 
@@ -3543,6 +3533,12 @@ export class Helios {
 			this._updateTrackerNodesData();
 		}
 		
+		const now = performance.now();
+		let elapsedTime = now - this._trackingLastTime||now;
+		if(elapsedTime>1000){
+			elapsedTime = 1000;
+		}
+		this._trackingLastTime = now;
 
 		for (let trackedAttributeEntryKey in attributeTrackers) {
 			const trackedAttributeEntry = attributeTrackers[trackedAttributeEntryKey];
@@ -3558,19 +3554,13 @@ export class Helios {
 			const counts = new Map();
 
 			// calculate coefficient based on elapsed time of the last update using performance
-			const now = performance.now();
 
 
-			let elapsedTime = now - this._trackingLastTime||now;
-			if(elapsedTime>1000){
-				elapsedTime = 1000;
-			}
+
 			// const coefficient = Math.exp(- (now - trackedAttributeEntry.lastUpdate) / smoothness);
-			const coefficient = Math.exp(-elapsedTime/300);
+			const coefficient = Math.exp(-elapsedTime/(100*smoothness));
 			// const coefficient = smoothness;
 			// console.log(coefficient);
-
-			this._trackingLastTime = now;
 
 			// smoothness = -30/log(0.8)
 			
@@ -4363,8 +4353,10 @@ export class Helios {
 
 		// window.removeEventListener('resize', this._onresizeEvent);
 		if (this._resizeObserver) {
+			console.log("disconnecting resize observer");
 			this._resizeObserver.disconnect();
 			this._resizeObserver = null;
+			delete this._resizeObserver;
 		}
 
 		if (this.canvasElement) {
@@ -4443,4 +4435,4 @@ export class Helios {
 }
 
 // Helios.xnet = xnet;
-export { xnet };
+export { xnet,gexf };
