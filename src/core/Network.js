@@ -153,24 +153,24 @@ export class Network{
 		let colorMap = createColorMap(inferno, colorScale);
 		for (let index = 0; index < this.index2Node.length; index++) {
 			let node = this.index2Node[index];
-			if(node.hasOwnProperty("position")){
-				this.positions[index*3]   = node["position"][0];
-				this.positions[index*3+1] = node["position"][1];
-				this.positions[index*3+2] = node["position"][2];
+			if(node.hasOwnProperty("Position")){
+				this.positions[index*3]   = node["Position"][0];
+				this.positions[index*3+1] = node["Position"][1];
+				this.positions[index*3+2] = node["Position"][2];
 			}else{
 				this.positions[index*3+0] = (Math.random()-0.5)*2*200;
 				this.positions[index*3+1] = (Math.random()-0.5)*2*200;
 				this.positions[index*3+2] = (Math.random()-0.5)*2*200;
 			}
-			if(node.hasOwnProperty("color")){
+			if(node.hasOwnProperty("Color")){
 				if(index==0){
-					console.log("NODE COLOR:",node["color"])
+					console.log("NODE COLOR:",node["Color"])
 				}
-				this.colors[index*4+0] = node["color"][0];
-				this.colors[index*4+1] = node["color"][1];
-				this.colors[index*4+2] = node["color"][2];
-				if(node["color"].length > 3){
-					this.colors[index*4+3] = node["color"][3];
+				this.colors[index*4+0] = node["Color"][0];
+				this.colors[index*4+1] = node["Color"][1];
+				this.colors[index*4+2] = node["Color"][2];
+				if(node["Color"].length > 3){
+					this.colors[index*4+3] = node["Color"][3];
 				}else{
 					this.colors[index*4+3]=1.0;
 				}
@@ -186,18 +186,18 @@ export class Network{
 				}
 			}
 
-			if(node.hasOwnProperty("size")){
-				this.sizes[index] = node["size"];
+			if(node.hasOwnProperty("Size")){
+				this.sizes[index] = node["Size"];
 			}else{
 				this.sizes[index] = 1.0;
 			}
 
-			if(node.hasOwnProperty("outlineColor")){
-				this.outlineColors[index*4+0] = node["outlineColor"][0];
-				this.outlineColors[index*4+1] = node["outlineColor"][1];
-				this.outlineColors[index*4+2] = node["outlineColor"][2];
-				if(node["outlineColor"].length > 3){
-					this.outlineColors[index*4+3] = node["outlineColor"][3];
+			if(node.hasOwnProperty("OutlineColor")){
+				this.outlineColors[index*4+0] = node["OutlineColor"][0];
+				this.outlineColors[index*4+1] = node["OutlineColor"][1];
+				this.outlineColors[index*4+2] = node["OutlineColor"][2];
+				if(node["OutlineColor"].length > 3){
+					this.outlineColors[index*4+3] = node["OutlineColor"][3];
 				}else{
 					this.outlineColors[index*4+3]=1.0;
 				}
@@ -208,8 +208,8 @@ export class Network{
 				this.outlineColors[index*4+3] = 1.0;
 			}
 
-			if(node.hasOwnProperty("outlineWidth")){
-				this.outlineWidths[index] = node["outlineWidth"];
+			if(node.hasOwnProperty("OutlineWidth")){
+				this.outlineWidths[index] = node["OutlineWidth"];
 			}else{
 				this.outlineWidths[index] = 0.0;
 			}

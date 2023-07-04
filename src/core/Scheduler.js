@@ -2,7 +2,7 @@
 
 // //dictionary
 export class HeliosScheduler {
-	constructor(helios, { FPS = 120, throttle = true, maxQueueLength = 10 }) {
+	constructor(helios, { FPS = 60, throttle = true, maxQueueLength = 10 }) {
 		// TODO: Check if Weakref is needed
 		this.helios = helios;
 		this.needsRender = false;
