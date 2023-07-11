@@ -37,6 +37,18 @@
 
     }
 
+
+    #loadingPanel {
+      /* Center object to the whole screen */
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      /* Make sure it's above everything else */
+      z-index: 1000;
+      /* Make it invisible by default */
+    }
+
     #centerloading {
       position: relative;
       top: 5px;
@@ -93,7 +105,7 @@
       right: 0;
       left: 0;
       bottom: 0;
-      background: #f0e68c;
+      background: #DDDDDD;
     }
 
     .overlay {
@@ -119,7 +131,7 @@
       pointer-events: none;
     }
 
-    #selectionmenu {
+    .selectionMenu {
       position: absolute;
       font-family: "Helvetica Neue", Helvetica, "Arial", sans-serif;
       bottom: 0px;
@@ -141,10 +153,12 @@
       user-select: none;
       /* Non-prefixed version, currently
                                   supported by Chrome, Edge, Opera and Firefox */
+      /* Force allow pointer events */
+      pointer-events: auto !important;
 
     }
 
-    #selectionmenu .menuEntry {
+    .selectionMenu .menuEntry {
       display: flex;
       align-items: center;
       justify-content: center;
@@ -162,7 +176,7 @@
       /* overflow: hidden; */
     }
 
-    #selectionmenu .hasAction {
+    .selectionMenu .hasAction {
       cursor: pointer;
     }
 
@@ -319,7 +333,7 @@
       background: black;
     }
 
-    #filterPanel {
+    .filterPanel {
       position: relative;
       top: 0;
       right: 0;
@@ -331,7 +345,7 @@
       text-align: center;
     }
 
-    #searchSelector {
+    .searchSelector {
       font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, Roboto, 'Segoe UI', Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol';
       /* height: 1px; */
       margin-top: 0px;
@@ -359,11 +373,11 @@
       pointer-events: all !important;
     }
 
-    #searchSelector:focus {
+    .searchSelector:focus {
       outline: none;
     }
 
-    #searchSelector::placeholder {
+    .searchSelector::placeholder {
       /* Chrome, Firefox, Opera, Safari 10.1+ */
       color: rgb(255, 195, 195);
       opacity: 1;
@@ -396,10 +410,12 @@
 
     /* Tooltip container */
     .tooltip {
+
       position: relative;
       /* display: inline-block;
       border-bottom: 1px dotted black; */
       /* If you want dots under the hoverable text */
+      /* no pointer events */
     }
 
     /* Tooltip text */
@@ -410,24 +426,25 @@
       color: #fff;
       text-align: center;
       padding: 3px 3px;
-      font-size:12px;
+      font-size: 12px;
       border-radius: 3px;
 
       /* Position the tooltip text - see examples below! */
       position: absolute;
       z-index: 1;
+      pointer-events: none;
     }
 
     /* Show the tooltip text when you mouse over the tooltip container */
     .tooltip:hover .tooltiptext {
       visibility: visible;
     }
-    
+
     .activated.tooltiptext {
       visibility: visible;
     }
 
-    .tooltip .tooltiptext.tooltipright {
+    /* .tooltip .tooltiptext.tooltipright {
       top: -5px;
       left: 105%;
     }
@@ -435,22 +452,37 @@
     .tooltip .tooltiptext.tooltipleft {
       top: -5px;
       right: 105%;
-    }
+    } */
 
     .tooltip .tooltiptext.tooltiptop {
       width: 120px;
       bottom: 100%;
       left: 50%;
       margin-left: -60px;
-      /* Use half of the width (120/2 = 60), to center the tooltip */
     }
+
+    .tooltip .tooltiptext.tooltiptop.leftAlign {
+      margin-left: -10px;
+    }
+
+    .tooltip .tooltiptext.tooltiptop.rightAlign {
+      margin-left: -110px;
+    }
+
 
     .tooltip .tooltiptext.tooltipbottom {
       width: 120px;
       top: 100%;
       left: 50%;
       margin-left: -60px;
-      /* Use half of the width (120/2 = 60), to center the tooltip */
+    }
+
+    .tooltip .tooltiptext.tooltipbottom.leftAlign {
+      margin-left: -10px;
+    }
+
+    .tooltip .tooltiptext.tooltipbottom.rightAlign {
+      margin-left: -110px;
     }
 
     .tooltip .tooltiptext.tooltiptop::after {
@@ -465,6 +497,15 @@
       border-color: rgba(60, 60, 60, 0.95) transparent transparent transparent;
     }
 
+
+    .tooltip .tooltiptext.tooltiptop.leftAlign::after {
+      margin-left: -55px;
+    }
+
+    .tooltip .tooltiptext.tooltiptop.rightAlign::after {
+      margin-left: 45px;
+    }
+
     .tooltip .tooltiptext.tooltipbottom::after {
       content: " ";
       position: absolute;
@@ -477,17 +518,6 @@
       border-color: transparent transparent rgba(60, 60, 60, 0.95) transparent;
     }
 
-    .tooltip .tooltipleft.tooltiptext::after {
-      content: " ";
-      position: absolute;
-      top: 50%;
-      right: 100%;
-      /* To the left of the tooltip */
-      margin-top: -5px;
-      border-width: 5px;
-      border-style: solid;
-      border-color: transparent rgba(60, 60, 60, 0.95) transparent transparent;
-    }
 
     .tooltip .tooltipright.tooltiptext::after {
       content: " ";
@@ -501,7 +531,7 @@
       border-color: transparent transparent transparent rgba(60, 60, 60, 0.95);
     }
 
-    .tooltip .tooltiptext {
+    */ .tooltip .tooltiptext {
       opacity: 0;
       transition: opacity 1s;
     }
@@ -513,32 +543,52 @@
     .activated.tooltiptext {
       opacity: 1;
     }
+
+    .dragdropmessage {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: white;
+      font-size: 14px;
+      font-weight: bold;
+      text-align: center;
+      z-index: 1000;
+      border: 2px dashed white;
+      background: rgba(0, 0, 0, 0.65);
+      padding: 1em;
+      border-radius: 1em;
+      width: 75%;
+      height: 75%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      cursor: pointer;
+      pointer-events: none;
+    }
+
+    .dragdropmessage h1 {
+      font-size: 24px;
+    }
   </style>
   <link href="data:text/css;base64,LyogCi5hdXRvY29tcGxldGUtc3VnZ2VzdGlvbnM6YmVmb3JlIHsKCWNvbnRlbnQ6ICIgIjsKCXBvc2l0aW9uOmFic29sdXRlOwoJd2lkdGg6IDA7CgloZWlnaHQ6IDA7Cgl0b3A6LTIwcHg7CgkKCWJvcmRlci1zdHlsZTogc29saWQ7Cglib3JkZXItd2lkdGg6IDAgMTAwcHggMTAwcHggMTAwcHg7Cglib3JkZXItY29sb3I6IHRyYW5zcGFyZW50IHRyYW5zcGFyZW50ICMwMDdiZmYgdHJhbnNwYXJlbnQ7Cn0gKi8KCi5hdXRvY29tcGxldGUtc3VnZ2VzdGlvbnMgewogIAlmb250LWZhbWlseTogIk9zd2FsZCI7CgkJdGV4dC1hbGlnbjogbGVmdDsKCQljdXJzb3I6IGRlZmF1bHQ7CgkJYm9yZGVyOiAxcHggc29saWQgI2NjYzsKCQliYWNrZ3JvdW5kOiAjZmZmOwoJCWJveC1zaGFkb3c6IDJweCAycHggNHB4IHJnYmEoMCwgMCwgMCwgLjIpOwoJCS8qIGNvcmUgc3R5bGVzIHNob3VsZCBub3QgYmUgY2hhbmdlZCAqLwoJCXBvc2l0aW9uOiBhYnNvbHV0ZTsKCQlkaXNwbGF5OiBub25lOwoJCXotaW5kZXg6IDk5OTk7CgkJbWF4LWhlaWdodDogMzYwcHg7CgkJb3ZlcmZsb3c6IGhpZGRlbjsKCQlvdmVyZmxvdy15OiBhdXRvOwoJCWJveC1zaXppbmc6IGJvcmRlci1ib3g7CgkJYm9yZGVyLXJhZGl1czogMHB4IDBweCA1cHggNXB4Owp9CgoKLmF1dG9jb21wbGV0ZS1zdWdnZXN0aW9uIHsKCQlwb3NpdGlvbjogcmVsYXRpdmU7CgkJcGFkZGluZzogMCAuM2VtOwoJCW92ZXJmbG93OiBoaWRkZW47CgkJLyogd2hpdGUtc3BhY2U6IG5vd3JhcDsgKi8KCQl3b3JkLWJyZWFrOiBicmVhay13b3JkOwoJCWZvbnQtc2l6ZTogMS4wMmVtOwoJCWNvbG9yOiAjMzMzOwoJCXRleHQtYWxpZ246IGxlZnQ7CgkJZm9udC13ZWlnaHQ6IG5vcm1hbDsKCQlwYWRkaW5nLWxlZnQ6MzBweDsKCQljdXJzb3I6IHBvaW50ZXI7Cn0KCi5hdXRvY29tcGxldGUtc3VnZ2VzdGlvbiAuc3VidGl0bGV7Cgljb2xvcjogIzc5Nzk3OTsKCS8qIGZvbnQtd2VpZ2h0OiAzMDA7ICovCglmb250LXNpemU6MTJweDsKCWxpbmUtaGVpZ2h0OjE0cHg7Cn0KCi5hdXRvY29tcGxldGUtc3VnZ2VzdGlvbiBiIHsKCQlmb250LXdlaWdodDogbm9ybWFsOwoJCWNvbG9yOiByZ2IoMTMxLCA3MSwgNjUpOwp9CgouYXV0b2NvbXBsZXRlLXN1Z2dlc3Rpb24gLmNvbnRlbnQgewoJYm9yZGVyLXRvcDogc29saWQgMXB4ICNmMmYyZjI7Cglib3JkZXItYm90dG9tOiBzb2xpZCAxcHggI2YyZjJmMjsKfQoKLmF1dG9jb21wbGV0ZS1zdWdnZXN0aW9uLnNlbGVjdGVkIHsKCQliYWNrZ3JvdW5kOiAjZjBmMGYwOwp9CgouYXV0b2NvbXBsZXRlLXN1Z2dlc3Rpb25zID4gLmF1dG9jb21wbGV0ZS1zdWdnZXN0aW9uewoJYm9yZGVyOm5vbmU7Cn0KCi5hdXRvY29tcGxldGUtc3VnZ2VzdGlvbnMgPiAuYXV0b2NvbXBsZXRlLXN1Z2dlc3Rpb24uZGlzY2lwbGluZXsKCQlib3JkZXItdG9wOiBzb2xpZCAycHggcmdiKDE1MSwgOTAsIDg1KTsKfQoKLmF1dG9jb21wbGV0ZS1zdWdnZXN0aW9ucyA+IC5hdXRvY29tcGxldGUtc3VnZ2VzdGlvbi5kaXNjaXBsaW5lIH4gLmF1dG9jb21wbGV0ZS1zdWdnZXN0aW9uLmRpc2NpcGxpbmV7Cglib3JkZXI6bm9uZTsKCQkKfQoKCi5hdXRvY29tcGxldGUtc3VnZ2VzdGlvbnMgPiAuYXV0b2NvbXBsZXRlLXN1Z2dlc3Rpb24uYXV0aG9yIC5pY29uewoJcG9zaXRpb246YWJzb2x1dGU7Cgl0b3A6N3B4OwoJbGVmdDo3cHg7Cgl3aWR0aDoxNHB4OwoJaGVpZ2h0OjE0cHg7Cgljb2xvcjogcmdiKDE1MSwgOTAsIDg1KTsKfQoKLmF1dG9jb21wbGV0ZS1zdWdnZXN0aW9ucyA+IC5hdXRvY29tcGxldGUtc3VnZ2VzdGlvbi5kaXNjaXBsaW5lIC5pY29uewoJcG9zaXRpb246YWJzb2x1dGU7Cgl0b3A6N3B4OwoJbGVmdDo3cHg7Cgl3aWR0aDoxNHB4OwoJaGVpZ2h0OjE0cHg7Cgljb2xvcjogcmdiKDE1MSwgOTAsIDg1KTsKfQoKCgoK" rel="stylesheet" type="text/css" media="screen" />
-  <script type="module" crossorigin src="../../assets/main-6271a577.js"></script>
+  <script type="module" crossorigin src="../../assets/main-ab9701eb.js"></script>
 </head>
 
 <body>
   
   <!-- <div id="densityRegion"></div> -->
-  <div id="netviz">
+  <div id="netviz"></div>
+  <div id="loading"></div>
+
+  <div id="loadingPanel">
     <div id="centerloading"></div>
     <div style="padding:5px;text-align:center;margin:auto">Loading Data...<br />
       (may take a minute or two)</div>
   </div>
-  </div>
-  <div id="loading"></div>
+
   <div id="message" style="display:none">press space to start the layout</div>
-  <div id="tooltip">Tooltip</div>
-  <div id="selectionmenu"></div>
-  <div id="filterPanel" style="display:none" class="tooltip">
-    <form autocomplete='off' action=''>
-      <input autocomplete='false' name='hidden' type='text' style='display:none;'>
-      <input id='searchSelector' placeholder='Search'>
-      <span class="tooltiptext tooltipbottom">Search in labels</span>
-    </form>
-  </div>
-  <div class="tooltip" ></div>
 
 </body>
 
