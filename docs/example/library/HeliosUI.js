@@ -4,10 +4,11 @@ import { Pane } from "tweakpane";
 document.documentElement.style.setProperty('--tp-base-border-radius', '0px');
 
 export default class HeliosUI {
-	constructor(helios,options={collapsed:false}) {
+	constructor(helios,options={collapsed:false, resizeHelios:false}) {
 		// weak reference to helios
 		this._helios = helios;
-		this._isCollapsed = options?.collapsed||false;
+		this._isCollapsed = options?.collapsed;
+		this._resizeHelios = options?.resizeHelios;
 		this._createContainerPanel();
 	}
 
@@ -36,8 +37,8 @@ export default class HeliosUI {
 		this.toggleButton.style.position = 'absolute';
 		this.toggleButton.style.top = '0px';
 		this.toggleButton.style.fontSize = "12px"
-		this.toggleButton.style.left = '-16px';
-		this.toggleButton.style.width = '16px';
+		this.toggleButton.style.left = '-25px';
+		this.toggleButton.style.width = '25px';
 		this.toggleButton.style.height = '100px';
 		this.toggleButton.style.backgroundColor = 'rgba(75, 75, 75, 0.45)';
 		this.toggleButton.style.color = 'white';
@@ -46,10 +47,17 @@ export default class HeliosUI {
 		this.toggleButton.style.cursor = 'pointer';
 		if(this._isCollapsed){
 			this.toggleButton.textContent = '◀';
-			this.panelContainer.style.right = '-250px';
+			this.panelContainer.style.right = '-255px';
 		}else{
 			this.toggleButton.textContent = '▶';
 			this.panelContainer.style.right = '0px';
+		}
+		if(this._resizeHelios){
+			// enable animations in css
+			this._helios.canvasElement.style.transition = 'padding-right 0.3s ease';
+			console.log(this.panelContainer.style.right)
+			this._helios.canvasElement.style.paddingRight = this._isCollapsed?"0px":"255px";
+			this._helios.svgLayer.style.paddingRight = this._isCollapsed?"0px":"255px";
 		}
 		this.panel.appendChild(this.toggleButton);
 
@@ -62,9 +70,42 @@ export default class HeliosUI {
 			// title: 'Helios',
 		});
 		this.settings = {
+			// Helios Visuals
+			shaded: false,
+			advancedEdges: false,
+			darkMode: false,
+				blendings: "normal", // Only for darkMode
+			// Nodes
 			nodeSizeScale: 1.0,
-			edgeOpacityScale: 0.0,
-			
+			// Nodes Colors
+				nodeColorProperty:"index",
+				nodeColorMap:"viridis",
+			nodeOutlineScale:1.0,
+			// Edges
+			edgeOpacityScale: 0.1,
+			// Density
+			densityEnabled: false,
+			densityProperty:"uniform",
+			densityVsProperty: "None",
+			densityBandwidth: 0.1,
+			densityWeight: 0.5,
+			// Layout
+			layout: "Multipole FR",
+			gravity: 0.1,
+			forcesIntensity: 0.1,
+			attractiveRepulsiveRatio: 1.0,
+
+			// Filter Nodes
+			filterNodes: false,
+			filterNodesProperty: "None",
+			filterNodesInterval: [0, 1],
+
+			// Filter Edges
+			filterEdges: false,
+			filterEdgesProperty: "None",
+			filterEdgesInterval: [0, 1],
+
+
 
 		};
 		this.addHeliosPropertiesPane();
@@ -73,11 +114,15 @@ export default class HeliosUI {
 
 	toggleCollapse() {
 		if (!this._isCollapsed) {
-			this.panelContainer.style.right = '-250px';
+			this.panelContainer.style.right = '-255px';
 			this.toggleButton.textContent = '◀';
 		} else {
 			this.panelContainer.style.right = '0';
 			this.toggleButton.textContent = '▶';
+		}
+		if(this._resizeHelios){
+			this._helios.canvasElement.style.paddingRight = this._isCollapsed?"250px":"0px";
+			this._helios.svgLayer.style.paddingRight = this._isCollapsed?"250px":"0px";
 		}
 		this._isCollapsed = !this._isCollapsed;
 	}
@@ -89,7 +134,7 @@ export default class HeliosUI {
 	
 	addHeliosPropertiesPane(){
 		this.visualPropertiesPanel = this.pane.addFolder({
-			title: 'Visual Properties',
+			title: 'Node Visuals',
 			expanded: true,
 		});
 		this.visualPropertiesPanel.addInput(this.settings, 'edgeOpacityScale',{

@@ -1,4 +1,4 @@
-import { Helios, xnet, gexf } from "../../src/helios.js";
+import { Helios, xnet, gexf, gml, BehaviorFilter} from "../../src/helios.js";
 import { getGPUTier } from 'detect-gpu';
 
 // import {Helios,xnet} from "https://cdn.skypack.dev/helios-web?min";
@@ -11,7 +11,6 @@ import { default as autocomplete } from "./library/auto-complete_cache-control.j
 import { default as jsonQuery } from "json-query"
 import { default as d3Legend } from "./library/d3_legends.js"
 import { default as HeliosUI } from "./library/HeliosUI.js"
-import { default as BehaviorFilter } from "./library/BehaviorFilter.js"
 import { default as pako } from "pako"
 
 
@@ -28,10 +27,6 @@ allColors = Object.keys(allColors).sort().reduce((r, k) => (r[k] = allColors[k],
 // allColors["interpolateRedBlackBlue"] = d3ScaleLinear().domain([0,0.5,1.0]).range(["red","black", "blue"])
 let ignoredProperties = new Set(["ID", "edges", "neighbors"]);
 
-
-
-let nodesOnScreen = [];
-let categoriesOnScreen = [];
 
 
 function throttleLast(func, wait, scope) {
@@ -213,7 +208,7 @@ if (urlParams.has("shallNormalizeVsDensity")) {
 }
 
 
-let visualizeNetwork = async (networkName, settings = startSettings) => {
+let visualizeNetwork = async (networkData, settings = startSettings) => {
 	/*
 	 * Defining default and initial parameters
 	*/
@@ -229,6 +224,9 @@ let visualizeNetwork = async (networkName, settings = startSettings) => {
 
 	let updateNodeSize = node => node._originalSize;
 
+	let nodesOnScreen = [];
+	let categoriesOnScreen = [];
+	
 	// shaded mode does not require any outline
 	if (settings.shaded) {
 		defaultOutlineWidthFactor = 0.0;
@@ -298,41 +296,11 @@ let visualizeNetwork = async (networkName, settings = startSettings) => {
 	const gpuTier = await getGPUTier();
 	const isHighSpeed = !gpuTier.isMobile && gpuTier.tier > 2;
 
-	/*
-	 * Initializing the network
-	*/
 
-	// If extension is provided for networkName, it is removed and format is inferred if not defined
-	if (!settings.format) {
-		if (networkName.endsWith(".xnet")) {
-			settings.format = "xnet";
-			networkName = networkName.substring(0, networkName.length - 5);
-		} else if (networkName.endsWith(".gexf")) {
-			settings.format = "gexf";
-			networkName = networkName.substring(0, networkName.length - 5);
-		} else if (networkName.endsWith(".json")) {
-			settings.format = "json";
-			networkName = networkName.substring(0, networkName.length - 5);
-		} else {
-			settings.format = "xnet";
-		}
+	let networkName = "Network";
+	if (settings.networkName !== null) {
+		networkName = settings.networkName;
 	}
-
-	// Loading the network
-	let networkData;
-	if (settings.format === "xnet") {
-		let xnetData = await xnet.loadXNETFile("networks/" + networkName + ".xnet");
-		networkData = xnet.convertXNET2JSON(xnetData);
-	} else if (settings.format === "gexf") {
-		let gexfData = await gexf.loadGEXFFile("networks/" + networkName + ".gexf");
-		networkData = gexf.convertGEXF2JSON(gexfData);
-	} else if (settings.format === "json") {
-		networkData = await fetch("networks/" + networkName + ".json").then(response => response.json());
-	} else {
-		console.error("Unknown network format: " + settings.format);
-		return;
-	}
-
 	// let networkData = xnet.convertXNET2JSON(xnetNetwork);
 	let nodeCount = Object.keys(networkData.nodes).length;
 	let bigNetwork = nodeCount > 100000;
@@ -780,30 +748,61 @@ let visualizeNetwork = async (networkName, settings = startSettings) => {
 
 
 	let buttonInformation = {
-		"Export": {
-			name: "⬇︎",
+
+		"Load": {
+			name: "⬆︎",
 			mapColor: "#B1C3B6",
 			color: "#008758",
+			tooltipText: "Load network",
+			action: (selection, d, event) => {
+				// Open file upload dialog from scratch
+				let fileInput = document.createElement("input");
+				// Append fileInput to body (not visible) and then remove it
+				fileInput.style.display = "none";
+				document.body.appendChild(fileInput);
+				fileInput.type = "file";
+				fileInput.accept = ".gml,.xnet,.gexf,.json";
+				fileInput.onchange = event => {
+					let fileObject = event.target.files[0];
+					console.log("Loading file");
+					loadNetworkFromUploadedFile(fileObject);
+					document.body.removeChild(fileInput);
+				}
+				fileInput.click();
+				
+			},
+			extra: selection => {
+
+			}
+		},
+		"Save": {
+			name: "⬇︎",
+			mapColor: "#B1C3B6",
+			color: "#A72850",
+			tooltipText: "Download network",
+			action: (selection, d, event) => {
+				let gmlString = saveGML(helios.network);
+				downloadText(networkName + "_helios.gml", gmlString);
+				
+			},
+			extra: selection => {
+
+			}
+		},
+		"Export": {
+			name: "SVG",
+			mapColor: "#B1C3B6",
+			color: "#777722",
 			tooltipText: "Export image",
 			action: (selection, d, event) => {
-				if (event.shiftKey) {
-					let pos = helios.network.positions;
-					let postext = "";
-					for (let i = 0; i < pos.length; i += 3) {
-						postext += `${pos[i]} ${pos[i + 1]} ${pos[i + 2]}\n`;
-					}
-					downloadText(networkName + "_positions.txt", postext);
-				} else {
-					console.log("Action!");
-					let dpr = window.devicePixelRatio || 1;
-					helios.exportFigure(networkName + ".svg", {
-						scale: dpr,
-						// width: 2048,
-						// height: 2048,
-						supersampleFactor: 2.0,
-						backgroundColor: settings.backgroundColor,
-					});
-				}
+				let dpr = window.devicePixelRatio || 1;
+				helios.exportFigure(networkName + ".svg", {
+					scale: dpr,
+					// width: 2048,
+					// height: 2048,
+					supersampleFactor: 2.0,
+					backgroundColor: settings.backgroundColor,
+				});
 			},
 			extra: selection => {
 
@@ -1101,16 +1100,19 @@ let visualizeNetwork = async (networkName, settings = startSettings) => {
 
 	// Update densityLegendView position with observer when svgLayer is resized
 	let densityLegendViewObserver = new ResizeObserver(entries => {
-		for (let entry of entries) {
-			updateDensityLegendsPosition();
+		if(helios.isReady()){
+			for (let entry of entries) {
+				updateDensityLegendsPosition();
+			}
 		}
-
-
 	});
 
 	updateDensityLegendsPosition();
 	densityLegendViewObserver.observe(helios.canvasElement);
-
+	helios.onCleanup(() => {
+		densityLegendViewObserver.disconnect();
+	})
+	
 	let holdCategories = [];
 	let updateCategoryFilter = (categories) => {
 		let allNodes = helios.network.index2Node;
@@ -1506,7 +1508,7 @@ let visualizeNetwork = async (networkName, settings = startSettings) => {
 	}
 
 
-	let buttonOrder = ["Export", "Size", "Color"];
+	let buttonOrder = ["Load","Save","Export", "Size", "Color"];
 	if (helios.network.indexedEdges.length > 0) {
 		buttonOrder.push("Edges");
 	}
@@ -1515,8 +1517,12 @@ let visualizeNetwork = async (networkName, settings = startSettings) => {
 		buttonOrder = buttonOrder.concat(["Density", "vs", "Norm.", "Bandwidth", "Weight", "Map"]);
 	}
 
-	d3Select("#selectionmenu")
+	// Clear the selection menu if needed
+	d3Select(helios.overlay).select("div.selectionMenu").remove();
+	d3Select(helios.overlay).append("div").classed("selectionMenu",true)
 		.selectAll("span.menuEntry")
+		// pointer events !important so that the mouseover event is not blocked
+		.style("pointer-events", "none")
 		.data(buttonOrder)
 		.enter()
 		.append("span")
@@ -1526,9 +1532,33 @@ let visualizeNetwork = async (networkName, settings = startSettings) => {
 		.text(d => buttonInformation[d].name)
 		.each(function (d) {
 			d3Select(this).call(buttonInformation[d].extra);
+		})
+		.on('mouseover', function (d, i) {
+			let tooltipText = d3Select(this).select('.tooltiptext');
+			let rect = this.getBoundingClientRect();
+	
+			tooltipText.classed('tooltiptop', false);
+			tooltipText.classed('tooltipbottom', false);
+	
+			if (rect.top < window.innerHeight / 2) {
+				tooltipText.classed('tooltipbottom', true);
+			} else {
+				tooltipText.classed('tooltiptop', true);
+			}
+			tooltipText.classed('leftAlign', false);
+			tooltipText.classed('rightAlign', false);
+			// If in the first 60px set classed leftAlign
+			// If in the last 60px set classed rightAlign
+			let averageXPosition = (rect.left+rect.right)/2;
+			if (averageXPosition < 60) {
+				tooltipText.classed('leftAlign', true);
+			}
+			if (averageXPosition > window.innerWidth-60) {
+				tooltipText.classed('rightAlign', true);
+			}
 		});
 
-	d3Select("#selectionmenu")
+	d3Select(helios.overlay).select("div.selectionMenu")
 		.selectAll("span.menuEntry")
 		.filter(d => buttonInformation[d].action != null)
 		.on("click", (event, d) => {
@@ -1538,7 +1568,7 @@ let visualizeNetwork = async (networkName, settings = startSettings) => {
 		})
 		.classed("hasAction", true);
 
-	d3Select("#selectionmenu")
+	d3Select(helios.overlay).select("div.selectionMenu")
 		.selectAll("span.menuEntry")
 		.filter(d => buttonInformation[d].tooltipText)
 		.append("span")
@@ -1546,17 +1576,20 @@ let visualizeNetwork = async (networkName, settings = startSettings) => {
 		.classed("tooltiptop", true)
 		.text(d => buttonInformation[d].tooltipText);
 
-	d3Select("#selectionmenu")
+	d3Select(helios.overlay).select("div.selectionMenu")
 		.selectAll("span.menuEntry")
 
-
+	// add event listener for space key
+	// Remove previous event listener if any
 	document.addEventListener('keypress', event => {
 		if ((event.target.nodeName.toLowerCase() !== 'input')) {
-			if (event.code === 'Space') {
-				if (helios.layoutWorker.isRunning()) {
-					helios.pauseLayout();
-				} else {
-					helios.resumeLayout();
+			if(helios?.layoutWorker){
+				if (event.code === 'Space') {
+					if (helios?.layoutWorker?.isRunning?.()) {
+						helios.pauseLayout();
+					} else {
+						helios.resumeLayout();
+					}
 				}
 			}
 		}
@@ -1735,9 +1768,9 @@ let visualizeNetwork = async (networkName, settings = startSettings) => {
 
 
 
-	// let heliosUI = new HeliosUI(helios,{
-	// 	collapsed:true,
-	// });
+	let heliosUI = new HeliosUI(helios,{
+		collapsed:true,
+	});
 
 	helios.onReady(() => {
 		helios.trackAttribute("indexTracker", "index", {
@@ -1785,9 +1818,40 @@ let visualizeNetwork = async (networkName, settings = startSettings) => {
 		// 	updateLabelsInScreen()
 		// });
 
-		d3Select("#centerloading").style("display", "none");
+		d3Select("#loadingPanel").style("display", "none");
 		if (settings.searchEnabled) {
-			d3Select("#filterPanel").style("display", null);
+			d3Select(helios.overlay).select("div.filterPanel").remove();
+
+			//   <div id="filterPanel" style="display:none" class="tooltip">
+			//     <form autocomplete='off' action=''>
+			// 	<input autocomplete='false' name='hidden' type='text' style='display:none;'>
+			// 	<input class='searchSelector' placeholder='Search'>
+			// 	<span class="tooltiptext tooltipbottom">Search in labels</span>
+			//   </form>
+			// </div>
+
+			let searchPanelFormSelector = d3Select(helios.overlay).append("div")
+			.classed("filterPanel",true)
+			.classed("tooltip",true)
+			.append("form")
+			.attr("autocomplete","off")
+			.attr("action","")
+
+			
+			searchPanelFormSelector.append("input")
+			.attr("autocomplete","false")
+			.attr("name","hidden")
+			.attr("type","text")
+			.style("display","none")
+
+			searchPanelFormSelector.append("input")
+			.classed("searchSelector",true)
+			.attr("placeholder","Search")
+
+			searchPanelFormSelector.append("span")
+			.classed("tooltiptext",true)
+			.classed("tooltipbottom",true)
+			.text("Search in labels")
 		}
 
 		if (settings.autoStartLayout) {
@@ -1800,7 +1864,7 @@ let visualizeNetwork = async (networkName, settings = startSettings) => {
 
 
 	let updateFilteredNodes = throttleLast(() => {
-		let searchTerm = d3Select("#searchSelector").property("value");
+		let searchTerm = d3Select(helios.overlay).select("div.filterPanel").select(".searchSelector").property("value");
 		let allNodes = helios.network.index2Node;
 		// console.log("searching for " + searchTerm)
 		// if query
@@ -1834,13 +1898,197 @@ let visualizeNetwork = async (networkName, settings = startSettings) => {
 		helios.render();
 	}, 250);
 
-	d3Select("#searchSelector").on("input", (event, d) => {
+	d3Select(helios.overlay).select("div.filterPanel").select(".searchSelector").on("input", (event, d) => {
 		updateFilteredNodes()
 	})
 
 
 	// Temporarily for debugging
 	window.helios = helios;
+	return helios;
 }
 
-visualizeNetwork(startSettings.networkName, startSettings);
+
+/*
+	* Initializing the network
+*/
+let currentHelios = null;
+let networkName = startSettings.networkName;
+// If extension is provided for networkName, it is removed and format is inferred if not defined
+if (!startSettings.format) {
+	if (networkName.endsWith(".xnet")) {
+		startSettings.format = "xnet";
+		networkName = networkName.substring(0, networkName.length - 5);
+	} else if (networkName.endsWith(".gexf")) {
+		startSettings.format = "gexf";
+		networkName = networkName.substring(0, networkName.length - 5);
+	} else if (networkName.endsWith(".gml")) {
+		startSettings.format = "gml";
+		networkName = networkName.substring(0, networkName.length - 4);
+	} else if (networkName.endsWith(".json")) {
+		startSettings.format = "json";
+		networkName = networkName.substring(0, networkName.length - 5);
+	} else {
+		startSettings.format = "xnet";
+	}
+}
+
+// Loading the network
+let networkData;
+if (startSettings.format === "xnet") {
+	let xnetData = await xnet.loadXNETFile("networks/" + networkName + ".xnet");
+	networkData = xnet.convertXNET2JSON(xnetData);
+} else if (startSettings.format === "gexf") {
+	let gexfData = await gexf.loadGEXFFile("networks/" + networkName + ".gexf");
+	networkData = gexf.convertGEXF2JSON(gexfData);
+} else if (startSettings.format === "gml") {
+	let gmlData = await gml.loadGMLFile("networks/" + networkName + ".gml");
+	// console.log(gmlData);
+	// console.error("GML not supported yet");
+	networkData = gmlData;
+} else if (startSettings.format === "json") {
+	networkData = await fetch("networks/" + networkName + ".json").then(response => response.json());
+} else {
+	console.error("Unknown network format: " + startSettings.format);
+}
+
+async function loadNetworkFromContents(fileContents,fileExtension) {
+	let networkData;
+	if (fileExtension === "gml") {
+		networkData = gml.loadGML(fileContents);
+	} else if (fileExtension === "xnet") {
+		let xnetData = xnet.loadXNET(fileContents);
+		networkData = xnet.convertXNET2JSON(xnetData);
+	} else if (fileExtension === "gexf") {
+		let gexfData = gexf.loadGEXF(fileContents);
+		networkData = gexf.convertGEXF2JSON(gexfData);
+	} else if (fileExtension === "json") {
+		networkData = JSON.parse(fileContents);
+	}
+	currentHelios = await visualizeNetwork(networkData, startSettings);
+
+}
+
+async function loadNetworkFromUploadedFile(fileObject){
+	let fileName = fileObject.name;
+	let fileExtension = fileName.split(".").pop().toLowerCase();
+
+	if (fileExtension === "gml" || fileExtension === "xnet" || fileExtension === "gexf" || fileExtension === "json") {
+		// load the file
+		d3Select("#loadingPanel").style("display", null);
+		currentHelios?.cleanup()
+		let fileContents = await fileObject.text();
+		loadNetworkFromContents(fileContents,fileExtension).catch(error => {
+			console.error(error);
+			alert("Error loading network: " + error);
+			d3Select("#loadingPanel").style("display", "none");
+
+		})
+	} else {
+		//  Alert the user that the file format is not supported
+		alert("File format not supported. Supported formats: gml, xnet, gexf, json");
+		d3Select("#loadingPanel").style("display", "none");
+	}
+}
+
+// make the DOM element ID:"netviz" respond to drag of files show panel centered with msg indicating that
+// the file can be dragged and dropped there and gml, xnet, gexf, json are supported
+// A msg is shown when dragging a file over the panel incading that the file can be dropped there
+// You need to create all the elements and add them to netviz, and remove then after dropping or canceling
+// the drag.
+
+let netviz = document.getElementById("netviz");
+netviz.addEventListener("dragenter", dragEnter, false);
+netviz.addEventListener("dragleave", dragLeave, false);
+netviz.addEventListener("dragover", dragOver, false);
+netviz.addEventListener("drop", drop, false);
+
+let dropMessageElement = document.createElement("div");
+dropMessageElement.classList.add("dragdropmessage");
+dropMessageElement.innerHTML = "<h1>Drop a network file here</h1><br/>Supported formats: gml, xnet, gexf, json";
+
+function dragEnter(event) {
+	netviz.appendChild(dropMessageElement);
+	console.log("Enter");
+	event.stopPropagation();
+	event.preventDefault();
+}
+
+function dragLeave(event) {
+	// remove message from netviz
+	netviz.removeChild(dropMessageElement);
+	console.log("Leave");
+	event.stopPropagation();
+	event.preventDefault();
+}
+
+function dragOver(event) {
+	event.stopPropagation();
+	event.preventDefault();
+}
+
+
+async function drop(event) {
+	event.stopPropagation();
+	event.preventDefault();
+	console.log("Drop");
+
+	// remove message from netviz
+
+	// get the file
+	
+	let fileObject = event.dataTransfer.files[0];
+	
+	loadNetworkFromUploadedFile(fileObject);
+	netviz.removeChild(dropMessageElement);
+}
+
+function saveGML(network){
+	let nodes = [];
+	let edges = [];
+
+	for (let node of network.index2Node){
+		// filter any attribute starting with _ or named neighbors and edges
+		let nodeData = {};
+		let nodeIndex = 0;
+		let allPositions = helios.network.positions;
+		for (let [key,value] of Object.entries(node)){
+			if (!key.startsWith("_") && !ignoredProperties.has(key)){
+				nodeData[key] = value;
+			}
+			let posx = allPositions[nodeIndex*3];
+			let posy = allPositions[nodeIndex*3+1];
+			let posz = allPositions[nodeIndex*3+2];
+			nodeData.x = posx;
+			nodeData.y = posy;
+			nodeData.z = posz;
+		}
+
+		nodeData.id = nodeIndex;
+		if(nodeData.label === undefined){
+			nodeData.label = nodeIndex+"";
+		}
+		nodes.push(nodeData);
+		nodeIndex+=1;
+	}
+	// get edges from helios.network.indexedEdges which is a Int32Array
+	// of source,target,source,target,source,target, etc.
+
+	for (let i = 0; i < network.indexedEdges.length; i+=2){
+		let source = network.indexedEdges[i];
+		let target = network.indexedEdges[i+1];
+		edges.push({source:source,target:target});
+	}
+
+	let gmlData = gml.GMLStringify({nodes:nodes,edges:edges});
+
+	return gmlData;
+
+
+}
+
+currentHelios = await visualizeNetwork(networkData, startSettings);
+
+
+
+
