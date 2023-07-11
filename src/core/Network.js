@@ -6,11 +6,11 @@ import { viridis, cividis, plasma, inferno, magma, blackWhite } from "@colormap/
 class Node{
 	constructor(originalObject,ID,index,network){
 		for (const [nodeProperty, value] of Object.entries(originalObject)) {
-			if(nodeProperty == "color"
-			||  nodeProperty == "size"
-			||  nodeProperty == "position"
-			||  nodeProperty == "outlineColor"
-			||  nodeProperty == "outlineWidth"){
+			if(nodeProperty == "Color"
+			||  nodeProperty == "Size"
+			||  nodeProperty == "Position"
+			||  nodeProperty == "OutlineColor"
+			||  nodeProperty == "OutlineWidth"){
 				continue;
 			}
 			this[nodeProperty] = value;
@@ -95,6 +95,8 @@ class Node{
 }
 
 
+
+
 export class Network{
 	constructor(nodes,edges,properties){
 		this.ID2index = new Object();
@@ -158,10 +160,21 @@ export class Network{
 				this.positions[index*3+1] = node["Position"][1];
 				this.positions[index*3+2] = node["Position"][2];
 			}else{
-				this.positions[index*3+0] = (Math.random()-0.5)*2*200;
-				this.positions[index*3+1] = (Math.random()-0.5)*2*200;
-				this.positions[index*3+2] = (Math.random()-0.5)*2*200;
+				if(node.hasOwnProperty("posx") && node.hasOwnProperty("posy")){
+					this.positions[index*3]   = node["posx"];
+					this.positions[index*3+1] = node["posy"];
+					if(node.hasOwnProperty("posz")){
+						this.positions[index*3+2] = node["posz"];
+					}else{
+						this.positions[index*3+2] = 0;
+					}
+				}else{
+					this.positions[index*3+0] = (Math.random()-0.5)*2*200;
+					this.positions[index*3+1] = (Math.random()-0.5)*2*200;
+					this.positions[index*3+2] = (Math.random()-0.5)*2*200;
+				}
 			}
+
 			if(node.hasOwnProperty("Color")){
 				if(index==0){
 					console.log("NODE COLOR:",node["Color"])

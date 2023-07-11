@@ -175,7 +175,9 @@ class d3ForceLayoutWorker {
 		this._onStop = onStop;
 		this._onStart = onStart;
 		this._use2D = use2D;
-
+		this._attributes = {
+			"charge": 0.1,
+		};
 		this._layoutWorker = null;
 	}
 
@@ -219,7 +221,7 @@ class d3ForceLayoutWorker {
 		if(this._layoutRunning){
 			this._onStop?.();
 		}
-		this._layoutWorker.terminate();
+		this._layoutWorker?.terminate();
 		this._layoutRunning = false;
 		delete this._layoutWorker;
 		this._layoutWorker = null;
@@ -266,7 +268,7 @@ class d3ForceLayoutWorker {
 		this.stop();
 	}
 
-	async _handleGetAttribute(){
+	_handleGetAttribute(){
 		//Not implemented yet
 	}
 

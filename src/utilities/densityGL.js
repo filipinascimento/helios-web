@@ -561,7 +561,7 @@ export class DensityGL {
 		gl.deleteFramebuffer(this.framebuffer);
 		gl.deleteRenderbuffer(this.renderbuffer);
 		gl.deleteTexture(this.texture);
-		gl.deleteVertexArray(this.vao);
+		// gl.deleteVertexArray(this.vao);
 
 		this.positionsBuffer = null;
 		this.kernelWeightsBuffer = null;
@@ -570,7 +570,7 @@ export class DensityGL {
 		this.framebuffer = null;
 		this.renderbuffer = null;
 		this.texture = null;
-		this.vao = null;
+		// this.vao = null;
 
 		this.DATA = null;
 		this.kernel_weights = null;

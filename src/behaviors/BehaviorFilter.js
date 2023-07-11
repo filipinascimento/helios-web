@@ -1,7 +1,7 @@
 /**
  * A class representing a behavior filter for Helios.
  */
-export default class BehaviorFilter {
+export class BehaviorFilter {
 	/**
 	 * Creates a new instance of BehaviorFilter.
 	 * @param {Helios} helios - The Helios object to be attached to.

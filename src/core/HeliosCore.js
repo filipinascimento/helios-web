@@ -4,8 +4,6 @@ import { select as d3Select } from "d3-selection";
 import { zoom as d3Zoom, zoomIdentity as d3ZoomIdentity } from "d3-zoom";
 import * as glm from "gl-matrix";
 import * as glUtils from "../utilities/webgl.js";
-import * as xnet from "../utilities/xnet.js";
-import * as gexf from "../utilities/gexf.js";
 import { Network } from "./Network.js";
 import { HeliosScheduler } from "./Scheduler.js";
 // import { drag as d3Drag } from "d3-drag";
@@ -50,6 +48,8 @@ export class Helios {
 	 * 		@see {@link Network#addNodes}
 	 * @param {Object[]} [config.edges=[]] - The edges array of objects. Each object should have source and target attributes.
 	 * 		@see {@link Network#addEdges}
+	 * @param {Network} [network=null] - Alternavely, a network object can be passed directly. If this is the case, the nodes and edges parameters are ignored.
+	 * 		@see {@link Network}
 	 * @param {boolean} [config.use2D=false] - Whether to use 2D mode
 	 * @param {boolean} [config.orthographic=false] - Whether to use orthographic projection instead of perspective
 	 * @param {boolean} [config.hyperbolic=false] - Whether to use hyperbolic mode
@@ -92,6 +92,7 @@ export class Helios {
 		density = false,
 		nodes = {},
 		edges = [],
+		network = null,
 		use2D = false,
 		orthographic = false,
 		hyperbolic = false,
@@ -139,6 +140,12 @@ export class Helios {
 		// Do I need to setup the svg bounds?
 		this.element.appendChild(this.svgLayer);
 
+		this._canvasMargins = {
+			top: 0,
+			bottom: 0,
+			left: 0,
+			right: 0,
+		}
 
 		this.overlay = document.createElement("div");
 		this.overlay.style.position = 'absolute';
@@ -149,8 +156,7 @@ export class Helios {
 		this.overlay.style.pointerEvents = 'none';
 		this.element.appendChild(this.overlay);
 
-
-
+		
 		/**
 		 * @public 
 		 * @readonly
@@ -161,7 +167,11 @@ export class Helios {
 		 * let network = helios.network;
 		 * 
 		 */
-		this.network = new Network(nodes, edges);
+		if(network == null) {
+			this.network = new Network(nodes, edges);
+		} else {
+			this.network = network;
+		}
 
 		this._autoCleanup = autoCleanup;
 		this._hasCleanup = false;
@@ -205,10 +215,10 @@ export class Helios {
 		this._trackingBufferPixels = null;
 		this._attributeTrackers = {};
 		this._trackingNodeDataMinimumUpdateInterval = 200;
-		this._trackingNodeMinimumUpdateInterval = 1000/30;
-		
-		
-		this._updateTrackerNodesDataThrottle = _throttle(()=>{
+		this._trackingNodeMinimumUpdateInterval = 1000 / 30;
+
+
+		this._updateTrackerNodesDataThrottle = _throttle(() => {
 			this._updateTrackerNodesData();
 		}, this._trackingNodeDataMinimumUpdateInterval);
 
@@ -287,12 +297,13 @@ export class Helios {
 		this.onLayoutStopCallback = null;
 		this.onDrawCallback = null;
 		this.onReadyCallback = null;
-		this.isReady = false;
+		this.onCleanupCallback = null;
+		this._isReady = false;
 
 
 
 		this._onresizeEvent = (entries) => {
-			if(this.canvasElement){
+			if (this.canvasElement) {
 				for (let entry of entries) {
 					this._willResizeEvent(entry);
 				}
@@ -339,7 +350,7 @@ export class Helios {
 		// this.redraw();
 		this.onReadyCallback = null;
 
-		this.isReady = true;
+		this._isReady = true;
 	}
 
 	/** Setup the layout worker
@@ -350,23 +361,23 @@ export class Helios {
 	 */
 	_setupLayout() {
 		this._layoutLastUpdate = null;
-		this._alpha=0.001;
+		this._alpha = 0.001;
 		// this.layoutWorker = new Worker(new URL('../layouts/ngraphLayoutWorker.js', import.meta.url));
 		// this.layoutWorker = new Worker(new URL('../layouts/d3force3dLayoutWorker.js', import.meta.url));
 		this.newPositions = this.network.positions.slice(0);
 		let onlayoutUpdate = (data) => {
 			this.newPositions = data.positions;
-			if(!this._layoutLastUpdate){
+			if (!this._layoutLastUpdate) {
 				this._layoutLastUpdate = performance.now();
 			}
 			let layoutElapsedTime = performance.now() - this._layoutLastUpdate;
-			if (layoutElapsedTime<200){
-				layoutElapsedTime=200;
-			}else if(layoutElapsedTime>2500){
-				layoutElapsedTime=2500;
+			if (layoutElapsedTime < 200) {
+				layoutElapsedTime = 200;
+			} else if (layoutElapsedTime > 2500) {
+				layoutElapsedTime = 2500;
 			}
 
-			this._alpha=1.0/layoutElapsedTime;
+			this._alpha = 1.0 / layoutElapsedTime;
 
 			let interpolatorTask = {
 				name: "1.1.positionInterpolator",
@@ -380,10 +391,10 @@ export class Helios {
 						const displacement = newPositions[index] - previousPositions[index];
 
 						previousPositions[index] += alpha * (displacement) * elapsedTime;
-						
+
 						maxDisplacement = Math.max(Math.abs(displacement), maxDisplacement);
 					};
-					
+
 					this._updateCenterNodesPosition();
 					this._updateCameraInterpolation(true);
 					// console.log(this.scheduler._averageFPS);
@@ -438,10 +449,13 @@ export class Helios {
 			onStart: onLayoutStart,
 			use2D: this._use2D
 		});
+		console.log("Set layout worker",this.layoutWorker)
 
 		if (this._autoStartLayout) {
 			this.layoutWorker.start();
+			console.log("Start",this.layoutWorker)
 		}
+
 
 
 	}
@@ -482,6 +496,7 @@ export class Helios {
 	 */
 	pauseLayout() {
 		this.layoutWorker.pause();
+		console.log("Pause",this.layoutWorker)
 		return this;
 	}
 
@@ -497,6 +512,7 @@ export class Helios {
 	 */
 	resumeLayout() {
 		this.layoutWorker.resume();
+		console.log("Resume",this.layoutWorker)
 		return this;
 	}
 
@@ -954,7 +970,7 @@ export class Helios {
 	 * helios.triggerHoverEvents(event, false);
 	 */
 	triggerHoverEvents(event, shallCancel) {
-		if (!this.isReady) {
+		if (!this._isReady) {
 			return;
 		}
 		if (this.lastMouseX == -1 || this.lastMouseY == -1) {
@@ -1470,97 +1486,100 @@ export class Helios {
 		// document.onclick = void(0);
 
 
-		this.zoom = d3Zoom().on("zoom", event => {
-			this.interacting = true;
-			this._zoomFactor = event.transform.k;
-			this.triggerHoverEvents(event);
-			// check if prevX is undefined
-			if (this.prevK === undefined) {
-				this.prevK = event.transform.k;
-			}
-			let dx = 0;
-			let dy = 0;
-			if (this.prevK == event.transform.k || this._use2D) {
-				if (this.prevX === undefined || this._use2D) {
-					if(this._use2D){
-						dx = event.transform.x-this.canvasElement.clientWidth/2;
-						dy = event.transform.y-this.canvasElement.clientHeight/2;
-					}else{
-						dx = event.transform.x;
-						dy = event.transform.y;
+		this.zoom = d3Zoom()
+			.on("zoom", event => {
+				this.interacting = true;
+				this._zoomFactor = event.transform.k;
+				this.triggerHoverEvents(event);
+				// check if prevX is undefined
+				if (this.prevK === undefined) {
+					this.prevK = event.transform.k;
+				}
+				let dx = 0;
+				let dy = 0;
+				if (this.prevK == event.transform.k || this._use2D) {
+					if (this.prevX === undefined || this._use2D) {
+						if (this._use2D) {
+							dx = event.transform.x - this.canvasElement.clientWidth / 2;
+							dy = event.transform.y - this.canvasElement.clientHeight / 2;
+						} else {
+							dx = event.transform.x;
+							dy = event.transform.y;
+						}
+					} else {
+						dx = event.transform.x - this.prevX * this._zoomFactor;
+						dy = event.transform.y - this.prevY * this._zoomFactor;
 					}
 				} else {
-					dx = event.transform.x - this.prevX * this._zoomFactor;
-					dy = event.transform.y - this.prevY * this._zoomFactor;
 				}
-			} else {
-			}
 
-			if(!this._use2D){
-				this.prevX = event.transform.x / this._zoomFactor;
-				this.prevY = event.transform.y / this._zoomFactor;
-			}
-			this.prevK = event.transform.k;
-			// 	if (!this.positionInterpolator) {
-			// 		this.update();
-			// 		this.render();
-			// 	}
-			// 	// event => event.preventDefault();
-			// })
-			// // this.drag = d3Drag().on("drag", event => {
-			// // 	let dx = event.dx;
-			// // 	let dy = event.dy;
+				if (!this._use2D) {
+					this.prevX = event.transform.x / this._zoomFactor;
+					this.prevY = event.transform.y / this._zoomFactor;
+				}
+				this.prevK = event.transform.k;
+				// 	if (!this.positionInterpolator) {
+				// 		this.update();
+				// 		this.render();
+				// 	}
+				// 	// event => event.preventDefault();
+				// })
+				// // this.drag = d3Drag().on("drag", event => {
+				// // 	let dx = event.dx;
+				// // 	let dy = event.dy;
 
-			// this.zoom2 = d3Zoom().scaleExtent([1.0,1.0]).on("zoom", event => {
-			// 	console.log("ZOOM 2")
-			// 	// let dx = event.dx;
-			// 	// let dy = event.dy;
-			// let dx = 0;
-			// let dy = 0;
-			// if(this.prevX=== undefined){
-			// 	dx = event.transform.x;
-			// 	dy = event.transform.y;
-			// }else{
-			// 	dx = event.transform.x - this.prevX;
-			// 	dy = event.transform.y - this.prevY;
-			// }
+				// this.zoom2 = d3Zoom().scaleExtent([1.0,1.0]).on("zoom", event => {
+				// 	console.log("ZOOM 2")
+				// 	// let dx = event.dx;
+				// 	// let dy = event.dy;
+				// let dx = 0;
+				// let dy = 0;
+				// if(this.prevX=== undefined){
+				// 	dx = event.transform.x;
+				// 	dy = event.transform.y;
+				// }else{
+				// 	dx = event.transform.x - this.prevX;
+				// 	dy = event.transform.y - this.prevY;
+				// }
 
-			let newRotationMatrix = glm.mat4.create();
-			// console.log(event.sourceEvent.shiftKey)
-			if (this._use2D || event.sourceEvent?.shiftKey) {
-				const panelHeight = this.canvasElement.clientHeight;
-				const fovy = Math.PI * 2 / 360 * this._fieldOfView;
-				// FIXME: Maybe use the distance to the objects instead of the camera distance
-				// For the 3D case. The 2D case is fine.
-				const finalCameraDistance = this.cameraDistance / this._zoomFactor;
-				const displacementFactor  = 2 * finalCameraDistance * Math.tan(fovy / 2)/panelHeight;
-				if (this._centerNodes.length == 0) {
-					if(this._use2D){
-						
-						this.panX = dx*displacementFactor;
-						this.panY = -dy*displacementFactor;
-					}else{
-						this.panX = this.panX + dx * displacementFactor;
-						this.panY = this.panY - dy * displacementFactor;
+				let newRotationMatrix = glm.mat4.create();
+				// console.log(event.sourceEvent.shiftKey)
+				if (this._use2D || event.sourceEvent?.shiftKey) {
+					const panelHeight = this.canvasElement.clientHeight;
+					const fovy = Math.PI * 2 / 360 * this._fieldOfView;
+					// FIXME: Maybe use the distance to the objects instead of the camera distance
+					// For the 3D case. The 2D case is fine.
+					const finalCameraDistance = this.cameraDistance / this._zoomFactor;
+					const displacementFactor = 2 * finalCameraDistance * Math.tan(fovy / 2) / panelHeight;
+					if (this._centerNodes.length == 0) {
+						if (this._use2D) {
+
+							this.panX = dx * displacementFactor;
+							this.panY = -dy * displacementFactor;
+						} else {
+							this.panX = this.panX + dx * displacementFactor;
+							this.panY = this.panY - dy * displacementFactor;
+						}
 					}
+				} else {//pan
+					glm.mat4.identity(newRotationMatrix);
+					glm.mat4.rotate(newRotationMatrix, newRotationMatrix, glUtils.degToRad(dx / 2), [0, 1, 0]);
+					glm.mat4.rotate(newRotationMatrix, newRotationMatrix, glUtils.degToRad(dy / 2), [1, 0, 0]);
+
+					glm.mat4.multiply(this.rotationMatrix, newRotationMatrix, this.rotationMatrix);
 				}
-			} else {//pan
-				glm.mat4.identity(newRotationMatrix);
-				glm.mat4.rotate(newRotationMatrix, newRotationMatrix, glUtils.degToRad(dx / 2), [0, 1, 0]);
-				glm.mat4.rotate(newRotationMatrix, newRotationMatrix, glUtils.degToRad(dy / 2), [1, 0, 0]);
 
-				glm.mat4.multiply(this.rotationMatrix, newRotationMatrix, this.rotationMatrix);
-			}
-
-			this.update();
-			this.render();
-			// this.triggerHoverEvents(event);
-			event => event.preventDefault();
-		})
-			// .on("start", event => {
-			// 	console.log("start")
-			// })
-			.on("end", event => { this.interacting = false; });
+				this.update();
+				this.render();
+				// this.triggerHoverEvents(event);
+				event?.sourceEvent?.preventDefault();
+				event?.sourceEvent?.stopPropagation();
+			})
+			.on("end", event => {
+				this.interacting = false;
+				event?.sourceEvent?.preventDefault();
+				event?.sourceEvent?.stopPropagation();
+			});
 
 		d3Select(this.canvasElement)//
 			// .call(d3ZoomTransform, d3ZoomIdentity.translate(0, 0).scale(this.cameraDistance))
@@ -1598,19 +1617,19 @@ export class Helios {
 	zoomFactor(zoomFactor, duration) {
 		if (zoomFactor !== undefined) {
 			if (duration === undefined) {
-				if(this._use2D){
+				if (this._use2D) {
 					d3Select(this.canvasElement).call(this.zoom.transform,
-						 d3ZoomIdentity.translate(this.canvasElement.clientWidth/2, this.canvasElement.clientHeight/2).scale(zoomFactor))
-				}else{
+						d3ZoomIdentity.translate(this.canvasElement.clientWidth / 2, this.canvasElement.clientHeight / 2).scale(zoomFactor))
+				} else {
 					d3Select(this.canvasElement).call(this.zoom.transform, d3ZoomIdentity.translate(0, 0).scale(zoomFactor))
 				}
 			} else {
-				if(this._use2D){
+				if (this._use2D) {
 					d3Select(this.canvasElement).transition().ease(d3Ease.easeLinear).duration(duration)
-					.call(this.zoom.transform, d3ZoomIdentity.translate(this.canvasElement.clientWidth/2, this.canvasElement.clientHeight/2).scale(zoomFactor))
-					
-				}else{
-					d3Select(this.canvasElement).transition().ease(d3Ease.easeLinear).duration(duration).call(this.zoom.transform, d3ZoomIdentity.translate(0,0).scale(zoomFactor))
+						.call(this.zoom.transform, d3ZoomIdentity.translate(this.canvasElement.clientWidth / 2, this.canvasElement.clientHeight / 2).scale(zoomFactor))
+
+				} else {
+					d3Select(this.canvasElement).transition().ease(d3Ease.easeLinear).duration(duration).call(this.zoom.transform, d3ZoomIdentity.translate(0, 0).scale(zoomFactor))
 				}
 			}
 			return this;
@@ -1660,16 +1679,19 @@ export class Helios {
 
 		// this.canvasElement.style.width = this.element.clientWidth + "px";
 		// this.canvasElement.style.height = this.element.clientHeight + "px";
+		// Update margins:
 
 		let newFrameworkWidth = dpr * this.canvasElement.clientWidth;
 		let newFrameworkHeight = dpr * this.canvasElement.clientHeight;
+
+		console.log(newFrameworkWidth,newFrameworkHeight);
 
 		requestAnimationFrame(() => {
 			this._resizeGL(newFrameworkWidth, newFrameworkHeight);
 		});
 
 		this._updateCameraInteraction();
-		
+
 		this.onResizeCallback?.(event);
 		//});
 	}
@@ -1683,18 +1705,18 @@ export class Helios {
 	 * @returns {this} Returns this for chaining.
 	 */
 	_updateCameraInteraction() {
-		if(this.zoom && this._use2D){
+		if (this.zoom && this._use2D) {
 			const panelHeight = this.canvasElement.clientHeight;
 			const fovy = Math.PI * 2 / 360 * this._fieldOfView;
 			// FIXME: Maybe use the distance to the objects instead of the camera distance
 			// For the 3D case. The 2D case is fine.
 			const finalCameraDistance = this.cameraDistance / this._zoomFactor;
-			const displacementFactor  = 2 * finalCameraDistance * Math.tan(fovy / 2)/panelHeight;
+			const displacementFactor = 2 * finalCameraDistance * Math.tan(fovy / 2) / panelHeight;
 			d3Select(this.canvasElement).property("__zoom",
 				d3ZoomIdentity.translate(
-					this.panX/displacementFactor+this._lastCanvasDimensions[0]/2,
-					-this.panY/displacementFactor+this._lastCanvasDimensions[1]/2
-					).scale(this._zoomFactor));
+					this.panX / displacementFactor + this._lastCanvasDimensions[0] / 2,
+					-this.panY / displacementFactor + this._lastCanvasDimensions[1] / 2
+				).scale(this._zoomFactor));
 		}
 	}
 
@@ -1845,7 +1867,7 @@ export class Helios {
 		// 
 		let fovy = Math.PI * 2 / 360 * this._fieldOfView;
 		let aspectRatio = fbWidth / fbHeight;
-		if (this._use2D||this._orthographic) {
+		if (this._use2D || this._orthographic) {
 			const finalCameraDistance = this.cameraDistance / this._zoomFactor;
 			const orthoHeight = 2 * finalCameraDistance * Math.tan(fovy / 2);
 			const orthoWidth = orthoHeight * aspectRatio;
@@ -1857,11 +1879,11 @@ export class Helios {
 			// console.log("Scale Factor:",orthogonalScaleFactor);
 
 			glm.mat4.ortho(this.projectionMatrix,
-				 left,
-				 right,
-				 bottom,
-				 top,
-				-100+finalCameraDistance, 10000.0+finalCameraDistance);
+				left,
+				right,
+				bottom,
+				top,
+				-100 + finalCameraDistance, 10000.0 + finalCameraDistance);
 
 			// glm.mat4.ortho(this.projectionMatrix,
 			// 	-fbWidth / this._zoomFactor / orthoRescaleFactor * scaleFactor*orthogonalScaleFactor/ scaleHeight,
@@ -1870,7 +1892,7 @@ export class Helios {
 			// 	fbHeight / this._zoomFactor / orthoRescaleFactor * scaleFactor*orthogonalScaleFactor / scaleHeight,
 			// 	-10000.0, 100000.0);
 			// glm.mat4.perspective(this.projectionMatrix, Math.PI * 2 / 360 * 70, fbWidth / fbHeight, 1.0, 10000.0);
-			
+
 		} else {
 			glm.mat4.perspective(this.projectionMatrix, fovy, aspectRatio, 1.0, null);
 		}
@@ -2292,7 +2314,7 @@ export class Helios {
 		this.targetTranslatePosition[0] = 0;
 		this.targetTranslatePosition[1] = 0;
 		this.targetTranslatePosition[2] = 0;
-		
+
 		if (this._centerNodes && this._centerNodes.length > 0) {
 			for (let i = 0; i < this._centerNodes.length; i++) {
 				let node = this._centerNodes[i];
@@ -2388,7 +2410,7 @@ export class Helios {
 				this.translatePosition[2] = this.targetTranslatePosition[2];
 				this.panX = 0;
 				this.panY = 0;
-				if(this._use2D){
+				if (this._use2D) {
 					// this.zoom.translateTo(d3Select(this.canvasElement),this.panX+this.canvasElement.clientWidth/2,this.panY+this.canvasElement.clientHeight/2);
 				}
 			}
@@ -2412,7 +2434,7 @@ export class Helios {
 			this.panY = (1.0 - alpha) * this.lastPanY;
 			this.panX += alpha * this.targetPanX;
 			this.panY += alpha * this.targetPanY;
-			if(this._use2D){
+			if (this._use2D) {
 				// this.zoom.translateTo(d3Select(this.canvasElement),this.panX+this.canvasElement.clientWidth/2,this.panY+this.canvasElement.clientHeight/2);
 			}
 			if (alpha >= 1.0) {
@@ -2748,6 +2770,7 @@ export class Helios {
 	 * @see {@link Helios#onLayoutEnd}
 	 */
 	onLayoutStart(callback) {
+		console.log("On start",this.layoutWorker)
 		this.onLayoutStartCallback = callback;
 		this?.layoutWorker.onStart(() => {
 			this.onLayoutStartCallback?.();
@@ -2772,6 +2795,7 @@ export class Helios {
 	 * @see {@link Helios#onLayoutTick}
 	 */
 	onLayoutStop(callback) {
+		console.log("Stop",this.layoutWorker)
 		this.onLayoutStopCallback = callback;
 		this?.layoutWorker.onStop(() => {
 			this.onLayoutStopCallback?.();
@@ -2813,12 +2837,36 @@ export class Helios {
 	 * });
 	 */
 	onReady(callback) {
-		if (this.isReady) {
+		if (this._isReady) {
 			callback?.(this);
 		} else {
 			this.onReadyCallback = callback;
 		}
 	}
+
+
+	/** Set the callback for when Helios is cleaned up and properly disposed.
+	 * @method onCleanup
+	 * @memberof Helios
+	 * @instance
+	 * @param {Function} callback - The callback function.
+	 * @chainable
+	 * @return {this} The current Helios instance for chaining.
+	 * @example
+	 * // Set the callback for when Helios is cleaned up
+	 * let helios = Helios("elementID",networkData);
+	 * helios.onCleanup(() => {
+	 * 	console.log("Helios is cleaned up");
+	 * });
+	 */
+	onCleanup(callback) {
+		if (this.isCleanedUp) {
+			callback?.(this);
+		} else {
+			this.onCleanupCallback = callback;
+		}
+	}
+
 
 	//#endregion
 
@@ -3388,7 +3436,7 @@ export class Helios {
 			let nodePositions = this.network.positions;
 			let projectedPositions = new Float32Array(nodes.length * 4);
 
-			let [w2d,h2d] = this._lastCanvasDimensions;
+			let [w2d, h2d] = this._lastCanvasDimensions;
 
 			for (let i = 0; i < nodes.length; i++) {
 				let nodeIndex = nodeIndices[i];
@@ -3401,9 +3449,9 @@ export class Helios {
 				// if (projectedPosition[2] < 0) {//behind the camera
 				// 	// continue;
 				// }
-				
+
 				let perspectiveFactor = 1.0 / projectedPosition[3];
-				
+
 				// if(!this._orthographic){
 				// 	perspectiveFactor = 1.0 / (projectedPosition[3]);
 				// }
@@ -3476,19 +3524,19 @@ export class Helios {
 	_calculateCentroidForAttribute(nodeAttribute, xy, centroids, counts) {
 		// const xy = this._pixelXYOnScreen[i];
 		if (!centroids.has(nodeAttribute)) {
-			centroids.set(nodeAttribute, [0,0]);
+			centroids.set(nodeAttribute, [0, 0]);
 			counts.set(nodeAttribute, 0);
 		}
 		const centroid = centroids.get(nodeAttribute);
 		centroid[0] += xy[0];
 		centroid[1] += xy[1];
-		
+
 		const count = counts.get(nodeAttribute);
 		counts.set(nodeAttribute, count + 1);
 	}
 
 
-	_updateTrackerNodesData(){
+	_updateTrackerNodesData() {
 		const gl = this.gl;
 		const data = this._trackingBufferPixels;
 		const nodesOnScreen = this._nodesOnScreen;
@@ -3524,18 +3572,18 @@ export class Helios {
 		}
 		const attributeTrackers = this._attributeTrackers;
 		const totalPixels = this._trackingFramebuffer.size.width * this._trackingFramebuffer.size.height;
-		
+
 
 		const nodesOnScreen = this._nodesOnScreen;
 		const XYPositions = this._pixelXYOnScreen;
-		
-		if(!avoidPixelBufferUpdate){
+
+		if (!avoidPixelBufferUpdate) {
 			this._updateTrackerNodesData();
 		}
-		
+
 		const now = performance.now();
-		let elapsedTime = now - this._trackingLastTime||now;
-		if(elapsedTime>1000){
+		let elapsedTime = now - this._trackingLastTime || now;
+		if (elapsedTime > 1000) {
 			elapsedTime = 1000;
 		}
 		this._trackingLastTime = now;
@@ -3558,12 +3606,12 @@ export class Helios {
 
 
 			// const coefficient = Math.exp(- (now - trackedAttributeEntry.lastUpdate) / smoothness);
-			const coefficient = Math.exp(-elapsedTime/(100*smoothness));
+			const coefficient = Math.exp(-elapsedTime / (100 * smoothness));
 			// const coefficient = smoothness;
 			// console.log(coefficient);
 
 			// smoothness = -30/log(0.8)
-			
+
 			// const attribute = trackedAttributeEntry.attribute;
 			// console.log(currentKeys.length);
 			for (let i = 0; i < currentKeys.length; i++) {
@@ -3576,8 +3624,8 @@ export class Helios {
 						if (centroidPositions.has(currentKeys[i])) {
 							const centroidPosition = centroidPositions.get(currentKeys[i]);
 							if (centroidPosition) {
-								centroidPosition[0] *=  coefficient;
-								centroidPosition[1] *=  coefficient;
+								centroidPosition[0] *= coefficient;
+								centroidPosition[1] *= coefficient;
 							}
 							// centroidPositions.set(currentKeys[i], centroidPosition);
 						}
@@ -3657,7 +3705,7 @@ export class Helios {
 						// add new centroid (1.0 - coefficient)
 						centroidPosition[0] += newCentroidPosition[0] * (1.0 - coefficient);
 						centroidPosition[1] += newCentroidPosition[1] * (1.0 - coefficient);
-						
+
 						// centroidPosition[0] = newCentroidPosition[0];
 						// centroidPosition[1] = newCentroidPosition[1];
 					} else {
@@ -3697,7 +3745,7 @@ export class Helios {
 			const attributeTracker = this._attributeTrackers[trackerName];
 			const pixelCounter = attributeTracker.pixelCounter;
 			// const IDProportion = 
-			if(attributeTracker.calculateCentroid){
+			if (attributeTracker.calculateCentroid) {
 				const centroidPositions = attributeTracker.centroidPositions;
 				const IDProportion = pixelCounter.getSortedPairs();
 				// add the centroid positions to the array [ID,proportion,x,y]
@@ -3708,7 +3756,7 @@ export class Helios {
 					IDProportion[i] = [ID, proportion, centroidPosition[0], centroidPosition[1]];
 				}
 				return IDProportion;
-			}else{
+			} else {
 				return pixelCounter.getSortedPairs();
 			}
 		}
@@ -3869,7 +3917,7 @@ export class Helios {
 			return this;
 		}
 	}
-	
+
 	/** Set/get tracker update interval
 	 * @method trackingUpdateInterval
 	 * @memberof Helios
@@ -4322,9 +4370,12 @@ export class Helios {
 	 */
 	cleanup(keepGLContext) {
 		// console.log("Cleanup started");
-		this.isReady = false;
-		this.layoutWorker.cleanup();
-		this.scheduler.stop();
+		this._isReady = false;
+
+		console.log("Cleanup",this.layoutWorker)
+		this.layoutWorker?.cleanup();
+		this.scheduler?.stop();
+		console.log("Null",this.layoutWorker)
 		this.layoutWorker = null;
 		const gl = this.gl;
 		this.onReadyCallback = null;
@@ -4349,7 +4400,7 @@ export class Helios {
 		this.onLayoutStopCallback = null;
 		this.onDrawCallback = null;
 		this.onReadyCallback = null;
-		this.isReady = false;
+		this._isReady = false;
 
 		// window.removeEventListener('resize', this._onresizeEvent);
 		if (this._resizeObserver) {
@@ -4418,7 +4469,38 @@ export class Helios {
 			this.canvasElement.remove();
 			this.canvasElement = null;
 		}
+		// Remove this.svgLayer and this.overlay 
+		if (this.svgLayer) {
+			this.svgLayer.remove();
+			this.svgLayer = null;
+		}
+		if (this.overlay) {
+			this.overlay.remove();
+			this.overlay = null;
+		}
+
+		this.onCleanupCallback?.();
+
 		this._hasCleanup = true;
+	}
+
+
+	/**
+	 * Returns whether the Helios instance is ready to be used.
+	 * @method isReady
+	 * @memberof Helios
+	 * @instance
+	 * @returns {boolean} - Whether the Helios instance is ready to be used.
+	 * @example
+	 * // Check if Helios is ready to be used.
+	 * if (helios.isReady()) {
+	 *   // Helios is ready, do something.
+	 * } else {
+	 *   // Helios is not ready yet, wait or handle the error.
+	 * }
+	 */
+	isReady() {
+		return this._isReady;
 	}
 
 	/** Destroys the Helios instance.
@@ -4435,4 +4517,3 @@ export class Helios {
 }
 
 // Helios.xnet = xnet;
-export { xnet,gexf };

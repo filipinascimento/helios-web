@@ -21,7 +21,6 @@ let schemeCategory18 = [
     "#9edae5"
 ];
 
-// import {colors as cmasherColorsData} from './cmasherColorsData.js'
 
 import {default as cmasherColorsJSONData} from './cmasherColorsData.json';
 
