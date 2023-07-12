@@ -5,11 +5,14 @@
 </p>
 
 <!-- Create a table centered text saying use Helios-Web experimental version here. Just drag and drop your gml, xnet or gexf file. Then it should point to Dark and Light versions as columns and with Density and without density as rows. All links should point to  http://heliosweb.io/docs/example/?advanced -->
+Test the preliminary version of Helios Web here:
 
 |         | Light Version | Dark Version |
 |---------|---------------|--------------|
 | No Density | [Light](http://heliosweb.io/docs/example/?advanced) | [Dark](http://heliosweb.io/docs/example/?advanced&dark) |
 | Density | [Light & Density](http://heliosweb.io/docs/example/?advanced&density) | [Dark & Density](http://heliosweb.io/docs/example/?advanced&dark&density) |
+
+You an drag and drop your own network in gml, xnet or gexf formats.
 
 
 Helios Web is a web-based library to visualize dynamic networks in real-time. Helios-web is under active development and aims to provide a simple API and optimized implementation to be integrated into other systems and render and layout large networks. This is the successor to the [Networks 3D project](https://filipinascimento.github.io/networks3d/) and the [Networks Web project](https://filipinascimento.github.io/software/networksweb/).
