@@ -1768,9 +1768,9 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 
 
 
-	let heliosUI = new HeliosUI(helios,{
-		collapsed:true,
-	});
+	// let heliosUI = new HeliosUI(helios,{
+	// 	collapsed:true,
+	// });
 
 	helios.onReady(() => {
 		helios.trackAttribute("indexTracker", "index", {
@@ -2047,10 +2047,10 @@ function saveGML(network){
 	let nodes = [];
 	let edges = [];
 
+	let nodeIndex = 0;
 	for (let node of network.index2Node){
 		// filter any attribute starting with _ or named neighbors and edges
 		let nodeData = {};
-		let nodeIndex = 0;
 		let allPositions = helios.network.positions;
 		for (let [key,value] of Object.entries(node)){
 			if (!key.startsWith("_") && !ignoredProperties.has(key)){
@@ -2059,9 +2059,9 @@ function saveGML(network){
 			let posx = allPositions[nodeIndex*3];
 			let posy = allPositions[nodeIndex*3+1];
 			let posz = allPositions[nodeIndex*3+2];
-			nodeData.x = posx;
-			nodeData.y = posy;
-			nodeData.z = posz;
+			nodeData.posx = posx;
+			nodeData.posy = posy;
+			nodeData.posz = posz;
 		}
 
 		nodeData.id = nodeIndex;
@@ -2080,7 +2080,9 @@ function saveGML(network){
 		edges.push({source:source,target:target});
 	}
 
-	let gmlData = gml.GMLStringify({nodes:nodes,edges:edges});
+	let gmlData = gml.GMLStringify({nodes:nodes,edges:edges},{
+		nodeAttributes: Object.keys(nodes[0]),
+	});
 
 	return gmlData;
 
