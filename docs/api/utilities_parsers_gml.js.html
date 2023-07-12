@@ -274,13 +274,14 @@ function GMLStringify(graph, options) {
 
 		lines.push(indent1 + 'node [');
 
-		addAttribute('id', node.id, indent2);
-		addAttribute('label', node.label, indent2);
+		// addAttribute('id', node.id, indent2);
+		// addAttribute('label', node.label, indent2);
 
 		if (getNodeAttributes) {
-			forIn(getNodeAttributes(node) || {}, function (key, value) {
+			// getNodeAttributes
+			getNodeAttributes.forEach(function (key) {
 
-				addAttribute(key, value, indent2);
+				addAttribute(key, node[key], indent2);
 			});
 		}
 
@@ -293,12 +294,12 @@ function GMLStringify(graph, options) {
 
 		addAttribute('source', edge.source, indent2);
 		addAttribute('target', edge.target, indent2);
-		addAttribute('label', edge.label, indent2);
+		// addAttribute('label', edge.label, indent2);
 
 		if (getEdgeAttributes) {
-			forIn(getEdgeAttributes(edge) || {}, function (key, value) {
+			getEdgeAttributes.forEach(function (key) {
 
-				addAttribute(key, value, indent2);
+				addAttribute(key, edge[key], indent2);
 			});
 		}
 
