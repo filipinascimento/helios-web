@@ -21,6 +21,33 @@ let schemeCategory18 = [
     "#9edae5"
 ];
 
+let schemeChr = [
+    "#B71C1C",
+    "#8B0000",
+    "#DC2C2C",
+    "#FF0000",
+    "#FF4444",
+    "#FF7070",
+    "#FFC0C0",
+    "#c0c0c0",
+    "#c0c0c0",
+    "#c0c0c0",
+    "#c0c0c0",
+    "#c0c0c0",
+    "#c0c0c0",
+    "#c0c0c0",
+    "#c0c0c0",
+    "#6495ED",
+    "#ADD8E6",
+    "#E6F7FF",
+    "#c0c0c0",
+    "#1976D2",
+    "#1E90FF",
+    "#000000",
+    "#1A237E"
+];
+
+
 
 import {default as cmasherColorsJSONData} from './cmasherColorsData.json';
 
@@ -69,6 +96,7 @@ for(let name of Object.keys(cmasherColorsJSONData)) {
 //     ).then(d => d3.dsvFormat(" ").parseRows(d, d => d3.rgb(d[0], d[1], d[2]))).then((l) => (t) => l[Math.floor(t * (l.length - 1e-7))])
 Object.assign(cmasherColors, {
     schemeCategory18,
+    schemeChr,
     // lut,
     // names
 })
