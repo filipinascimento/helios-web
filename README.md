@@ -65,7 +65,6 @@ To use it in your project you can load it as a module in modern browsers via sky
 <script type="module">
 
 import {Helios} from "https://cdn.skypack.dev/helios-web?min";
-// Currently not working. please download and follow the build instructions.
 // This will be fixed in the next release
 
 // Nodes are dictionaries (any key can be used as node properties)
@@ -122,5 +121,19 @@ import {Helios} from "helios-web";
 //...
 
 ```
+
+# Citing Helios-Web
+
+If you use Helios-Web in your research, please include the following citation in your publication:
+
+```text
+Silva, F.N. (2023). Helios-Web (Version 0.7.9) [Computer software].
+GitHub. http://heliosweb.io. https://doi.org/10.5281/zenodo.8251049
+```
+
+Note: A paper on Helios-Web is in progress. We will provide an updated citation once the paper is published.
+
+
+
 
 
