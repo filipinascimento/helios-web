@@ -75,7 +75,7 @@ void main(void){
     vec3 clipDisplacement = (clipTo.xyz / clipTo.w - clipFrom.xyz / clipFrom.w);
     vec3 perpendicularVector = normalize(vec3(-clipDisplacement.y, clipDisplacement.x, 0.0));
     
-    float width = globalWidthBase + globalWidthScale * ((fromSizeEffect) * vertexType.y + (toSizeEffect) * (1.0 - vertexType.y));
+    float width = globalWidthBase + globalWidthScale * ((fromSizeEffect) * vertexType.x + (toSizeEffect) * (1.0 - vertexType.x));
     
     vec3 offset = width * (vertexType.y - 0.5) * 2.0 * 1.5 * perpendicularVector;
     
@@ -199,9 +199,9 @@ varying vec3 vOffset;
 //gl_DepthRange.near)/gl_DepthRange.diff
 void main(){
 	//float w = (-vZComponent-nearFar[0])/(nearFar[1]-nearFar[0]);
-	if(vOffset.x<vOffset.y || vOffset.x>(1.0-vOffset.z)){
-		discard;
-	}
+	// if(vOffset.x<vOffset.y || vOffset.x>(1.0-vOffset.z)){
+	// 	discard;
+	// }
 
 	// gl_FragColor = vec4(vOffset.x,vOffset.x,0,1.0);//vec4(vColor.xyz,globalOpacity*vColor.w);
 	gl_FragColor = vColor;
