@@ -18,6 +18,8 @@ uniform float globalWidthBase;
 uniform float globalOpacityScale;
 uniform float globalOpacityBase;
 
+uniform float scaleWithNodeSize;
+
 attribute vec3 fromVertex;
 attribute vec3 toVertex;
 attribute vec2 vertexType;
@@ -36,50 +38,52 @@ varying vec4 vColor;
 varying vec3 vOffset;
 varying vec4 vEncodedIndex;
 
+varying vec3 vOffsetFromVertex;
+varying vec3 vOffsetToVertex;
+
 
 //varying float vZComponent;
 
 void main(void){
 	vColor = (fromColor)*vertexType.x + (toColor)*(1.0-vertexType.x);
 	vColor.w = clamp(globalOpacityBase+globalOpacityScale*vColor.w,0.0,1.0);
-	float updatedFromSize = globalSizeScale*fromSize+globalSizeBase;
-	float updatedToSize = globalSizeScale*toSize+globalSizeBase;
-
-	float width = globalWidthBase+globalWidthScale*((updatedFromSize)*vertexType.x + (updatedToSize)*(1.0-vertexType.x));
+	float updatedFromSize = 1.0*globalSizeScale*fromSize+globalSizeBase;
+	float updatedToSize = 1.0*globalSizeScale*toSize+globalSizeBase;
 	vEncodedIndex = encodedIndex;
 	//vZComponent = viewVertex.z;
-
-
-	vec3 vertexCenter = fromVertex.xyz*vertexType.x + toVertex.xyz*(1.0-vertexType.x);
-	vec3 destinationVertexCenter = fromVertex.xyz*(1.0-vertexType.x) + toVertex.xyz*vertexType.x;
 	
-	vec3 displacement = (viewMatrix*vec4((destinationVertexCenter-vertexCenter),0.0)).xyz;
-	vec3 perpendicularVector = normalize(vec3(-displacement.y, displacement.x, 0.0));
-	vec3 offset = width*(vertexType.x-0.5)*(vertexType.y-0.5)*4.0*1.5*perpendicularVector;
-	
-	vec4 viewVertex = viewMatrix * vec4(vertexCenter.xyz,1.0)+vec4(offset,0.0);
-	float displacementLength = length(displacement);
-	vOffset = vec3(vertexType.x,updatedToSize/displacementLength*1.5,updatedFromSize/displacementLength*1.5);
-	
+	// TODO Implement: correct version
+	// float fromSizeEffect = scaleWithNodeSize*updatedFromSize+1.0-scaleWithNodeSize;
+	// float toSizeEffect = scaleWithNodeSize*updatedToSize+1.0-scaleWithNodeSize;
+	float fromSizeEffect = updatedFromSize;
+	float toSizeEffect = updatedToSize;
 
-	vec4 temp_pos = projectionMatrix*viewVertex;
-	// vec4 eye_vec = vec4(0.0,0.0,0.0,0);
-	// float dist = length(eye_vec);
-	// vec4 lookat = eye_vec - temp_pos;
-	// vec4 dir = temp_pos - eye_vec;
-	// vec4 center = normalize(-eye_vec);
-	// vec4 proj = dot(temp_pos, normalize(-lookat)) * normalize(-lookat);
-	// vec4 c = temp_pos - proj;
-	// float magnitude = 1.0-acos(dot(normalize(-eye_vec), normalize(temp_pos)));
+    // Compute the normalized direction of the edge from source to target
+    vec3 direction = normalize(toVertex - fromVertex);
 
-	// c = length(c) * magnitude * normalize(c);
-	// vec4 dir2 = normalize(c-lookat);
-	// temp_pos.xy = (dir2).xy;
-	// temp_pos.z = 0.0;
-	// temp_pos.w = 1.0;
+    // Offset source and target positions
+    vec3 offsetFromVertex = fromVertex + direction * updatedFromSize;
+    vec3 offsetToVertex = toVertex - direction * updatedToSize;
 
+    // Adjust the vertex center based on the updated source and target positions
+    vec3 vertexCenter = offsetFromVertex * vertexType.x + offsetToVertex * (1.0 - vertexType.x);
 
-	gl_Position = temp_pos;
+	// vec3 vertexCenter = fromVertex.xyz*vertexType.x + toVertex.xyz*(1.0-vertexType.x);
+    vec4 clipFrom = projectionMatrix * viewMatrix * vec4(fromVertex, 1.0);
+    vec4 clipTo = projectionMatrix * viewMatrix * vec4(toVertex, 1.0);
+    
+    vec3 clipDisplacement = (clipTo.xyz / clipTo.w - clipFrom.xyz / clipFrom.w);
+    vec3 perpendicularVector = normalize(vec3(-clipDisplacement.y, clipDisplacement.x, 0.0));
+    
+    float width = globalWidthBase + globalWidthScale * ((fromSizeEffect) * vertexType.y + (toSizeEffect) * (1.0 - vertexType.y));
+    
+    vec3 offset = width * (vertexType.y - 0.5) * 2.0 * 1.5 * perpendicularVector;
+    
+    vec4 viewVertex = viewMatrix * vec4(vertexCenter, 1.0);
+    vec4 offsetVertex = viewVertex + vec4(offset, 0.0);
+    
+    vec4 finalPos = projectionMatrix * offsetVertex;
+    gl_Position = finalPos;
 	
 }
 `;
