@@ -78,7 +78,7 @@ function downloadText(filename, text) {
 }
 
 function wrapText() {
-	let width = 300;
+	let width = 600;
 	let padding = 10
 	let self = d3Select(this),
 		textLength = self.node().getComputedTextLength(),
@@ -294,6 +294,7 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 
 
 	const gpuTier = await getGPUTier();
+	console.log(gpuTier);
 	const isHighSpeed = !gpuTier.isMobile && gpuTier.tier > 2;
 
 
@@ -312,7 +313,11 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 	/*
 	 * Initializing Helios
 	*/
-
+	let networkWeighted = false;
+	if(networkData.edges.length>0){
+		networkWeighted = "weight" in networkData.edges[0];
+	}
+	
 	let helios = new Helios({
 		elementID: "netviz",
 		// densityElementID: "densityRegion",
@@ -320,11 +325,21 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 		nodes: networkData.nodes,
 		edges: networkData.edges,
 		use2D: settings.use2D,
-		tracking: true,
+		tracking: false,
 		hyperbolic: settings.hyperbolic,
+		// if network is weighted
+		edgesWidthFromNodes: !networkWeighted,
 		fastEdges: !settings.advancedEdges && bigNetwork,
 		forceSupersample: isHighSpeed,
 		autoStartLayout: false,
+		webGLOptions: {
+			// alpha:false,
+			// depth:true,
+			// antialias:true,
+			// desynchronized:true,
+			powerPreference:"high-performance",
+			// premultipliedAlpha:false,
+		}
 	});
 
 	let ToBase64 = function (u8) {
@@ -351,7 +366,12 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 
 	for (let [key, node] of Object.entries(helios.network.nodes)) {
 		let nodeDegree = node.edges.length;
-		node._originalSize = defaultNodeScale * (1.0 + Math.log10(nodeDegree + 1.0));
+		// check if nodes have property Size
+		if (node.size) {
+			node._originalSize = node.size;
+		} else {
+			node._originalSize = defaultNodeScale * (1.0 + Math.log10(nodeDegree + 1.0));
+		}
 	}
 
 	let updateNodeSelectionStyle = (node) => {
@@ -396,9 +416,9 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 		}
 
 		if (node._filtered) {
-			nodeSize *= 0.05;
+			nodeSize *= 0.25;
 			nodeOpacity *= 1.0;
-			nodeOutlineWidth *= 0.1;
+			nodeOutlineWidth *= 0.0;
 		}
 
 
@@ -428,7 +448,6 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 		}
 	};
 
-	let nodesFilters = [];
 
 	let behaviorFilter = new BehaviorFilter(helios);
 
@@ -494,15 +513,14 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 		let outlineColor;
 		let textColor;
 
-		if (colorHSL.l > 0.30) {
-			textColor = colorRGB.brighter(0.25).formatRgb();
-			outlineColor = "rgba(0,0,0,1.0)";
-			outlineWidth = 1.0;
-
+		if (colorHSL.l > 0.33) {
+			textColor = colorRGB.formatRgb();
+			outlineColor = "rgba(5,5,5,1.0)";
+			outlineWidth = 1.15;
 		} else {
-			textColor = colorRGB.darker(0.25).formatRgb();
-			outlineColor = "rgba(200,200,200,1.0)";
-			outlineWidth = 1.25;
+			textColor = colorRGB.formatRgb();
+			outlineColor = "rgba(250,250,250,1.0)";
+			outlineWidth = 1.15;
 		}
 		return { fill: textColor, stroke: outlineColor, strokeWidth: outlineWidth };
 	}
@@ -520,7 +538,7 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 			// tooltipElement.style.left = x + "px";
 			// tooltipElement.style.top = y + "px";
 			if (typeof x !== 'undefined' && typeof y !== 'undefined') {
-				tooltipElement.group.style.transform = `translate(${x}px, ${y}px)`;
+				tooltipElement.group.style.transform = `translate(${x+2}px, ${y-25}px)`;
 				// tooltipElement.setAttribute('x', x);
 				// tooltipElement.setAttribute('y', y);
 			}
@@ -533,9 +551,38 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 				tooltipElement.outlineText.setAttribute("stroke-width", styleData.strokeWidth * 3.0);
 				tooltipElement.group.setAttribute("visibility", "visible");
 			}
-			// set text of the SVG element
 			tooltipElement.fillText.textContent = label;
 			tooltipElement.outlineText.textContent = label;
+			// set text of the SVG element
+			// if label is too long, it will split it into multiple lines
+			let maxLabelLength = 30;
+			let labelLines = [];
+			if (label.length > maxLabelLength) {
+				let words = label.split(" ");
+				let line = "";
+				words.forEach(word => {
+					if (line.length + word.length > maxLabelLength) {
+						labelLines.push(line);
+						line = "";
+					}
+					line += word + " ";
+				});
+				labelLines.push(line);
+			} else {
+				labelLines.push(label);
+			}
+			tooltipElement.fillText.innerHTML = "";
+			tooltipElement.outlineText.innerHTML = "";
+
+			labelLines.forEach(line => {
+				let textElement = document.createElementNS("http://www.w3.org/2000/svg", "tspan");
+				textElement.textContent = line;
+				textElement.setAttribute("x", 0);
+				textElement.setAttribute("dy", "1.2em");
+				tooltipElement.fillText.appendChild(textElement);
+				tooltipElement.outlineText.appendChild(textElement.cloneNode(true));
+			});
+
 		} else {
 			tooltipElement.group.setAttribute("visibility", "hidden");
 		}
@@ -567,25 +614,28 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 	let updateNodeSelectionGlobalStyle = (hasSelection) => {
 		// hasSelection not set 
 		if (typeof hasSelection === 'undefined') {
-			hasSelection = helios.network.index2Node.some(node => node._selected);
+			hasSelection = helios.network.indexedNodes.some(node => node._selected);
 		}
 		if (hasSelection) {
 			helios.nodesGlobalOpacityScale(nonSelectedNodeOpacityScale);
 			helios.nodesGlobalSizeScale(nonSelectedNodeSizeScale * currentGlobalNodeSizeScale);
+			// helios.edgesGlobalWidthScale(nonSelectedNodeSizeScale * currentGlobalNodeSizeScale);
 			helios.nodesGlobalOutlineWidthScale(nonSelectedNodeSizeScale * currentGlobalNodeSizeScale);
 			helios.edgesGlobalOpacityScale(currentGlobalEdgeOpacityScale * nonSelectedNodeOpacityScale);
 		} else {
 			helios.nodesGlobalOpacityScale(defaultNodeOpacity);
 			helios.nodesGlobalSizeScale(currentGlobalNodeSizeScale);
+			// helios.edgesGlobalWidthScale(currentGlobalNodeSizeScale);
 			helios.nodesGlobalOutlineWidthScale(currentGlobalNodeSizeScale);
 			helios.edgesGlobalOpacityScale(currentGlobalEdgeOpacityScale);
+			
 		}
 	}
 
 	let updateNodeSelectionOrHighlightedColors = (hasSelection) => {
 		// hasSelection not set 
 		if (typeof hasSelection === 'undefined') {
-			hasSelection = helios.network.index2Node.some(node => node._selected || node._highlighted || node._selectedNeighbor);
+			hasSelection = helios.network.indexedNodes.some(node => node._selected || node._highlighted || node._selectedNeighbor);
 		}
 		if (hasSelection) {
 			helios.nodeColor(node => {
@@ -606,9 +656,9 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 
 
 
-	let logK = Math.log10(helios.network.indexedEdges.length / helios.network.index2Node.length);
-	let logN = Math.log10(helios.network.index2Node.length);
-	let logDensity = Math.log10(2.0 * helios.network.indexedEdges.length / helios.network.index2Node.length / (helios.network.index2Node.length - 1.0));
+	let logK = Math.log10(helios.network.indexedEdges.length / helios.network.indexedNodes.length);
+	let logN = Math.log10(helios.network.indexedNodes.length);
+	let logDensity = Math.log10(2.0 * helios.network.indexedEdges.length / helios.network.indexedNodes.length / (helios.network.indexedNodes.length - 1.0));
 
 	// let estimatedZoom = Math.pow(10,1.3400+0.2144*logK+-0.3623*logN+0.0000*logDensity)
 	// let estimatedOpacity = Math.pow(10,1.8854+-0.6344*logK+-0.4964*logN+0.0000*logDensity)
@@ -672,7 +722,7 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 
 	helios.onNodeClick((node, event) => {
 		if (node) {
-			console.log(`Clicked: ${node.ID}`);
+			console.log(`Clicked: ${node.Label??node.ID}`);
 		} else {
 			console.log(`Clicked on background`);
 		}
@@ -680,7 +730,7 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 
 	helios.onNodeDoubleClick((node, event) => {
 		if (node) {
-			console.log(`Double Clicked: ${node.ID}`);
+			console.log(`Double Clicked: ${node.Label??node.ID}`);
 			centerOnNodes([node]);
 			// Special function for dealing with MAG/Openalex Citation networks
 			if ("mag id" in node) {
@@ -716,6 +766,9 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 	helios.onEdgeClick((edge, event) => {
 		console.log("Edge clicked");
 		console.log(edge);
+		if (edge){
+			console.log(`Clicked: ${edge.source.Label??edge.source.ID} - ${edge.target.Label??edge.source.ID}`);
+		}
 	});
 
 	helios.onLayoutStart(() => {
@@ -781,9 +834,17 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 			color: "#A72850",
 			tooltipText: "Download network",
 			action: (selection, d, event) => {
-				let gmlString = saveGML(helios.network);
-				downloadText(networkName + "_helios.gml", gmlString);
-				
+				if(event?.shiftKey){
+					let pos = helios.network.positions;
+					let postext = "" ;
+					for(let i=0;i<pos.length;i+=3){
+						postext+= `${pos[i]} ${pos[i+1]} ${pos[i+2]}\n`;
+					}
+					downloadText(networkName+"_positions.txt",postext);
+				}else{
+					let gmlString = saveGML(helios.network);
+					downloadText(networkName + "_helios.gml", gmlString);
+				}
 			},
 			extra: selection => {
 
@@ -795,13 +856,23 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 			color: "#777722",
 			tooltipText: "Export image",
 			action: (selection, d, event) => {
+				// if shift is pressed save as png
+				let extension = ".svg";
+				if (event?.shiftKey) {
+					extension = ".png";
+				}
+				// if option is pressed save with transparent background
+				let backgroundColor = settings.backgroundColor;
+				if (event?.altKey) {
+					backgroundColor = [settings.backgroundColor[0], settings.backgroundColor[1], settings.backgroundColor[2], 0.0];
+				}
 				let dpr = window.devicePixelRatio || 1;
-				helios.exportFigure(networkName + ".svg", {
-					scale: dpr,
+				helios.exportFigure(networkName + extension, {
+					scale: dpr*2.0,
 					// width: 2048,
 					// height: 2048,
 					supersampleFactor: 2.0,
-					backgroundColor: settings.backgroundColor,
+					backgroundColor: backgroundColor,
 				});
 			},
 			extra: selection => {
@@ -850,7 +921,7 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 						updateColorSelection();
 					})
 					.selectAll("option")
-					.data(Object.entries(helios.network.index2Node[0]))
+					.data(Object.entries(helios.network.indexedNodes[0]))
 					.enter()
 					.filter(d => !d[0].startsWith("_"))
 					.filter(d => !ignoredProperties.has(d[0]) && !d[0].startsWith("_"))
@@ -918,7 +989,7 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 						event.stopPropagation();
 					})
 					.selectAll("option")
-					.data(Object.entries(helios.network.index2Node[0]).concat([["Uniform", 0], ["Degree", 0]]))
+					.data(Object.entries(helios.network.indexedNodes[0]).concat([["Uniform", 0], ["Degree", 0]]))
 					.enter()
 					.filter(d => !d[0].startsWith("_"))
 					.filter(d => !ignoredProperties.has(d[0]) && !d[0].startsWith("_"))
@@ -947,7 +1018,7 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 						event.stopPropagation();
 					})
 					.selectAll("option")
-					.data(Object.entries(helios.network.index2Node[0]).concat([["Uniform", 0], ["Degree", 0], ["None", 0]]))
+					.data(Object.entries(helios.network.indexedNodes[0]).concat([["Uniform", 0], ["Degree", 0], ["None", 0]]))
 					.enter()
 					.filter(d => !d[0].startsWith("_"))
 					.filter(d => !ignoredProperties.has(d[0]) && !d[0].startsWith("_"))
@@ -1078,7 +1149,8 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 
 
 	let tooltipElement = {
-		group: helios.svgLayer.appendChild(document.createElementNS('http://www.w3.org/2000/svg', 'g'))
+		group: helios.svgLayer.appendChild(document.createElementNS('http://www.w3.org/2000/svg', 'g')),
+		text: ""
 		// .attr("id", "tooltips")
 	};
 
@@ -1115,7 +1187,7 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 	
 	let holdCategories = [];
 	let updateCategoryFilter = (categories) => {
-		let allNodes = helios.network.index2Node;
+		let allNodes = helios.network.indexedNodes;
 		// nodesFiltered(allNodes, true, false);
 		if (categories?.length > 0) {
 			let setCategories = new Set(categories);
@@ -1258,6 +1330,8 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 
 	function updateCategoricalColors() {
 		let propertyArray = [];
+
+		console.log(helios.network.nodes);
 		for (let [key, node] of Object.entries(helios.network.nodes)) {
 			propertyArray.push(node[colorProperty]);
 		}
@@ -1611,6 +1685,7 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 	}
 
 	helios.nodesGlobalSizeScale(currentGlobalNodeSizeScale);
+	// helios.edgesGlobalWidthScale(currentGlobalNodeSizeScale);
 	helios.nodesGlobalOutlineWidthScale(currentGlobalNodeSizeScale);
 	helios.edgesGlobalOpacityScale(currentGlobalEdgeOpacityScale);
 
@@ -1625,7 +1700,7 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 
 	let minScreenProportion = 0.0005;
 	let visibleScreenProportion = 0.001;
-	let maxLabels = 10;
+	let maxLabels = 100;
 	let screenLabelsSmoothness = 2.0;
 
 
@@ -1664,7 +1739,7 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 						.classed("label", true);
 
 					let nodeLabel = (nodeIDsProportion) => {
-						let node = helios.network.index2Node[+nodeIDsProportion[0]];
+						let node = helios.network.indexedNodes[+nodeIDsProportion[0]];
 						return node.Label ?? node.title ?? node.ID;
 					}
 					labelGroup.append("text").classed("labelOutline", true).attr("dy", "0.25em")
@@ -1693,7 +1768,7 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 				return interpolateProportion(nodeIDsProportion[1]);
 			})
 			.each(function (nodeIDsProportion) {
-				let node = helios.network.index2Node[+nodeIDsProportion[0]];
+				let node = helios.network.indexedNodes[+nodeIDsProportion[0]];
 				// stylizeLabel(this, node.color);
 				let labelSelect = d3Select(this);
 				let labelFillNode = labelSelect.select(".labelFill").node();
@@ -1773,16 +1848,16 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 	// });
 
 	helios.onReady(() => {
-		helios.trackAttribute("indexTracker", "index", {
-			minProportion: minScreenProportion,
-			smoothness: screenLabelsSmoothness,
-			maxLabels: maxLabels,
-			onTrack: (indices, tracker) => {
-				nodesOnScreen = indices;
-				updateLabelsInScreen();
-			}
-		});
-
+		// helios.trackAttribute("indexTracker", "index", {
+		// 	minProportion: minScreenProportion,
+		// 	smoothness: screenLabelsSmoothness,
+		// 	maxLabels: maxLabels,
+		// 	onTrack: (indices, tracker) => {
+		// 		nodesOnScreen = indices;
+		// 		updateLabelsInScreen();
+		// 	}
+		// });
+		
 		// helios.trackAttribute("category", "cluster name", {
 		// 	maxLabels: maxLabels,
 		// 	calculateCentroid:true,
@@ -1865,7 +1940,7 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 
 	let updateFilteredNodes = throttleLast(() => {
 		let searchTerm = d3Select(helios.overlay).select("div.filterPanel").select(".searchSelector").property("value");
-		let allNodes = helios.network.index2Node;
+		let allNodes = helios.network.indexedNodes;
 		// console.log("searching for " + searchTerm)
 		// if query
 		if (!searchTerm.startsWith("*")) {
@@ -1952,7 +2027,7 @@ if (startSettings.format === "xnet") {
 	console.error("Unknown network format: " + startSettings.format);
 }
 
-async function loadNetworkFromContents(fileContents,fileExtension) {
+async function loadNetworkFromContents(fileContents,filenameWithoutExtension,fileExtension) {
 	let networkData;
 	if (fileExtension === "gml") {
 		networkData = gml.loadGML(fileContents);
@@ -1965,6 +2040,7 @@ async function loadNetworkFromContents(fileContents,fileExtension) {
 	} else if (fileExtension === "json") {
 		networkData = JSON.parse(fileContents);
 	}
+	startSettings.networkName = filenameWithoutExtension;
 	currentHelios = await visualizeNetwork(networkData, startSettings);
 
 }
@@ -1972,13 +2048,14 @@ async function loadNetworkFromContents(fileContents,fileExtension) {
 async function loadNetworkFromUploadedFile(fileObject){
 	let fileName = fileObject.name;
 	let fileExtension = fileName.split(".").pop().toLowerCase();
-
 	if (fileExtension === "gml" || fileExtension === "xnet" || fileExtension === "gexf" || fileExtension === "json") {
+
+		let filenameWithoutExtension = fileName.substring(0, fileName.length - fileExtension.length - 1);
 		// load the file
 		d3Select("#loadingPanel").style("display", null);
 		currentHelios?.cleanup()
 		let fileContents = await fileObject.text();
-		loadNetworkFromContents(fileContents,fileExtension).catch(error => {
+		loadNetworkFromContents(fileContents,filenameWithoutExtension,fileExtension).catch(error => {
 			console.error(error);
 			alert("Error loading network: " + error);
 			d3Select("#loadingPanel").style("display", "none");
@@ -2048,7 +2125,7 @@ function saveGML(network){
 	let edges = [];
 
 	let nodeIndex = 0;
-	for (let node of network.index2Node){
+	for (let node of network.indexedNodes){
 		// filter any attribute starting with _ or named neighbors and edges
 		let nodeData = {};
 		let allPositions = helios.network.positions;

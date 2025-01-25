@@ -4,7 +4,7 @@ import {makeOrtho, Matrix} from "sylvester-es6"
 import * as d3Chromatic from "d3-scale-chromatic"
 import { rgb as d3rgb } from "d3-color"
 import { scaleOrdinal as d3ScaleOrdinal, scaleSequential as d3ScaleSequential } from "d3-scale"
-import * as glUtils from "../utilities/webgl.js"
+import * as glUtils from "./webgl.js"
 import * as densityShaders from "../shaders/density.js"
 
 

@@ -1,6 +1,6 @@
 
 import { createColorMap, linearScale } from "@colormap/core";
-import { viridis, cividis, plasma, inferno, magma, blackWhite } from "@colormap/presets";
+import {inferno} from "@colormap/presets";
 
 //Make a node from a generic object
 class Node{
@@ -96,46 +96,57 @@ class Node{
 
 
 
-
 export class Network{
-	constructor(nodes,edges,properties){
+	constructor(nodes, edges, directed = false, weighted = false){
 		this.ID2index = new Object();
-		this.index2Node = [];
+		this.indexedNodes = [];
+		// DEPRECATED: Changed to index2Node kept for backwards compatibility
+		this.index2Node = this.indexedNodes;
+		this.directed = directed;
+		// weighted defined if edge.weight is present
+		if(edges.length > 0 && edges[0].hasOwnProperty("weight")){
+			this.weighted = true;
+		}
 		for (const [nodeID, node] of Object.entries(nodes)) {
 			if(!this.ID2index.hasOwnProperty(nodeID)){
-				let nodeIndex = this.index2Node.length;
+				let nodeIndex = this.indexedNodes.length;
 				this.ID2index[nodeID] = nodeIndex;
 				node.index = nodeIndex;
 				node.ID = nodeID;
-				this.index2Node.push(node);
+				this.indexedNodes.push(node);
 				node.neighbors = [];
 				node.edges = [];
 			}
 		}
 
 		this.indexedEdges = new Int32Array(edges.length*2);
+		this.edgeWeights = new Float32Array(edges.length);
+		
 		for (let edgeIndex = 0; edgeIndex < edges.length; edgeIndex++) {
 			const edge = edges[edgeIndex];
-			// console.log(this.index2Node)
+			// console.log(this.indexedNodes)
 			let fromIndex =this.ID2index[edge.source];
 			let toIndex = this.ID2index[edge.target];
-			// let fromNode = this.index2Node[fromIndex];
-			// let toNode = this.index2Node[toIndex];
+			// let fromNode = this.indexedNodes[fromIndex];
+			// let toNode = this.indexedNodes[toIndex];
 			this.indexedEdges[edgeIndex*2] = fromIndex;
 			this.indexedEdges[edgeIndex*2+1] = toIndex;
+			if(this.weighted){
+				this.edgeWeights[edgeIndex] = edge.weight;
+			}
 		}
 		
-		this.positions = new Float32Array(3*this.index2Node.length);
-		this.colors = new Float32Array(4*this.index2Node.length);
-		this.sizes = new Float32Array(this.index2Node.length);
-		this.outlineColors = new Float32Array(4*this.index2Node.length);
+		this.positions = new Float32Array(3*this.indexedNodes.length);
+		this.colors = new Float32Array(4*this.indexedNodes.length);
+		this.sizes = new Float32Array(this.indexedNodes.length);
+		this.outlineColors = new Float32Array(4*this.indexedNodes.length);
 		//set intensities to 1.0
-		for (let nodeIndex=0; nodeIndex<this.index2Node.length;nodeIndex++){
+		for (let nodeIndex=0; nodeIndex<this.indexedNodes.length;nodeIndex++){
 			this.colors[nodeIndex*4+3] = 1.0;
 			this.outlineColors[nodeIndex*4+3] = 1.0;
 		}
 
-		this.outlineWidths = new Float32Array(this.index2Node.length);
+		this.outlineWidths = new Float32Array(this.indexedNodes.length);
 		
 		this.edgePositions = null; //new Float32Array(3*this.indexedEdges.length);
 		this.edgeColors = null; //new Float32Array(3*this.indexedEdges.length);
@@ -151,10 +162,10 @@ export class Network{
 
 		this.nodes = {}
 		
-		let colorScale = linearScale([0, this.index2Node.length], [0, 1]);
+		let colorScale = linearScale([0, this.indexedNodes.length], [0, 1]);
 		let colorMap = createColorMap(inferno, colorScale);
-		for (let index = 0; index < this.index2Node.length; index++) {
-			let node = this.index2Node[index];
+		for (let index = 0; index < this.indexedNodes.length; index++) {
+			let node = this.indexedNodes[index];
 			if(node.hasOwnProperty("Position")){
 				this.positions[index*3]   = node["Position"][0];
 				this.positions[index*3+1] = node["Position"][1];
@@ -228,25 +239,47 @@ export class Network{
 			}
 
 			let newNode = new Node(node,node.ID,index,this);
-			this.index2Node[index] = newNode;
+			this.indexedNodes[index] = newNode;
 			this.nodes[node.ID] = newNode;
 		}
 		for (let edgeIndex = 0; edgeIndex < edges.length; edgeIndex++) {
 			const edge = edges[edgeIndex];
-			// console.log(this.index2Node)
+			// console.log(this.indexedNodes)
 			let fromIndex =this.ID2index[edge.source];
 			let toIndex = this.ID2index[edge.target];
-			let fromNode = this.index2Node[fromIndex];
-			let toNode = this.index2Node[toIndex];
+			let fromNode = this.indexedNodes[fromIndex];
+			let toNode = this.indexedNodes[toIndex];
 			fromNode.neighbors.push(toNode);
-			toNode.neighbors.push(fromNode);
 			fromNode.edges.push(edgeIndex);
-			toNode.edges.push(edgeIndex);
+			if(!this.directed){
+				toNode.neighbors.push(fromNode);
+				toNode.edges.push(edgeIndex);
+			}
+		}
+
+		// if weighted make edgeSizes proportional
+		if(this.weighted){
+			if (this.edgeSizes == null) {
+				this.edgeSizes = new Float32Array(this.indexedEdges.length);
+			}
+			let edgeWeights = this.edgeWeights;
+			let edgeSizes = this.edgeSizes;
+			let maxWeight = -Infinity;
+			for (let i = 0; i < edgeWeights.length; i++) {
+			  if (edgeWeights[i] > maxWeight) {
+				maxWeight = edgeWeights[i];
+			  }
+			}
+			for (let edgeIndex = 0; edgeIndex < edgeWeights.length; edgeIndex++) {
+				edgeSizes[edgeIndex*2] = edgeWeights[edgeIndex]/maxWeight;
+				edgeSizes[edgeIndex*2+1] = edgeWeights[edgeIndex]/maxWeight;
+
+			}
 		}
 	}
 
 	get nodeCount(){
-		return this.index2Node.length;
+		return this.indexedNodes.length;
 	}
 
 	updateEdgePositions() {
@@ -305,6 +338,7 @@ export class Network{
 	}
 	
 	updateEdgeSizes() {
+		// console.log("UPDATING EDGE SIZES...");
 		if (this.edgeSizes == null) {
 			this.edgeSizes = new Float32Array(this.indexedEdges.length);
 		}
@@ -323,7 +357,7 @@ export class Network{
 	
 
 
-	updateEdgeOpacity(updateOpacity) {
+	updateEdgeOpacity() {
 		if (this.edgeColors == null) {
 			this.edgeColors = new Float32Array(4 * this.indexedEdges.length);
 		}
@@ -341,3 +375,118 @@ export class Network{
 	}
 	
 }
+
+
+// Create a class for a Node Selector
+class NodeSelector{
+	constructor(network,{nodeIndices = [], nodeIDs = []}){ //NodeIndices or nodeIDs, not both
+		this._network = network;
+		// Check if nodeIndices and nodeIDs are provided
+		if(nodeIndices.length > 0 && nodeIDs.length > 0){
+			throw new Error("NodeSelector can only be initialized with nodeIndices or nodeIDs, not both");
+		}
+		this._nodeIndices = nodeIndices;
+		if(nodeIDs.length > 0){
+			this._nodeIndices = nodeIDs.map(id => this._network.ID2index[id]);
+		}
+	}
+
+	includeNodeID(nodeID){
+		this._nodeIndices.push(this._network.ID2index[nodeID]);
+	}
+
+	includeNode(node){
+		this._nodeIndices.push(node.index);
+	}
+
+	includeNodeIndex(nodeIndex){
+		this._nodeIndices.push(nodeIndex);
+	}
+
+	filter(selectorFunction){
+		// will select a subset of the nodes based on a function
+		// the function will be passed a node object and should return true or false
+
+		const nodes = this._network.nodes;
+		const nodeIndices = this._nodeIndices;
+		const selectedNodeIndices = [];
+		for(let i = 0; i < nodeIndices.length; i++){
+			const nodeIndex = nodeIndices[i];
+			if(selectorFunction(nodes[nodeIndex])){
+				selectedNodeIndices.push(nodeIndex);
+			}
+		}
+		return new NodeSelector(this._network,{nodeIndices: selectedNodeIndices});
+	}
+
+	selectFromAttributes(attributeNames, selectorFunction){
+		// Use a list of attributes that will be passed to selectorFunction to check if a node should be selected or not
+		// selectorFunction will be passed an object with the attributes as properties
+
+		const nodes = this._network.nodes;
+		const nodeIndices = this._nodeIndices;
+		const selectedNodeIndices = [];
+		for(let i = 0; i < nodeIndices.length; i++){
+			const nodeIndex = nodeIndices[i];
+			const node = nodes[nodeIndex];
+			const nodeAttributes = {};
+			for(let j = 0; j < attributeNames.length; j++){
+				const attributeName = attributeNames[j];
+				nodeAttributes[attributeName] = node[attributeName];
+			}
+			if(selectorFunction(nodeAttributes)){
+				selectedNodeIndices.push(nodeIndex);
+			}
+		}
+		return new NodeSelector(this._network,{nodeIndices: selectedNodeIndices});
+	}
+
+	get indices (){
+		return this._nodeIndices;
+	}
+
+	get nodes(){
+		return this._nodeIndices.map(nodeIndex => this._network.nodes[nodeIndex]);
+	}
+
+	get nodeIDs(){
+		return this._nodeIndices.map(nodeIndex => this._network.nodes[nodeIndex].ID);
+	}
+
+	nodeAttribute(attributeName, value){
+		// Get or set the following attribute to all nodes in the selector, if value is function call it for each node
+		const nodes = this._network.nodes;
+		const nodeIndices = this._nodeIndices;
+		if(value === undefined){
+			// Get attribute for all nodes in selector
+			const attributeValues = [];
+			for(let i = 0; i < nodeIndices.length; i++){
+				const nodeIndex = nodeIndices[i];
+				attributeValues.push(nodes[nodeIndex][attributeName]);
+			}
+			return attributeValues;
+		} else {
+			// Set attribute for all nodes in selector
+			if(typeof value === "function"){
+				for(let i = 0; i < nodeIndices.length; i++){
+					const nodeIndex = nodeIndices[i];
+					nodes[nodeIndex][attributeName] = value(nodes[nodeIndex]);
+				}
+			} else {
+				for(let i = 0; i < nodeIndices.length; i++){
+					const nodeIndex = nodeIndices[i];
+					nodes[nodeIndex][attributeName] = value;
+				}
+			}
+		}
+		return this; // For chaining
+	}
+
+
+
+}
+
+
+
+
+

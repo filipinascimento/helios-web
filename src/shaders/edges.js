@@ -131,9 +131,9 @@ vec2 hyperbolicNormFactor(vec2 vertex, float scaling){
 	vec2 pos = vertex.xy;
 	float r = length(pos.xy);
 	// //polar
-	// vec2 normFactor = (r+scaling)*vec2(1.0,1.0);
+	vec2 normFactor = (r+scaling)*vec2(1.0,1.0);
 	// catersian
-	vec2 normFactor = sqrt(vertex.xy*vertex.xy+scaling*scaling);
+	// vec2 normFactor = sqrt(vertex.xy*vertex.xy+scaling*scaling);
 	return normFactor;
 }
 

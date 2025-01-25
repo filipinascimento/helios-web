@@ -62,13 +62,20 @@ for(let name of Object.keys(cmasherColorsJSONData)) {
 // });
 
 
-
+let schemeOrangeGrayBlue3 = [
+    // Three matching and beautiful colors based on Blue, Gray and Red
+    // 
+    "#ff7f0e",
+    "#888888",
+    "#1f77b4",
+];
 
 // lut = (name) =>d3.text(
 //       `https://raw.githubusercontent.com/1313e/CMasher/master/cmasher/colormaps/${name}/${name}_8bit.txt`
 //     ).then(d => d3.dsvFormat(" ").parseRows(d, d => d3.rgb(d[0], d[1], d[2]))).then((l) => (t) => l[Math.floor(t * (l.length - 1e-7))])
 Object.assign(cmasherColors, {
     schemeCategory18,
+    schemeOrangeGrayBlue3,
     // lut,
     // names
 })

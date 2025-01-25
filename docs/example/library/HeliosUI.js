@@ -39,25 +39,30 @@ export default class HeliosUI {
 		this.toggleButton.style.fontSize = "12px"
 		this.toggleButton.style.left = '-25px';
 		this.toggleButton.style.width = '25px';
-		this.toggleButton.style.height = '100px';
+		this.toggleButton.style.height = '70px';
+		// bold
+		this.toggleButton.style.fontWeight = 'bold';
 		this.toggleButton.style.backgroundColor = 'rgba(75, 75, 75, 0.45)';
 		this.toggleButton.style.color = 'white';
 		this.toggleButton.style.textAlign = 'center';
-		this.toggleButton.style.lineHeight = '100px';
+		// this.toggleButton.style.lineHeight = '100px';
+		this.toggleButton.style.lineHeight = '25px';
 		this.toggleButton.style.cursor = 'pointer';
+		// writing-mode: vertical-rl;
+		this.toggleButton.style.writingMode = 'vertical-rl';
 		if(this._isCollapsed){
-			this.toggleButton.textContent = '◀';
+			this.toggleButton.textContent = 'Controls';
 			this.panelContainer.style.right = '-255px';
 		}else{
-			this.toggleButton.textContent = '▶';
+			this.toggleButton.textContent = 'Controls';
 			this.panelContainer.style.right = '0px';
 		}
 		if(this._resizeHelios){
 			// enable animations in css
 			this._helios.canvasElement.style.transition = 'padding-right 0.3s ease';
 			console.log(this.panelContainer.style.right)
-			this._helios.canvasElement.style.paddingRight = this._isCollapsed?"0px":"255px";
-			this._helios.svgLayer.style.paddingRight = this._isCollapsed?"0px":"255px";
+			this._helios.canvasElement.style.paddingRight = this._isCollapsed?"0px":"250px";
+			this._helios.svgLayer.style.paddingRight = this._isCollapsed?"0px":"250px";
 		}
 		this.panel.appendChild(this.toggleButton);
 
@@ -74,21 +79,26 @@ export default class HeliosUI {
 			shaded: false,
 			advancedEdges: false,
 			darkMode: false,
-				blendings: "normal", // Only for darkMode
+			blendings: "normal", // Only for darkMode
+
 			// Nodes
 			nodeSizeScale: 1.0,
+
 			// Nodes Colors
 				nodeColorProperty:"index",
 				nodeColorMap:"viridis",
 			nodeOutlineScale:1.0,
+
 			// Edges
 			edgeOpacityScale: 0.1,
+
 			// Density
 			densityEnabled: false,
 			densityProperty:"uniform",
 			densityVsProperty: "None",
 			densityBandwidth: 0.1,
 			densityWeight: 0.5,
+
 			// Layout
 			layout: "Multipole FR",
 			gravity: 0.1,
@@ -109,16 +119,71 @@ export default class HeliosUI {
 
 		};
 		this.addHeliosPropertiesPane();
+	}
+
+	updateFromHelios() {
+		// // Helios Visuals
+		// shaded: false,
+		// advancedEdges: false,
+		// darkMode: false,
+		// blendings: "normal", // Only for darkMode
+		this.settings.shaded = helios.shadedNodes();
+		this.settings.advancedEdges = helios._settings.fastEdges;
+		// this.settings.darkMode = helios._settings.darkMode;
+		this.settings.blendings = helios.additiveBlending()? "additive":"normal";
+
+		// // Nodes
+		// nodeSizeScale: 1.0,
+		// nodeOutlineScale:1.0,
+		this.settings.nodeSizeScale = helios.nodesGlobalSizeScale()
+		this.settings.nodeOutlineScale = helios.nodesGlobalOutlineWidthScale()
+
+		// // Nodes Colors
+		// 	nodeColorProperty:"index",
+		// 	nodeColorMap:"viridis",
+
+		// // Edges
+		// edgeOpacityScale: 0.1,
+		this.settings.edgeOpacityScale = helios.edgesGlobalOpacityScale()
+		
+		// // Density
+		this.settings.densityEnabled = helios.densityMap?true:false;
+		if(this.settings.densityEnabled){
+			this.densityBandwidth = helios.densityMap.bandwidthScale;
+			this.densityWeight = helios.densityMap.kernel_weightScale;
+		}
+		// densityEnabled: false,
+		// densityProperty:"uniform",
+		// densityVsProperty: "None",
+		// densityBandwidth: 0.1,
+		// densityWeight: 0.5,
+
+		// // Layout
+		// layout: "Multipole FR",
+		// gravity: 0.1,
+		// forcesIntensity: 0.1,
+		// attractiveRepulsiveRatio: 1.0,
+
+		// // Filter Nodes
+		// filterNodes: false,
+		// filterNodesProperty: "None",
+		// filterNodesInterval: [0, 1],
+
+		// // Filter Edges
+		// filterEdges: false,
+		// filterEdgesProperty: "None",
+		// filterEdgesInterval: [0, 1],
+
 
 	}
 
 	toggleCollapse() {
 		if (!this._isCollapsed) {
 			this.panelContainer.style.right = '-255px';
-			this.toggleButton.textContent = '◀';
+			this.toggleButton.textContent = "Controls"//'◀';
 		} else {
 			this.panelContainer.style.right = '0';
-			this.toggleButton.textContent = '▶';
+			this.toggleButton.textContent = "Controls"//'▶';
 		}
 		if(this._resizeHelios){
 			this._helios.canvasElement.style.paddingRight = this._isCollapsed?"250px":"0px";
@@ -137,13 +202,16 @@ export default class HeliosUI {
 			title: 'Node Visuals',
 			expanded: true,
 		});
-		this.visualPropertiesPanel.addInput(this.settings, 'edgeOpacityScale',{
+
+		this.visualPropertiesPanel.addBinding(this.settings, 'edgeOpacityScale',{
 			min: 0,
 			max: 255,
 			step: 1,
-			
 			format: (v) => v/255.0,
 			label: 'Edge Opacity',
+		}).on('change', (ev) => {
+			this._helios.edgesGlobalOpacityScale(ev.value/255.0);
+			this._helios.render();
 		});
 	}
 

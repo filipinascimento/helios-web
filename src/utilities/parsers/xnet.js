@@ -268,6 +268,9 @@ function convertXNET2JSON(network){
 			"target": "" + network.edges[index][1],
 			// directed?
 		});
+		if (network.weighted) {
+			edges[index].weight = network.weights[index];
+		}
 	}
 	
 	return {nodes:nodes,edges:edges};

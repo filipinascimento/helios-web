@@ -1,6 +1,10 @@
 /**
  * A class representing a behavior filter for Helios.
  */
+
+
+
+
 export class BehaviorFilter {
 	/**
 	 * Creates a new instance of BehaviorFilter.
@@ -52,7 +56,7 @@ export class BehaviorFilter {
 	 * Applies the filters.
 	 */
 	applyFilters() {
-		for (let node of this._helios.network.index2Node) {
+		for (let node of this._helios.network.indexedNodes) {
 			let nodeState = false;
 			for (let filter in this._filters) {
 				nodeState = nodeState || this._filters[filter](node);

@@ -17,6 +17,45 @@ void main(){
 `;
 
 
+// TERRAIN SHADER
+let terrainFragmentShader = /*glsl*/`#extension GL_OES_standard_derivatives : enable
+precision highp float; 
+
+
+uniform sampler2D input_tex; // Elevation data
+uniform sampler2D lut_tex;   // Color map
+uniform float diverging;     // If diverging
+varying vec2 tex_coord;      // Texture coordinate
+
+// Simple directional light properties
+vec3 lightDir = normalize(vec3(1.0, 1.0, 1.0)); // Light direction
+vec3 ambientColor = vec3(0.3, 0.3, 0.3); // Ambient light color
+vec3 lightColor = vec3(0.7, 0.7, 0.7); // Diffuse light color
+
+void main() {
+    float val = texture2D(input_tex, tex_coord).r + 0.5 * diverging;
+
+    // Approximate the gradient (slope) of the elevation
+    float dx = dFdx(val*1000.0); // Change in x direction
+    float dy = dFdy(val*1000.0); // Change in y direction
+
+    // Compute normal vector from gradient
+    vec3 normal = normalize(vec3(-dx, -dy, 1.0));
+
+    // Compute lighting
+    float diff = max(dot(normal, lightDir), 0.0); // Diffuse lighting
+    vec3 lighting = ambientColor + (lightColor * diff); // Total lighting
+
+    // Lookup the color from the LUT based on elevation
+    vec4 baseColor = texture2D(lut_tex, vec2(val, 0.5));
+
+    // Apply lighting to the base color
+    vec3 finalColor = baseColor.rgb * lighting;
+
+    gl_FragColor = vec4(finalColor, 1.0);
+}
+`;
+
 //
 // TEXTURE SHADER VERTEX
 //

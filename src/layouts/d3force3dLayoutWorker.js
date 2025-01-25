@@ -29,6 +29,50 @@ let workerFunction = (function (){
 
 	"use strict"
 
+
+	
+	function d3gravityForce() {
+		// var nodes, strength = 0.20, softening = 0.05;
+		var nodes, strength = 0.05, softening = 0.025;
+		function force(alpha){
+			const totalStrength = Math.sqrt(nodes.length)*alpha * strength;
+			for (let i = 0, n = nodes.length, node; i < n; ++i) {
+				node = nodes[i];
+				let distance = Math.sqrt(node.x * node.x + node.y * node.y + node.z * node.z + softening);
+				
+				let kinvdistance3 = totalStrength/(distance);
+				node.vx -= node.x * kinvdistance3;
+				node.vy -= node.y * kinvdistance3;
+				node.vz -= node.z * kinvdistance3;
+			}
+		}
+		
+		force.initialize = function(_) {
+			nodes = _;
+		};
+		
+		force.strength = function(_) {
+			return arguments.length ? (strength = +_, force) : strength;
+		};
+
+		force.softening = function(_) {
+			return arguments.length ? (softening = +_, force) : softening;
+		};
+		
+		return force;
+	}
+
+	let nodes = [];
+	let inputEdges = [];
+	let links = [];
+	let enabledLinks = links;
+	let use2D = false;
+	let weighted = false;
+	this.simulation = null;
+	this._linkForceStrength = 1;
+	this._normalizationType = "degree";
+
+
 	this._handleSetAttribute = (attributeName,value)=>{
 		// example attributeName = "simulation.alpha"
 		// example this.simulation.attributeName?.(value);
@@ -39,10 +83,161 @@ let workerFunction = (function (){
 		}
 		attribute?.(value);
 	}
+	this.forceLinkStrength = (value)=>{
+		// value not defined
+		if(value == undefined){
+			value = this._linkForceStrength;
+		}
+		this._linkForceStrength = value;
+		if(weighted){
+			switch(this._normalizationType){
+				case "strength":
+					this.attractiveforce.strength(d => d.weight==0?0:this._linkForceStrength * d.weight / Math.min(d.target.strength, d.source.strength));
+					break;
+				case "degree":
+					this.attractiveforce.strength(d => d.weight==0?0:this._linkForceStrength / Math.min(d.target.degree, d.source.degree));
+					break;
+				default:
+					this.attractiveforce.strength(d => this._linkForceStrength * d.weight);
+			}
+		}else{
+			switch(this._normalizationType){
+				case "strength":
+					this.attractiveforce.strength(d => this._linkForceStrength / Math.min(d.target.strength, d.source.strength));
+					break;
+				case "degree":
+					this.attractiveforce.strength(d => this._linkForceStrength / Math.min(d.target.degree, d.source.degree));
+					break;
+				default:
+					this.attractiveforce.strength(d => this._linkForceStrength);
+			}
+			// this.attractiveforce.strength(1);
+		}
+	}
+	
+	this.forceNormalizationType = (value)=>{
+		if(value){
+			this._normalizationType = value;
+			this.forceLinkStrength(this._linkForceStrength);
+		}
+	
+	}
+
+	this._createNodesAndEdges = ()=>{
+		// let inputNodes = msg.data.nodes;
+		// let inputEdgeWeights = msg.data.weights;
+		
+
+		for (let nodeIndex = 0; nodeIndex < inputNodesPositions.length/3; nodeIndex++) {
+			let x = inputNodesPositions[nodeIndex*3+0]*10;
+			let y = inputNodesPositions[nodeIndex*3+1]*10;
+			let z = inputNodesPositions[nodeIndex*3+2]*10;
+			let vz = 0;
+			nodes.push({x,y,z,vz,ID:nodeIndex,strength:1});
+		}
+
+		for (let index = 0; index < inputEdges.length / 2; index++) {
+			let edgeFrom = nodes[(inputEdges[index * 2])];
+			let edgeTo = nodes[(inputEdges[index * 2 + 1])];
+			let edgeObject = {
+				source: edgeFrom,
+				target: edgeTo,
+			}
+			links.push(edgeObject);
+		}
+		allowedLinks = links;
+		this._recalculateStrenghts();
+	}
+
+	this._setupForces = (dataUse2D)=>{
+		if(dataUse2D) {
+			use2D = true;
+		}
+		this.repulsiveforce = d3.forceManyBody();
+		this.attractiveforce = d3.forceLink(allowedLinks);
+		this.centralForce = d3.forceCenter();
+		this.gravityForce = d3gravityForce();
+		// this.gravityForce.strength(0.65);
+
+
+		this.simulation = d3.forceSimulation(nodes)
+			.numDimensions(use2D?2:3)
+			.force("charge", this.repulsiveforce)
+			.force("link", this.attractiveforce)
+			.force("center", centralForce)
+			.force("gravity", this.gravityForce)
+			// .force("collide", d3.forceCollide(d => d.size*4))
+			.velocityDecay(0.05)
+			.on("tick", async () => {
+				for (let vertexIndex = 0; vertexIndex < nodes.length; vertexIndex++) {
+					const node = nodes[vertexIndex];
+					inputNodesPositions[vertexIndex * 3 + 0] = node.x/10;
+					inputNodesPositions[vertexIndex * 3 + 1] = node.y/10;
+					if(!use2D) {
+						inputNodesPositions[vertexIndex * 3 + 2] = node.z/10;
+					}else{
+						inputNodesPositions[vertexIndex * 3 + 2] = 0;
+					}
+				}
+				self.postMessage({ type: "update", positions: inputNodesPositions });
+			}).on("end", () => {
+				self.postMessage({ type: "stop" });
+			});
+		this.forceLinkStrength(this._linkForceStrength);
+	}
+	
+	this._recalculateStrenghts = ()=>{
+		nodes.forEach((node,index)=>{
+			node.strength = 0;
+			node.degree = 0;
+		});
+		if(weighted){
+			// reset all node strengths
+			allowedLinks.forEach((link,index)=>{
+				link.source.strength += link.weight;
+				link.target.strength += link.weight;
+				link.source.degree += 1;
+				link.target.degree += 1;
+			});
+		}else{ //use degree
+			allowedLinks.forEach((link,index)=>{
+				link.source.strength += 1;
+				link.target.strength += 1;
+				link.source.degree += 1;
+				link.target.degree += 1;
+			});
+		}
+	}
+
+	this._updateWeights = (weights)=>{
+		if(weights && weights.length == links.length){
+			links.forEach((link,index)=>{
+				link.weight = weights[index];
+			});
+			weighted = true;
+			this._recalculateStrenghts();
+			this.forceLinkStrength(this._linkForceStrength);
+
+		}else{
+			weighted = false;
+		}
+	}
+	
+	this.setAllowedEdges = (allowedEdgesIndices)=>{
+		if(allowedEdgesIndices){
+			allowedLinks = [];
+			allowedEdgesIndices.forEach((edgeIndex,index)=>{
+				allowedLinks.push(links[edgeIndex]);
+			});
+		}
+		this._recalculateStrenghts();
+		this.forceLinkStrength(this._linkForceStrength);
+		this.attractiveforce.links(allowedLinks);
+	}
+
 
 	self.onmessage = function (msg) {
 		// console.log("RECEIVED:", msg.data.type);
-		let use2D = false;
 		if (msg.data.type == "pause") {
 			// console.log("PAUSING!!!!")
 			this.simulation.stop();
@@ -50,110 +245,18 @@ let workerFunction = (function (){
 			this.simulation.restart();
 		} else if (msg.data.type == "setAttribute") {
 			this._handleSetAttribute(msg.data.attributeName,msg.data.value);
+		} else if (msg.data.type == "setWeights") {
+			this._updateWeights(msg.data.weights);
+		} else if (msg.data.type == "setAllowedEdges") {
+			this.setAllowedEdges(msg.data.allowedEdgeIndices);
 		} else if (msg.data.type == "start") {
-			// let inputNodes = msg.data.nodes;
-			let inputNodesPositions = msg.data.positions;
-			let inputEdges = msg.data.edges;
-			// let inputEdgeWeights = msg.data.weights;
-			
-			if(msg.data.use2D) {
-				use2D = true;
+			inputNodesPositions = msg.data.positions;
+			inputEdges = msg.data.edges;
+			this._createNodesAndEdges();
+			this._setupForces(msg.data.use2D);
+			if(msg.data.weights){
+				this._updateWeights(msg.data.weights);
 			}
-
-			let nodes = [];
-			let links = [];
-			for (let nodeIndex = 0; nodeIndex < inputNodesPositions.length/3; nodeIndex++) {
-				
-				// console.log(entry);
-				
-
-				// node.x = 400 * (Math.random() * 1.0 - 0.5);
-				// node.y = 400 * (Math.random() * 1.0 - 0.5);
-				// node.z = 400 * (Math.random() * 1.0 - 0.5);
-				// node.vz = 0;
-				
-				let x = inputNodesPositions[nodeIndex*3+0]*10;//400 * (Math.random() * 1.0 - 0.5);
-				let y = inputNodesPositions[nodeIndex*3+1]*10;//400 * (Math.random() * 1.0 - 0.5);
-				let z = inputNodesPositions[nodeIndex*3+2]*10;//400 * (Math.random() * 1.0 - 0.5);
-				let vz = 0;
-				
-
-				// node.index = network.ID2index[key];
-				nodes.push({x,y,z,vz,ID:nodeIndex});
-			}
-
-			for (let index = 0; index < inputEdges.length / 2; index++) {
-				let edgeFrom = (inputEdges[index * 2]);
-				let edgeTo = (inputEdges[index * 2 + 1]);
-				let edgeObject = {
-					source: edgeFrom,
-					target: edgeTo,
-				}
-				links.push(edgeObject);
-			}
-			
-
-		function d3gravityForce() {
-			// var nodes, strength = 0.20, softening = 0.05;
-			var nodes, strength = 0.10, softening = 0.05;
-			function force(alpha){
-				const totalStrength = Math.sqrt(nodes.length)*alpha * strength;
-				for (let i = 0, n = nodes.length, node; i < n; ++i) {
-					node = nodes[i];
-					let distance = Math.sqrt(node.x * node.x + node.y * node.y + node.z * node.z + softening);
-					
-					let kinvdistance3 = totalStrength/(distance);
-					node.vx -= node.x * kinvdistance3;
-					node.vy -= node.y * kinvdistance3;
-					node.vz -= node.z * kinvdistance3;
-				}
-			}
-			
-			force.initialize = function(_) {
-				nodes = _;
-			};
-			
-			force.strength = function(_) {
-				return arguments.length ? (strength = +_, force) : strength;
-			};
-
-			force.softening = function(_) {
-				return arguments.length ? (softening = +_, force) : softening;
-			};
-			
-			return force;
-		}
-
-
-
-
-			this.repulsiveforce = d3.forceManyBody();
-			this.attractiveforce = d3.forceLink(links);
-			this.centralForce = d3.forceCenter();
-			// this.gravityForce = d3gravityForce();
-			this.simulation = d3.forceSimulation(nodes)
-				.numDimensions(use2D?2:3)
-				.force("charge", this.repulsiveforce)
-				.force("link", this.attractiveforce)
-				.force("center", centralForce)
-				.force("gravity", this.gravityForce)
-				// .force("collide", d3.forceCollide(d => d.size*4))
-				.velocityDecay(0.05)
-				.on("tick", async () => {
-					for (let vertexIndex = 0; vertexIndex < nodes.length; vertexIndex++) {
-						const node = nodes[vertexIndex];
-						inputNodesPositions[vertexIndex * 3 + 0] = node.x/10;
-						inputNodesPositions[vertexIndex * 3 + 1] = node.y/10;
-						if(!use2D) {
-							inputNodesPositions[vertexIndex * 3 + 2] = node.z/10;
-						}else{
-							inputNodesPositions[vertexIndex * 3 + 2] = 0;
-						}
-					}
-					self.postMessage({ type: "update", positions: inputNodesPositions });
-				}).on("end", () => {
-					self.postMessage({ type: "stop" });
-				});
 		}
 	}
 })
@@ -199,14 +302,18 @@ class d3ForceLayoutWorker {
 
 			this._layoutRunning = true;
 			this._onStart?.();
-			this._layoutWorker.postMessage({
-				 type: "start",
+			let startMessage = {
+				type: "start",
 				// network: this.network,
 				// nodes:this._network.nodes,
 				positions:this._network.positions,
 				edges:this._network.indexedEdges, 
 				use2D: this._use2D
-			});
+			};
+			if(this._network.weighted){
+				startMessage.weights = this._network.edgeWeights;
+			}
+			this._layoutWorker.postMessage(startMessage);
 		}
 		return this;
 	}
@@ -285,20 +392,54 @@ class d3ForceLayoutWorker {
 		return this.setAttribute("groups", groups);
 	}
 
-	alpha(alphaValue){
-		return this.setAttribute("alpha", alphaValue);
+	alpha(alphaValue){``
+		return this.setAttribute("simulation.alpha", alphaValue);
 	}
 
 	alphaDecay(alphaValue){
-		return this.setAttribute("alphaDecay", alphaValue);
+		return this.setAttribute("simulation.alphaDecay", alphaValue);
 	}
 
 	alphaTarget(alphaValue){
-		return this.setAttribute("alphaTarget", alphaValue);
+		return this.setAttribute("simulation.alphaTarget", alphaValue);
 	}
 
 	velocityDecay(velocityDecayValue){
-		return this.setAttribute("velocityDecay", velocityDecayValue);
+		return this.setAttribute("simulation.velocityDecay", velocityDecayValue);
+	}
+
+	setWeights(weights){
+		this._layoutWorker.postMessage({
+			type: "setWeights",
+			weights: weights
+		});
+		return this;
+	}
+
+	setAllowedEdges(allowedEdgesIndices){
+		this._layoutWorker.postMessage({
+			type: "setAllowedEdges",
+			allowedEdgeIndices: allowedEdgesIndices
+		});
+		return this;
+	}
+
+	forceLinkStrength(strength){
+		this._layoutWorker.postMessage({
+			type: "setAttribute",
+			attributeName: "forceLinkStrength",
+			value: strength
+		});
+		return this;
+	}
+
+	forceNormalizationType(normalizationType){
+		this._layoutWorker.postMessage({
+			type: "setAttribute",
+			attributeName: "forceNormalizationType",
+			value: normalizationType
+		});
+		return this;
 	}
 }
 
