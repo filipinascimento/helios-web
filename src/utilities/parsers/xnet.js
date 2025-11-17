@@ -275,7 +275,7 @@ function convertXNET2JSON(network){
 		}
 		// if weighted
 		if (network.weighted && network.weights) {
-			edges[index].weight_temp = network.weights[index];
+			edges[index].weight = network.weights[index];
 		}
 	}
 	console.log({"edges":edges});

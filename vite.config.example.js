@@ -23,9 +23,12 @@ build.assetsDir = "assets"
 /** @type {import('vite').UserConfig} */
 export default defineConfig({
 	base: '', // no base, always relative
+	assetsInclude: ['**/*.wasm'],
+	optimizeDeps: {
+		exclude: ['helios-network'],
+	},
 	server: {
 	  open: '/docs/example/index.html'
 	},
 	build: build
 });
-

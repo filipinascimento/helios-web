@@ -1,0 +1,88 @@
+
+
+
+.noUi-tooltip {
+  color:white;
+  background:#b30000;
+  display: none ;
+  border: none;
+}
+
+.noUi-active .noUi-tooltip {
+  display: block;
+}
+
+.noUi-state-drag .noUi-tooltip {
+  display: block;
+}
+
+.noUi-marker-horizontal.noUi-marker-sub{
+  height:5px;
+}
+
+.noUi-marker-horizontal.noUi-marker-large{
+  height:8px;
+}
+
+  /* #fdbb84;  */
+  /* #fc8d59;  */
+  /* #e34a33;  */
+  /* #b30000;  */
+
+.noUi-handle {
+  box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px;
+  border: none;
+  
+  background:#e34a33;
+  width: 16px !important;
+  right: -8px !important;
+  border-radius: 5px; 
+}
+
+.noUi-active.noUi-handle {
+  border:1px solid #410000;
+}
+
+.noUi-state-drag .noUi-handle {
+  background:#b30000;
+}
+
+.noUi-handle:after,
+.noUi-handle:before {
+  content: none;
+  font-size: 10px;
+}
+
+.noUi-connect{
+  background:#e34a33;
+}
+
+.noUi-state-drag .noUi-connect{
+  background:#b30000;
+}
+
+
+
+.noUi-handle:before {
+  content:none;
+  display:none;
+}
+
+.noUi-handle:after {
+  content:none;
+  display:none;
+}
+
+.noUi-value-sub{
+  color:#555555
+}
+
+.noUi-value-large{
+  color:#555555
+}
+
+.noUi-pips{
+  /* ignore pointer events by passing through */
+  pointer-events: none !important;
+
+}

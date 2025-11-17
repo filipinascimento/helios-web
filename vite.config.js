@@ -25,9 +25,10 @@ function stripDocumentationFromBuild () {
 
 /** @type {import('vite').UserConfig} */
 export default defineConfig({
-	// optimizeDeps: {
-	//   esbuildOptions: { target: "es2020", supported: { bigint: true } },
-	// },
+	assetsInclude: ['**/*.wasm'],
+	optimizeDeps: {
+		exclude: ['helios-network'],
+	},
 	// esbuild: {
 	//   target: "es2020"
 	// },
@@ -52,4 +53,3 @@ export default defineConfig({
 	environment: "jsdom"
 	},
 });
-

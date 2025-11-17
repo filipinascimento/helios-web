@@ -67,7 +67,8 @@
     "sylvester-es6": "github:filipinascimento/sylvester-es6#fix_duplicate_makeortho",
     "tar": ">=6.1.9",
     "topojson-client": "^3.1.0",
-    "tweakpane": "^4.0.3"
+    "tweakpane": "^4.0.3",
+    "helios-network":"^0.2.10"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^2.0.1",

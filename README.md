@@ -123,4 +123,13 @@ import {Helios} from "helios-web";
 
 ```
 
+## Helios Network serialization example
+
+The repository includes a minimal Node.js example that exercises the new `helios-network` integration and the BXNet/ZXNet loaders. Run it with:
+
+```bash
+node examples/helios-network-buffers.mjs
+```
+
+The script creates a tiny in-memory network, serializes it to BXNet/ZXNet buffers, and then rehydrates both payloads back into live `Network` instances. Use it as a starting point for automations that need to persist or stream compact Helios networks.
 
