@@ -121,6 +121,7 @@ export class Network{
 
 		this.indexedEdges = new Int32Array(edges.length*2);
 		this.edgeWeights = new Float32Array(edges.length);
+		this.edgeAttributes = {};
 		
 		for (let edgeIndex = 0; edgeIndex < edges.length; edgeIndex++) {
 			const edge = edges[edgeIndex];
@@ -134,8 +135,17 @@ export class Network{
 			if(this.weighted){
 				this.edgeWeights[edgeIndex] = edge.weight;
 			}
+			for (const [edgeProperty, value] of Object.entries(edge)) {
+				if(edgeProperty == "source" || edgeProperty == "target" || edgeProperty == "weight"){
+					continue;
+				}
+				if(!this.edgeAttributes.hasOwnProperty(edgeProperty)){
+					this.edgeAttributes[edgeProperty] = new Array(edges.length);
+				}
+				this.edgeAttributes[edgeProperty][edgeIndex] = value;
+			}
 		}
-		
+
 		this.positions = new Float32Array(3*this.indexedNodes.length);
 		this.colors = new Float32Array(4*this.indexedNodes.length);
 		this.sizes = new Float32Array(this.indexedNodes.length);
@@ -374,6 +384,86 @@ export class Network{
 		}
 	}
 	
+	edgeAttribute(attributeName, value){
+		// Get or set the following attribute to all edges in the network, if value is function call it for each edge
+		const edges = this.indexedEdges;
+		if(value === undefined){
+			// Get attribute for all edges in network
+			return this.edgeAttributes[attributeName];
+		} else {
+			// Set attribute for all edges in network
+			if(typeof value === "function"){
+				for(let i = 0; i < edges.length; i++){
+					const edgeIndex = edges[i];
+					this.edgeAttributes[attributeName][edgeIndex] = value(this.edgeAttributes[attributeName][edgeIndex]);
+				}
+			} else {
+				for(let i = 0; i < edges.length; i++){
+					const edgeIndex = edges[i];
+					this.edgeAttributes[attributeName][edgeIndex] = value;
+				}
+			}
+		}
+		return this; // For chaining
+	}
+
+	mapEdges(attributeName, visualAttribute, transformFunction){
+		// Map the edges to a visual attribute based on the attribute name
+		// The transform function will be passed the attribute value and should return the visual attribute value
+		if(!this.edgeAttributes.hasOwnProperty(attributeName)){
+			throw new Error(`Attribute ${attributeName} does not exist`);
+		}
+		if(visualAttribute == "color"){
+			this.edgeColors = new Float32Array(4*this.indexedEdges.length);
+			const edgeColors = this.edgeColors;
+			const edgeAttributes = this.edgeAttributes[attributeName];
+			for(let edgeIndex = 0; edgeIndex < this.indexedEdges.length/2; edgeIndex++){
+				const attributeValue = edgeAttributes[edgeIndex];
+				const visualAttributeValue = transformFunction(attributeValue);
+				edgeColors[edgeIndex*4*2+0] = visualAttributeValue[0];
+				edgeColors[edgeIndex*4*2+1] = visualAttributeValue[1];
+				edgeColors[edgeIndex*4*2+2] = visualAttributeValue[2];
+				
+				edgeColors[edgeIndex*4*2+4] = visualAttributeValue[0];
+				edgeColors[edgeIndex*4*2+5] = visualAttributeValue[1];
+				edgeColors[edgeIndex*4*2+6] = visualAttributeValue[2];
+
+
+				if(visualAttributeValue.length > 3){
+					edgeColors[edgeIndex*4*2+3] = visualAttributeValue[3];
+					edgeColors[edgeIndex*4*2+7] = visualAttributeValue[3];
+				}else{
+					edgeColors[edgeIndex*4*2+3]=1.0;
+					edgeColors[edgeIndex*4*2+7]=1.0;
+				}
+			}
+		}else if(visualAttribute == "size" || visualAttribute == "width"){
+			this.edgeSizes = new Float32Array(this.indexedEdges.length);
+			const edgeSizes = this.edgeSizes;
+			const edgeAttributes = this.edgeAttributes[attributeName];
+			for(let edgeIndex = 0; edgeIndex < this.indexedEdges.length/2; edgeIndex++){
+				const attributeValue = edgeAttributes[edgeIndex];
+				const visualAttributeValue = transformFunction(attributeValue);
+				edgeSizes[edgeIndex*2] = visualAttributeValue;
+				edgeSizes[edgeIndex*2+1] = visualAttributeValue;
+			}
+		}else if(visualAttribute == "opacity"){
+			this.edgeColors = new Float32Array(4*this.indexedEdges.length);
+			const edges = this.indexedEdges;
+			const edgeColors = this.edgeColors;
+			const edgeAttributes = this.edgeAttributes[attributeName];
+			for(let edgeIndex = 0; edgeIndex < this.indexedEdges.length/2; edgeIndex++){
+				const attributeValue = edgeAttributes[edgeIndex];
+				const visualAttributeValue = transformFunction(attributeValue);
+				edgeColors[edgeIndex*4*2+3] = visualAttributeValue;
+				edgeColors[edgeIndex*4*2+7] = visualAttributeValue;
+			}
+		}
+		else{
+			throw new Error(`Visual attribute ${visualAttribute} is not supported`);
+		}
+		return this; // For chaining
+	}
 }
 
 
@@ -481,9 +571,6 @@ class NodeSelector{
 		}
 		return this; // For chaining
 	}
-
-
-
 }
 
 

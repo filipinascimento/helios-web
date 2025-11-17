@@ -6,7 +6,7 @@ import * as d3Chromatic from "d3-scale-chromatic"
 import { scaleLinear as d3ScaleLinear, scaleOrdinal as d3ScaleOrdinal, scaleSequential as d3ScaleSequential, scaleDiverging as d3ScaleDiverging } from "d3-scale"
 import { select as d3Select, selectAll as d3SelectAll } from "d3-selection"
 import { rgb as d3rgb, hsl as d3hsl } from "d3-color"
-import { default as extraColors } from "./extraColors"
+import { default as extraColors } from "./library/extraColors"
 import { default as autocomplete } from "./library/auto-complete_cache-control.js"
 import { default as jsonQuery } from "json-query"
 import { default as d3Legend } from "./library/d3_legends.js"
@@ -17,6 +17,7 @@ import { default as pako } from "pako"
 let allColors = {}
 Object.assign(allColors, d3Chromatic);
 Object.assign(allColors, extraColors);
+
 // console.log(allColors);
 //remove last color of category10
 // allColors["schemeCategory10"].pop();
@@ -182,6 +183,17 @@ if (urlParams.has("density")) {
 	startSettings.densityEnabled = true;
 }
 
+startSettings.densityScale = 0.1;
+if (urlParams.has("densityScale")) {
+	startSettings.densityScale = +urlParams.get("densityScale");
+}
+
+startSettings.topographic = false;
+if (urlParams.has("topographic")) {
+	startSettings.topographic = true;
+}
+
+
 startSettings.additiveBlending = false;
 if (urlParams.has("additive") && startSettings.darkBackground) {
 	startSettings.additiveBlending = true;
@@ -202,6 +214,7 @@ startSettings.vsDensityProperty = "None";
 if (urlParams.has("vsDensityProperty")) {
 	startSettings.vsDensityProperty = urlParams.get("vsDensityProperty");
 }
+
 startSettings.shallNormalizeVsDensity = false;
 if (urlParams.has("shallNormalizeVsDensity")) {
 	startSettings.vsDensityNormalize = urlParams.get("shallNormalizeVsDensity");
@@ -225,6 +238,7 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 	let updateNodeSize = node => node._originalSize;
 
 	let nodesOnScreen = [];
+
 	let categoriesOnScreen = [];
 	
 	// shaded mode does not require any outline
@@ -250,7 +264,7 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 	let densityDiverging = true;
 
 	// Scale and Opacity of Highlighted nodes
-	let highlightNodeScale = 1.5;
+	let highlightNodeScale = 2.0;
 	let highlightNodeOpacityScale = 1e10;// as opaque as possible
 
 	// Scale and Opacity of selected nodes
@@ -317,15 +331,17 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 	if(networkData.edges.length>0){
 		networkWeighted = "weight" in networkData.edges[0];
 	}
-	
+	console.log(networkData.edges);
 	let helios = new Helios({
 		elementID: "netviz",
 		// densityElementID: "densityRegion",
 		density: settings.densityEnabled,
+		densityScale: settings.densityScale,
+		topographic: settings.topographic,
 		nodes: networkData.nodes,
 		edges: networkData.edges,
 		use2D: settings.use2D,
-		tracking: false,
+		tracking: true,
 		hyperbolic: settings.hyperbolic,
 		// if network is weighted
 		edgesWidthFromNodes: !networkWeighted,
@@ -522,6 +538,9 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 			outlineColor = "rgba(250,250,250,1.0)";
 			outlineWidth = 1.15;
 		}
+		textColor = "rgba(225,225,225,1.0)";
+		outlineColor = "rgba(5,5,5,1.0)";
+
 		return { fill: textColor, stroke: outlineColor, strokeWidth: outlineWidth };
 	}
 
@@ -538,7 +557,7 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 			// tooltipElement.style.left = x + "px";
 			// tooltipElement.style.top = y + "px";
 			if (typeof x !== 'undefined' && typeof y !== 'undefined') {
-				tooltipElement.group.style.transform = `translate(${x+2}px, ${y-25}px)`;
+				tooltipElement.group.style.transform = `translate(${x+12}px, ${y-25}px)`;
 				// tooltipElement.setAttribute('x', x);
 				// tooltipElement.setAttribute('y', y);
 			}
@@ -1301,10 +1320,10 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 		if (densityDiverging) {
 			scheme = allColors[densityDivergingColormap];
 		}
-		let densityScale = d3ScaleSequential(scheme).domain([0, 1])
+		let densityColorScale = d3ScaleSequential(scheme).domain([0, 1])
 
 		if (densityDiverging) {
-			densityScale = d3ScaleDiverging(scheme).domain([-1, 0, 1])
+			densityColorScale = d3ScaleDiverging(scheme).domain([-1, 0, 1])
 		}
 		densityLegendView.selectAll("*").remove();
 		let densityLabelRanges = ["-", "0", "+"];
@@ -1314,7 +1333,7 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 			title = "";
 		}
 		if (settings.legendsEnabled) {
-			d3Legend(densityScale, {
+			d3Legend(densityColorScale, {
 				svg: densityLegendView,
 				title: title,
 				titleAlignment: "end",
@@ -1791,6 +1810,35 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 			});
 
 	}
+	// make it available to window
+	window.selectNodesOnScreen = filter=>{
+		nodesOnScreen = helios.network.indexedNodes.filter(filter).map(node=>[
+			node.index,
+			1.0]);
+		updateLabelsInScreen();
+	}
+
+	window.trackLabels = (filter, options) => {
+		helios.untrackAttribute("indexTracker");
+		nodesOnScreen = helios.network.indexedNodes.filter(filter).map(node=>[
+			node.index,
+			1.0]);
+		updateLabelsInScreen();
+		helios.scheduler.schedule({
+			name: "9.0.labelsUpdate",
+			callback: (elapsedTime, task) => {
+				updateLabelsInScreen();
+			},
+			delay: 0,
+			repeatInterval: 20,
+			repeat: true,
+			synchronized: true,
+			immediateUpdates: false,
+			redraw: false,
+			updateNodesGeometry: false,
+			updateEdgesGeometry: false,
+		});
+	}
 
 
 
@@ -1843,20 +1891,22 @@ let visualizeNetwork = async (networkData, settings = startSettings) => {
 
 
 
-	// let heliosUI = new HeliosUI(helios,{
-	// 	collapsed:true,
-	// });
+	let heliosUI = new HeliosUI(helios,{
+		collapsed:true,
+	});
+
+	window.heliosUI = heliosUI;
 
 	helios.onReady(() => {
-		// helios.trackAttribute("indexTracker", "index", {
-		// 	minProportion: minScreenProportion,
-		// 	smoothness: screenLabelsSmoothness,
-		// 	maxLabels: maxLabels,
-		// 	onTrack: (indices, tracker) => {
-		// 		nodesOnScreen = indices;
-		// 		updateLabelsInScreen();
-		// 	}
-		// });
+		helios.trackAttribute("indexTracker", "index", {
+			minProportion: minScreenProportion,
+			smoothness: screenLabelsSmoothness,
+			maxLabels: maxLabels,
+			onTrack: (indices, tracker) => {
+				nodesOnScreen = indices;
+				updateLabelsInScreen();
+			}
+		});
 		
 		// helios.trackAttribute("category", "cluster name", {
 		// 	maxLabels: maxLabels,

@@ -35,6 +35,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "dev_map": "vite dev -c vite_maps.config.js",
+    "build_map": "vite build -c vite_maps.config.js",
     "preview": "vite preview",
     "test": "vitest",
     "coverage": "vitest run --coverage",
@@ -49,6 +51,7 @@
     "avl": "~1.5.3",
     "d3": "^7.8.2",
     "d3-ease": "^3.0.0",
+    "d3-geo": "^3.0.0",
     "d3-scale": "^4.0.2",
     "d3-scale-chromatic": "^3.0.0",
     "d3-selection": "^3.0.0",
@@ -57,10 +60,13 @@
     "fast-png": "^6.2.0",
     "gl-matrix": "^3.3.0",
     "json-query": "^2.2.2",
+    "nanoevents": "^9.1.0",
+    "nouislider": "^15.8.1",
     "pako": "~2.1.0",
     "pica": "^9.0.1",
     "sylvester-es6": "github:filipinascimento/sylvester-es6#fix_duplicate_makeortho",
     "tar": ">=6.1.9",
+    "topojson-client": "^3.1.0",
     "tweakpane": "^4.0.3"
   },
   "devDependencies": {

@@ -11,86 +11,8 @@ import * as densityShaders from "../shaders/density.js"
 
 
 
-function getShader(gl, code, type) {
-    let shader = gl.createShader(type);
-    gl.shaderSource(shader, code);
-    gl.compileShader(shader);
-
-    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-        console.log(gl.getShaderInfoLog(shader));
-        return null;
-    }
-    return shader;
-}
-
-
-function createShader(gl) {
-    //let fragmentShader = getShader(gl, "shader-fs");
-    //let vertexShader =   getShader(gl,   "shader-vs");
-    let fragmentShader = getShader(gl, densityShaders.fragmentShader, gl.FRAGMENT_SHADER);
-    let vertexShader = getShader(gl, densityShaders.vertexShader, gl.VERTEX_SHADER);
-
-    let program = gl.createProgram();
-    gl.attachShader(program, vertexShader);
-    gl.attachShader(program, fragmentShader);
-    gl.linkProgram(program);
-
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-        alert("Could not initialise shaders");
-    }
-    gl.useProgram(program);
-    program.vertexPositionAttribute = gl.getAttribLocation(program, "position");
-    program.vertexKernelWeightAttribute = gl.getAttribLocation(program, "kernel_weight");
-    program.vertexOffsetAttribute = gl.getAttribLocation(program, "offset");
-
-    program.pMatrixUniform = gl.getUniformLocation(program, "uPMatrix");
-    program.mvMatrixUniform = gl.getUniformLocation(program, "uMVMatrix");
-    program.projectionMatrixUniform = gl.getUniformLocation(program, "projectionMatrix");
-	program.viewMatrixUniform = gl.getUniformLocation(program, "viewMatrix");
-	
-    program.bandwidthUniform = gl.getUniformLocation(program, "bandwidth");
-    program.bandwidthScaleUniform = gl.getUniformLocation(program, "bandwidthScale");
-    program.kernel_weightScaleUniform = gl.getUniformLocation(program, "kernel_weightScale");
-
-    return program;
-}
-
-function createShader2Dlut(gl) {
-    //    let frags = getShader(gl, "shader-tex-lut-frag");
-    //    let verts = getShader(gl, "shader-tex-lut-vert");
-    let frags = getShader(gl, densityShaders.textureFragmentShader, gl.FRAGMENT_SHADER);
-    let verts = getShader(gl, densityShaders.textureVertexShader, gl.VERTEX_SHADER);
-
-    let program = gl.createProgram();
-    gl.attachShader(program, verts);
-    gl.attachShader(program, frags);
-    gl.linkProgram(program);
-
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-        alert("Could not initialise shaders");
-    }
-    gl.useProgram(program);
-    program.vertexAttribute = gl.getAttribLocation(program, "vertex");
-    program.texCoordAttribute = gl.getAttribLocation(program, "texCoord");
-    //gl.enableVertexAttribArray(program.vertexAttribute);
-    //gl.enableVertexAttribArray(program.texCoordAttribute);
-
-    program.pMatrixUniform = gl.getUniformLocation(program, "uPMatrix");
-    program.mvMatrixUniform = gl.getUniformLocation(program, "uMVMatrix");
-    program.input_texUniform = gl.getUniformLocation(program, "input_tex");
-    program.lut_texUniform = gl.getUniformLocation(program, "lut_tex");
-	program.divergingUniform = gl.getUniformLocation(program, "diverging");
-    return program;
-}
-
-
-function log_it(what) {
-    console.log(what);
-}
-
-
 export class DensityGL {
-	constructor(gl,width,height,qualityScale=0.10) {
+	constructor(gl,width,height,qualityScale=0.10, topographic=false) {
 		this.gl = gl;
 		this.FBO;
 		this.lutShader;
@@ -99,8 +21,18 @@ export class DensityGL {
 		this.pMatrix;
 		this.qualityScale=qualityScale;
 		this._divergingColormap = false;
-
-
+		this._topographic = false;
+		if(topographic){
+			// FOR TERRAIN SHADER
+			let ext = this.gl.getExtension('OES_standard_derivatives');
+			if (!ext) {
+				// The extension is not supported
+				console.warning("OES_standard_derivatives extension not supported on this browser/device. Unable to use topographic mode.");
+				this._topographic = false;
+			}else{
+				this._topographic = true;
+			}
+		}
 		this.bandwidth = [5.5, 5.5];
 		this.bandwidthScale = 5.0;
 		this.kernel_weightScale = 0.5;
@@ -120,8 +52,8 @@ export class DensityGL {
 
 		this.resize(width,height)
 
-		this.shaderProgram = createShader(this.gl);
-		this.lutShader = createShader2Dlut(this.gl);
+		this.shaderProgram = this.createShader();
+		this.lutShader = this.createShader2Dlut();
 		this.initBuffers();
 
 		// this.gl.clearColor(0.0, 0.0, 0.0, 1.0);
@@ -362,10 +294,10 @@ export class DensityGL {
 
 		//FloatingPointTextureExtensionSupported = false;
 		if (FloatingPointTextureExtensionSupported && FloatingPointTextureExtensionSupportedLinear) {
-			log_it("[ OK ] Floating point textures (OES_texture_float) is supported");
+			this.log_it("[ OK ] Floating point textures (OES_texture_float) is supported");
 			gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, fboWidth, fboHeight, 0, gl.RGBA, gl.FLOAT, null);
 		} else {
-			log_it("[FAIL] Floating point textures (OES_texture_float) is <B>NOT</B> supported, falling back to 8 bit blending. OES_texture_float is supported in Chrome dev version.");
+			this.log_it("[FAIL] Floating point textures (OES_texture_float) is <B>NOT</B> supported, falling back to 8 bit blending. OES_texture_float is supported in Chrome dev version.");
 			gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, fboWidth, fboHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
 		}
 		gl.bindTexture(gl.TEXTURE_2D, null);
@@ -374,21 +306,21 @@ export class DensityGL {
 
 		let res = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
 		if (res == gl.FRAMEBUFFER_COMPLETE)
-			log_it("[ OK ] Framebuffer Initialization");
+			this.log_it("[ OK ] Framebuffer Initialization");
 		else if (res == gl.FRAMEBUFFER_INCOMPLETE_ATTACHMENT)
-			log_it("[FAIL] Framebuffer Creation FAIL GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT <br/> \
+			this.log_it("[FAIL] Framebuffer Creation FAIL GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT <br/> \
               Not all framebuffer attachment points are framebuffer attachment complete.");
 		else if (res == gl.FRAMEBUFFER_INCOMPLETE_DIMENSIONS)
-			log_it("[FAIL] Framebuffer Creation FAIL GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS <br/> \
+			this.log_it("[FAIL] Framebuffer Creation FAIL GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS <br/> \
               Not all attached images have the same width and height. ");
 		else if (res == gl.FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT)
-			log_it("[FAIL] Framebuffer Creation FAIL GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT <br/> No images are attached to the framebuffer. ");
+			this.log_it("[FAIL] Framebuffer Creation FAIL GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT <br/> No images are attached to the framebuffer. ");
 		else if (res == gl.FRAMEBUFFER_INCOMPLETE_UNSUPPORTED)
-			log_it("[FAIL] Framebuffer Creation FAIL GL_FRAMEBUFFER_INCOMPLETE_UNSUPPORTED <br/> The combination of internal formats of the attached images violates an implementation-dependent set of restrictions.");
+			this.log_it("[FAIL] Framebuffer Creation FAIL GL_FRAMEBUFFER_INCOMPLETE_UNSUPPORTED <br/> The combination of internal formats of the attached images violates an implementation-dependent set of restrictions.");
 		else if (res == gl.FRAMEBUFFER_UNSUPPORTED)
-			log_it("[FAIL] Framebuffer Creation FAIL GL_FRAMEBUFFER_UNSUPPORTED <br/> \
+			this.log_it("[FAIL] Framebuffer Creation FAIL GL_FRAMEBUFFER_UNSUPPORTED <br/> \
             The combination of internal formats of the attached images violates an implementation-dependent set of restrictions.");
-		else log_it("[FAIL] Framebuffer Creation FAIL Unknown Error");
+		else this.log_it("[FAIL] Framebuffer Creation FAIL Unknown Error");
 
 		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 		this.FBO = FBO;
@@ -579,4 +511,91 @@ export class DensityGL {
 		this.gl = null;
 	}
 
+
+	getShader(code, type) {
+		let gl = this.gl;
+		let shader = gl.createShader(type);
+		gl.shaderSource(shader, code);
+		gl.compileShader(shader);
+	
+		if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+			console.log(gl.getShaderInfoLog(shader));
+			return null;
+		}
+		return shader;
+	}
+	
+	
+	createShader() {
+		let gl = this.gl;
+		//let fragmentShader = getShader(gl, "shader-fs");
+		//let vertexShader =   getShader(gl,   "shader-vs");
+		let fragmentShader = this.getShader(densityShaders.fragmentShader, gl.FRAGMENT_SHADER);
+		let vertexShader = this.getShader(densityShaders.vertexShader, gl.VERTEX_SHADER);
+	
+		let program = gl.createProgram();
+		gl.attachShader(program, vertexShader);
+		gl.attachShader(program, fragmentShader);
+		gl.linkProgram(program);
+	
+		if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+			alert("Could not initialise shaders");
+		}
+		gl.useProgram(program);
+		program.vertexPositionAttribute = gl.getAttribLocation(program, "position");
+		program.vertexKernelWeightAttribute = gl.getAttribLocation(program, "kernel_weight");
+		program.vertexOffsetAttribute = gl.getAttribLocation(program, "offset");
+	
+		program.pMatrixUniform = gl.getUniformLocation(program, "uPMatrix");
+		program.mvMatrixUniform = gl.getUniformLocation(program, "uMVMatrix");
+		program.projectionMatrixUniform = gl.getUniformLocation(program, "projectionMatrix");
+		program.viewMatrixUniform = gl.getUniformLocation(program, "viewMatrix");
+		
+		program.bandwidthUniform = gl.getUniformLocation(program, "bandwidth");
+		program.bandwidthScaleUniform = gl.getUniformLocation(program, "bandwidthScale");
+		program.kernel_weightScaleUniform = gl.getUniformLocation(program, "kernel_weightScale");
+	
+		return program;
+	}
+	
+	createShader2Dlut() {
+		let gl = this.gl;
+		//    let frags = getShader(gl, "shader-tex-lut-frag");
+		//    let verts = getShader(gl, "shader-tex-lut-vert");
+		let frags;
+		if(this._topographic){
+			frags = this.getShader(densityShaders.topographicFragmentShader, gl.FRAGMENT_SHADER);
+		}else{
+			frags = this.getShader(densityShaders.textureFragmentShader, gl.FRAGMENT_SHADER);
+		}
+		
+		let verts = this.getShader(densityShaders.textureVertexShader, gl.VERTEX_SHADER);
+	
+		let program = gl.createProgram();
+		gl.attachShader(program, verts);
+		gl.attachShader(program, frags);
+		gl.linkProgram(program);
+	
+		if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+			alert("Could not initialise shaders");
+		}
+		gl.useProgram(program);
+		program.vertexAttribute = gl.getAttribLocation(program, "vertex");
+		program.texCoordAttribute = gl.getAttribLocation(program, "texCoord");
+		//gl.enableVertexAttribArray(program.vertexAttribute);
+		//gl.enableVertexAttribArray(program.texCoordAttribute);
+	
+		program.pMatrixUniform = gl.getUniformLocation(program, "uPMatrix");
+		program.mvMatrixUniform = gl.getUniformLocation(program, "uMVMatrix");
+		program.input_texUniform = gl.getUniformLocation(program, "input_tex");
+		program.lut_texUniform = gl.getUniformLocation(program, "lut_tex");
+		program.divergingUniform = gl.getUniformLocation(program, "diverging");
+		return program;
+	}
+	
+	
+	log_it(what) {
+		console.log(what);
+	}
+	
 }

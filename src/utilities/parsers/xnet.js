@@ -208,6 +208,7 @@ let loadXNET = (data) => {
 	if (network.weighted) {
 		network.weights = edgesData.weights;
 	}
+	// console.log({"weights":network.weights});
 
 	do{
 		while (status.lineIndex < status.lines.length && status.lines[status.lineIndex].length == 0) {
@@ -268,11 +269,16 @@ function convertXNET2JSON(network){
 			"target": "" + network.edges[index][1],
 			// directed?
 		});
-		if (network.weighted) {
-			edges[index].weight = network.weights[index];
+		// transfer attributes
+		for (const [key, value] of Object.entries(network.edgesProperties)) {
+			edges[index][key] = value[index];
+		}
+		// if weighted
+		if (network.weighted && network.weights) {
+			edges[index].weight_temp = network.weights[index];
 		}
 	}
-	
+	console.log({"edges":edges});
 	return {nodes:nodes,edges:edges};
 }
 

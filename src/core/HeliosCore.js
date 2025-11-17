@@ -16,7 +16,6 @@ import * as nodesShaders from "../shaders/nodes.js";
 import { DensityGL } from "../utilities/DensityGL.js";
 import { SortedValueMap } from "../utilities/SortedMap.js";
 
-
 let isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
 
 // throttle function
@@ -90,6 +89,8 @@ export class Helios {
 		element = null,
 		elementID = null,
 		density = false,
+		densityScale = 0.1,
+		topographic = false,
 		nodes = {},
 		edges = [],
 		network = null,
@@ -102,6 +103,7 @@ export class Helios {
 		forceSupersample = false,
 		autoStartLayout = true,
 		autoCleanup = true, // cleanup helios if canvas or element is removed
+		backgroundLayer = false,
 		webglOptions = {},
 		behaviors = {},
 	}) {
@@ -120,6 +122,9 @@ export class Helios {
 			this._element.style.position = 'relative';
 		}
 		// Setup the default layers [canvas, overlay and svgLayer]
+
+		this._createBackgroundLayer = backgroundLayer;
+
 		this._setupLayers();
 
 		/**
@@ -159,6 +164,9 @@ export class Helios {
 		this._camera.lastPanY = 0;
 		this._camera.panX = 0;
 		this._camera.panY = 0;
+		this._camera.transformX = 0;
+		this._camera.transformY = 0;
+		this._camera.transformZoom = 0;
 		this._camera.fieldOfView = fieldOfView;
 		this._camera.targetPanX = 0;
 		this._camera.targetPanY = 0;
@@ -201,6 +209,7 @@ export class Helios {
 		this._settings.semanticZoomExponent = 0.25;
 
 
+		
 		this._settings.nodesGlobalOpacityScale = 1.0;
 		this._settings.nodesGlobalOpacityBase = 0.0;
 
@@ -210,7 +219,7 @@ export class Helios {
 		this._settings.edgesGlobalOpacityScale = 1.0;
 		this._settings.edgesGlobalOpacityBase = 0.0;
 
-		this._settings.edgesGlobalWidthScale = 0.25;
+		this._settings.edgesGlobalWidthScale = 0.5;
 		this._settings.edgesGlobalWidthBase = 0.0;
 
 		this._settings.nodesGlobalOutlineWidthScale = 1.0;
@@ -228,6 +237,7 @@ export class Helios {
 		this._settings.useAdditiveBlending = false;
 		this._settings.pickeableEdges = new Set();
 		this._settings.webglOptions = webglOptions;
+
 		this._scheduler = new HeliosScheduler(this, { throttle: false });
 
 		if (this._settings.use2D) {
@@ -240,13 +250,10 @@ export class Helios {
 
 		glm.mat4.identity(this._camera.rotationMatrix);
 		this.gl = glUtils.createWebGLContext(this._canvasElement, this._settings.webglOptions);
-		// let ext = this.gl.getExtension('OES_standard_derivatives');
-		// if (!ext) {
-		// 	// The extension is not supported
-		// 	alert("OES_standard_derivatives extension not supported on this browser/device.");
-		// } FOR TERRAIN SHADER
+
+		
 		if (density) {
-			this.densityMap = new DensityGL(this.gl, this._canvasElement.clientWidth, this._canvasElement.clientHeight);
+			this.densityMap = new DensityGL(this.gl, this._canvasElement.clientWidth, this._canvasElement.clientHeight, densityScale, topographic);
 			this.densityMap.setBandwidth(10);
 			this.densityMap.setKernelWeightScale(0.01);
 			this.densityPlot = true;
@@ -346,6 +353,23 @@ export class Helios {
 		this._svgLayer.style.display = 'block';
 		this._svgLayer.style.boxSizing = 'border-box';
 		this._svgLayer.style.pointerEvents = 'none';
+
+		if(this._createBackgroundLayer) {
+			this._backgroundSVGLayer = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+			//SVG that takes the entire space of the canvas
+			this._backgroundSVGLayer.style.position = 'absolute';
+			this._backgroundSVGLayer.style.width = '100%';
+			this._backgroundSVGLayer.style.height = '100%';
+			this._backgroundSVGLayer.style.display = 'block';
+			this._backgroundSVGLayer.style.boxSizing = 'border-box';
+			this._backgroundSVGLayer.style.pointerEvents = 'none';
+			// this._backgroundSVGLayer.style.zIndex = '-1'; // make sure the background layer is behind everything
+			// set background color to yellow
+			// this._backgroundSVGLayer.style.backgroundColor = 'yellow'; // or any other color you want
+			// add behind the canvas layer
+			this._element.insertBefore(this._backgroundSVGLayer, this._canvasElement);
+		}
+
 		// Do I need to setup the svg bounds?
 		this._element.appendChild(this._svgLayer);
 
@@ -388,7 +412,16 @@ export class Helios {
 	get svgLayer() {
 		return this._svgLayer;
 	}
-
+	/**
+	 * Get the background SVG layer element.
+	 * @readonly
+	 * @type {Element}
+	 * @memberof HeliosCore
+	 * @instance
+	 */
+	get backgroundLayer() {
+		return this._backgroundSVGLayer;
+	}
 	/**
 	 * Get the overlay element.
 	 * @readonly
@@ -478,37 +511,49 @@ export class Helios {
 				this._layoutLastUpdate = performance.now();
 			}
 			let layoutElapsedTime = performance.now() - this._layoutLastUpdate;
-			if (layoutElapsedTime < 100) {
-				layoutElapsedTime = 100;
+			if (layoutElapsedTime < 20) {
+				layoutElapsedTime = 10;
 			} else if (layoutElapsedTime > 2500) {
 				layoutElapsedTime = 2500;
 			}
 			this._layoutLastUpdate = performance.now();
 
 			this._alpha = 1.0 / layoutElapsedTime;
+			const k = 6;                          // responsiveness (per second)
 
 			let interpolatorTask = {
 				name: "1.1.positionInterpolator",
 				callback: (elapsedTime, task) => {
 					let maxDisplacement = 0;
+					let maxBoundaries = 0;
 					const alpha = this._alpha;
 					const positionsLength = this.network.positions.length;
 					const newPositions = this.newPositions;
 					const previousPositions = this.network.positions;
+					const minDisplacementRatio = 0.0005;
+					
 					// console.log(layoutElapsedTime,elapsedTime,alpha)
+					const dt = Math.min(elapsedTime, 20) / 2500;  // seconds, clamp dt a bit
+					const w = 1 - Math.exp(-k * dt);      // in (0,1)
+
 					for (let index = 0; index < positionsLength; index++) {
 						const displacement = newPositions[index] - previousPositions[index];
 
-						previousPositions[index] += alpha * (displacement) * elapsedTime;
+						// previousPositions[index] += alpha * (displacement) * elapsedTime;
+						const dt = Math.min(elapsedTime, 20) / 2500;  // seconds, clamp dt a bit
+						const w = 1 - Math.exp(-k * dt);      // in (0,1)
 
+						previousPositions[index] += w * (newPositions[index] - previousPositions[index]);
 						maxDisplacement = Math.max(Math.abs(displacement), maxDisplacement);
+						maxBoundaries = Math.max(Math.abs(newPositions[index]), maxBoundaries);
 					};
 
 					this._updateCenterNodesPosition();
 					this._updateCameraInterpolation(true);
 					// console.log(this.scheduler._averageFPS);
-
-					if (maxDisplacement < 1) {
+					if (maxDisplacement / maxBoundaries < minDisplacementRatio) {
+						// console.log(maxDisplacement, maxBoundaries, maxDisplacement / maxBoundaries);
+						// console.log("Interpolator stopped");
 						this._scheduler.unschedule("1.1.positionInterpolator");
 					}
 				},
@@ -1598,6 +1643,15 @@ export class Helios {
 	}
 
 
+	cameraDisplacementFactor(){
+		const panelHeight = this._canvasElement.clientHeight;
+		const fovy = Math.PI * 2 / 360 * this._camera.fieldOfView;
+		// FIXME: Maybe use the distance to the objects instead of the camera distance
+		// For the 3D case. The 2D case is fine.
+		const finalCameraDistance = this._camera.cameraDistance / this._camera.zoomFactor;
+		const displacementFactor = 2 * finalCameraDistance * Math.tan(fovy / 2) / panelHeight;
+		return displacementFactor;
+	}
 
 	/** Setup the camera data.
 	 * @method _setupCamera
@@ -1677,6 +1731,7 @@ export class Helios {
 					// For the 3D case. The 2D case is fine.
 					const finalCameraDistance = this._camera.cameraDistance / this._camera.zoomFactor;
 					const displacementFactor = 2 * finalCameraDistance * Math.tan(fovy / 2) / panelHeight;
+					// const displacementFactor = 1.0;
 					if (this._centerNodes.length == 0) {
 						if (this._settings.use2D) {
 
@@ -1846,12 +1901,19 @@ export class Helios {
 			// For the 3D case. The 2D case is fine.
 			const finalCameraDistance = this._camera.cameraDistance / this._camera.zoomFactor;
 			const displacementFactor = 2 * finalCameraDistance * Math.tan(fovy / 2) / panelHeight;
+			// const displacementFactor = 1.0;
+			this._camera.transformX = this._camera.panX / displacementFactor + this._lastCanvasDimensions[0] / 2
+			this._camera.transformY = -this._camera.panY / displacementFactor + this._lastCanvasDimensions[1] / 2;
+
+
+			
 			d3Select(this._canvasElement).property("__zoom",
 				d3ZoomIdentity.translate(
-					this._camera.panX / displacementFactor + this._lastCanvasDimensions[0] / 2,
-					-this._camera.panY / displacementFactor + this._lastCanvasDimensions[1] / 2
+					this._camera.transformX,
+					this._camera.transformY
 				).scale(this._camera.zoomFactor));
 		}
+		return this;
 	}
 
 	/** Will hint force Helios to redraw the network.
@@ -3216,7 +3278,12 @@ export class Helios {
 				}
 			} else if (typeof colorInput === "number") {
 				//index
-				return this.network.outlineColors[this.network.ID2index[colorInput]];
+				let nodeIndex = this.network.ID2index[colorInput];
+				
+				return [this.network.outlineColors[nodeIndex * 4 + 0],
+					this.network.outlineColors[nodeIndex * 4 + 1],
+					this.network.outlineColors[nodeIndex * 4 + 2],
+					this.network.outlineColors[nodeIndex * 4 + 3]];
 			} else {
 				let allNodes = this.network.indexedNodes;
 				for (let nodeIndex = 0; nodeIndex < allNodes.length; nodeIndex++) {
@@ -3385,11 +3452,9 @@ export class Helios {
 				//index
 				return [this.network.edgeColors[colorInput * 2 + 0], this.network.edgeColors[colorInput * 2 + 1]];
 			} else {
-
-				let allNodes = this.network.indexedNodes;
 				let allEdges = this.network.indexedEdges;
 				for (let edgeIndex = 0; edgeIndex < allEdges.length / 2; edgeIndex++) {
-					let aColor = colorInput(edgeIndex, sourceNode, targetNode, this.network);
+					let aColor = colorInput;
 					if (colorInput.length == 2) {// two colors
 						this.network.edgeColors[(edgeIndex * 2) * 4 + 0] = aColor[0][0];
 						this.network.edgeColors[(edgeIndex * 2) * 4 + 1] = aColor[0][1];
@@ -3433,22 +3498,22 @@ export class Helios {
 				this.network.edgeColors[(edgeIndex * 2 + 1) * 4 + 0] = aColor[1][0];
 				this.network.edgeColors[(edgeIndex * 2 + 1) * 4 + 1] = aColor[1][1];
 				this.network.edgeColors[(edgeIndex * 2 + 1) * 4 + 2] = aColor[1][2];
-				if (colorInput[0].length > 3) {
+				if (aColor[0].length > 3) {
 					this.network.edgeColors[(edgeIndex * 2) * 4 + 3] = aColor[0][3];
 				}
-				if (colorInput[1].length > 3) {
-					this.network.edgeColors[(edgeIndex * 2 + 1) * 4 + 3] = colorInput[1][3];
+				if (aColor[1].length > 3) {
+					this.network.edgeColors[(edgeIndex * 2 + 1) * 4 + 3] = aColor[1][3];
 				}
 			} else {// one colors
-				this.network.edgeColors[(edgeIndex * 2) * 4 + 0] = colorInput[0];
-				this.network.edgeColors[(edgeIndex * 2) * 4 + 1] = colorInput[1];
-				this.network.edgeColors[(edgeIndex * 2) * 4 + 2] = colorInput[2];
-				this.network.edgeColors[(edgeIndex * 2 + 1) * 4 + 0] = colorInput[0];
-				this.network.edgeColors[(edgeIndex * 2 + 1) * 4 + 1] = colorInput[1];
-				this.network.edgeColors[(edgeIndex * 2 + 1) * 4 + 2] = colorInput[2];
-				if (colorInput.length > 3) {
-					this.network.edgeColors[(edgeIndex * 2) * 4 + 3] = colorInput[3];
-					this.network.edgeColors[(edgeIndex * 2 + 1) * 4 + 3] = colorInput[3];
+				this.network.edgeColors[(edgeIndex * 2) * 4 + 0] = aColor[0];
+				this.network.edgeColors[(edgeIndex * 2) * 4 + 1] = aColor[1];
+				this.network.edgeColors[(edgeIndex * 2) * 4 + 2] = aColor[2];
+				this.network.edgeColors[(edgeIndex * 2 + 1) * 4 + 0] = aColor[0];
+				this.network.edgeColors[(edgeIndex * 2 + 1) * 4 + 1] = aColor[1];
+				this.network.edgeColors[(edgeIndex * 2 + 1) * 4 + 2] = aColor[2];
+				if (aColor.length > 3) {
+					this.network.edgeColors[(edgeIndex * 2) * 4 + 3] = aColor[3];
+					this.network.edgeColors[(edgeIndex * 2 + 1) * 4 + 3] = aColor[3];
 				}
 			}
 		}
@@ -3575,12 +3640,21 @@ export class Helios {
 			}
 			let nodePositions = this.network.positions;
 			let projectedPositions = new Float32Array(nodes.length * 4);
-
+			
 			let [w2d, h2d] = this._lastCanvasDimensions;
 
 			for (let i = 0; i < nodes.length; i++) {
 				let nodeIndex = nodeIndices[i];
 				let nodePosition = [nodePositions[nodeIndex * 3], nodePositions[nodeIndex * 3 + 1], nodePositions[nodeIndex * 3 + 2], 1.0];
+
+				// let xoffset=this._camera.translatePosition[0];
+				// let yoffset=this._camera.translatePosition[1];
+				// let zoffset=this._camera.translatePosition[2];
+				// nodePosition[0] -= xoffset;
+				// nodePosition[1] -= yoffset;
+				// nodePosition[2] -= zoffset;
+
+				// translate by camera position
 
 				let projectedPosition = glm.vec4.create();
 				glm.vec4.transformMat4(projectedPosition, nodePosition, this.projectionViewMatrix);
@@ -4464,7 +4538,7 @@ export class Helios {
 			this._settings.pickeableEdges = new Set(pickables);
 			if (pickables == "all") {
 				// console.log("all");
-				for (let i = 0; i < this.network.edges.length; i++) {
+				for (let i = 0; i < this.network.indexedEdges.length/2; i++) {
 					this._settings.pickeableEdges.add(i);
 				}
 				this._status.edgeIndicesUpdate = true;

@@ -2,6 +2,9 @@
 // Temporary fix for
 // https://github.com/evanw/esbuild/issues/312
 
+// const { forceLink, link } = require("d3");
+import TrackedSettings from "../utilities/TrackedSettings.js";
+
 let workerFunction = (function (){
 	//dummy require
 	var require = function(moduleName){};
@@ -17,8 +20,11 @@ let workerFunction = (function (){
 	!function(t,r){"object"==typeof exports&&"undefined"!=typeof module?r(exports):"function"==typeof define&&define.amd?define(["exports"],r):r((t="undefined"!=typeof globalThis?globalThis:t||self).d3=t.d3||{})}(this,(function(t){"use strict";function r(t,r,e){if(isNaN(r))return t;var n,i,o,s,h,u,a=t._root,f={data:e},l=t._x0,x=t._x1;if(!a)return t._root=f,t;for(;a.length;)if((s=r>=(i=(l+x)/2))?l=i:x=i,n=a,!(a=a[h=+s]))return n[h]=f,t;if(r===(o=+t._x.call(null,a.data)))return f.next=a,n?n[h]=f:t._root=f,t;do{n=n?n[h]=new Array(2):t._root=new Array(2),(s=r>=(i=(l+x)/2))?l=i:x=i}while((h=+s)==(u=+(o>=i)));return n[u]=a,n[h]=f,t}function e(t,r,e){this.node=t,this.x0=r,this.x1=e}function n(t){return t[0]}function i(t,r){var e=new o(null==r?n:r,NaN,NaN);return null==t?e:e.addAll(t)}function o(t,r,e){this._x=t,this._x0=r,this._x1=e,this._root=void 0}function s(t){for(var r={data:t.data},e=r;t=t.next;)e=e.next={data:t.data};return r}var h=i.prototype=o.prototype;h.copy=function(){var t,r,e=new o(this._x,this._x0,this._x1),n=this._root;if(!n)return e;if(!n.length)return e._root=s(n),e;for(t=[{source:n,target:e._root=new Array(2)}];n=t.pop();)for(var i=0;i<2;++i)(r=n.source[i])&&(r.length?t.push({source:r,target:n.target[i]=new Array(2)}):n.target[i]=s(r));return e},h.add=function(t){var e=+this._x.call(null,t);return r(this.cover(e),e,t)},h.addAll=function(t){var e,n,i=t.length,o=new Array(i),s=1/0,h=-1/0;for(e=0;e<i;++e)isNaN(n=+this._x.call(null,t[e]))||(o[e]=n,n<s&&(s=n),n>h&&(h=n));if(s>h)return this;for(this.cover(s).cover(h),e=0;e<i;++e)r(this,o[e],t[e]);return this},h.cover=function(t){if(isNaN(t=+t))return this;var r=this._x0,e=this._x1;if(isNaN(r))e=(r=Math.floor(t))+1;else{for(var n,i,o=e-r||1,s=this._root;r>t||t>=e;)switch(i=+(t<r),(n=new Array(2))[i]=s,s=n,o*=2,i){case 0:e=r+o;break;case 1:r=e-o}this._root&&this._root.length&&(this._root=s)}return this._x0=r,this._x1=e,this},h.data=function(){var t=[];return this.visit((function(r){if(!r.length)do{t.push(r.data)}while(r=r.next)})),t},h.extent=function(t){return arguments.length?this.cover(+t[0][0]).cover(+t[1][0]):isNaN(this._x0)?void 0:[[this._x0],[this._x1]]},h.find=function(t,r){var n,i,o,s,h,u=this._x0,a=this._x1,f=[],l=this._root;for(l&&f.push(new e(l,u,a)),null==r?r=1/0:(u=t-r,a=t+r);s=f.pop();)if(!(!(l=s.node)||(i=s.x0)>a||(o=s.x1)<u))if(l.length){var x=(i+o)/2;f.push(new e(l[1],x,o),new e(l[0],i,x)),(h=+(t>=x))&&(s=f[f.length-1],f[f.length-1]=f[f.length-1-h],f[f.length-1-h]=s)}else{var _=Math.abs(t-+this._x.call(null,l.data));_<r&&(r=_,u=t-_,a=t+_,n=l.data)}return n},h.remove=function(t){if(isNaN(o=+this._x.call(null,t)))return this;var r,e,n,i,o,s,h,u,a,f=this._root,l=this._x0,x=this._x1;if(!f)return this;if(f.length)for(;;){if((h=o>=(s=(l+x)/2))?l=s:x=s,r=f,!(f=f[u=+h]))return this;if(!f.length)break;r[u+1&1]&&(e=r,a=u)}for(;f.data!==t;)if(n=f,!(f=f.next))return this;return(i=f.next)&&delete f.next,n?(i?n.next=i:delete n.next,this):r?(i?r[u]=i:delete r[u],(f=r[0]||r[1])&&f===(r[1]||r[0])&&!f.length&&(e?e[a]=f:this._root=f),this):(this._root=i,this)},h.removeAll=function(t){for(var r=0,e=t.length;r<e;++r)this.remove(t[r]);return this},h.root=function(){return this._root},h.size=function(){var t=0;return this.visit((function(r){if(!r.length)do{++t}while(r=r.next)})),t},h.visit=function(t){var r,n,i,o,s=[],h=this._root;for(h&&s.push(new e(h,this._x0,this._x1));r=s.pop();)if(!t(h=r.node,i=r.x0,o=r.x1)&&h.length){var u=(i+o)/2;(n=h[1])&&s.push(new e(n,u,o)),(n=h[0])&&s.push(new e(n,i,u))}return this},h.visitAfter=function(t){var r,n=[],i=[];for(this._root&&n.push(new e(this._root,this._x0,this._x1));r=n.pop();){var o=r.node;if(o.length){var s,h=r.x0,u=r.x1,a=(h+u)/2;(s=o[0])&&n.push(new e(s,h,a)),(s=o[1])&&n.push(new e(s,a,u))}i.push(r)}for(;r=i.pop();)t(r.node,r.x0,r.x1);return this},h.x=function(t){return arguments.length?(this._x=t,this):this._x},t.binarytree=i,Object.defineProperty(t,"__esModule",{value:!0})}));
 	// // // https://github.com/vasturiano/d3-octree v0.2.0 Copyright 2021 Vasco Asturiano
 	!function(t,i){"object"==typeof exports&&"undefined"!=typeof module?i(exports):"function"==typeof define&&define.amd?define(["exports"],i):i((t="undefined"!=typeof globalThis?globalThis:t||self).d3=t.d3||{})}(this,(function(t){"use strict";function i(t,i,n,e,s){if(isNaN(i)||isNaN(n)||isNaN(e))return t;var h,r,o,a,l,u,_,f,c,y,x,d,p=t._root,w={data:s},z=t._x0,N=t._y0,v=t._z0,g=t._x1,b=t._y1,A=t._z1;if(!p)return t._root=w,t;for(;p.length;)if((f=i>=(r=(z+g)/2))?z=r:g=r,(c=n>=(o=(N+b)/2))?N=o:b=o,(y=e>=(a=(v+A)/2))?v=a:A=a,h=p,!(p=p[x=y<<2|c<<1|f]))return h[x]=w,t;if(l=+t._x.call(null,p.data),u=+t._y.call(null,p.data),_=+t._z.call(null,p.data),i===l&&n===u&&e===_)return w.next=p,h?h[x]=w:t._root=w,t;do{h=h?h[x]=new Array(8):t._root=new Array(8),(f=i>=(r=(z+g)/2))?z=r:g=r,(c=n>=(o=(N+b)/2))?N=o:b=o,(y=e>=(a=(v+A)/2))?v=a:A=a}while((x=y<<2|c<<1|f)==(d=(_>=a)<<2|(u>=o)<<1|l>=r));return h[d]=p,h[x]=w,t}function n(t,i,n,e,s,h,r){this.node=t,this.x0=i,this.y0=n,this.z0=e,this.x1=s,this.y1=h,this.z1=r}function e(t){return t[0]}function s(t){return t[1]}function h(t){return t[2]}function r(t,i,n,r){var a=new o(null==i?e:i,null==n?s:n,null==r?h:r,NaN,NaN,NaN,NaN,NaN,NaN);return null==t?a:a.addAll(t)}function o(t,i,n,e,s,h,r,o,a){this._x=t,this._y=i,this._z=n,this._x0=e,this._y0=s,this._z0=h,this._x1=r,this._y1=o,this._z1=a,this._root=void 0}function a(t){for(var i={data:t.data},n=i;t=t.next;)n=n.next={data:t.data};return i}var l=r.prototype=o.prototype;l.copy=function(){var t,i,n=new o(this._x,this._y,this._z,this._x0,this._y0,this._z0,this._x1,this._y1,this._z1),e=this._root;if(!e)return n;if(!e.length)return n._root=a(e),n;for(t=[{source:e,target:n._root=new Array(8)}];e=t.pop();)for(var s=0;s<8;++s)(i=e.source[s])&&(i.length?t.push({source:i,target:e.target[s]=new Array(8)}):e.target[s]=a(i));return n},l.add=function(t){var n=+this._x.call(null,t),e=+this._y.call(null,t),s=+this._z.call(null,t);return i(this.cover(n,e,s),n,e,s,t)},l.addAll=function(t){var n,e,s,h,r,o=t.length,a=new Array(o),l=new Array(o),u=new Array(o),_=1/0,f=1/0,c=1/0,y=-1/0,x=-1/0,d=-1/0;for(e=0;e<o;++e)isNaN(s=+this._x.call(null,n=t[e]))||isNaN(h=+this._y.call(null,n))||isNaN(r=+this._z.call(null,n))||(a[e]=s,l[e]=h,u[e]=r,s<_&&(_=s),s>y&&(y=s),h<f&&(f=h),h>x&&(x=h),r<c&&(c=r),r>d&&(d=r));if(_>y||f>x||c>d)return this;for(this.cover(_,f,c).cover(y,x,d),e=0;e<o;++e)i(this,a[e],l[e],u[e],t[e]);return this},l.cover=function(t,i,n){if(isNaN(t=+t)||isNaN(i=+i)||isNaN(n=+n))return this;var e=this._x0,s=this._y0,h=this._z0,r=this._x1,o=this._y1,a=this._z1;if(isNaN(e))r=(e=Math.floor(t))+1,o=(s=Math.floor(i))+1,a=(h=Math.floor(n))+1;else{for(var l,u,_=r-e||1,f=this._root;e>t||t>=r||s>i||i>=o||h>n||n>=a;)switch(u=(n<h)<<2|(i<s)<<1|t<e,(l=new Array(8))[u]=f,f=l,_*=2,u){case 0:r=e+_,o=s+_,a=h+_;break;case 1:e=r-_,o=s+_,a=h+_;break;case 2:r=e+_,s=o-_,a=h+_;break;case 3:e=r-_,s=o-_,a=h+_;break;case 4:r=e+_,o=s+_,h=a-_;break;case 5:e=r-_,o=s+_,h=a-_;break;case 6:r=e+_,s=o-_,h=a-_;break;case 7:e=r-_,s=o-_,h=a-_}this._root&&this._root.length&&(this._root=f)}return this._x0=e,this._y0=s,this._z0=h,this._x1=r,this._y1=o,this._z1=a,this},l.data=function(){var t=[];return this.visit((function(i){if(!i.length)do{t.push(i.data)}while(i=i.next)})),t},l.extent=function(t){return arguments.length?this.cover(+t[0][0],+t[0][1],+t[0][2]).cover(+t[1][0],+t[1][1],+t[1][2]):isNaN(this._x0)?void 0:[[this._x0,this._y0,this._z0],[this._x1,this._y1,this._z1]]},l.find=function(t,i,e,s){var h,r,o,a,l,u,_,f,c,y=this._x0,x=this._y0,d=this._z0,p=this._x1,w=this._y1,z=this._z1,N=[],v=this._root;for(v&&N.push(new n(v,y,x,d,p,w,z)),null==s?s=1/0:(y=t-s,x=i-s,d=e-s,p=t+s,w=i+s,z=e+s,s*=s);f=N.pop();)if(!(!(v=f.node)||(r=f.x0)>p||(o=f.y0)>w||(a=f.z0)>z||(l=f.x1)<y||(u=f.y1)<x||(_=f.z1)<d))if(v.length){var g=(r+l)/2,b=(o+u)/2,A=(a+_)/2;N.push(new n(v[7],g,b,A,l,u,_),new n(v[6],r,b,A,g,u,_),new n(v[5],g,o,A,l,b,_),new n(v[4],r,o,A,g,b,_),new n(v[3],g,b,a,l,u,A),new n(v[2],r,b,a,g,u,A),new n(v[1],g,o,a,l,b,A),new n(v[0],r,o,a,g,b,A)),(c=(e>=A)<<2|(i>=b)<<1|t>=g)&&(f=N[N.length-1],N[N.length-1]=N[N.length-1-c],N[N.length-1-c]=f)}else{var k=t-+this._x.call(null,v.data),m=i-+this._y.call(null,v.data),M=e-+this._z.call(null,v.data),j=k*k+m*m+M*M;if(j<s){var T=Math.sqrt(s=j);y=t-T,x=i-T,d=e-T,p=t+T,w=i+T,z=e+T,h=v.data}}return h},l.remove=function(t){if(isNaN(h=+this._x.call(null,t))||isNaN(r=+this._y.call(null,t))||isNaN(o=+this._z.call(null,t)))return this;var i,n,e,s,h,r,o,a,l,u,_,f,c,y,x,d=this._root,p=this._x0,w=this._y0,z=this._z0,N=this._x1,v=this._y1,g=this._z1;if(!d)return this;if(d.length)for(;;){if((_=h>=(a=(p+N)/2))?p=a:N=a,(f=r>=(l=(w+v)/2))?w=l:v=l,(c=o>=(u=(z+g)/2))?z=u:g=u,i=d,!(d=d[y=c<<2|f<<1|_]))return this;if(!d.length)break;(i[y+1&7]||i[y+2&7]||i[y+3&7]||i[y+4&7]||i[y+5&7]||i[y+6&7]||i[y+7&7])&&(n=i,x=y)}for(;d.data!==t;)if(e=d,!(d=d.next))return this;return(s=d.next)&&delete d.next,e?(s?e.next=s:delete e.next,this):i?(s?i[y]=s:delete i[y],(d=i[0]||i[1]||i[2]||i[3]||i[4]||i[5]||i[6]||i[7])&&d===(i[7]||i[6]||i[5]||i[4]||i[3]||i[2]||i[1]||i[0])&&!d.length&&(n?n[x]=d:this._root=d),this):(this._root=s,this)},l.removeAll=function(t){for(var i=0,n=t.length;i<n;++i)this.remove(t[i]);return this},l.root=function(){return this._root},l.size=function(){var t=0;return this.visit((function(i){if(!i.length)do{++t}while(i=i.next)})),t},l.visit=function(t){var i,e,s,h,r,o,a,l,u=[],_=this._root;for(_&&u.push(new n(_,this._x0,this._y0,this._z0,this._x1,this._y1,this._z1));i=u.pop();)if(!t(_=i.node,s=i.x0,h=i.y0,r=i.z0,o=i.x1,a=i.y1,l=i.z1)&&_.length){var f=(s+o)/2,c=(h+a)/2,y=(r+l)/2;(e=_[7])&&u.push(new n(e,f,c,y,o,a,l)),(e=_[6])&&u.push(new n(e,s,c,y,f,a,l)),(e=_[5])&&u.push(new n(e,f,h,y,o,c,l)),(e=_[4])&&u.push(new n(e,s,h,y,f,c,l)),(e=_[3])&&u.push(new n(e,f,c,r,o,a,y)),(e=_[2])&&u.push(new n(e,s,c,r,f,a,y)),(e=_[1])&&u.push(new n(e,f,h,r,o,c,y)),(e=_[0])&&u.push(new n(e,s,h,r,f,c,y))}return this},l.visitAfter=function(t){var i,e=[],s=[];for(this._root&&e.push(new n(this._root,this._x0,this._y0,this._z0,this._x1,this._y1,this._z1));i=e.pop();){var h=i.node;if(h.length){var r,o=i.x0,a=i.y0,l=i.z0,u=i.x1,_=i.y1,f=i.z1,c=(o+u)/2,y=(a+_)/2,x=(l+f)/2;(r=h[0])&&e.push(new n(r,o,a,l,c,y,x)),(r=h[1])&&e.push(new n(r,c,a,l,u,y,x)),(r=h[2])&&e.push(new n(r,o,y,l,c,_,x)),(r=h[3])&&e.push(new n(r,c,y,l,u,_,x)),(r=h[4])&&e.push(new n(r,o,a,x,c,y,f)),(r=h[5])&&e.push(new n(r,c,a,x,u,y,f)),(r=h[6])&&e.push(new n(r,o,y,x,c,_,f)),(r=h[7])&&e.push(new n(r,c,y,x,u,_,f))}s.push(i)}for(;i=s.pop();)t(i.node,i.x0,i.y0,i.z0,i.x1,i.y1,i.z1);return this},l.x=function(t){return arguments.length?(this._x=t,this):this._x},l.y=function(t){return arguments.length?(this._y=t,this):this._y},l.z=function(t){return arguments.length?(this._z=t,this):this._z},t.octree=r,Object.defineProperty(t,"__esModule",{value:!0})}));
+	// // // https://github.com/vasturiano/d3-force-3d v3.0.2 Copyright 2025 Vasco Asturiano
+	NEW: !function(n,t){"object"==typeof exports&&"undefined"!=typeof module?t(exports,require("d3-binarytree"),require("d3-quadtree"),require("d3-octree"),require("d3-dispatch"),require("d3-timer")):"function"==typeof define&&define.amd?define(["exports","d3-binarytree","d3-quadtree","d3-octree","d3-dispatch","d3-timer"],t):t((n="undefined"!=typeof globalThis?globalThis:n||self).d3=n.d3||{},n.d3,n.d3,n.d3,n.d3,n.d3)}(this,(function(n,t,e,r,i,u){"use strict";function o(n){return function(){return n}}function f(n){return 1e-6*(n()-.5)}function a(n){return n.x+n.vx}function c(n){return n.y+n.vy}function l(n){return n.z+n.vz}function h(n){return n.index}function v(n,t){var e=n.get(t);if(!e)throw new Error("node not found: "+t);return e}const d=4294967296;function y(n){return n.x}function s(n){return n.y}function g(n){return n.z}var x=Math.PI*(3-Math.sqrt(5)),z=20*Math.PI/(9+Math.sqrt(221));n.forceCenter=function(n,t,e){var r,i=1;function u(){var u,o,f=r.length,a=0,c=0,l=0;for(u=0;u<f;++u)a+=(o=r[u]).x||0,c+=o.y||0,l+=o.z||0;for(a=(a/f-n)*i,c=(c/f-t)*i,l=(l/f-e)*i,u=0;u<f;++u)o=r[u],a&&(o.x-=a),c&&(o.y-=c),l&&(o.z-=l)}return null==n&&(n=0),null==t&&(t=0),null==e&&(e=0),u.initialize=function(n){r=n},u.x=function(t){return arguments.length?(n=+t,u):n},u.y=function(n){return arguments.length?(t=+n,u):t},u.z=function(n){return arguments.length?(e=+n,u):e},u.strength=function(n){return arguments.length?(i=+n,u):i},u},n.forceCollide=function(n){var i,u,h,v,d=1,y=1;function s(){for(var n,o,s,x,z,p,M,w,q=i.length,N=0;N<y;++N)for(o=(1===u?t.binarytree(i,a):2===u?e.quadtree(i,a,c):3===u?r.octree(i,a,c,l):null).visitAfter(g),n=0;n<q;++n)s=i[n],M=h[s.index],w=M*M,x=s.x+s.vx,u>1&&(z=s.y+s.vy),u>2&&(p=s.z+s.vz),o.visit(m);function m(n,t,e,r,i,o,a){var c=[t,e,r,i,o,a],l=c[0],h=c[1],y=c[2],g=c[u],q=c[u+1],N=c[u+2],m=n.data,A=n.r,b=M+A;if(!m)return l>x+b||g<x-b||u>1&&(h>z+b||q<z-b)||u>2&&(y>p+b||N<p-b);if(m.index>s.index){var k=x-m.x-m.vx,E=u>1?z-m.y-m.vy:0,j=u>2?p-m.z-m.vz:0,D=k*k+E*E+j*j;D<b*b&&(0===k&&(D+=(k=f(v))*k),u>1&&0===E&&(D+=(E=f(v))*E),u>2&&0===j&&(D+=(j=f(v))*j),D=(b-(D=Math.sqrt(D)))/D*d,s.vx+=(k*=D)*(b=(A*=A)/(w+A)),u>1&&(s.vy+=(E*=D)*b),u>2&&(s.vz+=(j*=D)*b),m.vx-=k*(b=1-b),u>1&&(m.vy-=E*b),u>2&&(m.vz-=j*b))}}}function g(n){if(n.data)return n.r=h[n.data.index];for(var t=n.r=0;t<Math.pow(2,u);++t)n[t]&&n[t].r>n.r&&(n.r=n[t].r)}function x(){if(i){var t,e,r=i.length;for(h=new Array(r),t=0;t<r;++t)e=i[t],h[e.index]=+n(e,t,i)}}return"function"!=typeof n&&(n=o(null==n?1:+n)),s.initialize=function(n,...t){i=n,v=t.find((n=>"function"==typeof n))||Math.random,u=t.find((n=>[1,2,3].includes(n)))||2,x()},s.iterations=function(n){return arguments.length?(y=+n,s):y},s.strength=function(n){return arguments.length?(d=+n,s):d},s.radius=function(t){return arguments.length?(n="function"==typeof t?t:o(+t),x(),s):n},s},n.forceLink=function(n){var t,e,r,i,u,a,c,l=h,d=function(n){return 1/Math.min(a[n.source.index],a[n.target.index])},y=function(n){return a[n.source.index]/(a[n.source.index]+a[n.target.index])},s=o(30),g=1,x=1;function z(i){for(var o=0,a=n.length;o<x;++o)for(var l,h,v,d,y,s=0,z=0,p=0,M=0;s<a;++s){h=(l=n[s]).source,z=(v=l.target).x+v.vx-h.x-h.vx||f(c),u>1&&(p=v.y+v.vy-h.y-h.vy||f(c)),u>2&&(M=v.z+v.vz-h.z-h.vz||f(c));let o=(d=Math.sqrt(z*z+p*p+M*M))-r[s];2==g?o*=Math.abs(o):o=o=Math.sign(o)*Math.pow(Math.abs(o),g),z*=d=o/d*i*t[s],p*=d,M*=d,v.vx-=z*(y=e[s]),u>1&&(v.vy-=p*y),u>2&&(v.vz-=M*y),h.vx+=z*(y=1-y),u>1&&(h.vy+=p*y),u>2&&(h.vz+=M*y)}}function p(){if(i){var u,o,f=i.length,c=n.length,h=new Map(i.map(((n,t)=>[l(n,t,i),n])));for(u=0,a=new Array(f);u<c;++u)(o=n[u]).index=u,"object"!=typeof o.source&&(o.source=v(h,o.source)),"object"!=typeof o.target&&(o.target=v(h,o.target)),a[o.source.index]=(a[o.source.index]||0)+1,a[o.target.index]=(a[o.target.index]||0)+1;for(u=0;u<c;++u)o=n[u];t=new Array(c),M(),r=new Array(c),q(),e=new Array(c),w()}}function M(){if(i)for(var e=0,r=n.length;e<r;++e)t[e]=+d(n[e],e,n)}function w(){if(i)for(var t=0,r=n.length;t<r;++t)e[t]=+y(n[t],t,n)}function q(){if(i)for(var t=0,e=n.length;t<e;++t)r[t]=+s(n[t],t,n)}return null==n&&(n=[]),z.initialize=function(n,...t){i=n,c=t.find((n=>"function"==typeof n))||Math.random,u=t.find((n=>[1,2,3].includes(n)))||2,p()},z.links=function(t){return arguments.length?(n=t,p(),z):n},z.id=function(n){return arguments.length?(l=n,z):l},z.iterations=function(n){return arguments.length?(x=+n,z):x},z.strength=function(n){return arguments.length?(d="function"==typeof n?n:o(+n),M(),z):d},z.bias=function(n){return arguments.length?(y="function"==typeof n?n:o(+n),w(),z):y},z.exponent=function(n){return arguments.length?(g=+n,z):g},z.distance=function(n){return arguments.length?(s="function"==typeof n?n:o(+n),q(),z):s},z},n.forceManyBody=function(){var n,i,u,a,c,l,h=o(-30),v=1,d=1,x=1/0,z=.81;function p(o){var f,a=n.length,l=(1===i?t.binarytree(n,y):2===i?e.quadtree(n,y,s):3===i?r.octree(n,y,s,g):null).visitAfter(w);for(c=o,f=0;f<a;++f)u=n[f],l.visit(q)}function M(){if(n){var t,e,r=n.length;for(l=new Array(r),t=0;t<r;++t)e=n[t],l[e.index]=+h(e,t,n)}}function w(n){var t,e,r,u,o,f,a=0,c=0,h=n.length;if(h){for(r=u=o=f=0;f<h;++f)(t=n[f])&&(e=Math.abs(t.value))&&(a+=t.value,c+=e,r+=e*(t.x||0),u+=e*(t.y||0),o+=e*(t.z||0));a*=Math.sqrt(4/h),n.x=r/c,i>1&&(n.y=u/c),i>2&&(n.z=o/c)}else{(t=n).x=t.data.x,i>1&&(t.y=t.data.y),i>2&&(t.z=t.data.z);do{a+=l[t.data.index]}while(t=t.next)}n.value=a}function q(n,t,e,r,o){if(!n.value)return!0;var h=[e,r,o][i-1],y=n.x-u.x,s=i>1?n.y-u.y:0,g=i>2?n.z-u.z:0,p=h-t,M=y*y+s*s+g*g;if(p*p/z<M){if(M<x){0===y&&(M+=(y=f(a))*y),i>1&&0===s&&(M+=(s=f(a))*s),i>2&&0===g&&(M+=(g=f(a))*g),M<d&&(M=Math.sqrt(d*M));let t=M;1==v||(t=2==v?M*Math.sqrt(M):Math.pow(M,(v+1)/2)),u.vx+=y*n.value*c/t,i>1&&(u.vy+=s*n.value*c/t),i>2&&(u.vz+=g*n.value*c/t)}return!0}if(n.length||M>=x)return;(n.data!==u||n.next)&&(0===y&&(M+=(y=f(a))*y),i>1&&0===s&&(M+=(s=f(a))*s),i>2&&0===g&&(M+=(g=f(a))*g),M<d&&(M=Math.sqrt(d*M)));let w=M;1==v||(w=2==v?M*Math.sqrt(M):Math.pow(M,(v+1)/2));do{n.data!==u&&(p=l[n.data.index]*c/w,u.vx+=y*p,i>1&&(u.vy+=s*p),i>2&&(u.vz+=g*p))}while(n=n.next)}return p.initialize=function(t,...e){n=t,a=e.find((n=>"function"==typeof n))||Math.random,i=e.find((n=>[1,2,3].includes(n)))||2,M()},p.strength=function(n){return arguments.length?(h="function"==typeof n?n:o(+n),M(),p):h},p.exponent=function(n){return arguments.length?(v=+n,p):v},p.distanceMin=function(n){return arguments.length?(d=n*n,p):Math.sqrt(d)},p.distanceMax=function(n){return arguments.length?(x=n*n,p):Math.sqrt(x)},p.theta=function(n){return arguments.length?(z=n*n,p):Math.sqrt(z)},p},n.forceRadial=function(n,t,e,r){var i,u,f,a,c=o(.1);function l(n){for(var o=0,c=i.length;o<c;++o){var l=i[o],h=l.x-t||1e-6,v=(l.y||0)-e||1e-6,d=(l.z||0)-r||1e-6,y=Math.sqrt(h*h+v*v+d*d),s=(a[o]-y)*f[o]*n/y;l.vx+=h*s,u>1&&(l.vy+=v*s),u>2&&(l.vz+=d*s)}}function h(){if(i){var t,e=i.length;for(f=new Array(e),a=new Array(e),t=0;t<e;++t)a[t]=+n(i[t],t,i),f[t]=isNaN(a[t])?0:+c(i[t],t,i)}}return"function"!=typeof n&&(n=o(+n)),null==t&&(t=0),null==e&&(e=0),null==r&&(r=0),l.initialize=function(n,...t){i=n,u=t.find((n=>[1,2,3].includes(n)))||2,h()},l.strength=function(n){return arguments.length?(c="function"==typeof n?n:o(+n),h(),l):c},l.radius=function(t){return arguments.length?(n="function"==typeof t?t:o(+t),h(),l):n},l.x=function(n){return arguments.length?(t=+n,l):t},l.y=function(n){return arguments.length?(e=+n,l):e},l.z=function(n){return arguments.length?(r=+n,l):r},l},n.forceSimulation=function(n,t){t=t||2;var e,r=Math.min(3,Math.max(1,Math.round(t))),o=1,f=.001,a=1-Math.pow(f,1/300),c=0,l=.6,h=new Map,v=u.timer(g),y=i.dispatch("tick","end"),s=function(){let n=1;return()=>(n=(1664525*n+1013904223)%d)/d}();function g(){p(),y.call("tick",e),o<f&&(v.stop(),y.call("end",e))}function p(t){var i,u,f=n.length;void 0===t&&(t=1);for(var v=0;v<t;++v)for(o+=(c-o)*a,h.forEach((function(n){n(o)})),i=0;i<f;++i)null==(u=n[i]).fx?u.x+=u.vx*=l:(u.x=u.fx,u.vx=0),r>1&&(null==u.fy?u.y+=u.vy*=l:(u.y=u.fy,u.vy=0)),r>2&&(null==u.fz?u.z+=u.vz*=l:(u.z=u.fz,u.vz=0));return e}function M(){for(var t,e=0,i=n.length;e<i;++e){if((t=n[e]).index=e,null!=t.fx&&(t.x=t.fx),null!=t.fy&&(t.y=t.fy),null!=t.fz&&(t.z=t.fz),isNaN(t.x)||r>1&&isNaN(t.y)||r>2&&isNaN(t.z)){var u=10*(r>2?Math.cbrt(.5+e):r>1?Math.sqrt(.5+e):e),o=e*x,f=e*z;1===r?t.x=u:2===r?(t.x=u*Math.cos(o),t.y=u*Math.sin(o)):(t.x=u*Math.sin(o)*Math.cos(f),t.y=u*Math.cos(o),t.z=u*Math.sin(o)*Math.sin(f))}(isNaN(t.vx)||r>1&&isNaN(t.vy)||r>2&&isNaN(t.vz))&&(t.vx=0,r>1&&(t.vy=0),r>2&&(t.vz=0))}}function w(t){return t.initialize&&t.initialize(n,s,r),t}return null==n&&(n=[]),M(),e={tick:p,restart:function(){return v.restart(g),e},stop:function(){return v.stop(),e},numDimensions:function(n){return arguments.length?(r=Math.min(3,Math.max(1,Math.round(n))),h.forEach(w),e):r},nodes:function(t){return arguments.length?(n=t,M(),h.forEach(w),e):n},alpha:function(n){return arguments.length?(o=+n,e):o},alphaMin:function(n){return arguments.length?(f=+n,e):f},alphaDecay:function(n){return arguments.length?(a=+n,e):+a},alphaTarget:function(n){return arguments.length?(c=+n,e):c},velocityDecay:function(n){return arguments.length?(l=1-n,e):1-l},randomSource:function(n){return arguments.length?(s=n,h.forEach(w),e):s},force:function(n,t){return arguments.length>1?(null==t?h.delete(n):h.set(n,w(t)),e):h.get(n)},find:function(){var t,e,i,u,o,f,a=Array.prototype.slice.call(arguments),c=a.shift()||0,l=(r>1?a.shift():null)||0,h=(r>2?a.shift():null)||0,v=a.shift()||1/0,d=0,y=n.length;for(v*=v,d=0;d<y;++d)(u=(t=c-(o=n[d]).x)*t+(e=l-(o.y||0))*e+(i=h-(o.z||0))*i)<v&&(f=o,v=u);return f},on:function(n,t){return arguments.length>1?(y.on(n,t),e):y.on(n)}}},n.forceX=function(n){var t,e,r,i=o(.1);function u(n){for(var i,u=0,o=t.length;u<o;++u)(i=t[u]).vx+=(r[u]-i.x)*e[u]*n}function f(){if(t){var u,o=t.length;for(e=new Array(o),r=new Array(o),u=0;u<o;++u)e[u]=isNaN(r[u]=+n(t[u],u,t))?0:+i(t[u],u,t)}}return"function"!=typeof n&&(n=o(null==n?0:+n)),u.initialize=function(n){t=n,f()},u.strength=function(n){return arguments.length?(i="function"==typeof n?n:o(+n),f(),u):i},u.x=function(t){return arguments.length?(n="function"==typeof t?t:o(+t),f(),u):n},u},n.forceY=function(n){var t,e,r,i=o(.1);function u(n){for(var i,u=0,o=t.length;u<o;++u)(i=t[u]).vy+=(r[u]-i.y)*e[u]*n}function f(){if(t){var u,o=t.length;for(e=new Array(o),r=new Array(o),u=0;u<o;++u)e[u]=isNaN(r[u]=+n(t[u],u,t))?0:+i(t[u],u,t)}}return"function"!=typeof n&&(n=o(null==n?0:+n)),u.initialize=function(n){t=n,f()},u.strength=function(n){return arguments.length?(i="function"==typeof n?n:o(+n),f(),u):i},u.y=function(t){return arguments.length?(n="function"==typeof t?t:o(+t),f(),u):n},u},n.forceZ=function(n){var t,e,r,i=o(.1);function u(n){for(var i,u=0,o=t.length;u<o;++u)(i=t[u]).vz+=(r[u]-i.z)*e[u]*n}function f(){if(t){var u,o=t.length;for(e=new Array(o),r=new Array(o),u=0;u<o;++u)e[u]=isNaN(r[u]=+n(t[u],u,t))?0:+i(t[u],u,t)}}return"function"!=typeof n&&(n=o(null==n?0:+n)),u.initialize=function(n){t=n,f()},u.strength=function(n){return arguments.length?(i="function"==typeof n?n:o(+n),f(),u):i},u.z=function(t){return arguments.length?(n="function"==typeof t?t:o(+t),f(),u):n},u},Object.defineProperty(n,"__esModule",{value:!0})}));
 	// // // https://github.com/vasturiano/d3-force-3d v3.0.2 Copyright 2021 Vasco Asturiano
-	!function(n,t){"object"==typeof exports&&"undefined"!=typeof module?t(exports,require("d3-binarytree"),require("d3-quadtree"),require("d3-octree"),require("d3-dispatch"),require("d3-timer")):"function"==typeof define&&define.amd?define(["exports","d3-binarytree","d3-quadtree","d3-octree","d3-dispatch","d3-timer"],t):t((n="undefined"!=typeof globalThis?globalThis:n||self).d3=n.d3||{},n.d3,n.d3,n.d3,n.d3,n.d3)}(this,(function(n,t,e,r,i,u){"use strict";function o(n){return function(){return n}}function f(n){return 1e-6*(n()-.5)}function a(n){return n.x+n.vx}function c(n){return n.y+n.vy}function l(n){return n.z+n.vz}function h(n){return n.index}function v(n,t){var e=n.get(t);if(!e)throw new Error("node not found: "+t);return e}const d=4294967296;function y(n){return n.x}function s(n){return n.y}function g(n){return n.z}var x=Math.PI*(3-Math.sqrt(5)),z=20*Math.PI/(9+Math.sqrt(221));n.forceCenter=function(n,t,e){var r,i=1;function u(){var u,o,f=r.length,a=0,c=0,l=0;for(u=0;u<f;++u)a+=(o=r[u]).x||0,c+=o.y||0,l+=o.z||0;for(a=(a/f-n)*i,c=(c/f-t)*i,l=(l/f-e)*i,u=0;u<f;++u)o=r[u],a&&(o.x-=a),c&&(o.y-=c),l&&(o.z-=l)}return null==n&&(n=0),null==t&&(t=0),null==e&&(e=0),u.initialize=function(n){r=n},u.x=function(t){return arguments.length?(n=+t,u):n},u.y=function(n){return arguments.length?(t=+n,u):t},u.z=function(n){return arguments.length?(e=+n,u):e},u.strength=function(n){return arguments.length?(i=+n,u):i},u},n.forceCollide=function(n){var i,u,h,v,d=1,y=1;function s(){for(var n,o,s,x,z,p,M,w,q=i.length,N=0;N<y;++N)for(o=(1===u?t.binarytree(i,a):2===u?e.quadtree(i,a,c):3===u?r.octree(i,a,c,l):null).visitAfter(g),n=0;n<q;++n)s=i[n],M=h[s.index],w=M*M,x=s.x+s.vx,u>1&&(z=s.y+s.vy),u>2&&(p=s.z+s.vz),o.visit(m);function m(n,t,e,r,i,o,a){var c=[t,e,r,i,o,a],l=c[0],h=c[1],y=c[2],g=c[u],q=c[u+1],N=c[u+2],m=n.data,A=n.r,b=M+A;if(!m)return l>x+b||g<x-b||u>1&&(h>z+b||q<z-b)||u>2&&(y>p+b||N<p-b);if(m.index>s.index){var k=x-m.x-m.vx,E=u>1?z-m.y-m.vy:0,j=u>2?p-m.z-m.vz:0,D=k*k+E*E+j*j;D<b*b&&(0===k&&(D+=(k=f(v))*k),u>1&&0===E&&(D+=(E=f(v))*E),u>2&&0===j&&(D+=(j=f(v))*j),D=(b-(D=Math.sqrt(D)))/D*d,s.vx+=(k*=D)*(b=(A*=A)/(w+A)),u>1&&(s.vy+=(E*=D)*b),u>2&&(s.vz+=(j*=D)*b),m.vx-=k*(b=1-b),u>1&&(m.vy-=E*b),u>2&&(m.vz-=j*b))}}}function g(n){if(n.data)return n.r=h[n.data.index];for(var t=n.r=0;t<Math.pow(2,u);++t)n[t]&&n[t].r>n.r&&(n.r=n[t].r)}function x(){if(i){var t,e,r=i.length;for(h=new Array(r),t=0;t<r;++t)e=i[t],h[e.index]=+n(e,t,i)}}return"function"!=typeof n&&(n=o(null==n?1:+n)),s.initialize=function(n,...t){i=n,v=t.find((n=>"function"==typeof n))||Math.random,u=t.find((n=>[1,2,3].includes(n)))||2,x()},s.iterations=function(n){return arguments.length?(y=+n,s):y},s.strength=function(n){return arguments.length?(d=+n,s):d},s.radius=function(t){return arguments.length?(n="function"==typeof t?t:o(+t),x(),s):n},s},n.forceLink=function(n){var t,e,r,i,u,a,c,l=h,d=function(n){return 1/Math.min(u[n.source.index],u[n.target.index])},y=o(30),s=1;function g(r){for(var u=0,o=n.length;u<s;++u)for(var l,h,v,d,y,g=0,x=0,z=0,p=0;g<o;++g)h=(l=n[g]).source,x=(v=l.target).x+v.vx-h.x-h.vx||f(c),i>1&&(z=v.y+v.vy-h.y-h.vy||f(c)),i>2&&(p=v.z+v.vz-h.z-h.vz||f(c)),x*=d=((d=Math.sqrt(x*x+z*z+p*p))-e[g])/d*r*t[g],z*=d,p*=d,v.vx-=x*(y=a[g]),i>1&&(v.vy-=z*y),i>2&&(v.vz-=p*y),h.vx+=x*(y=1-y),i>1&&(h.vy+=z*y),i>2&&(h.vz+=p*y)}function x(){if(r){var i,o,f=r.length,c=n.length,h=new Map(r.map(((n,t)=>[l(n,t,r),n])));for(i=0,u=new Array(f);i<c;++i)(o=n[i]).index=i,"object"!=typeof o.source&&(o.source=v(h,o.source)),"object"!=typeof o.target&&(o.target=v(h,o.target)),u[o.source.index]=(u[o.source.index]||0)+1,u[o.target.index]=(u[o.target.index]||0)+1;for(i=0,a=new Array(c);i<c;++i)o=n[i],a[i]=u[o.source.index]/(u[o.source.index]+u[o.target.index]);t=new Array(c),z(),e=new Array(c),p()}}function z(){if(r)for(var e=0,i=n.length;e<i;++e)t[e]=+d(n[e],e,n)}function p(){if(r)for(var t=0,i=n.length;t<i;++t)e[t]=+y(n[t],t,n)}return null==n&&(n=[]),g.initialize=function(n,...t){r=n,c=t.find((n=>"function"==typeof n))||Math.random,i=t.find((n=>[1,2,3].includes(n)))||2,x()},g.links=function(t){return arguments.length?(n=t,x(),g):n},g.id=function(n){return arguments.length?(l=n,g):l},g.iterations=function(n){return arguments.length?(s=+n,g):s},g.strength=function(n){return arguments.length?(d="function"==typeof n?n:o(+n),z(),g):d},g.distance=function(n){return arguments.length?(y="function"==typeof n?n:o(+n),p(),g):y},g},n.forceManyBody=function(){var n,i,u,a,c,l,h=o(-30),v=1,d=1/0,x=.81;function z(o){var f,a=n.length,l=(1===i?t.binarytree(n,y):2===i?e.quadtree(n,y,s):3===i?r.octree(n,y,s,g):null).visitAfter(M);for(c=o,f=0;f<a;++f)u=n[f],l.visit(w)}function p(){if(n){var t,e,r=n.length;for(l=new Array(r),t=0;t<r;++t)e=n[t],l[e.index]=+h(e,t,n)}}function M(n){var t,e,r,u,o,f,a=0,c=0,h=n.length;if(h){for(r=u=o=f=0;f<h;++f)(t=n[f])&&(e=Math.abs(t.value))&&(a+=t.value,c+=e,r+=e*(t.x||0),u+=e*(t.y||0),o+=e*(t.z||0));a*=Math.sqrt(4/h),n.x=r/c,i>1&&(n.y=u/c),i>2&&(n.z=o/c)}else{(t=n).x=t.data.x,i>1&&(t.y=t.data.y),i>2&&(t.z=t.data.z);do{a+=l[t.data.index]}while(t=t.next)}n.value=a}function w(n,t,e,r,o){if(!n.value)return!0;var h=[e,r,o][i-1],y=n.x-u.x,s=i>1?n.y-u.y:0,g=i>2?n.z-u.z:0,z=h-t,p=y*y+s*s+g*g;if(z*z/x<p)return p<d&&(0===y&&(p+=(y=f(a))*y),i>1&&0===s&&(p+=(s=f(a))*s),i>2&&0===g&&(p+=(g=f(a))*g),p<v&&(p=Math.sqrt(v*p)),u.vx+=y*n.value*c/p,i>1&&(u.vy+=s*n.value*c/p),i>2&&(u.vz+=g*n.value*c/p)),!0;if(!(n.length||p>=d)){(n.data!==u||n.next)&&(0===y&&(p+=(y=f(a))*y),i>1&&0===s&&(p+=(s=f(a))*s),i>2&&0===g&&(p+=(g=f(a))*g),p<v&&(p=Math.sqrt(v*p)));do{n.data!==u&&(z=l[n.data.index]*c/p,u.vx+=y*z,i>1&&(u.vy+=s*z),i>2&&(u.vz+=g*z))}while(n=n.next)}}return z.initialize=function(t,...e){n=t,a=e.find((n=>"function"==typeof n))||Math.random,i=e.find((n=>[1,2,3].includes(n)))||2,p()},z.strength=function(n){return arguments.length?(h="function"==typeof n?n:o(+n),p(),z):h},z.distanceMin=function(n){return arguments.length?(v=n*n,z):Math.sqrt(v)},z.distanceMax=function(n){return arguments.length?(d=n*n,z):Math.sqrt(d)},z.theta=function(n){return arguments.length?(x=n*n,z):Math.sqrt(x)},z},n.forceRadial=function(n,t,e,r){var i,u,f,a,c=o(.1);function l(n){for(var o=0,c=i.length;o<c;++o){var l=i[o],h=l.x-t||1e-6,v=(l.y||0)-e||1e-6,d=(l.z||0)-r||1e-6,y=Math.sqrt(h*h+v*v+d*d),s=(a[o]-y)*f[o]*n/y;l.vx+=h*s,u>1&&(l.vy+=v*s),u>2&&(l.vz+=d*s)}}function h(){if(i){var t,e=i.length;for(f=new Array(e),a=new Array(e),t=0;t<e;++t)a[t]=+n(i[t],t,i),f[t]=isNaN(a[t])?0:+c(i[t],t,i)}}return"function"!=typeof n&&(n=o(+n)),null==t&&(t=0),null==e&&(e=0),null==r&&(r=0),l.initialize=function(n,...t){i=n,u=t.find((n=>[1,2,3].includes(n)))||2,h()},l.strength=function(n){return arguments.length?(c="function"==typeof n?n:o(+n),h(),l):c},l.radius=function(t){return arguments.length?(n="function"==typeof t?t:o(+t),h(),l):n},l.x=function(n){return arguments.length?(t=+n,l):t},l.y=function(n){return arguments.length?(e=+n,l):e},l.z=function(n){return arguments.length?(r=+n,l):r},l},n.forceSimulation=function(n,t){t=t||2;var e,r=Math.min(3,Math.max(1,Math.round(t))),o=1,f=.001,a=1-Math.pow(f,1/300),c=0,l=.6,h=new Map,v=u.timer(g),y=i.dispatch("tick","end"),s=function(){let n=1;return()=>(n=(1664525*n+1013904223)%d)/d}();function g(){p(),y.call("tick",e),o<f&&(v.stop(),y.call("end",e))}function p(t){var i,u,f=n.length;void 0===t&&(t=1);for(var v=0;v<t;++v)for(o+=(c-o)*a,h.forEach((function(n){n(o)})),i=0;i<f;++i)null==(u=n[i]).fx?u.x+=u.vx*=l:(u.x=u.fx,u.vx=0),r>1&&(null==u.fy?u.y+=u.vy*=l:(u.y=u.fy,u.vy=0)),r>2&&(null==u.fz?u.z+=u.vz*=l:(u.z=u.fz,u.vz=0));return e}function M(){for(var t,e=0,i=n.length;e<i;++e){if((t=n[e]).index=e,null!=t.fx&&(t.x=t.fx),null!=t.fy&&(t.y=t.fy),null!=t.fz&&(t.z=t.fz),isNaN(t.x)||r>1&&isNaN(t.y)||r>2&&isNaN(t.z)){var u=10*(r>2?Math.cbrt(.5+e):r>1?Math.sqrt(.5+e):e),o=e*x,f=e*z;1===r?t.x=u:2===r?(t.x=u*Math.cos(o),t.y=u*Math.sin(o)):(t.x=u*Math.sin(o)*Math.cos(f),t.y=u*Math.cos(o),t.z=u*Math.sin(o)*Math.sin(f))}(isNaN(t.vx)||r>1&&isNaN(t.vy)||r>2&&isNaN(t.vz))&&(t.vx=0,r>1&&(t.vy=0),r>2&&(t.vz=0))}}function w(t){return t.initialize&&t.initialize(n,s,r),t}return null==n&&(n=[]),M(),e={tick:p,restart:function(){return v.restart(g),e},stop:function(){return v.stop(),e},numDimensions:function(n){return arguments.length?(r=Math.min(3,Math.max(1,Math.round(n))),h.forEach(w),e):r},nodes:function(t){return arguments.length?(n=t,M(),h.forEach(w),e):n},alpha:function(n){return arguments.length?(o=+n,e):o},alphaMin:function(n){return arguments.length?(f=+n,e):f},alphaDecay:function(n){return arguments.length?(a=+n,e):+a},alphaTarget:function(n){return arguments.length?(c=+n,e):c},velocityDecay:function(n){return arguments.length?(l=1-n,e):1-l},randomSource:function(n){return arguments.length?(s=n,h.forEach(w),e):s},force:function(n,t){return arguments.length>1?(null==t?h.delete(n):h.set(n,w(t)),e):h.get(n)},find:function(){var t,e,i,u,o,f,a=Array.prototype.slice.call(arguments),c=a.shift()||0,l=(r>1?a.shift():null)||0,h=(r>2?a.shift():null)||0,v=a.shift()||1/0,d=0,y=n.length;for(v*=v,d=0;d<y;++d)(u=(t=c-(o=n[d]).x)*t+(e=l-(o.y||0))*e+(i=h-(o.z||0))*i)<v&&(f=o,v=u);return f},on:function(n,t){return arguments.length>1?(y.on(n,t),e):y.on(n)}}},n.forceX=function(n){var t,e,r,i=o(.1);function u(n){for(var i,u=0,o=t.length;u<o;++u)(i=t[u]).vx+=(r[u]-i.x)*e[u]*n}function f(){if(t){var u,o=t.length;for(e=new Array(o),r=new Array(o),u=0;u<o;++u)e[u]=isNaN(r[u]=+n(t[u],u,t))?0:+i(t[u],u,t)}}return"function"!=typeof n&&(n=o(null==n?0:+n)),u.initialize=function(n){t=n,f()},u.strength=function(n){return arguments.length?(i="function"==typeof n?n:o(+n),f(),u):i},u.x=function(t){return arguments.length?(n="function"==typeof t?t:o(+t),f(),u):n},u},n.forceY=function(n){var t,e,r,i=o(.1);function u(n){for(var i,u=0,o=t.length;u<o;++u)(i=t[u]).vy+=(r[u]-i.y)*e[u]*n}function f(){if(t){var u,o=t.length;for(e=new Array(o),r=new Array(o),u=0;u<o;++u)e[u]=isNaN(r[u]=+n(t[u],u,t))?0:+i(t[u],u,t)}}return"function"!=typeof n&&(n=o(null==n?0:+n)),u.initialize=function(n){t=n,f()},u.strength=function(n){return arguments.length?(i="function"==typeof n?n:o(+n),f(),u):i},u.y=function(t){return arguments.length?(n="function"==typeof t?t:o(+t),f(),u):n},u},n.forceZ=function(n){var t,e,r,i=o(.1);function u(n){for(var i,u=0,o=t.length;u<o;++u)(i=t[u]).vz+=(r[u]-i.z)*e[u]*n}function f(){if(t){var u,o=t.length;for(e=new Array(o),r=new Array(o),u=0;u<o;++u)e[u]=isNaN(r[u]=+n(t[u],u,t))?0:+i(t[u],u,t)}}return"function"!=typeof n&&(n=o(null==n?0:+n)),u.initialize=function(n){t=n,f()},u.strength=function(n){return arguments.length?(i="function"==typeof n?n:o(+n),f(),u):i},u.z=function(t){return arguments.length?(n="function"==typeof t?t:o(+t),f(),u):n},u},Object.defineProperty(n,"__esModule",{value:!0})}));
+	// !function(n,t){"object"==typeof exports&&"undefined"!=typeof module?t(exports,require("d3-binarytree"),require("d3-quadtree"),require("d3-octree"),require("d3-dispatch"),require("d3-timer")):"function"==typeof define&&define.amd?define(["exports","d3-binarytree","d3-quadtree","d3-octree","d3-dispatch","d3-timer"],t):t((n="undefined"!=typeof globalThis?globalThis:n||self).d3=n.d3||{},n.d3,n.d3,n.d3,n.d3,n.d3)}(this,(function(n,t,e,r,i,u){"use strict";function o(n){return function(){return n}}function f(n){return 1e-6*(n()-.5)}function a(n){return n.x+n.vx}function c(n){return n.y+n.vy}function l(n){return n.z+n.vz}function h(n){return n.index}function v(n,t){var e=n.get(t);if(!e)throw new Error("node not found: "+t);return e}const d=4294967296;function y(n){return n.x}function s(n){return n.y}function g(n){return n.z}var x=Math.PI*(3-Math.sqrt(5)),z=20*Math.PI/(9+Math.sqrt(221));n.forceCenter=function(n,t,e){var r,i=1;function u(){var u,o,f=r.length,a=0,c=0,l=0;for(u=0;u<f;++u)a+=(o=r[u]).x||0,c+=o.y||0,l+=o.z||0;for(a=(a/f-n)*i,c=(c/f-t)*i,l=(l/f-e)*i,u=0;u<f;++u)o=r[u],a&&(o.x-=a),c&&(o.y-=c),l&&(o.z-=l)}return null==n&&(n=0),null==t&&(t=0),null==e&&(e=0),u.initialize=function(n){r=n},u.x=function(t){return arguments.length?(n=+t,u):n},u.y=function(n){return arguments.length?(t=+n,u):t},u.z=function(n){return arguments.length?(e=+n,u):e},u.strength=function(n){return arguments.length?(i=+n,u):i},u},n.forceCollide=function(n){var i,u,h,v,d=1,y=1;function s(){for(var n,o,s,x,z,p,M,w,q=i.length,N=0;N<y;++N)for(o=(1===u?t.binarytree(i,a):2===u?e.quadtree(i,a,c):3===u?r.octree(i,a,c,l):null).visitAfter(g),n=0;n<q;++n)s=i[n],M=h[s.index],w=M*M,x=s.x+s.vx,u>1&&(z=s.y+s.vy),u>2&&(p=s.z+s.vz),o.visit(m);function m(n,t,e,r,i,o,a){var c=[t,e,r,i,o,a],l=c[0],h=c[1],y=c[2],g=c[u],q=c[u+1],N=c[u+2],m=n.data,A=n.r,b=M+A;if(!m)return l>x+b||g<x-b||u>1&&(h>z+b||q<z-b)||u>2&&(y>p+b||N<p-b);if(m.index>s.index){var k=x-m.x-m.vx,E=u>1?z-m.y-m.vy:0,j=u>2?p-m.z-m.vz:0,D=k*k+E*E+j*j;D<b*b&&(0===k&&(D+=(k=f(v))*k),u>1&&0===E&&(D+=(E=f(v))*E),u>2&&0===j&&(D+=(j=f(v))*j),D=(b-(D=Math.sqrt(D)))/D*d,s.vx+=(k*=D)*(b=(A*=A)/(w+A)),u>1&&(s.vy+=(E*=D)*b),u>2&&(s.vz+=(j*=D)*b),m.vx-=k*(b=1-b),u>1&&(m.vy-=E*b),u>2&&(m.vz-=j*b))}}}function g(n){if(n.data)return n.r=h[n.data.index];for(var t=n.r=0;t<Math.pow(2,u);++t)n[t]&&n[t].r>n.r&&(n.r=n[t].r)}function x(){if(i){var t,e,r=i.length;for(h=new Array(r),t=0;t<r;++t)e=i[t],h[e.index]=+n(e,t,i)}}return"function"!=typeof n&&(n=o(null==n?1:+n)),s.initialize=function(n,...t){i=n,v=t.find((n=>"function"==typeof n))||Math.random,u=t.find((n=>[1,2,3].includes(n)))||2,x()},s.iterations=function(n){return arguments.length?(y=+n,s):y},s.strength=function(n){return arguments.length?(d=+n,s):d},s.radius=function(t){return arguments.length?(n="function"==typeof t?t:o(+t),x(),s):n},s},n.forceLink=function(n){var t,e,r,i,u,a,c,l=h,d=function(n){return 1/Math.min(u[n.source.index],u[n.target.index])},y=o(30),s=1;function g(r){for(var u=0,o=n.length;u<s;++u)for(var l,h,v,d,y,g=0,x=0,z=0,p=0;g<o;++g)h=(l=n[g]).source,x=(v=l.target).x+v.vx-h.x-h.vx||f(c),i>1&&(z=v.y+v.vy-h.y-h.vy||f(c)),i>2&&(p=v.z+v.vz-h.z-h.vz||f(c)),x*=d=((d=Math.sqrt(x*x+z*z+p*p))-e[g])/d*r*t[g],z*=d,p*=d,v.vx-=x*(y=a[g]),i>1&&(v.vy-=z*y),i>2&&(v.vz-=p*y),h.vx+=x*(y=1-y),i>1&&(h.vy+=z*y),i>2&&(h.vz+=p*y)}function x(){if(r){var i,o,f=r.length,c=n.length,h=new Map(r.map(((n,t)=>[l(n,t,r),n])));for(i=0,u=new Array(f);i<c;++i)(o=n[i]).index=i,"object"!=typeof o.source&&(o.source=v(h,o.source)),"object"!=typeof o.target&&(o.target=v(h,o.target)),u[o.source.index]=(u[o.source.index]||0)+1,u[o.target.index]=(u[o.target.index]||0)+1;for(i=0,a=new Array(c);i<c;++i)o=n[i],a[i]=u[o.source.index]/(u[o.source.index]+u[o.target.index]);t=new Array(c),z(),e=new Array(c),p()}}function z(){if(r)for(var e=0,i=n.length;e<i;++e)t[e]=+d(n[e],e,n)}function p(){if(r)for(var t=0,i=n.length;t<i;++t)e[t]=+y(n[t],t,n)}return null==n&&(n=[]),g.initialize=function(n,...t){r=n,c=t.find((n=>"function"==typeof n))||Math.random,i=t.find((n=>[1,2,3].includes(n)))||2,x()},g.links=function(t){return arguments.length?(n=t,x(),g):n},g.id=function(n){return arguments.length?(l=n,g):l},g.iterations=function(n){return arguments.length?(s=+n,g):s},g.strength=function(n){return arguments.length?(d="function"==typeof n?n:o(+n),z(),g):d},g.distance=function(n){return arguments.length?(y="function"==typeof n?n:o(+n),p(),g):y},g},n.forceManyBody=function(){var n,i,u,a,c,l,h=o(-30),v=1,d=1/0,x=.81;function z(o){var f,a=n.length,l=(1===i?t.binarytree(n,y):2===i?e.quadtree(n,y,s):3===i?r.octree(n,y,s,g):null).visitAfter(M);for(c=o,f=0;f<a;++f)u=n[f],l.visit(w)}function p(){if(n){var t,e,r=n.length;for(l=new Array(r),t=0;t<r;++t)e=n[t],l[e.index]=+h(e,t,n)}}function M(n){var t,e,r,u,o,f,a=0,c=0,h=n.length;if(h){for(r=u=o=f=0;f<h;++f)(t=n[f])&&(e=Math.abs(t.value))&&(a+=t.value,c+=e,r+=e*(t.x||0),u+=e*(t.y||0),o+=e*(t.z||0));a*=Math.sqrt(4/h),n.x=r/c,i>1&&(n.y=u/c),i>2&&(n.z=o/c)}else{(t=n).x=t.data.x,i>1&&(t.y=t.data.y),i>2&&(t.z=t.data.z);do{a+=l[t.data.index]}while(t=t.next)}n.value=a}function w(n,t,e,r,o){if(!n.value)return!0;var h=[e,r,o][i-1],y=n.x-u.x,s=i>1?n.y-u.y:0,g=i>2?n.z-u.z:0,z=h-t,p=y*y+s*s+g*g;if(z*z/x<p)return p<d&&(0===y&&(p+=(y=f(a))*y),i>1&&0===s&&(p+=(s=f(a))*s),i>2&&0===g&&(p+=(g=f(a))*g),p<v&&(p=Math.sqrt(v*p)),u.vx+=y*n.value*c/p,i>1&&(u.vy+=s*n.value*c/p),i>2&&(u.vz+=g*n.value*c/p)),!0;if(!(n.length||p>=d)){(n.data!==u||n.next)&&(0===y&&(p+=(y=f(a))*y),i>1&&0===s&&(p+=(s=f(a))*s),i>2&&0===g&&(p+=(g=f(a))*g),p<v&&(p=Math.sqrt(v*p)));do{n.data!==u&&(z=l[n.data.index]*c/p,u.vx+=y*z,i>1&&(u.vy+=s*z),i>2&&(u.vz+=g*z))}while(n=n.next)}}return z.initialize=function(t,...e){n=t,a=e.find((n=>"function"==typeof n))||Math.random,i=e.find((n=>[1,2,3].includes(n)))||2,p()},z.strength=function(n){return arguments.length?(h="function"==typeof n?n:o(+n),p(),z):h},z.distanceMin=function(n){return arguments.length?(v=n*n,z):Math.sqrt(v)},z.distanceMax=function(n){return arguments.length?(d=n*n,z):Math.sqrt(d)},z.theta=function(n){return arguments.length?(x=n*n,z):Math.sqrt(x)},z},n.forceRadial=function(n,t,e,r){var i,u,f,a,c=o(.1);function l(n){for(var o=0,c=i.length;o<c;++o){var l=i[o],h=l.x-t||1e-6,v=(l.y||0)-e||1e-6,d=(l.z||0)-r||1e-6,y=Math.sqrt(h*h+v*v+d*d),s=(a[o]-y)*f[o]*n/y;l.vx+=h*s,u>1&&(l.vy+=v*s),u>2&&(l.vz+=d*s)}}function h(){if(i){var t,e=i.length;for(f=new Array(e),a=new Array(e),t=0;t<e;++t)a[t]=+n(i[t],t,i),f[t]=isNaN(a[t])?0:+c(i[t],t,i)}}return"function"!=typeof n&&(n=o(+n)),null==t&&(t=0),null==e&&(e=0),null==r&&(r=0),l.initialize=function(n,...t){i=n,u=t.find((n=>[1,2,3].includes(n)))||2,h()},l.strength=function(n){return arguments.length?(c="function"==typeof n?n:o(+n),h(),l):c},l.radius=function(t){return arguments.length?(n="function"==typeof t?t:o(+t),h(),l):n},l.x=function(n){return arguments.length?(t=+n,l):t},l.y=function(n){return arguments.length?(e=+n,l):e},l.z=function(n){return arguments.length?(r=+n,l):r},l},n.forceSimulation=function(n,t){t=t||2;var e,r=Math.min(3,Math.max(1,Math.round(t))),o=1,f=.001,a=1-Math.pow(f,1/300),c=0,l=.6,h=new Map,v=u.timer(g),y=i.dispatch("tick","end"),s=function(){let n=1;return()=>(n=(1664525*n+1013904223)%d)/d}();function g(){p(),y.call("tick",e),o<f&&(v.stop(),y.call("end",e))}function p(t){var i,u,f=n.length;void 0===t&&(t=1);for(var v=0;v<t;++v)for(o+=(c-o)*a,h.forEach((function(n){n(o)})),i=0;i<f;++i)null==(u=n[i]).fx?u.x+=u.vx*=l:(u.x=u.fx,u.vx=0),r>1&&(null==u.fy?u.y+=u.vy*=l:(u.y=u.fy,u.vy=0)),r>2&&(null==u.fz?u.z+=u.vz*=l:(u.z=u.fz,u.vz=0));return e}function M(){for(var t,e=0,i=n.length;e<i;++e){if((t=n[e]).index=e,null!=t.fx&&(t.x=t.fx),null!=t.fy&&(t.y=t.fy),null!=t.fz&&(t.z=t.fz),isNaN(t.x)||r>1&&isNaN(t.y)||r>2&&isNaN(t.z)){var u=10*(r>2?Math.cbrt(.5+e):r>1?Math.sqrt(.5+e):e),o=e*x,f=e*z;1===r?t.x=u:2===r?(t.x=u*Math.cos(o),t.y=u*Math.sin(o)):(t.x=u*Math.sin(o)*Math.cos(f),t.y=u*Math.cos(o),t.z=u*Math.sin(o)*Math.sin(f))}(isNaN(t.vx)||r>1&&isNaN(t.vy)||r>2&&isNaN(t.vz))&&(t.vx=0,r>1&&(t.vy=0),r>2&&(t.vz=0))}}function w(t){return t.initialize&&t.initialize(n,s,r),t}return null==n&&(n=[]),M(),e={tick:p,restart:function(){return v.restart(g),e},stop:function(){return v.stop(),e},numDimensions:function(n){return arguments.length?(r=Math.min(3,Math.max(1,Math.round(n))),h.forEach(w),e):r},nodes:function(t){return arguments.length?(n=t,M(),h.forEach(w),e):n},alpha:function(n){return arguments.length?(o=+n,e):o},alphaMin:function(n){return arguments.length?(f=+n,e):f},alphaDecay:function(n){return arguments.length?(a=+n,e):+a},alphaTarget:function(n){return arguments.length?(c=+n,e):c},velocityDecay:function(n){return arguments.length?(l=1-n,e):1-l},randomSource:function(n){return arguments.length?(s=n,h.forEach(w),e):s},force:function(n,t){return arguments.length>1?(null==t?h.delete(n):h.set(n,w(t)),e):h.get(n)},find:function(){var t,e,i,u,o,f,a=Array.prototype.slice.call(arguments),c=a.shift()||0,l=(r>1?a.shift():null)||0,h=(r>2?a.shift():null)||0,v=a.shift()||1/0,d=0,y=n.length;for(v*=v,d=0;d<y;++d)(u=(t=c-(o=n[d]).x)*t+(e=l-(o.y||0))*e+(i=h-(o.z||0))*i)<v&&(f=o,v=u);return f},on:function(n,t){return arguments.length>1?(y.on(n,t),e):y.on(n)}}},n.forceX=function(n){var t,e,r,i=o(.1);function u(n){for(var i,u=0,o=t.length;u<o;++u)(i=t[u]).vx+=(r[u]-i.x)*e[u]*n}function f(){if(t){var u,o=t.length;for(e=new Array(o),r=new Array(o),u=0;u<o;++u)e[u]=isNaN(r[u]=+n(t[u],u,t))?0:+i(t[u],u,t)}}return"function"!=typeof n&&(n=o(null==n?0:+n)),u.initialize=function(n){t=n,f()},u.strength=function(n){return arguments.length?(i="function"==typeof n?n:o(+n),f(),u):i},u.x=function(t){return arguments.length?(n="function"==typeof t?t:o(+t),f(),u):n},u},n.forceY=function(n){var t,e,r,i=o(.1);function u(n){for(var i,u=0,o=t.length;u<o;++u)(i=t[u]).vy+=(r[u]-i.y)*e[u]*n}function f(){if(t){var u,o=t.length;for(e=new Array(o),r=new Array(o),u=0;u<o;++u)e[u]=isNaN(r[u]=+n(t[u],u,t))?0:+i(t[u],u,t)}}return"function"!=typeof n&&(n=o(null==n?0:+n)),u.initialize=function(n){t=n,f()},u.strength=function(n){return arguments.length?(i="function"==typeof n?n:o(+n),f(),u):i},u.y=function(t){return arguments.length?(n="function"==typeof t?t:o(+t),f(),u):n},u},n.forceZ=function(n){var t,e,r,i=o(.1);function u(n){for(var i,u=0,o=t.length;u<o;++u)(i=t[u]).vz+=(r[u]-i.z)*e[u]*n}function f(){if(t){var u,o=t.length;for(e=new Array(o),r=new Array(o),u=0;u<o;++u)e[u]=isNaN(r[u]=+n(t[u],u,t))?0:+i(t[u],u,t)}}return"function"!=typeof n&&(n=o(null==n?0:+n)),u.initialize=function(n){t=n,f()},u.strength=function(n){return arguments.length?(i="function"==typeof n?n:o(+n),f(),u):i},u.z=function(t){return arguments.length?(n="function"==typeof t?t:o(+t),f(),u):n},u},Object.defineProperty(n,"__esModule",{value:!0})}));
+	
 	// importScripts("https://cdn.jsdelivr.net/npm/d3-dispatch@3");
 	// importScripts("https://cdn.jsdelivr.net/npm/d3-quadtree@3");
 	// importScripts("https://cdn.jsdelivr.net/npm/d3-timer@3");
@@ -29,8 +35,6 @@ let workerFunction = (function (){
 
 	"use strict"
 
-
-	
 	function d3gravityForce() {
 		// var nodes, strength = 0.20, softening = 0.05;
 		var nodes, strength = 0.05, softening = 0.025;
@@ -38,12 +42,13 @@ let workerFunction = (function (){
 			const totalStrength = Math.sqrt(nodes.length)*alpha * strength;
 			for (let i = 0, n = nodes.length, node; i < n; ++i) {
 				node = nodes[i];
-				let distance = Math.sqrt(node.x * node.x + node.y * node.y + node.z * node.z + softening);
+				let r2 = node.x * node.x + node.y * node.y + node.z * node.z + softening;
+				let distance = Math.sqrt(r2);
 				
-				let kinvdistance3 = totalStrength/(distance);
-				node.vx -= node.x * kinvdistance3;
-				node.vy -= node.y * kinvdistance3;
-				node.vz -= node.z * kinvdistance3;
+				let invDistMag = totalStrength/(distance);
+				node.vx -= node.x * invDistMag;
+				node.vy -= node.y * invDistMag;
+				node.vz -= node.z * invDistMag;
 			}
 		}
 		
@@ -65,12 +70,12 @@ let workerFunction = (function (){
 	let nodes = [];
 	let inputEdges = [];
 	let links = [];
-	let enabledLinks = links;
-	let use2D = false;
 	let weighted = false;
+	this.allowedLinks = links;
 	this.simulation = null;
-	this._linkForceStrength = 1;
-	this._normalizationType = "degree";
+	this._settings = {}
+	this._repulsiveStrength = 1;
+	this._attractiveStrength = 1;
 
 
 	this._handleSetAttribute = (attributeName,value)=>{
@@ -82,46 +87,59 @@ let workerFunction = (function (){
 			attribute = attribute?.[attributeNames[i]];
 		}
 		attribute?.(value);
-	}
-	this.forceLinkStrength = (value)=>{
-		// value not defined
-		if(value == undefined){
-			value = this._linkForceStrength;
-		}
-		this._linkForceStrength = value;
-		if(weighted){
-			switch(this._normalizationType){
-				case "strength":
-					this.attractiveforce.strength(d => d.weight==0?0:this._linkForceStrength * d.weight / Math.min(d.target.strength, d.source.strength));
-					break;
-				case "degree":
-					this.attractiveforce.strength(d => d.weight==0?0:this._linkForceStrength / Math.min(d.target.degree, d.source.degree));
-					break;
-				default:
-					this.attractiveforce.strength(d => this._linkForceStrength * d.weight);
+	};
+
+	this._recalculateRepulsiveAndAttractiveStrengths = ()=>{
+		let baseStrength = this._settings.forcesStrength;
+		let ratio = this._settings.forcesRatio;
+		let repulsiveExponent = this._settings.repulsiveExponent;
+		let attractiveExponent = this._settings.attractiveExponent;
+
+		// Balance force strengths based on exponent difference
+		this._repulsiveStrength = (baseStrength)*Math.pow(1/(ratio/100), (repulsiveExponent)/2);
+		this._attractiveStrength = (baseStrength)*Math.pow((ratio/100), (attractiveExponent)/2);
+		// this._repulsiveStrength = baseStrength * Math.pow(ratio/100, -0.5);
+		// this._attractiveStrength = baseStrength * Math.pow(ratio/100, 0.5);
+		
+
+	};
+
+	this._updateStrengths = ()=>{
+		this._recalculateRepulsiveAndAttractiveStrengths();
+		let attractiveStrength = this._attractiveStrength;
+		let repulsiveStrength = this._repulsiveStrength;
+		if(this.simulation){
+			if(weighted){
+				switch(this._settings.forceNormalizationType){
+					case "strength":
+						this.attractiveForce.strength(d => d.weight==0?0:attractiveStrength * d.weight / Math.min(d.target.strength, d.source.strength));
+						break;
+					case "degree":
+						this.attractiveForce.strength(d => d.weight==0?0:attractiveStrength / Math.min(d.target.degree, d.source.degree));
+						break;
+					default:
+						this.attractiveForce.strength(d => attractiveStrength * d.weight);
+				}
+			}else{
+				switch(this._settings.forceNormalizationType){
+					case "strength":
+						this.attractiveForce.strength(d => attractiveStrength / Math.min(d.target.strength, d.source.strength));
+						break;
+					case "degree":
+						this.attractiveForce.strength(d => attractiveStrength / Math.min(d.target.degree, d.source.degree));
+						break;
+					default:
+						this.attractiveForce.strength(attractiveStrength);
+				}
+				// this.attractiveforce.strength(1);
 			}
-		}else{
-			switch(this._normalizationType){
-				case "strength":
-					this.attractiveforce.strength(d => this._linkForceStrength / Math.min(d.target.strength, d.source.strength));
-					break;
-				case "degree":
-					this.attractiveforce.strength(d => this._linkForceStrength / Math.min(d.target.degree, d.source.degree));
-					break;
-				default:
-					this.attractiveforce.strength(d => this._linkForceStrength);
-			}
-			// this.attractiveforce.strength(1);
+			
+			this.repulsiveForce.exponent(this._settings.repulsiveExponent);
+			this.attractiveForce.exponent(this._settings.attractiveExponent);
+			this.repulsiveForce.strength(-repulsiveStrength);
 		}
-	}
+	};
 	
-	this.forceNormalizationType = (value)=>{
-		if(value){
-			this._normalizationType = value;
-			this.forceLinkStrength(this._linkForceStrength);
-		}
-	
-	}
 
 	this._createNodesAndEdges = ()=>{
 		// let inputNodes = msg.data.nodes;
@@ -145,30 +163,232 @@ let workerFunction = (function (){
 			}
 			links.push(edgeObject);
 		}
-		allowedLinks = links;
-		this._recalculateStrenghts();
+		this.allowedLinks = links;
+		this._recalculateNodeStrengths();
+	};
+
+	this.use2D = (value)=>{
+		if(value === undefined){
+			value = this._settings.use2D;
+		}
+		this._settings.use2D = value;
+		if(this.simulation){
+			this.simulation.numDimensions(value?2:3);
+		}
+	};
+
+	this.forcesStrength = (value,avoidStrengthUpdate=false)=>{
+		if(value === undefined){
+			value = this._settings.forcesStrength;
+		}
+		this._settings.forcesStrength = value;
+		if(!avoidStrengthUpdate){
+			this._updateStrengths();
+		}
+	};
+
+	this.forcesRatio = (value,avoidStrengthUpdate=false)=>{
+		if(value === undefined){
+			value = this._settings.forcesRatio;
+		}
+		this._settings.forcesRatio = value;
+		if(!avoidStrengthUpdate){
+			this._updateStrengths();
+		}
+	};
+
+	this.repulsiveExponent = (value,avoidStrengthUpdate=false)=>{
+		if(value === undefined){
+			value = this._settings.repulsiveExponent;
+		}
+		this._settings.repulsiveExponent = value;
+		if(!avoidStrengthUpdate){
+			this._updateStrengths();
+		}
+	};
+
+	this.attractiveExponent = (value,avoidStrengthUpdate=false)=>{
+		if(value === undefined){
+			value = this._settings.attractiveExponent;
+		}
+		this._settings.attractiveExponent = value;
+		if(!avoidStrengthUpdate){
+			this._updateStrengths();
+		}
+	};
+
+	this.gravity = (value)=>{
+		if(value === undefined){
+			value = this._settings.gravity;
+		}
+		this._settings.gravity = value;
+		if(this.gravityForce){
+			this.gravityForce.strength(value);
+		}
+	};
+
+	this.collisionEnabled = (value)=>{
+		if(value === undefined){
+			value = this._settings.collisionEnabled;
+		}
+		this._settings.collisionEnabled = value;
+		if(this.collisionForce){
+			if(value){
+				// get collision force from simulation
+				if(!this.simulation.force("collision")){
+					this.simulation.force("collision", this.collisionForce);
+				}
+			}else{
+				// remove collision force from simulation
+				if(this.simulation.force("collision")){
+					this.simulation.force("collision", null);
+				}
+			}
+		}
+	};
+
+	this.collisionRadius = (value)=>{
+		if(value === undefined){
+			value = this._settings.collisionRadius;
+		}
+		this._settings.collisionRadius = value;
+		if(this.collisionForce){
+			this.collisionForce.radius(value);
+		}
+	};
+
+	this.linkDistance = (value)=>{
+		if(value === undefined){
+			value = this._settings.linkDistance;
+		}
+		this._settings.linkDistance = value;
+		if(this.attractiveForce){
+			this.attractiveForce.distance(value);
+		}
+	};
+
+	this.viscosity = (value)=>{
+		if(value === undefined){
+			value = this._settings.viscosity;
+		}
+		this._settings.viscosity = value;
+		if(this.simulation){
+			this.simulation.velocityDecay(value);
+		}
+	};
+
+	this.alpha = (value)=>{
+		if(value === undefined){
+			value = this._settings.alpha;
+		}
+		this._settings.alpha = value;
+		if(this.simulation){
+			this.simulation.alpha(value);
+		}
+	};
+
+	this.alphaDecay = (value)=>{
+		if(value === undefined){
+			value = this._settings.alphaDecay;
+		}
+		this._settings.alphaDecay = value;
+		if(this.simulation){
+			this.simulation.alphaDecay(value);
+		}
+	};
+
+	this.alphaTarget = (value)=>{
+		if(value === undefined){
+			value = this._settings.alphaTarget;
+		}
+		this._settings.alphaTarget = value;
+		if(this.simulation){
+			this.simulation.alphaTarget(value);
+		}
+	};
+
+	this.alphaMin = (value)=>{
+		if(value === undefined){
+			value = this._settings.alphaMin;
+		}
+		this._settings.alphaMin = value;
+		if(this.simulation){
+			this.simulation.alphaMin(value);
+		}
+	};
+
+	this.forceNormalizationType = (value, avoidStrengthUpdate=false)=>{
+		if(value === undefined){
+			value = this._settings.forceNormalizationType;
+		}
+		this._settings.forceNormalizationType = value;
+		if(!avoidStrengthUpdate){
+			this._updateStrengths();
+		}
+	};
+
+	
+
+	this.settings = (settings)=>{
+		// always contains:
+		// use2D
+		// forcesStrength
+		// forcesRatio
+		// repulsiveExponent
+		// attractiveExponent
+		// gravity
+		// viscosity
+		// collisionEnabled
+		// collisionRadius
+		// linkDistance
+		// forceNormalizationType
+		// alpha
+		// alphaDecay
+		// alphaTarget
+		// alphaMin
+		this._settings = settings;
+		this._settingsUpdated();
 	}
 
-	this._setupForces = (dataUse2D)=>{
-		if(dataUse2D) {
-			use2D = true;
-		}
-		this.repulsiveforce = d3.forceManyBody();
-		this.attractiveforce = d3.forceLink(allowedLinks);
+	this._settingsUpdated = ()=>{
+		this.use2D(this._settings.use2D);
+		this.forcesStrength(this._settings.forcesStrength, false);
+		this.forcesRatio(this._settings.forcesRatio, false);
+		this.repulsiveExponent(this._settings.repulsiveExponent, false);
+		this.attractiveExponent(this._settings.attractiveExponent, false);
+		this.gravity(this._settings.gravity);
+		this.collisionEnabled(this._settings.collisionEnabled);
+		this.collisionRadius(this._settings.collisionRadius);
+		this.linkDistance(this._settings.linkDistance);
+		this.viscosity(this._settings.viscosity);
+		this.alpha(this._settings.alpha);
+		this.alphaDecay(this._settings.alphaDecay);
+		this.alphaTarget(this._settings.alphaTarget);
+		this.alphaMin(this._settings.alphaMin);
+		this.forceNormalizationType(this._settings.forceNormalizationType, false);
+		this._updateStrengths();
+	};
+
+	this._setupForces = (settings)=>{
+		this.repulsiveForce = d3.forceManyBody();
+		this.attractiveForce = d3.forceLink(this.allowedLinks);
 		this.centralForce = d3.forceCenter();
 		this.gravityForce = d3gravityForce();
-		// this.gravityForce.strength(0.65);
+		this.collisionForce = d3.forceCollide();
+		
 
 
 		this.simulation = d3.forceSimulation(nodes)
-			.numDimensions(use2D?2:3)
-			.force("charge", this.repulsiveforce)
-			.force("link", this.attractiveforce)
-			.force("center", centralForce)
-			.force("gravity", this.gravityForce)
-			// .force("collide", d3.forceCollide(d => d.size*4))
-			.velocityDecay(0.05)
-			.on("tick", async () => {
+			.numDimensions(this._settings.use2D?2:3)
+			.force("repulsive", this.repulsiveForce)
+			.force("attractive", this.attractiveForce)
+			.force("central", this.centralForce)
+			.force("gravity", this.gravityForce);
+
+		this.settings(settings);
+
+		this.simulation.on("tick", async () => {
+				let use2D = this._settings.use2D;
 				for (let vertexIndex = 0; vertexIndex < nodes.length; vertexIndex++) {
 					const node = nodes[vertexIndex];
 					inputNodesPositions[vertexIndex * 3 + 0] = node.x/10;
@@ -179,35 +399,35 @@ let workerFunction = (function (){
 						inputNodesPositions[vertexIndex * 3 + 2] = 0;
 					}
 				}
-				self.postMessage({ type: "update", positions: inputNodesPositions });
+				this._settings.alpha = this.simulation.alpha();
+				self.postMessage({ type: "update", positions: inputNodesPositions, alpha: this._settings.alpha });
 			}).on("end", () => {
 				self.postMessage({ type: "stop" });
 			});
-		this.forceLinkStrength(this._linkForceStrength);
-	}
-	
-	this._recalculateStrenghts = ()=>{
+	};
+
+	this._recalculateNodeStrengths = ()=>{
 		nodes.forEach((node,index)=>{
 			node.strength = 0;
 			node.degree = 0;
 		});
 		if(weighted){
 			// reset all node strengths
-			allowedLinks.forEach((link,index)=>{
+			this.allowedLinks.forEach((link,index)=>{
 				link.source.strength += link.weight;
 				link.target.strength += link.weight;
 				link.source.degree += 1;
 				link.target.degree += 1;
 			});
 		}else{ //use degree
-			allowedLinks.forEach((link,index)=>{
+			this.allowedLinks.forEach((link,index)=>{
 				link.source.strength += 1;
 				link.target.strength += 1;
 				link.source.degree += 1;
 				link.target.degree += 1;
 			});
 		}
-	}
+	};
 
 	this._updateWeights = (weights)=>{
 		if(weights && weights.length == links.length){
@@ -215,25 +435,25 @@ let workerFunction = (function (){
 				link.weight = weights[index];
 			});
 			weighted = true;
-			this._recalculateStrenghts();
-			this.forceLinkStrength(this._linkForceStrength);
+			this._recalculateNodeStrengths();
+			this._updateStrengths();
 
 		}else{
 			weighted = false;
 		}
-	}
+	};
 	
 	this.setAllowedEdges = (allowedEdgesIndices)=>{
 		if(allowedEdgesIndices){
-			allowedLinks = [];
+			this.allowedLinks = [];
 			allowedEdgesIndices.forEach((edgeIndex,index)=>{
-				allowedLinks.push(links[edgeIndex]);
+				this.allowedLinks.push(links[edgeIndex]);
 			});
 		}
-		this._recalculateStrenghts();
-		this.forceLinkStrength(this._linkForceStrength);
-		this.attractiveforce.links(allowedLinks);
-	}
+		this._recalculateNodeStrengths();
+		this._updateStrengths();
+		this.attractiveForce.links(this.allowedLinks);
+	};
 
 
 	self.onmessage = function (msg) {
@@ -253,17 +473,179 @@ let workerFunction = (function (){
 			inputNodesPositions = msg.data.positions;
 			inputEdges = msg.data.edges;
 			this._createNodesAndEdges();
-			this._setupForces(msg.data.use2D);
+			this._setupForces(msg.data.settings);
 			if(msg.data.weights){
 				this._updateWeights(msg.data.weights);
 			}
 		}
-	}
+	};
 })
+
+
+
+
+
+
+
+
+
 
 let workerFunctionString = workerFunction.toString();
 let workerURL = URL.createObjectURL(new Blob([`(${workerFunctionString})()`], {type:'text/javascript'}));
 
+
+
+// settings for d3ForceLayoutWorker
+const SETTINGS_DEFINITION = {
+	use2D: {
+		type: "boolean",
+		default: false,
+		label: "Use 2D",
+		access: "readwrite",
+		description: "Use 2D forces instead of 3D forces. This will ignore the z-coordinate of nodes and edges.",
+		// default change function (instance.use2D(value))
+	},
+	forcesStrength: {
+		type: "number",
+		default: 1,
+		label: "Forces Strength",
+		access: "readwrite",
+		preferableRange: [0.1, 10],
+		transform: "log",
+		description: "The strength of the forces applied to the nodes. Higher values will result in stronger forces.",
+	},
+	forcesRatio: {
+		type: "number",
+		default: 1,
+		label: "Forces Ratio",
+		access: "readwrite",
+		preferableRange: [0.05, 20],
+		transform: "log",
+		description: "The ratio between attractive and repulsive forces. A value of 1 means equal strength, higher values mean stronger attractive forces.",
+	},
+	repulsiveExponent: {
+		type: "number",
+		default: 1,
+		label: "Repulsive Exponent",
+		access: "readwrite",
+		preferableRange: [0.5, 2],
+		transform: "log",
+		description: "The exponent for the repulsive force. Higher values will result in stronger repulsive forces.",
+	},
+	attractiveExponent: {
+		type: "number",
+		default: 1,
+		label: "Attractive Exponent",
+		access: "readwrite",
+		preferableRange: [0.5, 2],
+		transform: "log",
+		description: "The exponent for the attractive force. Higher values will result in stronger attractive forces.",
+	},
+	gravity: {
+		type: "number",
+		default: 0.05,
+		label: "Gravity",
+		access: "readwrite",
+		preferableRange: [0.001, 10],
+		transform: "log",
+		description: "The strength of the gravity force applied to the nodes. Higher values will result in stronger gravity forces.",
+	},
+	viscosity: {
+		type: "number",
+		default: 0.05,
+		label: "Viscosity",
+		access: "readwrite",
+		preferableRange: [0.01, 1],
+		transform: "log",
+		description: "The strength of the viscosity force applied to the nodes. Higher values will result in stronger viscosity forces.",
+	},
+	collisionRadius: {
+		type: "number",
+		default: 50,
+		label: "Collision Radius",
+		access: "readwrite",
+		preferableRange: [1, 100],
+		transform: "log",
+		description: "The radius of the collision force applied to the nodes. Higher values will result in larger collision areas.",
+		enabled: "collisionEnabled",
+	},
+	collisionEnabled: {
+		type: "boolean",
+		default: false,
+		label: "Collision Force",
+		access: "readwrite",
+		description: "Enable or disable the collision force. When enabled, nodes will repel each other based on their collision radius.",
+	},
+	linkDistance: {
+		type: "number",
+		default: 30,
+		label: "Link Distance",
+		access: "readwrite",
+		preferableRange: [0, 100],
+		description: "The distance between linked nodes. Higher values will result in more spaced out nodes.",
+	},
+	forceNormalizationType: {
+		type: "categorical",
+		options: {
+			"Strength":"strength",
+			"Degree":"degree",
+			"None":"none"
+		},
+		default: "degree",
+		label: "Normalization Type",
+		access: "readwrite",
+		description: "The type of normalization applied to the attractive force. 'strength' normalizes by the minimum strength of the linked nodes, 'degree' normalizes by the minimum degree of the linked nodes, and 'none' applies the force without normalization.",
+	},
+	interactionAlpha: {
+		type: "number",
+		default: 0.5,
+		label: "Interaction Alpha",
+		transform: "log",
+		preferableRange: [0.1, 1],
+		description: "The alpha value used for each interaction."
+	},
+	alphaDecay: {
+		type: "number",
+		default: 1 - Math.pow(0.001, 1 / 300),
+		label: "Alpha Decay",
+		access: "readwrite",
+		preferableRange: [0.001, 1],
+		transform: "log",
+		description: "The decay rate of the alpha value. This controls how quickly the forces applied to the nodes will decrease over time. A value of 1 means no decay, while a value close to 0 means very fast decay.",
+	},
+	alphaTarget: {
+		type: "number",
+		default: 0,
+		label: "Alpha Target",
+		access: "readwrite",
+		preferableRange: [0, 1],
+		description: "The target alpha value of the simulation. This controls the final strength of the forces applied to the nodes. The alpha value will decay towards this target value over time.",
+	},
+	alphaMin: {
+		type: "number",
+		default: 0.001,
+		label: "Alpha Min",
+		access: "readwrite",
+		preferableRange: [0.0001, 1],
+		transform: "log",
+		description: "The minimum alpha value of the simulation. This controls the minimum strength of the forces applied to the nodes. The alpha value will not decay below this value.",
+	},
+	alpha: {
+		type: "number",
+		default: 1.0,
+		label: "Alpha",
+		access: "readonly",
+		transform: "log",
+		description: "The alpha value of the simulation. This controls the strength of the forces applied to the nodes. The value will decay over time, simulating a cooling effect.",
+	},
+	running: {
+		type: "boolean",
+		default: false,
+		label: "Running",
+		access: "readonly",
+		description: "Indicates whether the layout is currently running. This is set to true when the layout is started and false when it is stopped.",
+	},
+};
 
 class d3ForceLayoutWorker {
 	constructor({
@@ -271,17 +653,29 @@ class d3ForceLayoutWorker {
 		onUpdate=null,
 		onStop=null,
 		onStart=null,
-		use2D=false
+		use2D=false, // DEPRECATED, use settings.use2D instead
+		settings = {}
 	}) {
 		this._network = network;
 		this._onUpdate = onUpdate;
 		this._onStop = onStop;
 		this._onStart = onStart;
-		this._use2D = use2D;
-		this._attributes = {
-			"charge": 0.1,
-		};
+		this._settings = new TrackedSettings(settings, SETTINGS_DEFINITION);
+		if (use2D !== undefined) {
+			console.warn("use2D is deprecated, use settings.use2D instead.");
+			this._settings.use2D = use2D;
+		}
 		this._layoutWorker = null;
+	}
+
+
+	reset(){
+		if(this._layoutWorker){
+			this.stop();
+			if(this._settings.running){
+				this.start();
+			}
+		}
 	}
 
 	start(){
@@ -289,10 +683,12 @@ class d3ForceLayoutWorker {
 			this._layoutWorker = new Worker(workerURL);
 			this._layoutWorker.onmessage = (msg) => {
 				if (msg.data.type == "update") {
+					this._settings.alpha = msg.data.alpha;
 					this._onUpdate?.(msg.data);
+					// update settings.alpha
 				}else if (msg.data.type == "stop") {
 					this._onStop?.(msg.data);
-					this._layoutRunning = false;
+					this._settings.running = false;
 				}else if (msg.data.type == "getAttribute") {
 					this._handleReturnAttribute(msg.data);
 				}else {
@@ -300,7 +696,7 @@ class d3ForceLayoutWorker {
 				}
 			};
 
-			this._layoutRunning = true;
+			this._settings.running = true;
 			this._onStart?.();
 			let startMessage = {
 				type: "start",
@@ -308,7 +704,7 @@ class d3ForceLayoutWorker {
 				// nodes:this._network.nodes,
 				positions:this._network.positions,
 				edges:this._network.indexedEdges, 
-				use2D: this._use2D
+				settings: this._settings.getAll(),
 			};
 			if(this._network.weighted){
 				startMessage.weights = this._network.edgeWeights;
@@ -325,11 +721,11 @@ class d3ForceLayoutWorker {
 	}
 
 	stop(){
-		if(this._layoutRunning){
+		if(this._settings.running){
 			this._onStop?.();
 		}
 		this._layoutWorker?.terminate();
-		this._layoutRunning = false;
+		this._settings.running = false;
 		delete this._layoutWorker;
 		this._layoutWorker = null;
 		return this;
@@ -337,17 +733,17 @@ class d3ForceLayoutWorker {
 
 	resume() {
 		this.start();
-		if(!this._layoutRunning){
+		if(!this._settings.running){
 			this._onStart?.();
 		}
 		this._layoutWorker.postMessage({ type: "resume" });
-		this._layoutRunning=true;
+		this._settings.running=true;
 		return this;
 	}
 
 	pause(){
 		this._layoutWorker.postMessage({ type: "pause"});
-		this._layoutRunning=false;
+		this._settings.running=false;
 		this._onStop?.();
 		return this;
 	}
@@ -368,7 +764,7 @@ class d3ForceLayoutWorker {
 	}
 
 	isRunning() {
-		return this._layoutRunning;
+		return this._settings.running;
 	}
 	
 	cleanup() {
@@ -388,24 +784,194 @@ class d3ForceLayoutWorker {
 		return this;
 	}
 
-	groups(groups) {
-		return this.setAttribute("groups", groups);
+	// use2D
+	// forcesStrength
+	// forcesRatio
+	// repulsiveExponent
+	// attractiveExponent
+	// gravity
+	// viscosity
+	// collisionRadius
+	// collisionEnabled
+	// linkDistance
+	// forceNormalizationType
+	// alpha
+	// alphaDecay
+	// alphaTarget
+	// alphaMin
+
+	use2D(value){
+		if(value === undefined){
+			return this._settings.use2D;
+		}
+		this._settings.use2D = value;
+		this.setAttribute("use2D", value);
+		return this;
 	}
 
-	alpha(alphaValue){``
-		return this.setAttribute("simulation.alpha", alphaValue);
+	forcesStrength(strength) {
+		if(strength === undefined){
+			return this._settings.forcesStrength;
+		}
+		this._settings.forcesStrength = strength;
+		this.setAttribute("forcesStrength", strength);
+		return this;
 	}
 
-	alphaDecay(alphaValue){
-		return this.setAttribute("simulation.alphaDecay", alphaValue);
+	forcesRatio(forceRatio) {
+		if(forceRatio === undefined){
+			return this._settings.forcesRatio;
+		}
+		this._settings.forcesRatio = forceRatio;
+		this.setAttribute("forcesRatio", forceRatio);
+		return this;
 	}
 
-	alphaTarget(alphaValue){
-		return this.setAttribute("simulation.alphaTarget", alphaValue);
+	repulsiveExponent(exponent) {
+		if(exponent === undefined){
+			return this._settings.repulsiveExponent;
+		}
+		this._settings.repulsiveExponent = exponent;
+		this.setAttribute("repulsiveExponent", exponent);
+		return this;
 	}
 
-	velocityDecay(velocityDecayValue){
-		return this.setAttribute("simulation.velocityDecay", velocityDecayValue);
+	attractiveExponent(exponent) {
+		if(exponent === undefined){
+			return this._settings.attractiveExponent;
+		}
+		this._settings.attractiveExponent = exponent;
+		this.setAttribute("attractiveExponent", exponent);
+		return this;
+	}
+
+	gravity(strength) {
+		if(strength === undefined){
+			return this._settings.gravity;
+		}
+		this._settings.gravity = strength;
+		this.setAttribute("gravityForce.strength", strength);
+		return this;
+	}
+
+	viscosity(strength) {
+		if(strength === undefined){
+			return this._settings.viscosity;
+		}
+		this._settings.viscosity = strength;
+		this.setAttribute("viscosity", strength);
+		return this;
+	}
+
+	collisionRadius(radius) {
+		if(radius === undefined){
+			return this._settings.collisionRadius;
+		}
+		this._settings.collisionRadius = radius;
+		this.setAttribute("collisionRadius", radius);
+		return this;
+	}
+
+	collisionEnabled(enabled) {
+		if(enabled === undefined){
+			return this._settings.collisionEnabled;
+		}
+		this._settings.collisionEnabled = enabled;
+		this.setAttribute("collisionEnabled", enabled);
+	}
+
+	forceNormalizationType(forceNormalizationType) {
+		if(forceNormalizationType === undefined){
+			return this._settings.forceNormalizationType;
+		}
+		this._settings.forceNormalizationType = forceNormalizationType;
+		this.setAttribute("forceNormalizationType", forceNormalizationType);
+		return this;
+	}
+
+	linkDistance(distance) {
+		if(distance === undefined){
+			return this._settings.linkDistance;
+		}
+		this._settings.linkDistance = distance;
+		this.setAttribute("linkDistance", distance);
+		return this;
+	}
+
+	
+	alpha(alphaValue){
+		if(alphaValue === undefined){
+			return this._settings.alpha;
+		}
+
+		// console.log(`Updating alpha to ${alphaValue}`);
+		// this._settings.alpha = alphaValue;
+		this.setAttribute("alpha", alphaValue);
+		return this;
+	}
+
+	alphaDecay(alphaDecayValue){
+		if(alphaDecayValue === undefined){
+			return this._settings.alphaDecay;
+		}
+		this._settings.alphaDecay = alphaDecayValue;
+		this.setAttribute("alphaDecay", alphaDecayValue);
+		return this;
+	}
+
+	alphaTarget(alphaTargetValue){
+		if(alphaTargetValue === undefined){
+			return this._settings.alphaTarget;
+		}
+		this._settings.alphaTarget = alphaTargetValue;
+		this.setAttribute("alphaTarget", alphaTargetValue);
+		return this;
+	}
+
+	alphaMin(alphaMinValue){
+		if(alphaMinValue === undefined){
+			return this._settings.alphaMin;
+		}
+		this._settings.alphaMin = alphaMinValue;
+		this.setAttribute("alphaMin", alphaMinValue);
+		return this;
+	}
+
+	interactionAlpha(interactionAlphaValue){
+		if(interactionAlphaValue === undefined){
+			return this._settings.interactionAlpha;
+		}
+		this._settings.interactionAlpha = interactionAlphaValue;
+		return this;
+	}
+
+	interactionReheat(){
+		this.alpha(this._settings.interactionAlpha);
+	}
+
+	settings(settings){
+		if(settings === undefined){
+			return this._settings;
+		}
+
+		Object.entries(settings).forEach(([key, value]) => {
+			if (key in this._settings) {
+				this._settings[key] = value;
+			}
+		});
+
+		this.setAttribute("settings", settings);
+		return this;
+	}
+
+
+	updateForcesStrength(strength, forceRatio){
+		this._settings.forcesStrength = strength;
+		this._settings.forcesRatio = forceRatio;
+		this.setAttribute("forcesStrength", strength);
+		this.setAttribute("forcesRatio", forceRatio);
+		return this;
+
 	}
 
 	setWeights(weights){
@@ -424,23 +990,6 @@ class d3ForceLayoutWorker {
 		return this;
 	}
 
-	forceLinkStrength(strength){
-		this._layoutWorker.postMessage({
-			type: "setAttribute",
-			attributeName: "forceLinkStrength",
-			value: strength
-		});
-		return this;
-	}
-
-	forceNormalizationType(normalizationType){
-		this._layoutWorker.postMessage({
-			type: "setAttribute",
-			attributeName: "forceNormalizationType",
-			value: normalizationType
-		});
-		return this;
-	}
 }
 
 export {d3ForceLayoutWorker as layoutWorker};

@@ -18,8 +18,8 @@ void main(){
 
 
 // TERRAIN SHADER
-let terrainFragmentShader = /*glsl*/`#extension GL_OES_standard_derivatives : enable
-precision highp float; 
+let topographicFragmentShader = /*glsl*/`#extension GL_OES_standard_derivatives : enable
+precision highp float;
 
 
 uniform sampler2D input_tex; // Elevation data
@@ -28,9 +28,11 @@ uniform float diverging;     // If diverging
 varying vec2 tex_coord;      // Texture coordinate
 
 // Simple directional light properties
-vec3 lightDir = normalize(vec3(1.0, 1.0, 1.0)); // Light direction
-vec3 ambientColor = vec3(0.3, 0.3, 0.3); // Ambient light color
-vec3 lightColor = vec3(0.7, 0.7, 0.7); // Diffuse light color
+vec3 lightDir = normalize(vec3(-0.5, 0.77777, 0.88888)); // Light direction
+// use the time of the day to calculate the light direction
+
+vec3 ambientColor = vec3(0.6, 0.6, 0.6); // Ambient light color
+vec3 lightColor = vec3(0.6, 0.6, 0.6); // Diffuse light color
 
 void main() {
     float val = texture2D(input_tex, tex_coord).r + 0.5 * diverging;
@@ -139,5 +141,5 @@ void main(void) {
 } 
 `;
 
-export { fragmentShader, vertexShader, textureFragmentShader, textureVertexShader };
+export { fragmentShader, vertexShader, textureFragmentShader, textureVertexShader,topographicFragmentShader};
 
