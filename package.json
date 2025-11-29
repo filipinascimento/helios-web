@@ -1,0 +1,35 @@
+{
+  "name": "helios-web-next",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "helios-network": "^0.2.10"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "@webgpu/types": "^0.1.49",
+    "pngjs": "^7.0.0",
+    "vite": "^5.4.10"
+  },
+  "main": "./dist/helios-web.umd.cjs",
+  "module": "./dist/helios-web.es.js",
+  "exports": {
+    ".": {
+      "import": "./dist/helios-web.es.js",
+      "require": "./dist/helios-web.umd.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "docs",
+    "README.md"
+  ]
+}

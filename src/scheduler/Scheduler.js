@@ -1,0 +1,103 @@
+/**
+ * Coordinates layout, geometry, and rendering cycles.
+ */
+export class Scheduler {
+  constructor() {
+    this.layout = null;
+    this.geometryCallback = null;
+    this.renderCallback = null;
+    this.running = false;
+    this._needsLayout = true;
+    this._needsGeometry = true;
+    this._lastTime = 0;
+    this._raf = null;
+    this._layoutBusy = false;
+    this.currentFrame = null;
+  }
+
+  setLayout(layout) {
+    this.layout = layout;
+    this.requestLayout();
+  }
+
+  setGeometryCallback(callback) {
+    this.geometryCallback = callback;
+    this.requestGeometry();
+  }
+
+  setRenderCallback(callback) {
+    this.renderCallback = callback;
+  }
+
+  requestLayout() {
+    this._needsLayout = true;
+  }
+
+  requestGeometry() {
+    this._needsGeometry = true;
+  }
+
+  start() {
+    if (this.running) return;
+    this.running = true;
+    this._lastTime = performance.now();
+    this._raf = requestAnimationFrame((ts) => this.tick(ts));
+  }
+
+  stop() {
+    this.running = false;
+    if (this._raf !== null) {
+      cancelAnimationFrame(this._raf);
+      this._raf = null;
+    }
+  }
+
+  tick(timestamp) {
+    if (!this.running) {
+      return;
+    }
+    const delta = timestamp - this._lastTime;
+    this._lastTime = timestamp;
+
+    const layoutShouldRun = Boolean(
+      this.layout &&
+        (this._needsLayout ||
+          (typeof this.layout.shouldRun === 'function' && this.layout.shouldRun())),
+    );
+
+    if (layoutShouldRun && !this._layoutBusy) {
+      try {
+        const result = this.layout.step(delta);
+        this._layoutBusy = result instanceof Promise;
+        if (this._layoutBusy) {
+          result
+            .then((changed) => {
+              this._layoutBusy = false;
+              if (changed) {
+                this.requestGeometry();
+              }
+            })
+            .catch((error) => {
+              this._layoutBusy = false;
+              console.error('Layout execution failed', error);
+            });
+        } else if (result) {
+          this.requestGeometry();
+        }
+      } finally {
+        this._needsLayout = false;
+      }
+    }
+
+    if (this.geometryCallback && this._needsGeometry && !this._layoutBusy) {
+      this.currentFrame = this.geometryCallback();
+      this._needsGeometry = false;
+    }
+
+    if (this.renderCallback && this.currentFrame) {
+      this.renderCallback(this.currentFrame);
+    }
+
+    this._raf = requestAnimationFrame((ts) => this.tick(ts));
+  }
+}

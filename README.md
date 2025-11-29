@@ -1,0 +1,95 @@
+# Helios Web Next
+
+A fresh boilerplate for the next-generation Helios web renderer. It wires the
+[`helios-network`](https://www.npmjs.com/package/helios-network) WASM graph core
+into a layered rendering stack that targets WebGPU first with a WebGL2 fallback.
+
+## Getting Started
+
+```bash
+npm install
+npm run dev    # serves the example under docs/examples/basic via Vite
+npm run build  # produces the library bundle in dist/
+npm run test:e2e  # launches a headless smoke test (run `npx playwright install` once)
+```
+
+Point your browser at `http://localhost:5173` to interact with the bundled
+example (located in `docs/examples/basic`). It creates a sample graph, applies
+worker layout updates, and renders it through the Helios pipeline so you can
+verify the stack end-to-end.
+
+## Documentation & Examples
+
+All package-focused notes now live under [`docs/`](./docs/README.md) so you can
+ship this as a reusable dependency. The directory includes a growing set of
+examples (starting with [`docs/examples/basic`](./docs/examples/basic/)) plus
+step-by-step installation and API guidance.
+
+## Using as a Library
+
+The build artifact targets WebGPU first with WebGL2 as a fallback. After running
+`npm run build`, you can consume the package exactly like any other module:
+
+```js
+import HeliosNetwork from 'helios-network';
+import { Helios } from 'helios-web-next';
+
+const network = await HeliosNetwork.create();
+network.addNodes(5);
+
+const helios = new Helios(network, { container: '#app' });
+await helios.ready;
+```
+
+The same API powers the example under `docs/examples/basic/main.js`, making it
+easy to copy-paste a working setup into your own application.
+
+## Headless Smoke Test
+
+Run `npm run test:e2e` to boot the basic example in a headless Chromium session
+via Playwright. The test forces the WebGL renderer, waits for Helios to finish
+bootstrapping, and samples pixels from the canvas to ensure the output isn't
+stuck at the background color. This provides a quick automated sanity check that
+both the rendering pipeline and the documentation example stay functional.
+
+## Architecture Overview
+
+- **Helios class (`src/Helios.js`)** – public entry point. It accepts an
+  existing `helios-network` instance, prepares DOM layers, initializes the
+  rendering backend, and wires the scheduler, layout, and pipeline together.
+- **LayerManager (`src/layers/LayerManager.js`)** – creates the stack of layers
+  (WebGPU/WebGL canvas, SVG overlay, HTML overlay) and keeps them sized via a
+  `ResizeObserver` hook.
+- **Pipeline (`src/pipeline/*.js`)** – ensures visual attributes live directly
+  inside the `helios-network` object, converts them into geometry buffers, and
+  provides extension points (edge expansion, attribute mapping utilities) for
+  future stages.
+- **Scheduler (`src/scheduler/Scheduler.js`)** – lightweight coordinator that
+  sequences layout ticks, geometry updates, and draw calls. Layouts can
+  advertise that they should run continuously or only when explicitly marked
+  dirty.
+- **Layouts (`src/layouts`)** – base class + `StaticLayout` fallback +
+  `WorkerLayout` that proxies work to `src/workers/layoutWorker.js`. Workers can
+  push updated positions back to the main thread without touching DOM/APIs.
+- **Rendering (`src/rendering`)** – `WebGPURenderer` uploads raw attribute views
+  as storage buffers (no extra copies) and draws edges before nodes. When
+  WebGPU is unavailable the `WebGL2Renderer` draws instanced point sprites and
+  line lists using the same geometry data.
+- **Attribute mapping (`src/pipeline/AttributeMapperUtility.js`)** – helper to
+  convert arbitrary node/edge attributes into colors or sizes using linear
+  gradients or custom palette callbacks.
+
+The demo in `docs/examples/basic/main.js` showcases how to instantiate a
+network, define visual attributes, and kick off Helios with a worker-driven
+layout.
+
+## Next Steps
+
+This scaffold is intentionally minimal but structured for future work, such as:
+
+- richer edge-expansion stages (curves, multi-pass rendering)
+- import/export helpers that stream buffers into GPU textures
+- advanced layout families that use workers or WASM modules
+- multi-layer rendering order controls and picking/interaction APIs
+
+Contributions welcome!

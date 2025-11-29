@@ -168,5 +168,4 @@ coverage/
 docs/api/
 dist_example/
 dist*/
-/helios-network-for-reference
-/helios-web-for-reference
+/for_reference
