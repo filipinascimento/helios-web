@@ -71,10 +71,14 @@ both the rendering pipeline and the documentation example stay functional.
 - **Layouts (`src/layouts`)** – base class + `StaticLayout` fallback +
   `WorkerLayout` that proxies work to `src/workers/layoutWorker.js`. Workers can
   push updated positions back to the main thread without touching DOM/APIs.
-- **Rendering (`src/rendering`)** – `WebGPURenderer` uploads raw attribute views
-  as storage buffers (no extra copies) and draws edges before nodes. When
-  WebGPU is unavailable the `WebGL2Renderer` draws instanced point sprites and
-  line lists using the same geometry data.
+- **Rendering (`src/rendering`)** – the new modular `LayeredRenderer` chooses
+  WebGPU when available (falling back to WebGL2) and exposes layers, materials,
+  shader overrides, framebuffer capture/present helpers, and projection
+  utilities. The default graph layer still uploads raw attribute views (no
+  extra copies) and draws edges before nodes. Force selection via the Helios
+  option `renderer: 'webgl' | 'webgpu'` when needed.
+
+Development docs and test commands live in `DEVELOPING.md`.
 - **Attribute mapping (`src/pipeline/AttributeMapperUtility.js`)** – helper to
   convert arbitrary node/edge attributes into colors or sizes using linear
   gradients or custom palette callbacks.

@@ -145,12 +145,14 @@ export class VisualAttributeMapper {
   }
 
   ensureAttributes() {
-    this.ensureNodeAttribute(NODE_POSITION_ATTRIBUTE, AttributeType.Float, 2);
+    // Positions store a padded vec4 to keep GPU alignment predictable (x, y, z, w).
+    this.ensureNodeAttribute(NODE_POSITION_ATTRIBUTE, AttributeType.Float, 4);
     this.ensureNodeAttribute(NODE_COLOR_ATTRIBUTE, AttributeType.Float, 4);
     this.ensureNodeAttribute(NODE_SIZE_ATTRIBUTE, AttributeType.Float, 1);
     this.ensureEdgeAttribute(EDGE_COLOR_ATTRIBUTE, AttributeType.Float, 4);
     this.ensureEdgeAttribute(EDGE_WIDTH_ATTRIBUTE, AttributeType.Float, 1);
-    this.ensureEdgeAttribute(EDGE_GEOMETRY_ATTRIBUTE, AttributeType.Float, 4);
+    // Edge geometry stores two padded vec4 values: start(xyz1) and end(xyz1).
+    this.ensureEdgeAttribute(EDGE_GEOMETRY_ATTRIBUTE, AttributeType.Float, 8);
   }
 
   /**
@@ -159,10 +161,21 @@ export class VisualAttributeMapper {
    * @param {number} dimension
    */
   ensureNodeAttribute(name, type, dimension) {
+    let buffer = null;
+    try {
+      buffer = this.network.getNodeAttributeBuffer(name);
+    } catch (error) {
+      buffer = null;
+    }
     try {
       this.network.defineNodeAttribute(name, type, dimension);
+      buffer = this.network.getNodeAttributeBuffer(name);
     } catch (error) {
       this.ignoreDuplicateAttribute(error, name);
+    }
+    buffer = buffer ?? this.network.getNodeAttributeBuffer(name);
+    if (buffer?.dimension !== dimension) {
+      throw new Error(`Attribute ${name} has dimension ${buffer?.dimension ?? 'unknown'}, expected ${dimension}`);
     }
   }
 
@@ -172,10 +185,21 @@ export class VisualAttributeMapper {
    * @param {number} dimension
    */
   ensureEdgeAttribute(name, type, dimension) {
+    let buffer = null;
+    try {
+      buffer = this.network.getEdgeAttributeBuffer(name);
+    } catch (error) {
+      buffer = null;
+    }
     try {
       this.network.defineEdgeAttribute(name, type, dimension);
+      buffer = this.network.getEdgeAttributeBuffer(name);
     } catch (error) {
       this.ignoreDuplicateAttribute(error, name);
+    }
+    buffer = buffer ?? this.network.getEdgeAttributeBuffer(name);
+    if (buffer?.dimension !== dimension) {
+      throw new Error(`Attribute ${name} has dimension ${buffer?.dimension ?? 'unknown'}, expected ${dimension}`);
     }
   }
 
@@ -208,13 +232,17 @@ export class VisualAttributeMapper {
     const sizeOffset = index;
     sizeView[sizeOffset] = size;
 
-    const posOffset = index * 2;
+    const posOffset = index * 4;
     if (!Number.isFinite(positionView[posOffset])) {
       positionView[posOffset] = 0;
     }
     if (!Number.isFinite(positionView[posOffset + 1])) {
       positionView[posOffset + 1] = 0;
     }
+    if (!Number.isFinite(positionView[posOffset + 2])) {
+      positionView[posOffset + 2] = 0;
+    }
+    positionView[posOffset + 3] = 1;
   }
 
   /**

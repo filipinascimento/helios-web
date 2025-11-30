@@ -9,6 +9,13 @@ function resolveRendererPreference() {
   return null;
 }
 
+function resolveMode() {
+  const params = new URLSearchParams(window.location.search);
+  const mode = params.get('mode');
+  if (mode && mode.toLowerCase() === '3d') return '3d';
+  return '2d';
+}
+
 async function bootstrap() {
   const diagnostics = {
     ready: false,
@@ -23,8 +30,12 @@ async function bootstrap() {
   const edgeAttribute = 'intensity';
   network.defineNodeAttribute(nodeAttribute, AttributeType.Float);
   network.defineEdgeAttribute(edgeAttribute, AttributeType.Float);
+  // Ensure visual attributes exist before seeding positions.
+  network.defineNodeAttribute('_helios_visuals_position', AttributeType.Float, 4);
+  network.defineNodeAttribute('_helios_visuals_color', AttributeType.Float, 4);
+  network.defineNodeAttribute('_helios_visuals_size', AttributeType.Float, 1);
 
-  const nodeCount = 64;
+  const nodeCount = 256;
   const nodes = network.addNodes(nodeCount);
   for (let i = 0; i < nodes.length; i += 1) {
     const value = Math.random();
@@ -32,7 +43,7 @@ async function bootstrap() {
   }
 
   const edges = [];
-  for (let i = 0; i < nodeCount * 1.5; i += 1) {
+  for (let i = 0; i < nodeCount * 3; i += 1) {
     const from = Math.floor(Math.random() * nodeCount);
     const to = Math.floor(Math.random() * nodeCount);
     if (from === to) continue;
@@ -44,9 +55,26 @@ async function bootstrap() {
     edgeBuffer[id] = Math.random();
   }
 
+  // Seed initial positions randomly before the animated layout takes over.
+  const pos = network.getNodeAttributeBuffer('_helios_visuals_position').view;
+  const target = document.getElementById('app');
+  const rect = target.getBoundingClientRect();
+  const width = Math.max(1, rect.width || 640);
+  const height = Math.max(1, rect.height || 480);
+  for (let i = 0; i < nodeCount; i += 1) {
+    const offset = i * 4;
+    pos[offset] = Math.random() * width;
+    pos[offset + 1] = Math.random() * height;
+    pos[offset + 2] = 0;
+    pos[offset + 3] = 1;
+  }
+
+  const mode = resolveMode();
   const heliosOptions = {
-    container: document.getElementById('app'),
-    layout: { type: 'worker', options: { radius: 180 } },
+    container: target,
+    layout: { type: 'worker', options: { radius: 220, depth: mode === '3d' ? 140 : 0, mode } },
+    mode,
+    projection: 'perspective',
   };
   const rendererPreference = resolveRendererPreference();
   if (rendererPreference) {
@@ -59,8 +87,9 @@ async function bootstrap() {
   helios.attributeMappings.mapNodeAttributeToColor(nodeAttribute);
   helios.attributeMappings.mapEdgeAttributeToColor(edgeAttribute);
 
+  const rendererType = helios.renderer?.device?.type ?? helios.renderer?.constructor?.name ?? 'unknown';
   diagnostics.ready = true;
-  diagnostics.renderer = helios.renderer?.constructor?.name ?? 'unknown';
+  diagnostics.renderer = rendererType;
   diagnostics.nodeCount = nodes.length;
   diagnostics.edgeCount = edgeIds.length;
   window.__HELIOS_DIAGNOSTICS__ = diagnostics;

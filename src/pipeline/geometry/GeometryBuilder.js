@@ -4,7 +4,7 @@ import { VisualAttributeMapper } from '../VisualAttributeMapper';
 
 /**
  * @typedef {Object} NodeGeometry
- * @property {Float32Array} positions
+ * @property {Float32Array} positions - Packed vec4 positions (x, y, z, 1)
  * @property {Float32Array} colors
  * @property {Float32Array} sizes
  * @property {number} count
@@ -15,7 +15,7 @@ import { VisualAttributeMapper } from '../VisualAttributeMapper';
  * @typedef {Object} EdgeGeometry
  * @property {Float32Array} colors
  * @property {Float32Array} widths
- * @property {Float32Array} segments
+ * @property {Float32Array} segments - Packed start/end vec4 tuples per edge
  * @property {number} count
  * @property {Uint32Array} indices
  */
@@ -76,8 +76,8 @@ export class GeometryBuilder {
     const edgesView = this.network.edgesView;
     const edgeActivity = this.network.edgeActivityView;
     const geometryView = this.mapper.edgeGeometry;
-    const nodeStride = 2;
-    const edgeStride = 4; // fromX, fromY, toX, toY per edge
+    const nodeStride = 4;
+    const edgeStride = 8; // fromXYZ1, toXYZ1 per edge
 
     for (let edgeIndex = 0; edgeIndex < edgeActivity.length; edgeIndex += 1) {
       if (!edgeActivity[edgeIndex]) {
@@ -93,8 +93,12 @@ export class GeometryBuilder {
 
       geometryView[geometryOffset + 0] = nodePositions[fromOffset + 0];
       geometryView[geometryOffset + 1] = nodePositions[fromOffset + 1];
-      geometryView[geometryOffset + 2] = nodePositions[toOffset + 0];
-      geometryView[geometryOffset + 3] = nodePositions[toOffset + 1];
+      geometryView[geometryOffset + 2] = nodePositions[fromOffset + 2];
+      geometryView[geometryOffset + 3] = 1;
+      geometryView[geometryOffset + 4] = nodePositions[toOffset + 0];
+      geometryView[geometryOffset + 5] = nodePositions[toOffset + 1];
+      geometryView[geometryOffset + 6] = nodePositions[toOffset + 2];
+      geometryView[geometryOffset + 7] = 1;
     }
   }
 

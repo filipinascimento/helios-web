@@ -43,6 +43,9 @@ export class Helios {
     this.renderer = await createRenderer(this.layers.canvas, {
       clearColor: this.options.clearColor,
       forceWebGL: this.options.renderer === 'webgl',
+      forceWebGPU: this.options.renderer === 'webgpu',
+      mode: this.options.mode ?? '2d',
+      projection: this.options.projection ?? 'perspective',
     });
     if (typeof this.renderer.resize === 'function') {
       this.renderer.resize(this.layers.size);
@@ -73,10 +76,13 @@ export class Helios {
       return layoutOption;
     }
     if (layoutOption?.type === 'worker') {
-      return new WorkerLayout(this.network, this.pipeline.visuals, layoutOption.options);
+      const workerOptions = { ...(layoutOption.options ?? {}), mode: this.options.mode ?? '2d' };
+      return new WorkerLayout(this.network, this.pipeline.visuals, workerOptions);
     }
+    const w = this.layers.size.width;
+    const h = this.layers.size.height;
     return new StaticLayout(this.network, this.pipeline.visuals, {
-      bounds: [0, 0, this.layers.size.width, this.layers.size.height],
+      bounds: [-w * 0.5, -h * 0.5, w * 0.5, h * 0.5],
     });
   }
 

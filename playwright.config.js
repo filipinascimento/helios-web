@@ -5,6 +5,26 @@ export default defineConfig({
   timeout: 30_000,
   fullyParallel: true,
   retries: process.env.CI ? 2 : 0,
+  projects: [
+    {
+      name: 'chromium',
+      use: { browserName: 'chromium' },
+    },
+    {
+      name: 'chromium-webgpu-headed',
+      use: {
+        browserName: 'chromium',
+        headless: false,
+        launchOptions: {
+          args: [
+            '--enable-unsafe-webgpu',
+            '--disable-dawn-features=disallow_unsafe_apis',
+            '--use-angle=metal',
+          ],
+        },
+      },
+    },
+  ],
   use: {
     baseURL: 'http://127.0.0.1:4173',
     headless: true,
