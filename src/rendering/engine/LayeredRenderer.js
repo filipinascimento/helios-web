@@ -23,7 +23,7 @@ export class LayeredRenderer {
 
     // Default graph drawing layer. Developers can remove or replace it if
     // they want to fully customize rendering.
-    this.graphLayer = new GraphLayer();
+    this.graphLayer = new GraphLayer({ edgeRendering: options.edgeRendering });
     this.layers.push(this.graphLayer);
   }
 
@@ -109,6 +109,10 @@ export class LayeredRenderer {
   presentFramebuffer(framebuffer, rect) {
     this.presentRect = rect ?? null;
     this.device?.presentFramebuffer(framebuffer, rect);
+  }
+
+  setEdgeRenderingMode(mode) {
+    this.graphLayer?.setEdgeRenderingMode?.(mode);
   }
 
   /**

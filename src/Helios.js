@@ -55,6 +55,7 @@ export class Helios {
       forceWebGPU: this.options.renderer === 'webgpu',
       mode: this.options.mode ?? '2d',
       projection: this.options.projection ?? 'perspective',
+      edgeRendering: this.options.edgeRendering,
     });
     if (typeof this.renderer.resize === 'function') {
       this.renderer.resize(this.layers.size);

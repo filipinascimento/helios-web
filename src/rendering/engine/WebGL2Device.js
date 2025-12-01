@@ -69,7 +69,10 @@ export class WebGL2Device {
     }
     this.gl = gl;
     gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    // The pipeline outputs un-premultiplied colors; with a premultiplied canvas
+    // we need ONE / ONE_MINUS_SRC_ALPHA to avoid double-premultiplication that
+    // darkens thin geometry like edges.
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LEQUAL);
     gl.clearDepth(1.0);

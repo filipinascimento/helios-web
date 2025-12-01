@@ -8,6 +8,8 @@ import {
 } from './shaders/graphWebGL.js';
 import { NODE_WGSL, EDGE_WGSL } from './shaders/graphWebGPU.js';
 
+export const EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL = 300.0;
+
 export class GraphLayer {
   constructor(options = {}) {
     this.name = 'graph-layer';
@@ -26,7 +28,6 @@ export class GraphLayer {
     this.edgeOpacityScale = 1;
     this.edgeWidthBase = 0;
     this.edgeWidthScale = 1;
-    this.edgeMinPixels = 2;
 
     // WebGL2 resources
     this.nodeProgram = null;
@@ -59,7 +60,6 @@ export class GraphLayer {
     this.edgeQuadUniformOpacityScale = null;
     this.edgeQuadUniformWidthBase = null;
     this.edgeQuadUniformWidthScale = null;
-    this.edgeQuadUniformMinPixels = null;
     this.nodeVAO = null;
     this.nodeBuffers = {};
     this.edgeVAO = null;
@@ -168,7 +168,6 @@ export class GraphLayer {
     this.edgeQuadUniformOpacityScale = gl.getUniformLocation(this.edgeQuadProgram, 'u_edgeOpacityScale');
     this.edgeQuadUniformWidthBase = gl.getUniformLocation(this.edgeQuadProgram, 'u_edgeWidthBase');
     this.edgeQuadUniformWidthScale = gl.getUniformLocation(this.edgeQuadProgram, 'u_edgeWidthScale');
-    this.edgeQuadUniformMinPixels = gl.getUniformLocation(this.edgeQuadProgram, 'u_edgeMinPixels');
 
     // Quad geometry for node billboards (triangle strip)
     this.nodeQuadBuffer = gl.createBuffer();
@@ -334,6 +333,8 @@ export class GraphLayer {
       // Prevent edges from writing to depth; they will still be depth-tested against nodes.
       gl.depthMask(false);
       const useQuads = this.edgeRenderingMode === 'quad';
+      const globalEdgeWidthBase = this.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL;
+      const globalEdgeWidthScale = this.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL;
       if (useQuads) {
         gl.useProgram(this.edgeQuadProgram);
         gl.uniformMatrix4fv(this.edgeQuadUniformViewProjection, false, cameraUniforms.viewProjection);
@@ -344,11 +345,8 @@ export class GraphLayer {
         }
         gl.uniform1f(this.edgeQuadUniformOpacityBase, this.edgeOpacityBase);
         gl.uniform1f(this.edgeQuadUniformOpacityScale, this.edgeOpacityScale);
-        gl.uniform1f(this.edgeQuadUniformWidthBase, this.edgeWidthBase);
-        gl.uniform1f(this.edgeQuadUniformWidthScale, this.edgeWidthScale);
-        if (this.edgeQuadUniformMinPixels) {
-          gl.uniform1f(this.edgeQuadUniformMinPixels, this.edgeMinPixels);
-        }
+        gl.uniform1f(this.edgeQuadUniformWidthBase, globalEdgeWidthBase);
+        gl.uniform1f(this.edgeQuadUniformWidthScale, globalEdgeWidthScale);
         gl.bindVertexArray(this.edgeQuadVAO);
         gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.edgeCount);
       } else {
@@ -356,8 +354,8 @@ export class GraphLayer {
         gl.uniformMatrix4fv(this.edgeUniformViewProjection, false, cameraUniforms.viewProjection);
         gl.uniform1f(this.edgeUniformOpacityBase, this.edgeOpacityBase);
         gl.uniform1f(this.edgeUniformOpacityScale, this.edgeOpacityScale);
-        gl.uniform1f(this.edgeUniformWidthBase, this.edgeWidthBase);
-        gl.uniform1f(this.edgeUniformWidthScale, this.edgeWidthScale);
+        gl.uniform1f(this.edgeUniformWidthBase, globalEdgeWidthBase);
+        gl.uniform1f(this.edgeUniformWidthScale, globalEdgeWidthScale);
         gl.bindVertexArray(this.edgeVAO);
         gl.drawArraysInstanced(gl.LINES, 0, 2, this.edgeCount);
       }
@@ -463,7 +461,7 @@ export class GraphLayer {
       size: this.cameraArray.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-    this.globalsArray = new Float32Array(20);
+    this.globalsArray = new Float32Array(16);
     this.globalsBuffer = device.device.createBuffer({
       size: this.globalsArray.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -845,18 +843,14 @@ export class GraphLayer {
     this.globalsArray[5] = this.nodeOutlineWidthScale;
     this.globalsArray[6] = this.edgeOpacityBase;
     this.globalsArray[7] = this.edgeOpacityScale;
-    this.globalsArray[8] = this.edgeWidthBase;
-    this.globalsArray[9] = this.edgeWidthScale;
+    this.globalsArray[8] = this.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL;
+    this.globalsArray[9] = this.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL;
     this.globalsArray[10] = outlineColor[0] ?? 0;
     this.globalsArray[11] = outlineColor[1] ?? 0;
     this.globalsArray[12] = outlineColor[2] ?? 0;
     this.globalsArray[13] = outlineColor[3] ?? 1;
-    this.globalsArray[14] = this.edgeMinPixels;
+    this.globalsArray[14] = 0;
     this.globalsArray[15] = 0;
-    this.globalsArray[16] = 0;
-    this.globalsArray[17] = 0;
-    this.globalsArray[18] = 0;
-    this.globalsArray[19] = 0;
     device.queue.writeBuffer(this.globalsBuffer, 0, this.globalsArray);
   }
 }

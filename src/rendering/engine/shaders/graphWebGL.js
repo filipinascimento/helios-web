@@ -85,10 +85,6 @@ uniform float u_edgeOpacityBase;
 uniform float u_edgeOpacityScale;
 uniform float u_edgeWidthBase;
 uniform float u_edgeWidthScale;
-<<<<<<< ours
-=======
-uniform float u_edgeMinPixels;
->>>>>>> theirs
 
 out vec4 v_color;
 
@@ -135,12 +131,12 @@ void main() {
   vec2 dir = ndcEnd - ndcStart;
   float dirLen = max(length(dir), 1e-5);
   vec2 perp = vec2(-dir.y, dir.x) / dirLen;
-  float halfWidth = max(width, u_edgeMinPixels) * 0.5;
+  float halfWidth = max(width, 1.0) * 0.5;
   vec2 pixelToNdc = vec2(2.0 / max(u_viewport.x, 1.0), 2.0 / max(u_viewport.y, 1.0));
   vec2 offsetNdc = perp * halfWidth * pixelToNdc;
   float segmentMix = clamp(a_corner.x, 0.0, 1.0);
   vec4 clipPos = mix(clipStart, clipEnd, segmentMix);
-  clipPos.xy += offsetNdc * clipPos.w * a_corner.y;
+  clipPos.xy += offsetNdc * a_corner.y * 1.5;
   gl_Position = clipPos;
   float alpha = clamp(u_edgeOpacityBase + u_edgeOpacityScale * a_color.a, 0.0, 1.0);
   v_color = vec4(a_color.rgb, alpha);

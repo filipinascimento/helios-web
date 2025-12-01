@@ -87,7 +87,7 @@ async function bootstrap() {
       options: {
         layout: layoutType,
         mode,
-        radius: 220,
+        radius: 220*Math.sqrt(nodeCount/1000),
         depth: mode === '3d' ? 140 : 0,
         // Slightly stronger forces for the demo; tweak via query params if needed.
         kRepulsion: 3,
@@ -111,6 +111,11 @@ async function bootstrap() {
 
   helios.attributeMappings.mapNodeAttributeToColor(nodeAttribute);
   helios.attributeMappings.mapEdgeAttributeToColor(edgeAttribute);
+  // Make edges visibly thicker for the demo.
+  if (helios.renderer?.graphLayer) {
+    helios.renderer.graphLayer.edgeWidthScale = 1.0;
+    helios.renderer.graphLayer.edgeWidthBase = 0;
+  }
 
   const rendererType = helios.renderer?.device?.type ?? helios.renderer?.constructor?.name ?? 'unknown';
   diagnostics.ready = true;

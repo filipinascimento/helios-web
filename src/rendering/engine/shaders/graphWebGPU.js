@@ -16,10 +16,6 @@ struct Globals {
   edgeOpacity: vec2<f32>, // base, scale
   edgeWidth: vec2<f32>, // base, scale
   nodeOutlineColor: vec4<f32>,
-<<<<<<< ours
-=======
-  edgeParams: vec2<f32>, // x: minPixels, y: padding
->>>>>>> theirs
 };
 
 struct NodeIndices {
@@ -204,12 +200,12 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   let lenDir = max(length(dir), 1e-5);
   dir = dir / vec2<f32>(lenDir);
   let perp = vec2<f32>(-dir.y, dir.x);
-  let halfWidth = max(width, globals.edgeParams.x) * 0.5;
+  let halfWidth = max(width, 1.0) * 0.5;
   let pixelToNdc = vec2<f32>(2.0 / max(camera.viewport.x, 1.0), 2.0 / max(camera.viewport.y, 1.0));
   let offsetNdc = perp * halfWidth * pixelToNdc;
   let t = clamp(input.corner.x, 0.0, 1.0);
   var clipPos = clipStart + (clipEnd - clipStart) * t;
-  let adjusted = clipPos.xy + offsetNdc * clipPos.w * input.corner.y;
+  let adjusted = clipPos.xy + offsetNdc * input.corner.y * 1.5;
   clipPos = vec4<f32>(adjusted.x, adjusted.y, clipPos.z, clipPos.w);
   var output : EdgeVertexOutput;
   output.position = clipPos;

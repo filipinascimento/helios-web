@@ -847,6 +847,7 @@ export class Camera {
       up: this.up,
       mode: this.mode,
       projectionType: this.projection,
+      viewport: this.viewport,
     };
   }
 }
