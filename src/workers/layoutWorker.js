@@ -20,7 +20,7 @@ const defaultOptions = {
   theta: 0.6,
   leafSize: 16,
   repulsionStrategy: 'barnes-hut', // 'barnes-hut' | 'negative' | 'full'
-  negativeSampling: true,
+  negativeSampling: false,
   negativesPerNode: 48,
   recenter: true,
 };

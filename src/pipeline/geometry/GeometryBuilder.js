@@ -1,4 +1,12 @@
 import { VisualAttributeMapper } from '../VisualAttributeMapper';
+import {
+  EDGE_COLOR_ATTRIBUTE,
+  EDGE_GEOMETRY_ATTRIBUTE,
+  EDGE_WIDTH_ATTRIBUTE,
+  NODE_COLOR_ATTRIBUTE,
+  NODE_POSITION_ATTRIBUTE,
+  NODE_SIZE_ATTRIBUTE,
+} from '../constants.js';
 
 /** @typedef {import('helios-network').default} HeliosNetwork */
 
@@ -39,10 +47,20 @@ export class GeometryBuilder {
     this.network = network;
     this.mapper = mapper;
     this.edgesDirty = true;
+    this.hasDense = typeof network?.updateDenseNodeAttributeBuffer === 'function';
+    this.nodeIndexCache = null;
+    this.edgeIndexCache = null;
   }
 
   markNodePositionsDirty() {
     this.edgesDirty = true;
+    if (this.hasDense && typeof this.network?.markDenseNodeAttributeDirty === 'function') {
+      try {
+        this.network.markDenseNodeAttributeDirty(NODE_POSITION_ATTRIBUTE);
+      } catch (_) {
+        // Ignore if dense buffers are unavailable.
+      }
+    }
   }
 
   /**
@@ -55,6 +73,26 @@ export class GeometryBuilder {
       this.edgesDirty = false;
     }
 
+    if (this.hasDense) {
+      const dense = this.buildDenseGeometry();
+      if (dense) {
+        return dense;
+      }
+    }
+
+    return this.buildSparseGeometry();
+  }
+
+  buildDenseGeometry() {
+    const nodes = this.getDenseNodeGeometry();
+    const edges = this.getDenseEdgeGeometry();
+    if (!nodes?.positions || !nodes?.colors || !nodes?.sizes || !edges?.segments || !edges?.colors || !edges?.widths) {
+      return null;
+    }
+    return { nodes, edges };
+  }
+
+  buildSparseGeometry() {
     return {
       nodes: {
         positions: this.mapper.nodePositions,
@@ -100,6 +138,14 @@ export class GeometryBuilder {
       geometryView[geometryOffset + 6] = nodePositions[toOffset + 2];
       geometryView[geometryOffset + 7] = 1;
     }
+
+    if (this.hasDense && typeof this.network?.markDenseEdgeAttributeDirty === 'function') {
+      try {
+        this.network.markDenseEdgeAttributeDirty(EDGE_GEOMETRY_ATTRIBUTE);
+      } catch (_) {
+        // Ignore if dense buffers are unavailable.
+      }
+    }
   }
 
   collectActiveSelection(activity) {
@@ -118,5 +164,58 @@ export class GeometryBuilder {
       }
     }
     return { count, indices };
+  }
+
+  getDenseNodeGeometry() {
+    const positions = this.getDenseAttribute(NODE_POSITION_ATTRIBUTE, 4, 'node');
+    const colors = this.getDenseAttribute(NODE_COLOR_ATTRIBUTE, 4, 'node');
+    const sizes = this.getDenseAttribute(NODE_SIZE_ATTRIBUTE, 1, 'node');
+    const count = Math.min(
+      positions?.length ? positions.length / 4 : 0,
+      colors?.length ? colors.length / 4 : 0,
+      sizes?.length ?? 0,
+    );
+    const indices = this.ensureIdentityBuffer('node', count);
+    return { positions, colors, sizes, count, indices };
+  }
+
+  getDenseEdgeGeometry() {
+    const segments = this.getDenseAttribute(EDGE_GEOMETRY_ATTRIBUTE, 8, 'edge');
+    const colors = this.getDenseAttribute(EDGE_COLOR_ATTRIBUTE, 4, 'edge');
+    const widths = this.getDenseAttribute(EDGE_WIDTH_ATTRIBUTE, 1, 'edge');
+    const count = Math.min(
+      segments?.length ? segments.length / 8 : 0,
+      colors?.length ? colors.length / 4 : 0,
+      widths?.length ?? 0,
+    );
+    const indices = this.ensureIdentityBuffer('edge', count);
+    return { segments, colors, widths, count, indices };
+  }
+
+  getDenseAttribute(name, dimension, scope) {
+    if (!this.hasDense) return null;
+    const updater =
+      scope === 'node'
+        ? this.network?.updateDenseNodeAttributeBuffer?.bind(this.network)
+        : this.network?.updateDenseEdgeAttributeBuffer?.bind(this.network);
+    if (!updater) return null;
+    const descriptor = updater(name);
+    if (!descriptor || !descriptor.view) return null;
+    const byteOffset = descriptor.pointer ?? descriptor.view.byteOffset ?? 0;
+    const length = descriptor.count * dimension;
+    return new Float32Array(descriptor.view.buffer, byteOffset, length);
+  }
+
+  ensureIdentityBuffer(scope, count) {
+    const key = scope === 'edge' ? 'edgeIndexCache' : 'nodeIndexCache';
+    const existing = this[key];
+    if (!existing || existing.length < count) {
+      this[key] = new Uint32Array(count);
+    }
+    const target = this[key];
+    for (let i = 0; i < count; i += 1) {
+      target[i] = i;
+    }
+    return target.subarray(0, count);
   }
 }

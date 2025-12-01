@@ -35,6 +35,7 @@ export class VisualAttributeMapper {
   constructor(network) {
     this.network = network;
     this.ensureAttributes();
+    this.registerDenseBuffers();
   }
 
   /**
@@ -117,6 +118,8 @@ export class VisualAttributeMapper {
     for (const index of indices) {
       this.writeNodeDefaults(index, color, size, positionView, colorView, sizeView);
     }
+
+    this.markDenseNodeAttributesDirty();
   }
 
   /**
@@ -142,6 +145,8 @@ export class VisualAttributeMapper {
     for (const index of indices) {
       this.writeEdgeDefaults(index, color, width, colorView, widthView);
     }
+
+    this.markDenseEdgeAttributesDirty();
   }
 
   ensureAttributes() {
@@ -200,6 +205,46 @@ export class VisualAttributeMapper {
     buffer = buffer ?? this.network.getEdgeAttributeBuffer(name);
     if (buffer?.dimension !== dimension) {
       throw new Error(`Attribute ${name} has dimension ${buffer?.dimension ?? 'unknown'}, expected ${dimension}`);
+    }
+  }
+
+  registerDenseBuffers() {
+    if (!this.network) return;
+    const addDense = (method, name) => {
+      if (typeof this.network[method] !== 'function') return;
+      try {
+        this.network[method](name);
+      } catch (error) {
+        // Ignore duplicate registration or unsupported dense buffers.
+      }
+    };
+    addDense('addDenseNodeAttributeBuffer', NODE_POSITION_ATTRIBUTE);
+    addDense('addDenseNodeAttributeBuffer', NODE_COLOR_ATTRIBUTE);
+    addDense('addDenseNodeAttributeBuffer', NODE_SIZE_ATTRIBUTE);
+    addDense('addDenseEdgeAttributeBuffer', EDGE_COLOR_ATTRIBUTE);
+    addDense('addDenseEdgeAttributeBuffer', EDGE_WIDTH_ATTRIBUTE);
+    addDense('addDenseEdgeAttributeBuffer', EDGE_GEOMETRY_ATTRIBUTE);
+  }
+
+  markDenseNodeAttributesDirty() {
+    if (typeof this.network?.markDenseNodeAttributeDirty !== 'function') return;
+    try {
+      this.network.markDenseNodeAttributeDirty(NODE_POSITION_ATTRIBUTE);
+      this.network.markDenseNodeAttributeDirty(NODE_COLOR_ATTRIBUTE);
+      this.network.markDenseNodeAttributeDirty(NODE_SIZE_ATTRIBUTE);
+    } catch (_) {
+      // Ignore if dense buffers are unavailable.
+    }
+  }
+
+  markDenseEdgeAttributesDirty() {
+    if (typeof this.network?.markDenseEdgeAttributeDirty !== 'function') return;
+    try {
+      this.network.markDenseEdgeAttributeDirty(EDGE_COLOR_ATTRIBUTE);
+      this.network.markDenseEdgeAttributeDirty(EDGE_WIDTH_ATTRIBUTE);
+      this.network.markDenseEdgeAttributeDirty(EDGE_GEOMETRY_ATTRIBUTE);
+    } catch (_) {
+      // Ignore if dense buffers are unavailable.
     }
   }
 

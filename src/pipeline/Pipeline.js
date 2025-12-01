@@ -1,6 +1,7 @@
 import { VisualAttributeMapper } from './VisualAttributeMapper.js';
 import { GeometryBuilder } from './geometry/GeometryBuilder.js';
 import { EdgeExpansionStage } from './stages/EdgeExpansionStage.js';
+import { EDGE_GEOMETRY_ATTRIBUTE, NODE_POSITION_ATTRIBUTE } from './constants.js';
 
 /**
  * High-level orchestrator responsible for mapping Helios network attributes to
@@ -24,6 +25,20 @@ export class Pipeline {
 
   markPositionsDirty() {
     this.geometryBuilder.markNodePositionsDirty();
+    if (typeof this.network?.markDenseNodeAttributeDirty === 'function') {
+      try {
+        this.network.markDenseNodeAttributeDirty(NODE_POSITION_ATTRIBUTE);
+      } catch (_) {
+        // Ignore if dense buffers are unavailable.
+      }
+    }
+    if (typeof this.network?.markDenseEdgeAttributeDirty === 'function') {
+      try {
+        this.network.markDenseEdgeAttributeDirty(EDGE_GEOMETRY_ATTRIBUTE);
+      } catch (_) {
+        // Ignore if dense buffers are unavailable.
+      }
+    }
   }
 
   /**

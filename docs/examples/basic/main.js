@@ -44,15 +44,15 @@ async function bootstrap() {
   network.defineNodeAttribute('_helios_visuals_color', AttributeType.Float, 4);
   network.defineNodeAttribute('_helios_visuals_size', AttributeType.Float, 1);
 
-  const nodeCount = 25600;
+  const nodeCount = 256;
   const nodes = network.addNodes(nodeCount);
   for (let i = 0; i < nodes.length; i += 1) {
-    const value = Math.random()*10000;
+    const value = Math.random();
     network.getNodeAttributeBuffer(nodeAttribute).view[nodes[i]] = value;
   }
 
   const edges = [];
-  for (let i = 0; i < nodeCount * 2; i += 1) {
+  for (let i = 0; i < nodeCount * 3; i += 1) {
     const from = Math.floor(Math.random() * nodeCount);
     const to = Math.floor(Math.random() * nodeCount);
     if (from === to) continue;
@@ -87,13 +87,13 @@ async function bootstrap() {
       options: {
         layout: layoutType,
         mode,
-        radius: 900,
+        radius: 220,
         depth: mode === '3d' ? 140 : 0,
         // Slightly stronger forces for the demo; tweak via query params if needed.
         kRepulsion: 3,
         kAttraction: 0.003,
         kGravity: 0.0008,
-        repulsionStrategy: 'negative',
+        repulsionStrategy: 'barnes-hut',
         negativesPerNode: 64,
         negativeSampling: true,
       },
