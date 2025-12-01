@@ -276,6 +276,9 @@ export class GraphLayer {
     const cameraUniforms = this.getCameraUniforms(camera);
     if (!cameraUniforms) return;
     const is2D = cameraUniforms.mode === '2d';
+    const zoom2D = is2D ? Math.max(1e-3, cameraUniforms.view?.[0] ?? 1) : 1;
+    // In 2D, scale widths with zoom so they shrink as you zoom out (matching 3D behavior).
+    const edgeWidthFactor = is2D ? (zoom2D / EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL) : 1.0;
 
     // Keep depth handling aligned with legacy: always clear with writes enabled
     // and use LEQUAL for a stable depth compare.
@@ -341,8 +344,8 @@ export class GraphLayer {
       // Prevent edges from writing to depth; they will still be depth-tested against nodes.
       gl.depthMask(false);
       const useQuads = this.edgeRenderingMode === 'quad';
-      const globalEdgeWidthBase = this.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL;
-      const globalEdgeWidthScale = this.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL;
+      const globalEdgeWidthBase = this.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
+      const globalEdgeWidthScale = this.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
       if (useQuads) {
         gl.useProgram(this.edgeQuadProgram);
         gl.uniformMatrix4fv(this.edgeQuadUniformViewProjection, false, cameraUniforms.viewProjection);
@@ -734,7 +737,7 @@ export class GraphLayer {
     const maxBindingSize = device.limits?.maxStorageBufferBindingSize;
     const cameraUniforms = this.getCameraUniforms(camera);
     const is2D = cameraUniforms?.mode === '2d';
-    this.updateGlobalsGpu(device);
+    this.updateGlobalsGpu(device, cameraUniforms);
     this.updateCameraUniformsGpu(camera, cameraUniforms);
     if (!this.cameraBuffer) return;
     if (geometry.nodes.count) {
@@ -862,9 +865,14 @@ export class GraphLayer {
     }
   }
 
-  updateGlobalsGpu(device) {
+  updateGlobalsGpu(device, cameraUniforms) {
     if (!device || !this.globalsBuffer || !this.globalsArray) return;
     const outlineColor = this.nodeOutlineColor || [0, 0, 0, 1];
+    const is2D = cameraUniforms?.mode === '2d';
+    const zoom2D = is2D ? Math.max(1e-3, cameraUniforms?.view?.[0] ?? 1) : 1;
+    const edgeWidthFactor = is2D ? (zoom2D / EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL) : 1.0;
+    const edgeWidthBase = this.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
+    const edgeWidthScale = this.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
     this.globalsArray[0] = this.nodeOpacityBase;
     this.globalsArray[1] = this.nodeOpacityScale;
     this.globalsArray[2] = this.nodeSizeBase;
@@ -873,8 +881,8 @@ export class GraphLayer {
     this.globalsArray[5] = this.nodeOutlineWidthScale;
     this.globalsArray[6] = this.edgeOpacityBase;
     this.globalsArray[7] = this.edgeOpacityScale;
-    this.globalsArray[8] = this.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL;
-    this.globalsArray[9] = this.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL;
+    this.globalsArray[8] = edgeWidthBase;
+    this.globalsArray[9] = edgeWidthScale;
     this.globalsArray[10] = outlineColor[0] ?? 0;
     this.globalsArray[11] = outlineColor[1] ?? 0;
     this.globalsArray[12] = outlineColor[2] ?? 0;
