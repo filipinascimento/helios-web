@@ -276,6 +276,14 @@ export class GraphLayer {
     const cameraUniforms = this.getCameraUniforms(camera);
     if (!cameraUniforms) return;
     const is2D = cameraUniforms.mode === '2d';
+
+    // Keep depth handling aligned with legacy: always clear with writes enabled
+    // and use LEQUAL for a stable depth compare.
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthMask(true);
+    gl.depthFunc(gl.LEQUAL);
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+
     if (is2D) {
       gl.disable(gl.DEPTH_TEST);
       gl.depthMask(false);
@@ -283,7 +291,6 @@ export class GraphLayer {
       gl.enable(gl.DEPTH_TEST);
       gl.depthMask(true);
     }
-    gl.clear(gl.DEPTH_BUFFER_BIT);
     if (geometry.edges.count) {
       this.uploadEdgesWebGL2(gl, geometry.edges);
     } else {
@@ -295,8 +302,8 @@ export class GraphLayer {
       this.nodeCount = 0;
     }
 
-    // Draw nodes first so they populate depth, then draw edges without writing depth to reduce collision.
-    if (this.nodeCount) {
+    const drawNodes = () => {
+      if (!this.nodeCount) return;
       gl.useProgram(this.nodeProgram);
       gl.uniformMatrix4fv(this.nodeUniformViewProjection, false, cameraUniforms.viewProjection);
       gl.uniformMatrix4fv(this.nodeUniformView, false, cameraUniforms.view);
@@ -327,9 +334,10 @@ export class GraphLayer {
       );
       gl.bindVertexArray(this.nodeVAO);
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.nodeCount);
-    }
+    };
 
-    if (this.edgeCount) {
+    const drawEdges = () => {
+      if (!this.edgeCount) return;
       // Prevent edges from writing to depth; they will still be depth-tested against nodes.
       gl.depthMask(false);
       const useQuads = this.edgeRenderingMode === 'quad';
@@ -359,13 +367,22 @@ export class GraphLayer {
         gl.bindVertexArray(this.edgeVAO);
         gl.drawArraysInstanced(gl.LINES, 0, 2, this.edgeCount);
       }
+    };
+
+    if (is2D) {
+      // In 2D, draw edges first and keep depth disabled so nodes always sit on top.
+      drawEdges();
+      drawNodes();
+    } else {
+      // In 3D, draw nodes into depth first, then overlay edges without writing depth.
+      drawNodes();
+      drawEdges();
     }
 
     gl.bindVertexArray(null);
     gl.depthMask(true);
-    if (is2D) {
-      gl.enable(gl.DEPTH_TEST);
-    }
+    gl.depthFunc(gl.LEQUAL);
+    gl.enable(gl.DEPTH_TEST);
   }
 
   uploadNodesWebGL2(gl, nodes) {
