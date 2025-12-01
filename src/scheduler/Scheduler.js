@@ -2,7 +2,7 @@
  * Coordinates layout, geometry, and rendering cycles.
  */
 export class Scheduler {
-  constructor() {
+  constructor(options = {}) {
     this.layout = null;
     this.geometryCallback = null;
     this.renderCallback = null;
@@ -13,6 +13,7 @@ export class Scheduler {
     this._raf = null;
     this._layoutBusy = false;
     this.currentFrame = null;
+    this.performanceMonitor = options.performanceMonitor ?? null;
   }
 
   setLayout(layout) {
@@ -58,6 +59,7 @@ export class Scheduler {
     }
     const delta = timestamp - this._lastTime;
     this._lastTime = timestamp;
+    const perf = this.performanceMonitor;
 
     const layoutShouldRun = Boolean(
       this.layout &&
@@ -66,6 +68,15 @@ export class Scheduler {
     );
 
     if (layoutShouldRun && !this._layoutBusy) {
+      const layoutStart = perf?.enabled ? performance.now() : 0;
+      const finalizeLayout = (changed) => {
+        if (layoutStart) {
+          perf.record('layout', performance.now() - layoutStart);
+        }
+        if (changed) {
+          this.requestGeometry();
+        }
+      };
       try {
         const result = this.layout.step(delta);
         this._layoutBusy = result instanceof Promise;
@@ -73,16 +84,17 @@ export class Scheduler {
           result
             .then((changed) => {
               this._layoutBusy = false;
-              if (changed) {
-                this.requestGeometry();
-              }
+              finalizeLayout(changed);
             })
             .catch((error) => {
               this._layoutBusy = false;
+              if (layoutStart) {
+                perf.record('layout', performance.now() - layoutStart);
+              }
               console.error('Layout execution failed', error);
             });
-        } else if (result) {
-          this.requestGeometry();
+        } else {
+          finalizeLayout(result);
         }
       } finally {
         this._needsLayout = false;
@@ -90,14 +102,23 @@ export class Scheduler {
     }
 
     if (this.geometryCallback && this._needsGeometry && !this._layoutBusy) {
+      const geometryStart = perf?.enabled ? performance.now() : 0;
       this.currentFrame = this.geometryCallback();
+      if (geometryStart) {
+        perf.record('geometry', performance.now() - geometryStart);
+      }
       this._needsGeometry = false;
     }
 
     if (this.renderCallback && this.currentFrame) {
+      const renderStart = perf?.enabled ? performance.now() : 0;
       this.renderCallback(this.currentFrame);
+      if (renderStart) {
+        perf.record('render', performance.now() - renderStart);
+      }
     }
 
+    perf?.logIfDue();
     this._raf = requestAnimationFrame((ts) => this.tick(ts));
   }
 }

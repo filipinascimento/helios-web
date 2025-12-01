@@ -16,6 +16,15 @@ function resolveMode() {
   return '2d';
 }
 
+function resolveLayoutType() {
+  const params = new URLSearchParams(window.location.search);
+  const layout = params.get('layout');
+  if (!layout) return 'force3d';
+  const normalized = layout.toLowerCase();
+  if (normalized === 'jitter' || normalized === 'legacy') return 'jitter';
+  return 'force3d';
+}
+
 async function bootstrap() {
   const diagnostics = {
     ready: false,
@@ -35,15 +44,15 @@ async function bootstrap() {
   network.defineNodeAttribute('_helios_visuals_color', AttributeType.Float, 4);
   network.defineNodeAttribute('_helios_visuals_size', AttributeType.Float, 1);
 
-  const nodeCount = 256;
+  const nodeCount = 25600;
   const nodes = network.addNodes(nodeCount);
   for (let i = 0; i < nodes.length; i += 1) {
-    const value = Math.random();
+    const value = Math.random()*10000;
     network.getNodeAttributeBuffer(nodeAttribute).view[nodes[i]] = value;
   }
 
   const edges = [];
-  for (let i = 0; i < nodeCount * 3; i += 1) {
+  for (let i = 0; i < nodeCount * 2; i += 1) {
     const from = Math.floor(Math.random() * nodeCount);
     const to = Math.floor(Math.random() * nodeCount);
     if (from === to) continue;
@@ -70,9 +79,25 @@ async function bootstrap() {
   }
 
   const mode = resolveMode();
+  const layoutType = resolveLayoutType();
   const heliosOptions = {
     container: target,
-    layout: { type: 'worker', options: { radius: 220, depth: mode === '3d' ? 140 : 0, mode } },
+    layout: {
+      type: 'worker',
+      options: {
+        layout: layoutType,
+        mode,
+        radius: 900,
+        depth: mode === '3d' ? 140 : 0,
+        // Slightly stronger forces for the demo; tweak via query params if needed.
+        kRepulsion: 3,
+        kAttraction: 0.003,
+        kGravity: 0.0008,
+        repulsionStrategy: 'negative',
+        negativesPerNode: 64,
+        negativeSampling: true,
+      },
+    },
     mode,
     projection: 'perspective',
   };

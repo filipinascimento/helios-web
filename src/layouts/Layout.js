@@ -112,11 +112,14 @@ export class WorkerLayout extends Layout {
     }
     this.pending = true;
     const positionsCopy = new Float32Array(this.visuals.nodePositions);
+    const { nodeActivity, edges } = this.buildGraphPayload();
     this.worker.postMessage(
       {
         type: 'tick',
         timestamp: performance.now(),
         positions: positionsCopy,
+        nodeActivity,
+        edges,
       },
       [positionsCopy.buffer],
     );
@@ -155,5 +158,25 @@ export class WorkerLayout extends Layout {
       type: 'resize',
       center: [size.width / 2, size.height / 2],
     });
+  }
+
+  buildGraphPayload() {
+    const nodeActivity = new Uint8Array(this.network.nodeActivityView);
+    const edgeActivity = this.network.edgeActivityView;
+    const edgesView = this.network.edgesView;
+    let edgeCount = 0;
+    for (let i = 0; i < edgeActivity.length; i += 1) {
+      if (edgeActivity[i]) edgeCount += 1;
+    }
+    const edges = new Uint32Array(edgeCount * 2);
+    let offset = 0;
+    for (let i = 0; i < edgeActivity.length; i += 1) {
+      if (!edgeActivity[i]) continue;
+      const base = i * 2;
+      edges[offset] = edgesView[base];
+      edges[offset + 1] = edgesView[base + 1];
+      offset += 2;
+    }
+    return { nodeActivity, edges };
   }
 }

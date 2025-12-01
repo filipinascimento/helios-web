@@ -6,6 +6,7 @@ import { Scheduler } from './scheduler/Scheduler.js';
 import { StaticLayout, WorkerLayout } from './layouts/Layout.js';
 import { AttributeMapperUtility } from './pipeline/AttributeMapperUtility.js';
 import { createRenderer } from './rendering/createRenderer.js';
+import { PerformanceMonitor } from './utils/PerformanceMonitor.js';
 
 function isLayoutInstance(candidate) {
   return candidate && typeof candidate.step === 'function' && typeof candidate.initialize === 'function';
@@ -22,7 +23,15 @@ export class Helios {
     this.layers = new LayerManager(container);
     this.pipeline = new Pipeline(network);
     this.attributeMappings = new AttributeMapperUtility(network, this.pipeline.visuals);
-    this.scheduler = new Scheduler();
+    const debugPerformance = options.debugPerformance !== false;
+    const performanceWindow = options.performanceWindow ?? 60;
+    const performanceLogEvery = options.performanceLogEvery ?? performanceWindow;
+    this.performanceMonitor = new PerformanceMonitor({
+      enabled: debugPerformance,
+      windowSize: performanceWindow,
+      logEvery: performanceLogEvery,
+    });
+    this.scheduler = new Scheduler({ performanceMonitor: this.performanceMonitor });
     this.layout = this.createLayout(options.layout);
     this.renderer = null;
     this.size = { ...this.layers.size };

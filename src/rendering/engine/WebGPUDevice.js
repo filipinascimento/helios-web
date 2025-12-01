@@ -35,6 +35,12 @@ export class WebGPUDevice {
     this.sampler = null;
     this.type = 'webgpu';
     this.size = { width: 1, height: 1, devicePixelRatio: 1 };
+    this.depthTexture = null;
+    this.depthSize = { width: 0, height: 0 };
+    this.depthFormat = 'depth24plus';
+    this.limits = null;
+    this.maxStorageBufferBindingSize = null;
+    this.requestedLimits = null;
   }
 
   static async isSupported() {
@@ -49,7 +55,21 @@ export class WebGPUDevice {
     if (!this.adapter) {
       throw new Error('Unable to acquire GPU adapter');
     }
-    this.device = await this.adapter.requestDevice();
+    const storageLimitRatio = Math.min(Math.max(this.options.storageBufferLimitRatio ?? 0.75, 0), 1);
+    const adapterStorageLimit = this.adapter.limits?.maxStorageBufferBindingSize;
+    // Request a higher storage buffer limit (defaults are often 128 MB). Clamp to 75% of what the adapter reports.
+    const baseStorageLimit = 128 * 1024 * 1024;
+    const requestedStorageLimit = adapterStorageLimit
+      ? Math.min(adapterStorageLimit, Math.max(baseStorageLimit, Math.floor(adapterStorageLimit * storageLimitRatio)))
+      : null;
+    const requiredLimits = {};
+    if (requestedStorageLimit) {
+      requiredLimits.maxStorageBufferBindingSize = requestedStorageLimit;
+    }
+    this.requestedLimits = Object.keys(requiredLimits).length ? requiredLimits : null;
+    this.device = await this.adapter.requestDevice(this.requestedLimits ? { requiredLimits } : {});
+    this.limits = this.device.limits;
+    this.maxStorageBufferBindingSize = this.device.limits?.maxStorageBufferBindingSize ?? null;
     this.context = this.canvas.getContext('webgpu');
     if (!this.context) {
       throw new Error('Unable to create WebGPU context');
@@ -120,9 +140,13 @@ export class WebGPUDevice {
   }
 
   beginFrame(renderTarget, clearColor, rect) {
-    const colorAttachment = renderTarget
-      ? { view: renderTarget.texture.createView() }
-      : { view: this.context.getCurrentTexture().createView() };
+    const targetTexture = renderTarget ? renderTarget.texture : this.context.getCurrentTexture();
+    const width = renderTarget?.width ?? this.canvas.width;
+    const height = renderTarget?.height ?? this.canvas.height;
+    const colorAttachment = { view: targetTexture.createView() };
+    const depthView = renderTarget?.depthTexture
+      ? renderTarget.depthTexture.createView()
+      : this.ensureDepthTexture(width, height)?.createView();
 
     const encoder = this.device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
@@ -136,6 +160,16 @@ export class WebGPUDevice {
           storeOp: 'store',
         },
       ],
+      ...(depthView
+        ? {
+            depthStencilAttachment: {
+              view: depthView,
+              depthClearValue: 1.0,
+              depthLoadOp: 'clear',
+              depthStoreOp: 'store',
+            },
+          }
+        : {}),
     });
 
     if (rect) {
@@ -164,9 +198,15 @@ export class WebGPUDevice {
       format: this.format,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
     });
+    const depthTexture = this.device.createTexture({
+      size: { width, height, depthOrArrayLayers: 1 },
+      format: this.depthFormat,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT,
+    });
     return {
       type: 'webgpu',
       texture,
+      depthTexture,
       width,
       height,
     };
@@ -237,5 +277,21 @@ export class WebGPUDevice {
 
   destroy() {
     this.quadVertexBuffer?.destroy?.();
+    this.depthTexture?.destroy?.();
+    this.depthTexture = null;
+  }
+
+  ensureDepthTexture(width, height) {
+    if (!width || !height) return null;
+    if (!this.depthTexture || this.depthSize.width !== width || this.depthSize.height !== height) {
+      this.depthTexture?.destroy?.();
+      this.depthTexture = this.device.createTexture({
+        size: { width, height, depthOrArrayLayers: 1 },
+        format: this.depthFormat,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      this.depthSize = { width, height };
+    }
+    return this.depthTexture;
   }
 }

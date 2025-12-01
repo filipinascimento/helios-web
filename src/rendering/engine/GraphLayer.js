@@ -347,6 +347,11 @@ export class GraphLayer {
 
     const nodeModule = device.device.createShaderModule({ code: NODE_WGSL });
     const edgeModule = device.device.createShaderModule({ code: EDGE_WGSL });
+    const depthStencil = {
+      format: device.depthFormat ?? 'depth24plus',
+      depthWriteEnabled: true,
+      depthCompare: 'less-equal',
+    };
 
     this.nodePipeline = device.device.createRenderPipeline({
       layout: device.device.createPipelineLayout({ bindGroupLayouts: [this.nodeBindGroupLayout] }),
@@ -366,6 +371,7 @@ export class GraphLayer {
         entryPoint: 'nodeFragment',
         targets: [{ format: device.format }],
       },
+      depthStencil,
       primitive: { topology: 'triangle-strip' },
     });
 
@@ -377,12 +383,18 @@ export class GraphLayer {
         entryPoint: 'edgeFragment',
         targets: [{ format: device.format }],
       },
+      depthStencil,
       primitive: { topology: 'line-list' },
     });
   }
 
-  ensureBufferGpu(entry, requiredBytes, usage, device) {
+  ensureBufferGpu(entry, requiredBytes, usage, device, maxBindingSize, label = 'storage buffer') {
     const aligned = Math.max(256, Math.ceil(requiredBytes / 256) * 256);
+    if ((usage & GPUBufferUsage.STORAGE) && maxBindingSize && aligned > maxBindingSize) {
+      const message = `${label} requires ${aligned} bytes, exceeding maxStorageBufferBindingSize (${maxBindingSize}).`;
+      console.warn(message);
+      throw new Error(message);
+    }
     if (!entry || aligned > entry.size) {
       entry?.buffer?.destroy?.();
       return {
@@ -393,7 +405,7 @@ export class GraphLayer {
     return entry;
   }
 
-  updateNodeBuffersGpu(nodes, device) {
+  updateNodeBuffersGpu(nodes, device, maxBindingSize) {
     const { positions, sizes, colors, indices } = nodes;
     const storageUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
     this.nodeBuffersGpu.indices = this.ensureBufferGpu(
@@ -401,19 +413,32 @@ export class GraphLayer {
       indices.byteLength,
       storageUsage,
       device,
+      maxBindingSize,
+      'Node index buffer',
     );
     this.nodeBuffersGpu.positions = this.ensureBufferGpu(
       this.nodeBuffersGpu.positions,
       positions.byteLength,
       storageUsage,
       device,
+      maxBindingSize,
+      'Node position buffer',
     );
-    this.nodeBuffersGpu.sizes = this.ensureBufferGpu(this.nodeBuffersGpu.sizes, sizes.byteLength, storageUsage, device);
+    this.nodeBuffersGpu.sizes = this.ensureBufferGpu(
+      this.nodeBuffersGpu.sizes,
+      sizes.byteLength,
+      storageUsage,
+      device,
+      maxBindingSize,
+      'Node size buffer',
+    );
     this.nodeBuffersGpu.colors = this.ensureBufferGpu(
       this.nodeBuffersGpu.colors,
       colors.byteLength,
       storageUsage,
       device,
+      maxBindingSize,
+      'Node color buffer',
     );
 
     device.queue.writeBuffer(this.nodeBuffersGpu.indices.buffer, 0, indices);
@@ -433,7 +458,7 @@ export class GraphLayer {
     });
   }
 
-  updateEdgeBuffersGpu(edges, device) {
+  updateEdgeBuffersGpu(edges, device, maxBindingSize) {
     const { segments, colors, indices } = edges;
     const storageUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
     this.edgeBuffersGpu.indices = this.ensureBufferGpu(
@@ -441,18 +466,24 @@ export class GraphLayer {
       indices.byteLength,
       storageUsage,
       device,
+      maxBindingSize,
+      'Edge index buffer',
     );
     this.edgeBuffersGpu.segments = this.ensureBufferGpu(
       this.edgeBuffersGpu.segments,
       segments.byteLength,
       storageUsage,
       device,
+      maxBindingSize,
+      'Edge segment buffer',
     );
     this.edgeBuffersGpu.colors = this.ensureBufferGpu(
       this.edgeBuffersGpu.colors,
       colors.byteLength,
       storageUsage,
       device,
+      maxBindingSize,
+      'Edge color buffer',
     );
     device.queue.writeBuffer(this.edgeBuffersGpu.indices.buffer, 0, indices);
     device.queue.writeBuffer(this.edgeBuffersGpu.segments.buffer, 0, segments);
@@ -471,15 +502,16 @@ export class GraphLayer {
 
   renderWebGPU(context, geometry, camera) {
     const { device } = this.device;
+    const maxBindingSize = device.limits?.maxStorageBufferBindingSize;
     this.updateCameraUniformsGpu(camera);
     if (!this.cameraBuffer) return;
     if (geometry.nodes.count) {
-      this.updateNodeBuffersGpu(geometry.nodes, device);
+      this.updateNodeBuffersGpu(geometry.nodes, device, maxBindingSize);
     } else {
       this.nodeBindGroup = null;
     }
     if (geometry.edges.count) {
-      this.updateEdgeBuffersGpu(geometry.edges, device);
+      this.updateEdgeBuffersGpu(geometry.edges, device, maxBindingSize);
     } else {
       this.edgeBindGroup = null;
     }
