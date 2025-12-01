@@ -732,8 +732,10 @@ export class GraphLayer {
   renderWebGPU(context, geometry, camera) {
     const { device } = this.device;
     const maxBindingSize = device.limits?.maxStorageBufferBindingSize;
+    const cameraUniforms = this.getCameraUniforms(camera);
+    const is2D = cameraUniforms?.mode === '2d';
     this.updateGlobalsGpu(device);
-    this.updateCameraUniformsGpu(camera);
+    this.updateCameraUniformsGpu(camera, cameraUniforms);
     if (!this.cameraBuffer) return;
     if (geometry.nodes.count) {
       this.updateNodeBuffersGpu(geometry.nodes, device, maxBindingSize);
@@ -746,14 +748,16 @@ export class GraphLayer {
       this.edgeBindGroup = null;
     }
 
-    if (geometry.nodes.count && this.nodeBindGroup) {
+    const drawNodes = () => {
+      if (!geometry.nodes.count || !this.nodeBindGroup) return;
       context.passEncoder.setPipeline(this.nodePipeline);
       context.passEncoder.setBindGroup(0, this.nodeBindGroup);
       context.passEncoder.setVertexBuffer(0, this.nodeQuadBufferGpu);
       context.passEncoder.draw(4, geometry.nodes.count, 0, 0);
-    }
+    };
 
-    if (geometry.edges.count && this.edgeBindGroup) {
+    const drawEdges = () => {
+      if (!geometry.edges.count || !this.edgeBindGroup) return;
       if (this.edgeRenderingMode === 'quad' && this.edgeQuadPipeline) {
         context.passEncoder.setPipeline(this.edgeQuadPipeline);
         context.passEncoder.setBindGroup(0, this.edgeBindGroup);
@@ -764,6 +768,15 @@ export class GraphLayer {
         context.passEncoder.setBindGroup(0, this.edgeBindGroup);
         context.passEncoder.draw(geometry.edges.count * 2, 1, 0, 0);
       }
+    };
+
+    if (is2D) {
+      // Match WebGL ordering in 2D: draw edges first, then nodes on top.
+      drawEdges();
+      drawNodes();
+    } else {
+      drawNodes();
+      drawEdges();
     }
   }
 
@@ -813,9 +826,9 @@ export class GraphLayer {
     return this.fallbackCameraUniforms;
   }
 
-  updateCameraUniformsGpu(camera) {
+  updateCameraUniformsGpu(camera, cameraUniforms) {
     if (!this.device?.device || !this.cameraBuffer || !this.cameraArray) return;
-    const source = this.getCameraUniforms(camera);
+    const source = cameraUniforms ?? this.getCameraUniforms(camera);
     if (!source) return;
     this.cameraArray.set(source.viewProjection, 0);
     this.cameraArray.set(source.view, 16);
