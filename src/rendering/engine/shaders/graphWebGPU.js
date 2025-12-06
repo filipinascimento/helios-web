@@ -16,6 +16,8 @@ struct Globals {
   edgeOpacity: vec2<f32>, // base, scale
   edgeWidth: vec2<f32>, // base, scale
   nodeOutlineColor: vec4<f32>,
+  edgeTrim: f32,
+  _pad: vec3<f32>,
 };
 
 struct NodeIndices {
@@ -129,6 +131,8 @@ struct Globals {
   edgeOpacity: vec2<f32>, // base, scale
   edgeWidth: vec2<f32>, // base, scale
   nodeOutlineColor: vec4<f32>,
+  edgeTrim: f32,
+  _pad: vec3<f32>,
 };
 
 struct EdgeSegment {
@@ -152,12 +156,17 @@ struct EdgeWidths {
   data: array<f32>,
 };
 
+struct EdgeEndpointSizes {
+  data: array<vec2<f32>>,
+};
+
 @group(0) @binding(0) var<uniform> camera : Camera;
 @group(0) @binding(1) var<storage, read> edgeIndices : EdgeIndices;
 @group(0) @binding(2) var<storage, read> edgeSegments : EdgeSegments;
 @group(0) @binding(3) var<storage, read> edgeColors : EdgeColors;
 @group(0) @binding(4) var<storage, read> edgeWidths : EdgeWidths;
-@group(0) @binding(5) var<uniform> globals : Globals;
+@group(0) @binding(5) var<storage, read> edgeEndpointSizes : EdgeEndpointSizes;
+@group(0) @binding(6) var<uniform> globals : Globals;
 
 struct EdgeVertexOutput {
   @builtin(position) position : vec4<f32>,
@@ -169,10 +178,20 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
   let edgeSlot = vertexIndex / 2u;
   let edgeId = edgeIndices.data[edgeSlot];
   let segment = edgeSegments.data[edgeId];
+  let endpointSize = edgeEndpointSizes.data[edgeId];
   let width = globals.edgeWidth.x + globals.edgeWidth.y * edgeWidths.data[edgeId];
-  var position = segment.start.xyz;
+  let dirRaw = segment.end.xyz - segment.start.xyz;
+  let dirLen = max(length(dirRaw), 1e-5);
+  let dir = dirRaw / vec3<f32>(dirLen);
+  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.x, 0.0) * 0.5;
+  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.y, 0.0) * 0.5;
+  let trimStart = startRadius * globals.edgeTrim;
+  let trimEnd = endRadius * globals.edgeTrim;
+  let startPos = segment.start.xyz + dir * trimStart;
+  let endPos = segment.end.xyz - dir * trimEnd;
+  var position = startPos;
   if ((vertexIndex & 1u) == 1u) {
-    position = segment.end.xyz;
+    position = endPos;
   }
   let baseColor = edgeColors.data[edgeId];
   let alpha = clamp(globals.edgeOpacity.x + globals.edgeOpacity.y * baseColor.a + width * 0.0, 0.0, 1.0);
@@ -191,15 +210,26 @@ struct EdgeQuadInput {
 fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   let edgeId = edgeIndices.data[input.instance];
   let segment = edgeSegments.data[edgeId];
+  let endpointSize = edgeEndpointSizes.data[edgeId];
   let width = max(globals.edgeWidth.x + globals.edgeWidth.y * edgeWidths.data[edgeId], 1e-3);
-  let clipStart = camera.viewProjection * vec4<f32>(segment.start.xyz, 1.0);
-  let clipEnd = camera.viewProjection * vec4<f32>(segment.end.xyz, 1.0);
+  let dirRaw = segment.end.xyz - segment.start.xyz;
+  let dirLenWorld = max(length(dirRaw), 1e-5);
+  let dir = dirRaw / vec3<f32>(dirLenWorld);
+  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.x, 0.0) * 0.5;
+  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.y, 0.0) * 0.5;
+  let trimStart = startRadius * globals.edgeTrim;
+  let trimEnd = endRadius * globals.edgeTrim;
+  let startPos = segment.start.xyz + dir * trimStart;
+  let endPos = segment.end.xyz - dir * trimEnd;
+
+  let clipStart = camera.viewProjection * vec4<f32>(startPos, 1.0);
+  let clipEnd = camera.viewProjection * vec4<f32>(endPos, 1.0);
   let ndcStart = clipStart.xy / clipStart.w;
   let ndcEnd = clipEnd.xy / clipEnd.w;
-  var dir = ndcEnd - ndcStart;
-  let lenDir = max(length(dir), 1e-5);
-  dir = dir / vec2<f32>(lenDir);
-  let perp = vec2<f32>(-dir.y, dir.x);
+  var ndcDir = ndcEnd - ndcStart;
+  let lenDir = max(length(ndcDir), 1e-5);
+  ndcDir = ndcDir / vec2<f32>(lenDir);
+  let perp = vec2<f32>(-ndcDir.y, ndcDir.x);
   let halfWidth = max(width, 1.0) * 0.5;
   let pixelToNdc = vec2<f32>(2.0 / max(camera.viewport.x, 1.0), 2.0 / max(camera.viewport.y, 1.0));
   let offsetNdc = perp * halfWidth * pixelToNdc;

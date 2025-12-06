@@ -28,6 +28,7 @@ export class GraphLayer {
     this.edgeOpacityScale = 1;
     this.edgeWidthBase = 0;
     this.edgeWidthScale = 1;
+    this.edgeEndpointTrim = 1;
 
     // WebGL2 resources
     this.nodeProgram = null;
@@ -162,12 +163,18 @@ export class GraphLayer {
     this.edgeUniformOpacityScale = gl.getUniformLocation(this.edgeProgram, 'u_edgeOpacityScale');
     this.edgeUniformWidthBase = gl.getUniformLocation(this.edgeProgram, 'u_edgeWidthBase');
     this.edgeUniformWidthScale = gl.getUniformLocation(this.edgeProgram, 'u_edgeWidthScale');
+    this.edgeUniformNodeSizeBase = gl.getUniformLocation(this.edgeProgram, 'u_nodeSizeBase');
+    this.edgeUniformNodeSizeScale = gl.getUniformLocation(this.edgeProgram, 'u_nodeSizeScale');
+    this.edgeUniformEndpointTrim = gl.getUniformLocation(this.edgeProgram, 'u_edgeEndpointTrim');
     this.edgeQuadUniformViewProjection = gl.getUniformLocation(this.edgeQuadProgram, 'u_viewProjection');
     this.edgeQuadUniformViewport = gl.getUniformLocation(this.edgeQuadProgram, 'u_viewport');
     this.edgeQuadUniformOpacityBase = gl.getUniformLocation(this.edgeQuadProgram, 'u_edgeOpacityBase');
     this.edgeQuadUniformOpacityScale = gl.getUniformLocation(this.edgeQuadProgram, 'u_edgeOpacityScale');
     this.edgeQuadUniformWidthBase = gl.getUniformLocation(this.edgeQuadProgram, 'u_edgeWidthBase');
     this.edgeQuadUniformWidthScale = gl.getUniformLocation(this.edgeQuadProgram, 'u_edgeWidthScale');
+    this.edgeQuadUniformNodeSizeBase = gl.getUniformLocation(this.edgeQuadProgram, 'u_nodeSizeBase');
+    this.edgeQuadUniformNodeSizeScale = gl.getUniformLocation(this.edgeQuadProgram, 'u_nodeSizeScale');
+    this.edgeQuadUniformEndpointTrim = gl.getUniformLocation(this.edgeQuadProgram, 'u_edgeEndpointTrim');
 
     // Quad geometry for node billboards (triangle strip)
     this.nodeQuadBuffer = gl.createBuffer();
@@ -231,6 +238,11 @@ export class GraphLayer {
     gl.enableVertexAttribArray(3);
     gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 0, 0);
     gl.vertexAttribDivisor(3, 1);
+    this.edgeBuffers.endpointSizes = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.endpointSizes);
+    gl.enableVertexAttribArray(4);
+    gl.vertexAttribPointer(4, 2, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribDivisor(4, 1);
     gl.bindVertexArray(null);
 
     // Edge rectangles (instanced quads)
@@ -268,6 +280,10 @@ export class GraphLayer {
     gl.enableVertexAttribArray(4);
     gl.vertexAttribPointer(4, 4, gl.FLOAT, false, 0, 0);
     gl.vertexAttribDivisor(4, 1);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.endpointSizes);
+    gl.enableVertexAttribArray(5);
+    gl.vertexAttribPointer(5, 2, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribDivisor(5, 1);
     gl.bindVertexArray(null);
   }
 
@@ -358,6 +374,9 @@ export class GraphLayer {
         gl.uniform1f(this.edgeQuadUniformOpacityScale, this.edgeOpacityScale);
         gl.uniform1f(this.edgeQuadUniformWidthBase, globalEdgeWidthBase);
         gl.uniform1f(this.edgeQuadUniformWidthScale, globalEdgeWidthScale);
+        gl.uniform1f(this.edgeQuadUniformNodeSizeBase, this.nodeSizeBase);
+        gl.uniform1f(this.edgeQuadUniformNodeSizeScale, this.nodeSizeScale);
+        gl.uniform1f(this.edgeQuadUniformEndpointTrim, this.edgeEndpointTrim);
         gl.bindVertexArray(this.edgeQuadVAO);
         gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.edgeCount);
       } else {
@@ -367,6 +386,9 @@ export class GraphLayer {
         gl.uniform1f(this.edgeUniformOpacityScale, this.edgeOpacityScale);
         gl.uniform1f(this.edgeUniformWidthBase, globalEdgeWidthBase);
         gl.uniform1f(this.edgeUniformWidthScale, globalEdgeWidthScale);
+        gl.uniform1f(this.edgeUniformNodeSizeBase, this.nodeSizeBase);
+        gl.uniform1f(this.edgeUniformNodeSizeScale, this.nodeSizeScale);
+        gl.uniform1f(this.edgeUniformEndpointTrim, this.edgeEndpointTrim);
         gl.bindVertexArray(this.edgeVAO);
         gl.drawArraysInstanced(gl.LINES, 0, 2, this.edgeCount);
       }
@@ -430,6 +452,7 @@ export class GraphLayer {
     const segmentData = this.getCpuArray('edgeSegments', count * 8);
     const colorData = this.getCpuArray('edgeColors', count * 4);
     const widthData = this.getCpuArray('edgeWidths', count);
+    const endpointSizeData = this.getCpuArray('edgeEndpointSizes', count * 2);
     let segmentOffset = 0;
     for (let i = 0; i < count; i += 1) {
       const edgeIndex = edges.indices[i];
@@ -450,6 +473,9 @@ export class GraphLayer {
       colorData[colorWrite + 2] = edges.colors[colorOffset + 2];
       colorData[colorWrite + 3] = edges.colors[colorOffset + 3];
       widthData[i] = Math.max(1e-3, edges.widths?.[edgeIndex] ?? 1);
+      const endpointOffset = edgeIndex * 2;
+      endpointSizeData[i * 2] = edges.endpointSizes?.[endpointOffset] ?? 0;
+      endpointSizeData[i * 2 + 1] = edges.endpointSizes?.[endpointOffset + 1] ?? 0;
       segmentOffset += 8;
     }
 
@@ -463,6 +489,9 @@ export class GraphLayer {
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.widths);
     gl.bufferData(gl.ARRAY_BUFFER, widthData.subarray(0, count), gl.DYNAMIC_DRAW);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.endpointSizes);
+    gl.bufferData(gl.ARRAY_BUFFER, endpointSizeData.subarray(0, count * 2), gl.DYNAMIC_DRAW);
   }
 
   getCpuArray(name, length) {
@@ -481,7 +510,8 @@ export class GraphLayer {
       size: this.cameraArray.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-    this.globalsArray = new Float32Array(16);
+    // Globals buffer: 5 vec2 + 1 vec4 + edgeTrim (+padding) rounded up to 24 floats (96 bytes).
+    this.globalsArray = new Float32Array(24);
     this.globalsBuffer = device.device.createBuffer({
       size: this.globalsArray.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -539,7 +569,8 @@ export class GraphLayer {
           buffer: { type: 'read-only-storage' },
         }, // colors
         { binding: 4, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } }, // widths
-        { binding: 5, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }, // globals
+        { binding: 5, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } }, // endpoint sizes
+        { binding: 6, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }, // globals
       ],
     });
 
@@ -681,6 +712,7 @@ export class GraphLayer {
 
   updateEdgeBuffersGpu(edges, device, maxBindingSize) {
     const { segments, colors, indices, widths } = edges;
+    const endpointSizes = edges.endpointSizes ?? this.getCpuArray('edgeEndpointSizesGpu', indices.length * 2);
     const storageUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
     this.edgeBuffersGpu.indices = this.ensureBufferGpu(
       this.edgeBuffersGpu.indices,
@@ -714,10 +746,19 @@ export class GraphLayer {
       maxBindingSize,
       'Edge width buffer',
     );
+    this.edgeBuffersGpu.endpointSizes = this.ensureBufferGpu(
+      this.edgeBuffersGpu.endpointSizes,
+      endpointSizes.byteLength,
+      storageUsage,
+      device,
+      maxBindingSize,
+      'Edge endpoint size buffer',
+    );
     device.queue.writeBuffer(this.edgeBuffersGpu.indices.buffer, 0, indices);
     device.queue.writeBuffer(this.edgeBuffersGpu.segments.buffer, 0, segments);
     device.queue.writeBuffer(this.edgeBuffersGpu.colors.buffer, 0, colors);
     device.queue.writeBuffer(this.edgeBuffersGpu.widths.buffer, 0, widths);
+    device.queue.writeBuffer(this.edgeBuffersGpu.endpointSizes.buffer, 0, endpointSizes);
 
     this.edgeBindGroup = device.createBindGroup({
       layout: this.edgeBindGroupLayout,
@@ -727,7 +768,8 @@ export class GraphLayer {
         { binding: 2, resource: { buffer: this.edgeBuffersGpu.segments.buffer } },
         { binding: 3, resource: { buffer: this.edgeBuffersGpu.colors.buffer } },
         { binding: 4, resource: { buffer: this.edgeBuffersGpu.widths.buffer } },
-        { binding: 5, resource: { buffer: this.globalsBuffer } },
+        { binding: 5, resource: { buffer: this.edgeBuffersGpu.endpointSizes.buffer } },
+        { binding: 6, resource: { buffer: this.globalsBuffer } },
       ],
     });
   }
@@ -887,8 +929,17 @@ export class GraphLayer {
     this.globalsArray[11] = outlineColor[1] ?? 0;
     this.globalsArray[12] = outlineColor[2] ?? 0;
     this.globalsArray[13] = outlineColor[3] ?? 1;
-    this.globalsArray[14] = 0;
+    this.globalsArray[14] = this.edgeEndpointTrim;
+    // Pad remaining slots to keep buffer deterministic.
     this.globalsArray[15] = 0;
+    this.globalsArray[16] = 0;
+    this.globalsArray[17] = 0;
+    this.globalsArray[18] = 0;
+    this.globalsArray[19] = 0;
+    this.globalsArray[20] = 0;
+    this.globalsArray[21] = 0;
+    this.globalsArray[22] = 0;
+    this.globalsArray[23] = 0;
     device.queue.writeBuffer(this.globalsBuffer, 0, this.globalsArray);
   }
 }

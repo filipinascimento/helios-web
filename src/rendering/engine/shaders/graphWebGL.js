@@ -79,18 +79,31 @@ layout (location = 1) in vec4 a_end;
 layout (location = 2) in vec4 a_color;
 // a_width only used in quad path
 layout (location = 3) in float a_width;
+layout (location = 4) in vec2 a_endpointSize;
 
 uniform mat4 u_viewProjection;
 uniform float u_edgeOpacityBase;
 uniform float u_edgeOpacityScale;
 uniform float u_edgeWidthBase;
 uniform float u_edgeWidthScale;
+uniform float u_nodeSizeBase;
+uniform float u_nodeSizeScale;
+uniform float u_edgeEndpointTrim;
 
 out vec4 v_color;
 
 void main() {
+  vec3 dir = a_end.xyz - a_start.xyz;
+  float dirLen = max(length(dir), 1e-5);
+  vec3 dirN = dir / dirLen;
+  float startRadius = max(u_nodeSizeBase + u_nodeSizeScale * a_endpointSize.x, 0.0) * 0.5;
+  float endRadius = max(u_nodeSizeBase + u_nodeSizeScale * a_endpointSize.y, 0.0) * 0.5;
+  float trimStart = startRadius * u_edgeEndpointTrim;
+  float trimEnd = endRadius * u_edgeEndpointTrim;
+  vec3 startPos = a_start.xyz + dirN * trimStart;
+  vec3 endPos = a_end.xyz - dirN * trimEnd;
   bool isEnd = (gl_VertexID & 1) == 1;
-  vec3 pos = isEnd ? a_end.xyz : a_start.xyz;
+  vec3 pos = isEnd ? endPos : startPos;
   gl_Position = u_viewProjection * vec4(pos, 1.0);
   float alpha = clamp(u_edgeOpacityBase + u_edgeOpacityScale * a_color.a, 0.0, 1.0);
   v_color = vec4(a_color.rgb, alpha);
@@ -112,6 +125,7 @@ layout (location = 1) in vec4 a_start;
 layout (location = 2) in vec4 a_end;
 layout (location = 3) in float a_width;
 layout (location = 4) in vec4 a_color;
+layout (location = 5) in vec2 a_endpointSize;
 
 uniform mat4 u_viewProjection;
 uniform vec2 u_viewport;
@@ -119,18 +133,31 @@ uniform float u_edgeOpacityBase;
 uniform float u_edgeOpacityScale;
 uniform float u_edgeWidthBase;
 uniform float u_edgeWidthScale;
+uniform float u_nodeSizeBase;
+uniform float u_nodeSizeScale;
+uniform float u_edgeEndpointTrim;
 
 out vec4 v_color;
 
 void main() {
+  vec3 dir = a_end.xyz - a_start.xyz;
+  float dirLenWorld = max(length(dir), 1e-5);
+  vec3 dirN = dir / dirLenWorld;
+  float startRadius = max(u_nodeSizeBase + u_nodeSizeScale * a_endpointSize.x, 0.0) * 0.5;
+  float endRadius = max(u_nodeSizeBase + u_nodeSizeScale * a_endpointSize.y, 0.0) * 0.5;
+  float trimStart = startRadius * u_edgeEndpointTrim;
+  float trimEnd = endRadius * u_edgeEndpointTrim;
+  vec3 startPos = a_start.xyz + dirN * trimStart;
+  vec3 endPos = a_end.xyz - dirN * trimEnd;
+
   float width = max(u_edgeWidthBase + u_edgeWidthScale * a_width, 0.0);
-  vec4 clipStart = u_viewProjection * vec4(a_start.xyz, 1.0);
-  vec4 clipEnd = u_viewProjection * vec4(a_end.xyz, 1.0);
+  vec4 clipStart = u_viewProjection * vec4(startPos, 1.0);
+  vec4 clipEnd = u_viewProjection * vec4(endPos, 1.0);
   vec2 ndcStart = clipStart.xy / clipStart.w;
   vec2 ndcEnd = clipEnd.xy / clipEnd.w;
-  vec2 dir = ndcEnd - ndcStart;
-  float dirLen = max(length(dir), 1e-5);
-  vec2 perp = vec2(-dir.y, dir.x) / dirLen;
+  vec2 ndcDir = ndcEnd - ndcStart;
+  float dirLen = max(length(ndcDir), 1e-5);
+  vec2 perp = vec2(-ndcDir.y, ndcDir.x) / dirLen;
   float halfWidth = max(width, 1.0) * 0.5;
   vec2 pixelToNdc = vec2(2.0 / max(u_viewport.x, 1.0), 2.0 / max(u_viewport.y, 1.0));
   vec2 offsetNdc = perp * halfWidth * pixelToNdc;

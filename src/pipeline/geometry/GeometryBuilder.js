@@ -50,6 +50,7 @@ export class GeometryBuilder {
     this.hasDense = typeof network?.updateDenseNodeAttributeBuffer === 'function';
     this.nodeIndexCache = null;
     this.edgeIndexCache = null;
+    this.edgeEndpointSizes = new Float32Array(0);
   }
 
   markNodePositionsDirty() {
@@ -104,6 +105,7 @@ export class GeometryBuilder {
         colors: this.mapper.edgeColors,
         widths: this.mapper.edgeWidths,
         segments: this.mapper.edgeGeometry,
+        endpointSizes: this.edgeEndpointSizes,
         ...this.collectActiveSelection(this.network.edgeActivityView),
       },
     };
@@ -111,11 +113,16 @@ export class GeometryBuilder {
 
   populateEdgeGeometry() {
     const nodePositions = this.mapper.nodePositions;
+    const nodeSizes = this.mapper.nodeSizes;
     const edgesView = this.network.edgesView;
     const edgeActivity = this.network.edgeActivityView;
     const geometryView = this.mapper.edgeGeometry;
     const nodeStride = 4;
     const edgeStride = 8; // fromXYZ1, toXYZ1 per edge
+
+    if (!this.edgeEndpointSizes || this.edgeEndpointSizes.length < edgeActivity.length * 2) {
+      this.edgeEndpointSizes = new Float32Array(edgeActivity.length * 2);
+    }
 
     for (let edgeIndex = 0; edgeIndex < edgeActivity.length; edgeIndex += 1) {
       if (!edgeActivity[edgeIndex]) {
@@ -137,6 +144,9 @@ export class GeometryBuilder {
       geometryView[geometryOffset + 5] = nodePositions[toOffset + 1];
       geometryView[geometryOffset + 6] = nodePositions[toOffset + 2];
       geometryView[geometryOffset + 7] = 1;
+
+      this.edgeEndpointSizes[edgeIndex * 2] = nodeSizes?.[fromNode] ?? 0;
+      this.edgeEndpointSizes[edgeIndex * 2 + 1] = nodeSizes?.[toNode] ?? 0;
     }
 
     if (this.hasDense && typeof this.network?.markDenseEdgeAttributeDirty === 'function') {
@@ -189,7 +199,7 @@ export class GeometryBuilder {
       widths?.length ?? 0,
     );
     const indices = this.ensureIdentityBuffer('edge', count);
-    return { segments, colors, widths, count, indices };
+    return { segments, colors, widths, endpointSizes: this.edgeEndpointSizes, count, indices };
   }
 
   getDenseAttribute(name, dimension, scope) {
