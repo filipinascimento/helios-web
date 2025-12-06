@@ -12,12 +12,12 @@ export async function createDeterministicHelios(container, renderer = 'webgl') {
   const network = await HeliosNetwork.create({ directed: false, initialNodes: 0 });
   const nodes = network.addNodes(4);
 
-  network.defineNodeAttribute('_helios_visuals_position', AttributeType.Float, 4);
+  network.defineNodeAttribute('_helios_visuals_position', AttributeType.Float, 3);
   network.defineNodeAttribute('_helios_visuals_color', AttributeType.Float, 4);
   network.defineNodeAttribute('_helios_visuals_size', AttributeType.Float, 1);
   network.defineEdgeAttribute('_helios_visuals_edge_color', AttributeType.Float, 4);
   network.defineEdgeAttribute('_helios_visuals_edge_width', AttributeType.Float, 1);
-  network.defineEdgeAttribute('_helios_visuals_edge_geometry', AttributeType.Float, 8);
+  network.defineEdgeAttribute('_helios_visuals_edge_geometry', AttributeType.Float, 6);
 
   const pos = network.getNodeAttributeBuffer('_helios_visuals_position').view;
   const color = network.getNodeAttributeBuffer('_helios_visuals_color').view;
@@ -37,11 +37,10 @@ export async function createDeterministicHelios(container, renderer = 'webgl') {
   ];
 
   nodes.forEach((id, i) => {
-    const offset = id * 4;
+    const offset = id * 3;
     pos[offset] = positions[i][0];
     pos[offset + 1] = positions[i][1];
     pos[offset + 2] = 0;
-    pos[offset + 3] = 1;
     size[id] = 48;
   });
 

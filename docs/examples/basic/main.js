@@ -40,7 +40,7 @@ async function bootstrap() {
   network.defineNodeAttribute(nodeAttribute, AttributeType.Float);
   network.defineEdgeAttribute(edgeAttribute, AttributeType.Float);
   // Ensure visual attributes exist before seeding positions.
-  network.defineNodeAttribute('_helios_visuals_position', AttributeType.Float, 4);
+  network.defineNodeAttribute('_helios_visuals_position', AttributeType.Float, 3);
   network.defineNodeAttribute('_helios_visuals_color', AttributeType.Float, 4);
   network.defineNodeAttribute('_helios_visuals_size', AttributeType.Float, 1);
 
@@ -71,11 +71,10 @@ async function bootstrap() {
   const width = Math.max(1, rect.width || 640);
   const height = Math.max(1, rect.height || 480);
   for (let i = 0; i < nodeCount; i += 1) {
-    const offset = i * 4;
+    const offset = i * 3;
     pos[offset] = Math.random() * width;
     pos[offset + 1] = Math.random() * height;
     pos[offset + 2] = 0;
-    pos[offset + 3] = 1;
   }
 
   const mode = resolveMode();

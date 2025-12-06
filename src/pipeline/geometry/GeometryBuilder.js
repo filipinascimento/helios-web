@@ -12,7 +12,7 @@ import {
 
 /**
  * @typedef {Object} NodeGeometry
- * @property {Float32Array} positions - Packed vec4 positions (x, y, z, 1)
+ * @property {Float32Array} positions - Packed vec3 positions (x, y, z)
  * @property {Float32Array} colors
  * @property {Float32Array} sizes
  * @property {number} count
@@ -23,7 +23,7 @@ import {
  * @typedef {Object} EdgeGeometry
  * @property {Float32Array} colors
  * @property {Float32Array} widths
- * @property {Float32Array} segments - Packed start/end vec4 tuples per edge
+ * @property {Float32Array} segments - Packed start/end vec3 tuples per edge
  * @property {number} count
  * @property {Uint32Array} indices
  */
@@ -53,6 +53,7 @@ export class GeometryBuilder {
     this.edgeIndexCache = null;
     this.edgeEndpointSizes = new Float32Array(0);
     this.denseEdgeEndpointCache = new Float32Array(0);
+    this.nodeToEdgeBuffersRegistered = false;
   }
 
   markNodePositionsDirty() {
@@ -71,11 +72,7 @@ export class GeometryBuilder {
    * @returns {GeometryBuffers}
    */
   build(force = false) {
-    if (force || this.edgesDirty) {
-      this.populateEdgeGeometry();
-      this.edgesDirty = false;
-    }
-
+    // Prefer dense node-to-edge buffers; fall back to sparse generation.
     if (this.hasDense) {
       const dense = this.buildDenseGeometry();
       if (dense) {
@@ -83,10 +80,17 @@ export class GeometryBuilder {
       }
     }
 
+    if (force || this.edgesDirty) {
+      this.populateEdgeGeometry();
+      this.edgesDirty = false;
+    }
+
     return this.buildSparseGeometry();
   }
 
   buildDenseGeometry() {
+    this.markDenseVisualsDirty();
+    this.ensureDenseNodeToEdgeBuffers();
     const nodes = this.getDenseNodeGeometry();
     const edges = this.getDenseEdgeGeometry();
     if (
@@ -100,7 +104,36 @@ export class GeometryBuilder {
     ) {
       return null;
     }
+    // If dense views exist but report zero elements, fall back to sparse so
+    // renderer still draws.
+    if (!nodes.count || !edges.count) {
+      return null;
+    }
     return { nodes, edges };
+  }
+
+  markDenseVisualsDirty() {
+    if (!this.hasDense) return;
+    const markNode = (name) => {
+      try {
+        this.network?.markDenseNodeAttributeDirty?.(name);
+      } catch (_) {
+        // Dense buffers may be unsupported.
+      }
+    };
+    const markEdge = (name) => {
+      try {
+        this.network?.markDenseEdgeAttributeDirty?.(name);
+      } catch (_) {
+        // Dense buffers may be unsupported.
+      }
+    };
+    markNode(NODE_POSITION_ATTRIBUTE);
+    markNode(NODE_COLOR_ATTRIBUTE);
+    markNode(NODE_SIZE_ATTRIBUTE);
+    markEdge(EDGE_COLOR_ATTRIBUTE);
+    markEdge(EDGE_WIDTH_ATTRIBUTE);
+    markEdge(EDGE_GEOMETRY_ATTRIBUTE);
   }
 
   buildSparseGeometry() {
@@ -127,8 +160,8 @@ export class GeometryBuilder {
     const edgesView = this.network.edgesView;
     const edgeActivity = this.network.edgeActivityView;
     const geometryView = this.mapper.edgeGeometry;
-    const nodeStride = 4;
-    const edgeStride = 8; // fromXYZ1, toXYZ1 per edge
+    const nodeStride = 3;
+    const edgeStride = 6; // fromXYZ, toXYZ per edge
 
     if (!this.edgeEndpointSizes || this.edgeEndpointSizes.length < edgeActivity.length * 2) {
       this.edgeEndpointSizes = new Float32Array(edgeActivity.length * 2);
@@ -149,11 +182,9 @@ export class GeometryBuilder {
       geometryView[geometryOffset + 0] = nodePositions[fromOffset + 0];
       geometryView[geometryOffset + 1] = nodePositions[fromOffset + 1];
       geometryView[geometryOffset + 2] = nodePositions[fromOffset + 2];
-      geometryView[geometryOffset + 3] = 1;
-      geometryView[geometryOffset + 4] = nodePositions[toOffset + 0];
-      geometryView[geometryOffset + 5] = nodePositions[toOffset + 1];
-      geometryView[geometryOffset + 6] = nodePositions[toOffset + 2];
-      geometryView[geometryOffset + 7] = 1;
+      geometryView[geometryOffset + 3] = nodePositions[toOffset + 0];
+      geometryView[geometryOffset + 4] = nodePositions[toOffset + 1];
+      geometryView[geometryOffset + 5] = nodePositions[toOffset + 2];
 
       this.edgeEndpointSizes[edgeIndex * 2] = nodeSizes?.[fromNode] ?? 0;
       this.edgeEndpointSizes[edgeIndex * 2 + 1] = nodeSizes?.[toNode] ?? 0;
@@ -187,14 +218,16 @@ export class GeometryBuilder {
   }
 
   getDenseNodeGeometry() {
-    const positions = this.getDenseAttribute(NODE_POSITION_ATTRIBUTE, 4, 'node');
+    const positions = this.getDenseAttribute(NODE_POSITION_ATTRIBUTE, 3, 'node');
     const colors = this.getDenseAttribute(NODE_COLOR_ATTRIBUTE, 4, 'node');
     const sizes = this.getDenseAttribute(NODE_SIZE_ATTRIBUTE, 1, 'node');
-    const count = this.resolveDenseCount([positions, colors, sizes]);
+    const indexBuffer = this.getDenseIndexBuffer('node');
+    const count = this.resolveDenseCount([positions, colors, sizes, indexBuffer]);
     if (!count || !positions?.array || !colors?.array || !sizes?.array) return null;
-    const indices = this.ensureIdentityBuffer('node', count);
+    const indices =
+      indexBuffer?.array?.subarray(0, count) ?? this.ensureIdentityBuffer('node', count);
     return {
-      positions: positions.array.subarray(0, count * 4),
+      positions: positions.array.subarray(0, count * 3),
       colors: colors.array.subarray(0, count * 4),
       sizes: sizes.array.subarray(0, count),
       count,
@@ -203,22 +236,34 @@ export class GeometryBuilder {
   }
 
   getDenseEdgeGeometry() {
+    // Pull endpoints directly from node->edge dense buffers for speed.
+    const segments = this.getDenseNodeToEdgeAttribute(NODE_POSITION_ATTRIBUTE, 3);
     const endpointSizes = this.getDenseNodeToEdgeAttribute(NODE_SIZE_ATTRIBUTE, 1);
-    const segments =
-      this.getDenseNodeToEdgeAttribute(NODE_POSITION_ATTRIBUTE, 4) ??
-      this.getDenseAttribute(EDGE_GEOMETRY_ATTRIBUTE, 8, 'edge');
     const colors = this.getDenseAttribute(EDGE_COLOR_ATTRIBUTE, 4, 'edge');
     const widths = this.getDenseAttribute(EDGE_WIDTH_ATTRIBUTE, 1, 'edge');
     const indexBuffer = this.getDenseIndexBuffer('edge');
     const count = this.resolveDenseCount([segments, colors, widths, endpointSizes, indexBuffer]);
-    if (!count || !segments?.array || !colors?.array || !widths?.array) return null;
-    const indices = this.ensureIdentityBuffer('edge', count);
-    const endpointSizesArray =
-      endpointSizes?.array?.subarray(0, count * 2) ??
-      this.buildDenseEndpointSizesFromSparse(indexBuffer?.array, count);
+    if (
+      !count ||
+      !segments?.array ||
+      !colors?.array ||
+      !widths?.array ||
+      segments.array.length < count * 6 ||
+      endpointSizes?.array?.length < count * 2 ||
+      !this.ensureFiniteArray(segments.array, count * 6) ||
+      !this.ensureFiniteArray(endpointSizes.array, count * 2)
+    ) {
+      return null;
+    }
+    const indices =
+      indexBuffer?.array?.subarray(0, count) ?? this.ensureIdentityBuffer('edge', count);
+    const endpointSizesArray = endpointSizes?.array?.subarray(0, count * 2);
     if (!endpointSizesArray) return null;
+    if (!this.validateDenseSegments(segments.array, indices, count)) {
+      return null;
+    }
     return {
-      segments: segments.array.subarray(0, count * 8),
+      segments: segments.array.subarray(0, count * 6),
       colors: colors.array.subarray(0, count * 4),
       widths: widths.array.subarray(0, count),
       endpointSizes: endpointSizesArray,
@@ -245,7 +290,12 @@ export class GeometryBuilder {
     if (!this.hasDenseNodeToEdge) return null;
     const updater = this.network?.updateDenseNodeToEdgeAttributeBuffer?.bind(this.network);
     if (!updater) return null;
-    const descriptor = updater(name);
+    let descriptor = null;
+    try {
+      descriptor = updater(name);
+    } catch (_) {
+      return null;
+    }
     if (!descriptor || !descriptor.view || typeof descriptor.count !== 'number') return null;
     const byteOffset = descriptor.pointer ?? descriptor.view.byteOffset ?? 0;
     const length = descriptor.count * dimension * 2;
@@ -305,5 +355,51 @@ export class GeometryBuilder {
       target[i] = i;
     }
     return target.subarray(0, count);
+  }
+
+  ensureFiniteArray(array, length) {
+    if (!array || array.length < length) return false;
+    for (let i = 0; i < length; i += 1) {
+      if (!Number.isFinite(array[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  validateDenseSegments(segments, indices, count) {
+    if (!segments || !indices || !count) return false;
+    const edgesView = this.network?.edgesView;
+    const nodePositions = this.mapper?.nodePositions;
+    if (!edgesView || !nodePositions) return true;
+    const edgeId = indices[0];
+    const baseEdge = edgeId * 2;
+    const from = edgesView[baseEdge];
+    const to = edgesView[baseEdge + 1];
+    const nodeStride = 3;
+    const fromPos = from * nodeStride;
+    const toPos = to * nodeStride;
+    const tol = 1e-3;
+    const matches =
+      Math.abs(segments[0] - nodePositions[fromPos]) < tol &&
+      Math.abs(segments[1] - nodePositions[fromPos + 1]) < tol &&
+      Math.abs(segments[2] - nodePositions[fromPos + 2]) < tol &&
+      Math.abs(segments[3] - nodePositions[toPos]) < tol &&
+      Math.abs(segments[4] - nodePositions[toPos + 1]) < tol &&
+      Math.abs(segments[5] - nodePositions[toPos + 2]) < tol;
+    return matches;
+  }
+
+  ensureDenseNodeToEdgeBuffers() {
+    if (!this.hasDenseNodeToEdge || this.nodeToEdgeBuffersRegistered) return;
+    // Avoid registering until there is capacity, otherwise wasm returns null pointers.
+    if (!this.network || this.network.edgeCapacity === 0 || this.network.nodeCapacity === 0) return;
+    try {
+      this.network.addDenseNodeToEdgeAttributeBuffer?.(NODE_POSITION_ATTRIBUTE);
+      this.network.addDenseNodeToEdgeAttributeBuffer?.(NODE_SIZE_ATTRIBUTE);
+      this.nodeToEdgeBuffersRegistered = true;
+    } catch (_) {
+      // Ignore if unsupported; fallback to sparse path.
+    }
   }
 }

@@ -199,7 +199,7 @@ export class GraphLayer {
     this.nodeBuffers.positions = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.positions);
     gl.enableVertexAttribArray(1);
-    gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 0, 0);
     gl.vertexAttribDivisor(1, 1);
 
     this.nodeBuffers.colors = gl.createBuffer();
@@ -221,11 +221,11 @@ export class GraphLayer {
     this.edgeBuffers.segments = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.segments);
     gl.enableVertexAttribArray(0);
-    gl.vertexAttribPointer(0, 4, gl.FLOAT, false, 32, 0);
+    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 24, 0);
     gl.vertexAttribDivisor(0, 1);
 
     gl.enableVertexAttribArray(1);
-    gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 32, 16);
+    gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 24, 12);
     gl.vertexAttribDivisor(1, 1);
 
     this.edgeBuffers.colors = gl.createBuffer();
@@ -264,11 +264,11 @@ export class GraphLayer {
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.segments);
     gl.enableVertexAttribArray(1);
-    gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 32, 0);
+    gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 24, 0);
     gl.vertexAttribDivisor(1, 1);
 
     gl.enableVertexAttribArray(2);
-    gl.vertexAttribPointer(2, 4, gl.FLOAT, false, 32, 16);
+    gl.vertexAttribPointer(2, 3, gl.FLOAT, false, 24, 12);
     gl.vertexAttribDivisor(2, 1);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.widths);
@@ -414,34 +414,44 @@ export class GraphLayer {
     const count = nodes.indices.length;
     this.nodeCount = count;
     if (!count) return;
-    const positionData = this.getCpuArray('nodePositions', count * 4);
-    const colorData = this.getCpuArray('nodeColors', count * 4);
-    const sizeData = this.getCpuArray('nodeSizes', count);
-    for (let i = 0; i < count; i += 1) {
-      const nodeIndex = nodes.indices[i];
-      const posOffset = nodeIndex * 4;
-      const colorOffset = nodeIndex * 4;
-      const sizeOffset = nodeIndex;
-      const dstPos = i * 4;
-      positionData[dstPos] = nodes.positions[posOffset];
-      positionData[dstPos + 1] = nodes.positions[posOffset + 1];
-      positionData[dstPos + 2] = nodes.positions[posOffset + 2];
-      positionData[dstPos + 3] = 1;
-      colorData[i * 4] = nodes.colors[colorOffset];
-      colorData[i * 4 + 1] = nodes.colors[colorOffset + 1];
-      colorData[i * 4 + 2] = nodes.colors[colorOffset + 2];
-      colorData[i * 4 + 3] = nodes.colors[colorOffset + 3];
-      sizeData[i] = nodes.sizes[sizeOffset];
+    const canUseDirect =
+      nodes.positions?.length === count * 3 &&
+      nodes.colors?.length === count * 4 &&
+      nodes.sizes?.length === count;
+
+    const positionSource = canUseDirect
+      ? nodes.positions.subarray(0, count * 3)
+      : this.getCpuArray('nodePositions', count * 3);
+    const colorSource = canUseDirect ? nodes.colors.subarray(0, count * 4) : this.getCpuArray('nodeColors', count * 4);
+    const sizeSource = canUseDirect ? nodes.sizes.subarray(0, count) : this.getCpuArray('nodeSizes', count);
+
+    if (!canUseDirect) {
+      for (let i = 0; i < count; i += 1) {
+        const nodeIndex = nodes.indices[i];
+        const posOffset = nodeIndex * 3;
+        const colorOffset = nodeIndex * 4;
+        const sizeOffset = nodeIndex;
+        const dstPos = i * 3;
+        positionSource[dstPos] = nodes.positions[posOffset];
+        positionSource[dstPos + 1] = nodes.positions[posOffset + 1];
+        positionSource[dstPos + 2] = nodes.positions[posOffset + 2];
+        colorSource[i * 4] = nodes.colors[colorOffset];
+        colorSource[i * 4 + 1] = nodes.colors[colorOffset + 1];
+        colorSource[i * 4 + 2] = nodes.colors[colorOffset + 2];
+        colorSource[i * 4 + 3] = nodes.colors[colorOffset + 3];
+        sizeSource[i] = nodes.sizes[sizeOffset];
+      }
     }
+
     gl.bindVertexArray(this.nodeVAO);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.positions);
-    gl.bufferData(gl.ARRAY_BUFFER, positionData.subarray(0, count * 4), gl.DYNAMIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, positionSource, gl.DYNAMIC_DRAW);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.colors);
-    gl.bufferData(gl.ARRAY_BUFFER, colorData.subarray(0, count * 4), gl.DYNAMIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, colorSource, gl.DYNAMIC_DRAW);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.sizes);
-    gl.bufferData(gl.ARRAY_BUFFER, sizeData.subarray(0, count), gl.DYNAMIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, sizeSource, gl.DYNAMIC_DRAW);
     gl.bindVertexArray(null);
   }
 
@@ -449,49 +459,57 @@ export class GraphLayer {
     const count = edges.indices.length;
     this.edgeCount = count;
     if (!count) return;
-    const segmentData = this.getCpuArray('edgeSegments', count * 8);
-    const colorData = this.getCpuArray('edgeColors', count * 4);
-    const widthData = this.getCpuArray('edgeWidths', count);
-    const endpointSizeData = this.getCpuArray('edgeEndpointSizes', count * 2);
-    let segmentOffset = 0;
-    for (let i = 0; i < count; i += 1) {
-      const edgeIndex = edges.indices[i];
-      const geomOffset = edgeIndex * 8;
-      const colorOffset = edgeIndex * 4;
-      segmentData[segmentOffset + 0] = edges.segments[geomOffset];
-      segmentData[segmentOffset + 1] = edges.segments[geomOffset + 1];
-      segmentData[segmentOffset + 2] = edges.segments[geomOffset + 2];
-      segmentData[segmentOffset + 3] = 1;
-      segmentData[segmentOffset + 4] = edges.segments[geomOffset + 4];
-      segmentData[segmentOffset + 5] = edges.segments[geomOffset + 5];
-      segmentData[segmentOffset + 6] = edges.segments[geomOffset + 6];
-      segmentData[segmentOffset + 7] = 1;
+    const canUseDirect =
+      edges.segments?.length === count * 6 &&
+      edges.colors?.length === count * 4 &&
+      edges.widths?.length === count &&
+      edges.endpointSizes?.length === count * 2;
 
-      const colorWrite = i * 4;
-      colorData[colorWrite + 0] = edges.colors[colorOffset];
-      colorData[colorWrite + 1] = edges.colors[colorOffset + 1];
-      colorData[colorWrite + 2] = edges.colors[colorOffset + 2];
-      colorData[colorWrite + 3] = edges.colors[colorOffset + 3];
-      widthData[i] = Math.max(1e-3, edges.widths?.[edgeIndex] ?? 1);
-      const endpointOffset = edgeIndex * 2;
-      endpointSizeData[i * 2] = edges.endpointSizes?.[endpointOffset] ?? 0;
-      endpointSizeData[i * 2 + 1] = edges.endpointSizes?.[endpointOffset + 1] ?? 0;
-      segmentOffset += 8;
+    const segmentData = canUseDirect ? edges.segments.subarray(0, count * 6) : this.getCpuArray('edgeSegments', count * 6);
+    const colorData = canUseDirect ? edges.colors.subarray(0, count * 4) : this.getCpuArray('edgeColors', count * 4);
+    const widthData = canUseDirect ? edges.widths.subarray(0, count) : this.getCpuArray('edgeWidths', count);
+    const endpointSizeData = canUseDirect
+      ? edges.endpointSizes.subarray(0, count * 2)
+      : this.getCpuArray('edgeEndpointSizes', count * 2);
+
+    if (!canUseDirect) {
+      for (let i = 0; i < count; i += 1) {
+        const edgeIndex = edges.indices[i];
+        const geomOffset = edgeIndex * 6;
+        const colorOffset = edgeIndex * 4;
+        const segmentOffset = i * 6;
+        segmentData[segmentOffset + 0] = edges.segments[geomOffset];
+        segmentData[segmentOffset + 1] = edges.segments[geomOffset + 1];
+        segmentData[segmentOffset + 2] = edges.segments[geomOffset + 2];
+        segmentData[segmentOffset + 3] = edges.segments[geomOffset + 3];
+        segmentData[segmentOffset + 4] = edges.segments[geomOffset + 4];
+        segmentData[segmentOffset + 5] = edges.segments[geomOffset + 5];
+
+        const colorWrite = i * 4;
+        colorData[colorWrite + 0] = edges.colors[colorOffset];
+        colorData[colorWrite + 1] = edges.colors[colorOffset + 1];
+        colorData[colorWrite + 2] = edges.colors[colorOffset + 2];
+        colorData[colorWrite + 3] = edges.colors[colorOffset + 3];
+        widthData[i] = Math.max(1e-3, edges.widths?.[edgeIndex] ?? 1);
+        const endpointOffset = edgeIndex * 2;
+        endpointSizeData[i * 2] = edges.endpointSizes?.[endpointOffset] ?? 0;
+        endpointSizeData[i * 2 + 1] = edges.endpointSizes?.[endpointOffset + 1] ?? 0;
+      }
     }
 
     gl.bindVertexArray(this.edgeVAO);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.segments);
-    gl.bufferData(gl.ARRAY_BUFFER, segmentData.subarray(0, count * 8), gl.DYNAMIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, segmentData, gl.DYNAMIC_DRAW);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.colors);
-    gl.bufferData(gl.ARRAY_BUFFER, colorData.subarray(0, count * 4), gl.DYNAMIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, colorData, gl.DYNAMIC_DRAW);
     gl.bindVertexArray(null);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.widths);
-    gl.bufferData(gl.ARRAY_BUFFER, widthData.subarray(0, count), gl.DYNAMIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, widthData, gl.DYNAMIC_DRAW);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.endpointSizes);
-    gl.bufferData(gl.ARRAY_BUFFER, endpointSizeData.subarray(0, count * 2), gl.DYNAMIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, endpointSizeData, gl.DYNAMIC_DRAW);
   }
 
   getCpuArray(name, length) {
@@ -501,6 +519,14 @@ export class GraphLayer {
       return this.cpuArrays[name];
     }
     return existing;
+  }
+
+  isIdentityIndices(indices, count) {
+    if (!indices || indices.length < count) return false;
+    for (let i = 0; i < count; i += 1) {
+      if (indices[i] !== i) return false;
+    }
+    return true;
   }
 
   // WebGPU helpers

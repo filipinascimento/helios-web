@@ -25,7 +25,7 @@ struct NodeIndices {
 };
 
 struct NodePositions {
-  data: array<vec4<f32>>,
+  data: array<f32>, // packed xyz triplets
 };
 
 struct NodeSizes {
@@ -59,7 +59,12 @@ struct VertexOutput {
 @vertex
 fn nodeVertex(input : VertexInput) -> VertexOutput {
   let index = nodeIndices.data[input.instance];
-  let basePosition = nodePositions.data[index].xyz;
+  let baseOffset = index * 3u;
+  let basePosition = vec3<f32>(
+    nodePositions.data[baseOffset + 0u],
+    nodePositions.data[baseOffset + 1u],
+    nodePositions.data[baseOffset + 2u]
+  );
   let rawSize = nodeSizes.data[index];
   let diameter = max(1.0, globals.nodeSize.x + globals.nodeSize.y * rawSize);
   let outlineWidth = max(0.0, globals.nodeOutline.x + globals.nodeOutline.y * rawSize);
@@ -135,13 +140,8 @@ struct Globals {
   _pad: vec3<f32>,
 };
 
-struct EdgeSegment {
-  start: vec4<f32>,
-  end: vec4<f32>,
-};
-
 struct EdgeSegments {
-  data: array<EdgeSegment>,
+  data: array<f32>, // packed start/end xyz
 };
 
 struct EdgeColors {
@@ -177,18 +177,28 @@ struct EdgeVertexOutput {
 fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
   let edgeSlot = vertexIndex / 2u;
   let edgeId = edgeIndices.data[edgeSlot];
-  let segment = edgeSegments.data[edgeId];
+  let base = edgeId * 6u;
+  var startPos = vec3<f32>(
+    edgeSegments.data[base + 0u],
+    edgeSegments.data[base + 1u],
+    edgeSegments.data[base + 2u]
+  );
+  var endPos = vec3<f32>(
+    edgeSegments.data[base + 3u],
+    edgeSegments.data[base + 4u],
+    edgeSegments.data[base + 5u]
+  );
   let endpointSize = edgeEndpointSizes.data[edgeId];
   let width = globals.edgeWidth.x + globals.edgeWidth.y * edgeWidths.data[edgeId];
-  let dirRaw = segment.end.xyz - segment.start.xyz;
+  let dirRaw = endPos - startPos;
   let dirLen = max(length(dirRaw), 1e-5);
   let dir = dirRaw / vec3<f32>(dirLen);
   let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.x, 0.0) * 0.5;
   let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.y, 0.0) * 0.5;
   let trimStart = startRadius * globals.edgeTrim;
   let trimEnd = endRadius * globals.edgeTrim;
-  let startPos = segment.start.xyz + dir * trimStart;
-  let endPos = segment.end.xyz - dir * trimEnd;
+  startPos = startPos + dir * trimStart;
+  endPos = endPos - dir * trimEnd;
   var position = startPos;
   if ((vertexIndex & 1u) == 1u) {
     position = endPos;
@@ -209,18 +219,28 @@ struct EdgeQuadInput {
 @vertex
 fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   let edgeId = edgeIndices.data[input.instance];
-  let segment = edgeSegments.data[edgeId];
+  let base = edgeId * 6u;
+  var startPos = vec3<f32>(
+    edgeSegments.data[base + 0u],
+    edgeSegments.data[base + 1u],
+    edgeSegments.data[base + 2u]
+  );
+  var endPos = vec3<f32>(
+    edgeSegments.data[base + 3u],
+    edgeSegments.data[base + 4u],
+    edgeSegments.data[base + 5u]
+  );
   let endpointSize = edgeEndpointSizes.data[edgeId];
   let width = max(globals.edgeWidth.x + globals.edgeWidth.y * edgeWidths.data[edgeId], 1e-3);
-  let dirRaw = segment.end.xyz - segment.start.xyz;
+  let dirRaw = endPos - startPos;
   let dirLenWorld = max(length(dirRaw), 1e-5);
   let dir = dirRaw / vec3<f32>(dirLenWorld);
   let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.x, 0.0) * 0.5;
   let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.y, 0.0) * 0.5;
   let trimStart = startRadius * globals.edgeTrim;
   let trimEnd = endRadius * globals.edgeTrim;
-  let startPos = segment.start.xyz + dir * trimStart;
-  let endPos = segment.end.xyz - dir * trimEnd;
+  startPos = startPos + dir * trimStart;
+  endPos = endPos - dir * trimEnd;
 
   let clipStart = camera.viewProjection * vec4<f32>(startPos, 1.0);
   let clipEnd = camera.viewProjection * vec4<f32>(endPos, 1.0);

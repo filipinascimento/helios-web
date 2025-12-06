@@ -1,6 +1,6 @@
 export const NODE_VERTEX_SOURCE = /* glsl */ `#version 300 es
 layout (location = 0) in vec2 a_corner;
-layout (location = 1) in vec4 a_position;
+layout (location = 1) in vec3 a_position;
 layout (location = 2) in vec4 a_color;
 layout (location = 3) in float a_size;
 
@@ -34,7 +34,7 @@ void main() {
     right = normalize(right);
     up = normalize(up);
   } else {
-    vec3 viewDir = u_cameraPosition - a_position.xyz;
+    vec3 viewDir = u_cameraPosition - a_position;
     float viewLen = length(viewDir);
     viewDir = viewLen > 1e-5 ? viewDir / viewLen : vec3(0.0, 0.0, 1.0);
     right = u_cameraRight - viewDir * dot(u_cameraRight, viewDir);
@@ -42,7 +42,7 @@ void main() {
     right = rightLen > 1e-5 ? right / rightLen : normalize(cross(u_cameraUp, viewDir));
     up = normalize(cross(viewDir, right));
   }
-  vec3 world = a_position.xyz + (right * a_corner.x + up * a_corner.y) * radius;
+  vec3 world = a_position + (right * a_corner.x + up * a_corner.y) * radius;
   gl_Position = u_viewProjection * vec4(world, 1.0);
   float alpha = clamp(u_nodeOpacityBase + u_nodeOpacityScale * a_color.a, 0.0, 1.0);
   v_color = vec4(a_color.rgb, alpha);
@@ -74,8 +74,8 @@ void main() {
 }`;
 
 export const EDGE_VERTEX_SOURCE = /* glsl */ `#version 300 es
-layout (location = 0) in vec4 a_start;
-layout (location = 1) in vec4 a_end;
+layout (location = 0) in vec3 a_start;
+layout (location = 1) in vec3 a_end;
 layout (location = 2) in vec4 a_color;
 // a_width only used in quad path
 layout (location = 3) in float a_width;
@@ -93,15 +93,15 @@ uniform float u_edgeEndpointTrim;
 out vec4 v_color;
 
 void main() {
-  vec3 dir = a_end.xyz - a_start.xyz;
+  vec3 dir = a_end - a_start;
   float dirLen = max(length(dir), 1e-5);
   vec3 dirN = dir / dirLen;
   float startRadius = max(u_nodeSizeBase + u_nodeSizeScale * a_endpointSize.x, 0.0) * 0.5;
   float endRadius = max(u_nodeSizeBase + u_nodeSizeScale * a_endpointSize.y, 0.0) * 0.5;
   float trimStart = startRadius * u_edgeEndpointTrim;
   float trimEnd = endRadius * u_edgeEndpointTrim;
-  vec3 startPos = a_start.xyz + dirN * trimStart;
-  vec3 endPos = a_end.xyz - dirN * trimEnd;
+  vec3 startPos = a_start + dirN * trimStart;
+  vec3 endPos = a_end - dirN * trimEnd;
   bool isEnd = (gl_VertexID & 1) == 1;
   vec3 pos = isEnd ? endPos : startPos;
   gl_Position = u_viewProjection * vec4(pos, 1.0);
@@ -121,8 +121,8 @@ void main() {
 
 export const EDGE_QUAD_VERTEX_SOURCE = /* glsl */ `#version 300 es
 layout (location = 0) in vec2 a_corner;
-layout (location = 1) in vec4 a_start;
-layout (location = 2) in vec4 a_end;
+layout (location = 1) in vec3 a_start;
+layout (location = 2) in vec3 a_end;
 layout (location = 3) in float a_width;
 layout (location = 4) in vec4 a_color;
 layout (location = 5) in vec2 a_endpointSize;
@@ -140,15 +140,15 @@ uniform float u_edgeEndpointTrim;
 out vec4 v_color;
 
 void main() {
-  vec3 dir = a_end.xyz - a_start.xyz;
+  vec3 dir = a_end - a_start;
   float dirLenWorld = max(length(dir), 1e-5);
   vec3 dirN = dir / dirLenWorld;
   float startRadius = max(u_nodeSizeBase + u_nodeSizeScale * a_endpointSize.x, 0.0) * 0.5;
   float endRadius = max(u_nodeSizeBase + u_nodeSizeScale * a_endpointSize.y, 0.0) * 0.5;
   float trimStart = startRadius * u_edgeEndpointTrim;
   float trimEnd = endRadius * u_edgeEndpointTrim;
-  vec3 startPos = a_start.xyz + dirN * trimStart;
-  vec3 endPos = a_end.xyz - dirN * trimEnd;
+  vec3 startPos = a_start + dirN * trimStart;
+  vec3 endPos = a_end - dirN * trimEnd;
 
   float width = max(u_edgeWidthBase + u_edgeWidthScale * a_width, 0.0);
   vec4 clipStart = u_viewProjection * vec4(startPos, 1.0);

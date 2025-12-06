@@ -62,7 +62,7 @@ export class StaticLayout extends Layout {
 
     for (let node = 0; node < activity.length; node += 1) {
       if (!activity[node]) continue;
-      const offset = node * 4;
+      const offset = node * 3;
       const x = positions[offset];
       const y = positions[offset + 1];
       if (Number.isFinite(x) && Number.isFinite(y)) {
@@ -71,7 +71,6 @@ export class StaticLayout extends Layout {
       positions[offset] = minX + (width * Math.random());
       positions[offset + 1] = minY + (height * Math.random());
       positions[offset + 2] = 0;
-      positions[offset + 3] = 1;
     }
     this._updateRequested = false;
     this.emitUpdate({ positions });

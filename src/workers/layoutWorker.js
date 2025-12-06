@@ -25,6 +25,8 @@ const defaultOptions = {
   recenter: true,
 };
 
+const POSITION_STRIDE = 3;
+
 const state = {
   nodeCount: 0,
   options: { ...defaultOptions },
@@ -81,7 +83,7 @@ function stepLayout(message) {
 
 function runJitterLayout(buffer, timestamp) {
   const { radius, jitter, center = [0, 0], depth = 0, mode = '2d' } = state.options;
-  const stride = 4;
+  const stride = POSITION_STRIDE;
   const count = buffer.length / stride;
   const cx = center[0] ?? 0;
   const cy = center[1] ?? 0;
@@ -93,7 +95,7 @@ function runJitterLayout(buffer, timestamp) {
       buffer[pos] = cx + (Math.random() - 0.5) * radius;
       buffer[pos + 1] = cy + (Math.random() - 0.5) * radius;
       buffer[pos + 2] = (Math.random() - 0.5) * useDepth;
-      buffer[pos + 3] = 1;
+      // no w component; positions are xyz
     }
     state.seeded = true;
     state.lastTimestamp = timestamp ?? performance.now();
@@ -115,13 +117,13 @@ function runJitterLayout(buffer, timestamp) {
     buffer[pos] += (Math.random() - 0.5) * jitterScale + (cx - buffer[pos]) * spring;
     buffer[pos + 1] += (Math.random() - 0.5) * jitterScale + (cy - buffer[pos + 1]) * spring;
     buffer[pos + 2] += (Math.random() - 0.5) * jitterScale * (useDepth ? 1 : 0) - buffer[pos + 2] * spring;
-    buffer[pos + 3] = 1;
+    // keep positions bounded without a w component
   }
   self.postMessage({ type: 'positions', positions: buffer }, [buffer.buffer]);
 }
 
 function runForceDirectedLayout(buffer, timestamp) {
-  const stride = 4;
+  const stride = POSITION_STRIDE;
   const count = buffer.length / stride;
   if (!state.velocities || state.velocities.length < count * 3) {
     state.velocities = new Float32Array(count * 3);
@@ -172,7 +174,7 @@ function collectActiveNodes(activity, count) {
 }
 
 function seedPositions(buffer, activeNodes, useDepth) {
-  const stride = 4;
+  const stride = POSITION_STRIDE;
   const { radius, depth, center } = state.options;
   const cz = center?.[2] ?? 0;
   for (let i = 0; i < activeNodes.length; i += 1) {
@@ -181,7 +183,6 @@ function seedPositions(buffer, activeNodes, useDepth) {
     buffer[pos] = (center?.[0] ?? 0) + (Math.random() - 0.5) * radius;
     buffer[pos + 1] = (center?.[1] ?? 0) + (Math.random() - 0.5) * radius;
     buffer[pos + 2] = cz + (Math.random() - 0.5) * (useDepth ? depth : 0);
-    buffer[pos + 3] = 1;
   }
 }
 
@@ -222,7 +223,7 @@ function applyRepulsion(buffer, activeNodes, useDepth) {
 }
 
 function repulsionAllPairs(buffer, activeNodes, useDepth) {
-  const stride = 4;
+  const stride = POSITION_STRIDE;
   const rExp = state.options.repulsionExponent ?? defaultOptions.repulsionExponent;
   const kRep = state.options.kRepulsion ?? defaultOptions.kRepulsion;
   const eps = state.options.epsilon ?? defaultOptions.epsilon;
@@ -259,7 +260,7 @@ function repulsionAllPairs(buffer, activeNodes, useDepth) {
 }
 
 function repulsionByNegativeSampling(buffer, activeNodes, useDepth, scaleFactor) {
-  const stride = 4;
+  const stride = POSITION_STRIDE;
   const rExp = state.options.repulsionExponent ?? defaultOptions.repulsionExponent;
   const kRep = (state.options.kRepulsion ?? defaultOptions.kRepulsion) * scaleFactor;
   const eps = state.options.epsilon ?? defaultOptions.epsilon;
@@ -304,7 +305,7 @@ function repulsionByNegativeSampling(buffer, activeNodes, useDepth, scaleFactor)
 function repulsionBarnesHut(buffer, activeNodes, useDepth) {
   if (activeNodes.length === 0) return;
   const tree = buildOctree(buffer, activeNodes, useDepth);
-  const stride = 4;
+  const stride = POSITION_STRIDE;
   const rExp = state.options.repulsionExponent ?? defaultOptions.repulsionExponent;
   const kRep = state.options.kRepulsion ?? defaultOptions.kRepulsion;
   const eps = state.options.epsilon ?? defaultOptions.epsilon;
@@ -363,7 +364,7 @@ function repulsionBarnesHut(buffer, activeNodes, useDepth) {
 }
 
 function buildOctree(buffer, activeNodes, useDepth) {
-  const stride = 4;
+  const stride = POSITION_STRIDE;
   let minX = Infinity;
   let minY = Infinity;
   let minZ = Infinity;
@@ -454,7 +455,7 @@ function subdivide(tree, nodeIndex) {
 }
 
 function selectOctant(node, pointIndex, buffer, useDepth) {
-  const stride = 4;
+  const stride = POSITION_STRIDE;
   const offset = pointIndex * stride;
   const x = buffer[offset];
   const y = buffer[offset + 1];
@@ -469,7 +470,7 @@ function selectOctant(node, pointIndex, buffer, useDepth) {
 function computeMass(index, tree, buffer, useDepth) {
   const node = tree[index];
   if (node.isLeaf) {
-    const stride = 4;
+    const stride = POSITION_STRIDE;
     const len = node.indices.length;
     if (!len) {
       node.mass = 0;
@@ -516,7 +517,7 @@ function computeMass(index, tree, buffer, useDepth) {
 
 function applyAttraction(buffer, activeNodes, useDepth) {
   if (!state.edges || state.edges.length === 0) return;
-  const stride = 4;
+  const stride = POSITION_STRIDE;
   const aExp = state.options.attractionExponent ?? defaultOptions.attractionExponent;
   const kAtt = state.options.kAttraction ?? defaultOptions.kAttraction;
   const dMin = state.options.minDistance ?? defaultOptions.minDistance;
@@ -553,7 +554,7 @@ function applyGravity(buffer, activeNodes, useDepth) {
   const cx = state.options.center?.[0] ?? 0;
   const cy = state.options.center?.[1] ?? 0;
   const cz = state.options.center?.[2] ?? 0;
-  const stride = 4;
+  const stride = POSITION_STRIDE;
   for (let i = 0; i < activeNodes.length; i += 1) {
     const index = activeNodes[i];
     const offset = index * stride;
@@ -570,7 +571,7 @@ function applyGravity(buffer, activeNodes, useDepth) {
 function integrate(buffer, activeNodes, useDepth, eta, damping) {
   const maxForce = state.options.maxForce ?? defaultOptions.maxForce;
   const maxStep = state.options.maxStep ?? defaultOptions.maxStep;
-  const stride = 4;
+  const stride = POSITION_STRIDE;
   for (let i = 0; i < activeNodes.length; i += 1) {
     const index = activeNodes[i];
     const fo = index * 3;
@@ -602,13 +603,12 @@ function integrate(buffer, activeNodes, useDepth, eta, damping) {
     buffer[pos] += vx;
     buffer[pos + 1] += vy;
     buffer[pos + 2] = useDepth ? buffer[pos + 2] + vz : 0;
-    buffer[pos + 3] = 1;
   }
 }
 
 function recenter(buffer, activeNodes, useDepth) {
   if (!activeNodes.length) return;
-  const stride = 4;
+  const stride = POSITION_STRIDE;
   let cx = 0;
   let cy = 0;
   let cz = 0;

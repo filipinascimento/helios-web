@@ -1,13 +1,18 @@
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { test, expect } from '@playwright/test';
 import { PNG } from 'pngjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const heliosPath = encodeURI(`file://${path.resolve(__dirname, '../src/index.js')}`);
-const networkPath = encodeURI(`file://${path.resolve(__dirname, '../node_modules/helios-network/dist/helios-network.js')}`);
+function resolveModuleUrl(baseURL, absolutePath) {
+  if (baseURL) {
+    const root = baseURL.endsWith('/') ? baseURL : `${baseURL}/`;
+    return new URL(`/@fs${absolutePath}`, root).href;
+  }
+  return pathToFileURL(absolutePath).href;
+}
 
 /**
  * Measures the thickest run of non-white pixels along a vertical scan line.
@@ -35,7 +40,17 @@ function measureEdgeThickness(pngBuffer) {
   return longest;
 }
 
-async function renderAndMeasure(page, { mode }) {
+async function renderAndMeasure(page, { mode, baseURL }) {
+  const heliosPath = resolveModuleUrl(baseURL, path.resolve(__dirname, '../src/index.js'));
+  const networkPath = resolveModuleUrl(
+    baseURL,
+    path.resolve(__dirname, '../node_modules/helios-network/dist/helios-network.js'),
+  );
+  if (baseURL) {
+    await page.goto(baseURL);
+  } else {
+    await page.goto('about:blank');
+  }
   await page.setViewportSize({ width: 400, height: 400 });
   await page.setContent(`
     <html>
@@ -57,12 +72,12 @@ async function renderAndMeasure(page, { mode }) {
 
           async function setup(mode) {
             const network = await HeliosNetwork.create({ directed: false, initialNodes: 0 });
-            network.defineNodeAttribute('_helios_visuals_position', AttributeType.Float, 4);
+            network.defineNodeAttribute('_helios_visuals_position', AttributeType.Float, 3);
             network.defineNodeAttribute('_helios_visuals_color', AttributeType.Float, 4);
             network.defineNodeAttribute('_helios_visuals_size', AttributeType.Float, 1);
             network.defineEdgeAttribute('_helios_visuals_edge_color', AttributeType.Float, 4);
             network.defineEdgeAttribute('_helios_visuals_edge_width', AttributeType.Float, 1);
-            network.defineEdgeAttribute('_helios_visuals_edge_geometry', AttributeType.Float, 8);
+            network.defineEdgeAttribute('_helios_visuals_edge_geometry', AttributeType.Float, 6);
 
             const nodes = network.addNodes(2);
             const pos = network.getNodeAttributeBuffer('_helios_visuals_position').view;
@@ -74,11 +89,10 @@ async function renderAndMeasure(page, { mode }) {
               [280, 200],
             ];
             nodes.forEach((id, i) => {
-              const offset = id * 4;
+              const offset = id * 3;
               pos[offset] = placements[i][0];
               pos[offset + 1] = placements[i][1];
               pos[offset + 2] = 0;
-              pos[offset + 3] = 1;
               nodeColors[offset] = 1;
               nodeColors[offset + 1] = 1;
               nodeColors[offset + 2] = 1;
@@ -104,6 +118,7 @@ async function renderAndMeasure(page, { mode }) {
               layout: { type: 'static', options: { bounds: [0, 0, 400, 400] } },
             });
             await helios.ready;
+            window.__helios = helios;
 
             // Keep global edge width modest and consistent.
             if (helios.renderer?.graphLayer) {
@@ -135,13 +150,28 @@ async function renderAndMeasure(page, { mode }) {
 
   // Allow rendering to settle and then capture the center line.
   await page.waitForTimeout(200);
+  const stats = await page.evaluate(() => {
+    const helios = window.__helios;
+    const edges = helios?.pipeline?.geometryBuilder?.edgeEndpointSizes?.length ?? 0;
+    const edgeCount = helios?.renderer?.graphLayer?.edgeCount ?? 0;
+    const edgeActivity = Array.from(helios?.network?.edgeActivityView ?? []);
+    const geometryEdgesCount = helios?.pipeline?.buildFrame?.()?.geometry?.edges?.count ?? 0;
+    return { edges, edgeCount, edgeActivity, geometryEdgesCount };
+  });
   const buffer = await page.screenshot({ fullPage: false });
-  return measureEdgeThickness(buffer);
+  return { width: measureEdgeThickness(buffer), stats };
 }
 
-test('2D and 3D edge thickness stay aligned', async ({ page }) => {
-  const width2D = await renderAndMeasure(page, { mode: '2d' });
-  const width3D = await renderAndMeasure(page, { mode: '3d' });
+test('2D and 3D edge thickness stay aligned', async ({ page }, testInfo) => {
+  const baseURL = testInfo.project.use.baseURL;
+  const { width: width2D, stats: stats2D } = await renderAndMeasure(page, { mode: '2d', baseURL });
+  const { width: width3D, stats: stats3D } = await renderAndMeasure(page, { mode: '3d', baseURL });
+  console.log('edge widths', { width2D, width3D, stats2D, stats3D });
+  // Ensure we actually drew an edge in both modes.
+  expect(width2D).toBeGreaterThanOrEqual(2);
+  expect(width3D).toBeGreaterThanOrEqual(2);
+  expect(stats2D.edgeCount).toBeGreaterThan(0);
+  expect(stats3D.edgeCount).toBeGreaterThan(0);
   const diff = Math.abs(width2D - width3D);
   expect(diff).toBeLessThanOrEqual(2);
 });

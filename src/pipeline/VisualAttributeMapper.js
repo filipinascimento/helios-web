@@ -150,14 +150,14 @@ export class VisualAttributeMapper {
   }
 
   ensureAttributes() {
-    // Positions store a padded vec4 to keep GPU alignment predictable (x, y, z, w).
-    this.ensureNodeAttribute(NODE_POSITION_ATTRIBUTE, AttributeType.Float, 4);
+    // Positions store vec3 (x, y, z); w is supplied in shaders.
+    this.ensureNodeAttribute(NODE_POSITION_ATTRIBUTE, AttributeType.Float, 3);
     this.ensureNodeAttribute(NODE_COLOR_ATTRIBUTE, AttributeType.Float, 4);
     this.ensureNodeAttribute(NODE_SIZE_ATTRIBUTE, AttributeType.Float, 1);
     this.ensureEdgeAttribute(EDGE_COLOR_ATTRIBUTE, AttributeType.Float, 4);
     this.ensureEdgeAttribute(EDGE_WIDTH_ATTRIBUTE, AttributeType.Float, 1);
-    // Edge geometry stores two padded vec4 values: start(xyz1) and end(xyz1).
-    this.ensureEdgeAttribute(EDGE_GEOMETRY_ATTRIBUTE, AttributeType.Float, 8);
+    // Edge geometry stores two vec3 values: start(xyz) and end(xyz).
+    this.ensureEdgeAttribute(EDGE_GEOMETRY_ATTRIBUTE, AttributeType.Float, 6);
   }
 
   /**
@@ -279,7 +279,7 @@ export class VisualAttributeMapper {
     const sizeOffset = index;
     sizeView[sizeOffset] = size;
 
-    const posOffset = index * 4;
+    const posOffset = index * 3;
     if (!Number.isFinite(positionView[posOffset])) {
       positionView[posOffset] = 0;
     }
@@ -289,7 +289,6 @@ export class VisualAttributeMapper {
     if (!Number.isFinite(positionView[posOffset + 2])) {
       positionView[posOffset + 2] = 0;
     }
-    positionView[posOffset + 3] = 1;
   }
 
   /**

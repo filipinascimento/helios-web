@@ -21,7 +21,7 @@ test.describe('force layout behavior', () => {
     const stats = await page.evaluate(() => {
       const helios = window.__helios;
       const pos = helios.pipeline.visuals.nodePositions;
-      const stride = 4;
+      const stride = 3;
       const nodeActivity = helios.network.nodeActivityView;
       const edgesView = helios.network.edgesView;
       const edgeActivity = helios.network.edgeActivityView;
