@@ -48,9 +48,11 @@ export class GeometryBuilder {
     this.mapper = mapper;
     this.edgesDirty = true;
     this.hasDense = typeof network?.updateDenseNodeAttributeBuffer === 'function';
+    this.hasDenseNodeToEdge = typeof network?.updateDenseNodeToEdgeAttributeBuffer === 'function';
     this.nodeIndexCache = null;
     this.edgeIndexCache = null;
     this.edgeEndpointSizes = new Float32Array(0);
+    this.denseEdgeEndpointCache = new Float32Array(0);
   }
 
   markNodePositionsDirty() {
@@ -87,7 +89,15 @@ export class GeometryBuilder {
   buildDenseGeometry() {
     const nodes = this.getDenseNodeGeometry();
     const edges = this.getDenseEdgeGeometry();
-    if (!nodes?.positions || !nodes?.colors || !nodes?.sizes || !edges?.segments || !edges?.colors || !edges?.widths) {
+    if (
+      !nodes?.positions ||
+      !nodes?.colors ||
+      !nodes?.sizes ||
+      !edges?.segments ||
+      !edges?.colors ||
+      !edges?.widths ||
+      !edges?.endpointSizes
+    ) {
       return null;
     }
     return { nodes, edges };
@@ -180,26 +190,41 @@ export class GeometryBuilder {
     const positions = this.getDenseAttribute(NODE_POSITION_ATTRIBUTE, 4, 'node');
     const colors = this.getDenseAttribute(NODE_COLOR_ATTRIBUTE, 4, 'node');
     const sizes = this.getDenseAttribute(NODE_SIZE_ATTRIBUTE, 1, 'node');
-    const count = Math.min(
-      positions?.length ? positions.length / 4 : 0,
-      colors?.length ? colors.length / 4 : 0,
-      sizes?.length ?? 0,
-    );
+    const count = this.resolveDenseCount([positions, colors, sizes]);
+    if (!count || !positions?.array || !colors?.array || !sizes?.array) return null;
     const indices = this.ensureIdentityBuffer('node', count);
-    return { positions, colors, sizes, count, indices };
+    return {
+      positions: positions.array.subarray(0, count * 4),
+      colors: colors.array.subarray(0, count * 4),
+      sizes: sizes.array.subarray(0, count),
+      count,
+      indices,
+    };
   }
 
   getDenseEdgeGeometry() {
-    const segments = this.getDenseAttribute(EDGE_GEOMETRY_ATTRIBUTE, 8, 'edge');
+    const endpointSizes = this.getDenseNodeToEdgeAttribute(NODE_SIZE_ATTRIBUTE, 1);
+    const segments =
+      this.getDenseNodeToEdgeAttribute(NODE_POSITION_ATTRIBUTE, 4) ??
+      this.getDenseAttribute(EDGE_GEOMETRY_ATTRIBUTE, 8, 'edge');
     const colors = this.getDenseAttribute(EDGE_COLOR_ATTRIBUTE, 4, 'edge');
     const widths = this.getDenseAttribute(EDGE_WIDTH_ATTRIBUTE, 1, 'edge');
-    const count = Math.min(
-      segments?.length ? segments.length / 8 : 0,
-      colors?.length ? colors.length / 4 : 0,
-      widths?.length ?? 0,
-    );
+    const indexBuffer = this.getDenseIndexBuffer('edge');
+    const count = this.resolveDenseCount([segments, colors, widths, endpointSizes, indexBuffer]);
+    if (!count || !segments?.array || !colors?.array || !widths?.array) return null;
     const indices = this.ensureIdentityBuffer('edge', count);
-    return { segments, colors, widths, endpointSizes: this.edgeEndpointSizes, count, indices };
+    const endpointSizesArray =
+      endpointSizes?.array?.subarray(0, count * 2) ??
+      this.buildDenseEndpointSizesFromSparse(indexBuffer?.array, count);
+    if (!endpointSizesArray) return null;
+    return {
+      segments: segments.array.subarray(0, count * 8),
+      colors: colors.array.subarray(0, count * 4),
+      widths: widths.array.subarray(0, count),
+      endpointSizes: endpointSizesArray,
+      count,
+      indices,
+    };
   }
 
   getDenseAttribute(name, dimension, scope) {
@@ -210,10 +235,63 @@ export class GeometryBuilder {
         : this.network?.updateDenseEdgeAttributeBuffer?.bind(this.network);
     if (!updater) return null;
     const descriptor = updater(name);
-    if (!descriptor || !descriptor.view) return null;
+    if (!descriptor || !descriptor.view || typeof descriptor.count !== 'number') return null;
     const byteOffset = descriptor.pointer ?? descriptor.view.byteOffset ?? 0;
     const length = descriptor.count * dimension;
-    return new Float32Array(descriptor.view.buffer, byteOffset, length);
+    return { array: new Float32Array(descriptor.view.buffer, byteOffset, length), count: descriptor.count };
+  }
+
+  getDenseNodeToEdgeAttribute(name, dimension) {
+    if (!this.hasDenseNodeToEdge) return null;
+    const updater = this.network?.updateDenseNodeToEdgeAttributeBuffer?.bind(this.network);
+    if (!updater) return null;
+    const descriptor = updater(name);
+    if (!descriptor || !descriptor.view || typeof descriptor.count !== 'number') return null;
+    const byteOffset = descriptor.pointer ?? descriptor.view.byteOffset ?? 0;
+    const length = descriptor.count * dimension * 2;
+    return { array: new Float32Array(descriptor.view.buffer, byteOffset, length), count: descriptor.count };
+  }
+
+  resolveDenseCount(descriptors) {
+    let min = Number.POSITIVE_INFINITY;
+    for (const entry of descriptors) {
+      if (!entry?.count || entry.count < 0) continue;
+      min = Math.min(min, entry.count);
+    }
+    if (!Number.isFinite(min)) {
+      return 0;
+    }
+    return min;
+  }
+
+  getDenseIndexBuffer(scope) {
+    const updater =
+      scope === 'node'
+        ? this.network?.updateDenseNodeIndexBuffer?.bind(this.network)
+        : this.network?.updateDenseEdgeIndexBuffer?.bind(this.network);
+    if (!updater) return null;
+    const descriptor = updater();
+    if (!descriptor?.view || typeof descriptor.count !== 'number') return null;
+    const byteOffset = descriptor.pointer ?? descriptor.view.byteOffset ?? 0;
+    return {
+      array: new Uint32Array(descriptor.view.buffer, byteOffset, descriptor.count),
+      count: descriptor.count,
+    };
+  }
+
+  buildDenseEndpointSizesFromSparse(order, count) {
+    if (!order || !count) return null;
+    if (!this.denseEdgeEndpointCache || this.denseEdgeEndpointCache.length < count * 2) {
+      this.denseEdgeEndpointCache = new Float32Array(count * 2);
+    }
+    const target = this.denseEdgeEndpointCache;
+    for (let i = 0; i < count; i += 1) {
+      const edgeId = order[i];
+      const base = edgeId * 2;
+      target[i * 2] = this.edgeEndpointSizes?.[base] ?? 0;
+      target[i * 2 + 1] = this.edgeEndpointSizes?.[base + 1] ?? 0;
+    }
+    return target.subarray(0, count * 2);
   }
 
   ensureIdentityBuffer(scope, count) {

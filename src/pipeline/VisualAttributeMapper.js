@@ -224,6 +224,8 @@ export class VisualAttributeMapper {
     addDense('addDenseEdgeAttributeBuffer', EDGE_COLOR_ATTRIBUTE);
     addDense('addDenseEdgeAttributeBuffer', EDGE_WIDTH_ATTRIBUTE);
     addDense('addDenseEdgeAttributeBuffer', EDGE_GEOMETRY_ATTRIBUTE);
+    addDense('addDenseNodeToEdgeAttributeBuffer', NODE_POSITION_ATTRIBUTE);
+    addDense('addDenseNodeToEdgeAttributeBuffer', NODE_SIZE_ATTRIBUTE);
   }
 
   markDenseNodeAttributesDirty() {

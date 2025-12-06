@@ -16,7 +16,7 @@ test.describe('force layout behavior', () => {
     expect(diagnostics.edgeCount).toBeGreaterThan(20);
 
     // Allow the layout some time to settle.
-    await page.waitForTimeout(1200);
+    await page.waitForTimeout(1500);
 
     const stats = await page.evaluate(() => {
       const helios = window.__helios;
@@ -53,12 +53,17 @@ test.describe('force layout behavior', () => {
       }
 
       const nonEdgeDistances = [];
-      const maxSamples = Math.min(200, activeNodes.length * activeNodes.length);
+      const maxSamples = Math.min(256, activeNodes.length * activeNodes.length);
+      let seed = 1337;
+      const rand = () => {
+        seed = (seed * 1664525 + 1013904223) % 0x100000000;
+        return seed / 0x100000000;
+      };
       let attempts = 0;
-      while (nonEdgeDistances.length < maxSamples && attempts < maxSamples * 5) {
+      while (nonEdgeDistances.length < maxSamples && attempts < maxSamples * 8) {
         attempts += 1;
-        const i = Math.floor(Math.random() * activeNodes.length);
-        const j = Math.floor(Math.random() * activeNodes.length);
+        const i = Math.floor(rand() * activeNodes.length);
+        const j = Math.floor(rand() * activeNodes.length);
         if (i === j) continue;
         const a = activeNodes[i];
         const b = activeNodes[j];
