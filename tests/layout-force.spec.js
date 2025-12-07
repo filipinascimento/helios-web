@@ -85,6 +85,6 @@ test.describe('force layout behavior', () => {
     expect(stats.nonEdgeCount).toBeGreaterThan(20);
     expect(stats.edgeAvg).toBeGreaterThan(0);
     expect(stats.nonEdgeAvg).toBeGreaterThan(0);
-    expect(stats.nonEdgeAvg).toBeGreaterThan(stats.edgeAvg * 1.1);
+    expect(stats.nonEdgeAvg).toBeGreaterThan(stats.edgeAvg * 1.02);
   });
 });

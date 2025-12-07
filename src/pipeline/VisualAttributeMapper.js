@@ -479,37 +479,33 @@ export class VisualAttributeMapper {
     if (!this.network?.setDenseNodeOrder || !this.network?.setDenseEdgeOrder) {
       return;
     }
-    const nodeCount = this.network.nodeCount ?? 0;
-    const edgeCount = this.network.edgeCount ?? 0;
+    const nodeOrder = this.collectActiveIndices(this.network?.nodeActivityView);
+    const edgeOrder = this.collectActiveIndices(this.network?.edgeActivityView);
 
-    if (nodeCount !== this.lastNodeCount) {
-      if (!this.nodeOrderCache || this.nodeOrderCache.length < nodeCount) {
-        this.nodeOrderCache = new Uint32Array(nodeCount);
+    if (nodeOrder && nodeOrder.length !== this.lastNodeCount) {
+      if (!this.nodeOrderCache || this.nodeOrderCache.length < nodeOrder.length) {
+        this.nodeOrderCache = new Uint32Array(nodeOrder.length);
       }
-      for (let i = 0; i < nodeCount; i += 1) {
-        this.nodeOrderCache[i] = i;
-      }
+      this.nodeOrderCache.set(nodeOrder);
       try {
-        this.network.setDenseNodeOrder(this.nodeOrderCache.subarray(0, nodeCount));
+        this.network.setDenseNodeOrder(this.nodeOrderCache.subarray(0, nodeOrder.length));
       } catch (_) {
         // ignore order failures; dense updates will fall back to defaults
       }
-      this.lastNodeCount = nodeCount;
+      this.lastNodeCount = nodeOrder.length;
     }
 
-    if (edgeCount !== this.lastEdgeCount) {
-      if (!this.edgeOrderCache || this.edgeOrderCache.length < edgeCount) {
-        this.edgeOrderCache = new Uint32Array(edgeCount);
+    if (edgeOrder && edgeOrder.length !== this.lastEdgeCount) {
+      if (!this.edgeOrderCache || this.edgeOrderCache.length < edgeOrder.length) {
+        this.edgeOrderCache = new Uint32Array(edgeOrder.length);
       }
-      for (let i = 0; i < edgeCount; i += 1) {
-        this.edgeOrderCache[i] = i;
-      }
+      this.edgeOrderCache.set(edgeOrder);
       try {
-        this.network.setDenseEdgeOrder(this.edgeOrderCache.subarray(0, edgeCount));
+        this.network.setDenseEdgeOrder(this.edgeOrderCache.subarray(0, edgeOrder.length));
       } catch (_) {
         // ignore order failures; dense updates will fall back to defaults
       }
-      this.lastEdgeCount = edgeCount;
+      this.lastEdgeCount = edgeOrder.length;
     }
   }
 
@@ -545,5 +541,22 @@ export class VisualAttributeMapper {
       this.edgeOrderCache[i] = i;
     }
     return this.edgeOrderCache.subarray(0, count);
+  }
+
+  collectActiveIndices(activityView) {
+    if (!activityView) return null;
+    let count = 0;
+    for (let i = 0; i < activityView.length; i += 1) {
+      if (activityView[i]) count += 1;
+    }
+    const result = new Uint32Array(count);
+    let offset = 0;
+    for (let i = 0; i < activityView.length; i += 1) {
+      if (activityView[i]) {
+        result[offset] = i;
+        offset += 1;
+      }
+    }
+    return result;
   }
 }

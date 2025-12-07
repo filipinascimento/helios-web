@@ -1,5 +1,7 @@
 import { defineConfig } from '@playwright/test';
 
+const isLinux = process.platform === 'linux';
+
 export default defineConfig({
   testDir: './tests',
   timeout: 30_000,
@@ -20,6 +22,7 @@ export default defineConfig({
             '--enable-unsafe-webgpu',
             '--disable-dawn-features=disallow_unsafe_apis',
             '--use-angle=metal',
+            ...(isLinux ? ['--enable-features=Vulkan,UseSkiaRenderer'] : []),
           ],
         },
       },
