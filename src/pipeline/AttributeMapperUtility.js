@@ -1,4 +1,10 @@
 /** @typedef {import('helios-network').default} HeliosNetwork */
+import {
+  EDGE_COLOR_ATTRIBUTE,
+  EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
+  NODE_COLOR_ATTRIBUTE,
+  NODE_SIZE_ATTRIBUTE,
+} from './constants.js';
 
 const DEFAULT_COLOR_START = [0.2, 0.6, 1, 1];
 const DEFAULT_COLOR_END = [1, 0.4, 0.4, 1];
@@ -55,6 +61,8 @@ export class AttributeMapperUtility {
       const t = (value - domain.min) / (domain.max - domain.min);
       sizes[i] = minSize + (maxSize - minSize) * t;
     }
+    this.visuals.markNodeAttributesDirty(NODE_SIZE_ATTRIBUTE);
+    this.visuals.markEdgeAttributesDirty(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
     return sizes;
   }
 
@@ -77,6 +85,7 @@ export class AttributeMapperUtility {
       colors[offset + 2] = b;
       colors[offset + 3] = a;
     }
+    this.visuals.markNodeAttributesDirty(NODE_COLOR_ATTRIBUTE);
     return colors;
   }
 
@@ -99,6 +108,7 @@ export class AttributeMapperUtility {
       colors[offset + 2] = b;
       colors[offset + 3] = a;
     }
+    this.visuals.markEdgeAttributesDirty(EDGE_COLOR_ATTRIBUTE);
     return colors;
   }
 }

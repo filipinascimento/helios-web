@@ -6,13 +6,14 @@ import {
   NODE_POSITION_ATTRIBUTE,
   NODE_SIZE_ATTRIBUTE,
   EDGE_COLOR_ATTRIBUTE,
-  EDGE_GEOMETRY_ATTRIBUTE,
   EDGE_WIDTH_ATTRIBUTE,
+  EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
+  EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
   DEFAULT_EDGE_COLOR,
   DEFAULT_EDGE_WIDTH,
   DEFAULT_NODE_COLOR,
   DEFAULT_NODE_SIZE,
-} from './constants';
+} from './constants.js';
 
 /**
  * @typedef {Object} VisualAttributeViews
@@ -21,7 +22,6 @@ import {
  * @property {Float32Array} nodeSizes
  * @property {Float32Array} edgeColors
  * @property {Float32Array} edgeWidths
- * @property {Float32Array} edgeGeometry
  */
 
 /**
@@ -34,8 +34,17 @@ export class VisualAttributeMapper {
    */
   constructor(network) {
     this.network = network;
+    this.emptyFloat = new Float32Array(0);
+    this.emptyUint = new Uint32Array(0);
+    this.nodeOrderCache = null;
+    this.edgeOrderCache = null;
+    this.lastNodeCount = -1;
+    this.lastEdgeCount = -1;
     this.ensureAttributes();
     this.registerDenseBuffers();
+    this.applyNodeDefaults();
+    this.applyEdgeDefaults();
+    this.markAllDenseDirty();
   }
 
   /**
@@ -48,7 +57,6 @@ export class VisualAttributeMapper {
       nodeSizes: this.nodeSizes,
       edgeColors: this.edgeColors,
       edgeWidths: this.edgeWidths,
-      edgeGeometry: this.edgeGeometry,
     };
   }
 
@@ -88,13 +96,6 @@ export class VisualAttributeMapper {
   }
 
   /**
-   * @returns {Float32Array}
-   */
-  get edgeGeometry() {
-    return this.network.getEdgeAttributeBuffer(EDGE_GEOMETRY_ATTRIBUTE).view;
-  }
-
-  /**
    * Initializes basic node visuals. Can be re-used whenever nodes are added.
    * @param {Iterable<number>} [indices]
    */
@@ -112,14 +113,14 @@ export class VisualAttributeMapper {
           this.writeNodeDefaults(i, color, size, positionView, colorView, sizeView);
         }
       }
-      return;
+    } else {
+      for (const index of indices) {
+        this.writeNodeDefaults(index, color, size, positionView, colorView, sizeView);
+      }
     }
 
-    for (const index of indices) {
-      this.writeNodeDefaults(index, color, size, positionView, colorView, sizeView);
-    }
-
-    this.markDenseNodeAttributesDirty();
+    this.markNodeAttributesDirty(NODE_POSITION_ATTRIBUTE, NODE_COLOR_ATTRIBUTE, NODE_SIZE_ATTRIBUTE);
+    this.markEdgeAttributesDirty(EDGE_ENDPOINTS_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
   }
 
   /**
@@ -139,14 +140,13 @@ export class VisualAttributeMapper {
           this.writeEdgeDefaults(i, color, width, colorView, widthView);
         }
       }
-      return;
+    } else {
+      for (const index of indices) {
+        this.writeEdgeDefaults(index, color, width, colorView, widthView);
+      }
     }
 
-    for (const index of indices) {
-      this.writeEdgeDefaults(index, color, width, colorView, widthView);
-    }
-
-    this.markDenseEdgeAttributesDirty();
+    this.markEdgeAttributesDirty(EDGE_COLOR_ATTRIBUTE, EDGE_WIDTH_ATTRIBUTE);
   }
 
   ensureAttributes() {
@@ -156,8 +156,8 @@ export class VisualAttributeMapper {
     this.ensureNodeAttribute(NODE_SIZE_ATTRIBUTE, AttributeType.Float, 1);
     this.ensureEdgeAttribute(EDGE_COLOR_ATTRIBUTE, AttributeType.Float, 4);
     this.ensureEdgeAttribute(EDGE_WIDTH_ATTRIBUTE, AttributeType.Float, 1);
-    // Edge geometry stores two vec3 values: start(xyz) and end(xyz).
-    this.ensureEdgeAttribute(EDGE_GEOMETRY_ATTRIBUTE, AttributeType.Float, 6);
+    this.ensureNodeToEdgeAttribute(NODE_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_POSITION_ATTRIBUTE, 3);
+    this.ensureNodeToEdgeAttribute(NODE_SIZE_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE, 1);
   }
 
   /**
@@ -208,6 +208,28 @@ export class VisualAttributeMapper {
     }
   }
 
+  ensureNodeToEdgeAttribute(sourceName, edgeName, sourceDimension) {
+    const targetDimension = sourceDimension * 2;
+    let buffer = null;
+    try {
+      buffer = this.network.getEdgeAttributeBuffer(edgeName);
+    } catch (error) {
+      buffer = null;
+    }
+    try {
+      this.network.defineNodeToEdgeAttribute(sourceName, edgeName, 'both');
+      buffer = this.network.getEdgeAttributeBuffer(edgeName);
+    } catch (error) {
+      this.ignoreDuplicateAttribute(error, edgeName);
+    }
+    buffer = buffer ?? this.network.getEdgeAttributeBuffer(edgeName);
+    if (buffer?.dimension !== targetDimension) {
+      throw new Error(
+        `Attribute ${edgeName} has dimension ${buffer?.dimension ?? 'unknown'}, expected ${targetDimension}`,
+      );
+    }
+  }
+
   registerDenseBuffers() {
     if (!this.network) return;
     const addDense = (method, name) => {
@@ -223,31 +245,176 @@ export class VisualAttributeMapper {
     addDense('addDenseNodeAttributeBuffer', NODE_SIZE_ATTRIBUTE);
     addDense('addDenseEdgeAttributeBuffer', EDGE_COLOR_ATTRIBUTE);
     addDense('addDenseEdgeAttributeBuffer', EDGE_WIDTH_ATTRIBUTE);
-    addDense('addDenseEdgeAttributeBuffer', EDGE_GEOMETRY_ATTRIBUTE);
-    addDense('addDenseNodeToEdgeAttributeBuffer', NODE_POSITION_ATTRIBUTE);
-    addDense('addDenseNodeToEdgeAttributeBuffer', NODE_SIZE_ATTRIBUTE);
+    addDense('addDenseEdgeAttributeBuffer', EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
+    addDense('addDenseEdgeAttributeBuffer', EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
   }
 
-  markDenseNodeAttributesDirty() {
+  markNodeAttributesDirty(...names) {
     if (typeof this.network?.markDenseNodeAttributeDirty !== 'function') return;
-    try {
-      this.network.markDenseNodeAttributeDirty(NODE_POSITION_ATTRIBUTE);
-      this.network.markDenseNodeAttributeDirty(NODE_COLOR_ATTRIBUTE);
-      this.network.markDenseNodeAttributeDirty(NODE_SIZE_ATTRIBUTE);
-    } catch (_) {
-      // Ignore if dense buffers are unavailable.
+    const targets =
+      names && names.length ? names : [NODE_POSITION_ATTRIBUTE, NODE_COLOR_ATTRIBUTE, NODE_SIZE_ATTRIBUTE];
+    for (const name of targets) {
+      try {
+        this.network.markDenseNodeAttributeDirty(name);
+      } catch (_) {
+        // Ignore if dense buffers are unavailable.
+      }
     }
   }
 
-  markDenseEdgeAttributesDirty() {
+  markEdgeAttributesDirty(...names) {
     if (typeof this.network?.markDenseEdgeAttributeDirty !== 'function') return;
-    try {
-      this.network.markDenseEdgeAttributeDirty(EDGE_COLOR_ATTRIBUTE);
-      this.network.markDenseEdgeAttributeDirty(EDGE_WIDTH_ATTRIBUTE);
-      this.network.markDenseEdgeAttributeDirty(EDGE_GEOMETRY_ATTRIBUTE);
-    } catch (_) {
-      // Ignore if dense buffers are unavailable.
+    const targets =
+      names && names.length
+        ? names
+        : [EDGE_COLOR_ATTRIBUTE, EDGE_WIDTH_ATTRIBUTE, EDGE_ENDPOINTS_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE];
+    for (const name of targets) {
+      try {
+        this.network.markDenseEdgeAttributeDirty(name);
+      } catch (_) {
+        // Ignore if dense buffers are unavailable.
+      }
     }
+  }
+
+  markAllDenseDirty() {
+    this.markNodeAttributesDirty();
+    this.markEdgeAttributesDirty();
+  }
+
+  buildDenseGeometry() {
+    this.updateDenseOrders();
+    return {
+      nodes: this.buildDenseNodes(),
+      edges: this.buildDenseEdges(),
+    };
+  }
+
+  buildDenseNodes() {
+    const positions = this.getDenseAttribute(NODE_POSITION_ATTRIBUTE, 3, 'node');
+    const colors = this.getDenseAttribute(NODE_COLOR_ATTRIBUTE, 4, 'node');
+    const sizes = this.getDenseAttribute(NODE_SIZE_ATTRIBUTE, 1, 'node');
+    const indices = this.getDenseIndexBuffer('node');
+    const range = this.getValidRange('node');
+    const count = this.resolveDenseCount([positions, colors, sizes, indices], range);
+    if (!count) {
+      return {
+        positions: this.emptyFloat,
+        colors: this.emptyFloat,
+        sizes: this.emptyFloat,
+        indices: this.emptyUint,
+        count: 0,
+      };
+    }
+    return {
+      positions: positions.array.subarray(0, count * 3),
+      colors: colors.array.subarray(0, count * 4),
+      sizes: sizes.array.subarray(0, count),
+      indices: this.ensureNodeIndices(indices.array, count),
+      count,
+    };
+  }
+
+  buildDenseEdges() {
+    const segments = this.getDenseAttribute(EDGE_ENDPOINTS_POSITION_ATTRIBUTE, 6, 'edge');
+    const endpointSizes = this.getDenseAttribute(EDGE_ENDPOINTS_SIZE_ATTRIBUTE, 2, 'edge');
+    const colors = this.getDenseAttribute(EDGE_COLOR_ATTRIBUTE, 4, 'edge');
+    const widths = this.getDenseAttribute(EDGE_WIDTH_ATTRIBUTE, 1, 'edge');
+    const indices = this.getDenseIndexBuffer('edge');
+    const range = this.getValidRange('edge');
+    const count = this.resolveDenseCount([segments, endpointSizes, colors, widths, indices], range);
+    if (!count) {
+      return {
+        segments: this.emptyFloat,
+        colors: this.emptyFloat,
+        widths: this.emptyFloat,
+        endpointSizes: this.emptyFloat,
+        indices: this.emptyUint,
+        count: 0,
+      };
+    }
+    return {
+      segments: segments.array.subarray(0, count * 6),
+      colors: colors.array.subarray(0, count * 4),
+      widths: widths.array.subarray(0, count),
+      endpointSizes: endpointSizes.array.subarray(0, count * 2),
+      indices: this.ensureEdgeIndices(indices.array, count),
+      count,
+    };
+  }
+
+  getDenseAttribute(name, dimension, scope) {
+    const updater =
+      scope === 'node'
+        ? this.network?.updateDenseNodeAttributeBuffer?.bind(this.network)
+        : this.network?.updateDenseEdgeAttributeBuffer?.bind(this.network);
+    if (!updater) return { array: this.emptyFloat, count: 0 };
+    let descriptor = null;
+    try {
+      descriptor = updater(name);
+    } catch (_) {
+      return { array: this.emptyFloat, count: 0 };
+    }
+    if (!descriptor || !descriptor.view || typeof descriptor.count !== 'number') {
+      return { array: this.emptyFloat, count: 0 };
+    }
+    const byteOffset = descriptor.pointer ?? descriptor.view.byteOffset ?? 0;
+    const length = descriptor.count * dimension;
+    return {
+      array: new Float32Array(descriptor.view.buffer, byteOffset, length),
+      count: descriptor.count,
+      validStart: descriptor.validStart,
+      validEnd: descriptor.validEnd,
+    };
+  }
+
+  getDenseIndexBuffer(scope) {
+    const updater =
+      scope === 'node'
+        ? this.network?.updateDenseNodeIndexBuffer?.bind(this.network)
+        : this.network?.updateDenseEdgeIndexBuffer?.bind(this.network);
+    if (!updater) return { array: this.emptyUint, count: 0 };
+    let descriptor = null;
+    try {
+      descriptor = updater();
+    } catch (_) {
+      return { array: this.emptyUint, count: 0 };
+    }
+    if (!descriptor?.view || typeof descriptor.count !== 'number') {
+      return { array: this.emptyUint, count: 0 };
+    }
+    const byteOffset = descriptor.pointer ?? descriptor.view.byteOffset ?? 0;
+    const result = {
+      array: new Uint32Array(descriptor.view.buffer, byteOffset, descriptor.count),
+      count: descriptor.count,
+    };
+    if (typeof descriptor.validStart === 'number') {
+      result.validStart = descriptor.validStart;
+    }
+    if (typeof descriptor.validEnd === 'number') {
+      result.validEnd = descriptor.validEnd;
+    }
+    return result;
+  }
+
+  resolveDenseCount(descriptors, range) {
+    let min = Number.POSITIVE_INFINITY;
+    for (const entry of descriptors) {
+      if (!entry || !entry.array) return 0;
+      if (typeof entry.count !== 'number') return 0;
+      const range = typeof entry.validStart === 'number' && typeof entry.validEnd === 'number'
+        ? Math.max(0, entry.validEnd - entry.validStart)
+        : entry.count;
+      const effective = Math.min(entry.count, range);
+      min = Math.min(min, effective);
+    }
+    if (range && typeof range.start === 'number' && typeof range.end === 'number') {
+      min = Math.min(min, Math.max(0, range.end - range.start));
+    }
+    if (!Number.isFinite(min)) {
+      return 0;
+    }
+    return Math.max(0, min);
   }
 
   /**
@@ -255,7 +422,7 @@ export class VisualAttributeMapper {
    * @param {string} name
    */
   ignoreDuplicateAttribute(error, name) {
-    if (error instanceof Error && error.message.includes('already defined')) {
+    if (error instanceof Error && error.message.includes('already')) {
       return;
     }
     throw new Error(`Unable to define attribute ${name}: ${error}`);
@@ -306,5 +473,77 @@ export class VisualAttributeMapper {
     colorView[colorOffset + 3] = color[3];
 
     widthView[index] = width;
+  }
+
+  updateDenseOrders() {
+    if (!this.network?.setDenseNodeOrder || !this.network?.setDenseEdgeOrder) {
+      return;
+    }
+    const nodeCount = this.network.nodeCount ?? 0;
+    const edgeCount = this.network.edgeCount ?? 0;
+
+    if (nodeCount !== this.lastNodeCount) {
+      if (!this.nodeOrderCache || this.nodeOrderCache.length < nodeCount) {
+        this.nodeOrderCache = new Uint32Array(nodeCount);
+      }
+      for (let i = 0; i < nodeCount; i += 1) {
+        this.nodeOrderCache[i] = i;
+      }
+      try {
+        this.network.setDenseNodeOrder(this.nodeOrderCache.subarray(0, nodeCount));
+      } catch (_) {
+        // ignore order failures; dense updates will fall back to defaults
+      }
+      this.lastNodeCount = nodeCount;
+    }
+
+    if (edgeCount !== this.lastEdgeCount) {
+      if (!this.edgeOrderCache || this.edgeOrderCache.length < edgeCount) {
+        this.edgeOrderCache = new Uint32Array(edgeCount);
+      }
+      for (let i = 0; i < edgeCount; i += 1) {
+        this.edgeOrderCache[i] = i;
+      }
+      try {
+        this.network.setDenseEdgeOrder(this.edgeOrderCache.subarray(0, edgeCount));
+      } catch (_) {
+        // ignore order failures; dense updates will fall back to defaults
+      }
+      this.lastEdgeCount = edgeCount;
+    }
+  }
+
+  getValidRange(scope) {
+    try {
+      return scope === 'node' ? this.network?.nodeValidRange : this.network?.edgeValidRange;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  ensureNodeIndices(indices, count) {
+    if (indices?.length >= count) {
+      return indices.subarray(0, count);
+    }
+    if (!this.nodeOrderCache || this.nodeOrderCache.length < count) {
+      this.nodeOrderCache = new Uint32Array(count);
+    }
+    for (let i = 0; i < count; i += 1) {
+      this.nodeOrderCache[i] = i;
+    }
+    return this.nodeOrderCache.subarray(0, count);
+  }
+
+  ensureEdgeIndices(indices, count) {
+    if (indices?.length >= count) {
+      return indices.subarray(0, count);
+    }
+    if (!this.edgeOrderCache || this.edgeOrderCache.length < count) {
+      this.edgeOrderCache = new Uint32Array(count);
+    }
+    for (let i = 0; i < count; i += 1) {
+      this.edgeOrderCache[i] = i;
+    }
+    return this.edgeOrderCache.subarray(0, count);
   }
 }

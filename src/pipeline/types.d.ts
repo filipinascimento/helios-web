@@ -2,26 +2,22 @@ export interface NodeGeometry {
   positions: Float32Array;
   colors: Float32Array;
   sizes: Float32Array;
-  count: number;
   indices: Uint32Array;
+  count: number;
 }
 
 export interface EdgeGeometry {
+  segments: Float32Array;
   colors: Float32Array;
   widths: Float32Array;
-  segments: Float32Array;
-  count: number;
+  endpointSizes: Float32Array;
   indices: Uint32Array;
+  count: number;
 }
 
 export interface GeometryBuffers {
   nodes: NodeGeometry;
   edges: EdgeGeometry;
-}
-
-export interface PipelineStage {
-  readonly name: string;
-  process(buffers: GeometryBuffers): GeometryBuffers;
 }
 
 export interface PipelineFrame {

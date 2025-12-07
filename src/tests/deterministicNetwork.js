@@ -9,7 +9,7 @@ import { Helios } from '../index.js';
  * @returns {Promise<{ helios: import('../Helios.js').Helios, colors: number[][] }>}
  */
 export async function createDeterministicHelios(container, renderer = 'webgl') {
-  const network = await HeliosNetwork.create({ directed: false, initialNodes: 0 });
+  const network = await HeliosNetwork.create({ directed: false, initialNodes: 0, initialEdges: 1 });
   const nodes = network.addNodes(4);
 
   network.defineNodeAttribute('_helios_visuals_position', AttributeType.Float, 3);
@@ -17,7 +17,8 @@ export async function createDeterministicHelios(container, renderer = 'webgl') {
   network.defineNodeAttribute('_helios_visuals_size', AttributeType.Float, 1);
   network.defineEdgeAttribute('_helios_visuals_edge_color', AttributeType.Float, 4);
   network.defineEdgeAttribute('_helios_visuals_edge_width', AttributeType.Float, 1);
-  network.defineEdgeAttribute('_helios_visuals_edge_geometry', AttributeType.Float, 6);
+  network.defineNodeToEdgeAttribute('_helios_visuals_position', '_helios_visuals_edge_endpoints_position', 'both');
+  network.defineNodeToEdgeAttribute('_helios_visuals_size', '_helios_visuals_edge_endpoints_size', 'both');
 
   const pos = network.getNodeAttributeBuffer('_helios_visuals_position').view;
   const color = network.getNodeAttributeBuffer('_helios_visuals_color').view;

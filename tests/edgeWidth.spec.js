@@ -71,13 +71,18 @@ async function renderAndMeasure(page, { mode, baseURL }) {
           import HeliosNetwork, { AttributeType } from 'helios-network';
 
           async function setup(mode) {
-            const network = await HeliosNetwork.create({ directed: false, initialNodes: 0 });
+            const network = await HeliosNetwork.create({ directed: false, initialNodes: 0, initialEdges: 1 });
             network.defineNodeAttribute('_helios_visuals_position', AttributeType.Float, 3);
             network.defineNodeAttribute('_helios_visuals_color', AttributeType.Float, 4);
             network.defineNodeAttribute('_helios_visuals_size', AttributeType.Float, 1);
             network.defineEdgeAttribute('_helios_visuals_edge_color', AttributeType.Float, 4);
             network.defineEdgeAttribute('_helios_visuals_edge_width', AttributeType.Float, 1);
-            network.defineEdgeAttribute('_helios_visuals_edge_geometry', AttributeType.Float, 6);
+            network.defineNodeToEdgeAttribute('_helios_visuals_position', '_helios_visuals_edge_endpoints_position', 'both');
+            network.defineNodeToEdgeAttribute('_helios_visuals_size', '_helios_visuals_edge_endpoints_size', 'both');
+            // Ensure no stray active edges from initial capacity.
+            if (network.edgeActivityView) {
+              network.edgeActivityView.fill(0);
+            }
 
             const nodes = network.addNodes(2);
             const pos = network.getNodeAttributeBuffer('_helios_visuals_position').view;
@@ -108,6 +113,12 @@ async function renderAndMeasure(page, { mode, baseURL }) {
             edgeColors[edgeIds[0] * 4 + 2] = 0;
             edgeColors[edgeIds[0] * 4 + 3] = 1;
             edgeWidths[edgeIds[0]] = 1;
+            window.__networkDebug = {
+              edgeCount: network.edgeCount,
+              edgeCapacity: network.edgeCapacity,
+              edgeActivity: Array.from(network.edgeActivityView || []),
+              denseEdgeIndex: network.updateDenseEdgeIndexBuffer?.()?.count ?? null,
+            };
 
             const helios = new Helios(network, {
               container: document.getElementById('app'),
@@ -152,11 +163,25 @@ async function renderAndMeasure(page, { mode, baseURL }) {
   await page.waitForTimeout(200);
   const stats = await page.evaluate(() => {
     const helios = window.__helios;
-    const edges = helios?.pipeline?.geometryBuilder?.edgeEndpointSizes?.length ?? 0;
+    const debug = window.__networkDebug;
+    const frame = helios?.pipeline?.buildFrame?.();
+    const geometry = frame?.geometry;
     const edgeCount = helios?.renderer?.graphLayer?.edgeCount ?? 0;
-    const edgeActivity = Array.from(helios?.network?.edgeActivityView ?? []);
-    const geometryEdgesCount = helios?.pipeline?.buildFrame?.()?.geometry?.edges?.count ?? 0;
-    return { edges, edgeCount, edgeActivity, geometryEdgesCount };
+    const edgeActivity = helios?.network?.edgeActivityView;
+    const activeEdges = edgeActivity ? edgeActivity.reduce((sum, value) => sum + value, 0) : 0;
+    const edgeCountValue = helios?.network?.edgeCount ?? 0;
+    const currentFrameEdges = helios?.scheduler?.currentFrame?.geometry?.edges?.count ?? 0;
+    const geometryEdgesCount = geometry?.edges?.count ?? 0;
+    const endpointSizes = geometry?.edges?.endpointSizes?.length ?? 0;
+    return {
+      endpointSizes,
+      edgeCount,
+      edgeCountValue,
+      activeEdges,
+      geometryEdgesCount,
+      currentFrameEdges,
+      debug,
+    };
   });
   const buffer = await page.screenshot({ fullPage: false });
   return { width: measureEdgeThickness(buffer), stats };
