@@ -152,12 +152,7 @@ test.describe('renderer helpers', () => {
 });
 
 test.describe('webgpu visual (headed)', () => {
-  test.skip(
-    ({ browserName, headless }) => browserName !== 'chromium' || headless,
-    'WebGPU visual runs only in headed Chromium project'
-  );
-
-  test('renders deterministic node colors with WebGPU when available', async ({ page, browser }) => {
+  test('renders deterministic node colors with WebGPU when available @webgpu', async ({ page, browser }) => {
     // Attempt to spin a headed context; skip if not possible.
     let headedContext = null;
     let headedPage = page;

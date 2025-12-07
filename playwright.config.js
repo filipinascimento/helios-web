@@ -10,10 +10,12 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
+      grepInvert: /@webgpu/,
       use: { browserName: 'chromium' },
     },
     {
       name: 'chromium-webgpu-headed',
+      grep: /@webgpu/,
       use: {
         browserName: 'chromium',
         headless: false,
