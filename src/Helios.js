@@ -6,7 +6,7 @@ import { StaticLayout, WorkerLayout } from './layouts/Layout.js';
 import { createRenderer } from './rendering/createRenderer.js';
 import { PerformanceMonitor } from './utils/PerformanceMonitor.js';
 import { VisualAttributes } from './pipeline/VisualAttributes.js';
-import { createDefaultMappers } from './pipeline/Mapper.js';
+import { createDefaultMappers, MapperCollection } from './pipeline/Mapper.js';
 
 function isLayoutInstance(candidate) {
   return candidate && typeof candidate.step === 'function' && typeof candidate.initialize === 'function';
@@ -19,11 +19,27 @@ export class Helios {
     }
     this.network = network;
     this.options = options;
+    this.mappersDirty = false;
+    this.markMappersDirty = () => {
+      this.mappersDirty = true;
+      this.scheduler?.requestGeometry?.();
+    };
     const container = options.container ?? document.getElementById('app') ?? document.body;
     this.layers = new LayerManager(container);
     this.visuals = new VisualAttributes(network);
-    this.mappers = options.mappers === null ? null : options.mappers ?? createDefaultMappers(network);
-    this.mappersDirty = Boolean(this.mappers);
+    this.nodeMapper = new MapperCollection('node', network, this.markMappersDirty);
+    this.edgeMapper = new MapperCollection('edge', network, this.markMappersDirty);
+    const optionMappers = options.mappers;
+    if (optionMappers !== null) {
+      const initialMappers = optionMappers ?? createDefaultMappers(network);
+      if (initialMappers?.nodeMapper) {
+        this.nodeMapper.setDefault(initialMappers.nodeMapper);
+      }
+      if (initialMappers?.edgeMapper) {
+        this.edgeMapper.setDefault(initialMappers.edgeMapper);
+      }
+    }
+    this.mappersDirty = true;
     this.visuals.seedMissingPositions(this.layers.size);
     const debugPerformance = options.debugPerformance !== false;
     const performanceWindow = options.performanceWindow ?? 60;
@@ -74,8 +90,11 @@ export class Helios {
 
     this.scheduler.setLayout(this.layout);
     this.scheduler.setGeometryCallback(() => {
-      if (this.mappers && this.mappersDirty) {
-        this.visuals.applyMappers(this.mappers);
+      if (this.mappersDirty) {
+        this.visuals.applyMappers({
+          nodeMapper: this.nodeMapper.toCombinedMapper(),
+          edgeMapper: this.edgeMapper.toCombinedMapper(),
+        });
         this.mappersDirty = false;
       }
       return {
@@ -153,21 +172,24 @@ export class Helios {
 
   setMappers({ nodeMapper, edgeMapper } = {}) {
     if (nodeMapper === null && edgeMapper === null) {
-      this.mappers = null;
-      this.mappersDirty = false;
+      this.nodeMapper = new MapperCollection('node', this.network, () => {
+        this.markMappersDirty();
+      });
+      this.edgeMapper = new MapperCollection('edge', this.network, () => {
+        this.markMappersDirty();
+      });
+      this.mappersDirty = true;
+      this.scheduler?.requestGeometry?.();
+      this.scheduler.requestGeometry();
       return;
     }
     if (nodeMapper) {
-      if (!this.mappers) this.mappers = {};
-      this.mappers.nodeMapper = nodeMapper;
+      this.nodeMapper.setDefault(nodeMapper);
     }
     if (edgeMapper) {
-      if (!this.mappers) this.mappers = {};
-      this.mappers.edgeMapper = edgeMapper;
+      this.edgeMapper.setDefault(edgeMapper);
     }
-    if (this.mappers) {
-      this.mappersDirty = true;
-    }
+    this.mappersDirty = true;
     this.scheduler.requestGeometry();
   }
 

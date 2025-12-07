@@ -1,8 +1,7 @@
 import { AttributeType } from 'helios-network';
-import {
-  DEFAULT_NODE_OUTLINE_COLOR,
-  DEFAULT_NODE_OUTLINE_WIDTH,
-  DEFAULT_NODE_SIZE,
+import { VISUAL_ATTRIBUTE_NAMES, DEFAULT_VISUALS, VISUAL_ATTRIBUTE_MAP } from './constants.js';
+
+const {
   EDGE_COLOR_ATTRIBUTE,
   EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
   EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
@@ -12,8 +11,9 @@ import {
   NODE_OUTLINE_WIDTH_ATTRIBUTE,
   NODE_POSITION_ATTRIBUTE,
   NODE_SIZE_ATTRIBUTE,
-  VISUAL_ATTRIBUTE_MAP,
-} from './constants.js';
+} = VISUAL_ATTRIBUTE_NAMES;
+
+const { DEFAULT_NODE_OUTLINE_COLOR, DEFAULT_NODE_OUTLINE_WIDTH, DEFAULT_NODE_SIZE } = DEFAULT_VISUALS;
 
 function validateAttribute(buffer, name, expectedType, expectedDimension) {
   if (!buffer) {
@@ -453,3 +453,103 @@ export function createDefaultMappers(network) {
 }
 
 export { VISUAL_ATTRIBUTE_MAP as VISUAL_ATTRIBUTES };
+
+/**
+ * Convenience container that can hold multiple mappers of the same mode and
+ * build a combined mapper when applying visuals.
+ */
+export class MapperCollection {
+  constructor(mode, network, onChange) {
+    this.mode = mode;
+    this.network = network;
+    this.mappers = new Map();
+    this.onChange = onChange;
+    this.defaultMapper = this.createMapper('default');
+  }
+
+  /**
+   * Returns a ChannelBuilder bound to the default mapper. Calling `.done()`
+   * will mark the collection dirty.
+   */
+  channel(name) {
+    const builder = this.defaultMapper.channel(name);
+    const originalDone = builder.done.bind(builder);
+    builder.done = () => {
+      const result = originalDone();
+      this.touch();
+      return result;
+    };
+    return builder;
+  }
+
+  /**
+   * Adds a Mapper instance or a descriptor object describing channels.
+   * @param {Mapper | object} entry
+   * @param {string} [name]
+   */
+  add(entry, name) {
+    let mapper = null;
+    if (entry instanceof Mapper) {
+      mapper = entry;
+    } else {
+      mapper = this.buildFromDescriptor(entry);
+    }
+    const key = name ?? entry?.name ?? `mapper-${this.mappers.size + 1}`;
+    this.mappers.set(key, mapper);
+    this.touch();
+    return mapper;
+  }
+
+  /**
+   * Replaces the default mapper.
+   * @param {Mapper} mapper
+   */
+  setDefault(mapper) {
+    if (!(mapper instanceof Mapper)) return;
+    this.defaultMapper = mapper;
+    this.mappers.set('default', mapper);
+    this.touch();
+  }
+
+  createMapper(name) {
+    const mapper = new Mapper({ mode: this.mode, network: this.network });
+    this.mappers.set(name ?? `mapper-${this.mappers.size + 1}`, mapper);
+    return mapper;
+  }
+
+  buildFromDescriptor(descriptor) {
+    const mapper = new Mapper({ mode: this.mode, network: this.network });
+    if (!descriptor) return mapper;
+    const entries = Array.isArray(descriptor.channels)
+      ? descriptor.channels.map((entry) => [entry.name, entry.config ?? entry])
+      : Object.entries(descriptor).filter(([key]) => key !== 'name');
+    for (const [channelName, config] of entries) {
+      if (!channelName || !config) continue;
+      mapper.setChannel(channelName, config);
+    }
+    return mapper;
+  }
+
+  /**
+   * Merges all registered mappers into a single Mapper (channels override in
+   * insertion order).
+   */
+  toCombinedMapper() {
+    if (this.mappers.size === 1) {
+      // Fast path: no need to merge when only one mapper is registered.
+      return this.mappers.values().next().value;
+    }
+    const combined = new Mapper({ mode: this.mode, network: this.network });
+    for (const mapper of this.mappers.values()) {
+      for (const [name, config] of mapper.channels.entries()) {
+        const cloned = { ...config, attributes: config.attributes ?? config.from };
+        combined.setChannel(name, cloned);
+      }
+    }
+    return combined;
+  }
+
+  touch() {
+    this.onChange?.();
+  }
+}

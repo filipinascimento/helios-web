@@ -1,5 +1,7 @@
 import { AttributeType } from 'helios-network';
-import {
+import { VISUAL_ATTRIBUTE_NAMES, DEFAULT_VISUALS, VISUAL_ATTRIBUTE_MAP } from './constants.js';
+
+const {
   NODE_COLOR_ATTRIBUTE,
   NODE_POSITION_ATTRIBUTE,
   NODE_SIZE_ATTRIBUTE,
@@ -9,14 +11,16 @@ import {
   EDGE_WIDTH_ATTRIBUTE,
   EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
   EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
+} = VISUAL_ATTRIBUTE_NAMES;
+
+const {
   DEFAULT_EDGE_COLOR,
   DEFAULT_EDGE_WIDTH,
   DEFAULT_NODE_COLOR,
   DEFAULT_NODE_SIZE,
   DEFAULT_NODE_OUTLINE_COLOR,
   DEFAULT_NODE_OUTLINE_WIDTH,
-  VISUAL_ATTRIBUTE_MAP,
-} from './constants.js';
+} = DEFAULT_VISUALS;
 
 function validateAttribute(buffer, name, expected) {
   if (!buffer) {
@@ -87,7 +91,7 @@ export class VisualAttributes {
   applyNodeMapper(mapper) {
     if (!mapper?.channels?.size) return;
     const attributes = this.collectAttributeNames(mapper, 'node');
-    const buffers = this.resolveNodeAttributeBuffers(attributes);
+    const buffers = this.resolveNodeAttributeBuffers(attributes.node);
     const visuals = {
       color: this.nodeColors,
       size: this.nodeSizes,
@@ -426,7 +430,8 @@ export class VisualAttributes {
       try {
         const buffer = this.network.getNodeAttributeBuffer(lookup);
         if (buffer?.view) {
-          buffers.set(name, { view: buffer.view, dimension: buffer.dimension ?? 1 });
+          const dimension = buffer.dimension ?? 1;
+          buffers.set(name, { view: buffer.view, dimension: dimension > 0 ? dimension : 1 });
         }
       } catch (_) {
         // ignore missing attributes

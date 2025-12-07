@@ -1,6 +1,6 @@
 import HeliosNetwork, { AttributeType } from 'helios-network';
 // When consuming the published package use `import { Helios } from 'helios-web-next';`
-import { Helios, Mapper } from '../../../src/index.js';
+import { Helios } from '../../../src/index.js';
 
 function resolveRendererPreference() {
   const params = new URLSearchParams(window.location.search);
@@ -92,8 +92,7 @@ async function bootstrap() {
   const helios = new Helios(network, heliosOptions);
   await helios.ready;
 
-  const nodeMapper = new Mapper({ mode: 'node', network });
-  nodeMapper
+  helios.nodeMapper
     .channel('color')
     .from(nodeAttribute)
     .transform((v) => {
@@ -101,20 +100,16 @@ async function bootstrap() {
       return [t, 0.2, 1 - t, 1];
     })
     .done();
-  nodeMapper.channel('size').from(nodeAttribute).linear([0, 1], [6, 18]).done();
-
-  const edgeMapper = new Mapper({ mode: 'edge', network });
-  edgeMapper
-    .channel('color')
-    .from(edgeAttribute)
-    .transform((v) => {
-      const t = Math.max(0, Math.min(1, v ?? 0));
-      return [0.1, 0.3 + t * 0.5, 1 - t * 0.5, 0.9];
-    })
-    .done();
-  edgeMapper.channel('width').constant(1.5).done();
-
-  helios.setMappers({ nodeMapper, edgeMapper });
+  helios.nodeMapper.channel('size').from(nodeAttribute).linear([0, 1], [6, 18]).done();
+  // helios.edgeMapper
+  //   .channel('color')
+  //   .from(edgeAttribute)
+  //   .transform((v) => {
+  //     const t = Math.max(0, Math.min(1, v ?? 0));
+  //     return [0.1, 0.3 + t * 0.5, 1 - t * 0.5, 0.9];
+  //   })
+  //   .done();
+  helios.edgeMapper.channel('width').constant(1.5).done();
   // Make edges visibly thicker for the demo.
   if (helios.renderer?.graphLayer) {
     helios.renderer.graphLayer.edgeWidthScale = 1.0;

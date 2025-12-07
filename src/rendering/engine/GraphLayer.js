@@ -1,5 +1,7 @@
 import { Layer } from './Layer.js';
-import {
+import { VISUAL_ATTRIBUTE_NAMES } from '../../pipeline/constants.js';
+
+const {
   EDGE_COLOR_ATTRIBUTE,
   EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
   EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
@@ -9,7 +11,7 @@ import {
   NODE_OUTLINE_WIDTH_ATTRIBUTE,
   NODE_POSITION_ATTRIBUTE,
   NODE_SIZE_ATTRIBUTE,
-} from '../../pipeline/constants.js';
+} = VISUAL_ATTRIBUTE_NAMES;
 
 export { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './GraphLayerCommon.js';
 
@@ -116,24 +118,13 @@ export class GraphLayer extends Layer {
   createTypedView(descriptor, Type, components) {
     if (!descriptor?.view || typeof descriptor.count !== 'number') return null;
     const stride = descriptor.stride ?? components;
-    const start = Math.max(0, descriptor.validStart ?? 0);
-    const end = descriptor.validEnd ?? descriptor.count;
-    const count = Math.max(0, end - start);
-    const basePointer = descriptor.pointer ?? descriptor.view.byteOffset ?? 0;
-    const pointer = basePointer + start * stride * Type.BYTES_PER_ELEMENT;
-    const length = count * stride;
+    const pointer = descriptor.pointer ?? descriptor.view.byteOffset ?? 0;
+    const length = descriptor.count * stride;
     try {
       return new Type(descriptor.view.buffer, pointer, length);
     } catch (_) {
       return null;
     }
-  }
-
-  getDescriptorCount(descriptor) {
-    if (!descriptor || typeof descriptor.count !== 'number') return 0;
-    const start = Math.max(0, descriptor.validStart ?? 0);
-    const end = descriptor.validEnd ?? descriptor.count;
-    return Math.max(0, end - start);
   }
 
   readDenseGraph(network) {
@@ -178,10 +169,11 @@ export class GraphLayer extends Layer {
       outlineColors: this.createTypedView(nodeOutlineColorDesc, Float32Array, 4) ?? this.emptyFloat,
       indices: this.createTypedView(nodeIndexDesc, Uint32Array, 1) ?? this.emptyUint,
       count:
-        this.getDescriptorCount(nodeIndexDesc) ||
-        this.getDescriptorCount(nodePositionsDesc) ||
-        this.getDescriptorCount(nodeColorsDesc) ||
-        this.getDescriptorCount(nodeSizesDesc),
+        nodeIndexDesc?.count ??
+        nodePositionsDesc?.count ??
+        nodeColorsDesc?.count ??
+        nodeSizesDesc?.count ??
+        0,
     };
 
     const edges = {
@@ -191,10 +183,11 @@ export class GraphLayer extends Layer {
       endpointSizes: this.createTypedView(edgeEndpointSizeDesc, Float32Array, 2) ?? this.emptyFloat,
       indices: this.createTypedView(edgeIndexDesc, Uint32Array, 1) ?? this.emptyUint,
       count:
-        this.getDescriptorCount(edgeIndexDesc) ||
-        this.getDescriptorCount(edgeSegmentsDesc) ||
-        this.getDescriptorCount(edgeColorDesc) ||
-        this.getDescriptorCount(edgeWidthDesc),
+        edgeIndexDesc?.count ??
+        edgeSegmentsDesc?.count ??
+        edgeColorDesc?.count ??
+        edgeWidthDesc?.count ??
+        0,
     };
 
     return { nodes, edges };
