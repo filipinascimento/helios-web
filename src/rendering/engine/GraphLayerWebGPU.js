@@ -415,35 +415,46 @@ export class GraphLayerWebGPU extends GraphLayer {
 
   updateGlobalsGpu(device, cameraUniforms) {
     if (!device || !this.globalsBuffer || !this.globalsArray) return;
+    // Keep offsets aligned with WGSL struct layout (vec4 aligned to 16 bytes).
+    const OFFSET_NODE_OPACITY = 0;
+    const OFFSET_NODE_SIZE = 2;
+    const OFFSET_NODE_OUTLINE = 4;
+    const OFFSET_EDGE_OPACITY = 6;
+    const OFFSET_EDGE_WIDTH = 8;
+    const OFFSET_PADDING_AFTER_EDGE_WIDTH = 10; // 2 floats of padding before vec4 outline color
+    const OFFSET_OUTLINE_COLOR = 12;
+    const OFFSET_EDGE_TRIM = 16;
+    const OFFSET_PADDING_AFTER_EDGE_TRIM = 17; // 3 floats padding to align vec3 _pad
+    const OFFSET_PAD_VEC3 = 20;
     const outlineColor = this.nodeOutlineColor || [0, 0, 0, 1];
     const is2D = cameraUniforms?.mode === '2d';
     const zoom2D = is2D ? Math.max(1e-3, cameraUniforms?.view?.[0] ?? 1) : 1;
     const edgeWidthFactor = is2D ? (zoom2D / EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL) : 1.0;
     const edgeWidthBase = this.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
     const edgeWidthScale = this.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
-    this.globalsArray[0] = this.nodeOpacityBase;
-    this.globalsArray[1] = this.nodeOpacityScale;
-    this.globalsArray[2] = this.nodeSizeBase;
-    this.globalsArray[3] = this.nodeSizeScale;
-    this.globalsArray[4] = this.nodeOutlineWidthBase;
-    this.globalsArray[5] = this.nodeOutlineWidthScale;
-    this.globalsArray[6] = this.edgeOpacityBase;
-    this.globalsArray[7] = this.edgeOpacityScale;
-    this.globalsArray[8] = edgeWidthBase;
-    this.globalsArray[9] = edgeWidthScale;
-    this.globalsArray[10] = outlineColor[0] ?? 0;
-    this.globalsArray[11] = outlineColor[1] ?? 0;
-    this.globalsArray[12] = outlineColor[2] ?? 0;
-    this.globalsArray[13] = outlineColor[3] ?? 1;
-    this.globalsArray[14] = this.edgeEndpointTrim;
-    this.globalsArray[15] = 0;
-    this.globalsArray[16] = 0;
-    this.globalsArray[17] = 0;
-    this.globalsArray[18] = 0;
-    this.globalsArray[19] = 0;
-    this.globalsArray[20] = 0;
-    this.globalsArray[21] = 0;
-    this.globalsArray[22] = 0;
+    this.globalsArray[OFFSET_NODE_OPACITY + 0] = this.nodeOpacityBase;
+    this.globalsArray[OFFSET_NODE_OPACITY + 1] = this.nodeOpacityScale;
+    this.globalsArray[OFFSET_NODE_SIZE + 0] = this.nodeSizeBase;
+    this.globalsArray[OFFSET_NODE_SIZE + 1] = this.nodeSizeScale;
+    this.globalsArray[OFFSET_NODE_OUTLINE + 0] = this.nodeOutlineWidthBase;
+    this.globalsArray[OFFSET_NODE_OUTLINE + 1] = this.nodeOutlineWidthScale;
+    this.globalsArray[OFFSET_EDGE_OPACITY + 0] = this.edgeOpacityBase;
+    this.globalsArray[OFFSET_EDGE_OPACITY + 1] = this.edgeOpacityScale;
+    this.globalsArray[OFFSET_EDGE_WIDTH + 0] = edgeWidthBase;
+    this.globalsArray[OFFSET_EDGE_WIDTH + 1] = edgeWidthScale;
+    this.globalsArray[OFFSET_PADDING_AFTER_EDGE_WIDTH + 0] = 0;
+    this.globalsArray[OFFSET_PADDING_AFTER_EDGE_WIDTH + 1] = 0;
+    this.globalsArray[OFFSET_OUTLINE_COLOR + 0] = outlineColor[0] ?? 0;
+    this.globalsArray[OFFSET_OUTLINE_COLOR + 1] = outlineColor[1] ?? 0;
+    this.globalsArray[OFFSET_OUTLINE_COLOR + 2] = outlineColor[2] ?? 0;
+    this.globalsArray[OFFSET_OUTLINE_COLOR + 3] = outlineColor[3] ?? 1;
+    this.globalsArray[OFFSET_EDGE_TRIM] = this.edgeEndpointTrim;
+    this.globalsArray[OFFSET_PADDING_AFTER_EDGE_TRIM + 0] = 0;
+    this.globalsArray[OFFSET_PADDING_AFTER_EDGE_TRIM + 1] = 0;
+    this.globalsArray[OFFSET_PADDING_AFTER_EDGE_TRIM + 2] = 0;
+    this.globalsArray[OFFSET_PAD_VEC3 + 0] = 0;
+    this.globalsArray[OFFSET_PAD_VEC3 + 1] = 0;
+    this.globalsArray[OFFSET_PAD_VEC3 + 2] = 0;
     this.globalsArray[23] = 0;
     device.queue.writeBuffer(this.globalsBuffer, 0, this.globalsArray);
   }
