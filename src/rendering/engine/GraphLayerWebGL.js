@@ -237,8 +237,10 @@ export class GraphLayerWebGL extends GraphLayer {
 
   render(context, frame) {
     if (!context || context.type !== 'webgl2') return;
-    const { geometry, camera } = frame ?? {};
-    if (!geometry) return;
+    const network = frame?.network;
+    if (!network) return;
+    const geometry = this.readDenseGraph(network);
+    const { camera } = frame ?? {};
     const gl = context.gl;
     const cameraUniforms = this.getCameraUniforms(camera);
     if (!cameraUniforms) return;

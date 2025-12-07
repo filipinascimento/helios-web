@@ -15,6 +15,20 @@ import {
   VISUAL_ATTRIBUTE_MAP,
 } from './constants.js';
 
+function validateAttribute(buffer, name, expectedType, expectedDimension) {
+  if (!buffer) {
+    throw new Error(`Attribute ${name} is missing on the network`);
+  }
+  if (buffer.dimension !== expectedDimension) {
+    throw new Error(
+      `Attribute ${name} has dimension ${buffer.dimension ?? 'unknown'}, expected ${expectedDimension}`,
+    );
+  }
+  if (buffer.type != null && expectedType != null && buffer.type !== expectedType) {
+    throw new Error(`Attribute ${name} has type ${buffer.type}, expected ${expectedType}`);
+  }
+}
+
 function clamp01(value) {
   if (!Number.isFinite(value)) return 0;
   if (value < 0) return 0;
@@ -376,21 +390,34 @@ export class Mapper {
       if (this.mode === 'edge' && nodeSource && (config.type === 'passthrough' || config.type === 'nodeToEdge')) {
         this.network.defineNodeAttribute(nodeSource, type, dimension / 2);
         this.network.defineNodeToEdgeAttribute(nodeSource, attribute, 'both');
-        this.registerDense('node', nodeSource);
-        this.registerDense('edge', attribute);
-        return;
-      }
-      if (this.mode === 'node') {
+      } else if (this.mode === 'node') {
         this.network.defineNodeAttribute(attribute, type, dimension);
-        this.registerDense('node', attribute);
       } else {
         this.network.defineEdgeAttribute(attribute, type, dimension);
-        this.registerDense('edge', attribute);
       }
     } catch (error) {
       if (!(error instanceof Error) || !error.message.includes('already')) {
         console.warn(`Mapper ensureBuffersForChannel failed for ${config.name}:`, error);
       }
+    }
+
+    if (this.mode === 'edge' && nodeSource && (config.type === 'passthrough' || config.type === 'nodeToEdge')) {
+      const sourceBuffer = this.network.getNodeAttributeBuffer(nodeSource);
+      const edgeBuffer = this.network.getEdgeAttributeBuffer(attribute);
+      validateAttribute(sourceBuffer, nodeSource, type, dimension / 2);
+      validateAttribute(edgeBuffer, attribute, type, dimension);
+      this.registerDense('node', nodeSource);
+      this.registerDense('edge', attribute);
+      return;
+    }
+    if (this.mode === 'node') {
+      const buffer = this.network.getNodeAttributeBuffer(attribute);
+      validateAttribute(buffer, attribute, type, dimension);
+      this.registerDense('node', attribute);
+    } else {
+      const buffer = this.network.getEdgeAttributeBuffer(attribute);
+      validateAttribute(buffer, attribute, type, dimension);
+      this.registerDense('edge', attribute);
     }
   }
 

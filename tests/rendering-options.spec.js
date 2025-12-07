@@ -120,7 +120,7 @@ test.describe('renderer helpers', () => {
 
     const counts = await page.evaluate(async () => {
       const helios = window.__helios;
-      const frame = helios?.pipeline?.buildFrame?.(true);
+      const frame = helios ? { network: helios.network, timestamp: performance.now() } : null;
       if (frame) {
         helios?.renderer?.render?.(frame);
       }

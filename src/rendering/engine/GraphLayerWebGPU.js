@@ -331,8 +331,10 @@ export class GraphLayerWebGPU extends GraphLayer {
 
   render(context, frame) {
     if (!context || context.type !== 'webgpu') return;
-    const { geometry, camera } = frame ?? {};
-    if (!geometry) return;
+    const network = frame?.network;
+    if (!network) return;
+    const geometry = this.readDenseGraph(network);
+    const { camera } = frame ?? {};
     const gpuDevice = this.device?.device;
     if (!gpuDevice) return;
     const maxBindingSize = gpuDevice.limits?.maxStorageBufferBindingSize;

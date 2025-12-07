@@ -1,12 +1,12 @@
 /** @typedef {import('helios-network').default} HeliosNetwork */
 
 import { LayerManager } from './layers/LayerManager.js';
-import { Pipeline } from './pipeline/Pipeline.js';
 import { Scheduler } from './scheduler/Scheduler.js';
 import { StaticLayout, WorkerLayout } from './layouts/Layout.js';
-import { AttributeMapperUtility } from './pipeline/AttributeMapperUtility.js';
 import { createRenderer } from './rendering/createRenderer.js';
 import { PerformanceMonitor } from './utils/PerformanceMonitor.js';
+import { VisualAttributes } from './pipeline/VisualAttributes.js';
+import { createDefaultMappers } from './pipeline/Mapper.js';
 
 function isLayoutInstance(candidate) {
   return candidate && typeof candidate.step === 'function' && typeof candidate.initialize === 'function';
@@ -21,9 +21,10 @@ export class Helios {
     this.options = options;
     const container = options.container ?? document.getElementById('app') ?? document.body;
     this.layers = new LayerManager(container);
-    this.pipeline = new Pipeline(network);
-    this.attributeMappings = new AttributeMapperUtility(network, this.pipeline.visuals);
-    this.pipeline.visuals.seedMissingPositions(this.layers.size);
+    this.visuals = new VisualAttributes(network);
+    this.mappers = options.mappers === null ? null : options.mappers ?? createDefaultMappers(network);
+    this.mappersDirty = Boolean(this.mappers);
+    this.visuals.seedMissingPositions(this.layers.size);
     const debugPerformance = options.debugPerformance !== false;
     const performanceWindow = options.performanceWindow ?? 60;
     const performanceLogEvery = options.performanceLogEvery ?? performanceWindow;
@@ -43,7 +44,7 @@ export class Helios {
   async initialize() {
     if (this.layout?.setUpdateListener) {
       this.layout.setUpdateListener(() => {
-        this.pipeline.markPositionsDirty();
+        this.visuals.markPositionsDirty();
         this.scheduler.requestGeometry();
       });
     }
@@ -72,7 +73,16 @@ export class Helios {
     });
 
     this.scheduler.setLayout(this.layout);
-    this.scheduler.setGeometryCallback(() => this.pipeline.buildFrame());
+    this.scheduler.setGeometryCallback(() => {
+      if (this.mappers && this.mappersDirty) {
+        this.visuals.applyMappers(this.mappers);
+        this.mappersDirty = false;
+      }
+      return {
+        network: this.network,
+        timestamp: performance.now(),
+      };
+    });
     this.scheduler.setRenderCallback((frame) => {
       if (this.renderer && typeof this.renderer.render === 'function') {
         this.renderer.render(frame, this.size);
@@ -88,23 +98,24 @@ export class Helios {
     }
     if (layoutOption?.type === 'worker') {
       const workerOptions = { ...(layoutOption.options ?? {}), mode: this.options.mode ?? '2d' };
-      return new WorkerLayout(this.network, this.pipeline.visuals, workerOptions);
+      return new WorkerLayout(this.network, this.visuals, workerOptions);
     }
     const w = this.layers.size.width;
     const h = this.layers.size.height;
-    return new StaticLayout(this.network, this.pipeline.visuals, {
+    return new StaticLayout(this.network, this.visuals, {
       bounds: [-w * 0.5, -h * 0.5, w * 0.5, h * 0.5],
     });
   }
 
   addNodes(count, initializer) {
     const nodes = this.network.addNodes(count);
-    this.pipeline.visuals.applyNodeDefaults(nodes);
-    this.pipeline.visuals.seedMissingPositions(this.layers.size);
+    this.visuals.applyNodeDefaults(nodes);
+    this.visuals.seedMissingPositions(this.layers.size);
     if (initializer) {
-      initializer(nodes, this.pipeline.visuals);
+      initializer(nodes, this.visuals);
     }
-    this.pipeline.markPositionsDirty();
+    this.visuals.markPositionsDirty();
+    this.mappersDirty = true;
     this.layout?.requestUpdate?.();
     this.scheduler.requestLayout();
     this.scheduler.requestGeometry();
@@ -113,11 +124,12 @@ export class Helios {
 
   addEdges(edges, initializer) {
     const edgeIndices = this.network.addEdges(edges);
-    this.pipeline.visuals.applyEdgeDefaults(edgeIndices);
+    this.visuals.applyEdgeDefaults(edgeIndices);
     if (initializer) {
-      initializer(edgeIndices, this.pipeline.visuals);
+      initializer(edgeIndices, this.visuals);
     }
-    this.pipeline.markPositionsDirty();
+    this.visuals.markPositionsDirty();
+    this.mappersDirty = true;
     this.layout?.requestUpdate?.();
     this.scheduler.requestLayout();
     this.scheduler.requestGeometry();
@@ -126,15 +138,36 @@ export class Helios {
 
   notifyNetworkChanged({ nodes, edges } = {}) {
     if (nodes) {
-      this.pipeline.visuals.applyNodeDefaults(nodes);
-      this.pipeline.visuals.seedMissingPositions(this.layers.size);
+      this.visuals.applyNodeDefaults(nodes);
+      this.visuals.seedMissingPositions(this.layers.size);
     }
     if (edges) {
-      this.pipeline.visuals.applyEdgeDefaults(edges);
+      this.visuals.applyEdgeDefaults(edges);
     }
-    this.pipeline.markPositionsDirty();
+    this.visuals.markPositionsDirty();
+    this.mappersDirty = true;
     this.layout?.requestUpdate?.();
     this.scheduler.requestLayout();
+    this.scheduler.requestGeometry();
+  }
+
+  setMappers({ nodeMapper, edgeMapper } = {}) {
+    if (nodeMapper === null && edgeMapper === null) {
+      this.mappers = null;
+      this.mappersDirty = false;
+      return;
+    }
+    if (nodeMapper) {
+      if (!this.mappers) this.mappers = {};
+      this.mappers.nodeMapper = nodeMapper;
+    }
+    if (edgeMapper) {
+      if (!this.mappers) this.mappers = {};
+      this.mappers.edgeMapper = edgeMapper;
+    }
+    if (this.mappers) {
+      this.mappersDirty = true;
+    }
     this.scheduler.requestGeometry();
   }
 
@@ -145,7 +178,7 @@ export class Helios {
     this.layout?.dispose?.();
     this.layout = layout;
     this.layout.setUpdateListener(() => {
-      this.pipeline.markPositionsDirty();
+      this.visuals.markPositionsDirty();
       this.scheduler.requestGeometry();
     });
     this.layout.initialize?.();

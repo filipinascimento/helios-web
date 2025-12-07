@@ -14,7 +14,7 @@ The renderer expects an initialized `helios-network` instance. In many cases tha
 
 ```js
 import HeliosNetwork from 'helios-network';
-import { Helios } from 'helios-web-next';
+import { Helios, Mapper } from 'helios-web-next';
 
 const network = await HeliosNetwork.create();
 network.addNodes(5);
@@ -25,14 +25,17 @@ const helios = new Helios(network, {
 });
 await helios.ready;
 
-helios.attributeMappings.mapNodeAttributeToColor('weight');
+const mapper = new Mapper({ mode: 'node', network });
+mapper.channel('color').constant('#ff3366').done();
+helios.setMappers({ nodeMapper: mapper });
 ```
 
 Key entry points:
 
 - `Helios` – prepares layers, connects the scheduler, kick-starts rendering
 - `StaticLayout`, `WorkerLayout` – ready-to-use layout implementations
-- `AttributeMapperUtility` – helper for mapping graph attributes to visuals
+- `Mapper` – flexible mapping utility for visual channels; mapped values land in
+  sparse attributes and trigger dense buffer rebuilds automatically
 
 ## Example Catalog
 
@@ -52,6 +55,6 @@ The Vite dev server serves `index.html`, which bootstraps the Basic example unde
 
 - `npm run build` compiles the package into `dist/` for consumption via bundlers or CDN.
 - The build targets WebGPU first; WebGL2 is activated automatically when necessary.
-- Geometry buffers live directly on the `helios-network` object to avoid copies between layout, pipeline, and renderer stages.
+- Geometry buffers live directly on the `helios-network` object to avoid copies between layout, visuals, and renderer stages.
 
 Use this directory as the canonical reference when publishing or sharing package usage instructions.

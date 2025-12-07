@@ -53,6 +53,7 @@ export async function createDeterministicHelios(container, renderer = 'webgl') {
     renderer,
     clearColor: [0, 0, 0, 1],
     layout: { type: 'static', options: { bounds: [0, 0, 320, 320] } },
+    mappers: null,
   });
   await helios.ready;
 
@@ -69,7 +70,7 @@ export async function createDeterministicHelios(container, renderer = 'webgl') {
     sizeView[id] = 48;
   });
 
-  helios.pipeline.markPositionsDirty();
+  helios.visuals.markAllDenseDirty();
   helios.scheduler.requestGeometry();
 
   return { helios, colors };

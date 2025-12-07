@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import HeliosNetwork, { AttributeType } from 'helios-network';
-import { VisualAttributeMapper } from '../src/pipeline/VisualAttributeMapper.js';
+import { VisualAttributes } from '../src/pipeline/VisualAttributes.js';
 import {
   EDGE_COLOR_ATTRIBUTE,
   EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
@@ -22,7 +22,7 @@ test('dense buffers map nodes and edges with correct counts and data', async () 
   network.defineNodeToEdgeAttribute(NODE_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_POSITION_ATTRIBUTE, 'both');
   network.defineNodeToEdgeAttribute(NODE_SIZE_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE, 'both');
 
-  const mapper = new VisualAttributeMapper(network);
+  const visuals = new VisualAttributes(network);
   const nodes = network.addNodes(2);
   if (network.nodeActivityView) {
     network.nodeActivityView.fill(0);
@@ -46,16 +46,48 @@ test('dense buffers map nodes and edges with correct counts and data', async () 
   const edgeWidths = network.getEdgeAttributeBuffer(EDGE_WIDTH_ATTRIBUTE).view;
   edgeColors.set([0.1, 0.2, 0.3, 0.4], edges[0] * 4);
   edgeWidths[edges[0]] = 2;
-  mapper.markAllDenseDirty();
-  const geometry = mapper.buildDenseGeometry();
+  visuals.markAllDenseDirty();
 
-  expect(geometry.nodes.count).toBeGreaterThanOrEqual(2);
-  expect(geometry.edges.count).toBeGreaterThanOrEqual(1);
-  expect(geometry.nodes.indices.length).toBeGreaterThanOrEqual(2);
-  expect(geometry.edges.indices.length).toBeGreaterThanOrEqual(1);
-  expect(Array.from(geometry.edges.segments.slice(0, 6))).toEqual([10, 20, 0, 100, 200, 0]);
-  expect(Array.from(geometry.edges.endpointSizes.slice(0, 2))).toEqual([5, 7]);
-  expect(Array.from(geometry.edges.widths.slice(0, 1))).toEqual([2]);
+  const edgeSegmentsDesc = network.updateDenseEdgeAttributeBuffer(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
+  const edgeSegments = new Float32Array(
+    edgeSegmentsDesc.view.buffer,
+    edgeSegmentsDesc.pointer ?? edgeSegmentsDesc.view.byteOffset ?? 0,
+    edgeSegmentsDesc.count * 6,
+  );
+  const edgeEndpointSizesDesc = network.updateDenseEdgeAttributeBuffer(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+  const edgeEndpointSizes = new Float32Array(
+    edgeEndpointSizesDesc.view.buffer,
+    edgeEndpointSizesDesc.pointer ?? edgeEndpointSizesDesc.view.byteOffset ?? 0,
+    edgeEndpointSizesDesc.count * 2,
+  );
+  const edgeWidthsDesc = network.updateDenseEdgeAttributeBuffer(EDGE_WIDTH_ATTRIBUTE);
+  const edgeWidthsView = new Float32Array(
+    edgeWidthsDesc.view.buffer,
+    edgeWidthsDesc.pointer ?? edgeWidthsDesc.view.byteOffset ?? 0,
+    edgeWidthsDesc.count,
+  );
+  const edgeIndexDesc = network.updateDenseEdgeIndexBuffer();
+  const edgeIndices = new Uint32Array(
+    edgeIndexDesc.view.buffer,
+    edgeIndexDesc.pointer ?? edgeIndexDesc.view.byteOffset ?? 0,
+    edgeIndexDesc.count,
+  );
+
+  const nodeIndexDesc = network.updateDenseNodeIndexBuffer();
+  const nodeIndices = new Uint32Array(
+    nodeIndexDesc.view.buffer,
+    nodeIndexDesc.pointer ?? nodeIndexDesc.view.byteOffset ?? 0,
+    nodeIndexDesc.count,
+  );
+
+  expect(edgeSegmentsDesc.count).toBeGreaterThanOrEqual(1);
+  expect(edgeSegmentsDesc.count).toBe(edgeEndpointSizesDesc.count);
+  expect(nodeIndexDesc.count).toBeGreaterThanOrEqual(2);
+  expect(edgeIndices.length).toBeGreaterThanOrEqual(1);
+  expect(Array.from(edgeSegments.slice(0, 6))).toEqual([10, 20, 0, 100, 200, 0]);
+  expect(Array.from(edgeEndpointSizes.slice(0, 2))).toEqual([5, 7]);
+  expect(Array.from(edgeWidthsView.slice(0, 1))).toEqual([2]);
+  expect(Array.from(nodeIndices.slice(0, 2)).sort()).toEqual([nodes[0], nodes[1]].sort());
   expect(network.nodeValidRange.end - network.nodeValidRange.start).toBeGreaterThanOrEqual(2);
   expect(network.edgeValidRange.end - network.edgeValidRange.start).toBeGreaterThanOrEqual(1);
 });

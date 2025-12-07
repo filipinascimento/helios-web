@@ -15,8 +15,8 @@ npm run test:e2e  # launches a headless smoke test (run `npx playwright install`
 
 Point your browser at `http://localhost:5173` to interact with the bundled
 example (located in `docs/examples/basic`). It creates a sample graph, applies
-worker layout updates, and renders it through the Helios pipeline so you can
-verify the stack end-to-end.
+worker layout updates, and renders it via dense buffers pulled straight from
+`helios-network` so you can verify the stack end-to-end.
 
 ## Documentation & Examples
 
@@ -50,20 +50,21 @@ Run `npm run test:e2e` to boot the basic example in a headless Chromium session
 via Playwright. The test forces the WebGL renderer, waits for Helios to finish
 bootstrapping, and samples pixels from the canvas to ensure the output isn't
 stuck at the background color. This provides a quick automated sanity check that
-both the rendering pipeline and the documentation example stay functional.
+both the rendering stack and the documentation example stay functional.
 
 ## Architecture Overview
 
 - **Helios class (`src/Helios.js`)** – public entry point. It accepts an
   existing `helios-network` instance, prepares DOM layers, initializes the
-  rendering backend, and wires the scheduler, layout, and pipeline together.
+  rendering backend, and wires the scheduler, layout, visuals, and mappers
+  together.
 - **LayerManager (`src/layers/LayerManager.js`)** – creates the stack of layers
   (WebGPU/WebGL canvas, SVG overlay, HTML overlay) and keeps them sized via a
   `ResizeObserver` hook.
-- **Pipeline (`src/pipeline/*.js`)** – ensures visual attributes live directly
-  inside the `helios-network` object, converts them into geometry buffers, and
-  provides extension points (edge expansion, attribute mapping utilities) for
-  future stages.
+- **Visuals & mapping (`src/pipeline/*.js`)** – ensure visual attributes live
+  directly inside the `helios-network` object, seed defaults, validate
+  dimensions/types, and mark dense buffers dirty when mappers write into sparse
+  attributes.
 - **Scheduler (`src/scheduler/Scheduler.js`)** – lightweight coordinator that
   sequences layout ticks, geometry updates, and draw calls. Layouts can
   advertise that they should run continuously or only when explicitly marked
@@ -79,9 +80,9 @@ both the rendering pipeline and the documentation example stay functional.
   option `renderer: 'webgl' | 'webgpu'` when needed.
 
 Development docs and test commands live in `DEVELOPING.md`.
-- **Attribute mapping (`src/pipeline/AttributeMapperUtility.js`)** – helper to
-  convert arbitrary node/edge attributes into colors or sizes using linear
-  gradients or custom palette callbacks.
+- **Attribute mapping (`src/pipeline/Mapper.js`)** – helper to convert arbitrary
+  node/edge attributes into colors or sizes; mapped values are written into
+  sparse visual attributes and flagged for dense rebuilds.
 
 The demo in `docs/examples/basic/main.js` showcases how to instantiate a
 network, define visual attributes, and kick off Helios with a worker-driven

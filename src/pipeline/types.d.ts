@@ -1,28 +1,7 @@
-export interface NodeGeometry {
-  positions: Float32Array;
-  colors: Float32Array;
-  sizes: Float32Array;
-  outlineWidths: Float32Array;
-  outlineColors: Float32Array;
-  indices: Uint32Array;
-  count: number;
-}
+import type HeliosNetwork from 'helios-network';
 
-export interface EdgeGeometry {
-  segments: Float32Array;
-  colors: Float32Array;
-  widths: Float32Array;
-  endpointSizes: Float32Array;
-  indices: Uint32Array;
-  count: number;
-}
-
-export interface GeometryBuffers {
-  nodes: NodeGeometry;
-  edges: EdgeGeometry;
-}
-
-export interface PipelineFrame {
-  geometry: GeometryBuffers;
+export interface RenderFrame {
+  network: HeliosNetwork;
   timestamp: number;
+  camera?: unknown;
 }
