@@ -7,10 +7,11 @@ import {
   EDGE_QUAD_VERTEX_SOURCE,
 } from './shaders/graphWebGL.js';
 import { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './GraphLayerCommon.js';
+import { GraphLayer } from './GraphLayer.js';
 
-export class GraphLayerWebGL {
-  constructor(layer) {
-    this.layer = layer;
+export class GraphLayerWebGL extends GraphLayer {
+  constructor(options = {}) {
+    super(options);
     this.device = null;
     this.gl = null;
 
@@ -62,6 +63,7 @@ export class GraphLayerWebGL {
     if (device?.type !== 'webgl2') {
       throw new Error('GraphLayerWebGL requires a WebGL2 device.');
     }
+    super.initialize(device, size);
     this.device = device;
     this.gl = device.gl;
     this.initializeWebGL2();
@@ -69,7 +71,7 @@ export class GraphLayerWebGL {
   }
 
   resize(size) {
-    this.layer.size = size;
+    super.resize(size);
     // Matrices are updated per-frame from the camera.
   }
 
@@ -89,9 +91,7 @@ export class GraphLayerWebGL {
   }
 
   setEdgeRenderingMode(mode) {
-    if (mode === 'line' || mode === 'quad') {
-      this.layer.edgeRenderingMode = mode;
-    }
+    super.setEdgeRenderingMode(mode);
   }
 
   initializeWebGL2() {
@@ -240,7 +240,7 @@ export class GraphLayerWebGL {
     const { geometry, camera } = frame ?? {};
     if (!geometry) return;
     const gl = context.gl;
-    const cameraUniforms = this.layer.getCameraUniforms(camera);
+    const cameraUniforms = this.getCameraUniforms(camera);
     if (!cameraUniforms) return;
     const is2D = cameraUniforms.mode === '2d';
     const zoom2D = is2D ? Math.max(1e-3, cameraUniforms.view?.[0] ?? 1) : 1;
@@ -286,18 +286,18 @@ export class GraphLayerWebGL {
       if (this.nodeUniformIs2D) {
         gl.uniform1i(this.nodeUniformIs2D, is2D ? 1 : 0);
       }
-      gl.uniform1f(this.nodeUniformOpacityBase, this.layer.nodeOpacityBase);
-      gl.uniform1f(this.nodeUniformOpacityScale, this.layer.nodeOpacityScale);
-      gl.uniform1f(this.nodeUniformSizeBase, this.layer.nodeSizeBase);
-      gl.uniform1f(this.nodeUniformSizeScale, this.layer.nodeSizeScale);
-      gl.uniform1f(this.nodeUniformOutlineWidthBase, this.layer.nodeOutlineWidthBase);
-      gl.uniform1f(this.nodeUniformOutlineWidthScale, this.layer.nodeOutlineWidthScale);
+      gl.uniform1f(this.nodeUniformOpacityBase, this.nodeOpacityBase);
+      gl.uniform1f(this.nodeUniformOpacityScale, this.nodeOpacityScale);
+      gl.uniform1f(this.nodeUniformSizeBase, this.nodeSizeBase);
+      gl.uniform1f(this.nodeUniformSizeScale, this.nodeSizeScale);
+      gl.uniform1f(this.nodeUniformOutlineWidthBase, this.nodeOutlineWidthBase);
+      gl.uniform1f(this.nodeUniformOutlineWidthScale, this.nodeOutlineWidthScale);
       gl.uniform4f(
         this.nodeUniformOutlineColor,
-        this.layer.nodeOutlineColor?.[0] ?? 0,
-        this.layer.nodeOutlineColor?.[1] ?? 0,
-        this.layer.nodeOutlineColor?.[2] ?? 0,
-        this.layer.nodeOutlineColor?.[3] ?? 1,
+        this.nodeOutlineColor?.[0] ?? 0,
+        this.nodeOutlineColor?.[1] ?? 0,
+        this.nodeOutlineColor?.[2] ?? 0,
+        this.nodeOutlineColor?.[3] ?? 1,
       );
       gl.bindVertexArray(this.nodeVAO);
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.nodeCount);
@@ -306,36 +306,36 @@ export class GraphLayerWebGL {
     const drawEdges = () => {
       if (!this.edgeCount) return;
       gl.depthMask(false);
-      const useQuads = this.layer.edgeRenderingMode === 'quad';
-      const globalEdgeWidthBase = this.layer.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
-      const globalEdgeWidthScale = this.layer.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
+      const useQuads = this.edgeRenderingMode === 'quad';
+      const globalEdgeWidthBase = this.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
+      const globalEdgeWidthScale = this.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
       if (useQuads) {
         gl.useProgram(this.edgeQuadProgram);
         gl.uniformMatrix4fv(this.edgeQuadUniformViewProjection, false, cameraUniforms.viewProjection);
         if (this.edgeQuadUniformViewport) {
-          const viewportWidth = gl.drawingBufferWidth || this.layer.size?.width || 1;
-          const viewportHeight = gl.drawingBufferHeight || this.layer.size?.height || 1;
+          const viewportWidth = gl.drawingBufferWidth || this.size?.width || 1;
+          const viewportHeight = gl.drawingBufferHeight || this.size?.height || 1;
           gl.uniform2f(this.edgeQuadUniformViewport, viewportWidth, viewportHeight);
         }
-        gl.uniform1f(this.edgeQuadUniformOpacityBase, this.layer.edgeOpacityBase);
-        gl.uniform1f(this.edgeQuadUniformOpacityScale, this.layer.edgeOpacityScale);
+        gl.uniform1f(this.edgeQuadUniformOpacityBase, this.edgeOpacityBase);
+        gl.uniform1f(this.edgeQuadUniformOpacityScale, this.edgeOpacityScale);
         gl.uniform1f(this.edgeQuadUniformWidthBase, globalEdgeWidthBase);
         gl.uniform1f(this.edgeQuadUniformWidthScale, globalEdgeWidthScale);
-        gl.uniform1f(this.edgeQuadUniformNodeSizeBase, this.layer.nodeSizeBase);
-        gl.uniform1f(this.edgeQuadUniformNodeSizeScale, this.layer.nodeSizeScale);
-        gl.uniform1f(this.edgeQuadUniformEndpointTrim, this.layer.edgeEndpointTrim);
+        gl.uniform1f(this.edgeQuadUniformNodeSizeBase, this.nodeSizeBase);
+        gl.uniform1f(this.edgeQuadUniformNodeSizeScale, this.nodeSizeScale);
+        gl.uniform1f(this.edgeQuadUniformEndpointTrim, this.edgeEndpointTrim);
         gl.bindVertexArray(this.edgeQuadVAO);
         gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.edgeCount);
       } else {
         gl.useProgram(this.edgeProgram);
         gl.uniformMatrix4fv(this.edgeUniformViewProjection, false, cameraUniforms.viewProjection);
-        gl.uniform1f(this.edgeUniformOpacityBase, this.layer.edgeOpacityBase);
-        gl.uniform1f(this.edgeUniformOpacityScale, this.layer.edgeOpacityScale);
+        gl.uniform1f(this.edgeUniformOpacityBase, this.edgeOpacityBase);
+        gl.uniform1f(this.edgeUniformOpacityScale, this.edgeOpacityScale);
         gl.uniform1f(this.edgeUniformWidthBase, globalEdgeWidthBase);
         gl.uniform1f(this.edgeUniformWidthScale, globalEdgeWidthScale);
-        gl.uniform1f(this.edgeUniformNodeSizeBase, this.layer.nodeSizeBase);
-        gl.uniform1f(this.edgeUniformNodeSizeScale, this.layer.nodeSizeScale);
-        gl.uniform1f(this.edgeUniformEndpointTrim, this.layer.edgeEndpointTrim);
+        gl.uniform1f(this.edgeUniformNodeSizeBase, this.nodeSizeBase);
+        gl.uniform1f(this.edgeUniformNodeSizeScale, this.nodeSizeScale);
+        gl.uniform1f(this.edgeUniformEndpointTrim, this.edgeEndpointTrim);
         gl.bindVertexArray(this.edgeVAO);
         gl.drawArraysInstanced(gl.LINES, 0, 2, this.edgeCount);
       }

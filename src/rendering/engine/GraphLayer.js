@@ -1,6 +1,4 @@
 import { Layer } from './Layer.js';
-import { GraphLayerWebGL } from './GraphLayerWebGL.js';
-import { GraphLayerWebGPU } from './GraphLayerWebGPU.js';
 
 export { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './GraphLayerCommon.js';
 
@@ -21,41 +19,12 @@ export class GraphLayer extends Layer {
     this.edgeWidthBase = 0;
     this.edgeWidthScale = 1;
     this.edgeEndpointTrim = 1;
-    this.backend = null;
     this.fallbackCameraUniforms = null;
-  }
-
-  initialize(device, size) {
-    super.initialize(device, size);
-    if (device?.type === 'webgl2') {
-      this.backend = new GraphLayerWebGL(this);
-    } else if (device?.type === 'webgpu') {
-      this.backend = new GraphLayerWebGPU(this);
-    } else {
-      throw new Error(`Unsupported device type for GraphLayer: ${device?.type ?? 'unknown'}`);
-    }
-    this.backend.initialize(device, size);
-  }
-
-  resize(size, device = this.device) {
-    super.resize(size);
-    this.backend?.resize(size, device);
-  }
-
-  render(context, frame) {
-    if (!frame?.geometry || !this.backend) return;
-    this.backend.render(context, frame);
-  }
-
-  destroy() {
-    this.backend?.destroy?.();
-    this.backend = null;
   }
 
   setEdgeRenderingMode(mode) {
     if (mode === 'line' || mode === 'quad') {
       this.edgeRenderingMode = mode;
-      this.backend?.setEdgeRenderingMode?.(mode);
     }
   }
 

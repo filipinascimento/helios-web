@@ -1,4 +1,5 @@
-import { GraphLayer } from './GraphLayer.js';
+import { GraphLayerWebGL } from './GraphLayerWebGL.js';
+import { GraphLayerWebGPU } from './GraphLayerWebGPU.js';
 import { WebGL2Device } from './WebGL2Device.js';
 import { WebGPUDevice } from './WebGPUDevice.js';
 import { Camera } from '../Camera.js';
@@ -21,10 +22,8 @@ export class LayeredRenderer {
     this.presentRect = null;
     this.camera = options.camera ?? new Camera(canvas, { ...options, viewport: this.size, target: null });
 
-    // Default graph drawing layer. Developers can remove or replace it if
-    // they want to fully customize rendering.
-    this.graphLayer = new GraphLayer({ edgeRendering: options.edgeRendering });
-    this.layers.push(this.graphLayer);
+    // Default graph drawing layer will be created once a device is chosen.
+    this.graphLayer = null;
   }
 
   /**
@@ -58,6 +57,7 @@ export class LayeredRenderer {
     if (this.camera && this.size) {
       this.camera.setTarget([this.size.width * 0.5, this.size.height * 0.5, 0]);
     }
+    this.ensureGraphLayer();
     for (const layer of this.layers) {
       layer.initialize?.(this.device, this.size);
     }
@@ -112,6 +112,7 @@ export class LayeredRenderer {
   }
 
   setEdgeRenderingMode(mode) {
+    this.options.edgeRendering = mode;
     this.graphLayer?.setEdgeRenderingMode?.(mode);
   }
 
@@ -195,6 +196,18 @@ export class LayeredRenderer {
     }
     this.device?.destroy?.();
     this.camera?.destroy?.();
+  }
+
+  ensureGraphLayer() {
+    if (this.graphLayer) return;
+    const options = { edgeRendering: this.options.edgeRendering, nodeOutlineColor: this.options.nodeOutlineColor };
+    if (this.device?.type === 'webgpu') {
+      this.graphLayer = new GraphLayerWebGPU(options);
+    } else {
+      this.graphLayer = new GraphLayerWebGL(options);
+    }
+    // Keep the graph layer first to match previous ordering.
+    this.layers.unshift(this.graphLayer);
   }
 }
 

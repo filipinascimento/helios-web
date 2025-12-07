@@ -1,9 +1,10 @@
 import { NODE_WGSL, EDGE_WGSL } from './shaders/graphWebGPU.js';
 import { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './GraphLayerCommon.js';
+import { GraphLayer } from './GraphLayer.js';
 
-export class GraphLayerWebGPU {
-  constructor(layer) {
-    this.layer = layer;
+export class GraphLayerWebGPU extends GraphLayer {
+  constructor(options = {}) {
+    super(options);
     this.device = null;
 
     this.nodeBindGroupLayout = null;
@@ -27,13 +28,14 @@ export class GraphLayerWebGPU {
     if (device?.type !== 'webgpu') {
       throw new Error('GraphLayerWebGPU requires a WebGPU device.');
     }
+    super.initialize(device, size);
     this.device = device;
     this.initializeWebGPU(device);
     this.resize(size);
   }
 
   resize(size) {
-    this.layer.size = size;
+    super.resize(size);
   }
 
   destroy() {
@@ -53,9 +55,7 @@ export class GraphLayerWebGPU {
   }
 
   setEdgeRenderingMode(mode) {
-    if (mode === 'line' || mode === 'quad') {
-      this.layer.edgeRenderingMode = mode;
-    }
+    super.setEdgeRenderingMode(mode);
   }
 
   initializeWebGPU(device) {
@@ -336,7 +336,7 @@ export class GraphLayerWebGPU {
     const gpuDevice = this.device?.device;
     if (!gpuDevice) return;
     const maxBindingSize = gpuDevice.limits?.maxStorageBufferBindingSize;
-    const cameraUniforms = this.layer.getCameraUniforms(camera);
+    const cameraUniforms = this.getCameraUniforms(camera);
     const is2D = cameraUniforms?.mode === '2d';
     this.updateGlobalsGpu(gpuDevice, cameraUniforms);
     this.updateCameraUniformsGpu(camera, cameraUniforms);
@@ -362,7 +362,7 @@ export class GraphLayerWebGPU {
 
     const drawEdges = () => {
       if (!geometry.edges.count || !this.edgeBindGroup) return;
-      if (this.layer.edgeRenderingMode === 'quad' && this.edgeQuadPipeline) {
+      if (this.edgeRenderingMode === 'quad' && this.edgeQuadPipeline) {
         context.passEncoder.setPipeline(this.edgeQuadPipeline);
         context.passEncoder.setBindGroup(0, this.edgeBindGroup);
         context.passEncoder.setVertexBuffer(0, this.edgeQuadBufferGpu);
@@ -385,7 +385,7 @@ export class GraphLayerWebGPU {
 
   updateCameraUniformsGpu(camera, cameraUniforms) {
     if (!this.device?.device || !this.cameraBuffer || !this.cameraArray) return;
-    const source = cameraUniforms ?? this.layer.getCameraUniforms(camera);
+    const source = cameraUniforms ?? this.getCameraUniforms(camera);
     if (!source) return;
     this.cameraArray.set(source.viewProjection, 0);
     this.cameraArray.set(source.view, 16);
@@ -401,9 +401,9 @@ export class GraphLayerWebGPU {
     this.cameraArray[41] = source.right?.[1] ?? 0;
     this.cameraArray[42] = source.right?.[2] ?? 0;
     this.cameraArray[43] = 0;
-    const viewportWidth = source.viewport?.width ?? this.layer.size?.width ?? 1;
-    const viewportHeight = source.viewport?.height ?? this.layer.size?.height ?? 1;
-    const pixelRatio = source.viewport?.devicePixelRatio ?? this.layer.size?.devicePixelRatio ?? 1;
+    const viewportWidth = source.viewport?.width ?? this.size?.width ?? 1;
+    const viewportHeight = source.viewport?.height ?? this.size?.height ?? 1;
+    const pixelRatio = source.viewport?.devicePixelRatio ?? this.size?.devicePixelRatio ?? 1;
     const drawWidth = viewportWidth * pixelRatio;
     const drawHeight = viewportHeight * pixelRatio;
     this.cameraArray[44] = drawWidth;
@@ -415,27 +415,27 @@ export class GraphLayerWebGPU {
 
   updateGlobalsGpu(device, cameraUniforms) {
     if (!device || !this.globalsBuffer || !this.globalsArray) return;
-    const outlineColor = this.layer.nodeOutlineColor || [0, 0, 0, 1];
+    const outlineColor = this.nodeOutlineColor || [0, 0, 0, 1];
     const is2D = cameraUniforms?.mode === '2d';
     const zoom2D = is2D ? Math.max(1e-3, cameraUniforms?.view?.[0] ?? 1) : 1;
     const edgeWidthFactor = is2D ? (zoom2D / EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL) : 1.0;
-    const edgeWidthBase = this.layer.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
-    const edgeWidthScale = this.layer.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
-    this.globalsArray[0] = this.layer.nodeOpacityBase;
-    this.globalsArray[1] = this.layer.nodeOpacityScale;
-    this.globalsArray[2] = this.layer.nodeSizeBase;
-    this.globalsArray[3] = this.layer.nodeSizeScale;
-    this.globalsArray[4] = this.layer.nodeOutlineWidthBase;
-    this.globalsArray[5] = this.layer.nodeOutlineWidthScale;
-    this.globalsArray[6] = this.layer.edgeOpacityBase;
-    this.globalsArray[7] = this.layer.edgeOpacityScale;
+    const edgeWidthBase = this.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
+    const edgeWidthScale = this.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
+    this.globalsArray[0] = this.nodeOpacityBase;
+    this.globalsArray[1] = this.nodeOpacityScale;
+    this.globalsArray[2] = this.nodeSizeBase;
+    this.globalsArray[3] = this.nodeSizeScale;
+    this.globalsArray[4] = this.nodeOutlineWidthBase;
+    this.globalsArray[5] = this.nodeOutlineWidthScale;
+    this.globalsArray[6] = this.edgeOpacityBase;
+    this.globalsArray[7] = this.edgeOpacityScale;
     this.globalsArray[8] = edgeWidthBase;
     this.globalsArray[9] = edgeWidthScale;
     this.globalsArray[10] = outlineColor[0] ?? 0;
     this.globalsArray[11] = outlineColor[1] ?? 0;
     this.globalsArray[12] = outlineColor[2] ?? 0;
     this.globalsArray[13] = outlineColor[3] ?? 1;
-    this.globalsArray[14] = this.layer.edgeEndpointTrim;
+    this.globalsArray[14] = this.edgeEndpointTrim;
     this.globalsArray[15] = 0;
     this.globalsArray[16] = 0;
     this.globalsArray[17] = 0;
