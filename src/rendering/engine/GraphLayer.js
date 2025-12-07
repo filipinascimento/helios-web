@@ -455,15 +455,6 @@ export class GraphLayer {
     gl.bufferData(gl.ARRAY_BUFFER, edges.endpointSizes, gl.DYNAMIC_DRAW);
   }
 
-  getCpuArray(name, length) {
-    const existing = this.cpuArrays[name];
-    if (!existing || existing.length < length) {
-      this.cpuArrays[name] = new Float32Array(length);
-      return this.cpuArrays[name];
-    }
-    return existing;
-  }
-
   // WebGPU helpers
   initializeWebGPU(device) {
     this.cameraArray = new Float32Array(48);
@@ -672,8 +663,10 @@ export class GraphLayer {
   }
 
   updateEdgeBuffersGpu(edges, device, maxBindingSize) {
-    const { segments, colors, indices, widths } = edges;
-    const endpointSizes = edges.endpointSizes ?? this.getCpuArray('edgeEndpointSizesGpu', indices.length * 2);
+    const { segments, colors, indices, widths, endpointSizes } = edges;
+    if (!endpointSizes) {
+      throw new Error('Edge endpoint sizes buffer is missing; dense buffers must include endpointSizes.');
+    }
     const storageUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
     this.edgeBuffersGpu.indices = this.ensureBufferGpu(
       this.edgeBuffersGpu.indices,
