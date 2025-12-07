@@ -3,6 +3,8 @@ import {
   Mapper,
   createDefaultMappers,
 } from '../src/pipeline/Mapper.js';
+import { AttributeType } from 'helios-network';
+import { EDGE_ENDPOINTS_SIZE_ATTRIBUTE } from '../src/pipeline/constants.js';
 import { DEFAULT_NODE_SIZE } from '../src/pipeline/constants.js';
 
 test('maps linear channel with rule override', () => {
@@ -59,6 +61,96 @@ test('nodeToEdge passthrough returns endpoint values', () => {
     target: { attributes: { community: 'B' } },
   });
   expect(mapped.color).toEqual({ source: 'A', target: 'B' });
+});
+
+test('nodeAttribute mapping duplicates endpoints when requested', () => {
+  const sourceOnly = new Mapper({ mode: 'edge' });
+  sourceOnly.channel('endpointSize').nodeAttribute('size', 'source').done();
+  const mappedSource = sourceOnly.mapItem({
+    source: { attributes: { size: 2 } },
+    target: { attributes: { size: 7 } },
+  });
+  expect(mappedSource.endpointSize).toEqual({ source: 2, target: 2 });
+
+  const destOnly = new Mapper({ mode: 'edge' });
+  destOnly.channel('endpointSize').nodeAttribute('size', 'destination').done();
+  const mappedDest = destOnly.mapItem({
+    source: { attributes: { size: 4 } },
+    target: { attributes: { size: 9 } },
+  });
+  expect(mappedDest.endpointSize).toEqual({ source: 9, target: 9 });
+
+  const both = new Mapper({ mode: 'edge' });
+  both.channel('endpointSize').nodeAttribute('size', 'both').done();
+  const mappedBoth = both.mapItem({
+    source: { attributes: { size: 3 } },
+    target: { attributes: { size: 5 } },
+  });
+  expect(mappedBoth.endpointSize).toEqual({ source: 3, target: 5 });
+});
+
+test('nodeAttribute mapping registers node-to-edge passthrough and replaces prior mapping', () => {
+  class FakeBuffer {
+    constructor(dimension, type) {
+      this.dimension = dimension;
+      this.type = type;
+      this.view = new Float32Array(dimension * 4);
+    }
+  }
+  class FakeNetwork {
+    constructor() {
+      this.nodeAttributes = new Map();
+      this.edgeAttributes = new Map();
+      this.removed = [];
+      this.nodeToEdgeCalls = [];
+    }
+    defineNodeAttribute(name, type, dimension) {
+      this.nodeAttributes.set(name, new FakeBuffer(dimension, type));
+    }
+    defineEdgeAttribute(name, type, dimension) {
+      this.edgeAttributes.set(name, new FakeBuffer(dimension, type));
+    }
+    defineNodeToEdgeAttribute(source, edge, endpoints, doubleWidth) {
+      const dim = this.nodeAttributes.get(source)?.dimension ?? 1;
+      const edgeDim = doubleWidth ? dim * 2 : dim;
+      this.edgeAttributes.set(edge, new FakeBuffer(edgeDim, AttributeType.Float));
+      this.nodeToEdgeCalls.push({ source, edge, endpoints, doubleWidth });
+    }
+    getNodeAttributeBuffer(name) {
+      const buffer = this.nodeAttributes.get(name);
+      if (!buffer) throw new Error(`missing node attr ${name}`);
+      return buffer;
+    }
+    getEdgeAttributeBuffer(name) {
+      const buffer = this.edgeAttributes.get(name);
+      if (!buffer) throw new Error(`missing edge attr ${name}`);
+      return buffer;
+    }
+    removeNodeToEdgeAttribute(edge) {
+      this.removed.push(edge);
+      this.edgeAttributes.delete(edge);
+    }
+  }
+
+  const network = new FakeNetwork();
+  const mapper = new Mapper({ mode: 'edge', network });
+
+  mapper.channel('endpointSize').nodeAttribute('customSize', 'destination').done();
+  expect(network.nodeToEdgeCalls[0]).toMatchObject({
+    source: 'customSize',
+    edge: EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
+    endpoints: 'destination',
+    doubleWidth: true,
+  });
+
+  mapper.channel('endpointSize').nodeAttribute('otherSize', 'source').done();
+  expect(network.removed).toContain(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+  expect(network.nodeToEdgeCalls.at(-1)).toMatchObject({
+    source: 'otherSize',
+    edge: EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
+    endpoints: 'source',
+    doubleWidth: true,
+  });
 });
 
 test('default mappers expose sensible defaults', () => {

@@ -122,10 +122,13 @@ export class VisualAttributes {
     const attributes = this.collectAttributeNames(mapper, 'edge');
     const edgeBuffers = this.resolveEdgeAttributeBuffers(attributes.edge);
     const nodeBuffers = this.resolveNodeAttributeBuffers(attributes.node);
+    const nodeToEdgeRegistrations = mapper?.nodeToEdgeRegistrations ?? new Set();
+    const skipColor = nodeToEdgeRegistrations.has(EDGE_COLOR_ATTRIBUTE);
+    const skipEndpointSize = nodeToEdgeRegistrations.has(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
     const visuals = {
-      color: this.edgeColors,
+      color: skipColor ? null : this.edgeColors,
       width: this.edgeWidths,
-      endpointSize: this.network.getEdgeAttributeBuffer(EDGE_ENDPOINTS_SIZE_ATTRIBUTE).view,
+      endpointSize: skipEndpointSize ? null : this.network.getEdgeAttributeBuffer(EDGE_ENDPOINTS_SIZE_ATTRIBUTE).view,
     };
     const activity = this.network?.edgeActivityView;
     const edgesView = this.network?.edgesView;
@@ -152,8 +155,8 @@ export class VisualAttributes {
     this.ensureNodeAttribute(NODE_SIZE_ATTRIBUTE, AttributeType.Float, 1);
     this.ensureNodeAttribute(NODE_OUTLINE_WIDTH_ATTRIBUTE, AttributeType.Float, 1);
     this.ensureNodeAttribute(NODE_OUTLINE_COLOR_ATTRIBUTE, AttributeType.Float, 4);
-    this.ensureEdgeAttribute(EDGE_COLOR_ATTRIBUTE, AttributeType.Float, 4);
-    this.ensureEdgeAttribute(EDGE_WIDTH_ATTRIBUTE, AttributeType.Float, 1);
+    this.ensureEdgeAttribute(EDGE_COLOR_ATTRIBUTE, AttributeType.Float, 8);
+    this.ensureEdgeAttribute(EDGE_WIDTH_ATTRIBUTE, AttributeType.Float, 2);
     this.ensureNodeToEdgeAttribute(NODE_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_POSITION_ATTRIBUTE, 3);
     this.ensureNodeToEdgeAttribute(NODE_SIZE_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE, 1);
   }
@@ -368,6 +371,18 @@ export class VisualAttributes {
     } catch (error) {
       buffer = null;
     }
+    if (
+      buffer &&
+      ((typeof buffer.dimension === 'number' && buffer.dimension !== dimension) ||
+        (buffer.type != null && buffer.type !== type))
+    ) {
+      try {
+        this.network.removeEdgeAttribute(name);
+        buffer = null;
+      } catch (_) {
+        // Ignore removal failures; validation will throw later if still mismatched.
+      }
+    }
     try {
       this.network.defineEdgeAttribute(name, type, dimension);
       buffer = this.network.getEdgeAttributeBuffer(name);
@@ -511,15 +526,22 @@ export class VisualAttributes {
   writeEdgeVisuals(edgeId, mapped, visuals) {
     if (!mapped) return;
     if (mapped.color && visuals.color) {
-      const rgba = this.toRgba(mapped.color);
-      const offset = edgeId * 4;
-      visuals.color[offset + 0] = rgba[0];
-      visuals.color[offset + 1] = rgba[1];
-      visuals.color[offset + 2] = rgba[2];
-      visuals.color[offset + 3] = rgba[3];
+      const [startColor, endColor] = this.resolveEdgeColorPair(mapped.color);
+      const offset = edgeId * 8;
+      visuals.color[offset + 0] = startColor[0];
+      visuals.color[offset + 1] = startColor[1];
+      visuals.color[offset + 2] = startColor[2];
+      visuals.color[offset + 3] = startColor[3];
+      visuals.color[offset + 4] = endColor[0];
+      visuals.color[offset + 5] = endColor[1];
+      visuals.color[offset + 6] = endColor[2];
+      visuals.color[offset + 7] = endColor[3];
     }
-    if (Number.isFinite(mapped.width) && visuals.width) {
-      visuals.width[edgeId] = mapped.width;
+    if (mapped.width != null && visuals.width) {
+      const [startWidth, endWidth] = this.resolveEdgeScalarPair(mapped.width);
+      const offset = edgeId * 2;
+      visuals.width[offset + 0] = startWidth;
+      visuals.width[offset + 1] = endWidth;
     }
     if (mapped.endpointSize && visuals.endpointSize) {
       const value = Array.isArray(mapped.endpointSize)
@@ -567,6 +589,50 @@ export class VisualAttributes {
     return fallback;
   }
 
+  resolveEdgeColorPair(value) {
+    if (Array.isArray(value) || ArrayBuffer.isView(value)) {
+      if (value.length >= 8) {
+        const start = [value[0], value[1], value[2], value[3]];
+        const end = [value[4], value[5], value[6], value[7]];
+        return [this.toRgba(start), this.toRgba(end)];
+      }
+      if (value.length === 4) {
+        const rgba = this.toRgba(value);
+        return [rgba, rgba];
+      }
+    }
+    if (value && typeof value === 'object') {
+      const start = 'source' in value ? this.toRgba(value.source) : this.toRgba(value);
+      const end = 'target' in value ? this.toRgba(value.target) : start;
+      return [start, end];
+    }
+    const rgba = this.toRgba(value);
+    return [rgba, rgba];
+  }
+
+  resolveEdgeScalarPair(value) {
+    if (Array.isArray(value) || ArrayBuffer.isView(value)) {
+      if (value.length >= 2) {
+        const start = Number.isFinite(value[0]) ? Number(value[0]) : 0;
+        const end = Number.isFinite(value[1]) ? Number(value[1]) : start;
+        return [start, end];
+      }
+      if (value.length === 1) {
+        const v = Number(value[0]) ?? 0;
+        return [v, v];
+      }
+    }
+    if (value && typeof value === 'object') {
+      const start = 'source' in value ? Number(value.source) : Number(value);
+      const end = 'target' in value ? Number(value.target) : start;
+      const startSafe = Number.isFinite(start) ? start : 0;
+      const endSafe = Number.isFinite(end) ? end : startSafe;
+      return [startSafe, endSafe];
+    }
+    const scalar = Number.isFinite(value) ? value : 0;
+    return [scalar, scalar];
+  }
+
   writeNodeDefaults(
     index,
     color,
@@ -608,13 +674,20 @@ export class VisualAttributes {
   }
 
   writeEdgeDefaults(index, color, width, colorView, widthView) {
-    const colorOffset = index * 4;
-    colorView[colorOffset + 0] = color[0];
-    colorView[colorOffset + 1] = color[1];
-    colorView[colorOffset + 2] = color[2];
-    colorView[colorOffset + 3] = color[3];
+    const colorOffset = index * 8;
+    const rgba = this.toRgba(color);
+    colorView[colorOffset + 0] = rgba[0];
+    colorView[colorOffset + 1] = rgba[1];
+    colorView[colorOffset + 2] = rgba[2];
+    colorView[colorOffset + 3] = rgba[3];
+    colorView[colorOffset + 4] = rgba[0];
+    colorView[colorOffset + 5] = rgba[1];
+    colorView[colorOffset + 6] = rgba[2];
+    colorView[colorOffset + 7] = rgba[3];
 
-    widthView[index] = width;
+    const widthOffset = index * 2;
+    widthView[widthOffset] = width;
+    widthView[widthOffset + 1] = width;
   }
 
   ignoreDuplicateAttribute(error, name) {

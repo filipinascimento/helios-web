@@ -80,6 +80,24 @@ function resolveNodeEndpoints(item, context) {
   return [getNode(source), getNode(target)];
 }
 
+function normalizeEndpoints(value) {
+  if (value === 'source' || value === 'from') return 'source';
+  if (value === 'destination' || value === 'target' || value === 'to') return 'destination';
+  return 'both';
+}
+
+function normalizeAttributeName(name) {
+  if (typeof name !== 'string') return name;
+  const trimmed = name.replace(/^@nodes?\./, '');
+  return VISUAL_ATTRIBUTE_MAP[trimmed] ?? trimmed;
+}
+
+function computePassthroughTargetDimension(sourceDimension = 1, endpoints = 'both', doubleWidth = true) {
+  const base = Math.max(1, sourceDimension || 1);
+  if (endpoints === 'both') return base * 2;
+  return doubleWidth ? base * 2 : base;
+}
+
 function resolveValueFromItem(item, key) {
   if (!item) return undefined;
   if (item.attributes && key in item.attributes) {
@@ -194,6 +212,18 @@ function computeChannelValue(config, item, context) {
     if (Array.isArray(inputs)) return inputs.length === 1 ? inputs[0] : inputs;
     return inputs;
   }
+  if (config.type === 'nodeAttribute') {
+    if (!Array.isArray(inputs)) return inputs;
+    const [sourceValue, targetValue] = inputs;
+    const endpoints = normalizeEndpoints(config.endpoints);
+    if (endpoints === 'source') {
+      return { source: sourceValue, target: sourceValue };
+    }
+    if (endpoints === 'destination') {
+      return { source: targetValue, target: targetValue };
+    }
+    return { source: sourceValue, target: targetValue };
+  }
   if (config.type === 'nodeToEdge') {
     return buildNodeToEdgeValue(inputs);
   }
@@ -209,6 +239,17 @@ function computeChannelValue(config, item, context) {
     if (!predicate) continue;
     if (rule.type === 'nodeToEdge') {
       return buildNodeToEdgeValue(ruleInputs);
+    }
+    if (rule.type === 'nodeAttribute') {
+      const endpoints = normalizeEndpoints(rule.endpoints ?? config.endpoints);
+      const [sourceValue, targetValue] = Array.isArray(ruleInputs) ? ruleInputs : [ruleInputs, ruleInputs];
+      if (endpoints === 'source') {
+        return { source: sourceValue, target: sourceValue };
+      }
+      if (endpoints === 'destination') {
+        return { source: targetValue, target: targetValue };
+      }
+      return { source: sourceValue, target: targetValue };
     }
     if (rule.type === 'passthrough') {
       return Array.isArray(ruleInputs) && ruleInputs.length === 1 ? ruleInputs[0] : ruleInputs;
@@ -230,6 +271,8 @@ function normalizeChannelConfig(name, config) {
     attributes: config.attributes ?? config.from ?? undefined,
     transform: config.transform,
     type: config.type ?? config.mode ?? undefined,
+    endpoints: normalizeEndpoints(config.endpoints ?? config.endpoint ?? 'both'),
+    nodeAttribute: config.nodeAttribute ?? config.nodeAttr ?? undefined,
     domain: config.domain,
     range: config.range,
     scale: config.scale,
@@ -242,6 +285,20 @@ function normalizeChannelConfig(name, config) {
   }
   if (normalized.type === 'nodeToEdge') {
     normalized.rules = [];
+  }
+  if (normalized.type === 'nodeAttribute') {
+    normalized.rules = [];
+    if (!normalized.nodeAttribute && typeof normalized.attributes === 'string') {
+      normalized.nodeAttribute = normalized.attributes.replace('@nodes.', '').replace('@node.', '');
+    }
+    if (!normalized.attributes && normalized.nodeAttribute) {
+      normalized.attributes = `@node.${normalized.nodeAttribute}`;
+    }
+    normalized.endpoints = normalizeEndpoints(config.endpoints ?? config.endpoint ?? 'both');
+    normalized.transform = undefined;
+    normalized.scale = undefined;
+    normalized.domain = undefined;
+    normalized.range = undefined;
   }
   return normalized;
 }
@@ -298,6 +355,19 @@ class ChannelBuilder {
     return this;
   }
 
+  nodeAttribute(name, endpoints = 'both') {
+    this.config.type = 'nodeAttribute';
+    this.config.nodeAttribute = name;
+    this.config.endpoints = normalizeEndpoints(endpoints);
+    this.config.attributes = [`@node.${name}`];
+    this.config.transform = undefined;
+    this.config.scale = undefined;
+    this.config.domain = undefined;
+    this.config.range = undefined;
+    this.config.rules = [];
+    return this;
+  }
+
   nodeToEdge() {
     this.config.type = 'nodeToEdge';
     this.config.rules = [];
@@ -329,19 +399,33 @@ const CHANNEL_DEFS = {
     position: { attribute: NODE_POSITION_ATTRIBUTE, type: AttributeType.Float, dimension: 3 },
   },
   edge: {
-    color: { attribute: EDGE_COLOR_ATTRIBUTE, type: AttributeType.Float, dimension: 4 },
-    width: { attribute: EDGE_WIDTH_ATTRIBUTE, type: AttributeType.Float, dimension: 1 },
+    color: {
+      attribute: EDGE_COLOR_ATTRIBUTE,
+      type: AttributeType.Float,
+      dimension: 8,
+      nodeSource: NODE_COLOR_ATTRIBUTE,
+      nodeSourceDimension: 4,
+      nodePassthroughEndpoints: 'both',
+      nodePassthroughDoubleWidth: true,
+    },
+    width: { attribute: EDGE_WIDTH_ATTRIBUTE, type: AttributeType.Float, dimension: 2 },
     endpointPosition: {
       attribute: EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
       type: AttributeType.Float,
       dimension: 6,
       nodeSource: NODE_POSITION_ATTRIBUTE,
+      nodeSourceDimension: 3,
+      nodePassthroughEndpoints: 'both',
+      nodePassthroughDoubleWidth: true,
     },
     endpointSize: {
       attribute: EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
       type: AttributeType.Float,
       dimension: 2,
       nodeSource: NODE_SIZE_ATTRIBUTE,
+      nodeSourceDimension: 1,
+      nodePassthroughEndpoints: 'both',
+      nodePassthroughDoubleWidth: true,
     },
   },
 };
@@ -351,6 +435,7 @@ export class Mapper {
     this.mode = options.mode ?? 'node';
     this.network = options.network ?? null;
     this.channels = new Map();
+    this.nodeToEdgeRegistrations = new Set();
   }
 
   channel(name) {
@@ -358,6 +443,10 @@ export class Mapper {
   }
 
   setChannel(name, config) {
+    const previous = this.channels.get(name);
+    if (previous) {
+      this.unregisterChannel(previous);
+    }
     const normalized = normalizeChannelConfig(name, config ?? {});
     this.ensureBuffersForChannel(normalized);
     this.channels.set(name, normalized);
@@ -385,12 +474,28 @@ export class Mapper {
     const defs = CHANNEL_DEFS[this.mode] ?? {};
     const def = defs[config.name];
     if (!def) return;
-    const { attribute, type, dimension, nodeSource } = def;
+    const { attribute, type, dimension } = def;
+    if (this.isNodePassthroughChannel(config, def)) {
+      const sourceAttribute = this.resolveNodeSourceAttribute(config, def);
+      if (!sourceAttribute) {
+        console.warn(`Mapper: unable to resolve node attribute for ${config.name} passthrough`);
+        return;
+      }
+      const sourceDimension = this.resolveNodeSourceDimension(sourceAttribute, def);
+      const passthrough = this.resolvePassthroughConfig(config, def, sourceDimension, dimension);
+      this.configureNodeToEdgeAttribute({
+        attribute,
+        sourceAttribute,
+        sourceDimension,
+        type,
+        channelName: config.name,
+        ...passthrough,
+      });
+      return;
+    }
+
     try {
-      if (this.mode === 'edge' && nodeSource && (config.type === 'passthrough' || config.type === 'nodeToEdge')) {
-        this.network.defineNodeAttribute(nodeSource, type, dimension / 2);
-        this.network.defineNodeToEdgeAttribute(nodeSource, attribute, 'both');
-      } else if (this.mode === 'node') {
+      if (this.mode === 'node') {
         this.network.defineNodeAttribute(attribute, type, dimension);
       } else {
         this.network.defineEdgeAttribute(attribute, type, dimension);
@@ -401,23 +506,144 @@ export class Mapper {
       }
     }
 
-    if (this.mode === 'edge' && nodeSource && (config.type === 'passthrough' || config.type === 'nodeToEdge')) {
-      const sourceBuffer = this.network.getNodeAttributeBuffer(nodeSource);
-      const edgeBuffer = this.network.getEdgeAttributeBuffer(attribute);
-      validateAttribute(sourceBuffer, nodeSource, type, dimension / 2);
-      validateAttribute(edgeBuffer, attribute, type, dimension);
-      this.registerDense('node', nodeSource);
-      this.registerDense('edge', attribute);
-      return;
-    }
     if (this.mode === 'node') {
-      const buffer = this.network.getNodeAttributeBuffer(attribute);
+      const buffer = this.safeGetAttributeBuffer('node', attribute);
       validateAttribute(buffer, attribute, type, dimension);
       this.registerDense('node', attribute);
     } else {
-      const buffer = this.network.getEdgeAttributeBuffer(attribute);
+      const buffer = this.safeGetAttributeBuffer('edge', attribute);
       validateAttribute(buffer, attribute, type, dimension);
       this.registerDense('edge', attribute);
+    }
+  }
+
+  isNodePassthroughChannel(config, def) {
+    return (
+      this.mode === 'edge' &&
+      def?.nodeSource &&
+      (config.type === 'passthrough' || config.type === 'nodeToEdge' || config.type === 'nodeAttribute')
+    );
+  }
+
+  resolveNodeSourceAttribute(config, def) {
+    if (!def?.nodeSource) return null;
+    if (config.nodeAttribute) return normalizeAttributeName(config.nodeAttribute);
+    const attrs = normalizeAttributes(config.attributes);
+    for (const attr of attrs) {
+      if (typeof attr === 'string' && /^@nodes?\./.test(attr)) {
+        return normalizeAttributeName(attr);
+      }
+    }
+    return normalizeAttributeName(def.nodeSource);
+  }
+
+  resolveNodeSourceDimension(sourceAttribute, def) {
+    if (!sourceAttribute) return null;
+    const buffer = this.safeGetAttributeBuffer('node', sourceAttribute);
+    if (buffer?.dimension != null) {
+      return buffer.dimension;
+    }
+    if (def?.nodeSourceDimension) {
+      return def.nodeSourceDimension;
+    }
+    if (def?.dimension && def?.nodePassthroughEndpoints) {
+      const estimatedEndpoints = normalizeEndpoints(def.nodePassthroughEndpoints);
+      const estimate = estimatedEndpoints === 'both' ? def.dimension / 2 : def.dimension;
+      return Math.max(1, Math.round(estimate));
+    }
+    return def?.dimension ?? 1;
+  }
+
+  resolvePassthroughConfig(config, def, sourceDimension, expectedDimension) {
+    const preferredEndpoints = normalizeEndpoints(config.endpoints ?? def.nodePassthroughEndpoints ?? 'both');
+    const defaultDoubleWidth = def.nodePassthroughDoubleWidth ?? true;
+    let endpoints = preferredEndpoints;
+    let doubleWidth = defaultDoubleWidth;
+    let targetDimension = computePassthroughTargetDimension(sourceDimension, endpoints, doubleWidth);
+    const desired = expectedDimension ?? def?.dimension;
+
+    if (desired && targetDimension !== desired) {
+      const flipDoubleWidth = computePassthroughTargetDimension(sourceDimension, endpoints, !doubleWidth);
+      if (flipDoubleWidth === desired) {
+        doubleWidth = !doubleWidth;
+        targetDimension = flipDoubleWidth;
+      } else {
+        const candidates = ['source', 'destination', 'both'];
+        for (const candidate of candidates) {
+          const candidateDoubleWidth =
+            def.nodePassthroughDoubleWidth ??
+            (candidate === 'both' ? true : doubleWidth);
+          const candidateDimension = computePassthroughTargetDimension(
+            sourceDimension,
+            candidate,
+            candidateDoubleWidth,
+          );
+          if (candidateDimension === desired) {
+            endpoints = candidate;
+            doubleWidth = candidateDoubleWidth;
+            targetDimension = candidateDimension;
+            break;
+          }
+        }
+      }
+    }
+
+    return { endpoints, doubleWidth, targetDimension };
+  }
+
+  configureNodeToEdgeAttribute({
+    attribute,
+    sourceAttribute,
+    sourceDimension,
+    type,
+    endpoints,
+    doubleWidth,
+    targetDimension,
+    channelName,
+  }) {
+    if (!attribute || !sourceAttribute) return;
+    this.unregisterNodeToEdge(attribute);
+    this.removeEdgeAttribute(attribute);
+    try {
+      this.network.defineNodeAttribute(sourceAttribute, type, sourceDimension);
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes('already')) {
+        console.warn(`Mapper failed to define node attribute ${sourceAttribute} for ${channelName}:`, error);
+      }
+    }
+    try {
+      this.network.defineNodeToEdgeAttribute(sourceAttribute, attribute, endpoints, doubleWidth);
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes('already')) {
+        console.warn(`Mapper failed to define node-to-edge attribute for ${channelName}:`, error);
+      }
+    }
+    const sourceBuffer = this.safeGetAttributeBuffer('node', sourceAttribute);
+    const edgeBuffer = this.safeGetAttributeBuffer('edge', attribute);
+    const expected = targetDimension ?? computePassthroughTargetDimension(sourceDimension, endpoints, doubleWidth);
+    validateAttribute(sourceBuffer, sourceAttribute, type, sourceDimension);
+    validateAttribute(edgeBuffer, attribute, type, expected);
+    this.nodeToEdgeRegistrations.add(attribute);
+    this.registerDense('node', sourceAttribute);
+    this.registerDense('edge', attribute);
+  }
+
+  safeGetAttributeBuffer(scope, name) {
+    if (!this.network || !name) return null;
+    const getter = scope === 'node' ? 'getNodeAttributeBuffer' : 'getEdgeAttributeBuffer';
+    try {
+      return this.network[getter](name);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  removeEdgeAttribute(name) {
+    if (!this.network?.removeEdgeAttribute || !name) return;
+    try {
+      this.network.removeEdgeAttribute(name);
+    } catch (_) {
+      // ignore failures when removing stale attributes
     }
   }
 
@@ -429,6 +655,26 @@ export class Mapper {
       method.call(this.network, name);
     } catch (_) {
       // ignore duplicates or unsupported dense buffers
+    }
+  }
+
+  unregisterNodeToEdge(attribute) {
+    if (!this.network?.removeNodeToEdgeAttribute || !attribute) return;
+    try {
+      this.network.removeNodeToEdgeAttribute(attribute);
+    } catch (_) {
+      // ignore unregistration failures
+    }
+    this.nodeToEdgeRegistrations.delete(attribute);
+  }
+
+  unregisterChannel(config) {
+    if (this.mode !== 'edge' || !config) return;
+    const defs = CHANNEL_DEFS[this.mode] ?? {};
+    const def = defs[config.name];
+    if (!def?.attribute || !def?.nodeSource) return;
+    if (config.type === 'passthrough' || config.type === 'nodeToEdge' || config.type === 'nodeAttribute') {
+      this.unregisterNodeToEdge(def.attribute);
     }
   }
 }

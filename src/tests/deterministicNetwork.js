@@ -15,8 +15,8 @@ export async function createDeterministicHelios(container, renderer = 'webgl') {
   network.defineNodeAttribute('_helios_visuals_position', AttributeType.Float, 3);
   network.defineNodeAttribute('_helios_visuals_color', AttributeType.Float, 4);
   network.defineNodeAttribute('_helios_visuals_size', AttributeType.Float, 1);
-  network.defineEdgeAttribute('_helios_visuals_edge_color', AttributeType.Float, 4);
-  network.defineEdgeAttribute('_helios_visuals_edge_width', AttributeType.Float, 1);
+  network.defineEdgeAttribute('_helios_visuals_edge_color', AttributeType.Float, 8);
+  network.defineEdgeAttribute('_helios_visuals_edge_width', AttributeType.Float, 2);
   network.defineNodeToEdgeAttribute('_helios_visuals_position', '_helios_visuals_edge_endpoints_position', 'both');
   network.defineNodeToEdgeAttribute('_helios_visuals_size', '_helios_visuals_edge_endpoints_size', 'both');
 

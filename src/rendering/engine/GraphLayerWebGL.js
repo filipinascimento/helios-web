@@ -180,18 +180,21 @@ export class GraphLayerWebGL extends GraphLayer {
     this.edgeBuffers.colors = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.colors);
     gl.enableVertexAttribArray(2);
-    gl.vertexAttribPointer(2, 4, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribPointer(2, 4, gl.FLOAT, false, 32, 0);
     gl.vertexAttribDivisor(2, 1);
+    gl.enableVertexAttribArray(3);
+    gl.vertexAttribPointer(3, 4, gl.FLOAT, false, 32, 16);
+    gl.vertexAttribDivisor(3, 1);
     this.edgeBuffers.widths = this.edgeBuffers.widths || gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.widths);
-    gl.enableVertexAttribArray(3);
-    gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 0, 0);
-    gl.vertexAttribDivisor(3, 1);
+    gl.enableVertexAttribArray(4);
+    gl.vertexAttribPointer(4, 2, gl.FLOAT, false, 8, 0);
+    gl.vertexAttribDivisor(4, 1);
     this.edgeBuffers.endpointSizes = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.endpointSizes);
-    gl.enableVertexAttribArray(4);
-    gl.vertexAttribPointer(4, 2, gl.FLOAT, false, 0, 0);
-    gl.vertexAttribDivisor(4, 1);
+    gl.enableVertexAttribArray(5);
+    gl.vertexAttribPointer(5, 2, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribDivisor(5, 1);
     gl.bindVertexArray(null);
 
     this.edgeQuadBuffer = gl.createBuffer();
@@ -221,17 +224,20 @@ export class GraphLayerWebGL extends GraphLayer {
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.widths);
     gl.enableVertexAttribArray(3);
-    gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribPointer(3, 2, gl.FLOAT, false, 8, 0);
     gl.vertexAttribDivisor(3, 1);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.colors);
     gl.enableVertexAttribArray(4);
-    gl.vertexAttribPointer(4, 4, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribPointer(4, 4, gl.FLOAT, false, 32, 0);
     gl.vertexAttribDivisor(4, 1);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.endpointSizes);
     gl.enableVertexAttribArray(5);
-    gl.vertexAttribPointer(5, 2, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribPointer(5, 4, gl.FLOAT, false, 32, 16);
     gl.vertexAttribDivisor(5, 1);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.endpointSizes);
+    gl.enableVertexAttribArray(6);
+    gl.vertexAttribPointer(6, 2, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribDivisor(6, 1);
     gl.bindVertexArray(null);
   }
 

@@ -45,8 +45,8 @@ test('edges render with correct relative widths', async ({ page }, testInfo) => 
           network.defineNodeAttribute('_helios_visuals_position', AttributeType.Float, 3);
           network.defineNodeAttribute('_helios_visuals_color', AttributeType.Float, 4);
           network.defineNodeAttribute('_helios_visuals_size', AttributeType.Float, 1);
-          network.defineEdgeAttribute('_helios_visuals_edge_color', AttributeType.Float, 4);
-          network.defineEdgeAttribute('_helios_visuals_edge_width', AttributeType.Float, 1);
+          network.defineEdgeAttribute('_helios_visuals_edge_color', AttributeType.Float, 8);
+          network.defineEdgeAttribute('_helios_visuals_edge_width', AttributeType.Float, 2);
           network.defineNodeToEdgeAttribute('_helios_visuals_position', '_helios_visuals_edge_endpoints_position', 'both');
           network.defineNodeToEdgeAttribute('_helios_visuals_size', '_helios_visuals_edge_endpoints_size', 'both');
 
@@ -96,12 +96,22 @@ test('edges render with correct relative widths', async ({ page }, testInfo) => 
             nodeColors[c + 2] = 1;
             nodeColors[c + 3] = 0;
           });
+          const writeColor = (edgeId, rgba) => {
+            const offset = edgeId * 8;
+            edgeColors.set(rgba, offset);
+            edgeColors.set(rgba, offset + 4);
+          };
+          const writeWidth = (edgeId, value) => {
+            const offset = edgeId * 2;
+            edgeWidths[offset] = value;
+            edgeWidths[offset + 1] = value;
+          };
           // Thin red edge
-          edgeColors.set([1, 0, 0, 1], edges[0] * 4);
-          edgeWidths[edges[0]] = 2;
+          writeColor(edges[0], [1, 0, 0, 1]);
+          writeWidth(edges[0], 2);
           // Thick blue edge
-          edgeColors.set([0, 0.2, 1, 1], edges[1] * 4);
-          edgeWidths[edges[1]] = 6;
+          writeColor(edges[1], [0, 0.2, 1, 1]);
+          writeWidth(edges[1], 6);
           if (helios.renderer?.graphLayer) {
             // Keep global scaling neutral so per-edge widths dominate.
             helios.renderer.graphLayer.edgeWidthBase = 0;

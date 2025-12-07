@@ -100,7 +100,7 @@ async function bootstrap() {
       return [t, 0.2, 1 - t, 1];
     })
     .done();
-  helios.nodeMapper.channel('size').from(nodeAttribute).linear([0, 1], [6, 18]).done();
+  helios.nodeMapper.channel('size').from(nodeAttribute).linear([0, 1], [1, 5]).done();
   // helios.edgeMapper
   //   .channel('color')
   //   .from(edgeAttribute)

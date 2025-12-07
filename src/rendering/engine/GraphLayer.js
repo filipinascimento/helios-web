@@ -178,8 +178,8 @@ export class GraphLayer extends Layer {
 
     const edges = {
       segments: this.createTypedView(edgeSegmentsDesc, Float32Array, 6) ?? this.emptyFloat,
-      colors: this.createTypedView(edgeColorDesc, Float32Array, 4) ?? this.emptyFloat,
-      widths: this.createTypedView(edgeWidthDesc, Float32Array, 1) ?? this.emptyFloat,
+      colors: this.createTypedView(edgeColorDesc, Float32Array, 8) ?? this.emptyFloat,
+      widths: this.createTypedView(edgeWidthDesc, Float32Array, 2) ?? this.emptyFloat,
       endpointSizes: this.createTypedView(edgeEndpointSizeDesc, Float32Array, 2) ?? this.emptyFloat,
       indices: this.createTypedView(edgeIndexDesc, Uint32Array, 1) ?? this.emptyUint,
       count:

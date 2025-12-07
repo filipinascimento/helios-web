@@ -76,10 +76,10 @@ void main() {
 export const EDGE_VERTEX_SOURCE = /* glsl */ `#version 300 es
 layout (location = 0) in vec3 a_start;
 layout (location = 1) in vec3 a_end;
-layout (location = 2) in vec4 a_color;
-// a_width only used in quad path
-layout (location = 3) in float a_width;
-layout (location = 4) in vec2 a_endpointSize;
+layout (location = 2) in vec4 a_colorStart;
+layout (location = 3) in vec4 a_colorEnd;
+layout (location = 4) in vec2 a_width;
+layout (location = 5) in vec2 a_endpointSize;
 
 uniform mat4 u_viewProjection;
 uniform float u_edgeOpacityBase;
@@ -104,9 +104,11 @@ void main() {
   vec3 endPos = a_end - dirN * trimEnd;
   bool isEnd = (gl_VertexID & 1) == 1;
   vec3 pos = isEnd ? endPos : startPos;
+  vec4 color = isEnd ? a_colorEnd : a_colorStart;
+  float width = isEnd ? a_width.y : a_width.x;
   gl_Position = u_viewProjection * vec4(pos, 1.0);
-  float alpha = clamp(u_edgeOpacityBase + u_edgeOpacityScale * a_color.a, 0.0, 1.0);
-  v_color = vec4(a_color.rgb, alpha);
+  float alpha = clamp(u_edgeOpacityBase + u_edgeOpacityScale * color.a + width * 0.0, 0.0, 1.0);
+  v_color = vec4(color.rgb, alpha);
 }`;
 
 export const EDGE_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
@@ -123,9 +125,10 @@ export const EDGE_QUAD_VERTEX_SOURCE = /* glsl */ `#version 300 es
 layout (location = 0) in vec2 a_corner;
 layout (location = 1) in vec3 a_start;
 layout (location = 2) in vec3 a_end;
-layout (location = 3) in float a_width;
-layout (location = 4) in vec4 a_color;
-layout (location = 5) in vec2 a_endpointSize;
+layout (location = 3) in vec2 a_width;
+layout (location = 4) in vec4 a_colorStart;
+layout (location = 5) in vec4 a_colorEnd;
+layout (location = 6) in vec2 a_endpointSize;
 
 uniform mat4 u_viewProjection;
 uniform vec2 u_viewport;
@@ -150,7 +153,8 @@ void main() {
   vec3 startPos = a_start + dirN * trimStart;
   vec3 endPos = a_end - dirN * trimEnd;
 
-  float width = max(u_edgeWidthBase + u_edgeWidthScale * a_width, 0.0);
+  float segmentMix = clamp(a_corner.x, 0.0, 1.0);
+  float width = max(u_edgeWidthBase + u_edgeWidthScale * mix(a_width.x, a_width.y, segmentMix), 0.0);
   vec4 clipStart = u_viewProjection * vec4(startPos, 1.0);
   vec4 clipEnd = u_viewProjection * vec4(endPos, 1.0);
   vec2 ndcStart = clipStart.xy / clipStart.w;
@@ -161,12 +165,12 @@ void main() {
   float halfWidth = max(width, 1.0) * 0.5;
   vec2 pixelToNdc = vec2(2.0 / max(u_viewport.x, 1.0), 2.0 / max(u_viewport.y, 1.0));
   vec2 offsetNdc = perp * halfWidth * pixelToNdc;
-  float segmentMix = clamp(a_corner.x, 0.0, 1.0);
   vec4 clipPos = mix(clipStart, clipEnd, segmentMix);
   clipPos.xy += offsetNdc * a_corner.y * 1.5;
   gl_Position = clipPos;
-  float alpha = clamp(u_edgeOpacityBase + u_edgeOpacityScale * a_color.a, 0.0, 1.0);
-  v_color = vec4(a_color.rgb, alpha);
+  vec4 blended = mix(a_colorStart, a_colorEnd, segmentMix);
+  float alpha = clamp(u_edgeOpacityBase + u_edgeOpacityScale * blended.a, 0.0, 1.0);
+  v_color = vec4(blended.rgb, alpha);
 }`;
 
 export const EDGE_QUAD_FRAGMENT_SOURCE = EDGE_FRAGMENT_SOURCE;
