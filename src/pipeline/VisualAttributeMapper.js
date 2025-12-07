@@ -5,6 +5,8 @@ import {
   NODE_COLOR_ATTRIBUTE,
   NODE_POSITION_ATTRIBUTE,
   NODE_SIZE_ATTRIBUTE,
+  NODE_OUTLINE_COLOR_ATTRIBUTE,
+  NODE_OUTLINE_WIDTH_ATTRIBUTE,
   EDGE_COLOR_ATTRIBUTE,
   EDGE_WIDTH_ATTRIBUTE,
   EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
@@ -13,6 +15,8 @@ import {
   DEFAULT_EDGE_WIDTH,
   DEFAULT_NODE_COLOR,
   DEFAULT_NODE_SIZE,
+  DEFAULT_NODE_OUTLINE_COLOR,
+  DEFAULT_NODE_OUTLINE_WIDTH,
 } from './constants.js';
 
 /**
@@ -44,6 +48,7 @@ export class VisualAttributeMapper {
     this.registerDenseBuffers();
     this.applyNodeDefaults();
     this.applyEdgeDefaults();
+    this.seedMissingPositions();
     this.markAllDenseDirty();
   }
 
@@ -55,6 +60,8 @@ export class VisualAttributeMapper {
       nodePositions: this.nodePositions,
       nodeColors: this.nodeColors,
       nodeSizes: this.nodeSizes,
+      nodeOutlineWidths: this.nodeOutlineWidths,
+      nodeOutlineColors: this.nodeOutlineColors,
       edgeColors: this.edgeColors,
       edgeWidths: this.edgeWidths,
     };
@@ -84,6 +91,20 @@ export class VisualAttributeMapper {
   /**
    * @returns {Float32Array}
    */
+  get nodeOutlineWidths() {
+    return this.network.getNodeAttributeBuffer(NODE_OUTLINE_WIDTH_ATTRIBUTE).view;
+  }
+
+  /**
+   * @returns {Float32Array}
+   */
+  get nodeOutlineColors() {
+    return this.network.getNodeAttributeBuffer(NODE_OUTLINE_COLOR_ATTRIBUTE).view;
+  }
+
+  /**
+   * @returns {Float32Array}
+   */
   get edgeColors() {
     return this.network.getEdgeAttributeBuffer(EDGE_COLOR_ATTRIBUTE).view;
   }
@@ -102,24 +123,56 @@ export class VisualAttributeMapper {
   applyNodeDefaults(indices) {
     const color = DEFAULT_NODE_COLOR;
     const size = DEFAULT_NODE_SIZE;
+    const outlineWidth = DEFAULT_NODE_OUTLINE_WIDTH;
+    const outlineColor = DEFAULT_NODE_OUTLINE_COLOR;
     const positionView = this.nodePositions;
     const colorView = this.nodeColors;
     const sizeView = this.nodeSizes;
+    const outlineWidthView = this.nodeOutlineWidths;
+    const outlineColorView = this.nodeOutlineColors;
 
     if (!indices) {
       const activity = this.network.nodeActivityView;
       for (let i = 0; i < activity.length; i += 1) {
         if (activity[i]) {
-          this.writeNodeDefaults(i, color, size, positionView, colorView, sizeView);
+          this.writeNodeDefaults(
+            i,
+            color,
+            size,
+            outlineWidth,
+            outlineColor,
+            positionView,
+            colorView,
+            sizeView,
+            outlineWidthView,
+            outlineColorView,
+          );
         }
       }
     } else {
       for (const index of indices) {
-        this.writeNodeDefaults(index, color, size, positionView, colorView, sizeView);
+        this.writeNodeDefaults(
+          index,
+          color,
+          size,
+          outlineWidth,
+          outlineColor,
+          positionView,
+          colorView,
+          sizeView,
+          outlineWidthView,
+          outlineColorView,
+        );
       }
     }
 
-    this.markNodeAttributesDirty(NODE_POSITION_ATTRIBUTE, NODE_COLOR_ATTRIBUTE, NODE_SIZE_ATTRIBUTE);
+    this.markNodeAttributesDirty(
+      NODE_POSITION_ATTRIBUTE,
+      NODE_COLOR_ATTRIBUTE,
+      NODE_SIZE_ATTRIBUTE,
+      NODE_OUTLINE_WIDTH_ATTRIBUTE,
+      NODE_OUTLINE_COLOR_ATTRIBUTE,
+    );
     this.markEdgeAttributesDirty(EDGE_ENDPOINTS_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
   }
 
@@ -154,6 +207,8 @@ export class VisualAttributeMapper {
     this.ensureNodeAttribute(NODE_POSITION_ATTRIBUTE, AttributeType.Float, 3);
     this.ensureNodeAttribute(NODE_COLOR_ATTRIBUTE, AttributeType.Float, 4);
     this.ensureNodeAttribute(NODE_SIZE_ATTRIBUTE, AttributeType.Float, 1);
+    this.ensureNodeAttribute(NODE_OUTLINE_WIDTH_ATTRIBUTE, AttributeType.Float, 1);
+    this.ensureNodeAttribute(NODE_OUTLINE_COLOR_ATTRIBUTE, AttributeType.Float, 4);
     this.ensureEdgeAttribute(EDGE_COLOR_ATTRIBUTE, AttributeType.Float, 4);
     this.ensureEdgeAttribute(EDGE_WIDTH_ATTRIBUTE, AttributeType.Float, 1);
     this.ensureNodeToEdgeAttribute(NODE_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_POSITION_ATTRIBUTE, 3);
@@ -243,6 +298,8 @@ export class VisualAttributeMapper {
     addDense('addDenseNodeAttributeBuffer', NODE_POSITION_ATTRIBUTE);
     addDense('addDenseNodeAttributeBuffer', NODE_COLOR_ATTRIBUTE);
     addDense('addDenseNodeAttributeBuffer', NODE_SIZE_ATTRIBUTE);
+    addDense('addDenseNodeAttributeBuffer', NODE_OUTLINE_WIDTH_ATTRIBUTE);
+    addDense('addDenseNodeAttributeBuffer', NODE_OUTLINE_COLOR_ATTRIBUTE);
     addDense('addDenseEdgeAttributeBuffer', EDGE_COLOR_ATTRIBUTE);
     addDense('addDenseEdgeAttributeBuffer', EDGE_WIDTH_ATTRIBUTE);
     addDense('addDenseEdgeAttributeBuffer', EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
@@ -252,7 +309,15 @@ export class VisualAttributeMapper {
   markNodeAttributesDirty(...names) {
     if (typeof this.network?.markDenseNodeAttributeDirty !== 'function') return;
     const targets =
-      names && names.length ? names : [NODE_POSITION_ATTRIBUTE, NODE_COLOR_ATTRIBUTE, NODE_SIZE_ATTRIBUTE];
+      names && names.length
+        ? names
+        : [
+            NODE_POSITION_ATTRIBUTE,
+            NODE_COLOR_ATTRIBUTE,
+            NODE_SIZE_ATTRIBUTE,
+            NODE_OUTLINE_WIDTH_ATTRIBUTE,
+            NODE_OUTLINE_COLOR_ATTRIBUTE,
+          ];
     for (const name of targets) {
       try {
         this.network.markDenseNodeAttributeDirty(name);
@@ -294,14 +359,18 @@ export class VisualAttributeMapper {
     const positions = this.getDenseAttribute(NODE_POSITION_ATTRIBUTE, 3, 'node');
     const colors = this.getDenseAttribute(NODE_COLOR_ATTRIBUTE, 4, 'node');
     const sizes = this.getDenseAttribute(NODE_SIZE_ATTRIBUTE, 1, 'node');
+    const outlineWidths = this.getDenseAttribute(NODE_OUTLINE_WIDTH_ATTRIBUTE, 1, 'node');
+    const outlineColors = this.getDenseAttribute(NODE_OUTLINE_COLOR_ATTRIBUTE, 4, 'node');
     const indices = this.getDenseIndexBuffer('node');
     const range = this.getValidRange('node');
-    const count = this.resolveDenseCount([positions, colors, sizes, indices], range);
+    const count = this.resolveDenseCount([positions, colors, sizes, outlineWidths, outlineColors, indices], range);
     if (!count) {
       return {
         positions: this.emptyFloat,
         colors: this.emptyFloat,
         sizes: this.emptyFloat,
+        outlineWidths: this.emptyFloat,
+        outlineColors: this.emptyFloat,
         indices: this.emptyUint,
         count: 0,
       };
@@ -310,6 +379,8 @@ export class VisualAttributeMapper {
       positions: positions.array.subarray(0, count * 3),
       colors: colors.array.subarray(0, count * 4),
       sizes: sizes.array.subarray(0, count),
+      outlineWidths: outlineWidths.array.subarray(0, count),
+      outlineColors: outlineColors.array.subarray(0, count * 4),
       indices: this.ensureNodeIndices(indices.array, count),
       count,
     };
@@ -432,11 +503,26 @@ export class VisualAttributeMapper {
    * @param {number} index
    * @param {number[]} color
    * @param {number} size
+   * @param {number} outlineWidth
+   * @param {number[]} outlineColor
    * @param {Float32Array} positionView
    * @param {Float32Array} colorView
    * @param {Float32Array} sizeView
+   * @param {Float32Array} outlineWidthView
+   * @param {Float32Array} outlineColorView
    */
-  writeNodeDefaults(index, color, size, positionView, colorView, sizeView) {
+  writeNodeDefaults(
+    index,
+    color,
+    size,
+    outlineWidth,
+    outlineColor,
+    positionView,
+    colorView,
+    sizeView,
+    outlineWidthView,
+    outlineColorView,
+  ) {
     const colorOffset = index * 4;
     colorView[colorOffset + 0] = color[0];
     colorView[colorOffset + 1] = color[1];
@@ -445,6 +531,13 @@ export class VisualAttributeMapper {
 
     const sizeOffset = index;
     sizeView[sizeOffset] = size;
+
+    outlineWidthView[sizeOffset] = outlineWidth;
+    const outlineOffset = index * 4;
+    outlineColorView[outlineOffset + 0] = outlineColor[0];
+    outlineColorView[outlineOffset + 1] = outlineColor[1];
+    outlineColorView[outlineOffset + 2] = outlineColor[2];
+    outlineColorView[outlineOffset + 3] = outlineColor[3];
 
     const posOffset = index * 3;
     if (!Number.isFinite(positionView[posOffset])) {
@@ -455,6 +548,39 @@ export class VisualAttributeMapper {
     }
     if (!Number.isFinite(positionView[posOffset + 2])) {
       positionView[posOffset + 2] = 0;
+    }
+  }
+
+  /**
+   * Seeds missing node positions with random values so downstream layouts/renderers
+   * always have finite coordinates to start with.
+   * @param {{width?: number, height?: number}} [bounds]
+   */
+  seedMissingPositions(bounds = {}) {
+    const width = Math.max(1, bounds.width ?? 1);
+    const height = Math.max(1, bounds.height ?? 1);
+    const pos = this.nodePositions;
+    const activity = this.network?.nodeActivityView;
+    if (!pos || !activity) return;
+    let touched = false;
+    for (let i = 0; i < activity.length; i += 1) {
+      if (!activity[i]) continue;
+      const offset = i * 3;
+      const missing =
+        !Number.isFinite(pos[offset]) ||
+        !Number.isFinite(pos[offset + 1]) ||
+        !Number.isFinite(pos[offset + 2]) ||
+        (pos[offset] === 0 && pos[offset + 1] === 0 && pos[offset + 2] === 0);
+      if (missing) {
+        pos[offset] = Math.random() * width;
+        pos[offset + 1] = Math.random() * height;
+        pos[offset + 2] = 0;
+        touched = true;
+      }
+    }
+    if (touched) {
+      this.markNodeAttributesDirty(NODE_POSITION_ATTRIBUTE);
+      this.markEdgeAttributesDirty(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
     }
   }
 

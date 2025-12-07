@@ -23,6 +23,7 @@ export class Helios {
     this.layers = new LayerManager(container);
     this.pipeline = new Pipeline(network);
     this.attributeMappings = new AttributeMapperUtility(network, this.pipeline.visuals);
+    this.pipeline.visuals.seedMissingPositions(this.layers.size);
     const debugPerformance = options.debugPerformance !== false;
     const performanceWindow = options.performanceWindow ?? 60;
     const performanceLogEvery = options.performanceLogEvery ?? performanceWindow;
@@ -99,6 +100,7 @@ export class Helios {
   addNodes(count, initializer) {
     const nodes = this.network.addNodes(count);
     this.pipeline.visuals.applyNodeDefaults(nodes);
+    this.pipeline.visuals.seedMissingPositions(this.layers.size);
     if (initializer) {
       initializer(nodes, this.pipeline.visuals);
     }
@@ -125,6 +127,7 @@ export class Helios {
   notifyNetworkChanged({ nodes, edges } = {}) {
     if (nodes) {
       this.pipeline.visuals.applyNodeDefaults(nodes);
+      this.pipeline.visuals.seedMissingPositions(this.layers.size);
     }
     if (edges) {
       this.pipeline.visuals.applyEdgeDefaults(edges);

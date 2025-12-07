@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import HeliosNetwork, { AttributeType } from 'helios-network';
+import HeliosNetwork from 'helios-network';
 import { VisualAttributeMapper } from '../src/pipeline/VisualAttributeMapper.js';
 import {
   EDGE_COLOR_ATTRIBUTE,
@@ -14,14 +14,6 @@ test('edge widths and endpoint data propagate into dense buffers', async () => {
   const network = await HeliosNetwork.create({ directed: false, initialNodes: 2, initialEdges: 1 });
   network.nodeActivityView?.fill(0);
   network.edgeActivityView?.fill(0);
-
-  network.defineNodeAttribute(NODE_POSITION_ATTRIBUTE, AttributeType.Float, 3);
-  network.defineNodeAttribute('_helios_visuals_color', AttributeType.Float, 4);
-  network.defineNodeAttribute(NODE_SIZE_ATTRIBUTE, AttributeType.Float, 1);
-  network.defineEdgeAttribute(EDGE_COLOR_ATTRIBUTE, AttributeType.Float, 4);
-  network.defineEdgeAttribute(EDGE_WIDTH_ATTRIBUTE, AttributeType.Float, 1);
-  network.defineNodeToEdgeAttribute(NODE_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_POSITION_ATTRIBUTE, 'both');
-  network.defineNodeToEdgeAttribute(NODE_SIZE_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE, 'both');
 
   const mapper = new VisualAttributeMapper(network);
 

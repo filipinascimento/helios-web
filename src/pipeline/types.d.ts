@@ -2,6 +2,8 @@ export interface NodeGeometry {
   positions: Float32Array;
   colors: Float32Array;
   sizes: Float32Array;
+  outlineWidths: Float32Array;
+  outlineColors: Float32Array;
   indices: Uint32Array;
   count: number;
 }

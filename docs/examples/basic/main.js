@@ -39,10 +39,6 @@ async function bootstrap() {
   const edgeAttribute = 'intensity';
   network.defineNodeAttribute(nodeAttribute, AttributeType.Float);
   network.defineEdgeAttribute(edgeAttribute, AttributeType.Float);
-  // Ensure visual attributes exist before seeding positions.
-  network.defineNodeAttribute('_helios_visuals_position', AttributeType.Float, 3);
-  network.defineNodeAttribute('_helios_visuals_color', AttributeType.Float, 4);
-  network.defineNodeAttribute('_helios_visuals_size', AttributeType.Float, 1);
 
   const nodeCount = 256;
   const nodes = network.addNodes(nodeCount);
@@ -64,19 +60,7 @@ async function bootstrap() {
     edgeBuffer[id] = Math.random();
   }
 
-  // Seed initial positions randomly before the animated layout takes over.
-  const pos = network.getNodeAttributeBuffer('_helios_visuals_position').view;
   const target = document.getElementById('app');
-  const rect = target.getBoundingClientRect();
-  const width = Math.max(1, rect.width || 640);
-  const height = Math.max(1, rect.height || 480);
-  for (let i = 0; i < nodeCount; i += 1) {
-    const offset = i * 3;
-    pos[offset] = Math.random() * width;
-    pos[offset + 1] = Math.random() * height;
-    pos[offset + 2] = 0;
-  }
-
   const mode = resolveMode();
   const layoutType = resolveLayoutType();
   const heliosOptions = {
