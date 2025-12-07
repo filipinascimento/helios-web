@@ -5,6 +5,7 @@ const {
   EDGE_COLOR_ATTRIBUTE,
   EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
   EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
+  EDGE_OPACITY_ATTRIBUTE,
   EDGE_WIDTH_ATTRIBUTE,
   NODE_COLOR_ATTRIBUTE,
   NODE_OUTLINE_COLOR_ATTRIBUTE,
@@ -408,6 +409,7 @@ const CHANNEL_DEFS = {
       nodePassthroughEndpoints: 'both',
       nodePassthroughDoubleWidth: true,
     },
+    opacity: { attribute: EDGE_OPACITY_ATTRIBUTE, type: AttributeType.Float, dimension: 2 },
     width: { attribute: EDGE_WIDTH_ATTRIBUTE, type: AttributeType.Float, dimension: 2 },
     endpointPosition: {
       attribute: EDGE_ENDPOINTS_POSITION_ATTRIBUTE,

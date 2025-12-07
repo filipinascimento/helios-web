@@ -195,6 +195,11 @@ export class GraphLayerWebGL extends GraphLayer {
     gl.enableVertexAttribArray(5);
     gl.vertexAttribPointer(5, 2, gl.FLOAT, false, 0, 0);
     gl.vertexAttribDivisor(5, 1);
+    this.edgeBuffers.opacities = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.opacities);
+    gl.enableVertexAttribArray(6);
+    gl.vertexAttribPointer(6, 2, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribDivisor(6, 1);
     gl.bindVertexArray(null);
 
     this.edgeQuadBuffer = gl.createBuffer();
@@ -238,6 +243,10 @@ export class GraphLayerWebGL extends GraphLayer {
     gl.enableVertexAttribArray(6);
     gl.vertexAttribPointer(6, 2, gl.FLOAT, false, 0, 0);
     gl.vertexAttribDivisor(6, 1);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.opacities);
+    gl.enableVertexAttribArray(7);
+    gl.vertexAttribPointer(7, 2, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribDivisor(7, 1);
     gl.bindVertexArray(null);
   }
 
@@ -387,7 +396,7 @@ export class GraphLayerWebGL extends GraphLayer {
 
   uploadEdgesWebGL2(edges) {
     const count = edges?.count ?? 0;
-    if (!edges || !edges.segments || !edges.colors || !edges.widths || !edges.endpointSizes) {
+    if (!edges || !edges.segments || !edges.colors || !edges.opacities || !edges.widths || !edges.endpointSizes) {
       this.edgeCount = 0;
       return;
     }
@@ -402,6 +411,9 @@ export class GraphLayerWebGL extends GraphLayer {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.colors);
     gl.bufferData(gl.ARRAY_BUFFER, edges.colors, gl.DYNAMIC_DRAW);
     gl.bindVertexArray(null);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.opacities);
+    gl.bufferData(gl.ARRAY_BUFFER, edges.opacities, gl.DYNAMIC_DRAW);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.widths);
     gl.bufferData(gl.ARRAY_BUFFER, edges.widths, gl.DYNAMIC_DRAW);

@@ -80,6 +80,7 @@ layout (location = 2) in vec4 a_colorStart;
 layout (location = 3) in vec4 a_colorEnd;
 layout (location = 4) in vec2 a_width;
 layout (location = 5) in vec2 a_endpointSize;
+layout (location = 6) in vec2 a_opacity;
 
 uniform mat4 u_viewProjection;
 uniform float u_edgeOpacityBase;
@@ -107,7 +108,9 @@ void main() {
   vec4 color = isEnd ? a_colorEnd : a_colorStart;
   float width = isEnd ? a_width.y : a_width.x;
   gl_Position = u_viewProjection * vec4(pos, 1.0);
-  float alpha = clamp(u_edgeOpacityBase + u_edgeOpacityScale * color.a + width * 0.0, 0.0, 1.0);
+  float rawOpacity = isEnd ? a_opacity.y : a_opacity.x;
+  float opacity = clamp(u_edgeOpacityBase + u_edgeOpacityScale * rawOpacity, 0.0, 1.0);
+  float alpha = clamp(opacity * color.a, 0.0, 1.0);
   v_color = vec4(color.rgb, alpha);
 }`;
 
@@ -129,6 +132,7 @@ layout (location = 3) in vec2 a_width;
 layout (location = 4) in vec4 a_colorStart;
 layout (location = 5) in vec4 a_colorEnd;
 layout (location = 6) in vec2 a_endpointSize;
+layout (location = 7) in vec2 a_opacity;
 
 uniform mat4 u_viewProjection;
 uniform vec2 u_viewport;
@@ -169,7 +173,8 @@ void main() {
   clipPos.xy += offsetNdc * a_corner.y * 1.5;
   gl_Position = clipPos;
   vec4 blended = mix(a_colorStart, a_colorEnd, segmentMix);
-  float alpha = clamp(u_edgeOpacityBase + u_edgeOpacityScale * blended.a, 0.0, 1.0);
+  float opacity = clamp(u_edgeOpacityBase + u_edgeOpacityScale * mix(a_opacity.x, a_opacity.y, segmentMix), 0.0, 1.0);
+  float alpha = clamp(opacity * blended.a, 0.0, 1.0);
   v_color = vec4(blended.rgb, alpha);
 }`;
 

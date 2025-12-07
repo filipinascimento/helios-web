@@ -8,6 +8,7 @@ const {
   NODE_OUTLINE_COLOR_ATTRIBUTE,
   NODE_OUTLINE_WIDTH_ATTRIBUTE,
   EDGE_COLOR_ATTRIBUTE,
+  EDGE_OPACITY_ATTRIBUTE,
   EDGE_WIDTH_ATTRIBUTE,
   EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
   EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
@@ -15,6 +16,7 @@ const {
 
 const {
   DEFAULT_EDGE_COLOR,
+  DEFAULT_EDGE_OPACITY,
   DEFAULT_EDGE_WIDTH,
   DEFAULT_NODE_COLOR,
   DEFAULT_NODE_SIZE,
@@ -83,6 +85,10 @@ export class VisualAttributes {
     return this.network.getEdgeAttributeBuffer(EDGE_WIDTH_ATTRIBUTE).view;
   }
 
+  get edgeOpacities() {
+    return this.network.getEdgeAttributeBuffer(EDGE_OPACITY_ATTRIBUTE).view;
+  }
+
   applyMappers({ nodeMapper, edgeMapper } = {}) {
     if (nodeMapper) this.applyNodeMapper(nodeMapper);
     if (edgeMapper) this.applyEdgeMapper(edgeMapper);
@@ -124,9 +130,11 @@ export class VisualAttributes {
     const nodeBuffers = this.resolveNodeAttributeBuffers(attributes.node);
     const nodeToEdgeRegistrations = mapper?.nodeToEdgeRegistrations ?? new Set();
     const skipColor = nodeToEdgeRegistrations.has(EDGE_COLOR_ATTRIBUTE);
+    const skipOpacity = nodeToEdgeRegistrations.has(EDGE_OPACITY_ATTRIBUTE);
     const skipEndpointSize = nodeToEdgeRegistrations.has(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
     const visuals = {
       color: skipColor ? null : this.edgeColors,
+      opacity: skipOpacity ? null : this.edgeOpacities,
       width: this.edgeWidths,
       endpointSize: skipEndpointSize ? null : this.network.getEdgeAttributeBuffer(EDGE_ENDPOINTS_SIZE_ATTRIBUTE).view,
     };
@@ -146,7 +154,12 @@ export class VisualAttributes {
       );
       this.writeEdgeVisuals(edgeId, mapped, visuals);
     }
-    this.markEdgeAttributesDirty(EDGE_COLOR_ATTRIBUTE, EDGE_WIDTH_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+    this.markEdgeAttributesDirty(
+      EDGE_COLOR_ATTRIBUTE,
+      EDGE_OPACITY_ATTRIBUTE,
+      EDGE_WIDTH_ATTRIBUTE,
+      EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
+    );
   }
 
   ensureAttributes() {
@@ -156,6 +169,7 @@ export class VisualAttributes {
     this.ensureNodeAttribute(NODE_OUTLINE_WIDTH_ATTRIBUTE, AttributeType.Float, 1);
     this.ensureNodeAttribute(NODE_OUTLINE_COLOR_ATTRIBUTE, AttributeType.Float, 4);
     this.ensureEdgeAttribute(EDGE_COLOR_ATTRIBUTE, AttributeType.Float, 8);
+    this.ensureEdgeAttribute(EDGE_OPACITY_ATTRIBUTE, AttributeType.Float, 2);
     this.ensureEdgeAttribute(EDGE_WIDTH_ATTRIBUTE, AttributeType.Float, 2);
     this.ensureNodeToEdgeAttribute(NODE_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_POSITION_ATTRIBUTE, 3);
     this.ensureNodeToEdgeAttribute(NODE_SIZE_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE, 1);
@@ -177,6 +191,7 @@ export class VisualAttributes {
     addDense('addDenseNodeAttributeBuffer', NODE_OUTLINE_WIDTH_ATTRIBUTE);
     addDense('addDenseNodeAttributeBuffer', NODE_OUTLINE_COLOR_ATTRIBUTE);
     addDense('addDenseEdgeAttributeBuffer', EDGE_COLOR_ATTRIBUTE);
+    addDense('addDenseEdgeAttributeBuffer', EDGE_OPACITY_ATTRIBUTE);
     addDense('addDenseEdgeAttributeBuffer', EDGE_WIDTH_ATTRIBUTE);
     addDense('addDenseEdgeAttributeBuffer', EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
     addDense('addDenseEdgeAttributeBuffer', EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
@@ -208,7 +223,13 @@ export class VisualAttributes {
     const targets =
       names && names.length
         ? names
-        : [EDGE_COLOR_ATTRIBUTE, EDGE_WIDTH_ATTRIBUTE, EDGE_ENDPOINTS_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE];
+        : [
+            EDGE_COLOR_ATTRIBUTE,
+            EDGE_OPACITY_ATTRIBUTE,
+            EDGE_WIDTH_ATTRIBUTE,
+            EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
+            EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
+          ];
     for (const name of targets) {
       try {
         this.network.markDenseEdgeAttributeDirty(name);
@@ -294,24 +315,26 @@ export class VisualAttributes {
    */
   applyEdgeDefaults(indices) {
     const color = DEFAULT_EDGE_COLOR;
+    const opacity = DEFAULT_EDGE_OPACITY;
     const width = DEFAULT_EDGE_WIDTH;
     const colorView = this.edgeColors;
+    const opacityView = this.edgeOpacities;
     const widthView = this.edgeWidths;
 
     if (!indices) {
       const activity = this.network.edgeActivityView;
       for (let i = 0; i < activity.length; i += 1) {
         if (activity[i]) {
-          this.writeEdgeDefaults(i, color, width, colorView, widthView);
+          this.writeEdgeDefaults(i, color, width, opacity, colorView, widthView, opacityView);
         }
       }
     } else {
       for (const index of indices) {
-        this.writeEdgeDefaults(index, color, width, colorView, widthView);
+        this.writeEdgeDefaults(index, color, width, opacity, colorView, widthView, opacityView);
       }
     }
 
-    this.markEdgeAttributesDirty(EDGE_COLOR_ATTRIBUTE, EDGE_WIDTH_ATTRIBUTE);
+    this.markEdgeAttributesDirty(EDGE_COLOR_ATTRIBUTE, EDGE_OPACITY_ATTRIBUTE, EDGE_WIDTH_ATTRIBUTE);
   }
 
   /**
@@ -543,6 +566,12 @@ export class VisualAttributes {
       visuals.width[offset + 0] = startWidth;
       visuals.width[offset + 1] = endWidth;
     }
+    if (mapped.opacity != null && visuals.opacity) {
+      const [startOpacity, endOpacity] = this.resolveEdgeScalarPair(mapped.opacity);
+      const offset = edgeId * 2;
+      visuals.opacity[offset + 0] = startOpacity;
+      visuals.opacity[offset + 1] = endOpacity;
+    }
     if (mapped.endpointSize && visuals.endpointSize) {
       const value = Array.isArray(mapped.endpointSize)
         ? mapped.endpointSize
@@ -673,7 +702,7 @@ export class VisualAttributes {
     }
   }
 
-  writeEdgeDefaults(index, color, width, colorView, widthView) {
+  writeEdgeDefaults(index, color, width, opacity, colorView, widthView, opacityView) {
     const colorOffset = index * 8;
     const rgba = this.toRgba(color);
     colorView[colorOffset + 0] = rgba[0];
@@ -688,6 +717,12 @@ export class VisualAttributes {
     const widthOffset = index * 2;
     widthView[widthOffset] = width;
     widthView[widthOffset + 1] = width;
+
+    if (opacityView) {
+      const opacityOffset = index * 2;
+      opacityView[opacityOffset] = opacity;
+      opacityView[opacityOffset + 1] = opacity;
+    }
   }
 
   ignoreDuplicateAttribute(error, name) {

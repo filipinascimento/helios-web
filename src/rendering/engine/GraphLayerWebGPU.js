@@ -47,6 +47,7 @@ export class GraphLayerWebGPU extends GraphLayer {
     this.edgeBuffersGpu.segments?.buffer?.destroy?.();
     this.edgeBuffersGpu.colors?.buffer?.destroy?.();
     this.edgeBuffersGpu.widths?.buffer?.destroy?.();
+    this.edgeBuffersGpu.opacities?.buffer?.destroy?.();
     this.edgeBuffersGpu.endpointSizes?.buffer?.destroy?.();
     this.cameraBuffer?.destroy?.();
     this.globalsBuffer?.destroy?.();
@@ -123,7 +124,8 @@ export class GraphLayerWebGPU extends GraphLayer {
         },
         { binding: 4, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
         { binding: 5, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
-        { binding: 6, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 6, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
+        { binding: 7, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
       ],
     });
 
@@ -264,7 +266,7 @@ export class GraphLayerWebGPU extends GraphLayer {
   }
 
   updateEdgeBuffersGpu(edges, device, maxBindingSize) {
-    const { segments, colors, indices, widths, endpointSizes } = edges;
+    const { segments, colors, indices, widths, endpointSizes, opacities } = edges;
     if (!endpointSizes) {
       throw new Error('Edge endpoint sizes buffer is missing; dense buffers must include endpointSizes.');
     }
@@ -301,6 +303,14 @@ export class GraphLayerWebGPU extends GraphLayer {
       maxBindingSize,
       'Edge width buffer',
     );
+    this.edgeBuffersGpu.opacities = this.ensureBufferGpu(
+      this.edgeBuffersGpu.opacities,
+      opacities.byteLength,
+      storageUsage,
+      device,
+      maxBindingSize,
+      'Edge opacity buffer',
+    );
     this.edgeBuffersGpu.endpointSizes = this.ensureBufferGpu(
       this.edgeBuffersGpu.endpointSizes,
       endpointSizes.byteLength,
@@ -313,6 +323,7 @@ export class GraphLayerWebGPU extends GraphLayer {
     device.queue.writeBuffer(this.edgeBuffersGpu.segments.buffer, 0, segments);
     device.queue.writeBuffer(this.edgeBuffersGpu.colors.buffer, 0, colors);
     device.queue.writeBuffer(this.edgeBuffersGpu.widths.buffer, 0, widths);
+    device.queue.writeBuffer(this.edgeBuffersGpu.opacities.buffer, 0, opacities);
     device.queue.writeBuffer(this.edgeBuffersGpu.endpointSizes.buffer, 0, endpointSizes);
 
     this.edgeBindGroup = device.createBindGroup({
@@ -324,7 +335,8 @@ export class GraphLayerWebGPU extends GraphLayer {
         { binding: 3, resource: { buffer: this.edgeBuffersGpu.colors.buffer } },
         { binding: 4, resource: { buffer: this.edgeBuffersGpu.widths.buffer } },
         { binding: 5, resource: { buffer: this.edgeBuffersGpu.endpointSizes.buffer } },
-        { binding: 6, resource: { buffer: this.globalsBuffer } },
+        { binding: 6, resource: { buffer: this.edgeBuffersGpu.opacities.buffer } },
+        { binding: 7, resource: { buffer: this.globalsBuffer } },
       ],
     });
   }

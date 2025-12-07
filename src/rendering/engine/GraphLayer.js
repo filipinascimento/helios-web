@@ -5,6 +5,7 @@ const {
   EDGE_COLOR_ATTRIBUTE,
   EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
   EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
+  EDGE_OPACITY_ATTRIBUTE,
   EDGE_WIDTH_ATTRIBUTE,
   NODE_COLOR_ATTRIBUTE,
   NODE_OUTLINE_COLOR_ATTRIBUTE,
@@ -157,6 +158,7 @@ export class GraphLayer extends Layer {
     const nodeOutlineWidthDesc = this.getAttributeDescriptor(network, 'node', NODE_OUTLINE_WIDTH_ATTRIBUTE);
     const nodeOutlineColorDesc = this.getAttributeDescriptor(network, 'node', NODE_OUTLINE_COLOR_ATTRIBUTE);
     const edgeColorDesc = this.getAttributeDescriptor(network, 'edge', EDGE_COLOR_ATTRIBUTE);
+    const edgeOpacityDesc = this.getAttributeDescriptor(network, 'edge', EDGE_OPACITY_ATTRIBUTE);
     const edgeWidthDesc = this.getAttributeDescriptor(network, 'edge', EDGE_WIDTH_ATTRIBUTE);
     const edgeSegmentsDesc = this.getAttributeDescriptor(network, 'edge', EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
     const edgeEndpointSizeDesc = this.getAttributeDescriptor(network, 'edge', EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
@@ -179,6 +181,7 @@ export class GraphLayer extends Layer {
     const edges = {
       segments: this.createTypedView(edgeSegmentsDesc, Float32Array, 6) ?? this.emptyFloat,
       colors: this.createTypedView(edgeColorDesc, Float32Array, 8) ?? this.emptyFloat,
+      opacities: this.createTypedView(edgeOpacityDesc, Float32Array, 2) ?? this.emptyFloat,
       widths: this.createTypedView(edgeWidthDesc, Float32Array, 2) ?? this.emptyFloat,
       endpointSizes: this.createTypedView(edgeEndpointSizeDesc, Float32Array, 2) ?? this.emptyFloat,
       indices: this.createTypedView(edgeIndexDesc, Uint32Array, 1) ?? this.emptyUint,
@@ -186,6 +189,7 @@ export class GraphLayer extends Layer {
         edgeIndexDesc?.count ??
         edgeSegmentsDesc?.count ??
         edgeColorDesc?.count ??
+        edgeOpacityDesc?.count ??
         edgeWidthDesc?.count ??
         0,
     };

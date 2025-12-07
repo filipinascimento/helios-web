@@ -160,13 +160,18 @@ struct EdgeEndpointSizes {
   data: array<vec2<f32>>,
 };
 
+struct EdgeOpacities {
+  data: array<vec2<f32>>,
+};
+
 @group(0) @binding(0) var<uniform> camera : Camera;
 @group(0) @binding(1) var<storage, read> edgeIndices : EdgeIndices;
 @group(0) @binding(2) var<storage, read> edgeSegments : EdgeSegments;
 @group(0) @binding(3) var<storage, read> edgeColors : EdgeColors;
 @group(0) @binding(4) var<storage, read> edgeWidths : EdgeWidths;
 @group(0) @binding(5) var<storage, read> edgeEndpointSizes : EdgeEndpointSizes;
-@group(0) @binding(6) var<uniform> globals : Globals;
+@group(0) @binding(6) var<storage, read> edgeOpacities : EdgeOpacities;
+@group(0) @binding(7) var<uniform> globals : Globals;
 
 struct EdgeVertexOutput {
   @builtin(position) position : vec4<f32>,
@@ -205,9 +210,12 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
   let colorStart = edgeColors.data[edgeId * 2u];
   let colorEnd = edgeColors.data[edgeId * 2u + 1u];
   let endpointWidth = edgeWidths.data[edgeId];
+  let opacityPair = edgeOpacities.data[edgeId];
   let color = select(colorStart, colorEnd, (vertexIndex & 1u) == 1u);
   let width = globals.edgeWidth.x + globals.edgeWidth.y * select(endpointWidth.x, endpointWidth.y, (vertexIndex & 1u) == 1u);
-  let alpha = clamp(globals.edgeOpacity.x + globals.edgeOpacity.y * color.a + width * 0.0, 0.0, 1.0);
+  let attrOpacity = select(opacityPair.x, opacityPair.y, (vertexIndex & 1u) == 1u);
+  let opacity = clamp(globals.edgeOpacity.x + globals.edgeOpacity.y * attrOpacity, 0.0, 1.0);
+  let alpha = clamp(opacity * color.a, 0.0, 1.0);
   var output : EdgeVertexOutput;
   output.position = camera.viewProjection * vec4<f32>(position, 1.0);
   output.color = vec4<f32>(color.rgb, alpha);
@@ -235,6 +243,7 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   );
   let endpointSize = edgeEndpointSizes.data[edgeId];
   let endpointWidth = edgeWidths.data[edgeId];
+  let opacityPair = edgeOpacities.data[edgeId];
   let t = clamp(input.corner.x, 0.0, 1.0);
   let width = max(globals.edgeWidth.x + globals.edgeWidth.y * mix(endpointWidth.x, endpointWidth.y, t), 1e-3);
   let dirRaw = endPos - startPos;
@@ -266,7 +275,9 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   let colorStart = edgeColors.data[edgeId * 2u];
   let colorEnd = edgeColors.data[edgeId * 2u + 1u];
   let blended = mix(colorStart, colorEnd, t);
-  let alpha = clamp(globals.edgeOpacity.x + globals.edgeOpacity.y * blended.a, 0.0, 1.0);
+  let blendedOpacity = mix(opacityPair.x, opacityPair.y, t);
+  let opacity = clamp(globals.edgeOpacity.x + globals.edgeOpacity.y * blendedOpacity, 0.0, 1.0);
+  let alpha = clamp(opacity * blended.a, 0.0, 1.0);
   output.color = vec4<f32>(blended.rgb, alpha);
   return output;
 }
