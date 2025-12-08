@@ -4,7 +4,7 @@ import { LayerManager } from './layers/LayerManager.js';
 import { Scheduler } from './scheduler/Scheduler.js';
 import { StaticLayout, WorkerLayout } from './layouts/Layout.js';
 import { createRenderer } from './rendering/createRenderer.js';
-import { PerformanceMonitor } from './utils/PerformanceMonitor.js';
+import { PerformanceMonitor } from './utilities/PerformanceMonitor.js';
 import { VisualAttributes } from './pipeline/VisualAttributes.js';
 import { createDefaultMappers, MapperCollection } from './pipeline/Mapper.js';
 
