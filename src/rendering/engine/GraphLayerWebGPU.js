@@ -136,6 +136,18 @@ export class GraphLayerWebGPU extends GraphLayer {
       depthWriteEnabled: true,
       depthCompare: 'less-equal',
     };
+    const alphaBlend = {
+      color: {
+        srcFactor: 'one',
+        dstFactor: 'one-minus-src-alpha',
+        operation: 'add',
+      },
+      alpha: {
+        srcFactor: 'one',
+        dstFactor: 'one-minus-src-alpha',
+        operation: 'add',
+      },
+    };
 
     this.nodePipeline = device.device.createRenderPipeline({
       layout: device.device.createPipelineLayout({ bindGroupLayouts: [this.nodeBindGroupLayout] }),
@@ -153,7 +165,7 @@ export class GraphLayerWebGPU extends GraphLayer {
       fragment: {
         module: nodeModule,
         entryPoint: 'nodeFragment',
-        targets: [{ format: device.format }],
+        targets: [{ format: device.format, blend: alphaBlend }],
       },
       depthStencil,
       primitive: { topology: 'triangle-strip' },
@@ -165,7 +177,7 @@ export class GraphLayerWebGPU extends GraphLayer {
       fragment: {
         module: edgeModule,
         entryPoint: 'edgeFragment',
-        targets: [{ format: device.format }],
+        targets: [{ format: device.format, blend: alphaBlend }],
       },
       depthStencil: { ...depthStencil, depthWriteEnabled: false },
       primitive: { topology: 'line-list' },
@@ -187,7 +199,7 @@ export class GraphLayerWebGPU extends GraphLayer {
       fragment: {
         module: edgeModule,
         entryPoint: 'edgeFragment',
-        targets: [{ format: device.format }],
+        targets: [{ format: device.format, blend: alphaBlend }],
       },
       depthStencil: { ...depthStencil, depthWriteEnabled: false },
       primitive: { topology: 'triangle-strip' },
