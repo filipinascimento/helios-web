@@ -74,6 +74,7 @@ export class Helios {
       mode: this.options.mode ?? '2d',
       projection: this.options.projection ?? 'perspective',
       edgeRendering: this.options.edgeRendering,
+      transparencyModeEdges: this.options.transparencyModeEdges,
     });
     if (typeof this.renderer.resize === 'function') {
       this.renderer.resize(this.layers.size);

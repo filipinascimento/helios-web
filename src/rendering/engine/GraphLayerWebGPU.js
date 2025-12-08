@@ -1,4 +1,4 @@
-import { NODE_WGSL, EDGE_WGSL } from './shaders/graphWebGPU.js';
+import { NODE_WGSL, EDGE_WGSL, EDGE_WEIGHTED_WGSL, EDGE_WEIGHTED_RESOLVE_WGSL } from './shaders/graphWebGPU.js';
 import { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './GraphLayerCommon.js';
 import { GraphLayer } from './GraphLayer.js';
 
@@ -12,6 +12,18 @@ export class GraphLayerWebGPU extends GraphLayer {
     this.nodePipeline = null;
     this.edgePipeline = null;
     this.edgeQuadPipeline = null;
+    this.edgeWeightedPipeline = null;
+    this.edgeWeightedQuadPipeline = null;
+    this.edgeResolvePipeline = null;
+    this.edgeResolveBindGroup = null;
+    this.edgeResolveLayout = null;
+    this.weightedSampler = null;
+    this.weightedTextures = null;
+    this.weightedSupported = null;
+    this.warnedWeightedFallback = false;
+    this.edgeWeightedModule = null;
+    this.edgeResolveModule = null;
+    this.weightedPipelineFormats = null;
     this.nodeBindGroup = null;
     this.edgeBindGroup = null;
     this.cameraArray = null;
@@ -53,6 +65,8 @@ export class GraphLayerWebGPU extends GraphLayer {
     this.globalsBuffer?.destroy?.();
     this.nodeQuadBufferGpu?.destroy?.();
     this.edgeQuadBufferGpu?.destroy?.();
+    this.weightedTextures?.color?.destroy?.();
+    this.weightedTextures?.weight?.destroy?.();
   }
 
   setEdgeRenderingMode(mode) {
@@ -378,35 +392,53 @@ export class GraphLayerWebGPU extends GraphLayer {
       this.edgeBindGroup = null;
     }
 
-    const drawNodes = () => {
-      if (!geometry.nodes.count || !this.nodeBindGroup) return;
-      context.passEncoder.setPipeline(this.nodePipeline);
-      context.passEncoder.setBindGroup(0, this.nodeBindGroup);
-      context.passEncoder.setVertexBuffer(0, this.nodeQuadBufferGpu);
-      context.passEncoder.draw(4, geometry.nodes.count, 0, 0);
+    const drawNodes = (passEncoder) => {
+      if (!geometry.nodes.count || !this.nodeBindGroup || !passEncoder) return;
+      passEncoder.setPipeline(this.nodePipeline);
+      passEncoder.setBindGroup(0, this.nodeBindGroup);
+      passEncoder.setVertexBuffer(0, this.nodeQuadBufferGpu);
+      passEncoder.draw(4, geometry.nodes.count, 0, 0);
     };
 
-    const drawEdges = () => {
-      if (!geometry.edges.count || !this.edgeBindGroup) return;
+    const drawEdgesAlpha = (passEncoder) => {
+      if (!geometry.edges.count || !this.edgeBindGroup || !passEncoder) return;
       if (this.edgeRenderingMode === 'quad' && this.edgeQuadPipeline) {
-        context.passEncoder.setPipeline(this.edgeQuadPipeline);
-        context.passEncoder.setBindGroup(0, this.edgeBindGroup);
-        context.passEncoder.setVertexBuffer(0, this.edgeQuadBufferGpu);
-        context.passEncoder.draw(4, geometry.edges.count, 0, 0);
+        passEncoder.setPipeline(this.edgeQuadPipeline);
+        passEncoder.setBindGroup(0, this.edgeBindGroup);
+        passEncoder.setVertexBuffer(0, this.edgeQuadBufferGpu);
+        passEncoder.draw(4, geometry.edges.count, 0, 0);
       } else {
-        context.passEncoder.setPipeline(this.edgePipeline);
-        context.passEncoder.setBindGroup(0, this.edgeBindGroup);
-        context.passEncoder.draw(geometry.edges.count * 2, 1, 0, 0);
+        passEncoder.setPipeline(this.edgePipeline);
+        passEncoder.setBindGroup(0, this.edgeBindGroup);
+        passEncoder.draw(geometry.edges.count * 2, 1, 0, 0);
       }
     };
 
-    if (is2D) {
-      drawEdges();
-      drawNodes();
-    } else {
-      drawNodes();
-      drawEdges();
+    const weightedRequested = this.edgeTransparencyMode === 'weighted';
+    const weightedReady = weightedRequested && geometry.edges.count > 0
+      ? this.prepareWeightedResources(context, cameraUniforms)
+      : false;
+
+    if (!weightedReady) {
+      if (weightedRequested && !this.warnedWeightedFallback && geometry.edges.count > 0) {
+        console.warn('Weighted edge transparency is not available; using alpha blending instead.');
+        this.warnedWeightedFallback = true;
+      }
+      if (is2D) {
+        drawEdgesAlpha(context.passEncoder);
+        drawNodes(context.passEncoder);
+      } else {
+        drawNodes(context.passEncoder);
+        drawEdgesAlpha(context.passEncoder);
+      }
+      return;
     }
+
+    this.renderWeighted(context, {
+      geometry,
+      is2D,
+      drawNodes,
+    });
   }
 
   updateCameraUniformsGpu(camera, cameraUniforms) {
@@ -483,5 +515,310 @@ export class GraphLayerWebGPU extends GraphLayer {
     this.globalsArray[OFFSET_PAD_VEC3 + 2] = 0;
     this.globalsArray[23] = 0;
     device.queue.writeBuffer(this.globalsBuffer, 0, this.globalsArray);
+  }
+
+  prepareWeightedResources(context, cameraUniforms) {
+    const device = this.device?.device;
+    if (!device) return false;
+    const maxTargets = device.limits?.maxColorAttachments ?? 1;
+    if (maxTargets < 2) return false;
+
+    const viewport = cameraUniforms?.viewport;
+    const pixelRatio = viewport?.devicePixelRatio ?? this.size?.devicePixelRatio ?? 1;
+    const width = context?.target?.width ?? Math.max(1, Math.floor((viewport?.width ?? this.size?.width ?? 1) * pixelRatio));
+    const height = context?.target?.height ?? Math.max(1, Math.floor((viewport?.height ?? this.size?.height ?? 1) * pixelRatio));
+    if (!this.ensureWeightedTextures(device, width, height)) return false;
+    if (!this.ensureWeightedPipelines(device, context.format)) return false;
+    this.ensureWeightedResolveBindGroup(device);
+    return Boolean(this.edgeWeightedPipeline && this.edgeResolvePipeline && this.edgeResolveBindGroup);
+  }
+
+  ensureWeightedTextures(device, width, height) {
+    const targetWidth = Math.max(1, Math.floor(width));
+    const targetHeight = Math.max(1, Math.floor(height));
+    if (
+      this.weightedTextures &&
+      this.weightedTextures.width === targetWidth &&
+      this.weightedTextures.height === targetHeight
+    ) {
+      return true;
+    }
+
+    const destroyOld = () => {
+      this.weightedTextures?.color?.destroy?.();
+      this.weightedTextures?.weight?.destroy?.();
+    };
+
+    const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC;
+    try {
+      const color = device.createTexture({
+        size: { width: targetWidth, height: targetHeight, depthOrArrayLayers: 1 },
+        format: 'rgba16float',
+        usage,
+      });
+
+      let weightFormat = 'r16float';
+      let weight = null;
+      try {
+        weight = device.createTexture({
+          size: { width: targetWidth, height: targetHeight, depthOrArrayLayers: 1 },
+          format: weightFormat,
+          usage,
+        });
+      } catch (_) {
+        weightFormat = 'rgba16float';
+        weight = device.createTexture({
+          size: { width: targetWidth, height: targetHeight, depthOrArrayLayers: 1 },
+          format: weightFormat,
+          usage,
+        });
+      }
+
+      destroyOld();
+      this.weightedTextures = {
+        color,
+        weight,
+        width: targetWidth,
+        height: targetHeight,
+        weightFormat,
+      };
+      return true;
+    } catch (error) {
+      console.warn('Unable to allocate weighted transparency targets; falling back to alpha.', error);
+      destroyOld();
+      this.weightedTextures = null;
+      return false;
+    }
+  }
+
+  ensureWeightedPipelines(device, swapchainFormat) {
+    const colorFormat = this.weightedTextures?.color?.format ?? 'rgba16float';
+    const weightFormat = this.weightedTextures?.weight?.format ?? 'r16float';
+    if (!colorFormat || !weightFormat) return false;
+
+    const additiveBlend = {
+      color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
+      alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
+    };
+
+    const needsRebuild =
+      !this.weightedPipelineFormats ||
+      this.weightedPipelineFormats.color !== colorFormat ||
+      this.weightedPipelineFormats.weight !== weightFormat ||
+      this.weightedPipelineFormats.swapchain !== swapchainFormat;
+
+    if (!this.edgeWeightedModule) {
+      this.edgeWeightedModule = device.createShaderModule({ code: EDGE_WEIGHTED_WGSL });
+    }
+    if (!this.edgeResolveModule) {
+      this.edgeResolveModule = device.createShaderModule({ code: EDGE_WEIGHTED_RESOLVE_WGSL });
+    }
+
+    if (needsRebuild) {
+      const depthStencilAccumulate = {
+        format: this.device.depthFormat ?? 'depth24plus',
+        depthWriteEnabled: false,
+        depthCompare: 'less-equal',
+      };
+
+      this.edgeWeightedPipeline = device.createRenderPipeline({
+        layout: device.createPipelineLayout({ bindGroupLayouts: [this.edgeBindGroupLayout] }),
+        vertex: { module: this.edgeWeightedModule, entryPoint: 'edgeVertex' },
+        fragment: {
+          module: this.edgeWeightedModule,
+          entryPoint: 'edgeWeightedFragment',
+          targets: [
+            { format: colorFormat, blend: additiveBlend },
+            { format: weightFormat, blend: additiveBlend },
+          ],
+        },
+        depthStencil: depthStencilAccumulate,
+        primitive: { topology: 'line-list' },
+      });
+
+      this.edgeWeightedQuadPipeline = device.createRenderPipeline({
+        layout: device.createPipelineLayout({ bindGroupLayouts: [this.edgeBindGroupLayout] }),
+        vertex: {
+          module: this.edgeWeightedModule,
+          entryPoint: 'edgeQuadVertex',
+          buffers: [
+            {
+              arrayStride: 8,
+              attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }],
+              stepMode: 'vertex',
+            },
+          ],
+        },
+        fragment: {
+          module: this.edgeWeightedModule,
+          entryPoint: 'edgeWeightedFragment',
+          targets: [
+            { format: colorFormat, blend: additiveBlend },
+            { format: weightFormat, blend: additiveBlend },
+          ],
+        },
+        depthStencil: depthStencilAccumulate,
+        primitive: { topology: 'triangle-strip' },
+      });
+
+      this.edgeResolveLayout = device.createBindGroupLayout({
+        entries: [
+          { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+          { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+          { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        ],
+      });
+
+      this.edgeResolvePipeline = device.createRenderPipeline({
+        layout: device.createPipelineLayout({ bindGroupLayouts: [this.edgeResolveLayout] }),
+        vertex: {
+          module: this.edgeResolveModule,
+          entryPoint: 'vs',
+          buffers: [
+            {
+              arrayStride: 16,
+              attributes: [
+                { shaderLocation: 0, offset: 0, format: 'float32x2' },
+                { shaderLocation: 1, offset: 8, format: 'float32x2' },
+              ],
+            },
+          ],
+        },
+        fragment: {
+          module: this.edgeResolveModule,
+          entryPoint: 'fs',
+          targets: [
+            {
+              format: swapchainFormat,
+              blend: {
+                color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+                alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+              },
+            },
+          ],
+        },
+        depthStencil: {
+          format: this.device.depthFormat ?? 'depth24plus',
+          depthWriteEnabled: false,
+          depthCompare: 'always',
+        },
+        primitive: { topology: 'triangle-strip' },
+      });
+
+      this.weightedPipelineFormats = {
+        color: colorFormat,
+        weight: weightFormat,
+        swapchain: swapchainFormat,
+      };
+    }
+
+    return Boolean(this.edgeWeightedPipeline && this.edgeResolvePipeline);
+  }
+
+  ensureWeightedResolveBindGroup(device) {
+    if (!this.weightedTextures) return;
+    if (!this.weightedSampler) {
+      this.weightedSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
+    }
+    this.edgeResolveBindGroup = device.createBindGroup({
+      layout: this.edgeResolveLayout,
+      entries: [
+        { binding: 0, resource: this.weightedSampler },
+        { binding: 1, resource: this.weightedTextures.color.createView() },
+        { binding: 2, resource: this.weightedTextures.weight.createView() },
+      ],
+    });
+  }
+
+  renderWeighted(context, { geometry, is2D, drawNodes }) {
+    const commandEncoder = context.commandEncoder;
+    const targetView = context.colorView;
+    const depthView = context.depthView;
+    const useQuads = this.edgeRenderingMode === 'quad' && this.edgeWeightedQuadPipeline;
+    const edgePipeline = useQuads ? this.edgeWeightedQuadPipeline : this.edgeWeightedPipeline;
+    const edgeVertexBuffer = useQuads ? this.edgeQuadBufferGpu : null;
+    const applyViewport = (pass) => {
+      if (context.viewport && pass?.setViewport) {
+        pass.setViewport(context.viewport.x, context.viewport.y, context.viewport.width, context.viewport.height, 0, 1);
+      }
+    };
+
+    // Draw nodes first for 3D to populate depth, mirroring the existing ordering.
+    if (!is2D) {
+      drawNodes(context.passEncoder);
+    }
+
+    if (context.passEncoder) {
+      context.passEncoder.end();
+      context.passEncoder = null;
+    }
+
+    if (geometry.edges.count && edgePipeline) {
+      const accumulatePass = commandEncoder.beginRenderPass({
+        colorAttachments: [
+          {
+            view: this.weightedTextures.color.createView(),
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+            loadOp: 'clear',
+            storeOp: 'store',
+          },
+          {
+            view: this.weightedTextures.weight.createView(),
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+            loadOp: 'clear',
+            storeOp: 'store',
+          },
+        ],
+        ...(depthView
+          ? {
+              depthStencilAttachment: {
+                view: depthView,
+                depthLoadOp: 'load',
+                depthStoreOp: 'store',
+              },
+            }
+          : {}),
+      });
+          applyViewport(accumulatePass);
+      accumulatePass.setPipeline(edgePipeline);
+      accumulatePass.setBindGroup(0, this.edgeBindGroup);
+      if (edgeVertexBuffer) {
+        accumulatePass.setVertexBuffer(0, edgeVertexBuffer);
+        accumulatePass.draw(4, geometry.edges.count, 0, 0);
+      } else {
+        accumulatePass.draw(geometry.edges.count * 2, 1, 0, 0);
+      }
+      accumulatePass.end();
+    }
+
+    const resolvePass = commandEncoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view: targetView,
+          loadOp: 'load',
+          storeOp: 'store',
+        },
+      ],
+      ...(depthView
+        ? {
+            depthStencilAttachment: {
+              view: depthView,
+              depthLoadOp: 'load',
+              depthStoreOp: 'store',
+            },
+          }
+        : {}),
+    });
+    applyViewport(resolvePass);
+    resolvePass.setPipeline(this.edgeResolvePipeline);
+    resolvePass.setBindGroup(0, this.edgeResolveBindGroup);
+    resolvePass.setVertexBuffer(0, context.quad);
+    resolvePass.draw(4, 1, 0, 0);
+
+    if (is2D) {
+      drawNodes(resolvePass);
+    }
+
+    context.passEncoder = resolvePass;
   }
 }

@@ -16,3 +16,4 @@ The source lives in [`docs/examples/basic/main.js`](./main.js). Start the Vite d
 - The example now defaults to a 3D-ready force-directed layout with Barnes–Hut repulsion and damping safeguards.
 - Pass `?layout=jitter` to switch back to the legacy jitter layout.
 - Pass `?mode=3d` to enable the depth axis; otherwise it runs in 2D.
+- Pass `?edgeTransparency=weighted` to enable weighted blended transparency for edges (falls back to alpha if unsupported).

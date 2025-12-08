@@ -13,7 +13,7 @@ export class LayeredRenderer {
   constructor(canvas, options = {}) {
     const pixelRatio = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
     this.canvas = canvas;
-    this.options = options;
+    this.options = { transparencyModeEdges: 'alpha', ...options };
     this.clearColor = options.clearColor ?? [0.01, 0.01, 0.02, 1];
     this.layers = [];
     this.device = null;
@@ -116,6 +116,11 @@ export class LayeredRenderer {
     this.graphLayer?.setEdgeRenderingMode?.(mode);
   }
 
+  setEdgeTransparencyMode(mode) {
+    this.options.transparencyModeEdges = mode;
+    this.graphLayer?.setEdgeTransparencyMode?.(mode);
+  }
+
   /**
    * Allocates an off-screen framebuffer that can be used as a render target.
    * @param {number} width
@@ -200,7 +205,11 @@ export class LayeredRenderer {
 
   ensureGraphLayer() {
     if (this.graphLayer) return;
-    const options = { edgeRendering: this.options.edgeRendering, nodeOutlineColor: this.options.nodeOutlineColor };
+    const options = {
+      edgeRendering: this.options.edgeRendering,
+      nodeOutlineColor: this.options.nodeOutlineColor,
+      transparencyModeEdges: this.options.transparencyModeEdges,
+    };
     if (this.device?.type === 'webgpu') {
       this.graphLayer = new GraphLayerWebGPU(options);
     } else {

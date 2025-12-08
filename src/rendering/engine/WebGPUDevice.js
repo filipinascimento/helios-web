@@ -143,7 +143,7 @@ export class WebGPUDevice {
     const targetTexture = renderTarget ? renderTarget.texture : this.context.getCurrentTexture();
     const width = renderTarget?.width ?? this.canvas.width;
     const height = renderTarget?.height ?? this.canvas.height;
-    const colorAttachment = { view: targetTexture.createView() };
+    const colorView = targetTexture.createView();
     const depthView = renderTarget?.depthTexture
       ? renderTarget.depthTexture.createView()
       : this.ensureDepthTexture(width, height)?.createView();
@@ -152,7 +152,7 @@ export class WebGPUDevice {
     const pass = encoder.beginRenderPass({
       colorAttachments: [
         {
-          ...colorAttachment,
+          view: colorView,
           clearValue: clearColor
             ? { r: clearColor[0], g: clearColor[1], b: clearColor[2], a: clearColor[3] }
             : { r: 0, g: 0, b: 0, a: 1 },
@@ -184,11 +184,18 @@ export class WebGPUDevice {
       format: this.format,
       quad: this.quadVertexBuffer,
       target: renderTarget,
+      colorView,
+      depthView,
+      width,
+      height,
+      viewport: rect ?? null,
     };
   }
 
   endFrame(context) {
-    context.passEncoder.end();
+    if (context.passEncoder) {
+      context.passEncoder.end();
+    }
     this.device.queue.submit([context.commandEncoder.finish()]);
   }
 

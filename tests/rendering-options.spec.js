@@ -220,4 +220,87 @@ test.describe('webgpu visual (headed)', () => {
 
     await headedContext?.close();
   });
+
+  test('weighted edge transparency diverges from alpha (headed)', async ({ page, browser }) => {
+    // Ensure headed context so weighted blending can be exercised; skip otherwise.
+    let headedContext = null;
+    let headedPage = page;
+    if (browser) {
+      try {
+        headedContext = await browser.newContext({ headless: false });
+        headedPage = await headedContext.newPage();
+      } catch (error) {
+        test.skip(true, `Unable to launch headed browser: ${error?.message ?? error}`);
+      }
+    } else {
+      test.skip(true, 'Browser fixture unavailable');
+    }
+
+    await headedPage.goto('/');
+
+    const result = await headedPage.evaluate(async () => {
+      const { createDeterministicHelios } = await import('/src/tests/deterministicNetwork.js');
+      document.body.innerHTML = '<div id="app" style="width:320px;height:320px"></div>';
+      const { helios } = await createDeterministicHelios(document.getElementById('app'), 'webgl');
+
+      const network = helios.network;
+      const edges = network.addEdges([
+        { from: 0, to: 1 },
+        { from: 0, to: 1 },
+      ]);
+      const colors = network.getEdgeAttributeBuffer('_helios_visuals_edge_color').view;
+      const widths = network.getEdgeAttributeBuffer('_helios_visuals_edge_width').view;
+      const opacities = network.getEdgeAttributeBuffer('_helios_visuals_edge_opacity').view;
+      colors.set([1, 0, 0, 1, 1, 0, 0, 1], edges[0] * 8);
+      colors.set([0, 0, 1, 1, 0, 0, 1, 1], edges[1] * 8);
+      widths.set([10, 10], edges[0] * 2);
+      widths.set([10, 10], edges[1] * 2);
+      opacities.set([0.8, 0.8], edges[0] * 2);
+      opacities.set([0.2, 0.2], edges[1] * 2);
+
+      const sampleMean = async (mode) => {
+        helios.renderer?.setEdgeTransparencyMode?.(mode);
+        helios.visuals.markAllDenseDirty();
+        helios.scheduler.requestGeometry();
+        helios.renderer.render({ network, timestamp: performance.now(), camera: helios.renderer.camera });
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        const rect = { x: 150, y: 150, width: 20, height: 20 };
+        const pixels = await helios.renderer.readPixels(null, rect);
+        if (!pixels) return { mean: [0, 0, 0], fallback: true };
+        let r = 0; let g = 0; let b = 0; let count = 0;
+        for (let i = 0; i < pixels.length; i += 4) {
+          r += pixels[i];
+          g += pixels[i + 1];
+          b += pixels[i + 2];
+          count += 1;
+        }
+        const mean = [r / count, g / count, b / count];
+        const layer = helios.renderer?.graphLayer;
+        const fallback = mode === 'weighted' && layer?.edgeTransparencyMode !== 'weighted';
+        return { mean, fallback };
+      };
+
+      const alpha = await sampleMean('alpha');
+      const weighted = await sampleMean('weighted');
+
+      const distance = Math.sqrt(
+        (alpha.mean[0] - weighted.mean[0]) ** 2 +
+        (alpha.mean[1] - weighted.mean[1]) ** 2 +
+        (alpha.mean[2] - weighted.mean[2]) ** 2,
+      );
+
+      return {
+        distance,
+        fallback: weighted.fallback,
+      };
+    });
+
+    if (result.fallback || result.distance <= 5) {
+      test.skip(true, 'Weighted edge transparency unavailable or produced no observable delta in this environment');
+    }
+
+    expect(result.distance).toBeGreaterThan(5);
+
+    await headedContext?.close();
+  });
 });

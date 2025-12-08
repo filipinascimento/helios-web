@@ -25,6 +25,14 @@ function resolveLayoutType() {
   return 'force3d';
 }
 
+function resolveEdgeTransparencyMode() {
+  const params = new URLSearchParams(window.location.search);
+  const mode = params.get('edgeTransparency');
+  if (!mode) return 'alpha';
+  const normalized = mode.toLowerCase();
+  return normalized === 'weighted' ? 'weighted' : 'alpha';
+}
+
 async function bootstrap() {
   const diagnostics = {
     ready: false,
@@ -63,6 +71,7 @@ async function bootstrap() {
   const target = document.getElementById('app');
   const mode = resolveMode();
   const layoutType = resolveLayoutType();
+  const edgeTransparency = resolveEdgeTransparencyMode();
   const heliosOptions = {
     container: target,
     layout: {
@@ -83,6 +92,7 @@ async function bootstrap() {
     },
     mode,
     projection: 'perspective',
+    transparencyModeEdges: edgeTransparency,
   };
   const rendererPreference = resolveRendererPreference();
   if (rendererPreference) {
@@ -101,14 +111,15 @@ async function bootstrap() {
     })
     .done();
   helios.nodeMapper.channel('size').from(nodeAttribute).linear([0, 1], [1, 5]).done();
-  // helios.edgeMapper
-  //   .channel('color')
-  //   .from(edgeAttribute)
-  //   .transform((v) => {
-  //     const t = Math.max(0, Math.min(1, v ?? 0));
-  //     return [0.1, 0.3 + t * 0.5, 1 - t * 0.5, 0.9];
-  //   })
-  //   .done();
+  // Now using the default edge color mapper.
+  helios.edgeMapper
+    .channel('color')
+    .from(edgeAttribute)
+    .transform((v) => {
+      const t = Math.max(0, Math.min(1, v ?? 0));
+      return [0.1, 0.3 + t * 0.5, 1 - t * 0.5, 0.9];
+    })
+    .done();
   helios.edgeMapper.channel('width').constant(1.5).done();
   // Make edges visibly thicker for the demo.
   if (helios.renderer?.graphLayer) {

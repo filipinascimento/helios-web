@@ -23,6 +23,7 @@ export class GraphLayer extends Layer {
     this.emptyUint = new Uint32Array(0);
     this.cpuArrays = {};
     this.edgeRenderingMode = options.edgeRendering === 'line' ? 'line' : 'quad';
+    this.edgeTransparencyMode = options.transparencyModeEdges === 'weighted' ? 'weighted' : 'alpha';
     this.nodeOpacityBase = 0;
     this.nodeOpacityScale = 1;
     this.nodeSizeBase = 0;
@@ -41,6 +42,12 @@ export class GraphLayer extends Layer {
   setEdgeRenderingMode(mode) {
     if (mode === 'line' || mode === 'quad') {
       this.edgeRenderingMode = mode;
+    }
+  }
+
+  setEdgeTransparencyMode(mode) {
+    if (mode === 'alpha' || mode === 'weighted') {
+      this.edgeTransparencyMode = mode;
     }
   }
 

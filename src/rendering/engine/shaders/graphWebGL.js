@@ -73,6 +73,19 @@ void main() {
   fragColor = v_color;
 }`;
 
+export const EDGE_WEIGHTED_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
+precision mediump float;
+
+in vec4 v_color;
+layout (location = 0) out vec4 fragAccum;
+layout (location = 1) out vec4 fragWeight;
+
+void main() {
+  float weight = v_color.a;
+  fragAccum = vec4(v_color.rgb * weight, weight);
+  fragWeight = vec4(weight, 0.0, 0.0, 0.0);
+}`;
+
 export const EDGE_VERTEX_SOURCE = /* glsl */ `#version 300 es
 layout (location = 0) in vec3 a_start;
 layout (location = 1) in vec3 a_end;
@@ -179,3 +192,31 @@ void main() {
 }`;
 
 export const EDGE_QUAD_FRAGMENT_SOURCE = EDGE_FRAGMENT_SOURCE;
+
+export const EDGE_WEIGHTED_QUAD_FRAGMENT_SOURCE = EDGE_WEIGHTED_FRAGMENT_SOURCE;
+
+export const EDGE_RESOLVE_VERTEX_SOURCE = /* glsl */ `#version 300 es
+layout (location = 0) in vec2 a_position;
+layout (location = 1) in vec2 a_uv;
+out vec2 v_uv;
+
+void main() {
+  gl_Position = vec4(a_position, 0.0, 1.0);
+  v_uv = a_uv;
+}`;
+
+export const EDGE_RESOLVE_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
+precision mediump float;
+in vec2 v_uv;
+uniform sampler2D u_colorAccum;
+uniform sampler2D u_weightAccum;
+out vec4 fragColor;
+
+void main() {
+  vec3 accum = texture(u_colorAccum, v_uv).rgb;
+  float weight = texture(u_weightAccum, v_uv).r;
+  float denom = max(weight, 1e-4);
+  vec3 resolved = accum / denom;
+  float alpha = clamp(weight, 0.0, 1.0);
+  fragColor = vec4(resolved * alpha, alpha);
+}`;
