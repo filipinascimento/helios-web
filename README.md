@@ -11,6 +11,11 @@ npm install
 npm run dev    # serves the example under docs/examples/basic via Vite
 npm run build  # produces the library bundle in dist/
 npm run test:e2e  # launches a headless smoke test (run `npx playwright install` once)
+npm run test:e2e:headed  # headed run of the full Playwright suite
+npm run test:e2e:webgpu  # headed run with WebGPU flags (chromium-webgpu-headed project)
+npm run test:e2e:weighted  # headed weighted-transparency focus
+npm run test:e2e:rendering-options  # headed rendering-options focus
+npm run test    # runs the node colormap unit test
 ```
 
 Point your browser at `http://localhost:5173` to interact with the bundled

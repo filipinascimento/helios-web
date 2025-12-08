@@ -37,6 +37,31 @@ Key entry points:
 - `Mapper` – flexible mapping utility for visual channels; mapped values land in
   sparse attributes and trigger dense buffer rebuilds automatically
 
+## Mapper + Colormaps
+
+Color channels can now consume colormap names, objects, or custom functions. All
+colormaps shipped in `ColormapData.json` (CET, cmasher, helios) plus the entire
+`d3-scale-chromatic` catalog are available via the exported `colormaps` object.
+
+```js
+import { Mapper, colormaps, createColormapScale, colormapToScheme } from 'helios-web-next';
+
+// Continuous values → RGBA via an interpolated colormap
+mapper
+  .channel('color')
+  .from('weight')
+  .colormap('interpolateViridis', { domain: [minWeight, maxWeight], alpha: 0.9 })
+  .done();
+
+// Turn a continuous map into a categorical palette for discrete types
+const palette = colormapToScheme(colormaps.cmasher.cmasher_amber, 8);
+mapper.channel('color').categorical(['A', 'B', 'C'], palette).done();
+
+// Or pass a custom function directly
+const scale = createColormapScale((t) => (t < 0.5 ? '#ff7f00' : '#1f78b4'));
+mapper.channel('color').from('flag').scale(scale).done();
+```
+
 ## Example Catalog
 
 - [`docs/examples/basic`](./examples/basic/README.md) – creates a handful of nodes, randomizes attributes, and maps them to colors so you can see both node and edge styling.

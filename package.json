@@ -7,9 +7,15 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:webgpu": "playwright test --headed --project=chromium-webgpu-headed",
+    "test:e2e:weighted": "playwright test --headed tests/edge-transparency.spec.js",
+    "test:e2e:rendering-options": "playwright test --headed --project=chromium tests/rendering-options.spec.js",
+    "test": "node --test tests/colormaps.test.js"
   },
   "dependencies": {
+    "d3-scale-chromatic": "^3.1.0",
     "helios-network": "^0.2.10"
   },
   "devDependencies": {

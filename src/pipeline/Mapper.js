@@ -1,4 +1,5 @@
 import { AttributeType } from 'helios-network';
+import { createColormapScale } from '../colors/colormaps.js';
 import { VISUAL_ATTRIBUTE_NAMES, DEFAULT_VISUALS, VISUAL_ATTRIBUTE_MAP } from './constants.js';
 
 const {
@@ -179,6 +180,15 @@ function categoricalScale(value, domain = [], range = []) {
 }
 
 function applyScale(config, value, inputs, item, context) {
+  if (config.type === 'colormap' || config.colormap) {
+    const scale = config.__colormapScale ?? createColormapScale(config.colormap ?? config.scale ?? config.range, {
+      domain: config.domain,
+      alpha: config.alpha,
+      clamp: config.clamp ?? true,
+    });
+    config.__colormapScale = scale;
+    return scale(value, inputs, item, context);
+  }
   if (config.type === 'linear') {
     return linearScale(value, config.domain, config.range);
   }
@@ -272,6 +282,9 @@ function normalizeChannelConfig(name, config) {
     attributes: config.attributes ?? config.from ?? undefined,
     transform: config.transform,
     type: config.type ?? config.mode ?? undefined,
+    colormap: config.colormap,
+    alpha: config.alpha,
+    clamp: config.clamp,
     endpoints: normalizeEndpoints(config.endpoints ?? config.endpoint ?? 'both'),
     nodeAttribute: config.nodeAttribute ?? config.nodeAttr ?? undefined,
     domain: config.domain,
@@ -337,6 +350,15 @@ class ChannelBuilder {
 
   scale(fn) {
     this.config.scale = fn;
+    return this;
+  }
+
+  colormap(nameOrDescriptor, options = {}) {
+    this.config.type = 'colormap';
+    this.config.colormap = nameOrDescriptor;
+    if (options?.domain) this.config.domain = options.domain;
+    if (options?.alpha != null) this.config.alpha = options.alpha;
+    if (options?.clamp != null) this.config.clamp = options.clamp;
     return this;
   }
 

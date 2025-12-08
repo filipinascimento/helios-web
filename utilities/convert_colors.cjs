@@ -83,14 +83,29 @@ function processFile(filePath, prefix, accumulator) {
   const raw = fs.readFileSync(filePath, "utf8");
   const data = JSON.parse(raw);
 
+  // Add a new attribute to each colormap indicating it's a scheme if its name starts with "scheme"
+  // remove that scheme or interpolate from the name
+
   for (const [name, value] of Object.entries(data)) {
     const colors = parseColorValue(value);
     if (!colors.length) continue;
-    const key = `${prefix}_${name}`;
+    // Add a new attribute to each colormap indicating it's a scheme if its name starts with "scheme"
+    // remove that scheme or interpolate from the name
+    let isScheme = false;
+    if (name.toLowerCase().startsWith("scheme")) {
+      isScheme = true;
+    }
+    // remove "scheme" from the name for storage
+    const cleanName = isScheme ? name.slice(6) : name;
+
+    const key = `${prefix}_${cleanName}`;
     if (accumulator[key]) {
       throw new Error(`Duplicate colormap key detected: ${key}`);
     }
-    accumulator[key] = { n: colors.length, data: encodeToBase64(colors) };
+    accumulator[key] = {
+      n: colors.length,
+      data: encodeToBase64(colors),
+      isScheme: isScheme};
   }
 }
 
@@ -110,6 +125,10 @@ function main() {
     const prefix = path.basename(file, path.extname(file));
     processFile(path.join(DATA_DIR, file), prefix, output);
   }
+
+  // Add a new attribute to each colormap indicating it's a scheme if its name starts with "scheme"
+  // remove that scheme or interpolate from the name
+
 
   const sortedKeys = Object.keys(output).sort();
   const sortedOutput = {};

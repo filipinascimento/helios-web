@@ -4,6 +4,15 @@ export { StaticLayout, WorkerLayout, Layout } from './layouts/Layout.js';
 export { Mapper, createDefaultMappers, VISUAL_ATTRIBUTES } from './pipeline/Mapper.js';
 export { MapperCollection } from './pipeline/Mapper.js';
 export { VisualAttributes } from './pipeline/VisualAttributes.js';
+export {
+	colormaps,
+	createCategoricalColormap,
+	createColormapScale,
+	colormapToScheme,
+	colormapToInterpolator,
+	decodeColormapData,
+	base64ToUint8Array,
+} from './colors/colormaps.js';
 export { LayeredRenderer } from './rendering/engine/LayeredRenderer.js';
 export { Camera } from './rendering/Camera.js';
 export { WebGL2Renderer } from './rendering/WebGL2Renderer.js';
