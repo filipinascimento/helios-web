@@ -169,3 +169,4 @@ docs/api/
 dist_example/
 dist*/
 /for_reference
+/test-results
