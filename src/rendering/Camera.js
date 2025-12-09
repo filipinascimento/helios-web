@@ -489,17 +489,22 @@ export class Camera {
       const rect = this.canvas?.getBoundingClientRect?.();
       const scale = Math.exp(-event.deltaY * 0.001);
       const newZoom = clamp(this.zoom * scale, this.minZoom, this.maxZoom);
-      if (rect && this.viewport.width && this.viewport.height) {
-        const screenX = ((event.clientX - rect.left) / Math.max(1, rect.width)) * this.viewport.width;
-        const screenY = ((event.clientY - rect.top) / Math.max(1, rect.height)) * this.viewport.height;
-        const worldX = (screenX - this.pan2D[0]) / this.zoom;
-        const worldY = (screenY - this.pan2D[1]) / this.zoom;
-        this.zoom = newZoom;
-        this.pan2D[0] = screenX - worldX * this.zoom;
-        this.pan2D[1] = screenY - worldY * this.zoom;
-      } else {
-        this.zoom = newZoom;
-      }
+      const vpWidth = Math.max(1, this.viewport.width || 1);
+      const vpHeight = Math.max(1, this.viewport.height || 1);
+      const screenX = rect
+        ? ((event.clientX - rect.left) / Math.max(1, rect.width)) * vpWidth
+        : vpWidth * 0.5;
+      const screenY = rect
+        ? ((event.clientY - rect.top) / Math.max(1, rect.height)) * vpHeight
+        : vpHeight * 0.5;
+      const centerX = vpWidth * 0.5;
+      const centerY = vpHeight * 0.5;
+      const worldX = (screenX - centerX - this.pan2D[0]) / this.zoom;
+      const worldY = (screenY - centerY - this.pan2D[1]) / this.zoom;
+      this.zoom = newZoom;
+      // Keep the cursor's world position stationary by compensating pan around centered origin.
+      this.pan2D[0] = screenX - centerX - worldX * this.zoom;
+      this.pan2D[1] = screenY - centerY - worldY * this.zoom;
     } else {
       const scale = Math.exp(event.deltaY * 0.001);
       const next = this.distance * scale;
@@ -737,7 +742,16 @@ export class Camera {
     this.viewMatrix[12] = this.pan2D[0];
     this.viewMatrix[13] = this.pan2D[1];
     this.viewMatrix[15] = 1;
-    mat4Ortho(this.projectionMatrix, 0, width, height, 0, this.near2D, this.far2D);
+    // Center origin so world (0,0) maps to the viewport center by default.
+    mat4Ortho(
+      this.projectionMatrix,
+      -width * 0.5,
+      width * 0.5,
+      height * 0.5,
+      -height * 0.5,
+      this.near2D,
+      this.far2D,
+    );
     mat4Multiply(this.viewProjectionMatrix, this.projectionMatrix, this.viewMatrix);
     this.position[0] = -this.pan2D[0];
     this.position[1] = -this.pan2D[1];

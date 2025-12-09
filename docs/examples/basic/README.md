@@ -11,6 +11,8 @@ visuals flow that feeds dense buffers directly from `helios-network` each frame:
 
 The source lives in [`docs/examples/basic/main.js`](./main.js). Start the Vite dev server and visit `http://localhost:5173` to see it in action.
 
+For details on how the node colors and sizes are mapped (including the colormap used in this example), see [`docs/MAPPERS.md`](../MAPPERS.md).
+
 ### Layout controls
 
 - The example now defaults to a 3D-ready force-directed layout with Barnes–Hut repulsion and damping safeguards.

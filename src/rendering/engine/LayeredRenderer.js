@@ -55,7 +55,12 @@ export class LayeredRenderer {
     }
     this.device.resize(this.size);
     if (this.camera && this.size) {
-      this.camera.setTarget([this.size.width * 0.5, this.size.height * 0.5, 0]);
+      this.camera.setTarget([0, 0, 0]);
+      if (this.camera.mode === '2d') {
+        this.camera.pan2D[0] = 0;
+        this.camera.pan2D[1] = 0;
+      }
+      this.camera.updateMatrices();
     }
     this.ensureGraphLayer();
     for (const layer of this.layers) {
@@ -163,7 +168,12 @@ export class LayeredRenderer {
     this.size = size;
     this.camera?.setViewport(size);
     if (this.camera && size?.width && size?.height) {
-      this.camera.setTarget([size.width * 0.5, size.height * 0.5, 0]);
+      this.camera.setTarget([0, 0, 0]);
+      if (this.camera.mode === '2d') {
+        this.camera.pan2D[0] = 0;
+        this.camera.pan2D[1] = 0;
+      }
+      this.camera.updateMatrices();
     }
     this.device?.resize(size);
     for (const layer of this.layers) {
