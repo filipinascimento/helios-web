@@ -800,7 +800,7 @@ export class GraphLayerWebGL extends GraphLayer {
     gl.bindVertexArray(null);
     gl.depthMask(true);
     gl.enable(gl.DEPTH_TEST);
-    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.depthFunc(gl.LEQUAL);
   }
 }

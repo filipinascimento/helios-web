@@ -152,12 +152,12 @@ export class GraphLayerWebGPU extends GraphLayer {
     };
     const alphaBlend = {
       color: {
-        srcFactor: 'one',
+        srcFactor: 'src-alpha',
         dstFactor: 'one-minus-src-alpha',
         operation: 'add',
       },
       alpha: {
-        srcFactor: 'one',
+        srcFactor: 'src-alpha',
         dstFactor: 'one-minus-src-alpha',
         operation: 'add',
       },
