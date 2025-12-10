@@ -97,39 +97,49 @@ export class GraphLayer extends Layer {
     return this.fallbackCameraUniforms;
   }
 
-  getAttributeDescriptor(network, scope, name) {
-    const updater =
-      scope === 'node'
-        ? network?.updateDenseNodeAttributeBuffer?.bind(network)
-        : network?.updateDenseEdgeAttributeBuffer?.bind(network);
-    if (!updater) return null;
+  updateDenseGraphBuffers(network) {
+    if (!network) return false;
+    const updates = [
+      () => network.updateDenseNodeIndexBuffer?.(),
+      () => network.updateDenseEdgeIndexBuffer?.(),
+      () => network.updateDenseNodeAttributeBuffer?.(NODE_POSITION_ATTRIBUTE),
+      () => network.updateDenseNodeAttributeBuffer?.(NODE_COLOR_ATTRIBUTE),
+      () => network.updateDenseNodeAttributeBuffer?.(NODE_SIZE_ATTRIBUTE),
+      () => network.updateDenseNodeAttributeBuffer?.(NODE_OUTLINE_WIDTH_ATTRIBUTE),
+      () => network.updateDenseNodeAttributeBuffer?.(NODE_OUTLINE_COLOR_ATTRIBUTE),
+      () => network.updateDenseEdgeAttributeBuffer?.(EDGE_COLOR_ATTRIBUTE),
+      () => network.updateDenseEdgeAttributeBuffer?.(EDGE_OPACITY_ATTRIBUTE),
+      () => network.updateDenseEdgeAttributeBuffer?.(EDGE_WIDTH_ATTRIBUTE),
+      () => network.updateDenseEdgeAttributeBuffer?.(EDGE_ENDPOINTS_POSITION_ATTRIBUTE),
+      () => network.updateDenseEdgeAttributeBuffer?.(EDGE_ENDPOINTS_SIZE_ATTRIBUTE),
+    ];
+    for (const fn of updates) {
+      if (typeof fn !== 'function') continue;
+      try {
+        fn();
+      } catch (error) {
+        console.warn('GraphLayer: failed to update dense buffer', error);
+        return false;
+      }
+    }
+    return true;
+  }
+
+  getAttributeView(network, scope, name) {
+    if (!network) return null;
     try {
-      return updater(name);
+      return scope === 'node'
+        ? network.getDenseNodeAttributeView(name)
+        : network.getDenseEdgeAttributeView(name);
     } catch (_) {
       return null;
     }
   }
 
-  getIndexDescriptor(network, scope) {
-    const updater =
-      scope === 'node'
-        ? network?.updateDenseNodeIndexBuffer?.bind(network)
-        : network?.updateDenseEdgeIndexBuffer?.bind(network);
-    if (!updater) return null;
+  getIndexView(network, scope) {
+    if (!network) return null;
     try {
-      return updater();
-    } catch (_) {
-      return null;
-    }
-  }
-
-  createTypedView(descriptor, Type, components) {
-    if (!descriptor?.view || typeof descriptor.count !== 'number') return null;
-    const stride = descriptor.stride ?? components;
-    const pointer = descriptor.pointer ?? descriptor.view.byteOffset ?? 0;
-    const length = descriptor.count * stride;
-    try {
-      return new Type(descriptor.view.buffer, pointer, length);
+      return scope === 'node' ? network.getDenseNodeIndexView() : network.getDenseEdgeIndexView();
     } catch (_) {
       return null;
     }
@@ -157,26 +167,26 @@ export class GraphLayer extends Layer {
         },
       };
     }
-    const nodeIndexDesc = this.getIndexDescriptor(network, 'node');
-    const edgeIndexDesc = this.getIndexDescriptor(network, 'edge');
-    const nodePositionsDesc = this.getAttributeDescriptor(network, 'node', NODE_POSITION_ATTRIBUTE);
-    const nodeColorsDesc = this.getAttributeDescriptor(network, 'node', NODE_COLOR_ATTRIBUTE);
-    const nodeSizesDesc = this.getAttributeDescriptor(network, 'node', NODE_SIZE_ATTRIBUTE);
-    const nodeOutlineWidthDesc = this.getAttributeDescriptor(network, 'node', NODE_OUTLINE_WIDTH_ATTRIBUTE);
-    const nodeOutlineColorDesc = this.getAttributeDescriptor(network, 'node', NODE_OUTLINE_COLOR_ATTRIBUTE);
-    const edgeColorDesc = this.getAttributeDescriptor(network, 'edge', EDGE_COLOR_ATTRIBUTE);
-    const edgeOpacityDesc = this.getAttributeDescriptor(network, 'edge', EDGE_OPACITY_ATTRIBUTE);
-    const edgeWidthDesc = this.getAttributeDescriptor(network, 'edge', EDGE_WIDTH_ATTRIBUTE);
-    const edgeSegmentsDesc = this.getAttributeDescriptor(network, 'edge', EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
-    const edgeEndpointSizeDesc = this.getAttributeDescriptor(network, 'edge', EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+    const nodeIndexDesc = this.getIndexView(network, 'node');
+    const edgeIndexDesc = this.getIndexView(network, 'edge');
+    const nodePositionsDesc = this.getAttributeView(network, 'node', NODE_POSITION_ATTRIBUTE);
+    const nodeColorsDesc = this.getAttributeView(network, 'node', NODE_COLOR_ATTRIBUTE);
+    const nodeSizesDesc = this.getAttributeView(network, 'node', NODE_SIZE_ATTRIBUTE);
+    const nodeOutlineWidthDesc = this.getAttributeView(network, 'node', NODE_OUTLINE_WIDTH_ATTRIBUTE);
+    const nodeOutlineColorDesc = this.getAttributeView(network, 'node', NODE_OUTLINE_COLOR_ATTRIBUTE);
+    const edgeColorDesc = this.getAttributeView(network, 'edge', EDGE_COLOR_ATTRIBUTE);
+    const edgeOpacityDesc = this.getAttributeView(network, 'edge', EDGE_OPACITY_ATTRIBUTE);
+    const edgeWidthDesc = this.getAttributeView(network, 'edge', EDGE_WIDTH_ATTRIBUTE);
+    const edgeSegmentsDesc = this.getAttributeView(network, 'edge', EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
+    const edgeEndpointSizeDesc = this.getAttributeView(network, 'edge', EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
 
     const nodes = {
-      positions: this.createTypedView(nodePositionsDesc, Float32Array, 3) ?? this.emptyFloat,
-      colors: this.createTypedView(nodeColorsDesc, Float32Array, 4) ?? this.emptyFloat,
-      sizes: this.createTypedView(nodeSizesDesc, Float32Array, 1) ?? this.emptyFloat,
-      outlineWidths: this.createTypedView(nodeOutlineWidthDesc, Float32Array, 1) ?? this.emptyFloat,
-      outlineColors: this.createTypedView(nodeOutlineColorDesc, Float32Array, 4) ?? this.emptyFloat,
-      indices: this.createTypedView(nodeIndexDesc, Uint32Array, 1) ?? this.emptyUint,
+      positions: nodePositionsDesc?.view ?? this.emptyFloat,
+      colors: nodeColorsDesc?.view ?? this.emptyFloat,
+      sizes: nodeSizesDesc?.view ?? this.emptyFloat,
+      outlineWidths: nodeOutlineWidthDesc?.view ?? this.emptyFloat,
+      outlineColors: nodeOutlineColorDesc?.view ?? this.emptyFloat,
+      indices: nodeIndexDesc?.view ?? this.emptyUint,
       count:
         nodeIndexDesc?.count ??
         nodePositionsDesc?.count ??
@@ -186,12 +196,12 @@ export class GraphLayer extends Layer {
     };
 
     const edges = {
-      segments: this.createTypedView(edgeSegmentsDesc, Float32Array, 6) ?? this.emptyFloat,
-      colors: this.createTypedView(edgeColorDesc, Float32Array, 8) ?? this.emptyFloat,
-      opacities: this.createTypedView(edgeOpacityDesc, Float32Array, 2) ?? this.emptyFloat,
-      widths: this.createTypedView(edgeWidthDesc, Float32Array, 2) ?? this.emptyFloat,
-      endpointSizes: this.createTypedView(edgeEndpointSizeDesc, Float32Array, 2) ?? this.emptyFloat,
-      indices: this.createTypedView(edgeIndexDesc, Uint32Array, 1) ?? this.emptyUint,
+      segments: edgeSegmentsDesc?.view ?? this.emptyFloat,
+      colors: edgeColorDesc?.view ?? this.emptyFloat,
+      opacities: edgeOpacityDesc?.view ?? this.emptyFloat,
+      widths: edgeWidthDesc?.view ?? this.emptyFloat,
+      endpointSizes: edgeEndpointSizeDesc?.view ?? this.emptyFloat,
+      indices: edgeIndexDesc?.view ?? this.emptyUint,
       count:
         edgeIndexDesc?.count ??
         edgeSegmentsDesc?.count ??

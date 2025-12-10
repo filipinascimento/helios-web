@@ -139,8 +139,17 @@ test('edges render with correct relative widths', async ({ page }, testInfo) => 
   const counts = await page.evaluate(() => {
     const frame = { network: window.__helios?.network, timestamp: performance.now() };
     window.__helios?.renderer?.render?.(frame);
-    const desc = window.__helios?.network?.updateDenseEdgeIndexBuffer?.();
-    return { edgeCount: desc?.count ?? 0 };
+    const net = window.__helios?.network;
+    let edgeCount = 0;
+    try {
+      net?.updateDenseEdgeIndexBuffer?.();
+      net?.withBufferAccess?.(() => {
+        edgeCount = net?.getDenseEdgeIndexView?.()?.count ?? 0;
+      });
+    } catch (_) {
+      edgeCount = 0;
+    }
+    return { edgeCount };
   });
   expect(counts.edgeCount).toBeGreaterThanOrEqual(2);
   await page.waitForTimeout(200);
@@ -171,6 +180,15 @@ test('edges render with correct relative widths', async ({ page }, testInfo) => 
       return { width: rect.width, height: rect.height, clientWidth: el.width, clientHeight: el.height };
     })();
     const dataPromise = window.__helios?.renderer?.readPixels?.() ?? null;
+    let edgeCount = 0;
+    try {
+      window.__helios?.network?.updateDenseEdgeIndexBuffer?.();
+      window.__helios?.network?.withBufferAccess?.(() => {
+        edgeCount = window.__helios?.network?.getDenseEdgeIndexView?.()?.count ?? 0;
+      });
+    } catch (_) {
+      edgeCount = 0;
+    }
     const measure = (data, x, matchFn) => {
       let longest = 0;
       let current = 0;
@@ -191,12 +209,11 @@ test('edges render with correct relative widths', async ({ page }, testInfo) => 
     };
     return Promise.resolve(dataPromise).then((data) => {
       if (!data || !width || !height) {
-        const edgeCount = window.__helios?.network?.updateDenseEdgeIndexBuffer?.()?.count ?? 0;
-        return {
-          thinWidth: 0, thickWidth: 0, width, height, hasData: !!data, nonWhite: 0, canvas,
-          rendererType: window.__helios?.renderer?.device?.type ?? null,
-          hasCanvas: !!document.querySelector('canvas'),
-          layerCanvas: !!window.__helios?.layers?.canvas,
+          return {
+            thinWidth: 0, thickWidth: 0, width, height, hasData: !!data, nonWhite: 0, canvas,
+            rendererType: window.__helios?.renderer?.device?.type ?? null,
+            hasCanvas: !!document.querySelector('canvas'),
+            layerCanvas: !!window.__helios?.layers?.canvas,
           canvasCount: document.querySelectorAll('canvas').length,
           bodyHtml: document.body?.innerHTML ?? '',
           containerId: window.__helios?.layers?.container?.id ?? null,
@@ -228,11 +245,11 @@ test('edges render with correct relative widths', async ({ page }, testInfo) => 
         rendererType: window.__helios?.renderer?.device?.type ?? null,
         hasCanvas: !!document.querySelector('canvas'),
         layerCanvas: !!window.__helios?.layers?.canvas,
-        canvasCount: document.querySelectorAll('canvas').length,
+          canvasCount: document.querySelectorAll('canvas').length,
           bodyHtml: document.body?.innerHTML ?? '',
           containerId: window.__helios?.layers?.container?.id ?? null,
           containerConnected: window.__helios?.layers?.container?.isConnected ?? null,
-          edgeCount: window.__helios?.network?.updateDenseEdgeIndexBuffer?.()?.count ?? 0,
+          edgeCount,
         };
       });
   });

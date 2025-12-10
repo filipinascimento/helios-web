@@ -322,145 +322,155 @@ export class GraphLayerWebGL extends GraphLayer {
     if (!context || context.type !== 'webgl2') return;
     const network = frame?.network;
     if (!network) return;
-    const geometry = this.readDenseGraph(network);
+    if (!this.updateDenseGraphBuffers(network)) return;
     const { camera } = frame ?? {};
     const gl = context.gl;
     const cameraUniforms = this.getCameraUniforms(camera);
     if (!cameraUniforms) return;
-    const is2D = cameraUniforms.mode === '2d';
-    const zoom2D = is2D ? Math.max(1e-3, cameraUniforms.view?.[0] ?? 1) : 1;
-    const edgeWidthFactor = is2D ? (zoom2D / EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL) : 1.0;
-    const globalEdgeWidthBase = this.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
-    const globalEdgeWidthScale = this.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
-    const viewport = context.viewport;
-    const viewportWidth = viewport ? viewport[2] : (gl.drawingBufferWidth || this.size?.width || 1);
-    const viewportHeight = viewport ? viewport[3] : (gl.drawingBufferHeight || this.size?.height || 1);
 
-    gl.enable(gl.DEPTH_TEST);
-    gl.depthMask(true);
-    gl.depthFunc(gl.LEQUAL);
-    gl.clear(gl.DEPTH_BUFFER_BIT);
+    let renderedWeighted = false;
+    network.withBufferAccess(() => {
+      const geometry = this.readDenseGraph(network);
+      const is2D = cameraUniforms.mode === '2d';
+      const zoom2D = is2D ? Math.max(1e-3, cameraUniforms.view?.[0] ?? 1) : 1;
+      const edgeWidthFactor = is2D ? (zoom2D / EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL) : 1.0;
+      const globalEdgeWidthBase = this.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
+      const globalEdgeWidthScale = this.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
+      const viewport = context.viewport;
+      const viewportWidth = viewport ? viewport[2] : (gl.drawingBufferWidth || this.size?.width || 1);
+      const viewportHeight = viewport ? viewport[3] : (gl.drawingBufferHeight || this.size?.height || 1);
 
-    if (is2D) {
-      gl.disable(gl.DEPTH_TEST);
-      gl.depthMask(false);
-    } else {
       gl.enable(gl.DEPTH_TEST);
       gl.depthMask(true);
-    }
-    if (geometry.edges.count) {
-      this.uploadEdgesWebGL2(geometry.edges);
-    } else {
-      this.edgeCount = 0;
-    }
-    if (geometry.nodes.count) {
-      this.uploadNodesWebGL2(geometry.nodes);
-    } else {
-      this.nodeCount = 0;
-    }
+      gl.depthFunc(gl.LEQUAL);
+      gl.clear(gl.DEPTH_BUFFER_BIT);
 
-    const drawNodes = () => {
-      if (!this.nodeCount) return;
-      gl.useProgram(this.nodeProgram);
-      gl.uniformMatrix4fv(this.nodeUniformViewProjection, false, cameraUniforms.viewProjection);
-      gl.uniformMatrix4fv(this.nodeUniformView, false, cameraUniforms.view);
-      if (this.nodeUniformCameraPosition) {
-        gl.uniform3fv(this.nodeUniformCameraPosition, cameraUniforms.position);
-      }
-      if (this.nodeUniformCameraUp) {
-        gl.uniform3fv(this.nodeUniformCameraUp, cameraUniforms.up);
-      }
-      if (this.nodeUniformCameraRight) {
-        gl.uniform3fv(this.nodeUniformCameraRight, cameraUniforms.right);
-      }
-      if (this.nodeUniformIs2D) {
-        gl.uniform1i(this.nodeUniformIs2D, is2D ? 1 : 0);
-      }
-      gl.uniform1f(this.nodeUniformOpacityBase, this.nodeOpacityBase);
-      gl.uniform1f(this.nodeUniformOpacityScale, this.nodeOpacityScale);
-      gl.uniform1f(this.nodeUniformSizeBase, this.nodeSizeBase);
-      gl.uniform1f(this.nodeUniformSizeScale, this.nodeSizeScale);
-      gl.uniform1f(this.nodeUniformOutlineWidthBase, this.nodeOutlineWidthBase);
-      gl.uniform1f(this.nodeUniformOutlineWidthScale, this.nodeOutlineWidthScale);
-      gl.uniform4f(
-        this.nodeUniformOutlineColor,
-        this.nodeOutlineColor?.[0] ?? 0,
-        this.nodeOutlineColor?.[1] ?? 0,
-        this.nodeOutlineColor?.[2] ?? 0,
-        this.nodeOutlineColor?.[3] ?? 1,
-      );
-      gl.bindVertexArray(this.nodeVAO);
-      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.nodeCount);
-    };
-
-    const drawEdges = () => {
-      if (!this.edgeCount) return;
-      gl.depthMask(false);
-      const useQuads = this.edgeRenderingMode === 'quad';
-      if (useQuads) {
-        gl.useProgram(this.edgeQuadProgram);
-        gl.uniformMatrix4fv(this.edgeQuadUniformViewProjection, false, cameraUniforms.viewProjection);
-        if (this.edgeQuadUniformViewport) {
-          gl.uniform2f(this.edgeQuadUniformViewport, viewportWidth, viewportHeight);
-        }
-        gl.uniform1f(this.edgeQuadUniformOpacityBase, this.edgeOpacityBase);
-        gl.uniform1f(this.edgeQuadUniformOpacityScale, this.edgeOpacityScale);
-        gl.uniform1f(this.edgeQuadUniformWidthBase, globalEdgeWidthBase);
-        gl.uniform1f(this.edgeQuadUniformWidthScale, globalEdgeWidthScale);
-        gl.uniform1f(this.edgeQuadUniformNodeSizeBase, this.nodeSizeBase);
-        gl.uniform1f(this.edgeQuadUniformNodeSizeScale, this.nodeSizeScale);
-        gl.uniform1f(this.edgeQuadUniformEndpointTrim, this.edgeEndpointTrim);
-        gl.bindVertexArray(this.edgeQuadVAO);
-        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.edgeCount);
+      if (is2D) {
+        gl.disable(gl.DEPTH_TEST);
+        gl.depthMask(false);
       } else {
-        gl.useProgram(this.edgeProgram);
-        gl.uniformMatrix4fv(this.edgeUniformViewProjection, false, cameraUniforms.viewProjection);
-        gl.uniform1f(this.edgeUniformOpacityBase, this.edgeOpacityBase);
-        gl.uniform1f(this.edgeUniformOpacityScale, this.edgeOpacityScale);
-        gl.uniform1f(this.edgeUniformWidthBase, globalEdgeWidthBase);
-        gl.uniform1f(this.edgeUniformWidthScale, globalEdgeWidthScale);
-        gl.uniform1f(this.edgeUniformNodeSizeBase, this.nodeSizeBase);
-        gl.uniform1f(this.edgeUniformNodeSizeScale, this.nodeSizeScale);
-        gl.uniform1f(this.edgeUniformEndpointTrim, this.edgeEndpointTrim);
-        gl.bindVertexArray(this.edgeVAO);
-        gl.drawArraysInstanced(gl.LINES, 0, 2, this.edgeCount);
+        gl.enable(gl.DEPTH_TEST);
+        gl.depthMask(true);
       }
-    };
+      if (geometry.edges.count) {
+        this.uploadEdgesWebGL2(geometry.edges);
+      } else {
+        this.edgeCount = 0;
+      }
+      if (geometry.nodes.count) {
+        this.uploadNodesWebGL2(geometry.nodes);
+      } else {
+        this.nodeCount = 0;
+      }
 
-    const weightedRequested = this.edgeTransparencyMode === 'weighted';
-    const weightedReady = weightedRequested && geometry.edges.count > 0
-      ? this.prepareWeightedWebGL(viewportWidth, viewportHeight)
-      : false;
+      const drawNodes = () => {
+        if (!this.nodeCount) return;
+        gl.useProgram(this.nodeProgram);
+        gl.uniformMatrix4fv(this.nodeUniformViewProjection, false, cameraUniforms.viewProjection);
+        gl.uniformMatrix4fv(this.nodeUniformView, false, cameraUniforms.view);
+        if (this.nodeUniformCameraPosition) {
+          gl.uniform3fv(this.nodeUniformCameraPosition, cameraUniforms.position);
+        }
+        if (this.nodeUniformCameraUp) {
+          gl.uniform3fv(this.nodeUniformCameraUp, cameraUniforms.up);
+        }
+        if (this.nodeUniformCameraRight) {
+          gl.uniform3fv(this.nodeUniformCameraRight, cameraUniforms.right);
+        }
+        if (this.nodeUniformIs2D) {
+          gl.uniform1i(this.nodeUniformIs2D, is2D ? 1 : 0);
+        }
+        gl.uniform1f(this.nodeUniformOpacityBase, this.nodeOpacityBase);
+        gl.uniform1f(this.nodeUniformOpacityScale, this.nodeOpacityScale);
+        gl.uniform1f(this.nodeUniformSizeBase, this.nodeSizeBase);
+        gl.uniform1f(this.nodeUniformSizeScale, this.nodeSizeScale);
+        gl.uniform1f(this.nodeUniformOutlineWidthBase, this.nodeOutlineWidthBase);
+        gl.uniform1f(this.nodeUniformOutlineWidthScale, this.nodeOutlineWidthScale);
+        gl.uniform4f(
+          this.nodeUniformOutlineColor,
+          this.nodeOutlineColor?.[0] ?? 0,
+          this.nodeOutlineColor?.[1] ?? 0,
+          this.nodeOutlineColor?.[2] ?? 0,
+          this.nodeOutlineColor?.[3] ?? 1,
+        );
+        gl.bindVertexArray(this.nodeVAO);
+        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.nodeCount);
+      };
 
-    if (weightedReady) {
-      this.renderWeightedWebGL(context, {
-        geometry,
-        is2D,
-        cameraUniforms,
-        edgeWidthBase: globalEdgeWidthBase,
-        edgeWidthScale: globalEdgeWidthScale,
-        viewport,
-      });
+      const drawEdges = () => {
+        if (!this.edgeCount) return;
+        gl.depthMask(false);
+        const useQuads = this.edgeRenderingMode === 'quad';
+        if (useQuads) {
+          gl.useProgram(this.edgeQuadProgram);
+          gl.uniformMatrix4fv(this.edgeQuadUniformViewProjection, false, cameraUniforms.viewProjection);
+          if (this.edgeQuadUniformViewport) {
+            gl.uniform2f(this.edgeQuadUniformViewport, viewportWidth, viewportHeight);
+          }
+          gl.uniform1f(this.edgeQuadUniformOpacityBase, this.edgeOpacityBase);
+          gl.uniform1f(this.edgeQuadUniformOpacityScale, this.edgeOpacityScale);
+          gl.uniform1f(this.edgeQuadUniformWidthBase, globalEdgeWidthBase);
+          gl.uniform1f(this.edgeQuadUniformWidthScale, globalEdgeWidthScale);
+          gl.uniform1f(this.edgeQuadUniformNodeSizeBase, this.nodeSizeBase);
+          gl.uniform1f(this.edgeQuadUniformNodeSizeScale, this.nodeSizeScale);
+          gl.uniform1f(this.edgeQuadUniformEndpointTrim, this.edgeEndpointTrim);
+          gl.bindVertexArray(this.edgeQuadVAO);
+          gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.edgeCount);
+        } else {
+          gl.useProgram(this.edgeProgram);
+          gl.uniformMatrix4fv(this.edgeUniformViewProjection, false, cameraUniforms.viewProjection);
+          gl.uniform1f(this.edgeUniformOpacityBase, this.edgeOpacityBase);
+          gl.uniform1f(this.edgeUniformOpacityScale, this.edgeOpacityScale);
+          gl.uniform1f(this.edgeUniformWidthBase, globalEdgeWidthBase);
+          gl.uniform1f(this.edgeUniformWidthScale, globalEdgeWidthScale);
+          gl.uniform1f(this.edgeUniformNodeSizeBase, this.nodeSizeBase);
+          gl.uniform1f(this.edgeUniformNodeSizeScale, this.nodeSizeScale);
+          gl.uniform1f(this.edgeUniformEndpointTrim, this.edgeEndpointTrim);
+          gl.bindVertexArray(this.edgeVAO);
+          gl.drawArraysInstanced(gl.LINES, 0, 2, this.edgeCount);
+        }
+      };
+
+      const weightedRequested = this.edgeTransparencyMode === 'weighted';
+      const weightedReady = weightedRequested && geometry.edges.count > 0
+        ? this.prepareWeightedWebGL(viewportWidth, viewportHeight)
+        : false;
+
+      if (weightedReady) {
+        this.renderWeightedWebGL(context, {
+          geometry,
+          is2D,
+          cameraUniforms,
+          edgeWidthBase: globalEdgeWidthBase,
+          edgeWidthScale: globalEdgeWidthScale,
+          viewport,
+        });
+        renderedWeighted = true;
+        return;
+      }
+
+      if (weightedRequested && geometry.edges.count && !this.warnedWeightedFallback) {
+        console.warn('Weighted edge transparency is not available in WebGL2; falling back to alpha.');
+        this.warnedWeightedFallback = true;
+      }
+
+      if (is2D) {
+        drawEdges();
+        drawNodes();
+      } else {
+        drawNodes();
+        drawEdges();
+      }
+
+      gl.bindVertexArray(null);
+      gl.depthMask(true);
+      gl.depthFunc(gl.LEQUAL);
+      gl.enable(gl.DEPTH_TEST);
+    });
+
+    if (renderedWeighted) {
       return;
     }
-
-    if (weightedRequested && geometry.edges.count && !this.warnedWeightedFallback) {
-      console.warn('Weighted edge transparency is not available in WebGL2; falling back to alpha.');
-      this.warnedWeightedFallback = true;
-    }
-
-    if (is2D) {
-      drawEdges();
-      drawNodes();
-    } else {
-      drawNodes();
-      drawEdges();
-    }
-
-    gl.bindVertexArray(null);
-    gl.depthMask(true);
-    gl.depthFunc(gl.LEQUAL);
-    gl.enable(gl.DEPTH_TEST);
   }
 
   uploadNodesWebGL2(nodes) {

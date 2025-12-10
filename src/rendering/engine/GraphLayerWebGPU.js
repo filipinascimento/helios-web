@@ -371,26 +371,39 @@ export class GraphLayerWebGPU extends GraphLayer {
     if (!context || context.type !== 'webgpu') return;
     const network = frame?.network;
     if (!network) return;
-    const geometry = this.readDenseGraph(network);
+    if (!this.updateDenseGraphBuffers(network)) return;
     const { camera } = frame ?? {};
     const gpuDevice = this.device?.device;
     if (!gpuDevice) return;
     const maxBindingSize = gpuDevice.limits?.maxStorageBufferBindingSize;
     const cameraUniforms = this.getCameraUniforms(camera);
-    const is2D = cameraUniforms?.mode === '2d';
-    this.updateGlobalsGpu(gpuDevice, cameraUniforms);
-    this.updateCameraUniformsGpu(camera, cameraUniforms);
-    if (!this.cameraBuffer) return;
-    if (geometry.nodes.count) {
-      this.updateNodeBuffersGpu(geometry.nodes, gpuDevice, maxBindingSize);
-    } else {
-      this.nodeBindGroup = null;
-    }
-    if (geometry.edges.count) {
-      this.updateEdgeBuffersGpu(geometry.edges, gpuDevice, maxBindingSize);
-    } else {
-      this.edgeBindGroup = null;
-    }
+    const weightedRequested = this.edgeTransparencyMode === 'weighted';
+    let weightedReady = false;
+    let geometry = null;
+    let is2D = cameraUniforms?.mode === '2d';
+
+    network.withBufferAccess(() => {
+      geometry = this.readDenseGraph(network);
+      is2D = cameraUniforms?.mode === '2d';
+      this.updateGlobalsGpu(gpuDevice, cameraUniforms);
+      this.updateCameraUniformsGpu(camera, cameraUniforms);
+      if (!this.cameraBuffer) return;
+      if (geometry.nodes.count) {
+        this.updateNodeBuffersGpu(geometry.nodes, gpuDevice, maxBindingSize);
+      } else {
+        this.nodeBindGroup = null;
+      }
+      if (geometry.edges.count) {
+        this.updateEdgeBuffersGpu(geometry.edges, gpuDevice, maxBindingSize);
+      } else {
+        this.edgeBindGroup = null;
+      }
+      weightedReady = weightedRequested && geometry.edges.count > 0
+        ? this.prepareWeightedResources(context, cameraUniforms)
+        : false;
+    });
+
+    if (!geometry || !this.cameraBuffer) return;
 
     const drawNodes = (passEncoder) => {
       if (!geometry.nodes.count || !this.nodeBindGroup || !passEncoder) return;
@@ -413,11 +426,6 @@ export class GraphLayerWebGPU extends GraphLayer {
         passEncoder.draw(geometry.edges.count * 2, 1, 0, 0);
       }
     };
-
-    const weightedRequested = this.edgeTransparencyMode === 'weighted';
-    const weightedReady = weightedRequested && geometry.edges.count > 0
-      ? this.prepareWeightedResources(context, cameraUniforms)
-      : false;
 
     if (!weightedReady) {
       if (weightedRequested && !this.warnedWeightedFallback && geometry.edges.count > 0) {

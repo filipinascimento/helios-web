@@ -41,7 +41,7 @@ export class Helios {
     }
     this.mappersDirty = true;
     this.visuals.seedMissingPositions(this.layers.size);
-    const debugPerformance = options.debugPerformance !== false;
+    const debugPerformance = options.debugPerformance?? false;
     const performanceWindow = options.performanceWindow ?? 60;
     const performanceLogEvery = options.performanceLogEvery ?? performanceWindow;
     this.performanceMonitor = new PerformanceMonitor({
@@ -49,11 +49,13 @@ export class Helios {
       windowSize: performanceWindow,
       logEvery: performanceLogEvery,
     });
+    this.manualRendering = options.manualRendering === true;
     this.scheduler = new Scheduler({ performanceMonitor: this.performanceMonitor });
     this.layout = this.createLayout(options.layout);
     this.renderer = null;
     this.size = { ...this.layers.size };
     this.removeResizeListener = null;
+    this.firstGeometryUpdateComplete = false;
     this.ready = this.initialize();
   }
 
@@ -86,7 +88,9 @@ export class Helios {
         this.renderer.resize(size);
       }
       this.layout?.resize?.(size);
-      this.scheduler.requestGeometry();
+      if (!this.manualRendering) {
+        this.scheduler.requestGeometry();
+      }
     });
 
     this.scheduler.setLayout(this.layout);
@@ -98,18 +102,31 @@ export class Helios {
         });
         this.mappersDirty = false;
       }
+      this.firstGeometryUpdateComplete = true;
       return {
         network: this.network,
         timestamp: performance.now(),
       };
     });
     this.scheduler.setRenderCallback((frame) => {
-      if (this.renderer && typeof this.renderer.render === 'function') {
+      if (this.firstGeometryUpdateComplete && this.renderer && typeof this.renderer.render === 'function') {
         this.renderer.render(frame, this.size);
       }
     });
-    this.scheduler.start();
-    this.scheduler.requestGeometry();
+    if (!this.manualRendering) {
+      this.scheduler.start();
+      this.scheduler.requestGeometry();
+    } else {
+      // In manual mode, run initial geometry setup but don't start scheduler
+      if (this.mappersDirty) {
+        this.visuals.applyMappers({
+          nodeMapper: this.nodeMapper.toCombinedMapper(),
+          edgeMapper: this.edgeMapper.toCombinedMapper(),
+        });
+        this.mappersDirty = false;
+      }
+      this.firstGeometryUpdateComplete = true;
+    }
   }
 
   createLayout(layoutOption) {
@@ -207,6 +224,33 @@ export class Helios {
     this.layout.initialize?.();
     this.scheduler.setLayout(layout);
     this.scheduler.requestLayout();
+  }
+
+  performRendering() {
+    if (!this.manualRendering) {
+      console.warn('performRendering() should only be called when manualRendering option is enabled');
+      return;
+    }
+    if (!this.firstGeometryUpdateComplete) {
+      console.warn('performRendering() called before initialization is complete');
+      return;
+    }
+    // Update geometry if needed
+    // if (this.mappersDirty) {
+    //   this.visuals.applyMappers({
+    //     nodeMapper: this.nodeMapper.toCombinedMapper(),
+    //     edgeMapper: this.edgeMapper.toCombinedMapper(),
+    //   });
+    //   this.mappersDirty = false;
+    // }
+    // Create frame and render
+    const frame = {
+      network: this.network,
+      timestamp: performance.now(),
+    };
+    if (this.renderer && typeof this.renderer.render === 'function') {
+      this.renderer.render(frame, this.size);
+    }
   }
 
   destroy() {

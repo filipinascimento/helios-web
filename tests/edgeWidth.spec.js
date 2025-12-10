@@ -42,34 +42,21 @@ test('edge widths and endpoint data propagate into dense buffers', async () => {
   edgeColors.set([0.2, 0.2, 0.2, 1], edges[0] * 4);
 
   visuals.markAllDenseDirty();
-  const edgeSegmentsDesc = network.updateDenseEdgeAttributeBuffer(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
-  const denseEdgesSegments = new Float32Array(
-    edgeSegmentsDesc.view.buffer,
-    edgeSegmentsDesc.pointer ?? edgeSegmentsDesc.view.byteOffset ?? 0,
-    edgeSegmentsDesc.count * 6,
-  );
-  const edgeEndpointSizesDesc = network.updateDenseEdgeAttributeBuffer(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
-  const denseEdgeSizes = new Float32Array(
-    edgeEndpointSizesDesc.view.buffer,
-    edgeEndpointSizesDesc.pointer ?? edgeEndpointSizesDesc.view.byteOffset ?? 0,
-    edgeEndpointSizesDesc.count * 2,
-  );
-  const edgeWidthsDesc = network.updateDenseEdgeAttributeBuffer(EDGE_WIDTH_ATTRIBUTE);
-  const denseEdgeWidths = new Float32Array(
-    edgeWidthsDesc.view.buffer,
-    edgeWidthsDesc.pointer ?? edgeWidthsDesc.view.byteOffset ?? 0,
-    edgeWidthsDesc.count,
-  );
-  const edgeIndexDesc = network.updateDenseEdgeIndexBuffer();
-  const denseEdgeIndices = new Uint32Array(
-    edgeIndexDesc.view.buffer,
-    edgeIndexDesc.pointer ?? edgeIndexDesc.view.byteOffset ?? 0,
-    edgeIndexDesc.count,
-  );
+  network.updateDenseEdgeAttributeBuffer(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
+  network.updateDenseEdgeAttributeBuffer(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+  network.updateDenseEdgeAttributeBuffer(EDGE_WIDTH_ATTRIBUTE);
+  network.updateDenseEdgeIndexBuffer();
 
-  expect(edgeSegmentsDesc.count).toBeGreaterThanOrEqual(1);
-  expect(Array.from(denseEdgeIndices.slice(0, 1))).toEqual([edges[0]]);
-  expect(Array.from(denseEdgesSegments.slice(0, 6))).toEqual([0, 0, 0, 10, 0, 0]);
-  expect(Array.from(denseEdgeSizes.slice(0, 2))).toEqual([4, 6]);
-  expect(Array.from(denseEdgeWidths.slice(0, 1))).toEqual([3.5]);
+  network.withBufferAccess(() => {
+    const edgeSegmentsDesc = network.getDenseEdgeAttributeView(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
+    const edgeEndpointSizesDesc = network.getDenseEdgeAttributeView(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+    const edgeWidthsDesc = network.getDenseEdgeAttributeView(EDGE_WIDTH_ATTRIBUTE);
+    const edgeIndexDesc = network.getDenseEdgeIndexView();
+
+    expect(edgeSegmentsDesc.count).toBeGreaterThanOrEqual(1);
+    expect(Array.from(edgeIndexDesc.view.slice(0, 1))).toEqual([edges[0]]);
+    expect(Array.from(edgeSegmentsDesc.view.slice(0, 6))).toEqual([0, 0, 0, 10, 0, 0]);
+    expect(Array.from(edgeEndpointSizesDesc.view.slice(0, 2))).toEqual([4, 6]);
+    expect(Array.from(edgeWidthsDesc.view.slice(0, 1))).toEqual([3.5]);
+  });
 });

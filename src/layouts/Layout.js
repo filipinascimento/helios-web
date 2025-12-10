@@ -84,7 +84,7 @@ export class WorkerLayout extends Layout {
   constructor(network, visuals, options = {}) {
     super(network, visuals);
     this.worker = null;
-    this.options = options;
+    this.options = { center: [0, 0, 0], ...options };
     this.pending = false;
     this.lastUpdate = 0;
   }
@@ -153,9 +153,13 @@ export class WorkerLayout extends Layout {
 
   resize(size) {
     if (!this.worker || !size) return;
+    const center =
+      Array.isArray(this.options.center) && this.options.center.length >= 2
+        ? this.options.center
+        : [0, 0, 0];
     this.worker.postMessage({
       type: 'resize',
-      center: [size.width / 2, size.height / 2],
+      center,
     });
   }
 

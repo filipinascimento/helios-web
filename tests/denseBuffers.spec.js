@@ -48,46 +48,29 @@ test('dense buffers map nodes and edges with correct counts and data', async () 
   edgeWidths[edges[0]] = 2;
   visuals.markAllDenseDirty();
 
-  const edgeSegmentsDesc = network.updateDenseEdgeAttributeBuffer(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
-  const edgeSegments = new Float32Array(
-    edgeSegmentsDesc.view.buffer,
-    edgeSegmentsDesc.pointer ?? edgeSegmentsDesc.view.byteOffset ?? 0,
-    edgeSegmentsDesc.count * 6,
-  );
-  const edgeEndpointSizesDesc = network.updateDenseEdgeAttributeBuffer(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
-  const edgeEndpointSizes = new Float32Array(
-    edgeEndpointSizesDesc.view.buffer,
-    edgeEndpointSizesDesc.pointer ?? edgeEndpointSizesDesc.view.byteOffset ?? 0,
-    edgeEndpointSizesDesc.count * 2,
-  );
-  const edgeWidthsDesc = network.updateDenseEdgeAttributeBuffer(EDGE_WIDTH_ATTRIBUTE);
-  const edgeWidthsView = new Float32Array(
-    edgeWidthsDesc.view.buffer,
-    edgeWidthsDesc.pointer ?? edgeWidthsDesc.view.byteOffset ?? 0,
-    edgeWidthsDesc.count,
-  );
-  const edgeIndexDesc = network.updateDenseEdgeIndexBuffer();
-  const edgeIndices = new Uint32Array(
-    edgeIndexDesc.view.buffer,
-    edgeIndexDesc.pointer ?? edgeIndexDesc.view.byteOffset ?? 0,
-    edgeIndexDesc.count,
-  );
+  network.updateDenseNodeAttributeBuffer(NODE_POSITION_ATTRIBUTE);
+  network.updateDenseNodeAttributeBuffer(NODE_SIZE_ATTRIBUTE);
+  network.updateDenseEdgeAttributeBuffer(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
+  network.updateDenseEdgeAttributeBuffer(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+  network.updateDenseEdgeAttributeBuffer(EDGE_WIDTH_ATTRIBUTE);
+  network.updateDenseEdgeIndexBuffer();
+  network.updateDenseNodeIndexBuffer();
 
-  const nodeIndexDesc = network.updateDenseNodeIndexBuffer();
-  const nodeIndices = new Uint32Array(
-    nodeIndexDesc.view.buffer,
-    nodeIndexDesc.pointer ?? nodeIndexDesc.view.byteOffset ?? 0,
-    nodeIndexDesc.count,
-  );
-
-  expect(edgeSegmentsDesc.count).toBeGreaterThanOrEqual(1);
-  expect(edgeSegmentsDesc.count).toBe(edgeEndpointSizesDesc.count);
-  expect(nodeIndexDesc.count).toBeGreaterThanOrEqual(2);
-  expect(edgeIndices.length).toBeGreaterThanOrEqual(1);
-  expect(Array.from(edgeSegments.slice(0, 6))).toEqual([10, 20, 0, 100, 200, 0]);
-  expect(Array.from(edgeEndpointSizes.slice(0, 2))).toEqual([5, 7]);
-  expect(Array.from(edgeWidthsView.slice(0, 1))).toEqual([2]);
-  expect(Array.from(nodeIndices.slice(0, 2)).sort()).toEqual([nodes[0], nodes[1]].sort());
+  network.withBufferAccess(() => {
+    const edgeSegmentsDesc = network.getDenseEdgeAttributeView(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
+    const edgeEndpointSizesDesc = network.getDenseEdgeAttributeView(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+    const edgeWidthsDesc = network.getDenseEdgeAttributeView(EDGE_WIDTH_ATTRIBUTE);
+    const edgeIndexDesc = network.getDenseEdgeIndexView();
+    const nodeIndexDesc = network.getDenseNodeIndexView();
+    expect(edgeSegmentsDesc.count).toBeGreaterThanOrEqual(1);
+    expect(edgeSegmentsDesc.count).toBe(edgeEndpointSizesDesc.count);
+    expect(nodeIndexDesc.count).toBeGreaterThanOrEqual(2);
+    expect(edgeIndexDesc.view.length).toBeGreaterThanOrEqual(1);
+    expect(Array.from(edgeSegmentsDesc.view.slice(0, 6))).toEqual([10, 20, 0, 100, 200, 0]);
+    expect(Array.from(edgeEndpointSizesDesc.view.slice(0, 2))).toEqual([5, 7]);
+    expect(Array.from(edgeWidthsDesc.view.slice(0, 1))).toEqual([2]);
+    expect(Array.from(nodeIndexDesc.view.slice(0, 2)).sort()).toEqual([nodes[0], nodes[1]].sort());
+  });
   expect(network.nodeValidRange.end - network.nodeValidRange.start).toBeGreaterThanOrEqual(2);
   expect(network.edgeValidRange.end - network.edgeValidRange.start).toBeGreaterThanOrEqual(1);
 });

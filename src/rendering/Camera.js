@@ -414,9 +414,9 @@ export class Camera {
     this._arcballLast = null;
 
     // Default debug flag on so early state is captured.
-    if (typeof window !== 'undefined' && window.__HELIOS_DEBUG_CAMERA !== false) {
-      window.__HELIOS_DEBUG_CAMERA = true;
-    }
+    // if (typeof window !== 'undefined' && window.__HELIOS_DEBUG_CAMERA !== false) {
+    //   window.__HELIOS_DEBUG_CAMERA = true;
+    // }
 
     this.setViewport(options.viewport ?? this.viewport);
     if (!options.disableControls) {

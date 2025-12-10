@@ -34,6 +34,15 @@ function resolveEdgeTransparencyMode() {
   return normalized === 'weighted' ? 'weighted' : 'alpha';
 }
 
+function resolveNodeCount() {
+  const params = new URLSearchParams(window.location.search);
+  const value = Number(params.get('nodes') ?? params.get('nodeCount'));
+  if (Number.isFinite(value) && value > 0) {
+    return Math.floor(value);
+  }
+  return 100_000;
+}
+
 async function bootstrap() {
   const diagnostics = {
     ready: false,
@@ -42,89 +51,125 @@ async function bootstrap() {
     edgeCount: 0,
   };
   window.__HELIOS_DIAGNOSTICS__ = diagnostics;
-
+  console.log("Creating Helios network...");
   const network = await HeliosNetwork.create({ directed: false, initialNodes: 0 });
+
+  console.log("Defining attributes...");
   const nodeAttribute = 'weight';
   const edgeAttribute = 'intensity';
   network.defineNodeAttribute(nodeAttribute, AttributeType.Float);
   network.defineEdgeAttribute(edgeAttribute, AttributeType.Float);
 
-  const nodeCount = 2560;
+  console.log("Adding nodes...");
+  const nodeCount = resolveNodeCount();
   const nodes = network.addNodes(nodeCount);
-  for (let i = 0; i < nodes.length; i += 1) {
-    const value = Math.random();
-    network.getNodeAttributeBuffer(nodeAttribute).view[nodes[i]] = value;
-  }
+
+  console.log("Filling node attributes...");
+  network.withBufferAccess(() => {
+    const view = network.getNodeAttributeBuffer(nodeAttribute).view;
+    for (let i = 0; i < nodes.length; i += 1) {
+      const value = Math.random();
+      view[nodes[i]] = value;
+    }
+  });
 
   function seedGridPositions() {
     // Predefine node positions so we can disable layout and still render nicely.
     // Allocate visuals buffers in case they are not already present.
     network.defineNodeAttribute('_helios_visuals_position', AttributeType.Float, 3);
-    network.defineNodeToEdgeAttribute('_helios_visuals_position', '_helios_visuals_edge_endpoints_position', 'both');
-    const pos = network.getNodeAttributeBuffer('_helios_visuals_position').view;
+    network.withBufferAccess(() => {
+      const pos = network.getNodeAttributeBuffer('_helios_visuals_position').view;
 
-    const is3D = mode === '3d';
-    let minX = Infinity; let maxX = -Infinity;
-    let minY = Infinity; let maxY = -Infinity;
-    let minZ = Infinity; let maxZ = -Infinity;
+      const is3D = mode === '3d';
+      let minX = Infinity; let maxX = -Infinity;
+      let minY = Infinity; let maxY = -Infinity;
+      let minZ = Infinity; let maxZ = -Infinity;
 
-    if (is3D) {
-      const side = Math.ceil(Math.cbrt(nodeCount));
-      const spacing = 10;
-      for (let i = 0; i < nodeCount; i += 1) {
-        const z = Math.floor(i / (side * side));
-        const rem = i - z * side * side;
-        const y = Math.floor(rem / side);
-        const x = rem - y * side;
-        const offset = i * 3;
-        pos[offset] = x * spacing;
-        pos[offset + 1] = y * spacing;
-        pos[offset + 2] = z * spacing;
-        if (pos[offset] < minX) minX = pos[offset]; if (pos[offset] > maxX) maxX = pos[offset];
-        if (pos[offset + 1] < minY) minY = pos[offset + 1]; if (pos[offset + 1] > maxY) maxY = pos[offset + 1];
-        if (pos[offset + 2] < minZ) minZ = pos[offset + 2]; if (pos[offset + 2] > maxZ) maxZ = pos[offset + 2];
+      if (is3D) {
+        const side = Math.ceil(Math.cbrt(nodeCount));
+        const spacing = 10;
+        for (let i = 0; i < nodeCount; i += 1) {
+          const z = Math.floor(i / (side * side));
+          const rem = i - z * side * side;
+          const y = Math.floor(rem / side);
+          const x = rem - y * side;
+          const offset = i * 3;
+          pos[offset] = x * spacing;
+          pos[offset + 1] = y * spacing;
+          pos[offset + 2] = z * spacing;
+          if (pos[offset] < minX) minX = pos[offset]; if (pos[offset] > maxX) maxX = pos[offset];
+          if (pos[offset + 1] < minY) minY = pos[offset + 1]; if (pos[offset + 1] > maxY) maxY = pos[offset + 1];
+          if (pos[offset + 2] < minZ) minZ = pos[offset + 2]; if (pos[offset + 2] > maxZ) maxZ = pos[offset + 2];
+        }
+      } else {
+        const side = Math.ceil(Math.sqrt(nodeCount));
+        const spacing = 8; // Keep density reasonable even with many nodes.
+        for (let i = 0; i < nodeCount; i += 1) {
+          const row = Math.floor(i / side);
+          const col = i - row * side;
+          const offset = i * 3;
+          pos[offset] = col * spacing;
+          pos[offset + 1] = row * spacing;
+          pos[offset + 2] = 0;
+          if (pos[offset] < minX) minX = pos[offset]; if (pos[offset] > maxX) maxX = pos[offset];
+          if (pos[offset + 1] < minY) minY = pos[offset + 1]; if (pos[offset + 1] > maxY) maxY = pos[offset + 1];
+          if (pos[offset + 2] < minZ) minZ = pos[offset + 2]; if (pos[offset + 2] > maxZ) maxZ = pos[offset + 2];
+        }
       }
-    } else {
-      const side = Math.ceil(Math.sqrt(nodeCount));
-      const spacing = 8; // Keep density reasonable even with many nodes.
-      for (let i = 0; i < nodeCount; i += 1) {
-        const row = Math.floor(i / side);
-        const col = i - row * side;
-        const offset = i * 3;
-        pos[offset] = col * spacing;
-        pos[offset + 1] = row * spacing;
-        pos[offset + 2] = 0;
-        if (pos[offset] < minX) minX = pos[offset]; if (pos[offset] > maxX) maxX = pos[offset];
-        if (pos[offset + 1] < minY) minY = pos[offset + 1]; if (pos[offset + 1] > maxY) maxY = pos[offset + 1];
-        if (pos[offset + 2] < minZ) minZ = pos[offset + 2]; if (pos[offset + 2] > maxZ) maxZ = pos[offset + 2];
-      }
-    }
 
-    // Center the cloud around the origin so 2D/3D views stay balanced.
-    const centerX = (minX + maxX) / 2;
-    const centerY = (minY + maxY) / 2;
-    const centerZ = (minZ + maxZ) / 2;
-    for (let i = 0; i < nodeCount; i += 1) {
-      const offset = i * 3;
-      pos[offset] -= centerX;
-      pos[offset + 1] -= centerY;
-      pos[offset + 2] -= centerZ;
-    }
+      // Center the cloud around the origin so 2D/3D views stay balanced.
+      const centerX = (minX + maxX) / 2;
+      const centerY = (minY + maxY) / 2;
+      const centerZ = (minZ + maxZ) / 2;
+      for (let i = 0; i < nodeCount; i += 1) {
+        const offset = i * 3;
+        pos[offset] -= centerX;
+        pos[offset + 1] -= centerY;
+        pos[offset + 2] -= centerZ;
+      }
+    });
   }
 
+  // const edges = [];
+  // const expectedDegree = 3;
+  // const probability = expectedDegree / nodeCount;
+  // for (let i = 0; i < nodeCount; i += 1) {
+  //   for (let j = i + 1; j < nodeCount; j += 1) {
+  //     if (Math.random() < probability) {
+  //       edges.push([nodes[i], nodes[j]]);
+  //     }
+  //   }
+  // }
+
+  // connect with the next 2 or 3 nodes to ensure connectivity
+  // if 2d or 3d (try to follow the grid
+  console.log("Adding edges...");
   const edges = [];
-  for (let i = 0; i < nodeCount * 3; i += 1) {
-    const from = Math.floor(Math.random() * nodeCount);
-    const to = Math.floor(Math.random() * nodeCount);
-    if (from === to) continue;
-    edges.push({ from, to });
-  }
-  const edgeIds = network.addEdges(edges);
-  const edgeBuffer = network.getEdgeAttributeBuffer(edgeAttribute).view;
-  for (const id of edgeIds) {
-    edgeBuffer[id] = Math.random();
+  const is3D = resolveMode() === '3d';
+  const step = is3D ? 1 : 1;
+  for (let i = 0; i < nodeCount; i += 1) {
+    for (let j = 1; j <= step; j += 1) {
+      const to = (i + j) % nodeCount;
+      edges.push(nodes[i], nodes[to]);
+    }
   }
 
+  // Trying adding another edge...
+  // edges.push(nodes[0],nodes[100]);
+
+  const edgeIds = network.addEdges(edges);
+  // network node and edge count
+  console.log("Created a network with nodes:", network.nodeCount, "edges:", network.edgeCount);
+
+  console.log("Filling edge attribute...");
+  network.withBufferAccess(() => {
+    const edgeBuffer = network.getEdgeAttributeBuffer(edgeAttribute).view;
+    for (const id of edgeIds) {
+      edgeBuffer[id] = Math.random();
+    }
+  });
+
+  console.log("Defining helios options...");
   const target = document.getElementById('app');
   const mode = resolveMode();
   const layoutType = resolveLayoutType();
@@ -138,6 +183,7 @@ async function bootstrap() {
           options: {
             layout: layoutType,
             mode,
+            center: [0, 0, 0],
             radius: 220*Math.sqrt(nodeCount/1000),
             depth: mode === '3d' ? 140 : 0,
             // Slightly stronger forces for the demo; tweak via query params if needed.
@@ -158,17 +204,33 @@ async function bootstrap() {
     heliosOptions.renderer = rendererPreference;
   }
 
+
   if (layoutType === 'none') {
+    console.log("No layout selected, seeding grid positions...");
     seedGridPositions();
   }
+  
+  
 
+  console.log("Creating helios-web instance...");
   const helios = new Helios(network, heliosOptions);
+
+  console.log("Waiting for helios to be ready...");
   await helios.ready;
+  console.log("Helios is ready!");
+  // helios.renderer?.camera?.setTarget?.([0, 0, mode === '3d' ? 0 : 0]);
 
   // Showcase a colormap on nodes: map "weight" through a perceptual ramp.
+  console.log("Setting up mappers...");
   const nodeColormap = createColormapScale('cmasher:rainforest', { domain: [0, 1], alpha: 1 });
+
+  console.log("  Node colors...");
   helios.nodeMapper.channel('color').from(nodeAttribute).transform((v) => nodeColormap(v ?? 0)).done();
+
+  console.log("  Node sizes...");
   helios.nodeMapper.channel('size').from(nodeAttribute).linear([0, 1], [1, 5]).done();
+
+  // console.log("  Edge color mapper...");
   // Now using the default edge color mapper.
   // helios.edgeMapper
   //   .channel('color')
@@ -178,13 +240,17 @@ async function bootstrap() {
   //     return [0.1, 0.3 + t * 0.5, 1 - t * 0.5, 0.9];
   //   })
   //   .done();
+  console.log("  Edge width mapper...");
   helios.edgeMapper.channel('width').constant(1.5).done();
+
+  console.log("Changing edge scaling...");
   // Make edges visibly thicker for the demo.
   if (helios.renderer?.graphLayer) {
     helios.renderer.graphLayer.edgeWidthScale = 1.0;
     helios.renderer.graphLayer.edgeWidthBase = 0;
   }
 
+  console.log("Misc diagnostics...");
   const rendererType = helios.renderer?.device?.type ?? helios.renderer?.constructor?.name ?? 'unknown';
   diagnostics.ready = true;
   diagnostics.renderer = rendererType;
@@ -192,6 +258,7 @@ async function bootstrap() {
   diagnostics.edgeCount = edgeIds.length;
   window.__HELIOS_DIAGNOSTICS__ = diagnostics;
   window.__helios = helios;
+  console.log("Done! Helios instance is available as window.__helios", helios);
 }
 
 bootstrap().catch((error) => {

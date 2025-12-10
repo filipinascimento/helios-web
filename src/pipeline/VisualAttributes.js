@@ -38,6 +38,14 @@ function validateAttribute(buffer, name, expected) {
   }
 }
 
+function attributeInfoMismatched(info, expected) {
+  if (!info) return false;
+  const dimensionMismatch =
+    typeof expected.dimension === 'number' && info.dimension != null && info.dimension !== expected.dimension;
+  const typeMismatch = typeof expected.type === 'number' && info.type != null && info.type !== expected.type;
+  return dimensionMismatch || typeMismatch;
+}
+
 /**
  * Ensures required visual attributes exist on the Helios network, seeds defaults,
  * and provides helpers to apply mappers into sparse buffers while marking dense
@@ -51,10 +59,10 @@ export class VisualAttributes {
     this.network = network;
     this.ensureAttributes();
     this.registerDenseBuffers();
-    this.applyNodeDefaults();
-    this.applyEdgeDefaults();
-    this.seedMissingPositions();
-    this.markAllDenseDirty();
+    // this.applyNodeDefaults();
+    // this.applyEdgeDefaults();
+    // this.seedMissingPositions();
+    // this.markAllDenseDirty();
   }
 
   get nodePositions() {
@@ -96,70 +104,74 @@ export class VisualAttributes {
 
   applyNodeMapper(mapper) {
     if (!mapper?.channels?.size) return;
-    const attributes = this.collectAttributeNames(mapper, 'node');
-    const buffers = this.resolveNodeAttributeBuffers(attributes.node);
-    const visuals = {
-      color: this.nodeColors,
-      size: this.nodeSizes,
-      outline: this.nodeOutlineWidths,
-      outlineColor: this.nodeOutlineColors,
-      position: this.nodePositions,
-    };
-    const activity = this.network?.nodeActivityView;
-    if (!activity) return;
-    for (let nodeId = 0; nodeId < activity.length; nodeId += 1) {
-      if (!activity[nodeId]) continue;
-      const inputs = this.buildAttributeObject(buffers, nodeId);
-      const mapped = mapper.mapItem({ attributes: inputs }, { index: nodeId });
-      this.writeNodeVisuals(nodeId, mapped, visuals);
-    }
-    this.markNodeAttributesDirty(
-      NODE_COLOR_ATTRIBUTE,
-      NODE_SIZE_ATTRIBUTE,
-      NODE_OUTLINE_WIDTH_ATTRIBUTE,
-      NODE_OUTLINE_COLOR_ATTRIBUTE,
-      NODE_POSITION_ATTRIBUTE,
-    );
-    this.markEdgeAttributesDirty(EDGE_ENDPOINTS_SIZE_ATTRIBUTE, EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
+    this.withBufferAccess(() => {
+      const attributes = this.collectAttributeNames(mapper, 'node');
+      const buffers = this.resolveNodeAttributeBuffers(attributes.node);
+      const visuals = {
+        color: this.nodeColors,
+        size: this.nodeSizes,
+        outline: this.nodeOutlineWidths,
+        outlineColor: this.nodeOutlineColors,
+        position: this.nodePositions,
+      };
+      const activity = this.network?.nodeActivityView;
+      if (!activity) return;
+      for (let nodeId = 0; nodeId < activity.length; nodeId += 1) {
+        if (!activity[nodeId]) continue;
+        const inputs = this.buildAttributeObject(buffers, nodeId);
+        const mapped = mapper.mapItem({ attributes: inputs }, { index: nodeId });
+        this.writeNodeVisuals(nodeId, mapped, visuals);
+      }
+      this.markNodeAttributesDirty(
+        NODE_COLOR_ATTRIBUTE,
+        NODE_SIZE_ATTRIBUTE,
+        NODE_OUTLINE_WIDTH_ATTRIBUTE,
+        NODE_OUTLINE_COLOR_ATTRIBUTE,
+        NODE_POSITION_ATTRIBUTE,
+      );
+      this.markEdgeAttributesDirty(EDGE_ENDPOINTS_SIZE_ATTRIBUTE, EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
+    });
   }
 
   applyEdgeMapper(mapper) {
     if (!mapper?.channels?.size) return;
-    const attributes = this.collectAttributeNames(mapper, 'edge');
-    const edgeBuffers = this.resolveEdgeAttributeBuffers(attributes.edge);
-    const nodeBuffers = this.resolveNodeAttributeBuffers(attributes.node);
-    const nodeToEdgeRegistrations = mapper?.nodeToEdgeRegistrations ?? new Set();
-    const skipColor = nodeToEdgeRegistrations.has(EDGE_COLOR_ATTRIBUTE);
-    const skipOpacity = nodeToEdgeRegistrations.has(EDGE_OPACITY_ATTRIBUTE);
-    const skipEndpointSize = nodeToEdgeRegistrations.has(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
-    const visuals = {
-      color: skipColor ? null : this.edgeColors,
-      opacity: skipOpacity ? null : this.edgeOpacities,
-      width: this.edgeWidths,
-      endpointSize: skipEndpointSize ? null : this.network.getEdgeAttributeBuffer(EDGE_ENDPOINTS_SIZE_ATTRIBUTE).view,
-    };
-    const activity = this.network?.edgeActivityView;
-    const edgesView = this.network?.edgesView;
-    if (!activity) return;
-    for (let edgeId = 0; edgeId < activity.length; edgeId += 1) {
-      if (!activity[edgeId]) continue;
-      const edgeInputs = this.buildEdgeAttributeObject(edgeBuffers, edgeId);
-      const sourceId = edgesView ? edgesView[edgeId * 2] : null;
-      const targetId = edgesView ? edgesView[edgeId * 2 + 1] : null;
-      const sourceAttributes = sourceId != null ? this.buildAttributeObject(nodeBuffers, sourceId) : {};
-      const targetAttributes = targetId != null ? this.buildAttributeObject(nodeBuffers, targetId) : {};
-      const mapped = mapper.mapItem(
-        { attributes: edgeInputs, source: { attributes: sourceAttributes }, target: { attributes: targetAttributes } },
-        { index: edgeId },
+    this.withBufferAccess(() => {
+      const attributes = this.collectAttributeNames(mapper, 'edge');
+      const edgeBuffers = this.resolveEdgeAttributeBuffers(attributes.edge);
+      const nodeBuffers = this.resolveNodeAttributeBuffers(attributes.node);
+      const nodeToEdgeRegistrations = mapper?.nodeToEdgeRegistrations ?? new Set();
+      const skipColor = nodeToEdgeRegistrations.has(EDGE_COLOR_ATTRIBUTE);
+      const skipOpacity = nodeToEdgeRegistrations.has(EDGE_OPACITY_ATTRIBUTE);
+      const skipEndpointSize = nodeToEdgeRegistrations.has(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+      const visuals = {
+        color: skipColor ? null : this.edgeColors,
+        opacity: skipOpacity ? null : this.edgeOpacities,
+        width: this.edgeWidths,
+        endpointSize: skipEndpointSize ? null : this.network.getEdgeAttributeBuffer(EDGE_ENDPOINTS_SIZE_ATTRIBUTE).view,
+      };
+      const activity = this.network?.edgeActivityView;
+      const edgesView = this.network?.edgesView;
+      if (!activity) return;
+      for (let edgeId = 0; edgeId < activity.length; edgeId += 1) {
+        if (!activity[edgeId]) continue;
+        const edgeInputs = this.buildEdgeAttributeObject(edgeBuffers, edgeId);
+        const sourceId = edgesView ? edgesView[edgeId * 2] : null;
+        const targetId = edgesView ? edgesView[edgeId * 2 + 1] : null;
+        const sourceAttributes = sourceId != null ? this.buildAttributeObject(nodeBuffers, sourceId) : {};
+        const targetAttributes = targetId != null ? this.buildAttributeObject(nodeBuffers, targetId) : {};
+        const mapped = mapper.mapItem(
+          { attributes: edgeInputs, source: { attributes: sourceAttributes }, target: { attributes: targetAttributes } },
+          { index: edgeId },
+        );
+        this.writeEdgeVisuals(edgeId, mapped, visuals);
+      }
+      this.markEdgeAttributesDirty(
+        EDGE_COLOR_ATTRIBUTE,
+        EDGE_OPACITY_ATTRIBUTE,
+        EDGE_WIDTH_ATTRIBUTE,
+        EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
       );
-      this.writeEdgeVisuals(edgeId, mapped, visuals);
-    }
-    this.markEdgeAttributesDirty(
-      EDGE_COLOR_ATTRIBUTE,
-      EDGE_OPACITY_ATTRIBUTE,
-      EDGE_WIDTH_ATTRIBUTE,
-      EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
-    );
+    });
   }
 
   ensureAttributes() {
@@ -254,22 +266,39 @@ export class VisualAttributes {
    * @param {Iterable<number>} [indices]
    */
   applyNodeDefaults(indices) {
-    const color = DEFAULT_NODE_COLOR;
-    const size = DEFAULT_NODE_SIZE;
-    const outlineWidth = DEFAULT_NODE_OUTLINE_WIDTH;
-    const outlineColor = DEFAULT_NODE_OUTLINE_COLOR;
-    const positionView = this.nodePositions;
-    const colorView = this.nodeColors;
-    const sizeView = this.nodeSizes;
-    const outlineWidthView = this.nodeOutlineWidths;
-    const outlineColorView = this.nodeOutlineColors;
+    this.withBufferAccess(() => {
+      const color = DEFAULT_NODE_COLOR;
+      const size = DEFAULT_NODE_SIZE;
+      const outlineWidth = DEFAULT_NODE_OUTLINE_WIDTH;
+      const outlineColor = DEFAULT_NODE_OUTLINE_COLOR;
+      const positionView = this.nodePositions;
+      const colorView = this.nodeColors;
+      const sizeView = this.nodeSizes;
+      const outlineWidthView = this.nodeOutlineWidths;
+      const outlineColorView = this.nodeOutlineColors;
 
-    if (!indices) {
-      const activity = this.network.nodeActivityView;
-      for (let i = 0; i < activity.length; i += 1) {
-        if (activity[i]) {
+      if (!indices) {
+        const activity = this.network.nodeActivityView;
+        for (let i = 0; i < activity.length; i += 1) {
+          if (activity[i]) {
+            this.writeNodeDefaults(
+              i,
+              color,
+              size,
+              outlineWidth,
+              outlineColor,
+              positionView,
+              colorView,
+              sizeView,
+              outlineWidthView,
+              outlineColorView,
+            );
+          }
+        }
+      } else {
+        for (const index of indices) {
           this.writeNodeDefaults(
-            i,
+            index,
             color,
             size,
             outlineWidth,
@@ -282,31 +311,16 @@ export class VisualAttributes {
           );
         }
       }
-    } else {
-      for (const index of indices) {
-        this.writeNodeDefaults(
-          index,
-          color,
-          size,
-          outlineWidth,
-          outlineColor,
-          positionView,
-          colorView,
-          sizeView,
-          outlineWidthView,
-          outlineColorView,
-        );
-      }
-    }
 
-    this.markNodeAttributesDirty(
-      NODE_POSITION_ATTRIBUTE,
-      NODE_COLOR_ATTRIBUTE,
-      NODE_SIZE_ATTRIBUTE,
-      NODE_OUTLINE_WIDTH_ATTRIBUTE,
-      NODE_OUTLINE_COLOR_ATTRIBUTE,
-    );
-    this.markEdgeAttributesDirty(EDGE_ENDPOINTS_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+      this.markNodeAttributesDirty(
+        NODE_POSITION_ATTRIBUTE,
+        NODE_COLOR_ATTRIBUTE,
+        NODE_SIZE_ATTRIBUTE,
+        NODE_OUTLINE_WIDTH_ATTRIBUTE,
+        NODE_OUTLINE_COLOR_ATTRIBUTE,
+      );
+      this.markEdgeAttributesDirty(EDGE_ENDPOINTS_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+    });
   }
 
   /**
@@ -314,27 +328,29 @@ export class VisualAttributes {
    * @param {Iterable<number>} [indices]
    */
   applyEdgeDefaults(indices) {
-    const color = DEFAULT_EDGE_COLOR;
-    const opacity = DEFAULT_EDGE_OPACITY;
-    const width = DEFAULT_EDGE_WIDTH;
-    const colorView = this.edgeColors;
-    const opacityView = this.edgeOpacities;
-    const widthView = this.edgeWidths;
+    this.withBufferAccess(() => {
+      const color = DEFAULT_EDGE_COLOR;
+      const opacity = DEFAULT_EDGE_OPACITY;
+      const width = DEFAULT_EDGE_WIDTH;
+      const colorView = this.edgeColors;
+      const opacityView = this.edgeOpacities;
+      const widthView = this.edgeWidths;
 
-    if (!indices) {
-      const activity = this.network.edgeActivityView;
-      for (let i = 0; i < activity.length; i += 1) {
-        if (activity[i]) {
-          this.writeEdgeDefaults(i, color, width, opacity, colorView, widthView, opacityView);
+      if (!indices) {
+        const activity = this.network.edgeActivityView;
+        for (let i = 0; i < activity.length; i += 1) {
+          if (activity[i]) {
+            this.writeEdgeDefaults(i, color, width, opacity, colorView, widthView, opacityView);
+          }
+        }
+      } else {
+        for (const index of indices) {
+          this.writeEdgeDefaults(index, color, width, opacity, colorView, widthView, opacityView);
         }
       }
-    } else {
-      for (const index of indices) {
-        this.writeEdgeDefaults(index, color, width, opacity, colorView, widthView, opacityView);
-      }
-    }
 
-    this.markEdgeAttributesDirty(EDGE_COLOR_ATTRIBUTE, EDGE_OPACITY_ATTRIBUTE, EDGE_WIDTH_ATTRIBUTE);
+      this.markEdgeAttributesDirty(EDGE_COLOR_ATTRIBUTE, EDGE_OPACITY_ATTRIBUTE, EDGE_WIDTH_ATTRIBUTE);
+    });
   }
 
   /**
@@ -343,95 +359,83 @@ export class VisualAttributes {
    * @param {{width?: number, height?: number}} [bounds]
    */
   seedMissingPositions(bounds = {}) {
-    const width = Math.max(1, bounds.width ?? 1);
-    const height = Math.max(1, bounds.height ?? 1);
-    const pos = this.nodePositions;
-    const activity = this.network?.nodeActivityView;
-    if (!pos || !activity) return;
-    let touched = false;
-    for (let i = 0; i < activity.length; i += 1) {
-      if (!activity[i]) continue;
-      const offset = i * 3;
-      const missing =
-        !Number.isFinite(pos[offset]) ||
-        !Number.isFinite(pos[offset + 1]) ||
-        !Number.isFinite(pos[offset + 2]) ||
-        (pos[offset] === 0 && pos[offset + 1] === 0 && pos[offset + 2] === 0);
-      if (missing) {
-        pos[offset] = Math.random() * width;
-        pos[offset + 1] = Math.random() * height;
-        pos[offset + 2] = 0;
-        touched = true;
+    this.withBufferAccess(() => {
+      const width = Math.max(1, bounds.width ?? 1);
+      const height = Math.max(1, bounds.height ?? 1);
+      const pos = this.nodePositions;
+      const activity = this.network?.nodeActivityView;
+      if (!pos || !activity) return;
+      let touched = false;
+      for (let i = 0; i < activity.length; i += 1) {
+        if (!activity[i]) continue;
+        const offset = i * 3;
+        const missing =
+          !Number.isFinite(pos[offset]) ||
+          !Number.isFinite(pos[offset + 1]) ||
+          !Number.isFinite(pos[offset + 2]) ||
+          (pos[offset] === 0 && pos[offset + 1] === 0 && pos[offset + 2] === 0);
+        if (missing) {
+          pos[offset] = Math.random() * width;
+          pos[offset + 1] = Math.random() * height;
+          pos[offset + 2] = 0;
+          touched = true;
+        }
       }
-    }
-    if (touched) {
-      this.markNodeAttributesDirty(NODE_POSITION_ATTRIBUTE);
-      this.markEdgeAttributesDirty(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
-    }
+      if (touched) {
+        this.markNodeAttributesDirty(NODE_POSITION_ATTRIBUTE);
+        this.markEdgeAttributesDirty(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
+      }
+    });
   }
 
   ensureNodeAttribute(name, type, dimension) {
-    let buffer = null;
-    try {
-      buffer = this.network.getNodeAttributeBuffer(name);
-    } catch (error) {
-      buffer = null;
-    }
-    try {
+    const expected = { dimension, type };
+    const info = this.network.getNodeAttributeInfo(name);
+    const hasAttribute = this.network.hasNodeAttribute(name);
+
+    if (!hasAttribute) {
       this.network.defineNodeAttribute(name, type, dimension);
-      buffer = this.network.getNodeAttributeBuffer(name);
-    } catch (error) {
-      this.ignoreDuplicateAttribute(error, name);
+    } else if (attributeInfoMismatched(info, expected)) {
+      throw new Error(
+        `Attribute ${name} metadata mismatch: dimension ${info?.dimension ?? 'unknown'}, expected ${dimension}`,
+      );
     }
-    buffer = buffer ?? this.network.getNodeAttributeBuffer(name);
-    validateAttribute(buffer, name, { dimension, type });
+
+    const buffer = this.network.getNodeAttributeBuffer(name);
+    validateAttribute(buffer, name, expected);
   }
 
   ensureEdgeAttribute(name, type, dimension) {
-    let buffer = null;
-    try {
-      buffer = this.network.getEdgeAttributeBuffer(name);
-    } catch (error) {
-      buffer = null;
-    }
-    if (
-      buffer &&
-      ((typeof buffer.dimension === 'number' && buffer.dimension !== dimension) ||
-        (buffer.type != null && buffer.type !== type))
-    ) {
-      try {
-        this.network.removeEdgeAttribute(name);
-        buffer = null;
-      } catch (_) {
-        // Ignore removal failures; validation will throw later if still mismatched.
-      }
-    }
-    try {
+    const expected = { dimension, type };
+    const info = this.network.getEdgeAttributeInfo(name);
+    const hasAttribute = this.network.hasEdgeAttribute(name, true);
+
+    if (!hasAttribute) {
       this.network.defineEdgeAttribute(name, type, dimension);
-      buffer = this.network.getEdgeAttributeBuffer(name);
-    } catch (error) {
-      this.ignoreDuplicateAttribute(error, name);
+    } else if (attributeInfoMismatched(info, expected)) {
+      this.network.removeEdgeAttribute(name);
+      this.network.defineEdgeAttribute(name, type, dimension);
     }
-    buffer = buffer ?? this.network.getEdgeAttributeBuffer(name);
-    validateAttribute(buffer, name, { dimension, type });
+
+    const buffer = this.network.getEdgeAttributeBuffer(name);
+    validateAttribute(buffer, name, expected);
   }
 
   ensureNodeToEdgeAttribute(sourceName, edgeName, sourceDimension) {
     const targetDimension = sourceDimension * 2;
-    let buffer = null;
-    try {
-      buffer = this.network.getEdgeAttributeBuffer(edgeName);
-    } catch (error) {
-      buffer = null;
-    }
-    try {
+    const expected = { dimension: targetDimension, type: AttributeType.Float };
+    const info = this.network.getEdgeAttributeInfo(edgeName);
+    const hasAttribute = this.network.hasEdgeAttribute(edgeName);
+
+    if (!hasAttribute) {
       this.network.defineNodeToEdgeAttribute(sourceName, edgeName, 'both');
-      buffer = this.network.getEdgeAttributeBuffer(edgeName);
-    } catch (error) {
-      this.ignoreDuplicateAttribute(error, edgeName);
+    } else if (attributeInfoMismatched(info, expected)) {
+      this.network.removeEdgeAttribute(edgeName);
+      this.network.defineNodeToEdgeAttribute(sourceName, edgeName, 'both');
     }
-    buffer = buffer ?? this.network.getEdgeAttributeBuffer(edgeName);
-    validateAttribute(buffer, edgeName, { dimension: targetDimension, type: AttributeType.Float });
+
+    const buffer = this.network.getEdgeAttributeBuffer(edgeName);
+    validateAttribute(buffer, edgeName, expected);
   }
 
   collectAttributeNames(mapper, mode) {
@@ -725,11 +729,11 @@ export class VisualAttributes {
     }
   }
 
-  ignoreDuplicateAttribute(error, name) {
-    if (error instanceof Error && error.message.includes('already')) {
-      return;
+  withBufferAccess(fn) {
+    if (typeof this.network?.withBufferAccess === 'function') {
+      return this.network.withBufferAccess(fn);
     }
-    throw new Error(`Unable to define attribute ${name}: ${error}`);
+    return fn();
   }
 }
 

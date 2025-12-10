@@ -13,7 +13,7 @@ export class LayeredRenderer {
   constructor(canvas, options = {}) {
     const pixelRatio = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
     this.canvas = canvas;
-    this.options = { transparencyModeEdges: 'alpha', ...options };
+    this.options = options;
     this.clearColor = options.clearColor ?? [0.01, 0.01, 0.02, 1];
     this.layers = [];
     this.device = null;
@@ -56,11 +56,6 @@ export class LayeredRenderer {
     this.device.resize(this.size);
     if (this.camera && this.size) {
       this.camera.setTarget([0, 0, 0]);
-      if (this.camera.mode === '2d') {
-        this.camera.pan2D[0] = 0;
-        this.camera.pan2D[1] = 0;
-      }
-      this.camera.updateMatrices();
     }
     this.ensureGraphLayer();
     for (const layer of this.layers) {
@@ -169,11 +164,6 @@ export class LayeredRenderer {
     this.camera?.setViewport(size);
     if (this.camera && size?.width && size?.height) {
       this.camera.setTarget([0, 0, 0]);
-      if (this.camera.mode === '2d') {
-        this.camera.pan2D[0] = 0;
-        this.camera.pan2D[1] = 0;
-      }
-      this.camera.updateMatrices();
     }
     this.device?.resize(size);
     for (const layer of this.layers) {
@@ -217,8 +207,8 @@ export class LayeredRenderer {
     if (this.graphLayer) return;
     const options = {
       edgeRendering: this.options.edgeRendering,
-      nodeOutlineColor: this.options.nodeOutlineColor,
       transparencyModeEdges: this.options.transparencyModeEdges,
+      nodeOutlineColor: this.options.nodeOutlineColor,
     };
     if (this.device?.type === 'webgpu') {
       this.graphLayer = new GraphLayerWebGPU(options);
