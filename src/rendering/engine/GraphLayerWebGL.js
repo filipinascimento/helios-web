@@ -142,8 +142,14 @@ export class GraphLayerWebGL extends GraphLayer {
     const { gl } = this;
     const extColorBufferFloat = gl.getExtension('EXT_color_buffer_float');
     const extColorBufferHalfFloat = gl.getExtension('EXT_color_buffer_half_float');
+    const extFloatBlend = gl.getExtension('EXT_float_blend');
     const canDrawMultiple = (gl.getParameter(gl.MAX_COLOR_ATTACHMENTS) ?? 1) >= 2;
-    this.weightedSupported = Boolean(gl.drawBuffers && canDrawMultiple && (extColorBufferFloat || extColorBufferHalfFloat));
+    this.weightedSupported = Boolean(
+      gl.drawBuffers &&
+        canDrawMultiple &&
+        (extColorBufferFloat || extColorBufferHalfFloat) &&
+        extFloatBlend,
+    );
     this.nodeProgram = this.device.createProgram(NODE_VERTEX_SOURCE, NODE_FRAGMENT_SOURCE);
     this.edgeProgram = this.device.createProgram(EDGE_VERTEX_SOURCE, EDGE_FRAGMENT_SOURCE);
     this.edgeQuadProgram = this.device.createProgram(EDGE_QUAD_VERTEX_SOURCE, EDGE_QUAD_FRAGMENT_SOURCE);

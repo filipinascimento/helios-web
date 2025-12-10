@@ -59,10 +59,7 @@ export class VisualAttributes {
     this.network = network;
     this.ensureAttributes();
     this.registerDenseBuffers();
-    // this.applyNodeDefaults();
-    // this.applyEdgeDefaults();
-    // this.seedMissingPositions();
-    // this.markAllDenseDirty();
+    this.seedMissingEdgeOpacity();
   }
 
   get nodePositions() {
@@ -95,6 +92,36 @@ export class VisualAttributes {
 
   get edgeOpacities() {
     return this.network.getEdgeAttributeBuffer(EDGE_OPACITY_ATTRIBUTE).view;
+  }
+
+  /**
+   * When networks are populated before Helios is created, edge opacity buffers
+   * start at zero which hides edges entirely. Seed a reasonable default for any
+   * active edge that still has an uninitialized (zero/invalid) opacity.
+   */
+  seedMissingEdgeOpacity() {
+    this.withBufferAccess(() => {
+      const activity = this.network?.edgeActivityView;
+      const opacities = this.edgeOpacities;
+      if (!activity || !opacities) return;
+      let touched = false;
+      for (let edgeId = 0; edgeId < activity.length; edgeId += 1) {
+        if (!activity[edgeId]) continue;
+        const offset = edgeId * 2;
+        const a = opacities[offset];
+        const b = opacities[offset + 1];
+        const invalidA = !Number.isFinite(a) || a === 0;
+        const invalidB = !Number.isFinite(b) || b === 0;
+        if (invalidA && invalidB) {
+          opacities[offset] = DEFAULT_EDGE_OPACITY;
+          opacities[offset + 1] = DEFAULT_EDGE_OPACITY;
+          touched = true;
+        }
+      }
+      if (touched) {
+        this.markEdgeAttributesDirty(EDGE_OPACITY_ATTRIBUTE);
+      }
+    });
   }
 
   applyMappers({ nodeMapper, edgeMapper } = {}) {
