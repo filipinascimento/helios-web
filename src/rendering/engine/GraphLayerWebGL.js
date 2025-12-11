@@ -9,6 +9,8 @@ import {
   EDGE_WEIGHTED_QUAD_FRAGMENT_SOURCE,
   EDGE_RESOLVE_VERTEX_SOURCE,
   EDGE_RESOLVE_FRAGMENT_SOURCE,
+  EDGE_RESOLVE_TONEMAP_FRAGMENT_SOURCE,
+  EDGE_RESOLVE_BOOST_FRAGMENT_SOURCE,
 } from './shaders/graphWebGL.js';
 import { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './GraphLayerCommon.js';
 import { GraphLayer } from './GraphLayer.js';
@@ -76,6 +78,12 @@ export class GraphLayerWebGL extends GraphLayer {
     this.edgeResolveUniformWeight = null;
     this.edgeResolveVAO = null;
     this.edgeResolveBuffer = null;
+    this.edgeResolveTonemapProgram = null;
+    this.edgeResolveTonemapUniformColor = null;
+    this.edgeResolveTonemapUniformWeight = null;
+    this.edgeResolveBoostProgram = null;
+    this.edgeResolveBoostUniformColor = null;
+    this.edgeResolveBoostUniformWeight = null;
     this.nodeVAO = null;
     this.nodeBuffers = {};
     this.edgeVAO = null;
@@ -345,6 +353,7 @@ export class GraphLayerWebGL extends GraphLayer {
       const viewport = context.viewport;
       const viewportWidth = viewport ? viewport[2] : (gl.drawingBufferWidth || this.size?.width || 1);
       const viewportHeight = viewport ? viewport[3] : (gl.drawingBufferHeight || this.size?.height || 1);
+      const transparencyMode = this.edgeTransparencyMode;
 
       gl.enable(gl.DEPTH_TEST);
       gl.depthMask(true);
@@ -437,12 +446,16 @@ export class GraphLayerWebGL extends GraphLayer {
         }
       };
 
-      const weightedRequested = this.edgeTransparencyMode === 'weighted';
+      const weightedRequested = transparencyMode === 'weighted' || transparencyMode === 'additive-normalized' || transparencyMode === 'additive-tonemapped' || transparencyMode === 'additive-normalized-bright';
       const weightedReady = weightedRequested && geometry.edges.count > 0
         ? this.prepareWeightedWebGL(viewportWidth, viewportHeight)
         : false;
 
       if (weightedReady) {
+        if (!this.loggedWeightedActive) {
+          console.info(`GraphLayerWebGL: using weighted multipass for '${transparencyMode}'`);
+          this.loggedWeightedActive = true;
+        }
         this.renderWeightedWebGL(context, {
           geometry,
           is2D,
@@ -460,12 +473,22 @@ export class GraphLayerWebGL extends GraphLayer {
         this.warnedWeightedFallback = true;
       }
 
+      // Always render nodes with standard alpha blending.
+      gl.blendEquation(gl.FUNC_ADD);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
       if (is2D) {
+        this.applyEdgeBlend(gl, transparencyMode);
         drawEdges();
+        gl.blendEquation(gl.FUNC_ADD);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         drawNodes();
       } else {
         drawNodes();
+        this.applyEdgeBlend(gl, transparencyMode);
         drawEdges();
+        gl.blendEquation(gl.FUNC_ADD);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
       }
 
       gl.bindVertexArray(null);
@@ -476,6 +499,27 @@ export class GraphLayerWebGL extends GraphLayer {
 
     if (renderedWeighted) {
       return;
+    }
+  }
+
+  applyEdgeBlend(gl, mode) {
+    switch (mode) {
+      case 'additive':
+        gl.blendEquation(gl.FUNC_ADD);
+        gl.blendFunc(gl.ONE, gl.ONE);
+        break;
+      case 'screen':
+        gl.blendEquation(gl.FUNC_ADD);
+        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_COLOR);
+        break;
+      case 'max':
+        gl.blendEquation(gl.MAX);
+        gl.blendFunc(gl.ONE, gl.ONE);
+        break;
+      default:
+        gl.blendEquation(gl.FUNC_ADD);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        break;
     }
   }
 
@@ -560,11 +604,16 @@ export class GraphLayerWebGL extends GraphLayer {
       this.edgeWeightedQuadUniformEndpointTrim = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_edgeEndpointTrim');
     }
 
-    if (!this.edgeResolveProgram) {
-      this.edgeResolveProgram = this.device.createProgram(EDGE_RESOLVE_VERTEX_SOURCE, EDGE_RESOLVE_FRAGMENT_SOURCE);
-      this.edgeResolveUniformColor = gl.getUniformLocation(this.edgeResolveProgram, 'u_colorAccum');
-      this.edgeResolveUniformWeight = gl.getUniformLocation(this.edgeResolveProgram, 'u_weightAccum');
-    }
+    const ensureResolveProgram = (key, fragSource) => {
+      if (this[key]) return;
+      this[key] = this.device.createProgram(EDGE_RESOLVE_VERTEX_SOURCE, fragSource);
+      this[`${key.replace('Program', 'UniformColor')}`] = gl.getUniformLocation(this[key], 'u_colorAccum');
+      this[`${key.replace('Program', 'UniformWeight')}`] = gl.getUniformLocation(this[key], 'u_weightAccum');
+    };
+
+    ensureResolveProgram('edgeResolveProgram', EDGE_RESOLVE_FRAGMENT_SOURCE);
+    ensureResolveProgram('edgeResolveTonemapProgram', EDGE_RESOLVE_TONEMAP_FRAGMENT_SOURCE);
+    ensureResolveProgram('edgeResolveBoostProgram', EDGE_RESOLVE_BOOST_FRAGMENT_SOURCE);
 
     return Boolean(this.edgeWeightedProgram && this.edgeWeightedQuadProgram && this.edgeResolveProgram);
   }
@@ -777,13 +826,26 @@ export class GraphLayerWebGL extends GraphLayer {
     gl.disable(gl.DEPTH_TEST);
     gl.depthMask(false);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-    gl.useProgram(this.edgeResolveProgram);
+    let resolveProgram = this.edgeResolveProgram;
+    let resolveUniformColor = this.edgeResolveUniformColor;
+    let resolveUniformWeight = this.edgeResolveUniformWeight;
+    if (this.edgeTransparencyMode === 'additive-tonemapped') {
+      resolveProgram = this.edgeResolveTonemapProgram ?? resolveProgram;
+      resolveUniformColor = this.edgeResolveTonemapUniformColor ?? resolveUniformColor;
+      resolveUniformWeight = this.edgeResolveTonemapUniformWeight ?? resolveUniformWeight;
+    } else if (this.edgeTransparencyMode === 'additive-normalized-bright') {
+      resolveProgram = this.edgeResolveBoostProgram ?? resolveProgram;
+      resolveUniformColor = this.edgeResolveBoostUniformColor ?? resolveUniformColor;
+      resolveUniformWeight = this.edgeResolveBoostUniformWeight ?? resolveUniformWeight;
+    }
+
+    gl.useProgram(resolveProgram);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.weightedColor);
-    gl.uniform1i(this.edgeResolveUniformColor, 0);
+    gl.uniform1i(resolveUniformColor, 0);
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.weightedWeight);
-    gl.uniform1i(this.edgeResolveUniformWeight, 1);
+    gl.uniform1i(resolveUniformWeight, 1);
     gl.bindVertexArray(this.edgeResolveVAO);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
 

@@ -23,7 +23,8 @@ export class GraphLayer extends Layer {
     this.emptyUint = new Uint32Array(0);
     this.cpuArrays = {};
     this.edgeRenderingMode = options.edgeRendering === 'line' ? 'line' : 'quad';
-    this.edgeTransparencyMode = options.transparencyModeEdges === 'weighted' ? 'weighted' : 'alpha';
+    const mode = options.transparencyModeEdges;
+    this.edgeTransparencyMode = this.isSupportedTransparencyMode(mode) ? mode : 'alpha';
     this.nodeOpacityBase = 0;
     this.nodeOpacityScale = 1;
     this.nodeSizeBase = 0;
@@ -37,6 +38,7 @@ export class GraphLayer extends Layer {
     this.edgeWidthScale = 1;
     this.edgeEndpointTrim = 1;
     this.fallbackCameraUniforms = null;
+    this.loggedWeightedActive = false;
   }
 
   setEdgeRenderingMode(mode) {
@@ -46,9 +48,20 @@ export class GraphLayer extends Layer {
   }
 
   setEdgeTransparencyMode(mode) {
-    if (mode === 'alpha' || mode === 'weighted') {
+    if (this.isSupportedTransparencyMode(mode)) {
       this.edgeTransparencyMode = mode;
     }
+  }
+
+  isSupportedTransparencyMode(mode) {
+    return mode === 'alpha' ||
+      mode === 'weighted' ||
+      mode === 'additive' ||
+      mode === 'screen' ||
+      mode === 'max' ||
+      mode === 'additive-normalized' ||
+      mode === 'additive-tonemapped' ||
+      mode === 'additive-normalized-bright';
   }
 
   getCameraUniforms(camera) {

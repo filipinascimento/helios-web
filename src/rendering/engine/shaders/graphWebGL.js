@@ -220,3 +220,43 @@ void main() {
   float alpha = clamp(weight, 0.0, 1.0);
   fragColor = vec4(resolved * alpha, alpha);
 }`;
+
+// Simple Reinhard tone map after normalization.
+export const EDGE_RESOLVE_TONEMAP_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
+precision mediump float;
+in vec2 v_uv;
+uniform sampler2D u_colorAccum;
+uniform sampler2D u_weightAccum;
+out vec4 fragColor;
+
+void main() {
+  vec3 accum = texture(u_colorAccum, v_uv).rgb;
+  float weight = texture(u_weightAccum, v_uv).r;
+  float denom = max(weight, 1e-4);
+  vec3 resolved = accum / denom;
+  // Reinhard tone map
+  vec3 tonemapped = resolved / (resolved + vec3(1.0));
+  float alpha = clamp(weight, 0.0, 1.0);
+  fragColor = vec4(tonemapped, alpha);
+}`;
+
+// Normalize then boost by weight before tone mapping to brighten overlaps.
+export const EDGE_RESOLVE_BOOST_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
+precision mediump float;
+in vec2 v_uv;
+uniform sampler2D u_colorAccum;
+uniform sampler2D u_weightAccum;
+out vec4 fragColor;
+
+void main() {
+  vec3 accum = texture(u_colorAccum, v_uv).rgb;
+  float weight = texture(u_weightAccum, v_uv).r;
+  float denom = max(weight, 1e-4);
+  vec3 resolved = accum / denom;
+  float boost = clamp(weight, 0.0, 4.0);
+  vec3 boosted = resolved * boost;
+  // Tone map to avoid infinite growth.
+  vec3 tonemapped = boosted / (boosted + vec3(1.0));
+  float alpha = clamp(weight, 0.0, 1.0);
+  fragColor = vec4(tonemapped, alpha);
+}`;

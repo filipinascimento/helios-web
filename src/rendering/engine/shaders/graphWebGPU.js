@@ -494,3 +494,50 @@ fn fs(input : VertexOut) -> @location(0) vec4<f32> {
   let alpha = clamp(weight, 0.0, 1.0);
   return vec4<f32>(resolved * alpha, alpha);
 }`;
+
+export function createEdgeWeightedResolveTonemapWGSL(options = {}) {
+  const boost = options.boost === true;
+  const body = boost
+    ? `
+  let uv = vec2<f32>(input.uv.x, 1.0 - input.uv.y);
+  let accumColor = textureSample(colorAccum, textureSampler, uv).rgb;
+  let weight = textureSample(weightAccum, textureSampler, uv).x;
+  let denom = max(weight, 1e-4);
+  let resolved = accumColor / vec3<f32>(denom);
+  let scaled = resolved * clamp(weight, 0.0, 4.0);
+  let tonemapped = scaled / (scaled + vec3<f32>(1.0));
+  let alpha = clamp(weight, 0.0, 1.0);
+  return vec4<f32>(tonemapped, alpha);`
+    : `
+  let uv = vec2<f32>(input.uv.x, 1.0 - input.uv.y);
+  let accumColor = textureSample(colorAccum, textureSampler, uv).rgb;
+  let weight = textureSample(weightAccum, textureSampler, uv).x;
+  let denom = max(weight, 1e-4);
+  let resolved = accumColor / vec3<f32>(denom);
+  let tonemapped = resolved / (resolved + vec3<f32>(1.0));
+  let alpha = clamp(weight, 0.0, 1.0);
+  return vec4<f32>(tonemapped, alpha);`;
+
+  return /* wgsl */ `
+struct VertexOut {
+  @builtin(position) position : vec4<f32>,
+  @location(0) uv : vec2<f32>,
+};
+
+@group(0) @binding(0) var textureSampler : sampler;
+@group(0) @binding(1) var colorAccum : texture_2d<f32>;
+@group(0) @binding(2) var weightAccum : texture_2d<f32>;
+
+@vertex
+fn vs(@location(0) position : vec2<f32>, @location(1) uv : vec2<f32>) -> VertexOut {
+  var output : VertexOut;
+  output.position = vec4<f32>(position, 0.0, 1.0);
+  output.uv = uv;
+  return output;
+}
+
+@fragment
+fn fs(input : VertexOut) -> @location(0) vec4<f32> {
+  ${body}
+}`;
+}

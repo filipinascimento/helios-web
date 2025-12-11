@@ -31,7 +31,18 @@ function resolveEdgeTransparencyMode() {
   const mode = params.get('edgeTransparency');
   if (!mode) return 'alpha';
   const normalized = mode.toLowerCase();
-  return normalized === 'weighted' ? 'weighted' : 'alpha';
+  switch (normalized) {
+    case 'weighted':
+    case 'additive':
+    case 'screen':
+    case 'max':
+    case 'additive-normalized':
+    case 'additive-tonemapped':
+    case 'additive-normalized-bright':
+      return normalized;
+    default:
+      return 'alpha';
+  }
 }
 
 function resolveNodeCount() {
@@ -160,7 +171,7 @@ async function bootstrap() {
   const edgeIds = network.addEdges(edges);
   // network node and edge count
   console.log("Created a network with nodes:", network.nodeCount, "edges:", network.edgeCount);
-
+  
   console.log("Filling edge attribute...");
   network.withBufferAccess(() => {
     const edgeBuffer = network.getEdgeAttributeBuffer(edgeAttribute).view;
@@ -228,7 +239,7 @@ async function bootstrap() {
   helios.nodeMapper.channel('color').from(nodeAttribute).transform((v) => nodeColormap(v ?? 0)).done();
 
   console.log("  Node sizes...");
-  helios.nodeMapper.channel('size').from(nodeAttribute).linear([0, 1], [1, 5]).done();
+  helios.nodeMapper.channel('size').from(nodeAttribute).linear([0, 1], [0.1, 0.5]).done();
 
   // console.log("  Edge color mapper...");
   // Now using the default edge color mapper.

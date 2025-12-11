@@ -1,4 +1,10 @@
-import { NODE_WGSL, EDGE_WGSL, EDGE_WEIGHTED_WGSL, EDGE_WEIGHTED_RESOLVE_WGSL } from './shaders/graphWebGPU.js';
+import {
+  NODE_WGSL,
+  EDGE_WGSL,
+  EDGE_WEIGHTED_WGSL,
+  EDGE_WEIGHTED_RESOLVE_WGSL,
+  createEdgeWeightedResolveTonemapWGSL,
+} from './shaders/graphWebGPU.js';
 import { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './GraphLayerCommon.js';
 import { GraphLayer } from './GraphLayer.js';
 
@@ -15,17 +21,24 @@ export class GraphLayerWebGPU extends GraphLayer {
     this.edgeWeightedPipeline = null;
     this.edgeWeightedQuadPipeline = null;
     this.edgeResolvePipeline = null;
+    this.edgeResolvePipelineCache = new Map();
+    this.edgeResolveModuleCache = new Map();
     this.edgeResolveBindGroup = null;
     this.edgeResolveLayout = null;
     this.weightedSampler = null;
     this.weightedTextures = null;
     this.weightedSupported = null;
     this.warnedWeightedFallback = false;
+    this.edgePipelineCache = new Map();
+    this.edgeQuadPipelineCache = new Map();
+    this.currentEdgeBlend = 'alpha';
     this.edgeWeightedModule = null;
     this.edgeResolveModule = null;
     this.weightedPipelineFormats = null;
     this.nodeBindGroup = null;
     this.edgeBindGroup = null;
+    this.edgeModule = null;
+    this.baseDepthStencil = null;
     this.cameraArray = null;
     this.cameraBuffer = null;
     this.globalsArray = null;
@@ -145,11 +158,13 @@ export class GraphLayerWebGPU extends GraphLayer {
 
     const nodeModule = device.device.createShaderModule({ code: NODE_WGSL });
     const edgeModule = device.device.createShaderModule({ code: EDGE_WGSL });
+    this.edgeModule = edgeModule;
     const depthStencil = {
       format: device.depthFormat ?? 'depth24plus',
       depthWriteEnabled: true,
       depthCompare: 'less-equal',
     };
+    this.baseDepthStencil = depthStencil;
     const alphaBlend = {
       color: {
         srcFactor: 'src-alpha',
@@ -185,39 +200,7 @@ export class GraphLayerWebGPU extends GraphLayer {
       primitive: { topology: 'triangle-strip' },
     });
 
-    this.edgePipeline = device.device.createRenderPipeline({
-      layout: device.device.createPipelineLayout({ bindGroupLayouts: [this.edgeBindGroupLayout] }),
-      vertex: { module: edgeModule, entryPoint: 'edgeVertex' },
-      fragment: {
-        module: edgeModule,
-        entryPoint: 'edgeFragment',
-        targets: [{ format: device.format, blend: alphaBlend }],
-      },
-      depthStencil: { ...depthStencil, depthWriteEnabled: false },
-      primitive: { topology: 'line-list' },
-    });
-
-    this.edgeQuadPipeline = device.device.createRenderPipeline({
-      layout: device.device.createPipelineLayout({ bindGroupLayouts: [this.edgeBindGroupLayout] }),
-      vertex: {
-        module: edgeModule,
-        entryPoint: 'edgeQuadVertex',
-        buffers: [
-          {
-            arrayStride: 8,
-            attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }],
-            stepMode: 'vertex',
-          },
-        ],
-      },
-      fragment: {
-        module: edgeModule,
-        entryPoint: 'edgeFragment',
-        targets: [{ format: device.format, blend: alphaBlend }],
-      },
-      depthStencil: { ...depthStencil, depthWriteEnabled: false },
-      primitive: { topology: 'triangle-strip' },
-    });
+    this.createEdgePipelines('alpha', alphaBlend, edgeModule, depthStencil);
   }
 
   ensureBufferGpu(entry, requiredBytes, usage, device, maxBindingSize, label = 'storage buffer') {
@@ -377,7 +360,11 @@ export class GraphLayerWebGPU extends GraphLayer {
     if (!gpuDevice) return;
     const maxBindingSize = gpuDevice.limits?.maxStorageBufferBindingSize;
     const cameraUniforms = this.getCameraUniforms(camera);
-    const weightedRequested = this.edgeTransparencyMode === 'weighted';
+    const transparencyMode = this.edgeTransparencyMode;
+    const weightedRequested = transparencyMode === 'weighted'
+      || transparencyMode === 'additive-normalized'
+      || transparencyMode === 'additive-tonemapped'
+      || transparencyMode === 'additive-normalized-bright';
     let weightedReady = false;
     let geometry = null;
     let is2D = cameraUniforms?.mode === '2d';
@@ -405,6 +392,8 @@ export class GraphLayerWebGPU extends GraphLayer {
 
     if (!geometry || !this.cameraBuffer) return;
 
+    const edgePipelines = this.getEdgePipelinesForMode(transparencyMode, gpuDevice);
+
     const drawNodes = (passEncoder) => {
       if (!geometry.nodes.count || !this.nodeBindGroup || !passEncoder) return;
       passEncoder.setPipeline(this.nodePipeline);
@@ -415,13 +404,13 @@ export class GraphLayerWebGPU extends GraphLayer {
 
     const drawEdgesAlpha = (passEncoder) => {
       if (!geometry.edges.count || !this.edgeBindGroup || !passEncoder) return;
-      if (this.edgeRenderingMode === 'quad' && this.edgeQuadPipeline) {
-        passEncoder.setPipeline(this.edgeQuadPipeline);
+      if (this.edgeRenderingMode === 'quad' && edgePipelines?.quad) {
+        passEncoder.setPipeline(edgePipelines.quad);
         passEncoder.setBindGroup(0, this.edgeBindGroup);
         passEncoder.setVertexBuffer(0, this.edgeQuadBufferGpu);
         passEncoder.draw(4, geometry.edges.count, 0, 0);
-      } else {
-        passEncoder.setPipeline(this.edgePipeline);
+      } else if (edgePipelines?.line) {
+        passEncoder.setPipeline(edgePipelines.line);
         passEncoder.setBindGroup(0, this.edgeBindGroup);
         passEncoder.draw(geometry.edges.count * 2, 1, 0, 0);
       }
@@ -442,11 +431,83 @@ export class GraphLayerWebGPU extends GraphLayer {
       return;
     }
 
+    if (!this.loggedWeightedActive) {
+      console.info(`GraphLayerWebGPU: using weighted multipass for '${transparencyMode}'`);
+      this.loggedWeightedActive = true;
+    }
     this.renderWeighted(context, {
       geometry,
       is2D,
       drawNodes,
+      mode: transparencyMode,
     });
+  }
+
+  getBlendForMode(mode) {
+    switch (mode) {
+      case 'additive':
+        return { key: 'additive', blend: { color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' }, alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' } } };
+      case 'screen':
+        return { key: 'screen', blend: { color: { srcFactor: 'one', dstFactor: 'one-minus-src-color', operation: 'add' }, alpha: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' } } };
+      case 'max':
+        return { key: 'max', blend: { color: { srcFactor: 'one', dstFactor: 'one', operation: 'max' }, alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'max' } } };
+      default:
+        return { key: 'alpha', blend: { color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' }, alpha: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' } } };
+    }
+  }
+
+  createEdgePipelines(key, blend, edgeModule, depthStencil) {
+    const device = this.device?.device;
+    if (!device || !edgeModule || !depthStencil) return;
+    const linePipeline = device.createRenderPipeline({
+      layout: device.createPipelineLayout({ bindGroupLayouts: [this.edgeBindGroupLayout] }),
+      vertex: { module: edgeModule, entryPoint: 'edgeVertex' },
+      fragment: {
+        module: edgeModule,
+        entryPoint: 'edgeFragment',
+        targets: [{ format: this.device.format, blend }],
+      },
+      depthStencil: { ...depthStencil, depthWriteEnabled: false },
+      primitive: { topology: 'line-list' },
+    });
+
+    const quadPipeline = device.createRenderPipeline({
+      layout: device.createPipelineLayout({ bindGroupLayouts: [this.edgeBindGroupLayout] }),
+      vertex: {
+        module: edgeModule,
+        entryPoint: 'edgeQuadVertex',
+        buffers: [
+          {
+            arrayStride: 8,
+            attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }],
+            stepMode: 'vertex',
+          },
+        ],
+      },
+      fragment: {
+        module: edgeModule,
+        entryPoint: 'edgeFragment',
+        targets: [{ format: this.device.format, blend }],
+      },
+      depthStencil: { ...depthStencil, depthWriteEnabled: false },
+      primitive: { topology: 'triangle-strip' },
+    });
+
+    this.edgePipelineCache.set(key, linePipeline);
+    this.edgeQuadPipelineCache.set(key, quadPipeline);
+  }
+
+  getEdgePipelinesForMode(mode, gpuDevice) {
+    if (!gpuDevice) return null;
+    const { key, blend } = this.getBlendForMode(mode);
+    if (key === 'alpha' && this.edgePipelineCache.has('alpha')) {
+      return { line: this.edgePipelineCache.get('alpha'), quad: this.edgeQuadPipelineCache.get('alpha') };
+    }
+    if (this.edgePipelineCache.has(key)) {
+      return { line: this.edgePipelineCache.get(key), quad: this.edgeQuadPipelineCache.get(key) };
+    }
+    this.createEdgePipelines(key, blend, this.edgeModule, this.baseDepthStencil);
+    return { line: this.edgePipelineCache.get(key), quad: this.edgeQuadPipelineCache.get(key) };
   }
 
   updateCameraUniformsGpu(camera, cameraUniforms) {
@@ -538,7 +599,7 @@ export class GraphLayerWebGPU extends GraphLayer {
     if (!this.ensureWeightedTextures(device, width, height)) return false;
     if (!this.ensureWeightedPipelines(device, context.format)) return false;
     this.ensureWeightedResolveBindGroup(device);
-    return Boolean(this.edgeWeightedPipeline && this.edgeResolvePipeline && this.edgeResolveBindGroup);
+    return Boolean(this.edgeWeightedPipeline && this.edgeResolveBindGroup && this.edgeResolveLayout);
   }
 
   ensureWeightedTextures(device, width, height) {
@@ -669,50 +730,6 @@ export class GraphLayerWebGPU extends GraphLayer {
         primitive: { topology: 'triangle-strip' },
       });
 
-      this.edgeResolveLayout = device.createBindGroupLayout({
-        entries: [
-          { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-          { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-          { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        ],
-      });
-
-      this.edgeResolvePipeline = device.createRenderPipeline({
-        layout: device.createPipelineLayout({ bindGroupLayouts: [this.edgeResolveLayout] }),
-        vertex: {
-          module: this.edgeResolveModule,
-          entryPoint: 'vs',
-          buffers: [
-            {
-              arrayStride: 16,
-              attributes: [
-                { shaderLocation: 0, offset: 0, format: 'float32x2' },
-                { shaderLocation: 1, offset: 8, format: 'float32x2' },
-              ],
-            },
-          ],
-        },
-        fragment: {
-          module: this.edgeResolveModule,
-          entryPoint: 'fs',
-          targets: [
-            {
-              format: swapchainFormat,
-              blend: {
-                color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-                alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-              },
-            },
-          ],
-        },
-        depthStencil: {
-          format: this.device.depthFormat ?? 'depth24plus',
-          depthWriteEnabled: false,
-          depthCompare: 'always',
-        },
-        primitive: { topology: 'triangle-strip' },
-      });
-
       this.weightedPipelineFormats = {
         color: colorFormat,
         weight: weightFormat,
@@ -720,7 +737,17 @@ export class GraphLayerWebGPU extends GraphLayer {
       };
     }
 
-    return Boolean(this.edgeWeightedPipeline && this.edgeResolvePipeline);
+    if (!this.edgeResolveLayout) {
+      this.edgeResolveLayout = device.createBindGroupLayout({
+        entries: [
+          { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+          { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+          { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        ],
+      });
+    }
+
+    return Boolean(this.edgeWeightedPipeline);
   }
 
   ensureWeightedResolveBindGroup(device) {
@@ -738,7 +765,74 @@ export class GraphLayerWebGPU extends GraphLayer {
     });
   }
 
-  renderWeighted(context, { geometry, is2D, drawNodes }) {
+  getResolvePipeline(mode, swapchainFormat) {
+    const key = `${mode ?? 'default'}|${swapchainFormat}`;
+    if (this.edgeResolvePipelineCache.has(key)) {
+      return this.edgeResolvePipelineCache.get(key);
+    }
+
+    const device = this.device?.device;
+    if (!device) return null;
+    const layout = this.edgeResolveLayout;
+    if (!layout) return null;
+
+    const shaderCode = (() => {
+      if (mode === 'additive-tonemapped') {
+        return createEdgeWeightedResolveTonemapWGSL({ boost: false });
+      }
+      if (mode === 'additive-normalized-bright') {
+        return createEdgeWeightedResolveTonemapWGSL({ boost: true });
+      }
+      return EDGE_WEIGHTED_RESOLVE_WGSL;
+    })();
+
+    let module = this.edgeResolveModuleCache.get(shaderCode);
+    if (!module) {
+      module = device.createShaderModule({ code: shaderCode });
+      this.edgeResolveModuleCache.set(shaderCode, module);
+    }
+
+    const pipeline = device.createRenderPipeline({
+      layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
+      vertex: {
+        module,
+        entryPoint: 'vs',
+        buffers: [
+          {
+            arrayStride: 16,
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: 'float32x2' },
+              { shaderLocation: 1, offset: 8, format: 'float32x2' },
+            ],
+          },
+        ],
+      },
+      fragment: {
+        module,
+        entryPoint: 'fs',
+        targets: [
+          {
+            format: swapchainFormat,
+            blend: {
+              color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+              alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+            },
+          },
+        ],
+      },
+      depthStencil: {
+        format: this.device.depthFormat ?? 'depth24plus',
+        depthWriteEnabled: false,
+        depthCompare: 'always',
+      },
+      primitive: { topology: 'triangle-strip' },
+    });
+
+    this.edgeResolvePipelineCache.set(key, pipeline);
+    return pipeline;
+  }
+
+  renderWeighted(context, { geometry, is2D, drawNodes, mode }) {
     const commandEncoder = context.commandEncoder;
     const targetView = context.colorView;
     const depthView = context.depthView;
@@ -818,7 +912,7 @@ export class GraphLayerWebGPU extends GraphLayer {
         : {}),
     });
     applyViewport(resolvePass);
-    resolvePass.setPipeline(this.edgeResolvePipeline);
+    resolvePass.setPipeline(this.getResolvePipeline(mode, context.format));
     resolvePass.setBindGroup(0, this.edgeResolveBindGroup);
     resolvePass.setVertexBuffer(0, context.quad);
     resolvePass.draw(4, 1, 0, 0);
