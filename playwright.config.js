@@ -41,6 +41,7 @@ export default defineConfig({
     timeout: 120_000,
     env: {
       VITE_HOST: '127.0.0.1',
+      VITE_NODE_COUNT: '2000',
     },
   },
 });

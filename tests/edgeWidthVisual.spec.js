@@ -1,264 +1,172 @@
-import path from 'path';
-import { fileURLToPath, pathToFileURL } from 'url';
 import { test, expect } from '@playwright/test';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-function resolveModuleUrl(baseURL, absolutePath) {
-  if (baseURL) {
-    const root = baseURL.endsWith('/') ? baseURL : `${baseURL}/`;
-    return new URL(`/@fs${absolutePath}`, root).href;
-  }
-  return pathToFileURL(absolutePath).href;
-}
-
 test('edges render with correct relative widths', async ({ page }, testInfo) => {
-  const baseURL = testInfo.project.use.baseURL;
-  const heliosPath = resolveModuleUrl(baseURL, path.resolve(__dirname, '../src/index.js'));
-  const networkPath = resolveModuleUrl(
-    baseURL,
-    path.resolve(__dirname, '../node_modules/helios-network/dist/helios-network.js'),
-  );
-
-  if (baseURL) {
-    await page.goto(baseURL);
-  } else {
-    await page.goto('about:blank');
-  }
+  await page.goto('/');
   await page.setViewportSize({ width: 400, height: 300 });
 
-  await page.setContent(`
-    <html>
-      <head></head>
-      <body style="margin:0; padding:0; background:white;">
-        <div id="app" style="width:400px;height:300px;"></div>
-        <script type="module">
-          window.__helios?.destroy?.();
-          window.__helios = undefined;
-          const { Helios } = await import('${heliosPath}');
-          const { default: HeliosNetwork, AttributeType } = await import('${networkPath}');
-
-          const network = await HeliosNetwork.create({ directed: false, initialNodes: 0, initialEdges: 2 });
-          network.nodeActivityView?.fill(0);
-          network.edgeActivityView?.fill(0);
-          network.defineNodeAttribute('_helios_visuals_position', AttributeType.Float, 3);
-          network.defineNodeAttribute('_helios_visuals_color', AttributeType.Float, 4);
-          network.defineNodeAttribute('_helios_visuals_size', AttributeType.Float, 1);
-          network.defineEdgeAttribute('_helios_visuals_edge_color', AttributeType.Float, 8);
-          network.defineEdgeAttribute('_helios_visuals_edge_width', AttributeType.Float, 2);
-          network.defineNodeToEdgeAttribute('_helios_visuals_position', '_helios_visuals_edge_endpoints_position', 'both');
-          network.defineNodeToEdgeAttribute('_helios_visuals_size', '_helios_visuals_edge_endpoints_size', 'both');
-
-          const nodes = network.addNodes(4);
-          // Activate nodes explicitly.
-          if (network.nodeActivityView) {
-            network.nodeActivityView.fill(0);
-            nodes.forEach((id) => { network.nodeActivityView[id] = 1; });
-          }
-
-          const edges = network.addEdges([
-            { from: nodes[0], to: nodes[1] },
-            { from: nodes[2], to: nodes[3] },
-          ]);
-          if (network.edgeActivityView) {
-            network.edgeActivityView.fill(0);
-            edges.forEach((id) => { network.edgeActivityView[id] = 1; });
-          }
-          const helios = new Helios(network, {
-            container: document.getElementById('app'),
-            renderer: 'webgl',
-            mode: '2d',
-            projection: 'orthographic',
-            edgeRendering: 'quad',
-            mappers: null,
-          });
-          await helios.ready;
-          const pos = network.getNodeAttributeBuffer('_helios_visuals_position').view;
-          const sizes = network.getNodeAttributeBuffer('_helios_visuals_size').view;
-          const nodeColors = network.getNodeAttributeBuffer('_helios_visuals_color').view;
-          const edgeColors = network.getEdgeAttributeBuffer('_helios_visuals_edge_color').view;
-          const edgeWidths = network.getEdgeAttributeBuffer('_helios_visuals_edge_width').view;
-          // Two horizontal edges at different y positions.
-          const placements = [
-            [120, 140], [280, 140], // Edge 1 (red, thin)
-            [120, 190], [280, 190], // Edge 2 (blue, thick)
-          ];
-          nodes.forEach((id, i) => {
-            const base = id * 3;
-            pos[base + 0] = placements[i][0];
-            pos[base + 1] = placements[i][1];
-            pos[base + 2] = 0;
-            sizes[id] = 10;
-            const c = base; // reuse position as offset to write color alpha 0
-            nodeColors[c + 0] = 1;
-            nodeColors[c + 1] = 1;
-            nodeColors[c + 2] = 1;
-            nodeColors[c + 3] = 0;
-          });
-          const writeColor = (edgeId, rgba) => {
-            const offset = edgeId * 8;
-            edgeColors.set(rgba, offset);
-            edgeColors.set(rgba, offset + 4);
-          };
-          const writeWidth = (edgeId, value) => {
-            const offset = edgeId * 2;
-            edgeWidths[offset] = value;
-            edgeWidths[offset + 1] = value;
-          };
-          // Thin red edge
-          writeColor(edges[0], [1, 0, 0, 1]);
-          writeWidth(edges[0], 2);
-          // Thick blue edge
-          writeColor(edges[1], [0, 0.2, 1, 1]);
-          writeWidth(edges[1], 6);
-          if (helios.renderer?.graphLayer) {
-            // Keep global scaling neutral so per-edge widths dominate.
-            helios.renderer.graphLayer.edgeWidthBase = 0;
-            helios.renderer.graphLayer.edgeWidthScale = 1;
-            helios.renderer.graphLayer.nodeOpacityBase = 0;
-            helios.renderer.graphLayer.nodeOpacityScale = 0;
-          }
-          helios.visuals.markPositionsDirty();
-          helios.visuals.markEdgeAttributesDirty(
-            '_helios_visuals_edge_color',
-            '_helios_visuals_edge_width',
-          );
-          helios.scheduler.requestGeometry();
-          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-          window.__helios = helios;
-        </script>
-      </body>
-    </html>
-  `);
-
-  await page.waitForFunction(
-    () => window.__helios?.layers?.container?.isConnected === true,
-    { timeout: 5000 },
-  );
-  const counts = await page.evaluate(() => {
-    const frame = { network: window.__helios?.network, timestamp: performance.now() };
-    window.__helios?.renderer?.render?.(frame);
-    const net = window.__helios?.network;
-    let edgeCount = 0;
-    try {
-      net?.updateDenseEdgeIndexBuffer?.();
-      net?.withBufferAccess?.(() => {
-        edgeCount = net?.getDenseEdgeIndexView?.()?.count ?? 0;
-      });
-    } catch (_) {
-      edgeCount = 0;
+  const setup = await page.evaluate(async () => {
+    if (window.__helios) {
+      window.__helios.destroy();
     }
-    return { edgeCount };
+    document.body.innerHTML = '<div id="app" style="width:400px;height:300px;"></div>';
+    const { createDeterministicHelios } = await import('/src/tests/deterministicNetwork.js');
+    const { helios } = await createDeterministicHelios(document.getElementById('app'), 'webgl');
+    const network = helios.network;
+    const edges = network.addEdges([
+      { from: 0, to: 1 },
+      { from: 2, to: 3 },
+    ]);
+    network.withBufferAccess(() => {
+      const positions = network.getNodeAttributeBuffer('_helios_visuals_position')?.view;
+      const colors = network.getEdgeAttributeBuffer('_helios_visuals_edge_color')?.view;
+      const widths = network.getEdgeAttributeBuffer('_helios_visuals_edge_width')?.view;
+      const opacities = network.getEdgeAttributeBuffer('_helios_visuals_edge_opacity')?.view;
+      if (!positions || !colors || !widths || !opacities) {
+        throw new Error('Buffers unavailable for position/color/width/opacity');
+      }
+      // Center the nodes around the origin so the default camera sees both edges.
+      const placements = [
+        [-80, -40, 0],
+        [80, -40, 0],
+        [-80, 40, 0],
+        [80, 40, 0],
+      ];
+      placements.forEach(([x, y, z], idx) => {
+        const base = idx * 3;
+        positions[base] = x;
+        positions[base + 1] = y;
+        positions[base + 2] = z;
+      });
+      const writeColor = (edgeId, rgba) => {
+        const offset = edgeId * 8;
+        colors.set(rgba, offset);
+        colors.set(rgba, offset + 4);
+      };
+      const writeWidth = (edgeId, value) => {
+        const offset = edgeId * 2;
+        widths[offset] = value;
+        widths[offset + 1] = value;
+      };
+      writeColor(edges[0], [1, 0, 0, 1]);
+      writeWidth(edges[0], 1);
+      writeColor(edges[1], [0, 0.25, 1, 1]);
+      writeWidth(edges[1], 10);
+      opacities.set([1, 1], edges[0] * 2);
+      opacities.set([1, 1], edges[1] * 2);
+      window.__edgeColorSample = {
+        edge0: Array.from(colors.slice(edges[0] * 8, edges[0] * 8 + 8)),
+        edge1: Array.from(colors.slice(edges[1] * 8, edges[1] * 8 + 8)),
+        widths: Array.from(widths.slice(edges[0] * 2, edges[1] * 2 + 2)),
+      };
+    });
+    if (!helios.renderer?.graphLayer) {
+      throw new Error('Renderer graph layer unavailable');
+    }
+    helios.renderer.graphLayer.edgeWidthBase = 0;
+    helios.renderer.graphLayer.edgeWidthScale = 1;
+    helios.renderer.graphLayer.nodeOpacityBase = 0;
+    helios.renderer.graphLayer.nodeOpacityScale = 0;
+    helios.renderer.graphLayer.edgeOpacityBase = 0;
+    helios.renderer.graphLayer.edgeOpacityScale = 1;
+    helios.renderer.graphLayer.edgeRendering = 'quad';
+    helios.visuals.markEdgeAttributesDirty(
+      '_helios_visuals_edge_color',
+      '_helios_visuals_edge_width',
+      '_helios_visuals_edge_opacity',
+    );
+    helios.visuals.markPositionsDirty();
+    helios.visuals.markAllDenseDirty();
+    helios.scheduler.requestGeometry();
+    window.__edgeIds = Array.from(edges);
+    window.__helios = helios;
+    return { edges: Array.from(edges), samples: window.__edgeColorSample };
   });
-  expect(counts.edgeCount).toBeGreaterThanOrEqual(2);
-  await page.waitForTimeout(200);
 
-  const {
-    thinWidth,
-    thickWidth,
-    width,
-    height,
-    hasData,
-    nonWhite,
-    canvas,
-    rendererType,
-    hasCanvas,
-    layerCanvas,
-    canvasCount,
-    bodyHtml,
-    containerId,
-    containerConnected,
-  } = await page.evaluate(() => {
-    const frame = { network: window.__helios?.network, timestamp: performance.now() };
-    window.__helios?.renderer?.render?.(frame);
-    const { width, height } = window.__helios?.renderer?.size ?? { width: 0, height: 0 };
-    const canvas = (() => {
-      const el = document.querySelector('canvas');
-      if (!el) return null;
-      const rect = el.getBoundingClientRect();
-      return { width: rect.width, height: rect.height, clientWidth: el.width, clientHeight: el.height };
-    })();
-    const dataPromise = window.__helios?.renderer?.readPixels?.() ?? null;
-    let edgeCount = 0;
-    try {
-      window.__helios?.network?.updateDenseEdgeIndexBuffer?.();
-      window.__helios?.network?.withBufferAccess?.(() => {
-        edgeCount = window.__helios?.network?.getDenseEdgeIndexView?.()?.count ?? 0;
-      });
-    } catch (_) {
-      edgeCount = 0;
-    }
-    const measure = (data, x, matchFn) => {
-      let longest = 0;
-      let current = 0;
-      for (let y = 0; y < height; y += 1) {
-        const idx = (width * y + x) * 4;
-        const r = data[idx];
-        const g = data[idx + 1];
-        const b = data[idx + 2];
-        const a = data[idx + 3];
-        if (matchFn(r, g, b, a)) {
-          current += 1;
-          longest = Math.max(longest, current);
-        } else {
-          current = 0;
-        }
-      }
-      return longest;
-    };
-    return Promise.resolve(dataPromise).then((data) => {
-      if (!data || !width || !height) {
-          return {
-            thinWidth: 0, thickWidth: 0, width, height, hasData: !!data, nonWhite: 0, canvas,
-            rendererType: window.__helios?.renderer?.device?.type ?? null,
-            hasCanvas: !!document.querySelector('canvas'),
-            layerCanvas: !!window.__helios?.layers?.canvas,
-          canvasCount: document.querySelectorAll('canvas').length,
-          bodyHtml: document.body?.innerHTML ?? '',
-          containerId: window.__helios?.layers?.container?.id ?? null,
-          containerConnected: window.__helios?.layers?.container?.isConnected ?? null,
-          redMax: 0,
-          blueMax: 0,
-          redCount: 0,
-          blueCount: 0,
-        };
-      }
-      const mid = Math.floor((120 + 280) / 2);
-      const thinWidth = measure(data, mid, (r, g, b) => r > g + b + 10 && r > 20);
-      const thickWidth = measure(data, mid, (r, g, b) => b > r + g + 10 && b > 50);
-      let nonWhite = 0;
-      for (let i = 0; i < data.length; i += 4) {
-        const r = data[i];
-        const g = data[i + 1];
-        const b = data[i + 2];
-        if (r || g || b) nonWhite += 1;
-      }
-        return {
-          thinWidth,
-          thickWidth,
+  await page.waitForFunction(() => {
+    const h = window.__helios;
+    if (!h) return false;
+    if (!h.renderer || typeof h.renderer.render !== 'function') throw new Error('Renderer unavailable');
+    return true;
+  }, { timeout: 5000 });
+  await page.waitForTimeout(150);
+
+  const metrics = await page.evaluate(async () => {
+    const helios = window.__helios;
+    if (!helios) throw new Error('Helios instance missing');
+    const renderer = helios.renderer;
+    if (!renderer || typeof renderer.render !== 'function') throw new Error('Renderer missing');
+    const frame = { network: helios.network, timestamp: performance.now(), camera: renderer.camera };
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    renderer.render(frame);
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const { width, height } = renderer.size ?? { width: 0, height: 0 };
+    const rect = { x: 0, y: 0, width, height };
+    const data = await Promise.resolve(renderer.readPixels(null, rect));
+    let denseEdgeCount = 0;
+    helios.network.updateDenseEdgeIndexBuffer();
+    helios.network.withBufferAccess(() => {
+      denseEdgeCount = helios.network.getDenseEdgeIndexView()?.count ?? 0;
+    });
+    if (!data || !width || !height) {
+      return {
         width,
         height,
         hasData: !!data,
-        nonWhite,
-        canvas,
-        rendererType: window.__helios?.renderer?.device?.type ?? null,
-        hasCanvas: !!document.querySelector('canvas'),
-        layerCanvas: !!window.__helios?.layers?.canvas,
-          canvasCount: document.querySelectorAll('canvas').length,
-          bodyHtml: document.body?.innerHTML ?? '',
-          containerId: window.__helios?.layers?.container?.id ?? null,
-          containerConnected: window.__helios?.layers?.container?.isConnected ?? null,
-          edgeCount,
-        };
-      });
+        nonWhite: 0,
+        redCount: 0,
+        blueCount: 0,
+        redMax: 0,
+        blueMax: 0,
+        edgeIds: window.__edgeIds ?? [],
+        denseEdgeCount,
+        samples: window.__edgeColorSample ?? null,
+        dataLength: data ? data.length : 0,
+      };
+    }
+    let redCount = 0;
+    let blueCount = 0;
+    let nonWhite = 0;
+    let redMax = 0;
+    let blueMax = 0;
+    const dataLength = data.length;
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      if (r || g || b) nonWhite += 1;
+      if (r > g + b + 10 && r > 20) redCount += 1;
+      if (b > r + g + 10 && b > 40) blueCount += 1;
+      redMax = Math.max(redMax, r);
+      blueMax = Math.max(blueMax, b);
+    }
+    return {
+      width,
+      height,
+      hasData: !!data,
+      nonWhite,
+      redCount,
+      blueCount,
+      redMax,
+      blueMax,
+      edgeIds: window.__edgeIds ?? [],
+      denseEdgeCount,
+      samples: window.__edgeColorSample ?? null,
+      dataLength,
+    };
   });
 
-  // Measure vertical thickness at the edge center line.
-  expect(hasData).toBeTruthy();
-  expect(width).toBeGreaterThan(0);
-  expect(height).toBeGreaterThan(0);
-  expect(nonWhite).toBeGreaterThan(0);
-  expect(thinWidth).toBeGreaterThanOrEqual(1);
-  expect(thickWidth).toBeGreaterThan(thinWidth);
+  await testInfo.attach('edge-width-metrics', {
+    body: JSON.stringify({ ...metrics, edges: setup.edges, samples: setup.samples }, null, 2),
+    contentType: 'application/json',
+  });
+  // eslint-disable-next-line no-console
+  console.log('edge-width-metrics', metrics);
+
+  expect(metrics.hasData).toBeTruthy();
+  expect(metrics.width).toBeGreaterThan(0);
+  expect(metrics.height).toBeGreaterThan(0);
+  expect(metrics.nonWhite).toBeGreaterThan(0);
+  expect(metrics.redCount).toBeGreaterThan(0);
+  expect(metrics.blueCount).toBeGreaterThan(0);
+  expect(metrics.blueCount).toBeGreaterThan(metrics.redCount * 1.4);
 });

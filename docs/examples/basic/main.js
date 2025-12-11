@@ -2,6 +2,14 @@ import HeliosNetwork, { AttributeType } from 'helios-network';
 // When consuming the published package use `import { Helios } from 'helios-web-next';`
 import { Helios, createColormapScale } from '../../../src/index.js';
 
+const DEFAULT_NODE_COUNT = (() => {
+  const fromEnv = Number(import.meta?.env?.VITE_NODE_COUNT ?? Number.NaN);
+  if (Number.isFinite(fromEnv) && fromEnv > 0) {
+    return Math.floor(fromEnv);
+  }
+  return 2_000;
+})();
+
 function resolveRendererPreference() {
   const params = new URLSearchParams(window.location.search);
   const renderer = params.get('renderer');
@@ -51,7 +59,7 @@ function resolveNodeCount() {
   if (Number.isFinite(value) && value > 0) {
     return Math.floor(value);
   }
-  return 100_000;
+  return DEFAULT_NODE_COUNT;
 }
 
 async function bootstrap() {
