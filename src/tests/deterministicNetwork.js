@@ -26,10 +26,10 @@ export async function createDeterministicHelios(container, renderer = 'webgl') {
 
   // Keep nodes centered around the origin so any renderer/camera starts with all four visible.
   const positions = [
-    [-80, -80, 0],
-    [80, -80, 0],
-    [-80, 80, 0],
-    [80, 80, 0],
+    [-80, -80],
+    [80, -80],
+    [-80, 80],
+    [80, 80],
   ];
   const colors = [
     [1, 0.1, 0.1, 1],
@@ -56,7 +56,7 @@ export async function createDeterministicHelios(container, renderer = 'webgl') {
     container,
     renderer,
     clearColor: [0, 0, 0, 1],
-    layout: { type: 'static', options: { bounds: [-200, -200, 200, 200] } },
+    layout: { type: 'static', options: { bounds: [0, 0, 320, 320] } },
     mappers: null,
   });
   await helios.ready;

@@ -313,59 +313,19 @@ test.describe('webgpu visual (headed)', () => {
       const { helios } = await createDeterministicHelios(document.getElementById('app'), 'webgl');
 
       const network = helios.network;
-      const extraEdges = Array.from({ length: 32 }, () => ({ from: 0, to: 1 }));
-      const edges = network.addEdges(extraEdges);
+      const edges = network.addEdges([
+        { from: 0, to: 1 },
+        { from: 0, to: 1 },
+      ]);
       const colors = network.getEdgeAttributeBuffer('_helios_visuals_edge_color').view;
       const widths = network.getEdgeAttributeBuffer('_helios_visuals_edge_width').view;
       const opacities = network.getEdgeAttributeBuffer('_helios_visuals_edge_opacity').view;
-      const positions = network.getNodeAttributeBuffer('_helios_visuals_position')?.view;
-      const sizes = network.getNodeAttributeBuffer('_helios_visuals_size')?.view;
-      // Stack many overlapping edges with alternating colors and varying opacity to amplify weighted blending.
-      edges.forEach((edgeId, idx) => {
-        const isRed = idx % 2 === 0;
-        const opacity = 0.1 + (idx / edges.length) * 0.6;
-        const offsetC = edgeId * 8;
-        const offsetW = edgeId * 2;
-        const offsetO = edgeId * 2;
-        colors.set(isRed ? [1, 0, 0, 1] : [0, 0, 1, 1], offsetC);
-        colors.set(isRed ? [1, 0, 0, 1] : [0, 0, 1, 1], offsetC + 4);
-        widths[offsetW] = 18;
-        widths[offsetW + 1] = 18;
-        opacities[offsetO] = opacity;
-        opacities[offsetO + 1] = opacity;
-      });
-      if (positions && sizes) {
-        const coords = [
-          [-20, -10, 0],
-          [20, -10, 0],
-          [-20, 10, 0],
-          [20, 10, 0],
-        ];
-        coords.forEach(([x, y, z], idx) => {
-          const o = idx * 3;
-          positions[o] = x;
-          positions[o + 1] = y;
-          positions[o + 2] = z;
-          sizes[idx] = 20;
-        });
-        helios.visuals.markPositionsDirty();
-      }
-      if (positions && sizes) {
-        const coords = [
-          [120, 160, 0],
-          [200, 160, 0],
-          [120, 220, 0],
-          [200, 220, 0],
-        ];
-        coords.forEach(([x, y, z], idx) => {
-          const o = idx * 3;
-          positions[o] = x;
-          positions[o + 1] = y;
-          positions[o + 2] = z;
-          sizes[idx] = 20;
-        });
-      }
-      helios.visuals.markPositionsDirty();
+      colors.set([1, 0, 0, 1, 1, 0, 0, 1], edges[0] * 8);
+      colors.set([0, 0, 1, 1, 0, 0, 1, 1], edges[1] * 8);
+      widths.set([20, 20], edges[0] * 2);
+      widths.set([20, 20], edges[1] * 2);
+      opacities.set([1.0, 1.0], edges[0] * 2);
+      opacities.set([0.05, 0.05], edges[1] * 2);
 
       const sampleMean = async (mode) => {
         helios.renderer?.setEdgeTransparencyMode?.(mode);
@@ -374,7 +334,7 @@ test.describe('webgpu visual (headed)', () => {
         helios.renderer.render({ network, timestamp: performance.now(), camera: helios.renderer.camera });
         await new Promise((resolve) => setTimeout(resolve, 80));
         // Sample around the midpoint of the overlapping edges.
-        const rect = { x: 120, y: 120, width: 80, height: 80 };
+        const rect = { x: 120, y: 60, width: 80, height: 40 };
         const pixels = await helios.renderer.readPixels(null, rect);
         if (!pixels) return { mean: [0, 0, 0], fallback: true };
         let r = 0; let g = 0; let b = 0; let count = 0;
