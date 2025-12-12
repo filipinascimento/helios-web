@@ -8,12 +8,6 @@ test('MapperCollection channels receive attribute values', async () => {
   const attr = 'weight';
   network.defineNodeAttribute(attr, AttributeType.Float, 1);
   const nodes = network.addNodes(3);
-  if (network.nodeActivityView) {
-    network.nodeActivityView.fill(0);
-    nodes.forEach((id) => {
-      network.nodeActivityView[id] = 1;
-    });
-  }
   const weights = network.getNodeAttributeBuffer(attr).view;
   weights[nodes[0]] = 0.2;
   weights[nodes[1]] = 0.6;

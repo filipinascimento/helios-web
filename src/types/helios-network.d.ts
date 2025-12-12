@@ -67,8 +67,15 @@ declare module 'helios-network' {
     getOutNeighbors(node: number): NodeNeighbors;
     getInNeighbors(node: number): NodeNeighbors;
 
-    readonly nodeActivityView: Uint8Array;
-    readonly edgeActivityView: Uint8Array;
+    hasNodeIndex(index: number): boolean;
+    hasEdgeIndex(index: number): boolean;
+    hasNodeIndices(indices: Iterable<number> | Uint32Array): boolean[];
+    hasEdgeIndices(indices: Iterable<number> | Uint32Array): boolean[];
+
+    readonly nodeIndices: Uint32Array;
+    readonly edgeIndices: Uint32Array;
+    readonly nodes: any;
+    readonly edges: any;
     readonly edgesView: Uint32Array;
   }
 }

@@ -12,7 +12,7 @@
     "test:e2e:webgpu": "playwright test --headed --project=chromium-webgpu-headed",
     "test:e2e:weighted": "playwright test --headed tests/edge-transparency.spec.js",
     "test:e2e:rendering-options": "playwright test --headed --project=chromium tests/rendering-options.spec.js",
-    "test": "node --test tests/colormaps.test.js"
+    "test": "node --test tests/colormaps.test.js tests/visualAttributes.test.js"
   },
   "dependencies": {
     "d3-scale-chromatic": "^3.1.0",

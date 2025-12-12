@@ -22,13 +22,9 @@ test.describe('force layout behavior', () => {
       const helios = window.__helios;
       const pos = helios.visuals.nodePositions;
       const stride = 3;
-      const nodeActivity = helios.network.nodeActivityView;
       const edgesView = helios.network.edgesView;
-      const edgeActivity = helios.network.edgeActivityView;
-      const activeNodes = [];
-      for (let i = 0; i < nodeActivity.length; i += 1) {
-        if (nodeActivity[i]) activeNodes.push(i);
-      }
+      const activeNodes = Array.from(helios.network.nodeIndices || []);
+      const activeEdges = helios.network.edgeIndices || [];
       const coord = (idx) => {
         const o = idx * stride;
         return [pos[o], pos[o + 1], pos[o + 2]];
@@ -42,11 +38,10 @@ test.describe('force layout behavior', () => {
 
       const adjacency = new Set();
       const edgeDistances = [];
-      for (let e = 0; e < edgeActivity.length; e += 1) {
-        if (!edgeActivity[e]) continue;
-        const a = edgesView[e * 2];
-        const b = edgesView[e * 2 + 1];
-        if (!nodeActivity[a] || !nodeActivity[b]) continue;
+      for (let i = 0; i < activeEdges.length; i += 1) {
+        const edgeId = activeEdges[i];
+        const a = edgesView[edgeId * 2];
+        const b = edgesView[edgeId * 2 + 1];
         const key = a < b ? `${a}-${b}` : `${b}-${a}`;
         adjacency.add(key);
         edgeDistances.push(dist(coord(a), coord(b)));

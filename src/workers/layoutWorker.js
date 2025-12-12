@@ -35,7 +35,7 @@ const state = {
   velocities: null,
   forces: null,
   edges: new Uint32Array(0),
-  nodeActivity: null,
+  nodeIndices: null,
 };
 
 self.onmessage = (event) => {
@@ -69,8 +69,8 @@ function stepLayout(message) {
   if (message.edges instanceof Uint32Array) {
     state.edges = message.edges;
   }
-  if (message.nodeActivity instanceof Uint8Array) {
-    state.nodeActivity = message.nodeActivity;
+  if (message.nodeIndices instanceof Uint32Array) {
+    state.nodeIndices = message.nodeIndices;
   }
 
   const layoutMode = (state.options.layout || 'force3d').toLowerCase();
@@ -132,7 +132,7 @@ function runForceDirectedLayout(buffer, timestamp) {
     state.forces = new Float32Array(count * 3);
   }
   const useDepth = (state.options.mode ?? '2d') === '3d';
-  const activeNodes = collectActiveNodes(state.nodeActivity, count);
+  const activeNodes = collectActiveNodes(state.nodeIndices, count);
 
   if (!state.seeded) {
     seedPositions(buffer, activeNodes, useDepth);
@@ -160,15 +160,12 @@ function runForceDirectedLayout(buffer, timestamp) {
 }
 
 function collectActiveNodes(activity, count) {
-  if (!(activity instanceof Uint8Array)) {
-    return Array.from({ length: count }, (_, i) => i);
+  if (activity instanceof Uint32Array || Array.isArray(activity)) {
+    return activity;
   }
-  const active = [];
-  const limit = Math.min(count, activity.length);
-  for (let i = 0; i < limit; i += 1) {
-    if (activity[i]) {
-      active.push(i);
-    }
+  const active = new Uint32Array(count);
+  for (let i = 0; i < count; i += 1) {
+    active[i] = i;
   }
   return active;
 }

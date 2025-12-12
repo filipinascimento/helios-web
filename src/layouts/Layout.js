@@ -55,13 +55,13 @@ export class StaticLayout extends Layout {
 
   initialize() {
     const positions = this.visuals.nodePositions;
-    const activity = this.network.nodeActivityView;
+    const activeNodes = this.network?.nodeIndices || [];
     const [minX, minY, maxX, maxY] = this.bounds;
     const width = Math.max(1, maxX - minX);
     const height = Math.max(1, maxY - minY);
 
-    for (let node = 0; node < activity.length; node += 1) {
-      if (!activity[node]) continue;
+    for (let n = 0; n < activeNodes.length; n += 1) {
+      const node = activeNodes[n];
       const offset = node * 3;
       const x = positions[offset];
       const y = positions[offset + 1];
@@ -111,13 +111,13 @@ export class WorkerLayout extends Layout {
     }
     this.pending = true;
     const positionsCopy = new Float32Array(this.visuals.nodePositions);
-    const { nodeActivity, edges } = this.buildGraphPayload();
+    const { nodeIndices, edges } = this.buildGraphPayload();
     this.worker.postMessage(
       {
         type: 'tick',
         timestamp: performance.now(),
         positions: positionsCopy,
-        nodeActivity,
+        nodeIndices,
         edges,
       },
       [positionsCopy.buffer],
@@ -164,22 +164,16 @@ export class WorkerLayout extends Layout {
   }
 
   buildGraphPayload() {
-    const nodeActivity = new Uint8Array(this.network.nodeActivityView);
-    const edgeActivity = this.network.edgeActivityView;
+    const nodeIndices = this.network.nodeIndices;
+    const edgeIndices = this.network.edgeIndices;
     const edgesView = this.network.edgesView;
-    let edgeCount = 0;
-    for (let i = 0; i < edgeActivity.length; i += 1) {
-      if (edgeActivity[i]) edgeCount += 1;
+    const edges = new Uint32Array(edgeIndices.length * 2);
+    for (let i = 0; i < edgeIndices.length; i += 1) {
+      const id = edgeIndices[i];
+      const base = id * 2;
+      edges[i * 2] = edgesView[base];
+      edges[i * 2 + 1] = edgesView[base + 1];
     }
-    const edges = new Uint32Array(edgeCount * 2);
-    let offset = 0;
-    for (let i = 0; i < edgeActivity.length; i += 1) {
-      if (!edgeActivity[i]) continue;
-      const base = i * 2;
-      edges[offset] = edgesView[base];
-      edges[offset + 1] = edgesView[base + 1];
-      offset += 2;
-    }
-    return { nodeActivity, edges };
+    return { nodeIndices, edges };
   }
 }

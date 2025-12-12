@@ -11,9 +11,7 @@ import {
 } from '../src/pipeline/constants.js';
 
 test('dense buffers map nodes and edges with correct counts and data', async () => {
-  const network = await HeliosNetwork.create({ directed: false, initialNodes: 2, initialEdges: 1 });
-  network.nodeActivityView?.fill(0);
-  network.edgeActivityView?.fill(0);
+  const network = await HeliosNetwork.create({ directed: false, initialNodes: 0, initialEdges: 1 });
   network.defineNodeAttribute(NODE_POSITION_ATTRIBUTE, AttributeType.Float, 3);
   network.defineNodeAttribute('_helios_visuals_color', AttributeType.Float, 4);
   network.defineNodeAttribute(NODE_SIZE_ATTRIBUTE, AttributeType.Float, 1);
@@ -22,14 +20,8 @@ test('dense buffers map nodes and edges with correct counts and data', async () 
   network.defineNodeToEdgeAttribute(NODE_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_POSITION_ATTRIBUTE, 'both');
   network.defineNodeToEdgeAttribute(NODE_SIZE_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE, 'both');
 
-  const visuals = new VisualAttributes(network);
   const nodes = network.addNodes(2);
-  if (network.nodeActivityView) {
-    network.nodeActivityView.fill(0);
-    nodes.forEach((id) => {
-      network.nodeActivityView[id] = 1;
-    });
-  }
+  const visuals = new VisualAttributes(network);
   const positions = network.getNodeAttributeBuffer(NODE_POSITION_ATTRIBUTE).view;
   const sizes = network.getNodeAttributeBuffer(NODE_SIZE_ATTRIBUTE).view;
   positions.set([10, 20, 0], nodes[0] * 3);
@@ -38,10 +30,6 @@ test('dense buffers map nodes and edges with correct counts and data', async () 
   sizes[nodes[1]] = 7;
 
   const edges = network.addEdges([{ from: nodes[0], to: nodes[1] }]);
-  if (network.edgeActivityView) {
-    network.edgeActivityView.fill(0);
-    network.edgeActivityView[edges[0]] = 1;
-  }
   const edgeColors = network.getEdgeAttributeBuffer(EDGE_COLOR_ATTRIBUTE).view;
   const edgeWidths = network.getEdgeAttributeBuffer(EDGE_WIDTH_ATTRIBUTE).view;
   edgeColors.set([0.1, 0.2, 0.3, 0.4], edges[0] * 4);

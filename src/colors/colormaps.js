@@ -1,5 +1,5 @@
 import * as d3Chromatic from 'd3-scale-chromatic';
-import rawColormapData from './ColormapData.json' assert { type: 'json' };
+import rawColormapData from './ColormapData.json' with { type: 'json' };
 
 function clamp01(value) {
   if (!Number.isFinite(value)) return 0;

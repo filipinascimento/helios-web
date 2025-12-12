@@ -100,13 +100,14 @@ export class VisualAttributes {
    * active edge that still has an uninitialized (zero/invalid) opacity.
    */
   seedMissingEdgeOpacity() {
+    const edgeIndices = this.network?.edgeIndices;
+    if (!edgeIndices?.length) return;
     this.withBufferAccess(() => {
-      const activity = this.network?.edgeActivityView;
       const opacities = this.edgeOpacities;
-      if (!activity || !opacities) return;
+      if (!opacities) return;
       let touched = false;
-      for (let edgeId = 0; edgeId < activity.length; edgeId += 1) {
-        if (!activity[edgeId]) continue;
+      for (let i = 0; i < edgeIndices.length; i += 1) {
+        const edgeId = edgeIndices[i];
         const offset = edgeId * 2;
         const a = opacities[offset];
         const b = opacities[offset + 1];
@@ -131,6 +132,7 @@ export class VisualAttributes {
 
   applyNodeMapper(mapper) {
     if (!mapper?.channels?.size) return;
+    const nodeIndices = this.network?.nodeIndices;
     this.withBufferAccess(() => {
       const attributes = this.collectAttributeNames(mapper, 'node');
       const buffers = this.resolveNodeAttributeBuffers(attributes.node);
@@ -141,10 +143,9 @@ export class VisualAttributes {
         outlineColor: this.nodeOutlineColors,
         position: this.nodePositions,
       };
-      const activity = this.network?.nodeActivityView;
-      if (!activity) return;
-      for (let nodeId = 0; nodeId < activity.length; nodeId += 1) {
-        if (!activity[nodeId]) continue;
+      if (!nodeIndices?.length) return;
+      for (let i = 0; i < nodeIndices.length; i += 1) {
+        const nodeId = nodeIndices[i];
         const inputs = this.buildAttributeObject(buffers, nodeId);
         const mapped = mapper.mapItem({ attributes: inputs }, { index: nodeId });
         this.writeNodeVisuals(nodeId, mapped, visuals);
@@ -162,6 +163,7 @@ export class VisualAttributes {
 
   applyEdgeMapper(mapper) {
     if (!mapper?.channels?.size) return;
+    const edgeIndices = this.network?.edgeIndices;
     this.withBufferAccess(() => {
       const attributes = this.collectAttributeNames(mapper, 'edge');
       const edgeBuffers = this.resolveEdgeAttributeBuffers(attributes.edge);
@@ -176,11 +178,10 @@ export class VisualAttributes {
         width: this.edgeWidths,
         endpointSize: skipEndpointSize ? null : this.network.getEdgeAttributeBuffer(EDGE_ENDPOINTS_SIZE_ATTRIBUTE).view,
       };
-      const activity = this.network?.edgeActivityView;
       const edgesView = this.network?.edgesView;
-      if (!activity) return;
-      for (let edgeId = 0; edgeId < activity.length; edgeId += 1) {
-        if (!activity[edgeId]) continue;
+      if (!edgeIndices?.length) return;
+      for (let i = 0; i < edgeIndices.length; i += 1) {
+        const edgeId = edgeIndices[i];
         const edgeInputs = this.buildEdgeAttributeObject(edgeBuffers, edgeId);
         const sourceId = edgesView ? edgesView[edgeId * 2] : null;
         const targetId = edgesView ? edgesView[edgeId * 2 + 1] : null;
@@ -293,6 +294,7 @@ export class VisualAttributes {
    * @param {Iterable<number>} [indices]
    */
   applyNodeDefaults(indices) {
+    const targetIndices = indices ?? this.network?.nodeIndices;
     this.withBufferAccess(() => {
       const color = DEFAULT_NODE_COLOR;
       const size = DEFAULT_NODE_SIZE;
@@ -304,26 +306,8 @@ export class VisualAttributes {
       const outlineWidthView = this.nodeOutlineWidths;
       const outlineColorView = this.nodeOutlineColors;
 
-      if (!indices) {
-        const activity = this.network.nodeActivityView;
-        for (let i = 0; i < activity.length; i += 1) {
-          if (activity[i]) {
-            this.writeNodeDefaults(
-              i,
-              color,
-              size,
-              outlineWidth,
-              outlineColor,
-              positionView,
-              colorView,
-              sizeView,
-              outlineWidthView,
-              outlineColorView,
-            );
-          }
-        }
-      } else {
-        for (const index of indices) {
+      if (targetIndices) {
+        for (const index of targetIndices) {
           this.writeNodeDefaults(
             index,
             color,
@@ -355,6 +339,7 @@ export class VisualAttributes {
    * @param {Iterable<number>} [indices]
    */
   applyEdgeDefaults(indices) {
+    const targetIndices = indices ?? this.network?.edgeIndices;
     this.withBufferAccess(() => {
       const color = DEFAULT_EDGE_COLOR;
       const opacity = DEFAULT_EDGE_OPACITY;
@@ -363,15 +348,8 @@ export class VisualAttributes {
       const opacityView = this.edgeOpacities;
       const widthView = this.edgeWidths;
 
-      if (!indices) {
-        const activity = this.network.edgeActivityView;
-        for (let i = 0; i < activity.length; i += 1) {
-          if (activity[i]) {
-            this.writeEdgeDefaults(i, color, width, opacity, colorView, widthView, opacityView);
-          }
-        }
-      } else {
-        for (const index of indices) {
+      if (targetIndices) {
+        for (const index of targetIndices) {
           this.writeEdgeDefaults(index, color, width, opacity, colorView, widthView, opacityView);
         }
       }
@@ -386,16 +364,16 @@ export class VisualAttributes {
    * @param {{width?: number, height?: number}} [bounds]
    */
   seedMissingPositions(bounds = {}) {
+    const nodeIndices = this.network?.nodeIndices;
     this.withBufferAccess(() => {
       const width = Math.max(1, bounds.width ?? 1);
       const height = Math.max(1, bounds.height ?? 1);
       const pos = this.nodePositions;
-      const activity = this.network?.nodeActivityView;
-      if (!pos || !activity) return;
+      if (!pos || !nodeIndices?.length) return;
       let touched = false;
-      for (let i = 0; i < activity.length; i += 1) {
-        if (!activity[i]) continue;
-        const offset = i * 3;
+      for (let i = 0; i < nodeIndices.length; i += 1) {
+        const nodeId = nodeIndices[i];
+        const offset = nodeId * 3;
         const missing =
           !Number.isFinite(pos[offset]) ||
           !Number.isFinite(pos[offset + 1]) ||
@@ -423,13 +401,20 @@ export class VisualAttributes {
     if (!hasAttribute) {
       this.network.defineNodeAttribute(name, type, dimension);
     } else if (attributeInfoMismatched(info, expected)) {
-      throw new Error(
-        `Attribute ${name} metadata mismatch: dimension ${info?.dimension ?? 'unknown'}, expected ${dimension}`,
+      console.warn(
+        `Attribute ${name} metadata mismatch: redefining with dimension ${dimension} type ${type} (saw dimension ${info?.dimension ?? 'unknown'}, type ${info?.type ?? 'unknown'})`,
       );
+      this.network.removeNodeAttribute(name);
+      this.network.defineNodeAttribute(name, type, dimension);
     }
 
-    const buffer = this.network.getNodeAttributeBuffer(name);
-    validateAttribute(buffer, name, expected);
+    try {
+      const buffer = this.network.getNodeAttributeBuffer(name);
+      validateAttribute(buffer, name, expected);
+    } catch (error) {
+      // If no node capacity is allocated yet, buffer pointers may be unavailable; defer validation.
+      if (this.network.nodeCapacity > 0) throw error;
+    }
   }
 
   ensureEdgeAttribute(name, type, dimension) {
@@ -440,12 +425,20 @@ export class VisualAttributes {
     if (!hasAttribute) {
       this.network.defineEdgeAttribute(name, type, dimension);
     } else if (attributeInfoMismatched(info, expected)) {
+      console.warn(
+        `Edge attribute ${name} metadata mismatch: redefining with dimension ${dimension} type ${type} (saw dimension ${info?.dimension ?? 'unknown'}, type ${info?.type ?? 'unknown'})`,
+      );
       this.network.removeEdgeAttribute(name);
       this.network.defineEdgeAttribute(name, type, dimension);
     }
 
-    const buffer = this.network.getEdgeAttributeBuffer(name);
-    validateAttribute(buffer, name, expected);
+    try {
+      const buffer = this.network.getEdgeAttributeBuffer(name);
+      validateAttribute(buffer, name, expected);
+    } catch (error) {
+      // If no edge capacity is allocated yet, buffer pointers may be unavailable; defer validation.
+      if (this.network.edgeCapacity > 0) throw error;
+    }
   }
 
   ensureNodeToEdgeAttribute(sourceName, edgeName, sourceDimension) {
@@ -457,12 +450,20 @@ export class VisualAttributes {
     if (!hasAttribute) {
       this.network.defineNodeToEdgeAttribute(sourceName, edgeName, 'both');
     } else if (attributeInfoMismatched(info, expected)) {
+      console.warn(
+        `Edge attribute ${edgeName} metadata mismatch: redefining with dimension ${targetDimension} type ${AttributeType.Float} (saw dimension ${info?.dimension ?? 'unknown'}, type ${info?.type ?? 'unknown'})`,
+      );
       this.network.removeEdgeAttribute(edgeName);
       this.network.defineNodeToEdgeAttribute(sourceName, edgeName, 'both');
     }
 
-    const buffer = this.network.getEdgeAttributeBuffer(edgeName);
-    validateAttribute(buffer, edgeName, expected);
+    try {
+      const buffer = this.network.getEdgeAttributeBuffer(edgeName);
+      validateAttribute(buffer, edgeName, expected);
+    } catch (error) {
+      // If no edge capacity is allocated yet, buffer pointers may be unavailable; defer validation.
+      if (this.network.edgeCapacity > 0) throw error;
+    }
   }
 
   collectAttributeNames(mapper, mode) {
