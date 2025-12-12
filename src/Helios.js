@@ -84,6 +84,11 @@ export class Helios {
     if (typeof this.renderer.resize === 'function') {
       this.renderer.resize(this.layers.size);
     }
+    if (this.renderer?.camera?.setChangeListener) {
+      this.renderer.camera.setChangeListener(() => {
+        this.scheduler.requestRender();
+      });
+    }
 
     this.removeResizeListener = this.layers.onResize((size) => {
       this.size = size;
@@ -93,6 +98,7 @@ export class Helios {
       this.layout?.resize?.(size);
       if (!this.manualRendering) {
         this.scheduler.requestGeometry();
+        this.scheduler.requestRender();
       }
     });
 
@@ -109,6 +115,7 @@ export class Helios {
       return {
         network: this.network,
         timestamp: performance.now(),
+        camera: this.renderer?.camera,
       };
     });
     this.scheduler.setRenderCallback((frame) => {
@@ -227,6 +234,11 @@ export class Helios {
     this.layout.initialize?.();
     this.scheduler.setLayout(layout);
     this.scheduler.requestLayout();
+    this.scheduler.requestRender();
+  }
+
+  requestRender() {
+    this.scheduler.requestRender();
   }
 
   performRendering() {

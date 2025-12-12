@@ -404,6 +404,7 @@ export class Camera {
     this._debugFrame = 0;
 
     this._needsUpdate = true;
+    this._changeListener = typeof options.onChange === 'function' ? options.onChange : null;
     this._pointerId = null;
     this._lastPointer = null;
     this._boundPointerDown = (event) => this.handlePointerDown(event);
@@ -476,11 +477,16 @@ export class Camera {
     this.canvas.addEventListener('wheel', this._boundWheel, { passive: false });
   }
 
+  setChangeListener(listener) {
+    this._changeListener = typeof listener === 'function' ? listener : null;
+  }
+
   destroy() {
     this.canvas?.removeEventListener?.('wheel', this._boundWheel);
     this.canvas?.removeEventListener?.('pointerdown', this._boundPointerDown);
     window.removeEventListener('pointermove', this._boundMove);
     window.removeEventListener('pointerup', this._boundUp);
+    this._changeListener = null;
   }
 
   handleWheel(event) {
@@ -730,6 +736,7 @@ export class Camera {
         });
       }
     }
+    this._changeListener?.();
   }
 
   update2D() {

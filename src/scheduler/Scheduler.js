@@ -9,6 +9,7 @@ export class Scheduler {
     this.running = false;
     this._needsLayout = true;
     this._needsGeometry = true;
+    this._needsRender = true;
     this._lastTime = 0;
     this._raf = null;
     this._layoutBusy = false;
@@ -39,6 +40,10 @@ export class Scheduler {
 
   requestGeometry() {
     this._needsGeometry = true;
+  }
+
+  requestRender() {
+    this._needsRender = true;
   }
 
   start() {
@@ -117,14 +122,16 @@ export class Scheduler {
         perf.record('geometry', performance.now() - geometryStart);
       }
       this._needsGeometry = false;
+      this._needsRender = true;
     }
 
-    if (this.renderCallback && this.currentFrame) {
+    if (this.renderCallback && this.currentFrame && this._needsRender) {
       const renderStart = perf?.enabled ? performance.now() : 0;
       this.renderCallback(this.currentFrame);
       if (renderStart) {
         perf.record('render', performance.now() - renderStart);
       }
+      this._needsRender = false;
     }
 
     perf?.logIfDue();
