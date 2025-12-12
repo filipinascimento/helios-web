@@ -249,8 +249,9 @@ async function bootstrap() {
   console.log("  Node sizes...");
   helios.nodeMapper.channel('size').from(nodeAttribute).linear([0, 1], [0.1, 0.5]).done();
 
-  // console.log("  Edge color mapper...");
   // Now using the default edge color mapper.
+  // uncomment below to use a custom edge color mapper
+  // console.log("  Edge color mapper...");
   // helios.edgeMapper
   //   .channel('color')
   //   .from(edgeAttribute)

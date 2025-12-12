@@ -50,7 +50,10 @@ export class Helios {
       logEvery: performanceLogEvery,
     });
     this.manualRendering = options.manualRendering === true;
-    this.scheduler = new Scheduler({ performanceMonitor: this.performanceMonitor });
+    this.scheduler = new Scheduler({
+      performanceMonitor: this.performanceMonitor,
+      maxFps: options.maxFps,
+    });
     this.layout = this.createLayout(options.layout);
     this.renderer = null;
     this.size = { ...this.layers.size };

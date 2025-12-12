@@ -14,6 +14,9 @@ export class Scheduler {
     this._layoutBusy = false;
     this.currentFrame = null;
     this.performanceMonitor = options.performanceMonitor ?? null;
+    this.maxFrameInterval =
+      options.maxFps && options.maxFps > 0 ? 1000 / options.maxFps : 0;
+    this._lastRenderTime = 0;
   }
 
   setLayout(layout) {
@@ -42,6 +45,7 @@ export class Scheduler {
     if (this.running) return;
     this.running = true;
     this._lastTime = performance.now();
+    this._lastRenderTime = this._lastTime;
     this._raf = requestAnimationFrame((ts) => this.tick(ts));
   }
 
@@ -57,8 +61,13 @@ export class Scheduler {
     if (!this.running) {
       return;
     }
+    if (this.maxFrameInterval > 0 && timestamp - this._lastRenderTime < this.maxFrameInterval) {
+      this._raf = requestAnimationFrame((ts) => this.tick(ts));
+      return;
+    }
     const delta = timestamp - this._lastTime;
     this._lastTime = timestamp;
+    this._lastRenderTime = timestamp;
     const perf = this.performanceMonitor;
 
     const layoutShouldRun = Boolean(
