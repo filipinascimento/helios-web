@@ -62,13 +62,14 @@ test('edges render with correct relative widths', async ({ page }, testInfo) => 
     if (!helios.renderer?.graphLayer) {
       throw new Error('Renderer graph layer unavailable');
     }
+    helios.renderer.setEdgeRenderingMode?.('quad');
+    helios.renderer.setEdgeTransparencyMode?.('alpha');
     helios.renderer.graphLayer.edgeWidthBase = 0;
     helios.renderer.graphLayer.edgeWidthScale = 1;
     helios.renderer.graphLayer.nodeOpacityBase = 0;
     helios.renderer.graphLayer.nodeOpacityScale = 0;
     helios.renderer.graphLayer.edgeOpacityBase = 0;
     helios.renderer.graphLayer.edgeOpacityScale = 1;
-    helios.renderer.graphLayer.edgeRendering = 'quad';
     helios.visuals.markEdgeAttributesDirty(
       '_helios_visuals_edge_color',
       '_helios_visuals_edge_width',
@@ -95,13 +96,45 @@ test('edges render with correct relative widths', async ({ page }, testInfo) => 
     if (!helios) throw new Error('Helios instance missing');
     const renderer = helios.renderer;
     if (!renderer || typeof renderer.render !== 'function') throw new Error('Renderer missing');
-    const frame = { network: helios.network, timestamp: performance.now(), camera: renderer.camera };
-    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-    renderer.render(frame);
-    await new Promise((resolve) => requestAnimationFrame(resolve));
+    helios.scheduler?.requestRender?.();
+    await new Promise((resolve) => {
+      let attempts = 0;
+      const waitFrame = () => {
+        if (helios.scheduler?._needsRender === false || attempts > 10) {
+          resolve();
+          return;
+        }
+        attempts += 1;
+        requestAnimationFrame(waitFrame);
+      };
+      requestAnimationFrame(waitFrame);
+    });
     const { width, height } = renderer.size ?? { width: 0, height: 0 };
     const rect = { x: 0, y: 0, width, height };
     const data = await Promise.resolve(renderer.readPixels(null, rect));
+    const denseColors = (() => {
+      try {
+        return Array.from(helios.network.getDenseEdgeAttributeView('_helios_visuals_edge_color')?.view?.slice(0, 16) ?? []);
+      } catch (_) {
+        return null;
+      }
+    })();
+    const denseWidths = (() => {
+      try {
+        return Array.from(helios.network.getDenseEdgeAttributeView('_helios_visuals_edge_width')?.view?.slice(0, 8) ?? []);
+      } catch (_) {
+        return null;
+      }
+    })();
+    const denseSegments = (() => {
+      try {
+        return Array.from(
+          helios.network.getDenseEdgeAttributeView('_helios_visuals_edge_endpoints_position')?.view?.slice(0, 24) ?? [],
+        );
+      } catch (_) {
+        return null;
+      }
+    })();
     let denseEdgeCount = 0;
     helios.network.updateDenseEdgeIndexBuffer();
     helios.network.withBufferAccess(() => {
@@ -152,6 +185,15 @@ test('edges render with correct relative widths', async ({ page }, testInfo) => 
       denseEdgeCount,
       samples: window.__edgeColorSample ?? null,
       dataLength,
+      edgeCount: renderer.graphLayer?.edgeCount ?? null,
+      denseColors,
+      denseWidths,
+      denseSegments,
+      schedulerState: {
+        running: helios.scheduler?.running ?? null,
+        needsRender: helios.scheduler?._needsRender ?? null,
+        needsGeometry: helios.scheduler?._needsGeometry ?? null,
+      },
     };
   });
 
