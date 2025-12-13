@@ -222,6 +222,9 @@ async function bootstrap() {
     projection: 'perspective',
     transparencyModeEdges: edgeTransparency,
     debug: DEBUG_CONFIG,
+    // Warm up mapper application and dense buffers so first render is quick on large graphs.
+    prewarm: true,
+    prewarmDenseBuffers: true,
   };
   const rendererPreference = resolveRendererPreference();
   if (rendererPreference) {

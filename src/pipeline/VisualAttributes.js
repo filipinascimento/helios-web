@@ -341,6 +341,39 @@ export class VisualAttributes {
     }
   }
 
+  /**
+   * Forces dense buffers to be rebuilt if supported by the network. Useful to
+   * warm up large graphs before the first render.
+   */
+  updateDenseBuffers() {
+    const updates = [
+      () => this.network?.updateDenseNodeIndexBuffer?.(),
+      () => this.network?.updateDenseEdgeIndexBuffer?.(),
+      () => this.network?.updateDenseNodeAttributeBuffer?.(NODE_POSITION_ATTRIBUTE),
+      () => this.network?.updateDenseNodeAttributeBuffer?.(NODE_COLOR_ATTRIBUTE),
+      () => this.network?.updateDenseNodeAttributeBuffer?.(NODE_SIZE_ATTRIBUTE),
+      () => this.network?.updateDenseNodeAttributeBuffer?.(NODE_OUTLINE_WIDTH_ATTRIBUTE),
+      () => this.network?.updateDenseNodeAttributeBuffer?.(NODE_OUTLINE_COLOR_ATTRIBUTE),
+      () => this.network?.updateDenseEdgeAttributeBuffer?.(EDGE_COLOR_ATTRIBUTE),
+      () => this.network?.updateDenseEdgeAttributeBuffer?.(EDGE_OPACITY_ATTRIBUTE),
+      () => this.network?.updateDenseEdgeAttributeBuffer?.(EDGE_WIDTH_ATTRIBUTE),
+      () => this.network?.updateDenseEdgeAttributeBuffer?.(EDGE_ENDPOINTS_POSITION_ATTRIBUTE),
+      () => this.network?.updateDenseEdgeAttributeBuffer?.(EDGE_ENDPOINTS_SIZE_ATTRIBUTE),
+    ];
+
+    let touched = false;
+    for (const fn of updates) {
+      if (typeof fn !== 'function') continue;
+      try {
+        fn();
+        touched = true;
+      } catch (error) {
+        this.debug?.log('visuals', 'Failed to update dense buffer during prewarm', { error });
+      }
+    }
+    return touched;
+  }
+
   markAllDenseDirty() {
     this.markNodeAttributesDirty();
     this.markEdgeAttributesDirty();

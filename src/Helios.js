@@ -22,9 +22,11 @@ export class Helios {
     this.options = options;
     this.debug = createDebugLogger(options.debug);
     this.debug.log('helios', 'Constructing Helios instance', { mode: options.mode ?? '2d' });
+    this.prewarmPromise = null;
     this.mappersDirty = false;
     this.markMappersDirty = () => {
       this.mappersDirty = true;
+      this.prewarmPromise = null;
       this.scheduler?.requestGeometry?.();
     };
     const container = options.container ?? document.getElementById('app') ?? document.body;
@@ -58,6 +60,9 @@ export class Helios {
       maxFps: options.maxFps,
       debug: this.debug,
     });
+    if (options.prewarm === true) {
+      this.prewarm({ updateDenseBuffers: options.prewarmDenseBuffers !== false });
+    }
     this.layout = this.createLayout(options.layout);
     this.renderer = null;
     this.size = { ...this.layers.size };
@@ -175,6 +180,38 @@ export class Helios {
       this.debug.log('helios', 'Manual rendering enabled, initial geometry applied');
     }
     this.debug.log('helios', 'Initialization complete');
+  }
+
+  /**
+   * Pre-runs mapper application and (optionally) dense buffer rebuilds. Useful
+   * for large graphs where the first geometry pass is expensive.
+   * Can be awaited before `helios.ready` to shorten time to first render.
+   */
+  async prewarm(options = {}) {
+    if (this.prewarmPromise) return this.prewarmPromise;
+    const { updateDenseBuffers = true } = options;
+    this.debug.log('helios', 'Prewarming visuals before ready', { updateDenseBuffers });
+    this.prewarmPromise = (async () => {
+      if (this.mappersDirty) {
+        this.visuals.applyMappers({
+          nodeMapper: this.nodeMapper.toCombinedMapper(),
+          edgeMapper: this.edgeMapper.toCombinedMapper(),
+        });
+        this.mappersDirty = false;
+      }
+      if (updateDenseBuffers) {
+        this.visuals.updateDenseBuffers?.();
+      }
+      this.scheduler?.requestGeometry?.();
+    })();
+    try {
+      await this.prewarmPromise;
+    } catch (error) {
+      this.prewarmPromise = null;
+      this.debug.log('helios', 'Prewarm failed', { error });
+      throw error;
+    }
+    return this.prewarmPromise;
   }
 
   createLayout(layoutOption) {
