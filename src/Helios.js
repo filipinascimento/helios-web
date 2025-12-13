@@ -4,6 +4,7 @@ import { LayerManager } from './layers/LayerManager.js';
 import { Scheduler } from './scheduler/Scheduler.js';
 import { StaticLayout, WorkerLayout } from './layouts/Layout.js';
 import { createRenderer } from './rendering/createRenderer.js';
+import { AttributeTracker } from './rendering/AttributeTracker.js';
 import { PerformanceMonitor } from './utilities/PerformanceMonitor.js';
 import { VisualAttributes } from './pipeline/VisualAttributes.js';
 import { createDefaultMappers, MapperCollection } from './pipeline/Mapper.js';
@@ -65,6 +66,7 @@ export class Helios {
     }
     this.layout = this.createLayout(options.layout);
     this.renderer = null;
+    this.attributeTracker = null;
     this.size = { ...this.layers.size };
     this.removeResizeListener = null;
     this.firstGeometryUpdateComplete = false;
@@ -101,6 +103,8 @@ export class Helios {
       edgeEndpointTrim: this.options.edgeEndpointTrim,
     });
     this.debug.log('helios', 'Renderer created', { renderer: this.renderer?.constructor?.name });
+    this.attributeTracker = new AttributeTracker(this.renderer);
+    this.attributeTracker.resize(this.layers.size);
     if (typeof this.renderer.resize === 'function') {
       this.renderer.resize(this.layers.size);
     }
@@ -116,6 +120,7 @@ export class Helios {
       if (this.renderer?.resize) {
         this.renderer.resize(size);
       }
+      this.attributeTracker?.resize(size);
       this.layout?.resize?.(size);
       if (!this.manualRendering) {
         this.scheduler.requestGeometry();
@@ -160,6 +165,7 @@ export class Helios {
         size: this.size,
       });
       if (this.firstGeometryUpdateComplete && this.renderer && typeof this.renderer.render === 'function') {
+        this.attributeTracker?.render(frame);
         this.renderer.render(frame, this.size);
       }
     });
@@ -351,9 +357,38 @@ export class Helios {
       network: this.network,
       timestamp: performance.now(),
     };
+    this.attributeTracker?.render(frame, true);
     if (this.renderer && typeof this.renderer.render === 'function') {
       this.renderer.render(frame, this.size);
     }
+  }
+
+  enableAttributeTracking(nodeAttribute = 'index', edgeAttribute = null, options = {}) {
+    if (!this.attributeTracker && this.renderer) {
+      this.attributeTracker = new AttributeTracker(this.renderer);
+    }
+    this.attributeTracker?.enable(nodeAttribute, edgeAttribute, options);
+    return this.attributeTracker;
+  }
+
+  disableAttributeTracking(scope) {
+    this.attributeTracker?.disable(scope);
+  }
+
+  async renderAttributeTracking() {
+    if (!this.attributeTracker) return null;
+    const frame = {
+      network: this.network,
+      timestamp: performance.now(),
+      camera: this.renderer?.camera,
+    };
+    return this.attributeTracker.render(frame, true);
+  }
+
+  async pickAttributesAt(clientX, clientY) {
+    if (!this.attributeTracker) return { node: -1, edge: -1 };
+    await this.renderAttributeTracking();
+    return this.attributeTracker.pick(clientX, clientY);
   }
 
   destroy() {
@@ -363,6 +398,7 @@ export class Helios {
       this.removeResizeListener();
       this.removeResizeListener = null;
     }
+    this.attributeTracker?.destroy?.();
     this.renderer?.destroy?.();
     this.layers.destroy();
   }

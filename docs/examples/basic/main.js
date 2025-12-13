@@ -278,6 +278,19 @@ async function bootstrap() {
     helios.renderer.graphLayer.edgeWidthBase = 0;
   }
 
+  console.log("Enabling attribute tracking for picking...");
+  helios.enableAttributeTracking('index', 'index', { resolutionScale: 0.5 });
+  const canvas = helios.layers?.canvas ?? helios.renderer?.canvas ?? document.querySelector('canvas');
+  if (canvas) {
+    canvas.addEventListener('click', async (event) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      const picked = await helios.pickAttributesAt(x, y);
+      console.log('Picked node/edge indices', picked);
+    });
+  }
+
   console.log("Misc diagnostics...");
   const rendererType = helios.renderer?.device?.type ?? helios.renderer?.constructor?.name ?? 'unknown';
   diagnostics.ready = true;
