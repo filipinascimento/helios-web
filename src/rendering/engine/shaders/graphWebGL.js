@@ -22,6 +22,11 @@ out vec4 v_color;
 out vec2 v_local;
 out vec4 v_outlineColor;
 out float v_outlineThreshold;
+out vec3 v_centerWorld;
+out vec3 v_rightWorld;
+out vec3 v_upWorld;
+out vec3 v_viewDir;
+out float v_radius;
 
 void main() {
   float baseSize = u_nodeSizeBase + u_nodeSizeScale * a_size;
@@ -30,11 +35,12 @@ void main() {
   float radius = max(1.0, fullSize) * 0.5;
   vec3 right = u_cameraRight;
   vec3 up = u_cameraUp;
+  vec3 viewDir = vec3(0.0, 0.0, 1.0);
   if (u_is2D) {
     right = normalize(right);
     up = normalize(up);
   } else {
-    vec3 viewDir = u_cameraPosition - a_position;
+    viewDir = u_cameraPosition - a_position;
     float viewLen = length(viewDir);
     viewDir = viewLen > 1e-5 ? viewDir / viewLen : vec3(0.0, 0.0, 1.0);
     right = u_cameraRight - viewDir * dot(u_cameraRight, viewDir);
@@ -50,6 +56,11 @@ void main() {
   v_outlineColor = vec4(u_outlineColor.rgb, outlineAlpha);
   v_outlineThreshold = outlineWidth / max(fullSize, 1e-5);
   v_local = a_corner;
+  v_centerWorld = a_position;
+  v_rightWorld = right;
+  v_upWorld = up;
+  v_viewDir = viewDir;
+  v_radius = radius;
 }`;
 
 export const NODE_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
@@ -59,6 +70,15 @@ in vec4 v_color;
 in vec2 v_local;
 in vec4 v_outlineColor;
 in float v_outlineThreshold;
+in vec3 v_centerWorld;
+in vec3 v_rightWorld;
+in vec3 v_upWorld;
+in vec3 v_viewDir;
+in float v_radius;
+
+uniform mat4 u_viewProjection;
+uniform bool u_is2D;
+
 out vec4 fragColor;
 
 void main() {
@@ -71,6 +91,19 @@ void main() {
     return;
   }
   fragColor = v_color;
+
+  // Write depth as if the quad represents a sphere in 3D mode.
+  if (!u_is2D) {
+    float radius = v_radius;
+    float xyLenSq = dot(v_local * radius, v_local * radius);
+    float zOffset = sqrt(max(radius * radius - xyLenSq, 0.0));
+    vec3 worldPos = v_centerWorld
+      + (v_rightWorld * v_local.x + v_upWorld * v_local.y) * radius
+      + normalize(v_viewDir) * zOffset;
+    vec4 clip = u_viewProjection * vec4(worldPos, 1.0);
+    float depth = clip.z / clip.w;
+    gl_FragDepth = depth * 0.5 + 0.5;
+  }
 }`;
 
 export const EDGE_WEIGHTED_FRAGMENT_SOURCE = /* glsl */ `#version 300 es

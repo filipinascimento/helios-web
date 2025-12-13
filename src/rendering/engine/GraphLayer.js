@@ -36,7 +36,7 @@ export class GraphLayer extends Layer {
     this.edgeOpacityScale = 1;
     this.edgeWidthBase = 0;
     this.edgeWidthScale = 1;
-    this.edgeEndpointTrim = 1;
+    this.edgeEndpointTrim = Number.isFinite(options.edgeEndpointTrim) ? options.edgeEndpointTrim : 0.8;
     this.fallbackCameraUniforms = null;
     this.loggedWeightedActive = false;
   }

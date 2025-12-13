@@ -54,6 +54,11 @@ struct VertexOutput {
   @location(1) local : vec2<f32>,
   @location(2) outlineColor : vec4<f32>,
   @location(3) outlineThreshold : f32,
+  @location(4) centerWorld : vec3<f32>,
+  @location(5) rightWorld : vec3<f32>,
+  @location(6) upWorld : vec3<f32>,
+  @location(7) viewDir : vec3<f32>,
+  @location(8) radius : f32,
 };
 
 @vertex
@@ -73,11 +78,12 @@ fn nodeVertex(input : VertexInput) -> VertexOutput {
   let is2D = camera.position.w > 0.5;
   var right = camera.right.xyz;
   var up = camera.up.xyz;
+  var viewDir = vec3<f32>(0.0, 0.0, 1.0);
   if (is2D) {
     right = normalize(right);
     up = normalize(up);
   } else {
-    var viewDir = camera.position.xyz - basePosition;
+    viewDir = camera.position.xyz - basePosition;
     let viewLen = length(viewDir);
     if (viewLen > 1e-5) {
       viewDir = viewDir / vec3<f32>(viewLen);
@@ -103,19 +109,45 @@ fn nodeVertex(input : VertexInput) -> VertexOutput {
   let outlineAlpha = clamp(globals.nodeOpacity.x + globals.nodeOpacity.y * globals.nodeOutlineColor.a, 0.0, 1.0);
   output.outlineColor = vec4<f32>(globals.nodeOutlineColor.rgb, outlineAlpha);
   output.outlineThreshold = select(0.0, outlineWidth / max(fullDiameter, 1e-5), outlineWidth > 0.0);
+  output.centerWorld = basePosition;
+  output.rightWorld = right;
+  output.upWorld = up;
+  output.viewDir = viewDir;
+  output.radius = radius;
   return output;
 }
 
+struct NodeFragmentOutput {
+  @location(0) color : vec4<f32>,
+  @builtin(frag_depth) depth : f32,
+};
+
 @fragment
-fn nodeFragment(input : VertexOutput) -> @location(0) vec4<f32> {
+fn nodeFragment(input : VertexOutput) -> NodeFragmentOutput {
+  var output : NodeFragmentOutput;
   let dist = length(input.local);
   if (dist > 1.0) {
     discard;
   }
   if (input.outlineThreshold > 0.0 && dist > (1.0 - input.outlineThreshold)) {
-    return input.outlineColor;
+    output.color = input.outlineColor;
+  } else {
+    output.color = input.color;
   }
-  return input.color;
+  // Depth as a sphere in 3D; retain default depth in 2D (where depth test is disabled).
+  if (camera.position.w < 0.5) {
+    let radius = input.radius;
+    let xyLenSq = dot(input.local * radius, input.local * radius);
+    let zOffset = sqrt(max(radius * radius - xyLenSq, 0.0));
+    let worldPos = input.centerWorld
+      + (input.rightWorld * input.local.x + input.upWorld * input.local.y) * radius
+      + normalize(input.viewDir) * zOffset;
+    let clip = camera.viewProjection * vec4<f32>(worldPos, 1.0);
+    output.depth = clip.z / clip.w;
+  } else {
+    output.depth = input.position.z / input.position.w;
+  }
+  return output;
 }`;
 
 export const EDGE_WGSL = /* wgsl */ `

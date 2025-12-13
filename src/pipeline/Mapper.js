@@ -729,23 +729,26 @@ export { VISUAL_ATTRIBUTE_MAP as VISUAL_ATTRIBUTES };
  * build a combined mapper when applying visuals.
  */
 export class MapperCollection {
-  constructor(mode, network, onChange) {
+  constructor(mode, network, onChange, debug) {
     this.mode = mode;
     this.network = network;
     this.mappers = new Map();
     this.onChange = onChange;
+    this.debug = debug;
     this.defaultMapper = this.createMapper('default');
+    this.debug?.log('mapper', `Created ${mode} mapper collection`);
   }
 
   /**
    * Returns a ChannelBuilder bound to the default mapper. Calling `.done()`
    * will mark the collection dirty.
-   */
+  */
   channel(name) {
     const builder = this.defaultMapper.channel(name);
     const originalDone = builder.done.bind(builder);
     builder.done = () => {
       const result = originalDone();
+      this.debug?.log('mapper', `Updated ${this.mode} channel "${name}"`);
       this.touch();
       return result;
     };
@@ -766,6 +769,7 @@ export class MapperCollection {
     }
     const key = name ?? entry?.name ?? `mapper-${this.mappers.size + 1}`;
     this.mappers.set(key, mapper);
+    this.debug?.log('mapper', `Added ${this.mode} mapper`, { name: key });
     this.touch();
     return mapper;
   }
@@ -778,6 +782,7 @@ export class MapperCollection {
     if (!(mapper instanceof Mapper)) return;
     this.defaultMapper = mapper;
     this.mappers.set('default', mapper);
+    this.debug?.log('mapper', `Replaced default ${this.mode} mapper`);
     this.touch();
   }
 
@@ -805,6 +810,7 @@ export class MapperCollection {
    * insertion order).
    */
   toCombinedMapper() {
+    this.debug?.log('mapper', `Combining ${this.mode} mappers`, { count: this.mappers.size });
     if (this.mappers.size === 1) {
       // Fast path: no need to merge when only one mapper is registered.
       return this.mappers.values().next().value;
@@ -816,6 +822,7 @@ export class MapperCollection {
         combined.setChannel(name, cloned);
       }
     }
+    this.debug?.log('mapper', `Combined ${this.mode} mappers`, { channels: combined.channels.size });
     return combined;
   }
 

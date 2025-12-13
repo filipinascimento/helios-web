@@ -7,6 +7,7 @@ import { createRenderer } from './rendering/createRenderer.js';
 import { PerformanceMonitor } from './utilities/PerformanceMonitor.js';
 import { VisualAttributes } from './pipeline/VisualAttributes.js';
 import { createDefaultMappers, MapperCollection } from './pipeline/Mapper.js';
+import { createDebugLogger } from './utilities/DebugLogger.js';
 
 function isLayoutInstance(candidate) {
   return candidate && typeof candidate.step === 'function' && typeof candidate.initialize === 'function';
@@ -19,6 +20,8 @@ export class Helios {
     }
     this.network = network;
     this.options = options;
+    this.debug = createDebugLogger(options.debug);
+    this.debug.log('helios', 'Constructing Helios instance', { mode: options.mode ?? '2d' });
     this.mappersDirty = false;
     this.markMappersDirty = () => {
       this.mappersDirty = true;
@@ -26,9 +29,9 @@ export class Helios {
     };
     const container = options.container ?? document.getElementById('app') ?? document.body;
     this.layers = new LayerManager(container);
-    this.visuals = new VisualAttributes(network);
-    this.nodeMapper = new MapperCollection('node', network, this.markMappersDirty);
-    this.edgeMapper = new MapperCollection('edge', network, this.markMappersDirty);
+    this.visuals = new VisualAttributes(network, this.debug);
+    this.nodeMapper = new MapperCollection('node', network, this.markMappersDirty, this.debug);
+    this.edgeMapper = new MapperCollection('edge', network, this.markMappersDirty, this.debug);
     const optionMappers = options.mappers;
     if (optionMappers !== null) {
       const initialMappers = optionMappers ?? createDefaultMappers(network);
@@ -53,6 +56,7 @@ export class Helios {
     this.scheduler = new Scheduler({
       performanceMonitor: this.performanceMonitor,
       maxFps: options.maxFps,
+      debug: this.debug,
     });
     this.layout = this.createLayout(options.layout);
     this.renderer = null;
@@ -63,15 +67,24 @@ export class Helios {
   }
 
   async initialize() {
+    this.debug.log('helios', 'Initializing layout');
     if (this.layout?.setUpdateListener) {
       this.layout.setUpdateListener(() => {
         this.visuals.markPositionsDirty();
         this.scheduler.requestGeometry();
+        this.debug.log('layout', 'Layout requested geometry update');
       });
     }
     await this.layout?.initialize?.();
+    this.debug.log('helios', 'Layout initialized', { layout: this.layout?.constructor?.name });
     this.layout?.resize?.(this.layers.size);
+    this.debug.log('layout', 'Layout resized to initial viewport', this.layers.size);
 
+    this.debug.log('helios', 'Creating renderer', {
+      mode: this.options.mode ?? '2d',
+      projection: this.options.projection ?? 'perspective',
+      renderer: this.options.renderer ?? 'auto',
+    });
     this.renderer = await createRenderer(this.layers.canvas, {
       clearColor: this.options.clearColor,
       forceWebGL: this.options.renderer === 'webgl',
@@ -80,13 +93,16 @@ export class Helios {
       projection: this.options.projection ?? 'perspective',
       edgeRendering: this.options.edgeRendering,
       transparencyModeEdges: this.options.transparencyModeEdges,
+      edgeEndpointTrim: this.options.edgeEndpointTrim,
     });
+    this.debug.log('helios', 'Renderer created', { renderer: this.renderer?.constructor?.name });
     if (typeof this.renderer.resize === 'function') {
       this.renderer.resize(this.layers.size);
     }
     if (this.renderer?.camera?.setChangeListener) {
       this.renderer.camera.setChangeListener(() => {
         this.scheduler.requestRender();
+        this.debug.log('helios', 'Camera change requested render');
       });
     }
 
@@ -99,26 +115,45 @@ export class Helios {
       if (!this.manualRendering) {
         this.scheduler.requestGeometry();
         this.scheduler.requestRender();
+        this.debug.log('helios', 'Resize requested geometry/render', size);
       }
     });
 
+    this.debug.log('scheduler', 'Setting scheduler callbacks');
     this.scheduler.setLayout(this.layout);
     this.scheduler.setGeometryCallback(() => {
       if (this.mappersDirty) {
+        this.debug.log('mapper', 'Applying mappers to visuals');
         this.visuals.applyMappers({
           nodeMapper: this.nodeMapper.toCombinedMapper(),
           edgeMapper: this.edgeMapper.toCombinedMapper(),
         });
         this.mappersDirty = false;
       }
-      this.firstGeometryUpdateComplete = true;
-      return {
+      const frame = {
         network: this.network,
         timestamp: performance.now(),
         camera: this.renderer?.camera,
       };
+      if (!this.firstGeometryUpdateComplete) {
+        this.firstGeometryUpdateComplete = true;
+        this.debug.log('scheduler', 'First geometry frame ready', {
+          nodes: this.network?.nodeCount,
+          edges: this.network?.edgeCount,
+        });
+      } else {
+        this.debug.log('scheduler', 'Geometry frame prepared', {
+          nodes: this.network?.nodeCount,
+          edges: this.network?.edgeCount,
+        });
+      }
+      return frame;
     });
     this.scheduler.setRenderCallback((frame) => {
+      this.debug.log('scheduler', 'Rendering frame', {
+        renderer: this.renderer?.constructor?.name,
+        size: this.size,
+      });
       if (this.firstGeometryUpdateComplete && this.renderer && typeof this.renderer.render === 'function') {
         this.renderer.render(frame, this.size);
       }
@@ -126,6 +161,7 @@ export class Helios {
     if (!this.manualRendering) {
       this.scheduler.start();
       this.scheduler.requestGeometry();
+      this.debug.log('scheduler', 'Scheduler started (auto rendering)');
     } else {
       // In manual mode, run initial geometry setup but don't start scheduler
       if (this.mappersDirty) {
@@ -136,7 +172,9 @@ export class Helios {
         this.mappersDirty = false;
       }
       this.firstGeometryUpdateComplete = true;
+      this.debug.log('helios', 'Manual rendering enabled, initial geometry applied');
     }
+    this.debug.log('helios', 'Initialization complete');
   }
 
   createLayout(layoutOption) {
@@ -145,10 +183,12 @@ export class Helios {
     }
     if (layoutOption?.type === 'worker') {
       const workerOptions = { ...(layoutOption.options ?? {}), mode: this.options.mode ?? '2d' };
+      this.debug.log('layout', 'Using worker layout', workerOptions);
       return new WorkerLayout(this.network, this.visuals, workerOptions);
     }
     const w = this.layers.size.width;
     const h = this.layers.size.height;
+    this.debug.log('layout', 'Using static layout', { width: w, height: h });
     return new StaticLayout(this.network, this.visuals, {
       bounds: [-w * 0.5, -h * 0.5, w * 0.5, h * 0.5],
     });
@@ -156,6 +196,7 @@ export class Helios {
 
   addNodes(count, initializer) {
     const nodes = this.network.addNodes(count);
+    this.debug.log('helios', 'Adding nodes', { count });
     this.visuals.applyNodeDefaults(nodes);
     this.visuals.seedMissingPositions(this.layers.size);
     if (initializer) {
@@ -171,6 +212,7 @@ export class Helios {
 
   addEdges(edges, initializer) {
     const edgeIndices = this.network.addEdges(edges);
+    this.debug.log('helios', 'Adding edges', { count: edgeIndices?.length ?? 0 });
     this.visuals.applyEdgeDefaults(edgeIndices);
     if (initializer) {
       initializer(edgeIndices, this.visuals);
@@ -185,10 +227,12 @@ export class Helios {
 
   notifyNetworkChanged({ nodes, edges } = {}) {
     if (nodes) {
+      this.debug.log('helios', 'Network nodes changed', { count: nodes.length ?? nodes.size ?? nodes });
       this.visuals.applyNodeDefaults(nodes);
       this.visuals.seedMissingPositions(this.layers.size);
     }
     if (edges) {
+      this.debug.log('helios', 'Network edges changed', { count: edges.length ?? edges.size ?? edges });
       this.visuals.applyEdgeDefaults(edges);
     }
     this.visuals.markPositionsDirty();
@@ -200,21 +244,24 @@ export class Helios {
 
   setMappers({ nodeMapper, edgeMapper } = {}) {
     if (nodeMapper === null && edgeMapper === null) {
+      this.debug.log('mapper', 'Resetting mappers to defaults');
       this.nodeMapper = new MapperCollection('node', this.network, () => {
         this.markMappersDirty();
-      });
+      }, this.debug);
       this.edgeMapper = new MapperCollection('edge', this.network, () => {
         this.markMappersDirty();
-      });
+      }, this.debug);
       this.mappersDirty = true;
       this.scheduler?.requestGeometry?.();
       this.scheduler.requestGeometry();
       return;
     }
     if (nodeMapper) {
+      this.debug.log('mapper', 'Replacing node mapper');
       this.nodeMapper.setDefault(nodeMapper);
     }
     if (edgeMapper) {
+      this.debug.log('mapper', 'Replacing edge mapper');
       this.edgeMapper.setDefault(edgeMapper);
     }
     this.mappersDirty = true;
@@ -227,11 +274,15 @@ export class Helios {
     }
     this.layout?.dispose?.();
     this.layout = layout;
+    this.debug.log('layout', 'Layout replaced', { layout: layout?.constructor?.name });
     this.layout.setUpdateListener(() => {
       this.visuals.markPositionsDirty();
       this.scheduler.requestGeometry();
     });
+    this.debug.log('layout', 'Initializing new layout instance');
     this.layout.initialize?.();
+    this.layout.resize?.(this.layers.size);
+    this.debug.log('layout', 'Layout initialized and resized', this.layers.size);
     this.scheduler.setLayout(layout);
     this.scheduler.requestLayout();
     this.scheduler.requestRender();

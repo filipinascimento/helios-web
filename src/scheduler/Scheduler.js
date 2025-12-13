@@ -1,6 +1,8 @@
 /**
  * Coordinates layout, geometry, and rendering cycles.
  */
+import { createDebugLogger } from '../utilities/DebugLogger.js';
+
 export class Scheduler {
   constructor(options = {}) {
     this.layout = null;
@@ -18,31 +20,51 @@ export class Scheduler {
     this.maxFrameInterval =
       options.maxFps && options.maxFps > 0 ? 1000 / options.maxFps : 0;
     this._lastRenderTime = 0;
+    this.debug =
+      options.debug && typeof options.debug.log === 'function'
+        ? options.debug
+        : createDebugLogger(options.debug);
+    this.debug.log('scheduler', 'Scheduler created', {
+      maxFps: options.maxFps ?? null,
+      throttled: this.maxFrameInterval > 0,
+    });
   }
 
   setLayout(layout) {
     this.layout = layout;
+    this.debug.log('scheduler', 'Layout attached', { layout: layout?.constructor?.name });
     this.requestLayout();
   }
 
   setGeometryCallback(callback) {
     this.geometryCallback = callback;
+    this.debug.log('scheduler', 'Geometry callback registered');
     this.requestGeometry();
   }
 
   setRenderCallback(callback) {
     this.renderCallback = callback;
+    this.debug.log('scheduler', 'Render callback registered');
   }
 
   requestLayout() {
+    if (!this._needsLayout) {
+      this.debug.log('scheduler', 'Layout requested');
+    }
     this._needsLayout = true;
   }
 
   requestGeometry() {
+    if (!this._needsGeometry) {
+      this.debug.log('scheduler', 'Geometry requested');
+    }
     this._needsGeometry = true;
   }
 
   requestRender() {
+    if (!this._needsRender) {
+      this.debug.log('scheduler', 'Render requested');
+    }
     this._needsRender = true;
   }
 
@@ -51,6 +73,7 @@ export class Scheduler {
     this.running = true;
     this._lastTime = performance.now();
     this._lastRenderTime = this._lastTime;
+    this.debug.log('scheduler', 'Scheduler started');
     this._raf = requestAnimationFrame((ts) => this.tick(ts));
   }
 
@@ -60,6 +83,7 @@ export class Scheduler {
       cancelAnimationFrame(this._raf);
       this._raf = null;
     }
+    this.debug.log('scheduler', 'Scheduler stopped');
   }
 
   tick(timestamp) {

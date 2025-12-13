@@ -46,6 +46,27 @@ function attributeInfoMismatched(info, expected) {
   return dimensionMismatch || typeMismatch;
 }
 
+function expandAttributeData({ view, count, fromDimension, toDimension }) {
+  const result = new Float32Array(count * toDimension);
+  if (!view || !view.length || fromDimension <= 0 || toDimension <= 0) return result;
+  const ratio = toDimension / fromDimension;
+  const duplicateEach = Number.isInteger(ratio) && ratio === 2 ? 2 : 1;
+  for (let i = 0; i < count; i += 1) {
+    const baseFrom = i * fromDimension;
+    const baseTo = i * toDimension;
+    for (let k = 0; k < toDimension; k += 1) {
+      if (duplicateEach === 2 && toDimension === fromDimension * 2) {
+        const sourceIndex = baseFrom + Math.floor(k / 2);
+        result[baseTo + k] = view[sourceIndex] ?? 0;
+      } else {
+        const sourceIndex = baseFrom + Math.min(k, fromDimension - 1);
+        result[baseTo + k] = view[sourceIndex] ?? 0;
+      }
+    }
+  }
+  return result;
+}
+
 /**
  * Ensures required visual attributes exist on the Helios network, seeds defaults,
  * and provides helpers to apply mappers into sparse buffers while marking dense
@@ -55,8 +76,9 @@ export class VisualAttributes {
   /**
    * @param {import('helios-network').default} network
    */
-  constructor(network) {
+  constructor(network, debug) {
     this.network = network;
+    this.debug = debug;
     this.ensureAttributes();
     this.registerDenseBuffers();
     this.seedMissingEdgeOpacity();
@@ -126,13 +148,27 @@ export class VisualAttributes {
   }
 
   applyMappers({ nodeMapper, edgeMapper } = {}) {
+    this.debug?.log('mapper', 'Applying mappers to visuals');
     if (nodeMapper) this.applyNodeMapper(nodeMapper);
     if (edgeMapper) this.applyEdgeMapper(edgeMapper);
+    this.debug?.log('mapper', 'Finished applying mappers');
   }
 
   applyNodeMapper(mapper) {
     if (!mapper?.channels?.size) return;
     const nodeIndices = this.network?.nodeIndices;
+    const nodeChannels = [...mapper.channels.keys()];
+    this.debug?.log('mapper', 'Applying node mapper', {
+      nodes: nodeIndices?.length ?? 0,
+      channels: mapper.channels.size,
+      channelNames: nodeChannels,
+    });
+    for (const channel of nodeChannels) {
+      this.debug?.log('mapper', 'Applying node channel start', {
+        channel,
+        nodes: nodeIndices?.length ?? 0,
+      });
+    }
     this.withBufferAccess(() => {
       const attributes = this.collectAttributeNames(mapper, 'node');
       const buffers = this.resolveNodeAttributeBuffers(attributes.node);
@@ -159,11 +195,30 @@ export class VisualAttributes {
       );
       this.markEdgeAttributesDirty(EDGE_ENDPOINTS_SIZE_ATTRIBUTE, EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
     });
+    for (const channel of nodeChannels) {
+      this.debug?.log('mapper', 'Applying node channel finish', {
+        channel,
+        nodes: nodeIndices?.length ?? 0,
+      });
+    }
+    this.debug?.log('mapper', 'Node mapper applied', { nodes: nodeIndices?.length ?? 0 });
   }
 
   applyEdgeMapper(mapper) {
     if (!mapper?.channels?.size) return;
     const edgeIndices = this.network?.edgeIndices;
+    const edgeChannels = [...mapper.channels.keys()];
+    this.debug?.log('mapper', 'Applying edge mapper', {
+      edges: edgeIndices?.length ?? 0,
+      channels: mapper.channels.size,
+      channelNames: edgeChannels,
+    });
+    for (const channel of edgeChannels) {
+      this.debug?.log('mapper', 'Applying edge channel start', {
+        channel,
+        edges: edgeIndices?.length ?? 0,
+      });
+    }
     this.withBufferAccess(() => {
       const attributes = this.collectAttributeNames(mapper, 'edge');
       const edgeBuffers = this.resolveEdgeAttributeBuffers(attributes.edge);
@@ -200,6 +255,13 @@ export class VisualAttributes {
         EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
       );
     });
+    for (const channel of edgeChannels) {
+      this.debug?.log('mapper', 'Applying edge channel finish', {
+        channel,
+        edges: edgeIndices?.length ?? 0,
+      });
+    }
+    this.debug?.log('mapper', 'Edge mapper applied', { edges: edgeIndices?.length ?? 0 });
   }
 
   ensureAttributes() {
@@ -401,11 +463,35 @@ export class VisualAttributes {
     if (!hasAttribute) {
       this.network.defineNodeAttribute(name, type, dimension);
     } else if (attributeInfoMismatched(info, expected)) {
+      const currentDim = info?.dimension ?? dimension;
+      const shouldExpand = currentDim > 0 && currentDim < dimension;
+      let preserved = null;
+      if (shouldExpand) {
+        try {
+          const buffer = this.network.getNodeAttributeBuffer(name);
+          const count = buffer?.view ? Math.floor(buffer.view.length / currentDim) : 0;
+          preserved = expandAttributeData({
+            view: buffer?.view,
+            count,
+            fromDimension: currentDim,
+            toDimension: dimension,
+          });
+        } catch (_) {
+          preserved = null;
+        }
+      }
       console.warn(
-        `Attribute ${name} metadata mismatch: redefining with dimension ${dimension} type ${type} (saw dimension ${info?.dimension ?? 'unknown'}, type ${info?.type ?? 'unknown'})`,
+        `Attribute ${name} metadata mismatch: redefining with dimension ${dimension} type ${type} (saw dimension ${info?.dimension ?? 'unknown'}, type ${info?.type ?? 'unknown'}).` +
+          (shouldExpand ? ' Existing data was expanded and padded to the new dimension.' : ''),
       );
       this.network.removeNodeAttribute(name);
       this.network.defineNodeAttribute(name, type, dimension);
+      if (preserved) {
+        const buffer = this.network.getNodeAttributeBuffer(name);
+        if (buffer?.view) {
+          buffer.view.set(preserved.subarray(0, buffer.view.length));
+        }
+      }
     }
 
     try {
@@ -425,11 +511,35 @@ export class VisualAttributes {
     if (!hasAttribute) {
       this.network.defineEdgeAttribute(name, type, dimension);
     } else if (attributeInfoMismatched(info, expected)) {
+      const currentDim = info?.dimension ?? dimension;
+      const shouldExpand = currentDim > 0 && currentDim < dimension;
+      let preserved = null;
+      if (shouldExpand) {
+        try {
+          const buffer = this.network.getEdgeAttributeBuffer(name);
+          const count = buffer?.view ? Math.floor(buffer.view.length / currentDim) : 0;
+          preserved = expandAttributeData({
+            view: buffer?.view,
+            count,
+            fromDimension: currentDim,
+            toDimension: dimension,
+          });
+        } catch (_) {
+          preserved = null;
+        }
+      }
       console.warn(
-        `Edge attribute ${name} metadata mismatch: redefining with dimension ${dimension} type ${type} (saw dimension ${info?.dimension ?? 'unknown'}, type ${info?.type ?? 'unknown'})`,
+        `Edge attribute ${name} metadata mismatch: redefining with dimension ${dimension} type ${type} (saw dimension ${info?.dimension ?? 'unknown'}, type ${info?.type ?? 'unknown'}).` +
+          (shouldExpand ? ' Existing data was expanded and padded to the new dimension.' : ''),
       );
       this.network.removeEdgeAttribute(name);
       this.network.defineEdgeAttribute(name, type, dimension);
+      if (preserved) {
+        const buffer = this.network.getEdgeAttributeBuffer(name);
+        if (buffer?.view) {
+          buffer.view.set(preserved.subarray(0, buffer.view.length));
+        }
+      }
     }
 
     try {
@@ -450,11 +560,35 @@ export class VisualAttributes {
     if (!hasAttribute) {
       this.network.defineNodeToEdgeAttribute(sourceName, edgeName, 'both');
     } else if (attributeInfoMismatched(info, expected)) {
+      const currentDim = info?.dimension ?? targetDimension;
+      const shouldExpand = currentDim > 0 && currentDim < targetDimension;
+      let preserved = null;
+      if (shouldExpand) {
+        try {
+          const buffer = this.network.getEdgeAttributeBuffer(edgeName);
+          const count = buffer?.view ? Math.floor(buffer.view.length / currentDim) : 0;
+          preserved = expandAttributeData({
+            view: buffer?.view,
+            count,
+            fromDimension: currentDim,
+            toDimension: targetDimension,
+          });
+        } catch (_) {
+          preserved = null;
+        }
+      }
       console.warn(
-        `Edge attribute ${edgeName} metadata mismatch: redefining with dimension ${targetDimension} type ${AttributeType.Float} (saw dimension ${info?.dimension ?? 'unknown'}, type ${info?.type ?? 'unknown'})`,
+        `Edge attribute ${edgeName} metadata mismatch: redefining with dimension ${targetDimension} type ${AttributeType.Float} (saw dimension ${info?.dimension ?? 'unknown'}, type ${info?.type ?? 'unknown'})` +
+          (shouldExpand ? ' Existing data was expanded and padded to the new dimension.' : ''),
       );
       this.network.removeEdgeAttribute(edgeName);
       this.network.defineNodeToEdgeAttribute(sourceName, edgeName, 'both');
+      if (preserved) {
+        const buffer = this.network.getEdgeAttributeBuffer(edgeName);
+        if (buffer?.view) {
+          buffer.view.set(preserved.subarray(0, buffer.view.length));
+        }
+      }
     }
 
     try {
@@ -536,7 +670,8 @@ export class VisualAttributes {
         result[name] = view[index];
       } else {
         const start = index * dimension;
-        result[name] = Array.from(view.subarray(start, start + dimension));
+        // Expose a view into the buffer to avoid per-item copies; callers should treat as read-only.
+        result[name] = view.subarray(start, start + dimension);
       }
     }
     return result;

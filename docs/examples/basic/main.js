@@ -2,6 +2,10 @@ import HeliosNetwork, { AttributeType } from 'helios-network';
 // When consuming the published package use `import { Helios } from 'helios-web-next';`
 import { Helios, createColormapScale } from '../../../src/index.js';
 
+// Set this to an object like { helios: true, mapper: true, scheduler: true } to re-enable debug logs.
+const DEBUG_CONFIG = null;
+window.__HELIOS_DEBUG__ = DEBUG_CONFIG;
+
 const DEFAULT_NODE_COUNT = (() => {
   const fromEnv = Number(import.meta?.env?.VITE_NODE_COUNT ?? Number.NaN);
   if (Number.isFinite(fromEnv) && fromEnv > 0) {
@@ -217,6 +221,7 @@ async function bootstrap() {
     mode,
     projection: 'perspective',
     transparencyModeEdges: edgeTransparency,
+    debug: DEBUG_CONFIG,
   };
   const rendererPreference = resolveRendererPreference();
   if (rendererPreference) {

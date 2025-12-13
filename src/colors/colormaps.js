@@ -92,17 +92,55 @@ function normalizeColors(colors) {
   return colors.map((c) => normalizeCssColor(c));
 }
 
-function createInterpolatorFromList(colors) {
-  const list = normalizeColors(colors);
-  const last = Math.max(1, list.length - 1);
+function basisBlend(t, v0, v1, v2, v3) {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return ((1 - 3 * t + 3 * t2 - t3) * v0
+    + (4 - 6 * t2 + 3 * t3) * v1
+    + (1 + 3 * t + 3 * t2 - 3 * t3) * v2
+    + t3 * v3) / 6;
+}
+
+function basisVector(t, a, b, c, d) {
+  const size = Math.max(3, Math.min(4, Math.max(a?.length ?? 0, b?.length ?? 0, c?.length ?? 0, d?.length ?? 0)));
+  const out = new Array(size);
+  for (let i = 0; i < size; i += 1) {
+    const av = a?.[i] ?? a?.[0] ?? 0;
+    const bv = b?.[i] ?? b?.[0] ?? av;
+    const cv = c?.[i] ?? c?.[0] ?? bv;
+    const dv = d?.[i] ?? d?.[0] ?? cv;
+    out[i] = basisBlend(t, av, bv, cv, dv);
+  }
+  if (size === 3) out.push(1);
+  if (size === 4 && (out[3] == null || Number.isNaN(out[3]))) out[3] = 1;
+  return out;
+}
+
+function createInterpolatorFromList(colors, alreadyNormalized = false, closed = false) {
+  const list = alreadyNormalized ? colors.map((c) => [...c]) : normalizeColors(colors);
+  const n = list.length;
+  if (n === 0) return () => [0, 0, 0, 1];
+  if (n === 1) return () => [...list[0]];
   return (tRaw) => {
     const t = clamp01(tRaw);
-    if (list.length === 1) return [...list[0]];
-    const scaled = t * last;
-    const i0 = Math.max(0, Math.min(list.length - 1, Math.floor(scaled)));
-    const i1 = Math.max(0, Math.min(list.length - 1, i0 + 1));
-    const localT = scaled - i0;
-    return lerpColor(list[i0], list[i1], localT);
+    if (closed) {
+      const scaled = t * n;
+      const i = Math.floor(scaled);
+      const localT = scaled - i;
+      const v0 = list[(i - 1 + n) % n];
+      const v1 = list[i % n];
+      const v2 = list[(i + 1) % n];
+      const v3 = list[(i + 2) % n];
+      return basisVector(localT, v0, v1, v2, v3);
+    }
+    const scaled = t * (n - 1);
+    const i = Math.floor(scaled);
+    const localT = scaled - i;
+    const v0 = i > 0 ? list[i - 1] : list[0];
+    const v1 = list[i];
+    const v2 = i + 1 < n ? list[i + 1] : list[n - 1];
+    const v3 = i + 2 < n ? list[i + 2] : list[n - 1];
+    return basisVector(localT, v0, v1, v2, v3);
   };
 }
 
@@ -120,10 +158,10 @@ function sampleColorsFromInterpolator(interpolator, count, alpha) {
   return result;
 }
 
-function sampleColorsFromList(colors, count) {
+function sampleColorsFromList(colors, count, alreadyNormalized = false) {
   if (!colors?.length) return [];
-  if (!count || count >= colors.length) return normalizeColors(colors);
-  const normalized = normalizeColors(colors);
+  const normalized = alreadyNormalized ? colors : normalizeColors(colors);
+  if (!count || count >= normalized.length) return normalized.map((c) => [...c]);
   const result = [];
   const step = (normalized.length - 1) / Math.max(1, count - 1);
   for (let i = 0; i < count; i += 1) {
@@ -148,22 +186,52 @@ function buildJsonColormapDescriptor(name, entry, source) {
     name,
     source,
     isScheme: !!entry.isScheme,
-    interpolate: (t) => createInterpolatorFromList(load())(t),
-    scheme: (count) => sampleColorsFromList(load(), count ?? entry.n ?? load().length),
+    interpolate: (() => {
+      const interpolator = createInterpolatorFromList(load(), true, false);
+      return (t) => interpolator(t);
+    })(),
+    scheme: (count) => sampleColorsFromList(load(), count ?? entry.n ?? load().length, true),
   };
 }
 
 function buildD3Descriptors() {
+  const RAMP_SIZE = 1024;
   const result = {};
   for (const [name, value] of Object.entries(d3Chromatic)) {
     if (!value) continue;
     if (typeof value === 'function') {
+      // Build a ramp once from the d3 interpolator to avoid per-sample CSS parsing.
+      const ramp = new Float32Array(RAMP_SIZE * 4);
+      for (let i = 0; i < RAMP_SIZE; i += 1) {
+        const t = i / (RAMP_SIZE - 1);
+        const color = normalizeCssColor(value(clamp01(t)));
+        const offset = i * 4;
+        ramp[offset] = color[0];
+        ramp[offset + 1] = color[1];
+        ramp[offset + 2] = color[2];
+        ramp[offset + 3] = color[3];
+      }
+      const rampInterpolator = (tRaw) => {
+        const t = clamp01(tRaw);
+        const scaled = t * (RAMP_SIZE - 1);
+        const i0 = Math.max(0, Math.min(RAMP_SIZE - 1, Math.floor(scaled)));
+        const i1 = Math.max(0, Math.min(RAMP_SIZE - 1, i0 + 1));
+        const localT = scaled - i0;
+        const offset0 = i0 * 4;
+        const offset1 = i1 * 4;
+        return [
+          lerp(ramp[offset0], ramp[offset1], localT),
+          lerp(ramp[offset0 + 1], ramp[offset1 + 1], localT),
+          lerp(ramp[offset0 + 2], ramp[offset1 + 2], localT),
+          lerp(ramp[offset0 + 3], ramp[offset1 + 3], localT),
+        ];
+      };
       result[name] = {
         name,
         source: 'd3',
         isScheme: false,
-        interpolate: (t) => normalizeCssColor(value(clamp01(t))),
-        scheme: (count) => sampleColorsFromInterpolator((t) => value(clamp01(t)), count ?? 10),
+        interpolate: rampInterpolator,
+        scheme: (count) => sampleColorsFromInterpolator(rampInterpolator, count ?? 10),
       };
     } else if (Array.isArray(value)) {
       const colorsByCount = new Map();
@@ -173,6 +241,8 @@ function buildD3Descriptors() {
       });
       const maxKey = Math.max(...colorsByCount.keys(), 0);
       const fallback = Array.isArray(value[0]) ? normalizeColors(value[value.length - 1]) : normalizeColors(value);
+      const baseColors = value.find((entry) => Array.isArray(entry) && entry.length >= 2) ?? fallback;
+      const baseInterpolator = createInterpolatorFromList(baseColors, true, false);
       result[name] = {
         name,
         source: 'd3',
@@ -195,10 +265,7 @@ function buildD3Descriptors() {
           }
           return chosen ?? fallback;
         },
-        interpolate: (t) => {
-          const colors = value.find((entry) => Array.isArray(entry) && entry.length >= 2) ?? fallback;
-          return createInterpolatorFromList(normalizeColors(colors))(t);
-        },
+        interpolate: (t) => baseInterpolator(t),
       };
     }
   }
@@ -302,12 +369,19 @@ export function colormapToScheme(input, count) {
 export function createColormapScale(colormapInput, options = {}) {
   const { domain = [0, 1], clamp = true, alpha } = options;
   const interpolator = colormapToInterpolator(colormapInput);
+  const sample = interpolator(0.5);
+  const isArrayLike = (value) =>
+    (Array.isArray(value) || ArrayBuffer.isView(value)) &&
+    typeof value.length === 'number' &&
+    value.length >= 3;
+  const interpolatorReturnsArray =
+    isArrayLike(sample) && Array.from(sample).every((v) => Number.isFinite(v));
   const [d0, d1] = domain;
   const denom = d1 - d0 || 1;
   return (value) => {
     const tRaw = (value - d0) / denom;
     const t = clamp ? clamp01(tRaw) : tRaw;
-    const color = normalizeCssColor(interpolator(t));
+    const color = interpolatorReturnsArray ? [...interpolator(t)] : normalizeCssColor(interpolator(t));
     if (alpha != null) {
       color[3] = alpha;
     }
