@@ -81,3 +81,58 @@ test('repairs incompatible visual attribute metadata', async () => {
   assert.equal(edgeOpacity?.dimension, 2);
   assert.equal(edgeOpacity?.type, AttributeType.Float);
 });
+
+test('does not overwrite zeroed nodes when positions are already initialized', async () => {
+  const network = await HeliosNetwork.create({ directed: false, initialNodes: 0, initialEdges: 0 });
+  network.defineNodeAttribute(NODE_POSITION_ATTRIBUTE, AttributeType.Float, 3);
+  const nodeCount = 10_649;
+  network.addNodes(nodeCount);
+  const targetId = Math.floor(nodeCount / 2);
+  network.withBufferAccess(() => {
+    const pos = network.getNodeAttributeBuffer(NODE_POSITION_ATTRIBUTE).view;
+    for (let i = 0; i < nodeCount; i += 1) {
+      const offset = i * 3;
+      pos[offset] = (i % 100) + 1;
+      pos[offset + 1] = (i % 37) + 2;
+      pos[offset + 2] = (i % 13) + 3;
+    }
+    // Intentionally place a single node at the origin.
+    const originOffset = targetId * 3;
+    pos[originOffset] = 0;
+    pos[originOffset + 1] = 0;
+    pos[originOffset + 2] = 0;
+  });
+
+  const visuals = new VisualAttributes(network);
+  const before = network.getNodeAttributeBuffer(NODE_POSITION_ATTRIBUTE).view.slice(targetId * 3, targetId * 3 + 3);
+  visuals.seedMissingPositions({ width: 800, height: 600 });
+  const after = network.getNodeAttributeBuffer(NODE_POSITION_ATTRIBUTE).view.slice(targetId * 3, targetId * 3 + 3);
+
+  assert.deepEqual(after, before);
+});
+
+test('seeds nodes when all positions are missing', async () => {
+  const network = await HeliosNetwork.create({ directed: false, initialNodes: 0, initialEdges: 0 });
+  network.defineNodeAttribute(NODE_POSITION_ATTRIBUTE, AttributeType.Float, 3);
+  const nodeCount = 12;
+  network.addNodes(nodeCount);
+
+  const visuals = new VisualAttributes(network);
+  visuals.seedMissingPositions({ width: 10, height: 20 });
+
+  const pos = network.getNodeAttributeBuffer(NODE_POSITION_ATTRIBUTE).view;
+  let seeded = 0;
+  for (let i = 0; i < nodeCount; i += 1) {
+    const offset = i * 3;
+    const x = pos[offset];
+    const y = pos[offset + 1];
+    const z = pos[offset + 2];
+    assert.ok(Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z));
+    if (x !== 0 || y !== 0 || z !== 0) {
+      seeded += 1;
+    }
+    assert.ok(x >= 0 && x <= 10);
+    assert.ok(y >= 0 && y <= 20);
+  }
+  assert.equal(seeded, nodeCount);
+});

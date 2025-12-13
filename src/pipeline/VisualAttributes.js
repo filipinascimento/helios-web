@@ -79,6 +79,7 @@ export class VisualAttributes {
   constructor(network, debug) {
     this.network = network;
     this.debug = debug;
+    this.maxInitializedNodeId = -1;
     this.ensureAttributes();
     this.registerDenseBuffers();
     this.seedMissingEdgeOpacity();
@@ -466,21 +467,49 @@ export class VisualAttributes {
       const pos = this.nodePositions;
       if (!pos || !nodeIndices?.length) return;
       let touched = false;
+      const previousMaxNodeId = this.maxInitializedNodeId ?? -1;
+      let maxNodeId = previousMaxNodeId;
+      let hasAnyNonZero = false;
+
       for (let i = 0; i < nodeIndices.length; i += 1) {
         const nodeId = nodeIndices[i];
         const offset = nodeId * 3;
         const missing =
           !Number.isFinite(pos[offset]) ||
           !Number.isFinite(pos[offset + 1]) ||
-          !Number.isFinite(pos[offset + 2]) ||
-          (pos[offset] === 0 && pos[offset + 1] === 0 && pos[offset + 2] === 0);
+          !Number.isFinite(pos[offset + 2]);
+        const zeroVector = pos[offset] === 0 && pos[offset + 1] === 0 && pos[offset + 2] === 0;
+        if (!missing && !zeroVector) {
+          hasAnyNonZero = true;
+        }
         if (missing) {
+          pos[offset] = Math.random() * width;
+          pos[offset + 1] = Math.random() * height;
+          pos[offset + 2] = 0;
+          touched = true;
+          hasAnyNonZero = true;
+        }
+        if (nodeId > maxNodeId) {
+          maxNodeId = nodeId;
+        }
+      }
+
+      const zeroSeedBaseline = hasAnyNonZero
+        ? (previousMaxNodeId >= 0 ? previousMaxNodeId : maxNodeId)
+        : -1;
+      for (let i = 0; i < nodeIndices.length; i += 1) {
+        const nodeId = nodeIndices[i];
+        const offset = nodeId * 3;
+        const zeroVector = pos[offset] === 0 && pos[offset + 1] === 0 && pos[offset + 2] === 0;
+        const isNewNode = nodeId > zeroSeedBaseline;
+        if (zeroVector && (!hasAnyNonZero || isNewNode)) {
           pos[offset] = Math.random() * width;
           pos[offset + 1] = Math.random() * height;
           pos[offset + 2] = 0;
           touched = true;
         }
       }
+      this.maxInitializedNodeId = Math.max(maxNodeId, this.maxInitializedNodeId ?? -1);
       if (touched) {
         this.markNodeAttributesDirty(NODE_POSITION_ATTRIBUTE);
         this.markEdgeAttributesDirty(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);

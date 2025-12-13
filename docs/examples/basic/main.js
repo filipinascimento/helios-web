@@ -223,8 +223,8 @@ async function bootstrap() {
     transparencyModeEdges: edgeTransparency,
     debug: DEBUG_CONFIG,
     // Warm up mapper application and dense buffers so first render is quick on large graphs.
-    prewarm: true,
-    prewarmDenseBuffers: true,
+    // prewarm: true,
+    // prewarmDenseBuffers: true,
   };
   const rendererPreference = resolveRendererPreference();
   if (rendererPreference) {
@@ -237,13 +237,13 @@ async function bootstrap() {
     seedGridPositions();
   }
   
-  
-
   console.log("Creating helios-web instance...");
   const helios = new Helios(network, heliosOptions);
 
   console.log("Waiting for helios to be ready...");
   await helios.ready;
+ 
+
   console.log("Helios is ready!");
   // helios.renderer?.camera?.setTarget?.([0, 0, mode === '3d' ? 0 : 0]);
 
@@ -255,7 +255,7 @@ async function bootstrap() {
   helios.nodeMapper.channel('color').from(nodeAttribute).transform((v) => nodeColormap(v ?? 0)).done();
 
   console.log("  Node sizes...");
-  helios.nodeMapper.channel('size').from(nodeAttribute).linear([0, 1], [0.1, 0.5]).done();
+  helios.nodeMapper.channel('size').from(nodeAttribute).linear([0, 1], [1, 4]).done();
 
   // Now using the default edge color mapper.
   // uncomment below to use a custom edge color mapper
