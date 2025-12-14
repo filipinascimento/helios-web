@@ -1292,7 +1292,7 @@ export class AttributeTracker {
     this.graphLayer = renderer?.graphLayer ?? null;
     this.nodeAttribute = null;
     this.edgeAttribute = null;
-    this.options = { resolutionScale: 1, autoRender: true };
+    this.options = { resolutionScale: 0.5, autoRender: true };
     this.webgl = null;
     this.webgpu = null;
     this.size = renderer?.size ?? null;

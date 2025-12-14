@@ -55,11 +55,19 @@ export class Helios {
       windowSize: performanceWindow,
       logEvery: performanceLogEvery,
     });
+    this.attributeUpdateOptions = {
+      autoUpdate: options.attributeAutoUpdate === true,
+      maxFps: options.attributeAutoUpdateMaxFps ?? null,
+      frameSkip: options.attributeAutoUpdateFrameSkip ?? null,
+    };
     this.manualRendering = options.manualRendering === true;
     this.scheduler = new Scheduler({
       performanceMonitor: this.performanceMonitor,
       maxFps: options.maxFps,
       debug: this.debug,
+      attributeAutoUpdate: this.attributeUpdateOptions.autoUpdate,
+      attributeMaxFps: this.attributeUpdateOptions.maxFps,
+      attributeFrameSkip: this.attributeUpdateOptions.frameSkip,
     });
     if (options.prewarm === true) {
       this.prewarm({ updateDenseBuffers: options.prewarmDenseBuffers !== false });
@@ -108,6 +116,17 @@ export class Helios {
     if (typeof this.renderer.resize === 'function') {
       this.renderer.resize(this.layers.size);
     }
+    this.scheduler.setAttributeCallback(
+      (frame) => {
+        if (!frame) return;
+        this.attributeTracker?.render(frame, true);
+      },
+      {
+        autoUpdate: this.attributeUpdateOptions.autoUpdate,
+        maxFps: this.attributeUpdateOptions.maxFps,
+        frameSkip: this.attributeUpdateOptions.frameSkip,
+      },
+    );
     if (this.renderer?.camera?.setChangeListener) {
       this.renderer.camera.setChangeListener(() => {
         this.scheduler.requestRender();
@@ -368,6 +387,13 @@ export class Helios {
       this.attributeTracker = new AttributeTracker(this.renderer);
     }
     this.attributeTracker?.enable(nodeAttribute, edgeAttribute, options);
+    const updateOptions = {
+      autoUpdate: options.autoUpdate ?? this.attributeUpdateOptions.autoUpdate,
+      maxFps: options.autoUpdateMaxFps ?? this.attributeUpdateOptions.maxFps,
+      frameSkip: options.autoUpdateFrameSkip ?? this.attributeUpdateOptions.frameSkip,
+    };
+    this.attributeUpdateOptions = updateOptions;
+    this.scheduler.configureAttributeUpdates(updateOptions);
     return this.attributeTracker;
   }
 

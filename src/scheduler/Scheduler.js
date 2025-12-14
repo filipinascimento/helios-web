@@ -20,6 +20,22 @@ export class Scheduler {
     this.maxFrameInterval =
       options.maxFps && options.maxFps > 0 ? 1000 / options.maxFps : 0;
     this._lastRenderTime = 0;
+    this._renderCount = 0;
+    this.attributeCallback = null;
+    this.attributeUpdateConfig = {
+      autoUpdate: options.attributeAutoUpdate === true,
+      maxFrameInterval:
+        options.attributeMaxFps && options.attributeMaxFps > 0
+          ? 1000 / options.attributeMaxFps
+          : 0,
+      frameSkip:
+        Number.isFinite(options.attributeFrameSkip) && options.attributeFrameSkip > 0
+          ? Math.floor(options.attributeFrameSkip)
+          : 0,
+    };
+    this._attributeTimer = null;
+    this._lastAttributeTime = -Infinity;
+    this._lastAttributeRenderCount = 0;
     this.debug =
       options.debug && typeof options.debug.log === 'function'
         ? options.debug
@@ -27,6 +43,9 @@ export class Scheduler {
     this.debug.log('scheduler', 'Scheduler created', {
       maxFps: options.maxFps ?? null,
       throttled: this.maxFrameInterval > 0,
+      attributeAutoUpdate: this.attributeUpdateConfig.autoUpdate,
+      attributeMaxFps: options.attributeMaxFps ?? null,
+      attributeFrameSkip: this.attributeUpdateConfig.frameSkip,
     });
   }
 
@@ -73,7 +92,10 @@ export class Scheduler {
     this.running = true;
     this._lastTime = performance.now();
     this._lastRenderTime = this._lastTime;
+    this._lastAttributeTime = -Infinity;
+    this._lastAttributeRenderCount = this._renderCount;
     this.debug.log('scheduler', 'Scheduler started');
+    this._restartAttributeTimer();
     this._raf = requestAnimationFrame((ts) => this.tick(ts));
   }
 
@@ -83,7 +105,73 @@ export class Scheduler {
       cancelAnimationFrame(this._raf);
       this._raf = null;
     }
+    this._clearAttributeTimer();
     this.debug.log('scheduler', 'Scheduler stopped');
+  }
+
+  setAttributeCallback(callback, options = {}) {
+    this.attributeCallback = callback;
+    this.configureAttributeUpdates(options);
+  }
+
+  configureAttributeUpdates(options = {}) {
+    const cfg = { ...this.attributeUpdateConfig };
+    if (options.autoUpdate != null) {
+      cfg.autoUpdate = options.autoUpdate === true;
+    }
+    if (options.maxFps != null) {
+      cfg.maxFrameInterval = options.maxFps > 0 ? 1000 / options.maxFps : 0;
+    }
+    if (options.frameSkip != null) {
+      cfg.frameSkip = Number.isFinite(options.frameSkip) && options.frameSkip > 0
+        ? Math.floor(options.frameSkip)
+        : 0;
+    }
+    this.attributeUpdateConfig = cfg;
+    this._restartAttributeTimer();
+  }
+
+  _clearAttributeTimer() {
+    if (this._attributeTimer) {
+      clearTimeout(this._attributeTimer);
+      this._attributeTimer = null;
+    }
+  }
+
+  _restartAttributeTimer() {
+    this._clearAttributeTimer();
+    if (!this.running) return;
+    if (!this.attributeUpdateConfig.autoUpdate) return;
+    if (!this.attributeCallback) return;
+    const interval = this.attributeUpdateConfig.maxFrameInterval;
+    const delay = interval > 0 ? interval : 16;
+    this._attributeTimer = setTimeout(() => this._attributeTick(), delay);
+  }
+
+  _attributeTick() {
+    if (!this.running) return;
+    this._maybeRunAttributeUpdate('timer');
+    this._restartAttributeTimer();
+  }
+
+  _maybeRunAttributeUpdate(reason) {
+    if (!this.attributeUpdateConfig.autoUpdate) return;
+    if (!this.attributeCallback) return;
+    if (!this.currentFrame) return;
+    const now = performance.now();
+    const elapsed = now - this._lastAttributeTime;
+    const interval = this.attributeUpdateConfig.maxFrameInterval;
+    if (interval > 0 && elapsed < interval) return;
+    const frameSkip = this.attributeUpdateConfig.frameSkip ?? 0;
+    const framesSince = this._renderCount - this._lastAttributeRenderCount;
+    if (frameSkip > 0 && this._lastAttributeRenderCount > 0 && framesSince < frameSkip + 1) return;
+    this._lastAttributeTime = now;
+    this._lastAttributeRenderCount = this._renderCount;
+    try {
+      this.attributeCallback(this.currentFrame);
+    } catch (error) {
+      console.error('Attribute update failed', { reason, error });
+    }
   }
 
   tick(timestamp) {
@@ -156,6 +244,8 @@ export class Scheduler {
         perf.record('render', performance.now() - renderStart);
       }
       this._needsRender = false;
+      this._renderCount += 1;
+      this._maybeRunAttributeUpdate('render');
     }
 
     perf?.logIfDue();

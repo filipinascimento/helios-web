@@ -66,6 +66,11 @@ function resolveNodeCount() {
   return DEFAULT_NODE_COUNT;
 }
 
+function resolvePickTestMode() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('pickTest') === '1';
+}
+
 async function bootstrap() {
   const diagnostics = {
     ready: false,
@@ -85,6 +90,7 @@ async function bootstrap() {
 
   console.log("Adding nodes...");
   const nodeCount = resolveNodeCount();
+  const pickTest = resolvePickTestMode();
   const nodes = network.addNodes(nodeCount);
 
   console.log("Filling node attributes...");
@@ -167,13 +173,18 @@ async function bootstrap() {
   // connect with the next 2 or 3 nodes to ensure connectivity
   // if 2d or 3d (try to follow the grid
   console.log("Adding edges...");
-  const edges = [];
+  let edges = [];
   const is3D = resolveMode() === '3d';
   const step = is3D ? 1 : 1;
-  for (let i = 0; i < nodeCount; i += 1) {
-    for (let j = 1; j <= step; j += 1) {
-      const to = (i + j) % nodeCount;
-      edges.push(nodes[i], nodes[to]);
+  if (pickTest && nodeCount >= 2) {
+    edges = [[nodes[0], nodes[1]]];
+    if (nodeCount >= 3) edges.push([nodes[1], nodes[2]]);
+  } else {
+    for (let i = 0; i < nodeCount; i += 1) {
+      for (let j = 1; j <= step; j += 1) {
+        const to = (i + j) % nodeCount;
+        edges.push([nodes[i], nodes[to]]);
+      }
     }
   }
 
@@ -255,7 +266,11 @@ async function bootstrap() {
   helios.nodeMapper.channel('color').from(nodeAttribute).transform((v) => nodeColormap(v ?? 0)).done();
 
   console.log("  Node sizes...");
-  helios.nodeMapper.channel('size').from(nodeAttribute).linear([0, 1], [1, 4]).done();
+  if (pickTest) {
+    helios.nodeMapper.channel('size').constant(14).done();
+  } else {
+    helios.nodeMapper.channel('size').from(nodeAttribute).linear([0, 1], [1, 4]).done();
+  }
 
   // Now using the default edge color mapper.
   // uncomment below to use a custom edge color mapper
@@ -278,8 +293,13 @@ async function bootstrap() {
     helios.renderer.graphLayer.edgeWidthBase = 0;
   }
 
-  console.log("Enabling attribute tracking for picking...");
-  helios.enableAttributeTracking('index', 'index', { resolutionScale: 0.5, trackDepth: true });
+  console.log("Enabling attribute tracking for picking (auto-update, scaled)...");
+  helios.enableAttributeTracking('index', 'index', {
+    resolutionScale: pickTest ? 1 : 0.5,
+    trackDepth: true,
+    autoUpdate: true,
+    autoUpdateFrameSkip: pickTest ? 0 : 1,
+  });
   const canvas = helios.layers?.canvas ?? helios.renderer?.canvas ?? document.querySelector('canvas');
   if (canvas) {
     canvas.addEventListener('click', async (event) => {
@@ -289,6 +309,10 @@ async function bootstrap() {
       const picked = await helios.pickAttributesAt(x, y);
       console.log('Picked node/edge indices', picked);
     });
+  }
+
+  if (pickTest) {
+    await helios.renderAttributeTracking();
   }
 
   console.log("Misc diagnostics...");

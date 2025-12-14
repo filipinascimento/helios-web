@@ -75,3 +75,53 @@ test('maxFps throttles renders but preserves pending render requests', () => {
   scheduler.tick(1100);
   assert.equal(renders, 2, 'should render once interval has elapsed');
 });
+
+test('attribute auto-update runs after renders with optional frame skipping', () => {
+  const scheduler = createScheduler({ attributeAutoUpdate: true, attributeFrameSkip: 1 });
+  const attributeRuns = [];
+  scheduler.setAttributeCallback((frame) => {
+    attributeRuns.push(frame.frameId);
+  });
+  let renderId = 0;
+  scheduler.setRenderCallback(() => {
+    renderId += 1;
+    scheduler.currentFrame.frameId = renderId;
+  });
+
+  scheduler.tick(0); // first render
+  assert.deepEqual(attributeRuns, [1], 'attribute update should run on first render');
+
+  scheduler.requestRender();
+  scheduler.tick(16); // second render, should be skipped due to frameSkip=1
+  assert.deepEqual(attributeRuns, [1], 'attribute update should skip one render');
+
+  scheduler.requestRender();
+  scheduler.tick(32); // third render, attribute should run
+  assert.deepEqual(attributeRuns, [1, 3], 'attribute update should run after skip window');
+
+  scheduler.stop();
+});
+
+test('attribute auto-update respects max fps when timer-driven', async () => {
+  const scheduler = createScheduler({ attributeAutoUpdate: true, attributeMaxFps: 2 });
+  const attributeRuns = [];
+  scheduler.setAttributeCallback((frame) => {
+    attributeRuns.push({ frame: frame.frameId, time: performance.now() });
+  });
+  let renderId = 0;
+  scheduler.setRenderCallback(() => {
+    renderId += 1;
+    scheduler.currentFrame.frameId = renderId;
+  });
+
+  scheduler.tick(0); // render 1 + attribute run 1
+  scheduler.requestRender();
+  scheduler.tick(100); // render 2, too soon for attribute (max fps 2 => 500 ms)
+  assert.equal(attributeRuns.length, 1);
+
+  await new Promise((resolve) => setTimeout(resolve, 550));
+  scheduler._maybeRunAttributeUpdate('test');
+  assert.equal(attributeRuns.length, 2, 'attribute update should run after interval elapses');
+
+  scheduler.stop();
+});
