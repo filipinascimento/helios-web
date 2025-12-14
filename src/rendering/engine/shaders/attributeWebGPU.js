@@ -88,6 +88,14 @@ struct FragmentOutput {
   @builtin(frag_depth) depth : f32,
 };
 
+fn packDepthToRGBA(v : f32) -> vec4<f32> {
+  let bitShift = vec4<f32>(256.0 * 256.0 * 256.0, 256.0 * 256.0, 256.0, 1.0);
+  let bitMask = vec4<f32>(0.0, 1.0 / 256.0, 1.0 / 256.0, 1.0 / 256.0);
+  var res = fract(v * bitShift);
+  res = res - res.xxyz * bitMask;
+  return res;
+}
+
 @fragment
 fn nodeFragment(input : VertexOutput) -> FragmentOutput {
   var output : FragmentOutput;
@@ -111,7 +119,33 @@ fn nodeFragment(input : VertexOutput) -> FragmentOutput {
   }
   output.color = vec4<f32>(vec4<f32>(input.encoded) / vec4<f32>(255.0));
   return output;
-}`;
+}
+
+@fragment
+fn nodeDepthFragment(input : VertexOutput) -> FragmentOutput {
+  var output : FragmentOutput;
+  let dist = length(input.local);
+  if (dist > 1.0) {
+    discard;
+  }
+  let is2D = camera.position.w > 0.5;
+  if (!is2D) {
+    let radius = input.radius;
+    let xyLenSq = dot(input.local * radius, input.local * radius);
+    let zOffset = sqrt(max(radius * radius - xyLenSq, 0.0));
+    let worldPos = input.centerWorld
+      + (input.rightWorld * input.local.x + input.upWorld * input.local.y) * radius
+      + normalize(input.viewDir) * zOffset;
+    let clip = camera.viewProjection * vec4<f32>(worldPos, 1.0);
+    let depth = clip.z / clip.w;
+    output.depth = depth * 0.5 + 0.5;
+  } else {
+    output.depth = input.position.z / input.position.w;
+  }
+  output.color = packDepthToRGBA(output.depth);
+  return output;
+}
+`;
 
 export const EDGE_ATTRIBUTE_WGSL = /* wgsl */ `
 struct Camera {
@@ -150,6 +184,14 @@ struct EdgeQuadVertexInput {
   @location(4) endpointSize : vec2<f32>,
   @location(5) encoded : vec4<u32>,
 };
+
+fn packDepthToRGBA(v : f32) -> vec4<f32> {
+  let bitShift = vec4<f32>(256.0 * 256.0 * 256.0, 256.0 * 256.0, 256.0, 1.0);
+  let bitMask = vec4<f32>(0.0, 1.0 / 256.0, 1.0 / 256.0, 1.0 / 256.0);
+  var res = fract(v * bitShift);
+  res = res - res.xxyz * bitMask;
+  return res;
+}
 
 struct EdgeVertexOutput {
   @builtin(position) position : vec4<f32>,
@@ -213,4 +255,10 @@ fn edgeQuadVertex(input : EdgeQuadVertexInput) -> EdgeVertexOutput {
 @fragment
 fn edgeFragment(input : EdgeVertexOutput) -> @location(0) vec4<f32> {
   return vec4<f32>(vec4<f32>(input.encoded) / vec4<f32>(255.0));
-}`;
+}
+
+@fragment
+fn edgeDepthFragment(input : EdgeVertexOutput) -> @location(0) vec4<f32> {
+  return packDepthToRGBA(input.position.z / input.position.w);
+}
+`;

@@ -12,6 +12,58 @@ import {
   EDGE_ATTRIBUTE_WGSL,
 } from './engine/shaders/attributeWebGPU.js';
 
+const PACK_DEPTH_GLSL = /* glsl */ `
+vec4 packDepthToRGBA(const in float v) {
+  const vec4 bitShift = vec4(256.0 * 256.0 * 256.0, 256.0 * 256.0, 256.0, 1.0);
+  const vec4 bitMask = vec4(0.0, 1.0 / 256.0, 1.0 / 256.0, 1.0 / 256.0);
+  vec4 res = fract(v * bitShift);
+  res -= res.xxyz * bitMask;
+  return res;
+}`;
+
+const NODE_DEPTH_FRAGMENT = /* glsl */ `#version 300 es
+precision highp float;
+${PACK_DEPTH_GLSL}
+
+in vec2 v_local;
+in vec3 v_centerWorld;
+in vec3 v_rightWorld;
+in vec3 v_upWorld;
+in vec3 v_viewDir;
+in float v_radius;
+
+uniform mat4 u_viewProjection;
+uniform bool u_is2D;
+
+out vec4 fragColor;
+
+void main() {
+  float dist = length(v_local);
+  if (dist > 1.0) {
+    discard;
+  }
+  if (!u_is2D) {
+    float radius = v_radius;
+    float xyLenSq = dot(v_local * radius, v_local * radius);
+    float zOffset = sqrt(max(radius * radius - xyLenSq, 0.0));
+    vec3 worldPos = v_centerWorld
+      + (v_rightWorld * v_local.x + v_upWorld * v_local.y) * radius
+      + normalize(v_viewDir) * zOffset;
+    vec4 clip = u_viewProjection * vec4(worldPos, 1.0);
+    float depth = clip.z / clip.w;
+    gl_FragDepth = depth * 0.5 + 0.5;
+  }
+  fragColor = packDepthToRGBA(gl_FragCoord.z);
+}`;
+
+const EDGE_DEPTH_FRAGMENT = /* glsl */ `#version 300 es
+precision highp float;
+${PACK_DEPTH_GLSL}
+out vec4 fragColor;
+void main() {
+  fragColor = packDepthToRGBA(gl_FragCoord.z);
+}`;
+
 function decodePacked(bytes, offset = 0) {
   const r = bytes[offset] ?? 0;
   const g = bytes[offset + 1] ?? 0;
@@ -23,6 +75,16 @@ function decodePacked(bytes, offset = 0) {
 
 const ENCODE_FORMAT = 'u8x4';
 const INDEX_SENTINEL = '$index';
+
+function unpackDepthRGBA(bytes, offset = 0) {
+  const inv255 = 1 / 255;
+  const r = (bytes[offset] ?? 0) * inv255;
+  const g = (bytes[offset + 1] ?? 0) * inv255;
+  const b = (bytes[offset + 2] ?? 0) * inv255;
+  const a = (bytes[offset + 3] ?? 0) * inv255;
+  // Inverse of packDepthToRGBA bit packing.
+  return (r * (1 / (256 * 256 * 256))) + (g * (1 / (256 * 256))) + (b * (1 / 256)) + a;
+}
 
 function getEncodedName(scope, sourceName) {
   return `_helios_encoded_${scope}_${sourceName || 'index'}`;
@@ -74,9 +136,15 @@ class WebGLAttributeRenderer {
     this.gl = null;
     this.device = null;
     this.trackDepth = false;
+    this.depthBits = 16;
+    this.depthReadSupported = true;
+    this.depthTargets = { node: null, edge: null };
     this.nodeProgram = null;
+    this.nodeDepthProgram = null;
     this.edgeProgram = null;
+    this.edgeDepthProgram = null;
     this.edgeQuadProgram = null;
+    this.edgeQuadDepthProgram = null;
     this.nodeVAO = null;
     this.edgeVAO = null;
     this.edgeQuadVAO = null;
@@ -94,8 +162,11 @@ class WebGLAttributeRenderer {
     this.gl = device.gl;
     const { gl } = this;
     this.nodeProgram = device.createProgram(NODE_ATTRIBUTE_VERTEX, NODE_ATTRIBUTE_FRAGMENT);
+    this.nodeDepthProgram = device.createProgram(NODE_ATTRIBUTE_VERTEX, NODE_DEPTH_FRAGMENT);
     this.edgeProgram = device.createProgram(EDGE_ATTRIBUTE_VERTEX, EDGE_ATTRIBUTE_FRAGMENT);
+    this.edgeDepthProgram = device.createProgram(EDGE_ATTRIBUTE_VERTEX, EDGE_DEPTH_FRAGMENT);
     this.edgeQuadProgram = device.createProgram(EDGE_ATTRIBUTE_QUAD_VERTEX, EDGE_ATTRIBUTE_QUAD_FRAGMENT);
+    this.edgeQuadDepthProgram = device.createProgram(EDGE_ATTRIBUTE_QUAD_VERTEX, EDGE_DEPTH_FRAGMENT);
 
     const quad = new Float32Array([
       -1, -1,
@@ -215,6 +286,9 @@ class WebGLAttributeRenderer {
     gl.deleteProgram(this.nodeProgram);
     gl.deleteProgram(this.edgeProgram);
     gl.deleteProgram(this.edgeQuadProgram);
+    gl.deleteProgram(this.nodeDepthProgram);
+    gl.deleteProgram(this.edgeDepthProgram);
+    gl.deleteProgram(this.edgeQuadDepthProgram);
     this.nodeVAO = null;
     this.edgeVAO = null;
     this.edgeQuadVAO = null;
@@ -224,7 +298,16 @@ class WebGLAttributeRenderer {
     if (this.targets.edge?.texture) gl.deleteTexture(this.targets.edge.texture);
     if (this.targets.node?.depth) gl.deleteRenderbuffer(this.targets.node.depth);
     if (this.targets.edge?.depth) gl.deleteRenderbuffer(this.targets.edge.depth);
+    if (this.targets.node?.depthRenderbuffer) gl.deleteRenderbuffer(this.targets.node.depthRenderbuffer);
+    if (this.targets.edge?.depthRenderbuffer) gl.deleteRenderbuffer(this.targets.edge.depthRenderbuffer);
+    if (this.depthTargets.node?.texture) gl.deleteTexture(this.depthTargets.node.texture);
+    if (this.depthTargets.edge?.texture) gl.deleteTexture(this.depthTargets.edge.texture);
+    if (this.depthTargets.node?.depth) gl.deleteRenderbuffer(this.depthTargets.node.depth);
+    if (this.depthTargets.edge?.depth) gl.deleteRenderbuffer(this.depthTargets.edge.depth);
+    if (this.depthTargets.node?.handle) gl.deleteFramebuffer(this.depthTargets.node.handle);
+    if (this.depthTargets.edge?.handle) gl.deleteFramebuffer(this.depthTargets.edge.handle);
     this.targets = { node: null, edge: null };
+    this.depthTargets = { node: null, edge: null };
   }
 
   resize(size, scale, trackDepth) {
@@ -241,16 +324,30 @@ class WebGLAttributeRenderer {
       this.gl.deleteTexture(this.targets.node.texture);
       if (this.targets.node.depth) this.gl.deleteRenderbuffer(this.targets.node.depth);
       if (this.targets.node.depthTexture) this.gl.deleteTexture(this.targets.node.depthTexture);
+      if (this.targets.node.depthRenderbuffer) this.gl.deleteRenderbuffer(this.targets.node.depthRenderbuffer);
     }
     if (this.targets.edge) {
       this.gl.deleteFramebuffer(this.targets.edge.handle);
       this.gl.deleteTexture(this.targets.edge.texture);
       if (this.targets.edge.depth) this.gl.deleteRenderbuffer(this.targets.edge.depth);
       if (this.targets.edge.depthTexture) this.gl.deleteTexture(this.targets.edge.depthTexture);
+      if (this.targets.edge.depthRenderbuffer) this.gl.deleteRenderbuffer(this.targets.edge.depthRenderbuffer);
+    }
+    if (this.depthTargets.node) {
+      this.gl.deleteFramebuffer(this.depthTargets.node.handle);
+      this.gl.deleteTexture(this.depthTargets.node.texture);
+      if (this.depthTargets.node.depth) this.gl.deleteRenderbuffer(this.depthTargets.node.depth);
+    }
+    if (this.depthTargets.edge) {
+      this.gl.deleteFramebuffer(this.depthTargets.edge.handle);
+      this.gl.deleteTexture(this.depthTargets.edge.texture);
+      if (this.depthTargets.edge.depth) this.gl.deleteRenderbuffer(this.depthTargets.edge.depth);
     }
     this.size = { width, height };
     this.targets.node = this.createTarget(width, height);
     this.targets.edge = this.createTarget(width, height);
+    this.depthTargets.node = this.trackDepth ? this.createDepthColorTarget(width, height) : null;
+    this.depthTargets.edge = this.trackDepth ? this.createDepthColorTarget(width, height) : null;
   }
 
   createTarget(width, height) {
@@ -270,52 +367,78 @@ class WebGLAttributeRenderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
 
-    // Use depth24/UNSIGNED_INT for broad compatibility; avoid float depth read issues.
-    let depthTexture = gl.createTexture();
-    const depthFormat = gl.DEPTH_COMPONENT24;
-    const depthType = gl.UNSIGNED_INT;
-    gl.bindTexture(gl.TEXTURE_2D, depthTexture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, depthFormat, width, height, 0, gl.DEPTH_COMPONENT, depthType, null);
+    // Use a depth renderbuffer for maximum readPixels compatibility on ANGLE/Chrome.
+    const depthRenderbuffer = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, depthRenderbuffer);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, width, height);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depthRenderbuffer);
+
+    const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
     const err = gl.getError();
+    const depthFormat = gl.DEPTH_COMPONENT16;
+    const depthType = gl.UNSIGNED_SHORT;
+    const depthBits = 16;
     const isDevEnv = typeof process !== 'undefined' && process?.env?.NODE_ENV !== 'production';
+    if (status !== gl.FRAMEBUFFER_COMPLETE || err !== gl.NO_ERROR) {
+      console.warn('AttributeTracker: depth renderbuffer unsupported, disabling depth tracking for attributes', { status, err });
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      return this.device.createFramebuffer(width, height);
+    }
+
     if (isDevEnv) {
       console.info('AttributeTracker: depth target format', {
         chosen: depthFormat,
         type: depthType,
-        note: 'Using depth24/UNSIGNED_INT for attribute depth readback',
-        err,
+        bits: depthBits,
+        note: 'Attribute depth readback (renderbuffer)',
       });
     }
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, depthTexture, 0);
-
-    // Try a tiny read to confirm depth readback support; if it fails, disable depth tracking.
-    let depthReadable = true;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-    const probe = new Uint32Array(1);
-    gl.getError();
-    gl.readPixels(0, 0, 1, 1, gl.DEPTH_COMPONENT, depthType, probe);
-    const readErr = gl.getError();
-    if (readErr !== gl.NO_ERROR) {
-      depthReadable = false;
-      if (isDevEnv) {
-        console.warn('AttributeTracker: depth readPixels unsupported, disabling depth tracking for attribute pass', { readErr, depthFormat, depthType });
-      }
-    }
+    this.depthBits = depthBits;
 
     gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.bindRenderbuffer(gl.RENDERBUFFER, null);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     return {
       type: 'webgl2',
       handle: framebuffer,
       texture,
-      depthTexture,
+      depthRenderbuffer,
       depthFormat,
       depthType,
-      depthReadable,
+      depthBits,
+      width,
+      height,
+    };
+  }
+
+  createDepthColorTarget(width, height) {
+    const { gl } = this;
+    const framebuffer = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+
+    const depth = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, depth);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, width, height);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depth);
+
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return {
+      handle: framebuffer,
+      texture,
+      depth,
       width,
       height,
     };
@@ -432,6 +555,81 @@ class WebGLAttributeRenderer {
       }
     }
 
+    // Optional depth-to-color fallback: render packed depth into a color target for robust readback.
+    const renderDepthColor = (target, isNode, useQuads) => {
+      if (!target) return;
+      const program = isNode
+        ? this.nodeDepthProgram
+        : (useQuads ? this.edgeQuadDepthProgram : this.edgeDepthProgram);
+      if (!program) return;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target.handle);
+      gl.viewport(0, 0, this.size.width, this.size.height);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      gl.useProgram(program);
+      gl.uniformMatrix4fv(gl.getUniformLocation(program, 'u_viewProjection'), false, cameraUniforms.viewProjection);
+      gl.uniform1i(gl.getUniformLocation(program, 'u_is2D'), is2D ? 1 : 0);
+      if (isNode) {
+        gl.uniformMatrix4fv(gl.getUniformLocation(program, 'u_view'), false, cameraUniforms.view);
+        gl.uniform3fv(gl.getUniformLocation(program, 'u_cameraPosition'), cameraUniforms.position);
+        gl.uniform3fv(gl.getUniformLocation(program, 'u_cameraUp'), cameraUniforms.up);
+        gl.uniform3fv(gl.getUniformLocation(program, 'u_cameraRight'), cameraUniforms.right);
+        gl.uniform1f(gl.getUniformLocation(program, 'u_nodeSizeBase'), this.graphLayer.nodeSizeBase);
+        gl.uniform1f(gl.getUniformLocation(program, 'u_nodeSizeScale'), this.graphLayer.nodeSizeScale);
+        gl.uniform1f(gl.getUniformLocation(program, 'u_outlineWidthBase'), this.graphLayer.nodeOutlineWidthBase);
+        gl.uniform1f(gl.getUniformLocation(program, 'u_outlineWidthScale'), this.graphLayer.nodeOutlineWidthScale);
+        gl.bindVertexArray(this.nodeVAO);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.positions);
+        gl.bufferData(gl.ARRAY_BUFFER, geometry.nodes.positions, gl.DYNAMIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.sizes);
+        gl.bufferData(gl.ARRAY_BUFFER, geometry.nodes.sizes, gl.DYNAMIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.encoded);
+        gl.bufferData(gl.ARRAY_BUFFER, encoded.nodeEncoded, gl.DYNAMIC_DRAW);
+        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, geometry.nodes.count);
+      } else {
+        const widthBaseLocation = 'u_edgeWidthBase';
+        const widthScaleLocation = 'u_edgeWidthScale';
+        const nodeSizeBaseLocation = 'u_nodeSizeBase';
+        const nodeSizeScaleLocation = 'u_nodeSizeScale';
+        const endpointLocation = 'u_edgeEndpointTrim';
+        gl.uniform1f(gl.getUniformLocation(program, widthBaseLocation), edgeWidthBase);
+        gl.uniform1f(gl.getUniformLocation(program, widthScaleLocation), edgeWidthScale);
+        gl.uniform1f(gl.getUniformLocation(program, nodeSizeBaseLocation), this.graphLayer.nodeSizeBase);
+        gl.uniform1f(gl.getUniformLocation(program, nodeSizeScaleLocation), this.graphLayer.nodeSizeScale);
+        gl.uniform1f(gl.getUniformLocation(program, endpointLocation), this.graphLayer.edgeEndpointTrim);
+        if (useQuads) {
+          const viewport = cameraUniforms.viewport;
+          const vw = viewport?.width ? viewport.width * (viewport.devicePixelRatio ?? 1) : this.size.width;
+          const vh = viewport?.height ? viewport.height * (viewport.devicePixelRatio ?? 1) : this.size.height;
+          gl.uniform2f(gl.getUniformLocation(program, 'u_viewport'), vw, vh);
+        }
+        gl.bindVertexArray(useQuads ? this.edgeQuadVAO : this.edgeVAO);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.segments);
+        gl.bufferData(gl.ARRAY_BUFFER, geometry.edges.segments, gl.DYNAMIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.widths);
+        gl.bufferData(gl.ARRAY_BUFFER, geometry.edges.widths, gl.DYNAMIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.endpointSizes);
+        gl.bufferData(gl.ARRAY_BUFFER, geometry.edges.endpointSizes, gl.DYNAMIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.encoded);
+        gl.bufferData(gl.ARRAY_BUFFER, encoded.edgeEncoded, gl.DYNAMIC_DRAW);
+        if (useQuads) {
+          gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, geometry.edges.count);
+        } else {
+          gl.drawArraysInstanced(gl.LINES, 0, 2, geometry.edges.count);
+        }
+      }
+    };
+
+    if (config.trackDepth) {
+      if (geometry.nodes.count && this.depthTargets.node) {
+        renderDepthColor(this.depthTargets.node, true, false);
+      }
+      if (geometry.edges.count && this.depthTargets.edge) {
+        const useQuads = this.graphLayer.edgeRenderingMode === 'quad';
+        renderDepthColor(this.depthTargets.edge, false, useQuads);
+      }
+    }
+
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.bindVertexArray(null);
     // Restore default blend/depth state expected by the main render pass.
@@ -440,14 +638,18 @@ class WebGLAttributeRenderer {
     gl.depthMask(true);
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LEQUAL);
-    return this.targets;
+    return { ...this.targets, depthTargets: this.depthTargets };
   }
 
   readDepth(target, x, y) {
-    if (!this.trackDepth || !target?.depthTexture || target.depthReadable === false) return null;
+    if (!this.trackDepth || !this.depthReadSupported) return null;
+    if (!target?.depthTexture && !target?.depthRenderbuffer) return null;
     const { gl } = this;
-    const type = target.depthType ?? gl.FLOAT;
-    const pixel = type === gl.UNSIGNED_INT ? new Uint32Array(1) : new Float32Array(1);
+    const type = target.depthType
+      ?? (target.depthFormat === gl.DEPTH_COMPONENT32F ? gl.FLOAT : gl.UNSIGNED_SHORT);
+    const pixel = type === gl.UNSIGNED_INT
+      ? new Uint32Array(1)
+      : (type === gl.UNSIGNED_SHORT ? new Uint16Array(1) : new Float32Array(1));
     gl.bindFramebuffer(gl.FRAMEBUFFER, target.handle);
     gl.getError(); // clear previous errors
     try {
@@ -460,12 +662,19 @@ class WebGLAttributeRenderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     const postErr = gl.getError();
     if (postErr !== gl.NO_ERROR) {
+      const canTryFloat = target.depthFormat === gl.DEPTH_COMPONENT32F && type !== gl.FLOAT;
+      if (canTryFloat) {
+        return this.readDepth({ ...target, depthType: gl.FLOAT }, x, y);
+      }
       console.warn('AttributeTracker: depth readPixels error', { postErr, type, depthFormat: target.depthFormat });
+      this.depthReadSupported = false; // stop spamming on platforms that reject depth readback
       return null;
     }
     let depth = pixel[0];
-    if (type === gl.UNSIGNED_INT) {
-      depth = depth / 0xffffff;
+    if (type === gl.UNSIGNED_INT || type === gl.UNSIGNED_SHORT) {
+      const bits = target.depthBits ?? this.depthBits ?? (type === gl.UNSIGNED_SHORT ? 16 : 24);
+      const maxVal = Math.max(1, (2 ** bits) - 1);
+      depth = depth / maxVal;
     }
     return Number.isFinite(depth) ? depth : null;
   }
@@ -476,8 +685,11 @@ class WebGPUAttributeRenderer {
     this.graphLayer = graphLayer;
     this.device = null;
     this.nodePipeline = null;
+    this.nodeDepthPipeline = null;
     this.edgePipeline = null;
+    this.edgeDepthPipeline = null;
     this.edgeQuadPipeline = null;
+    this.edgeQuadDepthPipeline = null;
     this.nodeBindGroupLayout = null;
     this.edgeBindGroupLayout = null;
     this.nodeBindGroup = null;
@@ -487,6 +699,7 @@ class WebGPUAttributeRenderer {
     this.cornerBuffer = null;
     this.edgeCornerBuffer = null;
     this.targets = { node: null, edge: null };
+    this.depthTargets = { node: null, edge: null };
     this.size = null;
   }
 
@@ -560,6 +773,29 @@ class WebGPUAttributeRenderer {
       primitive: { topology: 'triangle-strip' },
     });
 
+    this.nodeDepthPipeline = device.device.createRenderPipeline({
+      layout: device.device.createPipelineLayout({ bindGroupLayouts: [this.nodeBindGroupLayout] }),
+      vertex: {
+        module: nodeModule,
+        entryPoint: 'nodeVertex',
+        buffers: [
+          { arrayStride: 8, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }], stepMode: 'vertex' },
+          {
+            arrayStride: 32,
+            attributes: [
+              { shaderLocation: 1, offset: 0, format: 'float32x3' },
+              { shaderLocation: 2, offset: 12, format: 'float32' },
+              { shaderLocation: 3, offset: 16, format: 'uint32x4' },
+            ],
+            stepMode: 'instance',
+          },
+        ],
+      },
+      fragment: { module: nodeModule, entryPoint: 'nodeDepthFragment', targets: [{ format: device.format }] },
+      depthStencil: { format: device.depthFormat ?? 'depth24plus', depthWriteEnabled: true, depthCompare: 'less-equal' },
+      primitive: { topology: 'triangle-strip' },
+    });
+
     this.edgePipeline = device.device.createRenderPipeline({
       layout: device.device.createPipelineLayout({ bindGroupLayouts: [this.edgeBindGroupLayout] }),
       vertex: {
@@ -580,6 +816,30 @@ class WebGPUAttributeRenderer {
         ],
       },
       fragment: { module: edgeModule, entryPoint: 'edgeFragment', targets: [{ format: device.format }] },
+      depthStencil: { format: device.depthFormat ?? 'depth24plus', depthWriteEnabled: true, depthCompare: 'less-equal' },
+      primitive: { topology: 'line-list' },
+    });
+
+    this.edgeDepthPipeline = device.device.createRenderPipeline({
+      layout: device.device.createPipelineLayout({ bindGroupLayouts: [this.edgeBindGroupLayout] }),
+      vertex: {
+        module: edgeModule,
+        entryPoint: 'edgeVertex',
+        buffers: [
+          {
+            arrayStride: 56,
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: 'float32x3' },
+              { shaderLocation: 1, offset: 12, format: 'float32x3' },
+              { shaderLocation: 2, offset: 24, format: 'float32x2' },
+              { shaderLocation: 3, offset: 32, format: 'float32x2' },
+              { shaderLocation: 4, offset: 40, format: 'uint32x4' },
+            ],
+            stepMode: 'instance',
+          },
+        ],
+      },
+      fragment: { module: edgeModule, entryPoint: 'edgeDepthFragment', targets: [{ format: device.format }] },
       depthStencil: { format: device.depthFormat ?? 'depth24plus', depthWriteEnabled: true, depthCompare: 'less-equal' },
       primitive: { topology: 'line-list' },
     });
@@ -608,6 +868,31 @@ class WebGPUAttributeRenderer {
       depthStencil: { format: device.depthFormat ?? 'depth24plus', depthWriteEnabled: true, depthCompare: 'less-equal' },
       primitive: { topology: 'triangle-strip' },
     });
+
+    this.edgeQuadDepthPipeline = device.device.createRenderPipeline({
+      layout: device.device.createPipelineLayout({ bindGroupLayouts: [this.edgeBindGroupLayout] }),
+      vertex: {
+        module: edgeModule,
+        entryPoint: 'edgeQuadVertex',
+        buffers: [
+          { arrayStride: 8, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }], stepMode: 'vertex' },
+          {
+            arrayStride: 56,
+            attributes: [
+              { shaderLocation: 1, offset: 0, format: 'float32x3' },
+              { shaderLocation: 2, offset: 12, format: 'float32x3' },
+              { shaderLocation: 3, offset: 24, format: 'float32x2' },
+              { shaderLocation: 4, offset: 32, format: 'float32x2' },
+              { shaderLocation: 5, offset: 40, format: 'uint32x4' },
+            ],
+            stepMode: 'instance',
+          },
+        ],
+      },
+      fragment: { module: edgeModule, entryPoint: 'edgeDepthFragment', targets: [{ format: device.format }] },
+      depthStencil: { format: device.depthFormat ?? 'depth24plus', depthWriteEnabled: true, depthCompare: 'less-equal' },
+      primitive: { topology: 'triangle-strip' },
+    });
   }
 
   destroy() {
@@ -615,12 +900,17 @@ class WebGPUAttributeRenderer {
     this.targets.edge?.texture?.destroy?.();
     this.targets.node?.depthTexture?.destroy?.();
     this.targets.edge?.depthTexture?.destroy?.();
+    this.depthTargets.node?.texture?.destroy?.();
+    this.depthTargets.edge?.texture?.destroy?.();
+    this.depthTargets.node?.depthTexture?.destroy?.();
+    this.depthTargets.edge?.depthTexture?.destroy?.();
     this.cornerBuffer?.destroy?.();
     this.edgeCornerBuffer?.destroy?.();
     this.nodeBuffers.instances?.destroy?.();
     this.edgeBuffers.instances?.destroy?.();
     Object.values(this.nodeBuffers).forEach((buf) => buf?.destroy?.());
     Object.values(this.edgeBuffers).forEach((buf) => buf?.destroy?.());
+    this.depthTargets = { node: null, edge: null };
   }
 
   resize(size, scale) {
@@ -633,9 +923,15 @@ class WebGPUAttributeRenderer {
     this.targets.edge?.texture?.destroy?.();
     this.targets.node?.depthTexture?.destroy?.();
     this.targets.edge?.depthTexture?.destroy?.();
+    this.depthTargets.node?.texture?.destroy?.();
+    this.depthTargets.edge?.texture?.destroy?.();
+    this.depthTargets.node?.depthTexture?.destroy?.();
+    this.depthTargets.edge?.depthTexture?.destroy?.();
     this.size = { width, height };
     this.targets.node = this.device.createFramebuffer(width, height);
     this.targets.edge = this.device.createFramebuffer(width, height);
+    this.depthTargets.node = this.device.createFramebuffer(width, height);
+    this.depthTargets.edge = this.device.createFramebuffer(width, height);
   }
 
   encodeAttributes(network, geometry, config) {
@@ -851,10 +1147,64 @@ class WebGPUAttributeRenderer {
       pass.end();
     }
 
+    if (config.trackDepth) {
+      if (geometry.nodes.count && this.depthTargets.node) {
+        const pass = encoder.beginRenderPass({
+          colorAttachments: [{
+            view: this.depthTargets.node.texture.createView(),
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+            loadOp: 'clear',
+            storeOp: 'store',
+          }],
+          depthStencilAttachment: {
+            view: this.depthTargets.node.depthTexture.createView(),
+            depthClearValue: 1,
+            depthLoadOp: 'clear',
+            depthStoreOp: 'store',
+          },
+        });
+        pass.setPipeline(this.nodeDepthPipeline);
+        pass.setBindGroup(0, this.nodeBindGroup);
+        pass.setVertexBuffer(0, this.cornerBuffer);
+        pass.setVertexBuffer(1, this.nodeBuffers.instances);
+        pass.draw(4, geometry.nodes.count, 0, 0);
+        pass.end();
+      }
+
+      if (geometry.edges.count && this.depthTargets.edge) {
+        const useQuad = this.graphLayer.edgeRenderingMode === 'quad';
+        const pass = encoder.beginRenderPass({
+          colorAttachments: [{
+            view: this.depthTargets.edge.texture.createView(),
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+            loadOp: 'clear',
+            storeOp: 'store',
+          }],
+          depthStencilAttachment: {
+            view: this.depthTargets.edge.depthTexture.createView(),
+            depthClearValue: 1,
+            depthLoadOp: 'clear',
+            depthStoreOp: 'store',
+          },
+        });
+        pass.setPipeline(useQuad ? this.edgeQuadDepthPipeline : this.edgeDepthPipeline);
+        pass.setBindGroup(0, this.edgeBindGroup);
+        if (useQuad) {
+          pass.setVertexBuffer(0, this.edgeCornerBuffer);
+          pass.setVertexBuffer(1, this.edgeBuffers.instances);
+          pass.draw(4, geometry.edges.count, 0, 0);
+        } else {
+          pass.setVertexBuffer(0, this.edgeBuffers.instances);
+          pass.draw(2, geometry.edges.count, 0, 0);
+        }
+        pass.end();
+      }
+    }
+
     gpu.queue.submit([encoder.finish()]);
     cameraBuffer.destroy();
     globalsBuffer.destroy();
-    return this.targets;
+    return { ...this.targets, depthTargets: this.depthTargets };
   }
 }
 
@@ -958,11 +1308,31 @@ export class AttributeTracker {
         ? decodePacked(new Uint8Array([pixels[2], pixels[1], pixels[0], pixels[3]]), 0)
         : decodePacked(pixels, 0);
       results[key] = decoded;
-      if (this.options.trackDepth && device.type === 'webgl2') {
-        const depth = key === 'node'
-          ? this.webgl?.readDepth?.(target, clampedX, clampedY)
-          : this.webgl?.readDepth?.(target, clampedX, clampedY);
-        results[`${key}Depth`] = depth;
+      if (this.options.trackDepth) {
+        if (device.type === 'webgl2') {
+          const depthTarget = key === 'node' ? this.webgl?.depthTargets?.node : this.webgl?.depthTargets?.edge;
+          if (depthTarget) {
+            const depthPixels = await device.readPixels(depthTarget, { x: clampedX, y: clampedY, width: 1, height: 1 });
+            const depthBytes = depthPixels instanceof Uint8Array ? depthPixels : new Uint8Array(depthPixels);
+            const reordered = useBgra
+              ? new Uint8Array([depthBytes[2], depthBytes[1], depthBytes[0], depthBytes[3]])
+              : depthBytes;
+            results[`${key}Depth`] = unpackDepthRGBA(reordered, 0);
+          } else {
+            const depth = this.webgl?.readDepth?.(target, clampedX, clampedY);
+            results[`${key}Depth`] = depth;
+          }
+        } else if (device.type === 'webgpu') {
+          const depthTarget = key === 'node' ? this.webgpu?.depthTargets?.node : this.webgpu?.depthTargets?.edge;
+          if (depthTarget?.texture) {
+            const depthPixels = await device.readPixels(depthTarget, { x: clampedX, y: clampedY, width: 1, height: 1 });
+            const depthBytes = depthPixels instanceof Uint8Array ? depthPixels : new Uint8Array(depthPixels);
+            const reordered = useBgra
+              ? new Uint8Array([depthBytes[2], depthBytes[1], depthBytes[0], depthBytes[3]])
+              : depthBytes;
+            results[`${key}Depth`] = unpackDepthRGBA(reordered, 0);
+          }
+        }
       }
     };
     if (this.nodeAttribute) {
