@@ -519,6 +519,33 @@ class WebGLAttributeRenderer {
       gl.viewport(0, 0, this.size.width, this.size.height);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      // First draw nodes into the edge target with zero-encoded color so they occlude edges.
+      if (geometry.nodes.count) {
+        gl.useProgram(this.nodeProgram);
+        gl.uniformMatrix4fv(gl.getUniformLocation(this.nodeProgram, 'u_viewProjection'), false, cameraUniforms.viewProjection);
+        gl.uniformMatrix4fv(gl.getUniformLocation(this.nodeProgram, 'u_view'), false, cameraUniforms.view);
+        gl.uniform3fv(gl.getUniformLocation(this.nodeProgram, 'u_cameraPosition'), cameraUniforms.position);
+        gl.uniform3fv(gl.getUniformLocation(this.nodeProgram, 'u_cameraUp'), cameraUniforms.up);
+        gl.uniform3fv(gl.getUniformLocation(this.nodeProgram, 'u_cameraRight'), cameraUniforms.right);
+        gl.uniform1i(gl.getUniformLocation(this.nodeProgram, 'u_is2D'), is2D ? 1 : 0);
+        gl.uniform1f(gl.getUniformLocation(this.nodeProgram, 'u_nodeSizeBase'), this.graphLayer.nodeSizeBase);
+        gl.uniform1f(gl.getUniformLocation(this.nodeProgram, 'u_nodeSizeScale'), this.graphLayer.nodeSizeScale);
+        gl.uniform1f(gl.getUniformLocation(this.nodeProgram, 'u_outlineWidthBase'), this.graphLayer.nodeOutlineWidthBase);
+        gl.uniform1f(gl.getUniformLocation(this.nodeProgram, 'u_outlineWidthScale'), this.graphLayer.nodeOutlineWidthScale);
+        gl.bindVertexArray(this.nodeVAO);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.positions);
+        gl.bufferData(gl.ARRAY_BUFFER, geometry.nodes.positions, gl.DYNAMIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.sizes);
+        gl.bufferData(gl.ARRAY_BUFFER, geometry.nodes.sizes, gl.DYNAMIC_DRAW);
+        const zeroEncoded = (this._zeroNodeEncoded?.length === geometry.nodes.count * 4)
+          ? this._zeroNodeEncoded
+          : new Uint8Array(geometry.nodes.count * 4);
+        zeroEncoded.fill(0);
+        this._zeroNodeEncoded = zeroEncoded;
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.encoded);
+        gl.bufferData(gl.ARRAY_BUFFER, zeroEncoded, gl.DYNAMIC_DRAW);
+        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, geometry.nodes.count);
+      }
       const useQuads = this.graphLayer.edgeRenderingMode === 'quad';
       const widthBaseLocation = 'u_edgeWidthBase';
       const widthScaleLocation = 'u_edgeWidthScale';
@@ -556,7 +583,7 @@ class WebGLAttributeRenderer {
     }
 
     // Optional depth-to-color fallback: render packed depth into a color target for robust readback.
-    const renderDepthColor = (target, isNode, useQuads) => {
+      const renderDepthColor = (target, isNode, useQuads) => {
       if (!target) return;
       const program = isNode
         ? this.nodeDepthProgram
@@ -626,7 +653,11 @@ class WebGLAttributeRenderer {
       }
       if (geometry.edges.count && this.depthTargets.edge) {
         const useQuads = this.graphLayer.edgeRenderingMode === 'quad';
-        renderDepthColor(this.depthTargets.edge, false, useQuads);
+          // Draw occluding nodes into the edge depth-color target before edges.
+          if (geometry.nodes.count && this.depthTargets.edge) {
+            renderDepthColor(this.depthTargets.edge, true, false);
+          }
+          renderDepthColor(this.depthTargets.edge, false, useQuads);
       }
     }
 
@@ -1016,10 +1047,11 @@ class WebGPUAttributeRenderer {
     globalsBuffer.unmap();
 
     const encoder = gpu.createCommandEncoder();
+    const nodeStrideBytes = 32;
+    const nodeStrideFloats = nodeStrideBytes / 4;
+
     if (geometry.nodes.count && encoded.nodeEncoded && config.nodeAttribute) {
       this.nodeBuffers.instances?.destroy?.();
-      const nodeStrideBytes = 32;
-      const nodeStrideFloats = nodeStrideBytes / 4;
       const buffer = new ArrayBuffer(geometry.nodes.count * nodeStrideBytes);
       const floatView = new Float32Array(buffer);
       const uintView = new Uint32Array(buffer);
@@ -1118,6 +1150,52 @@ class WebGPUAttributeRenderer {
           { binding: 1, resource: { buffer: globalsBuffer } },
         ],
       });
+
+      // Render nodes into the edge target with zero-encoded color to occlude edges.
+      if (geometry.nodes.count && config.edgeAttribute && this.targets.edge) {
+        const occlusionBuffer = new ArrayBuffer(geometry.nodes.count * nodeStrideBytes);
+        const floatView = new Float32Array(occlusionBuffer);
+        const uintView = new Uint32Array(occlusionBuffer);
+        for (let i = 0; i < geometry.nodes.count; i += 1) {
+          const posBase = i * 3;
+          const base = i * nodeStrideFloats;
+          floatView[base] = geometry.nodes.positions[posBase];
+          floatView[base + 1] = geometry.nodes.positions[posBase + 1];
+          floatView[base + 2] = geometry.nodes.positions[posBase + 2];
+          floatView[base + 3] = geometry.nodes.sizes[i];
+          // encoded bytes remain zero to yield -1 when decoded.
+          uintView[base + 4] = 0;
+          uintView[base + 5] = 0;
+          uintView[base + 6] = 0;
+          uintView[base + 7] = 0;
+        }
+        const occlusionInstances = gpu.createBuffer({
+          size: occlusionBuffer.byteLength,
+          usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+          mappedAtCreation: true,
+        });
+        new Uint8Array(occlusionInstances.getMappedRange()).set(new Uint8Array(occlusionBuffer));
+        occlusionInstances.unmap();
+
+        const passNodes = encoder.beginRenderPass({
+          colorAttachments: [{
+            view: this.targets.edge.texture.createView(),
+            loadOp: 'load', // keep previous clear
+            storeOp: 'store',
+          }],
+          depthStencilAttachment: {
+            view: this.targets.edge.depthTexture.createView(),
+            depthLoadOp: 'load',
+            depthStoreOp: 'store',
+          },
+        });
+        passNodes.setPipeline(this.nodePipeline);
+        passNodes.setBindGroup(0, this.nodeBindGroup);
+        passNodes.setVertexBuffer(0, this.cornerBuffer);
+        passNodes.setVertexBuffer(1, occlusionInstances);
+        passNodes.draw(4, geometry.nodes.count, 0, 0);
+        passNodes.end();
+      }
 
       const pass = encoder.beginRenderPass({
         colorAttachments: [{
