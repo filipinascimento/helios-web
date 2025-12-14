@@ -287,12 +287,8 @@ class WebGLAttributeRenderer {
 
     gl.disable(gl.BLEND);
     gl.depthMask(true);
-    if (is2D) {
-      gl.disable(gl.DEPTH_TEST);
-    } else {
-      gl.enable(gl.DEPTH_TEST);
-      gl.depthFunc(gl.LEQUAL);
-    }
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
 
     if (geometry.nodes.count && encoded.nodeEncoded && config.nodeAttribute) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.targets.node?.handle ?? null);
@@ -321,6 +317,9 @@ class WebGLAttributeRenderer {
     }
 
     if (geometry.edges.count && encoded.edgeEncoded && config.edgeAttribute) {
+      // Depth test/write for edges so overlaps are correct in attribute targets.
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthMask(true);
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.targets.edge?.handle ?? null);
       gl.viewport(0, 0, this.size.width, this.size.height);
       gl.clearColor(0, 0, 0, 0);
