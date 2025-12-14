@@ -12,16 +12,6 @@ import {
   EDGE_ATTRIBUTE_WGSL,
 } from './engine/shaders/attributeWebGPU.js';
 
-function packUint32(value) {
-  const clamped = Math.max(0, Math.min(0xFFFFFFFF, value >>> 0));
-  return [
-    clamped & 0xFF,
-    (clamped >>> 8) & 0xFF,
-    (clamped >>> 16) & 0xFF,
-    (clamped >>> 24) & 0xFF,
-  ];
-}
-
 function decodePacked(bytes, offset = 0) {
   const r = bytes[offset] ?? 0;
   const g = bytes[offset + 1] ?? 0;
@@ -31,15 +21,51 @@ function decodePacked(bytes, offset = 0) {
   return value - 1;
 }
 
-function isIntegerView(view) {
-  return view instanceof Int8Array
-    || view instanceof Uint8Array
-    || view instanceof Int16Array
-    || view instanceof Uint16Array
-    || view instanceof Int32Array
-    || view instanceof Uint32Array
-    || view instanceof BigInt64Array
-    || view instanceof BigUint64Array;
+const ENCODE_FORMAT = 'u8x4';
+const INDEX_SENTINEL = '$index';
+
+function getEncodedName(scope, sourceName) {
+  return `_helios_encoded_${scope}_${sourceName || 'index'}`;
+}
+
+function getEncodedView(network, scope, attrName) {
+  if (!network || !attrName) return null;
+  const source = attrName === 'index' ? INDEX_SENTINEL : attrName;
+  const encodedName = getEncodedName(scope, source);
+  const defineFn = scope === 'node'
+    ? 'defineDenseColorEncodedNodeAttribute'
+    : 'defineDenseColorEncodedEdgeAttribute';
+  const updateFn = scope === 'node'
+    ? 'updateDenseColorEncodedNodeAttribute'
+    : 'updateDenseColorEncodedEdgeAttribute';
+  const getFn = scope === 'node'
+    ? 'getDenseColorEncodedNodeAttributeView'
+    : 'getDenseColorEncodedEdgeAttributeView';
+  const desc = network[getFn]?.(encodedName);
+  return desc?.view ?? null;
+}
+
+function ensureEncodedView(network, scope, attrName, count) {
+  if (!attrName || !count) return null;
+  const encoded = getEncodedView(network, scope, attrName);
+  if (!encoded) {
+    throw new Error(`Encoded ${scope} attribute "${attrName}" not available; expected dense color encoding from helios-network.`);
+  }
+  return encoded;
+}
+
+function ensureEncodedReady(network, scope, attrName) {
+  if (!network || !attrName) return;
+  const source = attrName === 'index' ? INDEX_SENTINEL : attrName;
+  const encodedName = getEncodedName(scope, source);
+  const defineFn = scope === 'node'
+    ? 'defineDenseColorEncodedNodeAttribute'
+    : 'defineDenseColorEncodedEdgeAttribute';
+  const updateFn = scope === 'node'
+    ? 'updateDenseColorEncodedNodeAttribute'
+    : 'updateDenseColorEncodedEdgeAttribute';
+  network[defineFn]?.(source, encodedName, { format: ENCODE_FORMAT });
+  network[updateFn]?.(encodedName);
 }
 
 class WebGLAttributeRenderer {
@@ -224,39 +250,10 @@ class WebGLAttributeRenderer {
   }
 
   encodeAttributes(network, geometry, config) {
-    const { nodeAttribute, edgeAttribute } = config;
-    const nodeCount = geometry.nodes.count ?? 0;
-    const edgeCount = geometry.edges.count ?? 0;
-    const nodeEncoded = nodeCount && nodeAttribute ? new Uint8Array(nodeCount * 4) : null;
-    const edgeEncoded = edgeCount && edgeAttribute ? new Uint8Array(edgeCount * 4) : null;
-
-    const encodeScope = (scope, count, indices, attrName, target) => {
-      if (!target) return;
-      const desc = attrName && attrName !== 'index'
-        ? this.graphLayer.getAttributeView(network, scope, attrName)
-        : null;
-      const view = desc?.view;
-      const dim = Math.max(1, desc?.dimension ?? 1);
-      const hasIntegers = attrName === 'index' || isIntegerView(view);
-      for (let i = 0; i < count; i += 1) {
-        const id = indices?.[i] ?? i;
-        let value = attrName === 'index' ? id : -1;
-        if (attrName && attrName !== 'index') {
-          const base = id * dim;
-          const raw = view && Number.isFinite(view[base]) ? view[base] : null;
-          value = hasIntegers && raw != null ? Math.trunc(raw) : -1;
-        }
-        const encodedValue = packUint32((value ?? -1) + 1);
-        const offset = i * 4;
-        target[offset] = encodedValue[0];
-        target[offset + 1] = encodedValue[1];
-        target[offset + 2] = encodedValue[2];
-        target[offset + 3] = encodedValue[3];
-      }
-    };
-
-    encodeScope('node', nodeCount, geometry.nodes.indices, nodeAttribute, nodeEncoded);
-    encodeScope('edge', edgeCount, geometry.edges.indices, edgeAttribute, edgeEncoded);
+    const nodeCount = geometry?.nodes?.count ?? 0;
+    const edgeCount = geometry?.edges?.count ?? 0;
+    const nodeEncoded = ensureEncodedView(network, 'node', config.nodeAttribute, nodeCount);
+    const edgeEncoded = ensureEncodedView(network, 'edge', config.edgeAttribute, edgeCount);
     return { nodeEncoded, edgeEncoded };
   }
 
@@ -265,6 +262,9 @@ class WebGLAttributeRenderer {
     const network = frame.network;
     const camera = frame.camera;
     const scale = config.resolutionScale ?? 1;
+    // Prepare encoded buffers outside buffer access to avoid allocation errors.
+    ensureEncodedReady(network, 'node', config.nodeAttribute);
+    ensureEncodedReady(network, 'edge', config.edgeAttribute);
     this.resize(size, scale);
     const cameraUniforms = this.graphLayer.getCameraUniforms(camera);
     if (!cameraUniforms) return null;
@@ -362,6 +362,12 @@ class WebGLAttributeRenderer {
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.bindVertexArray(null);
+    // Restore default blend/depth state expected by the main render pass.
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.depthMask(true);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
     return this.targets;
   }
 }
@@ -537,34 +543,8 @@ class WebGPUAttributeRenderer {
     const { nodeAttribute, edgeAttribute } = config;
     const nodeCount = geometry.nodes.count ?? 0;
     const edgeCount = geometry.edges.count ?? 0;
-    const nodeEncoded = nodeCount && nodeAttribute ? new Uint32Array(nodeCount * 4) : null;
-    const edgeEncoded = edgeCount && edgeAttribute ? new Uint32Array(edgeCount * 4) : null;
-    const encodeScope = (scope, count, indices, attrName, target) => {
-      if (!target) return;
-      const desc = attrName && attrName !== 'index'
-        ? this.graphLayer.getAttributeView(network, scope, attrName)
-        : null;
-      const view = desc?.view;
-      const dim = Math.max(1, desc?.dimension ?? 1);
-      const hasIntegers = attrName === 'index' || isIntegerView(view);
-      for (let i = 0; i < count; i += 1) {
-        const id = indices?.[i] ?? i;
-        let value = attrName === 'index' ? id : -1;
-        if (attrName && attrName !== 'index') {
-          const base = id * dim;
-          const raw = view && Number.isFinite(view[base]) ? view[base] : null;
-          value = hasIntegers && raw != null ? Math.trunc(raw) : -1;
-        }
-        const packed = packUint32((value ?? -1) + 1);
-        const base = i * 4;
-        target[base] = packed[0];
-        target[base + 1] = packed[1];
-        target[base + 2] = packed[2];
-        target[base + 3] = packed[3];
-      }
-    };
-    encodeScope('node', nodeCount, geometry.nodes.indices, nodeAttribute, nodeEncoded);
-    encodeScope('edge', edgeCount, geometry.edges.indices, edgeAttribute, edgeEncoded);
+    const nodeEncoded = ensureEncodedView(network, 'node', nodeAttribute, nodeCount);
+    const edgeEncoded = ensureEncodedView(network, 'edge', edgeAttribute, edgeCount);
     return { nodeEncoded, edgeEncoded };
   }
 
@@ -573,6 +553,8 @@ class WebGPUAttributeRenderer {
     const network = frame.network;
     const camera = frame.camera;
     const scale = config.resolutionScale ?? 1;
+    ensureEncodedReady(network, 'node', config.nodeAttribute);
+    ensureEncodedReady(network, 'edge', config.edgeAttribute);
     this.resize(size, scale);
     const cameraUniforms = this.graphLayer.getCameraUniforms(camera);
     if (!cameraUniforms) return null;
@@ -655,10 +637,10 @@ class WebGPUAttributeRenderer {
         floatView[base + 3] = geometry.nodes.sizes[i];
         const encBase = base + 4;
         const srcBase = i * 4;
-        uintView[encBase] = encoded.nodeEncoded[srcBase];
-        uintView[encBase + 1] = encoded.nodeEncoded[srcBase + 1];
-        uintView[encBase + 2] = encoded.nodeEncoded[srcBase + 2];
-        uintView[encBase + 3] = encoded.nodeEncoded[srcBase + 3];
+        uintView[encBase] = encoded.nodeEncoded[srcBase] ?? 0;
+        uintView[encBase + 1] = encoded.nodeEncoded[srcBase + 1] ?? 0;
+        uintView[encBase + 2] = encoded.nodeEncoded[srcBase + 2] ?? 0;
+        uintView[encBase + 3] = encoded.nodeEncoded[srcBase + 3] ?? 0;
       }
       this.nodeBuffers.instances = gpu.createBuffer({
         size: buffer.byteLength,
@@ -721,10 +703,10 @@ class WebGPUAttributeRenderer {
         floatView[base + 9] = geometry.edges.endpointSizes[widthBase + 1];
         const encBase = base + 10;
         const srcBase = i * 4;
-        uintView[encBase] = encoded.edgeEncoded[srcBase];
-        uintView[encBase + 1] = encoded.edgeEncoded[srcBase + 1];
-        uintView[encBase + 2] = encoded.edgeEncoded[srcBase + 2];
-        uintView[encBase + 3] = encoded.edgeEncoded[srcBase + 3];
+        uintView[encBase] = encoded.edgeEncoded[srcBase] ?? 0;
+        uintView[encBase + 1] = encoded.edgeEncoded[srcBase + 1] ?? 0;
+        uintView[encBase + 2] = encoded.edgeEncoded[srcBase + 2] ?? 0;
+        uintView[encBase + 3] = encoded.edgeEncoded[srcBase + 3] ?? 0;
       }
       this.edgeBuffers.instances = gpu.createBuffer({
         size: buffer.byteLength,
