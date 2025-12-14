@@ -279,7 +279,7 @@ async function bootstrap() {
   }
 
   console.log("Enabling attribute tracking for picking...");
-  helios.enableAttributeTracking('index', 'index', { resolutionScale: 0.5 });
+  helios.enableAttributeTracking('index', 'index', { resolutionScale: 0.5, trackDepth: true });
   const canvas = helios.layers?.canvas ?? helios.renderer?.canvas ?? document.querySelector('canvas');
   if (canvas) {
     canvas.addEventListener('click', async (event) => {

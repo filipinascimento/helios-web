@@ -73,6 +73,7 @@ class WebGLAttributeRenderer {
     this.graphLayer = graphLayer;
     this.gl = null;
     this.device = null;
+    this.trackDepth = false;
     this.nodeProgram = null;
     this.edgeProgram = null;
     this.edgeQuadProgram = null;
@@ -226,8 +227,9 @@ class WebGLAttributeRenderer {
     this.targets = { node: null, edge: null };
   }
 
-  resize(size, scale) {
+  resize(size, scale, trackDepth) {
     if (!size) return;
+    this.trackDepth = trackDepth === true;
     const pixelRatio = size.devicePixelRatio ?? 1;
     const width = Math.max(1, Math.floor((size.width ?? 1) * pixelRatio * scale));
     const height = Math.max(1, Math.floor((size.height ?? 1) * pixelRatio * scale));
@@ -237,16 +239,86 @@ class WebGLAttributeRenderer {
     if (this.targets.node) {
       this.gl.deleteFramebuffer(this.targets.node.handle);
       this.gl.deleteTexture(this.targets.node.texture);
-      this.gl.deleteRenderbuffer(this.targets.node.depth);
+      if (this.targets.node.depth) this.gl.deleteRenderbuffer(this.targets.node.depth);
+      if (this.targets.node.depthTexture) this.gl.deleteTexture(this.targets.node.depthTexture);
     }
     if (this.targets.edge) {
       this.gl.deleteFramebuffer(this.targets.edge.handle);
       this.gl.deleteTexture(this.targets.edge.texture);
-      this.gl.deleteRenderbuffer(this.targets.edge.depth);
+      if (this.targets.edge.depth) this.gl.deleteRenderbuffer(this.targets.edge.depth);
+      if (this.targets.edge.depthTexture) this.gl.deleteTexture(this.targets.edge.depthTexture);
     }
     this.size = { width, height };
-    this.targets.node = this.device.createFramebuffer(width, height);
-    this.targets.edge = this.device.createFramebuffer(width, height);
+    this.targets.node = this.createTarget(width, height);
+    this.targets.edge = this.createTarget(width, height);
+  }
+
+  createTarget(width, height) {
+    if (!this.trackDepth) {
+      return this.device.createFramebuffer(width, height);
+    }
+    const { gl } = this;
+    const framebuffer = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+
+    // Use depth24/UNSIGNED_INT for broad compatibility; avoid float depth read issues.
+    let depthTexture = gl.createTexture();
+    const depthFormat = gl.DEPTH_COMPONENT24;
+    const depthType = gl.UNSIGNED_INT;
+    gl.bindTexture(gl.TEXTURE_2D, depthTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, depthFormat, width, height, 0, gl.DEPTH_COMPONENT, depthType, null);
+    const err = gl.getError();
+    const isDevEnv = typeof process !== 'undefined' && process?.env?.NODE_ENV !== 'production';
+    if (isDevEnv) {
+      console.info('AttributeTracker: depth target format', {
+        chosen: depthFormat,
+        type: depthType,
+        note: 'Using depth24/UNSIGNED_INT for attribute depth readback',
+        err,
+      });
+    }
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, depthTexture, 0);
+
+    // Try a tiny read to confirm depth readback support; if it fails, disable depth tracking.
+    let depthReadable = true;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+    const probe = new Uint32Array(1);
+    gl.getError();
+    gl.readPixels(0, 0, 1, 1, gl.DEPTH_COMPONENT, depthType, probe);
+    const readErr = gl.getError();
+    if (readErr !== gl.NO_ERROR) {
+      depthReadable = false;
+      if (isDevEnv) {
+        console.warn('AttributeTracker: depth readPixels unsupported, disabling depth tracking for attribute pass', { readErr, depthFormat, depthType });
+      }
+    }
+
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return {
+      type: 'webgl2',
+      handle: framebuffer,
+      texture,
+      depthTexture,
+      depthFormat,
+      depthType,
+      depthReadable,
+      width,
+      height,
+    };
   }
 
   encodeAttributes(network, geometry, config) {
@@ -265,7 +337,7 @@ class WebGLAttributeRenderer {
     // Prepare encoded buffers outside buffer access to avoid allocation errors.
     ensureEncodedReady(network, 'node', config.nodeAttribute);
     ensureEncodedReady(network, 'edge', config.edgeAttribute);
-    this.resize(size, scale);
+    this.resize(size, scale, config.trackDepth);
     const cameraUniforms = this.graphLayer.getCameraUniforms(camera);
     if (!cameraUniforms) return null;
     if (!this.graphLayer.updateDenseGraphBuffers(network)) return null;
@@ -369,6 +441,33 @@ class WebGLAttributeRenderer {
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LEQUAL);
     return this.targets;
+  }
+
+  readDepth(target, x, y) {
+    if (!this.trackDepth || !target?.depthTexture || target.depthReadable === false) return null;
+    const { gl } = this;
+    const type = target.depthType ?? gl.FLOAT;
+    const pixel = type === gl.UNSIGNED_INT ? new Uint32Array(1) : new Float32Array(1);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, target.handle);
+    gl.getError(); // clear previous errors
+    try {
+      gl.readPixels(x, y, 1, 1, gl.DEPTH_COMPONENT, type, pixel);
+    } catch (error) {
+      console.warn('AttributeTracker: depth read failed', error);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      return null;
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    const postErr = gl.getError();
+    if (postErr !== gl.NO_ERROR) {
+      console.warn('AttributeTracker: depth readPixels error', { postErr, type, depthFormat: target.depthFormat });
+      return null;
+    }
+    let depth = pixel[0];
+    if (type === gl.UNSIGNED_INT) {
+      depth = depth / 0xffffff;
+    }
+    return Number.isFinite(depth) ? depth : null;
   }
 }
 
@@ -779,6 +878,7 @@ export class AttributeTracker {
       const scale = Number(options.resolutionScale);
       this.options.resolutionScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
     }
+    this.options.trackDepth = options.trackDepth === true;
     this.options.autoRender = options.autoRender !== false;
     if (options.edgeRenderingMode) {
       this.graphLayer?.setEdgeRenderingMode?.(options.edgeRenderingMode);
@@ -816,6 +916,7 @@ export class AttributeTracker {
         nodeAttribute: this.nodeAttribute,
         edgeAttribute: this.edgeAttribute,
         resolutionScale: this.options.resolutionScale,
+        trackDepth: this.options.trackDepth,
       });
     } else if (device.type === 'webgpu') {
       if (!this.webgpu) {
@@ -826,6 +927,7 @@ export class AttributeTracker {
         nodeAttribute: this.nodeAttribute,
         edgeAttribute: this.edgeAttribute,
         resolutionScale: this.options.resolutionScale,
+        trackDepth: this.options.trackDepth,
       });
     }
     return this.lastTargets;
@@ -841,7 +943,7 @@ export class AttributeTracker {
     const x = Math.floor(clientX * pixelRatio * scale);
     const yRaw = Math.floor(clientY * pixelRatio * scale);
     const targets = this.lastTargets;
-    const results = { node: -1, edge: -1 };
+    const results = { node: -1, edge: -1, nodeDepth: null, edgeDepth: null };
     const device = this.renderer.device;
     const readTarget = async (target, key) => {
       if (!target || !target.width || !target.height) return;
@@ -856,6 +958,12 @@ export class AttributeTracker {
         ? decodePacked(new Uint8Array([pixels[2], pixels[1], pixels[0], pixels[3]]), 0)
         : decodePacked(pixels, 0);
       results[key] = decoded;
+      if (this.options.trackDepth && device.type === 'webgl2') {
+        const depth = key === 'node'
+          ? this.webgl?.readDepth?.(target, clampedX, clampedY)
+          : this.webgl?.readDepth?.(target, clampedX, clampedY);
+        results[`${key}Depth`] = depth;
+      }
     };
     if (this.nodeAttribute) {
       await readTarget(targets.node, 'node');
