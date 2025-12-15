@@ -296,10 +296,10 @@ async function bootstrap() {
 
   console.log("Enabling attribute tracking for picking (auto-update, scaled)...");
   helios.enableAttributeTracking('index', 'index', {
-    resolutionScale: pickTest ? 1 : 0.5,
+    resolutionScale: pickTest ? 0.5 : 0.5,
     trackDepth: true,
     autoUpdate: true,
-    autoUpdateFrameSkip: pickTest ? 0 : 1,
+    autoUpdateFrameSkip: pickTest ? 1 : 1,
   });
   const canvas = helios.layers?.canvas ?? helios.renderer?.canvas ?? document.querySelector('canvas');
   if (canvas) {

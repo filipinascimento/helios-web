@@ -617,6 +617,7 @@ class WebGPUAttributeRenderer {
     this.edgeBindGroup = null;
     this.nodeBuffers = {};
     this.edgeBuffers = {};
+    this._zeroEncodedU8 = null;
     this.cornerBuffer = null;
     this.edgeCornerBuffer = null;
     this.targets = { node: null, edge: null };
@@ -678,15 +679,9 @@ class WebGPUAttributeRenderer {
         entryPoint: 'nodeVertex',
         buffers: [
           { arrayStride: 8, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }], stepMode: 'vertex' },
-          {
-            arrayStride: 32,
-            attributes: [
-              { shaderLocation: 1, offset: 0, format: 'float32x3' },
-              { shaderLocation: 2, offset: 12, format: 'float32' },
-              { shaderLocation: 3, offset: 16, format: 'uint32x4' },
-            ],
-            stepMode: 'instance',
-          },
+          { arrayStride: 12, attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x3' }], stepMode: 'instance' },
+          { arrayStride: 4, attributes: [{ shaderLocation: 2, offset: 0, format: 'float32' }], stepMode: 'instance' },
+          { arrayStride: 4, attributes: [{ shaderLocation: 3, offset: 0, format: 'uint8x4' }], stepMode: 'instance' },
         ],
       },
       fragment: { module: nodeModule, entryPoint: 'nodeFragment', targets: [{ format: device.format }] },
@@ -701,15 +696,9 @@ class WebGPUAttributeRenderer {
         entryPoint: 'nodeVertex',
         buffers: [
           { arrayStride: 8, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }], stepMode: 'vertex' },
-          {
-            arrayStride: 32,
-            attributes: [
-              { shaderLocation: 1, offset: 0, format: 'float32x3' },
-              { shaderLocation: 2, offset: 12, format: 'float32' },
-              { shaderLocation: 3, offset: 16, format: 'uint32x4' },
-            ],
-            stepMode: 'instance',
-          },
+          { arrayStride: 12, attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x3' }], stepMode: 'instance' },
+          { arrayStride: 4, attributes: [{ shaderLocation: 2, offset: 0, format: 'float32' }], stepMode: 'instance' },
+          { arrayStride: 4, attributes: [{ shaderLocation: 3, offset: 0, format: 'uint8x4' }], stepMode: 'instance' },
         ],
       },
       fragment: { module: nodeModule, entryPoint: 'nodeDepthFragment', targets: [{ format: device.format }] },
@@ -724,16 +713,16 @@ class WebGPUAttributeRenderer {
         entryPoint: 'edgeVertex',
         buffers: [
           {
-            arrayStride: 56,
+            arrayStride: 24,
             attributes: [
               { shaderLocation: 0, offset: 0, format: 'float32x3' },
               { shaderLocation: 1, offset: 12, format: 'float32x3' },
-              { shaderLocation: 2, offset: 24, format: 'float32x2' },
-              { shaderLocation: 3, offset: 32, format: 'float32x2' },
-              { shaderLocation: 4, offset: 40, format: 'uint32x4' },
             ],
             stepMode: 'instance',
           },
+          { arrayStride: 8, attributes: [{ shaderLocation: 2, offset: 0, format: 'float32x2' }], stepMode: 'instance' },
+          { arrayStride: 8, attributes: [{ shaderLocation: 3, offset: 0, format: 'float32x2' }], stepMode: 'instance' },
+          { arrayStride: 4, attributes: [{ shaderLocation: 4, offset: 0, format: 'uint8x4' }], stepMode: 'instance' },
         ],
       },
       fragment: { module: edgeModule, entryPoint: 'edgeFragment', targets: [{ format: device.format }] },
@@ -748,16 +737,16 @@ class WebGPUAttributeRenderer {
         entryPoint: 'edgeVertex',
         buffers: [
           {
-            arrayStride: 56,
+            arrayStride: 24,
             attributes: [
               { shaderLocation: 0, offset: 0, format: 'float32x3' },
               { shaderLocation: 1, offset: 12, format: 'float32x3' },
-              { shaderLocation: 2, offset: 24, format: 'float32x2' },
-              { shaderLocation: 3, offset: 32, format: 'float32x2' },
-              { shaderLocation: 4, offset: 40, format: 'uint32x4' },
             ],
             stepMode: 'instance',
           },
+          { arrayStride: 8, attributes: [{ shaderLocation: 2, offset: 0, format: 'float32x2' }], stepMode: 'instance' },
+          { arrayStride: 8, attributes: [{ shaderLocation: 3, offset: 0, format: 'float32x2' }], stepMode: 'instance' },
+          { arrayStride: 4, attributes: [{ shaderLocation: 4, offset: 0, format: 'uint8x4' }], stepMode: 'instance' },
         ],
       },
       fragment: { module: edgeModule, entryPoint: 'edgeDepthFragment', targets: [{ format: device.format }] },
@@ -773,16 +762,16 @@ class WebGPUAttributeRenderer {
         buffers: [
           { arrayStride: 8, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }], stepMode: 'vertex' },
           {
-            arrayStride: 56,
+            arrayStride: 24,
             attributes: [
               { shaderLocation: 1, offset: 0, format: 'float32x3' },
               { shaderLocation: 2, offset: 12, format: 'float32x3' },
-              { shaderLocation: 3, offset: 24, format: 'float32x2' },
-              { shaderLocation: 4, offset: 32, format: 'float32x2' },
-              { shaderLocation: 5, offset: 40, format: 'uint32x4' },
             ],
             stepMode: 'instance',
           },
+          { arrayStride: 8, attributes: [{ shaderLocation: 3, offset: 0, format: 'float32x2' }], stepMode: 'instance' },
+          { arrayStride: 8, attributes: [{ shaderLocation: 4, offset: 0, format: 'float32x2' }], stepMode: 'instance' },
+          { arrayStride: 4, attributes: [{ shaderLocation: 5, offset: 0, format: 'uint8x4' }], stepMode: 'instance' },
         ],
       },
       fragment: { module: edgeModule, entryPoint: 'edgeFragment', targets: [{ format: device.format }] },
@@ -798,16 +787,16 @@ class WebGPUAttributeRenderer {
         buffers: [
           { arrayStride: 8, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }], stepMode: 'vertex' },
           {
-            arrayStride: 56,
+            arrayStride: 24,
             attributes: [
               { shaderLocation: 1, offset: 0, format: 'float32x3' },
               { shaderLocation: 2, offset: 12, format: 'float32x3' },
-              { shaderLocation: 3, offset: 24, format: 'float32x2' },
-              { shaderLocation: 4, offset: 32, format: 'float32x2' },
-              { shaderLocation: 5, offset: 40, format: 'uint32x4' },
             ],
             stepMode: 'instance',
           },
+          { arrayStride: 8, attributes: [{ shaderLocation: 3, offset: 0, format: 'float32x2' }], stepMode: 'instance' },
+          { arrayStride: 8, attributes: [{ shaderLocation: 4, offset: 0, format: 'float32x2' }], stepMode: 'instance' },
+          { arrayStride: 4, attributes: [{ shaderLocation: 5, offset: 0, format: 'uint8x4' }], stepMode: 'instance' },
         ],
       },
       fragment: { module: edgeModule, entryPoint: 'edgeDepthFragment', targets: [{ format: device.format }] },
@@ -816,13 +805,57 @@ class WebGPUAttributeRenderer {
     });
   }
 
+  ensureVertexBuffer(map, key, requiredBytes) {
+    const size = Math.max(4, requiredBytes);
+    const current = map[key];
+    if (!current || size > current.size) {
+      if (current?.buffer) current.buffer.destroy();
+      else current?.destroy?.();
+      map[key] = {
+        buffer: this.device.device.createBuffer({ size, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST }),
+        size,
+      };
+    }
+    return map[key];
+  }
+
+  uploadVertexBuffer(map, key, source) {
+    if (!source) return null;
+    const bytes = source.byteLength ?? (source.length * source.BYTES_PER_ELEMENT) ?? 0;
+    if (!bytes) return null;
+    const entry = this.ensureVertexBuffer(map, key, bytes);
+    this.device.device.queue.writeBuffer(entry.buffer, 0, source);
+    return entry.buffer;
+  }
+
+  uploadZeroEncoded(count) {
+    if (!count) return null;
+    const required = count * 4;
+    if (!this._zeroEncodedU8 || this._zeroEncodedU8.byteLength < required) {
+      this._zeroEncodedU8 = new Uint8Array(required);
+    } else {
+      this._zeroEncodedU8.fill(0, 0, required);
+    }
+    const entry = this.ensureVertexBuffer(this.nodeBuffers, 'zeroEncoded', required);
+    this.device.device.queue.writeBuffer(entry.buffer, 0, this._zeroEncodedU8.subarray(0, required));
+    return entry.buffer;
+  }
+
   destroy() {
-    this.cornerBuffer?.destroy?.();
-    this.edgeCornerBuffer?.destroy?.();
-    this.nodeBuffers.instances?.destroy?.();
-    this.edgeBuffers.instances?.destroy?.();
-    Object.values(this.nodeBuffers).forEach((buf) => buf?.destroy?.());
-    Object.values(this.edgeBuffers).forEach((buf) => buf?.destroy?.());
+    const destroyEntry = (entry) => {
+      if (!entry) return;
+      if (entry.buffer) {
+        entry.buffer.destroy();
+      } else {
+        entry.destroy?.();
+      }
+    };
+    destroyEntry(this.cornerBuffer);
+    destroyEntry(this.edgeCornerBuffer);
+    Object.values(this.nodeBuffers).forEach(destroyEntry);
+    Object.values(this.edgeBuffers).forEach(destroyEntry);
+    this.cornerBuffer = null;
+    this.edgeCornerBuffer = null;
     this.depthTargets = { node: null, edge: null };
   }
 
@@ -935,39 +968,44 @@ class WebGPUAttributeRenderer {
         { binding: 1, resource: { buffer: globalsBuffer } },
       ],
     });
+    this.edgeBindGroup = geometry.edges.count
+      ? gpu.createBindGroup({
+        layout: this.edgeBindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: cameraBuffer } },
+          { binding: 1, resource: { buffer: globalsBuffer } },
+        ],
+      })
+      : null;
 
     const encoder = gpu.createCommandEncoder();
-    const nodeStrideBytes = 32;
-    const nodeStrideFloats = nodeStrideBytes / 4;
     const passes = [];
 
-    if (geometry.nodes.count && encoded.nodeEncoded && config.nodeAttribute) {
-      passes.push(() => {
-        const buffer = new ArrayBuffer(geometry.nodes.count * nodeStrideBytes);
-        const floatView = new Float32Array(buffer);
-        const uintView = new Uint32Array(buffer);
-        for (let i = 0; i < geometry.nodes.count; i += 1) {
-          const posBase = i * 3;
-          const base = i * nodeStrideFloats;
-          floatView[base] = geometry.nodes.positions[posBase];
-          floatView[base + 1] = geometry.nodes.positions[posBase + 1];
-          floatView[base + 2] = geometry.nodes.positions[posBase + 2];
-          floatView[base + 3] = geometry.nodes.sizes[i];
-          const encBase = base + 4;
-          const srcBase = i * 4;
-          uintView[encBase] = encoded.nodeEncoded[srcBase] ?? 0;
-          uintView[encBase + 1] = encoded.nodeEncoded[srcBase + 1] ?? 0;
-          uintView[encBase + 2] = encoded.nodeEncoded[srcBase + 2] ?? 0;
-          uintView[encBase + 3] = encoded.nodeEncoded[srcBase + 3] ?? 0;
-        }
-        this.nodeBuffers.instances = gpu.createBuffer({
-          size: buffer.byteLength,
-          usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-          mappedAtCreation: true,
-        });
-        new Uint8Array(this.nodeBuffers.instances.getMappedRange()).set(new Uint8Array(buffer));
-        this.nodeBuffers.instances.unmap();
+    const nodePositionBuffer = geometry.nodes.count
+      ? this.uploadVertexBuffer(this.nodeBuffers, 'positions', geometry.nodes.positions)
+      : null;
+    const nodeSizeBuffer = geometry.nodes.count
+      ? this.uploadVertexBuffer(this.nodeBuffers, 'sizes', geometry.nodes.sizes)
+      : null;
+    const nodeEncodedBuffer = (geometry.nodes.count && encoded.nodeEncoded && config.nodeAttribute)
+      ? this.uploadVertexBuffer(this.nodeBuffers, 'encoded', encoded.nodeEncoded)
+      : null;
 
+    const edgeSegmentsBuffer = geometry.edges.count
+      ? this.uploadVertexBuffer(this.edgeBuffers, 'segments', geometry.edges.segments)
+      : null;
+    const edgeWidthsBuffer = geometry.edges.count
+      ? this.uploadVertexBuffer(this.edgeBuffers, 'widths', geometry.edges.widths)
+      : null;
+    const edgeEndpointSizeBuffer = geometry.edges.count
+      ? this.uploadVertexBuffer(this.edgeBuffers, 'endpointSizes', geometry.edges.endpointSizes)
+      : null;
+    const edgeEncodedBuffer = (geometry.edges.count && encoded.edgeEncoded && config.edgeAttribute)
+      ? this.uploadVertexBuffer(this.edgeBuffers, 'encoded', encoded.edgeEncoded)
+      : null;
+
+    if (geometry.nodes.count && nodeEncodedBuffer && nodePositionBuffer && nodeSizeBuffer && config.nodeAttribute) {
+      passes.push(() => {
         const pass = encoder.beginRenderPass({
           colorAttachments: [{
             view: this.targets.node.texture.createView(),
@@ -985,82 +1023,19 @@ class WebGPUAttributeRenderer {
         pass.setPipeline(this.nodePipeline);
         pass.setBindGroup(0, this.nodeBindGroup);
         pass.setVertexBuffer(0, this.cornerBuffer);
-        pass.setVertexBuffer(1, this.nodeBuffers.instances);
+        pass.setVertexBuffer(1, nodePositionBuffer);
+        pass.setVertexBuffer(2, nodeSizeBuffer);
+        pass.setVertexBuffer(3, nodeEncodedBuffer);
         pass.draw(4, geometry.nodes.count, 0, 0);
         pass.end();
       });
     }
 
-    if (geometry.edges.count && encoded.edgeEncoded && config.edgeAttribute) {
+    if (geometry.edges.count && edgeEncodedBuffer && edgeSegmentsBuffer && edgeWidthsBuffer && edgeEndpointSizeBuffer && config.edgeAttribute) {
       passes.push(() => {
-        const edgeStrideBytes = 56;
-        const edgeStrideFloats = edgeStrideBytes / 4;
-        const buffer = new ArrayBuffer(geometry.edges.count * edgeStrideBytes);
-        const floatView = new Float32Array(buffer);
-        const uintView = new Uint32Array(buffer);
-        for (let i = 0; i < geometry.edges.count; i += 1) {
-          const segBase = i * 6;
-          const widthBase = i * 2;
-          const base = i * edgeStrideFloats;
-          floatView[base] = geometry.edges.segments[segBase];
-          floatView[base + 1] = geometry.edges.segments[segBase + 1];
-          floatView[base + 2] = geometry.edges.segments[segBase + 2];
-          floatView[base + 3] = geometry.edges.segments[segBase + 3];
-          floatView[base + 4] = geometry.edges.segments[segBase + 4];
-          floatView[base + 5] = geometry.edges.segments[segBase + 5];
-          floatView[base + 6] = geometry.edges.widths[widthBase];
-          floatView[base + 7] = geometry.edges.widths[widthBase + 1];
-          floatView[base + 8] = geometry.edges.endpointSizes[widthBase];
-          floatView[base + 9] = geometry.edges.endpointSizes[widthBase + 1];
-          const encBase = base + 10;
-          const srcBase = i * 4;
-          uintView[encBase] = encoded.edgeEncoded[srcBase] ?? 0;
-          uintView[encBase + 1] = encoded.edgeEncoded[srcBase + 1] ?? 0;
-          uintView[encBase + 2] = encoded.edgeEncoded[srcBase + 2] ?? 0;
-          uintView[encBase + 3] = encoded.edgeEncoded[srcBase + 3] ?? 0;
-        }
-        this.edgeBuffers.instances = gpu.createBuffer({
-          size: buffer.byteLength,
-          usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-          mappedAtCreation: true,
-        });
-        new Uint8Array(this.edgeBuffers.instances.getMappedRange()).set(new Uint8Array(buffer));
-        this.edgeBuffers.instances.unmap();
-
-        this.edgeBindGroup = gpu.createBindGroup({
-          layout: this.edgeBindGroupLayout,
-          entries: [
-            { binding: 0, resource: { buffer: cameraBuffer } },
-            { binding: 1, resource: { buffer: globalsBuffer } },
-          ],
-        });
-
         // Render nodes into the edge target with zero-encoded color to occlude edges.
-        if (geometry.nodes.count && config.edgeAttribute && this.targets.edge && this.nodeBindGroup) {
-          const occlusionBuffer = new ArrayBuffer(geometry.nodes.count * nodeStrideBytes);
-          const floatView = new Float32Array(occlusionBuffer);
-          const uintView = new Uint32Array(occlusionBuffer);
-          for (let i = 0; i < geometry.nodes.count; i += 1) {
-            const posBase = i * 3;
-            const base = i * nodeStrideFloats;
-            floatView[base] = geometry.nodes.positions[posBase];
-            floatView[base + 1] = geometry.nodes.positions[posBase + 1];
-            floatView[base + 2] = geometry.nodes.positions[posBase + 2];
-            floatView[base + 3] = geometry.nodes.sizes[i];
-            // encoded bytes remain zero to yield -1 when decoded.
-            uintView[base + 4] = 0;
-            uintView[base + 5] = 0;
-            uintView[base + 6] = 0;
-            uintView[base + 7] = 0;
-          }
-          const occlusionInstances = gpu.createBuffer({
-            size: occlusionBuffer.byteLength,
-            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-            mappedAtCreation: true,
-          });
-          new Uint8Array(occlusionInstances.getMappedRange()).set(new Uint8Array(occlusionBuffer));
-          occlusionInstances.unmap();
-
+        if (geometry.nodes.count && this.targets.edge && this.nodeBindGroup && nodePositionBuffer && nodeSizeBuffer) {
+          const zeroEncodedBuffer = this.uploadZeroEncoded(geometry.nodes.count);
           const passNodes = encoder.beginRenderPass({
             colorAttachments: [{
               view: this.targets.edge.texture.createView(),
@@ -1076,7 +1051,9 @@ class WebGPUAttributeRenderer {
           passNodes.setPipeline(this.nodePipeline);
           passNodes.setBindGroup(0, this.nodeBindGroup);
           passNodes.setVertexBuffer(0, this.cornerBuffer);
-          passNodes.setVertexBuffer(1, occlusionInstances);
+          passNodes.setVertexBuffer(1, nodePositionBuffer);
+          passNodes.setVertexBuffer(2, nodeSizeBuffer);
+          passNodes.setVertexBuffer(3, zeroEncodedBuffer);
           passNodes.draw(4, geometry.nodes.count, 0, 0);
           passNodes.end();
         }
@@ -1100,10 +1077,16 @@ class WebGPUAttributeRenderer {
         pass.setBindGroup(0, this.edgeBindGroup);
         if (useQuad) {
           pass.setVertexBuffer(0, this.edgeCornerBuffer);
-          pass.setVertexBuffer(1, this.edgeBuffers.instances);
+          pass.setVertexBuffer(1, edgeSegmentsBuffer);
+          pass.setVertexBuffer(2, edgeWidthsBuffer);
+          pass.setVertexBuffer(3, edgeEndpointSizeBuffer);
+          pass.setVertexBuffer(4, edgeEncodedBuffer);
           pass.draw(4, geometry.edges.count, 0, 0);
         } else {
-          pass.setVertexBuffer(0, this.edgeBuffers.instances);
+          pass.setVertexBuffer(0, edgeSegmentsBuffer);
+          pass.setVertexBuffer(1, edgeWidthsBuffer);
+          pass.setVertexBuffer(2, edgeEndpointSizeBuffer);
+          pass.setVertexBuffer(3, edgeEncodedBuffer);
           pass.draw(2, geometry.edges.count, 0, 0);
         }
         pass.end();
@@ -1111,7 +1094,7 @@ class WebGPUAttributeRenderer {
     }
 
     if (config.trackDepth) {
-      if (geometry.nodes.count && this.depthTargets.node && this.nodeBindGroup && this.nodeBuffers.instances) {
+      if (geometry.nodes.count && this.depthTargets.node && this.nodeBindGroup && nodePositionBuffer && nodeSizeBuffer && nodeEncodedBuffer) {
         passes.push(() => {
           const pass = encoder.beginRenderPass({
             colorAttachments: [{
@@ -1130,13 +1113,15 @@ class WebGPUAttributeRenderer {
           pass.setPipeline(this.nodeDepthPipeline);
           pass.setBindGroup(0, this.nodeBindGroup);
           pass.setVertexBuffer(0, this.cornerBuffer);
-          pass.setVertexBuffer(1, this.nodeBuffers.instances);
+          pass.setVertexBuffer(1, nodePositionBuffer);
+          pass.setVertexBuffer(2, nodeSizeBuffer);
+          pass.setVertexBuffer(3, nodeEncodedBuffer);
           pass.draw(4, geometry.nodes.count, 0, 0);
           pass.end();
         });
       }
 
-      if (geometry.edges.count && this.depthTargets.edge && this.edgeBindGroup && this.edgeBuffers.instances) {
+      if (geometry.edges.count && this.depthTargets.edge && this.edgeBindGroup && edgeSegmentsBuffer && edgeWidthsBuffer && edgeEndpointSizeBuffer && edgeEncodedBuffer) {
         passes.push(() => {
           const useQuad = this.graphLayer.edgeRenderingMode === 'quad';
           const pass = encoder.beginRenderPass({
@@ -1157,10 +1142,16 @@ class WebGPUAttributeRenderer {
           pass.setBindGroup(0, this.edgeBindGroup);
           if (useQuad) {
             pass.setVertexBuffer(0, this.edgeCornerBuffer);
-            pass.setVertexBuffer(1, this.edgeBuffers.instances);
+            pass.setVertexBuffer(1, edgeSegmentsBuffer);
+            pass.setVertexBuffer(2, edgeWidthsBuffer);
+            pass.setVertexBuffer(3, edgeEndpointSizeBuffer);
+            pass.setVertexBuffer(4, edgeEncodedBuffer);
             pass.draw(4, geometry.edges.count, 0, 0);
           } else {
-            pass.setVertexBuffer(0, this.edgeBuffers.instances);
+            pass.setVertexBuffer(0, edgeSegmentsBuffer);
+            pass.setVertexBuffer(1, edgeWidthsBuffer);
+            pass.setVertexBuffer(2, edgeEndpointSizeBuffer);
+            pass.setVertexBuffer(3, edgeEncodedBuffer);
             pass.draw(2, geometry.edges.count, 0, 0);
           }
           pass.end();
