@@ -296,20 +296,20 @@ async function bootstrap() {
 
   console.log("Enabling attribute tracking for picking (auto-update, scaled)...");
   helios.enableAttributeTracking('index', 'index', {
-    resolutionScale: pickTest ? 0.5 : 0.5,
-    trackDepth: true,
+    resolutionScale: pickTest ? 1.0 : 0.1,
+    trackDepth: false,
     autoUpdate: true,
     autoUpdateFrameSkip: pickTest ? 1 : 1,
   });
   const canvas = helios.layers?.canvas ?? helios.renderer?.canvas ?? document.querySelector('canvas');
   if (canvas) {
-    canvas.addEventListener('click', async (event) => {
-      const rect = canvas.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
-      const picked = await helios.pickAttributesAt(x, y);
-      console.log('Picked node/edge indices', picked);
-    });
+    // canvas.addEventListener('click', async (event) => {
+    //   const rect = canvas.getBoundingClientRect();
+    //   const x = event.clientX - rect.left;
+    //   const y = event.clientY - rect.top;
+    //   const picked = await helios.pickAttributesAt(x, y);
+    //   console.log('Picked node/edge indices', picked);
+    // });
   }
 
   if (pickTest) {

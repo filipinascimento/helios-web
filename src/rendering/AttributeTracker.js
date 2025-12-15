@@ -617,6 +617,9 @@ class WebGPUAttributeRenderer {
     this.edgeBindGroup = null;
     this.nodeBuffers = {};
     this.edgeBuffers = {};
+    this.nodeCache = { positions: null, sizes: null, encoded: null, count: 0 };
+    this.edgeCache = { segments: null, widths: null, endpointSizes: null, encoded: null, count: 0 };
+    this.zeroEncodedCount = 0;
     this._zeroEncodedU8 = null;
     this.cornerBuffer = null;
     this.edgeCornerBuffer = null;
@@ -828,8 +831,27 @@ class WebGPUAttributeRenderer {
     return entry.buffer;
   }
 
+  uploadVertexBufferCached(map, key, source, cache, count) {
+    if (!source) return null;
+    const sameView = cache[key]
+      && source
+      && cache[key].buffer === source.buffer
+      && cache[key].byteOffset === source.byteOffset
+      && cache[key].byteLength === source.byteLength;
+    if (sameView && cache.count === count && map[key]?.buffer) {
+      return map[key].buffer;
+    }
+    const buffer = this.uploadVertexBuffer(map, key, source);
+    cache[key] = source;
+    cache.count = count;
+    return buffer;
+  }
+
   uploadZeroEncoded(count) {
     if (!count) return null;
+    if (this.zeroEncodedCount === count && this.nodeBuffers.zeroEncoded?.buffer) {
+      return this.nodeBuffers.zeroEncoded.buffer;
+    }
     const required = count * 4;
     if (!this._zeroEncodedU8 || this._zeroEncodedU8.byteLength < required) {
       this._zeroEncodedU8 = new Uint8Array(required);
@@ -838,6 +860,7 @@ class WebGPUAttributeRenderer {
     }
     const entry = this.ensureVertexBuffer(this.nodeBuffers, 'zeroEncoded', required);
     this.device.device.queue.writeBuffer(entry.buffer, 0, this._zeroEncodedU8.subarray(0, required));
+    this.zeroEncodedCount = count;
     return entry.buffer;
   }
 
@@ -982,26 +1005,26 @@ class WebGPUAttributeRenderer {
     const passes = [];
 
     const nodePositionBuffer = geometry.nodes.count
-      ? this.uploadVertexBuffer(this.nodeBuffers, 'positions', geometry.nodes.positions)
+      ? this.uploadVertexBufferCached(this.nodeBuffers, 'positions', geometry.nodes.positions, this.nodeCache, geometry.nodes.count)
       : null;
     const nodeSizeBuffer = geometry.nodes.count
-      ? this.uploadVertexBuffer(this.nodeBuffers, 'sizes', geometry.nodes.sizes)
+      ? this.uploadVertexBufferCached(this.nodeBuffers, 'sizes', geometry.nodes.sizes, this.nodeCache, geometry.nodes.count)
       : null;
     const nodeEncodedBuffer = (geometry.nodes.count && encoded.nodeEncoded && config.nodeAttribute)
-      ? this.uploadVertexBuffer(this.nodeBuffers, 'encoded', encoded.nodeEncoded)
+      ? this.uploadVertexBufferCached(this.nodeBuffers, 'encoded', encoded.nodeEncoded, this.nodeCache, geometry.nodes.count)
       : null;
 
     const edgeSegmentsBuffer = geometry.edges.count
-      ? this.uploadVertexBuffer(this.edgeBuffers, 'segments', geometry.edges.segments)
+      ? this.uploadVertexBufferCached(this.edgeBuffers, 'segments', geometry.edges.segments, this.edgeCache, geometry.edges.count)
       : null;
     const edgeWidthsBuffer = geometry.edges.count
-      ? this.uploadVertexBuffer(this.edgeBuffers, 'widths', geometry.edges.widths)
+      ? this.uploadVertexBufferCached(this.edgeBuffers, 'widths', geometry.edges.widths, this.edgeCache, geometry.edges.count)
       : null;
     const edgeEndpointSizeBuffer = geometry.edges.count
-      ? this.uploadVertexBuffer(this.edgeBuffers, 'endpointSizes', geometry.edges.endpointSizes)
+      ? this.uploadVertexBufferCached(this.edgeBuffers, 'endpointSizes', geometry.edges.endpointSizes, this.edgeCache, geometry.edges.count)
       : null;
     const edgeEncodedBuffer = (geometry.edges.count && encoded.edgeEncoded && config.edgeAttribute)
-      ? this.uploadVertexBuffer(this.edgeBuffers, 'encoded', encoded.edgeEncoded)
+      ? this.uploadVertexBufferCached(this.edgeBuffers, 'encoded', encoded.edgeEncoded, this.edgeCache, geometry.edges.count)
       : null;
 
     if (geometry.nodes.count && nodeEncodedBuffer && nodePositionBuffer && nodeSizeBuffer && config.nodeAttribute) {
