@@ -1,0 +1,84 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Helios Standalone Pick</title>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background: #111;
+      }
+      #app {
+        width: 320px;
+        height: 240px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module">
+      import HeliosNetwork, { AttributeType } from 'helios-network';
+      import { Helios } from '/src/index.js';
+
+      async function main() {
+        try {
+          const container = document.getElementById('app');
+          const network = await HeliosNetwork.create({ directed: false, initialNodes: 0 });
+          network.defineNodeAttribute('_helios_visuals_position', AttributeType.Float, 3);
+          network.defineNodeAttribute('_helios_visuals_size', AttributeType.Float, 1);
+          network.defineNodeAttribute('weight', AttributeType.Float);
+          network.defineEdgeAttribute('intensity', AttributeType.Float);
+          const nodes = network.addNodes(2);
+          network.withBufferAccess(() => {
+            const pos = network.getNodeAttributeBuffer('_helios_visuals_position').view;
+            const size = network.getNodeAttributeBuffer('_helios_visuals_size').view;
+            const w = network.getNodeAttributeBuffer('weight').view;
+            const positions = [
+              [0, 0, 0],
+              [120, 0, 0],
+            ];
+            nodes.forEach((id, i) => {
+              const offset = id * 3;
+              pos[offset] = positions[i][0];
+              pos[offset + 1] = positions[i][1];
+              pos[offset + 2] = positions[i][2];
+              size[id] = 48;
+              w[id] = i === 0 ? 0.2 : 0.8;
+            });
+          });
+          network.addEdges([[nodes[0], nodes[1]]]);
+
+          const helios = new Helios(network, {
+            container,
+            layout: { type: 'static', options: { bounds: [-50, -50, 50, 50] } },
+            mode: '2d',
+            manualRendering: true,
+          });
+          await helios.ready;
+          helios.renderer?.camera?.setTarget?.([0, 0, 0]);
+          helios.renderer?.camera?.setMode?.('2d');
+          const size = { width: 320, height: 240, devicePixelRatio: 1 };
+          helios.renderer?.resize?.(size);
+          helios.attributeTracker?.resize?.(size);
+          helios.size = size;
+          helios.enableAttributeTracking('index', 'index', {
+            resolutionScale: 1,
+            autoUpdate: false,
+            trackDepth: true,
+          });
+          helios.visuals?.markNodeAttributesDirty?.();
+          await helios.renderAttributeTracking();
+          helios.performRendering?.();
+          window.__helios = helios;
+        } catch (error) {
+          console.error('helios init failed', error);
+          window.__heliosError = error?.stack ?? error?.message ?? String(error);
+        }
+      }
+
+      main();
+    </script>
+  </body>
+</html>

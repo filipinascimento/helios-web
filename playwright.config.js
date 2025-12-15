@@ -18,12 +18,15 @@ export default defineConfig({
       grep: /@webgpu/,
       use: {
         browserName: 'chromium',
+        channel: 'chrome',
         headless: false,
         launchOptions: {
           args: [
             '--enable-unsafe-webgpu',
             '--disable-dawn-features=disallow_unsafe_apis',
             '--use-angle=metal',
+            '--unsafely-treat-insecure-origin-as-secure=http://127.0.0.1:4173',
+            '--enable-features=AllowUnsafeWebGPU,UnsafeWebGPU',
             ...(isLinux ? ['--enable-features=Vulkan,UseSkiaRenderer'] : []),
           ],
         },

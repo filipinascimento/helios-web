@@ -177,8 +177,9 @@ async function bootstrap() {
   const is3D = resolveMode() === '3d';
   const step = is3D ? 1 : 1;
   if (pickTest && nodeCount >= 2) {
-    edges = [[nodes[0], nodes[1]]];
+    edges = [[nodes[0], nodes[3] ?? nodes[1]]];
     if (nodeCount >= 3) edges.push([nodes[1], nodes[2]]);
+    if (nodeCount >= 4) edges.push([nodes[0], nodes[1]]);
   } else {
     for (let i = 0; i < nodeCount; i += 1) {
       for (let j = 1; j <= step; j += 1) {

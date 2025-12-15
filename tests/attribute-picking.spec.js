@@ -92,6 +92,8 @@ test('attribute picking works in headless chromium (webgl)', async ({ page }) =>
 });
 
 test('@webgpu attribute picking works in headed webgpu when available', async ({ page }) => {
+  // Navigate first so the origin is one we explicitly mark as secure for WebGPU.
+  await page.goto('/');
   const supported = await page.evaluate(() => Boolean(navigator.gpu));
   test.skip(!supported, 'WebGPU not available in browser');
   await runPickFlow(page, { renderer: 'webgpu' });
