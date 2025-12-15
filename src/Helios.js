@@ -382,7 +382,7 @@ export class Helios {
     }
   }
 
-  enableAttributeTracking(nodeAttribute = 'index', edgeAttribute = null, options = {}) {
+  enableAttributeTracking(nodeAttribute = '$index', edgeAttribute = null, options = {}) {
     if (!this.attributeTracker && this.renderer) {
       this.attributeTracker = new AttributeTracker(this.renderer);
     }
