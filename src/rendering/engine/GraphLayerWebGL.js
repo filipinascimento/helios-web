@@ -14,12 +14,14 @@ import {
 } from './shaders/graphWebGL.js';
 import { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './GraphLayerCommon.js';
 import { GraphLayer } from './GraphLayer.js';
+import { FrameGraphRunner } from './framegraph/FrameGraphRunner.js';
 
 export class GraphLayerWebGL extends GraphLayer {
   constructor(options = {}) {
     super(options);
     this.device = null;
     this.gl = null;
+    this.frameGraph = new FrameGraphRunner();
 
     this.nodeProgram = null;
     this.edgeProgram = null;
@@ -343,8 +345,10 @@ export class GraphLayerWebGL extends GraphLayer {
     if (!cameraUniforms) return;
 
     let renderedWeighted = false;
+    const passes = [];
+    let geometry = null;
     network.withBufferAccess(() => {
-      const geometry = this.readDenseGraph(network);
+      geometry = this.readDenseGraph(network);
       const is2D = cameraUniforms.mode === '2d';
       const zoom2D = is2D ? Math.max(1e-3, cameraUniforms.view?.[0] ?? 1) : 1;
       const edgeWidthFactor = is2D ? (zoom2D / EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL) : 1.0;
@@ -456,14 +460,14 @@ export class GraphLayerWebGL extends GraphLayer {
           console.info(`GraphLayerWebGL: using weighted multipass for '${transparencyMode}'`);
           this.loggedWeightedActive = true;
         }
-        this.renderWeightedWebGL(context, {
+        passes.push(() => this.renderWeightedWebGL(context, {
           geometry,
           is2D,
           cameraUniforms,
           edgeWidthBase: globalEdgeWidthBase,
           edgeWidthScale: globalEdgeWidthScale,
           viewport,
-        });
+        }));
         renderedWeighted = true;
         return;
       }
@@ -474,32 +478,43 @@ export class GraphLayerWebGL extends GraphLayer {
       }
 
       // Always render nodes with standard alpha blending.
+      gl.enable(gl.BLEND);
       gl.blendEquation(gl.FUNC_ADD);
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
       if (is2D) {
-        this.applyEdgeBlend(gl, transparencyMode);
-        drawEdges();
-        gl.blendEquation(gl.FUNC_ADD);
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-        drawNodes();
+        passes.push(() => {
+          this.applyEdgeBlend(gl, transparencyMode);
+          drawEdges();
+          gl.blendEquation(gl.FUNC_ADD);
+          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+          drawNodes();
+          gl.bindVertexArray(null);
+          gl.depthMask(true);
+          gl.depthFunc(gl.LEQUAL);
+          gl.enable(gl.DEPTH_TEST);
+        });
       } else {
-        drawNodes();
-        this.applyEdgeBlend(gl, transparencyMode);
-        drawEdges();
-        gl.blendEquation(gl.FUNC_ADD);
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        passes.push(() => {
+          drawNodes();
+          this.applyEdgeBlend(gl, transparencyMode);
+          drawEdges();
+          gl.blendEquation(gl.FUNC_ADD);
+          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+          gl.bindVertexArray(null);
+          gl.depthMask(true);
+          gl.depthFunc(gl.LEQUAL);
+          gl.enable(gl.DEPTH_TEST);
+        });
       }
-
-      gl.bindVertexArray(null);
-      gl.depthMask(true);
-      gl.depthFunc(gl.LEQUAL);
-      gl.enable(gl.DEPTH_TEST);
     });
 
     if (renderedWeighted) {
+      this.frameGraph.run(passes, context);
       return;
     }
+
+    this.frameGraph.run(passes, context);
   }
 
   applyEdgeBlend(gl, mode) {

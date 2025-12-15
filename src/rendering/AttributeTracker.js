@@ -1,4 +1,6 @@
 import { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './engine/GraphLayerCommon.js';
+import { RenderTargetPool } from './engine/RenderTargetPool.js';
+import { FrameGraphRunner } from './engine/framegraph/FrameGraphRunner.js';
 import {
   NODE_ATTRIBUTE_VERTEX,
   NODE_ATTRIBUTE_FRAGMENT,
@@ -131,8 +133,10 @@ function ensureEncodedReady(network, scope, attrName) {
 }
 
 class WebGLAttributeRenderer {
-  constructor(graphLayer) {
+  constructor(graphLayer, pool, runner) {
     this.graphLayer = graphLayer;
+    this.pool = pool;
+    this.runner = runner; // Added runner parameter
     this.gl = null;
     this.device = null;
     this.trackDepth = false;
@@ -292,20 +296,6 @@ class WebGLAttributeRenderer {
     this.nodeVAO = null;
     this.edgeVAO = null;
     this.edgeQuadVAO = null;
-    this.targets.node && gl.deleteFramebuffer(this.targets.node.handle);
-    this.targets.edge && gl.deleteFramebuffer(this.targets.edge.handle);
-    if (this.targets.node?.texture) gl.deleteTexture(this.targets.node.texture);
-    if (this.targets.edge?.texture) gl.deleteTexture(this.targets.edge.texture);
-    if (this.targets.node?.depth) gl.deleteRenderbuffer(this.targets.node.depth);
-    if (this.targets.edge?.depth) gl.deleteRenderbuffer(this.targets.edge.depth);
-    if (this.targets.node?.depthRenderbuffer) gl.deleteRenderbuffer(this.targets.node.depthRenderbuffer);
-    if (this.targets.edge?.depthRenderbuffer) gl.deleteRenderbuffer(this.targets.edge.depthRenderbuffer);
-    if (this.depthTargets.node?.texture) gl.deleteTexture(this.depthTargets.node.texture);
-    if (this.depthTargets.edge?.texture) gl.deleteTexture(this.depthTargets.edge.texture);
-    if (this.depthTargets.node?.depth) gl.deleteRenderbuffer(this.depthTargets.node.depth);
-    if (this.depthTargets.edge?.depth) gl.deleteRenderbuffer(this.depthTargets.edge.depth);
-    if (this.depthTargets.node?.handle) gl.deleteFramebuffer(this.depthTargets.node.handle);
-    if (this.depthTargets.edge?.handle) gl.deleteFramebuffer(this.depthTargets.edge.handle);
     this.targets = { node: null, edge: null };
     this.depthTargets = { node: null, edge: null };
   }
@@ -316,132 +306,18 @@ class WebGLAttributeRenderer {
     const pixelRatio = size.devicePixelRatio ?? 1;
     const width = Math.max(1, Math.floor((size.width ?? 1) * pixelRatio * scale));
     const height = Math.max(1, Math.floor((size.height ?? 1) * pixelRatio * scale));
-    if (this.size && this.size.width === width && this.size.height === height) {
-      return;
-    }
-    if (this.targets.node) {
-      this.gl.deleteFramebuffer(this.targets.node.handle);
-      this.gl.deleteTexture(this.targets.node.texture);
-      if (this.targets.node.depth) this.gl.deleteRenderbuffer(this.targets.node.depth);
-      if (this.targets.node.depthTexture) this.gl.deleteTexture(this.targets.node.depthTexture);
-      if (this.targets.node.depthRenderbuffer) this.gl.deleteRenderbuffer(this.targets.node.depthRenderbuffer);
-    }
-    if (this.targets.edge) {
-      this.gl.deleteFramebuffer(this.targets.edge.handle);
-      this.gl.deleteTexture(this.targets.edge.texture);
-      if (this.targets.edge.depth) this.gl.deleteRenderbuffer(this.targets.edge.depth);
-      if (this.targets.edge.depthTexture) this.gl.deleteTexture(this.targets.edge.depthTexture);
-      if (this.targets.edge.depthRenderbuffer) this.gl.deleteRenderbuffer(this.targets.edge.depthRenderbuffer);
-    }
-    if (this.depthTargets.node) {
-      this.gl.deleteFramebuffer(this.depthTargets.node.handle);
-      this.gl.deleteTexture(this.depthTargets.node.texture);
-      if (this.depthTargets.node.depth) this.gl.deleteRenderbuffer(this.depthTargets.node.depth);
-    }
-    if (this.depthTargets.edge) {
-      this.gl.deleteFramebuffer(this.depthTargets.edge.handle);
-      this.gl.deleteTexture(this.depthTargets.edge.texture);
-      if (this.depthTargets.edge.depth) this.gl.deleteRenderbuffer(this.depthTargets.edge.depth);
-    }
     this.size = { width, height };
-    this.targets.node = this.createTarget(width, height);
-    this.targets.edge = this.createTarget(width, height);
-    this.depthTargets.node = this.trackDepth ? this.createDepthColorTarget(width, height) : null;
-    this.depthTargets.edge = this.trackDepth ? this.createDepthColorTarget(width, height) : null;
-  }
-
-  createTarget(width, height) {
-    if (!this.trackDepth) {
-      return this.device.createFramebuffer(width, height);
-    }
-    const { gl } = this;
-    const framebuffer = gl.createFramebuffer();
-    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-
-    const texture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
-
-    // Use a depth renderbuffer for maximum readPixels compatibility on ANGLE/Chrome.
-    const depthRenderbuffer = gl.createRenderbuffer();
-    gl.bindRenderbuffer(gl.RENDERBUFFER, depthRenderbuffer);
-    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, width, height);
-    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depthRenderbuffer);
-
-    const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
-    const err = gl.getError();
-    const depthFormat = gl.DEPTH_COMPONENT16;
-    const depthType = gl.UNSIGNED_SHORT;
-    const depthBits = 16;
-    const isDevEnv = typeof process !== 'undefined' && process?.env?.NODE_ENV !== 'production';
-    if (status !== gl.FRAMEBUFFER_COMPLETE || err !== gl.NO_ERROR) {
-      console.warn('AttributeTracker: depth renderbuffer unsupported, disabling depth tracking for attributes', { status, err });
-      gl.bindTexture(gl.TEXTURE_2D, null);
-      gl.bindRenderbuffer(gl.RENDERBUFFER, null);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      return this.device.createFramebuffer(width, height);
-    }
-
-    if (isDevEnv) {
-      console.info('AttributeTracker: depth target format', {
-        chosen: depthFormat,
-        type: depthType,
-        bits: depthBits,
-        note: 'Attribute depth readback (renderbuffer)',
-      });
-    }
-    this.depthBits = depthBits;
-
-    gl.bindTexture(gl.TEXTURE_2D, null);
-    gl.bindRenderbuffer(gl.RENDERBUFFER, null);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    return {
-      type: 'webgl2',
-      handle: framebuffer,
-      texture,
-      depthRenderbuffer,
-      depthFormat,
-      depthType,
-      depthBits,
-      width,
-      height,
-    };
-  }
-
-  createDepthColorTarget(width, height) {
-    const { gl } = this;
-    const framebuffer = gl.createFramebuffer();
-    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-
-    const texture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
-
-    const depth = gl.createRenderbuffer();
-    gl.bindRenderbuffer(gl.RENDERBUFFER, depth);
-    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, width, height);
-    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depth);
-
-    gl.bindTexture(gl.TEXTURE_2D, null);
-    gl.bindRenderbuffer(gl.RENDERBUFFER, null);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    return {
-      handle: framebuffer,
-      texture,
-      depth,
-      width,
-      height,
-    };
+    const tagNode = this.trackDepth ? 'attr-node-depth-cap' : 'attr-node';
+    const tagEdge = this.trackDepth ? 'attr-edge-depth-cap' : 'attr-edge';
+    this.targets.node = this.pool.get(this.device, tagNode, width, height, { depth: true, filter: 'nearest' });
+    this.targets.edge = this.pool.get(this.device, tagEdge, width, height, { depth: true, filter: 'nearest' });
+    this.depthTargets.node = this.trackDepth
+      ? this.pool.get(this.device, 'attr-node-depth-color', width, height, { depth: true, filter: 'nearest' })
+      : null;
+    this.depthTargets.edge = this.trackDepth
+      ? this.pool.get(this.device, 'attr-edge-depth-color', width, height, { depth: true, filter: 'nearest' })
+      : null;
+    this.depthBits = this.trackDepth ? 16 : this.depthBits;
   }
 
   encodeAttributes(network, geometry, config) {
@@ -485,42 +361,14 @@ class WebGLAttributeRenderer {
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LEQUAL);
 
-    if (geometry.nodes.count && encoded.nodeEncoded && config.nodeAttribute) {
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this.targets.node?.handle ?? null);
-      gl.viewport(0, 0, this.size.width, this.size.height);
-      gl.clearColor(0, 0, 0, 0);
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-      gl.useProgram(this.nodeProgram);
-      gl.uniformMatrix4fv(gl.getUniformLocation(this.nodeProgram, 'u_viewProjection'), false, cameraUniforms.viewProjection);
-      gl.uniformMatrix4fv(gl.getUniformLocation(this.nodeProgram, 'u_view'), false, cameraUniforms.view);
-      gl.uniform3fv(gl.getUniformLocation(this.nodeProgram, 'u_cameraPosition'), cameraUniforms.position);
-      gl.uniform3fv(gl.getUniformLocation(this.nodeProgram, 'u_cameraUp'), cameraUniforms.up);
-      gl.uniform3fv(gl.getUniformLocation(this.nodeProgram, 'u_cameraRight'), cameraUniforms.right);
-      gl.uniform1i(gl.getUniformLocation(this.nodeProgram, 'u_is2D'), is2D ? 1 : 0);
-      gl.uniform1f(gl.getUniformLocation(this.nodeProgram, 'u_nodeSizeBase'), this.graphLayer.nodeSizeBase);
-      gl.uniform1f(gl.getUniformLocation(this.nodeProgram, 'u_nodeSizeScale'), this.graphLayer.nodeSizeScale);
-      gl.uniform1f(gl.getUniformLocation(this.nodeProgram, 'u_outlineWidthBase'), this.graphLayer.nodeOutlineWidthBase);
-      gl.uniform1f(gl.getUniformLocation(this.nodeProgram, 'u_outlineWidthScale'), this.graphLayer.nodeOutlineWidthScale);
-      gl.bindVertexArray(this.nodeVAO);
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.positions);
-      gl.bufferData(gl.ARRAY_BUFFER, geometry.nodes.positions, gl.DYNAMIC_DRAW);
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.sizes);
-      gl.bufferData(gl.ARRAY_BUFFER, geometry.nodes.sizes, gl.DYNAMIC_DRAW);
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.encoded);
-      gl.bufferData(gl.ARRAY_BUFFER, encoded.nodeEncoded, gl.DYNAMIC_DRAW);
-      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, geometry.nodes.count);
-    }
+    const passes = [];
 
-    if (geometry.edges.count && encoded.edgeEncoded && config.edgeAttribute) {
-      // Depth test/write for edges so overlaps are correct in attribute targets.
-      gl.enable(gl.DEPTH_TEST);
-      gl.depthMask(true);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this.targets.edge?.handle ?? null);
-      gl.viewport(0, 0, this.size.width, this.size.height);
-      gl.clearColor(0, 0, 0, 0);
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-      // First draw nodes into the edge target with zero-encoded color so they occlude edges.
-      if (geometry.nodes.count) {
+    if (geometry.nodes.count && encoded.nodeEncoded && config.nodeAttribute) {
+      passes.push(() => {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.targets.node?.handle ?? null);
+        gl.viewport(0, 0, this.size.width, this.size.height);
+        gl.clearColor(0, 0, 0, 0);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
         gl.useProgram(this.nodeProgram);
         gl.uniformMatrix4fv(gl.getUniformLocation(this.nodeProgram, 'u_viewProjection'), false, cameraUniforms.viewProjection);
         gl.uniformMatrix4fv(gl.getUniformLocation(this.nodeProgram, 'u_view'), false, cameraUniforms.view);
@@ -537,49 +385,83 @@ class WebGLAttributeRenderer {
         gl.bufferData(gl.ARRAY_BUFFER, geometry.nodes.positions, gl.DYNAMIC_DRAW);
         gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.sizes);
         gl.bufferData(gl.ARRAY_BUFFER, geometry.nodes.sizes, gl.DYNAMIC_DRAW);
-        const zeroEncoded = (this._zeroNodeEncoded?.length === geometry.nodes.count * 4)
-          ? this._zeroNodeEncoded
-          : new Uint8Array(geometry.nodes.count * 4);
-        zeroEncoded.fill(0);
-        this._zeroNodeEncoded = zeroEncoded;
         gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.encoded);
-        gl.bufferData(gl.ARRAY_BUFFER, zeroEncoded, gl.DYNAMIC_DRAW);
+        gl.bufferData(gl.ARRAY_BUFFER, encoded.nodeEncoded, gl.DYNAMIC_DRAW);
         gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, geometry.nodes.count);
-      }
-      const useQuads = this.graphLayer.edgeRenderingMode === 'quad';
-      const widthBaseLocation = 'u_edgeWidthBase';
-      const widthScaleLocation = 'u_edgeWidthScale';
-      const nodeSizeBaseLocation = 'u_nodeSizeBase';
-      const nodeSizeScaleLocation = 'u_nodeSizeScale';
-      const endpointLocation = 'u_edgeEndpointTrim';
-      const program = useQuads ? this.edgeQuadProgram : this.edgeProgram;
-      gl.useProgram(program);
-      gl.uniformMatrix4fv(gl.getUniformLocation(program, 'u_viewProjection'), false, cameraUniforms.viewProjection);
-      gl.uniform1f(gl.getUniformLocation(program, widthBaseLocation), edgeWidthBase);
-      gl.uniform1f(gl.getUniformLocation(program, widthScaleLocation), edgeWidthScale);
-      gl.uniform1f(gl.getUniformLocation(program, nodeSizeBaseLocation), this.graphLayer.nodeSizeBase);
-      gl.uniform1f(gl.getUniformLocation(program, nodeSizeScaleLocation), this.graphLayer.nodeSizeScale);
-      gl.uniform1f(gl.getUniformLocation(program, endpointLocation), this.graphLayer.edgeEndpointTrim);
-      if (useQuads) {
-        const viewport = cameraUniforms.viewport;
-        const vw = viewport?.width ? viewport.width * (viewport.devicePixelRatio ?? 1) : this.size.width;
-        const vh = viewport?.height ? viewport.height * (viewport.devicePixelRatio ?? 1) : this.size.height;
-        gl.uniform2f(gl.getUniformLocation(program, 'u_viewport'), vw, vh);
-      }
-      gl.bindVertexArray(useQuads ? this.edgeQuadVAO : this.edgeVAO);
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.segments);
-      gl.bufferData(gl.ARRAY_BUFFER, geometry.edges.segments, gl.DYNAMIC_DRAW);
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.widths);
-      gl.bufferData(gl.ARRAY_BUFFER, geometry.edges.widths, gl.DYNAMIC_DRAW);
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.endpointSizes);
-      gl.bufferData(gl.ARRAY_BUFFER, geometry.edges.endpointSizes, gl.DYNAMIC_DRAW);
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.encoded);
-      gl.bufferData(gl.ARRAY_BUFFER, encoded.edgeEncoded, gl.DYNAMIC_DRAW);
-      if (useQuads) {
-        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, geometry.edges.count);
-      } else {
-        gl.drawArraysInstanced(gl.LINES, 0, 2, geometry.edges.count);
-      }
+      });
+    }
+
+    if (geometry.edges.count && encoded.edgeEncoded && config.edgeAttribute) {
+      // Depth test/write for edges so overlaps are correct in attribute targets.
+      passes.push(() => {
+        gl.enable(gl.DEPTH_TEST);
+        gl.depthMask(true);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.targets.edge?.handle ?? null);
+        gl.viewport(0, 0, this.size.width, this.size.height);
+        gl.clearColor(0, 0, 0, 0);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        // First draw nodes into the edge target with zero-encoded color so they occlude edges.
+        if (geometry.nodes.count) {
+          gl.useProgram(this.nodeProgram);
+          gl.uniformMatrix4fv(gl.getUniformLocation(this.nodeProgram, 'u_viewProjection'), false, cameraUniforms.viewProjection);
+          gl.uniformMatrix4fv(gl.getUniformLocation(this.nodeProgram, 'u_view'), false, cameraUniforms.view);
+          gl.uniform3fv(gl.getUniformLocation(this.nodeProgram, 'u_cameraPosition'), cameraUniforms.position);
+          gl.uniform3fv(gl.getUniformLocation(this.nodeProgram, 'u_cameraUp'), cameraUniforms.up);
+          gl.uniform3fv(gl.getUniformLocation(this.nodeProgram, 'u_cameraRight'), cameraUniforms.right);
+          gl.uniform1i(gl.getUniformLocation(this.nodeProgram, 'u_is2D'), is2D ? 1 : 0);
+          gl.uniform1f(gl.getUniformLocation(this.nodeProgram, 'u_nodeSizeBase'), this.graphLayer.nodeSizeBase);
+          gl.uniform1f(gl.getUniformLocation(this.nodeProgram, 'u_nodeSizeScale'), this.graphLayer.nodeSizeScale);
+          gl.uniform1f(gl.getUniformLocation(this.nodeProgram, 'u_outlineWidthBase'), this.graphLayer.nodeOutlineWidthBase);
+          gl.uniform1f(gl.getUniformLocation(this.nodeProgram, 'u_outlineWidthScale'), this.graphLayer.nodeOutlineWidthScale);
+          gl.bindVertexArray(this.nodeVAO);
+          gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.positions);
+          gl.bufferData(gl.ARRAY_BUFFER, geometry.nodes.positions, gl.DYNAMIC_DRAW);
+          gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.sizes);
+          gl.bufferData(gl.ARRAY_BUFFER, geometry.nodes.sizes, gl.DYNAMIC_DRAW);
+          const zeroEncoded = (this._zeroNodeEncoded?.length === geometry.nodes.count * 4)
+            ? this._zeroNodeEncoded
+            : new Uint8Array(geometry.nodes.count * 4);
+          zeroEncoded.fill(0);
+          this._zeroNodeEncoded = zeroEncoded;
+          gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.encoded);
+          gl.bufferData(gl.ARRAY_BUFFER, zeroEncoded, gl.DYNAMIC_DRAW);
+          gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, geometry.nodes.count);
+        }
+        const useQuads = this.graphLayer.edgeRenderingMode === 'quad';
+        const widthBaseLocation = 'u_edgeWidthBase';
+        const widthScaleLocation = 'u_edgeWidthScale';
+        const nodeSizeBaseLocation = 'u_nodeSizeBase';
+        const nodeSizeScaleLocation = 'u_nodeSizeScale';
+        const endpointLocation = 'u_edgeEndpointTrim';
+        const program = useQuads ? this.edgeQuadProgram : this.edgeProgram;
+        gl.useProgram(program);
+        gl.uniformMatrix4fv(gl.getUniformLocation(program, 'u_viewProjection'), false, cameraUniforms.viewProjection);
+        gl.uniform1f(gl.getUniformLocation(program, widthBaseLocation), edgeWidthBase);
+        gl.uniform1f(gl.getUniformLocation(program, widthScaleLocation), edgeWidthScale);
+        gl.uniform1f(gl.getUniformLocation(program, nodeSizeBaseLocation), this.graphLayer.nodeSizeBase);
+        gl.uniform1f(gl.getUniformLocation(program, nodeSizeScaleLocation), this.graphLayer.nodeSizeScale);
+        gl.uniform1f(gl.getUniformLocation(program, endpointLocation), this.graphLayer.edgeEndpointTrim);
+        if (useQuads) {
+          const viewport = cameraUniforms.viewport;
+          const vw = viewport?.width ? viewport.width * (viewport.devicePixelRatio ?? 1) : this.size.width;
+          const vh = viewport?.height ? viewport.height * (viewport.devicePixelRatio ?? 1) : this.size.height;
+          gl.uniform2f(gl.getUniformLocation(program, 'u_viewport'), vw, vh);
+        }
+        gl.bindVertexArray(useQuads ? this.edgeQuadVAO : this.edgeVAO);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.segments);
+        gl.bufferData(gl.ARRAY_BUFFER, geometry.edges.segments, gl.DYNAMIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.widths);
+        gl.bufferData(gl.ARRAY_BUFFER, geometry.edges.widths, gl.DYNAMIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.endpointSizes);
+        gl.bufferData(gl.ARRAY_BUFFER, geometry.edges.endpointSizes, gl.DYNAMIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.encoded);
+        gl.bufferData(gl.ARRAY_BUFFER, encoded.edgeEncoded, gl.DYNAMIC_DRAW);
+        if (useQuads) {
+          gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, geometry.edges.count);
+        } else {
+          gl.drawArraysInstanced(gl.LINES, 0, 2, geometry.edges.count);
+        }
+      });
     }
 
     // Optional depth-to-color fallback: render packed depth into a color target for robust readback.
@@ -649,26 +531,31 @@ class WebGLAttributeRenderer {
 
     if (config.trackDepth) {
       if (geometry.nodes.count && this.depthTargets.node) {
-        renderDepthColor(this.depthTargets.node, true, false);
+        passes.push(() => renderDepthColor(this.depthTargets.node, true, false));
       }
       if (geometry.edges.count && this.depthTargets.edge) {
         const useQuads = this.graphLayer.edgeRenderingMode === 'quad';
+        passes.push(() => {
           // Draw occluding nodes into the edge depth-color target before edges.
           if (geometry.nodes.count && this.depthTargets.edge) {
             renderDepthColor(this.depthTargets.edge, true, false);
           }
           renderDepthColor(this.depthTargets.edge, false, useQuads);
+        });
       }
     }
 
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.bindVertexArray(null);
-    // Restore default blend/depth state expected by the main render pass.
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    gl.depthMask(true);
-    gl.enable(gl.DEPTH_TEST);
-    gl.depthFunc(gl.LEQUAL);
+    passes.push(() => {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.bindVertexArray(null);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.depthMask(true);
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthFunc(gl.LEQUAL);
+    });
+
+    this.runner?.run?.(passes, { gl, device: this.device });
     return { ...this.targets, depthTargets: this.depthTargets };
   }
 
@@ -712,9 +599,12 @@ class WebGLAttributeRenderer {
 }
 
 class WebGPUAttributeRenderer {
-  constructor(graphLayer) {
+  constructor(graphLayer, pool, runner) {
     this.graphLayer = graphLayer;
+    this.pool = pool;
+    this.runner = runner;
     this.device = null;
+    this.trackDepth = false;
     this.nodePipeline = null;
     this.nodeDepthPipeline = null;
     this.edgePipeline = null;
@@ -927,14 +817,6 @@ class WebGPUAttributeRenderer {
   }
 
   destroy() {
-    this.targets.node?.texture?.destroy?.();
-    this.targets.edge?.texture?.destroy?.();
-    this.targets.node?.depthTexture?.destroy?.();
-    this.targets.edge?.depthTexture?.destroy?.();
-    this.depthTargets.node?.texture?.destroy?.();
-    this.depthTargets.edge?.texture?.destroy?.();
-    this.depthTargets.node?.depthTexture?.destroy?.();
-    this.depthTargets.edge?.depthTexture?.destroy?.();
     this.cornerBuffer?.destroy?.();
     this.edgeCornerBuffer?.destroy?.();
     this.nodeBuffers.instances?.destroy?.();
@@ -944,25 +826,24 @@ class WebGPUAttributeRenderer {
     this.depthTargets = { node: null, edge: null };
   }
 
-  resize(size, scale) {
+  resize(size, scale, trackDepth) {
     if (!size || !this.device) return;
     const pixelRatio = size.devicePixelRatio ?? 1;
     const width = Math.max(1, Math.floor((size.width ?? 1) * pixelRatio * scale));
     const height = Math.max(1, Math.floor((size.height ?? 1) * pixelRatio * scale));
-    if (this.size && this.size.width === width && this.size.height === height) return;
-    this.targets.node?.texture?.destroy?.();
-    this.targets.edge?.texture?.destroy?.();
-    this.targets.node?.depthTexture?.destroy?.();
-    this.targets.edge?.depthTexture?.destroy?.();
-    this.depthTargets.node?.texture?.destroy?.();
-    this.depthTargets.edge?.texture?.destroy?.();
-    this.depthTargets.node?.depthTexture?.destroy?.();
-    this.depthTargets.edge?.depthTexture?.destroy?.();
+    if (this.size && this.size.width === width && this.size.height === height && this.trackDepth === (trackDepth === true)) {
+      return;
+    }
     this.size = { width, height };
-    this.targets.node = this.device.createFramebuffer(width, height);
-    this.targets.edge = this.device.createFramebuffer(width, height);
-    this.depthTargets.node = this.device.createFramebuffer(width, height);
-    this.depthTargets.edge = this.device.createFramebuffer(width, height);
+    this.trackDepth = trackDepth === true;
+    this.targets.node = this.pool.get(this.device, 'attr-node', width, height, { depth: true, filter: 'nearest' });
+    this.targets.edge = this.pool.get(this.device, 'attr-edge', width, height, { depth: true, filter: 'nearest' });
+    this.depthTargets.node = this.trackDepth
+      ? this.pool.get(this.device, 'attr-node-depth-color', width, height, { depth: true, filter: 'nearest' })
+      : null;
+    this.depthTargets.edge = this.trackDepth
+      ? this.pool.get(this.device, 'attr-edge-depth-color', width, height, { depth: true, filter: 'nearest' })
+      : null;
   }
 
   encodeAttributes(network, geometry, config) {
@@ -981,7 +862,7 @@ class WebGPUAttributeRenderer {
     const scale = config.resolutionScale ?? 1;
     ensureEncodedReady(network, 'node', config.nodeAttribute);
     ensureEncodedReady(network, 'edge', config.edgeAttribute);
-    this.resize(size, scale);
+    this.resize(size, scale, config.trackDepth);
     const cameraUniforms = this.graphLayer.getCameraUniforms(camera);
     if (!cameraUniforms) return null;
     if (!this.graphLayer.updateDenseGraphBuffers(network)) return null;
@@ -1046,116 +927,25 @@ class WebGPUAttributeRenderer {
     globalsArray[16] = this.graphLayer.edgeEndpointTrim;
     globalsBuffer.unmap();
 
+    // Bind groups depend on per-frame camera/global buffers; refresh every render.
+    this.nodeBindGroup = gpu.createBindGroup({
+      layout: this.nodeBindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: cameraBuffer } },
+        { binding: 1, resource: { buffer: globalsBuffer } },
+      ],
+    });
+
     const encoder = gpu.createCommandEncoder();
     const nodeStrideBytes = 32;
     const nodeStrideFloats = nodeStrideBytes / 4;
+    const passes = [];
 
     if (geometry.nodes.count && encoded.nodeEncoded && config.nodeAttribute) {
-      this.nodeBuffers.instances?.destroy?.();
-      const buffer = new ArrayBuffer(geometry.nodes.count * nodeStrideBytes);
-      const floatView = new Float32Array(buffer);
-      const uintView = new Uint32Array(buffer);
-      for (let i = 0; i < geometry.nodes.count; i += 1) {
-        const posBase = i * 3;
-        const base = i * nodeStrideFloats;
-        floatView[base] = geometry.nodes.positions[posBase];
-        floatView[base + 1] = geometry.nodes.positions[posBase + 1];
-        floatView[base + 2] = geometry.nodes.positions[posBase + 2];
-        floatView[base + 3] = geometry.nodes.sizes[i];
-        const encBase = base + 4;
-        const srcBase = i * 4;
-        uintView[encBase] = encoded.nodeEncoded[srcBase] ?? 0;
-        uintView[encBase + 1] = encoded.nodeEncoded[srcBase + 1] ?? 0;
-        uintView[encBase + 2] = encoded.nodeEncoded[srcBase + 2] ?? 0;
-        uintView[encBase + 3] = encoded.nodeEncoded[srcBase + 3] ?? 0;
-      }
-      this.nodeBuffers.instances = gpu.createBuffer({
-        size: buffer.byteLength,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-        mappedAtCreation: true,
-      });
-      new Uint8Array(this.nodeBuffers.instances.getMappedRange()).set(new Uint8Array(buffer));
-      this.nodeBuffers.instances.unmap();
-
-      this.nodeBindGroup = gpu.createBindGroup({
-        layout: this.nodeBindGroupLayout,
-        entries: [
-          { binding: 0, resource: { buffer: cameraBuffer } },
-          { binding: 1, resource: { buffer: globalsBuffer } },
-        ],
-      });
-
-      const pass = encoder.beginRenderPass({
-        colorAttachments: [{
-          view: this.targets.node.texture.createView(),
-          clearValue: { r: 0, g: 0, b: 0, a: 0 },
-          loadOp: 'clear',
-          storeOp: 'store',
-        }],
-        depthStencilAttachment: {
-          view: this.targets.node.depthTexture.createView(),
-          depthClearValue: 1,
-          depthLoadOp: 'clear',
-          depthStoreOp: 'store',
-        },
-      });
-      pass.setPipeline(this.nodePipeline);
-      pass.setBindGroup(0, this.nodeBindGroup);
-      pass.setVertexBuffer(0, this.cornerBuffer);
-      pass.setVertexBuffer(1, this.nodeBuffers.instances);
-      pass.draw(4, geometry.nodes.count, 0, 0);
-      pass.end();
-    }
-
-    if (geometry.edges.count && encoded.edgeEncoded && config.edgeAttribute) {
-      this.edgeBuffers.instances?.destroy?.();
-      const edgeStrideBytes = 56;
-      const edgeStrideFloats = edgeStrideBytes / 4;
-      const buffer = new ArrayBuffer(geometry.edges.count * edgeStrideBytes);
-      const floatView = new Float32Array(buffer);
-      const uintView = new Uint32Array(buffer);
-      for (let i = 0; i < geometry.edges.count; i += 1) {
-        const segBase = i * 6;
-        const widthBase = i * 2;
-        const base = i * edgeStrideFloats;
-        floatView[base] = geometry.edges.segments[segBase];
-        floatView[base + 1] = geometry.edges.segments[segBase + 1];
-        floatView[base + 2] = geometry.edges.segments[segBase + 2];
-        floatView[base + 3] = geometry.edges.segments[segBase + 3];
-        floatView[base + 4] = geometry.edges.segments[segBase + 4];
-        floatView[base + 5] = geometry.edges.segments[segBase + 5];
-        floatView[base + 6] = geometry.edges.widths[widthBase];
-        floatView[base + 7] = geometry.edges.widths[widthBase + 1];
-        floatView[base + 8] = geometry.edges.endpointSizes[widthBase];
-        floatView[base + 9] = geometry.edges.endpointSizes[widthBase + 1];
-        const encBase = base + 10;
-        const srcBase = i * 4;
-        uintView[encBase] = encoded.edgeEncoded[srcBase] ?? 0;
-        uintView[encBase + 1] = encoded.edgeEncoded[srcBase + 1] ?? 0;
-        uintView[encBase + 2] = encoded.edgeEncoded[srcBase + 2] ?? 0;
-        uintView[encBase + 3] = encoded.edgeEncoded[srcBase + 3] ?? 0;
-      }
-      this.edgeBuffers.instances = gpu.createBuffer({
-        size: buffer.byteLength,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-        mappedAtCreation: true,
-      });
-      new Uint8Array(this.edgeBuffers.instances.getMappedRange()).set(new Uint8Array(buffer));
-      this.edgeBuffers.instances.unmap();
-
-      this.edgeBindGroup = gpu.createBindGroup({
-        layout: this.edgeBindGroupLayout,
-        entries: [
-          { binding: 0, resource: { buffer: cameraBuffer } },
-          { binding: 1, resource: { buffer: globalsBuffer } },
-        ],
-      });
-
-      // Render nodes into the edge target with zero-encoded color to occlude edges.
-      if (geometry.nodes.count && config.edgeAttribute && this.targets.edge) {
-        const occlusionBuffer = new ArrayBuffer(geometry.nodes.count * nodeStrideBytes);
-        const floatView = new Float32Array(occlusionBuffer);
-        const uintView = new Uint32Array(occlusionBuffer);
+      passes.push(() => {
+        const buffer = new ArrayBuffer(geometry.nodes.count * nodeStrideBytes);
+        const floatView = new Float32Array(buffer);
+        const uintView = new Uint32Array(buffer);
         for (let i = 0; i < geometry.nodes.count; i += 1) {
           const posBase = i * 3;
           const base = i * nodeStrideFloats;
@@ -1163,109 +953,150 @@ class WebGPUAttributeRenderer {
           floatView[base + 1] = geometry.nodes.positions[posBase + 1];
           floatView[base + 2] = geometry.nodes.positions[posBase + 2];
           floatView[base + 3] = geometry.nodes.sizes[i];
-          // encoded bytes remain zero to yield -1 when decoded.
-          uintView[base + 4] = 0;
-          uintView[base + 5] = 0;
-          uintView[base + 6] = 0;
-          uintView[base + 7] = 0;
+          const encBase = base + 4;
+          const srcBase = i * 4;
+          uintView[encBase] = encoded.nodeEncoded[srcBase] ?? 0;
+          uintView[encBase + 1] = encoded.nodeEncoded[srcBase + 1] ?? 0;
+          uintView[encBase + 2] = encoded.nodeEncoded[srcBase + 2] ?? 0;
+          uintView[encBase + 3] = encoded.nodeEncoded[srcBase + 3] ?? 0;
         }
-        const occlusionInstances = gpu.createBuffer({
-          size: occlusionBuffer.byteLength,
+        this.nodeBuffers.instances = gpu.createBuffer({
+          size: buffer.byteLength,
           usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
           mappedAtCreation: true,
         });
-        new Uint8Array(occlusionInstances.getMappedRange()).set(new Uint8Array(occlusionBuffer));
-        occlusionInstances.unmap();
+        new Uint8Array(this.nodeBuffers.instances.getMappedRange()).set(new Uint8Array(buffer));
+        this.nodeBuffers.instances.unmap();
 
-        const passNodes = encoder.beginRenderPass({
-          colorAttachments: [{
-            view: this.targets.edge.texture.createView(),
-            loadOp: 'load', // keep previous clear
-            storeOp: 'store',
-          }],
-          depthStencilAttachment: {
-            view: this.targets.edge.depthTexture.createView(),
-            depthLoadOp: 'load',
-            depthStoreOp: 'store',
-          },
-        });
-        passNodes.setPipeline(this.nodePipeline);
-        passNodes.setBindGroup(0, this.nodeBindGroup);
-        passNodes.setVertexBuffer(0, this.cornerBuffer);
-        passNodes.setVertexBuffer(1, occlusionInstances);
-        passNodes.draw(4, geometry.nodes.count, 0, 0);
-        passNodes.end();
-      }
-
-      const pass = encoder.beginRenderPass({
-        colorAttachments: [{
-          view: this.targets.edge.texture.createView(),
-          clearValue: { r: 0, g: 0, b: 0, a: 0 },
-          loadOp: 'clear',
-          storeOp: 'store',
-        }],
-        depthStencilAttachment: {
-          view: this.targets.edge.depthTexture.createView(),
-          depthClearValue: 1,
-          depthLoadOp: 'clear',
-          depthStoreOp: 'store',
-        },
-      });
-      const useQuad = this.graphLayer.edgeRenderingMode === 'quad';
-      pass.setPipeline(useQuad ? this.edgeQuadPipeline : this.edgePipeline);
-      pass.setBindGroup(0, this.edgeBindGroup);
-      if (useQuad) {
-        pass.setVertexBuffer(0, this.edgeCornerBuffer);
-        pass.setVertexBuffer(1, this.edgeBuffers.instances);
-        pass.draw(4, geometry.edges.count, 0, 0);
-      } else {
-        pass.setVertexBuffer(0, this.edgeBuffers.instances);
-        pass.draw(2, geometry.edges.count, 0, 0);
-      }
-      pass.end();
-    }
-
-    if (config.trackDepth) {
-      if (geometry.nodes.count && this.depthTargets.node) {
         const pass = encoder.beginRenderPass({
           colorAttachments: [{
-            view: this.depthTargets.node.texture.createView(),
+            view: this.targets.node.texture.createView(),
             clearValue: { r: 0, g: 0, b: 0, a: 0 },
             loadOp: 'clear',
             storeOp: 'store',
           }],
           depthStencilAttachment: {
-            view: this.depthTargets.node.depthTexture.createView(),
+            view: this.targets.node.depthTexture.createView(),
             depthClearValue: 1,
             depthLoadOp: 'clear',
             depthStoreOp: 'store',
           },
         });
-        pass.setPipeline(this.nodeDepthPipeline);
+        pass.setPipeline(this.nodePipeline);
         pass.setBindGroup(0, this.nodeBindGroup);
         pass.setVertexBuffer(0, this.cornerBuffer);
         pass.setVertexBuffer(1, this.nodeBuffers.instances);
         pass.draw(4, geometry.nodes.count, 0, 0);
         pass.end();
-      }
+      });
+    }
 
-      if (geometry.edges.count && this.depthTargets.edge) {
-        const useQuad = this.graphLayer.edgeRenderingMode === 'quad';
+    if (geometry.edges.count && encoded.edgeEncoded && config.edgeAttribute) {
+      passes.push(() => {
+        const edgeStrideBytes = 56;
+        const edgeStrideFloats = edgeStrideBytes / 4;
+        const buffer = new ArrayBuffer(geometry.edges.count * edgeStrideBytes);
+        const floatView = new Float32Array(buffer);
+        const uintView = new Uint32Array(buffer);
+        for (let i = 0; i < geometry.edges.count; i += 1) {
+          const segBase = i * 6;
+          const widthBase = i * 2;
+          const base = i * edgeStrideFloats;
+          floatView[base] = geometry.edges.segments[segBase];
+          floatView[base + 1] = geometry.edges.segments[segBase + 1];
+          floatView[base + 2] = geometry.edges.segments[segBase + 2];
+          floatView[base + 3] = geometry.edges.segments[segBase + 3];
+          floatView[base + 4] = geometry.edges.segments[segBase + 4];
+          floatView[base + 5] = geometry.edges.segments[segBase + 5];
+          floatView[base + 6] = geometry.edges.widths[widthBase];
+          floatView[base + 7] = geometry.edges.widths[widthBase + 1];
+          floatView[base + 8] = geometry.edges.endpointSizes[widthBase];
+          floatView[base + 9] = geometry.edges.endpointSizes[widthBase + 1];
+          const encBase = base + 10;
+          const srcBase = i * 4;
+          uintView[encBase] = encoded.edgeEncoded[srcBase] ?? 0;
+          uintView[encBase + 1] = encoded.edgeEncoded[srcBase + 1] ?? 0;
+          uintView[encBase + 2] = encoded.edgeEncoded[srcBase + 2] ?? 0;
+          uintView[encBase + 3] = encoded.edgeEncoded[srcBase + 3] ?? 0;
+        }
+        this.edgeBuffers.instances = gpu.createBuffer({
+          size: buffer.byteLength,
+          usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+          mappedAtCreation: true,
+        });
+        new Uint8Array(this.edgeBuffers.instances.getMappedRange()).set(new Uint8Array(buffer));
+        this.edgeBuffers.instances.unmap();
+
+        this.edgeBindGroup = gpu.createBindGroup({
+          layout: this.edgeBindGroupLayout,
+          entries: [
+            { binding: 0, resource: { buffer: cameraBuffer } },
+            { binding: 1, resource: { buffer: globalsBuffer } },
+          ],
+        });
+
+        // Render nodes into the edge target with zero-encoded color to occlude edges.
+        if (geometry.nodes.count && config.edgeAttribute && this.targets.edge && this.nodeBindGroup) {
+          const occlusionBuffer = new ArrayBuffer(geometry.nodes.count * nodeStrideBytes);
+          const floatView = new Float32Array(occlusionBuffer);
+          const uintView = new Uint32Array(occlusionBuffer);
+          for (let i = 0; i < geometry.nodes.count; i += 1) {
+            const posBase = i * 3;
+            const base = i * nodeStrideFloats;
+            floatView[base] = geometry.nodes.positions[posBase];
+            floatView[base + 1] = geometry.nodes.positions[posBase + 1];
+            floatView[base + 2] = geometry.nodes.positions[posBase + 2];
+            floatView[base + 3] = geometry.nodes.sizes[i];
+            // encoded bytes remain zero to yield -1 when decoded.
+            uintView[base + 4] = 0;
+            uintView[base + 5] = 0;
+            uintView[base + 6] = 0;
+            uintView[base + 7] = 0;
+          }
+          const occlusionInstances = gpu.createBuffer({
+            size: occlusionBuffer.byteLength,
+            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+            mappedAtCreation: true,
+          });
+          new Uint8Array(occlusionInstances.getMappedRange()).set(new Uint8Array(occlusionBuffer));
+          occlusionInstances.unmap();
+
+          const passNodes = encoder.beginRenderPass({
+            colorAttachments: [{
+              view: this.targets.edge.texture.createView(),
+              loadOp: 'load', // keep previous clear
+              storeOp: 'store',
+            }],
+            depthStencilAttachment: {
+              view: this.targets.edge.depthTexture.createView(),
+              depthLoadOp: 'load',
+              depthStoreOp: 'store',
+            },
+          });
+          passNodes.setPipeline(this.nodePipeline);
+          passNodes.setBindGroup(0, this.nodeBindGroup);
+          passNodes.setVertexBuffer(0, this.cornerBuffer);
+          passNodes.setVertexBuffer(1, occlusionInstances);
+          passNodes.draw(4, geometry.nodes.count, 0, 0);
+          passNodes.end();
+        }
+
         const pass = encoder.beginRenderPass({
           colorAttachments: [{
-            view: this.depthTargets.edge.texture.createView(),
+            view: this.targets.edge.texture.createView(),
             clearValue: { r: 0, g: 0, b: 0, a: 0 },
             loadOp: 'clear',
             storeOp: 'store',
           }],
           depthStencilAttachment: {
-            view: this.depthTargets.edge.depthTexture.createView(),
+            view: this.targets.edge.depthTexture.createView(),
             depthClearValue: 1,
             depthLoadOp: 'clear',
             depthStoreOp: 'store',
           },
         });
-        pass.setPipeline(useQuad ? this.edgeQuadDepthPipeline : this.edgeDepthPipeline);
+        const useQuad = this.graphLayer.edgeRenderingMode === 'quad';
+        pass.setPipeline(useQuad ? this.edgeQuadPipeline : this.edgePipeline);
         pass.setBindGroup(0, this.edgeBindGroup);
         if (useQuad) {
           pass.setVertexBuffer(0, this.edgeCornerBuffer);
@@ -1276,12 +1107,74 @@ class WebGPUAttributeRenderer {
           pass.draw(2, geometry.edges.count, 0, 0);
         }
         pass.end();
+      });
+    }
+
+    if (config.trackDepth) {
+      if (geometry.nodes.count && this.depthTargets.node && this.nodeBindGroup && this.nodeBuffers.instances) {
+        passes.push(() => {
+          const pass = encoder.beginRenderPass({
+            colorAttachments: [{
+              view: this.depthTargets.node.texture.createView(),
+              clearValue: { r: 0, g: 0, b: 0, a: 0 },
+              loadOp: 'clear',
+              storeOp: 'store',
+            }],
+            depthStencilAttachment: {
+              view: this.depthTargets.node.depthTexture.createView(),
+              depthClearValue: 1,
+              depthLoadOp: 'clear',
+              depthStoreOp: 'store',
+            },
+          });
+          pass.setPipeline(this.nodeDepthPipeline);
+          pass.setBindGroup(0, this.nodeBindGroup);
+          pass.setVertexBuffer(0, this.cornerBuffer);
+          pass.setVertexBuffer(1, this.nodeBuffers.instances);
+          pass.draw(4, geometry.nodes.count, 0, 0);
+          pass.end();
+        });
+      }
+
+      if (geometry.edges.count && this.depthTargets.edge && this.edgeBindGroup && this.edgeBuffers.instances) {
+        passes.push(() => {
+          const useQuad = this.graphLayer.edgeRenderingMode === 'quad';
+          const pass = encoder.beginRenderPass({
+            colorAttachments: [{
+              view: this.depthTargets.edge.texture.createView(),
+              clearValue: { r: 0, g: 0, b: 0, a: 0 },
+              loadOp: 'clear',
+              storeOp: 'store',
+            }],
+            depthStencilAttachment: {
+              view: this.depthTargets.edge.depthTexture.createView(),
+              depthClearValue: 1,
+              depthLoadOp: 'clear',
+              depthStoreOp: 'store',
+            },
+          });
+          pass.setPipeline(useQuad ? this.edgeQuadDepthPipeline : this.edgeDepthPipeline);
+          pass.setBindGroup(0, this.edgeBindGroup);
+          if (useQuad) {
+            pass.setVertexBuffer(0, this.edgeCornerBuffer);
+            pass.setVertexBuffer(1, this.edgeBuffers.instances);
+            pass.draw(4, geometry.edges.count, 0, 0);
+          } else {
+            pass.setVertexBuffer(0, this.edgeBuffers.instances);
+            pass.draw(2, geometry.edges.count, 0, 0);
+          }
+          pass.end();
+        });
       }
     }
 
-    gpu.queue.submit([encoder.finish()]);
-    cameraBuffer.destroy();
-    globalsBuffer.destroy();
+    passes.push(() => {
+      gpu.queue.submit([encoder.finish()]);
+      cameraBuffer.destroy();
+      globalsBuffer.destroy();
+    });
+
+    this.runner?.run?.(passes, { device: this.device });
     return { ...this.targets, depthTargets: this.depthTargets };
   }
 }
@@ -1297,6 +1190,8 @@ export class AttributeTracker {
     this.webgpu = null;
     this.size = renderer?.size ?? null;
     this.lastTargets = null;
+    this.targetPool = new RenderTargetPool();
+    this.runner = new FrameGraphRunner();
   }
 
   enable(nodeAttribute, edgeAttribute, options = {}) {
@@ -1337,7 +1232,7 @@ export class AttributeTracker {
     const device = this.renderer.device;
     if (device.type === 'webgl2') {
       if (!this.webgl) {
-        this.webgl = new WebGLAttributeRenderer(this.graphLayer);
+        this.webgl = new WebGLAttributeRenderer(this.graphLayer, this.targetPool, this.runner);
         this.webgl.initialize(device);
       }
       this.lastTargets = this.webgl.render(frame, this.size ?? this.renderer.size, {
@@ -1348,7 +1243,7 @@ export class AttributeTracker {
       });
     } else if (device.type === 'webgpu') {
       if (!this.webgpu) {
-        this.webgpu = new WebGPUAttributeRenderer(this.graphLayer);
+        this.webgpu = new WebGPUAttributeRenderer(this.graphLayer, this.targetPool, this.runner);
         this.webgpu.initialize(device);
       }
       this.lastTargets = this.webgpu.render(frame, this.size ?? this.renderer.size, {
@@ -1428,5 +1323,6 @@ export class AttributeTracker {
     this.webgl = null;
     this.webgpu = null;
     this.lastTargets = null;
+    this.targetPool?.releaseAll?.(this.renderer?.device);
   }
 }

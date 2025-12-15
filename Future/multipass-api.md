@@ -38,6 +38,7 @@ Introduce a modular pass graph that:
 - Preserve edge rendering modes and transparency behavior by mapping them to pass sets:
   - Alpha path: scene pass with node+edge in chosen order.
   - Weighted path: node depth seed (3D), edge accumulation MRT pass, resolve pass, optional node overlay (2D).
+- Treat attribute tracking as first-class passes that share the same geometry uploads and pooled render targets (node/edge color IDs plus optional packed-depth targets) across WebGL/WebGPU.
 - Multi-camera: allow multiple camera pass instances targeting different resources; final compose/present can place textures into panels (using `presentFramebuffer` rects).
 - AA: per-pass `samples` for MSAA, with automatic resolve pass to single-sample textures before post-processing; also include optional FXAA/TAA passes in the graph.
 - Depth use: passes can declare depth attachment and depth read dependencies (for SSAO or soft particles). WebGL requires depth texture support; guard and fallback.

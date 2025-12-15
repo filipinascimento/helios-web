@@ -7,11 +7,14 @@ import {
 } from './shaders/graphWebGPU.js';
 import { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './GraphLayerCommon.js';
 import { GraphLayer } from './GraphLayer.js';
+import { FrameGraphRunner } from './framegraph/FrameGraphRunner.js';
 
 export class GraphLayerWebGPU extends GraphLayer {
   constructor(options = {}) {
     super(options);
     this.device = null;
+
+    this.frameGraph = new FrameGraphRunner();
 
     this.nodeBindGroupLayout = null;
     this.edgeBindGroupLayout = null;
@@ -369,6 +372,7 @@ export class GraphLayerWebGPU extends GraphLayer {
     let geometry = null;
     let is2D = cameraUniforms?.mode === '2d';
 
+    const passes = [];
     network.withBufferAccess(() => {
       geometry = this.readDenseGraph(network);
       is2D = cameraUniforms?.mode === '2d';
@@ -422,25 +426,30 @@ export class GraphLayerWebGPU extends GraphLayer {
         this.warnedWeightedFallback = true;
       }
       if (is2D) {
-        drawEdgesAlpha(context.passEncoder);
-        drawNodes(context.passEncoder);
+        passes.push(() => {
+          drawEdgesAlpha(context.passEncoder);
+          drawNodes(context.passEncoder);
+        });
       } else {
-        drawNodes(context.passEncoder);
-        drawEdgesAlpha(context.passEncoder);
+        passes.push(() => {
+          drawNodes(context.passEncoder);
+          drawEdgesAlpha(context.passEncoder);
+        });
       }
-      return;
+    } else {
+      if (!this.loggedWeightedActive) {
+        console.info(`GraphLayerWebGPU: using weighted multipass for '${transparencyMode}'`);
+        this.loggedWeightedActive = true;
+      }
+      passes.push(() => this.renderWeighted(context, {
+        geometry,
+        is2D,
+        drawNodes,
+        mode: transparencyMode,
+      }));
     }
 
-    if (!this.loggedWeightedActive) {
-      console.info(`GraphLayerWebGPU: using weighted multipass for '${transparencyMode}'`);
-      this.loggedWeightedActive = true;
-    }
-    this.renderWeighted(context, {
-      geometry,
-      is2D,
-      drawNodes,
-      mode: transparencyMode,
-    });
+    this.frameGraph.run(passes, context);
   }
 
   getBlendForMode(mode) {
