@@ -251,6 +251,7 @@ async function bootstrap() {
   
   console.log("Creating helios-web instance...");
   const helios = new Helios(network, heliosOptions);
+  window.__helios = helios;
 
   console.log("Waiting for helios to be ready...");
   await helios.ready;
@@ -325,6 +326,8 @@ async function bootstrap() {
   window.__HELIOS_DIAGNOSTICS__ = diagnostics;
   window.__helios = helios;
   console.log("Done! Helios instance is available as window.__helios", helios);
+  const m = window.__helios?.network?.module;
+  console.log("HEAP SIZE: ",m?.HEAPU8?.buffer?.byteLength, 'bytes');
 }
 
 bootstrap().catch((error) => {
