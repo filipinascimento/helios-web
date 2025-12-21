@@ -271,14 +271,10 @@ export class GraphLayerWebGPU extends GraphLayer {
       || this._nodeBuffersLast?.colors !== this.nodeBuffersGpu.colors?.buffer
     );
 
-    const dataChanged = buffersChanged
-      || !sameView(cache.positions, positions)
-      || !sameView(cache.sizes, sizes)
-      || !sameView(cache.colors, colors)
-      || !sameView(cache.indices, indices)
-      || cache.count !== nodeCount;
-
-    if (dataChanged) {
+    // Layout mutates the same underlying views each tick, so even when the
+    // typed array identity is stable we still need to push fresh data to the GPU.
+    // Always upload when we have nodes to avoid stale positions/sizes/colors.
+    if (nodeCount > 0) {
       device.queue.writeBuffer(this.nodeBuffersGpu.indices.buffer, 0, indices);
       device.queue.writeBuffer(this.nodeBuffersGpu.positions.buffer, 0, positions);
       device.queue.writeBuffer(this.nodeBuffersGpu.sizes.buffer, 0, sizes);
@@ -378,16 +374,9 @@ export class GraphLayerWebGPU extends GraphLayer {
       || this._edgeBuffersLast?.opacities !== this.edgeBuffersGpu.opacities?.buffer
     );
 
-    const dataChanged = buffersChanged
-      || !sameView(cache.segments, segments)
-      || !sameView(cache.colors, colors)
-      || !sameView(cache.indices, indices)
-      || !sameView(cache.widths, widths)
-      || !sameView(cache.endpointSizes, endpointSizes)
-      || !sameView(cache.opacities, opacities)
-      || cache.count !== edgeCount;
-
-    if (dataChanged) {
+    // Same reasoning as nodes: layout writes into stable views, so always push
+    // edge data when present to avoid stale buffers on WebGPU.
+    if (edgeCount > 0) {
       device.queue.writeBuffer(this.edgeBuffersGpu.indices.buffer, 0, indices);
       device.queue.writeBuffer(this.edgeBuffersGpu.segments.buffer, 0, segments);
       device.queue.writeBuffer(this.edgeBuffersGpu.colors.buffer, 0, colors);
