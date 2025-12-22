@@ -52,6 +52,8 @@ export class GraphLayerWebGPU extends GraphLayer {
     this.edgeQuadBufferGpu = null;
     this._nodeDataCache = { positions: null, sizes: null, colors: null, indices: null, count: 0 };
     this._edgeDataCache = { segments: null, widths: null, endpointSizes: null, colors: null, indices: null, opacities: null, count: 0 };
+    this._nodeVersionsLast = null;
+    this._edgeVersionsLast = null;
   }
 
   initialize(device, size) {
@@ -226,10 +228,9 @@ export class GraphLayerWebGPU extends GraphLayer {
   }
 
   updateNodeBuffersGpu(nodes, device, maxBindingSize) {
-    const { positions, sizes, colors, indices } = nodes;
+    const { positions, sizes, colors, indices, versions = {} } = nodes;
     const nodeCount = Math.floor((positions?.length ?? 0) / 3);
     const cache = this._nodeDataCache;
-    const sameView = (a, b) => a && b && a.buffer === b.buffer && a.byteOffset === b.byteOffset && a.byteLength === b.byteLength;
     const storageUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
     this.nodeBuffersGpu.indices = this.ensureBufferGpu(
       this.nodeBuffersGpu.indices,
@@ -271,10 +272,15 @@ export class GraphLayerWebGPU extends GraphLayer {
       || this._nodeBuffersLast?.colors !== this.nodeBuffersGpu.colors?.buffer
     );
 
-    // Layout mutates the same underlying views each tick, so even when the
-    // typed array identity is stable we still need to push fresh data to the GPU.
-    // Always upload when we have nodes to avoid stale positions/sizes/colors.
-    if (nodeCount > 0) {
+    const versionChanged = buffersChanged
+      || this._nodeVersionsLast?.indices !== (versions.indices ?? 0)
+      || this._nodeVersionsLast?.positions !== (versions.positions ?? 0)
+      || this._nodeVersionsLast?.sizes !== (versions.sizes ?? 0)
+      || this._nodeVersionsLast?.colors !== (versions.colors ?? 0)
+      || this._nodeVersionsLast?.topology !== (versions.topology ?? 0)
+      || cache.count !== nodeCount;
+
+    if (versionChanged && nodeCount > 0) {
       device.queue.writeBuffer(this.nodeBuffersGpu.indices.buffer, 0, indices);
       device.queue.writeBuffer(this.nodeBuffersGpu.positions.buffer, 0, positions);
       device.queue.writeBuffer(this.nodeBuffersGpu.sizes.buffer, 0, sizes);
@@ -284,6 +290,13 @@ export class GraphLayerWebGPU extends GraphLayer {
       cache.colors = colors;
       cache.indices = indices;
       cache.count = nodeCount;
+      this._nodeVersionsLast = {
+        indices: versions.indices ?? 0,
+        positions: versions.positions ?? 0,
+        sizes: versions.sizes ?? 0,
+        colors: versions.colors ?? 0,
+        topology: versions.topology ?? 0,
+      };
     }
 
     if (buffersChanged || !this.nodeBindGroup) {
@@ -308,13 +321,12 @@ export class GraphLayerWebGPU extends GraphLayer {
   }
 
   updateEdgeBuffersGpu(edges, device, maxBindingSize) {
-    const { segments, colors, indices, widths, endpointSizes, opacities } = edges;
+    const { segments, colors, indices, widths, endpointSizes, opacities, versions = {} } = edges;
     if (!endpointSizes) {
       throw new Error('Edge endpoint sizes buffer is missing; dense buffers must include endpointSizes.');
     }
     const edgeCount = Math.floor((segments?.length ?? 0) / 6);
     const cache = this._edgeDataCache;
-    const sameView = (a, b) => a && b && a.buffer === b.buffer && a.byteOffset === b.byteOffset && a.byteLength === b.byteLength;
     const storageUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
     this.edgeBuffersGpu.indices = this.ensureBufferGpu(
       this.edgeBuffersGpu.indices,
@@ -374,9 +386,17 @@ export class GraphLayerWebGPU extends GraphLayer {
       || this._edgeBuffersLast?.opacities !== this.edgeBuffersGpu.opacities?.buffer
     );
 
-    // Same reasoning as nodes: layout writes into stable views, so always push
-    // edge data when present to avoid stale buffers on WebGPU.
-    if (edgeCount > 0) {
+    const versionChanged = buffersChanged
+      || this._edgeVersionsLast?.indices !== (versions.indices ?? 0)
+      || this._edgeVersionsLast?.segments !== (versions.segments ?? 0)
+      || this._edgeVersionsLast?.colors !== (versions.colors ?? 0)
+      || this._edgeVersionsLast?.widths !== (versions.widths ?? 0)
+      || this._edgeVersionsLast?.endpointSizes !== (versions.endpointSizes ?? 0)
+      || this._edgeVersionsLast?.opacities !== (versions.opacities ?? 0)
+      || this._edgeVersionsLast?.topology !== (versions.topology ?? 0)
+      || cache.count !== edgeCount;
+
+    if (versionChanged && edgeCount > 0) {
       device.queue.writeBuffer(this.edgeBuffersGpu.indices.buffer, 0, indices);
       device.queue.writeBuffer(this.edgeBuffersGpu.segments.buffer, 0, segments);
       device.queue.writeBuffer(this.edgeBuffersGpu.colors.buffer, 0, colors);
@@ -390,6 +410,15 @@ export class GraphLayerWebGPU extends GraphLayer {
       cache.endpointSizes = endpointSizes;
       cache.opacities = opacities;
       cache.count = edgeCount;
+      this._edgeVersionsLast = {
+        indices: versions.indices ?? 0,
+        segments: versions.segments ?? 0,
+        colors: versions.colors ?? 0,
+        widths: versions.widths ?? 0,
+        endpointSizes: versions.endpointSizes ?? 0,
+        opacities: versions.opacities ?? 0,
+        topology: versions.topology ?? 0,
+      };
     }
 
     if (buffersChanged || !this.edgeBindGroup) {
@@ -447,11 +476,15 @@ export class GraphLayerWebGPU extends GraphLayer {
         this.updateNodeBuffersGpu(geometry.nodes, gpuDevice, maxBindingSize);
       } else {
         this.nodeBindGroup = null;
+        this._nodeVersionsLast = null;
+        this._nodeDataCache.count = 0;
       }
       if (geometry.edges.count) {
         this.updateEdgeBuffersGpu(geometry.edges, gpuDevice, maxBindingSize);
       } else {
         this.edgeBindGroup = null;
+        this._edgeVersionsLast = null;
+        this._edgeDataCache.count = 0;
       }
       weightedReady = weightedRequested && geometry.edges.count > 0
         ? this.prepareWeightedResources(context, cameraUniforms)

@@ -206,6 +206,15 @@ export class GraphLayer extends Layer {
         nodeColorsDesc?.count ??
         nodeSizesDesc?.count ??
         0,
+      versions: {
+        positions: nodePositionsDesc?.version ?? 0,
+        colors: nodeColorsDesc?.version ?? 0,
+        sizes: nodeSizesDesc?.version ?? 0,
+        outlineWidths: nodeOutlineWidthDesc?.version ?? 0,
+        outlineColors: nodeOutlineColorDesc?.version ?? 0,
+        indices: nodeIndexDesc?.version ?? 0,
+        topology: nodeIndexDesc?.topologyVersion ?? 0,
+      },
     };
 
     const edges = {
@@ -222,6 +231,15 @@ export class GraphLayer extends Layer {
         edgeOpacityDesc?.count ??
         edgeWidthDesc?.count ??
         0,
+      versions: {
+        segments: edgeSegmentsDesc?.version ?? 0,
+        colors: edgeColorDesc?.version ?? 0,
+        opacities: edgeOpacityDesc?.version ?? 0,
+        widths: edgeWidthDesc?.version ?? 0,
+        endpointSizes: edgeEndpointSizeDesc?.version ?? 0,
+        indices: edgeIndexDesc?.version ?? 0,
+        topology: edgeIndexDesc?.topologyVersion ?? 0,
+      },
     };
 
     return { nodes, edges };

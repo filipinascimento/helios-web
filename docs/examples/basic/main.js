@@ -296,26 +296,26 @@ async function bootstrap() {
   }
 
   console.log("Enabling attribute tracking for picking (auto-update, scaled)...");
-  // helios.enableAttributeTracking('$index', null, {
-  //   resolutionScale: pickTest ? 0.5 : 0.5,
-  //   trackDepth: false,
-  //   autoUpdate: false,
-  //   autoUpdateFrameSkip: pickTest ? 10 : 10,
-  // });
-  // const canvas = helios.layers?.canvas ?? helios.renderer?.canvas ?? document.querySelector('canvas');
-  // if (canvas) {
-  //   // canvas.addEventListener('click', async (event) => {
-  //   //   const rect = canvas.getBoundingClientRect();
-  //   //   const x = event.clientX - rect.left;
-  //   //   const y = event.clientY - rect.top;
-  //   //   const picked = await helios.pickAttributesAt(x, y);
-  //   //   console.log('Picked node/edge indices', picked);
-  //   // });
-  // }
+  helios.enableAttributeTracking('$index', '$index', {
+    resolutionScale: pickTest ? 0.5 : 0.5,
+    trackDepth: true,
+    autoUpdate: true,
+    autoUpdateFrameSkip: pickTest ? 10 : 10,
+  });
+  const canvas = helios.layers?.canvas ?? helios.renderer?.canvas ?? document.querySelector('canvas');
+  if (canvas) {
+    canvas.addEventListener('click', async (event) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      const picked = await helios.pickAttributesAt(x, y);
+      console.log('Picked node/edge indices', picked);
+    });
+  }
 
-  // if (pickTest) {
-  //   await helios.renderAttributeTracking();
-  // }
+  if (pickTest) {
+    await helios.renderAttributeTracking();
+  }
 
   console.log("Misc diagnostics...");
   const rendererType = helios.renderer?.device?.type ?? helios.renderer?.constructor?.name ?? 'unknown';
