@@ -14,12 +14,14 @@ import {
 } from './shaders/graphWebGL.js';
 import { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './GraphLayerCommon.js';
 import { GraphLayer } from './GraphLayer.js';
+import { FrameGraphRunner } from './framegraph/FrameGraphRunner.js';
 
 export class GraphLayerWebGL extends GraphLayer {
   constructor(options = {}) {
     super(options);
     this.device = null;
     this.gl = null;
+    this.frameGraph = new FrameGraphRunner();
 
     this.nodeProgram = null;
     this.edgeProgram = null;
@@ -100,6 +102,8 @@ export class GraphLayerWebGL extends GraphLayer {
     this.edgeCount = 0;
     this.weightedSupported = null;
     this.warnedWeightedFallback = false;
+    this._nodeVersionsLast = null;
+    this._edgeVersionsLast = null;
   }
 
   initialize(device, size) {
@@ -343,8 +347,10 @@ export class GraphLayerWebGL extends GraphLayer {
     if (!cameraUniforms) return;
 
     let renderedWeighted = false;
+    const passes = [];
+    let geometry = null;
     network.withBufferAccess(() => {
-      const geometry = this.readDenseGraph(network);
+      geometry = this.readDenseGraph(network);
       const is2D = cameraUniforms.mode === '2d';
       const zoom2D = is2D ? Math.max(1e-3, cameraUniforms.view?.[0] ?? 1) : 1;
       const edgeWidthFactor = is2D ? (zoom2D / EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL) : 1.0;
@@ -371,11 +377,13 @@ export class GraphLayerWebGL extends GraphLayer {
         this.uploadEdgesWebGL2(geometry.edges);
       } else {
         this.edgeCount = 0;
+        this._edgeVersionsLast = null;
       }
       if (geometry.nodes.count) {
         this.uploadNodesWebGL2(geometry.nodes);
       } else {
         this.nodeCount = 0;
+        this._nodeVersionsLast = null;
       }
 
       const drawNodes = () => {
@@ -456,14 +464,14 @@ export class GraphLayerWebGL extends GraphLayer {
           console.info(`GraphLayerWebGL: using weighted multipass for '${transparencyMode}'`);
           this.loggedWeightedActive = true;
         }
-        this.renderWeightedWebGL(context, {
+        passes.push(() => this.renderWeightedWebGL(context, {
           geometry,
           is2D,
           cameraUniforms,
           edgeWidthBase: globalEdgeWidthBase,
           edgeWidthScale: globalEdgeWidthScale,
           viewport,
-        });
+        }));
         renderedWeighted = true;
         return;
       }
@@ -474,32 +482,43 @@ export class GraphLayerWebGL extends GraphLayer {
       }
 
       // Always render nodes with standard alpha blending.
+      gl.enable(gl.BLEND);
       gl.blendEquation(gl.FUNC_ADD);
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
       if (is2D) {
-        this.applyEdgeBlend(gl, transparencyMode);
-        drawEdges();
-        gl.blendEquation(gl.FUNC_ADD);
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-        drawNodes();
+        passes.push(() => {
+          this.applyEdgeBlend(gl, transparencyMode);
+          drawEdges();
+          gl.blendEquation(gl.FUNC_ADD);
+          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+          drawNodes();
+          gl.bindVertexArray(null);
+          gl.depthMask(true);
+          gl.depthFunc(gl.LEQUAL);
+          gl.enable(gl.DEPTH_TEST);
+        });
       } else {
-        drawNodes();
-        this.applyEdgeBlend(gl, transparencyMode);
-        drawEdges();
-        gl.blendEquation(gl.FUNC_ADD);
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        passes.push(() => {
+          drawNodes();
+          this.applyEdgeBlend(gl, transparencyMode);
+          drawEdges();
+          gl.blendEquation(gl.FUNC_ADD);
+          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+          gl.bindVertexArray(null);
+          gl.depthMask(true);
+          gl.depthFunc(gl.LEQUAL);
+          gl.enable(gl.DEPTH_TEST);
+        });
       }
-
-      gl.bindVertexArray(null);
-      gl.depthMask(true);
-      gl.depthFunc(gl.LEQUAL);
-      gl.enable(gl.DEPTH_TEST);
     });
 
     if (renderedWeighted) {
+      this.frameGraph.run(passes, context);
       return;
     }
+
+    this.frameGraph.run(passes, context);
   }
 
   applyEdgeBlend(gl, mode) {
@@ -525,12 +544,21 @@ export class GraphLayerWebGL extends GraphLayer {
 
   uploadNodesWebGL2(nodes) {
     const count = nodes?.count ?? 0;
+    const versions = nodes?.versions ?? {};
     if (!nodes || !nodes.positions || !nodes.colors || !nodes.sizes) {
       this.nodeCount = 0;
       return;
     }
+    const versionChanged = (
+      this._nodeVersionsLast?.positions !== (versions.positions ?? 0)
+      || this._nodeVersionsLast?.colors !== (versions.colors ?? 0)
+      || this._nodeVersionsLast?.sizes !== (versions.sizes ?? 0)
+      || this._nodeVersionsLast?.topology !== (versions.topology ?? 0)
+      || this.nodeCount !== count
+    );
     this.nodeCount = count;
     if (!count) return;
+    if (!versionChanged) return;
 
     const { gl } = this;
     gl.bindVertexArray(this.nodeVAO);
@@ -543,16 +571,34 @@ export class GraphLayerWebGL extends GraphLayer {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.sizes);
     gl.bufferData(gl.ARRAY_BUFFER, nodes.sizes, gl.DYNAMIC_DRAW);
     gl.bindVertexArray(null);
+
+    this._nodeVersionsLast = {
+      positions: versions.positions ?? 0,
+      colors: versions.colors ?? 0,
+      sizes: versions.sizes ?? 0,
+      topology: versions.topology ?? 0,
+    };
   }
 
   uploadEdgesWebGL2(edges) {
     const count = edges?.count ?? 0;
+    const versions = edges?.versions ?? {};
     if (!edges || !edges.segments || !edges.colors || !edges.opacities || !edges.widths || !edges.endpointSizes) {
       this.edgeCount = 0;
       return;
     }
+    const versionChanged = (
+      this._edgeVersionsLast?.segments !== (versions.segments ?? 0)
+      || this._edgeVersionsLast?.colors !== (versions.colors ?? 0)
+      || this._edgeVersionsLast?.opacities !== (versions.opacities ?? 0)
+      || this._edgeVersionsLast?.widths !== (versions.widths ?? 0)
+      || this._edgeVersionsLast?.endpointSizes !== (versions.endpointSizes ?? 0)
+      || this._edgeVersionsLast?.topology !== (versions.topology ?? 0)
+      || this.edgeCount !== count
+    );
     this.edgeCount = count;
     if (!count) return;
+    if (!versionChanged) return;
 
     const { gl } = this;
     gl.bindVertexArray(this.edgeVAO);
@@ -571,6 +617,15 @@ export class GraphLayerWebGL extends GraphLayer {
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.endpointSizes);
     gl.bufferData(gl.ARRAY_BUFFER, edges.endpointSizes, gl.DYNAMIC_DRAW);
+
+    this._edgeVersionsLast = {
+      segments: versions.segments ?? 0,
+      colors: versions.colors ?? 0,
+      opacities: versions.opacities ?? 0,
+      widths: versions.widths ?? 0,
+      endpointSizes: versions.endpointSizes ?? 0,
+      topology: versions.topology ?? 0,
+    };
   }
 
   ensureWeightedPrograms() {

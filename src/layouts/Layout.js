@@ -134,6 +134,8 @@ export class WorkerLayout extends Layout {
       }
       this.pending = false;
       this._updateRequested = false;
+      // Inform downstream consumers that position-dependent buffers changed.
+      this.visuals?.markPositionsDirty?.();
       this.emitUpdate({ positions: view });
       return true;
     }

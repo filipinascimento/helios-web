@@ -2,7 +2,12 @@ import { test, expect } from '@playwright/test';
 
 async function waitForHelios(page) {
   await page.waitForFunction(() => Boolean(window.__helios?.ready), null, { timeout: 15_000 });
-  await page.evaluate(() => window.__helios.ready);
+  await page.evaluate(async () => {
+    await window.__helios.ready;
+    if (!window.__helios.attributeTracker?.lastTargets) {
+      await window.__helios.renderAttributeTracking?.();
+    }
+  });
   await page.waitForFunction(() => Boolean(window.__helios?.attributeTracker?.lastTargets), null, { timeout: 15_000 });
 }
 
@@ -42,6 +47,31 @@ async function collectPicks(page) {
       };
     }
     const rect = canvas.getBoundingClientRect();
+    let encodedDebug = null;
+    let positionDebug = null;
+    let sizeDebug = null;
+    let nodePixelsNonZero = null;
+    try {
+      const encoded = helios.network?.getDenseColorEncodedNodeAttributeView?.('_helios_encoded_node_$index');
+      encodedDebug = encoded?.view ? Array.from(encoded.view.slice(0, 8)) : null;
+      const graph = helios.renderer?.graphLayer?.readDenseGraph?.(helios.network);
+      positionDebug = graph?.nodes?.positions ? graph.nodes.positions.length : null;
+      sizeDebug = graph?.nodes?.sizes ? Array.from(graph.nodes.sizes.slice(0, 4)) : null;
+      if (helios.renderer?.readPixels && targets?.node) {
+        const all = await helios.renderer.readPixels(targets.node, { x: 0, y: 0, width: targets.node.width, height: targets.node.height });
+        const bytes = all instanceof Uint8Array ? all : new Uint8Array(all);
+        let count = 0;
+        for (let i = 0; i < bytes.length; i += 4) {
+          if (bytes[i] | bytes[i + 1] | bytes[i + 2] | bytes[i + 3]) count += 1;
+        }
+        nodePixelsNonZero = count;
+      }
+    } catch (_) {
+      encodedDebug = null;
+      positionDebug = null;
+      sizeDebug = null;
+      nodePixelsNonZero = null;
+    }
     const xs = Array.from({ length: 8 }, (_, i) => (i + 0.5) / 8);
     const ys = Array.from({ length: 8 }, (_, i) => (i + 0.5) / 8);
     const nodeHits = [];
@@ -58,43 +88,50 @@ async function collectPicks(page) {
         if (picked.edge !== -1) edgeHits.push(picked.edge);
       }
     }
-    return {
-      nodeHits,
-      edgeHits,
-      meta: {
-        targets: targetInfo,
-        canvas: { width: rect.width, height: rect.height },
-        sample,
-        directPick,
+	    return {
+	      nodeHits,
+	      edgeHits,
+	      meta: {
+	        renderer: helios.renderer?.device?.type ?? null,
+	        targets: targetInfo,
+	        canvas: { width: rect.width, height: rect.height },
+	        sample,
+	        directPick,
         counts,
+        encodedDebug,
+        positionDebug,
+        sizeDebug,
+        nodePixelsNonZero,
       },
     };
   });
 }
 
-async function runPickFlow(page, params) {
-  const query = new URLSearchParams({ nodes: '4', layout: 'none', mode: '2d', renderer: 'webgl', pickTest: '1', ...params });
-  await page.goto(`/?${query.toString()}`);
-  await waitForHelios(page);
-  const picks = await collectPicks(page);
+	async function runPickFlow(page, params) {
+	  const query = new URLSearchParams({ nodes: '4', layout: 'none', mode: '2d', renderer: 'webgl', pickTest: '1', ...params });
+	  await page.goto(`/?${query.toString()}`);
+	  await waitForHelios(page);
+	  const picks = await collectPicks(page);
   if (!picks.nodeHits.length) {
     throw new Error(`No node picks found. meta=${JSON.stringify(picks.meta)}`);
   }
   expect(picks.nodeHits.length, 'should pick at least one node').toBeGreaterThan(0);
   // Edge picking is best-effort on the minimal demo; we log but do not fail if absent.
-  if (picks.edgeHits.length) {
-    expect(picks.edgeHits.length, 'should pick at least one edge').toBeGreaterThan(0);
-  }
-}
+	  if (picks.edgeHits.length) {
+	    expect(picks.edgeHits.length, 'should pick at least one edge').toBeGreaterThan(0);
+	  }
+	  return picks;
+	}
 
 test('attribute picking works in headless chromium (webgl)', async ({ page }) => {
   await runPickFlow(page, {});
 });
 
-test('@webgpu attribute picking works in headed webgpu when available', async ({ page }) => {
-  // Navigate first so the origin is one we explicitly mark as secure for WebGPU.
-  await page.goto('/');
-  const supported = await page.evaluate(() => Boolean(navigator.gpu));
-  test.skip(!supported, 'WebGPU not available in browser');
-  await runPickFlow(page, { renderer: 'webgpu' });
-});
+	test('@webgpu attribute picking works in headed webgpu when available', async ({ page }) => {
+	  // Navigate first so the origin is one we explicitly mark as secure for WebGPU.
+	  await page.goto('/');
+	  const supported = await page.evaluate(() => Boolean(navigator.gpu));
+	  test.skip(!supported, 'WebGPU not available in browser');
+	  const picks = await runPickFlow(page, { renderer: 'webgpu' });
+	  expect(picks.meta.renderer).toBe('webgpu');
+	});

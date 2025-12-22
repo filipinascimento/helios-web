@@ -18,6 +18,7 @@ function resolveRendererPreference() {
   const params = new URLSearchParams(window.location.search);
   const renderer = params.get('renderer');
   if (renderer === 'webgl') return 'webgl';
+  if (renderer === 'webgpu') return 'webgpu';
   return null;
 }
 
@@ -251,6 +252,7 @@ async function bootstrap() {
   
   console.log("Creating helios-web instance...");
   const helios = new Helios(network, heliosOptions);
+  window.__helios = helios;
 
   console.log("Waiting for helios to be ready...");
   await helios.ready;
@@ -258,6 +260,15 @@ async function bootstrap() {
 
   console.log("Helios is ready!");
   // helios.renderer?.camera?.setTarget?.([0, 0, mode === '3d' ? 0 : 0]);
+  if (pickTest && helios.renderer?.camera) {
+    helios.renderer.camera.setMode?.('2d');
+    helios.renderer.camera.zoom = 2;
+    if (helios.renderer.camera.pan2D?.length >= 2) {
+      helios.renderer.camera.pan2D[0] = 0;
+      helios.renderer.camera.pan2D[1] = 0;
+    }
+    helios.renderer.camera.updateMatrices?.();
+  }
 
   // Showcase a colormap on nodes: map "weight" through a perceptual ramp.
   console.log("Setting up mappers...");
@@ -295,11 +306,11 @@ async function bootstrap() {
   }
 
   console.log("Enabling attribute tracking for picking (auto-update, scaled)...");
-  helios.enableAttributeTracking('index', 'index', {
-    resolutionScale: pickTest ? 1 : 0.5,
+  helios.enableAttributeTracking('$index', '$index', {
+    resolutionScale: 1.0,
     trackDepth: true,
     autoUpdate: true,
-    autoUpdateFrameSkip: pickTest ? 0 : 1,
+    autoUpdateMaxFps: 1,
   });
   const canvas = helios.layers?.canvas ?? helios.renderer?.canvas ?? document.querySelector('canvas');
   if (canvas) {
@@ -325,6 +336,8 @@ async function bootstrap() {
   window.__HELIOS_DIAGNOSTICS__ = diagnostics;
   window.__helios = helios;
   console.log("Done! Helios instance is available as window.__helios", helios);
+  const m = window.__helios?.network?.module;
+  console.log("HEAP SIZE: ",m?.HEAPU8?.buffer?.byteLength, 'bytes');
 }
 
 bootstrap().catch((error) => {

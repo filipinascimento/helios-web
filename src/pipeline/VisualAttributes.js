@@ -143,7 +143,7 @@ export class VisualAttributes {
         }
       }
       if (touched) {
-        this.markEdgeAttributesDirty(EDGE_OPACITY_ATTRIBUTE);
+        this.bumpEdgeAttributes(EDGE_OPACITY_ATTRIBUTE);
       }
     });
   }
@@ -187,14 +187,14 @@ export class VisualAttributes {
         const mapped = mapper.mapItem({ attributes: inputs }, { index: nodeId });
         this.writeNodeVisuals(nodeId, mapped, visuals);
       }
-      this.markNodeAttributesDirty(
+      this.bumpNodeAttributes(
         NODE_COLOR_ATTRIBUTE,
         NODE_SIZE_ATTRIBUTE,
         NODE_OUTLINE_WIDTH_ATTRIBUTE,
         NODE_OUTLINE_COLOR_ATTRIBUTE,
         NODE_POSITION_ATTRIBUTE,
       );
-      this.markEdgeAttributesDirty(EDGE_ENDPOINTS_SIZE_ATTRIBUTE, EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
+      this.bumpEdgeAttributes(EDGE_ENDPOINTS_SIZE_ATTRIBUTE, EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
     });
     for (const channel of nodeChannels) {
       this.debug?.log('mapper', 'Applying node channel finish', {
@@ -249,7 +249,7 @@ export class VisualAttributes {
         );
         this.writeEdgeVisuals(edgeId, mapped, visuals);
       }
-      this.markEdgeAttributesDirty(
+      this.bumpEdgeAttributes(
         EDGE_COLOR_ATTRIBUTE,
         EDGE_OPACITY_ATTRIBUTE,
         EDGE_WIDTH_ATTRIBUTE,
@@ -300,8 +300,7 @@ export class VisualAttributes {
     addDense('addDenseEdgeAttributeBuffer', EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
   }
 
-  markNodeAttributesDirty(...names) {
-    if (typeof this.network?.markDenseNodeAttributeDirty !== 'function') return;
+  bumpNodeAttributes(...names) {
     const targets =
       names && names.length
         ? names
@@ -314,15 +313,16 @@ export class VisualAttributes {
           ];
     for (const name of targets) {
       try {
-        this.network.markDenseNodeAttributeDirty(name);
+        const buf = this.network?.getNodeAttributeBuffer?.(name);
+        buf?.bumpVersion?.();
+        this.network?.bumpNodeAttributeVersion?.(name);
       } catch (_) {
-        // Ignore if dense buffers are unavailable.
+        // Ignore if bumping is unavailable.
       }
     }
   }
 
-  markEdgeAttributesDirty(...names) {
-    if (typeof this.network?.markDenseEdgeAttributeDirty !== 'function') return;
+  bumpEdgeAttributes(...names) {
     const targets =
       names && names.length
         ? names
@@ -335,9 +335,11 @@ export class VisualAttributes {
           ];
     for (const name of targets) {
       try {
-        this.network.markDenseEdgeAttributeDirty(name);
+        const buf = this.network?.getEdgeAttributeBuffer?.(name);
+        buf?.bumpVersion?.();
+        this.network?.bumpEdgeAttributeVersion?.(name);
       } catch (_) {
-        // Ignore if dense buffers are unavailable.
+        // Ignore if bumping is unavailable.
       }
     }
   }
@@ -376,13 +378,13 @@ export class VisualAttributes {
   }
 
   markAllDenseDirty() {
-    this.markNodeAttributesDirty();
-    this.markEdgeAttributesDirty();
+    this.bumpNodeAttributes();
+    this.bumpEdgeAttributes();
   }
 
   markPositionsDirty() {
-    this.markNodeAttributesDirty(NODE_POSITION_ATTRIBUTE, NODE_SIZE_ATTRIBUTE);
-    this.markEdgeAttributesDirty(EDGE_ENDPOINTS_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+    this.bumpNodeAttributes(NODE_POSITION_ATTRIBUTE, NODE_SIZE_ATTRIBUTE);
+    this.bumpEdgeAttributes(EDGE_ENDPOINTS_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
   }
 
   /**
@@ -419,14 +421,14 @@ export class VisualAttributes {
         }
       }
 
-      this.markNodeAttributesDirty(
+      this.bumpNodeAttributes(
         NODE_POSITION_ATTRIBUTE,
         NODE_COLOR_ATTRIBUTE,
         NODE_SIZE_ATTRIBUTE,
         NODE_OUTLINE_WIDTH_ATTRIBUTE,
         NODE_OUTLINE_COLOR_ATTRIBUTE,
       );
-      this.markEdgeAttributesDirty(EDGE_ENDPOINTS_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+      this.bumpEdgeAttributes(EDGE_ENDPOINTS_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
     });
   }
 
@@ -450,7 +452,7 @@ export class VisualAttributes {
         }
       }
 
-      this.markEdgeAttributesDirty(EDGE_COLOR_ATTRIBUTE, EDGE_OPACITY_ATTRIBUTE, EDGE_WIDTH_ATTRIBUTE);
+      this.bumpEdgeAttributes(EDGE_COLOR_ATTRIBUTE, EDGE_OPACITY_ATTRIBUTE, EDGE_WIDTH_ATTRIBUTE);
     });
   }
 
@@ -511,8 +513,8 @@ export class VisualAttributes {
       }
       this.maxInitializedNodeId = Math.max(maxNodeId, this.maxInitializedNodeId ?? -1);
       if (touched) {
-        this.markNodeAttributesDirty(NODE_POSITION_ATTRIBUTE);
-        this.markEdgeAttributesDirty(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
+        this.bumpNodeAttributes(NODE_POSITION_ATTRIBUTE);
+        this.bumpEdgeAttributes(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
       }
     });
   }

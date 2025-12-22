@@ -7,11 +7,14 @@ import {
 } from './shaders/graphWebGPU.js';
 import { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './GraphLayerCommon.js';
 import { GraphLayer } from './GraphLayer.js';
+import { FrameGraphRunner } from './framegraph/FrameGraphRunner.js';
 
 export class GraphLayerWebGPU extends GraphLayer {
   constructor(options = {}) {
     super(options);
     this.device = null;
+
+    this.frameGraph = new FrameGraphRunner();
 
     this.nodeBindGroupLayout = null;
     this.edgeBindGroupLayout = null;
@@ -47,6 +50,10 @@ export class GraphLayerWebGPU extends GraphLayer {
     this.edgeBuffersGpu = {};
     this.nodeQuadBufferGpu = null;
     this.edgeQuadBufferGpu = null;
+    this._nodeDataCache = { positions: null, sizes: null, colors: null, indices: null, count: 0 };
+    this._edgeDataCache = { segments: null, widths: null, endpointSizes: null, colors: null, indices: null, opacities: null, count: 0 };
+    this._nodeVersionsLast = null;
+    this._edgeVersionsLast = null;
   }
 
   initialize(device, size) {
@@ -221,7 +228,9 @@ export class GraphLayerWebGPU extends GraphLayer {
   }
 
   updateNodeBuffersGpu(nodes, device, maxBindingSize) {
-    const { positions, sizes, colors, indices } = nodes;
+    const { positions, sizes, colors, indices, versions = {} } = nodes;
+    const nodeCount = Math.floor((positions?.length ?? 0) / 3);
+    const cache = this._nodeDataCache;
     const storageUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
     this.nodeBuffersGpu.indices = this.ensureBufferGpu(
       this.nodeBuffersGpu.indices,
@@ -256,29 +265,68 @@ export class GraphLayerWebGPU extends GraphLayer {
       'Node color buffer',
     );
 
-    device.queue.writeBuffer(this.nodeBuffersGpu.indices.buffer, 0, indices);
-    device.queue.writeBuffer(this.nodeBuffersGpu.positions.buffer, 0, positions);
-    device.queue.writeBuffer(this.nodeBuffersGpu.sizes.buffer, 0, sizes);
-    device.queue.writeBuffer(this.nodeBuffersGpu.colors.buffer, 0, colors);
+    const buffersChanged = (
+      this._nodeBuffersLast?.indices !== this.nodeBuffersGpu.indices?.buffer
+      || this._nodeBuffersLast?.positions !== this.nodeBuffersGpu.positions?.buffer
+      || this._nodeBuffersLast?.sizes !== this.nodeBuffersGpu.sizes?.buffer
+      || this._nodeBuffersLast?.colors !== this.nodeBuffersGpu.colors?.buffer
+    );
 
-    this.nodeBindGroup = device.createBindGroup({
-      layout: this.nodeBindGroupLayout,
-      entries: [
-        { binding: 0, resource: { buffer: this.cameraBuffer } },
-        { binding: 1, resource: { buffer: this.nodeBuffersGpu.indices.buffer } },
-        { binding: 2, resource: { buffer: this.nodeBuffersGpu.positions.buffer } },
-        { binding: 3, resource: { buffer: this.nodeBuffersGpu.sizes.buffer } },
-        { binding: 4, resource: { buffer: this.nodeBuffersGpu.colors.buffer } },
-        { binding: 5, resource: { buffer: this.globalsBuffer } },
-      ],
-    });
+    const versionChanged = buffersChanged
+      || this._nodeVersionsLast?.indices !== (versions.indices ?? 0)
+      || this._nodeVersionsLast?.positions !== (versions.positions ?? 0)
+      || this._nodeVersionsLast?.sizes !== (versions.sizes ?? 0)
+      || this._nodeVersionsLast?.colors !== (versions.colors ?? 0)
+      || this._nodeVersionsLast?.topology !== (versions.topology ?? 0)
+      || cache.count !== nodeCount;
+
+    if (versionChanged && nodeCount > 0) {
+      device.queue.writeBuffer(this.nodeBuffersGpu.indices.buffer, 0, indices);
+      device.queue.writeBuffer(this.nodeBuffersGpu.positions.buffer, 0, positions);
+      device.queue.writeBuffer(this.nodeBuffersGpu.sizes.buffer, 0, sizes);
+      device.queue.writeBuffer(this.nodeBuffersGpu.colors.buffer, 0, colors);
+      cache.positions = positions;
+      cache.sizes = sizes;
+      cache.colors = colors;
+      cache.indices = indices;
+      cache.count = nodeCount;
+      this._nodeVersionsLast = {
+        indices: versions.indices ?? 0,
+        positions: versions.positions ?? 0,
+        sizes: versions.sizes ?? 0,
+        colors: versions.colors ?? 0,
+        topology: versions.topology ?? 0,
+      };
+    }
+
+    if (buffersChanged || !this.nodeBindGroup) {
+      this.nodeBindGroup = device.createBindGroup({
+        layout: this.nodeBindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: this.cameraBuffer } },
+          { binding: 1, resource: { buffer: this.nodeBuffersGpu.indices.buffer } },
+          { binding: 2, resource: { buffer: this.nodeBuffersGpu.positions.buffer } },
+          { binding: 3, resource: { buffer: this.nodeBuffersGpu.sizes.buffer } },
+          { binding: 4, resource: { buffer: this.nodeBuffersGpu.colors.buffer } },
+          { binding: 5, resource: { buffer: this.globalsBuffer } },
+        ],
+      });
+      this._nodeBuffersLast = {
+        indices: this.nodeBuffersGpu.indices.buffer,
+        positions: this.nodeBuffersGpu.positions.buffer,
+        sizes: this.nodeBuffersGpu.sizes.buffer,
+        colors: this.nodeBuffersGpu.colors.buffer,
+      };
+    }
   }
 
   updateEdgeBuffersGpu(edges, device, maxBindingSize) {
-    const { segments, colors, indices, widths, endpointSizes, opacities } = edges;
+    const { segments, colors, indices, widths, endpointSizes, opacities, versions = {} } = edges;
     if (!endpointSizes) {
       throw new Error('Edge endpoint sizes buffer is missing; dense buffers must include endpointSizes.');
     }
+    const edgeCount = Math.floor((segments?.length ?? 0) / 6);
+    const cache = this._edgeDataCache;
     const storageUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
     this.edgeBuffersGpu.indices = this.ensureBufferGpu(
       this.edgeBuffersGpu.indices,
@@ -328,26 +376,74 @@ export class GraphLayerWebGPU extends GraphLayer {
       maxBindingSize,
       'Edge endpoint size buffer',
     );
-    device.queue.writeBuffer(this.edgeBuffersGpu.indices.buffer, 0, indices);
-    device.queue.writeBuffer(this.edgeBuffersGpu.segments.buffer, 0, segments);
-    device.queue.writeBuffer(this.edgeBuffersGpu.colors.buffer, 0, colors);
-    device.queue.writeBuffer(this.edgeBuffersGpu.widths.buffer, 0, widths);
-    device.queue.writeBuffer(this.edgeBuffersGpu.opacities.buffer, 0, opacities);
-    device.queue.writeBuffer(this.edgeBuffersGpu.endpointSizes.buffer, 0, endpointSizes);
 
-    this.edgeBindGroup = device.createBindGroup({
-      layout: this.edgeBindGroupLayout,
-      entries: [
-        { binding: 0, resource: { buffer: this.cameraBuffer } },
-        { binding: 1, resource: { buffer: this.edgeBuffersGpu.indices.buffer } },
-        { binding: 2, resource: { buffer: this.edgeBuffersGpu.segments.buffer } },
-        { binding: 3, resource: { buffer: this.edgeBuffersGpu.colors.buffer } },
-        { binding: 4, resource: { buffer: this.edgeBuffersGpu.widths.buffer } },
-        { binding: 5, resource: { buffer: this.edgeBuffersGpu.endpointSizes.buffer } },
-        { binding: 6, resource: { buffer: this.edgeBuffersGpu.opacities.buffer } },
-        { binding: 7, resource: { buffer: this.globalsBuffer } },
-      ],
-    });
+    const buffersChanged = (
+      this._edgeBuffersLast?.indices !== this.edgeBuffersGpu.indices?.buffer
+      || this._edgeBuffersLast?.segments !== this.edgeBuffersGpu.segments?.buffer
+      || this._edgeBuffersLast?.colors !== this.edgeBuffersGpu.colors?.buffer
+      || this._edgeBuffersLast?.widths !== this.edgeBuffersGpu.widths?.buffer
+      || this._edgeBuffersLast?.endpointSizes !== this.edgeBuffersGpu.endpointSizes?.buffer
+      || this._edgeBuffersLast?.opacities !== this.edgeBuffersGpu.opacities?.buffer
+    );
+
+    const versionChanged = buffersChanged
+      || this._edgeVersionsLast?.indices !== (versions.indices ?? 0)
+      || this._edgeVersionsLast?.segments !== (versions.segments ?? 0)
+      || this._edgeVersionsLast?.colors !== (versions.colors ?? 0)
+      || this._edgeVersionsLast?.widths !== (versions.widths ?? 0)
+      || this._edgeVersionsLast?.endpointSizes !== (versions.endpointSizes ?? 0)
+      || this._edgeVersionsLast?.opacities !== (versions.opacities ?? 0)
+      || this._edgeVersionsLast?.topology !== (versions.topology ?? 0)
+      || cache.count !== edgeCount;
+
+    if (versionChanged && edgeCount > 0) {
+      device.queue.writeBuffer(this.edgeBuffersGpu.indices.buffer, 0, indices);
+      device.queue.writeBuffer(this.edgeBuffersGpu.segments.buffer, 0, segments);
+      device.queue.writeBuffer(this.edgeBuffersGpu.colors.buffer, 0, colors);
+      device.queue.writeBuffer(this.edgeBuffersGpu.widths.buffer, 0, widths);
+      device.queue.writeBuffer(this.edgeBuffersGpu.opacities.buffer, 0, opacities);
+      device.queue.writeBuffer(this.edgeBuffersGpu.endpointSizes.buffer, 0, endpointSizes);
+      cache.segments = segments;
+      cache.colors = colors;
+      cache.indices = indices;
+      cache.widths = widths;
+      cache.endpointSizes = endpointSizes;
+      cache.opacities = opacities;
+      cache.count = edgeCount;
+      this._edgeVersionsLast = {
+        indices: versions.indices ?? 0,
+        segments: versions.segments ?? 0,
+        colors: versions.colors ?? 0,
+        widths: versions.widths ?? 0,
+        endpointSizes: versions.endpointSizes ?? 0,
+        opacities: versions.opacities ?? 0,
+        topology: versions.topology ?? 0,
+      };
+    }
+
+    if (buffersChanged || !this.edgeBindGroup) {
+      this.edgeBindGroup = device.createBindGroup({
+        layout: this.edgeBindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: this.cameraBuffer } },
+          { binding: 1, resource: { buffer: this.edgeBuffersGpu.indices.buffer } },
+          { binding: 2, resource: { buffer: this.edgeBuffersGpu.segments.buffer } },
+          { binding: 3, resource: { buffer: this.edgeBuffersGpu.colors.buffer } },
+          { binding: 4, resource: { buffer: this.edgeBuffersGpu.widths.buffer } },
+          { binding: 5, resource: { buffer: this.edgeBuffersGpu.endpointSizes.buffer } },
+          { binding: 6, resource: { buffer: this.edgeBuffersGpu.opacities.buffer } },
+          { binding: 7, resource: { buffer: this.globalsBuffer } },
+        ],
+      });
+      this._edgeBuffersLast = {
+        indices: this.edgeBuffersGpu.indices.buffer,
+        segments: this.edgeBuffersGpu.segments.buffer,
+        colors: this.edgeBuffersGpu.colors.buffer,
+        widths: this.edgeBuffersGpu.widths.buffer,
+        endpointSizes: this.edgeBuffersGpu.endpointSizes.buffer,
+        opacities: this.edgeBuffersGpu.opacities.buffer,
+      };
+    }
   }
 
   render(context, frame) {
@@ -369,6 +465,7 @@ export class GraphLayerWebGPU extends GraphLayer {
     let geometry = null;
     let is2D = cameraUniforms?.mode === '2d';
 
+    const passes = [];
     network.withBufferAccess(() => {
       geometry = this.readDenseGraph(network);
       is2D = cameraUniforms?.mode === '2d';
@@ -379,11 +476,15 @@ export class GraphLayerWebGPU extends GraphLayer {
         this.updateNodeBuffersGpu(geometry.nodes, gpuDevice, maxBindingSize);
       } else {
         this.nodeBindGroup = null;
+        this._nodeVersionsLast = null;
+        this._nodeDataCache.count = 0;
       }
       if (geometry.edges.count) {
         this.updateEdgeBuffersGpu(geometry.edges, gpuDevice, maxBindingSize);
       } else {
         this.edgeBindGroup = null;
+        this._edgeVersionsLast = null;
+        this._edgeDataCache.count = 0;
       }
       weightedReady = weightedRequested && geometry.edges.count > 0
         ? this.prepareWeightedResources(context, cameraUniforms)
@@ -422,25 +523,30 @@ export class GraphLayerWebGPU extends GraphLayer {
         this.warnedWeightedFallback = true;
       }
       if (is2D) {
-        drawEdgesAlpha(context.passEncoder);
-        drawNodes(context.passEncoder);
+        passes.push(() => {
+          drawEdgesAlpha(context.passEncoder);
+          drawNodes(context.passEncoder);
+        });
       } else {
-        drawNodes(context.passEncoder);
-        drawEdgesAlpha(context.passEncoder);
+        passes.push(() => {
+          drawNodes(context.passEncoder);
+          drawEdgesAlpha(context.passEncoder);
+        });
       }
-      return;
+    } else {
+      if (!this.loggedWeightedActive) {
+        console.info(`GraphLayerWebGPU: using weighted multipass for '${transparencyMode}'`);
+        this.loggedWeightedActive = true;
+      }
+      passes.push(() => this.renderWeighted(context, {
+        geometry,
+        is2D,
+        drawNodes,
+        mode: transparencyMode,
+      }));
     }
 
-    if (!this.loggedWeightedActive) {
-      console.info(`GraphLayerWebGPU: using weighted multipass for '${transparencyMode}'`);
-      this.loggedWeightedActive = true;
-    }
-    this.renderWeighted(context, {
-      geometry,
-      is2D,
-      drawNodes,
-      mode: transparencyMode,
-    });
+    this.frameGraph.run(passes, context);
   }
 
   getBlendForMode(mode) {

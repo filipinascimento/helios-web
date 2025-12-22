@@ -56,15 +56,24 @@ export class WebGPUDevice {
       throw new Error('Unable to acquire GPU adapter');
     }
     const storageLimitRatio = Math.min(Math.max(this.options.storageBufferLimitRatio ?? 0.75, 0), 1);
+    const bufferLimitRatio = Math.min(Math.max(this.options.bufferLimitRatio ?? 1, 0), 1);
     const adapterStorageLimit = this.adapter.limits?.maxStorageBufferBindingSize;
-    // Request a higher storage buffer limit (defaults are often 128 MB). Clamp to 75% of what the adapter reports.
+    const adapterBufferLimit = this.adapter.limits?.maxBufferSize;
+    // Request higher limits (browser default is often 128 MB for storage and 256 MB for buffers).
     const baseStorageLimit = 128 * 1024 * 1024;
+    const baseBufferLimit = 256 * 1024 * 1024;
     const requestedStorageLimit = adapterStorageLimit
       ? Math.min(adapterStorageLimit, Math.max(baseStorageLimit, Math.floor(adapterStorageLimit * storageLimitRatio)))
+      : null;
+    const requestedBufferLimit = adapterBufferLimit
+      ? Math.min(adapterBufferLimit, Math.max(baseBufferLimit, Math.floor(adapterBufferLimit * bufferLimitRatio)))
       : null;
     const requiredLimits = {};
     if (requestedStorageLimit) {
       requiredLimits.maxStorageBufferBindingSize = requestedStorageLimit;
+    }
+    if (requestedBufferLimit) {
+      requiredLimits.maxBufferSize = requestedBufferLimit;
     }
     this.requestedLimits = Object.keys(requiredLimits).length ? requiredLimits : null;
     this.device = await this.adapter.requestDevice(this.requestedLimits ? { requiredLimits } : {});
