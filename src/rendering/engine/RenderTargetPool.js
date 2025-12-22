@@ -70,13 +70,17 @@ export class RenderTargetPool {
     };
   }
 
-  #createWebGPUTarget(device, width, height, options) {
-    const format = options.format ?? device.format ?? 'rgba8unorm';
-    const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC;
-    const texture = device.device.createTexture({
-      size: { width, height },
-      format,
-      usage,
+	  #createWebGPUTarget(device, width, height, options) {
+	    const format = options.format ?? device.format ?? 'rgba8unorm';
+	    const usage =
+	      GPUTextureUsage.RENDER_ATTACHMENT
+	      | GPUTextureUsage.TEXTURE_BINDING
+	      | GPUTextureUsage.COPY_SRC
+	      | GPUTextureUsage.COPY_DST;
+	    const texture = device.device.createTexture({
+	      size: { width, height },
+	      format,
+	      usage,
       sampleCount: options.samples ?? 1,
     });
     const depthTexture = options.depth

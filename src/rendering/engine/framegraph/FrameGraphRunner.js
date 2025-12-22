@@ -17,9 +17,12 @@ export class FrameGraphRunner {
   async run(passes, context) {
     if (!Array.isArray(passes) || !passes.length) return;
     for (const pass of passes) {
-      // Pass can be sync or async; await to allow async when needed.
-      // eslint-disable-next-line no-await-in-loop
-      await pass(context, this.resources);
+      // Run sync passes without yielding; only await when a pass returns a promise.
+      const result = pass(context, this.resources);
+      if (result && typeof result.then === 'function') {
+        // eslint-disable-next-line no-await-in-loop
+        await result;
+      }
     }
   }
 }

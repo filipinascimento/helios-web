@@ -18,6 +18,7 @@ function resolveRendererPreference() {
   const params = new URLSearchParams(window.location.search);
   const renderer = params.get('renderer');
   if (renderer === 'webgl') return 'webgl';
+  if (renderer === 'webgpu') return 'webgpu';
   return null;
 }
 
@@ -259,6 +260,15 @@ async function bootstrap() {
 
   console.log("Helios is ready!");
   // helios.renderer?.camera?.setTarget?.([0, 0, mode === '3d' ? 0 : 0]);
+  if (pickTest && helios.renderer?.camera) {
+    helios.renderer.camera.setMode?.('2d');
+    helios.renderer.camera.zoom = 2;
+    if (helios.renderer.camera.pan2D?.length >= 2) {
+      helios.renderer.camera.pan2D[0] = 0;
+      helios.renderer.camera.pan2D[1] = 0;
+    }
+    helios.renderer.camera.updateMatrices?.();
+  }
 
   // Showcase a colormap on nodes: map "weight" through a perceptual ramp.
   console.log("Setting up mappers...");
@@ -297,10 +307,10 @@ async function bootstrap() {
 
   console.log("Enabling attribute tracking for picking (auto-update, scaled)...");
   helios.enableAttributeTracking('$index', '$index', {
-    resolutionScale: pickTest ? 0.5 : 0.5,
+    resolutionScale: 1.0,
     trackDepth: true,
     autoUpdate: true,
-    autoUpdateFrameSkip: pickTest ? 10 : 10,
+    autoUpdateMaxFps: 1,
   });
   const canvas = helios.layers?.canvas ?? helios.renderer?.canvas ?? document.querySelector('canvas');
   if (canvas) {

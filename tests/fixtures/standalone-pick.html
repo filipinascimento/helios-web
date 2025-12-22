@@ -24,6 +24,8 @@
 
       async function main() {
         try {
+          const params = new URLSearchParams(window.location.search);
+          const renderer = params.get('renderer');
           const container = document.getElementById('app');
           const network = await HeliosNetwork.create({ directed: false, initialNodes: 0 });
           network.defineNodeAttribute('_helios_visuals_position', AttributeType.Float, 3);
@@ -36,15 +38,15 @@
             const size = network.getNodeAttributeBuffer('_helios_visuals_size').view;
             const w = network.getNodeAttributeBuffer('weight').view;
             const positions = [
-              [0, 0, 0],
-              [120, 0, 0],
+              [-40, 0, 0],
+              [40, 0, 0],
             ];
             nodes.forEach((id, i) => {
               const offset = id * 3;
               pos[offset] = positions[i][0];
               pos[offset + 1] = positions[i][1];
               pos[offset + 2] = positions[i][2];
-              size[id] = 48;
+              size[id] = 32;
               w[id] = i === 0 ? 0.2 : 0.8;
             });
           });
@@ -52,25 +54,32 @@
 
           const helios = new Helios(network, {
             container,
-            layout: { type: 'static', options: { bounds: [-50, -50, 50, 50] } },
+            layout: { type: 'static', options: { bounds: [-100, -100, 100, 100] } },
             mode: '2d',
-            manualRendering: true,
+            renderer,
           });
           await helios.ready;
           helios.renderer?.camera?.setTarget?.([0, 0, 0]);
           helios.renderer?.camera?.setMode?.('2d');
+          if (helios.renderer?.camera) {
+            helios.renderer.camera.zoom = 1;
+            if (helios.renderer.camera.pan2D?.length >= 2) {
+              helios.renderer.camera.pan2D[0] = 0;
+              helios.renderer.camera.pan2D[1] = 0;
+            }
+            helios.renderer.camera.updateMatrices?.();
+          }
           const size = { width: 320, height: 240, devicePixelRatio: 1 };
           helios.renderer?.resize?.(size);
           helios.attributeTracker?.resize?.(size);
           helios.size = size;
           helios.enableAttributeTracking('$index', '$index', {
             resolutionScale: 1,
-            autoUpdate: false,
+            autoUpdate: true,
             trackDepth: true,
           });
           helios.visuals?.markNodeAttributesDirty?.();
           await helios.renderAttributeTracking();
-          helios.performRendering?.();
           window.__helios = helios;
         } catch (error) {
           console.error('helios init failed', error);
