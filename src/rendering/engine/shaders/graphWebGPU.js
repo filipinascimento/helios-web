@@ -20,6 +20,12 @@ struct Globals {
   _pad0: vec2<f32>,
   nodeOutlineColor: vec4<f32>,
   edgeTrim: vec4<f32>, // edgeTrim.x used, rest padding
+  nodeNoStateScale: vec4<f32>, // x=sizeMul y=opacityMul z=outlineMul w=discard(>0.5)
+  nodeNoStateColorMul: vec4<f32>,
+  nodeNoStateColorAdd: vec4<f32>,
+  edgeNoStateScale: vec4<f32>, // x=widthMul y=opacityMul w=discard(>0.5)
+  edgeNoStateColorMul: vec4<f32>,
+  edgeNoStateColorAdd: vec4<f32>,
   nodeStateScale: array<vec4<f32>, ${STATE_SLOTS}>,
   nodeStateColorMul: array<vec4<f32>, ${STATE_SLOTS}>,
   nodeStateColorAdd: array<vec4<f32>, ${STATE_SLOTS}>,
@@ -72,6 +78,7 @@ struct VertexOutput {
   @location(6) upWorld : vec3<f32>,
   @location(7) viewDir : vec3<f32>,
   @location(8) radius : f32,
+  @location(9) @interpolate(flat) discardFlag : u32,
 };
 
 @vertex
@@ -90,7 +97,16 @@ fn nodeVertex(input : VertexInput) -> VertexOutput {
   var outlineMul = 1.0;
   var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
   var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
-  if (state != 0u) {
+  var discardFlag = 0u;
+  if (state == 0u) {
+    let scale = globals.nodeNoStateScale;
+    sizeMul = sizeMul * scale.x;
+    opacityMul = opacityMul * scale.y;
+    outlineMul = outlineMul * scale.z;
+    rgbMul = rgbMul * globals.nodeNoStateColorMul.rgb;
+    rgbAdd = rgbAdd + globals.nodeNoStateColorAdd.rgb;
+    discardFlag = select(0u, 1u, scale.w > 0.5);
+  } else {
     for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
       let enabled = (state >> i) & 1u;
       if (enabled == 1u) {
@@ -100,6 +116,9 @@ fn nodeVertex(input : VertexInput) -> VertexOutput {
         outlineMul = outlineMul * scale.z;
         rgbMul = rgbMul * globals.nodeStateColorMul[i].rgb;
         rgbAdd = rgbAdd + globals.nodeStateColorAdd[i].rgb;
+        if (scale.w > 0.5) {
+          discardFlag = 1u;
+        }
       }
     }
   }
@@ -148,6 +167,7 @@ fn nodeVertex(input : VertexInput) -> VertexOutput {
   output.upWorld = up;
   output.viewDir = viewDir;
   output.radius = radius;
+  output.discardFlag = discardFlag;
   return output;
 }
 
@@ -159,6 +179,9 @@ struct NodeFragmentOutput {
 @fragment
 fn nodeFragment(input : VertexOutput) -> NodeFragmentOutput {
   var output : NodeFragmentOutput;
+  if (input.discardFlag == 1u) {
+    discard;
+  }
   let dist = length(input.local);
   if (dist > 1.0) {
     discard;
@@ -204,6 +227,12 @@ struct Globals {
   _pad0: vec2<f32>,
   nodeOutlineColor: vec4<f32>,
   edgeTrim: vec4<f32>, // edgeTrim.x used, rest padding
+  nodeNoStateScale: vec4<f32>, // x=sizeMul y=opacityMul z=outlineMul w=discard(>0.5)
+  nodeNoStateColorMul: vec4<f32>,
+  nodeNoStateColorAdd: vec4<f32>,
+  edgeNoStateScale: vec4<f32>, // x=widthMul y=opacityMul w=discard(>0.5)
+  edgeNoStateColorMul: vec4<f32>,
+  edgeNoStateColorAdd: vec4<f32>,
   nodeStateScale: array<vec4<f32>, ${STATE_SLOTS}>,
   nodeStateColorMul: array<vec4<f32>, ${STATE_SLOTS}>,
   nodeStateColorAdd: array<vec4<f32>, ${STATE_SLOTS}>,
@@ -258,6 +287,7 @@ struct EdgeEndpointStates {
 struct EdgeVertexOutput {
   @builtin(position) position : vec4<f32>,
   @location(0) color : vec4<f32>,
+  @location(1) @interpolate(flat) discardFlag : u32,
 };
 
 @vertex
@@ -280,7 +310,15 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
   var opacityMul = 1.0;
   var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
   var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
-  if (state != 0u) {
+  var discardFlag = 0u;
+  if (state == 0u) {
+    let scale = globals.edgeNoStateScale;
+    widthMul = widthMul * scale.x;
+    opacityMul = opacityMul * scale.y;
+    rgbMul = rgbMul * globals.edgeNoStateColorMul.rgb;
+    rgbAdd = rgbAdd + globals.edgeNoStateColorAdd.rgb;
+    discardFlag = select(0u, 1u, scale.w > 0.5);
+  } else {
     for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
       let enabled = (state >> i) & 1u;
       if (enabled == 1u) {
@@ -289,6 +327,9 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
         opacityMul = opacityMul * scale.y;
         rgbMul = rgbMul * globals.edgeStateColorMul[i].rgb;
         rgbAdd = rgbAdd + globals.edgeStateColorAdd[i].rgb;
+        if (scale.w > 0.5) {
+          discardFlag = 1u;
+        }
       }
     }
   }
@@ -297,12 +338,21 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
   let endpointState = edgeEndpointStates.data[edgeId];
   var startSizeMul = 1.0;
   var endSizeMul = 1.0;
-  if ((endpointState.x | endpointState.y) != 0u) {
+  if (endpointState.x == 0u) {
+    startSizeMul = startSizeMul * globals.nodeNoStateScale.x;
+  } else {
     for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
       let slotMul = globals.nodeStateScale[i].x;
       if (((endpointState.x >> i) & 1u) == 1u) {
         startSizeMul = startSizeMul * slotMul;
       }
+    }
+  }
+  if (endpointState.y == 0u) {
+    endSizeMul = endSizeMul * globals.nodeNoStateScale.x;
+  } else {
+    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
+      let slotMul = globals.nodeStateScale[i].x;
       if (((endpointState.y >> i) & 1u) == 1u) {
         endSizeMul = endSizeMul * slotMul;
       }
@@ -334,6 +384,7 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
   var output : EdgeVertexOutput;
   output.position = camera.viewProjection * vec4<f32>(position, 1.0);
   output.color = vec4<f32>(rgb, alpha);
+  output.discardFlag = discardFlag;
   return output;
 }
 
@@ -361,7 +412,15 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   var opacityMul = 1.0;
   var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
   var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
-  if (state != 0u) {
+  var discardFlag = 0u;
+  if (state == 0u) {
+    let scale = globals.edgeNoStateScale;
+    widthMul = widthMul * scale.x;
+    opacityMul = opacityMul * scale.y;
+    rgbMul = rgbMul * globals.edgeNoStateColorMul.rgb;
+    rgbAdd = rgbAdd + globals.edgeNoStateColorAdd.rgb;
+    discardFlag = select(0u, 1u, scale.w > 0.5);
+  } else {
     for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
       let enabled = (state >> i) & 1u;
       if (enabled == 1u) {
@@ -370,6 +429,9 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
         opacityMul = opacityMul * scale.y;
         rgbMul = rgbMul * globals.edgeStateColorMul[i].rgb;
         rgbAdd = rgbAdd + globals.edgeStateColorAdd[i].rgb;
+        if (scale.w > 0.5) {
+          discardFlag = 1u;
+        }
       }
     }
   }
@@ -380,12 +442,21 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   let endpointState = edgeEndpointStates.data[edgeId];
   var startSizeMul = 1.0;
   var endSizeMul = 1.0;
-  if ((endpointState.x | endpointState.y) != 0u) {
+  if (endpointState.x == 0u) {
+    startSizeMul = startSizeMul * globals.nodeNoStateScale.x;
+  } else {
     for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
       let slotMul = globals.nodeStateScale[i].x;
       if (((endpointState.x >> i) & 1u) == 1u) {
         startSizeMul = startSizeMul * slotMul;
       }
+    }
+  }
+  if (endpointState.y == 0u) {
+    endSizeMul = endSizeMul * globals.nodeNoStateScale.x;
+  } else {
+    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
+      let slotMul = globals.nodeStateScale[i].x;
       if (((endpointState.y >> i) & 1u) == 1u) {
         endSizeMul = endSizeMul * slotMul;
       }
@@ -427,11 +498,15 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   let alpha = clamp(opacity * blended.a, 0.0, 1.0);
   let rgb = clamp(blended.rgb * rgbMul + rgbAdd, vec3<f32>(0.0), vec3<f32>(1.0));
   output.color = vec4<f32>(rgb, alpha);
+  output.discardFlag = discardFlag;
   return output;
 }
 
 @fragment
 fn edgeFragment(input : EdgeVertexOutput) -> @location(0) vec4<f32> {
+  if (input.discardFlag == 1u) {
+    discard;
+  }
   return vec4<f32>(input.color.rgb, input.color.a);
 }`;
 
@@ -455,6 +530,12 @@ struct Globals {
   _pad0: vec2<f32>,
   nodeOutlineColor: vec4<f32>,
   edgeTrim: vec4<f32>, // edgeTrim.x used, rest padding
+  nodeNoStateScale: vec4<f32>, // x=sizeMul y=opacityMul z=outlineMul w=discard(>0.5)
+  nodeNoStateColorMul: vec4<f32>,
+  nodeNoStateColorAdd: vec4<f32>,
+  edgeNoStateScale: vec4<f32>, // x=widthMul y=opacityMul w=discard(>0.5)
+  edgeNoStateColorMul: vec4<f32>,
+  edgeNoStateColorAdd: vec4<f32>,
   nodeStateScale: array<vec4<f32>, ${STATE_SLOTS}>,
   nodeStateColorMul: array<vec4<f32>, ${STATE_SLOTS}>,
   nodeStateColorAdd: array<vec4<f32>, ${STATE_SLOTS}>,
@@ -509,6 +590,7 @@ struct EdgeEndpointStates {
 struct EdgeVertexOutput {
   @builtin(position) position : vec4<f32>,
   @location(0) color : vec4<f32>,
+  @location(1) @interpolate(flat) discardFlag : u32,
 };
 
 @vertex
@@ -531,7 +613,15 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
   var opacityMul = 1.0;
   var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
   var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
-  if (state != 0u) {
+  var discardFlag = 0u;
+  if (state == 0u) {
+    let scale = globals.edgeNoStateScale;
+    widthMul = widthMul * scale.x;
+    opacityMul = opacityMul * scale.y;
+    rgbMul = rgbMul * globals.edgeNoStateColorMul.rgb;
+    rgbAdd = rgbAdd + globals.edgeNoStateColorAdd.rgb;
+    discardFlag = select(0u, 1u, scale.w > 0.5);
+  } else {
     for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
       let enabled = (state >> i) & 1u;
       if (enabled == 1u) {
@@ -540,6 +630,9 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
         opacityMul = opacityMul * scale.y;
         rgbMul = rgbMul * globals.edgeStateColorMul[i].rgb;
         rgbAdd = rgbAdd + globals.edgeStateColorAdd[i].rgb;
+        if (scale.w > 0.5) {
+          discardFlag = 1u;
+        }
       }
     }
   }
@@ -548,12 +641,21 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
   let endpointState = edgeEndpointStates.data[edgeId];
   var startSizeMul = 1.0;
   var endSizeMul = 1.0;
-  if ((endpointState.x | endpointState.y) != 0u) {
+  if (endpointState.x == 0u) {
+    startSizeMul = startSizeMul * globals.nodeNoStateScale.x;
+  } else {
     for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
       let slotMul = globals.nodeStateScale[i].x;
       if (((endpointState.x >> i) & 1u) == 1u) {
         startSizeMul = startSizeMul * slotMul;
       }
+    }
+  }
+  if (endpointState.y == 0u) {
+    endSizeMul = endSizeMul * globals.nodeNoStateScale.x;
+  } else {
+    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
+      let slotMul = globals.nodeStateScale[i].x;
       if (((endpointState.y >> i) & 1u) == 1u) {
         endSizeMul = endSizeMul * slotMul;
       }
@@ -585,6 +687,7 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
   var output : EdgeVertexOutput;
   output.position = camera.viewProjection * vec4<f32>(position, 1.0);
   output.color = vec4<f32>(rgb, alpha);
+  output.discardFlag = discardFlag;
   return output;
 }
 
@@ -612,7 +715,15 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   var opacityMul = 1.0;
   var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
   var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
-  if (state != 0u) {
+  var discardFlag = 0u;
+  if (state == 0u) {
+    let scale = globals.edgeNoStateScale;
+    widthMul = widthMul * scale.x;
+    opacityMul = opacityMul * scale.y;
+    rgbMul = rgbMul * globals.edgeNoStateColorMul.rgb;
+    rgbAdd = rgbAdd + globals.edgeNoStateColorAdd.rgb;
+    discardFlag = select(0u, 1u, scale.w > 0.5);
+  } else {
     for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
       let enabled = (state >> i) & 1u;
       if (enabled == 1u) {
@@ -621,6 +732,9 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
         opacityMul = opacityMul * scale.y;
         rgbMul = rgbMul * globals.edgeStateColorMul[i].rgb;
         rgbAdd = rgbAdd + globals.edgeStateColorAdd[i].rgb;
+        if (scale.w > 0.5) {
+          discardFlag = 1u;
+        }
       }
     }
   }
@@ -631,12 +745,21 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   let endpointState = edgeEndpointStates.data[edgeId];
   var startSizeMul = 1.0;
   var endSizeMul = 1.0;
-  if ((endpointState.x | endpointState.y) != 0u) {
+  if (endpointState.x == 0u) {
+    startSizeMul = startSizeMul * globals.nodeNoStateScale.x;
+  } else {
     for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
       let slotMul = globals.nodeStateScale[i].x;
       if (((endpointState.x >> i) & 1u) == 1u) {
         startSizeMul = startSizeMul * slotMul;
       }
+    }
+  }
+  if (endpointState.y == 0u) {
+    endSizeMul = endSizeMul * globals.nodeNoStateScale.x;
+  } else {
+    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
+      let slotMul = globals.nodeStateScale[i].x;
       if (((endpointState.y >> i) & 1u) == 1u) {
         endSizeMul = endSizeMul * slotMul;
       }
@@ -678,6 +801,7 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   let alpha = clamp(opacity * blended.a, 0.0, 1.0);
   let rgb = clamp(blended.rgb * rgbMul + rgbAdd, vec3<f32>(0.0), vec3<f32>(1.0));
   output.color = vec4<f32>(rgb, alpha);
+  output.discardFlag = discardFlag;
   return output;
 }
 
@@ -688,6 +812,9 @@ struct EdgeWeightedOutput {
 
 @fragment
 fn edgeWeightedFragment(input : EdgeVertexOutput) -> EdgeWeightedOutput {
+  if (input.discardFlag == 1u) {
+    discard;
+  }
   let weight = input.color.a;
   var output : EdgeWeightedOutput;
   output.colorAccum = vec4<f32>(input.color.rgb * weight, weight);

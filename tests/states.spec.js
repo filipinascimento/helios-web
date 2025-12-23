@@ -71,8 +71,76 @@ async function runStateVisualCheck(page, renderer) {
   expect(result.afterMaxGreen).toBeGreaterThan(result.beforeMaxGreen);
 }
 
+async function runNoStateVisualCheck(page, renderer) {
+  await page.goto(`/tests/fixtures/standalone-pick.html?renderer=${renderer}`);
+  await page.waitForFunction(() => window.__helios || window.__heliosError, { timeout: 5000 });
+  const error = await page.evaluate(() => window.__heliosError ?? null);
+  if (error) throw new Error(`fixture failed: ${error}`);
+
+  const result = await page.evaluate(async () => {
+    const helios = window.__helios;
+    if (!helios?.renderer?.readPixels) return { ok: false, reason: 'missing helios/renderer' };
+
+    const canvas = document.querySelector('canvas');
+    const mainWidth = canvas?.width ?? 320;
+    const mainHeight = canvas?.height ?? 240;
+    const offscreen = helios.renderer?.createFramebuffer?.(mainWidth, mainHeight) ?? null;
+    if (offscreen && helios.renderer?.setRenderTarget) {
+      helios.renderer.setRenderTarget(offscreen);
+    }
+
+    const renderMain = async () => {
+      await helios.prewarm?.({ updateDenseBuffers: true });
+      helios.renderer.render({ network: helios.network, camera: helios.renderer.camera });
+    };
+
+    const readStats = async () => {
+      const bytes = await helios.renderer.readPixels(offscreen, { x: 0, y: 0, width: mainWidth, height: mainHeight });
+      const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+      let sumG = 0;
+      let brightCount = 0;
+      const threshold = 30; // background is ~#111; pixels above this are likely rendered content.
+      for (let i = 0; i < arr.length; i += 4) {
+        const r = arr[i] ?? 0;
+        const g = arr[i + 1] ?? 0;
+        const b = arr[i + 2] ?? 0;
+        sumG += g;
+        if (r > threshold || g > threshold || b > threshold) brightCount += 1;
+      }
+      const pixelCount = Math.max(1, arr.length / 4);
+      return { meanG: sumG / pixelCount, brightCount };
+    };
+
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    await renderMain();
+    const before = await readStats();
+
+    helios.resetStateStyles();
+    helios.setNodeNoStateStyle({ colorMul: [0, 0, 0, 1], colorAdd: [0, 1, 0, 0] });
+    helios.setEdgeNoStateStyle({ colorMul: [0, 0, 0, 1], colorAdd: [0, 1, 0, 0] });
+    await renderMain();
+    const afterStyle = await readStats();
+
+    helios.setNodeNoStateStyle({ discard: true });
+    helios.setEdgeNoStateStyle({ discard: true });
+    await renderMain();
+    const afterDiscard = await readStats();
+
+    return { ok: true, before, afterStyle, afterDiscard };
+  });
+
+  expect(result.ok).toBe(true);
+  expect(result.before.brightCount).toBeGreaterThan(50);
+  expect(result.afterStyle.meanG).toBeGreaterThan(result.before.meanG);
+  expect(result.afterDiscard.brightCount).toBeLessThan(result.before.brightCount * 0.1);
+}
+
 test('state styling affects WebGL rendering', async ({ page }) => {
   await runStateVisualCheck(page, 'webgl');
+});
+
+test('no-state styling + discard affects WebGL rendering', async ({ page }) => {
+  await runNoStateVisualCheck(page, 'webgl');
 });
 
 test('@webgpu state styling affects WebGPU rendering', async ({ page }) => {
@@ -84,4 +152,15 @@ test('@webgpu state styling affects WebGPU rendering', async ({ page }) => {
   });
   test.skip(!supported, 'WebGPU not available in browser');
   await runStateVisualCheck(page, 'webgpu');
+});
+
+test('@webgpu no-state styling + discard affects WebGPU rendering', async ({ page }) => {
+  await page.goto('/');
+  const supported = await page.evaluate(async () => {
+    if (!navigator.gpu) return false;
+    const adapter = await navigator.gpu.requestAdapter();
+    return Boolean(adapter);
+  });
+  test.skip(!supported, 'WebGPU not available in browser');
+  await runNoStateVisualCheck(page, 'webgpu');
 });

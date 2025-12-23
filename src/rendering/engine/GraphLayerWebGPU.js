@@ -102,7 +102,7 @@ export class GraphLayerWebGPU extends GraphLayer {
       size: this.cameraArray.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-    const globalsFloats = 20 + this.stateSlotCount * 24;
+    const globalsFloats = 44 + this.stateSlotCount * 24;
     this.globalsArray = new Float32Array(globalsFloats);
     this.globalsBuffer = device.device.createBuffer({
       size: this.globalsArray.byteLength,
@@ -736,6 +736,12 @@ export class GraphLayerWebGPU extends GraphLayer {
     this.globalsArray[offset++] = 0;
 
     const slots = this.stateSlotCount;
+    this.globalsArray.set(this.nodeNoStateScale, offset); offset += 4;
+    this.globalsArray.set(this.nodeNoStateColorMul, offset); offset += 4;
+    this.globalsArray.set(this.nodeNoStateColorAdd, offset); offset += 4;
+    this.globalsArray.set(this.edgeNoStateScale, offset); offset += 4;
+    this.globalsArray.set(this.edgeNoStateColorMul, offset); offset += 4;
+    this.globalsArray.set(this.edgeNoStateColorAdd, offset); offset += 4;
     this.globalsArray.set(this.nodeStateScale, offset); offset += slots * 4;
     this.globalsArray.set(this.nodeStateColorMul, offset); offset += slots * 4;
     this.globalsArray.set(this.nodeStateColorAdd, offset); offset += slots * 4;

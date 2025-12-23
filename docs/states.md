@@ -57,12 +57,38 @@ helios.setEdgeStateStyle(1, { widthMul: 2.0 });
 
 Supported fields:
 
-- Nodes: `sizeMul`, `opacityMul`, `outlineMul`, `colorMul`, `colorAdd`
-- Edges: `widthMul`, `opacityMul`, `colorMul`, `colorAdd`
+- Nodes: `sizeMul`, `opacityMul`, `outlineMul`, `colorMul`, `colorAdd`, `discard`
+- Edges: `widthMul`, `opacityMul`, `colorMul`, `colorAdd`, `discard`
+
+### Styling `NO_STATE`
+
+You can also configure a style that applies when the state bitmask is `0` (no active bits):
+
+```js
+helios.setNodeNoStateStyle({ opacityMul: 0.25 });
+helios.setEdgeNoStateStyle({ opacityMul: 0.25 });
+```
+
+This is useful for “dim everything unless highlighted” patterns (then highlight uses a normal state slot).
+
+### `discard`
+
+If `discard: true` is set on a style, matching nodes/edges are discarded in the fragment shader (not drawn at all):
+
+```js
+// Hide everything in NO_STATE (common for filtering).
+helios.setNodeNoStateStyle({ discard: true });
+helios.setEdgeNoStateStyle({ discard: true });
+```
+
+Performance notes:
+
+- Overhead is small (a couple extra checks per vertex/fragment).
+- If you discard a large fraction of items, it can be faster than drawing fully-transparent pixels (less blending work).
+- Like any branch/discard, it can reduce some GPU optimizations depending on the GPU/driver and scene (measure if it matters).
 
 You can reset all slots back to neutral transforms with:
 
 ```js
 helios.resetStateStyles();
 ```
-

@@ -20,6 +20,9 @@ uniform float u_nodeSizeScale;
 uniform float u_outlineWidthBase;
 uniform float u_outlineWidthScale;
 uniform vec4 u_outlineColor;
+uniform vec4 u_nodeNoStateScale; // x=sizeMul y=opacityMul z=outlineMul w=discard(>0.5)
+uniform vec4 u_nodeNoStateColorMul;
+uniform vec4 u_nodeNoStateColorAdd;
 uniform vec4 u_nodeStateScale[${STATE_SLOTS}]; // x=sizeMul y=opacityMul z=outlineMul w=reserved
 uniform vec4 u_nodeStateColorMul[${STATE_SLOTS}];
 uniform vec4 u_nodeStateColorAdd[${STATE_SLOTS}];
@@ -33,6 +36,7 @@ out vec3 v_rightWorld;
 out vec3 v_upWorld;
 out vec3 v_viewDir;
 out float v_radius;
+flat out uint v_discardFlag;
 
 void main() {
   float sizeMul = 1.0;
@@ -40,7 +44,16 @@ void main() {
   float outlineMul = 1.0;
   vec3 rgbMul = vec3(1.0);
   vec3 rgbAdd = vec3(0.0);
-  if (a_state != 0u) {
+  uint discardFlag = 0u;
+  if (a_state == 0u) {
+    vec4 scale = u_nodeNoStateScale;
+    sizeMul *= scale.x;
+    opacityMul *= scale.y;
+    outlineMul *= scale.z;
+    rgbMul *= u_nodeNoStateColorMul.rgb;
+    rgbAdd += u_nodeNoStateColorAdd.rgb;
+    discardFlag = uint(scale.w > 0.5);
+  } else {
     for (int i = 0; i < ${STATE_SLOTS}; i += 1) {
       float enabled = float((a_state >> uint(i)) & 1u);
       vec4 scale = u_nodeStateScale[i];
@@ -49,8 +62,10 @@ void main() {
       outlineMul *= mix(1.0, scale.z, enabled);
       rgbMul *= mix(vec3(1.0), u_nodeStateColorMul[i].rgb, enabled);
       rgbAdd += u_nodeStateColorAdd[i].rgb * enabled;
+      discardFlag |= uint((scale.w > 0.5) && (enabled > 0.5));
     }
   }
+  v_discardFlag = discardFlag;
 
   float baseSize = (u_nodeSizeBase + u_nodeSizeScale * a_size) * sizeMul;
   float outlineWidth = max(0.0, (u_outlineWidthBase + u_outlineWidthScale * a_size) * outlineMul);
@@ -99,6 +114,7 @@ in vec3 v_rightWorld;
 in vec3 v_upWorld;
 in vec3 v_viewDir;
 in float v_radius;
+flat in uint v_discardFlag;
 
 uniform mat4 u_viewProjection;
 uniform bool u_is2D;
@@ -106,6 +122,9 @@ uniform bool u_is2D;
 out vec4 fragColor;
 
 void main() {
+  if (v_discardFlag != 0u) {
+    discard;
+  }
   float dist = length(v_local);
   if (dist > 1.0) {
     discard;
@@ -134,10 +153,14 @@ export const EDGE_WEIGHTED_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
 precision mediump float;
 
 in vec4 v_color;
+flat in uint v_discardFlag;
 layout (location = 0) out vec4 fragAccum;
 layout (location = 1) out vec4 fragWeight;
 
 void main() {
+  if (v_discardFlag != 0u) {
+    discard;
+  }
   float weight = v_color.a;
   fragAccum = vec4(v_color.rgb * weight, weight);
   fragWeight = vec4(weight, 0.0, 0.0, 0.0);
@@ -162,19 +185,32 @@ uniform float u_edgeWidthScale;
 uniform float u_nodeSizeBase;
 uniform float u_nodeSizeScale;
 uniform float u_edgeEndpointTrim;
+uniform vec4 u_nodeNoStateScale; // x=sizeMul used for endpoint sizes
 uniform vec4 u_nodeStateScale[${STATE_SLOTS}]; // x=sizeMul (used for endpoint sizes)
+uniform vec4 u_edgeNoStateScale; // x=widthMul y=opacityMul w=discard(>0.5)
+uniform vec4 u_edgeNoStateColorMul;
+uniform vec4 u_edgeNoStateColorAdd;
 uniform vec4 u_edgeStateScale[${STATE_SLOTS}]; // x=widthMul y=opacityMul
 uniform vec4 u_edgeStateColorMul[${STATE_SLOTS}];
 uniform vec4 u_edgeStateColorAdd[${STATE_SLOTS}];
 
 out vec4 v_color;
+flat out uint v_discardFlag;
 
 void main() {
   float widthMul = 1.0;
   float opacityMul = 1.0;
   vec3 rgbMul = vec3(1.0);
   vec3 rgbAdd = vec3(0.0);
-  if (a_state != 0u) {
+  uint discardFlag = 0u;
+  if (a_state == 0u) {
+    vec4 scale = u_edgeNoStateScale;
+    widthMul *= scale.x;
+    opacityMul *= scale.y;
+    rgbMul *= u_edgeNoStateColorMul.rgb;
+    rgbAdd += u_edgeNoStateColorAdd.rgb;
+    discardFlag = uint(scale.w > 0.5);
+  } else {
     for (int i = 0; i < ${STATE_SLOTS}; i += 1) {
       float enabled = float((a_state >> uint(i)) & 1u);
       vec4 scale = u_edgeStateScale[i];
@@ -182,17 +218,28 @@ void main() {
       opacityMul *= mix(1.0, scale.y, enabled);
       rgbMul *= mix(vec3(1.0), u_edgeStateColorMul[i].rgb, enabled);
       rgbAdd += u_edgeStateColorAdd[i].rgb * enabled;
+      discardFlag |= uint((scale.w > 0.5) && (enabled > 0.5));
     }
   }
+  v_discardFlag = discardFlag;
 
   float startSizeMul = 1.0;
   float endSizeMul = 1.0;
-  if ((a_endpointState.x | a_endpointState.y) != 0u) {
+  if (a_endpointState.x == 0u) {
+    startSizeMul *= u_nodeNoStateScale.x;
+  } else {
     for (int i = 0; i < ${STATE_SLOTS}; i += 1) {
       float enabledStart = float((a_endpointState.x >> uint(i)) & 1u);
-      float enabledEnd = float((a_endpointState.y >> uint(i)) & 1u);
       float slotMul = u_nodeStateScale[i].x;
       startSizeMul *= mix(1.0, slotMul, enabledStart);
+    }
+  }
+  if (a_endpointState.y == 0u) {
+    endSizeMul *= u_nodeNoStateScale.x;
+  } else {
+    for (int i = 0; i < ${STATE_SLOTS}; i += 1) {
+      float enabledEnd = float((a_endpointState.y >> uint(i)) & 1u);
+      float slotMul = u_nodeStateScale[i].x;
       endSizeMul *= mix(1.0, slotMul, enabledEnd);
     }
   }
@@ -223,9 +270,13 @@ export const EDGE_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
 precision mediump float;
 
 in vec4 v_color;
+flat in uint v_discardFlag;
 out vec4 fragColor;
 
 void main() {
+  if (v_discardFlag != 0u) {
+    discard;
+  }
   fragColor = v_color;
 }`;
 
@@ -250,19 +301,32 @@ uniform float u_edgeWidthScale;
 uniform float u_nodeSizeBase;
 uniform float u_nodeSizeScale;
 uniform float u_edgeEndpointTrim;
+uniform vec4 u_nodeNoStateScale; // x=sizeMul used for endpoint sizes
 uniform vec4 u_nodeStateScale[${STATE_SLOTS}]; // x=sizeMul (used for endpoint sizes)
+uniform vec4 u_edgeNoStateScale; // x=widthMul y=opacityMul w=discard(>0.5)
+uniform vec4 u_edgeNoStateColorMul;
+uniform vec4 u_edgeNoStateColorAdd;
 uniform vec4 u_edgeStateScale[${STATE_SLOTS}]; // x=widthMul y=opacityMul
 uniform vec4 u_edgeStateColorMul[${STATE_SLOTS}];
 uniform vec4 u_edgeStateColorAdd[${STATE_SLOTS}];
 
 out vec4 v_color;
+flat out uint v_discardFlag;
 
 void main() {
   float widthMul = 1.0;
   float opacityMul = 1.0;
   vec3 rgbMul = vec3(1.0);
   vec3 rgbAdd = vec3(0.0);
-  if (a_state != 0u) {
+  uint discardFlag = 0u;
+  if (a_state == 0u) {
+    vec4 scale = u_edgeNoStateScale;
+    widthMul *= scale.x;
+    opacityMul *= scale.y;
+    rgbMul *= u_edgeNoStateColorMul.rgb;
+    rgbAdd += u_edgeNoStateColorAdd.rgb;
+    discardFlag = uint(scale.w > 0.5);
+  } else {
     for (int i = 0; i < ${STATE_SLOTS}; i += 1) {
       float enabled = float((a_state >> uint(i)) & 1u);
       vec4 scale = u_edgeStateScale[i];
@@ -270,17 +334,28 @@ void main() {
       opacityMul *= mix(1.0, scale.y, enabled);
       rgbMul *= mix(vec3(1.0), u_edgeStateColorMul[i].rgb, enabled);
       rgbAdd += u_edgeStateColorAdd[i].rgb * enabled;
+      discardFlag |= uint((scale.w > 0.5) && (enabled > 0.5));
     }
   }
+  v_discardFlag = discardFlag;
 
   float startSizeMul = 1.0;
   float endSizeMul = 1.0;
-  if ((a_endpointState.x | a_endpointState.y) != 0u) {
+  if (a_endpointState.x == 0u) {
+    startSizeMul *= u_nodeNoStateScale.x;
+  } else {
     for (int i = 0; i < ${STATE_SLOTS}; i += 1) {
       float enabledStart = float((a_endpointState.x >> uint(i)) & 1u);
-      float enabledEnd = float((a_endpointState.y >> uint(i)) & 1u);
       float slotMul = u_nodeStateScale[i].x;
       startSizeMul *= mix(1.0, slotMul, enabledStart);
+    }
+  }
+  if (a_endpointState.y == 0u) {
+    endSizeMul *= u_nodeNoStateScale.x;
+  } else {
+    for (int i = 0; i < ${STATE_SLOTS}; i += 1) {
+      float enabledEnd = float((a_endpointState.y >> uint(i)) & 1u);
+      float slotMul = u_nodeStateScale[i].x;
       endSizeMul *= mix(1.0, slotMul, enabledEnd);
     }
   }

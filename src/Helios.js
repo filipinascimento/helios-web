@@ -539,8 +539,18 @@ export class Helios extends EventTarget {
     this.scheduler.requestRender();
   }
 
+  setNodeNoStateStyle(style) {
+    this.renderer?.graphLayer?.setNodeNoStateStyle?.(style);
+    this.scheduler.requestRender();
+  }
+
   setEdgeStateStyle(slot, style) {
     this.renderer?.graphLayer?.setEdgeStateStyle?.(slot, style);
+    this.scheduler.requestRender();
+  }
+
+  setEdgeNoStateStyle(style) {
+    this.renderer?.graphLayer?.setEdgeNoStateStyle?.(style);
     this.scheduler.requestRender();
   }
 

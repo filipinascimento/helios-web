@@ -47,9 +47,15 @@ export class GraphLayer extends Layer {
     this.nodeStateScale = new Float32Array(slots * 4);
     this.nodeStateColorMul = new Float32Array(slots * 4);
     this.nodeStateColorAdd = new Float32Array(slots * 4);
+    this.nodeNoStateScale = new Float32Array(4);
+    this.nodeNoStateColorMul = new Float32Array(4);
+    this.nodeNoStateColorAdd = new Float32Array(4);
     this.edgeStateScale = new Float32Array(slots * 4);
     this.edgeStateColorMul = new Float32Array(slots * 4);
     this.edgeStateColorAdd = new Float32Array(slots * 4);
+    this.edgeNoStateScale = new Float32Array(4);
+    this.edgeNoStateColorMul = new Float32Array(4);
+    this.edgeNoStateColorAdd = new Float32Array(4);
     this.resetStateStyles();
   }
 
@@ -83,6 +89,33 @@ export class GraphLayer extends Layer {
       this.edgeStateColorAdd[o + 2] = 0;
       this.edgeStateColorAdd[o + 3] = 0;
     }
+
+    // NO_STATE styles (applied when state bitmask is 0).
+    this.nodeNoStateScale[0] = 1;
+    this.nodeNoStateScale[1] = 1;
+    this.nodeNoStateScale[2] = 1;
+    this.nodeNoStateScale[3] = 0;
+    this.nodeNoStateColorMul[0] = 1;
+    this.nodeNoStateColorMul[1] = 1;
+    this.nodeNoStateColorMul[2] = 1;
+    this.nodeNoStateColorMul[3] = 1;
+    this.nodeNoStateColorAdd[0] = 0;
+    this.nodeNoStateColorAdd[1] = 0;
+    this.nodeNoStateColorAdd[2] = 0;
+    this.nodeNoStateColorAdd[3] = 0;
+
+    this.edgeNoStateScale[0] = 1;
+    this.edgeNoStateScale[1] = 1;
+    this.edgeNoStateScale[2] = 1;
+    this.edgeNoStateScale[3] = 0;
+    this.edgeNoStateColorMul[0] = 1;
+    this.edgeNoStateColorMul[1] = 1;
+    this.edgeNoStateColorMul[2] = 1;
+    this.edgeNoStateColorMul[3] = 1;
+    this.edgeNoStateColorAdd[0] = 0;
+    this.edgeNoStateColorAdd[1] = 0;
+    this.edgeNoStateColorAdd[2] = 0;
+    this.edgeNoStateColorAdd[3] = 0;
   }
 
   setNodeStateStyle(slot, style = {}) {
@@ -92,6 +125,7 @@ export class GraphLayer extends Layer {
     if (style.sizeMul != null) this.nodeStateScale[o + 0] = Number(style.sizeMul);
     if (style.opacityMul != null) this.nodeStateScale[o + 1] = Number(style.opacityMul);
     if (style.outlineMul != null) this.nodeStateScale[o + 2] = Number(style.outlineMul);
+    if (style.discard != null) this.nodeStateScale[o + 3] = style.discard ? 1 : 0;
     if (style.colorMul != null) {
       const v = style.colorMul;
       this.nodeStateColorMul[o + 0] = v[0] ?? this.nodeStateColorMul[o + 0];
@@ -108,12 +142,34 @@ export class GraphLayer extends Layer {
     }
   }
 
+  setNodeNoStateStyle(style = {}) {
+    if (style.sizeMul != null) this.nodeNoStateScale[0] = Number(style.sizeMul);
+    if (style.opacityMul != null) this.nodeNoStateScale[1] = Number(style.opacityMul);
+    if (style.outlineMul != null) this.nodeNoStateScale[2] = Number(style.outlineMul);
+    if (style.discard != null) this.nodeNoStateScale[3] = style.discard ? 1 : 0;
+    if (style.colorMul != null) {
+      const v = style.colorMul;
+      this.nodeNoStateColorMul[0] = v[0] ?? this.nodeNoStateColorMul[0];
+      this.nodeNoStateColorMul[1] = v[1] ?? this.nodeNoStateColorMul[1];
+      this.nodeNoStateColorMul[2] = v[2] ?? this.nodeNoStateColorMul[2];
+      this.nodeNoStateColorMul[3] = v[3] ?? this.nodeNoStateColorMul[3];
+    }
+    if (style.colorAdd != null) {
+      const v = style.colorAdd;
+      this.nodeNoStateColorAdd[0] = v[0] ?? this.nodeNoStateColorAdd[0];
+      this.nodeNoStateColorAdd[1] = v[1] ?? this.nodeNoStateColorAdd[1];
+      this.nodeNoStateColorAdd[2] = v[2] ?? this.nodeNoStateColorAdd[2];
+      this.nodeNoStateColorAdd[3] = v[3] ?? this.nodeNoStateColorAdd[3];
+    }
+  }
+
   setEdgeStateStyle(slot, style = {}) {
     const index = Number(slot);
     if (!Number.isInteger(index) || index < 0 || index >= this.stateSlotCount) return;
     const o = index * 4;
     if (style.widthMul != null) this.edgeStateScale[o + 0] = Number(style.widthMul);
     if (style.opacityMul != null) this.edgeStateScale[o + 1] = Number(style.opacityMul);
+    if (style.discard != null) this.edgeStateScale[o + 3] = style.discard ? 1 : 0;
     if (style.colorMul != null) {
       const v = style.colorMul;
       this.edgeStateColorMul[o + 0] = v[0] ?? this.edgeStateColorMul[o + 0];
@@ -127,6 +183,26 @@ export class GraphLayer extends Layer {
       this.edgeStateColorAdd[o + 1] = v[1] ?? this.edgeStateColorAdd[o + 1];
       this.edgeStateColorAdd[o + 2] = v[2] ?? this.edgeStateColorAdd[o + 2];
       this.edgeStateColorAdd[o + 3] = v[3] ?? this.edgeStateColorAdd[o + 3];
+    }
+  }
+
+  setEdgeNoStateStyle(style = {}) {
+    if (style.widthMul != null) this.edgeNoStateScale[0] = Number(style.widthMul);
+    if (style.opacityMul != null) this.edgeNoStateScale[1] = Number(style.opacityMul);
+    if (style.discard != null) this.edgeNoStateScale[3] = style.discard ? 1 : 0;
+    if (style.colorMul != null) {
+      const v = style.colorMul;
+      this.edgeNoStateColorMul[0] = v[0] ?? this.edgeNoStateColorMul[0];
+      this.edgeNoStateColorMul[1] = v[1] ?? this.edgeNoStateColorMul[1];
+      this.edgeNoStateColorMul[2] = v[2] ?? this.edgeNoStateColorMul[2];
+      this.edgeNoStateColorMul[3] = v[3] ?? this.edgeNoStateColorMul[3];
+    }
+    if (style.colorAdd != null) {
+      const v = style.colorAdd;
+      this.edgeNoStateColorAdd[0] = v[0] ?? this.edgeNoStateColorAdd[0];
+      this.edgeNoStateColorAdd[1] = v[1] ?? this.edgeNoStateColorAdd[1];
+      this.edgeNoStateColorAdd[2] = v[2] ?? this.edgeNoStateColorAdd[2];
+      this.edgeNoStateColorAdd[3] = v[3] ?? this.edgeNoStateColorAdd[3];
     }
   }
 
