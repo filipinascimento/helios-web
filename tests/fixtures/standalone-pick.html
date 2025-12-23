@@ -78,7 +78,7 @@
             autoUpdate: true,
             trackDepth: true,
           });
-          helios.visuals?.markNodeAttributesDirty?.();
+          helios.visuals?.bumpNodeAttributes?.('_helios_visuals_position', '_helios_visuals_size');
           await helios.renderAttributeTracking();
           window.__helios = helios;
         } catch (error) {

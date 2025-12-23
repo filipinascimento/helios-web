@@ -14,11 +14,32 @@ function isLayoutInstance(candidate) {
   return candidate && typeof candidate.step === 'function' && typeof candidate.initialize === 'function';
 }
 
-export class Helios {
+export const EVENTS = Object.freeze({
+  LAYOUT_START: 'layout:start',
+  LAYOUT_STOP: 'layout:stop',
+
+  NODE_HOVER: 'node:hover',
+  EDGE_HOVER: 'edge:hover',
+
+  NODE_CLICK: 'node:click',
+  EDGE_CLICK: 'edge:click',
+
+  NODE_DBLCLICK: 'node:dblclick',
+  EDGE_DBLCLICK: 'edge:dblclick',
+
+  BEFORE_RENDER: 'render:before',
+  AFTER_RENDER: 'render:after',
+
+  RESIZE: 'resize',
+  CAMERA_MOVE: 'camera:move',
+});
+
+export class Helios extends EventTarget {
   constructor(network, options = {}) {
     if (!network) {
       throw new Error('Helios requires a helios-network instance');
     }
+    super();
     this.network = network;
     this.options = options;
     this.debug = createDebugLogger(options.debug);
@@ -75,10 +96,105 @@ export class Helios {
     this.layout = this.createLayout(options.layout);
     this.renderer = null;
     this.attributeTracker = null;
+    this.indexPickingTracker = null;
+    this._anyListeners = new Set();
+    this._frameId = 0;
+    this._lastRenderTime = performance.now();
+    this._cameraMoveRaf = null;
+    this._picking = {
+      node: { enabled: false },
+      edge: { enabled: false },
+      options: {
+        resolutionScale: 0.5,
+        trackDepth: false,
+        maxFps: 30,
+        clickRequiresStationary: true,
+        clickMoveTolerancePx: 4,
+        suppressClickAfterWheelMs: 200,
+      },
+      hover: { kind: null, index: -1, depth: null },
+      pointer: { x: 0, y: 0, clientX: 0, clientY: 0, inside: false },
+      suppressHover: false,
+      cameraIdleTimer: null,
+      hoverThrottleTimer: null,
+      gesture: {
+        active: false,
+        startClientX: 0,
+        startClientY: 0,
+        moved: false,
+        cameraMoved: false,
+        wheelZoomed: false,
+        lastWheelAt: -Infinity,
+        lastCameraMoveAt: -Infinity,
+      },
+      _raf: null,
+      _inFlight: false,
+      _rerun: false,
+      _lastPickTime: -Infinity,
+    };
+    this._pickingListenersAttached = false;
+    this._boundPickingHandlers = {
+      down: (event) => this._handlePointerDown(event),
+      move: (event) => this._handlePointerMove(event),
+      up: () => this._handlePointerUp(),
+      cancel: () => this._handlePointerUp(),
+      leave: () => this._handlePointerLeave(),
+      wheel: (event) => this._handleWheel(event),
+      click: (event) => this._handlePointerClick(event, false),
+      dblclick: (event) => this._handlePointerClick(event, true),
+    };
     this.size = { ...this.layers.size };
     this.removeResizeListener = null;
     this.firstGeometryUpdateComplete = false;
     this.ready = this.initialize();
+  }
+
+  on(type, handler, options) {
+    this.addEventListener(type, handler, options);
+    if (options?.signal && typeof options.signal.addEventListener === 'function') {
+      const signal = options.signal;
+      if (signal.aborted) {
+        this.removeEventListener(type, handler, options);
+      } else {
+        signal.addEventListener('abort', () => this.removeEventListener(type, handler, options), { once: true });
+      }
+    }
+    return () => this.off(type, handler, options);
+  }
+
+  off(type, handler, options) {
+    this.removeEventListener(type, handler, options);
+  }
+
+  onAny(handler, options) {
+    if (typeof handler !== 'function') return () => {};
+    this._anyListeners.add(handler);
+    const unsubscribe = () => this._anyListeners.delete(handler);
+    if (options?.signal && typeof options.signal.addEventListener === 'function') {
+      const signal = options.signal;
+      if (signal.aborted) {
+        unsubscribe();
+      } else {
+        signal.addEventListener('abort', unsubscribe, { once: true });
+      }
+    }
+    return unsubscribe;
+  }
+
+  emit(type, detail) {
+    const event = new CustomEvent(type, { detail });
+    this.dispatchEvent(event);
+    if (this._anyListeners.size) {
+      for (const handler of this._anyListeners) {
+        try {
+          handler({ type, detail, event, target: this });
+        } catch (error) {
+          // eslint-disable-next-line no-console
+          console.error('Helios onAny handler failed', error);
+        }
+      }
+    }
+    return event;
   }
 
   async initialize() {
@@ -120,6 +236,7 @@ export class Helios {
       (frame) => {
         if (!frame) return;
         this.attributeTracker?.render(frame, true);
+        this.indexPickingTracker?.render(frame, true);
       },
       {
         autoUpdate: this.attributeUpdateOptions.autoUpdate,
@@ -127,9 +244,18 @@ export class Helios {
         frameSkip: this.attributeUpdateOptions.frameSkip,
       },
     );
+    this.scheduler.setLayoutEventHandlers({
+      start: (payload) => {
+        this.emit(EVENTS.LAYOUT_START, { ...payload, algo: this.layout?.constructor?.name ?? null });
+      },
+      stop: (payload) => {
+        this.emit(EVENTS.LAYOUT_STOP, { ...payload, algo: this.layout?.constructor?.name ?? null });
+      },
+    });
     if (this.renderer?.camera?.setChangeListener) {
       this.renderer.camera.setChangeListener(() => {
         this.scheduler.requestRender();
+        this._scheduleCameraMove();
         this.debug.log('helios', 'Camera change requested render');
       });
     }
@@ -146,6 +272,7 @@ export class Helios {
         this.scheduler.requestRender();
         this.debug.log('helios', 'Resize requested geometry/render', size);
       }
+      this.emit(EVENTS.RESIZE, { size: { ...size } });
     });
 
     this.debug.log('scheduler', 'Setting scheduler callbacks');
@@ -184,8 +311,14 @@ export class Helios {
         size: this.size,
       });
       if (this.firstGeometryUpdateComplete && this.renderer && typeof this.renderer.render === 'function') {
+        const now = performance.now();
+        const dt = now - this._lastRenderTime;
+        this._lastRenderTime = now;
+        this._frameId += 1;
+        this.emit(EVENTS.BEFORE_RENDER, { frameId: this._frameId, dt, frame, size: { ...this.size } });
         this.attributeTracker?.render(frame);
         this.renderer.render(frame, this.size);
+        this.emit(EVENTS.AFTER_RENDER, { frameId: this._frameId, dt, frame, size: { ...this.size } });
       }
     });
     if (!this.manualRendering) {
@@ -205,6 +338,7 @@ export class Helios {
       this.debug.log('helios', 'Manual rendering enabled, initial geometry applied');
     }
     this.debug.log('helios', 'Initialization complete');
+    this._applyPickingConfig();
   }
 
   /**
@@ -267,7 +401,7 @@ export class Helios {
     this.visuals.markPositionsDirty();
     this.mappersDirty = true;
     this.layout?.requestUpdate?.();
-    this.scheduler.requestLayout();
+    this.scheduler.requestLayout('data');
     this.scheduler.requestGeometry();
     return nodes;
   }
@@ -282,7 +416,7 @@ export class Helios {
     this.visuals.markPositionsDirty();
     this.mappersDirty = true;
     this.layout?.requestUpdate?.();
-    this.scheduler.requestLayout();
+    this.scheduler.requestLayout('data');
     this.scheduler.requestGeometry();
     return edgeIndices;
   }
@@ -300,7 +434,7 @@ export class Helios {
     this.visuals.markPositionsDirty();
     this.mappersDirty = true;
     this.layout?.requestUpdate?.();
-    this.scheduler.requestLayout();
+    this.scheduler.requestLayout('data');
     this.scheduler.requestGeometry();
   }
 
@@ -346,8 +480,23 @@ export class Helios {
     this.layout.resize?.(this.layers.size);
     this.debug.log('layout', 'Layout initialized and resized', this.layers.size);
     this.scheduler.setLayout(layout);
-    this.scheduler.requestLayout();
+    this.scheduler.requestLayout('user');
     this.scheduler.requestRender();
+  }
+
+  startLayout(algo = null, params = null) {
+    const requestedAlgo = typeof algo === 'string' ? algo : null;
+    const requestedParams = params ?? (requestedAlgo ? null : algo);
+    this.scheduler.setLayoutEnabled(true, 'user');
+    this.layout?.requestUpdate?.();
+    this.scheduler.requestLayout('user');
+    if (requestedAlgo || requestedParams) {
+      this.debug.log('layout', 'startLayout called', { algo: requestedAlgo, params: requestedParams });
+    }
+  }
+
+  stopLayout(reason = 'user') {
+    this.scheduler.setLayoutEnabled(false, reason);
   }
 
   requestRender() {
@@ -417,6 +566,420 @@ export class Helios {
     return this.attributeTracker.pick(clientX, clientY);
   }
 
+  enableNodePicking(options = {}) {
+    this._picking.node.enabled = true;
+    this._mergePickingOptions(options);
+    this._applyPickingConfig();
+  }
+
+  enableEdgePicking(options = {}) {
+    this._picking.edge.enabled = true;
+    this._mergePickingOptions(options);
+    this._applyPickingConfig();
+  }
+
+  disableNodePicking() {
+    this._picking.node.enabled = false;
+    this._applyPickingConfig();
+  }
+
+  disableEdgePicking() {
+    this._picking.edge.enabled = false;
+    this._applyPickingConfig();
+  }
+
+  _mergePickingOptions(options = {}) {
+    if (!options) return;
+    if (options.resolutionScale != null) {
+      const scale = Number(options.resolutionScale);
+      if (Number.isFinite(scale) && scale > 0) {
+        this._picking.options.resolutionScale = scale;
+      }
+    }
+    if (options.trackDepth != null) {
+      this._picking.options.trackDepth = options.trackDepth === true;
+    }
+    if (options.maxFps != null) {
+      const maxFps = Number(options.maxFps);
+      if (Number.isFinite(maxFps) && maxFps > 0) {
+        this._picking.options.maxFps = Math.floor(maxFps);
+      }
+    }
+    if (options.clickRequiresStationary != null) {
+      this._picking.options.clickRequiresStationary = options.clickRequiresStationary !== false;
+    }
+    if (options.clickMoveTolerancePx != null) {
+      const tolerance = Number(options.clickMoveTolerancePx);
+      if (Number.isFinite(tolerance) && tolerance >= 0) {
+        this._picking.options.clickMoveTolerancePx = tolerance;
+      }
+    }
+    if (options.suppressClickAfterWheelMs != null) {
+      const ms = Number(options.suppressClickAfterWheelMs);
+      if (Number.isFinite(ms) && ms >= 0) {
+        this._picking.options.suppressClickAfterWheelMs = ms;
+      }
+    }
+  }
+
+  _applyPickingConfig() {
+    const nodeEnabled = this._picking.node.enabled;
+    const edgeEnabled = this._picking.edge.enabled;
+    if (!nodeEnabled && !edgeEnabled) {
+      this._detachPickingListeners();
+      this._resetHover('disabled');
+      this.indexPickingTracker?.destroy?.();
+      this.indexPickingTracker = null;
+      this._reconcileAttributeUpdateConfig();
+      return;
+    }
+    if (!this.renderer) {
+      this.ready?.then?.(() => this._applyPickingConfig());
+      return;
+    }
+    if (!this.indexPickingTracker) {
+      this.indexPickingTracker = new AttributeTracker(this.renderer);
+    }
+    this.indexPickingTracker.enable(nodeEnabled ? '$index' : null, edgeEnabled ? '$index' : null, {
+      resolutionScale: this._picking.options.resolutionScale,
+      trackDepth: this._picking.options.trackDepth,
+      autoRender: true,
+    });
+    this.indexPickingTracker.resize(this.size);
+    this._attachPickingListeners();
+    this._reconcileAttributeUpdateConfig();
+    this.scheduler.requestRender();
+  }
+
+  _reconcileAttributeUpdateConfig() {
+    const manual = this.attributeUpdateOptions ?? { autoUpdate: false, maxFps: null, frameSkip: null };
+    const pickingEnabled = this._picking.node.enabled || this._picking.edge.enabled;
+    const picking = pickingEnabled
+      ? { autoUpdate: true, maxFps: this._picking.options.maxFps ?? 30, frameSkip: 0 }
+      : { autoUpdate: false, maxFps: null, frameSkip: null };
+    const autoUpdate = manual.autoUpdate === true || picking.autoUpdate === true;
+    if (!autoUpdate) {
+      this.scheduler.configureAttributeUpdates({ autoUpdate: false });
+      return;
+    }
+    const enabledMaxFps = [];
+    if (manual.autoUpdate === true) enabledMaxFps.push(manual.maxFps);
+    if (picking.autoUpdate === true) enabledMaxFps.push(picking.maxFps);
+    const effectiveFps = enabledMaxFps.map((value) => (Number.isFinite(value) && value > 0 ? value : 60));
+    const combinedMaxFps = Math.max(...effectiveFps);
+    const frameSkip = 0;
+    this.scheduler.configureAttributeUpdates({ autoUpdate: true, maxFps: combinedMaxFps, frameSkip });
+  }
+
+  _getInteractionCanvas() {
+    return this.layers?.canvas ?? this.renderer?.canvas ?? null;
+  }
+
+  _attachPickingListeners() {
+    const canvas = this._getInteractionCanvas();
+    if (!canvas || this._pickingListenersAttached) return;
+    canvas.addEventListener('pointerdown', this._boundPickingHandlers.down, { passive: true });
+    canvas.addEventListener('pointermove', this._boundPickingHandlers.move, { passive: true });
+    canvas.addEventListener('pointerup', this._boundPickingHandlers.up, { passive: true });
+    canvas.addEventListener('pointercancel', this._boundPickingHandlers.cancel, { passive: true });
+    canvas.addEventListener('pointerleave', this._boundPickingHandlers.leave, { passive: true });
+    canvas.addEventListener('wheel', this._boundPickingHandlers.wheel, { passive: true });
+    canvas.addEventListener('click', this._boundPickingHandlers.click);
+    canvas.addEventListener('dblclick', this._boundPickingHandlers.dblclick);
+    this._pickingListenersAttached = true;
+  }
+
+  _detachPickingListeners() {
+    const canvas = this._getInteractionCanvas();
+    if (!canvas || !this._pickingListenersAttached) return;
+    canvas.removeEventListener('pointerdown', this._boundPickingHandlers.down);
+    canvas.removeEventListener('pointermove', this._boundPickingHandlers.move);
+    canvas.removeEventListener('pointerup', this._boundPickingHandlers.up);
+    canvas.removeEventListener('pointercancel', this._boundPickingHandlers.cancel);
+    canvas.removeEventListener('pointerleave', this._boundPickingHandlers.leave);
+    canvas.removeEventListener('wheel', this._boundPickingHandlers.wheel);
+    canvas.removeEventListener('click', this._boundPickingHandlers.click);
+    canvas.removeEventListener('dblclick', this._boundPickingHandlers.dblclick);
+    this._pickingListenersAttached = false;
+  }
+
+  _handlePointerDown(event) {
+    const g = this._picking.gesture;
+    g.active = true;
+    g.startClientX = event.clientX ?? 0;
+    g.startClientY = event.clientY ?? 0;
+    g.moved = false;
+    g.cameraMoved = false;
+    // Keep wheelZoomed/lastWheelAt so we can suppress click after a zoom gesture.
+  }
+
+  _handlePointerUp() {
+    this._picking.gesture.active = false;
+  }
+
+  _handlePointerMove(event) {
+    const canvas = this._getInteractionCanvas();
+    if (!canvas) return;
+    const g = this._picking.gesture;
+    if (g.active) {
+      const dx = (event.clientX ?? 0) - g.startClientX;
+      const dy = (event.clientY ?? 0) - g.startClientY;
+      const dist = Math.hypot(dx, dy);
+      if (dist > (this._picking.options.clickMoveTolerancePx ?? 4)) {
+        g.moved = true;
+        g.cameraMoved = true;
+      }
+    }
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    this._picking.pointer = {
+      x,
+      y,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      inside: x >= 0 && y >= 0 && x <= rect.width && y <= rect.height,
+    };
+    // Suppress hover while panning/rotating (mouse button down).
+    if (event.buttons && event.buttons !== 0) {
+      this._picking.suppressHover = true;
+      this._resetHover('camera');
+      return;
+    }
+    this._picking.suppressHover = false;
+    this._scheduleHoverPick();
+  }
+
+  _handlePointerLeave() {
+    this._picking.pointer.inside = false;
+    this._picking.suppressHover = false;
+    if (this._picking.hoverThrottleTimer) {
+      clearTimeout(this._picking.hoverThrottleTimer);
+      this._picking.hoverThrottleTimer = null;
+    }
+    this._picking.gesture.active = false;
+    this._resetHover('leave');
+  }
+
+  _handleWheel(_) {
+    // Zoom can trigger camera changes; avoid hover spam while the camera is moving.
+    this._picking.suppressHover = true;
+    this._picking.gesture.wheelZoomed = true;
+    this._picking.gesture.lastWheelAt = performance.now();
+    this._resetHover('camera');
+    this._scheduleCameraIdleHoverPick();
+  }
+
+  async _handlePointerClick(event, isDouble) {
+    if (!this.indexPickingTracker) return;
+    const clickRequiresStationary = this._picking.options.clickRequiresStationary !== false;
+    if (clickRequiresStationary) {
+      const g = this._picking.gesture;
+      const now = performance.now();
+      const suppressWheelMs = this._picking.options.suppressClickAfterWheelMs ?? 200;
+      const wheelRecently = Number.isFinite(g.lastWheelAt) && now - g.lastWheelAt <= suppressWheelMs;
+      if (g.cameraMoved || g.moved || wheelRecently) {
+        return;
+      }
+    }
+    const canvas = this._getInteractionCanvas();
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    await this._ensureIndexPickingTargets();
+    const picked = await this.indexPickingTracker.pick(x, y);
+    const hit = this._resolvePrimaryHit(picked);
+    if (!hit || hit.index < 0) return;
+    const baseDetail = {
+      index: hit.index,
+      depth: hit.depth ?? null,
+      x,
+      y,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      modifiers: {
+        altKey: event.altKey,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        shiftKey: event.shiftKey,
+      },
+      button: event.button,
+    };
+    if (hit.kind === 'node') {
+      this.emit(isDouble ? EVENTS.NODE_DBLCLICK : EVENTS.NODE_CLICK, baseDetail);
+    } else if (hit.kind === 'edge') {
+      this.emit(isDouble ? EVENTS.EDGE_DBLCLICK : EVENTS.EDGE_CLICK, baseDetail);
+    }
+  }
+
+  _scheduleCameraMove() {
+    if (this._cameraMoveRaf != null) return;
+    this._cameraMoveRaf = requestAnimationFrame((ts) => {
+      this._cameraMoveRaf = null;
+      const camera = this.renderer?.camera ?? null;
+      const detail = {
+        timestamp: ts,
+        camera,
+        state: camera
+          ? {
+              mode: camera.mode,
+              projection: camera.projection,
+              zoom: camera.zoom,
+              distance: camera.distance,
+              viewport: camera.viewport ? { ...camera.viewport } : null,
+            }
+          : null,
+      };
+      this.emit(EVENTS.CAMERA_MOVE, detail);
+      // Avoid hover spam during camera movement; resample once the camera settles.
+      this._picking.suppressHover = true;
+      const g = this._picking.gesture;
+      g.lastCameraMoveAt = performance.now();
+      if (g.active) {
+        g.cameraMoved = true;
+      }
+      this._resetHover('camera');
+      this._scheduleCameraIdleHoverPick();
+    });
+  }
+
+  _scheduleCameraIdleHoverPick() {
+    if (!(this._picking.node.enabled || this._picking.edge.enabled)) return;
+    if (this._picking.cameraIdleTimer) {
+      clearTimeout(this._picking.cameraIdleTimer);
+    }
+    this._picking.cameraIdleTimer = setTimeout(() => {
+      this._picking.cameraIdleTimer = null;
+      this._picking.suppressHover = false;
+      if (this._picking.pointer.inside) {
+        this._scheduleHoverPick();
+      }
+    }, 80);
+  }
+
+  _scheduleHoverPick() {
+    if (!(this._picking.node.enabled || this._picking.edge.enabled)) return;
+    if (this._picking._raf != null) return;
+    this._picking._raf = requestAnimationFrame(() => {
+      this._picking._raf = null;
+      void this._runHoverPick();
+    });
+  }
+
+  async _ensureIndexPickingTargets() {
+    if (!this.indexPickingTracker) return;
+    if (this.indexPickingTracker.lastTargets) return;
+    const frame = this.scheduler?.currentFrame ?? {
+      network: this.network,
+      timestamp: performance.now(),
+      camera: this.renderer?.camera,
+    };
+    await this.indexPickingTracker.render(frame, true);
+  }
+
+  _resolvePrimaryHit(picked) {
+    if (!picked) return null;
+    const nodeEnabled = this._picking.node.enabled;
+    const edgeEnabled = this._picking.edge.enabled;
+    const nodeHit = nodeEnabled ? picked.node : -1;
+    const edgeHit = edgeEnabled ? picked.edge : -1;
+    const nodeDepth = picked.nodeDepth;
+    const edgeDepth = picked.edgeDepth;
+    if (nodeHit < 0 && edgeHit < 0) return { kind: null, index: -1, depth: null };
+    const trackDepth = this._picking.options.trackDepth === true;
+    if (trackDepth && nodeHit >= 0 && edgeHit >= 0 && Number.isFinite(nodeDepth) && Number.isFinite(edgeDepth)) {
+      return nodeDepth <= edgeDepth
+        ? { kind: 'node', index: nodeHit, depth: nodeDepth }
+        : { kind: 'edge', index: edgeHit, depth: edgeDepth };
+    }
+    if (nodeHit >= 0) return { kind: 'node', index: nodeHit, depth: Number.isFinite(nodeDepth) ? nodeDepth : null };
+    return { kind: 'edge', index: edgeHit, depth: Number.isFinite(edgeDepth) ? edgeDepth : null };
+  }
+
+  async _runHoverPick() {
+    if (!this.indexPickingTracker) return;
+    if (this._picking.suppressHover) return;
+    if (!this._picking.pointer.inside) {
+      this._resetHover('outside');
+      return;
+    }
+    const maxFps = this._picking.options.maxFps ?? 30;
+    const interval = maxFps > 0 ? (1000 / maxFps) : 0;
+    const now = performance.now();
+    if (interval > 0 && now - this._picking._lastPickTime < interval) {
+      if (!this._picking.hoverThrottleTimer) {
+        const remaining = Math.max(0, interval - (now - this._picking._lastPickTime));
+        this._picking.hoverThrottleTimer = setTimeout(() => {
+          this._picking.hoverThrottleTimer = null;
+          this._scheduleHoverPick();
+        }, remaining);
+      }
+      return;
+    }
+    if (this._picking._inFlight) {
+      this._picking._rerun = true;
+      return;
+    }
+    this._picking._inFlight = true;
+    this._picking._lastPickTime = now;
+    try {
+      await this._ensureIndexPickingTargets();
+      const { x, y, clientX, clientY } = this._picking.pointer;
+      const picked = await this.indexPickingTracker.pick(x, y);
+      const hit = this._resolvePrimaryHit(picked);
+      const prev = this._picking.hover;
+      const next = hit ?? { kind: null, index: -1, depth: null };
+      if (prev.kind === next.kind && prev.index === next.index) return;
+      if (prev.kind === 'node' && prev.index >= 0) {
+        this.emit(EVENTS.NODE_HOVER, { state: 'out', index: prev.index, depth: prev.depth, x, y, clientX, clientY });
+      } else if (prev.kind === 'edge' && prev.index >= 0) {
+        this.emit(EVENTS.EDGE_HOVER, { state: 'out', index: prev.index, depth: prev.depth, x, y, clientX, clientY });
+      }
+      if (next.kind === 'node' && next.index >= 0) {
+        this.emit(EVENTS.NODE_HOVER, { state: 'in', index: next.index, depth: next.depth, x, y, clientX, clientY });
+      } else if (next.kind === 'edge' && next.index >= 0) {
+        this.emit(EVENTS.EDGE_HOVER, { state: 'in', index: next.index, depth: next.depth, x, y, clientX, clientY });
+      }
+      this._picking.hover = { ...next };
+    } finally {
+      this._picking._inFlight = false;
+      if (this._picking._rerun) {
+        this._picking._rerun = false;
+        this._scheduleHoverPick();
+      }
+    }
+  }
+
+  _resetHover(reason) {
+    const prev = this._picking.hover;
+    const { x, y, clientX, clientY } = this._picking.pointer ?? {};
+    if (prev.kind === 'node' && prev.index >= 0) {
+      this.emit(EVENTS.NODE_HOVER, {
+        state: 'out',
+        index: prev.index,
+        depth: prev.depth,
+        reason,
+        x,
+        y,
+        clientX,
+        clientY,
+      });
+    } else if (prev.kind === 'edge' && prev.index >= 0) {
+      this.emit(EVENTS.EDGE_HOVER, {
+        state: 'out',
+        index: prev.index,
+        depth: prev.depth,
+        reason,
+        x,
+        y,
+        clientX,
+        clientY,
+      });
+    }
+    this._picking.hover = { kind: null, index: -1, depth: null };
+  }
+
   destroy() {
     this.scheduler.stop();
     this.layout?.dispose?.();
@@ -424,7 +987,10 @@ export class Helios {
       this.removeResizeListener();
       this.removeResizeListener = null;
     }
+    this._detachPickingListeners();
     this.attributeTracker?.destroy?.();
+    this.indexPickingTracker?.destroy?.();
+    this.indexPickingTracker = null;
     this.renderer?.destroy?.();
     this.layers.destroy();
   }

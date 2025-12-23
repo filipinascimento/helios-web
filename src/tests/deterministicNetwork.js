@@ -98,7 +98,7 @@ export async function createDeterministicHelios(container, renderer = 'webgl') {
     if (edgeOpacityView) {
       edgeOpacityView.fill(1);
     }
-    helios.visuals.markEdgeAttributesDirty(
+    helios.visuals.bumpEdgeAttributes(
       '_helios_visuals_edge_color',
       '_helios_visuals_edge_width',
       '_helios_visuals_edge_opacity',

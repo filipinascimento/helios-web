@@ -15,6 +15,15 @@ export class Scheduler {
     this._lastTime = 0;
     this._raf = null;
     this._layoutBusy = false;
+    this._layoutActive = false;
+    this.layoutEnabled = options.layoutEnabled !== false;
+    this._layoutStartReason = null;
+    this._layoutStopReason = null;
+    this._layoutStartTimestamp = 0;
+    this._layoutEventHandlers = {
+      start: typeof options.onLayoutStart === 'function' ? options.onLayoutStart : null,
+      stop: typeof options.onLayoutStop === 'function' ? options.onLayoutStop : null,
+    };
     this.currentFrame = null;
     this.performanceMonitor = options.performanceMonitor ?? null;
     this.maxFrameInterval =
@@ -46,6 +55,7 @@ export class Scheduler {
       attributeAutoUpdate: this.attributeUpdateConfig.autoUpdate,
       attributeMaxFps: options.attributeMaxFps ?? null,
       attributeFrameSkip: this.attributeUpdateConfig.frameSkip,
+      layoutEnabled: this.layoutEnabled,
     });
   }
 
@@ -67,10 +77,15 @@ export class Scheduler {
   }
 
   requestLayout() {
+    // Backwards-compatible signature: requestLayout(reason)
+    const reason = arguments.length ? arguments[0] : null;
     if (!this._needsLayout) {
       this.debug.log('scheduler', 'Layout requested');
     }
     this._needsLayout = true;
+    if (reason != null) {
+      this._layoutStartReason = reason;
+    }
   }
 
   requestGeometry() {
@@ -85,6 +100,28 @@ export class Scheduler {
       this.debug.log('scheduler', 'Render requested');
     }
     this._needsRender = true;
+  }
+
+  setLayoutEnabled(enabled, reason = null) {
+    const next = enabled !== false;
+    if (next === this.layoutEnabled) return;
+    this.layoutEnabled = next;
+    if (!next) {
+      this._layoutStopReason = reason ?? 'user';
+      this._needsLayout = false;
+    } else {
+      this._layoutStartReason = reason ?? 'user';
+      this._needsLayout = true;
+    }
+  }
+
+  setLayoutEventHandlers(handlers = {}) {
+    if (typeof handlers.start === 'function') {
+      this._layoutEventHandlers.start = handlers.start;
+    }
+    if (typeof handlers.stop === 'function') {
+      this._layoutEventHandlers.stop = handlers.stop;
+    }
   }
 
   start() {
@@ -106,6 +143,18 @@ export class Scheduler {
       this._raf = null;
     }
     this._clearAttributeTimer();
+    this._layoutBusy = false;
+    if (this._layoutActive) {
+      this._layoutActive = false;
+      const handler = this._layoutEventHandlers.stop;
+      if (handler) {
+        handler({
+          timestamp: performance.now(),
+          durationMs: Math.max(0, performance.now() - (this._layoutStartTimestamp || 0)),
+          reason: this._layoutStopReason ?? 'stopped',
+        });
+      }
+    }
     this.debug.log('scheduler', 'Scheduler stopped');
   }
 
@@ -187,13 +236,40 @@ export class Scheduler {
     this._lastRenderTime = timestamp;
     const perf = this.performanceMonitor;
 
-    const layoutShouldRun = Boolean(
-      this.layout &&
+    const layoutWanted = Boolean(
+      this.layoutEnabled &&
+        this.layout &&
         (this._needsLayout ||
           (typeof this.layout.shouldRun === 'function' && this.layout.shouldRun())),
     );
+    const layoutActiveNow = Boolean(layoutWanted || this._layoutBusy);
+    if (layoutActiveNow && !this._layoutActive) {
+      this._layoutActive = true;
+      this._layoutStartTimestamp = timestamp;
+      const handler = this._layoutEventHandlers.start;
+      if (handler) {
+        handler({
+          timestamp,
+          reason: this._layoutStartReason ?? 'requested',
+        });
+      }
+      this._layoutStartReason = null;
+      this._layoutStopReason = null;
+    } else if (!layoutActiveNow && this._layoutActive) {
+      this._layoutActive = false;
+      const handler = this._layoutEventHandlers.stop;
+      if (handler) {
+        handler({
+          timestamp,
+          durationMs: Math.max(0, timestamp - (this._layoutStartTimestamp || timestamp)),
+          reason: this._layoutStopReason ?? 'idle',
+        });
+      }
+      this._layoutStopReason = null;
+      this._layoutStartTimestamp = 0;
+    }
 
-    if (layoutShouldRun && !this._layoutBusy) {
+    if (layoutWanted && !this._layoutBusy) {
       const layoutStart = perf?.enabled ? performance.now() : 0;
       const finalizeLayout = (changed) => {
         if (layoutStart) {
