@@ -72,6 +72,11 @@ function resolvePickTestMode() {
   return params.get('pickTest') === '1';
 }
 
+function resolveEventsDemoMode() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('events') === '1';
+}
+
 async function bootstrap() {
   const diagnostics = {
     ready: false,
@@ -312,15 +317,25 @@ async function bootstrap() {
     autoUpdate: true,
     autoUpdateMaxFps: 1,
   });
-  const canvas = helios.layers?.canvas ?? helios.renderer?.canvas ?? document.querySelector('canvas');
-  if (canvas) {
-    canvas.addEventListener('click', async (event) => {
-      const rect = canvas.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
-      const picked = await helios.pickAttributesAt(x, y);
-      console.log('Picked node/edge indices', picked);
-    });
+
+  if (resolveEventsDemoMode()) {
+    console.log('Enabling Helios interaction events (node/edge picking)...');
+    const abort = new AbortController();
+    window.__heliosEventsAbort = abort;
+    helios.enableNodePicking({ resolutionScale: 1.0, trackDepth: true, maxFps: 30 });
+    helios.enableEdgePicking({ resolutionScale: 1.0, trackDepth: true, maxFps: 30 });
+    helios.on('node:hover', (e) => {
+      if (!e?.detail) return;
+      if (e.detail.state === 'in') console.log('Node hover in', e.detail);
+      if (e.detail.state === 'out') console.log('Node hover out', e.detail);
+    }, { signal: abort.signal });
+    helios.on('edge:hover', (e) => {
+      if (!e?.detail) return;
+      if (e.detail.state === 'in') console.log('Edge hover in', e.detail);
+      if (e.detail.state === 'out') console.log('Edge hover out', e.detail);
+    }, { signal: abort.signal });
+    helios.on('node:click', (e) => console.log('Node click', e.detail), { signal: abort.signal });
+    helios.on('edge:click', (e) => console.log('Edge click', e.detail), { signal: abort.signal });
   }
 
   if (pickTest) {

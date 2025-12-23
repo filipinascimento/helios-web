@@ -70,7 +70,7 @@ test('edges render with correct relative widths', async ({ page }, testInfo) => 
     helios.renderer.graphLayer.nodeOpacityScale = 0;
     helios.renderer.graphLayer.edgeOpacityBase = 0;
     helios.renderer.graphLayer.edgeOpacityScale = 1;
-    helios.visuals.markEdgeAttributesDirty(
+    helios.visuals.bumpEdgeAttributes(
       '_helios_visuals_edge_color',
       '_helios_visuals_edge_width',
       '_helios_visuals_edge_opacity',
