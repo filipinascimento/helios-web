@@ -1,0 +1,87 @@
+import { test, expect } from '@playwright/test';
+
+async function runStateVisualCheck(page, renderer) {
+  await page.goto(`/tests/fixtures/standalone-pick.html?renderer=${renderer}`);
+  await page.waitForFunction(() => window.__helios || window.__heliosError, { timeout: 5000 });
+  const error = await page.evaluate(() => window.__heliosError ?? null);
+  if (error) throw new Error(`fixture failed: ${error}`);
+
+  const result = await page.evaluate(async () => {
+    const helios = window.__helios;
+    if (!helios?.renderer?.readPixels) return { ok: false, reason: 'missing helios/renderer' };
+
+    const canvas = document.querySelector('canvas');
+    const mainWidth = canvas?.width ?? 320;
+    const mainHeight = canvas?.height ?? 240;
+    const isWebGL = helios.renderer?.device?.type === 'webgl2';
+    const offscreen = helios.renderer?.createFramebuffer?.(mainWidth, mainHeight) ?? null;
+    if (offscreen && helios.renderer?.setRenderTarget) {
+      helios.renderer.setRenderTarget(offscreen);
+    }
+
+    const decodeIndex = (bytes, offset = 0) => {
+      const r = bytes[offset] ?? 0;
+      const g = bytes[offset + 1] ?? 0;
+      const b = bytes[offset + 2] ?? 0;
+      const a = bytes[offset + 3] ?? 0;
+      return r + (g << 8) + (b << 16) + (a << 24) - 1;
+    };
+
+    const renderMain = async () => {
+      await helios.prewarm?.({ updateDenseBuffers: true });
+      helios.renderer.render({ network: helios.network, camera: helios.renderer.camera });
+    };
+
+    const readMaxGreen = async () => {
+      const bytes = await helios.renderer.readPixels(offscreen, { x: 0, y: 0, width: mainWidth, height: mainHeight });
+      const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+      let maxG = 0;
+      for (let i = 0; i < arr.length; i += 4) {
+        const g = arr[i + 1] ?? 0;
+        if (g > maxG) maxG = g;
+      }
+      return maxG;
+    };
+
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    await renderMain();
+    const beforeMaxGreen = await readMaxGreen();
+
+    helios.resetStateStyles();
+    // Slot 2 (HIGHLIGHTED): force green tint.
+    helios.setNodeStateStyle(2, { colorMul: [0, 0, 0, 1], colorAdd: [0, 1, 0, 0] });
+    helios.setEdgeStateStyle(2, { colorMul: [0, 0, 0, 1], colorAdd: [0, 1, 0, 0] });
+    helios.setNodeState([0], helios.constructor.STATES.HIGHLIGHTED, { mode: 'add' });
+    helios.setEdgeState([0], helios.constructor.STATES.HIGHLIGHTED, { mode: 'add' });
+    await renderMain();
+
+    const afterMaxGreen = await readMaxGreen();
+
+    return {
+      ok: true,
+      beforeMaxGreen,
+      afterMaxGreen,
+      mainWidth,
+      mainHeight,
+      device: helios.renderer?.device?.type ?? null,
+    };
+  });
+
+  expect(result.ok).toBe(true);
+  expect(result.afterMaxGreen).toBeGreaterThan(result.beforeMaxGreen);
+}
+
+test('state styling affects WebGL rendering', async ({ page }) => {
+  await runStateVisualCheck(page, 'webgl');
+});
+
+test('@webgpu state styling affects WebGPU rendering', async ({ page }) => {
+  await page.goto('/');
+  const supported = await page.evaluate(async () => {
+    if (!navigator.gpu) return false;
+    const adapter = await navigator.gpu.requestAdapter();
+    return Boolean(adapter);
+  });
+  test.skip(!supported, 'WebGPU not available in browser');
+  await runStateVisualCheck(page, 'webgpu');
+});

@@ -191,7 +191,7 @@ export class WebGL2Device {
     const y = rect?.y ?? 0;
     const data = new Uint8Array(width * height * 4);
     gl.bindFramebuffer(gl.FRAMEBUFFER, target);
-    gl.readBuffer?.(gl.COLOR_ATTACHMENT0);
+    gl.readBuffer?.(target ? gl.COLOR_ATTACHMENT0 : gl.BACK);
     gl.readPixels(x, y, width, height, gl.RGBA, gl.UNSIGNED_BYTE, data);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     return data;

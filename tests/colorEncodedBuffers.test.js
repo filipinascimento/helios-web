@@ -31,12 +31,12 @@ test('color-encoded dense buffers are provided for nodes and edges (attributes a
 
   network.withBufferAccess(() => {
     const nodeView = network.getNodeAttributeBuffer(nodeAttr).view;
-    nodeView[nodes[0]] = BigInt(10);
-    nodeView[nodes[1]] = BigInt(20);
-    nodeView[nodes[2]] = BigInt(30);
+    nodeView[nodes[0]] = 10;
+    nodeView[nodes[1]] = 20;
+    nodeView[nodes[2]] = 30;
     const edgeView = network.getEdgeAttributeBuffer(edgeAttr).view;
-    edgeView[edges[0]] = BigInt(5);
-    edgeView[edges[1]] = BigInt(15);
+    edgeView[edges[0]] = 5;
+    edgeView[edges[1]] = 15;
   });
 
   network.defineDenseColorEncodedNodeAttribute(nodeAttr, encodedNode);

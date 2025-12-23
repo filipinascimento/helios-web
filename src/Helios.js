@@ -9,9 +9,31 @@ import { PerformanceMonitor } from './utilities/PerformanceMonitor.js';
 import { VisualAttributes } from './pipeline/VisualAttributes.js';
 import { createDefaultMappers, MapperCollection } from './pipeline/Mapper.js';
 import { createDebugLogger } from './utilities/DebugLogger.js';
+import { VISUAL_ATTRIBUTE_NAMES } from './pipeline/constants.js';
+
+const {
+  NODE_STATE_ATTRIBUTE,
+  EDGE_STATE_ATTRIBUTE,
+  EDGE_ENDPOINTS_STATE_ATTRIBUTE,
+} = VISUAL_ATTRIBUTE_NAMES;
 
 function isLayoutInstance(candidate) {
   return candidate && typeof candidate.step === 'function' && typeof candidate.initialize === 'function';
+}
+
+function forEachIndex(indices, visitor) {
+  if (indices == null) return;
+  if (typeof indices === 'number') {
+    visitor(indices);
+    return;
+  }
+  if (Array.isArray(indices) || ArrayBuffer.isView(indices)) {
+    for (let i = 0; i < indices.length; i += 1) visitor(indices[i]);
+    return;
+  }
+  if (typeof indices[Symbol.iterator] === 'function') {
+    for (const index of indices) visitor(index);
+  }
 }
 
 export const EVENTS = Object.freeze({
@@ -35,6 +57,14 @@ export const EVENTS = Object.freeze({
 });
 
 export class Helios extends EventTarget {
+  static STATES = Object.freeze({
+    FILTERED: 1 << 0,
+    SELECTED: 1 << 1,
+    HIGHLIGHTED: 1 << 2,
+  });
+
+  static STATE_BITS = Helios.STATES;
+
   constructor(network, options = {}) {
     if (!network) {
       throw new Error('Helios requires a helios-network instance');
@@ -436,6 +466,87 @@ export class Helios extends EventTarget {
     this.layout?.requestUpdate?.();
     this.scheduler.requestLayout('data');
     this.scheduler.requestGeometry();
+  }
+
+  setNodeState(indices, mask, options = {}) {
+    const mode = options.mode ?? 'replace';
+    const value = (Number(mask) >>> 0);
+    this.network.withBufferAccess(() => {
+      const view = this.network.getNodeAttributeBuffer(NODE_STATE_ATTRIBUTE)?.view;
+      if (!view) return;
+      const usesBigInt = typeof view[0] === 'bigint';
+      const valueBig = usesBigInt ? BigInt(value) : null;
+      forEachIndex(indices, (index) => {
+        const id = Number(index);
+        if (!Number.isFinite(id) || id < 0) return;
+        const current = view[id] ?? (usesBigInt ? 0n : 0);
+        switch (mode) {
+          case 'add':
+            view[id] = usesBigInt ? (current | valueBig) : ((current | value) >>> 0);
+            break;
+          case 'remove':
+            view[id] = usesBigInt ? (current & (~valueBig)) : ((current & (~value)) >>> 0);
+            break;
+          case 'toggle':
+            view[id] = usesBigInt ? (current ^ valueBig) : ((current ^ value) >>> 0);
+            break;
+          default:
+            view[id] = usesBigInt ? valueBig : value;
+            break;
+        }
+      });
+      this.visuals.bumpNodeAttributes(NODE_STATE_ATTRIBUTE);
+      // Endpoint states are derived via node-to-edge mapping; bump versions so downstream dense rebuilds notice.
+      this.visuals.bumpEdgeAttributes(EDGE_ENDPOINTS_STATE_ATTRIBUTE);
+    });
+    this.scheduler.requestGeometry();
+  }
+
+  setEdgeState(indices, mask, options = {}) {
+    const mode = options.mode ?? 'replace';
+    const value = (Number(mask) >>> 0);
+    this.network.withBufferAccess(() => {
+      const view = this.network.getEdgeAttributeBuffer(EDGE_STATE_ATTRIBUTE)?.view;
+      if (!view) return;
+      const usesBigInt = typeof view[0] === 'bigint';
+      const valueBig = usesBigInt ? BigInt(value) : null;
+      forEachIndex(indices, (index) => {
+        const id = Number(index);
+        if (!Number.isFinite(id) || id < 0) return;
+        const current = view[id] ?? (usesBigInt ? 0n : 0);
+        switch (mode) {
+          case 'add':
+            view[id] = usesBigInt ? (current | valueBig) : ((current | value) >>> 0);
+            break;
+          case 'remove':
+            view[id] = usesBigInt ? (current & (~valueBig)) : ((current & (~value)) >>> 0);
+            break;
+          case 'toggle':
+            view[id] = usesBigInt ? (current ^ valueBig) : ((current ^ value) >>> 0);
+            break;
+          default:
+            view[id] = usesBigInt ? valueBig : value;
+            break;
+        }
+      });
+      this.visuals.bumpEdgeAttributes(EDGE_STATE_ATTRIBUTE);
+    });
+    this.scheduler.requestGeometry();
+  }
+
+  setNodeStateStyle(slot, style) {
+    this.renderer?.graphLayer?.setNodeStateStyle?.(slot, style);
+    this.scheduler.requestRender();
+  }
+
+  setEdgeStateStyle(slot, style) {
+    this.renderer?.graphLayer?.setEdgeStateStyle?.(slot, style);
+    this.scheduler.requestRender();
+  }
+
+  resetStateStyles() {
+    this.renderer?.graphLayer?.resetStateStyles?.();
+    this.scheduler.requestRender();
   }
 
   setMappers({ nodeMapper, edgeMapper } = {}) {

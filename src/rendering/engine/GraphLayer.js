@@ -5,13 +5,16 @@ const {
   EDGE_COLOR_ATTRIBUTE,
   EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
   EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
+  EDGE_ENDPOINTS_STATE_ATTRIBUTE,
   EDGE_OPACITY_ATTRIBUTE,
+  EDGE_STATE_ATTRIBUTE,
   EDGE_WIDTH_ATTRIBUTE,
   NODE_COLOR_ATTRIBUTE,
   NODE_OUTLINE_COLOR_ATTRIBUTE,
   NODE_OUTLINE_WIDTH_ATTRIBUTE,
   NODE_POSITION_ATTRIBUTE,
   NODE_SIZE_ATTRIBUTE,
+  NODE_STATE_ATTRIBUTE,
 } = VISUAL_ATTRIBUTE_NAMES;
 
 export { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './GraphLayerCommon.js';
@@ -21,7 +24,7 @@ export class GraphLayer extends Layer {
     super('graph-layer');
     this.emptyFloat = new Float32Array(0);
     this.emptyUint = new Uint32Array(0);
-    this.cpuArrays = {};
+    this.stateSlotCount = 8;
     this.edgeRenderingMode = options.edgeRendering === 'line' ? 'line' : 'quad';
     const mode = options.transparencyModeEdges;
     this.edgeTransparencyMode = this.isSupportedTransparencyMode(mode) ? mode : 'alpha';
@@ -39,6 +42,92 @@ export class GraphLayer extends Layer {
     this.edgeEndpointTrim = Number.isFinite(options.edgeEndpointTrim) ? options.edgeEndpointTrim : 0.8;
     this.fallbackCameraUniforms = null;
     this.loggedWeightedActive = false;
+
+    const slots = this.stateSlotCount;
+    this.nodeStateScale = new Float32Array(slots * 4);
+    this.nodeStateColorMul = new Float32Array(slots * 4);
+    this.nodeStateColorAdd = new Float32Array(slots * 4);
+    this.edgeStateScale = new Float32Array(slots * 4);
+    this.edgeStateColorMul = new Float32Array(slots * 4);
+    this.edgeStateColorAdd = new Float32Array(slots * 4);
+    this.resetStateStyles();
+  }
+
+  resetStateStyles() {
+    const slots = this.stateSlotCount;
+    for (let i = 0; i < slots; i += 1) {
+      const o = i * 4;
+      this.nodeStateScale[o + 0] = 1;
+      this.nodeStateScale[o + 1] = 1;
+      this.nodeStateScale[o + 2] = 1;
+      this.nodeStateScale[o + 3] = 0;
+      this.nodeStateColorMul[o + 0] = 1;
+      this.nodeStateColorMul[o + 1] = 1;
+      this.nodeStateColorMul[o + 2] = 1;
+      this.nodeStateColorMul[o + 3] = 1;
+      this.nodeStateColorAdd[o + 0] = 0;
+      this.nodeStateColorAdd[o + 1] = 0;
+      this.nodeStateColorAdd[o + 2] = 0;
+      this.nodeStateColorAdd[o + 3] = 0;
+
+      this.edgeStateScale[o + 0] = 1;
+      this.edgeStateScale[o + 1] = 1;
+      this.edgeStateScale[o + 2] = 1;
+      this.edgeStateScale[o + 3] = 0;
+      this.edgeStateColorMul[o + 0] = 1;
+      this.edgeStateColorMul[o + 1] = 1;
+      this.edgeStateColorMul[o + 2] = 1;
+      this.edgeStateColorMul[o + 3] = 1;
+      this.edgeStateColorAdd[o + 0] = 0;
+      this.edgeStateColorAdd[o + 1] = 0;
+      this.edgeStateColorAdd[o + 2] = 0;
+      this.edgeStateColorAdd[o + 3] = 0;
+    }
+  }
+
+  setNodeStateStyle(slot, style = {}) {
+    const index = Number(slot);
+    if (!Number.isInteger(index) || index < 0 || index >= this.stateSlotCount) return;
+    const o = index * 4;
+    if (style.sizeMul != null) this.nodeStateScale[o + 0] = Number(style.sizeMul);
+    if (style.opacityMul != null) this.nodeStateScale[o + 1] = Number(style.opacityMul);
+    if (style.outlineMul != null) this.nodeStateScale[o + 2] = Number(style.outlineMul);
+    if (style.colorMul != null) {
+      const v = style.colorMul;
+      this.nodeStateColorMul[o + 0] = v[0] ?? this.nodeStateColorMul[o + 0];
+      this.nodeStateColorMul[o + 1] = v[1] ?? this.nodeStateColorMul[o + 1];
+      this.nodeStateColorMul[o + 2] = v[2] ?? this.nodeStateColorMul[o + 2];
+      this.nodeStateColorMul[o + 3] = v[3] ?? this.nodeStateColorMul[o + 3];
+    }
+    if (style.colorAdd != null) {
+      const v = style.colorAdd;
+      this.nodeStateColorAdd[o + 0] = v[0] ?? this.nodeStateColorAdd[o + 0];
+      this.nodeStateColorAdd[o + 1] = v[1] ?? this.nodeStateColorAdd[o + 1];
+      this.nodeStateColorAdd[o + 2] = v[2] ?? this.nodeStateColorAdd[o + 2];
+      this.nodeStateColorAdd[o + 3] = v[3] ?? this.nodeStateColorAdd[o + 3];
+    }
+  }
+
+  setEdgeStateStyle(slot, style = {}) {
+    const index = Number(slot);
+    if (!Number.isInteger(index) || index < 0 || index >= this.stateSlotCount) return;
+    const o = index * 4;
+    if (style.widthMul != null) this.edgeStateScale[o + 0] = Number(style.widthMul);
+    if (style.opacityMul != null) this.edgeStateScale[o + 1] = Number(style.opacityMul);
+    if (style.colorMul != null) {
+      const v = style.colorMul;
+      this.edgeStateColorMul[o + 0] = v[0] ?? this.edgeStateColorMul[o + 0];
+      this.edgeStateColorMul[o + 1] = v[1] ?? this.edgeStateColorMul[o + 1];
+      this.edgeStateColorMul[o + 2] = v[2] ?? this.edgeStateColorMul[o + 2];
+      this.edgeStateColorMul[o + 3] = v[3] ?? this.edgeStateColorMul[o + 3];
+    }
+    if (style.colorAdd != null) {
+      const v = style.colorAdd;
+      this.edgeStateColorAdd[o + 0] = v[0] ?? this.edgeStateColorAdd[o + 0];
+      this.edgeStateColorAdd[o + 1] = v[1] ?? this.edgeStateColorAdd[o + 1];
+      this.edgeStateColorAdd[o + 2] = v[2] ?? this.edgeStateColorAdd[o + 2];
+      this.edgeStateColorAdd[o + 3] = v[3] ?? this.edgeStateColorAdd[o + 3];
+    }
   }
 
   setEdgeRenderingMode(mode) {
@@ -118,13 +207,16 @@ export class GraphLayer extends Layer {
       () => network.updateDenseNodeAttributeBuffer?.(NODE_POSITION_ATTRIBUTE),
       () => network.updateDenseNodeAttributeBuffer?.(NODE_COLOR_ATTRIBUTE),
       () => network.updateDenseNodeAttributeBuffer?.(NODE_SIZE_ATTRIBUTE),
+      () => network.updateDenseNodeAttributeBuffer?.(NODE_STATE_ATTRIBUTE),
       () => network.updateDenseNodeAttributeBuffer?.(NODE_OUTLINE_WIDTH_ATTRIBUTE),
       () => network.updateDenseNodeAttributeBuffer?.(NODE_OUTLINE_COLOR_ATTRIBUTE),
       () => network.updateDenseEdgeAttributeBuffer?.(EDGE_COLOR_ATTRIBUTE),
       () => network.updateDenseEdgeAttributeBuffer?.(EDGE_OPACITY_ATTRIBUTE),
       () => network.updateDenseEdgeAttributeBuffer?.(EDGE_WIDTH_ATTRIBUTE),
+      () => network.updateDenseEdgeAttributeBuffer?.(EDGE_STATE_ATTRIBUTE),
       () => network.updateDenseEdgeAttributeBuffer?.(EDGE_ENDPOINTS_POSITION_ATTRIBUTE),
       () => network.updateDenseEdgeAttributeBuffer?.(EDGE_ENDPOINTS_SIZE_ATTRIBUTE),
+      () => network.updateDenseEdgeAttributeBuffer?.(EDGE_ENDPOINTS_STATE_ATTRIBUTE),
     ];
     for (const fn of updates) {
       if (typeof fn !== 'function') continue;
@@ -165,6 +257,7 @@ export class GraphLayer extends Layer {
           positions: this.emptyFloat,
           colors: this.emptyFloat,
           sizes: this.emptyFloat,
+          states: this.emptyUint,
           outlineWidths: this.emptyFloat,
           outlineColors: this.emptyFloat,
           indices: this.emptyUint,
@@ -175,7 +268,9 @@ export class GraphLayer extends Layer {
           colors: this.emptyFloat,
           widths: this.emptyFloat,
           endpointSizes: this.emptyFloat,
+          endpointStates: this.emptyUint,
           indices: this.emptyUint,
+          states: this.emptyUint,
           count: 0,
         },
       };
@@ -185,18 +280,22 @@ export class GraphLayer extends Layer {
     const nodePositionsDesc = this.getAttributeView(network, 'node', NODE_POSITION_ATTRIBUTE);
     const nodeColorsDesc = this.getAttributeView(network, 'node', NODE_COLOR_ATTRIBUTE);
     const nodeSizesDesc = this.getAttributeView(network, 'node', NODE_SIZE_ATTRIBUTE);
+    const nodeStatesDesc = this.getAttributeView(network, 'node', NODE_STATE_ATTRIBUTE);
     const nodeOutlineWidthDesc = this.getAttributeView(network, 'node', NODE_OUTLINE_WIDTH_ATTRIBUTE);
     const nodeOutlineColorDesc = this.getAttributeView(network, 'node', NODE_OUTLINE_COLOR_ATTRIBUTE);
     const edgeColorDesc = this.getAttributeView(network, 'edge', EDGE_COLOR_ATTRIBUTE);
     const edgeOpacityDesc = this.getAttributeView(network, 'edge', EDGE_OPACITY_ATTRIBUTE);
     const edgeWidthDesc = this.getAttributeView(network, 'edge', EDGE_WIDTH_ATTRIBUTE);
+    const edgeStatesDesc = this.getAttributeView(network, 'edge', EDGE_STATE_ATTRIBUTE);
     const edgeSegmentsDesc = this.getAttributeView(network, 'edge', EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
     const edgeEndpointSizeDesc = this.getAttributeView(network, 'edge', EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+    const edgeEndpointStatesDesc = this.getAttributeView(network, 'edge', EDGE_ENDPOINTS_STATE_ATTRIBUTE);
 
     const nodes = {
       positions: nodePositionsDesc?.view ?? this.emptyFloat,
       colors: nodeColorsDesc?.view ?? this.emptyFloat,
       sizes: nodeSizesDesc?.view ?? this.emptyFloat,
+      states: nodeStatesDesc?.view ?? this.emptyUint,
       outlineWidths: nodeOutlineWidthDesc?.view ?? this.emptyFloat,
       outlineColors: nodeOutlineColorDesc?.view ?? this.emptyFloat,
       indices: nodeIndexDesc?.view ?? this.emptyUint,
@@ -205,11 +304,13 @@ export class GraphLayer extends Layer {
         nodePositionsDesc?.count ??
         nodeColorsDesc?.count ??
         nodeSizesDesc?.count ??
+        nodeStatesDesc?.count ??
         0,
       versions: {
         positions: nodePositionsDesc?.version ?? 0,
         colors: nodeColorsDesc?.version ?? 0,
         sizes: nodeSizesDesc?.version ?? 0,
+        states: nodeStatesDesc?.version ?? 0,
         outlineWidths: nodeOutlineWidthDesc?.version ?? 0,
         outlineColors: nodeOutlineColorDesc?.version ?? 0,
         indices: nodeIndexDesc?.version ?? 0,
@@ -223,13 +324,16 @@ export class GraphLayer extends Layer {
       opacities: edgeOpacityDesc?.view ?? this.emptyFloat,
       widths: edgeWidthDesc?.view ?? this.emptyFloat,
       endpointSizes: edgeEndpointSizeDesc?.view ?? this.emptyFloat,
+      endpointStates: edgeEndpointStatesDesc?.view ?? this.emptyUint,
       indices: edgeIndexDesc?.view ?? this.emptyUint,
+      states: edgeStatesDesc?.view ?? this.emptyUint,
       count:
         edgeIndexDesc?.count ??
         edgeSegmentsDesc?.count ??
         edgeColorDesc?.count ??
         edgeOpacityDesc?.count ??
         edgeWidthDesc?.count ??
+        edgeStatesDesc?.count ??
         0,
       versions: {
         segments: edgeSegmentsDesc?.version ?? 0,
@@ -237,6 +341,8 @@ export class GraphLayer extends Layer {
         opacities: edgeOpacityDesc?.version ?? 0,
         widths: edgeWidthDesc?.version ?? 0,
         endpointSizes: edgeEndpointSizeDesc?.version ?? 0,
+        endpointStates: edgeEndpointStatesDesc?.version ?? 0,
+        states: edgeStatesDesc?.version ?? 0,
         indices: edgeIndexDesc?.version ?? 0,
         topology: edgeIndexDesc?.topologyVersion ?? 0,
       },

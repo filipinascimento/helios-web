@@ -5,13 +5,16 @@ const {
   NODE_COLOR_ATTRIBUTE,
   NODE_POSITION_ATTRIBUTE,
   NODE_SIZE_ATTRIBUTE,
+  NODE_STATE_ATTRIBUTE,
   NODE_OUTLINE_COLOR_ATTRIBUTE,
   NODE_OUTLINE_WIDTH_ATTRIBUTE,
   EDGE_COLOR_ATTRIBUTE,
   EDGE_OPACITY_ATTRIBUTE,
   EDGE_WIDTH_ATTRIBUTE,
+  EDGE_STATE_ATTRIBUTE,
   EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
   EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
+  EDGE_ENDPOINTS_STATE_ATTRIBUTE,
 } = VISUAL_ATTRIBUTE_NAMES;
 
 const {
@@ -97,6 +100,10 @@ export class VisualAttributes {
     return this.network.getNodeAttributeBuffer(NODE_SIZE_ATTRIBUTE).view;
   }
 
+  get nodeStates() {
+    return this.network.getNodeAttributeBuffer(NODE_STATE_ATTRIBUTE).view;
+  }
+
   get nodeOutlineWidths() {
     return this.network.getNodeAttributeBuffer(NODE_OUTLINE_WIDTH_ATTRIBUTE).view;
   }
@@ -115,6 +122,10 @@ export class VisualAttributes {
 
   get edgeOpacities() {
     return this.network.getEdgeAttributeBuffer(EDGE_OPACITY_ATTRIBUTE).view;
+  }
+
+  get edgeStates() {
+    return this.network.getEdgeAttributeBuffer(EDGE_STATE_ATTRIBUTE).view;
   }
 
   /**
@@ -269,13 +280,16 @@ export class VisualAttributes {
     this.ensureNodeAttribute(NODE_POSITION_ATTRIBUTE, AttributeType.Float, 3);
     this.ensureNodeAttribute(NODE_COLOR_ATTRIBUTE, AttributeType.Float, 4);
     this.ensureNodeAttribute(NODE_SIZE_ATTRIBUTE, AttributeType.Float, 1);
+    this.ensureNodeAttribute(NODE_STATE_ATTRIBUTE, AttributeType.UnsignedInteger, 1);
     this.ensureNodeAttribute(NODE_OUTLINE_WIDTH_ATTRIBUTE, AttributeType.Float, 1);
     this.ensureNodeAttribute(NODE_OUTLINE_COLOR_ATTRIBUTE, AttributeType.Float, 4);
     this.ensureEdgeAttribute(EDGE_COLOR_ATTRIBUTE, AttributeType.Float, 8);
     this.ensureEdgeAttribute(EDGE_OPACITY_ATTRIBUTE, AttributeType.Float, 2);
     this.ensureEdgeAttribute(EDGE_WIDTH_ATTRIBUTE, AttributeType.Float, 2);
+    this.ensureEdgeAttribute(EDGE_STATE_ATTRIBUTE, AttributeType.UnsignedInteger, 1);
     this.ensureNodeToEdgeAttribute(NODE_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_POSITION_ATTRIBUTE, 3);
     this.ensureNodeToEdgeAttribute(NODE_SIZE_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE, 1);
+    this.ensureNodeToEdgeAttributeTyped(NODE_STATE_ATTRIBUTE, EDGE_ENDPOINTS_STATE_ATTRIBUTE, 1, AttributeType.UnsignedInteger);
   }
 
   registerDenseBuffers() {
@@ -291,13 +305,16 @@ export class VisualAttributes {
     addDense('addDenseNodeAttributeBuffer', NODE_POSITION_ATTRIBUTE);
     addDense('addDenseNodeAttributeBuffer', NODE_COLOR_ATTRIBUTE);
     addDense('addDenseNodeAttributeBuffer', NODE_SIZE_ATTRIBUTE);
+    addDense('addDenseNodeAttributeBuffer', NODE_STATE_ATTRIBUTE);
     addDense('addDenseNodeAttributeBuffer', NODE_OUTLINE_WIDTH_ATTRIBUTE);
     addDense('addDenseNodeAttributeBuffer', NODE_OUTLINE_COLOR_ATTRIBUTE);
     addDense('addDenseEdgeAttributeBuffer', EDGE_COLOR_ATTRIBUTE);
     addDense('addDenseEdgeAttributeBuffer', EDGE_OPACITY_ATTRIBUTE);
     addDense('addDenseEdgeAttributeBuffer', EDGE_WIDTH_ATTRIBUTE);
+    addDense('addDenseEdgeAttributeBuffer', EDGE_STATE_ATTRIBUTE);
     addDense('addDenseEdgeAttributeBuffer', EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
     addDense('addDenseEdgeAttributeBuffer', EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+    addDense('addDenseEdgeAttributeBuffer', EDGE_ENDPOINTS_STATE_ATTRIBUTE);
   }
 
   bumpNodeAttributes(...names) {
@@ -308,6 +325,7 @@ export class VisualAttributes {
             NODE_POSITION_ATTRIBUTE,
             NODE_COLOR_ATTRIBUTE,
             NODE_SIZE_ATTRIBUTE,
+            NODE_STATE_ATTRIBUTE,
             NODE_OUTLINE_WIDTH_ATTRIBUTE,
             NODE_OUTLINE_COLOR_ATTRIBUTE,
           ];
@@ -330,8 +348,10 @@ export class VisualAttributes {
             EDGE_COLOR_ATTRIBUTE,
             EDGE_OPACITY_ATTRIBUTE,
             EDGE_WIDTH_ATTRIBUTE,
+            EDGE_STATE_ATTRIBUTE,
             EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
             EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
+            EDGE_ENDPOINTS_STATE_ATTRIBUTE,
           ];
     for (const name of targets) {
       try {
@@ -355,13 +375,16 @@ export class VisualAttributes {
       () => this.network?.updateDenseNodeAttributeBuffer?.(NODE_POSITION_ATTRIBUTE),
       () => this.network?.updateDenseNodeAttributeBuffer?.(NODE_COLOR_ATTRIBUTE),
       () => this.network?.updateDenseNodeAttributeBuffer?.(NODE_SIZE_ATTRIBUTE),
+      () => this.network?.updateDenseNodeAttributeBuffer?.(NODE_STATE_ATTRIBUTE),
       () => this.network?.updateDenseNodeAttributeBuffer?.(NODE_OUTLINE_WIDTH_ATTRIBUTE),
       () => this.network?.updateDenseNodeAttributeBuffer?.(NODE_OUTLINE_COLOR_ATTRIBUTE),
       () => this.network?.updateDenseEdgeAttributeBuffer?.(EDGE_COLOR_ATTRIBUTE),
       () => this.network?.updateDenseEdgeAttributeBuffer?.(EDGE_OPACITY_ATTRIBUTE),
       () => this.network?.updateDenseEdgeAttributeBuffer?.(EDGE_WIDTH_ATTRIBUTE),
+      () => this.network?.updateDenseEdgeAttributeBuffer?.(EDGE_STATE_ATTRIBUTE),
       () => this.network?.updateDenseEdgeAttributeBuffer?.(EDGE_ENDPOINTS_POSITION_ATTRIBUTE),
       () => this.network?.updateDenseEdgeAttributeBuffer?.(EDGE_ENDPOINTS_SIZE_ATTRIBUTE),
+      () => this.network?.updateDenseEdgeAttributeBuffer?.(EDGE_ENDPOINTS_STATE_ATTRIBUTE),
     ];
 
     let touched = false;
@@ -401,6 +424,7 @@ export class VisualAttributes {
       const positionView = this.nodePositions;
       const colorView = this.nodeColors;
       const sizeView = this.nodeSizes;
+      const stateView = this.nodeStates;
       const outlineWidthView = this.nodeOutlineWidths;
       const outlineColorView = this.nodeOutlineColors;
 
@@ -418,6 +442,9 @@ export class VisualAttributes {
             outlineWidthView,
             outlineColorView,
           );
+          if (stateView) {
+            stateView[index] = typeof stateView[0] === 'bigint' ? 0n : 0;
+          }
         }
       }
 
@@ -425,10 +452,11 @@ export class VisualAttributes {
         NODE_POSITION_ATTRIBUTE,
         NODE_COLOR_ATTRIBUTE,
         NODE_SIZE_ATTRIBUTE,
+        NODE_STATE_ATTRIBUTE,
         NODE_OUTLINE_WIDTH_ATTRIBUTE,
         NODE_OUTLINE_COLOR_ATTRIBUTE,
       );
-      this.bumpEdgeAttributes(EDGE_ENDPOINTS_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+      this.bumpEdgeAttributes(EDGE_ENDPOINTS_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE, EDGE_ENDPOINTS_STATE_ATTRIBUTE);
     });
   }
 
@@ -445,14 +473,18 @@ export class VisualAttributes {
       const colorView = this.edgeColors;
       const opacityView = this.edgeOpacities;
       const widthView = this.edgeWidths;
+      const stateView = this.edgeStates;
 
       if (targetIndices) {
         for (const index of targetIndices) {
           this.writeEdgeDefaults(index, color, width, opacity, colorView, widthView, opacityView);
+          if (stateView) {
+            stateView[index] = typeof stateView[0] === 'bigint' ? 0n : 0;
+          }
         }
       }
 
-      this.bumpEdgeAttributes(EDGE_COLOR_ATTRIBUTE, EDGE_OPACITY_ATTRIBUTE, EDGE_WIDTH_ATTRIBUTE);
+      this.bumpEdgeAttributes(EDGE_COLOR_ATTRIBUTE, EDGE_OPACITY_ATTRIBUTE, EDGE_WIDTH_ATTRIBUTE, EDGE_STATE_ATTRIBUTE);
     });
   }
 
@@ -660,6 +692,30 @@ export class VisualAttributes {
       validateAttribute(buffer, edgeName, expected);
     } catch (error) {
       // If no edge capacity is allocated yet, buffer pointers may be unavailable; defer validation.
+      if (this.network.edgeCapacity > 0) throw error;
+    }
+  }
+
+  ensureNodeToEdgeAttributeTyped(sourceName, edgeName, sourceDimension, type) {
+    const targetDimension = sourceDimension * 2;
+    const expected = { dimension: targetDimension, type };
+    const info = this.network.getEdgeAttributeInfo(edgeName);
+    const hasAttribute = this.network.hasEdgeAttribute(edgeName);
+
+    if (!hasAttribute) {
+      this.network.defineNodeToEdgeAttribute(sourceName, edgeName, 'both');
+    } else if (attributeInfoMismatched(info, expected)) {
+      console.warn(
+        `Edge attribute ${edgeName} metadata mismatch: redefining with dimension ${targetDimension} type ${type} (saw dimension ${info?.dimension ?? 'unknown'}, type ${info?.type ?? 'unknown'}).`,
+      );
+      this.network.removeEdgeAttribute(edgeName);
+      this.network.defineNodeToEdgeAttribute(sourceName, edgeName, 'both');
+    }
+
+    try {
+      const buffer = this.network.getEdgeAttributeBuffer(edgeName);
+      validateAttribute(buffer, edgeName, expected);
+    } catch (error) {
       if (this.network.edgeCapacity > 0) throw error;
     }
   }

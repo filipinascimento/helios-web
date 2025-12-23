@@ -42,6 +42,10 @@ Key entry points:
 See [`docs/MAPPERS.md`](./MAPPERS.md) for channel mapping patterns, colormap helpers, and
 the node-color ramp used in the Basic example.
 
+## State docs
+
+See [`docs/states.md`](./states.md) for the bitmask-based node/edge state system (selected/highlighted/filtered/custom) and shader-applied styling.
+
 ## Example Catalog
 
 - [`docs/examples/basic`](./examples/basic/README.md) – creates a handful of nodes, randomizes attributes, and maps them to colors so you can see both node and edge styling.

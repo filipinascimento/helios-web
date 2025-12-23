@@ -6,13 +6,16 @@ import {
   NODE_POSITION_ATTRIBUTE,
   NODE_COLOR_ATTRIBUTE,
   NODE_SIZE_ATTRIBUTE,
+  NODE_STATE_ATTRIBUTE,
   NODE_OUTLINE_COLOR_ATTRIBUTE,
   NODE_OUTLINE_WIDTH_ATTRIBUTE,
   EDGE_COLOR_ATTRIBUTE,
   EDGE_OPACITY_ATTRIBUTE,
   EDGE_WIDTH_ATTRIBUTE,
+  EDGE_STATE_ATTRIBUTE,
   EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
   EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
+  EDGE_ENDPOINTS_STATE_ATTRIBUTE,
 } from '../src/pipeline/constants.js';
 
 test('creates missing visual attributes with expected shapes', async () => {
@@ -30,6 +33,10 @@ test('creates missing visual attributes with expected shapes', async () => {
   const size = network.getNodeAttributeInfo(NODE_SIZE_ATTRIBUTE);
   assert.equal(size?.dimension, 1);
   assert.equal(size?.type, AttributeType.Float);
+
+  const state = network.getNodeAttributeInfo(NODE_STATE_ATTRIBUTE);
+  assert.equal(state?.dimension, 1);
+  assert.equal(state?.type, AttributeType.UnsignedInteger);
 
   const outlineColor = network.getNodeAttributeInfo(NODE_OUTLINE_COLOR_ATTRIBUTE);
   assert.equal(outlineColor?.dimension, 4);
@@ -51,6 +58,10 @@ test('creates missing visual attributes with expected shapes', async () => {
   assert.equal(edgeWidth?.dimension, 2);
   assert.equal(edgeWidth?.type, AttributeType.Float);
 
+  const edgeState = network.getEdgeAttributeInfo(EDGE_STATE_ATTRIBUTE);
+  assert.equal(edgeState?.dimension, 1);
+  assert.equal(edgeState?.type, AttributeType.UnsignedInteger);
+
   const endpointsPos = network.getEdgeAttributeInfo(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
   assert.equal(endpointsPos?.dimension, 6);
   assert.equal(endpointsPos?.type, AttributeType.Float);
@@ -58,6 +69,10 @@ test('creates missing visual attributes with expected shapes', async () => {
   const endpointsSize = network.getEdgeAttributeInfo(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
   assert.equal(endpointsSize?.dimension, 2);
   assert.equal(endpointsSize?.type, AttributeType.Float);
+
+  const endpointsState = network.getEdgeAttributeInfo(EDGE_ENDPOINTS_STATE_ATTRIBUTE);
+  assert.equal(endpointsState?.dimension, 2);
+  assert.equal(endpointsState?.type, AttributeType.UnsignedInteger);
 });
 
 test('repairs incompatible visual attribute metadata', async () => {

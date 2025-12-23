@@ -1,8 +1,11 @@
+const STATE_SLOTS = 8;
+
 export const NODE_VERTEX_SOURCE = /* glsl */ `#version 300 es
 layout (location = 0) in vec2 a_corner;
 layout (location = 1) in vec3 a_position;
 layout (location = 2) in vec4 a_color;
 layout (location = 3) in float a_size;
+layout (location = 4) in uint a_state;
 
 uniform mat4 u_viewProjection;
 uniform mat4 u_view;
@@ -17,6 +20,9 @@ uniform float u_nodeSizeScale;
 uniform float u_outlineWidthBase;
 uniform float u_outlineWidthScale;
 uniform vec4 u_outlineColor;
+uniform vec4 u_nodeStateScale[${STATE_SLOTS}]; // x=sizeMul y=opacityMul z=outlineMul w=reserved
+uniform vec4 u_nodeStateColorMul[${STATE_SLOTS}];
+uniform vec4 u_nodeStateColorAdd[${STATE_SLOTS}];
 
 out vec4 v_color;
 out vec2 v_local;
@@ -29,8 +35,25 @@ out vec3 v_viewDir;
 out float v_radius;
 
 void main() {
-  float baseSize = u_nodeSizeBase + u_nodeSizeScale * a_size;
-  float outlineWidth = max(0.0, u_outlineWidthBase + u_outlineWidthScale * a_size);
+  float sizeMul = 1.0;
+  float opacityMul = 1.0;
+  float outlineMul = 1.0;
+  vec3 rgbMul = vec3(1.0);
+  vec3 rgbAdd = vec3(0.0);
+  if (a_state != 0u) {
+    for (int i = 0; i < ${STATE_SLOTS}; i += 1) {
+      float enabled = float((a_state >> uint(i)) & 1u);
+      vec4 scale = u_nodeStateScale[i];
+      sizeMul *= mix(1.0, scale.x, enabled);
+      opacityMul *= mix(1.0, scale.y, enabled);
+      outlineMul *= mix(1.0, scale.z, enabled);
+      rgbMul *= mix(vec3(1.0), u_nodeStateColorMul[i].rgb, enabled);
+      rgbAdd += u_nodeStateColorAdd[i].rgb * enabled;
+    }
+  }
+
+  float baseSize = (u_nodeSizeBase + u_nodeSizeScale * a_size) * sizeMul;
+  float outlineWidth = max(0.0, (u_outlineWidthBase + u_outlineWidthScale * a_size) * outlineMul);
   float fullSize = baseSize + outlineWidth;
   float radius = max(1.0, fullSize) * 0.5;
   vec3 right = u_cameraRight;
@@ -50,10 +73,11 @@ void main() {
   }
   vec3 world = a_position + (right * a_corner.x + up * a_corner.y) * radius;
   gl_Position = u_viewProjection * vec4(world, 1.0);
-  float alpha = clamp(u_nodeOpacityBase + u_nodeOpacityScale * a_color.a, 0.0, 1.0);
-  v_color = vec4(a_color.rgb, alpha);
-  float outlineAlpha = clamp(u_nodeOpacityBase + u_nodeOpacityScale * u_outlineColor.a, 0.0, 1.0);
-  v_outlineColor = vec4(u_outlineColor.rgb, outlineAlpha);
+  vec3 rgb = clamp(a_color.rgb * rgbMul + rgbAdd, 0.0, 1.0);
+  float alpha = clamp(u_nodeOpacityBase + u_nodeOpacityScale * a_color.a, 0.0, 1.0) * opacityMul;
+  v_color = vec4(rgb, clamp(alpha, 0.0, 1.0));
+  float outlineAlpha = clamp(u_nodeOpacityBase + u_nodeOpacityScale * u_outlineColor.a, 0.0, 1.0) * opacityMul;
+  v_outlineColor = vec4(u_outlineColor.rgb, clamp(outlineAlpha, 0.0, 1.0));
   v_outlineThreshold = outlineWidth / max(fullSize, 1e-5);
   v_local = a_corner;
   v_centerWorld = a_position;
@@ -127,6 +151,8 @@ layout (location = 3) in vec4 a_colorEnd;
 layout (location = 4) in vec2 a_width;
 layout (location = 5) in vec2 a_endpointSize;
 layout (location = 6) in vec2 a_opacity;
+layout (location = 7) in uint a_state;
+layout (location = 8) in uvec2 a_endpointState;
 
 uniform mat4 u_viewProjection;
 uniform float u_edgeOpacityBase;
@@ -136,26 +162,59 @@ uniform float u_edgeWidthScale;
 uniform float u_nodeSizeBase;
 uniform float u_nodeSizeScale;
 uniform float u_edgeEndpointTrim;
+uniform vec4 u_nodeStateScale[${STATE_SLOTS}]; // x=sizeMul (used for endpoint sizes)
+uniform vec4 u_edgeStateScale[${STATE_SLOTS}]; // x=widthMul y=opacityMul
+uniform vec4 u_edgeStateColorMul[${STATE_SLOTS}];
+uniform vec4 u_edgeStateColorAdd[${STATE_SLOTS}];
 
 out vec4 v_color;
 
 void main() {
+  float widthMul = 1.0;
+  float opacityMul = 1.0;
+  vec3 rgbMul = vec3(1.0);
+  vec3 rgbAdd = vec3(0.0);
+  if (a_state != 0u) {
+    for (int i = 0; i < ${STATE_SLOTS}; i += 1) {
+      float enabled = float((a_state >> uint(i)) & 1u);
+      vec4 scale = u_edgeStateScale[i];
+      widthMul *= mix(1.0, scale.x, enabled);
+      opacityMul *= mix(1.0, scale.y, enabled);
+      rgbMul *= mix(vec3(1.0), u_edgeStateColorMul[i].rgb, enabled);
+      rgbAdd += u_edgeStateColorAdd[i].rgb * enabled;
+    }
+  }
+
+  float startSizeMul = 1.0;
+  float endSizeMul = 1.0;
+  if ((a_endpointState.x | a_endpointState.y) != 0u) {
+    for (int i = 0; i < ${STATE_SLOTS}; i += 1) {
+      float enabledStart = float((a_endpointState.x >> uint(i)) & 1u);
+      float enabledEnd = float((a_endpointState.y >> uint(i)) & 1u);
+      float slotMul = u_nodeStateScale[i].x;
+      startSizeMul *= mix(1.0, slotMul, enabledStart);
+      endSizeMul *= mix(1.0, slotMul, enabledEnd);
+    }
+  }
+
   vec3 dir = a_end - a_start;
   float dirLen = max(length(dir), 1e-5);
   vec3 dirN = dir / dirLen;
-  float startRadius = max(u_nodeSizeBase + u_nodeSizeScale * a_endpointSize.x, 0.0) * 0.5;
-  float endRadius = max(u_nodeSizeBase + u_nodeSizeScale * a_endpointSize.y, 0.0) * 0.5;
+  float startRadius = max(u_nodeSizeBase + u_nodeSizeScale * a_endpointSize.x, 0.0) * 0.5 * startSizeMul;
+  float endRadius = max(u_nodeSizeBase + u_nodeSizeScale * a_endpointSize.y, 0.0) * 0.5 * endSizeMul;
   float trimStart = startRadius * u_edgeEndpointTrim;
   float trimEnd = endRadius * u_edgeEndpointTrim;
   vec3 startPos = a_start + dirN * trimStart;
   vec3 endPos = a_end - dirN * trimEnd;
   bool isEnd = (gl_VertexID & 1) == 1;
   vec3 pos = isEnd ? endPos : startPos;
-  vec4 color = isEnd ? a_colorEnd : a_colorStart;
-  float width = isEnd ? a_width.y : a_width.x;
+  vec4 baseColor = isEnd ? a_colorEnd : a_colorStart;
+  vec3 rgb = clamp(baseColor.rgb * rgbMul + rgbAdd, 0.0, 1.0);
+  vec4 color = vec4(rgb, baseColor.a);
+  float width = (isEnd ? a_width.y : a_width.x) * widthMul;
   gl_Position = u_viewProjection * vec4(pos, 1.0);
   float rawOpacity = isEnd ? a_opacity.y : a_opacity.x;
-  float opacity = clamp(u_edgeOpacityBase + u_edgeOpacityScale * rawOpacity, 0.0, 1.0);
+  float opacity = clamp(u_edgeOpacityBase + u_edgeOpacityScale * rawOpacity, 0.0, 1.0) * opacityMul;
   float alpha = clamp(opacity * color.a, 0.0, 1.0);
   v_color = vec4(color.rgb, alpha);
 }`;
@@ -179,6 +238,8 @@ layout (location = 4) in vec4 a_colorStart;
 layout (location = 5) in vec4 a_colorEnd;
 layout (location = 6) in vec2 a_endpointSize;
 layout (location = 7) in vec2 a_opacity;
+layout (location = 8) in uint a_state;
+layout (location = 9) in uvec2 a_endpointState;
 
 uniform mat4 u_viewProjection;
 uniform vec2 u_viewport;
@@ -189,22 +250,53 @@ uniform float u_edgeWidthScale;
 uniform float u_nodeSizeBase;
 uniform float u_nodeSizeScale;
 uniform float u_edgeEndpointTrim;
+uniform vec4 u_nodeStateScale[${STATE_SLOTS}]; // x=sizeMul (used for endpoint sizes)
+uniform vec4 u_edgeStateScale[${STATE_SLOTS}]; // x=widthMul y=opacityMul
+uniform vec4 u_edgeStateColorMul[${STATE_SLOTS}];
+uniform vec4 u_edgeStateColorAdd[${STATE_SLOTS}];
 
 out vec4 v_color;
 
 void main() {
+  float widthMul = 1.0;
+  float opacityMul = 1.0;
+  vec3 rgbMul = vec3(1.0);
+  vec3 rgbAdd = vec3(0.0);
+  if (a_state != 0u) {
+    for (int i = 0; i < ${STATE_SLOTS}; i += 1) {
+      float enabled = float((a_state >> uint(i)) & 1u);
+      vec4 scale = u_edgeStateScale[i];
+      widthMul *= mix(1.0, scale.x, enabled);
+      opacityMul *= mix(1.0, scale.y, enabled);
+      rgbMul *= mix(vec3(1.0), u_edgeStateColorMul[i].rgb, enabled);
+      rgbAdd += u_edgeStateColorAdd[i].rgb * enabled;
+    }
+  }
+
+  float startSizeMul = 1.0;
+  float endSizeMul = 1.0;
+  if ((a_endpointState.x | a_endpointState.y) != 0u) {
+    for (int i = 0; i < ${STATE_SLOTS}; i += 1) {
+      float enabledStart = float((a_endpointState.x >> uint(i)) & 1u);
+      float enabledEnd = float((a_endpointState.y >> uint(i)) & 1u);
+      float slotMul = u_nodeStateScale[i].x;
+      startSizeMul *= mix(1.0, slotMul, enabledStart);
+      endSizeMul *= mix(1.0, slotMul, enabledEnd);
+    }
+  }
+
   vec3 dir = a_end - a_start;
   float dirLenWorld = max(length(dir), 1e-5);
   vec3 dirN = dir / dirLenWorld;
-  float startRadius = max(u_nodeSizeBase + u_nodeSizeScale * a_endpointSize.x, 0.0) * 0.5;
-  float endRadius = max(u_nodeSizeBase + u_nodeSizeScale * a_endpointSize.y, 0.0) * 0.5;
+  float startRadius = max(u_nodeSizeBase + u_nodeSizeScale * a_endpointSize.x, 0.0) * 0.5 * startSizeMul;
+  float endRadius = max(u_nodeSizeBase + u_nodeSizeScale * a_endpointSize.y, 0.0) * 0.5 * endSizeMul;
   float trimStart = startRadius * u_edgeEndpointTrim;
   float trimEnd = endRadius * u_edgeEndpointTrim;
   vec3 startPos = a_start + dirN * trimStart;
   vec3 endPos = a_end - dirN * trimEnd;
 
   float segmentMix = clamp(a_corner.x, 0.0, 1.0);
-  float width = max(u_edgeWidthBase + u_edgeWidthScale * mix(a_width.x, a_width.y, segmentMix), 0.0);
+  float width = max((u_edgeWidthBase + u_edgeWidthScale * mix(a_width.x, a_width.y, segmentMix)) * widthMul, 0.0);
   vec4 clipStart = u_viewProjection * vec4(startPos, 1.0);
   vec4 clipEnd = u_viewProjection * vec4(endPos, 1.0);
   vec2 ndcStart = clipStart.xy / clipStart.w;
@@ -219,9 +311,10 @@ void main() {
   clipPos.xy += offsetNdc * a_corner.y * 1.5;
   gl_Position = clipPos;
   vec4 blended = mix(a_colorStart, a_colorEnd, segmentMix);
-  float opacity = clamp(u_edgeOpacityBase + u_edgeOpacityScale * mix(a_opacity.x, a_opacity.y, segmentMix), 0.0, 1.0);
+  vec3 rgb = clamp(blended.rgb * rgbMul + rgbAdd, 0.0, 1.0);
+  float opacity = clamp(u_edgeOpacityBase + u_edgeOpacityScale * mix(a_opacity.x, a_opacity.y, segmentMix), 0.0, 1.0) * opacityMul;
   float alpha = clamp(opacity * blended.a, 0.0, 1.0);
-  v_color = vec4(blended.rgb, alpha);
+  v_color = vec4(rgb, alpha);
 }`;
 
 export const EDGE_QUAD_FRAGMENT_SOURCE = EDGE_FRAGMENT_SOURCE;

@@ -42,6 +42,9 @@ export class GraphLayerWebGL extends GraphLayer {
     this.nodeUniformOutlineWidthBase = null;
     this.nodeUniformOutlineWidthScale = null;
     this.nodeUniformOutlineColor = null;
+    this.nodeUniformStateScale = null;
+    this.nodeUniformStateColorMul = null;
+    this.nodeUniformStateColorAdd = null;
     this.edgeUniformViewProjection = null;
     this.edgeUniformOpacityBase = null;
     this.edgeUniformOpacityScale = null;
@@ -50,6 +53,10 @@ export class GraphLayerWebGL extends GraphLayer {
     this.edgeUniformNodeSizeBase = null;
     this.edgeUniformNodeSizeScale = null;
     this.edgeUniformEndpointTrim = null;
+    this.edgeUniformNodeStateScale = null;
+    this.edgeUniformStateScale = null;
+    this.edgeUniformStateColorMul = null;
+    this.edgeUniformStateColorAdd = null;
     this.edgeQuadUniformViewProjection = null;
     this.edgeQuadUniformViewport = null;
     this.edgeQuadUniformOpacityBase = null;
@@ -59,6 +66,10 @@ export class GraphLayerWebGL extends GraphLayer {
     this.edgeQuadUniformNodeSizeBase = null;
     this.edgeQuadUniformNodeSizeScale = null;
     this.edgeQuadUniformEndpointTrim = null;
+    this.edgeQuadUniformNodeStateScale = null;
+    this.edgeQuadUniformStateScale = null;
+    this.edgeQuadUniformStateColorMul = null;
+    this.edgeQuadUniformStateColorAdd = null;
     this.edgeWeightedUniformViewProjection = null;
     this.edgeWeightedUniformOpacityBase = null;
     this.edgeWeightedUniformOpacityScale = null;
@@ -67,6 +78,10 @@ export class GraphLayerWebGL extends GraphLayer {
     this.edgeWeightedUniformNodeSizeBase = null;
     this.edgeWeightedUniformNodeSizeScale = null;
     this.edgeWeightedUniformEndpointTrim = null;
+    this.edgeWeightedUniformNodeStateScale = null;
+    this.edgeWeightedUniformStateScale = null;
+    this.edgeWeightedUniformStateColorMul = null;
+    this.edgeWeightedUniformStateColorAdd = null;
     this.edgeWeightedQuadUniformViewProjection = null;
     this.edgeWeightedQuadUniformViewport = null;
     this.edgeWeightedQuadUniformOpacityBase = null;
@@ -76,6 +91,10 @@ export class GraphLayerWebGL extends GraphLayer {
     this.edgeWeightedQuadUniformNodeSizeBase = null;
     this.edgeWeightedQuadUniformNodeSizeScale = null;
     this.edgeWeightedQuadUniformEndpointTrim = null;
+    this.edgeWeightedQuadUniformNodeStateScale = null;
+    this.edgeWeightedQuadUniformStateScale = null;
+    this.edgeWeightedQuadUniformStateColorMul = null;
+    this.edgeWeightedQuadUniformStateColorAdd = null;
     this.edgeResolveUniformColor = null;
     this.edgeResolveUniformWeight = null;
     this.edgeResolveVAO = null;
@@ -178,6 +197,9 @@ export class GraphLayerWebGL extends GraphLayer {
     this.nodeUniformOutlineWidthBase = gl.getUniformLocation(this.nodeProgram, 'u_outlineWidthBase');
     this.nodeUniformOutlineWidthScale = gl.getUniformLocation(this.nodeProgram, 'u_outlineWidthScale');
     this.nodeUniformOutlineColor = gl.getUniformLocation(this.nodeProgram, 'u_outlineColor');
+    this.nodeUniformStateScale = gl.getUniformLocation(this.nodeProgram, 'u_nodeStateScale[0]');
+    this.nodeUniformStateColorMul = gl.getUniformLocation(this.nodeProgram, 'u_nodeStateColorMul[0]');
+    this.nodeUniformStateColorAdd = gl.getUniformLocation(this.nodeProgram, 'u_nodeStateColorAdd[0]');
     this.edgeUniformViewProjection = gl.getUniformLocation(this.edgeProgram, 'u_viewProjection');
     this.edgeUniformOpacityBase = gl.getUniformLocation(this.edgeProgram, 'u_edgeOpacityBase');
     this.edgeUniformOpacityScale = gl.getUniformLocation(this.edgeProgram, 'u_edgeOpacityScale');
@@ -186,6 +208,10 @@ export class GraphLayerWebGL extends GraphLayer {
     this.edgeUniformNodeSizeBase = gl.getUniformLocation(this.edgeProgram, 'u_nodeSizeBase');
     this.edgeUniformNodeSizeScale = gl.getUniformLocation(this.edgeProgram, 'u_nodeSizeScale');
     this.edgeUniformEndpointTrim = gl.getUniformLocation(this.edgeProgram, 'u_edgeEndpointTrim');
+    this.edgeUniformNodeStateScale = gl.getUniformLocation(this.edgeProgram, 'u_nodeStateScale[0]');
+    this.edgeUniformStateScale = gl.getUniformLocation(this.edgeProgram, 'u_edgeStateScale[0]');
+    this.edgeUniformStateColorMul = gl.getUniformLocation(this.edgeProgram, 'u_edgeStateColorMul[0]');
+    this.edgeUniformStateColorAdd = gl.getUniformLocation(this.edgeProgram, 'u_edgeStateColorAdd[0]');
     this.edgeQuadUniformViewProjection = gl.getUniformLocation(this.edgeQuadProgram, 'u_viewProjection');
     this.edgeQuadUniformViewport = gl.getUniformLocation(this.edgeQuadProgram, 'u_viewport');
     this.edgeQuadUniformOpacityBase = gl.getUniformLocation(this.edgeQuadProgram, 'u_edgeOpacityBase');
@@ -195,6 +221,10 @@ export class GraphLayerWebGL extends GraphLayer {
     this.edgeQuadUniformNodeSizeBase = gl.getUniformLocation(this.edgeQuadProgram, 'u_nodeSizeBase');
     this.edgeQuadUniformNodeSizeScale = gl.getUniformLocation(this.edgeQuadProgram, 'u_nodeSizeScale');
     this.edgeQuadUniformEndpointTrim = gl.getUniformLocation(this.edgeQuadProgram, 'u_edgeEndpointTrim');
+    this.edgeQuadUniformNodeStateScale = gl.getUniformLocation(this.edgeQuadProgram, 'u_nodeStateScale[0]');
+    this.edgeQuadUniformStateScale = gl.getUniformLocation(this.edgeQuadProgram, 'u_edgeStateScale[0]');
+    this.edgeQuadUniformStateColorMul = gl.getUniformLocation(this.edgeQuadProgram, 'u_edgeStateColorMul[0]');
+    this.edgeQuadUniformStateColorAdd = gl.getUniformLocation(this.edgeQuadProgram, 'u_edgeStateColorAdd[0]');
 
     this.nodeQuadBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeQuadBuffer);
@@ -229,6 +259,12 @@ export class GraphLayerWebGL extends GraphLayer {
     gl.enableVertexAttribArray(3);
     gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 0, 0);
     gl.vertexAttribDivisor(3, 1);
+
+    this.nodeBuffers.states = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.states);
+    gl.enableVertexAttribArray(4);
+    gl.vertexAttribIPointer(4, 1, gl.UNSIGNED_INT, 0, 0);
+    gl.vertexAttribDivisor(4, 1);
     gl.bindVertexArray(null);
 
     this.edgeVAO = gl.createVertexArray();
@@ -266,6 +302,18 @@ export class GraphLayerWebGL extends GraphLayer {
     gl.enableVertexAttribArray(6);
     gl.vertexAttribPointer(6, 2, gl.FLOAT, false, 0, 0);
     gl.vertexAttribDivisor(6, 1);
+
+    this.edgeBuffers.states = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.states);
+    gl.enableVertexAttribArray(7);
+    gl.vertexAttribIPointer(7, 1, gl.UNSIGNED_INT, 0, 0);
+    gl.vertexAttribDivisor(7, 1);
+
+    this.edgeBuffers.endpointStates = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.endpointStates);
+    gl.enableVertexAttribArray(8);
+    gl.vertexAttribIPointer(8, 2, gl.UNSIGNED_INT, 0, 0);
+    gl.vertexAttribDivisor(8, 1);
     gl.bindVertexArray(null);
 
     this.edgeQuadBuffer = gl.createBuffer();
@@ -333,6 +381,16 @@ export class GraphLayerWebGL extends GraphLayer {
     gl.enableVertexAttribArray(7);
     gl.vertexAttribPointer(7, 2, gl.FLOAT, false, 0, 0);
     gl.vertexAttribDivisor(7, 1);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.states);
+    gl.enableVertexAttribArray(8);
+    gl.vertexAttribIPointer(8, 1, gl.UNSIGNED_INT, 0, 0);
+    gl.vertexAttribDivisor(8, 1);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.endpointStates);
+    gl.enableVertexAttribArray(9);
+    gl.vertexAttribIPointer(9, 2, gl.UNSIGNED_INT, 0, 0);
+    gl.vertexAttribDivisor(9, 1);
     gl.bindVertexArray(null);
   }
 
@@ -416,6 +474,9 @@ export class GraphLayerWebGL extends GraphLayer {
           this.nodeOutlineColor?.[2] ?? 0,
           this.nodeOutlineColor?.[3] ?? 1,
         );
+        if (this.nodeUniformStateScale) gl.uniform4fv(this.nodeUniformStateScale, this.nodeStateScale);
+        if (this.nodeUniformStateColorMul) gl.uniform4fv(this.nodeUniformStateColorMul, this.nodeStateColorMul);
+        if (this.nodeUniformStateColorAdd) gl.uniform4fv(this.nodeUniformStateColorAdd, this.nodeStateColorAdd);
         gl.bindVertexArray(this.nodeVAO);
         gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.nodeCount);
       };
@@ -437,6 +498,10 @@ export class GraphLayerWebGL extends GraphLayer {
           gl.uniform1f(this.edgeQuadUniformNodeSizeBase, this.nodeSizeBase);
           gl.uniform1f(this.edgeQuadUniformNodeSizeScale, this.nodeSizeScale);
           gl.uniform1f(this.edgeQuadUniformEndpointTrim, this.edgeEndpointTrim);
+          if (this.edgeQuadUniformNodeStateScale) gl.uniform4fv(this.edgeQuadUniformNodeStateScale, this.nodeStateScale);
+          if (this.edgeQuadUniformStateScale) gl.uniform4fv(this.edgeQuadUniformStateScale, this.edgeStateScale);
+          if (this.edgeQuadUniformStateColorMul) gl.uniform4fv(this.edgeQuadUniformStateColorMul, this.edgeStateColorMul);
+          if (this.edgeQuadUniformStateColorAdd) gl.uniform4fv(this.edgeQuadUniformStateColorAdd, this.edgeStateColorAdd);
           gl.bindVertexArray(this.edgeQuadVAO);
           gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.edgeCount);
         } else {
@@ -449,6 +514,10 @@ export class GraphLayerWebGL extends GraphLayer {
           gl.uniform1f(this.edgeUniformNodeSizeBase, this.nodeSizeBase);
           gl.uniform1f(this.edgeUniformNodeSizeScale, this.nodeSizeScale);
           gl.uniform1f(this.edgeUniformEndpointTrim, this.edgeEndpointTrim);
+          if (this.edgeUniformNodeStateScale) gl.uniform4fv(this.edgeUniformNodeStateScale, this.nodeStateScale);
+          if (this.edgeUniformStateScale) gl.uniform4fv(this.edgeUniformStateScale, this.edgeStateScale);
+          if (this.edgeUniformStateColorMul) gl.uniform4fv(this.edgeUniformStateColorMul, this.edgeStateColorMul);
+          if (this.edgeUniformStateColorAdd) gl.uniform4fv(this.edgeUniformStateColorAdd, this.edgeStateColorAdd);
           gl.bindVertexArray(this.edgeVAO);
           gl.drawArraysInstanced(gl.LINES, 0, 2, this.edgeCount);
         }
@@ -545,7 +614,7 @@ export class GraphLayerWebGL extends GraphLayer {
   uploadNodesWebGL2(nodes) {
     const count = nodes?.count ?? 0;
     const versions = nodes?.versions ?? {};
-    if (!nodes || !nodes.positions || !nodes.colors || !nodes.sizes) {
+    if (!nodes || !nodes.positions || !nodes.colors || !nodes.sizes || !nodes.states) {
       this.nodeCount = 0;
       return;
     }
@@ -553,6 +622,7 @@ export class GraphLayerWebGL extends GraphLayer {
       this._nodeVersionsLast?.positions !== (versions.positions ?? 0)
       || this._nodeVersionsLast?.colors !== (versions.colors ?? 0)
       || this._nodeVersionsLast?.sizes !== (versions.sizes ?? 0)
+      || this._nodeVersionsLast?.states !== (versions.states ?? 0)
       || this._nodeVersionsLast?.topology !== (versions.topology ?? 0)
       || this.nodeCount !== count
     );
@@ -570,12 +640,16 @@ export class GraphLayerWebGL extends GraphLayer {
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.sizes);
     gl.bufferData(gl.ARRAY_BUFFER, nodes.sizes, gl.DYNAMIC_DRAW);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.states);
+    gl.bufferData(gl.ARRAY_BUFFER, nodes.states, gl.DYNAMIC_DRAW);
     gl.bindVertexArray(null);
 
     this._nodeVersionsLast = {
       positions: versions.positions ?? 0,
       colors: versions.colors ?? 0,
       sizes: versions.sizes ?? 0,
+      states: versions.states ?? 0,
       topology: versions.topology ?? 0,
     };
   }
@@ -583,7 +657,7 @@ export class GraphLayerWebGL extends GraphLayer {
   uploadEdgesWebGL2(edges) {
     const count = edges?.count ?? 0;
     const versions = edges?.versions ?? {};
-    if (!edges || !edges.segments || !edges.colors || !edges.opacities || !edges.widths || !edges.endpointSizes) {
+    if (!edges || !edges.segments || !edges.colors || !edges.opacities || !edges.widths || !edges.endpointSizes || !edges.states || !edges.endpointStates) {
       this.edgeCount = 0;
       return;
     }
@@ -593,6 +667,8 @@ export class GraphLayerWebGL extends GraphLayer {
       || this._edgeVersionsLast?.opacities !== (versions.opacities ?? 0)
       || this._edgeVersionsLast?.widths !== (versions.widths ?? 0)
       || this._edgeVersionsLast?.endpointSizes !== (versions.endpointSizes ?? 0)
+      || this._edgeVersionsLast?.states !== (versions.states ?? 0)
+      || this._edgeVersionsLast?.endpointStates !== (versions.endpointStates ?? 0)
       || this._edgeVersionsLast?.topology !== (versions.topology ?? 0)
       || this.edgeCount !== count
     );
@@ -618,12 +694,20 @@ export class GraphLayerWebGL extends GraphLayer {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.endpointSizes);
     gl.bufferData(gl.ARRAY_BUFFER, edges.endpointSizes, gl.DYNAMIC_DRAW);
 
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.states);
+    gl.bufferData(gl.ARRAY_BUFFER, edges.states, gl.DYNAMIC_DRAW);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.endpointStates);
+    gl.bufferData(gl.ARRAY_BUFFER, edges.endpointStates, gl.DYNAMIC_DRAW);
+
     this._edgeVersionsLast = {
       segments: versions.segments ?? 0,
       colors: versions.colors ?? 0,
       opacities: versions.opacities ?? 0,
       widths: versions.widths ?? 0,
       endpointSizes: versions.endpointSizes ?? 0,
+      states: versions.states ?? 0,
+      endpointStates: versions.endpointStates ?? 0,
       topology: versions.topology ?? 0,
     };
   }
@@ -641,6 +725,10 @@ export class GraphLayerWebGL extends GraphLayer {
       this.edgeWeightedUniformNodeSizeBase = gl.getUniformLocation(this.edgeWeightedProgram, 'u_nodeSizeBase');
       this.edgeWeightedUniformNodeSizeScale = gl.getUniformLocation(this.edgeWeightedProgram, 'u_nodeSizeScale');
       this.edgeWeightedUniformEndpointTrim = gl.getUniformLocation(this.edgeWeightedProgram, 'u_edgeEndpointTrim');
+      this.edgeWeightedUniformNodeStateScale = gl.getUniformLocation(this.edgeWeightedProgram, 'u_nodeStateScale[0]');
+      this.edgeWeightedUniformStateScale = gl.getUniformLocation(this.edgeWeightedProgram, 'u_edgeStateScale[0]');
+      this.edgeWeightedUniformStateColorMul = gl.getUniformLocation(this.edgeWeightedProgram, 'u_edgeStateColorMul[0]');
+      this.edgeWeightedUniformStateColorAdd = gl.getUniformLocation(this.edgeWeightedProgram, 'u_edgeStateColorAdd[0]');
     }
 
     if (!this.edgeWeightedQuadProgram) {
@@ -657,6 +745,10 @@ export class GraphLayerWebGL extends GraphLayer {
       this.edgeWeightedQuadUniformNodeSizeBase = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_nodeSizeBase');
       this.edgeWeightedQuadUniformNodeSizeScale = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_nodeSizeScale');
       this.edgeWeightedQuadUniformEndpointTrim = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_edgeEndpointTrim');
+      this.edgeWeightedQuadUniformNodeStateScale = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_nodeStateScale[0]');
+      this.edgeWeightedQuadUniformStateScale = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_edgeStateScale[0]');
+      this.edgeWeightedQuadUniformStateColorMul = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_edgeStateColorMul[0]');
+      this.edgeWeightedQuadUniformStateColorAdd = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_edgeStateColorAdd[0]');
     }
 
     const ensureResolveProgram = (key, fragSource) => {
@@ -799,6 +891,9 @@ export class GraphLayerWebGL extends GraphLayer {
         this.nodeOutlineColor?.[2] ?? 0,
         this.nodeOutlineColor?.[3] ?? 1,
       );
+      if (this.nodeUniformStateScale) gl.uniform4fv(this.nodeUniformStateScale, this.nodeStateScale);
+      if (this.nodeUniformStateColorMul) gl.uniform4fv(this.nodeUniformStateColorMul, this.nodeStateColorMul);
+      if (this.nodeUniformStateColorAdd) gl.uniform4fv(this.nodeUniformStateColorAdd, this.nodeStateColorAdd);
       gl.bindVertexArray(this.nodeVAO);
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.nodeCount);
     };
@@ -858,6 +953,10 @@ export class GraphLayerWebGL extends GraphLayer {
         gl.uniform1f(this.edgeWeightedQuadUniformNodeSizeBase, this.nodeSizeBase);
         gl.uniform1f(this.edgeWeightedQuadUniformNodeSizeScale, this.nodeSizeScale);
         gl.uniform1f(this.edgeWeightedQuadUniformEndpointTrim, this.edgeEndpointTrim);
+        if (this.edgeWeightedQuadUniformNodeStateScale) gl.uniform4fv(this.edgeWeightedQuadUniformNodeStateScale, this.nodeStateScale);
+        if (this.edgeWeightedQuadUniformStateScale) gl.uniform4fv(this.edgeWeightedQuadUniformStateScale, this.edgeStateScale);
+        if (this.edgeWeightedQuadUniformStateColorMul) gl.uniform4fv(this.edgeWeightedQuadUniformStateColorMul, this.edgeStateColorMul);
+        if (this.edgeWeightedQuadUniformStateColorAdd) gl.uniform4fv(this.edgeWeightedQuadUniformStateColorAdd, this.edgeStateColorAdd);
         gl.bindVertexArray(this.edgeQuadVAO);
         gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.edgeCount);
       } else {
@@ -870,6 +969,10 @@ export class GraphLayerWebGL extends GraphLayer {
         gl.uniform1f(this.edgeWeightedUniformNodeSizeBase, this.nodeSizeBase);
         gl.uniform1f(this.edgeWeightedUniformNodeSizeScale, this.nodeSizeScale);
         gl.uniform1f(this.edgeWeightedUniformEndpointTrim, this.edgeEndpointTrim);
+        if (this.edgeWeightedUniformNodeStateScale) gl.uniform4fv(this.edgeWeightedUniformNodeStateScale, this.nodeStateScale);
+        if (this.edgeWeightedUniformStateScale) gl.uniform4fv(this.edgeWeightedUniformStateScale, this.edgeStateScale);
+        if (this.edgeWeightedUniformStateColorMul) gl.uniform4fv(this.edgeWeightedUniformStateColorMul, this.edgeStateColorMul);
+        if (this.edgeWeightedUniformStateColorAdd) gl.uniform4fv(this.edgeWeightedUniformStateColorAdd, this.edgeStateColorAdd);
         gl.bindVertexArray(this.edgeVAO);
         gl.drawArraysInstanced(gl.LINES, 0, 2, this.edgeCount);
       }

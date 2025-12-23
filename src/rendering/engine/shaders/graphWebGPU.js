@@ -1,3 +1,5 @@
+const STATE_SLOTS = 8;
+
 export const NODE_WGSL = /* wgsl */ `
 struct Camera {
   viewProjection: mat4x4<f32>,
@@ -15,9 +17,15 @@ struct Globals {
   nodeOutline: vec2<f32>, // base, scale (applied to node size attribute)
   edgeOpacity: vec2<f32>, // base, scale
   edgeWidth: vec2<f32>, // base, scale
+  _pad0: vec2<f32>,
   nodeOutlineColor: vec4<f32>,
-  edgeTrim: f32,
-  _pad: vec3<f32>,
+  edgeTrim: vec4<f32>, // edgeTrim.x used, rest padding
+  nodeStateScale: array<vec4<f32>, ${STATE_SLOTS}>,
+  nodeStateColorMul: array<vec4<f32>, ${STATE_SLOTS}>,
+  nodeStateColorAdd: array<vec4<f32>, ${STATE_SLOTS}>,
+  edgeStateScale: array<vec4<f32>, ${STATE_SLOTS}>,
+  edgeStateColorMul: array<vec4<f32>, ${STATE_SLOTS}>,
+  edgeStateColorAdd: array<vec4<f32>, ${STATE_SLOTS}>,
 };
 
 struct NodeIndices {
@@ -36,12 +44,17 @@ struct NodeColors {
   data: array<vec4<f32>>,
 };
 
+struct NodeStates {
+  data: array<u32>,
+};
+
 @group(0) @binding(0) var<uniform> camera : Camera;
 @group(0) @binding(1) var<storage, read> nodeIndices : NodeIndices;
 @group(0) @binding(2) var<storage, read> nodePositions : NodePositions;
 @group(0) @binding(3) var<storage, read> nodeSizes : NodeSizes;
 @group(0) @binding(4) var<storage, read> nodeColors : NodeColors;
-@group(0) @binding(5) var<uniform> globals : Globals;
+@group(0) @binding(5) var<storage, read> nodeStates : NodeStates;
+@group(0) @binding(6) var<uniform> globals : Globals;
 
 struct VertexInput {
   @location(0) corner : vec2<f32>,
@@ -71,8 +84,28 @@ fn nodeVertex(input : VertexInput) -> VertexOutput {
     nodePositions.data[baseOffset + 2u]
   );
   let rawSize = nodeSizes.data[index];
-  let diameter = max(1.0, globals.nodeSize.x + globals.nodeSize.y * rawSize);
-  let outlineWidth = max(0.0, globals.nodeOutline.x + globals.nodeOutline.y * rawSize);
+  let state = nodeStates.data[index];
+  var sizeMul = 1.0;
+  var opacityMul = 1.0;
+  var outlineMul = 1.0;
+  var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
+  var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
+  if (state != 0u) {
+    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
+      let enabled = (state >> i) & 1u;
+      if (enabled == 1u) {
+        let scale = globals.nodeStateScale[i];
+        sizeMul = sizeMul * scale.x;
+        opacityMul = opacityMul * scale.y;
+        outlineMul = outlineMul * scale.z;
+        rgbMul = rgbMul * globals.nodeStateColorMul[i].rgb;
+        rgbAdd = rgbAdd + globals.nodeStateColorAdd[i].rgb;
+      }
+    }
+  }
+
+  let diameter = max(1.0, (globals.nodeSize.x + globals.nodeSize.y * rawSize) * sizeMul);
+  let outlineWidth = max(0.0, (globals.nodeOutline.x + globals.nodeOutline.y * rawSize) * outlineMul);
   let fullDiameter = diameter + outlineWidth;
   let radius = fullDiameter * 0.5;
   let is2D = camera.position.w > 0.5;
@@ -103,11 +136,12 @@ fn nodeVertex(input : VertexInput) -> VertexOutput {
   var output : VertexOutput;
   output.position = camera.viewProjection * vec4<f32>(basePosition + offset * radius, 1.0);
   let baseColor = nodeColors.data[index];
-  let alpha = clamp(globals.nodeOpacity.x + globals.nodeOpacity.y * baseColor.a, 0.0, 1.0);
-  output.color = vec4<f32>(baseColor.rgb, alpha);
+  let alpha = clamp(globals.nodeOpacity.x + globals.nodeOpacity.y * baseColor.a, 0.0, 1.0) * opacityMul;
+  let rgb = clamp(baseColor.rgb * rgbMul + rgbAdd, vec3<f32>(0.0), vec3<f32>(1.0));
+  output.color = vec4<f32>(rgb, clamp(alpha, 0.0, 1.0));
   output.local = input.corner;
-  let outlineAlpha = clamp(globals.nodeOpacity.x + globals.nodeOpacity.y * globals.nodeOutlineColor.a, 0.0, 1.0);
-  output.outlineColor = vec4<f32>(globals.nodeOutlineColor.rgb, outlineAlpha);
+  let outlineAlpha = clamp(globals.nodeOpacity.x + globals.nodeOpacity.y * globals.nodeOutlineColor.a, 0.0, 1.0) * opacityMul;
+  output.outlineColor = vec4<f32>(globals.nodeOutlineColor.rgb, clamp(outlineAlpha, 0.0, 1.0));
   output.outlineThreshold = select(0.0, outlineWidth / max(fullDiameter, 1e-5), outlineWidth > 0.0);
   output.centerWorld = basePosition;
   output.rightWorld = right;
@@ -167,9 +201,15 @@ struct Globals {
   nodeOutline: vec2<f32>, // base, scale (applied to node size attribute)
   edgeOpacity: vec2<f32>, // base, scale
   edgeWidth: vec2<f32>, // base, scale
+  _pad0: vec2<f32>,
   nodeOutlineColor: vec4<f32>,
-  edgeTrim: f32,
-  _pad: vec3<f32>,
+  edgeTrim: vec4<f32>, // edgeTrim.x used, rest padding
+  nodeStateScale: array<vec4<f32>, ${STATE_SLOTS}>,
+  nodeStateColorMul: array<vec4<f32>, ${STATE_SLOTS}>,
+  nodeStateColorAdd: array<vec4<f32>, ${STATE_SLOTS}>,
+  edgeStateScale: array<vec4<f32>, ${STATE_SLOTS}>,
+  edgeStateColorMul: array<vec4<f32>, ${STATE_SLOTS}>,
+  edgeStateColorAdd: array<vec4<f32>, ${STATE_SLOTS}>,
 };
 
 struct EdgeSegments {
@@ -196,6 +236,14 @@ struct EdgeOpacities {
   data: array<vec2<f32>>,
 };
 
+struct EdgeStates {
+  data: array<u32>,
+};
+
+struct EdgeEndpointStates {
+  data: array<vec2<u32>>,
+};
+
 @group(0) @binding(0) var<uniform> camera : Camera;
 @group(0) @binding(1) var<storage, read> edgeIndices : EdgeIndices;
 @group(0) @binding(2) var<storage, read> edgeSegments : EdgeSegments;
@@ -203,7 +251,9 @@ struct EdgeOpacities {
 @group(0) @binding(4) var<storage, read> edgeWidths : EdgeWidths;
 @group(0) @binding(5) var<storage, read> edgeEndpointSizes : EdgeEndpointSizes;
 @group(0) @binding(6) var<storage, read> edgeOpacities : EdgeOpacities;
-@group(0) @binding(7) var<uniform> globals : Globals;
+@group(0) @binding(7) var<storage, read> edgeStates : EdgeStates;
+@group(0) @binding(8) var<storage, read> edgeEndpointStates : EdgeEndpointStates;
+@group(0) @binding(9) var<uniform> globals : Globals;
 
 struct EdgeVertexOutput {
   @builtin(position) position : vec4<f32>,
@@ -225,14 +275,46 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
     edgeSegments.data[base + 4u],
     edgeSegments.data[base + 5u]
   );
+  let state = edgeStates.data[edgeId];
+  var widthMul = 1.0;
+  var opacityMul = 1.0;
+  var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
+  var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
+  if (state != 0u) {
+    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
+      let enabled = (state >> i) & 1u;
+      if (enabled == 1u) {
+        let scale = globals.edgeStateScale[i];
+        widthMul = widthMul * scale.x;
+        opacityMul = opacityMul * scale.y;
+        rgbMul = rgbMul * globals.edgeStateColorMul[i].rgb;
+        rgbAdd = rgbAdd + globals.edgeStateColorAdd[i].rgb;
+      }
+    }
+  }
+
   let endpointSize = edgeEndpointSizes.data[edgeId];
+  let endpointState = edgeEndpointStates.data[edgeId];
+  var startSizeMul = 1.0;
+  var endSizeMul = 1.0;
+  if ((endpointState.x | endpointState.y) != 0u) {
+    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
+      let slotMul = globals.nodeStateScale[i].x;
+      if (((endpointState.x >> i) & 1u) == 1u) {
+        startSizeMul = startSizeMul * slotMul;
+      }
+      if (((endpointState.y >> i) & 1u) == 1u) {
+        endSizeMul = endSizeMul * slotMul;
+      }
+    }
+  }
   let dirRaw = endPos - startPos;
   let dirLen = max(length(dirRaw), 1e-5);
   let dir = dirRaw / vec3<f32>(dirLen);
-  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.x, 0.0) * 0.5;
-  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.y, 0.0) * 0.5;
-  let trimStart = startRadius * globals.edgeTrim;
-  let trimEnd = endRadius * globals.edgeTrim;
+  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.x, 0.0) * 0.5 * startSizeMul;
+  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.y, 0.0) * 0.5 * endSizeMul;
+  let trimStart = startRadius * globals.edgeTrim.x;
+  let trimEnd = endRadius * globals.edgeTrim.x;
   startPos = startPos + dir * trimStart;
   endPos = endPos - dir * trimEnd;
   var position = startPos;
@@ -244,13 +326,14 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
   let endpointWidth = edgeWidths.data[edgeId];
   let opacityPair = edgeOpacities.data[edgeId];
   let color = select(colorStart, colorEnd, (vertexIndex & 1u) == 1u);
-  let width = globals.edgeWidth.x + globals.edgeWidth.y * select(endpointWidth.x, endpointWidth.y, (vertexIndex & 1u) == 1u);
+  let width = (globals.edgeWidth.x + globals.edgeWidth.y * select(endpointWidth.x, endpointWidth.y, (vertexIndex & 1u) == 1u)) * widthMul;
   let attrOpacity = select(opacityPair.x, opacityPair.y, (vertexIndex & 1u) == 1u);
-  let opacity = clamp(globals.edgeOpacity.x + globals.edgeOpacity.y * attrOpacity, 0.0, 1.0);
+  let opacity = clamp(globals.edgeOpacity.x + globals.edgeOpacity.y * attrOpacity, 0.0, 1.0) * opacityMul;
+  let rgb = clamp(color.rgb * rgbMul + rgbAdd, vec3<f32>(0.0), vec3<f32>(1.0));
   let alpha = clamp(opacity * color.a, 0.0, 1.0);
   var output : EdgeVertexOutput;
   output.position = camera.viewProjection * vec4<f32>(position, 1.0);
-  output.color = vec4<f32>(color.rgb, alpha);
+  output.color = vec4<f32>(rgb, alpha);
   return output;
 }
 
@@ -273,18 +356,50 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
     edgeSegments.data[base + 4u],
     edgeSegments.data[base + 5u]
   );
+  let state = edgeStates.data[edgeId];
+  var widthMul = 1.0;
+  var opacityMul = 1.0;
+  var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
+  var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
+  if (state != 0u) {
+    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
+      let enabled = (state >> i) & 1u;
+      if (enabled == 1u) {
+        let scale = globals.edgeStateScale[i];
+        widthMul = widthMul * scale.x;
+        opacityMul = opacityMul * scale.y;
+        rgbMul = rgbMul * globals.edgeStateColorMul[i].rgb;
+        rgbAdd = rgbAdd + globals.edgeStateColorAdd[i].rgb;
+      }
+    }
+  }
+
   let endpointSize = edgeEndpointSizes.data[edgeId];
   let endpointWidth = edgeWidths.data[edgeId];
   let opacityPair = edgeOpacities.data[edgeId];
+  let endpointState = edgeEndpointStates.data[edgeId];
+  var startSizeMul = 1.0;
+  var endSizeMul = 1.0;
+  if ((endpointState.x | endpointState.y) != 0u) {
+    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
+      let slotMul = globals.nodeStateScale[i].x;
+      if (((endpointState.x >> i) & 1u) == 1u) {
+        startSizeMul = startSizeMul * slotMul;
+      }
+      if (((endpointState.y >> i) & 1u) == 1u) {
+        endSizeMul = endSizeMul * slotMul;
+      }
+    }
+  }
   let t = clamp(input.corner.x, 0.0, 1.0);
-  let width = max(globals.edgeWidth.x + globals.edgeWidth.y * mix(endpointWidth.x, endpointWidth.y, t), 1e-3);
+  let width = max((globals.edgeWidth.x + globals.edgeWidth.y * mix(endpointWidth.x, endpointWidth.y, t)) * widthMul, 1e-3);
   let dirRaw = endPos - startPos;
   let dirLenWorld = max(length(dirRaw), 1e-5);
   let dir = dirRaw / vec3<f32>(dirLenWorld);
-  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.x, 0.0) * 0.5;
-  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.y, 0.0) * 0.5;
-  let trimStart = startRadius * globals.edgeTrim;
-  let trimEnd = endRadius * globals.edgeTrim;
+  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.x, 0.0) * 0.5 * startSizeMul;
+  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.y, 0.0) * 0.5 * endSizeMul;
+  let trimStart = startRadius * globals.edgeTrim.x;
+  let trimEnd = endRadius * globals.edgeTrim.x;
   startPos = startPos + dir * trimStart;
   endPos = endPos - dir * trimEnd;
 
@@ -308,9 +423,10 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   let colorEnd = edgeColors.data[edgeId * 2u + 1u];
   let blended = mix(colorStart, colorEnd, t);
   let blendedOpacity = mix(opacityPair.x, opacityPair.y, t);
-  let opacity = clamp(globals.edgeOpacity.x + globals.edgeOpacity.y * blendedOpacity, 0.0, 1.0);
+  let opacity = clamp(globals.edgeOpacity.x + globals.edgeOpacity.y * blendedOpacity, 0.0, 1.0) * opacityMul;
   let alpha = clamp(opacity * blended.a, 0.0, 1.0);
-  output.color = vec4<f32>(blended.rgb, alpha);
+  let rgb = clamp(blended.rgb * rgbMul + rgbAdd, vec3<f32>(0.0), vec3<f32>(1.0));
+  output.color = vec4<f32>(rgb, alpha);
   return output;
 }
 
@@ -336,9 +452,15 @@ struct Globals {
   nodeOutline: vec2<f32>, // base, scale (applied to node size attribute)
   edgeOpacity: vec2<f32>, // base, scale
   edgeWidth: vec2<f32>, // base, scale
+  _pad0: vec2<f32>,
   nodeOutlineColor: vec4<f32>,
-  edgeTrim: f32,
-  _pad: vec3<f32>,
+  edgeTrim: vec4<f32>, // edgeTrim.x used, rest padding
+  nodeStateScale: array<vec4<f32>, ${STATE_SLOTS}>,
+  nodeStateColorMul: array<vec4<f32>, ${STATE_SLOTS}>,
+  nodeStateColorAdd: array<vec4<f32>, ${STATE_SLOTS}>,
+  edgeStateScale: array<vec4<f32>, ${STATE_SLOTS}>,
+  edgeStateColorMul: array<vec4<f32>, ${STATE_SLOTS}>,
+  edgeStateColorAdd: array<vec4<f32>, ${STATE_SLOTS}>,
 };
 
 struct EdgeSegments {
@@ -365,6 +487,14 @@ struct EdgeOpacities {
   data: array<vec2<f32>>,
 };
 
+struct EdgeStates {
+  data: array<u32>,
+};
+
+struct EdgeEndpointStates {
+  data: array<vec2<u32>>,
+};
+
 @group(0) @binding(0) var<uniform> camera : Camera;
 @group(0) @binding(1) var<storage, read> edgeIndices : EdgeIndices;
 @group(0) @binding(2) var<storage, read> edgeSegments : EdgeSegments;
@@ -372,7 +502,9 @@ struct EdgeOpacities {
 @group(0) @binding(4) var<storage, read> edgeWidths : EdgeWidths;
 @group(0) @binding(5) var<storage, read> edgeEndpointSizes : EdgeEndpointSizes;
 @group(0) @binding(6) var<storage, read> edgeOpacities : EdgeOpacities;
-@group(0) @binding(7) var<uniform> globals : Globals;
+@group(0) @binding(7) var<storage, read> edgeStates : EdgeStates;
+@group(0) @binding(8) var<storage, read> edgeEndpointStates : EdgeEndpointStates;
+@group(0) @binding(9) var<uniform> globals : Globals;
 
 struct EdgeVertexOutput {
   @builtin(position) position : vec4<f32>,
@@ -394,14 +526,46 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
     edgeSegments.data[base + 4u],
     edgeSegments.data[base + 5u]
   );
+  let state = edgeStates.data[edgeId];
+  var widthMul = 1.0;
+  var opacityMul = 1.0;
+  var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
+  var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
+  if (state != 0u) {
+    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
+      let enabled = (state >> i) & 1u;
+      if (enabled == 1u) {
+        let scale = globals.edgeStateScale[i];
+        widthMul = widthMul * scale.x;
+        opacityMul = opacityMul * scale.y;
+        rgbMul = rgbMul * globals.edgeStateColorMul[i].rgb;
+        rgbAdd = rgbAdd + globals.edgeStateColorAdd[i].rgb;
+      }
+    }
+  }
+
   let endpointSize = edgeEndpointSizes.data[edgeId];
+  let endpointState = edgeEndpointStates.data[edgeId];
+  var startSizeMul = 1.0;
+  var endSizeMul = 1.0;
+  if ((endpointState.x | endpointState.y) != 0u) {
+    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
+      let slotMul = globals.nodeStateScale[i].x;
+      if (((endpointState.x >> i) & 1u) == 1u) {
+        startSizeMul = startSizeMul * slotMul;
+      }
+      if (((endpointState.y >> i) & 1u) == 1u) {
+        endSizeMul = endSizeMul * slotMul;
+      }
+    }
+  }
   let dirRaw = endPos - startPos;
   let dirLen = max(length(dirRaw), 1e-5);
   let dir = dirRaw / vec3<f32>(dirLen);
-  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.x, 0.0) * 0.5;
-  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.y, 0.0) * 0.5;
-  let trimStart = startRadius * globals.edgeTrim;
-  let trimEnd = endRadius * globals.edgeTrim;
+  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.x, 0.0) * 0.5 * startSizeMul;
+  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.y, 0.0) * 0.5 * endSizeMul;
+  let trimStart = startRadius * globals.edgeTrim.x;
+  let trimEnd = endRadius * globals.edgeTrim.x;
   startPos = startPos + dir * trimStart;
   endPos = endPos - dir * trimEnd;
   var position = startPos;
@@ -413,13 +577,14 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
   let endpointWidth = edgeWidths.data[edgeId];
   let opacityPair = edgeOpacities.data[edgeId];
   let color = select(colorStart, colorEnd, (vertexIndex & 1u) == 1u);
-  let width = globals.edgeWidth.x + globals.edgeWidth.y * select(endpointWidth.x, endpointWidth.y, (vertexIndex & 1u) == 1u);
+  let width = (globals.edgeWidth.x + globals.edgeWidth.y * select(endpointWidth.x, endpointWidth.y, (vertexIndex & 1u) == 1u)) * widthMul;
   let attrOpacity = select(opacityPair.x, opacityPair.y, (vertexIndex & 1u) == 1u);
-  let opacity = clamp(globals.edgeOpacity.x + globals.edgeOpacity.y * attrOpacity, 0.0, 1.0);
+  let opacity = clamp(globals.edgeOpacity.x + globals.edgeOpacity.y * attrOpacity, 0.0, 1.0) * opacityMul;
+  let rgb = clamp(color.rgb * rgbMul + rgbAdd, vec3<f32>(0.0), vec3<f32>(1.0));
   let alpha = clamp(opacity * color.a, 0.0, 1.0);
   var output : EdgeVertexOutput;
   output.position = camera.viewProjection * vec4<f32>(position, 1.0);
-  output.color = vec4<f32>(color.rgb, alpha);
+  output.color = vec4<f32>(rgb, alpha);
   return output;
 }
 
@@ -442,18 +607,50 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
     edgeSegments.data[base + 4u],
     edgeSegments.data[base + 5u]
   );
+  let state = edgeStates.data[edgeId];
+  var widthMul = 1.0;
+  var opacityMul = 1.0;
+  var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
+  var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
+  if (state != 0u) {
+    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
+      let enabled = (state >> i) & 1u;
+      if (enabled == 1u) {
+        let scale = globals.edgeStateScale[i];
+        widthMul = widthMul * scale.x;
+        opacityMul = opacityMul * scale.y;
+        rgbMul = rgbMul * globals.edgeStateColorMul[i].rgb;
+        rgbAdd = rgbAdd + globals.edgeStateColorAdd[i].rgb;
+      }
+    }
+  }
+
   let endpointSize = edgeEndpointSizes.data[edgeId];
   let endpointWidth = edgeWidths.data[edgeId];
   let opacityPair = edgeOpacities.data[edgeId];
+  let endpointState = edgeEndpointStates.data[edgeId];
+  var startSizeMul = 1.0;
+  var endSizeMul = 1.0;
+  if ((endpointState.x | endpointState.y) != 0u) {
+    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
+      let slotMul = globals.nodeStateScale[i].x;
+      if (((endpointState.x >> i) & 1u) == 1u) {
+        startSizeMul = startSizeMul * slotMul;
+      }
+      if (((endpointState.y >> i) & 1u) == 1u) {
+        endSizeMul = endSizeMul * slotMul;
+      }
+    }
+  }
   let t = clamp(input.corner.x, 0.0, 1.0);
-  let width = max(globals.edgeWidth.x + globals.edgeWidth.y * mix(endpointWidth.x, endpointWidth.y, t), 1e-3);
+  let width = max((globals.edgeWidth.x + globals.edgeWidth.y * mix(endpointWidth.x, endpointWidth.y, t)) * widthMul, 1e-3);
   let dirRaw = endPos - startPos;
   let dirLenWorld = max(length(dirRaw), 1e-5);
   let dir = dirRaw / vec3<f32>(dirLenWorld);
-  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.x, 0.0) * 0.5;
-  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.y, 0.0) * 0.5;
-  let trimStart = startRadius * globals.edgeTrim;
-  let trimEnd = endRadius * globals.edgeTrim;
+  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.x, 0.0) * 0.5 * startSizeMul;
+  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.y, 0.0) * 0.5 * endSizeMul;
+  let trimStart = startRadius * globals.edgeTrim.x;
+  let trimEnd = endRadius * globals.edgeTrim.x;
   startPos = startPos + dir * trimStart;
   endPos = endPos - dir * trimEnd;
 
@@ -477,9 +674,10 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   let colorEnd = edgeColors.data[edgeId * 2u + 1u];
   let blended = mix(colorStart, colorEnd, t);
   let blendedOpacity = mix(opacityPair.x, opacityPair.y, t);
-  let opacity = clamp(globals.edgeOpacity.x + globals.edgeOpacity.y * blendedOpacity, 0.0, 1.0);
+  let opacity = clamp(globals.edgeOpacity.x + globals.edgeOpacity.y * blendedOpacity, 0.0, 1.0) * opacityMul;
   let alpha = clamp(opacity * blended.a, 0.0, 1.0);
-  output.color = vec4<f32>(blended.rgb, alpha);
+  let rgb = clamp(blended.rgb * rgbMul + rgbAdd, vec3<f32>(0.0), vec3<f32>(1.0));
+  output.color = vec4<f32>(rgb, alpha);
   return output;
 }
 

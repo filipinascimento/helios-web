@@ -50,8 +50,8 @@ export class GraphLayerWebGPU extends GraphLayer {
     this.edgeBuffersGpu = {};
     this.nodeQuadBufferGpu = null;
     this.edgeQuadBufferGpu = null;
-    this._nodeDataCache = { positions: null, sizes: null, colors: null, indices: null, count: 0 };
-    this._edgeDataCache = { segments: null, widths: null, endpointSizes: null, colors: null, indices: null, opacities: null, count: 0 };
+    this._nodeDataCache = { positions: null, sizes: null, colors: null, states: null, indices: null, count: 0 };
+    this._edgeDataCache = { segments: null, widths: null, endpointSizes: null, endpointStates: null, colors: null, indices: null, opacities: null, states: null, count: 0 };
     this._nodeVersionsLast = null;
     this._edgeVersionsLast = null;
   }
@@ -75,12 +75,15 @@ export class GraphLayerWebGPU extends GraphLayer {
     this.nodeBuffersGpu.positions?.buffer?.destroy?.();
     this.nodeBuffersGpu.sizes?.buffer?.destroy?.();
     this.nodeBuffersGpu.colors?.buffer?.destroy?.();
+    this.nodeBuffersGpu.states?.buffer?.destroy?.();
     this.edgeBuffersGpu.indices?.buffer?.destroy?.();
     this.edgeBuffersGpu.segments?.buffer?.destroy?.();
     this.edgeBuffersGpu.colors?.buffer?.destroy?.();
     this.edgeBuffersGpu.widths?.buffer?.destroy?.();
     this.edgeBuffersGpu.opacities?.buffer?.destroy?.();
     this.edgeBuffersGpu.endpointSizes?.buffer?.destroy?.();
+    this.edgeBuffersGpu.states?.buffer?.destroy?.();
+    this.edgeBuffersGpu.endpointStates?.buffer?.destroy?.();
     this.cameraBuffer?.destroy?.();
     this.globalsBuffer?.destroy?.();
     this.nodeQuadBufferGpu?.destroy?.();
@@ -99,7 +102,8 @@ export class GraphLayerWebGPU extends GraphLayer {
       size: this.cameraArray.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-    this.globalsArray = new Float32Array(24);
+    const globalsFloats = 20 + this.stateSlotCount * 24;
+    this.globalsArray = new Float32Array(globalsFloats);
     this.globalsBuffer = device.device.createBuffer({
       size: this.globalsArray.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -142,7 +146,8 @@ export class GraphLayerWebGPU extends GraphLayer {
           visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
           buffer: { type: 'read-only-storage' },
         },
-        { binding: 5, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 5, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        { binding: 6, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
       ],
     });
 
@@ -159,7 +164,9 @@ export class GraphLayerWebGPU extends GraphLayer {
         { binding: 4, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
         { binding: 5, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
         { binding: 6, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
-        { binding: 7, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 7, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
+        { binding: 8, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        { binding: 9, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
       ],
     });
 
@@ -228,7 +235,7 @@ export class GraphLayerWebGPU extends GraphLayer {
   }
 
   updateNodeBuffersGpu(nodes, device, maxBindingSize) {
-    const { positions, sizes, colors, indices, versions = {} } = nodes;
+    const { positions, sizes, colors, states, indices, versions = {} } = nodes;
     const nodeCount = Math.floor((positions?.length ?? 0) / 3);
     const cache = this._nodeDataCache;
     const storageUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
@@ -264,12 +271,21 @@ export class GraphLayerWebGPU extends GraphLayer {
       maxBindingSize,
       'Node color buffer',
     );
+    this.nodeBuffersGpu.states = this.ensureBufferGpu(
+      this.nodeBuffersGpu.states,
+      states.byteLength,
+      storageUsage,
+      device,
+      maxBindingSize,
+      'Node state buffer',
+    );
 
     const buffersChanged = (
       this._nodeBuffersLast?.indices !== this.nodeBuffersGpu.indices?.buffer
       || this._nodeBuffersLast?.positions !== this.nodeBuffersGpu.positions?.buffer
       || this._nodeBuffersLast?.sizes !== this.nodeBuffersGpu.sizes?.buffer
       || this._nodeBuffersLast?.colors !== this.nodeBuffersGpu.colors?.buffer
+      || this._nodeBuffersLast?.states !== this.nodeBuffersGpu.states?.buffer
     );
 
     const versionChanged = buffersChanged
@@ -277,6 +293,7 @@ export class GraphLayerWebGPU extends GraphLayer {
       || this._nodeVersionsLast?.positions !== (versions.positions ?? 0)
       || this._nodeVersionsLast?.sizes !== (versions.sizes ?? 0)
       || this._nodeVersionsLast?.colors !== (versions.colors ?? 0)
+      || this._nodeVersionsLast?.states !== (versions.states ?? 0)
       || this._nodeVersionsLast?.topology !== (versions.topology ?? 0)
       || cache.count !== nodeCount;
 
@@ -285,9 +302,11 @@ export class GraphLayerWebGPU extends GraphLayer {
       device.queue.writeBuffer(this.nodeBuffersGpu.positions.buffer, 0, positions);
       device.queue.writeBuffer(this.nodeBuffersGpu.sizes.buffer, 0, sizes);
       device.queue.writeBuffer(this.nodeBuffersGpu.colors.buffer, 0, colors);
+      device.queue.writeBuffer(this.nodeBuffersGpu.states.buffer, 0, states);
       cache.positions = positions;
       cache.sizes = sizes;
       cache.colors = colors;
+      cache.states = states;
       cache.indices = indices;
       cache.count = nodeCount;
       this._nodeVersionsLast = {
@@ -295,6 +314,7 @@ export class GraphLayerWebGPU extends GraphLayer {
         positions: versions.positions ?? 0,
         sizes: versions.sizes ?? 0,
         colors: versions.colors ?? 0,
+        states: versions.states ?? 0,
         topology: versions.topology ?? 0,
       };
     }
@@ -308,7 +328,8 @@ export class GraphLayerWebGPU extends GraphLayer {
           { binding: 2, resource: { buffer: this.nodeBuffersGpu.positions.buffer } },
           { binding: 3, resource: { buffer: this.nodeBuffersGpu.sizes.buffer } },
           { binding: 4, resource: { buffer: this.nodeBuffersGpu.colors.buffer } },
-          { binding: 5, resource: { buffer: this.globalsBuffer } },
+          { binding: 5, resource: { buffer: this.nodeBuffersGpu.states.buffer } },
+          { binding: 6, resource: { buffer: this.globalsBuffer } },
         ],
       });
       this._nodeBuffersLast = {
@@ -316,14 +337,18 @@ export class GraphLayerWebGPU extends GraphLayer {
         positions: this.nodeBuffersGpu.positions.buffer,
         sizes: this.nodeBuffersGpu.sizes.buffer,
         colors: this.nodeBuffersGpu.colors.buffer,
+        states: this.nodeBuffersGpu.states.buffer,
       };
     }
   }
 
   updateEdgeBuffersGpu(edges, device, maxBindingSize) {
-    const { segments, colors, indices, widths, endpointSizes, opacities, versions = {} } = edges;
+    const { segments, colors, indices, widths, endpointSizes, endpointStates, opacities, states, versions = {} } = edges;
     if (!endpointSizes) {
       throw new Error('Edge endpoint sizes buffer is missing; dense buffers must include endpointSizes.');
+    }
+    if (!endpointStates) {
+      throw new Error('Edge endpoint states buffer is missing; dense buffers must include endpointStates.');
     }
     const edgeCount = Math.floor((segments?.length ?? 0) / 6);
     const cache = this._edgeDataCache;
@@ -376,6 +401,22 @@ export class GraphLayerWebGPU extends GraphLayer {
       maxBindingSize,
       'Edge endpoint size buffer',
     );
+    this.edgeBuffersGpu.states = this.ensureBufferGpu(
+      this.edgeBuffersGpu.states,
+      states.byteLength,
+      storageUsage,
+      device,
+      maxBindingSize,
+      'Edge state buffer',
+    );
+    this.edgeBuffersGpu.endpointStates = this.ensureBufferGpu(
+      this.edgeBuffersGpu.endpointStates,
+      endpointStates.byteLength,
+      storageUsage,
+      device,
+      maxBindingSize,
+      'Edge endpoint state buffer',
+    );
 
     const buffersChanged = (
       this._edgeBuffersLast?.indices !== this.edgeBuffersGpu.indices?.buffer
@@ -384,6 +425,8 @@ export class GraphLayerWebGPU extends GraphLayer {
       || this._edgeBuffersLast?.widths !== this.edgeBuffersGpu.widths?.buffer
       || this._edgeBuffersLast?.endpointSizes !== this.edgeBuffersGpu.endpointSizes?.buffer
       || this._edgeBuffersLast?.opacities !== this.edgeBuffersGpu.opacities?.buffer
+      || this._edgeBuffersLast?.states !== this.edgeBuffersGpu.states?.buffer
+      || this._edgeBuffersLast?.endpointStates !== this.edgeBuffersGpu.endpointStates?.buffer
     );
 
     const versionChanged = buffersChanged
@@ -392,7 +435,9 @@ export class GraphLayerWebGPU extends GraphLayer {
       || this._edgeVersionsLast?.colors !== (versions.colors ?? 0)
       || this._edgeVersionsLast?.widths !== (versions.widths ?? 0)
       || this._edgeVersionsLast?.endpointSizes !== (versions.endpointSizes ?? 0)
+      || this._edgeVersionsLast?.endpointStates !== (versions.endpointStates ?? 0)
       || this._edgeVersionsLast?.opacities !== (versions.opacities ?? 0)
+      || this._edgeVersionsLast?.states !== (versions.states ?? 0)
       || this._edgeVersionsLast?.topology !== (versions.topology ?? 0)
       || cache.count !== edgeCount;
 
@@ -403,12 +448,16 @@ export class GraphLayerWebGPU extends GraphLayer {
       device.queue.writeBuffer(this.edgeBuffersGpu.widths.buffer, 0, widths);
       device.queue.writeBuffer(this.edgeBuffersGpu.opacities.buffer, 0, opacities);
       device.queue.writeBuffer(this.edgeBuffersGpu.endpointSizes.buffer, 0, endpointSizes);
+      device.queue.writeBuffer(this.edgeBuffersGpu.states.buffer, 0, states);
+      device.queue.writeBuffer(this.edgeBuffersGpu.endpointStates.buffer, 0, endpointStates);
       cache.segments = segments;
       cache.colors = colors;
       cache.indices = indices;
       cache.widths = widths;
       cache.endpointSizes = endpointSizes;
+      cache.endpointStates = endpointStates;
       cache.opacities = opacities;
+      cache.states = states;
       cache.count = edgeCount;
       this._edgeVersionsLast = {
         indices: versions.indices ?? 0,
@@ -416,7 +465,9 @@ export class GraphLayerWebGPU extends GraphLayer {
         colors: versions.colors ?? 0,
         widths: versions.widths ?? 0,
         endpointSizes: versions.endpointSizes ?? 0,
+        endpointStates: versions.endpointStates ?? 0,
         opacities: versions.opacities ?? 0,
+        states: versions.states ?? 0,
         topology: versions.topology ?? 0,
       };
     }
@@ -432,7 +483,9 @@ export class GraphLayerWebGPU extends GraphLayer {
           { binding: 4, resource: { buffer: this.edgeBuffersGpu.widths.buffer } },
           { binding: 5, resource: { buffer: this.edgeBuffersGpu.endpointSizes.buffer } },
           { binding: 6, resource: { buffer: this.edgeBuffersGpu.opacities.buffer } },
-          { binding: 7, resource: { buffer: this.globalsBuffer } },
+          { binding: 7, resource: { buffer: this.edgeBuffersGpu.states.buffer } },
+          { binding: 8, resource: { buffer: this.edgeBuffersGpu.endpointStates.buffer } },
+          { binding: 9, resource: { buffer: this.globalsBuffer } },
         ],
       });
       this._edgeBuffersLast = {
@@ -442,6 +495,8 @@ export class GraphLayerWebGPU extends GraphLayer {
         widths: this.edgeBuffersGpu.widths.buffer,
         endpointSizes: this.edgeBuffersGpu.endpointSizes.buffer,
         opacities: this.edgeBuffersGpu.opacities.buffer,
+        states: this.edgeBuffersGpu.states.buffer,
+        endpointStates: this.edgeBuffersGpu.endpointStates.buffer,
       };
     }
   }
@@ -648,47 +703,46 @@ export class GraphLayerWebGPU extends GraphLayer {
 
   updateGlobalsGpu(device, cameraUniforms) {
     if (!device || !this.globalsBuffer || !this.globalsArray) return;
-    // Keep offsets aligned with WGSL struct layout (vec4 aligned to 16 bytes).
-    const OFFSET_NODE_OPACITY = 0;
-    const OFFSET_NODE_SIZE = 2;
-    const OFFSET_NODE_OUTLINE = 4;
-    const OFFSET_EDGE_OPACITY = 6;
-    const OFFSET_EDGE_WIDTH = 8;
-    const OFFSET_PADDING_AFTER_EDGE_WIDTH = 10; // 2 floats of padding before vec4 outline color
-    const OFFSET_OUTLINE_COLOR = 12;
-    const OFFSET_EDGE_TRIM = 16;
-    const OFFSET_PADDING_AFTER_EDGE_TRIM = 17; // 3 floats padding to align vec3 _pad
-    const OFFSET_PAD_VEC3 = 20;
     const outlineColor = this.nodeOutlineColor || [0, 0, 0, 1];
     const is2D = cameraUniforms?.mode === '2d';
     const zoom2D = is2D ? Math.max(1e-3, cameraUniforms?.view?.[0] ?? 1) : 1;
     const edgeWidthFactor = is2D ? (zoom2D / EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL) : 1.0;
     const edgeWidthBase = this.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
     const edgeWidthScale = this.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
-    this.globalsArray[OFFSET_NODE_OPACITY + 0] = this.nodeOpacityBase;
-    this.globalsArray[OFFSET_NODE_OPACITY + 1] = this.nodeOpacityScale;
-    this.globalsArray[OFFSET_NODE_SIZE + 0] = this.nodeSizeBase;
-    this.globalsArray[OFFSET_NODE_SIZE + 1] = this.nodeSizeScale;
-    this.globalsArray[OFFSET_NODE_OUTLINE + 0] = this.nodeOutlineWidthBase;
-    this.globalsArray[OFFSET_NODE_OUTLINE + 1] = this.nodeOutlineWidthScale;
-    this.globalsArray[OFFSET_EDGE_OPACITY + 0] = this.edgeOpacityBase;
-    this.globalsArray[OFFSET_EDGE_OPACITY + 1] = this.edgeOpacityScale;
-    this.globalsArray[OFFSET_EDGE_WIDTH + 0] = edgeWidthBase;
-    this.globalsArray[OFFSET_EDGE_WIDTH + 1] = edgeWidthScale;
-    this.globalsArray[OFFSET_PADDING_AFTER_EDGE_WIDTH + 0] = 0;
-    this.globalsArray[OFFSET_PADDING_AFTER_EDGE_WIDTH + 1] = 0;
-    this.globalsArray[OFFSET_OUTLINE_COLOR + 0] = outlineColor[0] ?? 0;
-    this.globalsArray[OFFSET_OUTLINE_COLOR + 1] = outlineColor[1] ?? 0;
-    this.globalsArray[OFFSET_OUTLINE_COLOR + 2] = outlineColor[2] ?? 0;
-    this.globalsArray[OFFSET_OUTLINE_COLOR + 3] = outlineColor[3] ?? 1;
-    this.globalsArray[OFFSET_EDGE_TRIM] = this.edgeEndpointTrim;
-    this.globalsArray[OFFSET_PADDING_AFTER_EDGE_TRIM + 0] = 0;
-    this.globalsArray[OFFSET_PADDING_AFTER_EDGE_TRIM + 1] = 0;
-    this.globalsArray[OFFSET_PADDING_AFTER_EDGE_TRIM + 2] = 0;
-    this.globalsArray[OFFSET_PAD_VEC3 + 0] = 0;
-    this.globalsArray[OFFSET_PAD_VEC3 + 1] = 0;
-    this.globalsArray[OFFSET_PAD_VEC3 + 2] = 0;
-    this.globalsArray[23] = 0;
+
+    let offset = 0;
+    this.globalsArray[offset++] = this.nodeOpacityBase;
+    this.globalsArray[offset++] = this.nodeOpacityScale;
+    this.globalsArray[offset++] = this.nodeSizeBase;
+    this.globalsArray[offset++] = this.nodeSizeScale;
+    this.globalsArray[offset++] = this.nodeOutlineWidthBase;
+    this.globalsArray[offset++] = this.nodeOutlineWidthScale;
+    this.globalsArray[offset++] = this.edgeOpacityBase;
+    this.globalsArray[offset++] = this.edgeOpacityScale;
+    this.globalsArray[offset++] = edgeWidthBase;
+    this.globalsArray[offset++] = edgeWidthScale;
+    // _pad0
+    this.globalsArray[offset++] = 0;
+    this.globalsArray[offset++] = 0;
+    // nodeOutlineColor
+    this.globalsArray[offset++] = outlineColor[0] ?? 0;
+    this.globalsArray[offset++] = outlineColor[1] ?? 0;
+    this.globalsArray[offset++] = outlineColor[2] ?? 0;
+    this.globalsArray[offset++] = outlineColor[3] ?? 1;
+    // edgeTrim + padding
+    this.globalsArray[offset++] = this.edgeEndpointTrim;
+    this.globalsArray[offset++] = 0;
+    this.globalsArray[offset++] = 0;
+    this.globalsArray[offset++] = 0;
+
+    const slots = this.stateSlotCount;
+    this.globalsArray.set(this.nodeStateScale, offset); offset += slots * 4;
+    this.globalsArray.set(this.nodeStateColorMul, offset); offset += slots * 4;
+    this.globalsArray.set(this.nodeStateColorAdd, offset); offset += slots * 4;
+    this.globalsArray.set(this.edgeStateScale, offset); offset += slots * 4;
+    this.globalsArray.set(this.edgeStateColorMul, offset); offset += slots * 4;
+    this.globalsArray.set(this.edgeStateColorAdd, offset); offset += slots * 4;
+
     device.queue.writeBuffer(this.globalsBuffer, 0, this.globalsArray);
   }
 
