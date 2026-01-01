@@ -20,7 +20,7 @@ Helios exposes a convenience object with a few common bits:
 - `Helios.STATES.SELECTED` (bit `1`)
 - `Helios.STATES.HIGHLIGHTED` (bit `2`)
 
-Custom bits can be added by your application by defining additional bit positions (recommended: start at bit `8`).
+Custom bits can be added by your application by defining additional bit positions. By default, Helios compiles shaders with 4 styling slots (bits `0..3`), which leaves `bit 3` available as a “custom styled” bit if you want it.
 
 ## Mutating State
 
@@ -40,7 +40,19 @@ Supported `mode` values:
 
 ## Styling State in Shaders
 
-Each state bit position maps to a “slot” (0..7) that can apply transforms in the shaders. Configure slots via:
+Each state bit position maps to a “slot” (0..`stateSlots - 1`) that can apply transforms in the shaders.
+
+By default, Helios uses 4 slots total (`0..3`): the three built-in bits plus one extra custom slot.
+
+You can change the number of extra slots at construction time:
+
+```js
+const helios = new Helios(network, { extraStateSlots: 4 }); // total slots = 3 + 4 = 7
+```
+
+This affects shader compilation and cannot be changed after initialization.
+
+Configure slots via:
 
 ```js
 // Slot 2 (HIGHLIGHTED): boost size and tint green.

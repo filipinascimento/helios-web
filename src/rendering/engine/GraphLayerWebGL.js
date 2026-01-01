@@ -1,16 +1,5 @@
 import {
-  NODE_FRAGMENT_SOURCE,
-  NODE_VERTEX_SOURCE,
-  EDGE_FRAGMENT_SOURCE,
-  EDGE_VERTEX_SOURCE,
-  EDGE_QUAD_FRAGMENT_SOURCE,
-  EDGE_QUAD_VERTEX_SOURCE,
-  EDGE_WEIGHTED_FRAGMENT_SOURCE,
-  EDGE_WEIGHTED_QUAD_FRAGMENT_SOURCE,
-  EDGE_RESOLVE_VERTEX_SOURCE,
-  EDGE_RESOLVE_FRAGMENT_SOURCE,
-  EDGE_RESOLVE_TONEMAP_FRAGMENT_SOURCE,
-  EDGE_RESOLVE_BOOST_FRAGMENT_SOURCE,
+  createGraphWebGLSources,
 } from './shaders/graphWebGL.js';
 import { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './GraphLayerCommon.js';
 import { GraphLayer } from './GraphLayer.js';
@@ -142,6 +131,7 @@ export class GraphLayerWebGL extends GraphLayer {
     this.warnedWeightedFallback = false;
     this._nodeVersionsLast = null;
     this._edgeVersionsLast = null;
+    this._shaderSources = null;
   }
 
   initialize(device, size) {
@@ -190,6 +180,21 @@ export class GraphLayerWebGL extends GraphLayer {
 
   initializeWebGL2() {
     const { gl } = this;
+    this._shaderSources = createGraphWebGLSources(this.stateSlotCount);
+    const {
+      NODE_VERTEX_SOURCE,
+      NODE_FRAGMENT_SOURCE,
+      EDGE_VERTEX_SOURCE,
+      EDGE_FRAGMENT_SOURCE,
+      EDGE_QUAD_VERTEX_SOURCE,
+      EDGE_QUAD_FRAGMENT_SOURCE,
+      EDGE_WEIGHTED_FRAGMENT_SOURCE,
+      EDGE_WEIGHTED_QUAD_FRAGMENT_SOURCE,
+      EDGE_RESOLVE_VERTEX_SOURCE,
+      EDGE_RESOLVE_FRAGMENT_SOURCE,
+      EDGE_RESOLVE_TONEMAP_FRAGMENT_SOURCE,
+      EDGE_RESOLVE_BOOST_FRAGMENT_SOURCE,
+    } = this._shaderSources;
     const extColorBufferFloat = gl.getExtension('EXT_color_buffer_float');
     const extColorBufferHalfFloat = gl.getExtension('EXT_color_buffer_half_float');
     const extFloatBlend = gl.getExtension('EXT_float_blend');
@@ -756,6 +761,19 @@ export class GraphLayerWebGL extends GraphLayer {
   ensureWeightedPrograms() {
     const gl = this.gl;
     if (!gl || !this.weightedSupported) return false;
+    if (!this._shaderSources) {
+      this._shaderSources = createGraphWebGLSources(this.stateSlotCount);
+    }
+    const {
+      EDGE_VERTEX_SOURCE,
+      EDGE_QUAD_VERTEX_SOURCE,
+      EDGE_WEIGHTED_FRAGMENT_SOURCE,
+      EDGE_WEIGHTED_QUAD_FRAGMENT_SOURCE,
+      EDGE_RESOLVE_VERTEX_SOURCE,
+      EDGE_RESOLVE_FRAGMENT_SOURCE,
+      EDGE_RESOLVE_TONEMAP_FRAGMENT_SOURCE,
+      EDGE_RESOLVE_BOOST_FRAGMENT_SOURCE,
+    } = this._shaderSources;
     if (!this.edgeWeightedProgram) {
       this.edgeWeightedProgram = this.device.createProgram(EDGE_VERTEX_SOURCE, EDGE_WEIGHTED_FRAGMENT_SOURCE);
       this.edgeWeightedUniformViewProjection = gl.getUniformLocation(this.edgeWeightedProgram, 'u_viewProjection');

@@ -29,6 +29,11 @@ async function runStateVisualCheck(page, renderer) {
 
     const renderMain = async () => {
       await helios.prewarm?.({ updateDenseBuffers: true });
+      // Remove edge contribution so the assertions validate node state styling specifically.
+      if (helios.renderer?.graphLayer) {
+        helios.renderer.graphLayer.edgeOpacityBase = 0;
+        helios.renderer.graphLayer.edgeOpacityScale = 0;
+      }
       helios.renderer.render({ network: helios.network, camera: helios.renderer.camera });
     };
 
@@ -48,19 +53,26 @@ async function runStateVisualCheck(page, renderer) {
     const beforeMaxGreen = await readMaxGreen();
 
     helios.resetStateStyles();
-    // Slot 2 (HIGHLIGHTED): force green tint.
-    helios.setNodeStateStyle(2, { colorMul: [0, 0, 0, 1], colorAdd: [0, 1, 0, 0] });
-    helios.setEdgeStateStyle(2, { colorMul: [0, 0, 0, 1], colorAdd: [0, 1, 0, 0] });
-    helios.setNodeState([0], helios.constructor.STATES.HIGHLIGHTED, { mode: 'add' });
-    helios.setEdgeState([0], helios.constructor.STATES.HIGHLIGHTED, { mode: 'add' });
+    // Slot 2 (HIGHLIGHTED): force green tint on node 0.
+    helios.setNodeStateStyle(2, { opacityMul: 2, colorMul: [0, 0, 0, 1], colorAdd: [0, 1, 0, 0] });
+    helios.setNodeState([0], helios.constructor.STATES.HIGHLIGHTED, { mode: 'replace' });
     await renderMain();
 
-    const afterMaxGreen = await readMaxGreen();
+    const afterSlot2MaxGreen = await readMaxGreen();
+
+    // Slot 3 (custom): force green tint on node 1.
+    helios.resetStateStyles();
+    helios.setNodeState([0, 1], 0, { mode: 'replace' });
+    helios.setNodeStateStyle(3, { opacityMul: 2, colorMul: [0, 0, 0, 1], colorAdd: [0, 1, 0, 0] });
+    helios.setNodeState([1], 1 << 3, { mode: 'replace' });
+    await renderMain();
+    const afterSlot3MaxGreen = await readMaxGreen();
 
     return {
       ok: true,
       beforeMaxGreen,
-      afterMaxGreen,
+      afterSlot2MaxGreen,
+      afterSlot3MaxGreen,
       mainWidth,
       mainHeight,
       device: helios.renderer?.device?.type ?? null,
@@ -68,7 +80,8 @@ async function runStateVisualCheck(page, renderer) {
   });
 
   expect(result.ok).toBe(true);
-  expect(result.afterMaxGreen).toBeGreaterThan(result.beforeMaxGreen);
+  expect(result.afterSlot2MaxGreen).toBeGreaterThan(result.beforeMaxGreen);
+  expect(result.afterSlot3MaxGreen).toBeGreaterThan(result.beforeMaxGreen);
 }
 
 async function runNoStateVisualCheck(page, renderer) {

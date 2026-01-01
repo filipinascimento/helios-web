@@ -318,6 +318,109 @@ async function bootstrap() {
     autoUpdateMaxFps: 1,
   });
 
+  // --- State interactions demo -------------------------------------------------
+  // Click selects a node; clicking empty space deselects.
+  // Hover highlights a node.
+  // Double-click filters (hides) a node; double-click empty space resets filters.
+  //
+  // Requires node picking to be enabled (uses the internal $index pick targets).
+  console.log('Enabling state interactions (hover/click/dblclick)...');
+  const STATES = Helios.STATES;
+  helios.resetStateStyles();
+  // FILTERED: hide.
+  helios.setNodeStateStyle(0, { discard: true });
+  // SELECTED: bigger and brighter.
+  helios.setNodeStateStyle(1, { sizeMul: 1.4, opacityMul: 1.0, outlineMul: 2.0, colorAdd: [0.25, 0.25, 0.25, 0] });
+  // HIGHLIGHTED: slightly bigger and tint.
+  helios.setNodeStateStyle(2, { sizeMul: 1.15, opacityMul: 1.0, outlineMul: 1.2, colorAdd: [0.0, 0.25, 0.25, 0] });
+
+  helios.enableNodePicking({ resolutionScale: 0.25, trackDepth: true, maxFps: 30 });
+
+  let highlightedNode = null;
+  let selectedNode = null;
+  const filteredNodes = new Set();
+  let suppressNextBackgroundClick = false;
+  let suppressNextBackgroundDblClick = false;
+
+  const clearSelected = () => {
+    if (selectedNode != null) {
+      helios.setNodeState([selectedNode], STATES.SELECTED, { mode: 'remove' });
+      selectedNode = null;
+    }
+  };
+
+  const clearFiltered = () => {
+    if (!filteredNodes.size) return;
+    helios.setNodeState(Array.from(filteredNodes), STATES.FILTERED, { mode: 'remove' });
+    filteredNodes.clear();
+  };
+
+  helios.on('node:hover', (e) => {
+    const detail = e?.detail;
+    if (!detail) return;
+    const index = detail.index;
+    if (detail.state === 'in') {
+      if (highlightedNode != null && highlightedNode !== index) {
+        helios.setNodeState([highlightedNode], STATES.HIGHLIGHTED, { mode: 'remove' });
+      }
+      highlightedNode = index;
+      helios.setNodeState([index], STATES.HIGHLIGHTED, { mode: 'add' });
+    } else if (detail.state === 'out') {
+      if (highlightedNode === index) {
+        helios.setNodeState([index], STATES.HIGHLIGHTED, { mode: 'remove' });
+        highlightedNode = null;
+      }
+    }
+  });
+
+  helios.on('node:click', (e) => {
+    const detail = e?.detail;
+    if (!detail) return;
+    suppressNextBackgroundClick = true;
+    const index = detail.index;
+    if (selectedNode != null && selectedNode !== index) {
+      helios.setNodeState([selectedNode], STATES.SELECTED, { mode: 'remove' });
+    }
+    selectedNode = index;
+    helios.setNodeState([index], STATES.SELECTED, { mode: 'add' });
+  });
+
+  helios.on('edge:click', () => {
+    suppressNextBackgroundClick = true;
+    clearSelected();
+  });
+
+  helios.on('node:dblclick', (e) => {
+    const detail = e?.detail;
+    if (!detail) return;
+    suppressNextBackgroundDblClick = true;
+    clearFiltered();
+    filteredNodes.add(detail.index);
+    helios.setNodeState([detail.index], STATES.FILTERED, { mode: 'add' });
+  });
+
+  helios.on('edge:dblclick', () => {
+    suppressNextBackgroundDblClick = true;
+    clearFiltered();
+  });
+
+  // Background click / dblclick (no hit) handling.
+  helios.layers?.canvas?.addEventListener?.('click', () => {
+    if (suppressNextBackgroundClick) {
+      suppressNextBackgroundClick = false;
+      return;
+    }
+    clearSelected();
+  });
+
+  helios.layers?.canvas?.addEventListener?.('dblclick', () => {
+    if (suppressNextBackgroundDblClick) {
+      suppressNextBackgroundDblClick = false;
+      return;
+    }
+    clearFiltered();
+  });
+
   if (resolveEventsDemoMode()) {
     console.log('Enabling Helios interaction events (node/edge picking)...');
     const abort = new AbortController();

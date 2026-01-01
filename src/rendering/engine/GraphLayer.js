@@ -24,7 +24,9 @@ export class GraphLayer extends Layer {
     super('graph-layer');
     this.emptyFloat = new Float32Array(0);
     this.emptyUint = new Uint32Array(0);
-    this.stateSlotCount = 8;
+    const requestedSlots = Number(options.stateSlots);
+    const clampedSlots = Number.isFinite(requestedSlots) ? Math.floor(requestedSlots) : 4;
+    this.stateSlotCount = Math.min(32, Math.max(0, clampedSlots));
     this.edgeRenderingMode = options.edgeRendering === 'line' ? 'line' : 'quad';
     const mode = options.transparencyModeEdges;
     this.edgeTransparencyMode = this.isSupportedTransparencyMode(mode) ? mode : 'alpha';

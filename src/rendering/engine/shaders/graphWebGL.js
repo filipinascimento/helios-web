@@ -1,6 +1,7 @@
-const STATE_SLOTS = 8;
+export function createGraphWebGLSources(stateSlots = 4) {
+  const STATE_SLOTS = Math.max(0, Math.min(32, Math.floor(Number(stateSlots) || 0)));
 
-export const NODE_VERTEX_SOURCE = /* glsl */ `#version 300 es
+  const NODE_VERTEX_SOURCE = /* glsl */ `#version 300 es
 layout (location = 0) in vec2 a_corner;
 layout (location = 1) in vec3 a_position;
 layout (location = 2) in vec4 a_color;
@@ -23,7 +24,7 @@ uniform vec4 u_outlineColor;
 uniform vec4 u_nodeNoStateScale; // x=sizeMul y=opacityMul z=outlineMul w=discard(>0.5)
 uniform vec4 u_nodeNoStateColorMul;
 uniform vec4 u_nodeNoStateColorAdd;
-uniform vec4 u_nodeStateScale[${STATE_SLOTS}]; // x=sizeMul y=opacityMul z=outlineMul w=reserved
+uniform vec4 u_nodeStateScale[${STATE_SLOTS}]; // x=sizeMul y=opacityMul z=outlineMul w=discard(>0.5)
 uniform vec4 u_nodeStateColorMul[${STATE_SLOTS}];
 uniform vec4 u_nodeStateColorAdd[${STATE_SLOTS}];
 
@@ -102,7 +103,7 @@ void main() {
   v_radius = radius;
 }`;
 
-export const NODE_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
+  const NODE_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
 precision highp float;
 
 in vec4 v_color;
@@ -149,7 +150,7 @@ void main() {
   }
 }`;
 
-export const EDGE_WEIGHTED_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
+  const EDGE_WEIGHTED_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
 precision mediump float;
 
 in vec4 v_color;
@@ -166,7 +167,7 @@ void main() {
   fragWeight = vec4(weight, 0.0, 0.0, 0.0);
 }`;
 
-export const EDGE_VERTEX_SOURCE = /* glsl */ `#version 300 es
+  const EDGE_VERTEX_SOURCE = /* glsl */ `#version 300 es
 layout (location = 0) in vec3 a_start;
 layout (location = 1) in vec3 a_end;
 layout (location = 2) in vec4 a_colorStart;
@@ -190,7 +191,7 @@ uniform vec4 u_nodeStateScale[${STATE_SLOTS}]; // x=sizeMul (used for endpoint s
 uniform vec4 u_edgeNoStateScale; // x=widthMul y=opacityMul w=discard(>0.5)
 uniform vec4 u_edgeNoStateColorMul;
 uniform vec4 u_edgeNoStateColorAdd;
-uniform vec4 u_edgeStateScale[${STATE_SLOTS}]; // x=widthMul y=opacityMul
+uniform vec4 u_edgeStateScale[${STATE_SLOTS}]; // x=widthMul y=opacityMul w=discard(>0.5)
 uniform vec4 u_edgeStateColorMul[${STATE_SLOTS}];
 uniform vec4 u_edgeStateColorAdd[${STATE_SLOTS}];
 
@@ -266,7 +267,7 @@ void main() {
   v_color = vec4(color.rgb, alpha);
 }`;
 
-export const EDGE_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
+  const EDGE_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
 precision mediump float;
 
 in vec4 v_color;
@@ -280,7 +281,7 @@ void main() {
   fragColor = v_color;
 }`;
 
-export const EDGE_QUAD_VERTEX_SOURCE = /* glsl */ `#version 300 es
+  const EDGE_QUAD_VERTEX_SOURCE = /* glsl */ `#version 300 es
 layout (location = 0) in vec2 a_corner;
 layout (location = 1) in vec3 a_start;
 layout (location = 2) in vec3 a_end;
@@ -306,7 +307,7 @@ uniform vec4 u_nodeStateScale[${STATE_SLOTS}]; // x=sizeMul (used for endpoint s
 uniform vec4 u_edgeNoStateScale; // x=widthMul y=opacityMul w=discard(>0.5)
 uniform vec4 u_edgeNoStateColorMul;
 uniform vec4 u_edgeNoStateColorAdd;
-uniform vec4 u_edgeStateScale[${STATE_SLOTS}]; // x=widthMul y=opacityMul
+uniform vec4 u_edgeStateScale[${STATE_SLOTS}]; // x=widthMul y=opacityMul w=discard(>0.5)
 uniform vec4 u_edgeStateColorMul[${STATE_SLOTS}];
 uniform vec4 u_edgeStateColorAdd[${STATE_SLOTS}];
 
@@ -392,11 +393,10 @@ void main() {
   v_color = vec4(rgb, alpha);
 }`;
 
-export const EDGE_QUAD_FRAGMENT_SOURCE = EDGE_FRAGMENT_SOURCE;
+  const EDGE_QUAD_FRAGMENT_SOURCE = EDGE_FRAGMENT_SOURCE;
+  const EDGE_WEIGHTED_QUAD_FRAGMENT_SOURCE = EDGE_WEIGHTED_FRAGMENT_SOURCE;
 
-export const EDGE_WEIGHTED_QUAD_FRAGMENT_SOURCE = EDGE_WEIGHTED_FRAGMENT_SOURCE;
-
-export const EDGE_RESOLVE_VERTEX_SOURCE = /* glsl */ `#version 300 es
+  const EDGE_RESOLVE_VERTEX_SOURCE = /* glsl */ `#version 300 es
 layout (location = 0) in vec2 a_position;
 layout (location = 1) in vec2 a_uv;
 out vec2 v_uv;
@@ -406,7 +406,7 @@ void main() {
   v_uv = a_uv;
 }`;
 
-export const EDGE_RESOLVE_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
+  const EDGE_RESOLVE_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
 precision mediump float;
 in vec2 v_uv;
 uniform sampler2D u_colorAccum;
@@ -422,8 +422,7 @@ void main() {
   fragColor = vec4(resolved * alpha, alpha);
 }`;
 
-// Simple Reinhard tone map after normalization.
-export const EDGE_RESOLVE_TONEMAP_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
+  const EDGE_RESOLVE_TONEMAP_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
 precision mediump float;
 in vec2 v_uv;
 uniform sampler2D u_colorAccum;
@@ -435,14 +434,12 @@ void main() {
   float weight = texture(u_weightAccum, v_uv).r;
   float denom = max(weight, 1e-4);
   vec3 resolved = accum / denom;
-  // Reinhard tone map
   vec3 tonemapped = resolved / (resolved + vec3(1.0));
   float alpha = clamp(weight, 0.0, 1.0);
   fragColor = vec4(tonemapped, alpha);
 }`;
 
-// Normalize then boost by weight before tone mapping to brighten overlaps.
-export const EDGE_RESOLVE_BOOST_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
+  const EDGE_RESOLVE_BOOST_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
 precision mediump float;
 in vec2 v_uv;
 uniform sampler2D u_colorAccum;
@@ -456,8 +453,24 @@ void main() {
   vec3 resolved = accum / denom;
   float boost = clamp(weight, 0.0, 4.0);
   vec3 boosted = resolved * boost;
-  // Tone map to avoid infinite growth.
   vec3 tonemapped = boosted / (boosted + vec3(1.0));
   float alpha = clamp(weight, 0.0, 1.0);
   fragColor = vec4(tonemapped, alpha);
 }`;
+
+  return {
+    NODE_VERTEX_SOURCE,
+    NODE_FRAGMENT_SOURCE,
+    EDGE_VERTEX_SOURCE,
+    EDGE_FRAGMENT_SOURCE,
+    EDGE_QUAD_VERTEX_SOURCE,
+    EDGE_QUAD_FRAGMENT_SOURCE,
+    EDGE_WEIGHTED_FRAGMENT_SOURCE,
+    EDGE_WEIGHTED_QUAD_FRAGMENT_SOURCE,
+    EDGE_RESOLVE_VERTEX_SOURCE,
+    EDGE_RESOLVE_FRAGMENT_SOURCE,
+    EDGE_RESOLVE_TONEMAP_FRAGMENT_SOURCE,
+    EDGE_RESOLVE_BOOST_FRAGMENT_SOURCE,
+  };
+}
+

@@ -1,6 +1,7 @@
-const STATE_SLOTS = 8;
+export function createGraphWebGPUSources(stateSlots = 4) {
+  const STATE_SLOTS = Math.max(0, Math.min(32, Math.floor(Number(stateSlots) || 0)));
 
-export const NODE_WGSL = /* wgsl */ `
+  const NODE_WGSL = /* wgsl */ `
 struct Camera {
   viewProjection: mat4x4<f32>,
   view: mat4x4<f32>,
@@ -207,7 +208,7 @@ fn nodeFragment(input : VertexOutput) -> NodeFragmentOutput {
   return output;
 }`;
 
-export const EDGE_WGSL = /* wgsl */ `
+  const EDGE_WGSL = /* wgsl */ `
 struct Camera {
   viewProjection: mat4x4<f32>,
   view: mat4x4<f32>,
@@ -510,300 +511,8 @@ fn edgeFragment(input : EdgeVertexOutput) -> @location(0) vec4<f32> {
   return vec4<f32>(input.color.rgb, input.color.a);
 }`;
 
-export const EDGE_WEIGHTED_WGSL = /* wgsl */ `
-struct Camera {
-  viewProjection: mat4x4<f32>,
-  view: mat4x4<f32>,
-  position: vec4<f32>,
-  up: vec4<f32>,
-  right: vec4<f32>,
-  // viewport.xy = width/height in pixels, viewport.zw = 1/width,1/height
-  viewport: vec4<f32>,
-};
-
-struct Globals {
-  nodeOpacity: vec2<f32>, // base, scale
-  nodeSize: vec2<f32>, // base, scale
-  nodeOutline: vec2<f32>, // base, scale (applied to node size attribute)
-  edgeOpacity: vec2<f32>, // base, scale
-  edgeWidth: vec2<f32>, // base, scale
-  _pad0: vec2<f32>,
-  nodeOutlineColor: vec4<f32>,
-  edgeTrim: vec4<f32>, // edgeTrim.x used, rest padding
-  nodeNoStateScale: vec4<f32>, // x=sizeMul y=opacityMul z=outlineMul w=discard(>0.5)
-  nodeNoStateColorMul: vec4<f32>,
-  nodeNoStateColorAdd: vec4<f32>,
-  edgeNoStateScale: vec4<f32>, // x=widthMul y=opacityMul w=discard(>0.5)
-  edgeNoStateColorMul: vec4<f32>,
-  edgeNoStateColorAdd: vec4<f32>,
-  nodeStateScale: array<vec4<f32>, ${STATE_SLOTS}>,
-  nodeStateColorMul: array<vec4<f32>, ${STATE_SLOTS}>,
-  nodeStateColorAdd: array<vec4<f32>, ${STATE_SLOTS}>,
-  edgeStateScale: array<vec4<f32>, ${STATE_SLOTS}>,
-  edgeStateColorMul: array<vec4<f32>, ${STATE_SLOTS}>,
-  edgeStateColorAdd: array<vec4<f32>, ${STATE_SLOTS}>,
-};
-
-struct EdgeSegments {
-  data: array<f32>, // packed start/end xyz
-};
-
-struct EdgeColors {
-  data: array<vec4<f32>>,
-};
-
-struct EdgeIndices {
-  data: array<u32>,
-};
-
-struct EdgeWidths {
-  data: array<vec2<f32>>,
-};
-
-struct EdgeEndpointSizes {
-  data: array<vec2<f32>>,
-};
-
-struct EdgeOpacities {
-  data: array<vec2<f32>>,
-};
-
-struct EdgeStates {
-  data: array<u32>,
-};
-
-struct EdgeEndpointStates {
-  data: array<vec2<u32>>,
-};
-
-@group(0) @binding(0) var<uniform> camera : Camera;
-@group(0) @binding(1) var<storage, read> edgeIndices : EdgeIndices;
-@group(0) @binding(2) var<storage, read> edgeSegments : EdgeSegments;
-@group(0) @binding(3) var<storage, read> edgeColors : EdgeColors;
-@group(0) @binding(4) var<storage, read> edgeWidths : EdgeWidths;
-@group(0) @binding(5) var<storage, read> edgeEndpointSizes : EdgeEndpointSizes;
-@group(0) @binding(6) var<storage, read> edgeOpacities : EdgeOpacities;
-@group(0) @binding(7) var<storage, read> edgeStates : EdgeStates;
-@group(0) @binding(8) var<storage, read> edgeEndpointStates : EdgeEndpointStates;
-@group(0) @binding(9) var<uniform> globals : Globals;
-
-struct EdgeVertexOutput {
-  @builtin(position) position : vec4<f32>,
-  @location(0) color : vec4<f32>,
-  @location(1) @interpolate(flat) discardFlag : u32,
-};
-
-@vertex
-fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
-  let edgeSlot = vertexIndex / 2u;
-  let edgeId = edgeIndices.data[edgeSlot];
-  let base = edgeId * 6u;
-  var startPos = vec3<f32>(
-    edgeSegments.data[base + 0u],
-    edgeSegments.data[base + 1u],
-    edgeSegments.data[base + 2u]
-  );
-  var endPos = vec3<f32>(
-    edgeSegments.data[base + 3u],
-    edgeSegments.data[base + 4u],
-    edgeSegments.data[base + 5u]
-  );
-  let state = edgeStates.data[edgeId];
-  var widthMul = 1.0;
-  var opacityMul = 1.0;
-  var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
-  var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
-  var discardFlag = 0u;
-  if (state == 0u) {
-    let scale = globals.edgeNoStateScale;
-    widthMul = widthMul * scale.x;
-    opacityMul = opacityMul * scale.y;
-    rgbMul = rgbMul * globals.edgeNoStateColorMul.rgb;
-    rgbAdd = rgbAdd + globals.edgeNoStateColorAdd.rgb;
-    discardFlag = select(0u, 1u, scale.w > 0.5);
-  } else {
-    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
-      let enabled = (state >> i) & 1u;
-      if (enabled == 1u) {
-        let scale = globals.edgeStateScale[i];
-        widthMul = widthMul * scale.x;
-        opacityMul = opacityMul * scale.y;
-        rgbMul = rgbMul * globals.edgeStateColorMul[i].rgb;
-        rgbAdd = rgbAdd + globals.edgeStateColorAdd[i].rgb;
-        if (scale.w > 0.5) {
-          discardFlag = 1u;
-        }
-      }
-    }
-  }
-
-  let endpointSize = edgeEndpointSizes.data[edgeId];
-  let endpointState = edgeEndpointStates.data[edgeId];
-  var startSizeMul = 1.0;
-  var endSizeMul = 1.0;
-  if (endpointState.x == 0u) {
-    startSizeMul = startSizeMul * globals.nodeNoStateScale.x;
-  } else {
-    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
-      let slotMul = globals.nodeStateScale[i].x;
-      if (((endpointState.x >> i) & 1u) == 1u) {
-        startSizeMul = startSizeMul * slotMul;
-      }
-    }
-  }
-  if (endpointState.y == 0u) {
-    endSizeMul = endSizeMul * globals.nodeNoStateScale.x;
-  } else {
-    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
-      let slotMul = globals.nodeStateScale[i].x;
-      if (((endpointState.y >> i) & 1u) == 1u) {
-        endSizeMul = endSizeMul * slotMul;
-      }
-    }
-  }
-  let dirRaw = endPos - startPos;
-  let dirLen = max(length(dirRaw), 1e-5);
-  let dir = dirRaw / vec3<f32>(dirLen);
-  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.x, 0.0) * 0.5 * startSizeMul;
-  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.y, 0.0) * 0.5 * endSizeMul;
-  let trimStart = startRadius * globals.edgeTrim.x;
-  let trimEnd = endRadius * globals.edgeTrim.x;
-  startPos = startPos + dir * trimStart;
-  endPos = endPos - dir * trimEnd;
-  var position = startPos;
-  if ((vertexIndex & 1u) == 1u) {
-    position = endPos;
-  }
-  let colorStart = edgeColors.data[edgeId * 2u];
-  let colorEnd = edgeColors.data[edgeId * 2u + 1u];
-  let endpointWidth = edgeWidths.data[edgeId];
-  let opacityPair = edgeOpacities.data[edgeId];
-  let color = select(colorStart, colorEnd, (vertexIndex & 1u) == 1u);
-  let width = (globals.edgeWidth.x + globals.edgeWidth.y * select(endpointWidth.x, endpointWidth.y, (vertexIndex & 1u) == 1u)) * widthMul;
-  let attrOpacity = select(opacityPair.x, opacityPair.y, (vertexIndex & 1u) == 1u);
-  let opacity = clamp(globals.edgeOpacity.x + globals.edgeOpacity.y * attrOpacity, 0.0, 1.0) * opacityMul;
-  let rgb = clamp(color.rgb * rgbMul + rgbAdd, vec3<f32>(0.0), vec3<f32>(1.0));
-  let alpha = clamp(opacity * color.a, 0.0, 1.0);
-  var output : EdgeVertexOutput;
-  output.position = camera.viewProjection * vec4<f32>(position, 1.0);
-  output.color = vec4<f32>(rgb, alpha);
-  output.discardFlag = discardFlag;
-  return output;
-}
-
-struct EdgeQuadInput {
-  @location(0) corner : vec2<f32>,
-  @builtin(instance_index) instance : u32,
-};
-
-@vertex
-fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
-  let edgeId = edgeIndices.data[input.instance];
-  let base = edgeId * 6u;
-  var startPos = vec3<f32>(
-    edgeSegments.data[base + 0u],
-    edgeSegments.data[base + 1u],
-    edgeSegments.data[base + 2u]
-  );
-  var endPos = vec3<f32>(
-    edgeSegments.data[base + 3u],
-    edgeSegments.data[base + 4u],
-    edgeSegments.data[base + 5u]
-  );
-  let state = edgeStates.data[edgeId];
-  var widthMul = 1.0;
-  var opacityMul = 1.0;
-  var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
-  var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
-  var discardFlag = 0u;
-  if (state == 0u) {
-    let scale = globals.edgeNoStateScale;
-    widthMul = widthMul * scale.x;
-    opacityMul = opacityMul * scale.y;
-    rgbMul = rgbMul * globals.edgeNoStateColorMul.rgb;
-    rgbAdd = rgbAdd + globals.edgeNoStateColorAdd.rgb;
-    discardFlag = select(0u, 1u, scale.w > 0.5);
-  } else {
-    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
-      let enabled = (state >> i) & 1u;
-      if (enabled == 1u) {
-        let scale = globals.edgeStateScale[i];
-        widthMul = widthMul * scale.x;
-        opacityMul = opacityMul * scale.y;
-        rgbMul = rgbMul * globals.edgeStateColorMul[i].rgb;
-        rgbAdd = rgbAdd + globals.edgeStateColorAdd[i].rgb;
-        if (scale.w > 0.5) {
-          discardFlag = 1u;
-        }
-      }
-    }
-  }
-
-  let endpointSize = edgeEndpointSizes.data[edgeId];
-  let endpointWidth = edgeWidths.data[edgeId];
-  let opacityPair = edgeOpacities.data[edgeId];
-  let endpointState = edgeEndpointStates.data[edgeId];
-  var startSizeMul = 1.0;
-  var endSizeMul = 1.0;
-  if (endpointState.x == 0u) {
-    startSizeMul = startSizeMul * globals.nodeNoStateScale.x;
-  } else {
-    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
-      let slotMul = globals.nodeStateScale[i].x;
-      if (((endpointState.x >> i) & 1u) == 1u) {
-        startSizeMul = startSizeMul * slotMul;
-      }
-    }
-  }
-  if (endpointState.y == 0u) {
-    endSizeMul = endSizeMul * globals.nodeNoStateScale.x;
-  } else {
-    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
-      let slotMul = globals.nodeStateScale[i].x;
-      if (((endpointState.y >> i) & 1u) == 1u) {
-        endSizeMul = endSizeMul * slotMul;
-      }
-    }
-  }
-  let t = clamp(input.corner.x, 0.0, 1.0);
-  let width = max((globals.edgeWidth.x + globals.edgeWidth.y * mix(endpointWidth.x, endpointWidth.y, t)) * widthMul, 1e-3);
-  let dirRaw = endPos - startPos;
-  let dirLenWorld = max(length(dirRaw), 1e-5);
-  let dir = dirRaw / vec3<f32>(dirLenWorld);
-  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.x, 0.0) * 0.5 * startSizeMul;
-  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.y, 0.0) * 0.5 * endSizeMul;
-  let trimStart = startRadius * globals.edgeTrim.x;
-  let trimEnd = endRadius * globals.edgeTrim.x;
-  startPos = startPos + dir * trimStart;
-  endPos = endPos - dir * trimEnd;
-
-  let clipStart = camera.viewProjection * vec4<f32>(startPos, 1.0);
-  let clipEnd = camera.viewProjection * vec4<f32>(endPos, 1.0);
-  let ndcStart = clipStart.xy / clipStart.w;
-  let ndcEnd = clipEnd.xy / clipEnd.w;
-  var ndcDir = ndcEnd - ndcStart;
-  let lenDir = max(length(ndcDir), 1e-5);
-  ndcDir = ndcDir / vec2<f32>(lenDir);
-  let perp = vec2<f32>(-ndcDir.y, ndcDir.x);
-  let halfWidth = max(width, 1.0) * 0.5;
-  let pixelToNdc = vec2<f32>(2.0 / max(camera.viewport.x, 1.0), 2.0 / max(camera.viewport.y, 1.0));
-  let offsetNdc = perp * halfWidth * pixelToNdc;
-  var clipPos = clipStart + (clipEnd - clipStart) * t;
-  let adjusted = clipPos.xy + offsetNdc * input.corner.y * 1.5;
-  clipPos = vec4<f32>(adjusted.x, adjusted.y, clipPos.z, clipPos.w);
-  var output : EdgeVertexOutput;
-  output.position = clipPos;
-  let colorStart = edgeColors.data[edgeId * 2u];
-  let colorEnd = edgeColors.data[edgeId * 2u + 1u];
-  let blended = mix(colorStart, colorEnd, t);
-  let blendedOpacity = mix(opacityPair.x, opacityPair.y, t);
-  let opacity = clamp(globals.edgeOpacity.x + globals.edgeOpacity.y * blendedOpacity, 0.0, 1.0) * opacityMul;
-  let alpha = clamp(opacity * blended.a, 0.0, 1.0);
-  let rgb = clamp(blended.rgb * rgbMul + rgbAdd, vec3<f32>(0.0), vec3<f32>(1.0));
-  output.color = vec4<f32>(rgb, alpha);
-  output.discardFlag = discardFlag;
-  return output;
-}
+  const EDGE_WEIGHTED_WGSL = /* wgsl */ `
+${EDGE_WGSL}
 
 struct EdgeWeightedOutput {
   @location(0) colorAccum : vec4<f32>,
@@ -822,6 +531,13 @@ fn edgeWeightedFragment(input : EdgeVertexOutput) -> EdgeWeightedOutput {
   return output;
 }`;
 
+  return {
+    NODE_WGSL,
+    EDGE_WGSL,
+    EDGE_WEIGHTED_WGSL,
+  };
+}
+
 export const EDGE_WEIGHTED_RESOLVE_WGSL = /* wgsl */ `
 struct VertexOut {
   @builtin(position) position : vec4<f32>,
@@ -829,72 +545,73 @@ struct VertexOut {
 };
 
 @group(0) @binding(0) var textureSampler : sampler;
-@group(0) @binding(1) var colorAccum : texture_2d<f32>;
-@group(0) @binding(2) var weightAccum : texture_2d<f32>;
+@group(0) @binding(1) var colorTexture : texture_2d<f32>;
+@group(0) @binding(2) var weightTexture : texture_2d<f32>;
 
 @vertex
-fn vs(@location(0) position : vec2<f32>, @location(1) uv : vec2<f32>) -> VertexOut {
+fn resolveVertex(@builtin(vertex_index) vertexIndex : u32) -> VertexOut {
+  var pos = array<vec2<f32>, 6>(
+    vec2<f32>(-1.0, -1.0),
+    vec2<f32>(1.0, -1.0),
+    vec2<f32>(-1.0, 1.0),
+    vec2<f32>(-1.0, 1.0),
+    vec2<f32>(1.0, -1.0),
+    vec2<f32>(1.0, 1.0),
+  );
+  var uv = array<vec2<f32>, 6>(
+    vec2<f32>(0.0, 1.0),
+    vec2<f32>(1.0, 1.0),
+    vec2<f32>(0.0, 0.0),
+    vec2<f32>(0.0, 0.0),
+    vec2<f32>(1.0, 1.0),
+    vec2<f32>(1.0, 0.0),
+  );
   var output : VertexOut;
-  output.position = vec4<f32>(position, 0.0, 1.0);
-  output.uv = uv;
+  output.position = vec4<f32>(pos[vertexIndex], 0.0, 1.0);
+  output.uv = uv[vertexIndex];
   return output;
 }
 
 @fragment
-fn fs(input : VertexOut) -> @location(0) vec4<f32> {
-  // Flip Y to account for WebGPU texture coordinates so offscreen edges align with on-screen nodes.
-  let uv = vec2<f32>(input.uv.x, 1.0 - input.uv.y);
-  let accumColor = textureSample(colorAccum, textureSampler, uv).rgb;
-  let weight = textureSample(weightAccum, textureSampler, uv).x;
+fn resolveFragment(input : VertexOut) -> @location(0) vec4<f32> {
+  let accum = textureSample(colorTexture, textureSampler, input.uv).rgb;
+  let weight = textureSample(weightTexture, textureSampler, input.uv).r;
   let denom = max(weight, 1e-4);
-  let resolved = accumColor / vec3<f32>(denom);
+  let resolved = accum / vec3<f32>(denom);
   let alpha = clamp(weight, 0.0, 1.0);
   return vec4<f32>(resolved * alpha, alpha);
 }`;
 
-export function createEdgeWeightedResolveTonemapWGSL(options = {}) {
-  const boost = options.boost === true;
-  const body = boost
-    ? `
-  let uv = vec2<f32>(input.uv.x, 1.0 - input.uv.y);
-  let accumColor = textureSample(colorAccum, textureSampler, uv).rgb;
-  let weight = textureSample(weightAccum, textureSampler, uv).x;
-  let denom = max(weight, 1e-4);
-  let resolved = accumColor / vec3<f32>(denom);
-  let scaled = resolved * clamp(weight, 0.0, 4.0);
-  let tonemapped = scaled / (scaled + vec3<f32>(1.0));
-  let alpha = clamp(weight, 0.0, 1.0);
-  return vec4<f32>(tonemapped, alpha);`
-    : `
-  let uv = vec2<f32>(input.uv.x, 1.0 - input.uv.y);
-  let accumColor = textureSample(colorAccum, textureSampler, uv).rgb;
-  let weight = textureSample(weightAccum, textureSampler, uv).x;
-  let denom = max(weight, 1e-4);
-  let resolved = accumColor / vec3<f32>(denom);
-  let tonemapped = resolved / (resolved + vec3<f32>(1.0));
-  let alpha = clamp(weight, 0.0, 1.0);
-  return vec4<f32>(tonemapped, alpha);`;
-
-  return /* wgsl */ `
-struct VertexOut {
-  @builtin(position) position : vec4<f32>,
-  @location(0) uv : vec2<f32>,
-};
-
-@group(0) @binding(0) var textureSampler : sampler;
-@group(0) @binding(1) var colorAccum : texture_2d<f32>;
-@group(0) @binding(2) var weightAccum : texture_2d<f32>;
-
-@vertex
-fn vs(@location(0) position : vec2<f32>, @location(1) uv : vec2<f32>) -> VertexOut {
-  var output : VertexOut;
-  output.position = vec4<f32>(position, 0.0, 1.0);
-  output.uv = uv;
-  return output;
-}
+export function createEdgeWeightedResolveTonemapWGSL(options) {
+  const boost = options === 'boost' || options?.boost === true;
+  if (boost) {
+    return /* wgsl */ `
+${EDGE_WEIGHTED_RESOLVE_WGSL}
 
 @fragment
-fn fs(input : VertexOut) -> @location(0) vec4<f32> {
-  ${body}
+fn resolveFragment(input : VertexOut) -> @location(0) vec4<f32> {
+  let accum = textureSample(colorTexture, textureSampler, input.uv).rgb;
+  let weight = textureSample(weightTexture, textureSampler, input.uv).r;
+  let denom = max(weight, 1e-4);
+  let resolved = accum / vec3<f32>(denom);
+  let boost = clamp(weight, 0.0, 4.0);
+  let boosted = resolved * boost;
+  let tonemapped = boosted / (boosted + vec3<f32>(1.0));
+  let alpha = clamp(weight, 0.0, 1.0);
+  return vec4<f32>(tonemapped, alpha);
+}`;
+  }
+  return /* wgsl */ `
+${EDGE_WEIGHTED_RESOLVE_WGSL}
+
+@fragment
+fn resolveFragment(input : VertexOut) -> @location(0) vec4<f32> {
+  let accum = textureSample(colorTexture, textureSampler, input.uv).rgb;
+  let weight = textureSample(weightTexture, textureSampler, input.uv).r;
+  let denom = max(weight, 1e-4);
+  let resolved = accum / vec3<f32>(denom);
+  let tonemapped = resolved / (resolved + vec3<f32>(1.0));
+  let alpha = clamp(weight, 0.0, 1.0);
+  return vec4<f32>(tonemapped, alpha);
 }`;
 }

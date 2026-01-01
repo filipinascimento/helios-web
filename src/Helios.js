@@ -246,6 +246,9 @@ export class Helios extends EventTarget {
       projection: this.options.projection ?? 'perspective',
       renderer: this.options.renderer ?? 'auto',
     });
+    const extraStateSlotsRaw = this.options.extraStateSlots ?? 1;
+    const extraStateSlots = Number.isFinite(extraStateSlotsRaw) ? Math.max(0, Math.floor(extraStateSlotsRaw)) : 1;
+    const stateSlots = Math.min(32, 3 + extraStateSlots);
     this.renderer = await createRenderer(this.layers.canvas, {
       clearColor: this.options.clearColor,
       forceWebGL: this.options.renderer === 'webgl',
@@ -255,6 +258,7 @@ export class Helios extends EventTarget {
       edgeRendering: this.options.edgeRendering,
       transparencyModeEdges: this.options.transparencyModeEdges,
       edgeEndpointTrim: this.options.edgeEndpointTrim,
+      stateSlots,
     });
     this.debug.log('helios', 'Renderer created', { renderer: this.renderer?.constructor?.name });
     this.attributeTracker = new AttributeTracker(this.renderer);

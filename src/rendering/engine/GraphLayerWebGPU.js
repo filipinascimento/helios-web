@@ -1,7 +1,5 @@
 import {
-  NODE_WGSL,
-  EDGE_WGSL,
-  EDGE_WEIGHTED_WGSL,
+  createGraphWebGPUSources,
   EDGE_WEIGHTED_RESOLVE_WGSL,
   createEdgeWeightedResolveTonemapWGSL,
 } from './shaders/graphWebGPU.js';
@@ -54,6 +52,7 @@ export class GraphLayerWebGPU extends GraphLayer {
     this._edgeDataCache = { segments: null, widths: null, endpointSizes: null, endpointStates: null, colors: null, indices: null, opacities: null, states: null, count: 0 };
     this._nodeVersionsLast = null;
     this._edgeVersionsLast = null;
+    this._shaderSources = null;
   }
 
   initialize(device, size) {
@@ -170,8 +169,9 @@ export class GraphLayerWebGPU extends GraphLayer {
       ],
     });
 
-    const nodeModule = device.device.createShaderModule({ code: NODE_WGSL });
-    const edgeModule = device.device.createShaderModule({ code: EDGE_WGSL });
+    this._shaderSources = createGraphWebGPUSources(this.stateSlotCount);
+    const nodeModule = device.device.createShaderModule({ code: this._shaderSources.NODE_WGSL });
+    const edgeModule = device.device.createShaderModule({ code: this._shaderSources.EDGE_WGSL });
     this.edgeModule = edgeModule;
     const depthStencil = {
       format: device.depthFormat ?? 'depth24plus',
@@ -842,8 +842,11 @@ export class GraphLayerWebGPU extends GraphLayer {
       this.weightedPipelineFormats.weight !== weightFormat ||
       this.weightedPipelineFormats.swapchain !== swapchainFormat;
 
+    if (!this._shaderSources) {
+      this._shaderSources = createGraphWebGPUSources(this.stateSlotCount);
+    }
     if (!this.edgeWeightedModule) {
-      this.edgeWeightedModule = device.createShaderModule({ code: EDGE_WEIGHTED_WGSL });
+      this.edgeWeightedModule = device.createShaderModule({ code: this._shaderSources.EDGE_WEIGHTED_WGSL });
     }
     if (!this.edgeResolveModule) {
       this.edgeResolveModule = device.createShaderModule({ code: EDGE_WEIGHTED_RESOLVE_WGSL });

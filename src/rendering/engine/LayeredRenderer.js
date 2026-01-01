@@ -210,6 +210,7 @@ export class LayeredRenderer {
       transparencyModeEdges: this.options.transparencyModeEdges,
       nodeOutlineColor: this.options.nodeOutlineColor,
       edgeEndpointTrim: this.options.edgeEndpointTrim,
+      stateSlots: this.options.stateSlots,
     };
     if (this.device?.type === 'webgpu') {
       this.graphLayer = new GraphLayerWebGPU(options);
