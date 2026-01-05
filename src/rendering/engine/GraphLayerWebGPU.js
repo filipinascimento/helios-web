@@ -6,6 +6,7 @@ import {
 import { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './GraphLayerCommon.js';
 import { GraphLayer } from './GraphLayer.js';
 import { FrameGraphRunner } from './framegraph/FrameGraphRunner.js';
+import { bumpCounter } from '../../utilities/counters.js';
 
 export class GraphLayerWebGPU extends GraphLayer {
   constructor(options = {}) {
@@ -53,6 +54,7 @@ export class GraphLayerWebGPU extends GraphLayer {
     this._nodeVersionsLast = null;
     this._edgeVersionsLast = null;
     this._shaderSources = null;
+    this.counters = { weightedAttachmentRenders: 0 };
   }
 
   initialize(device, size) {
@@ -1002,6 +1004,7 @@ export class GraphLayerWebGPU extends GraphLayer {
   }
 
   renderWeighted(context, { geometry, is2D, drawNodes, mode }) {
+    this.counters.weightedAttachmentRenders = bumpCounter(this.counters.weightedAttachmentRenders);
     const commandEncoder = context.commandEncoder;
     const targetView = context.colorView;
     const depthView = context.depthView;

@@ -1,3 +1,5 @@
+import { bumpCounter } from '../../utilities/counters.js';
+
 const PRESENT_WGSL = /* wgsl */ `
 struct VertexOut {
   @builtin(position) position : vec4<f32>,
@@ -19,7 +21,6 @@ fn vs(@location(0) position : vec2<f32>, @location(1) uv : vec2<f32>) -> VertexO
 fn fs(input : VertexOut) -> @location(0) vec4<f32> {
   return textureSample(textureData, textureSampler, input.uv);
 }`;
-
 export class WebGPUDevice {
   constructor(canvas, options = {}) {
     this.canvas = canvas;
@@ -41,6 +42,7 @@ export class WebGPUDevice {
     this.limits = null;
     this.maxStorageBufferBindingSize = null;
     this.requestedLimits = null;
+    this.counters = { beginFrame: 0, presentFramebuffer: 0 };
   }
 
   static async isSupported() {
@@ -149,6 +151,7 @@ export class WebGPUDevice {
   }
 
   beginFrame(renderTarget, clearColor, rect) {
+    this.counters.beginFrame = bumpCounter(this.counters.beginFrame);
     const targetTexture = renderTarget ? renderTarget.texture : this.context.getCurrentTexture();
     const width = renderTarget?.width ?? this.canvas.width;
     const height = renderTarget?.height ?? this.canvas.height;
@@ -230,6 +233,7 @@ export class WebGPUDevice {
 
   presentFramebuffer(framebuffer, rect) {
     if (!framebuffer?.texture) return;
+    this.counters.presentFramebuffer = bumpCounter(this.counters.presentFramebuffer);
     const view = this.context.getCurrentTexture().createView();
     const encoder = this.device.createCommandEncoder();
     const pass = encoder.beginRenderPass({

@@ -6,6 +6,7 @@ import { StaticLayout, WorkerLayout } from './layouts/Layout.js';
 import { createRenderer } from './rendering/createRenderer.js';
 import { AttributeTracker } from './rendering/AttributeTracker.js';
 import { PerformanceMonitor } from './utilities/PerformanceMonitor.js';
+import { bumpCounter } from './utilities/counters.js';
 import { VisualAttributes } from './pipeline/VisualAttributes.js';
 import { createDefaultMappers, MapperCollection } from './pipeline/Mapper.js';
 import { createDebugLogger } from './utilities/DebugLogger.js';
@@ -130,6 +131,11 @@ export class Helios extends EventTarget {
     this._anyListeners = new Set();
     this._frameId = 0;
     this._lastRenderTime = performance.now();
+    this.counters = {
+      geometryFrames: 0,
+      renderFrames: 0,
+      attributeUpdateTicks: 0,
+    };
     this._cameraMoveRaf = null;
     this._picking = {
       node: { enabled: false },
@@ -269,8 +275,9 @@ export class Helios extends EventTarget {
     this.scheduler.setAttributeCallback(
       (frame) => {
         if (!frame) return;
-        this.attributeTracker?.render(frame, true);
-        this.indexPickingTracker?.render(frame, true);
+        this.counters.attributeUpdateTicks = bumpCounter(this.counters.attributeUpdateTicks);
+        this.attributeTracker?.render(frame, false);
+        this.indexPickingTracker?.render(frame, false);
       },
       {
         autoUpdate: this.attributeUpdateOptions.autoUpdate,
@@ -312,6 +319,7 @@ export class Helios extends EventTarget {
     this.debug.log('scheduler', 'Setting scheduler callbacks');
     this.scheduler.setLayout(this.layout);
     this.scheduler.setGeometryCallback(() => {
+      this.counters.geometryFrames = bumpCounter(this.counters.geometryFrames);
       if (this.mappersDirty) {
         this.debug.log('mapper', 'Applying mappers to visuals');
         this.visuals.applyMappers({
@@ -345,12 +353,12 @@ export class Helios extends EventTarget {
         size: this.size,
       });
       if (this.firstGeometryUpdateComplete && this.renderer && typeof this.renderer.render === 'function') {
+        this.counters.renderFrames = bumpCounter(this.counters.renderFrames);
         const now = performance.now();
         const dt = now - this._lastRenderTime;
         this._lastRenderTime = now;
         this._frameId += 1;
         this.emit(EVENTS.BEFORE_RENDER, { frameId: this._frameId, dt, frame, size: { ...this.size } });
-        this.attributeTracker?.render(frame);
         this.renderer.render(frame, this.size);
         this.emit(EVENTS.AFTER_RENDER, { frameId: this._frameId, dt, frame, size: { ...this.size } });
       }
@@ -652,6 +660,7 @@ export class Helios extends EventTarget {
     };
     this.attributeTracker?.render(frame, true);
     if (this.renderer && typeof this.renderer.render === 'function') {
+      this.counters.renderFrames = bumpCounter(this.counters.renderFrames);
       this.renderer.render(frame, this.size);
     }
   }
@@ -689,6 +698,250 @@ export class Helios extends EventTarget {
     if (!this.attributeTracker) return { node: -1, edge: -1 };
     await this.renderAttributeTracking();
     return this.attributeTracker.pick(clientX, clientY);
+  }
+
+  /**
+   * Returns a Map of framebuffer/attachment references to monotonically
+   * increasing "version" counters (wrapping at Number.MAX_SAFE_INTEGER).
+   *
+   * Keys are live object references (e.g. RenderTarget instances, WebGLFramebuffer,
+   * GPUTexture) so they can be used for identity comparisons.
+   */
+  getFramebufferVersionsByRefMap() {
+    const versions = new Map();
+
+    const addAttributeTrackerTargets = (tracker) => {
+      if (!tracker?.lastTargets) return;
+      const targets = tracker.lastTargets;
+      const counters = tracker.counters ?? {};
+      if (targets.node) versions.set(targets.node, counters.node ?? 0);
+      if (targets.edge) versions.set(targets.edge, counters.edge ?? 0);
+      if (targets.depthTargets?.node) versions.set(targets.depthTargets.node, counters.nodeDepth ?? 0);
+      if (targets.depthTargets?.edge) versions.set(targets.depthTargets.edge, counters.edgeDepth ?? 0);
+    };
+
+    addAttributeTrackerTargets(this.attributeTracker);
+    addAttributeTrackerTargets(this.indexPickingTracker);
+
+    if (this.renderer?.renderTarget) {
+      versions.set(this.renderer.renderTarget, this.counters?.renderFrames ?? 0);
+    }
+
+    const graphLayer = this.renderer?.graphLayer;
+    if (graphLayer?.weightedFramebuffer) {
+      versions.set(graphLayer.weightedFramebuffer, graphLayer.counters?.weightedFramebufferRenders ?? 0);
+    }
+    if (graphLayer?.weightedTextures?.color) {
+      versions.set(graphLayer.weightedTextures.color, graphLayer.counters?.weightedAttachmentRenders ?? 0);
+    }
+    if (graphLayer?.weightedTextures?.weight) {
+      versions.set(graphLayer.weightedTextures.weight, graphLayer.counters?.weightedAttachmentRenders ?? 0);
+    }
+
+    return versions;
+  }
+
+  /**
+   * Returns framebuffer/attachment information keyed by a meaningful name.
+   * Values include the version counter and a minimal shape description.
+   *
+   * Key format conventions:
+   * - `attributes.<attributeName>.<scope>.<tracking|picking>[.<depth>]`
+   * - `render.<variation>`
+   */
+  getFramebufferInformation() {
+    const info = {};
+
+    const set = (key, value) => {
+      if (!key) return;
+      info[key] = value;
+    };
+
+    const describeRenderTarget = (target, extra = {}) => {
+      if (!target) return { version: 0, ...extra };
+      const base = {
+        type: target.type ?? null,
+        width: target.width ?? null,
+        height: target.height ?? null,
+      };
+      return { ...base, ...extra };
+    };
+
+    const addTracker = (tracker, variant) => {
+      if (!tracker?.lastTargets) return;
+      const targets = tracker.lastTargets;
+      const counters = tracker.counters ?? {};
+      const nodeAttr = tracker.nodeAttribute ?? null;
+      const edgeAttr = tracker.edgeAttribute ?? null;
+      if (nodeAttr && targets.node) {
+        set(
+          `attributes.${nodeAttr}.node.${variant}`,
+          { ...describeRenderTarget(targets.node), version: counters.node ?? 0 },
+        );
+      }
+      if (edgeAttr && targets.edge) {
+        set(
+          `attributes.${edgeAttr}.edge.${variant}`,
+          { ...describeRenderTarget(targets.edge), version: counters.edge ?? 0 },
+        );
+      }
+      if (tracker.options?.trackDepth === true) {
+        if (nodeAttr && targets.depthTargets?.node) {
+          set(
+            `attributes.${nodeAttr}.node.${variant}.depth`,
+            { ...describeRenderTarget(targets.depthTargets.node), version: counters.nodeDepth ?? 0 },
+          );
+        }
+        if (edgeAttr && targets.depthTargets?.edge) {
+          set(
+            `attributes.${edgeAttr}.edge.${variant}.depth`,
+            { ...describeRenderTarget(targets.depthTargets.edge), version: counters.edgeDepth ?? 0 },
+          );
+        }
+      }
+    };
+
+    addTracker(this.attributeTracker, 'tracking');
+    addTracker(this.indexPickingTracker, 'picking');
+
+    const device = this.renderer?.device ?? null;
+    const renderTarget = this.renderer?.renderTarget ?? null;
+    if (device?.type === 'webgl2') {
+      set(
+        renderTarget ? 'render.webgl.target' : 'render.webgl.default',
+        { ...describeRenderTarget(renderTarget, { type: 'webgl2' }), version: device.counters?.beginFrame ?? 0 },
+      );
+      set('render.webgl.present', { type: 'webgl2', version: device.counters?.presentFramebuffer ?? 0 });
+    } else if (device?.type === 'webgpu') {
+      set(
+        renderTarget ? 'render.webgpu.target' : 'render.webgpu.swapchain',
+        { ...describeRenderTarget(renderTarget, { type: 'webgpu' }), version: device.counters?.beginFrame ?? 0 },
+      );
+      set(
+        'render.webgpu.depth',
+        {
+          type: 'webgpu',
+          width: renderTarget?.width ?? this.size?.width ?? null,
+          height: renderTarget?.height ?? this.size?.height ?? null,
+          version: device.counters?.beginFrame ?? 0,
+        },
+      );
+      set('render.webgpu.present', { type: 'webgpu', version: device.counters?.presentFramebuffer ?? 0 });
+    } else if (this.renderer) {
+      set('render.main', { type: 'unknown', version: this.counters?.renderFrames ?? 0 });
+    }
+
+    const graphLayer = this.renderer?.graphLayer;
+    if (graphLayer?.weightedFramebuffer) {
+      set(
+        'render.weighted.webgl.framebuffer',
+        {
+          type: 'webgl2',
+          width: graphLayer.weightedSize?.width ?? null,
+          height: graphLayer.weightedSize?.height ?? null,
+          version: graphLayer.counters?.weightedFramebufferRenders ?? 0,
+        },
+      );
+    }
+    if (graphLayer?.weightedTextures?.color) {
+      set(
+        'render.weighted.webgpu.color',
+        {
+          type: 'webgpu',
+          width: graphLayer.weightedTextures?.width ?? null,
+          height: graphLayer.weightedTextures?.height ?? null,
+          format: graphLayer.weightedTextures?.color?.format ?? null,
+          version: graphLayer.counters?.weightedAttachmentRenders ?? 0,
+        },
+      );
+    }
+    if (graphLayer?.weightedTextures?.weight) {
+      set(
+        'render.weighted.webgpu.weight',
+        {
+          type: 'webgpu',
+          width: graphLayer.weightedTextures?.width ?? null,
+          height: graphLayer.weightedTextures?.height ?? null,
+          format: graphLayer.weightedTextures?.weight?.format ?? null,
+          version: graphLayer.counters?.weightedAttachmentRenders ?? 0,
+        },
+      );
+    }
+
+    return info;
+  }
+
+  /**
+   * Returns an object keyed by a meaningful framebuffer name, where each value
+   * is the version counter.
+   *
+   * Key format conventions:
+   * - `attributes.<attributeName>.<scope>.<tracking|picking>[.<depth>]`
+   * - `render.<variation>`
+   */
+  getFramebufferVersions() {
+    const summary = {};
+
+    const addEntry = (key, version) => {
+      if (!key) return;
+      summary[key] = version ?? 0;
+    };
+
+    const addTracker = (tracker, variant) => {
+      if (!tracker?.lastTargets) return;
+      const targets = tracker.lastTargets;
+      const counters = tracker.counters ?? {};
+      const nodeAttr = tracker.nodeAttribute ?? null;
+      const edgeAttr = tracker.edgeAttribute ?? null;
+      if (nodeAttr && targets.node) {
+        addEntry(`attributes.${nodeAttr}.node.${variant}`, counters.node ?? 0);
+      }
+      if (edgeAttr && targets.edge) {
+        addEntry(`attributes.${edgeAttr}.edge.${variant}`, counters.edge ?? 0);
+      }
+      if (tracker.options?.trackDepth === true) {
+        if (nodeAttr && targets.depthTargets?.node) {
+          addEntry(`attributes.${nodeAttr}.node.${variant}.depth`, counters.nodeDepth ?? 0);
+        }
+        if (edgeAttr && targets.depthTargets?.edge) {
+          addEntry(`attributes.${edgeAttr}.edge.${variant}.depth`, counters.edgeDepth ?? 0);
+        }
+      }
+    };
+
+    addTracker(this.attributeTracker, 'tracking');
+    addTracker(this.indexPickingTracker, 'picking');
+
+    const device = this.renderer?.device ?? null;
+    const renderTarget = this.renderer?.renderTarget ?? null;
+    if (device?.type === 'webgl2') {
+      addEntry(renderTarget ? 'render.webgl.target' : 'render.webgl.default', device.counters?.beginFrame ?? 0);
+      addEntry('render.webgl.present', device.counters?.presentFramebuffer ?? 0);
+    } else if (device?.type === 'webgpu') {
+      addEntry(renderTarget ? 'render.webgpu.target' : 'render.webgpu.swapchain', device.counters?.beginFrame ?? 0);
+      addEntry('render.webgpu.depth', device.counters?.beginFrame ?? 0);
+      addEntry('render.webgpu.present', device.counters?.presentFramebuffer ?? 0);
+    } else if (this.renderer) {
+      addEntry('render.main', this.counters?.renderFrames ?? 0);
+    }
+
+    const graphLayer = this.renderer?.graphLayer;
+    if (graphLayer?.weightedFramebuffer) {
+      addEntry('render.weighted.webgl.framebuffer', graphLayer.counters?.weightedFramebufferRenders ?? 0);
+    }
+    if (graphLayer?.weightedTextures?.color) {
+      addEntry('render.weighted.webgpu.color', graphLayer.counters?.weightedAttachmentRenders ?? 0);
+    }
+    if (graphLayer?.weightedTextures?.weight) {
+      addEntry('render.weighted.webgpu.weight', graphLayer.counters?.weightedAttachmentRenders ?? 0);
+    }
+
+    return summary;
+  }
+
+  // Backwards-compatible alias: use getFramebufferInformation() for string-keyed details.
+  getFramebufferVersionsByRef() {
+    return this.getFramebufferInformation();
   }
 
   enableNodePicking(options = {}) {
@@ -994,7 +1247,6 @@ export class Helios extends EventTarget {
 
   async _ensureIndexPickingTargets() {
     if (!this.indexPickingTracker) return;
-    if (this.indexPickingTracker.lastTargets) return;
     const frame = this.scheduler?.currentFrame ?? {
       network: this.network,
       timestamp: performance.now(),

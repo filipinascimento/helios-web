@@ -1,6 +1,7 @@
 import { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './engine/GraphLayerCommon.js';
 import { RenderTargetPool } from './engine/RenderTargetPool.js';
 import { FrameGraphRunner } from './engine/framegraph/FrameGraphRunner.js';
+import { bumpCounter } from '../utilities/counters.js';
 import {
   NODE_ATTRIBUTE_VERTEX,
   NODE_ATTRIBUTE_FRAGMENT,
@@ -13,6 +14,7 @@ import {
   NODE_ATTRIBUTE_WGSL,
   EDGE_ATTRIBUTE_WGSL,
 } from './engine/shaders/attributeWebGPU.js';
+import { VISUAL_ATTRIBUTE_NAMES } from '../pipeline/constants.js';
 
 const PACK_DEPTH_GLSL = /* glsl */ `
 vec4 packDepthToRGBA(const in float v) {
@@ -1321,11 +1323,111 @@ export class AttributeTracker {
     this.lastTargets = null;
     this.targetPool = new RenderTargetPool();
     this.runner = new FrameGraphRunner();
+    this.counters = {
+      renders: 0,
+      node: 0,
+      edge: 0,
+      nodeDepth: 0,
+      edgeDepth: 0,
+    };
+    this._lastSignature = null;
+  }
+
+  _hashMat4(mat) {
+    if (!mat || mat.length < 16) return 0;
+    let hash = 2166136261;
+    for (let i = 0; i < 16; i += 1) {
+      const v = mat[i] ?? 0;
+      const n = Number.isFinite(v) ? v : 0;
+      const bits = (Math.fround(n) * 1e6) | 0;
+      hash ^= bits;
+      hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
+  }
+
+  _safeVersion(fn) {
+    try {
+      const v = fn();
+      return Number.isFinite(v) ? v : 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  _computeSignature(frame, size, options) {
+    const network = frame?.network;
+    if (!network || !this.graphLayer) return null;
+    const camera = frame?.camera ?? this.renderer?.camera ?? null;
+    const scale = options.resolutionScale ?? 1;
+    const pixelRatio = (size?.devicePixelRatio ?? 1);
+    const widthPx = Math.max(1, Math.floor((size?.width ?? 1) * pixelRatio * scale));
+    const heightPx = Math.max(1, Math.floor((size?.height ?? 1) * pixelRatio * scale));
+    const trackDepth = options.trackDepth === true ? 1 : 0;
+
+    const topology = this._safeVersion(() => {
+      const t = network.getTopologyVersions?.();
+      return t ? ((t.node ?? 0) * 1315423911) ^ (t.edge ?? 0) : 0;
+    });
+
+    const visuals = VISUAL_ATTRIBUTE_NAMES;
+    const nodePos = this._safeVersion(() => network.getNodeAttributeVersion?.(visuals.NODE_POSITION_ATTRIBUTE));
+    const nodeSize = this._safeVersion(() => network.getNodeAttributeVersion?.(visuals.NODE_SIZE_ATTRIBUTE));
+    const nodeState = this._safeVersion(() => network.getNodeAttributeVersion?.(visuals.NODE_STATE_ATTRIBUTE));
+    const nodeOutline = this._safeVersion(() => network.getNodeAttributeVersion?.(visuals.NODE_OUTLINE_WIDTH_ATTRIBUTE));
+    const edgeSeg = this._safeVersion(() => network.getEdgeAttributeVersion?.(visuals.EDGE_ENDPOINTS_POSITION_ATTRIBUTE));
+    const edgeWidth = this._safeVersion(() => network.getEdgeAttributeVersion?.(visuals.EDGE_WIDTH_ATTRIBUTE));
+    const edgeEndSize = this._safeVersion(() => network.getEdgeAttributeVersion?.(visuals.EDGE_ENDPOINTS_SIZE_ATTRIBUTE));
+    const edgeEndState = this._safeVersion(() => network.getEdgeAttributeVersion?.(visuals.EDGE_ENDPOINTS_STATE_ATTRIBUTE));
+    const edgeState = this._safeVersion(() => network.getEdgeAttributeVersion?.(visuals.EDGE_STATE_ATTRIBUTE));
+
+    const nodeAttr = this.nodeAttribute ?? '';
+    const edgeAttr = this.edgeAttribute ?? '';
+    const nodeAttrVer = nodeAttr === '$index'
+      ? this._safeVersion(() => network.getTopologyVersions?.()?.node ?? 0)
+      : (nodeAttr ? this._safeVersion(() => network.getNodeAttributeVersion?.(nodeAttr)) : 0);
+    const edgeAttrVer = edgeAttr === '$index'
+      ? this._safeVersion(() => network.getTopologyVersions?.()?.edge ?? 0)
+      : (edgeAttr ? this._safeVersion(() => network.getEdgeAttributeVersion?.(edgeAttr)) : 0);
+
+    const camHash = this._hashMat4(camera?.viewProjectionMatrix);
+    const edgeMode = this.graphLayer.edgeRenderingMode ?? 'quad';
+    const projection = camera?.projection ?? '';
+    const mode = camera?.mode ?? '';
+
+    return [
+      this.renderer?.device?.type ?? '',
+      widthPx,
+      heightPx,
+      scale,
+      trackDepth,
+      mode,
+      projection,
+      camHash,
+      edgeMode,
+      // Visuals drive geometry; include their versions.
+      topology,
+      nodePos,
+      nodeSize,
+      nodeState,
+      nodeOutline,
+      edgeSeg,
+      edgeWidth,
+      edgeEndSize,
+      edgeEndState,
+      edgeState,
+      // Tracked attributes drive encoded buffers.
+      nodeAttr,
+      nodeAttrVer,
+      edgeAttr,
+      edgeAttrVer,
+    ].join('|');
   }
 
   enable(nodeAttribute, edgeAttribute, options = {}) {
     this.nodeAttribute = nodeAttribute || null;
     this.edgeAttribute = edgeAttribute || null;
+    this._lastSignature = null;
     if (options.resolutionScale != null) {
       const scale = Number(options.resolutionScale);
       this.options.resolutionScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
@@ -1347,18 +1449,28 @@ export class AttributeTracker {
       this.nodeAttribute = null;
       this.edgeAttribute = null;
     }
+    this._lastSignature = null;
   }
 
   resize(size) {
     this.size = size;
     this.webgl?.resize?.(size, this.options.resolutionScale);
     this.webgpu?.resize?.(size, this.options.resolutionScale);
+    this._lastSignature = null;
   }
 
   async render(frame, force = false) {
     if (!this.renderer?.device || !this.graphLayer || (!this.nodeAttribute && !this.edgeAttribute)) return null;
-    if (!this.options.autoRender && !force) return null;
+    const signature = this._computeSignature(frame, this.size ?? this.renderer.size, this.options);
+    if (signature && this.lastTargets && signature === this._lastSignature) {
+      return this.lastTargets;
+    }
+    if (!this.options.autoRender && !force) return this.lastTargets;
     const device = this.renderer.device;
+    const hadNode = Boolean(this.nodeAttribute);
+    const hadEdge = Boolean(this.edgeAttribute);
+    const trackDepth = this.options.trackDepth === true;
+    let didRender = false;
     if (device.type === 'webgl2') {
       if (!this.webgl) {
         this.webgl = new WebGLAttributeRenderer(this.graphLayer, this.targetPool, this.runner);
@@ -1370,6 +1482,7 @@ export class AttributeTracker {
         resolutionScale: this.options.resolutionScale,
         trackDepth: this.options.trackDepth,
       });
+      didRender = Boolean(this.lastTargets);
     } else if (device.type === 'webgpu') {
       if (!this.webgpu) {
         this.webgpu = new WebGPUAttributeRenderer(this.graphLayer, this.targetPool, this.runner);
@@ -1381,6 +1494,19 @@ export class AttributeTracker {
         resolutionScale: this.options.resolutionScale,
         trackDepth: this.options.trackDepth,
       });
+      didRender = Boolean(this.lastTargets);
+    }
+    if (didRender) {
+      this._lastSignature = signature;
+      this.counters.renders = bumpCounter(this.counters.renders);
+      if (hadNode) {
+        this.counters.node = bumpCounter(this.counters.node);
+        if (trackDepth) this.counters.nodeDepth = bumpCounter(this.counters.nodeDepth);
+      }
+      if (hadEdge) {
+        this.counters.edge = bumpCounter(this.counters.edge);
+        if (trackDepth) this.counters.edgeDepth = bumpCounter(this.counters.edgeDepth);
+      }
     }
     return this.lastTargets;
   }

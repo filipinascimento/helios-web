@@ -1,3 +1,5 @@
+import { bumpCounter } from '../../utilities/counters.js';
+
 function compileShader(gl, type, source) {
   const shader = gl.createShader(type);
   gl.shaderSource(shader, source);
@@ -45,7 +47,6 @@ out vec4 fragColor;
 void main() {
   fragColor = texture(u_texture, v_uv);
 }`;
-
 /**
  * Thin wrapper around a WebGL2RenderingContext that exposes a consistent API
  * for the modular renderer.
@@ -60,6 +61,7 @@ export class WebGL2Device {
     this.presentTextureLocation = null;
     this.size = { width: 1, height: 1, devicePixelRatio: 1 };
     this.type = 'webgl2';
+    this.counters = { beginFrame: 0, presentFramebuffer: 0 };
   }
 
   async initialize() {
@@ -109,6 +111,7 @@ export class WebGL2Device {
   }
 
   beginFrame(renderTarget, clearColor, rect) {
+    this.counters.beginFrame = bumpCounter(this.counters.beginFrame);
     const { gl } = this;
     const target = renderTarget?.handle ?? null;
     gl.bindFramebuffer(gl.FRAMEBUFFER, target);
@@ -166,6 +169,7 @@ export class WebGL2Device {
 
   presentFramebuffer(framebuffer, rect) {
     if (!framebuffer?.texture) return;
+    this.counters.presentFramebuffer = bumpCounter(this.counters.presentFramebuffer);
     const { gl } = this;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     const width = rect?.width ?? this.canvas.width;

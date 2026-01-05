@@ -41,6 +41,7 @@ export class Scheduler {
         Number.isFinite(options.attributeFrameSkip) && options.attributeFrameSkip > 0
           ? Math.floor(options.attributeFrameSkip)
           : 0,
+      runWhenIdle: options.attributeRunWhenIdle === true,
     };
     this._attributeTimer = null;
     this._lastAttributeTime = -Infinity;
@@ -176,6 +177,9 @@ export class Scheduler {
         ? Math.floor(options.frameSkip)
         : 0;
     }
+    if (options.runWhenIdle != null) {
+      cfg.runWhenIdle = options.runWhenIdle === true;
+    }
     this.attributeUpdateConfig = cfg;
     this._restartAttributeTimer();
   }
@@ -191,6 +195,7 @@ export class Scheduler {
     this._clearAttributeTimer();
     if (!this.running) return;
     if (!this.attributeUpdateConfig.autoUpdate) return;
+    if (!this.attributeUpdateConfig.runWhenIdle) return;
     if (!this.attributeCallback) return;
     const interval = this.attributeUpdateConfig.maxFrameInterval;
     const delay = interval > 0 ? interval : 16;
@@ -207,6 +212,7 @@ export class Scheduler {
     if (!this.attributeUpdateConfig.autoUpdate) return;
     if (!this.attributeCallback) return;
     if (!this.currentFrame) return;
+    if (!this.attributeUpdateConfig.runWhenIdle && reason !== 'render') return;
     const now = performance.now();
     const elapsed = now - this._lastAttributeTime;
     const interval = this.attributeUpdateConfig.maxFrameInterval;

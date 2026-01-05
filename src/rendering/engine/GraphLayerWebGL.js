@@ -4,6 +4,7 @@ import {
 import { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './GraphLayerCommon.js';
 import { GraphLayer } from './GraphLayer.js';
 import { FrameGraphRunner } from './framegraph/FrameGraphRunner.js';
+import { bumpCounter } from '../../utilities/counters.js';
 
 export class GraphLayerWebGL extends GraphLayer {
   constructor(options = {}) {
@@ -132,6 +133,7 @@ export class GraphLayerWebGL extends GraphLayer {
     this._nodeVersionsLast = null;
     this._edgeVersionsLast = null;
     this._shaderSources = null;
+    this.counters = { weightedFramebufferRenders: 0 };
   }
 
   initialize(device, size) {
@@ -919,6 +921,7 @@ export class GraphLayerWebGL extends GraphLayer {
   }) {
     const gl = this.gl;
     if (!gl || !this.weightedFramebuffer) return;
+    this.counters.weightedFramebufferRenders = bumpCounter(this.counters.weightedFramebufferRenders);
     const mainFramebuffer = context.target?.handle ?? null;
     const mainDrawBuffers = mainFramebuffer ? [gl.COLOR_ATTACHMENT0] : [gl.BACK];
     const applyViewport = () => {
