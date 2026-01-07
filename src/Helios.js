@@ -44,6 +44,9 @@ export const EVENTS = Object.freeze({
   NODE_HOVER: 'node:hover',
   EDGE_HOVER: 'edge:hover',
 
+  GRAPH_CLICK: 'graph:click',
+  GRAPH_DBLCLICK: 'graph:dblclick',
+
   NODE_CLICK: 'node:click',
   EDGE_CLICK: 'edge:click',
 
@@ -307,6 +310,7 @@ export class Helios extends EventTarget {
         this.renderer.resize(size);
       }
       this.attributeTracker?.resize(size);
+      this.indexPickingTracker?.resize(size);
       this.layout?.resize?.(size);
       if (!this.manualRendering) {
         this.scheduler.requestGeometry();
@@ -1168,10 +1172,13 @@ export class Helios extends EventTarget {
     await this._ensureIndexPickingTargets();
     const picked = await this.indexPickingTracker.pick(x, y);
     const hit = this._resolvePrimaryHit(picked);
-    if (!hit || hit.index < 0) return;
+    const resolved = hit ?? { kind: null, index: -1, depth: null };
     const baseDetail = {
-      index: hit.index,
-      depth: hit.depth ?? null,
+      kind: resolved.kind,
+      index: resolved.index,
+      node: resolved.kind === 'node' ? resolved.index : -1,
+      edge: resolved.kind === 'edge' ? resolved.index : -1,
+      depth: resolved.depth ?? null,
       x,
       y,
       clientX: event.clientX,
@@ -1184,9 +1191,12 @@ export class Helios extends EventTarget {
       },
       button: event.button,
     };
-    if (hit.kind === 'node') {
+
+    this.emit(isDouble ? EVENTS.GRAPH_DBLCLICK : EVENTS.GRAPH_CLICK, baseDetail);
+
+    if (resolved.kind === 'node' && resolved.index >= 0) {
       this.emit(isDouble ? EVENTS.NODE_DBLCLICK : EVENTS.NODE_CLICK, baseDetail);
-    } else if (hit.kind === 'edge') {
+    } else if (resolved.kind === 'edge' && resolved.index >= 0) {
       this.emit(isDouble ? EVENTS.EDGE_DBLCLICK : EVENTS.EDGE_CLICK, baseDetail);
     }
   }

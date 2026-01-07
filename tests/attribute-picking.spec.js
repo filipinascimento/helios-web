@@ -109,7 +109,7 @@ async function collectPicks(page) {
 
 	async function runPickFlow(page, params) {
 	  const query = new URLSearchParams({ nodes: '4', layout: 'none', mode: '2d', renderer: 'webgl', pickTest: '1', ...params });
-	  await page.goto(`/?${query.toString()}`);
+	  await page.goto(`/tests/fixtures/demo.html?${query.toString()}`);
 	  await waitForHelios(page);
 	  const picks = await collectPicks(page);
   if (!picks.nodeHits.length) {
@@ -129,7 +129,7 @@ test('attribute picking works in headless chromium (webgl)', async ({ page }) =>
 
 	test('@webgpu attribute picking works in headed webgpu when available', async ({ page }) => {
 	  // Navigate first so the origin is one we explicitly mark as secure for WebGPU.
-	  await page.goto('/');
+	  await page.goto('/tests/fixtures/blank.html');
 	  const supported = await page.evaluate(() => Boolean(navigator.gpu));
 	  test.skip(!supported, 'WebGPU not available in browser');
 	  const picks = await runPickFlow(page, { renderer: 'webgpu' });

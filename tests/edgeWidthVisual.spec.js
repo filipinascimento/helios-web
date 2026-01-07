@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test('edges render with correct relative widths', async ({ page }, testInfo) => {
-  await page.goto('/');
+  await page.goto('/tests/fixtures/blank.html');
   await page.setViewportSize({ width: 400, height: 300 });
 
   const setup = await page.evaluate(async () => {

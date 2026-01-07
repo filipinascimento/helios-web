@@ -17,6 +17,13 @@ This folder contains two kinds of tests:
 
 Playwright spins up Vite via the config in `playwright.config.js` (port 4173). You usually do not need a separate `npm run dev`.
 
+## Test fixtures
+
+Playwright tests should avoid navigating to `/` (which loads `docs/examples/basic/main.js`). Instead, they use:
+
+- `tests/fixtures/blank.html`: minimal page with no scripts (tests build their own Helios instance via `page.evaluate`).
+- `tests/fixtures/demo.html`: stable demo harness that exposes `window.__helios` and `window.__HELIOS_DIAGNOSTICS__` and supports query params like `renderer`, `layout`, `mode`, `nodes`, and `pickTest`.
+
 ## Skips and environment notes
 
 Some tests intentionally skip when prerequisites are missing:

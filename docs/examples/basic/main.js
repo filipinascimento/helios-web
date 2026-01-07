@@ -3,16 +3,8 @@ import HeliosNetwork, { AttributeType } from 'helios-network';
 import { Helios, createColormapScale } from '../../../src/index.js';
 
 // Set this to an object like { helios: true, mapper: true, scheduler: true } to re-enable debug logs.
+const DEFAULT_NODE_COUNT = 2_000;
 const DEBUG_CONFIG = null;
-window.__HELIOS_DEBUG__ = DEBUG_CONFIG;
-
-const DEFAULT_NODE_COUNT = (() => {
-  const fromEnv = Number(import.meta?.env?.VITE_NODE_COUNT ?? Number.NaN);
-  if (Number.isFinite(fromEnv) && fromEnv > 0) {
-    return Math.floor(fromEnv);
-  }
-  return 2_000;
-})();
 
 function resolveRendererPreference() {
   const params = new URLSearchParams(window.location.search);
@@ -67,16 +59,6 @@ function resolveNodeCount() {
   return DEFAULT_NODE_COUNT;
 }
 
-function resolvePickTestMode() {
-  const params = new URLSearchParams(window.location.search);
-  return params.get('pickTest') === '1';
-}
-
-function resolveEventsDemoMode() {
-  const params = new URLSearchParams(window.location.search);
-  return params.get('events') === '1';
-}
-
 async function bootstrap() {
   const diagnostics = {
     ready: false,
@@ -96,7 +78,6 @@ async function bootstrap() {
 
   console.log("Adding nodes...");
   const nodeCount = resolveNodeCount();
-  const pickTest = resolvePickTestMode();
   const nodes = network.addNodes(nodeCount);
 
   console.log("Filling node attributes...");
@@ -179,36 +160,53 @@ async function bootstrap() {
   // connect with the next 2 or 3 nodes to ensure connectivity
   // if 2d or 3d (try to follow the grid
   console.log("Adding edges...");
-  let edges = [];
+  const edges = [];
   const is3D = resolveMode() === '3d';
-  const step = is3D ? 1 : 1;
-  if (pickTest && nodeCount >= 2) {
-    edges = [[nodes[0], nodes[3] ?? nodes[1]]];
-    if (nodeCount >= 3) edges.push([nodes[1], nodes[2]]);
-    if (nodeCount >= 4) edges.push([nodes[0], nodes[1]]);
-  } else {
-    for (let i = 0; i < nodeCount; i += 1) {
-      for (let j = 1; j <= step; j += 1) {
-        const to = (i + j) % nodeCount;
-        edges.push([nodes[i], nodes[to]]);
+
+  if (nodeCount > 1) {
+    if (is3D) {
+      const side = Math.ceil(Math.cbrt(nodeCount));
+      for (let i = 0; i < nodeCount; i += 1) {
+        const z = Math.floor(i / (side * side));
+        const rem = i - z * side * side;
+        const y = Math.floor(rem / side);
+        const x = rem - y * side;
+
+        const neighborX = x + 1 < side ? i + 1 : -1;
+        const neighborY = y + 1 < side ? i + side : -1;
+        const neighborZ = z + 1 < side ? i + side * side : -1;
+
+        if (neighborX >= 0 && neighborX < nodeCount) edges.push([nodes[i], nodes[neighborX]]);
+        if (neighborY >= 0 && neighborY < nodeCount) edges.push([nodes[i], nodes[neighborY]]);
+        if (neighborZ >= 0 && neighborZ < nodeCount) edges.push([nodes[i], nodes[neighborZ]]);
+      }
+    } else {
+      const side = Math.ceil(Math.sqrt(nodeCount));
+      for (let i = 0; i < nodeCount; i += 1) {
+        const row = Math.floor(i / side);
+        const col = i - row * side;
+        const neighborRight = col + 1 < side ? i + 1 : -1;
+        const neighborDown = row + 1 < side ? i + side : -1;
+
+        if (neighborRight >= 0 && neighborRight < nodeCount) edges.push([nodes[i], nodes[neighborRight]]);
+        if (neighborDown >= 0 && neighborDown < nodeCount) edges.push([nodes[i], nodes[neighborDown]]);
       }
     }
   }
-
-  // Trying adding another edge...
-  // edges.push(nodes[0],nodes[100]);
 
   const edgeIds = network.addEdges(edges);
   // network node and edge count
   console.log("Created a network with nodes:", network.nodeCount, "edges:", network.edgeCount);
   
   console.log("Filling edge attribute...");
-  network.withBufferAccess(() => {
-    const edgeBuffer = network.getEdgeAttributeBuffer(edgeAttribute).view;
-    for (const id of edgeIds) {
-      edgeBuffer[id] = Math.random();
-    }
-  });
+  if (edgeIds.length) {
+    network.withBufferAccess(() => {
+      const edgeBuffer = network.getEdgeAttributeBuffer(edgeAttribute).view;
+      for (const id of edgeIds) {
+        edgeBuffer[id] = Math.random();
+      }
+    });
+  }
 
   console.log("Defining helios options...");
   const target = document.getElementById('app');
@@ -264,16 +262,6 @@ async function bootstrap() {
  
 
   console.log("Helios is ready!");
-  // helios.renderer?.camera?.setTarget?.([0, 0, mode === '3d' ? 0 : 0]);
-  if (pickTest && helios.renderer?.camera) {
-    helios.renderer.camera.setMode?.('2d');
-    helios.renderer.camera.zoom = 2;
-    if (helios.renderer.camera.pan2D?.length >= 2) {
-      helios.renderer.camera.pan2D[0] = 0;
-      helios.renderer.camera.pan2D[1] = 0;
-    }
-    helios.renderer.camera.updateMatrices?.();
-  }
 
   // Showcase a colormap on nodes: map "weight" through a perceptual ramp.
   console.log("Setting up mappers...");
@@ -283,11 +271,7 @@ async function bootstrap() {
   helios.nodeMapper.channel('color').from(nodeAttribute).transform((v) => nodeColormap(v ?? 0)).done();
 
   console.log("  Node sizes...");
-  if (pickTest) {
-    helios.nodeMapper.channel('size').constant(14).done();
-  } else {
-    helios.nodeMapper.channel('size').from(nodeAttribute).linear([0, 1], [1, 4]).done();
-  }
+  helios.nodeMapper.channel('size').from(nodeAttribute).linear([0, 1], [1, 4]).done();
 
   // Now using the default edge color mapper.
   // uncomment below to use a custom edge color mapper
@@ -305,18 +289,11 @@ async function bootstrap() {
 
   console.log("Changing edge scaling...");
   // Make edges visibly thicker for the demo.
-  if (helios.renderer?.graphLayer) {
-    helios.renderer.graphLayer.edgeWidthScale = 1.0;
-    helios.renderer.graphLayer.edgeWidthBase = 0;
-  }
+  helios.renderer.graphLayer.edgeWidthScale = 1.0;
+  helios.renderer.graphLayer.edgeWidthBase = 0;
+  
 
-  console.log("Enabling attribute tracking for picking (auto-update, scaled)...");
-  helios.enableAttributeTracking('$index', '$index', {
-    resolutionScale: 1.0,
-    trackDepth: true,
-    autoUpdate: true,
-    autoUpdateMaxFps: 1,
-  });
+  console.log("Picking");
 
   // --- State interactions demo -------------------------------------------------
   // Click selects a node; clicking empty space deselects.
@@ -334,13 +311,11 @@ async function bootstrap() {
   // HIGHLIGHTED: slightly bigger and tint.
   helios.setNodeStateStyle(2, { sizeMul: 1.15, opacityMul: 1.0, outlineMul: 1.2, colorAdd: [0.0, 0.25, 0.25, 0] });
 
-  helios.enableNodePicking({ resolutionScale: 0.25, trackDepth: true, maxFps: 30 });
+  // helios.enableNodePicking({ resolutionScale: 0.25, trackDepth: false, maxFps: 15 });
 
   let highlightedNode = null;
   let selectedNode = null;
   const filteredNodes = new Set();
-  let suppressNextBackgroundClick = false;
-  let suppressNextBackgroundDblClick = false;
 
   const clearSelected = () => {
     if (selectedNode != null) {
@@ -373,77 +348,36 @@ async function bootstrap() {
     }
   });
 
-  helios.on('node:click', (e) => {
+  // Click and double-click are emitted even when the background is clicked (kind === null).
+  helios.on('graph:click', (e) => {
     const detail = e?.detail;
     if (!detail) return;
-    suppressNextBackgroundClick = true;
-    const index = detail.index;
-    if (selectedNode != null && selectedNode !== index) {
-      helios.setNodeState([selectedNode], STATES.SELECTED, { mode: 'remove' });
+    if (detail.kind === 'node' && detail.index >= 0) {
+      const index = detail.index;
+      if (selectedNode != null && selectedNode !== index) {
+        helios.setNodeState([selectedNode], STATES.SELECTED, { mode: 'remove' });
+      }
+      selectedNode = index;
+      helios.setNodeState([index], STATES.SELECTED, { mode: 'add' });
+      return;
     }
-    selectedNode = index;
-    helios.setNodeState([index], STATES.SELECTED, { mode: 'add' });
-  });
-
-  helios.on('edge:click', () => {
-    suppressNextBackgroundClick = true;
+    // Background click or edge click: clear selection.
     clearSelected();
   });
 
-  helios.on('node:dblclick', (e) => {
+  helios.on('graph:dblclick', (e) => {
     const detail = e?.detail;
     if (!detail) return;
-    suppressNextBackgroundDblClick = true;
-    clearFiltered();
-    filteredNodes.add(detail.index);
-    helios.setNodeState([detail.index], STATES.FILTERED, { mode: 'add' });
-  });
-
-  helios.on('edge:dblclick', () => {
-    suppressNextBackgroundDblClick = true;
-    clearFiltered();
-  });
-
-  // Background click / dblclick (no hit) handling.
-  helios.layers?.canvas?.addEventListener?.('click', () => {
-    if (suppressNextBackgroundClick) {
-      suppressNextBackgroundClick = false;
+    if (detail.kind === 'node' && detail.index >= 0) {
+      clearFiltered();
+      filteredNodes.add(detail.index);
+      helios.setNodeState([detail.index], STATES.FILTERED, { mode: 'add' });
       return;
     }
-    clearSelected();
-  });
-
-  helios.layers?.canvas?.addEventListener?.('dblclick', () => {
-    if (suppressNextBackgroundDblClick) {
-      suppressNextBackgroundDblClick = false;
-      return;
-    }
+    // Background double-click or edge double-click: reset filters.
     clearFiltered();
   });
 
-  if (resolveEventsDemoMode()) {
-    console.log('Enabling Helios interaction events (node/edge picking)...');
-    const abort = new AbortController();
-    window.__heliosEventsAbort = abort;
-    helios.enableNodePicking({ resolutionScale: 1.0, trackDepth: true, maxFps: 30 });
-    helios.enableEdgePicking({ resolutionScale: 1.0, trackDepth: true, maxFps: 30 });
-    helios.on('node:hover', (e) => {
-      if (!e?.detail) return;
-      if (e.detail.state === 'in') console.log('Node hover in', e.detail);
-      if (e.detail.state === 'out') console.log('Node hover out', e.detail);
-    }, { signal: abort.signal });
-    helios.on('edge:hover', (e) => {
-      if (!e?.detail) return;
-      if (e.detail.state === 'in') console.log('Edge hover in', e.detail);
-      if (e.detail.state === 'out') console.log('Edge hover out', e.detail);
-    }, { signal: abort.signal });
-    helios.on('node:click', (e) => console.log('Node click', e.detail), { signal: abort.signal });
-    helios.on('edge:click', (e) => console.log('Edge click', e.detail), { signal: abort.signal });
-  }
-
-  if (pickTest) {
-    await helios.renderAttributeTracking();
-  }
 
   console.log("Misc diagnostics...");
   const rendererType = helios.renderer?.device?.type ?? helios.renderer?.constructor?.name ?? 'unknown';
@@ -455,7 +389,6 @@ async function bootstrap() {
   window.__helios = helios;
   console.log("Done! Helios instance is available as window.__helios", helios);
   const m = window.__helios?.network?.module;
-  console.log("HEAP SIZE: ",m?.HEAPU8?.buffer?.byteLength, 'bytes');
 }
 
 bootstrap().catch((error) => {

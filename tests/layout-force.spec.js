@@ -10,7 +10,7 @@ async function waitForDiagnostics(page) {
 
 test.describe('force layout behavior', () => {
   test('connected nodes end up closer than random non-neighbors', async ({ page }, testInfo) => {
-    await page.goto('/?layout=force3d&mode=2d');
+    await page.goto('/tests/fixtures/demo.html?layout=force3d&mode=2d&nodes=240');
     const diagnostics = await waitForDiagnostics(page);
     expect(diagnostics.nodeCount).toBeGreaterThan(20);
     expect(diagnostics.edgeCount).toBeGreaterThan(20);

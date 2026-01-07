@@ -157,7 +157,7 @@ test('no-state styling + discard affects WebGL rendering', async ({ page }) => {
 });
 
 test('@webgpu state styling affects WebGPU rendering', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/tests/fixtures/blank.html');
   const supported = await page.evaluate(async () => {
     if (!navigator.gpu) return false;
     const adapter = await navigator.gpu.requestAdapter();
@@ -168,7 +168,7 @@ test('@webgpu state styling affects WebGPU rendering', async ({ page }) => {
 });
 
 test('@webgpu no-state styling + discard affects WebGPU rendering', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/tests/fixtures/blank.html');
   const supported = await page.evaluate(async () => {
     if (!navigator.gpu) return false;
     const adapter = await navigator.gpu.requestAdapter();

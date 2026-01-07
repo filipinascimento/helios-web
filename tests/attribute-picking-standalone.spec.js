@@ -141,7 +141,7 @@ test('deterministic picking hits expected indices (webgl)', async ({ page }) => 
 });
 
 test('deterministic picking hits expected indices (webgpu when available)', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/tests/fixtures/blank.html');
   const supported = await page.evaluate(async () => {
     if (!navigator.gpu) return false;
     const adapter = await navigator.gpu.requestAdapter();

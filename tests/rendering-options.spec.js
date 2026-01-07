@@ -34,13 +34,13 @@ async function capturePageScreenshot(page, testInfo, name, options = {}) {
 
 test.describe('renderer selection', () => {
   test('honors webgl force flag via query param', async ({ page }) => {
-    await page.goto('/?renderer=webgl');
+    await page.goto('/tests/fixtures/demo.html?renderer=webgl');
     const diagnostics = await waitForDiagnostics(page);
     expect(diagnostics.renderer.toLowerCase()).toContain('webgl');
   });
 
   test('defaults to best available backend', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/tests/fixtures/demo.html');
     const hasWebGPU = await page.evaluate(() => Boolean(navigator.gpu));
     const diagnostics = await waitForDiagnostics(page);
     if (hasWebGPU && diagnostics.renderer.toLowerCase().includes('webgpu')) {
@@ -53,7 +53,7 @@ test.describe('renderer selection', () => {
 
 test.describe('renderer helpers', () => {
   test('project/unproject round trips', async ({ page }) => {
-    await page.goto('/?renderer=webgl');
+    await page.goto('/tests/fixtures/demo.html?renderer=webgl');
     await waitForDiagnostics(page);
     const { original, roundTrip } = await page.evaluate(() => {
       const renderer = window.__helios.renderer;
@@ -67,7 +67,7 @@ test.describe('renderer helpers', () => {
   });
 
   test('can create framebuffers and present without errors', async ({ page }) => {
-    await page.goto('/?renderer=webgl');
+    await page.goto('/tests/fixtures/demo.html?renderer=webgl');
     await waitForDiagnostics(page);
     const framebufferInfo = await page.evaluate(() => {
       const renderer = window.__helios.renderer;
@@ -81,7 +81,7 @@ test.describe('renderer helpers', () => {
   });
 
   test('can render to framebuffer and read pixels', async ({ page }) => {
-    await page.goto('/?renderer=webgl');
+    await page.goto('/tests/fixtures/demo.html?renderer=webgl');
     await waitForDiagnostics(page);
     const pixel = await page.evaluate(async () => {
       const renderer = window.__helios.renderer;
@@ -107,7 +107,7 @@ test.describe('renderer helpers', () => {
   });
 
   test('custom layers receive render calls', async ({ page }) => {
-    await page.goto('/?renderer=webgl');
+    await page.goto('/tests/fixtures/demo.html?renderer=webgl');
     await waitForDiagnostics(page);
     const count = await page.evaluate(() => {
       const renderer = window.__helios.renderer;
@@ -127,7 +127,7 @@ test.describe('renderer helpers', () => {
   });
 
   test('renders deterministic node colors at fixed positions', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/tests/fixtures/blank.html');
     const diagnostics = await page.evaluate(async () => {
       window.__helios?.destroy?.();
       document.body.innerHTML = '<div id="app" style="width:320px;height:320px"></div>';
@@ -186,7 +186,7 @@ test.describe('webgpu visual (headed)', () => {
       test.skip(true, 'Browser fixture unavailable');
     }
 
-    await headedPage.goto('/');
+    await headedPage.goto('/tests/fixtures/blank.html');
     const hasWebGPU = await headedPage.evaluate(() => Boolean(navigator.gpu));
     if (!hasWebGPU) {
       await capturePageScreenshot(headedPage, testInfo, 'no-webgpu');
@@ -304,7 +304,7 @@ test.describe('webgpu visual (headed)', () => {
       test.skip(true, 'Browser fixture unavailable');
     }
 
-    await headedPage.goto('/');
+    await headedPage.goto('/tests/fixtures/blank.html');
     await capturePageScreenshot(headedPage, testInfo, 'weighted-headed-initial');
 
     const result = await headedPage.evaluate(async () => {

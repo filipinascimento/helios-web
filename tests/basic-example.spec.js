@@ -24,7 +24,7 @@ function parseScreenshot(buffer) {
 
 test.describe('basic example', () => {
   test('renders nodes with non-empty pixels', async ({ page }) => {
-    await page.goto('/?renderer=webgl');
+    await page.goto('/tests/fixtures/demo.html?renderer=webgl&nodes=600');
 
     const diagnostics = await waitForDiagnostics(page);
     expect(diagnostics.nodeCount).toBeGreaterThan(0);

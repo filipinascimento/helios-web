@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { PNG } from 'pngjs';
 
 async function createOverlapScreenshot(page, mode = 'alpha') {
-  await page.goto('/');
+  await page.goto('/tests/fixtures/blank.html');
   await page.setViewportSize({ width: 320, height: 320 });
 
   const { screenshot, fallback } = await page.evaluate(async ({ transparencyModeEdges }) => {
