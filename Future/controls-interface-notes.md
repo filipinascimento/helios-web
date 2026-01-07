@@ -15,7 +15,7 @@ This document captures a proposal for adding an optional (but complete) interfac
 Helios already exposes effectful APIs that can be driven by a reactive layer:
 
 - Layout:
-  - `Helios` can swap layouts via `helios.setLayout(layoutInstance)`.
+  - `Helios` can swap layouts via `helios.layout(layoutInstance)`.
   - There is a `WorkerLayout` backed by `src/workers/layoutWorker.js` with options such as `layout: 'force3d'|'jitter'`, force constants, etc.
   - Layout lifecycle is already signaled via `EVENTS.LAYOUT_START` / `EVENTS.LAYOUT_STOP`.
 
@@ -101,7 +101,7 @@ Layouts are “things that run.” Possible plugin surfaces:
 
 1. **Registry + factory (headless)**
    - `registerLayout(id, { label, schema, create(helios, params) })`
-   - UI renders inputs from schema; binding layer calls `helios.setLayout(create(...))`
+   - UI renders inputs from schema; binding layer calls `helios.layout(create(...))`
 
 2. **Worker-layout parameter plugins** (fits current worker)
    - Layout plugin contributes `workerOptionsPatch` + schema

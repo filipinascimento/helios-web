@@ -127,7 +127,7 @@ export class Helios extends EventTarget {
     if (options.prewarm === true) {
       this.prewarm({ updateDenseBuffers: options.prewarmDenseBuffers !== false });
     }
-    this.layout = this.createLayout(options.layout);
+    this._layout = this.createLayout(options.layout);
     this.renderer = null;
     this.attributeTracker = null;
     this.indexPickingTracker = null;
@@ -238,16 +238,16 @@ export class Helios extends EventTarget {
 
   async initialize() {
     this.debug.log('helios', 'Initializing layout');
-    if (this.layout?.setUpdateListener) {
-      this.layout.setUpdateListener(() => {
+    if (this._layout?.setUpdateListener) {
+      this._layout.setUpdateListener(() => {
         this.visuals.markPositionsDirty();
         this.scheduler.requestGeometry();
         this.debug.log('layout', 'Layout requested geometry update');
       });
     }
-    await this.layout?.initialize?.();
-    this.debug.log('helios', 'Layout initialized', { layout: this.layout?.constructor?.name });
-    this.layout?.resize?.(this.layers.size);
+    await this._layout?.initialize?.();
+    this.debug.log('helios', 'Layout initialized', { layout: this._layout?.constructor?.name });
+    this._layout?.resize?.(this.layers.size);
     this.debug.log('layout', 'Layout resized to initial viewport', this.layers.size);
 
     this.debug.log('helios', 'Creating renderer', {
@@ -290,10 +290,10 @@ export class Helios extends EventTarget {
     );
     this.scheduler.setLayoutEventHandlers({
       start: (payload) => {
-        this.emit(EVENTS.LAYOUT_START, { ...payload, algo: this.layout?.constructor?.name ?? null });
+        this.emit(EVENTS.LAYOUT_START, { ...payload, algo: this._layout?.constructor?.name ?? null });
       },
       stop: (payload) => {
-        this.emit(EVENTS.LAYOUT_STOP, { ...payload, algo: this.layout?.constructor?.name ?? null });
+        this.emit(EVENTS.LAYOUT_STOP, { ...payload, algo: this._layout?.constructor?.name ?? null });
       },
     });
     if (this.renderer?.camera?.setChangeListener) {
@@ -311,7 +311,7 @@ export class Helios extends EventTarget {
       }
       this.attributeTracker?.resize(size);
       this.indexPickingTracker?.resize(size);
-      this.layout?.resize?.(size);
+      this._layout?.resize?.(size);
       if (!this.manualRendering) {
         this.scheduler.requestGeometry();
         this.scheduler.requestRender();
@@ -321,7 +321,7 @@ export class Helios extends EventTarget {
     });
 
     this.debug.log('scheduler', 'Setting scheduler callbacks');
-    this.scheduler.setLayout(this.layout);
+    this.scheduler.setLayout(this._layout);
     this.scheduler.setGeometryCallback(() => {
       this.counters.geometryFrames = bumpCounter(this.counters.geometryFrames);
       if (this.mappersDirty) {
@@ -446,7 +446,7 @@ export class Helios extends EventTarget {
     }
     this.visuals.markPositionsDirty();
     this.mappersDirty = true;
-    this.layout?.requestUpdate?.();
+    this._layout?.requestUpdate?.();
     this.scheduler.requestLayout('data');
     this.scheduler.requestGeometry();
     return nodes;
@@ -461,7 +461,7 @@ export class Helios extends EventTarget {
     }
     this.visuals.markPositionsDirty();
     this.mappersDirty = true;
-    this.layout?.requestUpdate?.();
+    this._layout?.requestUpdate?.();
     this.scheduler.requestLayout('data');
     this.scheduler.requestGeometry();
     return edgeIndices;
@@ -479,12 +479,12 @@ export class Helios extends EventTarget {
     }
     this.visuals.markPositionsDirty();
     this.mappersDirty = true;
-    this.layout?.requestUpdate?.();
+    this._layout?.requestUpdate?.();
     this.scheduler.requestLayout('data');
     this.scheduler.requestGeometry();
   }
 
-  setNodeState(indices, mask, options = {}) {
+  nodeState(indices, mask, options = {}) {
     const mode = options.mode ?? 'replace';
     const value = (Number(mask) >>> 0);
     this.network.withBufferAccess(() => {
@@ -516,9 +516,10 @@ export class Helios extends EventTarget {
       this.visuals.bumpEdgeAttributes(EDGE_ENDPOINTS_STATE_ATTRIBUTE);
     });
     this.scheduler.requestGeometry();
+    return this;
   }
 
-  setEdgeState(indices, mask, options = {}) {
+  edgeState(indices, mask, options = {}) {
     const mode = options.mode ?? 'replace';
     const value = (Number(mask) >>> 0);
     this.network.withBufferAccess(() => {
@@ -548,34 +549,93 @@ export class Helios extends EventTarget {
       this.visuals.bumpEdgeAttributes(EDGE_STATE_ATTRIBUTE);
     });
     this.scheduler.requestGeometry();
+    return this;
   }
 
-  setNodeStateStyle(slot, style) {
+  nodeStateStyle(slot, style) {
+    if (arguments.length < 2) {
+      const layer = this.renderer?.graphLayer;
+      const index = Number(slot);
+      if (!layer || !Number.isInteger(index) || index < 0 || index >= layer.stateSlotCount) return null;
+      const o = index * 4;
+      return {
+        sizeMul: layer.nodeStateScale[o + 0],
+        opacityMul: layer.nodeStateScale[o + 1],
+        outlineMul: layer.nodeStateScale[o + 2],
+        discard: layer.nodeStateScale[o + 3] === 1,
+        colorMul: Array.from(layer.nodeStateColorMul.slice(o, o + 4)),
+        colorAdd: Array.from(layer.nodeStateColorAdd.slice(o, o + 4)),
+      };
+    }
     this.renderer?.graphLayer?.setNodeStateStyle?.(slot, style);
     this.scheduler.requestRender();
+    return this;
   }
 
-  setNodeNoStateStyle(style) {
+  nodeNoStateStyle(style) {
+    if (arguments.length === 0) {
+      const layer = this.renderer?.graphLayer;
+      if (!layer) return null;
+      return {
+        sizeMul: layer.nodeNoStateScale[0],
+        opacityMul: layer.nodeNoStateScale[1],
+        outlineMul: layer.nodeNoStateScale[2],
+        discard: layer.nodeNoStateScale[3] === 1,
+        colorMul: Array.from(layer.nodeNoStateColorMul.slice(0, 4)),
+        colorAdd: Array.from(layer.nodeNoStateColorAdd.slice(0, 4)),
+      };
+    }
     this.renderer?.graphLayer?.setNodeNoStateStyle?.(style);
     this.scheduler.requestRender();
+    return this;
   }
 
-  setEdgeStateStyle(slot, style) {
+  edgeStateStyle(slot, style) {
+    if (arguments.length < 2) {
+      const layer = this.renderer?.graphLayer;
+      const index = Number(slot);
+      if (!layer || !Number.isInteger(index) || index < 0 || index >= layer.stateSlotCount) return null;
+      const o = index * 4;
+      return {
+        widthMul: layer.edgeStateScale[o + 0],
+        opacityMul: layer.edgeStateScale[o + 1],
+        discard: layer.edgeStateScale[o + 3] === 1,
+        colorMul: Array.from(layer.edgeStateColorMul.slice(o, o + 4)),
+        colorAdd: Array.from(layer.edgeStateColorAdd.slice(o, o + 4)),
+      };
+    }
     this.renderer?.graphLayer?.setEdgeStateStyle?.(slot, style);
     this.scheduler.requestRender();
+    return this;
   }
 
-  setEdgeNoStateStyle(style) {
+  edgeNoStateStyle(style) {
+    if (arguments.length === 0) {
+      const layer = this.renderer?.graphLayer;
+      if (!layer) return null;
+      return {
+        widthMul: layer.edgeNoStateScale[0],
+        opacityMul: layer.edgeNoStateScale[1],
+        discard: layer.edgeNoStateScale[3] === 1,
+        colorMul: Array.from(layer.edgeNoStateColorMul.slice(0, 4)),
+        colorAdd: Array.from(layer.edgeNoStateColorAdd.slice(0, 4)),
+      };
+    }
     this.renderer?.graphLayer?.setEdgeNoStateStyle?.(style);
     this.scheduler.requestRender();
+    return this;
   }
 
   resetStateStyles() {
     this.renderer?.graphLayer?.resetStateStyles?.();
     this.scheduler.requestRender();
+    return this;
   }
 
-  setMappers({ nodeMapper, edgeMapper } = {}) {
+  mappers({ nodeMapper, edgeMapper } = {}) {
+    if (arguments.length === 0) {
+      return { nodeMapper: this.nodeMapper, edgeMapper: this.edgeMapper };
+    }
     if (nodeMapper === null && edgeMapper === null) {
       this.debug.log('mapper', 'Resetting mappers to defaults');
       this.nodeMapper = new MapperCollection('node', this.network, () => {
@@ -587,7 +647,7 @@ export class Helios extends EventTarget {
       this.mappersDirty = true;
       this.scheduler?.requestGeometry?.();
       this.scheduler.requestGeometry();
-      return;
+      return this;
     }
     if (nodeMapper) {
       this.debug.log('mapper', 'Replacing node mapper');
@@ -599,45 +659,63 @@ export class Helios extends EventTarget {
     }
     this.mappersDirty = true;
     this.scheduler.requestGeometry();
+    return this;
   }
 
-  setLayout(layout) {
+  layout(layout) {
+    if (arguments.length === 0) {
+      return this._layout;
+    }
     if (!isLayoutInstance(layout)) {
       throw new Error('Layout must extend the Layout base class');
     }
-    this.layout?.dispose?.();
-    this.layout = layout;
+    this._layout?.dispose?.();
+    this._layout = layout;
     this.debug.log('layout', 'Layout replaced', { layout: layout?.constructor?.name });
-    this.layout.setUpdateListener(() => {
+    this._layout.setUpdateListener(() => {
       this.visuals.markPositionsDirty();
       this.scheduler.requestGeometry();
     });
     this.debug.log('layout', 'Initializing new layout instance');
-    this.layout.initialize?.();
-    this.layout.resize?.(this.layers.size);
+    this._layout.initialize?.();
+    this._layout.resize?.(this.layers.size);
     this.debug.log('layout', 'Layout initialized and resized', this.layers.size);
     this.scheduler.setLayout(layout);
     this.scheduler.requestLayout('user');
     this.scheduler.requestRender();
+    return this;
   }
+
+  // Backwards-compatible aliases.
+  setLayout(layout) { return this.layout(layout); }
+  setMappers(mappers) { return this.mappers(mappers); }
+  setNodeState(indices, mask, options) { return this.nodeState(indices, mask, options); }
+  setEdgeState(indices, mask, options) { return this.edgeState(indices, mask, options); }
+  setNodeStateStyle(slot, style) { return this.nodeStateStyle(slot, style); }
+  setEdgeStateStyle(slot, style) { return this.edgeStateStyle(slot, style); }
+  setNodeNoStateStyle(style) { return this.nodeNoStateStyle(style); }
+  setEdgeNoStateStyle(style) { return this.edgeNoStateStyle(style); }
 
   startLayout(algo = null, params = null) {
     const requestedAlgo = typeof algo === 'string' ? algo : null;
     const requestedParams = params ?? (requestedAlgo ? null : algo);
     this.scheduler.setLayoutEnabled(true, 'user');
-    this.layout?.requestUpdate?.();
+    this._layout?.requestUpdate?.();
     this.scheduler.requestLayout('user');
     if (requestedAlgo || requestedParams) {
       this.debug.log('layout', 'startLayout called', { algo: requestedAlgo, params: requestedParams });
     }
+    return this;
   }
 
   stopLayout(reason = 'user') {
     this.scheduler.setLayoutEnabled(false, reason);
+    return this;
   }
 
   requestRender() {
     this.scheduler.requestRender();
+    return this;
   }
 
   performRendering() {
@@ -952,22 +1030,26 @@ export class Helios extends EventTarget {
     this._picking.node.enabled = true;
     this._mergePickingOptions(options);
     this._applyPickingConfig();
+    return this;
   }
 
   enableEdgePicking(options = {}) {
     this._picking.edge.enabled = true;
     this._mergePickingOptions(options);
     this._applyPickingConfig();
+    return this;
   }
 
   disableNodePicking() {
     this._picking.node.enabled = false;
     this._applyPickingConfig();
+    return this;
   }
 
   disableEdgePicking() {
     this._picking.edge.enabled = false;
     this._applyPickingConfig();
+    return this;
   }
 
   _mergePickingOptions(options = {}) {
@@ -1369,7 +1451,7 @@ export class Helios extends EventTarget {
 
   destroy() {
     this.scheduler.stop();
-    this.layout?.dispose?.();
+    this._layout?.dispose?.();
     if (this.removeResizeListener) {
       this.removeResizeListener();
       this.removeResizeListener = null;

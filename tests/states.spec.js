@@ -54,17 +54,17 @@ async function runStateVisualCheck(page, renderer) {
 
     helios.resetStateStyles();
     // Slot 2 (HIGHLIGHTED): force green tint on node 0.
-    helios.setNodeStateStyle(2, { opacityMul: 2, colorMul: [0, 0, 0, 1], colorAdd: [0, 1, 0, 0] });
-    helios.setNodeState([0], helios.constructor.STATES.HIGHLIGHTED, { mode: 'replace' });
+    helios.nodeStateStyle(2, { opacityMul: 2, colorMul: [0, 0, 0, 1], colorAdd: [0, 1, 0, 0] });
+    helios.nodeState([0], helios.constructor.STATES.HIGHLIGHTED, { mode: 'replace' });
     await renderMain();
 
     const afterSlot2MaxGreen = await readMaxGreen();
 
     // Slot 3 (custom): force green tint on node 1.
     helios.resetStateStyles();
-    helios.setNodeState([0, 1], 0, { mode: 'replace' });
-    helios.setNodeStateStyle(3, { opacityMul: 2, colorMul: [0, 0, 0, 1], colorAdd: [0, 1, 0, 0] });
-    helios.setNodeState([1], 1 << 3, { mode: 'replace' });
+    helios.nodeState([0, 1], 0, { mode: 'replace' });
+    helios.nodeStateStyle(3, { opacityMul: 2, colorMul: [0, 0, 0, 1], colorAdd: [0, 1, 0, 0] });
+    helios.nodeState([1], 1 << 3, { mode: 'replace' });
     await renderMain();
     const afterSlot3MaxGreen = await readMaxGreen();
 
@@ -129,13 +129,13 @@ async function runNoStateVisualCheck(page, renderer) {
     const before = await readStats();
 
     helios.resetStateStyles();
-    helios.setNodeNoStateStyle({ colorMul: [0, 0, 0, 1], colorAdd: [0, 1, 0, 0] });
-    helios.setEdgeNoStateStyle({ colorMul: [0, 0, 0, 1], colorAdd: [0, 1, 0, 0] });
+    helios.nodeNoStateStyle({ colorMul: [0, 0, 0, 1], colorAdd: [0, 1, 0, 0] });
+    helios.edgeNoStateStyle({ colorMul: [0, 0, 0, 1], colorAdd: [0, 1, 0, 0] });
     await renderMain();
     const afterStyle = await readStats();
 
-    helios.setNodeNoStateStyle({ discard: true });
-    helios.setEdgeNoStateStyle({ discard: true });
+    helios.nodeNoStateStyle({ discard: true });
+    helios.edgeNoStateStyle({ discard: true });
     await renderMain();
     const afterDiscard = await readStats();
 

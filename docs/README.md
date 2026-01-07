@@ -27,7 +27,7 @@ await helios.ready;
 
 const mapper = new Mapper({ mode: 'node', network });
 mapper.channel('color').constant('#ff3366').done();
-helios.setMappers({ nodeMapper: mapper });
+helios.mappers({ nodeMapper: mapper });
 ```
 
 Key entry points:

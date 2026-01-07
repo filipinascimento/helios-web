@@ -27,8 +27,8 @@ Custom bits can be added by your application by defining additional bit position
 State updates are designed to be cheap (one `u32` write per item):
 
 ```js
-helios.setNodeState([nodeId], Helios.STATES.HIGHLIGHTED, { mode: 'add' });
-helios.setEdgeState([edgeId], Helios.STATES.SELECTED, { mode: 'add' });
+helios.nodeState([nodeId], Helios.STATES.HIGHLIGHTED, { mode: 'add' });
+helios.edgeState([edgeId], Helios.STATES.SELECTED, { mode: 'add' });
 ```
 
 Supported `mode` values:
@@ -56,7 +56,7 @@ Configure slots via:
 
 ```js
 // Slot 2 (HIGHLIGHTED): boost size and tint green.
-helios.setNodeStateStyle(2, {
+helios.nodeStateStyle(2, {
   sizeMul: 1.3,
   opacityMul: 1.0,
   colorMul: [0, 0, 0, 1],
@@ -64,7 +64,7 @@ helios.setNodeStateStyle(2, {
 });
 
 // Slot 1 (SELECTED): widen edges.
-helios.setEdgeStateStyle(1, { widthMul: 2.0 });
+helios.edgeStateStyle(1, { widthMul: 2.0 });
 ```
 
 Supported fields:
@@ -77,8 +77,8 @@ Supported fields:
 You can also configure a style that applies when the state bitmask is `0` (no active bits):
 
 ```js
-helios.setNodeNoStateStyle({ opacityMul: 0.25 });
-helios.setEdgeNoStateStyle({ opacityMul: 0.25 });
+helios.nodeNoStateStyle({ opacityMul: 0.25 });
+helios.edgeNoStateStyle({ opacityMul: 0.25 });
 ```
 
 This is useful for “dim everything unless highlighted” patterns (then highlight uses a normal state slot).
@@ -89,8 +89,8 @@ If `discard: true` is set on a style, matching nodes/edges are discarded in the 
 
 ```js
 // Hide everything in NO_STATE (common for filtering).
-helios.setNodeNoStateStyle({ discard: true });
-helios.setEdgeNoStateStyle({ discard: true });
+helios.nodeNoStateStyle({ discard: true });
+helios.edgeNoStateStyle({ discard: true });
 ```
 
 Performance notes:

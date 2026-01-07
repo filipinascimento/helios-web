@@ -12,6 +12,8 @@ test('exports Helios.STATES and keeps Helios.STATE_BITS as alias', () => {
 });
 
 test('supports no-state style helpers', () => {
+  assert.equal(typeof Helios.prototype.nodeNoStateStyle, 'function');
+  assert.equal(typeof Helios.prototype.edgeNoStateStyle, 'function');
   assert.equal(typeof Helios.prototype.setNodeNoStateStyle, 'function');
   assert.equal(typeof Helios.prototype.setEdgeNoStateStyle, 'function');
 });
