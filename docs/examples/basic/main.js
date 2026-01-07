@@ -289,8 +289,7 @@ async function bootstrap() {
 
   console.log("Changing edge scaling...");
   // Make edges visibly thicker for the demo.
-  helios.renderer.graphLayer.edgeWidthScale = 1.0;
-  helios.renderer.graphLayer.edgeWidthBase = 0;
+  helios.edgeWidthScale(1.0).edgeWidthBase(0);
   
 
   console.log("Picking");

@@ -85,6 +85,45 @@ function resolveStateSlot(slot, states) {
   return 31 - Math.clz32(mask);
 }
 
+function normalizeColorInput(color) {
+  if (color == null) return null;
+  if (Array.isArray(color) || ArrayBuffer.isView(color)) {
+    const r = Number(color[0]);
+    const g = Number(color[1]);
+    const b = Number(color[2]);
+    const a = color.length >= 4 ? Number(color[3]) : 1;
+    if (![r, g, b, a].every(Number.isFinite)) return null;
+    const max = Math.max(r, g, b, a);
+    if (max > 1.0) {
+      return [r / 255, g / 255, b / 255, a / 255];
+    }
+    return [r, g, b, a];
+  }
+  if (typeof color === 'string') {
+    const hex = color.trim();
+    if (!hex.startsWith('#')) return null;
+    const raw = hex.slice(1);
+    const expand = (c) => `${c}${c}`;
+    let r = 0; let g = 0; let b = 0; let a = 255;
+    if (raw.length === 3 || raw.length === 4) {
+      r = parseInt(expand(raw[0]), 16);
+      g = parseInt(expand(raw[1]), 16);
+      b = parseInt(expand(raw[2]), 16);
+      if (raw.length === 4) a = parseInt(expand(raw[3]), 16);
+    } else if (raw.length === 6 || raw.length === 8) {
+      r = parseInt(raw.slice(0, 2), 16);
+      g = parseInt(raw.slice(2, 4), 16);
+      b = parseInt(raw.slice(4, 6), 16);
+      if (raw.length === 8) a = parseInt(raw.slice(6, 8), 16);
+    } else {
+      return null;
+    }
+    if (![r, g, b, a].every(Number.isFinite)) return null;
+    return [r / 255, g / 255, b / 255, a / 255];
+  }
+  return null;
+}
+
 export const EVENTS = Object.freeze({
   LAYOUT_START: 'layout:start',
   LAYOUT_STOP: 'layout:stop',
@@ -181,6 +220,8 @@ export class Helios extends EventTarget {
     this.indexPickingTracker = null;
     this._anyListeners = new Set();
     this._listenHandlers = new Map();
+    this._pendingGraphLayerProps = new Map();
+    this._pendingRendererProps = new Map();
     this._frameId = 0;
     this._lastRenderTime = performance.now();
     this.counters = {
@@ -368,6 +409,7 @@ export class Helios extends EventTarget {
       stateSlots,
     });
     this.debug.log('helios', 'Renderer created', { renderer: this.renderer?.constructor?.name });
+    this._applyPendingRendererProps();
     this.attributeTracker = new AttributeTracker(this.renderer);
     this.attributeTracker.resize(this.layers.size);
     if (typeof this.renderer.resize === 'function') {
@@ -483,6 +525,126 @@ export class Helios extends EventTarget {
     }
     this.debug.log('helios', 'Initialization complete');
     this._applyPickingConfig();
+  }
+
+  _applyPendingRendererProps() {
+    const renderer = this.renderer;
+    const graphLayer = renderer?.graphLayer;
+    if (renderer && this._pendingRendererProps.size) {
+      for (const [key, value] of this._pendingRendererProps.entries()) {
+        renderer[key] = value;
+      }
+      this._pendingRendererProps.clear();
+    }
+    if (graphLayer && this._pendingGraphLayerProps.size) {
+      for (const [key, value] of this._pendingGraphLayerProps.entries()) {
+        graphLayer[key] = value;
+      }
+      this._pendingGraphLayerProps.clear();
+    }
+  }
+
+  _getGraphLayerProp(name) {
+    if (this.renderer?.graphLayer && name in this.renderer.graphLayer) {
+      return this.renderer.graphLayer[name];
+    }
+    return this._pendingGraphLayerProps.get(name);
+  }
+
+  _setGraphLayerProp(name, value) {
+    if (this.renderer?.graphLayer && name in this.renderer.graphLayer) {
+      this.renderer.graphLayer[name] = value;
+      this.scheduler.requestRender();
+      return this;
+    }
+    this._pendingGraphLayerProps.set(name, value);
+    return this;
+  }
+
+  _getRendererProp(name) {
+    if (this.renderer && name in this.renderer) {
+      return this.renderer[name];
+    }
+    return this._pendingRendererProps.get(name);
+  }
+
+  _setRendererProp(name, value) {
+    if (this.renderer && name in this.renderer) {
+      this.renderer[name] = value;
+      this.scheduler.requestRender();
+      return this;
+    }
+    this._pendingRendererProps.set(name, value);
+    return this;
+  }
+
+  edgeWidthScale(value) {
+    if (arguments.length === 0) return this._getGraphLayerProp('edgeWidthScale');
+    return this._setGraphLayerProp('edgeWidthScale', Number(value));
+  }
+
+  edgeWidthBase(value) {
+    if (arguments.length === 0) return this._getGraphLayerProp('edgeWidthBase');
+    return this._setGraphLayerProp('edgeWidthBase', Number(value));
+  }
+
+  edgeOpacityScale(value) {
+    if (arguments.length === 0) return this._getGraphLayerProp('edgeOpacityScale');
+    return this._setGraphLayerProp('edgeOpacityScale', Number(value));
+  }
+
+  edgeOpacityBase(value) {
+    if (arguments.length === 0) return this._getGraphLayerProp('edgeOpacityBase');
+    return this._setGraphLayerProp('edgeOpacityBase', Number(value));
+  }
+
+  nodeOpacityScale(value) {
+    if (arguments.length === 0) return this._getGraphLayerProp('nodeOpacityScale');
+    return this._setGraphLayerProp('nodeOpacityScale', Number(value));
+  }
+
+  nodeOpacityBase(value) {
+    if (arguments.length === 0) return this._getGraphLayerProp('nodeOpacityBase');
+    return this._setGraphLayerProp('nodeOpacityBase', Number(value));
+  }
+
+  nodeSizeScale(value) {
+    if (arguments.length === 0) return this._getGraphLayerProp('nodeSizeScale');
+    return this._setGraphLayerProp('nodeSizeScale', Number(value));
+  }
+
+  nodeSizeBase(value) {
+    if (arguments.length === 0) return this._getGraphLayerProp('nodeSizeBase');
+    return this._setGraphLayerProp('nodeSizeBase', Number(value));
+  }
+
+  nodeOutlineWidthScale(value) {
+    if (arguments.length === 0) return this._getGraphLayerProp('nodeOutlineWidthScale');
+    return this._setGraphLayerProp('nodeOutlineWidthScale', Number(value));
+  }
+
+  nodeOutlineWidthBase(value) {
+    if (arguments.length === 0) return this._getGraphLayerProp('nodeOutlineWidthBase');
+    return this._setGraphLayerProp('nodeOutlineWidthBase', Number(value));
+  }
+
+  edgeEndpointTrim(value) {
+    if (arguments.length === 0) return this._getGraphLayerProp('edgeEndpointTrim');
+    return this._setGraphLayerProp('edgeEndpointTrim', Number(value));
+  }
+
+  background(color) {
+    if (arguments.length === 0) return this._getRendererProp('clearColor');
+    const normalized = normalizeColorInput(color);
+    if (!normalized) {
+      throw new Error('background(color) expects #rgb/#rgba/#rrggbb/#rrggbbaa or [r,g,b(,a)]');
+    }
+    return this._setRendererProp('clearColor', normalized);
+  }
+
+  clearColor(color) {
+    if (arguments.length === 0) return this.background();
+    return this.background(color);
   }
 
   /**
@@ -1557,6 +1719,8 @@ export class Helios extends EventTarget {
       entry.unsubscribeSignal?.();
     }
     this._listenHandlers.clear();
+    this._pendingGraphLayerProps.clear();
+    this._pendingRendererProps.clear();
     if (this.removeResizeListener) {
       this.removeResizeListener();
       this.removeResizeListener = null;

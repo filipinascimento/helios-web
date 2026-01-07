@@ -48,6 +48,14 @@ Helios uses the standard `EventTarget` API and provides two orthogonal helper me
   - `on()` and `listen()` never remove/replace each other’s handlers; on dispatch, both run (in DOM listener registration order).
   - Supports `AbortSignal` via `options.signal`.
 
+## Renderer Convenience Accessors
+
+Some common renderer/graph-layer “global” knobs are available directly on `Helios` as D3-style accessors:
+
+- Getter: `helios.edgeWidthScale()`
+- Setter (chainable): `helios.edgeWidthScale(1.0).edgeWidthBase(0)`
+- Background/clear color: `helios.background('#0b1020')` (alias: `helios.clearColor(...)`)
+
 ## Mapper docs
 
 See [`docs/MAPPERS.md`](./MAPPERS.md) for channel mapping patterns, colormap helpers, and
