@@ -306,13 +306,13 @@ async function bootstrap() {
   helios
     .resetStateStyles()
     // FILTERED: hide.
-    .nodeStateStyle(0, { discard: true })
+    .nodeStateStyle('FILTERED', { discard: true })
     // SELECTED: bigger and brighter.
-    .nodeStateStyle(1, { sizeMul: 1.4, opacityMul: 1.0, outlineMul: 2.0, colorAdd: [0.25, 0.25, 0.25, 0] })
+    .nodeStateStyle('SELECTED', { sizeMul: 1.4, opacityMul: 1.0, outlineMul: 2.0, colorAdd: [0.25, 0.25, 0.25, 0] })
     // HIGHLIGHTED: slightly bigger and tint.
-    .nodeStateStyle(2, { sizeMul: 1.15, opacityMul: 1.0, outlineMul: 1.2, colorAdd: [0.0, 0.25, 0.25, 0] });
+    .nodeStateStyle('HIGHLIGHTED', { sizeMul: 1.15, opacityMul: 1.0, outlineMul: 1.2, colorAdd: [0.0, 0.25, 0.25, 0] });
 
-  // helios.enableNodePicking({ resolutionScale: 0.25, trackDepth: false, maxFps: 15 });
+  helios.enableNodePicking({ resolutionScale: 0.25, trackDepth: false, maxFps: 30 });
 
   let highlightedNode = null;
   let selectedNode = null;
@@ -320,14 +320,14 @@ async function bootstrap() {
 
   const clearSelected = () => {
     if (selectedNode != null) {
-      helios.nodeState([selectedNode], STATES.SELECTED, { mode: 'remove' });
+      helios.nodeState([selectedNode], 'SELECTED', { mode: 'remove' });
       selectedNode = null;
     }
   };
 
   const clearFiltered = () => {
     if (!filteredNodes.size) return;
-    helios.nodeState(Array.from(filteredNodes), STATES.FILTERED, { mode: 'remove' });
+    helios.nodeState(Array.from(filteredNodes), 'FILTERED', { mode: 'remove' });
     filteredNodes.clear();
   };
 
@@ -337,13 +337,13 @@ async function bootstrap() {
     const index = detail.index;
     if (detail.state === 'in') {
       if (highlightedNode != null && highlightedNode !== index) {
-        helios.nodeState([highlightedNode], STATES.HIGHLIGHTED, { mode: 'remove' });
+        helios.nodeState([highlightedNode], 'HIGHLIGHTED', { mode: 'remove' });
       }
       highlightedNode = index;
-      helios.nodeState([index], STATES.HIGHLIGHTED, { mode: 'add' });
+      helios.nodeState([index], 'HIGHLIGHTED', { mode: 'add' });
     } else if (detail.state === 'out') {
       if (highlightedNode === index) {
-        helios.nodeState([index], STATES.HIGHLIGHTED, { mode: 'remove' });
+        helios.nodeState([index], 'HIGHLIGHTED', { mode: 'remove' });
         highlightedNode = null;
       }
     }
@@ -356,10 +356,10 @@ async function bootstrap() {
     if (detail.kind === 'node' && detail.index >= 0) {
       const index = detail.index;
       if (selectedNode != null && selectedNode !== index) {
-        helios.nodeState([selectedNode], STATES.SELECTED, { mode: 'remove' });
+        helios.nodeState([selectedNode], 'SELECTED', { mode: 'remove' });
       }
       selectedNode = index;
-      helios.nodeState([index], STATES.SELECTED, { mode: 'add' });
+      helios.nodeState([index], 'SELECTED', { mode: 'add' });
       return;
     }
     // Background click or edge click: clear selection.
@@ -372,7 +372,7 @@ async function bootstrap() {
     if (detail.kind === 'node' && detail.index >= 0) {
       clearFiltered();
       filteredNodes.add(detail.index);
-      helios.nodeState([detail.index], STATES.FILTERED, { mode: 'add' });
+      helios.nodeState([detail.index], 'FILTERED', { mode: 'add' });
       return;
     }
     // Background double-click or edge double-click: reset filters.

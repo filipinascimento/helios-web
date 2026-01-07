@@ -17,3 +17,10 @@ test('supports no-state style helpers', () => {
   assert.equal(typeof Helios.prototype.setNodeNoStateStyle, 'function');
   assert.equal(typeof Helios.prototype.setEdgeNoStateStyle, 'function');
 });
+
+test('state APIs accept built-in state names', () => {
+  assert.equal(typeof Helios.prototype.nodeStateStyle, 'function');
+  assert.equal(typeof Helios.prototype.edgeStateStyle, 'function');
+  assert.equal(typeof Helios.prototype.nodeState, 'function');
+  assert.equal(typeof Helios.prototype.edgeState, 'function');
+});

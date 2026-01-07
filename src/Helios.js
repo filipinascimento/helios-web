@@ -37,6 +37,54 @@ function forEachIndex(indices, visitor) {
   }
 }
 
+function parseNamespacedEventType(type) {
+  if (typeof type !== 'string') {
+    throw new TypeError('Event type must be a string');
+  }
+  const trimmed = type.trim();
+  if (!trimmed) {
+    throw new Error('Event type cannot be empty');
+  }
+  if (/\s/.test(trimmed)) {
+    throw new Error('Namespaced event types cannot contain whitespace');
+  }
+  const dot = trimmed.indexOf('.');
+  if (dot === -1) return { type: trimmed, namespace: '' };
+  const base = trimmed.slice(0, dot);
+  const namespace = trimmed.slice(dot + 1);
+  if (!base) {
+    throw new Error('Namespaced event types must include a base type before the "."');
+  }
+  return { type: base, namespace };
+}
+
+function resolveStateMask(mask, states) {
+  if (typeof mask === 'string') {
+    const value = states?.[mask];
+    if (value == null) {
+      throw new Error(`Unknown state name "${mask}"`);
+    }
+    return value;
+  }
+  if (Array.isArray(mask)) {
+    let combined = 0;
+    for (const entry of mask) {
+      combined |= (Number(resolveStateMask(entry, states)) >>> 0);
+    }
+    return combined >>> 0;
+  }
+  return mask;
+}
+
+function resolveStateSlot(slot, states) {
+  if (typeof slot !== 'string') return slot;
+  const mask = Number(resolveStateMask(slot, states)) >>> 0;
+  if (!mask || (mask & (mask - 1)) !== 0) {
+    throw new Error(`State "${slot}" must map to a single-bit mask to be used as a style slot`);
+  }
+  return 31 - Math.clz32(mask);
+}
+
 export const EVENTS = Object.freeze({
   LAYOUT_START: 'layout:start',
   LAYOUT_STOP: 'layout:stop',
@@ -132,6 +180,7 @@ export class Helios extends EventTarget {
     this.attributeTracker = null;
     this.indexPickingTracker = null;
     this._anyListeners = new Set();
+    this._listenHandlers = new Map();
     this._frameId = 0;
     this._lastRenderTime = performance.now();
     this.counters = {
@@ -199,6 +248,55 @@ export class Helios extends EventTarget {
       }
     }
     return () => this.off(type, handler, options);
+  }
+
+  listen(typeWithNamespace, handler, options) {
+    const parsed = parseNamespacedEventType(typeWithNamespace);
+    const namespace = parsed.namespace ?? '';
+    const key = `${parsed.type}\u0000${namespace}`;
+    const capture = options === true ? true : Boolean(options?.capture);
+
+    const existing = this._listenHandlers.get(key);
+    if (existing) {
+      this.removeEventListener(parsed.type, existing.listener, existing.capture);
+      existing.unsubscribeSignal?.();
+      this._listenHandlers.delete(key);
+    }
+
+    if (handler == null) {
+      return this;
+    }
+    if (typeof handler !== 'function') {
+      throw new TypeError('listen() handler must be a function or null');
+    }
+
+    const listener = (event) => handler(event);
+    const listenerOptions = options === true || options === false
+      ? options
+      : { ...options, signal: undefined };
+    this.addEventListener(parsed.type, listener, listenerOptions);
+
+    let unsubscribeSignal = null;
+    const signal = options?.signal;
+    if (signal && typeof signal.addEventListener === 'function') {
+      if (signal.aborted) {
+        this.removeEventListener(parsed.type, listener, capture);
+      } else {
+        const onAbort = () => this.listen(typeWithNamespace, null);
+        signal.addEventListener('abort', onAbort, { once: true });
+        unsubscribeSignal = () => signal.removeEventListener?.('abort', onAbort);
+      }
+    }
+
+    this._listenHandlers.set(key, {
+      type: parsed.type,
+      namespace,
+      listener,
+      capture,
+      unsubscribeSignal,
+    });
+
+    return this;
   }
 
   off(type, handler, options) {
@@ -486,7 +584,7 @@ export class Helios extends EventTarget {
 
   nodeState(indices, mask, options = {}) {
     const mode = options.mode ?? 'replace';
-    const value = (Number(mask) >>> 0);
+    const value = (Number(resolveStateMask(mask, this.constructor.STATES)) >>> 0);
     this.network.withBufferAccess(() => {
       const view = this.network.getNodeAttributeBuffer(NODE_STATE_ATTRIBUTE)?.view;
       if (!view) return;
@@ -521,7 +619,7 @@ export class Helios extends EventTarget {
 
   edgeState(indices, mask, options = {}) {
     const mode = options.mode ?? 'replace';
-    const value = (Number(mask) >>> 0);
+    const value = (Number(resolveStateMask(mask, this.constructor.STATES)) >>> 0);
     this.network.withBufferAccess(() => {
       const view = this.network.getEdgeAttributeBuffer(EDGE_STATE_ATTRIBUTE)?.view;
       if (!view) return;
@@ -555,7 +653,7 @@ export class Helios extends EventTarget {
   nodeStateStyle(slot, style) {
     if (arguments.length < 2) {
       const layer = this.renderer?.graphLayer;
-      const index = Number(slot);
+      const index = Number(resolveStateSlot(slot, this.constructor.STATES));
       if (!layer || !Number.isInteger(index) || index < 0 || index >= layer.stateSlotCount) return null;
       const o = index * 4;
       return {
@@ -567,7 +665,8 @@ export class Helios extends EventTarget {
         colorAdd: Array.from(layer.nodeStateColorAdd.slice(o, o + 4)),
       };
     }
-    this.renderer?.graphLayer?.setNodeStateStyle?.(slot, style);
+    const resolvedSlot = resolveStateSlot(slot, this.constructor.STATES);
+    this.renderer?.graphLayer?.setNodeStateStyle?.(resolvedSlot, style);
     this.scheduler.requestRender();
     return this;
   }
@@ -593,7 +692,7 @@ export class Helios extends EventTarget {
   edgeStateStyle(slot, style) {
     if (arguments.length < 2) {
       const layer = this.renderer?.graphLayer;
-      const index = Number(slot);
+      const index = Number(resolveStateSlot(slot, this.constructor.STATES));
       if (!layer || !Number.isInteger(index) || index < 0 || index >= layer.stateSlotCount) return null;
       const o = index * 4;
       return {
@@ -604,7 +703,8 @@ export class Helios extends EventTarget {
         colorAdd: Array.from(layer.edgeStateColorAdd.slice(o, o + 4)),
       };
     }
-    this.renderer?.graphLayer?.setEdgeStateStyle?.(slot, style);
+    const resolvedSlot = resolveStateSlot(slot, this.constructor.STATES);
+    this.renderer?.graphLayer?.setEdgeStateStyle?.(resolvedSlot, style);
     this.scheduler.requestRender();
     return this;
   }
@@ -1452,6 +1552,11 @@ export class Helios extends EventTarget {
   destroy() {
     this.scheduler.stop();
     this._layout?.dispose?.();
+    for (const entry of this._listenHandlers.values()) {
+      this.removeEventListener(entry.type, entry.listener, entry.capture);
+      entry.unsubscribeSignal?.();
+    }
+    this._listenHandlers.clear();
     if (this.removeResizeListener) {
       this.removeResizeListener();
       this.removeResizeListener = null;

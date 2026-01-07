@@ -37,6 +37,17 @@ Key entry points:
 - `Mapper` – flexible mapping utility for visual channels; mapped values land in
   sparse attributes and trigger dense buffer rebuilds automatically
 
+## Events
+
+Helios uses the standard `EventTarget` API and provides two orthogonal helper methods:
+
+- `helios.on(type, handler, options)` registers a listener and returns an unsubscribe function.
+- `helios.listen(type[.namespace], handler, options)` is D3-style and chainable:
+  - One handler per `(type, namespace)` key (rebinding replaces the prior `listen` handler for that key).
+  - `helios.listen(type[.namespace], null)` removes the `listen` handler for that key.
+  - `on()` and `listen()` never remove/replace each other’s handlers; on dispatch, both run (in DOM listener registration order).
+  - Supports `AbortSignal` via `options.signal`.
+
 ## Mapper docs
 
 See [`docs/MAPPERS.md`](./MAPPERS.md) for channel mapping patterns, colormap helpers, and

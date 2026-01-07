@@ -27,8 +27,8 @@ Custom bits can be added by your application by defining additional bit position
 State updates are designed to be cheap (one `u32` write per item):
 
 ```js
-helios.nodeState([nodeId], Helios.STATES.HIGHLIGHTED, { mode: 'add' });
-helios.edgeState([edgeId], Helios.STATES.SELECTED, { mode: 'add' });
+helios.nodeState([nodeId], 'HIGHLIGHTED', { mode: 'add' });
+helios.edgeState([edgeId], 'SELECTED', { mode: 'add' });
 ```
 
 Supported `mode` values:
@@ -56,7 +56,7 @@ Configure slots via:
 
 ```js
 // Slot 2 (HIGHLIGHTED): boost size and tint green.
-helios.nodeStateStyle(2, {
+helios.nodeStateStyle('HIGHLIGHTED', {
   sizeMul: 1.3,
   opacityMul: 1.0,
   colorMul: [0, 0, 0, 1],
@@ -64,7 +64,7 @@ helios.nodeStateStyle(2, {
 });
 
 // Slot 1 (SELECTED): widen edges.
-helios.edgeStateStyle(1, { widthMul: 2.0 });
+helios.edgeStateStyle('SELECTED', { widthMul: 2.0 });
 ```
 
 Supported fields:
