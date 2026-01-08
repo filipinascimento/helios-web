@@ -18,4 +18,4 @@ For details on how the node colors and sizes are mapped (including the colormap 
 - The example now defaults to a 3D-ready force-directed layout with Barnes–Hut repulsion and damping safeguards.
 - Pass `?layout=jitter` to switch back to the legacy jitter layout.
 - Pass `?mode=3d` to enable the depth axis; otherwise it runs in 2D.
-- Pass `?edgeTransparency=weighted` to enable weighted blended transparency for edges (falls back to alpha if unsupported).
+- Pass `?edgeTransparency=weighted` to enable weighted blended transparency for edges (falls back to alpha if unsupported; implemented as an offscreen accumulate + resolve pass).

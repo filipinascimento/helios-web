@@ -36,6 +36,7 @@ Key entry points:
 - `StaticLayout`, `WorkerLayout` – ready-to-use layout implementations
 - `Mapper` – flexible mapping utility for visual channels; mapped values land in
   sparse attributes and trigger dense buffer rebuilds automatically
+- `HeliosUI` – optional HTML overlay UI (panel manager + attribute bindings)
 
 ## Events
 
@@ -60,6 +61,10 @@ Some common renderer/graph-layer “global” knobs are available directly on `H
 
 See [`docs/MAPPERS.md`](./MAPPERS.md) for channel mapping patterns, colormap helpers, and
 the node-color ramp used in the Basic example.
+
+## UI docs
+
+See [`docs/UI.md`](./UI.md) for the optional `HeliosUI` overlay (panels, docking, theming, and attribute bindings).
 
 ## State docs
 

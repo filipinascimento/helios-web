@@ -1,6 +1,6 @@
 import HeliosNetwork, { AttributeType } from 'helios-network';
 // When consuming the published package use `import { Helios } from 'helios-web-next';`
-import { Helios, createColormapScale } from '../../../src/index.js';
+import { Helios, createColormapScale, HeliosUI } from '../../../src/index.js';
 
 // Set this to an object like { helios: true, mapper: true, scheduler: true } to re-enable debug logs.
 const DEFAULT_NODE_COUNT = 2_000;
@@ -263,6 +263,11 @@ async function bootstrap() {
 
   console.log("Helios is ready!");
 
+  // Optional UI overlay demo (panels, theming, attribute bindings).
+  const heliosUI = new HeliosUI({ helios, theme: 'dark', allowDrag: true });
+  heliosUI.createDemoPanel();
+  window.__heliosUI = heliosUI;
+
   // Showcase a colormap on nodes: map "weight" through a perceptual ramp.
   console.log("Setting up mappers...");
   const nodeColormap = createColormapScale('cmasher:rainforest', { domain: [0, 1], alpha: 1 });
@@ -388,7 +393,6 @@ async function bootstrap() {
   window.__HELIOS_DIAGNOSTICS__ = diagnostics;
   window.__helios = helios;
   console.log("Done! Helios instance is available as window.__helios", helios);
-  const m = window.__helios?.network?.module;
 }
 
 bootstrap().catch((error) => {

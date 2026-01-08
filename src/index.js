@@ -18,3 +18,8 @@ export { LayeredRenderer } from './rendering/engine/LayeredRenderer.js';
 export { Camera } from './rendering/Camera.js';
 export { WebGL2Renderer } from './rendering/WebGL2Renderer.js';
 export { WebGPURenderer } from './rendering/WebGPURenderer.js';
+export { HeliosUI } from './ui/HeliosUI.js';
+export { Store } from './ui/state/Store.js';
+export { UIAttribute } from './ui/state/UIAttribute.js';
+export { TabbedPanel } from './ui/panels/TabbedPanel.js';
+export { PanelStack } from './ui/panels/PanelStack.js';

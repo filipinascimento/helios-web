@@ -538,80 +538,71 @@ fn edgeWeightedFragment(input : EdgeVertexOutput) -> EdgeWeightedOutput {
   };
 }
 
-export const EDGE_WEIGHTED_RESOLVE_WGSL = /* wgsl */ `
+const EDGE_WEIGHTED_RESOLVE_SHARED_WGSL = /* wgsl */ `
 struct VertexOut {
   @builtin(position) position : vec4<f32>,
   @location(0) uv : vec2<f32>,
 };
 
+@vertex
+fn vs(@location(0) position : vec2<f32>, @location(1) uv : vec2<f32>) -> VertexOut {
+  var output : VertexOut;
+  output.position = vec4<f32>(position, 0.0, 1.0);
+  output.uv = uv;
+  return output;
+}
+
 @group(0) @binding(0) var textureSampler : sampler;
 @group(0) @binding(1) var colorTexture : texture_2d<f32>;
 @group(0) @binding(2) var weightTexture : texture_2d<f32>;
 
-@vertex
-fn resolveVertex(@builtin(vertex_index) vertexIndex : u32) -> VertexOut {
-  var pos = array<vec2<f32>, 6>(
-    vec2<f32>(-1.0, -1.0),
-    vec2<f32>(1.0, -1.0),
-    vec2<f32>(-1.0, 1.0),
-    vec2<f32>(-1.0, 1.0),
-    vec2<f32>(1.0, -1.0),
-    vec2<f32>(1.0, 1.0),
-  );
-  var uv = array<vec2<f32>, 6>(
-    vec2<f32>(0.0, 1.0),
-    vec2<f32>(1.0, 1.0),
-    vec2<f32>(0.0, 0.0),
-    vec2<f32>(0.0, 0.0),
-    vec2<f32>(1.0, 1.0),
-    vec2<f32>(1.0, 0.0),
-  );
-  var output : VertexOut;
-  output.position = vec4<f32>(pos[vertexIndex], 0.0, 1.0);
-  output.uv = uv[vertexIndex];
-  return output;
-}
-
-@fragment
-fn resolveFragment(input : VertexOut) -> @location(0) vec4<f32> {
-  let accum = textureSample(colorTexture, textureSampler, input.uv).rgb;
-  let weight = textureSample(weightTexture, textureSampler, input.uv).r;
+fn resolveWeighted(uv : vec2<f32>) -> vec4<f32> {
+  // Render targets in WebGPU are addressed with a top-left origin, so the
+  // fullscreen quad UVs must flip Y to match clip-space rasterization.
+  let uvFlipped = vec2<f32>(uv.x, 1.0 - uv.y);
+  let accum = textureSample(colorTexture, textureSampler, uvFlipped).rgb;
+  let weight = textureSample(weightTexture, textureSampler, uvFlipped).r;
   let denom = max(weight, 1e-4);
   let resolved = accum / vec3<f32>(denom);
   let alpha = clamp(weight, 0.0, 1.0);
   return vec4<f32>(resolved * alpha, alpha);
+}
+`;
+
+export const EDGE_WEIGHTED_RESOLVE_WGSL = /* wgsl */ `
+${EDGE_WEIGHTED_RESOLVE_SHARED_WGSL}
+
+@fragment
+fn fs(input : VertexOut) -> @location(0) vec4<f32> {
+  return resolveWeighted(input.uv);
 }`;
 
 export function createEdgeWeightedResolveTonemapWGSL(options) {
   const boost = options === 'boost' || options?.boost === true;
   if (boost) {
     return /* wgsl */ `
-${EDGE_WEIGHTED_RESOLVE_WGSL}
+${EDGE_WEIGHTED_RESOLVE_SHARED_WGSL}
 
 @fragment
-fn resolveFragment(input : VertexOut) -> @location(0) vec4<f32> {
-  let accum = textureSample(colorTexture, textureSampler, input.uv).rgb;
-  let weight = textureSample(weightTexture, textureSampler, input.uv).r;
-  let denom = max(weight, 1e-4);
-  let resolved = accum / vec3<f32>(denom);
-  let boost = clamp(weight, 0.0, 4.0);
-  let boosted = resolved * boost;
+fn fs(input : VertexOut) -> @location(0) vec4<f32> {
+  let base = resolveWeighted(input.uv);
+  let alpha = base.a;
+  let unpremul = base.rgb / vec3<f32>(max(alpha, 1e-4));
+  let boost = clamp(alpha, 0.0, 4.0);
+  let boosted = unpremul * boost;
   let tonemapped = boosted / (boosted + vec3<f32>(1.0));
-  let alpha = clamp(weight, 0.0, 1.0);
-  return vec4<f32>(tonemapped, alpha);
+  return vec4<f32>(tonemapped * alpha, alpha);
 }`;
   }
   return /* wgsl */ `
-${EDGE_WEIGHTED_RESOLVE_WGSL}
+${EDGE_WEIGHTED_RESOLVE_SHARED_WGSL}
 
 @fragment
-fn resolveFragment(input : VertexOut) -> @location(0) vec4<f32> {
-  let accum = textureSample(colorTexture, textureSampler, input.uv).rgb;
-  let weight = textureSample(weightTexture, textureSampler, input.uv).r;
-  let denom = max(weight, 1e-4);
-  let resolved = accum / vec3<f32>(denom);
-  let tonemapped = resolved / (resolved + vec3<f32>(1.0));
-  let alpha = clamp(weight, 0.0, 1.0);
-  return vec4<f32>(tonemapped, alpha);
+fn fs(input : VertexOut) -> @location(0) vec4<f32> {
+  let base = resolveWeighted(input.uv);
+  let alpha = base.a;
+  let unpremul = base.rgb / vec3<f32>(max(alpha, 1e-4));
+  let tonemapped = unpremul / (unpremul + vec3<f32>(1.0));
+  return vec4<f32>(tonemapped * alpha, alpha);
 }`;
 }

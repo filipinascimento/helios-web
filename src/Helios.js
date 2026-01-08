@@ -124,6 +124,16 @@ function normalizeColorInput(color) {
   return null;
 }
 
+function createDetailEvent(type, detail) {
+  if (typeof CustomEvent === 'function') return new CustomEvent(type, { detail });
+  if (typeof Event === 'function') {
+    const event = new Event(type);
+    event.detail = detail;
+    return event;
+  }
+  return { type, detail };
+}
+
 export const EVENTS = Object.freeze({
   LAYOUT_START: 'layout:start',
   LAYOUT_STOP: 'layout:stop',
@@ -155,6 +165,121 @@ export class Helios extends EventTarget {
   });
 
   static STATE_BITS = Helios.STATES;
+
+  static UI_BINDINGS = Object.freeze({
+    edgeWidthScale: {
+      type: 'number',
+      label: 'Edge Width Scale',
+      description: 'Scales mapped edge widths',
+      domain: { min: 0, max: 10 },
+      recommendedRange: { min: 0.25, max: 4.0 },
+      step: 0.01,
+    },
+    edgeWidthBase: {
+      type: 'number',
+      label: 'Edge Width Base',
+      description: 'Adds a constant to mapped edge widths',
+      domain: { min: 0, max: 20 },
+      recommendedRange: { min: 0.0, max: 6.0 },
+      step: 0.01,
+    },
+    edgeOpacityScale: {
+      type: 'number',
+      label: 'Edge Opacity Scale',
+      description: 'Scales mapped edge opacity',
+      domain: { min: 0, max: 4 },
+      recommendedRange: { min: 0.0, max: 2.0 },
+      step: 0.01,
+    },
+    edgeOpacityBase: {
+      type: 'number',
+      label: 'Edge Opacity Base',
+      description: 'Adds a constant to mapped edge opacity',
+      domain: { min: 0, max: 1 },
+      recommendedRange: { min: 0.0, max: 1.0 },
+      step: 0.01,
+    },
+    nodeOpacityScale: {
+      type: 'number',
+      label: 'Node Opacity Scale',
+      description: 'Scales mapped node opacity',
+      domain: { min: 0, max: 4 },
+      recommendedRange: { min: 0.0, max: 2.0 },
+      step: 0.01,
+    },
+    nodeOpacityBase: {
+      type: 'number',
+      label: 'Node Opacity Base',
+      description: 'Adds a constant to mapped node opacity',
+      domain: { min: 0, max: 1 },
+      recommendedRange: { min: 0.0, max: 1.0 },
+      step: 0.01,
+    },
+    nodeSizeScale: {
+      type: 'number',
+      label: 'Node Size Scale',
+      description: 'Scales mapped node sizes',
+      domain: { min: 0, max: 100 },
+      recommendedRange: { min: 0.25, max: 3.0 },
+      step: 0.01,
+    },
+    nodeSizeBase: {
+      type: 'number',
+      label: 'Node Size Base',
+      description: 'Adds a constant to mapped node sizes',
+      domain: { min: 0, max: 50 },
+      recommendedRange: { min: 0.0, max: 10.0 },
+      step: 0.01,
+    },
+    nodeOutlineWidthScale: {
+      type: 'number',
+      label: 'Outline Width Scale',
+      description: 'Scales mapped outline widths',
+      domain: { min: 0, max: 10 },
+      recommendedRange: { min: 0.0, max: 3.0 },
+      step: 0.01,
+    },
+    nodeOutlineWidthBase: {
+      type: 'number',
+      label: 'Outline Width Base',
+      description: 'Adds a constant to mapped outline widths',
+      domain: { min: 0, max: 20 },
+      recommendedRange: { min: 0.0, max: 4.0 },
+      step: 0.01,
+    },
+    edgeEndpointTrim: {
+      type: 'number',
+      label: 'Edge Endpoint Trim',
+      description: 'Trims edge endpoints so edges don’t overlap nodes',
+      domain: { min: 0, max: 3 },
+      recommendedRange: { min: 0.0, max: 1.5 },
+      step: 0.01,
+    },
+    background: {
+      type: 'color',
+      label: 'Background',
+      description: 'Renderer clear/background color',
+      eventName: 'clearColor',
+    },
+    clearColor: {
+      type: 'color',
+      label: 'Background',
+      description: 'Renderer clear/background color',
+    },
+  });
+
+  uiBindingInfo(name) {
+    return this.constructor.UI_BINDINGS?.[name] ?? null;
+  }
+
+  _emitUIBindingChange(name, value) {
+    if (typeof this.dispatchEvent !== 'function') return;
+    try {
+      this.dispatchEvent(createDetailEvent('ui:binding-change', { id: `helios.${name}`, name, value }));
+    } catch {
+      // Avoid breaking tests that create Helios-shaped objects without EventTarget internals.
+    }
+  }
 
   constructor(network, options = {}) {
     if (!network) {
@@ -555,9 +680,11 @@ export class Helios extends EventTarget {
     if (this.renderer?.graphLayer && name in this.renderer.graphLayer) {
       this.renderer.graphLayer[name] = value;
       this.scheduler.requestRender();
+      this._emitUIBindingChange(name, value);
       return this;
     }
     this._pendingGraphLayerProps.set(name, value);
+    this._emitUIBindingChange(name, value);
     return this;
   }
 
@@ -572,9 +699,11 @@ export class Helios extends EventTarget {
     if (this.renderer && name in this.renderer) {
       this.renderer[name] = value;
       this.scheduler.requestRender();
+      this._emitUIBindingChange(name, value);
       return this;
     }
     this._pendingRendererProps.set(name, value);
+    this._emitUIBindingChange(name, value);
     return this;
   }
 
