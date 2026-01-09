@@ -442,7 +442,21 @@ export const defaultStylesText = `
   font: inherit;
   font-weight: 600;
   padding: 8px 8px 6px;
-  cursor: default;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.helios-ui-subpanel__header::before {
+  content: "+";
+  width: 1.1em;
+  color: var(--helios-ui-muted);
+  font-weight: 700;
+}
+
+.helios-ui-subpanel[data-collapsed="false"] .helios-ui-subpanel__header::before {
+  content: "−";
 }
 
 .helios-ui-subpanel__body {

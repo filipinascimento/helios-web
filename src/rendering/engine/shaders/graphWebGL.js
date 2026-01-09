@@ -130,11 +130,10 @@ void main() {
   if (dist > 1.0) {
     discard;
   }
+  fragColor = v_color;
   if (v_outlineThreshold > 0.0 && dist > (1.0 - v_outlineThreshold)) {
     fragColor = v_outlineColor;
-    return;
   }
-  fragColor = v_color;
 
   // Write depth as if the quad represents a sphere in 3D mode.
   if (!u_is2D) {
@@ -473,4 +472,3 @@ void main() {
     EDGE_RESOLVE_BOOST_FRAGMENT_SOURCE,
   };
 }
-
