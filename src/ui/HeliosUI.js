@@ -2,6 +2,7 @@ import { PanelManager } from './panels/PanelManager.js';
 import { UIAttribute } from './state/UIAttribute.js';
 import { ensureDefaultStyles } from './style/defaultStyles.js';
 import { createSliderRow } from './controls/createSliderRow.js';
+import { PanelStack } from './panels/PanelStack.js';
 
 function resolveUiContainer({ helios, container, layerName }) {
   if (container) return container;
@@ -141,36 +142,57 @@ export class HeliosUI {
     themeControls.className = 'helios-ui-row__controls';
     themeControls.appendChild(themeButton);
     themeRow.appendChild(themeControls);
-    content.appendChild(themeRow);
 
     if (this.helios) {
       const bindings = this.helios?.constructor?.UI_BINDINGS ?? null;
-      const numericAccessors = [
-        'nodeSizeScale',
-        'nodeSizeBase',
-        'nodeOpacityScale',
-        'nodeOpacityBase',
-        'nodeOutlineWidthScale',
-        'nodeOutlineWidthBase',
-        'edgeWidthScale',
-        'edgeWidthBase',
-        'edgeOpacityScale',
-        'edgeOpacityBase',
-        'edgeEndpointTrim',
-      ];
-      const accessors = bindings
-        ? numericAccessors.filter((name) => name in bindings)
-        : ['nodeSizeScale'];
 
-      for (const accessorName of accessors) {
-        const info = bindings?.[accessorName] ?? { description: 'Scales mapped node sizes' };
-        if (info?.type && info.type !== 'number') continue;
-        if (typeof this.helios[accessorName] !== 'function') continue;
-        const attribute = this.bindHeliosAccessor(accessorName);
-        const row = createSliderRow(attribute, { hint: info?.description ?? null });
-        content.appendChild(row.element);
-        this._controlCleanups.add(row.destroy);
-      }
+      const createRows = (accessorNames) => {
+        const container = document.createElement('div');
+        for (const accessorName of accessorNames) {
+          const info = bindings?.[accessorName] ?? null;
+          if (info?.type && info.type !== 'number') continue;
+          if (typeof this.helios[accessorName] !== 'function') continue;
+          const attribute = this.bindHeliosAccessor(accessorName);
+          const row = createSliderRow(attribute, { hint: info?.description ?? null });
+          container.appendChild(row.element);
+          this._controlCleanups.add(row.destroy);
+        }
+        return container;
+      };
+
+      const stack = new PanelStack();
+      stack.add({
+        id: 'node-appearance',
+        title: 'Nodes',
+        content: (() => {
+          const wrapper = document.createElement('div');
+          wrapper.appendChild(themeRow);
+          wrapper.appendChild(createRows(['nodeSizeScale', 'nodeOpacityScale', 'nodeOutlineWidthScale']));
+          return wrapper;
+        })(),
+      });
+      stack.add({
+        id: 'edge-appearance',
+        title: 'Edges',
+        content: createRows(['edgeWidthScale', 'edgeOpacityScale']),
+      });
+      stack.add({
+        id: 'advanced-appearance',
+        title: 'Advanced',
+        collapsed: true,
+        content: createRows([
+          'nodeSizeBase',
+          'nodeOpacityBase',
+          'nodeOutlineWidthBase',
+          'edgeWidthBase',
+          'edgeOpacityBase',
+          'edgeEndpointTrim',
+        ]),
+      });
+      content.appendChild(stack.element);
+      this._controlCleanups.add(() => stack.destroy());
+    } else {
+      content.appendChild(themeRow);
     }
 
     return this.createPanel({

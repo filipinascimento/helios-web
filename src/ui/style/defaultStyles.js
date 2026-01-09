@@ -380,9 +380,11 @@ export const defaultStylesText = `
   max-height: 100%;
 }
 
-.helios-ui-dock--left { left: 0; }
-.helios-ui-dock--right { right: 0; align-items: flex-end; }
+.helios-ui-dock--left { left: 0; padding-left: 0; }
+.helios-ui-dock--right { right: 0; align-items: flex-end; padding-right: 0; }
+.helios-ui-dock--top { padding-top: 0; }
 .helios-ui-dock--bottom { justify-content: flex-end; }
+.helios-ui-dock--bottom { padding-bottom: 0; }
 
 .helios-ui-dock .helios-ui-panel {
   position: relative;
