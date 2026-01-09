@@ -19,8 +19,10 @@ export class PanelManager {
     this.allowDrag = Boolean(options.allowDrag ?? true);
     this.allowDock = Boolean(options.allowDock ?? true);
     this.dockThreshold = options.dockThreshold ?? 18;
+    this.labelColumn = options.labelColumn ?? { mode: 'auto', minPx: 120, maxPx: 220 };
     this.panels = new Map();
     this._zCounter = 1;
+    this._measureCanvas = null;
 
     this.dockLeftTop = document.createElement('div');
     this.dockLeftTop.className = 'helios-ui-dock helios-ui-dock--left helios-ui-dock--top';
@@ -56,6 +58,7 @@ export class PanelManager {
     panel.element.addEventListener('pointerdown', () => panel.setZIndex(this._nextZ()), { capture: true });
     this.panels.set(panel.id, panel);
     this._placePanel(panel);
+    this._scheduleAutoFitLabelColumn(panel);
     return panel;
   }
 
@@ -113,6 +116,49 @@ export class PanelManager {
       return;
     }
     if (panel.element.parentElement !== this.container) this.container.appendChild(panel.element);
+  }
+
+  _scheduleAutoFitLabelColumn(panel) {
+    const config = this.labelColumn;
+    if (!config || config.mode !== 'auto') return;
+    const doc = panel?.element?.ownerDocument ?? document;
+    const win = doc.defaultView ?? window;
+    const raf = win?.requestAnimationFrame ?? ((cb) => setTimeout(cb, 0));
+    raf(() => {
+      if (!panel?.element?.isConnected) return;
+      this._autoFitLabelColumn(panel.element, config);
+    });
+  }
+
+  _autoFitLabelColumn(panelElement, config) {
+    const titles = Array.from(panelElement.querySelectorAll('.helios-ui-row--aligned .helios-ui-label__title'));
+    if (!titles.length) return;
+    const minPx = Number(config?.minPx ?? 120);
+    const maxPx = Number(config?.maxPx ?? 220);
+    const paddingPx = Number(config?.paddingPx ?? 10);
+
+    let maxWidth = 0;
+    for (const titleEl of titles) {
+      const text = (titleEl.textContent ?? '').trim();
+      if (!text) continue;
+      const width = this._measureTextWidth(titleEl, text);
+      if (Number.isFinite(width)) maxWidth = Math.max(maxWidth, width);
+    }
+    if (!Number.isFinite(maxWidth) || maxWidth <= 0) return;
+
+    const computed = Math.max(minPx, Math.min(maxPx, Math.ceil(maxWidth + paddingPx)));
+    panelElement.style.setProperty('--helios-ui-label-col', `${computed}px`);
+  }
+
+  _measureTextWidth(referenceElement, text) {
+    const doc = referenceElement?.ownerDocument ?? document;
+    if (!this._measureCanvas) this._measureCanvas = doc.createElement('canvas');
+    const ctx = this._measureCanvas.getContext('2d');
+    if (!ctx) return null;
+    const style = (doc.defaultView ?? window).getComputedStyle(referenceElement);
+    ctx.font = style.font || `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    const metrics = ctx.measureText(text);
+    return metrics?.width ?? null;
   }
 
   destroy() {

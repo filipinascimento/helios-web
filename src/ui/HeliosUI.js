@@ -37,6 +37,7 @@ export class HeliosUI {
     this.panelManager = new PanelManager({
       container: this.container,
       allowDrag: options.allowDrag ?? true,
+      labelColumn: options.labelColumn ?? undefined,
     });
 
     this._controlCleanups = new Set();
@@ -116,8 +117,7 @@ export class HeliosUI {
     const content = document.createElement('div');
 
     const themeRow = document.createElement('div');
-    themeRow.className = 'helios-ui-row';
-    themeRow.style.gridTemplateColumns = '1fr auto';
+    themeRow.className = 'helios-ui-row helios-ui-row--aligned';
     const themeLabel = document.createElement('div');
     themeLabel.className = 'helios-ui-label';
     const themeTitle = document.createElement('div');
@@ -137,19 +137,40 @@ export class HeliosUI {
       themeButton.textContent = this.theme === 'dark' ? 'Dark' : 'Light';
     });
     themeRow.appendChild(themeLabel);
-    themeRow.appendChild(themeButton);
+    const themeControls = document.createElement('div');
+    themeControls.className = 'helios-ui-row__controls';
+    themeControls.appendChild(themeButton);
+    themeRow.appendChild(themeControls);
     content.appendChild(themeRow);
 
     if (this.helios) {
-      const nodeSize = this.bindHeliosAccessor('nodeSizeScale', {
-        label: 'Node Size Scale',
-        recommendedRange: { min: 0.25, max: 3.0 },
-        step: 0.01,
-        defaultValue: 1.0,
-      });
-      const row = createSliderRow(nodeSize, { hint: 'Scales mapped node sizes' });
-      content.appendChild(row.element);
-      this._controlCleanups.add(row.destroy);
+      const bindings = this.helios?.constructor?.UI_BINDINGS ?? null;
+      const numericAccessors = [
+        'nodeSizeScale',
+        'nodeSizeBase',
+        'nodeOpacityScale',
+        'nodeOpacityBase',
+        'nodeOutlineWidthScale',
+        'nodeOutlineWidthBase',
+        'edgeWidthScale',
+        'edgeWidthBase',
+        'edgeOpacityScale',
+        'edgeOpacityBase',
+        'edgeEndpointTrim',
+      ];
+      const accessors = bindings
+        ? numericAccessors.filter((name) => name in bindings)
+        : ['nodeSizeScale'];
+
+      for (const accessorName of accessors) {
+        const info = bindings?.[accessorName] ?? { description: 'Scales mapped node sizes' };
+        if (info?.type && info.type !== 'number') continue;
+        if (typeof this.helios[accessorName] !== 'function') continue;
+        const attribute = this.bindHeliosAccessor(accessorName);
+        const row = createSliderRow(attribute, { hint: info?.description ?? null });
+        content.appendChild(row.element);
+        this._controlCleanups.add(row.destroy);
+      }
     }
 
     return this.createPanel({

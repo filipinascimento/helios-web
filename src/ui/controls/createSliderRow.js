@@ -27,25 +27,123 @@ export function createSliderRow(attribute, options = {}) {
   const step = options.step ?? attribute.step ?? 0.01;
 
   const row = document.createElement('div');
-  row.className = 'helios-ui-row';
+  row.className = 'helios-ui-row helios-ui-row--aligned helios-ui-row--slider';
 
   const label = document.createElement('div');
   label.className = 'helios-ui-label';
   const labelTitle = document.createElement('div');
-  labelTitle.className = 'helios-ui-label__title';
-  labelTitle.textContent = title;
-  label.appendChild(labelTitle);
+  labelTitle.className = 'helios-ui-label__title-row';
+  const labelTitleText = document.createElement('div');
+  labelTitleText.className = 'helios-ui-label__title';
+  labelTitleText.textContent = title;
+  labelTitle.appendChild(labelTitleText);
+
+  let tooltip = null;
+  let tooltipRoot = null;
+  let hideTooltipTimer = null;
+  let removeTooltipListeners = null;
+
+  const setTooltipHidden = (hidden) => {
+    if (!tooltip) return;
+    tooltip.dataset.open = hidden ? 'false' : 'true';
+    tooltip.hidden = hidden;
+  };
+
+  const resolveTooltipRoot = () => row.closest?.('.helios-ui') ?? row.ownerDocument?.body ?? document.body;
+
+  const placeTooltip = () => {
+    if (!tooltip) return;
+    const anchor = tooltip.dataset.anchorId ? row.ownerDocument?.getElementById?.(tooltip.dataset.anchorId) : null;
+    const el = anchor ?? null;
+    if (!el) return;
+
+    const margin = 8;
+    const rect = el.getBoundingClientRect();
+    const { innerWidth: vw, innerHeight: vh } = window;
+
+    tooltip.style.left = '0px';
+    tooltip.style.top = '0px';
+    tooltip.style.transform = 'translate(-9999px, -9999px)';
+    const tipRect = tooltip.getBoundingClientRect();
+
+    const preferredLeft = rect.left + rect.width / 2 - tipRect.width / 2;
+    const left = Math.max(margin, Math.min(vw - margin - tipRect.width, preferredLeft));
+
+    const preferredTop = rect.top - 8 - tipRect.height;
+    const fallbackTop = rect.bottom + 8;
+    const top = preferredTop >= margin ? preferredTop : Math.min(vh - margin - tipRect.height, fallbackTop);
+
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
+    tooltip.style.transform = 'translate(0, 0)';
+  };
+
+  const scheduleHideTooltip = () => {
+    if (hideTooltipTimer != null) window.clearTimeout(hideTooltipTimer);
+    hideTooltipTimer = window.setTimeout(() => setTooltipHidden(true), 120);
+  };
+
+  const showTooltip = () => {
+    if (!tooltip) return;
+    if (hideTooltipTimer != null) window.clearTimeout(hideTooltipTimer);
+    if (!tooltipRoot) {
+      tooltipRoot = resolveTooltipRoot();
+      tooltipRoot.appendChild(tooltip);
+    }
+    setTooltipHidden(false);
+    placeTooltip();
+  };
+
   if (hint) {
-    const labelHint = document.createElement('div');
-    labelHint.className = 'helios-ui-label__hint';
-    labelHint.textContent = hint;
-    label.appendChild(labelHint);
+    tooltip = document.createElement('div');
+    tooltip.className = 'helios-ui-tooltip';
+    tooltip.hidden = true;
+    tooltip.dataset.open = 'false';
+    tooltip.textContent = hint;
+    tooltip.setAttribute('role', 'tooltip');
+    const tooltipId = `helios-ui-tooltip-${Math.random().toString(16).slice(2)}`;
+    tooltip.dataset.anchorId = tooltipId;
+    labelTitleText.id = tooltipId;
+    labelTitleText.tabIndex = 0;
+
+    const onPointerEnter = () => showTooltip();
+    const onPointerLeave = () => scheduleHideTooltip();
+    const onFocus = () => showTooltip();
+    const onBlur = () => setTooltipHidden(true);
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setTooltipHidden(true);
+        labelTitleText.blur();
+      }
+    };
+    const onScrollOrResize = () => {
+      if (!tooltip || tooltip.hidden) return;
+      placeTooltip();
+    };
+
+    labelTitleText.addEventListener('pointerenter', onPointerEnter);
+    labelTitleText.addEventListener('pointerleave', onPointerLeave);
+    labelTitleText.addEventListener('focus', onFocus);
+    labelTitleText.addEventListener('blur', onBlur);
+    labelTitleText.addEventListener('keydown', onKeyDown);
+    window.addEventListener('scroll', onScrollOrResize, { capture: true });
+    window.addEventListener('resize', onScrollOrResize);
+
+    removeTooltipListeners = () => {
+      labelTitleText.removeEventListener('pointerenter', onPointerEnter);
+      labelTitleText.removeEventListener('pointerleave', onPointerLeave);
+      labelTitleText.removeEventListener('focus', onFocus);
+      labelTitleText.removeEventListener('blur', onBlur);
+      labelTitleText.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('scroll', onScrollOrResize, { capture: true });
+      window.removeEventListener('resize', onScrollOrResize);
+    };
   }
 
-  const right = document.createElement('div');
-  right.style.display = 'grid';
-  right.style.gap = '3px';
-  right.style.justifyItems = 'end';
+  label.appendChild(labelTitle);
+
+  const controls = document.createElement('div');
+  controls.className = 'helios-ui-slider-controls';
 
   const valueInput = document.createElement('input');
   valueInput.className = 'helios-ui-number';
@@ -66,10 +164,20 @@ export function createSliderRow(attribute, options = {}) {
   slider.step = String(step);
   slider.disabled = attribute.readOnly;
 
+  const updateSliderVisual = () => {
+    const min = Number(slider.min);
+    const max = Number(slider.max);
+    const value = Number(slider.value);
+    if (!Number.isFinite(min) || !Number.isFinite(max) || !Number.isFinite(value) || min === max) return;
+    const pct = ((value - min) / (max - min)) * 100;
+    slider.style.setProperty('--pct', String(Math.max(0, Math.min(100, pct))));
+  };
+
   const updateFromAttribute = (value) => {
     const v = Number(value);
     if (Number.isFinite(v)) slider.value = String(clampToRange(v, sliderRange));
     valueInput.value = formatNumber(value, options.precision ?? 3);
+    updateSliderVisual();
   };
 
   const unsub = attribute.subscribe(updateFromAttribute);
@@ -77,6 +185,7 @@ export function createSliderRow(attribute, options = {}) {
   slider.addEventListener('input', () => {
     const v = Number(slider.value);
     if (!Number.isFinite(v)) return;
+    updateSliderVisual();
     attribute.write(v, { source: 'ui', event: 'input' });
   });
 
@@ -94,15 +203,20 @@ export function createSliderRow(attribute, options = {}) {
     }
   });
 
-  right.appendChild(valueInput);
   row.appendChild(label);
-  row.appendChild(right);
-  row.appendChild(slider);
-
-  slider.style.gridColumn = '1 / -1';
+  controls.appendChild(slider);
+  controls.appendChild(valueInput);
+  row.appendChild(controls);
 
   return {
     element: row,
-    destroy: () => unsub(),
+    destroy: () => {
+      unsub();
+      if (hideTooltipTimer != null) window.clearTimeout(hideTooltipTimer);
+      removeTooltipListeners?.();
+      tooltip?.remove?.();
+      tooltip = null;
+      tooltipRoot = null;
+    },
   };
 }
