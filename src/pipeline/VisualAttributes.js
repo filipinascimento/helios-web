@@ -491,13 +491,19 @@ export class VisualAttributes {
   /**
    * Seeds missing node positions with random values so downstream layouts/renderers
    * always have finite coordinates to start with.
-   * @param {{width?: number, height?: number}} [bounds]
+   * @param {{width?: number, height?: number, depth?: number, mode?: string, center?: number[]}} [bounds]
    */
   seedMissingPositions(bounds = {}) {
     const nodeIndices = this.network?.nodeIndices;
     this.withBufferAccess(() => {
       const width = Math.max(1, bounds.width ?? 1);
       const height = Math.max(1, bounds.height ?? 1);
+      const depth = Math.max(0, bounds.depth ?? 0);
+      const mode = bounds.mode === '3d' ? '3d' : '2d';
+      const center = Array.isArray(bounds.center) ? bounds.center : null;
+      const cx = Number.isFinite(center?.[0]) ? center[0] : 0;
+      const cy = Number.isFinite(center?.[1]) ? center[1] : 0;
+      const cz = Number.isFinite(center?.[2]) ? center[2] : 0;
       const pos = this.nodePositions;
       if (!pos || !nodeIndices?.length) return;
       let touched = false;
@@ -517,9 +523,9 @@ export class VisualAttributes {
           hasAnyNonZero = true;
         }
         if (missing) {
-          pos[offset] = Math.random() * width;
-          pos[offset + 1] = Math.random() * height;
-          pos[offset + 2] = 0;
+          pos[offset] = cx + (Math.random() - 0.5) * width;
+          pos[offset + 1] = cy + (Math.random() - 0.5) * height;
+          pos[offset + 2] = mode === '3d' ? cz + (Math.random() - 0.5) * depth : cz;
           touched = true;
           hasAnyNonZero = true;
         }
@@ -537,9 +543,9 @@ export class VisualAttributes {
         const zeroVector = pos[offset] === 0 && pos[offset + 1] === 0 && pos[offset + 2] === 0;
         const isNewNode = nodeId > zeroSeedBaseline;
         if (zeroVector && (!hasAnyNonZero || isNewNode)) {
-          pos[offset] = Math.random() * width;
-          pos[offset + 1] = Math.random() * height;
-          pos[offset + 2] = 0;
+          pos[offset] = cx + (Math.random() - 0.5) * width;
+          pos[offset + 1] = cy + (Math.random() - 0.5) * height;
+          pos[offset + 2] = mode === '3d' ? cz + (Math.random() - 0.5) * depth : cz;
           touched = true;
         }
       }

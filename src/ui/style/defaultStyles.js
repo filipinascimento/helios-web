@@ -115,6 +115,21 @@ export const defaultStylesText = `
   line-height: 1;
 }
 
+.helios-ui-select {
+  appearance: none;
+  border: 1px solid var(--helios-ui-border);
+  border-radius: 10px;
+  padding: 4px 8px;
+  background: color-mix(in srgb, var(--helios-ui-bg-solid) 85%, transparent);
+  color: inherit;
+  font: inherit;
+  line-height: 1;
+}
+
+.helios-ui-select:hover {
+  border-color: color-mix(in srgb, var(--helios-ui-fg) 18%, transparent);
+}
+
 .helios-ui-button:hover {
   border-color: color-mix(in srgb, var(--helios-ui-fg) 18%, transparent);
 }

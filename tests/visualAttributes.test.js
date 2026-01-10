@@ -146,8 +146,8 @@ test('seeds nodes when all positions are missing', async () => {
     if (x !== 0 || y !== 0 || z !== 0) {
       seeded += 1;
     }
-    assert.ok(x >= 0 && x <= 10);
-    assert.ok(y >= 0 && y <= 20);
+    assert.ok(x >= -5 && x <= 5);
+    assert.ok(y >= -10 && y <= 10);
   }
   assert.equal(seeded, nodeCount);
 });

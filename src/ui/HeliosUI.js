@@ -117,6 +117,27 @@ export class HeliosUI {
   createDemoPanel(options = {}) {
     const content = document.createElement('div');
 
+    const createAlignedRow = ({ title, hint, controls }) => {
+      const row = document.createElement('div');
+      row.className = 'helios-ui-row helios-ui-row--aligned';
+      const label = document.createElement('div');
+      label.className = 'helios-ui-label';
+      const titleEl = document.createElement('div');
+      titleEl.className = 'helios-ui-label__title';
+      titleEl.textContent = title ?? '';
+      const hintEl = document.createElement('div');
+      hintEl.className = 'helios-ui-label__hint';
+      hintEl.textContent = hint ?? '';
+      label.appendChild(titleEl);
+      label.appendChild(hintEl);
+      row.appendChild(label);
+      const controlWrap = document.createElement('div');
+      controlWrap.className = 'helios-ui-row__controls';
+      if (controls) controlWrap.appendChild(controls);
+      row.appendChild(controlWrap);
+      return { row, hintEl, titleEl, controlWrap };
+    };
+
     const themeRow = document.createElement('div');
     themeRow.className = 'helios-ui-row helios-ui-row--aligned';
     const themeLabel = document.createElement('div');
@@ -146,6 +167,125 @@ export class HeliosUI {
     if (this.helios) {
       const bindings = this.helios?.constructor?.UI_BINDINGS ?? null;
 
+      const networkControls = (() => {
+        const container = document.createElement('div');
+
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.accept = '.xnet,.zxnet,.bxnet';
+        fileInput.style.display = 'none';
+
+        const formatSelect = document.createElement('select');
+        formatSelect.className = 'helios-ui-select';
+        for (const fmt of ['bxnet', 'zxnet', 'xnet']) {
+          const opt = document.createElement('option');
+          opt.value = fmt;
+          opt.textContent = fmt.toUpperCase();
+          formatSelect.appendChild(opt);
+        }
+
+        const loadButton = document.createElement('button');
+        loadButton.type = 'button';
+        loadButton.className = 'helios-ui-button';
+        loadButton.textContent = 'Load…';
+
+        const saveButton = document.createElement('button');
+        saveButton.type = 'button';
+        saveButton.className = 'helios-ui-button';
+        saveButton.textContent = 'Save';
+
+        const controls = document.createElement('div');
+        controls.style.display = 'inline-flex';
+        controls.style.alignItems = 'center';
+        controls.style.gap = '6px';
+        controls.appendChild(loadButton);
+        controls.appendChild(saveButton);
+        controls.appendChild(formatSelect);
+        controls.appendChild(fileInput);
+
+        let baseName = this.helios._lastLoadedNetworkBase ?? 'network';
+        let loadedName = this.helios._lastLoadedNetworkName ?? null;
+        let loadedFormat = this.helios._lastLoadedNetworkFormat ?? null;
+        if (loadedFormat && ['bxnet', 'zxnet', 'xnet'].includes(loadedFormat)) {
+          formatSelect.value = loadedFormat;
+        }
+
+        const downloadBlob = (blob, filename) => {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename;
+          a.style.display = 'none';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 250);
+        };
+
+        const updateHint = (hintEl) => {
+          const nodes = this.helios?.network?.nodeCount ?? 0;
+          const edges = this.helios?.network?.edgeCount ?? 0;
+          const name = loadedName ?? `${baseName}.${formatSelect.value}`;
+          hintEl.textContent = `${name} • ${nodes} nodes • ${edges} edges`;
+        };
+
+        const { row, hintEl } = createAlignedRow({
+          title: 'Network',
+          hint: '',
+          controls,
+        });
+        updateHint(hintEl);
+
+        loadButton.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', async () => {
+          const file = fileInput.files?.[0] ?? null;
+          fileInput.value = '';
+          if (!file) return;
+          loadButton.disabled = true;
+          saveButton.disabled = true;
+          try {
+            await this.helios.loadNetwork(file, { disposeOld: true, recreateRenderer: true, keepCamera: false });
+            loadedName = file.name;
+            baseName = this.helios._lastLoadedNetworkBase ?? baseName;
+            loadedFormat = this.helios._lastLoadedNetworkFormat ?? loadedFormat;
+            if (loadedFormat && ['bxnet', 'zxnet', 'xnet'].includes(loadedFormat)) {
+              formatSelect.value = loadedFormat;
+            }
+          } catch (error) {
+            // eslint-disable-next-line no-console
+            console.error('Failed to load network', error);
+          } finally {
+            updateHint(hintEl);
+            loadButton.disabled = false;
+            saveButton.disabled = false;
+          }
+        });
+
+        saveButton.addEventListener('click', async () => {
+          saveButton.disabled = true;
+          loadButton.disabled = true;
+          try {
+            const fmt = formatSelect.value;
+            const blob = await this.helios.saveNetwork(fmt, { output: 'blob' });
+            if (blob) {
+              const filename = `${baseName}.${fmt}`;
+              downloadBlob(blob, filename);
+            }
+          } catch (error) {
+            // eslint-disable-next-line no-console
+            console.error('Failed to save network', error);
+          } finally {
+            updateHint(hintEl);
+            saveButton.disabled = false;
+            loadButton.disabled = false;
+          }
+        });
+
+        formatSelect.addEventListener('change', () => updateHint(hintEl));
+        container.appendChild(row);
+        return container;
+      })();
+
       const createRows = (accessorNames) => {
         const container = document.createElement('div');
         for (const accessorName of accessorNames) {
@@ -161,6 +301,11 @@ export class HeliosUI {
       };
 
       const stack = new PanelStack();
+      stack.add({
+        id: 'network-io',
+        title: 'Network',
+        content: networkControls,
+      });
       stack.add({
         id: 'node-appearance',
         title: 'Nodes',

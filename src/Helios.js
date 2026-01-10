@@ -134,6 +134,89 @@ function createDetailEvent(type, detail) {
   return { type, detail };
 }
 
+function cloneMapperCollection(previous, network, onChange, debug) {
+  const collection = new MapperCollection(previous?.mode ?? 'node', network, onChange, debug);
+  if (!previous?.mappers || previous.mappers.size === 0) {
+    return collection;
+  }
+  collection.mappers.clear();
+  collection.defaultMapper = null;
+  for (const [key, mapper] of previous.mappers.entries()) {
+    const cloned = collection.createMapper(key);
+    for (const [channelName, config] of mapper?.channels?.entries?.() ?? []) {
+      if (!channelName || !config) continue;
+      cloned.setChannel(channelName, { ...config, attributes: config.attributes ?? config.from });
+    }
+    if (!collection.defaultMapper && (key === 'default' || mapper === previous.defaultMapper)) {
+      collection.defaultMapper = cloned;
+    }
+  }
+  if (!collection.defaultMapper) {
+    collection.defaultMapper = collection.mappers.get('default') ?? collection.mappers.values().next().value ?? null;
+  }
+  return collection;
+}
+
+function inferNetworkFormatFromName(name) {
+  if (typeof name !== 'string') return null;
+  const lower = name.trim().toLowerCase();
+  if (lower.endsWith('.bxnet')) return 'bxnet';
+  if (lower.endsWith('.zxnet')) return 'zxnet';
+  if (lower.endsWith('.xnet')) return 'xnet';
+  return null;
+}
+
+function resolveSeedBoundsForLayout(layoutOption, size, mode) {
+  const safeMode = mode === '3d' ? '3d' : '2d';
+  const width = Math.max(1, size?.width ?? 1);
+  const height = Math.max(1, size?.height ?? 1);
+  const minSide = Math.max(1, Math.min(width, height));
+  const base = { width: minSide, height: minSide, depth: 0, mode: safeMode, center: [0, 0, 0] };
+
+  if (!layoutOption || isLayoutInstance(layoutOption)) return base;
+  if (layoutOption?.type === 'worker') {
+    const opts = layoutOption.options ?? {};
+    const radius = Number.isFinite(opts.radius) ? Math.max(1, opts.radius) : 150;
+    const depth = Number.isFinite(opts.depth) ? Math.max(0, opts.depth) : 0;
+    const center = Array.isArray(opts.center) ? opts.center : [0, 0, 0];
+    return {
+      width: radius,
+      height: radius,
+      depth: safeMode === '3d' ? depth : 0,
+      mode: safeMode,
+      center,
+    };
+  }
+
+  const bounds = layoutOption?.options?.bounds ?? null;
+  if (Array.isArray(bounds) && bounds.length >= 4) {
+    const minX = Number(bounds[0]);
+    const minY = Number(bounds[1]);
+    const maxX = Number(bounds[2]);
+    const maxY = Number(bounds[3]);
+    if ([minX, minY, maxX, maxY].every(Number.isFinite)) {
+      return {
+        width: Math.max(1, maxX - minX),
+        height: Math.max(1, maxY - minY),
+        depth: 0,
+        mode: safeMode,
+        center: [(minX + maxX) * 0.5, (minY + maxY) * 0.5, 0],
+      };
+    }
+  }
+
+  return base;
+}
+
+function getBaseFilename(name) {
+  if (typeof name !== 'string') return 'network';
+  const trimmed = name.trim();
+  if (!trimmed) return 'network';
+  const withoutKnown = trimmed.replace(/\.(bxnet|zxnet|xnet)$/i, '');
+  if (withoutKnown !== trimmed) return withoutKnown;
+  return trimmed.replace(/\.[^/.]+$/, '') || trimmed;
+}
+
 export const EVENTS = Object.freeze({
   LAYOUT_START: 'layout:start',
   LAYOUT_STOP: 'layout:stop',
@@ -155,6 +238,7 @@ export const EVENTS = Object.freeze({
 
   RESIZE: 'resize',
   CAMERA_MOVE: 'camera:move',
+  NETWORK_REPLACED: 'network:replaced',
 });
 
 export class Helios extends EventTarget {
@@ -324,7 +408,7 @@ export class Helios extends EventTarget {
       }
     }
     this.mappersDirty = true;
-    this.visuals.seedMissingPositions(this.layers.size);
+    this.visuals.seedMissingPositions(resolveSeedBoundsForLayout(options.layout, this.layers.size, options.mode));
     const debugPerformance = options.debugPerformance?? false;
     const performanceWindow = options.performanceWindow ?? 60;
     const performanceLogEvery = options.performanceLogEvery ?? performanceWindow;
@@ -408,10 +492,422 @@ export class Helios extends EventTarget {
       click: (event) => this._handlePointerClick(event, false),
       dblclick: (event) => this._handlePointerClick(event, true),
     };
+    this._pendingFrameNetwork = null;
     this.size = { ...this.layers.size };
     this.removeResizeListener = null;
     this.firstGeometryUpdateComplete = false;
     this.ready = this.initialize();
+  }
+
+  _snapshotCameraState() {
+    const camera = this.renderer?.camera ?? null;
+    if (!camera) return null;
+    const state = {
+      mode: camera.mode ?? null,
+      projection: camera.projection ?? null,
+      zoom: Number.isFinite(camera.zoom) ? camera.zoom : null,
+      distance: Number.isFinite(camera.distance) ? camera.distance : null,
+      pan2D: ArrayBuffer.isView(camera.pan2D) ? Array.from(camera.pan2D) : null,
+      orbit3D: ArrayBuffer.isView(camera.orbit3D) ? Array.from(camera.orbit3D) : null,
+      viewport: camera.viewport ? { ...camera.viewport } : null,
+    };
+    return state;
+  }
+
+  _restoreCameraState(state) {
+    if (!state) return;
+    const camera = this.renderer?.camera ?? null;
+    if (!camera) return;
+    if ('_needsUpdate' in camera) camera._needsUpdate = true;
+    if (state.mode && typeof camera.setMode === 'function') {
+      camera.setMode(state.mode);
+    } else if (state.mode) {
+      camera.mode = state.mode;
+    }
+    if (state.projection && typeof camera.setProjection === 'function') {
+      camera.setProjection(state.projection);
+    } else if (state.projection) {
+      camera.projection = state.projection;
+    }
+    if (state.zoom != null) camera.zoom = state.zoom;
+    if (state.distance != null) camera.distance = state.distance;
+    if (state.pan2D && ArrayBuffer.isView(camera.pan2D)) {
+      camera.pan2D[0] = state.pan2D[0] ?? camera.pan2D[0];
+      camera.pan2D[1] = state.pan2D[1] ?? camera.pan2D[1];
+    }
+    if (state.orbit3D && ArrayBuffer.isView(camera.orbit3D)) {
+      camera.orbit3D[0] = state.orbit3D[0] ?? camera.orbit3D[0];
+      camera.orbit3D[1] = state.orbit3D[1] ?? camera.orbit3D[1];
+      camera.orbit3D[2] = state.orbit3D[2] ?? camera.orbit3D[2];
+    }
+    camera.updateMatrices?.();
+  }
+
+  async _createRendererAndTrackers(options = {}) {
+    const extraStateSlotsRaw = this.options.extraStateSlots ?? 1;
+    const extraStateSlots = Number.isFinite(extraStateSlotsRaw) ? Math.max(0, Math.floor(extraStateSlotsRaw)) : 1;
+    const stateSlots = Math.min(32, 3 + extraStateSlots);
+    const renderer = await createRenderer(this.layers.canvas, {
+      clearColor: this.options.clearColor,
+      forceWebGL: this.options.renderer === 'webgl',
+      forceWebGPU: this.options.renderer === 'webgpu',
+      mode: this.options.mode ?? '2d',
+      projection: this.options.projection ?? 'perspective',
+      edgeRendering: this.options.edgeRendering,
+      transparencyModeEdges: this.options.transparencyModeEdges,
+      edgeEndpointTrim: this.options.edgeEndpointTrim,
+      stateSlots,
+      ...options,
+    });
+    this.renderer = renderer;
+    this._applyPendingRendererProps();
+    this.attributeTracker?.destroy?.();
+    this.attributeTracker = new AttributeTracker(this.renderer);
+    this.attributeTracker.resize(this.layers.size);
+    if (typeof this.renderer.resize === 'function') {
+      this.renderer.resize(this.layers.size);
+    }
+    if (this.renderer?.camera?.setChangeListener) {
+      this.renderer.camera.setChangeListener(() => {
+        this.scheduler.requestRender();
+        this._scheduleCameraMove();
+        this.debug.log('helios', 'Camera change requested render');
+      });
+    }
+    this._applyPickingConfig();
+  }
+
+  _resetMappersToDefault(network = this.network) {
+    const defaults = createDefaultMappers(network);
+    this.nodeMapper = new MapperCollection('node', network, this.markMappersDirty, this.debug);
+    this.edgeMapper = new MapperCollection('edge', network, this.markMappersDirty, this.debug);
+    if (defaults?.nodeMapper) this.nodeMapper.setDefault(defaults.nodeMapper);
+    if (defaults?.edgeMapper) this.edgeMapper.setDefault(defaults.edgeMapper);
+    this.mappersDirty = true;
+  }
+
+  _applyMappersSafely() {
+    if (!this.mappersDirty) return true;
+    if (!this.visuals) return false;
+    try {
+      this.visuals.applyMappers({
+        nodeMapper: this.nodeMapper.toCombinedMapper(),
+        edgeMapper: this.edgeMapper.toCombinedMapper(),
+      });
+      this.mappersDirty = false;
+      return true;
+    } catch (error) {
+      this.debug?.log?.('mapper', 'Failed to apply mappers; falling back to defaults', {
+        error,
+        nodeCount: this.network?.nodeCount ?? 0,
+        edgeCount: this.network?.edgeCount ?? 0,
+      });
+      try {
+        this._resetMappersToDefault(this.network);
+        this.visuals.applyMappers({
+          nodeMapper: this.nodeMapper.toCombinedMapper(),
+          edgeMapper: this.edgeMapper.toCombinedMapper(),
+        });
+        this.mappersDirty = false;
+        return true;
+      } catch (fallbackError) {
+        // Last resort: avoid crashing the scheduler loop.
+        this.mappersDirty = false;
+        // eslint-disable-next-line no-console
+        console.error('Failed to apply default mappers after fallback', fallbackError);
+        return false;
+      }
+    }
+  }
+
+  async replaceNetwork(nextNetwork, options = {}) {
+    if (!nextNetwork) {
+      throw new Error('replaceNetwork requires a helios-network instance');
+    }
+    await this.ready;
+
+    const disposeOld = options.disposeOld !== false;
+    const keepCamera = options.keepCamera !== false;
+    const keepMappers = options.keepMappers !== false;
+    const recreateRenderer = options.recreateRenderer !== false;
+    const frameNetwork = options.frame ?? (!keepCamera);
+    const layoutOption = options.layout ?? this.options.layout;
+    if (isLayoutInstance(layoutOption)) {
+      throw new Error('replaceNetwork requires options.layout when Helios was constructed with a layout instance');
+    }
+
+    const wasRunning = !this.manualRendering && this.scheduler?.running === true;
+    const cameraState = keepCamera ? this._snapshotCameraState() : null;
+    const attributeConfig = this.attributeTracker
+      ? { node: this.attributeTracker.nodeAttribute, edge: this.attributeTracker.edgeAttribute, options: { ...this.attributeTracker.options } }
+      : null;
+    const pickingConfig = {
+      node: this._picking?.node?.enabled === true,
+      edge: this._picking?.edge?.enabled === true,
+      options: { ...(this._picking?.options ?? {}) },
+    };
+
+    this.scheduler?.stop?.();
+    this._detachPickingListeners();
+    this.indexPickingTracker?.destroy?.();
+    this.indexPickingTracker = null;
+    this.attributeTracker?.destroy?.();
+    this.attributeTracker = null;
+    this._resetHover?.('network-replaced');
+
+    if (recreateRenderer) {
+      this.renderer?.destroy?.();
+      this.renderer = null;
+    }
+
+    this._layout?.dispose?.();
+
+    const prevNetwork = this.network;
+    this.network = nextNetwork;
+    this.visuals = new VisualAttributes(nextNetwork, this.debug);
+    this.visuals.seedMissingPositions(resolveSeedBoundsForLayout(layoutOption, this.layers.size, this.options.mode));
+
+    if (options.mappers === null) {
+      this.nodeMapper = new MapperCollection('node', nextNetwork, this.markMappersDirty, this.debug);
+      this.edgeMapper = new MapperCollection('edge', nextNetwork, this.markMappersDirty, this.debug);
+      this.mappersDirty = false;
+    } else if (options.mappers) {
+      this.nodeMapper = new MapperCollection('node', nextNetwork, this.markMappersDirty, this.debug);
+      this.edgeMapper = new MapperCollection('edge', nextNetwork, this.markMappersDirty, this.debug);
+      if (options.mappers?.nodeMapper) this.nodeMapper.setDefault(options.mappers.nodeMapper);
+      if (options.mappers?.edgeMapper) this.edgeMapper.setDefault(options.mappers.edgeMapper);
+      this.mappersDirty = true;
+    } else if (keepMappers) {
+      this.nodeMapper = cloneMapperCollection(this.nodeMapper, nextNetwork, this.markMappersDirty, this.debug);
+      this.edgeMapper = cloneMapperCollection(this.edgeMapper, nextNetwork, this.markMappersDirty, this.debug);
+      this.mappersDirty = true;
+    } else {
+      this._resetMappersToDefault(nextNetwork);
+    }
+
+    this.firstGeometryUpdateComplete = false;
+
+    this._layout = this.createLayout(layoutOption);
+    if (this._layout?.setUpdateListener) {
+      this._layout.setUpdateListener(() => {
+        this.visuals.markPositionsDirty();
+        this.scheduler.requestGeometry();
+        this.debug.log('layout', 'Layout requested geometry update');
+      });
+    }
+    await this._layout?.initialize?.();
+    this._layout?.resize?.(this.layers.size);
+    this.scheduler.setLayout(this._layout);
+
+    if (recreateRenderer) {
+      await this._createRendererAndTrackers();
+      if (frameNetwork) {
+        this.requestFrameNetwork({ paddingPx: options.framePaddingPx ?? 24 });
+      } else {
+        this._restoreCameraState(cameraState);
+      }
+    } else if (this.renderer) {
+      this.attributeTracker = new AttributeTracker(this.renderer);
+      this.attributeTracker.resize(this.layers.size);
+      this._applyPickingConfig();
+      if (frameNetwork) {
+        this.requestFrameNetwork({ paddingPx: options.framePaddingPx ?? 24 });
+      } else {
+        this._restoreCameraState(cameraState);
+      }
+    }
+
+    // Apply visuals immediately so first render and exports are non-empty even if the scheduler
+    // hasn't ticked yet; also catches incompatible mappers early.
+    this._applyMappersSafely();
+
+    if (attributeConfig && this.attributeTracker) {
+      this.enableAttributeTracking(attributeConfig.node, attributeConfig.edge, attributeConfig.options);
+    }
+    if (pickingConfig.node) this.enableNodePicking(pickingConfig.options);
+    if (pickingConfig.edge) this.enableEdgePicking(pickingConfig.options);
+
+    if (wasRunning) {
+      this.scheduler.start();
+    }
+    this.scheduler.requestGeometry();
+    this.scheduler.requestRender();
+
+    this.emit(EVENTS.NETWORK_REPLACED, {
+      oldNetwork: prevNetwork ?? null,
+      network: nextNetwork,
+      oldNodeCount: prevNetwork?.nodeCount ?? null,
+      oldEdgeCount: prevNetwork?.edgeCount ?? null,
+      nodeCount: nextNetwork?.nodeCount ?? null,
+      edgeCount: nextNetwork?.edgeCount ?? null,
+    });
+
+    if (disposeOld && prevNetwork && typeof prevNetwork.dispose === 'function') {
+      try {
+        prevNetwork.dispose();
+      } catch (_) {
+        // ignore disposal failures
+      }
+    }
+  }
+
+  _tryPendingFrameNetwork() {
+    const pending = this._pendingFrameNetwork;
+    if (!pending) return false;
+    if (!this.renderer?.camera) return false;
+    const size = this.size ?? this.layers?.size ?? null;
+    if (!size || size.width <= 2 || size.height <= 2) return false;
+
+    pending.attempts += 1;
+    const ok = this.frameNetwork(pending.options);
+    if (ok) {
+      this._pendingFrameNetwork = null;
+      return true;
+    }
+    if (pending.attempts >= pending.maxAttempts) {
+      this._pendingFrameNetwork = null;
+    }
+    return false;
+  }
+
+  requestFrameNetwork(options = {}) {
+    const maxAttempts = Number.isFinite(options.maxAttempts) ? Math.max(1, Math.floor(options.maxAttempts)) : 25;
+    const { maxAttempts: _ignored, ...frameOptions } = options ?? {};
+    this._pendingFrameNetwork = { options: frameOptions, attempts: 0, maxAttempts };
+    const ok = this._tryPendingFrameNetwork();
+    if (!ok) {
+      this.scheduler?.requestGeometry?.();
+      this.scheduler?.requestRender?.();
+    }
+    return this;
+  }
+
+  frameNetwork(options = {}) {
+    const camera = this.renderer?.camera ?? null;
+    const network = this.network;
+    const positions = this.visuals?.nodePositions ?? null;
+    const nodeIndices = network?.nodeIndices ?? null;
+    if (!camera || !positions || !nodeIndices?.length) return false;
+
+    const paddingPx = Number.isFinite(options.paddingPx) ? Math.max(0, options.paddingPx) : 24;
+    const maxSamples = options.maxSamples ?? 50000;
+    const stride = 3;
+    const step = Math.max(1, Math.ceil(nodeIndices.length / Math.max(1, maxSamples)));
+
+    let minX = Infinity; let minY = Infinity; let minZ = Infinity;
+    let maxX = -Infinity; let maxY = -Infinity; let maxZ = -Infinity;
+    let sumX = 0; let sumY = 0; let sumZ = 0;
+    let count = 0;
+    let found = false;
+    for (let i = 0; i < nodeIndices.length; i += step) {
+      const id = nodeIndices[i];
+      const o = id * stride;
+      const x = positions[o];
+      const y = positions[o + 1];
+      const z = positions[o + 2];
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+      found = true;
+      sumX += x; sumY += y; sumZ += z;
+      count += 1;
+      if (x < minX) minX = x; if (x > maxX) maxX = x;
+      if (y < minY) minY = y; if (y > maxY) maxY = y;
+      if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+    }
+    if (!found) return false;
+
+    const bboxCx = (minX + maxX) * 0.5;
+    const bboxCy = (minY + maxY) * 0.5;
+    const bboxCz = (minZ + maxZ) * 0.5;
+    const meanCx = count ? (sumX / count) : bboxCx;
+    const meanCy = count ? (sumY / count) : bboxCy;
+    const meanCz = count ? (sumZ / count) : bboxCz;
+    const cx = Number.isFinite(meanCx) ? meanCx : bboxCx;
+    const cy = Number.isFinite(meanCy) ? meanCy : bboxCy;
+    const cz = Number.isFinite(meanCz) ? meanCz : bboxCz;
+    const w = Math.max(1e-6, maxX - minX);
+    const h = Math.max(1e-6, maxY - minY);
+    const dz = Math.max(1e-6, maxZ - minZ);
+
+    if (camera.mode === '2d') {
+      const viewportW = Math.max(1, camera.viewport?.width ?? this.size?.width ?? 1);
+      const viewportH = Math.max(1, camera.viewport?.height ?? this.size?.height ?? 1);
+      const availW = Math.max(1, viewportW - paddingPx * 2);
+      const availH = Math.max(1, viewportH - paddingPx * 2);
+      const zoomX = availW / w;
+      const zoomY = availH / h;
+      const nextZoom = Math.min(zoomX, zoomY);
+      const clamped = Math.min(camera.maxZoom ?? nextZoom, Math.max(camera.minZoom ?? nextZoom, nextZoom));
+      camera.zoom = clamped;
+      camera.pan2D[0] = -cx * camera.zoom;
+      camera.pan2D[1] = -cy * camera.zoom;
+      if ('_needsUpdate' in camera) camera._needsUpdate = true;
+      camera.updateMatrices?.();
+      this.scheduler?.requestRender?.();
+      return true;
+    }
+
+    // 3D: reset rotation/pan, re-center target, choose a distance that frames the bounding box.
+    camera.resetCameraState?.();
+    camera.target[0] = cx;
+    camera.target[1] = cy;
+    camera.target[2] = cz;
+    const radius = 0.5 * Math.hypot(w, h, dz);
+    const fovRad = (Number.isFinite(camera.fov) ? camera.fov : 60) * (Math.PI / 180);
+    const distPerspective = radius / Math.max(1e-3, Math.tan(fovRad * 0.5));
+    const desired = camera.projection === 'orthographic' ? radius * 1.2 : distPerspective * 1.25;
+    camera.distance = Math.min(camera.maxDistance ?? desired, Math.max(camera.minDistance ?? desired, desired));
+    if ('_needsUpdate' in camera) camera._needsUpdate = true;
+    camera.updateMatrices?.();
+    this.scheduler?.requestRender?.();
+    return true;
+  }
+
+  async loadNetwork(source, options = {}) {
+    const requestedFormat = options.format ?? null;
+    const formatFromName = source && typeof source === 'object' && typeof source.name === 'string'
+      ? inferNetworkFormatFromName(source.name)
+      : null;
+    const format = requestedFormat ?? formatFromName;
+    if (!format) {
+      throw new Error('loadNetwork requires a format ("xnet", "zxnet", "bxnet") or a filename with a supported extension');
+    }
+    const { default: HeliosNetwork } = await import('helios-network');
+    const normalized = format.toLowerCase();
+    let next = null;
+    if (normalized === 'bxnet') next = await HeliosNetwork.fromBXNet(source);
+    else if (normalized === 'zxnet') next = await HeliosNetwork.fromZXNet(source);
+    else if (normalized === 'xnet') next = await HeliosNetwork.fromXNet(source);
+    else throw new Error(`Unsupported network format: ${format}`);
+    await this.replaceNetwork(next, options);
+    if (typeof source?.name === 'string') {
+      this._lastLoadedNetworkName = source.name;
+      this._lastLoadedNetworkBase = getBaseFilename(source.name);
+      this._lastLoadedNetworkFormat = inferNetworkFormatFromName(source.name);
+    }
+    return next;
+  }
+
+  async saveNetwork(format = 'bxnet', options = {}) {
+    const normalized = String(format).toLowerCase();
+    if (!this.network) throw new Error('saveNetwork requires an active network');
+    // Ensure visuals exist and mappers have been applied before serializing.
+    this.visuals?.seedMissingPositions?.(this.layers?.size);
+    this._applyMappersSafely();
+    const output = options.output ?? 'blob';
+    const saveOptions = { ...(options.saveOptions ?? {}), format: output };
+    if (normalized === 'bxnet') {
+      if (typeof this.network.saveBXNet !== 'function') throw new Error('Network does not support saveBXNet()');
+      return this.network.saveBXNet(saveOptions);
+    }
+    if (normalized === 'zxnet') {
+      if (typeof this.network.saveZXNet !== 'function') throw new Error('Network does not support saveZXNet()');
+      return this.network.saveZXNet(saveOptions);
+    }
+    if (normalized === 'xnet') {
+      if (typeof this.network.saveXNet !== 'function') throw new Error('Network does not support saveXNet()');
+      return this.network.saveXNet(saveOptions);
+    }
+    throw new Error(`Unsupported network format: ${format}`);
   }
 
   on(type, handler, options) {
@@ -588,6 +1084,7 @@ export class Helios extends EventTarget {
       this.attributeTracker?.resize(size);
       this.indexPickingTracker?.resize(size);
       this._layout?.resize?.(size);
+      this._tryPendingFrameNetwork();
       if (!this.manualRendering) {
         this.scheduler.requestGeometry();
         this.scheduler.requestRender();
@@ -602,11 +1099,7 @@ export class Helios extends EventTarget {
       this.counters.geometryFrames = bumpCounter(this.counters.geometryFrames);
       if (this.mappersDirty) {
         this.debug.log('mapper', 'Applying mappers to visuals');
-        this.visuals.applyMappers({
-          nodeMapper: this.nodeMapper.toCombinedMapper(),
-          edgeMapper: this.edgeMapper.toCombinedMapper(),
-        });
-        this.mappersDirty = false;
+        this._applyMappersSafely();
       }
       const frame = {
         network: this.network,
@@ -625,6 +1118,7 @@ export class Helios extends EventTarget {
           edges: this.network?.edgeCount,
         });
       }
+      this._tryPendingFrameNetwork();
       return frame;
     });
     this.scheduler.setRenderCallback((frame) => {
@@ -840,7 +1334,7 @@ export class Helios extends EventTarget {
     const nodes = this.network.addNodes(count);
     this.debug.log('helios', 'Adding nodes', { count });
     this.visuals.applyNodeDefaults(nodes);
-    this.visuals.seedMissingPositions(this.layers.size);
+    this.visuals.seedMissingPositions(resolveSeedBoundsForLayout(this.options.layout, this.layers.size, this.options.mode));
     if (initializer) {
       initializer(nodes, this.visuals);
     }
@@ -871,7 +1365,7 @@ export class Helios extends EventTarget {
     if (nodes) {
       this.debug.log('helios', 'Network nodes changed', { count: nodes.length ?? nodes.size ?? nodes });
       this.visuals.applyNodeDefaults(nodes);
-      this.visuals.seedMissingPositions(this.layers.size);
+      this.visuals.seedMissingPositions(resolveSeedBoundsForLayout(this.options.layout, this.layers.size, this.options.mode));
     }
     if (edges) {
       this.debug.log('helios', 'Network edges changed', { count: edges.length ?? edges.size ?? edges });

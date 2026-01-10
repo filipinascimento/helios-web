@@ -704,12 +704,20 @@ export class Mapper {
 }
 
 export function createDefaultMappers(network) {
+  const inferno = createColormapScale('interpolateInferno', { domain: [0, 1], alpha: 1 });
+  const denom = Math.max(1, (network?.nodeCapacity ?? network?.nodeCount ?? 1) - 1);
   const nodeMapper = new Mapper({ mode: 'node', network });
   nodeMapper
     .channel('color')
     .from('$index')
-    .scale((value, _inputs, _item, ctx) => colorFromIndex(value ?? ctx?.index ?? 0))
-    .default(colorFromIndex(0))
+    .scale((value, _inputs, _item, ctx) => {
+      const index = Number(value ?? ctx?.index ?? 0);
+      const t = denom > 1 ? clamp01(index / denom) : 0;
+      // Avoid the very darkest end of inferno so default visuals remain visible on dark backgrounds.
+      const adjusted = 0.15 + t * 0.85;
+      return inferno(adjusted);
+    })
+    .default(inferno(0.6))
     .done();
   nodeMapper.channel('size').constant(DEFAULT_NODE_SIZE).done();
   nodeMapper.channel('outline').constant(DEFAULT_NODE_OUTLINE_WIDTH).done();
