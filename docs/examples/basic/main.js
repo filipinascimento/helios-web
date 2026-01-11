@@ -333,7 +333,7 @@ async function bootstrap() {
     // HIGHLIGHTED: slightly bigger and tint.
     .nodeStateStyle('HIGHLIGHTED', { sizeMul: 1.15, opacityMul: 1.0, outlineMul: 1.2, colorAdd: [0.0, 0.25, 0.25, 0] });
 
-  // helios.enableNodePicking({ resolutionScale: 0.25, trackDepth: false, maxFps: 30 });
+  helios.enableNodePicking({ resolutionScale: 0.25, trackDepth: false, maxFps: 15 });
 
   let highlightedNode = null;
   let selectedNode = null;

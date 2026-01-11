@@ -1,7 +1,11 @@
-export function createGraphWebGPUSources(stateSlots = 4) {
+export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
   const STATE_SLOTS = Math.max(0, Math.min(32, Math.floor(Number(stateSlots) || 0)));
+  const useNodeIndices = options.useNodeIndices !== false;
+  const useEdgeIndices = options.useEdgeIndices !== false;
 
   const NODE_WGSL = /* wgsl */ `
+const USE_NODE_INDICES : bool = ${useNodeIndices ? 'true' : 'false'};
+
 struct Camera {
   viewProjection: mat4x4<f32>,
   view: mat4x4<f32>,
@@ -91,7 +95,10 @@ struct VertexOutput {
 
 @vertex
 fn nodeVertex(input : VertexInput) -> VertexOutput {
-  let index = nodeIndices.data[input.instance];
+  var index = input.instance;
+  if (USE_NODE_INDICES) {
+    index = nodeIndices.data[input.instance];
+  }
   let baseOffset = index * 3u;
   let basePosition = vec3<f32>(
     nodePositions.data[baseOffset + 0u],
@@ -219,6 +226,8 @@ fn nodeFragment(input : VertexOutput) -> NodeFragmentOutput {
 }`;
 
   const EDGE_WGSL = /* wgsl */ `
+const USE_EDGE_INDICES : bool = ${useEdgeIndices ? 'true' : 'false'};
+
 struct Camera {
   viewProjection: mat4x4<f32>,
   view: mat4x4<f32>,
@@ -312,7 +321,10 @@ struct EdgeVertexOutput {
 @vertex
 fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
   let edgeSlot = vertexIndex / 2u;
-  let edgeId = edgeIndices.data[edgeSlot];
+  var edgeId = edgeSlot;
+  if (USE_EDGE_INDICES) {
+    edgeId = edgeIndices.data[edgeSlot];
+  }
   let base = edgeId * 6u;
   var startPos = vec3<f32>(
     edgeSegments.data[base + 0u],
@@ -417,7 +429,10 @@ struct EdgeQuadInput {
 
 @vertex
 fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
-  let edgeId = edgeIndices.data[input.instance];
+  var edgeId = input.instance;
+  if (USE_EDGE_INDICES) {
+    edgeId = edgeIndices.data[input.instance];
+  }
   let base = edgeId * 6u;
   var startPos = vec3<f32>(
     edgeSegments.data[base + 0u],

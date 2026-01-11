@@ -19,6 +19,25 @@ const {
 
 export { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './GraphLayerCommon.js';
 
+const DENSE_GRAPH_NODE_REQUESTS = [
+  ['node', NODE_POSITION_ATTRIBUTE],
+  ['node', NODE_COLOR_ATTRIBUTE],
+  ['node', NODE_SIZE_ATTRIBUTE],
+  ['node', NODE_STATE_ATTRIBUTE],
+  ['node', NODE_OUTLINE_WIDTH_ATTRIBUTE],
+  ['node', NODE_OUTLINE_COLOR_ATTRIBUTE],
+];
+
+const DENSE_GRAPH_EDGE_REQUESTS = [
+  ['edge', EDGE_COLOR_ATTRIBUTE],
+  ['edge', EDGE_OPACITY_ATTRIBUTE],
+  ['edge', EDGE_WIDTH_ATTRIBUTE],
+  ['edge', EDGE_STATE_ATTRIBUTE],
+  ['edge', EDGE_ENDPOINTS_POSITION_ATTRIBUTE],
+  ['edge', EDGE_ENDPOINTS_SIZE_ATTRIBUTE],
+  ['edge', EDGE_ENDPOINTS_STATE_ATTRIBUTE],
+];
+
 export class GraphLayer extends Layer {
   static NO_HOVER_INDEX = 0xffffffff;
 
@@ -335,6 +354,29 @@ export class GraphLayer extends Layer {
     return true;
   }
 
+  getDensePackingInfo(network) {
+    if (!network) {
+      return { node: null, edge: null };
+    }
+    const node = typeof network.getDenseNodePackingInfo === 'function'
+      ? network.getDenseNodePackingInfo()
+      : null;
+    const edge = typeof network.getDenseEdgePackingInfo === 'function'
+      ? network.getDenseEdgePackingInfo()
+      : null;
+    return { node, edge };
+  }
+
+  getDenseGraphRequests(packing) {
+    const includeNodeIndex = !(packing?.node?.indicesAreIdentity);
+    const includeEdgeIndex = !(packing?.edge?.indicesAreIdentity);
+    const requests = [];
+    if (includeNodeIndex) requests.push(['node', 'index']);
+    if (includeEdgeIndex) requests.push(['edge', 'index']);
+    requests.push(...DENSE_GRAPH_NODE_REQUESTS, ...DENSE_GRAPH_EDGE_REQUESTS);
+    return requests;
+  }
+
   getAttributeView(network, scope, name) {
     if (!network) return null;
     try {
@@ -454,5 +496,148 @@ export class GraphLayer extends Layer {
     };
 
     return { nodes, edges };
+  }
+
+  readDenseGraphFromViews(views, packing) {
+    if (!views) return this.readDenseGraph(null);
+
+    const nodeIndexDesc = views.node?.index ?? null;
+    const edgeIndexDesc = views.edge?.index ?? null;
+    const nodePositionsDesc = views.node?.[NODE_POSITION_ATTRIBUTE] ?? null;
+    const nodeColorsDesc = views.node?.[NODE_COLOR_ATTRIBUTE] ?? null;
+    const nodeSizesDesc = views.node?.[NODE_SIZE_ATTRIBUTE] ?? null;
+    const nodeStatesDesc = views.node?.[NODE_STATE_ATTRIBUTE] ?? null;
+    const nodeOutlineWidthDesc = views.node?.[NODE_OUTLINE_WIDTH_ATTRIBUTE] ?? null;
+    const nodeOutlineColorDesc = views.node?.[NODE_OUTLINE_COLOR_ATTRIBUTE] ?? null;
+    const edgeColorDesc = views.edge?.[EDGE_COLOR_ATTRIBUTE] ?? null;
+    const edgeOpacityDesc = views.edge?.[EDGE_OPACITY_ATTRIBUTE] ?? null;
+    const edgeWidthDesc = views.edge?.[EDGE_WIDTH_ATTRIBUTE] ?? null;
+    const edgeStatesDesc = views.edge?.[EDGE_STATE_ATTRIBUTE] ?? null;
+    const edgeSegmentsDesc = views.edge?.[EDGE_ENDPOINTS_POSITION_ATTRIBUTE] ?? null;
+    const edgeEndpointSizeDesc = views.edge?.[EDGE_ENDPOINTS_SIZE_ATTRIBUTE] ?? null;
+    const edgeEndpointStatesDesc = views.edge?.[EDGE_ENDPOINTS_STATE_ATTRIBUTE] ?? null;
+
+    const nodes = {
+      positions: nodePositionsDesc?.view ?? this.emptyFloat,
+      colors: nodeColorsDesc?.view ?? this.emptyFloat,
+      sizes: nodeSizesDesc?.view ?? this.emptyFloat,
+      states: nodeStatesDesc?.view ?? this.emptyUint,
+      outlineWidths: nodeOutlineWidthDesc?.view ?? this.emptyFloat,
+      outlineColors: nodeOutlineColorDesc?.view ?? this.emptyFloat,
+      indices: nodeIndexDesc?.view ?? this.emptyUint,
+      count:
+        nodeIndexDesc?.count ??
+        nodePositionsDesc?.count ??
+        nodeColorsDesc?.count ??
+        nodeSizesDesc?.count ??
+        nodeStatesDesc?.count ??
+        packing?.node?.count ??
+        0,
+      versions: {
+        positions: nodePositionsDesc?.version ?? 0,
+        colors: nodeColorsDesc?.version ?? 0,
+        sizes: nodeSizesDesc?.version ?? 0,
+        states: nodeStatesDesc?.version ?? 0,
+        outlineWidths: nodeOutlineWidthDesc?.version ?? 0,
+        outlineColors: nodeOutlineColorDesc?.version ?? 0,
+        indices: nodeIndexDesc?.version ?? 0,
+        topology: nodeIndexDesc?.topologyVersion ?? nodePositionsDesc?.topologyVersion ?? 0,
+      },
+      packing: packing?.node ?? null,
+    };
+
+    const edges = {
+      segments: edgeSegmentsDesc?.view ?? this.emptyFloat,
+      colors: edgeColorDesc?.view ?? this.emptyFloat,
+      widths: edgeWidthDesc?.view ?? this.emptyFloat,
+      endpointSizes: edgeEndpointSizeDesc?.view ?? this.emptyFloat,
+      endpointStates: edgeEndpointStatesDesc?.view ?? this.emptyUint,
+      indices: edgeIndexDesc?.view ?? this.emptyUint,
+      opacities: edgeOpacityDesc?.view ?? this.emptyFloat,
+      states: edgeStatesDesc?.view ?? this.emptyUint,
+      count:
+        edgeIndexDesc?.count ??
+        edgeSegmentsDesc?.count ??
+        edgeColorDesc?.count ??
+        edgeWidthDesc?.count ??
+        edgeOpacityDesc?.count ??
+        edgeStatesDesc?.count ??
+        packing?.edge?.count ??
+        0,
+      versions: {
+        segments: edgeSegmentsDesc?.version ?? 0,
+        colors: edgeColorDesc?.version ?? 0,
+        widths: edgeWidthDesc?.version ?? 0,
+        endpointSizes: edgeEndpointSizeDesc?.version ?? 0,
+        endpointStates: edgeEndpointStatesDesc?.version ?? 0,
+        indices: edgeIndexDesc?.version ?? 0,
+        opacities: edgeOpacityDesc?.version ?? 0,
+        states: edgeStatesDesc?.version ?? 0,
+        topology: edgeIndexDesc?.topologyVersion ?? edgeSegmentsDesc?.topologyVersion ?? 0,
+      },
+      packing: packing?.edge ?? null,
+    };
+
+    return { nodes, edges };
+  }
+
+  withDenseGraph(network, fn) {
+    if (!network) return fn(this.readDenseGraph(null));
+    const packing = this.getDensePackingInfo(network);
+    const requests = this.getDenseGraphRequests(packing);
+
+    // Updates must happen outside of buffer access.
+    try {
+      for (const [scope, name] of requests) {
+        if (scope !== 'node' && scope !== 'edge') continue;
+        if (name === 'index') {
+          if (scope === 'node') network.updateDenseNodeIndexBuffer?.();
+          else network.updateDenseEdgeIndexBuffer?.();
+        } else if (scope === 'node') {
+          network.updateDenseNodeAttributeBuffer?.(name);
+        } else {
+          network.updateDenseEdgeAttributeBuffer?.(name);
+        }
+      }
+    } catch (error) {
+      console.warn('GraphLayer: failed to update dense buffers', error);
+      return null;
+    }
+
+    // Reads must happen inside buffer access.
+    try {
+      if (typeof network.withDenseBufferViews === 'function') {
+        return network.withDenseBufferViews(requests, (views) => {
+          const geometry = this.readDenseGraphFromViews(views, packing);
+          return fn(geometry);
+        });
+      }
+
+      if (typeof network.withBufferAccess === 'function') {
+        return network.withBufferAccess(() => {
+          const views = { node: Object.create(null), edge: Object.create(null) };
+          for (const [scope, name] of requests) {
+            if (scope !== 'node' && scope !== 'edge') continue;
+            if (name === 'index') {
+              views[scope].index = scope === 'node'
+                ? network.getDenseNodeIndexView?.()
+                : network.getDenseEdgeIndexView?.();
+            } else {
+              views[scope][name] = scope === 'node'
+                ? network.getDenseNodeAttributeView?.(name)
+                : network.getDenseEdgeAttributeView?.(name);
+            }
+          }
+          const geometry = this.readDenseGraphFromViews(views, packing);
+          return fn(geometry);
+        });
+      }
+
+      console.warn('GraphLayer: network does not support buffer access sessions');
+      return null;
+    } catch (error) {
+      console.warn('GraphLayer: failed to read dense buffers', error);
+      return null;
+    }
   }
 }

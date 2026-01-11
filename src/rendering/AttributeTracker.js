@@ -338,17 +338,6 @@ class WebGLAttributeRenderer {
     this.resize(size, scale, config.trackDepth);
     const cameraUniforms = this.graphLayer.getCameraUniforms(camera);
     if (!cameraUniforms) return null;
-    if (!this.graphLayer.updateDenseGraphBuffers(network)) return null;
-
-    ensureEncodedReady(network, 'node', config.nodeAttribute);
-    ensureEncodedReady(network, 'edge', config.edgeAttribute);
-    let geometry = null;
-    let encoded = null;
-    network.withBufferAccess(() => {
-      geometry = this.graphLayer.readDenseGraph(network);
-      encoded = this.encodeAttributes(network, geometry, config);
-    });
-    if (!geometry) return null;
 
     const { gl } = this;
     const is2D = cameraUniforms.mode === '2d';
@@ -362,10 +351,16 @@ class WebGLAttributeRenderer {
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LEQUAL);
 
-    const passes = [];
+    ensureEncodedReady(network, 'node', config.nodeAttribute);
+    ensureEncodedReady(network, 'edge', config.edgeAttribute);
 
-    if (geometry.nodes.count && encoded.nodeEncoded && config.nodeAttribute) {
-      passes.push(() => {
+    return this.graphLayer.withDenseGraph(network, (geometry) => {
+      if (!geometry) return null;
+      const encoded = this.encodeAttributes(network, geometry, config);
+      const passes = [];
+
+      if (geometry.nodes.count && encoded.nodeEncoded && config.nodeAttribute) {
+        passes.push(() => {
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.targets.node?.handle ?? null);
         gl.viewport(0, 0, this.size.width, this.size.height);
         gl.clearColor(0, 0, 0, 0);
@@ -389,12 +384,12 @@ class WebGLAttributeRenderer {
         gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.encoded);
         gl.bufferData(gl.ARRAY_BUFFER, encoded.nodeEncoded, gl.DYNAMIC_DRAW);
         gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, geometry.nodes.count);
-      });
-    }
+        });
+      }
 
-    if (geometry.edges.count && encoded.edgeEncoded && config.edgeAttribute) {
-      // Depth test/write for edges so overlaps are correct in attribute targets.
-      passes.push(() => {
+      if (geometry.edges.count && encoded.edgeEncoded && config.edgeAttribute) {
+        // Depth test/write for edges so overlaps are correct in attribute targets.
+        passes.push(() => {
         gl.enable(gl.DEPTH_TEST);
         gl.depthMask(true);
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.targets.edge?.handle ?? null);
@@ -530,34 +525,35 @@ class WebGLAttributeRenderer {
       }
     };
 
-    if (config.trackDepth) {
-      if (geometry.nodes.count && this.depthTargets.node) {
-        passes.push(() => renderDepthColor(this.depthTargets.node, true, false));
+      if (config.trackDepth) {
+        if (geometry.nodes.count && this.depthTargets.node) {
+          passes.push(() => renderDepthColor(this.depthTargets.node, true, false));
+        }
+        if (geometry.edges.count && this.depthTargets.edge) {
+          const useQuads = this.graphLayer.edgeRenderingMode === 'quad';
+          passes.push(() => {
+            // Draw occluding nodes into the edge depth-color target before edges.
+            if (geometry.nodes.count && this.depthTargets.edge) {
+              renderDepthColor(this.depthTargets.edge, true, false);
+            }
+            renderDepthColor(this.depthTargets.edge, false, useQuads);
+          });
+        }
       }
-      if (geometry.edges.count && this.depthTargets.edge) {
-        const useQuads = this.graphLayer.edgeRenderingMode === 'quad';
-        passes.push(() => {
-          // Draw occluding nodes into the edge depth-color target before edges.
-          if (geometry.nodes.count && this.depthTargets.edge) {
-            renderDepthColor(this.depthTargets.edge, true, false);
-          }
-          renderDepthColor(this.depthTargets.edge, false, useQuads);
-        });
-      }
-    }
 
-    passes.push(() => {
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      gl.bindVertexArray(null);
-      gl.enable(gl.BLEND);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-      gl.depthMask(true);
-      gl.enable(gl.DEPTH_TEST);
-      gl.depthFunc(gl.LEQUAL);
+      passes.push(() => {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.bindVertexArray(null);
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.depthMask(true);
+        gl.enable(gl.DEPTH_TEST);
+        gl.depthFunc(gl.LEQUAL);
+      });
+
+      this.runner?.run?.(passes, { gl, device: this.device });
+      return { ...this.targets, depthTargets: this.depthTargets };
     });
-
-    this.runner?.run?.(passes, { gl, device: this.device });
-    return { ...this.targets, depthTargets: this.depthTargets };
   }
 
   readDepth(target, x, y) {
@@ -950,46 +946,42 @@ class WebGPUAttributeRenderer {
     this.resize(size, scale, config.trackDepth);
     const cameraUniforms = this.graphLayer.getCameraUniforms(camera);
     if (!cameraUniforms) return null;
-    if (!this.graphLayer.updateDenseGraphBuffers(network)) return null;
     ensureEncodedReady(network, 'node', config.nodeAttribute);
     ensureEncodedReady(network, 'edge', config.edgeAttribute);
-    let geometry = null;
-    let encoded = null;
-    network.withBufferAccess(() => {
-      geometry = this.graphLayer.readDenseGraph(network);
-      encoded = this.encodeAttributes(network, geometry, config);
-    });
-    if (!geometry) return null;
 
-    const gpu = this.device.device;
-    const is2D = cameraUniforms.mode === '2d';
-    const zoom2D = is2D ? Math.max(1e-3, cameraUniforms.view?.[0] ?? 1) : 1;
-    const edgeWidthFactor = is2D ? (zoom2D / EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL) : 1.0;
-    const edgeWidthBase = this.graphLayer.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
-    const edgeWidthScale = this.graphLayer.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
+    return this.graphLayer.withDenseGraph(network, (geometry) => {
+      if (!geometry) return null;
+      const encoded = this.encodeAttributes(network, geometry, config);
 
-    const cameraBuffer = gpu.createBuffer({
-      size: 48 * 4,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      mappedAtCreation: true,
-    });
-    const cameraArray = new Float32Array(cameraBuffer.getMappedRange());
-    cameraArray.set(cameraUniforms.viewProjection, 0);
-    cameraArray.set(cameraUniforms.view, 16);
-    cameraArray.set(cameraUniforms.position ?? [0, 0, 0], 32);
-    cameraArray[35] = is2D ? 1 : 0;
-    cameraArray.set(cameraUniforms.up ?? [0, 1, 0], 36);
-    cameraArray.set(cameraUniforms.right ?? [1, 0, 0], 40);
-    const viewportWidth = cameraUniforms.viewport?.width ?? size.width ?? 1;
-    const viewportHeight = cameraUniforms.viewport?.height ?? size.height ?? 1;
-    const pixelRatio = cameraUniforms.viewport?.devicePixelRatio ?? size.devicePixelRatio ?? 1;
-    const drawWidth = viewportWidth * pixelRatio;
-    const drawHeight = viewportHeight * pixelRatio;
-    cameraArray[44] = drawWidth;
-    cameraArray[45] = drawHeight;
-    cameraArray[46] = drawWidth > 0 ? 1 / drawWidth : 0;
-    cameraArray[47] = drawHeight > 0 ? 1 / drawHeight : 0;
-    cameraBuffer.unmap();
+      const gpu = this.device.device;
+      const is2D = cameraUniforms.mode === '2d';
+      const zoom2D = is2D ? Math.max(1e-3, cameraUniforms.view?.[0] ?? 1) : 1;
+      const edgeWidthFactor = is2D ? (zoom2D / EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL) : 1.0;
+      const edgeWidthBase = this.graphLayer.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
+      const edgeWidthScale = this.graphLayer.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
+
+      const cameraBuffer = gpu.createBuffer({
+        size: 48 * 4,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        mappedAtCreation: true,
+      });
+      const cameraArray = new Float32Array(cameraBuffer.getMappedRange());
+      cameraArray.set(cameraUniforms.viewProjection, 0);
+      cameraArray.set(cameraUniforms.view, 16);
+      cameraArray.set(cameraUniforms.position ?? [0, 0, 0], 32);
+      cameraArray[35] = is2D ? 1 : 0;
+      cameraArray.set(cameraUniforms.up ?? [0, 1, 0], 36);
+      cameraArray.set(cameraUniforms.right ?? [1, 0, 0], 40);
+      const viewportWidth = cameraUniforms.viewport?.width ?? size.width ?? 1;
+      const viewportHeight = cameraUniforms.viewport?.height ?? size.height ?? 1;
+      const pixelRatio = cameraUniforms.viewport?.devicePixelRatio ?? size.devicePixelRatio ?? 1;
+      const drawWidth = viewportWidth * pixelRatio;
+      const drawHeight = viewportHeight * pixelRatio;
+      cameraArray[44] = drawWidth;
+      cameraArray[45] = drawHeight;
+      cameraArray[46] = drawWidth > 0 ? 1 / drawWidth : 0;
+      cameraArray[47] = drawHeight > 0 ? 1 / drawHeight : 0;
+      cameraBuffer.unmap();
 
     const globalsBuffer = gpu.createBuffer({
       size: 24 * 4,
@@ -1305,10 +1297,11 @@ class WebGPUAttributeRenderer {
       globalsBuffer.destroy();
     });
 
-	    this.runner?.run?.(passes, { device: this.device });
-	    return { ...this.targets, depthTargets: this.depthTargets };
-	  }
-	}
+      this.runner?.run?.(passes, { device: this.device });
+      return { ...this.targets, depthTargets: this.depthTargets };
+    });
+  }
+}
 
 export class AttributeTracker {
   constructor(renderer) {
