@@ -23,6 +23,8 @@ test('state APIs accept built-in state names', () => {
   assert.equal(typeof Helios.prototype.edgeStateStyle, 'function');
   assert.equal(typeof Helios.prototype.nodeState, 'function');
   assert.equal(typeof Helios.prototype.edgeState, 'function');
+  assert.equal(typeof Helios.prototype.hoverNodeState, 'function');
+  assert.equal(typeof Helios.prototype.hoverEdgeState, 'function');
 });
 
 test('global accessors exist on Helios prototype', () => {

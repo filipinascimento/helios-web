@@ -38,6 +38,20 @@ Supported `mode` values:
 - `remove` (bitwise AND NOT)
 - `toggle` (bitwise XOR)
 
+## Ephemeral Hover State (No Buffer Writes)
+
+For very large graphs, hover interactions can be made cheaper by applying an additional state bitmask in the shaders for a single hovered node/edge, without mutating the underlying `helios-network` buffers:
+
+```js
+// Apply HIGHLIGHTED style to just the hovered node (overlay in shaders).
+helios.hoverNodeState(nodeId, 'HIGHLIGHTED');
+helios.hoverEdgeState(edgeId, 'HIGHLIGHTED');
+
+// Clear hover.
+helios.hoverNodeState(null, 0);
+helios.hoverEdgeState(null, 0);
+```
+
 ## Styling State in Shaders
 
 Each state bit position maps to a “slot” (0..`stateSlots - 1`) that can apply transforms in the shaders.

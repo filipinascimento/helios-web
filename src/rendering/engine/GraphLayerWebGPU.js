@@ -45,6 +45,8 @@ export class GraphLayerWebGPU extends GraphLayer {
     this.cameraBuffer = null;
     this.globalsArray = null;
     this.globalsBuffer = null;
+    this.hoverArray = null;
+    this.hoverBuffer = null;
     this.nodeBuffersGpu = {};
     this.edgeBuffersGpu = {};
     this.nodeQuadBufferGpu = null;
@@ -87,6 +89,7 @@ export class GraphLayerWebGPU extends GraphLayer {
     this.edgeBuffersGpu.endpointStates?.buffer?.destroy?.();
     this.cameraBuffer?.destroy?.();
     this.globalsBuffer?.destroy?.();
+    this.hoverBuffer?.destroy?.();
     this.nodeQuadBufferGpu?.destroy?.();
     this.edgeQuadBufferGpu?.destroy?.();
     this.weightedTextures?.color?.destroy?.();
@@ -107,6 +110,11 @@ export class GraphLayerWebGPU extends GraphLayer {
     this.globalsArray = new Float32Array(globalsFloats);
     this.globalsBuffer = device.device.createBuffer({
       size: this.globalsArray.byteLength,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.hoverArray = new Uint32Array([GraphLayer.NO_HOVER_INDEX, 0, GraphLayer.NO_HOVER_INDEX, 0]);
+    this.hoverBuffer = device.device.createBuffer({
+      size: this.hoverArray.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     const quad = new Float32Array([
@@ -149,6 +157,7 @@ export class GraphLayerWebGPU extends GraphLayer {
         },
         { binding: 5, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
         { binding: 6, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 7, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
       ],
     });
 
@@ -168,6 +177,7 @@ export class GraphLayerWebGPU extends GraphLayer {
         { binding: 7, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
         { binding: 8, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
         { binding: 9, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 10, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
       ],
     });
 
@@ -332,6 +342,7 @@ export class GraphLayerWebGPU extends GraphLayer {
           { binding: 4, resource: { buffer: this.nodeBuffersGpu.colors.buffer } },
           { binding: 5, resource: { buffer: this.nodeBuffersGpu.states.buffer } },
           { binding: 6, resource: { buffer: this.globalsBuffer } },
+          { binding: 7, resource: { buffer: this.hoverBuffer } },
         ],
       });
       this._nodeBuffersLast = {
@@ -488,6 +499,7 @@ export class GraphLayerWebGPU extends GraphLayer {
           { binding: 7, resource: { buffer: this.edgeBuffersGpu.states.buffer } },
           { binding: 8, resource: { buffer: this.edgeBuffersGpu.endpointStates.buffer } },
           { binding: 9, resource: { buffer: this.globalsBuffer } },
+          { binding: 10, resource: { buffer: this.hoverBuffer } },
         ],
       });
       this._edgeBuffersLast = {
@@ -528,6 +540,7 @@ export class GraphLayerWebGPU extends GraphLayer {
       is2D = cameraUniforms?.mode === '2d';
       this.updateGlobalsGpu(gpuDevice, cameraUniforms);
       this.updateCameraUniformsGpu(camera, cameraUniforms);
+      this.updateHoverGpu(gpuDevice);
       if (!this.cameraBuffer) return;
       if (geometry.nodes.count) {
         this.updateNodeBuffersGpu(geometry.nodes, gpuDevice, maxBindingSize);
@@ -752,6 +765,30 @@ export class GraphLayerWebGPU extends GraphLayer {
     this.globalsArray.set(this.edgeStateColorAdd, offset); offset += slots * 4;
 
     device.queue.writeBuffer(this.globalsBuffer, 0, this.globalsArray);
+  }
+
+  updateHoverGpu(device) {
+    if (!device || !this.hoverBuffer || !this.hoverArray) return;
+    const nodeIndex = this.hoveredNodeIndex >>> 0;
+    const nodeState = this.hoveredNodeState >>> 0;
+    const edgeIndex = this.hoveredEdgeIndex >>> 0;
+    const edgeState = this.hoveredEdgeState >>> 0;
+    const prev = this._hoverLast;
+    if (
+      prev &&
+      prev.nodeIndex === nodeIndex &&
+      prev.nodeState === nodeState &&
+      prev.edgeIndex === edgeIndex &&
+      prev.edgeState === edgeState
+    ) {
+      return;
+    }
+    this.hoverArray[0] = nodeIndex;
+    this.hoverArray[1] = nodeState;
+    this.hoverArray[2] = edgeIndex;
+    this.hoverArray[3] = edgeState;
+    device.queue.writeBuffer(this.hoverBuffer, 0, this.hoverArray);
+    this._hoverLast = { nodeIndex, nodeState, edgeIndex, edgeState };
   }
 
   prepareWeightedResources(context, cameraUniforms) {

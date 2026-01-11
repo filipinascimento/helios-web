@@ -377,6 +377,7 @@ export class Camera {
     this.canvas = canvas;
     this.mode = options.mode === '3d' ? '3d' : '2d';
     this.projection = options.projection === 'orthographic' ? 'orthographic' : 'perspective';
+    this.suppressBrowserGestures = options.suppressBrowserGestures !== false;
     this.fov = options.fov ?? 60;
     this.near = options.near ?? 0.1;
     this.far = options.far ?? 100000;
@@ -491,6 +492,7 @@ export class Camera {
 
   handleWheel(event) {
     event.preventDefault();
+    if (this.suppressBrowserGestures) event.stopPropagation();
     if (this.mode === '2d') {
       const rect = this.canvas?.getBoundingClientRect?.();
       const scale = Math.exp(-event.deltaY * 0.001);

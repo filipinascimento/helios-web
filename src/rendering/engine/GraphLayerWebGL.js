@@ -223,6 +223,8 @@ export class GraphLayerWebGL extends GraphLayer {
     this.nodeUniformOutlineWidthBase = gl.getUniformLocation(this.nodeProgram, 'u_outlineWidthBase');
     this.nodeUniformOutlineWidthScale = gl.getUniformLocation(this.nodeProgram, 'u_outlineWidthScale');
     this.nodeUniformOutlineColor = gl.getUniformLocation(this.nodeProgram, 'u_outlineColor');
+    this.nodeUniformHoverIndex = gl.getUniformLocation(this.nodeProgram, 'u_hoverNodeIndex');
+    this.nodeUniformHoverState = gl.getUniformLocation(this.nodeProgram, 'u_hoverNodeState');
     this.nodeUniformNoStateScale = gl.getUniformLocation(this.nodeProgram, 'u_nodeNoStateScale');
     this.nodeUniformNoStateColorMul = gl.getUniformLocation(this.nodeProgram, 'u_nodeNoStateColorMul');
     this.nodeUniformNoStateColorAdd = gl.getUniformLocation(this.nodeProgram, 'u_nodeNoStateColorAdd');
@@ -237,6 +239,8 @@ export class GraphLayerWebGL extends GraphLayer {
     this.edgeUniformNodeSizeBase = gl.getUniformLocation(this.edgeProgram, 'u_nodeSizeBase');
     this.edgeUniformNodeSizeScale = gl.getUniformLocation(this.edgeProgram, 'u_nodeSizeScale');
     this.edgeUniformEndpointTrim = gl.getUniformLocation(this.edgeProgram, 'u_edgeEndpointTrim');
+    this.edgeUniformHoverIndex = gl.getUniformLocation(this.edgeProgram, 'u_hoverEdgeIndex');
+    this.edgeUniformHoverState = gl.getUniformLocation(this.edgeProgram, 'u_hoverEdgeState');
     this.edgeUniformNodeNoStateScale = gl.getUniformLocation(this.edgeProgram, 'u_nodeNoStateScale');
     this.edgeUniformNodeStateScale = gl.getUniformLocation(this.edgeProgram, 'u_nodeStateScale[0]');
     this.edgeUniformNoStateScale = gl.getUniformLocation(this.edgeProgram, 'u_edgeNoStateScale');
@@ -254,6 +258,8 @@ export class GraphLayerWebGL extends GraphLayer {
     this.edgeQuadUniformNodeSizeBase = gl.getUniformLocation(this.edgeQuadProgram, 'u_nodeSizeBase');
     this.edgeQuadUniformNodeSizeScale = gl.getUniformLocation(this.edgeQuadProgram, 'u_nodeSizeScale');
     this.edgeQuadUniformEndpointTrim = gl.getUniformLocation(this.edgeQuadProgram, 'u_edgeEndpointTrim');
+    this.edgeQuadUniformHoverIndex = gl.getUniformLocation(this.edgeQuadProgram, 'u_hoverEdgeIndex');
+    this.edgeQuadUniformHoverState = gl.getUniformLocation(this.edgeQuadProgram, 'u_hoverEdgeState');
     this.edgeQuadUniformNodeNoStateScale = gl.getUniformLocation(this.edgeQuadProgram, 'u_nodeNoStateScale');
     this.edgeQuadUniformNodeStateScale = gl.getUniformLocation(this.edgeQuadProgram, 'u_nodeStateScale[0]');
     this.edgeQuadUniformNoStateScale = gl.getUniformLocation(this.edgeQuadProgram, 'u_edgeNoStateScale');
@@ -511,6 +517,8 @@ export class GraphLayerWebGL extends GraphLayer {
           this.nodeOutlineColor?.[2] ?? 0,
           this.nodeOutlineColor?.[3] ?? 1,
         );
+        if (this.nodeUniformHoverIndex) gl.uniform1ui(this.nodeUniformHoverIndex, this.hoveredNodeIndex >>> 0);
+        if (this.nodeUniformHoverState) gl.uniform1ui(this.nodeUniformHoverState, this.hoveredNodeState >>> 0);
         if (this.nodeUniformStateScale) gl.uniform4fv(this.nodeUniformStateScale, this.nodeStateScale);
         if (this.nodeUniformStateColorMul) gl.uniform4fv(this.nodeUniformStateColorMul, this.nodeStateColorMul);
         if (this.nodeUniformStateColorAdd) gl.uniform4fv(this.nodeUniformStateColorAdd, this.nodeStateColorAdd);
@@ -538,6 +546,8 @@ export class GraphLayerWebGL extends GraphLayer {
           gl.uniform1f(this.edgeQuadUniformNodeSizeBase, this.nodeSizeBase);
           gl.uniform1f(this.edgeQuadUniformNodeSizeScale, this.nodeSizeScale);
           gl.uniform1f(this.edgeQuadUniformEndpointTrim, this.edgeEndpointTrim);
+          if (this.edgeQuadUniformHoverIndex) gl.uniform1ui(this.edgeQuadUniformHoverIndex, this.hoveredEdgeIndex >>> 0);
+          if (this.edgeQuadUniformHoverState) gl.uniform1ui(this.edgeQuadUniformHoverState, this.hoveredEdgeState >>> 0);
           if (this.edgeQuadUniformNodeNoStateScale) gl.uniform4fv(this.edgeQuadUniformNodeNoStateScale, this.nodeNoStateScale);
           if (this.edgeQuadUniformNodeStateScale) gl.uniform4fv(this.edgeQuadUniformNodeStateScale, this.nodeStateScale);
           if (this.edgeQuadUniformNoStateScale) gl.uniform4fv(this.edgeQuadUniformNoStateScale, this.edgeNoStateScale);
@@ -558,6 +568,8 @@ export class GraphLayerWebGL extends GraphLayer {
           gl.uniform1f(this.edgeUniformNodeSizeBase, this.nodeSizeBase);
           gl.uniform1f(this.edgeUniformNodeSizeScale, this.nodeSizeScale);
           gl.uniform1f(this.edgeUniformEndpointTrim, this.edgeEndpointTrim);
+          if (this.edgeUniformHoverIndex) gl.uniform1ui(this.edgeUniformHoverIndex, this.hoveredEdgeIndex >>> 0);
+          if (this.edgeUniformHoverState) gl.uniform1ui(this.edgeUniformHoverState, this.hoveredEdgeState >>> 0);
           if (this.edgeUniformNodeNoStateScale) gl.uniform4fv(this.edgeUniformNodeNoStateScale, this.nodeNoStateScale);
           if (this.edgeUniformNodeStateScale) gl.uniform4fv(this.edgeUniformNodeStateScale, this.nodeStateScale);
           if (this.edgeUniformNoStateScale) gl.uniform4fv(this.edgeUniformNoStateScale, this.edgeNoStateScale);
@@ -786,6 +798,8 @@ export class GraphLayerWebGL extends GraphLayer {
       this.edgeWeightedUniformNodeSizeBase = gl.getUniformLocation(this.edgeWeightedProgram, 'u_nodeSizeBase');
       this.edgeWeightedUniformNodeSizeScale = gl.getUniformLocation(this.edgeWeightedProgram, 'u_nodeSizeScale');
       this.edgeWeightedUniformEndpointTrim = gl.getUniformLocation(this.edgeWeightedProgram, 'u_edgeEndpointTrim');
+      this.edgeWeightedUniformHoverIndex = gl.getUniformLocation(this.edgeWeightedProgram, 'u_hoverEdgeIndex');
+      this.edgeWeightedUniformHoverState = gl.getUniformLocation(this.edgeWeightedProgram, 'u_hoverEdgeState');
       this.edgeWeightedUniformNodeNoStateScale = gl.getUniformLocation(this.edgeWeightedProgram, 'u_nodeNoStateScale');
       this.edgeWeightedUniformNodeStateScale = gl.getUniformLocation(this.edgeWeightedProgram, 'u_nodeStateScale[0]');
       this.edgeWeightedUniformNoStateScale = gl.getUniformLocation(this.edgeWeightedProgram, 'u_edgeNoStateScale');
@@ -810,6 +824,8 @@ export class GraphLayerWebGL extends GraphLayer {
       this.edgeWeightedQuadUniformNodeSizeBase = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_nodeSizeBase');
       this.edgeWeightedQuadUniformNodeSizeScale = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_nodeSizeScale');
       this.edgeWeightedQuadUniformEndpointTrim = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_edgeEndpointTrim');
+      this.edgeWeightedQuadUniformHoverIndex = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_hoverEdgeIndex');
+      this.edgeWeightedQuadUniformHoverState = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_hoverEdgeState');
       this.edgeWeightedQuadUniformNodeNoStateScale = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_nodeNoStateScale');
       this.edgeWeightedQuadUniformNodeStateScale = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_nodeStateScale[0]');
       this.edgeWeightedQuadUniformNoStateScale = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_edgeNoStateScale');
@@ -954,18 +970,20 @@ export class GraphLayerWebGL extends GraphLayer {
       gl.uniform1f(this.nodeUniformSizeScale, this.nodeSizeScale);
       gl.uniform1f(this.nodeUniformOutlineWidthBase, this.nodeOutlineWidthBase);
       gl.uniform1f(this.nodeUniformOutlineWidthScale, this.nodeOutlineWidthScale);
-      gl.uniform4f(
-        this.nodeUniformOutlineColor,
-        this.nodeOutlineColor?.[0] ?? 0,
-        this.nodeOutlineColor?.[1] ?? 0,
-        this.nodeOutlineColor?.[2] ?? 0,
-        this.nodeOutlineColor?.[3] ?? 1,
-      );
-      if (this.nodeUniformStateScale) gl.uniform4fv(this.nodeUniformStateScale, this.nodeStateScale);
-      if (this.nodeUniformStateColorMul) gl.uniform4fv(this.nodeUniformStateColorMul, this.nodeStateColorMul);
-      if (this.nodeUniformStateColorAdd) gl.uniform4fv(this.nodeUniformStateColorAdd, this.nodeStateColorAdd);
-      if (this.nodeUniformNoStateScale) gl.uniform4fv(this.nodeUniformNoStateScale, this.nodeNoStateScale);
-      if (this.nodeUniformNoStateColorMul) gl.uniform4fv(this.nodeUniformNoStateColorMul, this.nodeNoStateColorMul);
+	      gl.uniform4f(
+	        this.nodeUniformOutlineColor,
+	        this.nodeOutlineColor?.[0] ?? 0,
+	        this.nodeOutlineColor?.[1] ?? 0,
+	        this.nodeOutlineColor?.[2] ?? 0,
+	        this.nodeOutlineColor?.[3] ?? 1,
+	      );
+	      if (this.nodeUniformHoverIndex) gl.uniform1ui(this.nodeUniformHoverIndex, this.hoveredNodeIndex >>> 0);
+	      if (this.nodeUniformHoverState) gl.uniform1ui(this.nodeUniformHoverState, this.hoveredNodeState >>> 0);
+	      if (this.nodeUniformStateScale) gl.uniform4fv(this.nodeUniformStateScale, this.nodeStateScale);
+	      if (this.nodeUniformStateColorMul) gl.uniform4fv(this.nodeUniformStateColorMul, this.nodeStateColorMul);
+	      if (this.nodeUniformStateColorAdd) gl.uniform4fv(this.nodeUniformStateColorAdd, this.nodeStateColorAdd);
+	      if (this.nodeUniformNoStateScale) gl.uniform4fv(this.nodeUniformNoStateScale, this.nodeNoStateScale);
+	      if (this.nodeUniformNoStateColorMul) gl.uniform4fv(this.nodeUniformNoStateColorMul, this.nodeNoStateColorMul);
       if (this.nodeUniformNoStateColorAdd) gl.uniform4fv(this.nodeUniformNoStateColorAdd, this.nodeNoStateColorAdd);
       gl.bindVertexArray(this.nodeVAO);
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.nodeCount);
@@ -1026,6 +1044,8 @@ export class GraphLayerWebGL extends GraphLayer {
         gl.uniform1f(this.edgeWeightedQuadUniformNodeSizeBase, this.nodeSizeBase);
         gl.uniform1f(this.edgeWeightedQuadUniformNodeSizeScale, this.nodeSizeScale);
         gl.uniform1f(this.edgeWeightedQuadUniformEndpointTrim, this.edgeEndpointTrim);
+        if (this.edgeWeightedQuadUniformHoverIndex) gl.uniform1ui(this.edgeWeightedQuadUniformHoverIndex, this.hoveredEdgeIndex >>> 0);
+        if (this.edgeWeightedQuadUniformHoverState) gl.uniform1ui(this.edgeWeightedQuadUniformHoverState, this.hoveredEdgeState >>> 0);
         if (this.edgeWeightedQuadUniformNodeNoStateScale) gl.uniform4fv(this.edgeWeightedQuadUniformNodeNoStateScale, this.nodeNoStateScale);
         if (this.edgeWeightedQuadUniformNodeStateScale) gl.uniform4fv(this.edgeWeightedQuadUniformNodeStateScale, this.nodeStateScale);
         if (this.edgeWeightedQuadUniformNoStateScale) gl.uniform4fv(this.edgeWeightedQuadUniformNoStateScale, this.edgeNoStateScale);
@@ -1046,6 +1066,8 @@ export class GraphLayerWebGL extends GraphLayer {
         gl.uniform1f(this.edgeWeightedUniformNodeSizeBase, this.nodeSizeBase);
         gl.uniform1f(this.edgeWeightedUniformNodeSizeScale, this.nodeSizeScale);
         gl.uniform1f(this.edgeWeightedUniformEndpointTrim, this.edgeEndpointTrim);
+        if (this.edgeWeightedUniformHoverIndex) gl.uniform1ui(this.edgeWeightedUniformHoverIndex, this.hoveredEdgeIndex >>> 0);
+        if (this.edgeWeightedUniformHoverState) gl.uniform1ui(this.edgeWeightedUniformHoverState, this.hoveredEdgeState >>> 0);
         if (this.edgeWeightedUniformNodeNoStateScale) gl.uniform4fv(this.edgeWeightedUniformNodeNoStateScale, this.nodeNoStateScale);
         if (this.edgeWeightedUniformNodeStateScale) gl.uniform4fv(this.edgeWeightedUniformNodeStateScale, this.nodeStateScale);
         if (this.edgeWeightedUniformNoStateScale) gl.uniform4fv(this.edgeWeightedUniformNoStateScale, this.edgeNoStateScale);

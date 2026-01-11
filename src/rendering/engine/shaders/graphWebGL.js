@@ -18,15 +18,17 @@ uniform float u_nodeOpacityBase;
 uniform float u_nodeOpacityScale;
 uniform float u_nodeSizeBase;
 uniform float u_nodeSizeScale;
-uniform float u_outlineWidthBase;
-uniform float u_outlineWidthScale;
-uniform vec4 u_outlineColor;
-uniform vec4 u_nodeNoStateScale; // x=sizeMul y=opacityMul z=outlineMul w=discard(>0.5)
-uniform vec4 u_nodeNoStateColorMul;
-uniform vec4 u_nodeNoStateColorAdd;
-uniform vec4 u_nodeStateScale[${STATE_SLOTS}]; // x=sizeMul y=opacityMul z=outlineMul w=discard(>0.5)
-uniform vec4 u_nodeStateColorMul[${STATE_SLOTS}];
-uniform vec4 u_nodeStateColorAdd[${STATE_SLOTS}];
+	uniform float u_outlineWidthBase;
+	uniform float u_outlineWidthScale;
+	uniform vec4 u_outlineColor;
+	uniform uint u_hoverNodeIndex;
+	uniform uint u_hoverNodeState;
+	uniform vec4 u_nodeNoStateScale; // x=sizeMul y=opacityMul z=outlineMul w=discard(>0.5)
+	uniform vec4 u_nodeNoStateColorMul;
+	uniform vec4 u_nodeNoStateColorAdd;
+	uniform vec4 u_nodeStateScale[${STATE_SLOTS}]; // x=sizeMul y=opacityMul z=outlineMul w=discard(>0.5)
+	uniform vec4 u_nodeStateColorMul[${STATE_SLOTS}];
+	uniform vec4 u_nodeStateColorAdd[${STATE_SLOTS}];
 
 out vec4 v_color;
 out vec2 v_local;
@@ -39,33 +41,37 @@ out vec3 v_viewDir;
 out float v_radius;
 flat out uint v_discardFlag;
 
-void main() {
-  float sizeMul = 1.0;
-  float opacityMul = 1.0;
-  float outlineMul = 1.0;
-  vec3 rgbMul = vec3(1.0);
-  vec3 rgbAdd = vec3(0.0);
-  uint discardFlag = 0u;
-  if (a_state == 0u) {
-    vec4 scale = u_nodeNoStateScale;
-    sizeMul *= scale.x;
-    opacityMul *= scale.y;
-    outlineMul *= scale.z;
-    rgbMul *= u_nodeNoStateColorMul.rgb;
-    rgbAdd += u_nodeNoStateColorAdd.rgb;
-    discardFlag = uint(scale.w > 0.5);
-  } else {
-    for (int i = 0; i < ${STATE_SLOTS}; i += 1) {
-      float enabled = float((a_state >> uint(i)) & 1u);
-      vec4 scale = u_nodeStateScale[i];
-      sizeMul *= mix(1.0, scale.x, enabled);
-      opacityMul *= mix(1.0, scale.y, enabled);
-      outlineMul *= mix(1.0, scale.z, enabled);
-      rgbMul *= mix(vec3(1.0), u_nodeStateColorMul[i].rgb, enabled);
-      rgbAdd += u_nodeStateColorAdd[i].rgb * enabled;
-      discardFlag |= uint((scale.w > 0.5) && (enabled > 0.5));
-    }
-  }
+	void main() {
+	  uint state = a_state;
+	  if (u_hoverNodeIndex != 4294967295u && uint(gl_InstanceID) == u_hoverNodeIndex) {
+	    state |= u_hoverNodeState;
+	  }
+	  float sizeMul = 1.0;
+	  float opacityMul = 1.0;
+	  float outlineMul = 1.0;
+	  vec3 rgbMul = vec3(1.0);
+	  vec3 rgbAdd = vec3(0.0);
+	  uint discardFlag = 0u;
+	  if (state == 0u) {
+	    vec4 scale = u_nodeNoStateScale;
+	    sizeMul *= scale.x;
+	    opacityMul *= scale.y;
+	    outlineMul *= scale.z;
+	    rgbMul *= u_nodeNoStateColorMul.rgb;
+	    rgbAdd += u_nodeNoStateColorAdd.rgb;
+	    discardFlag = uint(scale.w > 0.5);
+	  } else {
+	    for (int i = 0; i < ${STATE_SLOTS}; i += 1) {
+	      float enabled = float((state >> uint(i)) & 1u);
+	      vec4 scale = u_nodeStateScale[i];
+	      sizeMul *= mix(1.0, scale.x, enabled);
+	      opacityMul *= mix(1.0, scale.y, enabled);
+	      outlineMul *= mix(1.0, scale.z, enabled);
+	      rgbMul *= mix(vec3(1.0), u_nodeStateColorMul[i].rgb, enabled);
+	      rgbAdd += u_nodeStateColorAdd[i].rgb * enabled;
+	      discardFlag |= uint((scale.w > 0.5) && (enabled > 0.5));
+	    }
+	  }
   v_discardFlag = discardFlag;
 
   float baseSize = (u_nodeSizeBase + u_nodeSizeScale * a_size) * sizeMul;
@@ -182,45 +188,51 @@ uniform float u_edgeOpacityBase;
 uniform float u_edgeOpacityScale;
 uniform float u_edgeWidthBase;
 uniform float u_edgeWidthScale;
-uniform float u_nodeSizeBase;
-uniform float u_nodeSizeScale;
-uniform float u_edgeEndpointTrim;
-uniform vec4 u_nodeNoStateScale; // x=sizeMul used for endpoint sizes
-uniform vec4 u_nodeStateScale[${STATE_SLOTS}]; // x=sizeMul (used for endpoint sizes)
-uniform vec4 u_edgeNoStateScale; // x=widthMul y=opacityMul w=discard(>0.5)
-uniform vec4 u_edgeNoStateColorMul;
-uniform vec4 u_edgeNoStateColorAdd;
-uniform vec4 u_edgeStateScale[${STATE_SLOTS}]; // x=widthMul y=opacityMul w=discard(>0.5)
-uniform vec4 u_edgeStateColorMul[${STATE_SLOTS}];
-uniform vec4 u_edgeStateColorAdd[${STATE_SLOTS}];
+	uniform float u_nodeSizeBase;
+	uniform float u_nodeSizeScale;
+	uniform float u_edgeEndpointTrim;
+	uniform uint u_hoverEdgeIndex;
+	uniform uint u_hoverEdgeState;
+	uniform vec4 u_nodeNoStateScale; // x=sizeMul used for endpoint sizes
+	uniform vec4 u_nodeStateScale[${STATE_SLOTS}]; // x=sizeMul (used for endpoint sizes)
+	uniform vec4 u_edgeNoStateScale; // x=widthMul y=opacityMul w=discard(>0.5)
+	uniform vec4 u_edgeNoStateColorMul;
+	uniform vec4 u_edgeNoStateColorAdd;
+	uniform vec4 u_edgeStateScale[${STATE_SLOTS}]; // x=widthMul y=opacityMul w=discard(>0.5)
+	uniform vec4 u_edgeStateColorMul[${STATE_SLOTS}];
+	uniform vec4 u_edgeStateColorAdd[${STATE_SLOTS}];
 
 out vec4 v_color;
 flat out uint v_discardFlag;
 
-void main() {
-  float widthMul = 1.0;
-  float opacityMul = 1.0;
-  vec3 rgbMul = vec3(1.0);
-  vec3 rgbAdd = vec3(0.0);
-  uint discardFlag = 0u;
-  if (a_state == 0u) {
-    vec4 scale = u_edgeNoStateScale;
-    widthMul *= scale.x;
-    opacityMul *= scale.y;
-    rgbMul *= u_edgeNoStateColorMul.rgb;
-    rgbAdd += u_edgeNoStateColorAdd.rgb;
-    discardFlag = uint(scale.w > 0.5);
-  } else {
-    for (int i = 0; i < ${STATE_SLOTS}; i += 1) {
-      float enabled = float((a_state >> uint(i)) & 1u);
-      vec4 scale = u_edgeStateScale[i];
-      widthMul *= mix(1.0, scale.x, enabled);
-      opacityMul *= mix(1.0, scale.y, enabled);
-      rgbMul *= mix(vec3(1.0), u_edgeStateColorMul[i].rgb, enabled);
-      rgbAdd += u_edgeStateColorAdd[i].rgb * enabled;
-      discardFlag |= uint((scale.w > 0.5) && (enabled > 0.5));
-    }
-  }
+	void main() {
+	  uint state = a_state;
+	  if (u_hoverEdgeIndex != 4294967295u && uint(gl_InstanceID) == u_hoverEdgeIndex) {
+	    state |= u_hoverEdgeState;
+	  }
+	  float widthMul = 1.0;
+	  float opacityMul = 1.0;
+	  vec3 rgbMul = vec3(1.0);
+	  vec3 rgbAdd = vec3(0.0);
+	  uint discardFlag = 0u;
+	  if (state == 0u) {
+	    vec4 scale = u_edgeNoStateScale;
+	    widthMul *= scale.x;
+	    opacityMul *= scale.y;
+	    rgbMul *= u_edgeNoStateColorMul.rgb;
+	    rgbAdd += u_edgeNoStateColorAdd.rgb;
+	    discardFlag = uint(scale.w > 0.5);
+	  } else {
+	    for (int i = 0; i < ${STATE_SLOTS}; i += 1) {
+	      float enabled = float((state >> uint(i)) & 1u);
+	      vec4 scale = u_edgeStateScale[i];
+	      widthMul *= mix(1.0, scale.x, enabled);
+	      opacityMul *= mix(1.0, scale.y, enabled);
+	      rgbMul *= mix(vec3(1.0), u_edgeStateColorMul[i].rgb, enabled);
+	      rgbAdd += u_edgeStateColorAdd[i].rgb * enabled;
+	      discardFlag |= uint((scale.w > 0.5) && (enabled > 0.5));
+	    }
+	  }
   v_discardFlag = discardFlag;
 
   float startSizeMul = 1.0;
@@ -298,45 +310,51 @@ uniform float u_edgeOpacityBase;
 uniform float u_edgeOpacityScale;
 uniform float u_edgeWidthBase;
 uniform float u_edgeWidthScale;
-uniform float u_nodeSizeBase;
-uniform float u_nodeSizeScale;
-uniform float u_edgeEndpointTrim;
-uniform vec4 u_nodeNoStateScale; // x=sizeMul used for endpoint sizes
-uniform vec4 u_nodeStateScale[${STATE_SLOTS}]; // x=sizeMul (used for endpoint sizes)
-uniform vec4 u_edgeNoStateScale; // x=widthMul y=opacityMul w=discard(>0.5)
-uniform vec4 u_edgeNoStateColorMul;
-uniform vec4 u_edgeNoStateColorAdd;
-uniform vec4 u_edgeStateScale[${STATE_SLOTS}]; // x=widthMul y=opacityMul w=discard(>0.5)
-uniform vec4 u_edgeStateColorMul[${STATE_SLOTS}];
-uniform vec4 u_edgeStateColorAdd[${STATE_SLOTS}];
+	uniform float u_nodeSizeBase;
+	uniform float u_nodeSizeScale;
+	uniform float u_edgeEndpointTrim;
+	uniform uint u_hoverEdgeIndex;
+	uniform uint u_hoverEdgeState;
+	uniform vec4 u_nodeNoStateScale; // x=sizeMul used for endpoint sizes
+	uniform vec4 u_nodeStateScale[${STATE_SLOTS}]; // x=sizeMul (used for endpoint sizes)
+	uniform vec4 u_edgeNoStateScale; // x=widthMul y=opacityMul w=discard(>0.5)
+	uniform vec4 u_edgeNoStateColorMul;
+	uniform vec4 u_edgeNoStateColorAdd;
+	uniform vec4 u_edgeStateScale[${STATE_SLOTS}]; // x=widthMul y=opacityMul w=discard(>0.5)
+	uniform vec4 u_edgeStateColorMul[${STATE_SLOTS}];
+	uniform vec4 u_edgeStateColorAdd[${STATE_SLOTS}];
 
 out vec4 v_color;
 flat out uint v_discardFlag;
 
-void main() {
-  float widthMul = 1.0;
-  float opacityMul = 1.0;
-  vec3 rgbMul = vec3(1.0);
-  vec3 rgbAdd = vec3(0.0);
-  uint discardFlag = 0u;
-  if (a_state == 0u) {
-    vec4 scale = u_edgeNoStateScale;
-    widthMul *= scale.x;
-    opacityMul *= scale.y;
-    rgbMul *= u_edgeNoStateColorMul.rgb;
-    rgbAdd += u_edgeNoStateColorAdd.rgb;
-    discardFlag = uint(scale.w > 0.5);
-  } else {
-    for (int i = 0; i < ${STATE_SLOTS}; i += 1) {
-      float enabled = float((a_state >> uint(i)) & 1u);
-      vec4 scale = u_edgeStateScale[i];
-      widthMul *= mix(1.0, scale.x, enabled);
-      opacityMul *= mix(1.0, scale.y, enabled);
-      rgbMul *= mix(vec3(1.0), u_edgeStateColorMul[i].rgb, enabled);
-      rgbAdd += u_edgeStateColorAdd[i].rgb * enabled;
-      discardFlag |= uint((scale.w > 0.5) && (enabled > 0.5));
-    }
-  }
+	void main() {
+	  uint state = a_state;
+	  if (u_hoverEdgeIndex != 4294967295u && uint(gl_InstanceID) == u_hoverEdgeIndex) {
+	    state |= u_hoverEdgeState;
+	  }
+	  float widthMul = 1.0;
+	  float opacityMul = 1.0;
+	  vec3 rgbMul = vec3(1.0);
+	  vec3 rgbAdd = vec3(0.0);
+	  uint discardFlag = 0u;
+	  if (state == 0u) {
+	    vec4 scale = u_edgeNoStateScale;
+	    widthMul *= scale.x;
+	    opacityMul *= scale.y;
+	    rgbMul *= u_edgeNoStateColorMul.rgb;
+	    rgbAdd += u_edgeNoStateColorAdd.rgb;
+	    discardFlag = uint(scale.w > 0.5);
+	  } else {
+	    for (int i = 0; i < ${STATE_SLOTS}; i += 1) {
+	      float enabled = float((state >> uint(i)) & 1u);
+	      vec4 scale = u_edgeStateScale[i];
+	      widthMul *= mix(1.0, scale.x, enabled);
+	      opacityMul *= mix(1.0, scale.y, enabled);
+	      rgbMul *= mix(vec3(1.0), u_edgeStateColorMul[i].rgb, enabled);
+	      rgbAdd += u_edgeStateColorAdd[i].rgb * enabled;
+	      discardFlag |= uint((scale.w > 0.5) && (enabled > 0.5));
+	    }
+	  }
   v_discardFlag = discardFlag;
 
   float startSizeMul = 1.0;

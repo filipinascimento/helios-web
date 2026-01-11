@@ -30,6 +30,25 @@ mapper.channel('color').constant('#ff3366').done();
 helios.mappers({ nodeMapper: mapper });
 ```
 
+## Preventing Browser Scroll / Back Gestures
+
+Helios suppresses wheel scroll chaining/bubbling on its own root element by default (`suppressBrowserGestures: true`) to avoid aggressive trackpad gestures leaking into page scroll or browser back/forward navigation.
+
+If you need to opt out (for example, you want the page to scroll when the pointer is over the graph), pass:
+
+```js
+const helios = new Helios(network, { suppressBrowserGestures: false });
+```
+
+For full-screen apps, also disabling scroll + overscroll on the page is a good belt-and-suspenders option:
+
+```css
+html, body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+```
+
 Key entry points:
 
 - `Helios` – prepares layers, connects the scheduler, kick-starts rendering

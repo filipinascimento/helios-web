@@ -25,6 +25,8 @@ export class LayerManager {
       throw new Error('A valid container element is required');
     }
 
+    const suppressBrowserGestures = options.suppressBrowserGestures !== false;
+
     this.root = document.createElement('div');
     this.root.className = 'helios-root';
     Object.assign(this.root.style, {
@@ -33,6 +35,9 @@ export class LayerManager {
       height: '100%',
       overflow: 'hidden',
       touchAction: 'none',
+      ...(suppressBrowserGestures
+        ? { overscrollBehavior: 'none', overscrollBehaviorX: 'none', overscrollBehaviorY: 'none' }
+        : null),
     });
 
     this.canvas3d = document.createElement('canvas');
@@ -43,6 +48,9 @@ export class LayerManager {
       width: '100%',
       height: '100%',
       display: 'block',
+      ...(suppressBrowserGestures
+        ? { overscrollBehavior: 'none', overscrollBehaviorX: 'none', overscrollBehaviorY: 'none' }
+        : null),
     });
 
     this.svgLayer = document.createElementNS(SVG_NS, 'svg');
@@ -68,6 +76,15 @@ export class LayerManager {
     this.root.appendChild(this.htmlOverlay);
 
     this.container.appendChild(this.root);
+
+    this._boundWheelBlocker = null;
+    if (suppressBrowserGestures) {
+      this._boundWheelBlocker = (event) => {
+        if (event?.cancelable) event.preventDefault();
+        event?.stopPropagation?.();
+      };
+      this.canvas3d.addEventListener('wheel', this._boundWheelBlocker, { passive: false });
+    }
 
     this.layers = new Map();
     this.resizeListeners = new Set();
@@ -142,6 +159,10 @@ export class LayerManager {
       this.resizeObserver.disconnect();
     } else {
       window.removeEventListener('resize', this.boundResize);
+    }
+    if (this._boundWheelBlocker) {
+      this.canvas3d.removeEventListener('wheel', this._boundWheelBlocker);
+      this._boundWheelBlocker = null;
     }
     this.root.remove();
     this.layers.clear();

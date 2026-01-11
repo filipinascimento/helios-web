@@ -51,17 +51,24 @@ struct NodeColors {
   data: array<vec4<f32>>,
 };
 
-struct NodeStates {
-  data: array<u32>,
-};
+	struct NodeStates {
+	  data: array<u32>,
+	};
 
-@group(0) @binding(0) var<uniform> camera : Camera;
-@group(0) @binding(1) var<storage, read> nodeIndices : NodeIndices;
-@group(0) @binding(2) var<storage, read> nodePositions : NodePositions;
-@group(0) @binding(3) var<storage, read> nodeSizes : NodeSizes;
-@group(0) @binding(4) var<storage, read> nodeColors : NodeColors;
-@group(0) @binding(5) var<storage, read> nodeStates : NodeStates;
-@group(0) @binding(6) var<uniform> globals : Globals;
+	@group(0) @binding(0) var<uniform> camera : Camera;
+	@group(0) @binding(1) var<storage, read> nodeIndices : NodeIndices;
+	@group(0) @binding(2) var<storage, read> nodePositions : NodePositions;
+	@group(0) @binding(3) var<storage, read> nodeSizes : NodeSizes;
+	@group(0) @binding(4) var<storage, read> nodeColors : NodeColors;
+	@group(0) @binding(5) var<storage, read> nodeStates : NodeStates;
+	@group(0) @binding(6) var<uniform> globals : Globals;
+	struct Hover {
+	  nodeIndex: u32,
+	  nodeState: u32,
+	  edgeIndex: u32,
+	  edgeState: u32,
+	};
+	@group(0) @binding(7) var<uniform> hover : Hover;
 
 struct VertexInput {
   @location(0) corner : vec2<f32>,
@@ -92,12 +99,15 @@ fn nodeVertex(input : VertexInput) -> VertexOutput {
     nodePositions.data[baseOffset + 2u]
   );
   let rawSize = nodeSizes.data[index];
-  let state = nodeStates.data[index];
-  var sizeMul = 1.0;
-  var opacityMul = 1.0;
-  var outlineMul = 1.0;
-  var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
-  var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
+	  var state = nodeStates.data[index];
+	  if (hover.nodeIndex != 0xffffffffu && index == hover.nodeIndex) {
+	    state = state | hover.nodeState;
+	  }
+	  var sizeMul = 1.0;
+	  var opacityMul = 1.0;
+	  var outlineMul = 1.0;
+	  var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
+	  var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
   var discardFlag = 0u;
   if (state == 0u) {
     let scale = globals.nodeNoStateScale;
@@ -270,20 +280,28 @@ struct EdgeStates {
   data: array<u32>,
 };
 
-struct EdgeEndpointStates {
-  data: array<vec2<u32>>,
-};
+	struct EdgeEndpointStates {
+	  data: array<vec2<u32>>,
+	};
 
-@group(0) @binding(0) var<uniform> camera : Camera;
-@group(0) @binding(1) var<storage, read> edgeIndices : EdgeIndices;
-@group(0) @binding(2) var<storage, read> edgeSegments : EdgeSegments;
-@group(0) @binding(3) var<storage, read> edgeColors : EdgeColors;
-@group(0) @binding(4) var<storage, read> edgeWidths : EdgeWidths;
+	struct Hover {
+	  nodeIndex: u32,
+	  nodeState: u32,
+	  edgeIndex: u32,
+	  edgeState: u32,
+	};
+
+	@group(0) @binding(0) var<uniform> camera : Camera;
+	@group(0) @binding(1) var<storage, read> edgeIndices : EdgeIndices;
+	@group(0) @binding(2) var<storage, read> edgeSegments : EdgeSegments;
+	@group(0) @binding(3) var<storage, read> edgeColors : EdgeColors;
+	@group(0) @binding(4) var<storage, read> edgeWidths : EdgeWidths;
 @group(0) @binding(5) var<storage, read> edgeEndpointSizes : EdgeEndpointSizes;
-@group(0) @binding(6) var<storage, read> edgeOpacities : EdgeOpacities;
-@group(0) @binding(7) var<storage, read> edgeStates : EdgeStates;
-@group(0) @binding(8) var<storage, read> edgeEndpointStates : EdgeEndpointStates;
-@group(0) @binding(9) var<uniform> globals : Globals;
+	@group(0) @binding(6) var<storage, read> edgeOpacities : EdgeOpacities;
+	@group(0) @binding(7) var<storage, read> edgeStates : EdgeStates;
+	@group(0) @binding(8) var<storage, read> edgeEndpointStates : EdgeEndpointStates;
+	@group(0) @binding(9) var<uniform> globals : Globals;
+	@group(0) @binding(10) var<uniform> hover : Hover;
 
 struct EdgeVertexOutput {
   @builtin(position) position : vec4<f32>,
@@ -306,12 +324,15 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
     edgeSegments.data[base + 4u],
     edgeSegments.data[base + 5u]
   );
-  let state = edgeStates.data[edgeId];
-  var widthMul = 1.0;
-  var opacityMul = 1.0;
-  var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
-  var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
-  var discardFlag = 0u;
+	  var state = edgeStates.data[edgeId];
+	  if (hover.edgeIndex != 0xffffffffu && edgeId == hover.edgeIndex) {
+	    state = state | hover.edgeState;
+	  }
+	  var widthMul = 1.0;
+	  var opacityMul = 1.0;
+	  var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
+	  var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
+	  var discardFlag = 0u;
   if (state == 0u) {
     let scale = globals.edgeNoStateScale;
     widthMul = widthMul * scale.x;
@@ -408,12 +429,15 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
     edgeSegments.data[base + 4u],
     edgeSegments.data[base + 5u]
   );
-  let state = edgeStates.data[edgeId];
-  var widthMul = 1.0;
-  var opacityMul = 1.0;
-  var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
-  var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
-  var discardFlag = 0u;
+	  var state = edgeStates.data[edgeId];
+	  if (hover.edgeIndex != 0xffffffffu && edgeId == hover.edgeIndex) {
+	    state = state | hover.edgeState;
+	  }
+	  var widthMul = 1.0;
+	  var opacityMul = 1.0;
+	  var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
+	  var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
+	  var discardFlag = 0u;
   if (state == 0u) {
     let scale = globals.edgeNoStateScale;
     widthMul = widthMul * scale.x;

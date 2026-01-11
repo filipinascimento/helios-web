@@ -101,6 +101,66 @@ test.describe('docs basic demo network io', () => {
     expect(afterPixels).toBeGreaterThan(200);
   });
 
+  test('keeps picking + state styles after recreateRenderer load', async ({ page }, testInfo) => {
+    await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=600');
+
+    await page.waitForFunction(() => Boolean(window.__helios && window.__helios.ready));
+    await page.waitForFunction(async () => {
+      const helios = window.__helios;
+      await helios.ready;
+      return true;
+    });
+
+    const before = await page.evaluate(async () => {
+      const helios = window.__helios;
+      // Ensure picking is enabled in the demo.
+      helios.enableNodePicking?.({ resolutionScale: 0.25, trackDepth: false, maxFps: 30 });
+
+      helios.resetStateStyles?.();
+      helios.nodeNoStateStyle?.({ opacityMul: 0.42 });
+      helios.nodeStateStyle?.('SELECTED', { sizeMul: 2.25, opacityMul: 0.8, outlineMul: 3.0, discard: false });
+      helios.nodeStateStyle?.('HIGHLIGHTED', { sizeMul: 1.5, opacityMul: 1.0, outlineMul: 1.1, discard: false });
+
+      const selected = helios.nodeStateStyle?.('SELECTED');
+      const blob = await helios.saveNetwork('xnet', { output: 'blob' });
+      await helios.loadNetwork(blob, { format: 'xnet', disposeOld: true, recreateRenderer: true, keepCamera: false });
+      helios.requestRender?.();
+      return {
+        selected,
+        picking: {
+          enabled: Boolean(helios?._picking?.node?.enabled),
+          listeners: Boolean(helios?._pickingListenersAttached),
+        },
+      };
+    });
+
+    await page.waitForTimeout(750);
+
+    const after = await page.evaluate(() => {
+      const helios = window.__helios;
+      return {
+        selected: helios.nodeStateStyle?.('SELECTED'),
+        picking: {
+          enabled: Boolean(helios?._picking?.node?.enabled),
+          listeners: Boolean(helios?._pickingListenersAttached),
+        },
+      };
+    });
+
+    await testInfo.attach('picking-style-before-after', {
+      body: JSON.stringify({ before, after }, null, 2),
+      contentType: 'application/json',
+    });
+
+    expect(after.picking.enabled).toBe(true);
+    expect(after.picking.listeners).toBe(true);
+    expect(after.selected).toBeTruthy();
+    // State styles should survive recreateRenderer (approx float comparisons).
+    expect(Math.abs(after.selected.sizeMul - 2.25)).toBeLessThan(1e-3);
+    expect(Math.abs(after.selected.opacityMul - 0.8)).toBeLessThan(1e-3);
+    expect(Math.abs(after.selected.outlineMul - 3.0)).toBeLessThan(1e-3);
+  });
+
   test('frames loaded 2D network into view', async ({ page }, testInfo) => {
     await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=800');
 

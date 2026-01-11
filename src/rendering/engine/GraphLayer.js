@@ -20,6 +20,8 @@ const {
 export { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './GraphLayerCommon.js';
 
 export class GraphLayer extends Layer {
+  static NO_HOVER_INDEX = 0xffffffff;
+
   constructor(options = {}) {
     super('graph-layer');
     this.emptyFloat = new Float32Array(0);
@@ -58,7 +60,32 @@ export class GraphLayer extends Layer {
     this.edgeNoStateScale = new Float32Array(4);
     this.edgeNoStateColorMul = new Float32Array(4);
     this.edgeNoStateColorAdd = new Float32Array(4);
+
+    this.hoveredNodeIndex = GraphLayer.NO_HOVER_INDEX;
+    this.hoveredNodeState = 0;
+    this.hoveredEdgeIndex = GraphLayer.NO_HOVER_INDEX;
+    this.hoveredEdgeState = 0;
     this.resetStateStyles();
+  }
+
+  setHoveredNodeState(index, mask) {
+    const nextIndex =
+      index == null || Number(index) < 0
+        ? GraphLayer.NO_HOVER_INDEX
+        : (Number(index) >>> 0);
+    this.hoveredNodeIndex = nextIndex;
+    this.hoveredNodeState = (Number(mask) >>> 0);
+    return this;
+  }
+
+  setHoveredEdgeState(index, mask) {
+    const nextIndex =
+      index == null || Number(index) < 0
+        ? GraphLayer.NO_HOVER_INDEX
+        : (Number(index) >>> 0);
+    this.hoveredEdgeIndex = nextIndex;
+    this.hoveredEdgeState = (Number(mask) >>> 0);
+    return this;
   }
 
   resetStateStyles() {

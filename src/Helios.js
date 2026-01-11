@@ -393,7 +393,7 @@ export class Helios extends EventTarget {
       this.scheduler?.requestGeometry?.();
     };
     const container = options.container ?? document.getElementById('app') ?? document.body;
-    this.layers = new LayerManager(container);
+    this.layers = new LayerManager(container, { suppressBrowserGestures: options.suppressBrowserGestures !== false });
     this.visuals = new VisualAttributes(network, this.debug);
     this.nodeMapper = new MapperCollection('node', network, this.markMappersDirty, this.debug);
     this.edgeMapper = new MapperCollection('edge', network, this.markMappersDirty, this.debug);
@@ -493,6 +493,12 @@ export class Helios extends EventTarget {
       dblclick: (event) => this._handlePointerClick(event, true),
     };
     this._pendingFrameNetwork = null;
+    this._stateStyleCache = {
+      nodeSlots: new Map(),
+      edgeSlots: new Map(),
+      nodeNoState: null,
+      edgeNoState: null,
+    };
     this.size = { ...this.layers.size };
     this.removeResizeListener = null;
     this.firstGeometryUpdateComplete = false;
@@ -553,6 +559,7 @@ export class Helios extends EventTarget {
       forceWebGPU: this.options.renderer === 'webgpu',
       mode: this.options.mode ?? '2d',
       projection: this.options.projection ?? 'perspective',
+      suppressBrowserGestures: this.options.suppressBrowserGestures !== false,
       edgeRendering: this.options.edgeRendering,
       transparencyModeEdges: this.options.transparencyModeEdges,
       edgeEndpointTrim: this.options.edgeEndpointTrim,
@@ -561,6 +568,7 @@ export class Helios extends EventTarget {
     });
     this.renderer = renderer;
     this._applyPendingRendererProps();
+    this._applyCachedStateStyles();
     this.attributeTracker?.destroy?.();
     this.attributeTracker = new AttributeTracker(this.renderer);
     this.attributeTracker.resize(this.layers.size);
@@ -1035,6 +1043,7 @@ export class Helios extends EventTarget {
       forceWebGPU: this.options.renderer === 'webgpu',
       mode: this.options.mode ?? '2d',
       projection: this.options.projection ?? 'perspective',
+      suppressBrowserGestures: this.options.suppressBrowserGestures !== false,
       edgeRendering: this.options.edgeRendering,
       transparencyModeEdges: this.options.transparencyModeEdges,
       edgeEndpointTrim: this.options.edgeEndpointTrim,
@@ -1042,6 +1051,7 @@ export class Helios extends EventTarget {
     });
     this.debug.log('helios', 'Renderer created', { renderer: this.renderer?.constructor?.name });
     this._applyPendingRendererProps();
+    this._applyCachedStateStyles();
     this.attributeTracker = new AttributeTracker(this.renderer);
     this.attributeTracker.resize(this.layers.size);
     if (typeof this.renderer.resize === 'function') {
@@ -1155,6 +1165,30 @@ export class Helios extends EventTarget {
     }
     this.debug.log('helios', 'Initialization complete');
     this._applyPickingConfig();
+  }
+
+  _applyCachedStateStyles() {
+    const layer = this.renderer?.graphLayer ?? null;
+    if (!layer) return false;
+    const cached = this._stateStyleCache;
+    if (!cached) return false;
+    if (!cached.nodeSlots.size && !cached.edgeSlots.size && !cached.nodeNoState && !cached.edgeNoState) {
+      return false;
+    }
+    layer.resetStateStyles?.();
+    if (cached.nodeNoState) {
+      layer.setNodeNoStateStyle?.(cached.nodeNoState);
+    }
+    if (cached.edgeNoState) {
+      layer.setEdgeNoStateStyle?.(cached.edgeNoState);
+    }
+    for (const [slot, style] of cached.nodeSlots.entries()) {
+      layer.setNodeStateStyle?.(slot, style);
+    }
+    for (const [slot, style] of cached.edgeSlots.entries()) {
+      layer.setEdgeStateStyle?.(slot, style);
+    }
+    return true;
   }
 
   _applyPendingRendererProps() {
@@ -1446,11 +1480,45 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  hoverNodeState(index, mask) {
+    const resolvedIndex = index == null || Number(index) < 0 ? 0xffffffff : (Number(index) >>> 0);
+    const value = (Number(resolveStateMask(mask, this.constructor.STATES)) >>> 0);
+    const layer = this.renderer?.graphLayer ?? null;
+    if (layer && 'hoveredNodeIndex' in layer) {
+      layer.hoveredNodeIndex = resolvedIndex;
+      layer.hoveredNodeState = value;
+      this.scheduler.requestRender();
+      return this;
+    }
+    this._pendingGraphLayerProps.set('hoveredNodeIndex', resolvedIndex);
+    this._pendingGraphLayerProps.set('hoveredNodeState', value);
+    return this;
+  }
+
+  hoverEdgeState(index, mask) {
+    const resolvedIndex = index == null || Number(index) < 0 ? 0xffffffff : (Number(index) >>> 0);
+    const value = (Number(resolveStateMask(mask, this.constructor.STATES)) >>> 0);
+    const layer = this.renderer?.graphLayer ?? null;
+    if (layer && 'hoveredEdgeIndex' in layer) {
+      layer.hoveredEdgeIndex = resolvedIndex;
+      layer.hoveredEdgeState = value;
+      this.scheduler.requestRender();
+      return this;
+    }
+    this._pendingGraphLayerProps.set('hoveredEdgeIndex', resolvedIndex);
+    this._pendingGraphLayerProps.set('hoveredEdgeState', value);
+    return this;
+  }
+
   nodeStateStyle(slot, style) {
     if (arguments.length < 2) {
       const layer = this.renderer?.graphLayer;
       const index = Number(resolveStateSlot(slot, this.constructor.STATES));
-      if (!layer || !Number.isInteger(index) || index < 0 || index >= layer.stateSlotCount) return null;
+      if (!Number.isInteger(index) || index < 0) return null;
+      if (!layer) {
+        return this._stateStyleCache?.nodeSlots?.get(index) ?? null;
+      }
+      if (index >= layer.stateSlotCount) return null;
       const o = index * 4;
       return {
         sizeMul: layer.nodeStateScale[o + 0],
@@ -1462,6 +1530,9 @@ export class Helios extends EventTarget {
       };
     }
     const resolvedSlot = resolveStateSlot(slot, this.constructor.STATES);
+    if (this._stateStyleCache?.nodeSlots) {
+      this._stateStyleCache.nodeSlots.set(resolvedSlot, style);
+    }
     this.renderer?.graphLayer?.setNodeStateStyle?.(resolvedSlot, style);
     this.scheduler.requestRender();
     return this;
@@ -1470,7 +1541,7 @@ export class Helios extends EventTarget {
   nodeNoStateStyle(style) {
     if (arguments.length === 0) {
       const layer = this.renderer?.graphLayer;
-      if (!layer) return null;
+      if (!layer) return this._stateStyleCache?.nodeNoState ?? null;
       return {
         sizeMul: layer.nodeNoStateScale[0],
         opacityMul: layer.nodeNoStateScale[1],
@@ -1479,6 +1550,9 @@ export class Helios extends EventTarget {
         colorMul: Array.from(layer.nodeNoStateColorMul.slice(0, 4)),
         colorAdd: Array.from(layer.nodeNoStateColorAdd.slice(0, 4)),
       };
+    }
+    if (this._stateStyleCache) {
+      this._stateStyleCache.nodeNoState = style;
     }
     this.renderer?.graphLayer?.setNodeNoStateStyle?.(style);
     this.scheduler.requestRender();
@@ -1489,7 +1563,11 @@ export class Helios extends EventTarget {
     if (arguments.length < 2) {
       const layer = this.renderer?.graphLayer;
       const index = Number(resolveStateSlot(slot, this.constructor.STATES));
-      if (!layer || !Number.isInteger(index) || index < 0 || index >= layer.stateSlotCount) return null;
+      if (!Number.isInteger(index) || index < 0) return null;
+      if (!layer) {
+        return this._stateStyleCache?.edgeSlots?.get(index) ?? null;
+      }
+      if (index >= layer.stateSlotCount) return null;
       const o = index * 4;
       return {
         widthMul: layer.edgeStateScale[o + 0],
@@ -1500,6 +1578,9 @@ export class Helios extends EventTarget {
       };
     }
     const resolvedSlot = resolveStateSlot(slot, this.constructor.STATES);
+    if (this._stateStyleCache?.edgeSlots) {
+      this._stateStyleCache.edgeSlots.set(resolvedSlot, style);
+    }
     this.renderer?.graphLayer?.setEdgeStateStyle?.(resolvedSlot, style);
     this.scheduler.requestRender();
     return this;
@@ -1508,7 +1589,7 @@ export class Helios extends EventTarget {
   edgeNoStateStyle(style) {
     if (arguments.length === 0) {
       const layer = this.renderer?.graphLayer;
-      if (!layer) return null;
+      if (!layer) return this._stateStyleCache?.edgeNoState ?? null;
       return {
         widthMul: layer.edgeNoStateScale[0],
         opacityMul: layer.edgeNoStateScale[1],
@@ -1517,12 +1598,21 @@ export class Helios extends EventTarget {
         colorAdd: Array.from(layer.edgeNoStateColorAdd.slice(0, 4)),
       };
     }
+    if (this._stateStyleCache) {
+      this._stateStyleCache.edgeNoState = style;
+    }
     this.renderer?.graphLayer?.setEdgeNoStateStyle?.(style);
     this.scheduler.requestRender();
     return this;
   }
 
   resetStateStyles() {
+    if (this._stateStyleCache) {
+      this._stateStyleCache.nodeSlots.clear();
+      this._stateStyleCache.edgeSlots.clear();
+      this._stateStyleCache.nodeNoState = null;
+      this._stateStyleCache.edgeNoState = null;
+    }
     this.renderer?.graphLayer?.resetStateStyles?.();
     this.scheduler.requestRender();
     return this;
