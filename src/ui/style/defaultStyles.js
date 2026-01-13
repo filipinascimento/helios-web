@@ -10,7 +10,7 @@ export const defaultStylesText = `
   --helios-ui-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
   --helios-ui-blur: 14px;
   --helios-ui-z: 50;
-  --helios-ui-label-col: 160px;
+  --helios-ui-label-col: 140px;
 
   position: absolute;
   inset: 0;
@@ -18,6 +18,14 @@ export const defaultStylesText = `
   font: 400 var(--helios-ui-font-size)/1.35 var(--helios-ui-font);
   color: var(--helios-ui-fg);
   pointer-events: none;
+}
+
+.helios-ui-ellipsis {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .helios-ui[data-theme="dark"] {
@@ -106,24 +114,93 @@ export const defaultStylesText = `
 
 .helios-ui-button {
   appearance: none;
-  border: 1px solid var(--helios-ui-border);
+  border: 1px solid color-mix(in srgb, var(--helios-ui-accent) 38%, var(--helios-ui-border));
   border-radius: 10px;
   padding: 4px 6px;
-  background: color-mix(in srgb, var(--helios-ui-bg-solid) 85%, transparent);
+  background: color-mix(in srgb, var(--helios-ui-accent) 16%, var(--helios-ui-bg-solid));
   color: inherit;
   font: inherit;
+  font-weight: 600;
   line-height: 1;
+}
+
+.helios-ui-button--icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+}
+
+.helios-ui-button__icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  opacity: 0.9;
+}
+
+.helios-ui-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .helios-ui-select {
   appearance: none;
   border: 1px solid var(--helios-ui-border);
   border-radius: 10px;
-  padding: 4px 8px;
-  background: color-mix(in srgb, var(--helios-ui-bg-solid) 85%, transparent);
+  padding: 4px 26px 4px 10px;
+  background:
+    linear-gradient(45deg, transparent 50%, color-mix(in srgb, var(--helios-ui-muted) 90%, transparent) 50%) right 12px center/6px 6px no-repeat,
+    linear-gradient(135deg, color-mix(in srgb, var(--helios-ui-muted) 90%, transparent) 50%, transparent 50%) right 8px center/6px 6px no-repeat,
+    color-mix(in srgb, var(--helios-ui-bg-solid) 85%, transparent);
   color: inherit;
   font: inherit;
   line-height: 1;
+  max-width: 220px;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.helios-ui-select--compact {
+  width: auto;
+  max-width: 140px;
+}
+
+.helios-ui-network {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.helios-ui-network__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.helios-ui-network__actions > .helios-ui-select {
+  flex: 0 0 auto;
+}
+
+.helios-ui-network__name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.helios-ui-network__name > .helios-ui-text {
+  flex: 1 1 auto;
+}
+
+.helios-ui-network__ext {
+  flex: none;
+  font: 600 11px/1 var(--helios-ui-font);
+  color: var(--helios-ui-muted);
+  padding: 0 2px;
+  user-select: none;
 }
 
 .helios-ui-select:hover {
@@ -131,11 +208,18 @@ export const defaultStylesText = `
 }
 
 .helios-ui-button:hover {
-  border-color: color-mix(in srgb, var(--helios-ui-fg) 18%, transparent);
+  border-color: color-mix(in srgb, var(--helios-ui-accent) 55%, var(--helios-ui-border));
+  background: color-mix(in srgb, var(--helios-ui-accent) 22%, var(--helios-ui-bg-solid));
 }
 
 .helios-ui-button:active {
   transform: translateY(0.5px);
+}
+
+.helios-ui-button:focus-visible,
+.helios-ui-select:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--helios-ui-accent) 22%, transparent);
 }
 
 .helios-ui-panel__body {
@@ -238,8 +322,40 @@ export const defaultStylesText = `
   text-align: right;
 }
 
+.helios-ui-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-start;
+}
+
+.helios-ui-stats--end { justify-content: flex-end; }
+
+.helios-ui-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--helios-ui-border);
+  background: color-mix(in srgb, var(--helios-ui-bg-solid) 85%, transparent);
+  font: 400 11px/1.1 var(--helios-ui-font);
+  max-width: 100%;
+}
+
+.helios-ui-stat__label {
+  color: var(--helios-ui-muted);
+  white-space: nowrap;
+}
+
+.helios-ui-stat__value {
+  font-variant-numeric: tabular-nums;
+  color: inherit;
+  white-space: nowrap;
+}
+
 .helios-ui-number {
-  width: 86px;
+  width: 78px;
   padding: 4px 6px;
   border-radius: 10px;
   border: 1px solid var(--helios-ui-border);
@@ -249,6 +365,62 @@ export const defaultStylesText = `
   font-variant-numeric: tabular-nums;
   text-align: right;
   -moz-appearance: textfield;
+}
+
+.helios-ui-toggle {
+  appearance: none;
+  border: 1px solid color-mix(in srgb, var(--helios-ui-accent) 38%, var(--helios-ui-border));
+  border-radius: 999px;
+  padding: 3px 10px 3px 6px;
+  background: color-mix(in srgb, var(--helios-ui-bg-solid) 85%, transparent);
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 1;
+}
+
+.helios-ui-toggle__thumb {
+  width: 22px;
+  height: 14px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--helios-ui-fg) 12%, transparent);
+  border: 1px solid var(--helios-ui-border);
+  position: relative;
+  flex: none;
+}
+
+.helios-ui-toggle__thumb::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--helios-ui-fg) 70%, transparent);
+  transition: transform 120ms ease;
+}
+
+.helios-ui-toggle[aria-checked="true"] {
+  background: color-mix(in srgb, var(--helios-ui-accent) 18%, var(--helios-ui-bg-solid));
+}
+
+.helios-ui-toggle[aria-checked="true"] .helios-ui-toggle__thumb {
+  background: color-mix(in srgb, var(--helios-ui-accent) 38%, transparent);
+  border-color: color-mix(in srgb, var(--helios-ui-accent) 55%, var(--helios-ui-border));
+}
+
+.helios-ui-toggle[aria-checked="true"] .helios-ui-toggle__thumb::after {
+  background: color-mix(in srgb, var(--helios-ui-accent) 92%, transparent);
+  transform: translateX(8px);
+}
+
+.helios-ui-toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--helios-ui-accent) 22%, transparent);
 }
 
 .helios-ui-number::-webkit-outer-spin-button,
@@ -271,6 +443,47 @@ export const defaultStylesText = `
 
 .helios-ui-number:disabled {
   opacity: 0.55;
+}
+
+.helios-ui-text {
+  width: 100%;
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--helios-ui-border);
+  background: color-mix(in srgb, var(--helios-ui-bg-solid) 85%, transparent);
+  color: inherit;
+  font: inherit;
+}
+
+.helios-ui-text:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--helios-ui-accent) 55%, var(--helios-ui-border));
+}
+
+.helios-ui-text:disabled {
+  opacity: 0.55;
+}
+
+.helios-ui-progress {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--helios-ui-fg) 10%, transparent);
+  border: 1px solid var(--helios-ui-border);
+}
+
+.helios-ui-progress::-webkit-progress-bar {
+  background: color-mix(in srgb, var(--helios-ui-fg) 10%, transparent);
+}
+
+.helios-ui-progress::-webkit-progress-value {
+  background: color-mix(in srgb, var(--helios-ui-accent) 92%, transparent);
+}
+
+.helios-ui-progress::-moz-progress-bar {
+  background: color-mix(in srgb, var(--helios-ui-accent) 92%, transparent);
 }
 
 .helios-ui-slider-controls {
@@ -463,15 +676,11 @@ export const defaultStylesText = `
   gap: 6px;
 }
 
-.helios-ui-subpanel__header::before {
-  content: "+";
+.helios-ui-subpanel__toggle {
   width: 1.1em;
   color: var(--helios-ui-muted);
   font-weight: 700;
-}
-
-.helios-ui-subpanel[data-collapsed="false"] .helios-ui-subpanel__header::before {
-  content: "−";
+  display: inline-block;
 }
 
 .helios-ui-subpanel__body {

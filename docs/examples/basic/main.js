@@ -266,6 +266,7 @@ async function bootstrap() {
   // Optional UI overlay demo (panels, theming, attribute bindings).
   const heliosUI = new HeliosUI({ helios, theme: 'dark', allowDrag: true });
   heliosUI.createDemoPanel();
+  heliosUI.createMetricsPanel();
   window.__heliosUI = heliosUI;
 
   const configureDemoMappers = () => {

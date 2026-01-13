@@ -1,13 +1,42 @@
 import { defineConfig } from 'vite';
+import fs from 'node:fs';
 import { resolve } from 'node:path';
 
+function getRealpathSafe(p) {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return null;
+  }
+}
+
 export default defineConfig({
-  base: '',
+  base: '/',
+  plugins: [],
+  resolve: {
+    // When `helios-network` is brought in via `npm link`, it's a symlink to a
+    // path outside this repo. Preserving symlinks keeps module URLs under
+    // `node_modules/` so Vite can serve worker files without `/@fs/` escaping.
+    preserveSymlinks: true,
+  },
+  server: {
+    fs: {
+      // Keep the default root allow-list PLUS allow common linked-dep paths.
+      // (Specifying `allow` overrides Vite defaults, so include the app root.)
+      allow: [
+        __dirname,
+        getRealpathSafe(resolve(__dirname, 'node_modules/helios-network')),
+        getRealpathSafe(resolve(__dirname, 'node_modules/vite/dist/client')),
+      ].filter(Boolean),
+    },
+  },
   esbuild: {
     target: 'esnext',
   },
   assetsInclude: ['**/*.wasm'],
   optimizeDeps: {
+    // Needed so Vite rewrites helios-network's `runWorker()` helper to a served worker chunk.
+    // If the dep is pre-bundled, Vite may not transform the worker URL and requests can hang.
     exclude: ['helios-network'],
   },
   build: {

@@ -25,7 +25,24 @@ export class PanelStack {
     const header = document.createElement('button');
     header.type = 'button';
     header.className = 'helios-ui-subpanel__header';
-    header.textContent = options.title ?? options.id;
+
+    const toggle = document.createElement('span');
+    toggle.className = 'helios-ui-subpanel__toggle';
+    toggle.setAttribute('aria-hidden', 'true');
+
+    const label = document.createElement('span');
+    label.className = 'helios-ui-subpanel__label';
+    label.textContent = options.title ?? options.id;
+
+    const sync = () => {
+      const collapsed = item.dataset.collapsed === 'true';
+      header.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      toggle.textContent = collapsed ? '+' : '−';
+    };
+
+    header.appendChild(toggle);
+    header.appendChild(label);
+    sync();
 
     const body = document.createElement('div');
     body.className = 'helios-ui-subpanel__body';
@@ -33,6 +50,7 @@ export class PanelStack {
 
     header.addEventListener('click', () => {
       item.dataset.collapsed = item.dataset.collapsed === 'true' ? 'false' : 'true';
+      sync();
     });
 
     item.appendChild(header);
