@@ -831,7 +831,8 @@ export class VisualAttributes {
       visuals.outlineColor[offset + 2] = rgba[2];
       visuals.outlineColor[offset + 3] = rgba[3];
     }
-    if (Array.isArray(mapped.position) && visuals.position) {
+    const isArrayLikePosition = Array.isArray(mapped.position) || ArrayBuffer.isView(mapped.position);
+    if (isArrayLikePosition && visuals.position) {
       const offset = nodeId * 3;
       visuals.position[offset + 0] = mapped.position[0] ?? visuals.position[offset + 0];
       visuals.position[offset + 1] = mapped.position[1] ?? visuals.position[offset + 1];
@@ -891,14 +892,23 @@ export class VisualAttributes {
     }
     if (typeof value === 'string') {
       const hex = value.trim();
-      if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(hex)) {
+      if (/^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(hex)) {
         const raw = hex.slice(1);
-        const expand = raw.length === 3 ? raw.split('').map((c) => c + c).join('') : raw;
-        const int = parseInt(expand, 16);
+        const expand =
+          raw.length === 3 || raw.length === 4
+            ? raw
+                .split('')
+                .map((c) => c + c)
+                .join('')
+            : raw;
+        const hasAlpha = expand.length === 8;
+        const rgb = expand.slice(0, 6);
+        const int = parseInt(rgb, 16);
         const r = (int >> 16) & 255;
         const g = (int >> 8) & 255;
         const b = int & 255;
-        return [r / 255, g / 255, b / 255, 1];
+        const a = hasAlpha ? parseInt(expand.slice(6, 8), 16) / 255 : 1;
+        return [r / 255, g / 255, b / 255, a];
       }
     }
     if (typeof value === 'number') {

@@ -151,3 +151,28 @@ test('seeds nodes when all positions are missing', async () => {
   }
   assert.equal(seeded, nodeCount);
 });
+
+test('parses hex colors with alpha in toRgba', async () => {
+  const network = await HeliosNetwork.create({ directed: false, initialNodes: 0, initialEdges: 0 });
+  const visuals = new VisualAttributes(network);
+
+  const close = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
+
+  const redOpaque = visuals.toRgba('#ff0000ff');
+  assert.ok(close(redOpaque[0], 1));
+  assert.ok(close(redOpaque[1], 0));
+  assert.ok(close(redOpaque[2], 0));
+  assert.ok(close(redOpaque[3], 1));
+
+  const blackTransparent = visuals.toRgba('#00000000');
+  assert.ok(close(blackTransparent[0], 0));
+  assert.ok(close(blackTransparent[1], 0));
+  assert.ok(close(blackTransparent[2], 0));
+  assert.ok(close(blackTransparent[3], 0));
+
+  const short = visuals.toRgba('#0f08'); // #RGBA => r=0, g=255, b=0, a~0.533
+  assert.ok(close(short[0], 0));
+  assert.ok(close(short[1], 1));
+  assert.ok(close(short[2], 0));
+  assert.ok(close(short[3], 0x88 / 255));
+});

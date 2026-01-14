@@ -3,6 +3,9 @@ import { UIAttribute } from './state/UIAttribute.js';
 import { ensureDefaultStyles } from './style/defaultStyles.js';
 import { createSliderRow } from './controls/createSliderRow.js';
 import { PanelStack } from './panels/PanelStack.js';
+import { TabbedPanel } from './panels/TabbedPanel.js';
+import { colormaps } from '../colors/colormaps.js';
+import { VISUAL_ATTRIBUTE_MAP } from '../pipeline/constants.js';
 
 function resolveUiContainer({ helios, container, layerName }) {
   if (container) return container;
@@ -182,6 +185,106 @@ function createStatChip(labelText, valueEl) {
   return { stat, label, value };
 }
 
+function clampNumber(value, { min = null, max = null } = {}) {
+  const v = Number(value);
+  if (!Number.isFinite(v)) return null;
+  if (min != null && v < min) return min;
+  if (max != null && v > max) return max;
+  return v;
+}
+
+function hexToRgb01(hex) {
+  if (typeof hex !== 'string') return null;
+  const raw = hex.trim().replace(/^#/, '');
+  const expand = (c) => `${c}${c}`;
+  let r; let g; let b;
+  if (raw.length === 3) {
+    r = parseInt(expand(raw[0]), 16);
+    g = parseInt(expand(raw[1]), 16);
+    b = parseInt(expand(raw[2]), 16);
+  } else if (raw.length >= 6) {
+    r = parseInt(raw.slice(0, 2), 16);
+    g = parseInt(raw.slice(2, 4), 16);
+    b = parseInt(raw.slice(4, 6), 16);
+  } else {
+    return null;
+  }
+  if (![r, g, b].every(Number.isFinite)) return null;
+  return [r / 255, g / 255, b / 255];
+}
+
+function toHex8(hex6, alpha01 = 1) {
+  const rgb = hexToRgb01(hex6);
+  if (!rgb) return '#000000ff';
+  const a = Math.round(Math.max(0, Math.min(1, Number(alpha01))) * 255);
+  const aa = a.toString(16).padStart(2, '0');
+  const raw = String(hex6).trim();
+  const base = raw.startsWith('#') ? raw.slice(1) : raw;
+  const normalized = base.length === 3
+    ? base.split('').map((c) => `${c}${c}`).join('')
+    : base.slice(0, 6).padEnd(6, '0');
+  return `#${normalized}${aa}`;
+}
+
+function shallowCloneChannelConfig(config) {
+  if (!config) return null;
+  return {
+    ...config,
+    attributes: config.attributes ?? config.from,
+    domain: Array.isArray(config.domain) ? [...config.domain] : config.domain,
+    range: Array.isArray(config.range) ? [...config.range] : config.range,
+    rules: Array.isArray(config.rules) ? config.rules.map((r) => ({ ...r })) : [],
+  };
+}
+
+function summarizeChannelConfig(config) {
+  if (!config) return '—';
+  const type = config.type ?? config.mode ?? 'custom';
+  const attr = config.attributes ?? config.from;
+  if (type === 'constant') {
+    return config.value != null ? `constant` : 'constant';
+  }
+  if (type === 'passthrough') {
+    return typeof attr === 'string' ? `passthrough: ${attr}` : 'passthrough';
+  }
+  if (type === 'linear') {
+    const d = Array.isArray(config.domain) ? config.domain.join('..') : '';
+    const r = Array.isArray(config.range) ? config.range.join('..') : '';
+    const src = typeof attr === 'string' ? attr : 'attr';
+    return `linear: ${src} (${d || '—'} → ${r || '—'})`;
+  }
+  if (type === 'colormap' || config.colormap) {
+    const name = config.colormap ?? config.scale ?? config.range ?? 'colormap';
+    const d = Array.isArray(config.domain) ? config.domain.join('..') : '';
+    const src = typeof attr === 'string' ? attr : 'attr';
+    return `colormap: ${src} → ${name}${d ? ` (${d})` : ''}`;
+  }
+  if (type === 'categorical') {
+    const src = typeof attr === 'string' ? attr : 'attr';
+    return `categorical: ${src}`;
+  }
+  if (type === 'nodeAttribute') return `node attribute: ${config.nodeAttribute ?? ''}`.trim();
+  return String(type);
+}
+
+function collectColormapSuggestionNames() {
+  const names = new Set();
+  const add = (value) => {
+    if (!value) return;
+    names.add(String(value));
+  };
+  for (const key of Object.keys(colormaps?.d3 ?? {})) add(key);
+  for (const key of Object.keys(colormaps?.CET ?? {})) add(key);
+  for (const key of Object.keys(colormaps?.helios ?? {})) add(key);
+  for (const key of Object.keys(colormaps?.cmasher ?? {})) {
+    add(key);
+    if (key.startsWith('cmasher_')) {
+      add(`cmasher:${key.slice('cmasher_'.length)}`);
+    }
+  }
+  return Array.from(names).sort((a, b) => a.localeCompare(b));
+}
+
 export class HeliosUI {
   constructor(options = {}) {
     this.helios = options.helios ?? null;
@@ -276,6 +379,18 @@ export class HeliosUI {
 
   createPanel(options) {
     return this.panelManager.createPanel(options);
+  }
+
+  createTabbedPanel(options = {}) {
+    const tabs = new TabbedPanel({ tabs: options.tabs ?? [], activeId: options.activeId });
+    this._controlCleanups.add(() => tabs.destroy());
+    return this.createPanel({
+      id: options.id,
+      title: options.title,
+      position: options.position,
+      dock: options.dock,
+      content: tabs.element,
+    });
   }
 
   createDemoPanel(options = {}) {
@@ -1352,5 +1467,870 @@ export class HeliosUI {
       return;
     }
     this.container?.remove?.();
+  }
+
+  createMappersPanel(options = {}) {
+    const helios = this.helios;
+    const network = helios?.network ?? null;
+
+    const nodeChannels = ['color', 'size', 'outline', 'outlineColor', 'position'];
+    const edgeChannels = ['color', 'width', 'opacity', 'endpointPosition', 'endpointSize'];
+
+    const colormapNames = collectColormapSuggestionNames();
+
+    const isHexColorString = (value) => {
+      if (typeof value !== 'string') return false;
+      const hex = value.trim();
+      return /^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(hex);
+    };
+
+    const isNumericAttributeType = (type) => typeof type === 'number';
+
+    const resolveVisualAlias = (name) => {
+      if (typeof name !== 'string') return name;
+      return VISUAL_ATTRIBUTE_MAP[name] ?? name;
+    };
+
+    const getAttributeInfo = (scope, rawName) => {
+      if (!network) return null;
+      if (rawName === '$index') return { dimension: 1, type: null };
+      if (typeof rawName !== 'string' || !rawName.length) return null;
+
+      if (scope === 'edge' && rawName.startsWith('@node.')) {
+        const key = rawName.slice('@node.'.length);
+        const resolved = resolveVisualAlias(key);
+        return network.getNodeAttributeInfo?.(resolved) ?? null;
+      }
+
+      const resolved = resolveVisualAlias(rawName);
+      return scope === 'edge'
+        ? (network.getEdgeAttributeInfo?.(resolved) ?? null)
+        : (network.getNodeAttributeInfo?.(resolved) ?? null);
+    };
+
+    const isCompatibleAttribute = (scope, channel, mapperType, name) => {
+      const info = getAttributeInfo(scope, name);
+      if (!info) return false;
+      if (info.type != null && !isNumericAttributeType(info.type)) return false;
+
+      const dim = info.dimension ?? 1;
+      const isEdge = scope === 'edge';
+      const isColorChannel = channel === 'color' || channel === 'outlineColor';
+      const isPositionChannel = scope === 'node' && channel === 'position';
+      const isScalarChannel =
+        channel === 'size' ||
+        channel === 'outline' ||
+        channel === 'width' ||
+        channel === 'opacity' ||
+        channel === 'endpointSize';
+      const isEdgeEndpointPosition = channel === 'endpointPosition';
+
+      if (mapperType === 'colormap') {
+        return dim === 1;
+      }
+
+      if (mapperType === 'linear') {
+        return dim === 1;
+      }
+
+      if (mapperType === 'nodeAttribute') {
+        if (isColorChannel) return dim === 3 || dim === 4 || dim === 1;
+        if (isScalarChannel) return dim === 1;
+        return false;
+      }
+
+      if (mapperType === 'passthrough') {
+        if (isPositionChannel) {
+          return dim === 3;
+        }
+        if (isColorChannel) {
+          if (isEdge && typeof name === 'string' && name.startsWith('@node.')) return false;
+          if (isEdge) return dim === 4 || dim === 8;
+          return dim === 3 || dim === 4;
+        }
+        if (isEdgeEndpointPosition) {
+          return isEdge && dim === 6;
+        }
+        if (isScalarChannel) {
+          if (isEdge) return dim === 1 || dim === 2;
+          return dim === 1;
+        }
+        return false;
+      }
+
+      return true;
+    };
+
+    const listAttributeNames = (scope, { channel, mapperType } = {}) => {
+      if (!network) return [];
+      const getNames = scope === 'edge' ? network.getEdgeAttributeNames : network.getNodeAttributeNames;
+      if (typeof getNames !== 'function') return [];
+      const raw = getNames.call(network) ?? [];
+      const out = [];
+
+      // Special built-in attribute implemented by Mapper.resolveAttribute.
+      out.push('$index');
+
+      // Friendly aliases for internal visual attributes (avoid showing _helios_*).
+      if (scope === 'node') {
+        out.push('color', 'size', 'outline', 'outlineColor', 'position');
+      } else {
+        out.push('edgeColor', 'edgeWidth', 'edgeOpacity', 'edgeEndpointPosition', 'edgeEndpointSize');
+      }
+
+      for (const name of raw) {
+        if (typeof name !== 'string') continue;
+        if (name.startsWith('__')) continue;
+        if (name.startsWith('_helios_') || name.startsWith('_helios')) continue;
+        out.push(name);
+      }
+
+      // For edge mappers, allow selecting node endpoint values with @node.*.
+      if (scope === 'edge' && typeof network.getNodeAttributeNames === 'function') {
+        const nodeRaw = network.getNodeAttributeNames() ?? [];
+        for (const name of nodeRaw) {
+          if (typeof name !== 'string') continue;
+          if (name.startsWith('__')) continue;
+          if (name.startsWith('_helios_') || name.startsWith('_helios')) continue;
+          out.push(`@node.${name}`);
+        }
+      }
+
+      const unique = Array.from(new Set(out));
+      unique.sort((a, b) => {
+        if (a === '$index') return -1;
+        if (b === '$index') return 1;
+        return a.localeCompare(b);
+      });
+
+      if (channel && mapperType) {
+        return unique.filter((name) => isCompatibleAttribute(scope, channel, mapperType, name));
+      }
+      return unique;
+    };
+
+    const resolveCollection = (mode) => {
+      if (!helios) return null;
+      return mode === 'edge' ? helios.edgeMapper : helios.nodeMapper;
+    };
+
+    const resolveLiveConfig = (mode, channel) => {
+      const collection = resolveCollection(mode);
+      const mapper = collection?.defaultMapper ?? null;
+      if (!mapper || typeof mapper.getChannel !== 'function') return null;
+      return shallowCloneChannelConfig(mapper.getChannel(channel));
+    };
+
+    const applyConfig = (mode, channel, config) => {
+      const collection = resolveCollection(mode);
+      const mapper = collection?.defaultMapper ?? null;
+      if (!collection || !mapper || typeof mapper.setChannel !== 'function') return false;
+      mapper.setChannel(channel, config);
+      collection.touch?.();
+      return true;
+    };
+
+    const createModeTab = (mode) => {
+      const root = document.createElement('div');
+
+      const state = {
+        channel: (mode === 'edge' ? (options.defaultEdgeChannel ?? 'color') : (options.defaultNodeChannel ?? 'color')),
+        pending: null,
+        dirty: false,
+      };
+
+      const channels = mode === 'edge' ? edgeChannels : nodeChannels;
+
+      const channelSelect = document.createElement('select');
+      channelSelect.className = 'helios-ui-select';
+      for (const name of channels) {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        channelSelect.appendChild(opt);
+      }
+      if (!channels.includes(state.channel)) state.channel = channels[0];
+      channelSelect.value = state.channel;
+
+      const channelRowControls = document.createElement('div');
+      channelRowControls.style.display = 'grid';
+      channelRowControls.style.gap = '6px';
+      channelRowControls.appendChild(channelSelect);
+
+      root.appendChild(createAlignedRowEl({ title: 'Channel', controls: channelRowControls }).row);
+
+      const summaryEl = document.createElement('div');
+      summaryEl.className = 'helios-ui-ellipsis';
+      summaryEl.style.color = 'var(--helios-ui-muted)';
+      summaryEl.style.fontSize = '11.5px';
+      summaryEl.style.marginTop = '-4px';
+      root.appendChild(summaryEl);
+
+      const editorStack = new PanelStack();
+      const editorBody = document.createElement('div');
+      editorStack.add({ id: `${mode}-mapper-basic`, title: 'Editor', content: editorBody });
+      root.appendChild(editorStack.element);
+      this._controlCleanups.add(() => editorStack.destroy());
+
+      const applyRow = document.createElement('div');
+      applyRow.style.display = 'flex';
+      applyRow.style.justifyContent = 'flex-end';
+      applyRow.style.gap = '8px';
+
+      const revertButton = document.createElement('button');
+      revertButton.type = 'button';
+      revertButton.className = 'helios-ui-button';
+      revertButton.textContent = 'Revert';
+
+      const applyButton = document.createElement('button');
+      applyButton.type = 'button';
+      applyButton.className = 'helios-ui-button';
+      applyButton.textContent = 'Apply';
+
+      applyRow.appendChild(revertButton);
+      applyRow.appendChild(applyButton);
+      root.appendChild(applyRow);
+
+      const canApplyPending = () => {
+        if (!state.pending) return false;
+        const collection = resolveCollection(mode);
+        const mapper = collection?.defaultMapper ?? null;
+        if (!collection || !mapper || typeof mapper.setChannel !== 'function') return false;
+
+        const type = state.pending.type ?? 'passthrough';
+
+        if (mode === 'node' && state.channel === 'position' && type === 'layout') {
+          const scheduler = helios?.scheduler ?? null;
+          if (!scheduler || typeof scheduler.setLayoutEnabled !== 'function') return false;
+          return Boolean(scheduler.layout);
+        }
+
+        if (type === 'passthrough') {
+          return typeof state.pending.attributes === 'string' && state.pending.attributes.length > 0;
+        }
+
+        if (type === 'nodeAttribute') {
+          return typeof state.pending.nodeAttribute === 'string' && state.pending.nodeAttribute.length > 0;
+        }
+
+        if (type === 'constant') {
+          const v = state.pending.value;
+          const isArrayLike = Array.isArray(v) || ArrayBuffer.isView(v);
+          if (mode === 'node' && state.channel === 'position') {
+            return isArrayLike && v.length === 3 && Array.from(v).every((x) => Number.isFinite(x));
+          }
+          if (isArrayLike) return v.length === 3 || v.length === 4;
+          if (typeof v === 'number') return Number.isFinite(v);
+          if (typeof v === 'string') return isHexColorString(v);
+          return false;
+        }
+
+        if (type === 'linear') {
+          if (!(typeof state.pending.attributes === 'string' && state.pending.attributes.length > 0)) return false;
+          const domain = state.pending.domain;
+          const range = state.pending.range;
+          const domainOk = Array.isArray(domain) && domain.length === 2 && domain.every((x) => Number.isFinite(x));
+          const rangeOk = Array.isArray(range) && range.length === 2 && range.every((x) => Number.isFinite(x));
+          return domainOk && rangeOk;
+        }
+
+        if (type === 'colormap') {
+          if (!(typeof state.pending.attributes === 'string' && state.pending.attributes.length > 0)) return false;
+          if (!(typeof state.pending.colormap === 'string' && state.pending.colormap.length > 0)) return false;
+          return true;
+        }
+
+        return true;
+      };
+
+      const syncApplyEnabled = () => {
+        applyButton.disabled = !canApplyPending();
+      };
+
+      const setDirty = (dirty) => {
+        state.dirty = Boolean(dirty);
+        syncApplyEnabled();
+      };
+
+      const syncSummary = () => {
+        if (mode === 'node' && state.channel === 'position') {
+          const scheduler = helios?.scheduler ?? null;
+          const hasLayout = Boolean(scheduler?.layout);
+          const layoutEnabled = hasLayout && scheduler?.layoutEnabled !== false;
+          if (layoutEnabled) {
+            summaryEl.textContent = 'Current: layout';
+            return;
+          }
+        }
+        const live = resolveLiveConfig(mode, state.channel);
+        summaryEl.textContent = `Current: ${summarizeChannelConfig(live)}`;
+      };
+
+      const resolveAllowedTypes = (channel) => {
+        if (mode === 'node' && channel === 'position') return ['layout', 'constant', 'passthrough'];
+        const isColor = channel === 'color' || channel === 'outlineColor';
+        const isScalar =
+          channel === 'size' ||
+          channel === 'outline' ||
+          channel === 'width' ||
+          channel === 'opacity' ||
+          channel === 'endpointSize';
+        if (mode === 'edge' && isColor) return ['constant', 'passthrough', 'nodeAttribute', 'colormap'];
+        if (mode === 'edge' && isScalar) return ['constant', 'passthrough', 'nodeAttribute', 'linear'];
+        if (isColor) return ['constant', 'passthrough', 'colormap'];
+        if (isScalar) return ['constant', 'passthrough', 'linear'];
+        // MVP: other channels are passthrough only.
+        return ['passthrough'];
+      };
+
+      const renderEditor = () => {
+        editorBody.textContent = '';
+        syncSummary();
+        const live = resolveLiveConfig(mode, state.channel);
+
+        if (!state.pending) {
+          if (mode === 'node' && state.channel === 'position') {
+            const scheduler = helios?.scheduler ?? null;
+            const hasLayout = Boolean(scheduler?.layout);
+            const layoutEnabled = hasLayout && scheduler?.layoutEnabled !== false;
+            state.pending = layoutEnabled ? { name: state.channel, type: 'layout' } : (shallowCloneChannelConfig(live) ?? { name: state.channel });
+          } else {
+            state.pending = shallowCloneChannelConfig(live) ?? { name: state.channel };
+          }
+        }
+
+        const allowedTypes = resolveAllowedTypes(state.channel);
+        const typeSelect = document.createElement('select');
+        typeSelect.className = 'helios-ui-select';
+        for (const t of allowedTypes) {
+          const opt = document.createElement('option');
+          opt.value = t;
+          opt.textContent = t;
+          typeSelect.appendChild(opt);
+        }
+        const currentType = state.pending.type ?? live?.type ?? allowedTypes[0];
+        typeSelect.value = allowedTypes.includes(currentType) ? currentType : allowedTypes[0];
+
+        const setPendingType = (nextType) => {
+          const prev = state.pending ?? {};
+          const base = nextType === 'layout'
+            ? { name: state.channel, type: nextType }
+            : {
+              name: state.channel,
+              type: nextType,
+              attributes: prev.attributes ?? live?.attributes ?? live?.from,
+              defaultValue: prev.defaultValue ?? live?.defaultValue,
+            };
+          if (nextType === 'constant') {
+            base.value = prev.value ?? live?.value;
+          }
+          if (nextType === 'passthrough') {
+            // nothing else
+          }
+          if (nextType === 'nodeAttribute') {
+            base.nodeAttribute = prev.nodeAttribute ?? live?.nodeAttribute ?? '';
+            base.endpoints = prev.endpoints ?? live?.endpoints ?? 'both';
+            if (!base.nodeAttribute) {
+              const isColorChannel = state.channel === 'color' || state.channel === 'outlineColor';
+              base.nodeAttribute = isColorChannel ? 'color' : 'size';
+            }
+            base.attributes = [`@node.${base.nodeAttribute}`];
+          }
+          if (nextType === 'linear') {
+            base.domain = Array.isArray(prev.domain) ? prev.domain : (Array.isArray(live?.domain) ? live.domain : [0, 1]);
+            base.range = Array.isArray(prev.range) ? prev.range : (Array.isArray(live?.range) ? live.range : [0, 1]);
+          }
+          if (nextType === 'colormap') {
+            base.colormap = prev.colormap ?? live?.colormap ?? 'interpolateInferno';
+            base.domain = Array.isArray(prev.domain) ? prev.domain : (Array.isArray(live?.domain) ? live.domain : [0, 1]);
+            base.alpha = prev.alpha ?? live?.alpha ?? 1;
+            base.clamp = prev.clamp ?? live?.clamp ?? true;
+          }
+          state.pending = base;
+          setDirty(true);
+          renderEditor();
+        };
+
+        typeSelect.addEventListener('change', () => {
+          setPendingType(typeSelect.value);
+        });
+
+        editorBody.appendChild(createAlignedRowEl({ title: 'Type', controls: typeSelect }).row);
+
+        const pendingType = typeSelect.value;
+        const isColor = state.channel === 'color' || state.channel === 'outlineColor';
+        const isScalar =
+          state.channel === 'size' ||
+          state.channel === 'outline' ||
+          state.channel === 'width' ||
+          state.channel === 'opacity' ||
+          state.channel === 'endpointSize';
+        const isPosition = mode === 'node' && state.channel === 'position';
+
+        if (pendingType === 'layout') {
+          const note = document.createElement('div');
+          note.style.color = 'var(--helios-ui-muted)';
+          note.textContent = 'Uses the active layout (no position mapper applied).';
+          editorBody.appendChild(note);
+        }
+
+        if (pendingType === 'passthrough') {
+          const attrSelect = document.createElement('select');
+          attrSelect.className = 'helios-ui-select';
+          const names = listAttributeNames(mode, { channel: state.channel, mapperType: 'passthrough' });
+          const current = typeof state.pending.attributes === 'string'
+            ? state.pending.attributes
+            : (typeof live?.attributes === 'string' ? live.attributes : '');
+          const optBlank = document.createElement('option');
+          optBlank.value = '';
+          optBlank.textContent = names.length ? 'Select attribute…' : 'No attributes';
+          attrSelect.appendChild(optBlank);
+          for (const name of names) {
+            const opt = document.createElement('option');
+            opt.value = name;
+            opt.textContent = name;
+            attrSelect.appendChild(opt);
+          }
+          attrSelect.value = names.includes(current) ? current : '';
+          attrSelect.addEventListener('change', () => {
+            state.pending = { ...state.pending, type: 'passthrough', attributes: attrSelect.value || undefined };
+            setDirty(true);
+          });
+          editorBody.appendChild(createAlignedRowEl({ title: 'Attribute', controls: attrSelect }).row);
+        }
+
+        if (pendingType === 'nodeAttribute') {
+          const attrSelect = document.createElement('select');
+          attrSelect.className = 'helios-ui-select';
+          const names = listAttributeNames('node', { channel: state.channel, mapperType: 'nodeAttribute' });
+          const current = typeof state.pending.nodeAttribute === 'string'
+            ? state.pending.nodeAttribute
+            : (typeof live?.nodeAttribute === 'string' ? live.nodeAttribute : '');
+
+          const optBlank = document.createElement('option');
+          optBlank.value = '';
+          optBlank.textContent = names.length ? 'Select node attribute…' : 'No node attributes';
+          attrSelect.appendChild(optBlank);
+
+          for (const name of names) {
+            const bare = name.startsWith('@node.') ? name.slice('@node.'.length) : name;
+            if (bare === '$index') continue;
+            const opt = document.createElement('option');
+            opt.value = bare;
+            opt.textContent = bare;
+            attrSelect.appendChild(opt);
+          }
+
+          attrSelect.value = current || '';
+          attrSelect.addEventListener('change', () => {
+            const bare = attrSelect.value || undefined;
+            state.pending = {
+              ...state.pending,
+              type: 'nodeAttribute',
+              nodeAttribute: bare,
+              endpoints: state.pending.endpoints ?? 'both',
+              attributes: bare ? [`@node.${bare}`] : undefined,
+            };
+            setDirty(true);
+          });
+          editorBody.appendChild(createAlignedRowEl({ title: 'From/To', controls: attrSelect }).row);
+        }
+
+        if (pendingType === 'constant' && isScalar) {
+          const input = document.createElement('input');
+          input.type = 'number';
+          input.className = 'helios-ui-number';
+          const fallbackValue = Number.isFinite(live?.value) ? live.value : 1;
+          const seeded = Number.isFinite(state.pending.value) ? state.pending.value : fallbackValue;
+          if (!Number.isFinite(state.pending.value)) {
+            state.pending = { ...state.pending, type: 'constant', value: seeded };
+          }
+          input.value = String(seeded);
+          input.addEventListener('change', () => {
+            const v = clampNumber(input.value);
+            if (v == null) return;
+            state.pending = { ...state.pending, type: 'constant', value: v };
+            setDirty(true);
+          });
+          editorBody.appendChild(createAlignedRowEl({ title: 'Value', controls: input }).row);
+        }
+
+        if (pendingType === 'constant' && isPosition) {
+          const wrap = document.createElement('div');
+          wrap.style.display = 'flex';
+          wrap.style.gap = '8px';
+
+          const makeNum = () => {
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.className = 'helios-ui-number';
+            return input;
+          };
+
+          const xInput = makeNum();
+          const yInput = makeNum();
+          const zInput = makeNum();
+
+          const seeded = (() => {
+            const v = state.pending.value ?? live?.value;
+            const isArrayLike = Array.isArray(v) || ArrayBuffer.isView(v);
+            if (isArrayLike && v.length >= 3) {
+              const x = Number(v[0]);
+              const y = Number(v[1]);
+              const z = Number(v[2]);
+              if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) return [x, y, z];
+            }
+            return [0, 0, 0];
+          })();
+
+          if (!Array.isArray(state.pending.value) && !ArrayBuffer.isView(state.pending.value)) {
+            state.pending = { ...state.pending, type: 'constant', value: seeded };
+          }
+
+          xInput.value = String(seeded[0]);
+          yInput.value = String(seeded[1]);
+          zInput.value = String(seeded[2]);
+
+          const commit = () => {
+            const x = clampNumber(xInput.value);
+            const y = clampNumber(yInput.value);
+            const z = clampNumber(zInput.value);
+            if (x == null || y == null || z == null) return;
+            state.pending = { ...state.pending, type: 'constant', value: [x, y, z] };
+            setDirty(true);
+          };
+          xInput.addEventListener('change', commit);
+          yInput.addEventListener('change', commit);
+          zInput.addEventListener('change', commit);
+
+          wrap.appendChild(xInput);
+          wrap.appendChild(yInput);
+          wrap.appendChild(zInput);
+          editorBody.appendChild(createAlignedRowEl({ title: 'Value', controls: wrap }).row);
+        }
+
+        if (pendingType === 'constant' && isColor) {
+          const wrap = document.createElement('div');
+          wrap.style.display = 'flex';
+          wrap.style.gap = '8px';
+          wrap.style.alignItems = 'center';
+
+          const colorInput = document.createElement('input');
+          colorInput.type = 'color';
+
+          const alphaInput = document.createElement('input');
+          alphaInput.type = 'number';
+          alphaInput.className = 'helios-ui-number';
+          alphaInput.min = '0';
+          alphaInput.max = '1';
+          alphaInput.step = '0.01';
+          alphaInput.style.maxWidth = '88px';
+          alphaInput.title = 'Alpha (0–1)';
+
+          const alphaLabel = document.createElement('span');
+          alphaLabel.textContent = 'Alpha (0–1)';
+          alphaLabel.style.color = 'var(--helios-ui-muted)';
+
+          if (!(typeof state.pending.value === 'string' && state.pending.value.length > 0)) {
+            const seed = typeof live?.value === 'string' && live.value.length > 0 ? live.value : '#ffffff';
+            state.pending = { ...state.pending, type: 'constant', value: seed };
+          }
+
+          const liveValue = state.pending.value ?? live?.value ?? '#ffffff';
+          const liveColor = typeof liveValue === 'string' ? liveValue : '#ffffff';
+          const raw = liveColor.startsWith('#') ? liveColor.slice(1) : liveColor;
+          const baseHex = raw.length >= 6 ? `#${raw.slice(0, 6)}` : '#ffffff';
+          const alphaHex = raw.length === 8 ? raw.slice(6, 8) : 'ff';
+          const alpha = Math.round(parseInt(alphaHex, 16) / 255 * 100) / 100;
+
+          colorInput.value = baseHex;
+          alphaInput.value = String(Number.isFinite(alpha) ? alpha : 1);
+
+          const commit = () => {
+            const a = clampNumber(alphaInput.value, { min: 0, max: 1 });
+            if (a == null) return;
+            state.pending = { ...state.pending, type: 'constant', value: toHex8(colorInput.value, a) };
+            setDirty(true);
+          };
+          colorInput.addEventListener('input', commit);
+          alphaInput.addEventListener('change', commit);
+
+          wrap.appendChild(colorInput);
+          wrap.appendChild(alphaLabel);
+          wrap.appendChild(alphaInput);
+          editorBody.appendChild(createAlignedRowEl({ title: 'Color', controls: wrap }).row);
+        }
+
+        if (pendingType === 'linear') {
+          const srcRow = document.createElement('div');
+          srcRow.style.display = 'grid';
+          srcRow.style.gap = '6px';
+
+          const attrSelect = document.createElement('select');
+          attrSelect.className = 'helios-ui-select';
+          const names = listAttributeNames(mode, { channel: state.channel, mapperType: 'linear' });
+          const current = typeof state.pending.attributes === 'string'
+            ? state.pending.attributes
+            : (typeof live?.attributes === 'string' ? live.attributes : '');
+          const optBlank = document.createElement('option');
+          optBlank.value = '';
+          optBlank.textContent = names.length ? 'Select attribute…' : 'No attributes';
+          attrSelect.appendChild(optBlank);
+          for (const name of names) {
+            const opt = document.createElement('option');
+            opt.value = name;
+            opt.textContent = name;
+            attrSelect.appendChild(opt);
+          }
+          attrSelect.value = names.includes(current) ? current : '';
+          attrSelect.addEventListener('change', () => {
+            state.pending = { ...state.pending, type: 'linear', attributes: attrSelect.value || undefined };
+            setDirty(true);
+          });
+          editorBody.appendChild(createAlignedRowEl({ title: 'Attribute', controls: attrSelect }).row);
+
+          const domainWrap = document.createElement('div');
+          domainWrap.style.display = 'flex';
+          domainWrap.style.gap = '8px';
+
+          const d0 = document.createElement('input');
+          d0.type = 'number';
+          d0.className = 'helios-ui-number';
+          const d1 = document.createElement('input');
+          d1.type = 'number';
+          d1.className = 'helios-ui-number';
+          const domain = Array.isArray(state.pending.domain) ? state.pending.domain : [0, 1];
+          d0.value = String(domain[0] ?? 0);
+          d1.value = String(domain[1] ?? 1);
+          const commitDomain = () => {
+            const a = clampNumber(d0.value);
+            const b = clampNumber(d1.value);
+            if (a == null || b == null) return;
+            state.pending = { ...state.pending, type: 'linear', domain: [a, b] };
+            setDirty(true);
+          };
+          d0.addEventListener('change', commitDomain);
+          d1.addEventListener('change', commitDomain);
+          domainWrap.appendChild(d0);
+          domainWrap.appendChild(d1);
+          editorBody.appendChild(createAlignedRowEl({ title: 'Domain', controls: domainWrap }).row);
+
+          const rangeWrap = document.createElement('div');
+          rangeWrap.style.display = 'flex';
+          rangeWrap.style.gap = '8px';
+          const r0 = document.createElement('input');
+          r0.type = 'number';
+          r0.className = 'helios-ui-number';
+          const r1 = document.createElement('input');
+          r1.type = 'number';
+          r1.className = 'helios-ui-number';
+          const range = Array.isArray(state.pending.range) ? state.pending.range : [0, 1];
+          r0.value = String(range[0] ?? 0);
+          r1.value = String(range[1] ?? 1);
+          const commitRange = () => {
+            const a = clampNumber(r0.value);
+            const b = clampNumber(r1.value);
+            if (a == null || b == null) return;
+            state.pending = { ...state.pending, type: 'linear', range: [a, b] };
+            setDirty(true);
+          };
+          r0.addEventListener('change', commitRange);
+          r1.addEventListener('change', commitRange);
+          rangeWrap.appendChild(r0);
+          rangeWrap.appendChild(r1);
+          editorBody.appendChild(createAlignedRowEl({ title: 'Range', controls: rangeWrap }).row);
+        }
+
+        if (pendingType === 'colormap') {
+          const attrSelect = document.createElement('select');
+          attrSelect.className = 'helios-ui-select';
+          const names = listAttributeNames(mode, { channel: state.channel, mapperType: 'colormap' });
+          const current = typeof state.pending.attributes === 'string'
+            ? state.pending.attributes
+            : (typeof live?.attributes === 'string' ? live.attributes : '');
+          const optBlank = document.createElement('option');
+          optBlank.value = '';
+          optBlank.textContent = names.length ? 'Select attribute…' : 'No attributes';
+          attrSelect.appendChild(optBlank);
+          for (const name of names) {
+            const opt = document.createElement('option');
+            opt.value = name;
+            opt.textContent = name;
+            attrSelect.appendChild(opt);
+          }
+          attrSelect.value = names.includes(current) ? current : '';
+          attrSelect.addEventListener('change', () => {
+            state.pending = { ...state.pending, type: 'colormap', attributes: attrSelect.value || undefined };
+            setDirty(true);
+          });
+          editorBody.appendChild(createAlignedRowEl({ title: 'Attribute', controls: attrSelect }).row);
+
+          const nameWrap = document.createElement('div');
+          nameWrap.style.display = 'grid';
+          nameWrap.style.gap = '6px';
+          const colormapInput = document.createElement('input');
+          colormapInput.type = 'text';
+          colormapInput.className = 'helios-ui-text';
+          colormapInput.placeholder = 'interpolateInferno';
+          colormapInput.value = String(state.pending.colormap ?? 'interpolateInferno');
+
+          const datalistId = `helios-ui-colormap-datalist-${Math.random().toString(16).slice(2)}`;
+          const datalist = document.createElement('datalist');
+          datalist.id = datalistId;
+          for (const name of colormapNames) {
+            const opt = document.createElement('option');
+            opt.value = name;
+            datalist.appendChild(opt);
+          }
+          colormapInput.setAttribute('list', datalistId);
+          nameWrap.appendChild(colormapInput);
+          nameWrap.appendChild(datalist);
+
+          colormapInput.addEventListener('change', () => {
+            state.pending = { ...state.pending, type: 'colormap', colormap: colormapInput.value || 'interpolateInferno' };
+            setDirty(true);
+          });
+          editorBody.appendChild(createAlignedRowEl({ title: 'Colormap', controls: nameWrap }).row);
+
+          const domainWrap = document.createElement('div');
+          domainWrap.style.display = 'flex';
+          domainWrap.style.gap = '8px';
+          const d0 = document.createElement('input');
+          d0.type = 'number';
+          d0.className = 'helios-ui-number';
+          const d1 = document.createElement('input');
+          d1.type = 'number';
+          d1.className = 'helios-ui-number';
+          const domain = Array.isArray(state.pending.domain) ? state.pending.domain : [0, 1];
+          d0.value = String(domain[0] ?? 0);
+          d1.value = String(domain[1] ?? 1);
+          const commitDomain = () => {
+            const a = clampNumber(d0.value);
+            const b = clampNumber(d1.value);
+            if (a == null || b == null) return;
+            state.pending = { ...state.pending, type: 'colormap', domain: [a, b] };
+            setDirty(true);
+          };
+          d0.addEventListener('change', commitDomain);
+          d1.addEventListener('change', commitDomain);
+          domainWrap.appendChild(d0);
+          domainWrap.appendChild(d1);
+          editorBody.appendChild(createAlignedRowEl({ title: 'Domain', controls: domainWrap }).row);
+
+          const advanced = document.createElement('div');
+          const clampWrap = document.createElement('label');
+          clampWrap.style.display = 'inline-flex';
+          clampWrap.style.alignItems = 'center';
+          clampWrap.style.gap = '6px';
+          const clampInput = document.createElement('input');
+          clampInput.type = 'checkbox';
+          clampInput.checked = state.pending.clamp ?? true;
+          clampInput.style.margin = '0';
+          const clampText = document.createElement('span');
+          clampText.textContent = 'Clamp';
+          clampText.style.color = 'var(--helios-ui-muted)';
+          clampWrap.appendChild(clampInput);
+          clampWrap.appendChild(clampText);
+
+          const alphaInput = document.createElement('input');
+          alphaInput.type = 'number';
+          alphaInput.className = 'helios-ui-number';
+          alphaInput.min = '0';
+          alphaInput.max = '1';
+          alphaInput.step = '0.01';
+          alphaInput.value = String(clampNumber(state.pending.alpha ?? 1, { min: 0, max: 1 }) ?? 1);
+
+          clampInput.addEventListener('change', () => {
+            state.pending = { ...state.pending, type: 'colormap', clamp: clampInput.checked };
+            setDirty(true);
+          });
+          alphaInput.addEventListener('change', () => {
+            const a = clampNumber(alphaInput.value, { min: 0, max: 1 });
+            if (a == null) return;
+            state.pending = { ...state.pending, type: 'colormap', alpha: a };
+            setDirty(true);
+          });
+
+          advanced.appendChild(createAlignedRowEl({ title: 'Clamp', controls: clampWrap }).row);
+          advanced.appendChild(createAlignedRowEl({ title: 'Alpha (0–1)', controls: alphaInput }).row);
+
+          const advancedStack = new PanelStack();
+          advancedStack.add({ id: `${mode}-mapper-advanced`, title: 'Advanced', collapsed: true, content: advanced });
+          editorBody.appendChild(advancedStack.element);
+          this._controlCleanups.add(() => advancedStack.destroy());
+        }
+
+        if (!isColor && !isScalar && pendingType !== 'passthrough') {
+          const note = document.createElement('div');
+          note.style.color = 'var(--helios-ui-muted)';
+          note.textContent = 'This channel is passthrough-only in the current MVP.';
+          editorBody.appendChild(note);
+        }
+
+        syncApplyEnabled();
+      };
+
+      const resetPendingFromLive = () => {
+        if (mode === 'node' && state.channel === 'position') {
+          const scheduler = helios?.scheduler ?? null;
+          const hasLayout = Boolean(scheduler?.layout);
+          const layoutEnabled = hasLayout && scheduler?.layoutEnabled !== false;
+          state.pending = layoutEnabled ? { name: state.channel, type: 'layout' } : (resolveLiveConfig(mode, state.channel) ?? { name: state.channel });
+        } else {
+          state.pending = resolveLiveConfig(mode, state.channel) ?? { name: state.channel };
+        }
+        setDirty(false);
+        renderEditor();
+      };
+
+      channelSelect.addEventListener('change', () => {
+        state.channel = channelSelect.value;
+        resetPendingFromLive();
+      });
+
+      revertButton.addEventListener('click', () => {
+        resetPendingFromLive();
+      });
+
+      applyButton.addEventListener('click', () => {
+        if (!state.pending) return;
+
+        if (mode === 'node' && state.channel === 'position') {
+          const scheduler = helios?.scheduler ?? null;
+          if (state.pending.type === 'layout') {
+            if (scheduler && typeof scheduler.setLayoutEnabled === 'function') {
+              scheduler.setLayoutEnabled(true, 'ui:mappers');
+              scheduler.requestLayout?.('ui:mappers');
+            }
+            setDirty(false);
+            syncSummary();
+            return;
+          }
+          if (scheduler && typeof scheduler.setLayoutEnabled === 'function') {
+            scheduler.setLayoutEnabled(false, 'ui:mappers');
+          }
+        }
+
+        const ok = applyConfig(mode, state.channel, state.pending);
+        if (ok) {
+          setDirty(false);
+          syncSummary();
+        }
+      });
+
+      resetPendingFromLive();
+      return root;
+    };
+
+    return this.createTabbedPanel({
+      id: options.id ?? 'helios-ui-mappers',
+      title: options.title ?? 'Mappers',
+      position: options.position ?? { x: 16, y: 120 },
+      dock: options.dock ?? 'top-left',
+      tabs: [
+        { id: 'nodes', title: 'Nodes', content: createModeTab('node') },
+        { id: 'edges', title: 'Edges', content: createModeTab('edge') },
+      ],
+    });
   }
 }

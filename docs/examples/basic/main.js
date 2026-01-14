@@ -267,6 +267,7 @@ async function bootstrap() {
   const heliosUI = new HeliosUI({ helios, theme: 'dark', allowDrag: true });
   heliosUI.createDemoPanel();
   heliosUI.createMetricsPanel();
+  heliosUI.createMappersPanel({ dock: 'top-right', position: { x: 16, y: 16 } });
   window.__heliosUI = heliosUI;
 
   const configureDemoMappers = () => {
