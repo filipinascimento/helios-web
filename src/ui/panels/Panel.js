@@ -1,5 +1,6 @@
 import { computeDockMode } from './docking.js';
 import { computeResizedWidth } from './resize.js';
+import { defineHeliosWebComponents } from '../web-components/defineHeliosWebComponents.js';
 
 const DEFAULT_POSITION = Object.freeze({ x: 12, y: 12 });
 const DEFAULT_DOCK_THRESHOLD = 18;
@@ -22,54 +23,37 @@ export class Panel {
       ? options.getContainerRect
       : () => this.element?.parentElement?.getBoundingClientRect?.();
 
-    this.element = document.createElement('div');
-    this.element.className = 'helios-ui-panel';
+    const doc = options?.content?.ownerDocument ?? document;
+    defineHeliosWebComponents(doc);
+
+    this.element = doc.createElement('helios-panel');
     this.element.dataset.panelId = this.id;
+    this.element.setAttribute('panel-id', this.id);
     this.element.dataset.collapsed = 'false';
-    this.element.dataset.dock = this.dock;
+    this.element.setAttribute('heading', this.title);
+    this.element.setAttribute('dock', this.dock);
+    this.element.ensureBuilt?.();
     if (this.width != null) this.element.style.width = `${Number(this.width)}px`;
     this.element.style.minWidth = `${Number(this.minWidth)}px`;
-    this.resizeHandle = document.createElement('div');
-    this.resizeHandle.className = 'helios-ui-resize-handle';
-    this.element.appendChild(this.resizeHandle);
+
+    this.resizeHandle = this.element.querySelector('.helios-ui-resize-handle');
     this._syncResizeHandleEdge();
     this._applyDock();
 
-    this.header = document.createElement('div');
-    this.header.className = 'helios-ui-panel__header';
-    this.titleEl = document.createElement('div');
-    this.titleEl.className = 'helios-ui-panel__title';
-    this.titleEl.textContent = this.title;
-    this.actionsEl = document.createElement('div');
-    this.actionsEl.className = 'helios-ui-panel__actions';
-
-    this.collapseButton = document.createElement('button');
-    this.collapseButton.className = 'helios-ui-button';
-    this.collapseButton.type = 'button';
-    this.collapseButton.title = 'Collapse';
-    this.collapseButton.textContent = '—';
-    this.actionsEl.appendChild(this.collapseButton);
-
-    this.header.appendChild(this.titleEl);
-    this.header.appendChild(this.actionsEl);
-
-    this.body = document.createElement('div');
-    this.body.className = 'helios-ui-panel__body';
-    if (options.content) this.body.appendChild(options.content);
-
-    this.element.appendChild(this.header);
-    this.element.appendChild(this.body);
-
-    this._onToggleCollapsed = () => this.toggleCollapsed();
-    this.collapseButton.addEventListener('click', this._onToggleCollapsed);
+    this.header = this.element.querySelector('.helios-ui-panel__header');
+    this.titleEl = this.element.querySelector('.helios-ui-panel__title');
+    this.actionsEl = this.element.querySelector('.helios-ui-panel__actions');
+    this.collapseButton = this.element.querySelector('.helios-ui-panel__actions .helios-ui-button');
+    this.body = this.element.querySelector('.helios-ui-panel__body');
+    if (this.body && options.content) this.body.appendChild(options.content);
 
     this._drag = null;
     this._resize = null;
     this._onPointerDown = (e) => this._handlePointerDown(e);
-    this.header.addEventListener('pointerdown', this._onPointerDown);
+    this.header?.addEventListener('pointerdown', this._onPointerDown);
 
     this._onResizePointerDown = (e) => this._handleResizePointerDown(e);
-    this.resizeHandle.addEventListener('pointerdown', this._onResizePointerDown);
+    this.resizeHandle?.addEventListener('pointerdown', this._onResizePointerDown);
   }
 
   setZIndex(zIndex) {
@@ -91,6 +75,7 @@ export class Panel {
     }
     this.dock = mode;
     this.element.dataset.dock = mode;
+    this.element.setAttribute('dock', mode);
     this._syncResizeHandleEdge();
     this._applyDock();
     this.onDockChange?.(this, mode);
@@ -169,12 +154,22 @@ export class Panel {
   }
 
   setCollapsed(collapsed) {
+    if (typeof this.element.setCollapsed === 'function') {
+      this.element.setCollapsed(collapsed);
+      return;
+    }
     this.element.dataset.collapsed = collapsed ? 'true' : 'false';
-    this.collapseButton.textContent = collapsed ? '+' : '—';
-    this.collapseButton.title = collapsed ? 'Expand' : 'Collapse';
+    if (this.collapseButton) {
+      this.collapseButton.textContent = collapsed ? '+' : '—';
+      this.collapseButton.title = collapsed ? 'Expand' : 'Collapse';
+    }
   }
 
   toggleCollapsed() {
+    if (typeof this.element.toggleCollapsed === 'function') {
+      this.element.toggleCollapsed();
+      return;
+    }
     this.setCollapsed(!this.collapsed());
   }
 
@@ -207,7 +202,7 @@ export class Panel {
       offsetX,
       offsetY,
     };
-    this.header.setPointerCapture(event.pointerId);
+    this.header?.setPointerCapture(event.pointerId);
     event.preventDefault();
   }
 
@@ -264,7 +259,7 @@ export class Panel {
       startWidth: rect.width,
       edge,
     };
-    this.resizeHandle.setPointerCapture(event.pointerId);
+    this.resizeHandle?.setPointerCapture(event.pointerId);
     event.preventDefault();
     event.stopPropagation();
   }
@@ -297,9 +292,8 @@ export class Panel {
   }
 
   destroy() {
-    this.collapseButton.removeEventListener('click', this._onToggleCollapsed);
-    this.header.removeEventListener('pointerdown', this._onPointerDown);
-    this.resizeHandle.removeEventListener('pointerdown', this._onResizePointerDown);
+    this.header?.removeEventListener('pointerdown', this._onPointerDown);
+    this.resizeHandle?.removeEventListener('pointerdown', this._onResizePointerDown);
     this.element.remove();
   }
 }

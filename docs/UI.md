@@ -96,6 +96,51 @@ const ui = new HeliosUI({ helios, styles: null });
 
 Then provide your own CSS for `.helios-ui` / `.helios-ui-panel` etc.
 
+## Web Components (Reusable UI building blocks)
+
+HeliosUI is built from plain DOM + CSS, but it now also exposes a small set of Web Components so people can build Helios-like controllers/panels outside Helios itself.
+
+### Register elements
+
+```js
+import { defineHeliosWebComponents } from 'helios-web-next';
+
+defineHeliosWebComponents(document);
+```
+
+This defines (at least) the custom element:
+
+- `<helios-panel>`
+
+### Use `<helios-panel>` standalone
+
+`<helios-panel>` is a Light DOM custom element (no Shadow DOM yet). That means:
+
+- It works with the existing HeliosUI stylesheet selectors (e.g. `.helios-ui-panel`, `.helios-ui-panel__header`).
+- It still benefits from the same CSS variables used by HeliosUI.
+
+Example:
+
+```js
+import { defineHeliosWebComponents, ensureDefaultStyles } from 'helios-web-next';
+
+defineHeliosWebComponents(document);
+ensureDefaultStyles(document);
+
+const uiRoot = document.createElement('div');
+uiRoot.className = 'helios-ui';
+uiRoot.dataset.theme = 'dark';
+document.body.appendChild(uiRoot);
+
+const panel = document.createElement('helios-panel');
+panel.setAttribute('heading', 'My Panel');
+panel.style.left = '16px';
+panel.style.top = '16px';
+
+panel.bodyEl.appendChild(document.createTextNode('Hello!'));
+uiRoot.appendChild(panel);
+```
+
 ## Building Controls (UIAttribute)
 
 HeliosUI is designed around “attributes” that can be read, optionally written, and subscribed to.

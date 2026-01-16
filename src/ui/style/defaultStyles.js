@@ -595,6 +595,125 @@ export const defaultStylesText = `
   cursor: default;
 }
 
+.helios-ui-color-swatch {
+  position: relative;
+  display: inline-block;
+  width: 34px;
+  height: 22px;
+  border-radius: 8px;
+  border: 1px solid var(--helios-ui-border);
+  background: color-mix(in srgb, var(--helios-ui-bg-solid) 85%, transparent);
+  padding: 0;
+  cursor: pointer;
+}
+
+.helios-ui-color-swatch:focus-within {
+  outline: none;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--helios-ui-accent) 22%, transparent);
+}
+
+.helios-ui-color-swatch__swatch {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--helios-ui-muted);
+}
+
+.helios-ui-color-swatch__input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+}
+
+.helios-ui-range2 {
+  width: 100%;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.helios-ui-range2__track {
+  position: relative;
+  width: 100%;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  --min-pct: 0;
+  --max-pct: 100;
+  --helios-ui-slider-track-h: 6px;
+}
+
+.helios-ui-range2__bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: var(--helios-ui-slider-track-h);
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px var(--helios-ui-border);
+  background: color-mix(in srgb, var(--helios-ui-fg) 12%, transparent);
+}
+
+.helios-ui-range2__range {
+  position: absolute;
+  height: var(--helios-ui-slider-track-h);
+  border-radius: 999px;
+  left: calc(var(--min-pct) * 1%);
+  right: calc(100% - (var(--max-pct) * 1%));
+  background: color-mix(in srgb, var(--helios-ui-accent) 92%, transparent);
+  cursor: grab;
+  touch-action: none;
+}
+
+.helios-ui-range2__range:active {
+  cursor: grabbing;
+}
+
+.helios-ui-range2__input {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  margin: 0;
+  /* Two overlaid range inputs: allow interaction only via the thumbs. */
+  pointer-events: none;
+}
+
+.helios-ui-range2__input::-webkit-slider-thumb {
+  pointer-events: all;
+}
+
+.helios-ui-range2__input::-moz-range-thumb {
+  pointer-events: all;
+}
+
+.helios-ui-range2__input::-webkit-slider-runnable-track {
+  background: transparent;
+  box-shadow: none;
+}
+
+.helios-ui-range2__input::-moz-range-track {
+  background: transparent;
+  box-shadow: none;
+}
+
+.helios-ui-range2__input::-moz-range-progress {
+  background: transparent;
+}
+
+.helios-ui-range2__values {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+}
+
 .helios-ui-dock {
   position: absolute;
   top: 0;

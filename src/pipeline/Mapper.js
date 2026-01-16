@@ -179,10 +179,74 @@ function categoricalScale(value, domain = [], range = []) {
   return range[index % range.length];
 }
 
+function applyBuiltinTransform(transformType, value, power = 1) {
+  const v = Number(value);
+  if (!Number.isFinite(v)) return value;
+  if (!transformType || transformType === 'linear') return v;
+
+  if (transformType === 'log') {
+    if (v <= 0) return undefined;
+    return Math.log(v);
+  }
+
+  if (transformType === 'log1p') {
+    if (v <= -1) return undefined;
+    return Math.log1p(v);
+  }
+
+  if (transformType === 'logit') {
+    // Avoid infinities for values near 0/1.
+    const eps = 1e-12;
+    const clamped = Math.max(eps, Math.min(1 - eps, v));
+    return Math.log(clamped / (1 - clamped));
+  }
+
+  if (transformType === 'power') {
+    const p = Number(power);
+    if (!Number.isFinite(p)) return undefined;
+    const out = Math.pow(v, p);
+    return Number.isFinite(out) ? out : undefined;
+  }
+
+  return v;
+}
+
+function clampForDomainTransform(transformType, value) {
+  const v = Number(value);
+  if (!Number.isFinite(v)) return value;
+  const eps = 1e-12;
+  if (!transformType || transformType === 'linear') return v;
+  if (transformType === 'log') return Math.max(eps, v);
+  if (transformType === 'log1p') return Math.max(-1 + eps, v);
+  if (transformType === 'logit') return Math.max(eps, Math.min(1 - eps, v));
+  return v;
+}
+
+function transformDomainIfNeeded(config, domain) {
+  const type = config?.transformType;
+  if (!type || type === 'linear') return domain;
+  if (!Array.isArray(domain) || domain.length !== 2) return domain;
+  const power = config?.transformPower;
+  const d0 = clampForDomainTransform(type, domain[0]);
+  const d1 = clampForDomainTransform(type, domain[1]);
+  const t0 = applyBuiltinTransform(type, d0, power);
+  const t1 = applyBuiltinTransform(type, d1, power);
+  if (!Number.isFinite(t0) || !Number.isFinite(t1)) return domain;
+  return [t0, t1];
+}
+
+function resolveTransformFn(config) {
+  const type = config?.transformType;
+  if (!type || type === 'linear') return undefined;
+  const power = config?.transformPower;
+  return (inputs) => applyBuiltinTransform(type, inputs, power);
+}
+
 function applyScale(config, value, inputs, item, context) {
   if (config.type === 'colormap' || config.colormap) {
+    const domain = transformDomainIfNeeded(config, config.domain);
     const scale = config.__colormapScale ?? createColormapScale(config.colormap ?? config.scale ?? config.range, {
-      domain: config.domain,
+      domain,
       alpha: config.alpha,
       clamp: config.clamp ?? true,
     });
@@ -190,7 +254,8 @@ function applyScale(config, value, inputs, item, context) {
     return scale(value, inputs, item, context);
   }
   if (config.type === 'linear') {
-    return linearScale(value, config.domain, config.range);
+    const domain = transformDomainIfNeeded(config, config.domain);
+    return linearScale(value, domain, config.range);
   }
   if (config.type === 'categorical') {
     return categoricalScale(value, config.domain, config.range);
@@ -279,8 +344,11 @@ function computeChannelValue(config, item, context) {
 function normalizeChannelConfig(name, config) {
   const normalized = {
     name,
+    meta: config.meta && typeof config.meta === 'object' ? { ...config.meta } : undefined,
     attributes: config.attributes ?? config.from ?? undefined,
     transform: config.transform,
+    transformType: config.transformType,
+    transformPower: config.transformPower,
     type: config.type ?? config.mode ?? undefined,
     colormap: config.colormap,
     alpha: config.alpha,
@@ -294,6 +362,11 @@ function normalizeChannelConfig(name, config) {
     defaultValue: config.defaultValue,
     rules: (config.rules ?? []).map((rule) => ({ ...rule })),
   };
+
+  if (typeof normalized.transform !== 'function') {
+    const fn = resolveTransformFn(normalized);
+    if (typeof fn === 'function') normalized.transform = fn;
+  }
   if (normalized.type === 'constant' && normalized.value === undefined) {
     normalized.value = config.defaultValue;
   }

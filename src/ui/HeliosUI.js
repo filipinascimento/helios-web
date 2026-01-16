@@ -1,6 +1,7 @@
 import { PanelManager } from './panels/PanelManager.js';
 import { UIAttribute } from './state/UIAttribute.js';
 import { ensureDefaultStyles } from './style/defaultStyles.js';
+import { defineHeliosWebComponents } from './web-components/defineHeliosWebComponents.js';
 import { createSliderRow } from './controls/createSliderRow.js';
 import { PanelStack } from './panels/PanelStack.js';
 import { TabbedPanel } from './panels/TabbedPanel.js';
@@ -226,10 +227,19 @@ function toHex8(hex6, alpha01 = 1) {
   return `#${normalized}${aa}`;
 }
 
+function isPublicAttributeName(name) {
+  if (typeof name !== 'string') return false;
+  // Treat leading-underscore names as private/internal.
+  // (This includes "__*" and "_helios*").
+  if (name.startsWith('_')) return false;
+  return true;
+}
+
 function shallowCloneChannelConfig(config) {
   if (!config) return null;
   return {
     ...config,
+    meta: config.meta && typeof config.meta === 'object' ? { ...config.meta } : config.meta,
     attributes: config.attributes ?? config.from,
     domain: Array.isArray(config.domain) ? [...config.domain] : config.domain,
     range: Array.isArray(config.range) ? [...config.range] : config.range,
@@ -241,6 +251,12 @@ function summarizeChannelConfig(config) {
   if (!config) return '—';
   const type = config.type ?? config.mode ?? 'custom';
   const attr = config.attributes ?? config.from;
+  if (type === 'custom') {
+    const name = config?.meta?.name;
+    const trimmed = typeof name === 'string' ? name.trim() : '';
+    if (!trimmed || trimmed.toLowerCase() === 'custom') return 'custom';
+    return `custom: ${trimmed}`;
+  }
   if (type === 'constant') {
     return config.value != null ? `constant` : 'constant';
   }
@@ -293,6 +309,9 @@ export class HeliosUI {
     this.styles = options.styles ?? 'default';
 
     if (this.styles === 'default') ensureDefaultStyles(options.document ?? document);
+
+    // Ensure custom elements exist before panels/controls are created.
+    defineHeliosWebComponents(options.document ?? document);
 
     this.container = resolveUiContainer({
       helios: this.helios,
@@ -1304,7 +1323,7 @@ export class HeliosUI {
       optNone.textContent = 'None';
       weightSelect.appendChild(optNone);
       if (network && typeof network.getEdgeAttributeNames === 'function') {
-        const names = network.getEdgeAttributeNames() ?? [];
+        const names = (network.getEdgeAttributeNames() ?? []).filter((name) => isPublicAttributeName(name));
         for (const name of names) {
           const opt = document.createElement('option');
           opt.value = name;
@@ -1478,6 +1497,77 @@ export class HeliosUI {
 
     const colormapNames = collectColormapSuggestionNames();
 
+    let customPresetCounter = 1;
+    const customPresetsByMode = {
+      node: new Map(),
+      edge: new Map(),
+    };
+
+    const getCustomPresetMap = (mode, channel) => {
+      const modeMap = customPresetsByMode[mode];
+      if (!modeMap) return new Map();
+      let byChannel = modeMap.get(channel);
+      if (!byChannel) {
+        byChannel = new Map();
+        modeMap.set(channel, byChannel);
+      }
+      return byChannel;
+    };
+
+    const isEditorTransferableConfig = (config) => {
+      if (!config) return false;
+      const type = config.type ?? config.mode ?? null;
+      if (type === 'layout') return true;
+
+      // Editor currently doesn't represent exception rules.
+      if (Array.isArray(config.rules) && config.rules.length > 0) return false;
+
+      // Any custom function makes the config non-roundtrippable for now.
+      if (typeof config.transform === 'function' && !config.transformType) return false;
+      if (typeof config.scale === 'function') return false;
+
+      // Cache/internal fields like __colormapScale are ignored.
+
+      if (type === 'constant') return true;
+      if (type === 'passthrough') return true;
+      if (type === 'linear') return true;
+      if (type === 'nodeAttribute') return true;
+
+      if (type === 'colormap' || config.colormap) {
+        // Only support selecting named colormaps in the editor for now.
+        return typeof (config.colormap ?? config.scale ?? config.range) === 'string';
+      }
+
+      return false;
+    };
+
+    // Domains shown in the UI are always in the original attribute scale.
+    // When a transform is selected, the runtime will transform the domain internally.
+
+    const registerCustomPreset = (mode, channel, config) => {
+      if (!config) return null;
+      const meta = config.meta && typeof config.meta === 'object' ? config.meta : {};
+      const preferredName = typeof meta.name === 'string' ? meta.name.trim() : '';
+      const baseId = preferredName || `custom-${customPresetCounter++}`;
+
+      const byId = getCustomPresetMap(mode, channel);
+      let id = baseId;
+      if (byId.has(id)) {
+        const existing = byId.get(id);
+        if (existing?.config === config) return id;
+        let n = 2;
+        while (byId.has(`${baseId} (${n})`)) n += 1;
+        id = `${baseId} (${n})`;
+      }
+
+      byId.set(id, {
+        id,
+        label: preferredName || 'custom',
+        config: shallowCloneChannelConfig(config) ?? config,
+      });
+      return id;
+    };
+
     const isHexColorString = (value) => {
       if (typeof value !== 'string') return false;
       const hex = value.trim();
@@ -1580,8 +1670,7 @@ export class HeliosUI {
 
       for (const name of raw) {
         if (typeof name !== 'string') continue;
-        if (name.startsWith('__')) continue;
-        if (name.startsWith('_helios_') || name.startsWith('_helios')) continue;
+        if (!isPublicAttributeName(name)) continue;
         out.push(name);
       }
 
@@ -1590,8 +1679,7 @@ export class HeliosUI {
         const nodeRaw = network.getNodeAttributeNames() ?? [];
         for (const name of nodeRaw) {
           if (typeof name !== 'string') continue;
-          if (name.startsWith('__')) continue;
-          if (name.startsWith('_helios_') || name.startsWith('_helios')) continue;
+          if (!isPublicAttributeName(name)) continue;
           out.push(`@node.${name}`);
         }
       }
@@ -1612,6 +1700,213 @@ export class HeliosUI {
     const resolveCollection = (mode) => {
       if (!helios) return null;
       return mode === 'edge' ? helios.edgeMapper : helios.nodeMapper;
+    };
+
+    const computeScalarExtent = (scope, rawName) => {
+      if (!network) return null;
+      if (typeof rawName !== 'string' || !rawName) return null;
+
+      if (rawName === '$index') {
+        const count = scope === 'edge' ? (network.edgeCount ?? network.edgesCount ?? null) : (network.nodeCount ?? network.nodesCount ?? null);
+        if (Number.isFinite(count) && count > 0) return { min: 0, max: Math.max(0, count - 1) };
+        return null;
+      }
+
+      const resolveName = (n) => resolveVisualAlias(n);
+      const isNodeProxy = scope === 'edge' && rawName.startsWith('@node.');
+      const name = isNodeProxy ? rawName.slice('@node.'.length) : rawName;
+      const resolved = resolveName(name);
+
+      try {
+        const buffer = isNodeProxy
+          ? network.getNodeAttributeBuffer?.(resolved)
+          : (scope === 'edge' ? network.getEdgeAttributeBuffer?.(resolved) : network.getNodeAttributeBuffer?.(resolved));
+
+        const view = buffer?.view ?? null;
+        if (!view || typeof view.length !== 'number' || view.length <= 0) return null;
+
+        let min = Infinity;
+        let max = -Infinity;
+        for (let i = 0; i < view.length; i += 1) {
+          const v = Number(view[i]);
+          if (!Number.isFinite(v)) continue;
+          if (v < min) min = v;
+          if (v > max) max = v;
+        }
+        if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+        if (min === max) return { min, max: min + 1 };
+        return { min, max };
+      } catch (_) {
+        return null;
+      }
+    };
+
+    const suggestDomainForAttribute = (scope, rawName) => {
+      const extent = computeScalarExtent(scope, rawName);
+      if (extent && Number.isFinite(extent.min) && Number.isFinite(extent.max)) return [extent.min, extent.max];
+      return [0, 1];
+    };
+
+    const suggestStepForRange = (min, max) => {
+      const span = Math.abs(Number(max) - Number(min));
+      if (!Number.isFinite(span) || span <= 0) return 0.01;
+      if (span <= 1) return 0.001;
+      if (span <= 10) return 0.01;
+      if (span <= 100) return 0.1;
+      return 1;
+    };
+
+    const createTwoHandleRange = ({ min, max, value, step, onChange }) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'helios-ui-range2';
+
+      const track = document.createElement('div');
+      track.className = 'helios-ui-range2__track';
+      const bar = document.createElement('div');
+      bar.className = 'helios-ui-range2__bar';
+      const rangeEl = document.createElement('div');
+      rangeEl.className = 'helios-ui-range2__range';
+      track.appendChild(bar);
+      track.appendChild(rangeEl);
+
+      const aInput = document.createElement('input');
+      aInput.type = 'range';
+      aInput.className = 'helios-ui-slider helios-ui-range2__input';
+      const bInput = document.createElement('input');
+      bInput.type = 'range';
+      bInput.className = 'helios-ui-slider helios-ui-range2__input';
+
+      const syncRanges = () => {
+        aInput.min = String(min);
+        aInput.max = String(max);
+        aInput.step = String(step);
+        bInput.min = String(min);
+        bInput.max = String(max);
+        bInput.step = String(step);
+      };
+      syncRanges();
+
+      const clampTo = (v) => {
+        const n = Number(v);
+        if (!Number.isFinite(n)) return null;
+        return Math.max(min, Math.min(max, n));
+      };
+
+      const setVisual = (lo, hi) => {
+        const span = max - min;
+        const loPct = span === 0 ? 0 : ((lo - min) / span) * 100;
+        const hiPct = span === 0 ? 100 : ((hi - min) / span) * 100;
+        track.style.setProperty('--min-pct', String(Math.max(0, Math.min(100, loPct))));
+        track.style.setProperty('--max-pct', String(Math.max(0, Math.min(100, hiPct))));
+      };
+
+      const commitBoth = (lo, hi) => {
+        const nextLo = clampTo(lo);
+        const nextHi = clampTo(hi);
+        if (nextLo == null || nextHi == null) return;
+        const orderedLo = Math.min(nextLo, nextHi);
+        const orderedHi = Math.max(nextLo, nextHi);
+        aInput.value = String(orderedLo);
+        bInput.value = String(orderedHi);
+        setVisual(orderedLo, orderedHi);
+        onChange?.([orderedLo, orderedHi]);
+      };
+
+      const seedLo = clampTo(value?.[0] ?? min) ?? min;
+      const seedHi = clampTo(value?.[1] ?? max) ?? max;
+      const lo0 = Math.min(seedLo, seedHi);
+      const hi0 = Math.max(seedLo, seedHi);
+      aInput.value = String(lo0);
+      bInput.value = String(hi0);
+      setVisual(lo0, hi0);
+
+      const commit = (source) => {
+        const a = clampTo(aInput.value);
+        const b = clampTo(bInput.value);
+        if (a == null || b == null) return;
+        const lo = Math.min(a, b);
+        const hi = Math.max(a, b);
+        // Keep thumbs from crossing visually.
+        if (source === 'a' && a > hi) aInput.value = String(hi);
+        if (source === 'b' && b < lo) bInput.value = String(lo);
+        setVisual(lo, hi);
+        onChange?.([lo, hi]);
+      };
+
+      // Dragging the highlighted range pans both thumbs together.
+      rangeEl.addEventListener('pointerdown', (event) => {
+        // Only handle primary pointer interactions.
+        if (event.button != null && event.button !== 0) return;
+        event.preventDefault();
+
+        const rect = track.getBoundingClientRect();
+        const widthPx = Math.max(1, rect.width);
+        const domainSpan = max - min;
+        if (!Number.isFinite(domainSpan) || Math.abs(domainSpan) < 1e-9) return;
+
+        const startX = event.clientX;
+        const startA = clampTo(aInput.value) ?? min;
+        const startB = clampTo(bInput.value) ?? max;
+        const startLo = Math.min(startA, startB);
+        const startHi = Math.max(startA, startB);
+        const rangeSpan = startHi - startLo;
+
+        const clampRangeToBounds = (lo, hi) => {
+          let nextLo = lo;
+          let nextHi = hi;
+          if (nextLo < min) {
+            const shift = min - nextLo;
+            nextLo = min;
+            nextHi += shift;
+          }
+          if (nextHi > max) {
+            const shift = nextHi - max;
+            nextHi = max;
+            nextLo -= shift;
+          }
+          // If span is larger than domain (shouldn't happen), fall back.
+          if (nextLo < min) nextLo = min;
+          if (nextHi > max) nextHi = max;
+          // Preserve original span when possible.
+          if (Number.isFinite(rangeSpan) && rangeSpan >= 0) {
+            const currentSpan = nextHi - nextLo;
+            if (currentSpan !== rangeSpan) {
+              nextHi = Math.min(max, nextLo + rangeSpan);
+              nextLo = Math.max(min, nextHi - rangeSpan);
+            }
+          }
+          return [nextLo, nextHi];
+        };
+
+        const onMove = (moveEvent) => {
+          const dx = moveEvent.clientX - startX;
+          const delta = (dx / widthPx) * domainSpan;
+          if (!Number.isFinite(delta)) return;
+          const [nextLo, nextHi] = clampRangeToBounds(startLo + delta, startHi + delta);
+          commitBoth(nextLo, nextHi);
+        };
+
+        const onUp = () => {
+          window.removeEventListener('pointermove', onMove);
+          window.removeEventListener('pointerup', onUp);
+          window.removeEventListener('pointercancel', onUp);
+        };
+
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+        window.addEventListener('pointercancel', onUp);
+      });
+
+      aInput.style.zIndex = '2';
+      bInput.style.zIndex = '3';
+      aInput.addEventListener('input', () => commit('a'));
+      bInput.addEventListener('input', () => commit('b'));
+
+      track.appendChild(aInput);
+      track.appendChild(bInput);
+      wrap.appendChild(track);
+
+      return { element: wrap, setVisual: (lo, hi) => setVisual(lo, hi), aInput, bInput };
     };
 
     const resolveLiveConfig = (mode, channel) => {
@@ -1659,13 +1954,6 @@ export class HeliosUI {
 
       root.appendChild(createAlignedRowEl({ title: 'Channel', controls: channelRowControls }).row);
 
-      const summaryEl = document.createElement('div');
-      summaryEl.className = 'helios-ui-ellipsis';
-      summaryEl.style.color = 'var(--helios-ui-muted)';
-      summaryEl.style.fontSize = '11.5px';
-      summaryEl.style.marginTop = '-4px';
-      root.appendChild(summaryEl);
-
       const editorStack = new PanelStack();
       const editorBody = document.createElement('div');
       editorStack.add({ id: `${mode}-mapper-basic`, title: 'Editor', content: editorBody });
@@ -1697,7 +1985,9 @@ export class HeliosUI {
         const mapper = collection?.defaultMapper ?? null;
         if (!collection || !mapper || typeof mapper.setChannel !== 'function') return false;
 
-        const type = state.pending.type ?? 'passthrough';
+        // If the editor can't fully represent the config, treat it as a custom mapper.
+        const rawType = state.pending.type ?? state.pending.mode ?? null;
+        const type = isEditorTransferableConfig(state.pending) ? (rawType ?? 'passthrough') : 'custom';
 
         if (mode === 'node' && state.channel === 'position' && type === 'layout') {
           const scheduler = helios?.scheduler ?? null;
@@ -1740,6 +2030,10 @@ export class HeliosUI {
           return true;
         }
 
+        if (type === 'custom') {
+          return true;
+        }
+
         return true;
       };
 
@@ -1752,19 +2046,6 @@ export class HeliosUI {
         syncApplyEnabled();
       };
 
-      const syncSummary = () => {
-        if (mode === 'node' && state.channel === 'position') {
-          const scheduler = helios?.scheduler ?? null;
-          const hasLayout = Boolean(scheduler?.layout);
-          const layoutEnabled = hasLayout && scheduler?.layoutEnabled !== false;
-          if (layoutEnabled) {
-            summaryEl.textContent = 'Current: layout';
-            return;
-          }
-        }
-        const live = resolveLiveConfig(mode, state.channel);
-        summaryEl.textContent = `Current: ${summarizeChannelConfig(live)}`;
-      };
 
       const resolveAllowedTypes = (channel) => {
         if (mode === 'node' && channel === 'position') return ['layout', 'constant', 'passthrough'];
@@ -1785,7 +2066,6 @@ export class HeliosUI {
 
       const renderEditor = () => {
         editorBody.textContent = '';
-        syncSummary();
         const live = resolveLiveConfig(mode, state.channel);
 
         if (!state.pending) {
@@ -1800,16 +2080,58 @@ export class HeliosUI {
         }
 
         const allowedTypes = resolveAllowedTypes(state.channel);
+        const customPresets = getCustomPresetMap(mode, state.channel);
+
+        // Decide current selection first, registering custom presets before building the dropdown.
+        const resolveCurrentTypeKey = () => {
+          const pendingType = state.pending?.type ?? state.pending?.mode ?? null;
+
+          if (pendingType === 'layout' && allowedTypes.includes('layout')) return 'layout';
+
+          if (state.pending && isEditorTransferableConfig(state.pending) && allowedTypes.includes(pendingType)) {
+            return pendingType;
+          }
+
+          const candidate = state.pending ?? live;
+          if (candidate && !isEditorTransferableConfig(candidate)) {
+            const id = registerCustomPreset(mode, state.channel, candidate);
+            if (id) return `custom:${id}`;
+          }
+
+          // If live is custom but pending isn't set yet, ensure the live custom preset exists.
+          if (live && !isEditorTransferableConfig(live)) {
+            const id = registerCustomPreset(mode, state.channel, live);
+            if (id) return `custom:${id}`;
+          }
+
+          return allowedTypes[0];
+        };
+
+        const currentKey = resolveCurrentTypeKey();
+
         const typeSelect = document.createElement('select');
         typeSelect.className = 'helios-ui-select';
+
         for (const t of allowedTypes) {
           const opt = document.createElement('option');
           opt.value = t;
           opt.textContent = t;
           typeSelect.appendChild(opt);
         }
-        const currentType = state.pending.type ?? live?.type ?? allowedTypes[0];
-        typeSelect.value = allowedTypes.includes(currentType) ? currentType : allowedTypes[0];
+
+        for (const preset of customPresets.values()) {
+          const opt = document.createElement('option');
+          opt.value = `custom:${preset.id}`;
+          const label = typeof preset.label === 'string' ? preset.label.trim() : '';
+          opt.textContent = label && label.toLowerCase() !== 'custom' ? `custom: ${label}` : 'custom';
+          typeSelect.appendChild(opt);
+        }
+
+        const availableKeys = [
+          ...allowedTypes,
+          ...Array.from(customPresets.keys()).map((id) => `custom:${id}`),
+        ];
+        typeSelect.value = availableKeys.includes(currentKey) ? currentKey : availableKeys[0];
 
         const setPendingType = (nextType) => {
           const prev = state.pending ?? {};
@@ -1837,12 +2159,22 @@ export class HeliosUI {
             base.attributes = [`@node.${base.nodeAttribute}`];
           }
           if (nextType === 'linear') {
-            base.domain = Array.isArray(prev.domain) ? prev.domain : (Array.isArray(live?.domain) ? live.domain : [0, 1]);
+            const attr = typeof base.attributes === 'string' ? base.attributes : null;
+            base.transformType = prev.transformType ?? live?.transformType ?? 'linear';
+            base.transformPower = prev.transformPower ?? live?.transformPower ?? 1;
+            base.domain = Array.isArray(prev.domain)
+              ? prev.domain
+              : (Array.isArray(live?.domain) ? live.domain : suggestDomainForAttribute(mode, attr));
             base.range = Array.isArray(prev.range) ? prev.range : (Array.isArray(live?.range) ? live.range : [0, 1]);
           }
           if (nextType === 'colormap') {
             base.colormap = prev.colormap ?? live?.colormap ?? 'interpolateInferno';
-            base.domain = Array.isArray(prev.domain) ? prev.domain : (Array.isArray(live?.domain) ? live.domain : [0, 1]);
+            const attr = typeof base.attributes === 'string' ? base.attributes : null;
+            base.transformType = prev.transformType ?? live?.transformType ?? 'linear';
+            base.transformPower = prev.transformPower ?? live?.transformPower ?? 1;
+            base.domain = Array.isArray(prev.domain)
+              ? prev.domain
+              : (Array.isArray(live?.domain) ? live.domain : suggestDomainForAttribute(mode, attr));
             base.alpha = prev.alpha ?? live?.alpha ?? 1;
             base.clamp = prev.clamp ?? live?.clamp ?? true;
           }
@@ -1852,12 +2184,24 @@ export class HeliosUI {
         };
 
         typeSelect.addEventListener('change', () => {
-          setPendingType(typeSelect.value);
+          const next = typeSelect.value;
+          if (next.startsWith('custom:')) {
+            const id = next.slice('custom:'.length);
+            const preset = customPresets.get(id) ?? null;
+            if (preset?.config) {
+              state.pending = shallowCloneChannelConfig(preset.config) ?? preset.config;
+              setDirty(true);
+              renderEditor();
+            }
+            return;
+          }
+          setPendingType(next);
         });
 
         editorBody.appendChild(createAlignedRowEl({ title: 'Type', controls: typeSelect }).row);
 
-        const pendingType = typeSelect.value;
+        const pendingTypeKey = typeSelect.value;
+        const pendingType = pendingTypeKey.startsWith('custom:') ? 'custom' : pendingTypeKey;
         const isColor = state.channel === 'color' || state.channel === 'outlineColor';
         const isScalar =
           state.channel === 'size' ||
@@ -1872,6 +2216,24 @@ export class HeliosUI {
           note.style.color = 'var(--helios-ui-muted)';
           note.textContent = 'Uses the active layout (no position mapper applied).';
           editorBody.appendChild(note);
+        }
+
+        if (pendingType === 'custom') {
+          const meta = state.pending?.meta && typeof state.pending.meta === 'object' ? state.pending.meta : {};
+          const description = typeof meta.description === 'string' ? meta.description : '';
+          const source = typeof meta.source === 'string' ? meta.source : '';
+
+          const descEl = document.createElement('div');
+          descEl.style.whiteSpace = 'pre-wrap';
+          descEl.style.color = 'var(--helios-ui-muted)';
+          descEl.textContent = description || '—';
+          editorBody.appendChild(createAlignedRowEl({ title: 'Description', controls: descEl }).row);
+
+          const srcEl = document.createElement('div');
+          srcEl.style.whiteSpace = 'pre-wrap';
+          srcEl.style.color = 'var(--helios-ui-muted)';
+          srcEl.textContent = source || '—';
+          editorBody.appendChild(createAlignedRowEl({ title: 'Source', controls: srcEl }).row);
         }
 
         if (pendingType === 'passthrough') {
@@ -2015,8 +2377,16 @@ export class HeliosUI {
           wrap.style.gap = '8px';
           wrap.style.alignItems = 'center';
 
+          const swatchWrap = document.createElement('div');
+          swatchWrap.className = 'helios-ui-color-swatch';
+
+          const swatch = document.createElement('div');
+          swatch.className = 'helios-ui-color-swatch__swatch';
+
           const colorInput = document.createElement('input');
           colorInput.type = 'color';
+          colorInput.className = 'helios-ui-color-swatch__input';
+          colorInput.setAttribute('aria-label', 'Color');
 
           const alphaInput = document.createElement('input');
           alphaInput.type = 'number';
@@ -2025,10 +2395,10 @@ export class HeliosUI {
           alphaInput.max = '1';
           alphaInput.step = '0.01';
           alphaInput.style.maxWidth = '88px';
-          alphaInput.title = 'Alpha (0–1)';
+          alphaInput.title = 'Alpha';
 
           const alphaLabel = document.createElement('span');
-          alphaLabel.textContent = 'Alpha (0–1)';
+          alphaLabel.textContent = 'Alpha';
           alphaLabel.style.color = 'var(--helios-ui-muted)';
 
           if (!(typeof state.pending.value === 'string' && state.pending.value.length > 0)) {
@@ -2046,16 +2416,25 @@ export class HeliosUI {
           colorInput.value = baseHex;
           alphaInput.value = String(Number.isFinite(alpha) ? alpha : 1);
 
+          const syncSwatch = () => {
+            swatch.style.background = colorInput.value;
+          };
+          syncSwatch();
+
           const commit = () => {
             const a = clampNumber(alphaInput.value, { min: 0, max: 1 });
             if (a == null) return;
             state.pending = { ...state.pending, type: 'constant', value: toHex8(colorInput.value, a) };
             setDirty(true);
+            syncSwatch();
           };
           colorInput.addEventListener('input', commit);
           alphaInput.addEventListener('change', commit);
 
-          wrap.appendChild(colorInput);
+          swatchWrap.appendChild(swatch);
+          swatchWrap.appendChild(colorInput);
+
+          wrap.appendChild(swatchWrap);
           wrap.appendChild(alphaLabel);
           wrap.appendChild(alphaInput);
           editorBody.appendChild(createAlignedRowEl({ title: 'Color', controls: wrap }).row);
@@ -2084,35 +2463,122 @@ export class HeliosUI {
           }
           attrSelect.value = names.includes(current) ? current : '';
           attrSelect.addEventListener('change', () => {
-            state.pending = { ...state.pending, type: 'linear', attributes: attrSelect.value || undefined };
+            const attr = attrSelect.value || undefined;
+            const domain = attr ? suggestDomainForAttribute(mode, attr) : [0, 1];
+            state.pending = { ...state.pending, type: 'linear', attributes: attr, domain };
             setDirty(true);
           });
           editorBody.appendChild(createAlignedRowEl({ title: 'Attribute', controls: attrSelect }).row);
 
-          const domainWrap = document.createElement('div');
-          domainWrap.style.display = 'flex';
-          domainWrap.style.gap = '8px';
+          const transformWrap = document.createElement('div');
+          transformWrap.style.display = 'flex';
+          transformWrap.style.gap = '8px';
+          transformWrap.style.alignItems = 'center';
 
+          const transformSelect = document.createElement('select');
+          transformSelect.className = 'helios-ui-select';
+          for (const optVal of ['linear', 'log', 'log1p', 'logit', 'power']) {
+            const opt = document.createElement('option');
+            opt.value = optVal;
+            opt.textContent = optVal;
+            transformSelect.appendChild(opt);
+          }
+          transformSelect.value = String(state.pending.transformType ?? 'linear');
+
+          const powerInput = document.createElement('input');
+          powerInput.type = 'number';
+          powerInput.className = 'helios-ui-number';
+          powerInput.style.maxWidth = '96px';
+          powerInput.value = String(Number.isFinite(Number(state.pending.transformPower)) ? state.pending.transformPower : 1);
+          powerInput.hidden = transformSelect.value !== 'power';
+
+          transformSelect.addEventListener('change', () => {
+            const nextType = transformSelect.value || 'linear';
+            powerInput.hidden = nextType !== 'power';
+            state.pending = { ...state.pending, type: 'linear', transformType: nextType };
+            if (nextType !== 'power') {
+              state.pending = { ...state.pending, type: 'linear', transformPower: undefined };
+            } else {
+              state.pending = { ...state.pending, type: 'linear', transformPower: Number(powerInput.value) || 1 };
+            }
+            setDirty(true);
+            renderEditor();
+          });
+
+          powerInput.addEventListener('change', () => {
+            const p = clampNumber(powerInput.value);
+            if (p == null) return;
+            state.pending = { ...state.pending, type: 'linear', transformType: 'power', transformPower: p };
+            setDirty(true);
+            renderEditor();
+          });
+
+          transformWrap.appendChild(transformSelect);
+          transformWrap.appendChild(powerInput);
+          editorBody.appendChild(createAlignedRowEl({ title: 'Transform', controls: transformWrap }).row);
+
+          const domainWrap = document.createElement('div');
+          domainWrap.style.display = 'grid';
+          domainWrap.style.gap = '2px';
+          domainWrap.style.width = '100%';
+
+          const domainAttr = typeof state.pending.attributes === 'string' ? state.pending.attributes : null;
+          const extent = computeScalarExtent(mode, domainAttr);
+          const min = extent?.min ?? 0;
+          const max = extent?.max ?? 1;
+          const step = suggestStepForRange(min, max);
+          const domain = Array.isArray(state.pending.domain) ? state.pending.domain : [min, max];
+
+          if (!Array.isArray(state.pending.domain) && domainAttr) {
+            state.pending = { ...state.pending, type: 'linear', domain: [min, max] };
+          }
+
+          const slider = createTwoHandleRange({
+            min,
+            max,
+            step,
+            value: domain,
+            onChange: (next) => {
+              state.pending = { ...state.pending, type: 'linear', domain: next };
+              setDirty(true);
+              d0.value = String(next[0]);
+              d1.value = String(next[1]);
+            },
+          });
+
+          const values = document.createElement('div');
+          values.className = 'helios-ui-range2__values';
           const d0 = document.createElement('input');
           d0.type = 'number';
           d0.className = 'helios-ui-number';
+          d0.style.maxWidth = '96px';
           const d1 = document.createElement('input');
           d1.type = 'number';
           d1.className = 'helios-ui-number';
-          const domain = Array.isArray(state.pending.domain) ? state.pending.domain : [0, 1];
-          d0.value = String(domain[0] ?? 0);
-          d1.value = String(domain[1] ?? 1);
-          const commitDomain = () => {
-            const a = clampNumber(d0.value);
-            const b = clampNumber(d1.value);
+          d1.style.maxWidth = '96px';
+
+          d0.value = String(domain[0] ?? min);
+          d1.value = String(domain[1] ?? max);
+
+          const commitDomainTyped = () => {
+            const a = clampNumber(d0.value, { min, max });
+            const b = clampNumber(d1.value, { min, max });
             if (a == null || b == null) return;
-            state.pending = { ...state.pending, type: 'linear', domain: [a, b] };
+            const lo = Math.min(a, b);
+            const hi = Math.max(a, b);
+            slider.aInput.value = String(lo);
+            slider.bInput.value = String(hi);
+            slider.setVisual(lo, hi);
+            state.pending = { ...state.pending, type: 'linear', domain: [lo, hi] };
             setDirty(true);
           };
-          d0.addEventListener('change', commitDomain);
-          d1.addEventListener('change', commitDomain);
-          domainWrap.appendChild(d0);
-          domainWrap.appendChild(d1);
+          d0.addEventListener('change', commitDomainTyped);
+          d1.addEventListener('change', commitDomainTyped);
+
+          values.appendChild(d0);
+          values.appendChild(d1);
+          domainWrap.appendChild(slider.element);
+          domainWrap.appendChild(values);
           editorBody.appendChild(createAlignedRowEl({ title: 'Domain', controls: domainWrap }).row);
 
           const rangeWrap = document.createElement('div');
@@ -2160,10 +2626,59 @@ export class HeliosUI {
           }
           attrSelect.value = names.includes(current) ? current : '';
           attrSelect.addEventListener('change', () => {
-            state.pending = { ...state.pending, type: 'colormap', attributes: attrSelect.value || undefined };
+            const attr = attrSelect.value || undefined;
+            const domain = attr ? suggestDomainForAttribute(mode, attr) : [0, 1];
+            state.pending = { ...state.pending, type: 'colormap', attributes: attr, domain };
             setDirty(true);
           });
           editorBody.appendChild(createAlignedRowEl({ title: 'Attribute', controls: attrSelect }).row);
+
+          const transformWrap = document.createElement('div');
+          transformWrap.style.display = 'flex';
+          transformWrap.style.gap = '8px';
+          transformWrap.style.alignItems = 'center';
+
+          const transformSelect = document.createElement('select');
+          transformSelect.className = 'helios-ui-select';
+          for (const optVal of ['linear', 'log', 'log1p', 'logit', 'power']) {
+            const opt = document.createElement('option');
+            opt.value = optVal;
+            opt.textContent = optVal;
+            transformSelect.appendChild(opt);
+          }
+          transformSelect.value = String(state.pending.transformType ?? 'linear');
+
+          const powerInput = document.createElement('input');
+          powerInput.type = 'number';
+          powerInput.className = 'helios-ui-number';
+          powerInput.style.maxWidth = '96px';
+          powerInput.value = String(Number.isFinite(Number(state.pending.transformPower)) ? state.pending.transformPower : 1);
+          powerInput.hidden = transformSelect.value !== 'power';
+
+          transformSelect.addEventListener('change', () => {
+            const nextType = transformSelect.value || 'linear';
+            powerInput.hidden = nextType !== 'power';
+            state.pending = { ...state.pending, type: 'colormap', transformType: nextType };
+            if (nextType !== 'power') {
+              state.pending = { ...state.pending, type: 'colormap', transformPower: undefined };
+            } else {
+              state.pending = { ...state.pending, type: 'colormap', transformPower: Number(powerInput.value) || 1 };
+            }
+            setDirty(true);
+            renderEditor();
+          });
+
+          powerInput.addEventListener('change', () => {
+            const p = clampNumber(powerInput.value);
+            if (p == null) return;
+            state.pending = { ...state.pending, type: 'colormap', transformType: 'power', transformPower: p };
+            setDirty(true);
+            renderEditor();
+          });
+
+          transformWrap.appendChild(transformSelect);
+          transformWrap.appendChild(powerInput);
+          editorBody.appendChild(createAlignedRowEl({ title: 'Transform', controls: transformWrap }).row);
 
           const nameWrap = document.createElement('div');
           nameWrap.style.display = 'grid';
@@ -2193,28 +2708,67 @@ export class HeliosUI {
           editorBody.appendChild(createAlignedRowEl({ title: 'Colormap', controls: nameWrap }).row);
 
           const domainWrap = document.createElement('div');
-          domainWrap.style.display = 'flex';
-          domainWrap.style.gap = '8px';
+          domainWrap.style.display = 'grid';
+          domainWrap.style.gap = '2px';
+          domainWrap.style.width = '100%';
+
+          const domainAttr = typeof state.pending.attributes === 'string' ? state.pending.attributes : null;
+          const extent = computeScalarExtent(mode, domainAttr);
+          const min = extent?.min ?? 0;
+          const max = extent?.max ?? 1;
+          const step = suggestStepForRange(min, max);
+          const domain = Array.isArray(state.pending.domain) ? state.pending.domain : [min, max];
+
+          if (!Array.isArray(state.pending.domain) && domainAttr) {
+            state.pending = { ...state.pending, type: 'colormap', domain: [min, max] };
+          }
+
+          const slider = createTwoHandleRange({
+            min,
+            max,
+            step,
+            value: domain,
+            onChange: (next) => {
+              state.pending = { ...state.pending, type: 'colormap', domain: next };
+              setDirty(true);
+              d0.value = String(next[0]);
+              d1.value = String(next[1]);
+            },
+          });
+
+          const values = document.createElement('div');
+          values.className = 'helios-ui-range2__values';
           const d0 = document.createElement('input');
           d0.type = 'number';
           d0.className = 'helios-ui-number';
+          d0.style.maxWidth = '96px';
           const d1 = document.createElement('input');
           d1.type = 'number';
           d1.className = 'helios-ui-number';
-          const domain = Array.isArray(state.pending.domain) ? state.pending.domain : [0, 1];
-          d0.value = String(domain[0] ?? 0);
-          d1.value = String(domain[1] ?? 1);
-          const commitDomain = () => {
-            const a = clampNumber(d0.value);
-            const b = clampNumber(d1.value);
+          d1.style.maxWidth = '96px';
+
+          d0.value = String(domain[0] ?? min);
+          d1.value = String(domain[1] ?? max);
+
+          const commitDomainTyped = () => {
+            const a = clampNumber(d0.value, { min, max });
+            const b = clampNumber(d1.value, { min, max });
             if (a == null || b == null) return;
-            state.pending = { ...state.pending, type: 'colormap', domain: [a, b] };
+            const lo = Math.min(a, b);
+            const hi = Math.max(a, b);
+            slider.aInput.value = String(lo);
+            slider.bInput.value = String(hi);
+            slider.setVisual(lo, hi);
+            state.pending = { ...state.pending, type: 'colormap', domain: [lo, hi] };
             setDirty(true);
           };
-          d0.addEventListener('change', commitDomain);
-          d1.addEventListener('change', commitDomain);
-          domainWrap.appendChild(d0);
-          domainWrap.appendChild(d1);
+          d0.addEventListener('change', commitDomainTyped);
+          d1.addEventListener('change', commitDomainTyped);
+
+          values.appendChild(d0);
+          values.appendChild(d1);
+          domainWrap.appendChild(slider.element);
+          domainWrap.appendChild(values);
           editorBody.appendChild(createAlignedRowEl({ title: 'Domain', controls: domainWrap }).row);
 
           const advanced = document.createElement('div');
@@ -2252,7 +2806,7 @@ export class HeliosUI {
           });
 
           advanced.appendChild(createAlignedRowEl({ title: 'Clamp', controls: clampWrap }).row);
-          advanced.appendChild(createAlignedRowEl({ title: 'Alpha (0–1)', controls: alphaInput }).row);
+          advanced.appendChild(createAlignedRowEl({ title: 'Alpha', controls: alphaInput }).row);
 
           const advancedStack = new PanelStack();
           advancedStack.add({ id: `${mode}-mapper-advanced`, title: 'Advanced', collapsed: true, content: advanced });
@@ -2303,7 +2857,6 @@ export class HeliosUI {
               scheduler.requestLayout?.('ui:mappers');
             }
             setDirty(false);
-            syncSummary();
             return;
           }
           if (scheduler && typeof scheduler.setLayoutEnabled === 'function') {
@@ -2313,8 +2866,19 @@ export class HeliosUI {
 
         const ok = applyConfig(mode, state.channel, state.pending);
         if (ok) {
+          if (
+            mode === 'node' &&
+            state.channel === 'outlineColor' &&
+            (state.pending.type ?? state.pending.mode) === 'constant' &&
+            typeof helios?.nodeOutlineColor === 'function'
+          ) {
+            try {
+              helios.nodeOutlineColor(state.pending.value);
+            } catch {
+              // Ignore invalid color inputs; mapper validation covers common cases.
+            }
+          }
           setDirty(false);
-          syncSummary();
         }
       });
 

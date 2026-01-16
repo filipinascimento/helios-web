@@ -1296,6 +1296,15 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('nodeOutlineWidthBase', Number(value));
   }
 
+  nodeOutlineColor(color) {
+    if (arguments.length === 0) return this._getGraphLayerProp('nodeOutlineColor');
+    const normalized = normalizeColorInput(color);
+    if (!normalized) {
+      throw new Error('nodeOutlineColor(color) expects #rgb/#rgba/#rrggbb/#rrggbbaa or [r,g,b(,a)]');
+    }
+    return this._setGraphLayerProp('nodeOutlineColor', normalized);
+  }
+
   edgeEndpointTrim(value) {
     if (arguments.length === 0) return this._getGraphLayerProp('edgeEndpointTrim');
     return this._setGraphLayerProp('edgeEndpointTrim', Number(value));

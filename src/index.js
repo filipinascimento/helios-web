@@ -23,3 +23,5 @@ export { Store } from './ui/state/Store.js';
 export { UIAttribute } from './ui/state/UIAttribute.js';
 export { TabbedPanel } from './ui/panels/TabbedPanel.js';
 export { PanelStack } from './ui/panels/PanelStack.js';
+export { defineHeliosWebComponents } from './ui/web-components/defineHeliosWebComponents.js';
+export { ensureDefaultStyles } from './ui/style/defaultStyles.js';
