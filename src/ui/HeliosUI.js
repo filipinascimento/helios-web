@@ -2878,6 +2878,17 @@ export class HeliosUI {
               // Ignore invalid color inputs; mapper validation covers common cases.
             }
           }
+
+          if (mode === 'node' && (state.channel === 'outline' || state.channel === 'outlineColor')) {
+            const outlineCfg = resolveLiveConfig('node', 'outline');
+            const outlineColorCfg = resolveLiveConfig('node', 'outlineColor');
+            const outlineType = outlineCfg?.type ?? outlineCfg?.mode ?? null;
+            const outlineColorType = outlineColorCfg?.type ?? outlineColorCfg?.mode ?? null;
+            const bothConstant = outlineType === 'constant' && outlineColorType === 'constant';
+            if (typeof helios?.nodeOutlineUseAttributes === 'function') {
+              helios.nodeOutlineUseAttributes(!bothConstant);
+            }
+          }
           setDirty(false);
         }
       });

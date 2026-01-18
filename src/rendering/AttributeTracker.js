@@ -16,6 +16,14 @@ import {
 } from './engine/shaders/attributeWebGPU.js';
 import { VISUAL_ATTRIBUTE_NAMES } from '../pipeline/constants.js';
 
+const {
+  NODE_POSITION_ATTRIBUTE,
+  NODE_SIZE_ATTRIBUTE,
+  EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
+  EDGE_WIDTH_ATTRIBUTE,
+  EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
+} = VISUAL_ATTRIBUTE_NAMES;
+
 const PACK_DEPTH_GLSL = /* glsl */ `
 vec4 packDepthToRGBA(const in float v) {
   const vec4 bitShift = vec4(256.0 * 256.0 * 256.0, 256.0 * 256.0, 256.0, 1.0);
@@ -94,7 +102,7 @@ function getEncodedName(scope, sourceName) {
   return `_helios_encoded_${scope}_${sourceName || 'index'}`;
 }
 
-function getEncodedView(network, scope, attrName) {
+function getEncodedDesc(network, scope, attrName) {
   if (!network || !attrName) return null;
   const source = attrName === 'index' ? INDEX_SENTINEL : attrName;
   const encodedName = getEncodedName(scope, source);
@@ -108,16 +116,16 @@ function getEncodedView(network, scope, attrName) {
     ? 'getDenseColorEncodedNodeAttributeView'
     : 'getDenseColorEncodedEdgeAttributeView';
   const desc = network[getFn]?.(encodedName);
-  return desc?.view ?? null;
+  return desc ?? null;
 }
 
-function ensureEncodedView(network, scope, attrName, count) {
+function ensureEncodedDesc(network, scope, attrName, count) {
   if (!attrName || !count) return null;
-  const encoded = getEncodedView(network, scope, attrName);
-  if (!encoded) {
+  const encodedDesc = getEncodedDesc(network, scope, attrName);
+  if (!encodedDesc?.view) {
     throw new Error(`Encoded ${scope} attribute "${attrName}" not available; expected dense color encoding from helios-network.`);
   }
-  return encoded;
+  return encodedDesc;
 }
 
 function ensureEncodedReady(network, scope, attrName) {
@@ -167,12 +175,17 @@ class WebGLAttributeRenderer {
     this.device = device;
     this.gl = device.gl;
     const { gl } = this;
-    this.nodeProgram = device.createProgram(NODE_ATTRIBUTE_VERTEX, NODE_ATTRIBUTE_FRAGMENT);
-    this.nodeDepthProgram = device.createProgram(NODE_ATTRIBUTE_VERTEX, NODE_DEPTH_FRAGMENT);
-    this.edgeProgram = device.createProgram(EDGE_ATTRIBUTE_VERTEX, EDGE_ATTRIBUTE_FRAGMENT);
-    this.edgeDepthProgram = device.createProgram(EDGE_ATTRIBUTE_VERTEX, EDGE_DEPTH_FRAGMENT);
-    this.edgeQuadProgram = device.createProgram(EDGE_ATTRIBUTE_QUAD_VERTEX, EDGE_ATTRIBUTE_QUAD_FRAGMENT);
-    this.edgeQuadDepthProgram = device.createProgram(EDGE_ATTRIBUTE_QUAD_VERTEX, EDGE_DEPTH_FRAGMENT);
+    const cache = device.resourceCache?.webgl;
+    const getProgram = (key, vert, frag) => {
+      if (!cache) return device.createProgram(vert, frag);
+      return cache.getOrCreateProgram(`attr:webgl:program:${key}`, () => ({ program: device.createProgram(vert, frag) }))?.program;
+    };
+    this.nodeProgram = getProgram('node', NODE_ATTRIBUTE_VERTEX, NODE_ATTRIBUTE_FRAGMENT);
+    this.nodeDepthProgram = getProgram('nodeDepth', NODE_ATTRIBUTE_VERTEX, NODE_DEPTH_FRAGMENT);
+    this.edgeProgram = getProgram('edge', EDGE_ATTRIBUTE_VERTEX, EDGE_ATTRIBUTE_FRAGMENT);
+    this.edgeDepthProgram = getProgram('edgeDepth', EDGE_ATTRIBUTE_VERTEX, EDGE_DEPTH_FRAGMENT);
+    this.edgeQuadProgram = getProgram('edgeQuad', EDGE_ATTRIBUTE_QUAD_VERTEX, EDGE_ATTRIBUTE_QUAD_FRAGMENT);
+    this.edgeQuadDepthProgram = getProgram('edgeQuadDepth', EDGE_ATTRIBUTE_QUAD_VERTEX, EDGE_DEPTH_FRAGMENT);
 
     const quad = new Float32Array([
       -1, -1,
@@ -181,6 +194,7 @@ class WebGLAttributeRenderer {
       1, 1,
     ]);
     const nodeQuadBuffer = gl.createBuffer();
+    this.nodeQuadBuffer = nodeQuadBuffer;
     gl.bindBuffer(gl.ARRAY_BUFFER, nodeQuadBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
 
@@ -190,19 +204,21 @@ class WebGLAttributeRenderer {
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
-    this.nodeBuffers.positions = gl.createBuffer();
+    const shared = device.resourceCache?.webgl;
+    this.nodeBuffers.positions = shared?.ensureBuffer(gl, 'dense:node:positions') ?? gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.positions);
     gl.enableVertexAttribArray(1);
     gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 0, 0);
     gl.vertexAttribDivisor(1, 1);
 
-    this.nodeBuffers.sizes = gl.createBuffer();
+    this.nodeBuffers.sizes = shared?.ensureBuffer(gl, 'dense:node:sizes') ?? gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.sizes);
     gl.enableVertexAttribArray(2);
     gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 0, 0);
     gl.vertexAttribDivisor(2, 1);
 
-    this.nodeBuffers.encoded = gl.createBuffer();
+    // Encoded buffers are keyed per attribute name at render time; initialize with a stable fallback.
+    this.nodeBuffers.encoded = shared?.ensureBuffer(gl, 'attr:webgl:node:encoded:fallback') ?? gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.encoded);
     gl.enableVertexAttribArray(3);
     gl.vertexAttribIPointer(3, 4, gl.UNSIGNED_BYTE, 4, 0);
@@ -211,7 +227,7 @@ class WebGLAttributeRenderer {
 
     this.edgeVAO = gl.createVertexArray();
     gl.bindVertexArray(this.edgeVAO);
-    this.edgeBuffers.segments = gl.createBuffer();
+    this.edgeBuffers.segments = shared?.ensureBuffer(gl, 'dense:edge:segments') ?? gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.segments);
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 24, 0);
@@ -220,19 +236,20 @@ class WebGLAttributeRenderer {
     gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 24, 12);
     gl.vertexAttribDivisor(1, 1);
 
-    this.edgeBuffers.widths = gl.createBuffer();
+    this.edgeBuffers.widths = shared?.ensureBuffer(gl, 'dense:edge:widths') ?? gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.widths);
     gl.enableVertexAttribArray(2);
     gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 8, 0);
     gl.vertexAttribDivisor(2, 1);
 
-    this.edgeBuffers.endpointSizes = gl.createBuffer();
+    this.edgeBuffers.endpointSizes = shared?.ensureBuffer(gl, 'dense:edge:endpointSizes') ?? gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.endpointSizes);
     gl.enableVertexAttribArray(3);
     gl.vertexAttribPointer(3, 2, gl.FLOAT, false, 8, 0);
     gl.vertexAttribDivisor(3, 1);
 
-    this.edgeBuffers.encoded = gl.createBuffer();
+    // Encoded buffers are keyed per attribute name at render time; initialize with a stable fallback.
+    this.edgeBuffers.encoded = shared?.ensureBuffer(gl, 'attr:webgl:edge:encoded:fallback') ?? gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.encoded);
     gl.enableVertexAttribArray(4);
     gl.vertexAttribIPointer(4, 4, gl.UNSIGNED_BYTE, 4, 0);
@@ -286,15 +303,10 @@ class WebGLAttributeRenderer {
     gl.deleteVertexArray(this.nodeVAO);
     gl.deleteVertexArray(this.edgeVAO);
     gl.deleteVertexArray(this.edgeQuadVAO);
-    gl.deleteBuffer(this.edgeQuadBuffer);
-    Object.values(this.nodeBuffers).forEach((buf) => gl.deleteBuffer(buf));
-    Object.values(this.edgeBuffers).forEach((buf) => gl.deleteBuffer(buf));
-    gl.deleteProgram(this.nodeProgram);
-    gl.deleteProgram(this.edgeProgram);
-    gl.deleteProgram(this.edgeQuadProgram);
-    gl.deleteProgram(this.nodeDepthProgram);
-    gl.deleteProgram(this.edgeDepthProgram);
-    gl.deleteProgram(this.edgeQuadDepthProgram);
+    if (this.edgeQuadBuffer) gl.deleteBuffer(this.edgeQuadBuffer);
+    if (this.nodeQuadBuffer) gl.deleteBuffer(this.nodeQuadBuffer);
+    // Shared buffers/programs are owned by the device-level resource cache.
+    // Do not delete them here.
     this.nodeVAO = null;
     this.edgeVAO = null;
     this.edgeQuadVAO = null;
@@ -325,8 +337,8 @@ class WebGLAttributeRenderer {
   encodeAttributes(network, geometry, config) {
     const nodeCount = geometry?.nodes?.count ?? 0;
     const edgeCount = geometry?.edges?.count ?? 0;
-    const nodeEncoded = ensureEncodedView(network, 'node', config.nodeAttribute, nodeCount);
-    const edgeEncoded = ensureEncodedView(network, 'edge', config.edgeAttribute, edgeCount);
+    const nodeEncoded = ensureEncodedDesc(network, 'node', config.nodeAttribute, nodeCount);
+    const edgeEncoded = ensureEncodedDesc(network, 'edge', config.edgeAttribute, edgeCount);
     return { nodeEncoded, edgeEncoded };
   }
 
@@ -354,10 +366,23 @@ class WebGLAttributeRenderer {
     ensureEncodedReady(network, 'node', config.nodeAttribute);
     ensureEncodedReady(network, 'edge', config.edgeAttribute);
 
+    const denseRequests = [];
+    if (config.nodeAttribute || config.edgeAttribute) {
+      denseRequests.push(['node', NODE_POSITION_ATTRIBUTE], ['node', NODE_SIZE_ATTRIBUTE]);
+    }
+    if (config.edgeAttribute) {
+      denseRequests.push(
+        ['edge', EDGE_ENDPOINTS_POSITION_ATTRIBUTE],
+        ['edge', EDGE_WIDTH_ATTRIBUTE],
+        ['edge', EDGE_ENDPOINTS_SIZE_ATTRIBUTE],
+      );
+    }
+
     return this.graphLayer.withDenseGraph(network, (geometry) => {
       if (!geometry) return null;
       const encoded = this.encodeAttributes(network, geometry, config);
       const passes = [];
+      const cache = this.device?.resourceCache?.webgl;
 
       if (geometry.nodes.count && encoded.nodeEncoded && config.nodeAttribute) {
         passes.push(() => {
@@ -377,12 +402,46 @@ class WebGLAttributeRenderer {
         gl.uniform1f(gl.getUniformLocation(this.nodeProgram, 'u_outlineWidthBase'), this.graphLayer.nodeOutlineWidthBase);
         gl.uniform1f(gl.getUniformLocation(this.nodeProgram, 'u_outlineWidthScale'), this.graphLayer.nodeOutlineWidthScale);
         gl.bindVertexArray(this.nodeVAO);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.positions);
-        gl.bufferData(gl.ARRAY_BUFFER, geometry.nodes.positions, gl.DYNAMIC_DRAW);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.sizes);
-        gl.bufferData(gl.ARRAY_BUFFER, geometry.nodes.sizes, gl.DYNAMIC_DRAW);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.encoded);
-        gl.bufferData(gl.ARRAY_BUFFER, encoded.nodeEncoded, gl.DYNAMIC_DRAW);
+        if (cache) {
+          cache.uploadArrayBuffer(gl, 'dense:node:positions', geometry.nodes.positions, {
+            version: geometry.nodes.versions?.positions ?? 0,
+            topologyVersion: geometry.nodes.versions?.topology ?? 0,
+            count: geometry.nodes.count,
+            trackViewIdentity: true,
+          });
+          cache.uploadArrayBuffer(gl, 'dense:node:sizes', geometry.nodes.sizes, {
+            version: geometry.nodes.versions?.sizes ?? 0,
+            topologyVersion: geometry.nodes.versions?.topology ?? 0,
+            count: geometry.nodes.count,
+            trackViewIdentity: true,
+          });
+        } else {
+          gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.positions);
+          gl.bufferData(gl.ARRAY_BUFFER, geometry.nodes.positions, gl.DYNAMIC_DRAW);
+          gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.sizes);
+          gl.bufferData(gl.ARRAY_BUFFER, geometry.nodes.sizes, gl.DYNAMIC_DRAW);
+        }
+        // Encoded buffer can vary by attribute name; bind the correct shared buffer into the VAO.
+        const nodeEncodedKey = `attr:webgl:node:encoded:${config.nodeAttribute || 'index'}`;
+        const nodeEncodedBuffer = cache?.ensureBuffer(gl, nodeEncodedKey);
+        if (cache && nodeEncodedBuffer) {
+          gl.bindVertexArray(this.nodeVAO);
+          gl.bindBuffer(gl.ARRAY_BUFFER, nodeEncodedBuffer);
+          gl.enableVertexAttribArray(3);
+          gl.vertexAttribIPointer(3, 4, gl.UNSIGNED_BYTE, 4, 0);
+          gl.vertexAttribDivisor(3, 1);
+        }
+        if (cache) {
+          cache.uploadArrayBuffer(gl, nodeEncodedKey, encoded.nodeEncoded.view, {
+            version: encoded.nodeEncoded.version ?? 0,
+            count: geometry.nodes.count,
+            // Do not rely on view identity alone: WASM may reuse the same memory region.
+            trackViewIdentity: false,
+          });
+        } else {
+          gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.encoded);
+          gl.bufferData(gl.ARRAY_BUFFER, encoded.nodeEncoded.view, gl.DYNAMIC_DRAW);
+        }
         gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, geometry.nodes.count);
         });
       }
@@ -410,17 +469,49 @@ class WebGLAttributeRenderer {
           gl.uniform1f(gl.getUniformLocation(this.nodeProgram, 'u_outlineWidthBase'), this.graphLayer.nodeOutlineWidthBase);
           gl.uniform1f(gl.getUniformLocation(this.nodeProgram, 'u_outlineWidthScale'), this.graphLayer.nodeOutlineWidthScale);
           gl.bindVertexArray(this.nodeVAO);
-          gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.positions);
-          gl.bufferData(gl.ARRAY_BUFFER, geometry.nodes.positions, gl.DYNAMIC_DRAW);
-          gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.sizes);
-          gl.bufferData(gl.ARRAY_BUFFER, geometry.nodes.sizes, gl.DYNAMIC_DRAW);
+          if (cache) {
+            cache.uploadArrayBuffer(gl, 'dense:node:positions', geometry.nodes.positions, {
+              version: geometry.nodes.versions?.positions ?? 0,
+              topologyVersion: geometry.nodes.versions?.topology ?? 0,
+              count: geometry.nodes.count,
+              trackViewIdentity: true,
+            });
+            cache.uploadArrayBuffer(gl, 'dense:node:sizes', geometry.nodes.sizes, {
+              version: geometry.nodes.versions?.sizes ?? 0,
+              topologyVersion: geometry.nodes.versions?.topology ?? 0,
+              count: geometry.nodes.count,
+              trackViewIdentity: true,
+            });
+          } else {
+            gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.positions);
+            gl.bufferData(gl.ARRAY_BUFFER, geometry.nodes.positions, gl.DYNAMIC_DRAW);
+            gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.sizes);
+            gl.bufferData(gl.ARRAY_BUFFER, geometry.nodes.sizes, gl.DYNAMIC_DRAW);
+          }
           const zeroEncoded = (this._zeroNodeEncoded?.length === geometry.nodes.count * 4)
             ? this._zeroNodeEncoded
             : new Uint8Array(geometry.nodes.count * 4);
           zeroEncoded.fill(0);
           this._zeroNodeEncoded = zeroEncoded;
-          gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.encoded);
-          gl.bufferData(gl.ARRAY_BUFFER, zeroEncoded, gl.DYNAMIC_DRAW);
+          const zeroKey = 'attr:webgl:node:encoded:__zero';
+          const zeroBuffer = cache?.ensureBuffer(gl, zeroKey);
+          if (cache && zeroBuffer) {
+            gl.bindVertexArray(this.nodeVAO);
+            gl.bindBuffer(gl.ARRAY_BUFFER, zeroBuffer);
+            gl.enableVertexAttribArray(3);
+            gl.vertexAttribIPointer(3, 4, gl.UNSIGNED_BYTE, 4, 0);
+            gl.vertexAttribDivisor(3, 1);
+          }
+          if (cache) {
+            cache.uploadArrayBuffer(gl, zeroKey, zeroEncoded, {
+              version: geometry.nodes.versions?.topology ?? 0,
+              count: geometry.nodes.count,
+              trackViewIdentity: false,
+            });
+          } else {
+            gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.encoded);
+            gl.bufferData(gl.ARRAY_BUFFER, zeroEncoded, gl.DYNAMIC_DRAW);
+          }
           gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, geometry.nodes.count);
         }
         const useQuads = this.graphLayer.edgeRenderingMode === 'quad';
@@ -444,14 +535,54 @@ class WebGLAttributeRenderer {
           gl.uniform2f(gl.getUniformLocation(program, 'u_viewport'), vw, vh);
         }
         gl.bindVertexArray(useQuads ? this.edgeQuadVAO : this.edgeVAO);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.segments);
-        gl.bufferData(gl.ARRAY_BUFFER, geometry.edges.segments, gl.DYNAMIC_DRAW);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.widths);
-        gl.bufferData(gl.ARRAY_BUFFER, geometry.edges.widths, gl.DYNAMIC_DRAW);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.endpointSizes);
-        gl.bufferData(gl.ARRAY_BUFFER, geometry.edges.endpointSizes, gl.DYNAMIC_DRAW);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.encoded);
-        gl.bufferData(gl.ARRAY_BUFFER, encoded.edgeEncoded, gl.DYNAMIC_DRAW);
+        if (cache) {
+          cache.uploadArrayBuffer(gl, 'dense:edge:segments', geometry.edges.segments, {
+            version: geometry.edges.versions?.segments ?? 0,
+            topologyVersion: geometry.edges.versions?.topology ?? 0,
+            count: geometry.edges.count,
+            trackViewIdentity: true,
+          });
+          cache.uploadArrayBuffer(gl, 'dense:edge:widths', geometry.edges.widths, {
+            version: geometry.edges.versions?.widths ?? 0,
+            topologyVersion: geometry.edges.versions?.topology ?? 0,
+            count: geometry.edges.count,
+            trackViewIdentity: true,
+          });
+          cache.uploadArrayBuffer(gl, 'dense:edge:endpointSizes', geometry.edges.endpointSizes, {
+            version: geometry.edges.versions?.endpointSizes ?? 0,
+            topologyVersion: geometry.edges.versions?.topology ?? 0,
+            count: geometry.edges.count,
+            trackViewIdentity: true,
+          });
+        } else {
+          gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.segments);
+          gl.bufferData(gl.ARRAY_BUFFER, geometry.edges.segments, gl.DYNAMIC_DRAW);
+          gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.widths);
+          gl.bufferData(gl.ARRAY_BUFFER, geometry.edges.widths, gl.DYNAMIC_DRAW);
+          gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.endpointSizes);
+          gl.bufferData(gl.ARRAY_BUFFER, geometry.edges.endpointSizes, gl.DYNAMIC_DRAW);
+        }
+        const edgeEncodedKey = `attr:webgl:edge:encoded:${config.edgeAttribute || 'index'}`;
+        const edgeEncodedBuffer = cache?.ensureBuffer(gl, edgeEncodedKey);
+        if (cache && edgeEncodedBuffer) {
+          const vao = useQuads ? this.edgeQuadVAO : this.edgeVAO;
+          const loc = useQuads ? 5 : 4;
+          gl.bindVertexArray(vao);
+          gl.bindBuffer(gl.ARRAY_BUFFER, edgeEncodedBuffer);
+          gl.enableVertexAttribArray(loc);
+          gl.vertexAttribIPointer(loc, 4, gl.UNSIGNED_BYTE, 4, 0);
+          gl.vertexAttribDivisor(loc, 1);
+        }
+        if (cache) {
+          cache.uploadArrayBuffer(gl, edgeEncodedKey, encoded.edgeEncoded.view, {
+            version: encoded.edgeEncoded.version ?? 0,
+            count: geometry.edges.count,
+            trackViewIdentity: false,
+          });
+        } else {
+          gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.encoded);
+          gl.bufferData(gl.ARRAY_BUFFER, encoded.edgeEncoded.view, gl.DYNAMIC_DRAW);
+        }
         if (useQuads) {
           gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, geometry.edges.count);
         } else {
@@ -484,12 +615,44 @@ class WebGLAttributeRenderer {
         gl.uniform1f(gl.getUniformLocation(program, 'u_outlineWidthBase'), this.graphLayer.nodeOutlineWidthBase);
         gl.uniform1f(gl.getUniformLocation(program, 'u_outlineWidthScale'), this.graphLayer.nodeOutlineWidthScale);
         gl.bindVertexArray(this.nodeVAO);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.positions);
-        gl.bufferData(gl.ARRAY_BUFFER, geometry.nodes.positions, gl.DYNAMIC_DRAW);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.sizes);
-        gl.bufferData(gl.ARRAY_BUFFER, geometry.nodes.sizes, gl.DYNAMIC_DRAW);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.encoded);
-        gl.bufferData(gl.ARRAY_BUFFER, encoded.nodeEncoded, gl.DYNAMIC_DRAW);
+        if (cache) {
+          cache.uploadArrayBuffer(gl, 'dense:node:positions', geometry.nodes.positions, {
+            version: geometry.nodes.versions?.positions ?? 0,
+            topologyVersion: geometry.nodes.versions?.topology ?? 0,
+            count: geometry.nodes.count,
+            trackViewIdentity: true,
+          });
+          cache.uploadArrayBuffer(gl, 'dense:node:sizes', geometry.nodes.sizes, {
+            version: geometry.nodes.versions?.sizes ?? 0,
+            topologyVersion: geometry.nodes.versions?.topology ?? 0,
+            count: geometry.nodes.count,
+            trackViewIdentity: true,
+          });
+        } else {
+          gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.positions);
+          gl.bufferData(gl.ARRAY_BUFFER, geometry.nodes.positions, gl.DYNAMIC_DRAW);
+          gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.sizes);
+          gl.bufferData(gl.ARRAY_BUFFER, geometry.nodes.sizes, gl.DYNAMIC_DRAW);
+        }
+        const nodeEncodedKey = `attr:webgl:node:encoded:${config.nodeAttribute || 'index'}`;
+        const nodeEncodedBuffer = cache?.ensureBuffer(gl, nodeEncodedKey);
+        if (cache && nodeEncodedBuffer) {
+          gl.bindVertexArray(this.nodeVAO);
+          gl.bindBuffer(gl.ARRAY_BUFFER, nodeEncodedBuffer);
+          gl.enableVertexAttribArray(3);
+          gl.vertexAttribIPointer(3, 4, gl.UNSIGNED_BYTE, 4, 0);
+          gl.vertexAttribDivisor(3, 1);
+        }
+        if (cache) {
+          cache.uploadArrayBuffer(gl, nodeEncodedKey, encoded.nodeEncoded.view, {
+            version: encoded.nodeEncoded.version ?? 0,
+            count: geometry.nodes.count,
+            trackViewIdentity: false,
+          });
+        } else {
+          gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.encoded);
+          gl.bufferData(gl.ARRAY_BUFFER, encoded.nodeEncoded.view, gl.DYNAMIC_DRAW);
+        }
         gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, geometry.nodes.count);
       } else {
         const widthBaseLocation = 'u_edgeWidthBase';
@@ -509,14 +672,54 @@ class WebGLAttributeRenderer {
           gl.uniform2f(gl.getUniformLocation(program, 'u_viewport'), vw, vh);
         }
         gl.bindVertexArray(useQuads ? this.edgeQuadVAO : this.edgeVAO);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.segments);
-        gl.bufferData(gl.ARRAY_BUFFER, geometry.edges.segments, gl.DYNAMIC_DRAW);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.widths);
-        gl.bufferData(gl.ARRAY_BUFFER, geometry.edges.widths, gl.DYNAMIC_DRAW);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.endpointSizes);
-        gl.bufferData(gl.ARRAY_BUFFER, geometry.edges.endpointSizes, gl.DYNAMIC_DRAW);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.encoded);
-        gl.bufferData(gl.ARRAY_BUFFER, encoded.edgeEncoded, gl.DYNAMIC_DRAW);
+        if (cache) {
+          cache.uploadArrayBuffer(gl, 'dense:edge:segments', geometry.edges.segments, {
+            version: geometry.edges.versions?.segments ?? 0,
+            topologyVersion: geometry.edges.versions?.topology ?? 0,
+            count: geometry.edges.count,
+            trackViewIdentity: true,
+          });
+          cache.uploadArrayBuffer(gl, 'dense:edge:widths', geometry.edges.widths, {
+            version: geometry.edges.versions?.widths ?? 0,
+            topologyVersion: geometry.edges.versions?.topology ?? 0,
+            count: geometry.edges.count,
+            trackViewIdentity: true,
+          });
+          cache.uploadArrayBuffer(gl, 'dense:edge:endpointSizes', geometry.edges.endpointSizes, {
+            version: geometry.edges.versions?.endpointSizes ?? 0,
+            topologyVersion: geometry.edges.versions?.topology ?? 0,
+            count: geometry.edges.count,
+            trackViewIdentity: true,
+          });
+        } else {
+          gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.segments);
+          gl.bufferData(gl.ARRAY_BUFFER, geometry.edges.segments, gl.DYNAMIC_DRAW);
+          gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.widths);
+          gl.bufferData(gl.ARRAY_BUFFER, geometry.edges.widths, gl.DYNAMIC_DRAW);
+          gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.endpointSizes);
+          gl.bufferData(gl.ARRAY_BUFFER, geometry.edges.endpointSizes, gl.DYNAMIC_DRAW);
+        }
+        const edgeEncodedKey = `attr:webgl:edge:encoded:${config.edgeAttribute || 'index'}`;
+        const edgeEncodedBuffer = cache?.ensureBuffer(gl, edgeEncodedKey);
+        if (cache && edgeEncodedBuffer) {
+          const vao = useQuads ? this.edgeQuadVAO : this.edgeVAO;
+          const loc = useQuads ? 5 : 4;
+          gl.bindVertexArray(vao);
+          gl.bindBuffer(gl.ARRAY_BUFFER, edgeEncodedBuffer);
+          gl.enableVertexAttribArray(loc);
+          gl.vertexAttribIPointer(loc, 4, gl.UNSIGNED_BYTE, 4, 0);
+          gl.vertexAttribDivisor(loc, 1);
+        }
+        if (cache) {
+          cache.uploadArrayBuffer(gl, edgeEncodedKey, encoded.edgeEncoded.view, {
+            version: encoded.edgeEncoded.version ?? 0,
+            count: geometry.edges.count,
+            trackViewIdentity: false,
+          });
+        } else {
+          gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.encoded);
+          gl.bufferData(gl.ARRAY_BUFFER, encoded.edgeEncoded.view, gl.DYNAMIC_DRAW);
+        }
         if (useQuads) {
           gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, geometry.edges.count);
         } else {
@@ -553,7 +756,7 @@ class WebGLAttributeRenderer {
 
       this.runner?.run?.(passes, { gl, device: this.device });
       return { ...this.targets, depthTargets: this.depthTargets };
-    });
+    }, denseRequests);
   }
 
   readDepth(target, x, y) {
@@ -633,19 +836,33 @@ class WebGPUAttributeRenderer {
     // Prefer a linear format for attribute targets so encoded indices round-trip without swizzling/gamma.
     const preferredFormat = (device.format && !device.format.includes('srgb')) ? device.format : null;
     this.targetFormat = preferredFormat && preferredFormat.startsWith('rgba') ? preferredFormat : 'rgba8unorm';
+    const cache = device.resourceCache?.webgpu;
     const quad = new Float32Array([
       -1, -1,
       1, -1,
       -1, 1,
       1, 1,
     ]);
-    this.cornerBuffer = device.device.createBuffer({
-      size: quad.byteLength,
-      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-      mappedAtCreation: true,
-    });
-    new Float32Array(this.cornerBuffer.getMappedRange()).set(quad);
-    this.cornerBuffer.unmap();
+    const cornerUsage = GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST;
+    if (cache) {
+      cache.ensureBuffer(device.device, 'attr:webgpu:corner', quad.byteLength, cornerUsage, 'AttributeTracker corner buffer');
+      cache.uploadBuffer(device.device, device.device.queue, 'attr:webgpu:corner', quad, {
+        label: 'AttributeTracker corner buffer',
+        version: 1,
+        topologyVersion: 0,
+        count: 4,
+        trackViewIdentity: true,
+      }, cornerUsage);
+      this.cornerBuffer = cache.buffers.get('attr:webgpu:corner')?.buffer ?? null;
+    } else {
+      this.cornerBuffer = device.device.createBuffer({
+        size: quad.byteLength,
+        usage: cornerUsage,
+        mappedAtCreation: true,
+      });
+      new Float32Array(this.cornerBuffer.getMappedRange()).set(quad);
+      this.cornerBuffer.unmap();
+    }
 
     const edgeQuad = new Float32Array([
       0, 1,
@@ -653,13 +870,25 @@ class WebGPUAttributeRenderer {
       1, 1,
       1, -1,
     ]);
-    this.edgeCornerBuffer = device.device.createBuffer({
-      size: edgeQuad.byteLength,
-      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-      mappedAtCreation: true,
-    });
-    new Float32Array(this.edgeCornerBuffer.getMappedRange()).set(edgeQuad);
-    this.edgeCornerBuffer.unmap();
+    if (cache) {
+      cache.ensureBuffer(device.device, 'attr:webgpu:edgeCorner', edgeQuad.byteLength, cornerUsage, 'AttributeTracker edge corner buffer');
+      cache.uploadBuffer(device.device, device.device.queue, 'attr:webgpu:edgeCorner', edgeQuad, {
+        label: 'AttributeTracker edge corner buffer',
+        version: 1,
+        topologyVersion: 0,
+        count: 4,
+        trackViewIdentity: true,
+      }, cornerUsage);
+      this.edgeCornerBuffer = cache.buffers.get('attr:webgpu:edgeCorner')?.buffer ?? null;
+    } else {
+      this.edgeCornerBuffer = device.device.createBuffer({
+        size: edgeQuad.byteLength,
+        usage: cornerUsage,
+        mappedAtCreation: true,
+      });
+      new Float32Array(this.edgeCornerBuffer.getMappedRange()).set(edgeQuad);
+      this.edgeCornerBuffer.unmap();
+    }
 
     this.nodeBindGroupLayout = device.device.createBindGroupLayout({
       entries: [
@@ -860,6 +1089,24 @@ class WebGPUAttributeRenderer {
 
   uploadZeroEncoded(count) {
     if (!count) return null;
+    const shared = this.device?.resourceCache?.webgpu;
+    if (shared) {
+      const required = count * 4;
+      if (!this._zeroEncodedU8 || this._zeroEncodedU8.byteLength < required) {
+        this._zeroEncodedU8 = new Uint8Array(required);
+      } else {
+        this._zeroEncodedU8.fill(0, 0, required);
+      }
+      const key = 'attr:webgpu:node:encoded:__zero';
+      const usage = GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST;
+      return shared.uploadBuffer(this.device.device, this.device.device.queue, key, this._zeroEncodedU8.subarray(0, required), {
+        label: 'AttributeTracker zero encoded',
+        version: count,
+        topologyVersion: 0,
+        count,
+        trackViewIdentity: false,
+      }, usage);
+    }
     if (this.zeroEncodedCount === count && this.nodeBuffers.zeroEncoded?.buffer) {
       return this.nodeBuffers.zeroEncoded.buffer;
     }
@@ -876,18 +1123,22 @@ class WebGPUAttributeRenderer {
   }
 
   destroy() {
-    const destroyEntry = (entry) => {
-      if (!entry) return;
-      if (entry.buffer) {
-        entry.buffer.destroy();
-      } else {
-        entry.destroy?.();
-      }
-    };
-    destroyEntry(this.cornerBuffer);
-    destroyEntry(this.edgeCornerBuffer);
-    Object.values(this.nodeBuffers).forEach(destroyEntry);
-    Object.values(this.edgeBuffers).forEach(destroyEntry);
+    const shared = this.device?.resourceCache?.webgpu;
+    // Shared buffers are owned by the device cache.
+    if (!shared) {
+      const destroyEntry = (entry) => {
+        if (!entry) return;
+        if (entry.buffer) {
+          entry.buffer.destroy();
+        } else {
+          entry.destroy?.();
+        }
+      };
+      destroyEntry(this.cornerBuffer);
+      destroyEntry(this.edgeCornerBuffer);
+      Object.values(this.nodeBuffers).forEach(destroyEntry);
+      Object.values(this.edgeBuffers).forEach(destroyEntry);
+    }
     this.cornerBuffer = null;
     this.edgeCornerBuffer = null;
     this.depthTargets = { node: null, edge: null };
@@ -933,8 +1184,8 @@ class WebGPUAttributeRenderer {
     const { nodeAttribute, edgeAttribute } = config;
     const nodeCount = geometry.nodes.count ?? 0;
     const edgeCount = geometry.edges.count ?? 0;
-    const nodeEncoded = ensureEncodedView(network, 'node', nodeAttribute, nodeCount);
-    const edgeEncoded = ensureEncodedView(network, 'edge', edgeAttribute, edgeCount);
+    const nodeEncoded = ensureEncodedDesc(network, 'node', nodeAttribute, nodeCount);
+    const edgeEncoded = ensureEncodedDesc(network, 'edge', edgeAttribute, edgeCount);
     return { nodeEncoded, edgeEncoded };
   }
 
@@ -948,6 +1199,18 @@ class WebGPUAttributeRenderer {
     if (!cameraUniforms) return null;
     ensureEncodedReady(network, 'node', config.nodeAttribute);
     ensureEncodedReady(network, 'edge', config.edgeAttribute);
+
+    const denseRequests = [];
+    if (config.nodeAttribute || config.edgeAttribute) {
+      denseRequests.push(['node', NODE_POSITION_ATTRIBUTE], ['node', NODE_SIZE_ATTRIBUTE]);
+    }
+    if (config.edgeAttribute) {
+      denseRequests.push(
+        ['edge', EDGE_ENDPOINTS_POSITION_ATTRIBUTE],
+        ['edge', EDGE_WIDTH_ATTRIBUTE],
+        ['edge', EDGE_ENDPOINTS_SIZE_ATTRIBUTE],
+      );
+    }
 
     return this.graphLayer.withDenseGraph(network, (geometry) => {
       if (!geometry) return null;
@@ -1027,64 +1290,87 @@ class WebGPUAttributeRenderer {
     const encoder = gpu.createCommandEncoder();
     const passes = [];
 
-	    const nodePositionBuffer = geometry.nodes.count
-	      ? this.uploadVertexBufferCached(
-	        this.nodeBuffers,
-	        'positions',
-	        geometry.nodes.positions,
-	        this.nodeCache,
-	        geometry.nodes.count,
-	        geometry.nodes.versions?.positions ?? null,
-	      )
-	      : null;
-	    const nodeSizeBuffer = geometry.nodes.count
-	      ? this.uploadVertexBufferCached(
-	        this.nodeBuffers,
-	        'sizes',
-	        geometry.nodes.sizes,
-	        this.nodeCache,
-	        geometry.nodes.count,
-	        geometry.nodes.versions?.sizes ?? null,
-	      )
-	      : null;
-	    const nodeEncodedBuffer = (geometry.nodes.count && encoded.nodeEncoded && config.nodeAttribute)
-	      // Always upload encoded ids to avoid stale GPU buffers when helios-network reuses the same backing memory.
-	      ? this.uploadVertexBuffer(this.nodeBuffers, 'encoded', encoded.nodeEncoded)
-	      : null;
+      const resourceCache = this.device?.resourceCache?.webgpu;
+      const vertexUsage = GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST;
+      const uploadVertex = (key, source, meta) => {
+        if (!resourceCache || !source) return null;
+        return resourceCache.uploadBuffer(gpu, gpu.queue, key, source, { ...meta, trackViewIdentity: true }, vertexUsage);
+      };
 
-	    const edgeSegmentsBuffer = geometry.edges.count
-	      ? this.uploadVertexBufferCached(
-	        this.edgeBuffers,
-	        'segments',
-	        geometry.edges.segments,
-	        this.edgeCache,
-	        geometry.edges.count,
-	        geometry.edges.versions?.segments ?? null,
-	      )
-	      : null;
-	    const edgeWidthsBuffer = geometry.edges.count
-	      ? this.uploadVertexBufferCached(
-	        this.edgeBuffers,
-	        'widths',
-	        geometry.edges.widths,
-	        this.edgeCache,
-	        geometry.edges.count,
-	        geometry.edges.versions?.widths ?? null,
-	      )
-	      : null;
-	    const edgeEndpointSizeBuffer = geometry.edges.count
-	      ? this.uploadVertexBufferCached(
-	        this.edgeBuffers,
-	        'endpointSizes',
-	        geometry.edges.endpointSizes,
-	        this.edgeCache,
-	        geometry.edges.count,
-	        geometry.edges.versions?.endpointSizes ?? null,
-	      )
-	      : null;
-	    const edgeEncodedBuffer = (geometry.edges.count && encoded.edgeEncoded && config.edgeAttribute)
-	      ? this.uploadVertexBuffer(this.edgeBuffers, 'encoded', encoded.edgeEncoded)
-	      : null;
+      const nodePositionBuffer = geometry.nodes.count
+        ? uploadVertex('attr:webgpu:node:positions', geometry.nodes.positions, {
+          label: 'AttributeTracker node positions',
+          version: geometry.nodes.versions?.positions ?? 0,
+          topologyVersion: geometry.nodes.versions?.topology ?? 0,
+          count: geometry.nodes.count,
+        })
+        : null;
+      const nodeSizeBuffer = geometry.nodes.count
+        ? uploadVertex('attr:webgpu:node:sizes', geometry.nodes.sizes, {
+          label: 'AttributeTracker node sizes',
+          version: geometry.nodes.versions?.sizes ?? 0,
+          topologyVersion: geometry.nodes.versions?.topology ?? 0,
+          count: geometry.nodes.count,
+        })
+        : null;
+      const nodeEncodedBuffer = (geometry.nodes.count && encoded.nodeEncoded?.view && config.nodeAttribute)
+        ? resourceCache?.uploadBuffer(
+          gpu,
+          gpu.queue,
+          `attr:webgpu:node:encoded:${config.nodeAttribute || 'index'}`,
+          encoded.nodeEncoded.view,
+          {
+            label: 'AttributeTracker node encoded',
+            version: encoded.nodeEncoded.version ?? 0,
+            topologyVersion: 0,
+            count: geometry.nodes.count,
+            // Do not rely on view identity alone: WASM may reuse the same backing memory.
+            trackViewIdentity: false,
+          },
+          vertexUsage,
+        )
+        : null;
+
+      const edgeSegmentsBuffer = geometry.edges.count
+        ? uploadVertex('attr:webgpu:edge:segments', geometry.edges.segments, {
+          label: 'AttributeTracker edge segments',
+          version: geometry.edges.versions?.segments ?? 0,
+          topologyVersion: geometry.edges.versions?.topology ?? 0,
+          count: geometry.edges.count,
+        })
+        : null;
+      const edgeWidthsBuffer = geometry.edges.count
+        ? uploadVertex('attr:webgpu:edge:widths', geometry.edges.widths, {
+          label: 'AttributeTracker edge widths',
+          version: geometry.edges.versions?.widths ?? 0,
+          topologyVersion: geometry.edges.versions?.topology ?? 0,
+          count: geometry.edges.count,
+        })
+        : null;
+      const edgeEndpointSizeBuffer = geometry.edges.count
+        ? uploadVertex('attr:webgpu:edge:endpointSizes', geometry.edges.endpointSizes, {
+          label: 'AttributeTracker edge endpoint sizes',
+          version: geometry.edges.versions?.endpointSizes ?? 0,
+          topologyVersion: geometry.edges.versions?.topology ?? 0,
+          count: geometry.edges.count,
+        })
+        : null;
+      const edgeEncodedBuffer = (geometry.edges.count && encoded.edgeEncoded?.view && config.edgeAttribute)
+        ? resourceCache?.uploadBuffer(
+          gpu,
+          gpu.queue,
+          `attr:webgpu:edge:encoded:${config.edgeAttribute || 'index'}`,
+          encoded.edgeEncoded.view,
+          {
+            label: 'AttributeTracker edge encoded',
+            version: encoded.edgeEncoded.version ?? 0,
+            topologyVersion: 0,
+            count: geometry.edges.count,
+            trackViewIdentity: false,
+          },
+          vertexUsage,
+        )
+        : null;
 
 	    const shouldRenderNodes = geometry.nodes.count
 	      && nodeEncodedBuffer
@@ -1299,7 +1585,7 @@ class WebGPUAttributeRenderer {
 
       this.runner?.run?.(passes, { device: this.device });
       return { ...this.targets, depthTargets: this.depthTargets };
-    });
+    }, denseRequests);
   }
 }
 

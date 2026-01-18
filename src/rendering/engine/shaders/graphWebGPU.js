@@ -3,8 +3,47 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
   const useNodeIndices = options.useNodeIndices !== false;
   const useEdgeIndices = options.useEdgeIndices !== false;
 
+  const nodeOptions = options?.node && typeof options.node === 'object' ? options.node : {};
+  const edgeOptions = options?.edge && typeof options.edge === 'object' ? options.edge : {};
+
+  // Back-compat: previous API used a single toggle for outline width + outline color from buffers.
+  if (options?.useNodeOutlineAttributes === true) {
+    if (nodeOptions.outline == null) nodeOptions.outline = 'buffer';
+    if (nodeOptions.outlineColor == null) nodeOptions.outlineColor = 'buffer';
+  }
+
+  const useNodeColorBuffer = nodeOptions.color !== 'uniform';
+  const useNodeSizeBuffer = nodeOptions.size !== 'uniform';
+  // Default outline to uniform unless explicitly marked as buffer.
+  const useNodeOutlineWidthBuffer = nodeOptions.outline === 'buffer';
+  const useNodeOutlineColorBuffer = nodeOptions.outlineColor === 'buffer';
+
+  const useEdgeColorBuffer = edgeOptions.color !== 'uniform';
+  const useEdgeWidthBuffer = edgeOptions.width !== 'uniform';
+  const useEdgeOpacityBuffer = edgeOptions.opacity !== 'uniform';
+  const useEdgeEndpointSizeBuffer = edgeOptions.endpointSize !== 'uniform';
+
+  // Existing optional extra bindings for outline buffers.
+  const useNodeOutlineAttributes = useNodeOutlineWidthBuffer || useNodeOutlineColorBuffer;
+
+  const NODE_OUTLINE_STORAGE_BINDINGS = useNodeOutlineAttributes
+    ? '@group(0) @binding(8) var<storage, read> nodeOutlineWidths : NodeOutlineWidths;\n\t@group(0) @binding(9) var<storage, read> nodeOutlineColors : NodeOutlineColors;'
+    : '';
+
+  const NODE_OUTLINE_RAW_EXPR = useNodeOutlineWidthBuffer
+    ? 'let outlineRaw = nodeOutlineWidths.data[index];'
+    : 'let outlineRaw = globals.nodeRaw.y;';
+
+  const NODE_OUTLINE_BASE_COLOR_EXPR = useNodeOutlineColorBuffer
+    ? 'let outlineBaseColor = nodeOutlineColors.data[index];'
+    : 'let outlineBaseColor = globals.nodeOutlineColor;';
+
   const NODE_WGSL = /* wgsl */ `
 const USE_NODE_INDICES : bool = ${useNodeIndices ? 'true' : 'false'};
+const USE_NODE_COLOR_BUFFER : bool = ${useNodeColorBuffer ? 'true' : 'false'};
+const USE_NODE_SIZE_BUFFER : bool = ${useNodeSizeBuffer ? 'true' : 'false'};
+const USE_NODE_OUTLINE_WIDTH_BUFFER : bool = ${useNodeOutlineWidthBuffer ? 'true' : 'false'};
+const USE_NODE_OUTLINE_COLOR_BUFFER : bool = ${useNodeOutlineColorBuffer ? 'true' : 'false'};
 
 struct Camera {
   viewProjection: mat4x4<f32>,
@@ -23,7 +62,16 @@ struct Globals {
   edgeOpacity: vec2<f32>, // base, scale
   edgeWidth: vec2<f32>, // base, scale
   _pad0: vec2<f32>,
+  nodeColor: vec4<f32>,
+  nodeRaw: vec2<f32>, // x=nodeSizeRaw y=nodeOutlineRaw
+  _pad1: vec2<f32>,
   nodeOutlineColor: vec4<f32>,
+  edgeColorStart: vec4<f32>,
+  edgeColorEnd: vec4<f32>,
+  edgeWidthRaw: vec2<f32>,
+  edgeOpacityRaw: vec2<f32>,
+  edgeEndpointSizeRaw: vec2<f32>,
+  _pad2: vec2<f32>,
   edgeTrim: vec4<f32>, // edgeTrim.x used, rest padding
   nodeNoStateScale: vec4<f32>, // x=sizeMul y=opacityMul z=outlineMul w=discard(>0.5)
   nodeNoStateColorMul: vec4<f32>,
@@ -59,12 +107,21 @@ struct NodeColors {
 	  data: array<u32>,
 	};
 
+  struct NodeOutlineWidths {
+    data: array<f32>,
+  };
+
+  struct NodeOutlineColors {
+    data: array<vec4<f32>>,
+  };
+
 	@group(0) @binding(0) var<uniform> camera : Camera;
 	@group(0) @binding(1) var<storage, read> nodeIndices : NodeIndices;
 	@group(0) @binding(2) var<storage, read> nodePositions : NodePositions;
 	@group(0) @binding(3) var<storage, read> nodeSizes : NodeSizes;
 	@group(0) @binding(4) var<storage, read> nodeColors : NodeColors;
 	@group(0) @binding(5) var<storage, read> nodeStates : NodeStates;
+  ${NODE_OUTLINE_STORAGE_BINDINGS}
 	@group(0) @binding(6) var<uniform> globals : Globals;
 	struct Hover {
 	  nodeIndex: u32,
@@ -105,7 +162,7 @@ fn nodeVertex(input : VertexInput) -> VertexOutput {
     nodePositions.data[baseOffset + 1u],
     nodePositions.data[baseOffset + 2u]
   );
-  let rawSize = nodeSizes.data[index];
+  let rawSize = select(globals.nodeRaw.x, nodeSizes.data[index], USE_NODE_SIZE_BUFFER);
 	  var state = nodeStates.data[index];
 	  if (hover.nodeIndex != 0xffffffffu && index == hover.nodeIndex) {
 	    state = state | hover.nodeState;
@@ -142,7 +199,8 @@ fn nodeVertex(input : VertexInput) -> VertexOutput {
   }
 
   let diameter = max(1.0, (globals.nodeSize.x + globals.nodeSize.y * rawSize) * sizeMul);
-  let outlineWidth = max(0.0, (globals.nodeOutline.x + globals.nodeOutline.y * rawSize) * outlineMul);
+  ${NODE_OUTLINE_RAW_EXPR}
+  let outlineWidth = max(0.0, (globals.nodeOutline.x + globals.nodeOutline.y * outlineRaw) * outlineMul);
   let fullDiameter = diameter + outlineWidth;
   let radius = fullDiameter * 0.5;
   let is2D = camera.position.w > 0.5;
@@ -172,13 +230,14 @@ fn nodeVertex(input : VertexInput) -> VertexOutput {
   let offset = right * input.corner.x + up * input.corner.y;
   var output : VertexOutput;
   output.position = camera.viewProjection * vec4<f32>(basePosition + offset * radius, 1.0);
-  let baseColor = nodeColors.data[index];
+  let baseColor = select(globals.nodeColor, nodeColors.data[index], USE_NODE_COLOR_BUFFER);
   let alpha = clamp(globals.nodeOpacity.x + globals.nodeOpacity.y * baseColor.a, 0.0, 1.0) * opacityMul;
   let rgb = clamp(baseColor.rgb * rgbMul + rgbAdd, vec3<f32>(0.0), vec3<f32>(1.0));
   output.color = vec4<f32>(rgb, clamp(alpha, 0.0, 1.0));
   output.local = input.corner;
-  let outlineAlpha = clamp(globals.nodeOpacity.x + globals.nodeOpacity.y * globals.nodeOutlineColor.a, 0.0, 1.0) * opacityMul;
-  output.outlineColor = vec4<f32>(globals.nodeOutlineColor.rgb, clamp(outlineAlpha, 0.0, 1.0));
+  ${NODE_OUTLINE_BASE_COLOR_EXPR}
+  let outlineAlpha = clamp(globals.nodeOpacity.x + globals.nodeOpacity.y * outlineBaseColor.a, 0.0, 1.0) * opacityMul;
+  output.outlineColor = vec4<f32>(outlineBaseColor.rgb, clamp(outlineAlpha, 0.0, 1.0));
   output.outlineThreshold = select(0.0, outlineWidth / max(fullDiameter, 1e-5), outlineWidth > 0.0);
   output.centerWorld = basePosition;
   output.rightWorld = right;
@@ -227,6 +286,10 @@ fn nodeFragment(input : VertexOutput) -> NodeFragmentOutput {
 
   const EDGE_WGSL = /* wgsl */ `
 const USE_EDGE_INDICES : bool = ${useEdgeIndices ? 'true' : 'false'};
+const USE_EDGE_COLOR_BUFFER : bool = ${useEdgeColorBuffer ? 'true' : 'false'};
+const USE_EDGE_WIDTH_BUFFER : bool = ${useEdgeWidthBuffer ? 'true' : 'false'};
+const USE_EDGE_OPACITY_BUFFER : bool = ${useEdgeOpacityBuffer ? 'true' : 'false'};
+const USE_EDGE_ENDPOINT_SIZE_BUFFER : bool = ${useEdgeEndpointSizeBuffer ? 'true' : 'false'};
 
 struct Camera {
   viewProjection: mat4x4<f32>,
@@ -245,7 +308,16 @@ struct Globals {
   edgeOpacity: vec2<f32>, // base, scale
   edgeWidth: vec2<f32>, // base, scale
   _pad0: vec2<f32>,
+  nodeColor: vec4<f32>,
+  nodeRaw: vec2<f32>, // x=nodeSizeRaw y=nodeOutlineRaw
+  _pad1: vec2<f32>,
   nodeOutlineColor: vec4<f32>,
+  edgeColorStart: vec4<f32>,
+  edgeColorEnd: vec4<f32>,
+  edgeWidthRaw: vec2<f32>,
+  edgeOpacityRaw: vec2<f32>,
+  edgeEndpointSizeRaw: vec2<f32>,
+  _pad2: vec2<f32>,
   edgeTrim: vec4<f32>, // edgeTrim.x used, rest padding
   nodeNoStateScale: vec4<f32>, // x=sizeMul y=opacityMul z=outlineMul w=discard(>0.5)
   nodeNoStateColorMul: vec4<f32>,
@@ -368,7 +440,7 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
     }
   }
 
-  let endpointSize = edgeEndpointSizes.data[edgeId];
+  let endpointSize = select(globals.edgeEndpointSizeRaw, edgeEndpointSizes.data[edgeId], USE_EDGE_ENDPOINT_SIZE_BUFFER);
   let endpointState = edgeEndpointStates.data[edgeId];
   var startSizeMul = 1.0;
   var endSizeMul = 1.0;
@@ -405,10 +477,10 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
   if ((vertexIndex & 1u) == 1u) {
     position = endPos;
   }
-  let colorStart = edgeColors.data[edgeId * 2u];
-  let colorEnd = edgeColors.data[edgeId * 2u + 1u];
-  let endpointWidth = edgeWidths.data[edgeId];
-  let opacityPair = edgeOpacities.data[edgeId];
+  let colorStart = select(globals.edgeColorStart, edgeColors.data[edgeId * 2u], USE_EDGE_COLOR_BUFFER);
+  let colorEnd = select(globals.edgeColorEnd, edgeColors.data[edgeId * 2u + 1u], USE_EDGE_COLOR_BUFFER);
+  let endpointWidth = select(globals.edgeWidthRaw, edgeWidths.data[edgeId], USE_EDGE_WIDTH_BUFFER);
+  let opacityPair = select(globals.edgeOpacityRaw, edgeOpacities.data[edgeId], USE_EDGE_OPACITY_BUFFER);
   let color = select(colorStart, colorEnd, (vertexIndex & 1u) == 1u);
   let width = (globals.edgeWidth.x + globals.edgeWidth.y * select(endpointWidth.x, endpointWidth.y, (vertexIndex & 1u) == 1u)) * widthMul;
   let attrOpacity = select(opacityPair.x, opacityPair.y, (vertexIndex & 1u) == 1u);
@@ -476,9 +548,9 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
     }
   }
 
-  let endpointSize = edgeEndpointSizes.data[edgeId];
-  let endpointWidth = edgeWidths.data[edgeId];
-  let opacityPair = edgeOpacities.data[edgeId];
+  let endpointSize = select(globals.edgeEndpointSizeRaw, edgeEndpointSizes.data[edgeId], USE_EDGE_ENDPOINT_SIZE_BUFFER);
+  let endpointWidth = select(globals.edgeWidthRaw, edgeWidths.data[edgeId], USE_EDGE_WIDTH_BUFFER);
+  let opacityPair = select(globals.edgeOpacityRaw, edgeOpacities.data[edgeId], USE_EDGE_OPACITY_BUFFER);
   let endpointState = edgeEndpointStates.data[edgeId];
   var startSizeMul = 1.0;
   var endSizeMul = 1.0;
@@ -530,8 +602,8 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   clipPos = vec4<f32>(adjusted.x, adjusted.y, clipPos.z, clipPos.w);
   var output : EdgeVertexOutput;
   output.position = clipPos;
-  let colorStart = edgeColors.data[edgeId * 2u];
-  let colorEnd = edgeColors.data[edgeId * 2u + 1u];
+  let colorStart = select(globals.edgeColorStart, edgeColors.data[edgeId * 2u], USE_EDGE_COLOR_BUFFER);
+  let colorEnd = select(globals.edgeColorEnd, edgeColors.data[edgeId * 2u + 1u], USE_EDGE_COLOR_BUFFER);
   let blended = mix(colorStart, colorEnd, t);
   let blendedOpacity = mix(opacityPair.x, opacityPair.y, t);
   let opacity = clamp(globals.edgeOpacity.x + globals.edgeOpacity.y * blendedOpacity, 0.0, 1.0) * opacityMul;

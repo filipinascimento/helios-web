@@ -1,4 +1,5 @@
 import { bumpCounter } from '../../utilities/counters.js';
+import { ResourceCache } from '../resources/ResourceCache.js';
 
 function compileShader(gl, type, source) {
   const shader = gl.createShader(type);
@@ -62,6 +63,7 @@ export class WebGL2Device {
     this.size = { width: 1, height: 1, devicePixelRatio: 1 };
     this.type = 'webgl2';
     this.counters = { beginFrame: 0, presentFramebuffer: 0 };
+    this.resourceCache = new ResourceCache(this.type);
   }
 
   async initialize() {
@@ -204,6 +206,7 @@ export class WebGL2Device {
   destroy() {
     const { gl } = this;
     if (!gl) return;
+    this.resourceCache?.destroy(gl);
     if (this.presentVAO) gl.deleteVertexArray(this.presentVAO);
     if (this.presentProgram) gl.deleteProgram(this.presentProgram);
   }

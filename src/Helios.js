@@ -1305,6 +1305,11 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('nodeOutlineColor', normalized);
   }
 
+  nodeOutlineUseAttributes(value) {
+    if (arguments.length === 0) return this._getGraphLayerProp('nodeOutlineUseAttributes');
+    return this._setGraphLayerProp('nodeOutlineUseAttributes', Boolean(value));
+  }
+
   edgeEndpointTrim(value) {
     if (arguments.length === 0) return this._getGraphLayerProp('edgeEndpointTrim');
     return this._setGraphLayerProp('edgeEndpointTrim', Number(value));

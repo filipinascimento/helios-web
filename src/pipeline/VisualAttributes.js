@@ -161,12 +161,81 @@ export class VisualAttributes {
 
   applyMappers({ nodeMapper, edgeMapper } = {}) {
     this.debug?.log('mapper', 'Applying mappers to visuals');
-    if (nodeMapper) this.applyNodeMapper(nodeMapper);
-    if (edgeMapper) this.applyEdgeMapper(edgeMapper);
+    const visualConfig = this.buildVisualConstantConfig({ nodeMapper, edgeMapper });
+    this.setNetworkVisualConfig(visualConfig);
+    if (nodeMapper) this.applyNodeMapper(nodeMapper, visualConfig);
+    if (edgeMapper) this.applyEdgeMapper(edgeMapper, visualConfig);
     this.debug?.log('mapper', 'Finished applying mappers');
   }
 
-  applyNodeMapper(mapper) {
+  setNetworkVisualConfig(config) {
+    if (!this.network) return;
+    Object.defineProperty(this.network, '__heliosVisualConfig', {
+      value: config,
+      writable: true,
+      configurable: true,
+    });
+  }
+
+  buildVisualConstantConfig({ nodeMapper, edgeMapper } = {}) {
+    return {
+      node: this.buildNodeConstantConfig(nodeMapper),
+      edge: this.buildEdgeConstantConfig(edgeMapper),
+    };
+  }
+
+  buildNodeConstantConfig(mapper) {
+    const channels = mapper?.channels;
+    const get = (name) => channels?.get?.(name);
+    const normalizeNumber = (v) => (Number.isFinite(Number(v)) ? Number(v) : undefined);
+    const normalizeRgba = (v) => (v != null ? this.toRgba(v) : undefined);
+
+    const color = get('color');
+    const size = get('size');
+    const outline = get('outline');
+    const outlineColor = get('outlineColor');
+
+    return {
+      color: color?.type === 'constant' ? { mode: 'uniform', value: normalizeRgba(color.value) } : { mode: 'buffer' },
+      size: size?.type === 'constant' ? { mode: 'uniform', value: normalizeNumber(size.value) } : { mode: 'buffer' },
+      outline: outline?.type === 'constant' ? { mode: 'uniform', value: normalizeNumber(outline.value) } : { mode: 'buffer' },
+      outlineColor: outlineColor?.type === 'constant'
+        ? { mode: 'uniform', value: normalizeRgba(outlineColor.value) }
+        : { mode: 'buffer' },
+    };
+  }
+
+  buildEdgeConstantConfig(mapper) {
+    const channels = mapper?.channels;
+    const get = (name) => channels?.get?.(name);
+    const normalizePair = (v) => {
+      if (v == null) return undefined;
+      const [a, b] = this.resolveEdgeScalarPair(v);
+      if (!Number.isFinite(a) || !Number.isFinite(b)) return undefined;
+      return [a, b];
+    };
+    const normalizeColorPair = (v) => {
+      if (v == null) return undefined;
+      const [start, end] = this.resolveEdgeColorPair(v);
+      return [start, end];
+    };
+
+    const color = get('color');
+    const width = get('width');
+    const opacity = get('opacity');
+    const endpointSize = get('endpointSize');
+
+    return {
+      color: color?.type === 'constant' ? { mode: 'uniform', value: normalizeColorPair(color.value) } : { mode: 'buffer' },
+      width: width?.type === 'constant' ? { mode: 'uniform', value: normalizePair(width.value) } : { mode: 'buffer' },
+      opacity: opacity?.type === 'constant' ? { mode: 'uniform', value: normalizePair(opacity.value) } : { mode: 'buffer' },
+      endpointSize: endpointSize?.type === 'constant'
+        ? { mode: 'uniform', value: normalizePair(endpointSize.value) }
+        : { mode: 'buffer' },
+    };
+  }
+
+  applyNodeMapper(mapper, visualConfig) {
     if (!mapper?.channels?.size) return;
     const nodeIndices = this.network?.nodeIndices;
     const nodeChannels = [...mapper.channels.keys()];
@@ -185,10 +254,10 @@ export class VisualAttributes {
       const attributes = this.collectAttributeNames(mapper, 'node');
       const buffers = this.resolveNodeAttributeBuffers(attributes.node);
       const visuals = {
-        color: this.nodeColors,
-        size: this.nodeSizes,
-        outline: this.nodeOutlineWidths,
-        outlineColor: this.nodeOutlineColors,
+        color: visualConfig?.node?.color?.mode === 'uniform' ? null : this.nodeColors,
+        size: visualConfig?.node?.size?.mode === 'uniform' ? null : this.nodeSizes,
+        outline: visualConfig?.node?.outline?.mode === 'uniform' ? null : this.nodeOutlineWidths,
+        outlineColor: visualConfig?.node?.outlineColor?.mode === 'uniform' ? null : this.nodeOutlineColors,
         position: this.nodePositions,
       };
       if (!nodeIndices?.length) return;
@@ -198,14 +267,17 @@ export class VisualAttributes {
         const mapped = mapper.mapItem({ attributes: inputs }, { index: nodeId });
         this.writeNodeVisuals(nodeId, mapped, visuals);
       }
-      this.bumpNodeAttributes(
-        NODE_COLOR_ATTRIBUTE,
-        NODE_SIZE_ATTRIBUTE,
-        NODE_OUTLINE_WIDTH_ATTRIBUTE,
-        NODE_OUTLINE_COLOR_ATTRIBUTE,
-        NODE_POSITION_ATTRIBUTE,
-      );
-      this.bumpEdgeAttributes(EDGE_ENDPOINTS_SIZE_ATTRIBUTE, EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
+
+      const bumpNode = [NODE_POSITION_ATTRIBUTE];
+      if (visuals.color) bumpNode.push(NODE_COLOR_ATTRIBUTE);
+      if (visuals.size) bumpNode.push(NODE_SIZE_ATTRIBUTE);
+      if (visuals.outline) bumpNode.push(NODE_OUTLINE_WIDTH_ATTRIBUTE);
+      if (visuals.outlineColor) bumpNode.push(NODE_OUTLINE_COLOR_ATTRIBUTE);
+      this.bumpNodeAttributes(...bumpNode);
+
+      const bumpEdge = [EDGE_ENDPOINTS_POSITION_ATTRIBUTE];
+      if (visuals.size) bumpEdge.push(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+      this.bumpEdgeAttributes(...bumpEdge);
     });
     for (const channel of nodeChannels) {
       this.debug?.log('mapper', 'Applying node channel finish', {
@@ -216,7 +288,7 @@ export class VisualAttributes {
     this.debug?.log('mapper', 'Node mapper applied', { nodes: nodeIndices?.length ?? 0 });
   }
 
-  applyEdgeMapper(mapper) {
+  applyEdgeMapper(mapper, visualConfig) {
     if (!mapper?.channels?.size) return;
     const edgeIndices = this.network?.edgeIndices;
     const edgeChannels = [...mapper.channels.keys()];
@@ -240,10 +312,12 @@ export class VisualAttributes {
       const skipOpacity = nodeToEdgeRegistrations.has(EDGE_OPACITY_ATTRIBUTE);
       const skipEndpointSize = nodeToEdgeRegistrations.has(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
       const visuals = {
-        color: skipColor ? null : this.edgeColors,
-        opacity: skipOpacity ? null : this.edgeOpacities,
-        width: this.edgeWidths,
-        endpointSize: skipEndpointSize ? null : this.network.getEdgeAttributeBuffer(EDGE_ENDPOINTS_SIZE_ATTRIBUTE).view,
+        color: (skipColor || visualConfig?.edge?.color?.mode === 'uniform') ? null : this.edgeColors,
+        opacity: (skipOpacity || visualConfig?.edge?.opacity?.mode === 'uniform') ? null : this.edgeOpacities,
+        width: visualConfig?.edge?.width?.mode === 'uniform' ? null : this.edgeWidths,
+        endpointSize: (skipEndpointSize || visualConfig?.edge?.endpointSize?.mode === 'uniform')
+          ? null
+          : this.network.getEdgeAttributeBuffer(EDGE_ENDPOINTS_SIZE_ATTRIBUTE).view,
       };
       const edgesView = this.network?.edgesView;
       if (!edgeIndices?.length) return;
@@ -260,12 +334,13 @@ export class VisualAttributes {
         );
         this.writeEdgeVisuals(edgeId, mapped, visuals);
       }
-      this.bumpEdgeAttributes(
-        EDGE_COLOR_ATTRIBUTE,
-        EDGE_OPACITY_ATTRIBUTE,
-        EDGE_WIDTH_ATTRIBUTE,
-        EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
-      );
+
+      const bumpEdge = [];
+      if (visuals.color) bumpEdge.push(EDGE_COLOR_ATTRIBUTE);
+      if (visuals.opacity) bumpEdge.push(EDGE_OPACITY_ATTRIBUTE);
+      if (visuals.width) bumpEdge.push(EDGE_WIDTH_ATTRIBUTE);
+      if (visuals.endpointSize) bumpEdge.push(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+      if (bumpEdge.length) this.bumpEdgeAttributes(...bumpEdge);
     });
     for (const channel of edgeChannels) {
       this.debug?.log('mapper', 'Applying edge channel finish', {

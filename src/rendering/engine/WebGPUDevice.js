@@ -1,4 +1,5 @@
 import { bumpCounter } from '../../utilities/counters.js';
+import { ResourceCache } from '../resources/ResourceCache.js';
 
 const PRESENT_WGSL = /* wgsl */ `
 struct VertexOut {
@@ -43,6 +44,7 @@ export class WebGPUDevice {
     this.maxStorageBufferBindingSize = null;
     this.requestedLimits = null;
     this.counters = { beginFrame: 0, presentFramebuffer: 0 };
+    this.resourceCache = new ResourceCache(this.type);
   }
 
   static async isSupported() {
@@ -209,6 +211,12 @@ export class WebGPUDevice {
       context.passEncoder.end();
     }
     this.device.queue.submit([context.commandEncoder.finish()]);
+  }
+
+  destroy() {
+    this.resourceCache?.destroy(this);
+    this.depthTexture?.destroy?.();
+    this.quadVertexBuffer?.destroy?.();
   }
 
   createFramebuffer(width, height) {

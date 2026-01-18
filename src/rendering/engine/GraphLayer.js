@@ -58,6 +58,7 @@ export class GraphLayer extends Layer {
     this.nodeOutlineWidthBase = 0;
     this.nodeOutlineWidthScale = 0;
     this.nodeOutlineColor = options.nodeOutlineColor ?? [0, 0, 0, 1];
+    this.nodeOutlineUseAttributes = options.nodeOutlineUseAttributes === true;
     this.edgeOpacityBase = 0;
     this.edgeOpacityScale = 1;
     this.edgeWidthBase = 0;
@@ -581,10 +582,23 @@ export class GraphLayer extends Layer {
     return { nodes, edges };
   }
 
-  withDenseGraph(network, fn) {
+  withDenseGraph(network, fn, explicitRequests = null) {
     if (!network) return fn(this.readDenseGraph(null));
     const packing = this.getDensePackingInfo(network);
-    const requests = this.getDenseGraphRequests(packing);
+    const requests = Array.isArray(explicitRequests) && explicitRequests.length
+      ? [...explicitRequests]
+      : this.getDenseGraphRequests(packing);
+
+    // Even when callers supply explicit attribute requests, ensure indices are
+    // included when dense packing requires them.
+    if (Array.isArray(explicitRequests) && explicitRequests.length) {
+      const needNodeIndex = !(packing?.node?.indicesAreIdentity);
+      const needEdgeIndex = !(packing?.edge?.indicesAreIdentity);
+      const hasNodeIndex = requests.some(([scope, name]) => scope === 'node' && name === 'index');
+      const hasEdgeIndex = requests.some(([scope, name]) => scope === 'edge' && name === 'index');
+      if (needNodeIndex && !hasNodeIndex) requests.unshift(['node', 'index']);
+      if (needEdgeIndex && !hasEdgeIndex) requests.unshift(['edge', 'index']);
+    }
 
     // Updates must happen outside of buffer access.
     try {
