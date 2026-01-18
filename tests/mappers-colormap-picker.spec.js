@@ -22,13 +22,16 @@ test.describe('mappers panel colormap picker', () => {
     const typeSelect = typeRow.locator('select.helios-ui-select').first();
     await typeSelect.selectOption('colormap');
 
-    const pickerInput = page.locator('input.helios-ui-colormap-picker__input').first();
-    await expect(pickerInput).toBeVisible();
-    await pickerInput.click();
-    await pickerInput.fill('CET');
+    const display = page.locator('input.helios-ui-colormap-picker__display').first();
+    await expect(display).toBeVisible();
+    await display.click();
 
     const popover = page.locator('.helios-ui-colormap-popover').first();
     await expect(popover).toBeVisible();
+
+    const search = popover.locator('input.helios-ui-colormap-popover__search').first();
+    await expect(search).toBeVisible();
+    await search.fill('CET');
 
     const items = popover.locator('.helios-ui-colormap-picker__item');
     await expect(items.first()).toBeVisible();
@@ -41,6 +44,6 @@ test.describe('mappers panel colormap picker', () => {
     expect(dataKey).toBeTruthy();
 
     await items.first().click();
-    await expect(pickerInput).toHaveValue(dataKey);
+    await expect(display).toHaveAttribute('data-colormap-key', dataKey);
   });
 });

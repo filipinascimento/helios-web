@@ -477,6 +477,10 @@ export const defaultStylesText = `
   height: 14px;
   border-radius: 999px;
   border: 1px solid var(--helios-ui-border);
+  overflow: hidden;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  background-clip: padding-box;
   background: linear-gradient(90deg, rgba(120, 120, 120, 1), rgba(40, 40, 40, 1));
 }
 
@@ -487,6 +491,10 @@ export const defaultStylesText = `
 
 .helios-ui-colormap-picker__preview {
   opacity: 0.95;
+}
+
+.helios-ui-colormap-picker__display {
+  max-width: none;
 }
 
 .helios-ui-colormap-picker {
@@ -508,6 +516,23 @@ export const defaultStylesText = `
   background: color-mix(in srgb, var(--helios-ui-bg-solid) 92%, transparent);
   overflow: auto;
   box-shadow: var(--helios-ui-shadow);
+}
+
+.helios-ui-colormap-popover__header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 8px;
+  background: color-mix(in srgb, var(--helios-ui-bg-solid) 96%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--helios-ui-border) 70%, transparent);
+}
+
+.helios-ui-colormap-popover__search {
+  width: 100%;
+}
+
+.helios-ui-colormap-popover__list {
+  padding: 4px;
 }
 
 .helios-ui-colormap-picker__item {

@@ -51,26 +51,33 @@ function buildColormapCatalog() {
     });
   };
 
-  for (const key of Object.keys(colormaps?.d3 ?? {})) {
-    pushEntry({ key, label: key, group: 'd3', searchExtras: ['d3:'] });
+  for (const [key, desc] of Object.entries(colormaps?.d3 ?? {})) {
+    if (desc?.isScheme) continue;
+    if (key.startsWith('scheme')) continue;
+    const label = key.startsWith('interpolate') ? key.slice('interpolate'.length) : key;
+    pushEntry({ key, label, group: 'd3', searchExtras: ['d3:', 'interpolate', 'scheme'] });
   }
 
-  for (const key of Object.keys(colormaps?.cmasher ?? {})) {
+  for (const [key, desc] of Object.entries(colormaps?.cmasher ?? {})) {
+    if (desc?.isScheme) continue;
     const label = key.startsWith('cmasher_') ? key.slice('cmasher_'.length) : key;
     const alias = key.startsWith('cmasher_') ? `cmasher:${label}` : key;
     pushEntry({ key: alias, label, group: 'cmasher', searchExtras: [key, 'cmasher:', 'cmasher_'] });
   }
 
-  for (const key of Object.keys(colormaps?.CET ?? {})) {
+  for (const [key, desc] of Object.entries(colormaps?.CET ?? {})) {
+    if (desc?.isScheme) continue;
     const label = key.startsWith('CET_') ? key.slice('CET_'.length) : key;
     pushEntry({ key, label, group: 'CET', searchExtras: ['CET:'] });
   }
 
-  for (const key of Object.keys(colormaps?.helios ?? {})) {
+  for (const [key, desc] of Object.entries(colormaps?.helios ?? {})) {
+    if (desc?.isScheme) continue;
     pushEntry({ key, label: key, group: 'helios', searchExtras: ['helios:'] });
   }
 
   const byGroup = new Map();
+  const byKey = new Map();
   for (const entry of entries) {
     let list = byGroup.get(entry.group);
     if (!list) {
@@ -78,13 +85,14 @@ function buildColormapCatalog() {
       byGroup.set(entry.group, list);
     }
     list.push(entry);
+    byKey.set(entry.key, entry);
   }
 
   for (const list of byGroup.values()) {
     list.sort((a, b) => a.label.localeCompare(b.label));
   }
 
-  return { entries, byGroup };
+  return { entries, byGroup, byKey };
 }
 
 function isHexColorString(value) {
@@ -1525,11 +1533,11 @@ export class MappersPanel {
 
           const nameWrap = document.createElement('div');
           nameWrap.className = 'helios-ui-colormap-picker';
-          const colormapInput = document.createElement('input');
-          colormapInput.type = 'text';
-          colormapInput.className = 'helios-ui-text helios-ui-colormap-picker__input';
-          colormapInput.placeholder = 'interpolateInferno';
-          colormapInput.value = String(state.pending.colormap ?? 'interpolateInferno');
+          const colormapDisplay = document.createElement('input');
+          colormapDisplay.type = 'text';
+          colormapDisplay.readOnly = true;
+          colormapDisplay.className = 'helios-ui-select helios-ui-colormap-picker__display';
+          colormapDisplay.placeholder = 'Select colormap…';
 
           const preview = document.createElement('div');
           preview.className = 'helios-ui-colormap-picker__preview helios-ui-colormap-thumb';
@@ -1542,35 +1550,99 @@ export class MappersPanel {
           popoverPanel.className = 'helios-ui-colormap-popover__panel';
           popover.appendChild(popoverPanel);
 
+          const popoverHeader = document.createElement('div');
+          popoverHeader.className = 'helios-ui-colormap-popover__header';
+          const searchInput = document.createElement('input');
+          searchInput.type = 'text';
+          searchInput.className = 'helios-ui-text helios-ui-colormap-popover__search';
+          searchInput.placeholder = 'Search colormaps (e.g. viridis, CET, cmasher)…';
+          popoverHeader.appendChild(searchInput);
+          popoverPanel.appendChild(popoverHeader);
+
+          const popoverList = document.createElement('div');
+          popoverList.className = 'helios-ui-colormap-popover__list';
+          popoverPanel.appendChild(popoverList);
+
           const portalRoot = ui?.container ?? document.body;
           portalRoot.appendChild(popover);
           ui._controlCleanups.add(() => popover.remove());
 
-          const updatePreview = (nameRaw) => {
-            const name = colormapInput.value || 'interpolateInferno';
-            const gradient = colormapToCssGradient(name, { samples: 32 });
+          const resolveDisplayEntry = (keyRaw) => {
+            const key = String(keyRaw ?? '').trim();
+            if (!key) return null;
+            return colormapCatalog.byKey.get(key) ?? null;
+          };
+
+          const formatDisplayValue = (keyRaw) => {
+            const key = String(keyRaw ?? '').trim();
+            if (!key) return '';
+            const entry = resolveDisplayEntry(key);
+            if (!entry) return key;
+            return `${entry.group}: ${entry.label}`;
+          };
+
+          const applySelectionToUi = (keyRaw) => {
+            const key = String(keyRaw ?? '').trim() || 'interpolateInferno';
+            colormapDisplay.value = formatDisplayValue(key);
+            colormapDisplay.dataset.colormapKey = key;
+            updatePreview(key);
+          };
+
+          const updatePreview = (keyRaw) => {
+            const key = String(keyRaw ?? '').trim() || 'interpolateInferno';
+            const gradient = colormapToCssGradient(key, { samples: 32, alpha: 1 });
             preview.style.background = gradient ?? 'linear-gradient(90deg, rgba(120,120,120,1), rgba(40,40,40,1))';
           };
 
+          const setSelectedColormap = (keyRaw) => {
+            const key = String(keyRaw ?? '').trim() || 'interpolateInferno';
+            state.pending = { ...state.pending, type: 'colormap', colormap: key };
+            applySelectionToUi(key);
+            setDirty(true);
+          };
+
+          // Initialize UI from current pending value (no dirty).
+          applySelectionToUi(state.pending.colormap ?? 'interpolateInferno');
+
+          let thumbObserver = null;
+          const ensureThumbObserver = () => {
+            if (thumbObserver) return thumbObserver;
+            if (typeof IntersectionObserver !== 'function') return null;
+            thumbObserver = new IntersectionObserver((entries) => {
+              for (const entry of entries) {
+                if (!entry.isIntersecting) continue;
+                const el = entry.target;
+                const key = el?.dataset?.colormapKey;
+                if (!key) continue;
+                if (el.dataset.colormapReady === '1') continue;
+                el.dataset.colormapReady = '1';
+                const gradient = colormapToCssGradient(key, { samples: 28, alpha: 1 });
+                el.style.background = gradient ?? 'linear-gradient(90deg, rgba(120,120,120,1), rgba(40,40,40,1))';
+                thumbObserver.unobserve(el);
+              }
+            }, { root: popoverPanel, rootMargin: '64px' });
+            ui._controlCleanups.add(() => {
+              thumbObserver?.disconnect?.();
+              thumbObserver = null;
+            });
+            return thumbObserver;
+          };
+
           const renderPopover = (queryRaw) => {
-            popoverPanel.replaceChildren();
+            popoverList.replaceChildren();
 
             const query = String(queryRaw ?? '').trim().toLowerCase();
             const tokens = query.split(/\s+/).filter(Boolean);
-            if (!tokens.length) {
-              const note = document.createElement('div');
-              note.className = 'helios-ui-colormap-picker__note';
-              note.textContent = 'Type to search colormaps (e.g. inferno, CET, cmasher).';
-              popoverPanel.appendChild(note);
-              return;
-            }
 
-            const matches = colormapCatalog.entries.filter((entry) => tokens.every((t) => entry.search.includes(t)));
+            const matches = tokens.length
+              ? colormapCatalog.entries.filter((entry) => tokens.every((t) => entry.search.includes(t)))
+              : colormapCatalog.entries;
+
             if (!matches.length) {
               const note = document.createElement('div');
               note.className = 'helios-ui-colormap-picker__note';
               note.textContent = 'No matches.';
-              popoverPanel.appendChild(note);
+              popoverList.appendChild(note);
               return;
             }
 
@@ -1585,9 +1657,11 @@ export class MappersPanel {
               list.sort((a, b) => a.label.localeCompare(b.label));
             }
 
-            const capPerGroup = 60;
-            const capTotal = 220;
+            const capPerGroup = tokens.length ? 60 : 5000;
+            const capTotal = tokens.length ? 220 : 5000;
             let total = 0;
+
+            const observer = ensureThumbObserver();
 
             for (const group of groupOrder) {
               const list = matchesByGroup.get(group);
@@ -1621,8 +1695,10 @@ export class MappersPanel {
 
                 const itemThumb = document.createElement('div');
                 itemThumb.className = 'helios-ui-colormap-thumb helios-ui-colormap-thumb--small';
-                const gradient = colormapToCssGradient(entry.key, { samples: 28 });
-                itemThumb.style.background = gradient ?? 'linear-gradient(90deg, rgba(120,120,120,1), rgba(40,40,40,1))';
+                itemThumb.dataset.colormapKey = entry.key;
+                itemThumb.dataset.colormapReady = '0';
+                itemThumb.style.background = 'linear-gradient(90deg, rgba(60,60,60,1), rgba(30,30,30,1))';
+                observer?.observe?.(itemThumb);
 
                 item.appendChild(itemTitle);
                 item.appendChild(itemThumb);
@@ -1630,10 +1706,7 @@ export class MappersPanel {
                 item.addEventListener('pointerdown', (e) => {
                   // Keep focus on the input while selecting.
                   e.preventDefault();
-                  colormapInput.value = entry.key;
-                  state.pending = { ...state.pending, type: 'colormap', colormap: entry.key || 'interpolateInferno' };
-                  setDirty(true);
-                  updatePreview();
+                  setSelectedColormap(entry.key);
                   popover.hidden = true;
                 });
 
@@ -1648,7 +1721,7 @@ export class MappersPanel {
               }
 
               section.appendChild(body);
-              popoverPanel.appendChild(section);
+              popoverList.appendChild(section);
               if (total >= capTotal) break;
             }
 
@@ -1656,7 +1729,7 @@ export class MappersPanel {
               const note = document.createElement('div');
               note.className = 'helios-ui-colormap-picker__note';
               note.textContent = `Showing ${capTotal} of ${matches.length}. Refine your search.`;
-              popoverPanel.appendChild(note);
+              popoverList.appendChild(note);
             }
           };
 
@@ -1666,11 +1739,11 @@ export class MappersPanel {
           const MIN_WIDTH = 240;
           const MAX_WIDTH = 420;
 
-          const positionPopover = () => {
-            if (popover.hidden) return;
-            const anchor = colormapInput.getBoundingClientRect();
-            const vw = window.innerWidth;
-            const vh = window.innerHeight;
+	          const positionPopover = () => {
+	            if (popover.hidden) return;
+	            const anchor = colormapDisplay.getBoundingClientRect();
+	            const vw = window.innerWidth;
+	            const vh = window.innerHeight;
 
             const spaceBelow = vh - anchor.bottom - MARGIN;
             const spaceAbove = anchor.top - MARGIN;
@@ -1738,20 +1811,9 @@ export class MappersPanel {
             popover.style.visibility = 'visible';
           };
 
-          const openPopoverIfNeeded = () => {
-            const query = (colormapInput.value ?? '').trim();
-            if (!query) {
-              popover.hidden = true;
-              return;
-            }
-            renderPopover(query);
-            popover.hidden = false;
-            positionPopover();
-          };
-
-          const closePopover = () => {
-            popover.hidden = true;
-          };
+	          const closePopover = () => {
+	            popover.hidden = true;
+	          };
 
           const onDocPointerDown = (e) => {
             const target = e.target;
@@ -1770,34 +1832,44 @@ export class MappersPanel {
           ui._controlCleanups.add(() => document.removeEventListener('scroll', onDocScroll, true));
           ui._controlCleanups.add(() => window.removeEventListener('resize', onWinResize));
 
-          colormapInput.addEventListener('focus', () => openPopoverIfNeeded());
-          colormapInput.addEventListener('input', () => {
-            updatePreview();
-            openPopoverIfNeeded();
+          const openPopover = ({ seedQuery } = {}) => {
+            popover.hidden = false;
+            positionPopover();
+            const query = seedQuery != null ? String(seedQuery) : '';
+            searchInput.value = query;
+            renderPopover(searchInput.value);
+            queueMicrotask(() => searchInput.focus());
+          };
+
+          colormapDisplay.addEventListener('click', () => openPopover());
+          colormapDisplay.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              openPopover();
+              return;
+            }
+            if (e.key && e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+              e.preventDefault();
+              openPopover({ seedQuery: e.key });
+            }
           });
-          colormapInput.addEventListener('keydown', (e) => {
+
+          searchInput.addEventListener('input', () => {
+            renderPopover(searchInput.value);
+            positionPopover();
+          });
+
+          searchInput.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
               closePopover();
-              colormapInput.blur();
+              colormapDisplay.focus();
             }
-            if (e.key === 'Enter') {
+            if (e.key === 'Enter' && (searchInput.value ?? '').trim()) {
               closePopover();
-              state.pending = {
-                ...state.pending,
-                type: 'colormap',
-                colormap: colormapInput.value || 'interpolateInferno',
-              };
-              setDirty(true);
+              // If the user typed an exact key, accept it.
+              const typed = String(searchInput.value ?? '').trim();
+              if (colormapCatalog.byKey.has(typed)) setSelectedColormap(typed);
             }
-          });
-          colormapInput.addEventListener('change', () => {
-            state.pending = {
-              ...state.pending,
-              type: 'colormap',
-              colormap: colormapInput.value || 'interpolateInferno',
-            };
-            setDirty(true);
-            updatePreview();
           });
 
           nameWrap.addEventListener('focusout', () => {
@@ -1807,9 +1879,7 @@ export class MappersPanel {
             });
           });
 
-          updatePreview();
-
-          nameWrap.appendChild(colormapInput);
+          nameWrap.appendChild(colormapDisplay);
           nameWrap.appendChild(preview);
 
           editorBody.appendChild(createAlignedRow({
