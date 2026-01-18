@@ -1807,7 +1807,7 @@ export class MappersPanel {
             popover.style.width = `${Math.min(desiredW, vw - 2 * MARGIN)}px`;
             popover.style.left = `${left}px`;
             popover.style.top = `${top}px`;
-            popoverPanel.style.maxHeight = `${Math.min(maxH, vh - top - MARGIN)}px`;
+            popoverList.style.maxHeight = `${Math.min(maxH, vh - top - MARGIN)}px`;
             popover.style.visibility = 'visible';
           };
 

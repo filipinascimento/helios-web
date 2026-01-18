@@ -514,7 +514,7 @@ export const defaultStylesText = `
   border-radius: 10px;
   padding: 0;
   background: color-mix(in srgb, var(--helios-ui-bg-solid) 92%, transparent);
-  overflow: auto;
+  overflow: hidden;
   box-shadow: var(--helios-ui-shadow);
 }
 
@@ -533,6 +533,7 @@ export const defaultStylesText = `
 
 .helios-ui-colormap-popover__list {
   padding: 4px;
+  overflow: auto;
 }
 
 .helios-ui-colormap-picker__item {
