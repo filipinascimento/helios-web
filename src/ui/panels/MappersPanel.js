@@ -1594,7 +1594,7 @@ export class MappersPanel {
           const updatePreview = (keyRaw) => {
             const key = String(keyRaw ?? '').trim() || 'interpolateInferno';
             const gradient = colormapToCssGradient(key, { samples: 32, alpha: 1 });
-            preview.style.background = gradient ?? 'linear-gradient(90deg, rgba(120,120,120,1), rgba(40,40,40,1))';
+            preview.style.backgroundImage = gradient ?? 'linear-gradient(90deg, rgba(120,120,120,1), rgba(40,40,40,1))';
           };
 
           const setSelectedColormap = (keyRaw) => {
@@ -1620,7 +1620,7 @@ export class MappersPanel {
                 if (el.dataset.colormapReady === '1') continue;
                 el.dataset.colormapReady = '1';
                 const gradient = colormapToCssGradient(key, { samples: 28, alpha: 1 });
-                el.style.background = gradient ?? 'linear-gradient(90deg, rgba(120,120,120,1), rgba(40,40,40,1))';
+                el.style.backgroundImage = gradient ?? 'linear-gradient(90deg, rgba(120,120,120,1), rgba(40,40,40,1))';
                 thumbObserver.unobserve(el);
               }
             }, { root: popoverPanel, rootMargin: '64px' });
@@ -1700,7 +1700,7 @@ export class MappersPanel {
                 itemThumb.className = 'helios-ui-colormap-thumb helios-ui-colormap-thumb--small';
                 itemThumb.dataset.colormapKey = entry.key;
                 itemThumb.dataset.colormapReady = '0';
-                itemThumb.style.background = 'linear-gradient(90deg, rgba(60,60,60,1), rgba(30,30,30,1))';
+                itemThumb.style.backgroundImage = 'linear-gradient(90deg, rgba(60,60,60,1), rgba(30,30,30,1))';
                 observer?.observe?.(itemThumb);
 
                 item.appendChild(itemTitle);
@@ -1741,6 +1741,7 @@ export class MappersPanel {
           const MIN_HEIGHT = 180;
           const MIN_WIDTH = 240;
           const MAX_WIDTH = 420;
+          const MAX_HEIGHT = 420;
 
 	          const positionPopover = () => {
 	            if (popover.hidden) return;
@@ -1756,14 +1757,11 @@ export class MappersPanel {
             popover.style.width = `${Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, anchor.width))}px`;
             popover.style.left = '0px';
             popover.style.top = '0px';
-            popover.style.maxHeight = '';
-
-            // Ensure we can measure the panel.
-            popover.style.visibility = 'hidden';
             popover.hidden = false;
-            const measured = popover.getBoundingClientRect();
+
+            const measured = popoverPanel.getBoundingClientRect();
             const desiredW = measured.width || Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, anchor.width));
-            const desiredH = measured.height || MIN_HEIGHT;
+            const desiredH = popoverPanel.scrollHeight || measured.height || MIN_HEIGHT;
 
             const canVertical = Math.max(spaceBelow, spaceAbove) >= MIN_HEIGHT;
             const preferBelow = spaceBelow >= spaceAbove;
@@ -1810,8 +1808,11 @@ export class MappersPanel {
             popover.style.width = `${Math.min(desiredW, vw - 2 * MARGIN)}px`;
             popover.style.left = `${left}px`;
             popover.style.top = `${top}px`;
-            popoverList.style.maxHeight = `${Math.min(maxH, vh - top - MARGIN)}px`;
-            popover.style.visibility = 'visible';
+
+            const bottomLimit = placement === 'top' ? Math.max(MARGIN, anchor.top - OFFSET) : vh - MARGIN;
+            const availableH = Math.max(120, bottomLimit - top);
+            popoverPanel.style.maxHeight = `${Math.min(MAX_HEIGHT, availableH)}px`;
+            popoverList.style.maxHeight = '';
           };
 
 	          const closePopover = () => {
@@ -1825,8 +1826,23 @@ export class MappersPanel {
             closePopover();
           };
 
-          const onDocScroll = () => positionPopover();
-          const onWinResize = () => positionPopover();
+          let pendingPosition = false;
+          const schedulePosition = () => {
+            if (pendingPosition) return;
+            pendingPosition = true;
+            requestAnimationFrame(() => {
+              pendingPosition = false;
+              positionPopover();
+            });
+          };
+
+          const onDocScroll = (e) => {
+            if (popover.hidden) return;
+            const target = e?.target;
+            if (target && popoverPanel.contains(target)) return; // allow internal list scroll
+            schedulePosition();
+          };
+          const onWinResize = () => schedulePosition();
 
           document.addEventListener('pointerdown', onDocPointerDown, true);
           document.addEventListener('scroll', onDocScroll, true);
@@ -1837,10 +1853,10 @@ export class MappersPanel {
 
           const openPopover = ({ seedQuery } = {}) => {
             popover.hidden = false;
-            positionPopover();
             const query = seedQuery != null ? String(seedQuery) : '';
             searchInput.value = query;
             renderPopover(searchInput.value);
+            positionPopover();
             queueMicrotask(() => searchInput.focus());
           };
 

@@ -479,9 +479,11 @@ export const defaultStylesText = `
   border: 1px solid var(--helios-ui-border);
   overflow: hidden;
   background-repeat: no-repeat;
+  background-position: 0 0;
   background-size: 100% 100%;
   background-clip: padding-box;
-  background: linear-gradient(90deg, rgba(120, 120, 120, 1), rgba(40, 40, 40, 1));
+  background-color: transparent;
+  background-image: linear-gradient(90deg, rgba(120, 120, 120, 1), rgba(40, 40, 40, 1));
 }
 
 .helios-ui-colormap-thumb--small {
@@ -523,6 +525,8 @@ export const defaultStylesText = `
   background: color-mix(in srgb, var(--helios-ui-bg-solid) 92%, transparent);
   overflow: hidden;
   box-shadow: var(--helios-ui-shadow);
+  display: flex;
+  flex-direction: column;
 }
 
 .helios-ui-colormap-popover__header {
@@ -541,6 +545,8 @@ export const defaultStylesText = `
 .helios-ui-colormap-popover__list {
   padding: 0;
   overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .helios-ui-colormap-picker__item {
