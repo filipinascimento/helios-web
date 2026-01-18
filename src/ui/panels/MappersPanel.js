@@ -1,5 +1,6 @@
 import { PanelStack } from './PanelStack.js';
 import { createAlignedRowEl } from '../controls/createAlignedRowEl.js';
+import { createTooltipManager } from '../controls/createTooltipManager.js';
 import { SuggestedSliderControls } from '../controls/SuggestedSliderControls.js';
 import { TwoHandleRange } from '../controls/TwoHandleRange.js';
 import { colormaps } from '../../colors/colormaps.js';
@@ -47,6 +48,16 @@ export class MappersPanel {
     const helios = this.helios;
     const network = helios?.network ?? null;
     const options = this.options ?? {};
+
+    const tooltips = createTooltipManager();
+    ui._controlCleanups.add(() => tooltips.destroy());
+
+    const createAlignedRow = ({ title, hint, controls }) => createAlignedRowEl({
+      title,
+      hint,
+      controls,
+      attachTooltip: tooltips.attachTooltip,
+    });
 
     const CHANNEL_LABELS = {
       color: 'Color',
@@ -656,7 +667,11 @@ export class MappersPanel {
           setPendingType(next);
         });
 
-        editorBody.appendChild(createAlignedRowEl({ title: 'Type', controls: typeSelect }).row);
+        editorBody.appendChild(createAlignedRow({
+          title: 'Type',
+          hint: 'Select how this channel is driven (constant, attribute passthrough, scale, colormap, layout).',
+          controls: typeSelect,
+        }).row);
 
         const pendingTypeKey = typeSelect.value;
         const pendingType = pendingTypeKey.startsWith('custom:') ? 'custom' : pendingTypeKey;
@@ -684,13 +699,21 @@ export class MappersPanel {
           descEl.style.whiteSpace = 'pre-wrap';
           descEl.style.color = 'var(--helios-ui-muted)';
           descEl.textContent = description || '—';
-          editorBody.appendChild(createAlignedRowEl({ title: 'Description', controls: descEl }).row);
+          editorBody.appendChild(createAlignedRow({
+            title: 'Description',
+            hint: 'Optional: describes what this preset does.',
+            controls: descEl,
+          }).row);
 
           const srcEl = document.createElement('div');
           srcEl.style.whiteSpace = 'pre-wrap';
           srcEl.style.color = 'var(--helios-ui-muted)';
           srcEl.textContent = source || '—';
-          editorBody.appendChild(createAlignedRowEl({ title: 'Source', controls: srcEl }).row);
+          editorBody.appendChild(createAlignedRow({
+            title: 'Source',
+            hint: 'Optional: where this preset came from (for your own reference).',
+            controls: srcEl,
+          }).row);
         }
 
         if (pendingType === 'passthrough') {
@@ -715,7 +738,11 @@ export class MappersPanel {
             state.pending = { ...state.pending, type: 'passthrough', attributes: attrSelect.value || undefined };
             setDirty(true);
           });
-          editorBody.appendChild(createAlignedRowEl({ title: 'Attribute', controls: attrSelect }).row);
+          editorBody.appendChild(createAlignedRow({
+            title: 'Attribute',
+            hint: 'Pick the attribute used as input for this channel.',
+            controls: attrSelect,
+          }).row);
         }
 
         if (pendingType === 'nodeAttribute') {
@@ -752,7 +779,11 @@ export class MappersPanel {
             };
             setDirty(true);
           });
-          editorBody.appendChild(createAlignedRowEl({ title: 'From/To', controls: attrSelect }).row);
+          editorBody.appendChild(createAlignedRow({
+            title: 'From/To',
+            hint: 'Pick the edge input (edge attribute or a derived @node.* value).',
+            controls: attrSelect,
+          }).row);
         }
 
         if (pendingType === 'constant' && isScalar) {
@@ -883,7 +914,11 @@ export class MappersPanel {
             wrap.appendChild(controls.element);
           }
 
-          editorBody.appendChild(createAlignedRowEl({ title: 'Value', controls: wrap }).row);
+          editorBody.appendChild(createAlignedRow({
+            title: 'Value',
+            hint: 'Use a fixed value for every item (node/edge).',
+            controls: wrap,
+          }).row);
         }
 
         if (pendingType === 'constant' && isPosition) {
@@ -937,7 +972,11 @@ export class MappersPanel {
           wrap.appendChild(xInput);
           wrap.appendChild(yInput);
           wrap.appendChild(zInput);
-          editorBody.appendChild(createAlignedRowEl({ title: 'Value', controls: wrap }).row);
+          editorBody.appendChild(createAlignedRow({
+            title: 'Value',
+            hint: 'Use a fixed value for every item (node/edge).',
+            controls: wrap,
+          }).row);
         }
 
         if (pendingType === 'constant' && isColor) {
@@ -1083,7 +1122,11 @@ export class MappersPanel {
                 state.pending = { ...state.pending, type: 'constant', value: { ...(state.pending.value ?? {}), target: v } };
               },
             }));
-            editorBody.appendChild(createAlignedRowEl({ title: 'Color', controls: wrap }).row);
+            editorBody.appendChild(createAlignedRow({
+              title: 'Color',
+              hint: 'Constant color applied to all items.',
+              controls: wrap,
+            }).row);
           } else {
             if (!(typeof state.pending.value === 'string' && state.pending.value.length > 0)) {
               state.pending = { ...state.pending, type: 'constant', value: seedSingle() };
@@ -1095,7 +1138,11 @@ export class MappersPanel {
                 state.pending = { ...state.pending, type: 'constant', value: v };
               },
             }));
-            editorBody.appendChild(createAlignedRowEl({ title: 'Color', controls: wrap }).row);
+            editorBody.appendChild(createAlignedRow({
+              title: 'Color',
+              hint: 'Constant color applied to all items.',
+              controls: wrap,
+            }).row);
           }
         }
 
@@ -1128,7 +1175,11 @@ export class MappersPanel {
             setDirty(true);
             renderEditor();
           });
-          editorBody.appendChild(createAlignedRowEl({ title: 'Attribute', controls: attrSelect }).row);
+          editorBody.appendChild(createAlignedRow({
+            title: 'Attribute',
+            hint: 'Pick the attribute to read values from.',
+            controls: attrSelect,
+          }).row);
 
           const transformWrap = document.createElement('div');
           transformWrap.style.display = 'flex';
@@ -1180,7 +1231,11 @@ export class MappersPanel {
 
           transformWrap.appendChild(transformSelect);
           transformWrap.appendChild(powerInput);
-          editorBody.appendChild(createAlignedRowEl({ title: 'Transform', controls: transformWrap }).row);
+          editorBody.appendChild(createAlignedRow({
+            title: 'Transform',
+            hint: 'Optional pre-transform applied before scaling.',
+            controls: transformWrap,
+          }).row);
 
           const domainWrap = document.createElement('div');
           domainWrap.style.display = 'grid';
@@ -1247,7 +1302,11 @@ export class MappersPanel {
           values.appendChild(d1);
           domainWrap.appendChild(slider.element);
           domainWrap.appendChild(values);
-          editorBody.appendChild(createAlignedRowEl({ title: 'Domain', controls: domainWrap }).row);
+          editorBody.appendChild(createAlignedRow({
+            title: 'Domain',
+            hint: 'Input range used for scaling (min/max).',
+            controls: domainWrap,
+          }).row);
 
           const rangeWrap = document.createElement('div');
           rangeWrap.style.display = 'grid';
@@ -1310,7 +1369,11 @@ export class MappersPanel {
           registerControl(maxControls);
           rangeWrap.appendChild(maxControls.element);
 
-          editorBody.appendChild(createAlignedRowEl({ title: 'Range', controls: rangeWrap }).row);
+          editorBody.appendChild(createAlignedRow({
+            title: 'Range',
+            hint: 'Output range produced after scaling.',
+            controls: rangeWrap,
+          }).row);
         }
 
         if (pendingType === 'colormap') {
@@ -1338,7 +1401,11 @@ export class MappersPanel {
             setDirty(true);
             renderEditor();
           });
-          editorBody.appendChild(createAlignedRowEl({ title: 'Attribute', controls: attrSelect }).row);
+          editorBody.appendChild(createAlignedRow({
+            title: 'Attribute',
+            hint: 'Pick the attribute to map through a colormap.',
+            controls: attrSelect,
+          }).row);
 
           const transformWrap = document.createElement('div');
           transformWrap.style.display = 'flex';
@@ -1390,7 +1457,11 @@ export class MappersPanel {
 
           transformWrap.appendChild(transformSelect);
           transformWrap.appendChild(powerInput);
-          editorBody.appendChild(createAlignedRowEl({ title: 'Transform', controls: transformWrap }).row);
+          editorBody.appendChild(createAlignedRow({
+            title: 'Transform',
+            hint: 'Optional pre-transform applied before colormapping.',
+            controls: transformWrap,
+          }).row);
 
           const nameWrap = document.createElement('div');
           nameWrap.style.display = 'grid';
@@ -1417,7 +1488,11 @@ export class MappersPanel {
             state.pending = { ...state.pending, type: 'colormap', colormap: colormapInput.value || 'interpolateInferno' };
             setDirty(true);
           });
-          editorBody.appendChild(createAlignedRowEl({ title: 'Colormap', controls: nameWrap }).row);
+          editorBody.appendChild(createAlignedRow({
+            title: 'Colormap',
+            hint: 'Choose the named colormap/interpolator to use.',
+            controls: nameWrap,
+          }).row);
 
           const domainWrap = document.createElement('div');
           domainWrap.style.display = 'grid';
@@ -1484,7 +1559,11 @@ export class MappersPanel {
           values.appendChild(d1);
           domainWrap.appendChild(slider.element);
           domainWrap.appendChild(values);
-          editorBody.appendChild(createAlignedRowEl({ title: 'Domain', controls: domainWrap }).row);
+          editorBody.appendChild(createAlignedRow({
+            title: 'Domain',
+            hint: 'Input range used to map values into the colormap (min/max).',
+            controls: domainWrap,
+          }).row);
 
           const advanced = document.createElement('div');
           const clampWrap = document.createElement('label');
@@ -1522,8 +1601,16 @@ export class MappersPanel {
             setDirty(true);
           });
 
-          advanced.appendChild(createAlignedRowEl({ title: 'Clamp', controls: clampWrap }).row);
-          advanced.appendChild(createAlignedRowEl({ title: 'Alpha', controls: alphaControls.element }).row);
+          advanced.appendChild(createAlignedRow({
+            title: 'Clamp',
+            hint: 'Clamp values outside the domain to the nearest end of the colormap.',
+            controls: clampWrap,
+          }).row);
+          advanced.appendChild(createAlignedRow({
+            title: 'Alpha',
+            hint: 'Overall opacity multiplier applied after colormapping.',
+            controls: alphaControls.element,
+          }).row);
 
           const advancedStack = new PanelStack();
           advancedStack.add({ id: `${mode}-mapper-advanced`, title: 'Advanced', collapsed: true, content: advanced });
@@ -1622,6 +1709,7 @@ export class MappersPanel {
 
     const channelSelect = document.createElement('select');
     channelSelect.className = 'helios-ui-select helios-ui-select--compact';
+    tooltips.attachTooltip(channelSelect, 'Select which visual channel to edit.');
 
     const getActiveTab = () => (activeMode === 'edge' ? edgeTab : nodeTab);
 
@@ -1659,7 +1747,7 @@ export class MappersPanel {
         { id: 'nodes', title: 'Nodes', content: nodeTab.root },
         { id: 'edges', title: 'Edges', content: edgeTab.root },
       ],
+      variant: 'panel',
     });
   }
 }
-

@@ -5,10 +5,17 @@ function resolveContainer(element) {
   return div;
 }
 
+function resolveVariantClassName(variant) {
+  if (typeof variant !== 'string') return '';
+  const cleaned = variant.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '');
+  if (!cleaned) return '';
+  return ` helios-ui-tabs--${cleaned}`;
+}
+
 export class TabbedPanel {
   constructor(options = {}) {
     this.element = document.createElement('div');
-    this.element.className = 'helios-ui-tabs';
+    this.element.className = `helios-ui-tabs${resolveVariantClassName(options.variant)}`;
 
     this.bar = document.createElement('div');
     this.bar.className = 'helios-ui-tabs__bar';

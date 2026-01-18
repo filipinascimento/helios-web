@@ -782,6 +782,49 @@ export const defaultStylesText = `
   border-color: color-mix(in srgb, var(--helios-ui-accent) 55%, var(--helios-ui-border));
 }
 
+.helios-ui-panel__body > .helios-ui-tabs--panel {
+  margin: -6px;
+}
+
+.helios-ui-tabs--panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.helios-ui-tabs--panel .helios-ui-tabs__bar {
+  padding: 0 6px;
+  gap: 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--helios-ui-border) 75%, transparent);
+}
+
+.helios-ui-tabs--panel .helios-ui-tabs__bar-left {
+  gap: 0;
+}
+
+.helios-ui-tabs--panel .helios-ui-tab {
+  border: 0;
+  border-radius: 0;
+  padding: 9px 10px 7px;
+  background: transparent;
+  color: var(--helios-ui-muted);
+  border-bottom: 2px solid transparent;
+}
+
+.helios-ui-tabs--panel .helios-ui-tab:hover {
+  color: inherit;
+  background: color-mix(in srgb, var(--helios-ui-bg-solid) 82%, transparent);
+}
+
+.helios-ui-tabs--panel .helios-ui-tab[data-active="true"] {
+  border-bottom-color: color-mix(in srgb, var(--helios-ui-accent) 72%, var(--helios-ui-border));
+  color: inherit;
+}
+
+.helios-ui-tabs--panel .helios-ui-tabs__content {
+  padding: 6px;
+}
+
 .helios-ui-tabpanel { display: none; }
 .helios-ui-tabpanel[data-active="true"] { display: block; }
 

@@ -1,5 +1,5 @@
 import HeliosNetwork, { AttributeType } from 'helios-network';
-import { Helios } from '/src/index.js';
+import { Helios, HeliosUI } from '/src/index.js';
 
 function resolveRendererPreference(params) {
   const renderer = params.get('renderer');
@@ -33,6 +33,10 @@ function resolveNodeCount(params) {
 
 function resolvePickTestMode(params) {
   return params.get('pickTest') === '1';
+}
+
+function resolveMappersUi(params) {
+  return params.get('mappers') === '1';
 }
 
 function seedGridPositions(network, nodeCount, mode) {
@@ -99,6 +103,7 @@ export async function bootstrapDemoFixture() {
     const layoutType = resolveLayoutType(params);
     const nodeCount = resolveNodeCount(params);
     const pickTest = resolvePickTestMode(params);
+    const mappersUi = resolveMappersUi(params);
     const rendererPreference = resolveRendererPreference(params);
 
     const container = document.getElementById('app');
@@ -178,6 +183,12 @@ export async function bootstrapDemoFixture() {
     window.__helios = helios;
     await helios.ready;
 
+    if (mappersUi) {
+      const heliosUI = new HeliosUI({ helios, theme: 'dark', allowDrag: false });
+      heliosUI.createMappersPanel({ dock: 'top-left', position: { x: 8, y: 8 } });
+      window.__heliosUI = heliosUI;
+    }
+
     if (pickTest && helios.renderer?.camera) {
       helios.renderer.camera.setMode?.('2d');
       helios.renderer.camera.zoom = 2;
@@ -219,4 +230,3 @@ export async function bootstrapDemoFixture() {
     window.__heliosError = error?.stack ?? error?.message ?? String(error);
   }
 }
-
