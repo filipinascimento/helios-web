@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import HeliosNetwork, { AttributeType } from 'helios-network';
 import { VisualAttributes } from '../src/pipeline/VisualAttributes.js';
+import { Mapper } from '../src/pipeline/Mapper.js';
 import {
   NODE_POSITION_ATTRIBUTE,
   NODE_COLOR_ATTRIBUTE,
@@ -175,4 +176,56 @@ test('parses hex colors with alpha in toRgba', async () => {
   assert.ok(close(short[1], 1));
   assert.ok(close(short[2], 0));
   assert.ok(close(short[3], 0x88 / 255));
+});
+
+test('constant mappers update uniform config without bumping buffer versions', async () => {
+  const network = await HeliosNetwork.create({ directed: false, initialNodes: 0, initialEdges: 0 });
+  const nodes = network.addNodes(3);
+  network.addEdges([
+    { from: nodes[0], to: nodes[1] },
+    { from: nodes[1], to: nodes[2] },
+  ]);
+
+  const visuals = new VisualAttributes(network);
+
+  const nodeMapper = new Mapper({ mode: 'node', network });
+  nodeMapper.channel('size').constant(2.5).done();
+
+  const edgeMapper = new Mapper({ mode: 'edge', network });
+  edgeMapper.channel('width').constant(1.25).done();
+
+  const nodePos = network.getNodeAttributeBuffer(NODE_POSITION_ATTRIBUTE);
+  const nodeColor = network.getNodeAttributeBuffer(NODE_COLOR_ATTRIBUTE);
+  const nodeSize = network.getNodeAttributeBuffer(NODE_SIZE_ATTRIBUTE);
+  const edgeColor = network.getEdgeAttributeBuffer(EDGE_COLOR_ATTRIBUTE);
+  const edgeOpacity = network.getEdgeAttributeBuffer(EDGE_OPACITY_ATTRIBUTE);
+  const edgeWidth = network.getEdgeAttributeBuffer(EDGE_WIDTH_ATTRIBUTE);
+  const edgeEndpointsPos = network.getEdgeAttributeBuffer(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
+  const edgeEndpointsSize = network.getEdgeAttributeBuffer(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+
+  const before = {
+    nodePos: nodePos.version,
+    nodeColor: nodeColor.version,
+    nodeSize: nodeSize.version,
+    edgeColor: edgeColor.version,
+    edgeOpacity: edgeOpacity.version,
+    edgeWidth: edgeWidth.version,
+    edgeEndpointsPos: edgeEndpointsPos.version,
+    edgeEndpointsSize: edgeEndpointsSize.version,
+  };
+
+  visuals.applyMappers({ nodeMapper, edgeMapper });
+
+  assert.equal(network.__heliosVisualConfig?.node?.size?.mode, 'uniform');
+  assert.equal(network.__heliosVisualConfig?.edge?.width?.mode, 'uniform');
+
+  // Applying constant mappers should not touch/bump dense visual buffers.
+  assert.equal(nodePos.version, before.nodePos);
+  assert.equal(nodeColor.version, before.nodeColor);
+  assert.equal(nodeSize.version, before.nodeSize);
+  assert.equal(edgeColor.version, before.edgeColor);
+  assert.equal(edgeOpacity.version, before.edgeOpacity);
+  assert.equal(edgeWidth.version, before.edgeWidth);
+  assert.equal(edgeEndpointsPos.version, before.edgeEndpointsPos);
+  assert.equal(edgeEndpointsSize.version, before.edgeEndpointsSize);
 });

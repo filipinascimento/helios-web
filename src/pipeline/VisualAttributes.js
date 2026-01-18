@@ -238,6 +238,12 @@ export class VisualAttributes {
   applyNodeMapper(mapper, visualConfig) {
     if (!mapper?.channels?.size) return;
     const nodeIndices = this.network?.nodeIndices;
+    const hasChannel = (name) => Boolean(mapper?.channels?.has?.(name));
+    const hasColor = hasChannel('color');
+    const hasSize = hasChannel('size');
+    const hasOutline = hasChannel('outline');
+    const hasOutlineColor = hasChannel('outlineColor');
+    const hasPosition = hasChannel('position');
     const nodeChannels = [...mapper.channels.keys()];
     this.debug?.log('mapper', 'Applying node mapper', {
       nodes: nodeIndices?.length ?? 0,
@@ -254,12 +260,18 @@ export class VisualAttributes {
       const attributes = this.collectAttributeNames(mapper, 'node');
       const buffers = this.resolveNodeAttributeBuffers(attributes.node);
       const visuals = {
-        color: visualConfig?.node?.color?.mode === 'uniform' ? null : this.nodeColors,
-        size: visualConfig?.node?.size?.mode === 'uniform' ? null : this.nodeSizes,
-        outline: visualConfig?.node?.outline?.mode === 'uniform' ? null : this.nodeOutlineWidths,
-        outlineColor: visualConfig?.node?.outlineColor?.mode === 'uniform' ? null : this.nodeOutlineColors,
-        position: this.nodePositions,
+        color: (hasColor && visualConfig?.node?.color?.mode !== 'uniform') ? this.nodeColors : null,
+        size: (hasSize && visualConfig?.node?.size?.mode !== 'uniform') ? this.nodeSizes : null,
+        outline: (hasOutline && visualConfig?.node?.outline?.mode !== 'uniform') ? this.nodeOutlineWidths : null,
+        outlineColor: (hasOutlineColor && visualConfig?.node?.outlineColor?.mode !== 'uniform') ? this.nodeOutlineColors : null,
+        position: hasPosition ? this.nodePositions : null,
       };
+
+      // If all mapped outputs are uniforms (or channels are absent), avoid
+      // iterating items and bumping versions: only the config changed.
+      if (!visuals.color && !visuals.size && !visuals.outline && !visuals.outlineColor && !visuals.position) {
+        return;
+      }
       if (!nodeIndices?.length) return;
       for (let i = 0; i < nodeIndices.length; i += 1) {
         const nodeId = nodeIndices[i];
@@ -268,16 +280,18 @@ export class VisualAttributes {
         this.writeNodeVisuals(nodeId, mapped, visuals);
       }
 
-      const bumpNode = [NODE_POSITION_ATTRIBUTE];
+      const bumpNode = [];
+      if (visuals.position) bumpNode.push(NODE_POSITION_ATTRIBUTE);
       if (visuals.color) bumpNode.push(NODE_COLOR_ATTRIBUTE);
       if (visuals.size) bumpNode.push(NODE_SIZE_ATTRIBUTE);
       if (visuals.outline) bumpNode.push(NODE_OUTLINE_WIDTH_ATTRIBUTE);
       if (visuals.outlineColor) bumpNode.push(NODE_OUTLINE_COLOR_ATTRIBUTE);
-      this.bumpNodeAttributes(...bumpNode);
+      if (bumpNode.length) this.bumpNodeAttributes(...bumpNode);
 
-      const bumpEdge = [EDGE_ENDPOINTS_POSITION_ATTRIBUTE];
+      const bumpEdge = [];
+      if (visuals.position) bumpEdge.push(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
       if (visuals.size) bumpEdge.push(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
-      this.bumpEdgeAttributes(...bumpEdge);
+      if (bumpEdge.length) this.bumpEdgeAttributes(...bumpEdge);
     });
     for (const channel of nodeChannels) {
       this.debug?.log('mapper', 'Applying node channel finish', {
@@ -291,6 +305,11 @@ export class VisualAttributes {
   applyEdgeMapper(mapper, visualConfig) {
     if (!mapper?.channels?.size) return;
     const edgeIndices = this.network?.edgeIndices;
+    const hasChannel = (name) => Boolean(mapper?.channels?.has?.(name));
+    const hasColor = hasChannel('color');
+    const hasOpacity = hasChannel('opacity');
+    const hasWidth = hasChannel('width');
+    const hasEndpointSize = hasChannel('endpointSize');
     const edgeChannels = [...mapper.channels.keys()];
     this.debug?.log('mapper', 'Applying edge mapper', {
       edges: edgeIndices?.length ?? 0,
@@ -312,13 +331,19 @@ export class VisualAttributes {
       const skipOpacity = nodeToEdgeRegistrations.has(EDGE_OPACITY_ATTRIBUTE);
       const skipEndpointSize = nodeToEdgeRegistrations.has(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
       const visuals = {
-        color: (skipColor || visualConfig?.edge?.color?.mode === 'uniform') ? null : this.edgeColors,
-        opacity: (skipOpacity || visualConfig?.edge?.opacity?.mode === 'uniform') ? null : this.edgeOpacities,
-        width: visualConfig?.edge?.width?.mode === 'uniform' ? null : this.edgeWidths,
-        endpointSize: (skipEndpointSize || visualConfig?.edge?.endpointSize?.mode === 'uniform')
-          ? null
-          : this.network.getEdgeAttributeBuffer(EDGE_ENDPOINTS_SIZE_ATTRIBUTE).view,
+        color: (hasColor && !skipColor && visualConfig?.edge?.color?.mode !== 'uniform') ? this.edgeColors : null,
+        opacity: (hasOpacity && !skipOpacity && visualConfig?.edge?.opacity?.mode !== 'uniform') ? this.edgeOpacities : null,
+        width: (hasWidth && visualConfig?.edge?.width?.mode !== 'uniform') ? this.edgeWidths : null,
+        endpointSize: (hasEndpointSize && !skipEndpointSize && visualConfig?.edge?.endpointSize?.mode !== 'uniform')
+          ? this.network.getEdgeAttributeBuffer(EDGE_ENDPOINTS_SIZE_ATTRIBUTE).view
+          : null,
       };
+
+      // If all mapped outputs are uniforms (or channels are absent), avoid
+      // iterating items and bumping versions: only the config changed.
+      if (!visuals.color && !visuals.opacity && !visuals.width && !visuals.endpointSize) {
+        return;
+      }
       const edgesView = this.network?.edgesView;
       if (!edgeIndices?.length) return;
       for (let i = 0; i < edgeIndices.length; i += 1) {
