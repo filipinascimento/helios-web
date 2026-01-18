@@ -91,7 +91,7 @@ export class HeliosPanelElement extends BaseHTMLElement {
     const dock = this.getAttribute('dock') ?? this.dataset.dock ?? 'free';
     this.dataset.dock = dock;
 
-    const collapsed = this.hasAttribute('collapsed') || this.dataset.collapsed === 'true';
+    const collapsed = this.hasAttribute('collapsed');
     this.dataset.collapsed = collapsed ? 'true' : 'false';
 
     if (this.collapseButtonEl) {

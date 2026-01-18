@@ -355,7 +355,7 @@ export const defaultStylesText = `
 }
 
 .helios-ui-number {
-  width: 78px;
+  width: 72px;
   padding: 4px 6px;
   border-radius: 10px;
   border: 1px solid var(--helios-ui-border);
@@ -430,7 +430,7 @@ export const defaultStylesText = `
 }
 
 .helios-ui-row--slider .helios-ui-number {
-  width: 74px;
+  width: 68px;
   padding: 3px 6px;
   border-radius: 9px;
   max-width: 100%;
