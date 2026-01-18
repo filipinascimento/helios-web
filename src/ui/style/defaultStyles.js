@@ -746,7 +746,25 @@ export const defaultStylesText = `
 .helios-ui-tabs__bar {
   display: flex;
   gap: 6px;
+  justify-content: space-between;
+  align-items: center;
+  min-width: 0;
+}
+
+.helios-ui-tabs__bar-left {
+  display: flex;
+  gap: 6px;
   flex-wrap: wrap;
+  align-items: center;
+  min-width: 0;
+}
+
+.helios-ui-tabs__bar-right {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .helios-ui-tab {

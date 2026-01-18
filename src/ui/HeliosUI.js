@@ -401,7 +401,12 @@ export class HeliosUI {
   }
 
   createTabbedPanel(options = {}) {
-    const tabs = new TabbedPanel({ tabs: options.tabs ?? [], activeId: options.activeId });
+    const tabs = new TabbedPanel({
+      tabs: options.tabs ?? [],
+      activeId: options.activeId,
+      barRight: options.barRight,
+      onActiveChanged: options.onActiveChanged,
+    });
     this._controlCleanups.add(() => tabs.destroy());
     return this.createPanel({
       id: options.id,
@@ -1492,8 +1497,30 @@ export class HeliosUI {
     const helios = this.helios;
     const network = helios?.network ?? null;
 
+    const CHANNEL_LABELS = {
+      color: 'Color',
+      size: 'Size',
+      outline: 'Outline Width',
+      outlineColor: 'Outline Color',
+      position: 'Position',
+      width: 'Width',
+      opacity: 'Opacity',
+      endpointPosition: 'Endpoint Position',
+      endpointSize: 'Endpoint Size',
+    };
+
+    const MAPPER_TYPE_LABELS = {
+      layout: 'Layout',
+      constant: 'Constant',
+      passthrough: 'Passthrough',
+      nodeAttribute: 'From Nodes',
+      linear: 'Scale',
+      colormap: 'Colormap',
+    };
+
     const nodeChannels = ['color', 'size', 'outline', 'outlineColor', 'position'];
-    const edgeChannels = ['color', 'width', 'opacity', 'endpointPosition', 'endpointSize'];
+    // Edge endpoint channels are node-derived and intentionally not exposed in the UI.
+    const edgeChannels = ['color', 'width', 'opacity'];
 
     const colormapNames = collectColormapSuggestionNames();
 
@@ -1544,11 +1571,26 @@ export class HeliosUI {
     // Domains shown in the UI are always in the original attribute scale.
     // When a transform is selected, the runtime will transform the domain internally.
 
+    const isEphemeralCustomPreset = (config) => {
+      if (!config) return false;
+      if (isEditorTransferableConfig(config)) return false;
+      const meta = config.meta && typeof config.meta === 'object' ? config.meta : null;
+      if (!meta) return true;
+      const keys = Object.keys(meta);
+      if (!keys.length) return true;
+      const hasLabel =
+        (typeof meta.name === 'string' && meta.name.trim()) ||
+        (typeof meta.source === 'string' && meta.source.trim()) ||
+        (typeof meta.description === 'string' && meta.description.trim());
+      return !hasLabel;
+    };
+
     const registerCustomPreset = (mode, channel, config) => {
       if (!config) return null;
       const meta = config.meta && typeof config.meta === 'object' ? config.meta : {};
       const preferredName = typeof meta.name === 'string' ? meta.name.trim() : '';
       const baseId = preferredName || `custom-${customPresetCounter++}`;
+      const ephemeral = isEphemeralCustomPreset(config);
 
       const byId = getCustomPresetMap(mode, channel);
       let id = baseId;
@@ -1563,9 +1605,17 @@ export class HeliosUI {
       byId.set(id, {
         id,
         label: preferredName || 'custom',
+        ephemeral,
         config: shallowCloneChannelConfig(config) ?? config,
       });
       return id;
+    };
+
+    const pruneEphemeralCustomPresets = (mode, channel) => {
+      const byId = getCustomPresetMap(mode, channel);
+      for (const [id, preset] of byId.entries()) {
+        if (preset?.ephemeral) byId.delete(id);
+      }
     };
 
     const isHexColorString = (value) => {
@@ -1747,6 +1797,18 @@ export class HeliosUI {
       return [0, 1];
     };
 
+    const suggestRangeForChannel = (mode, channel) => {
+      if (mode === 'node') {
+        if (channel === 'size') return [1, 20];
+        if (channel === 'outline') return [0, 6];
+      }
+      if (mode === 'edge') {
+        if (channel === 'width') return [0.5, 6];
+        if (channel === 'opacity') return [0, 1];
+      }
+      return [0, 1];
+    };
+
     const suggestStepForRange = (min, max) => {
       const span = Math.abs(Number(max) - Number(min));
       if (!Number.isFinite(span) || span <= 0) return 0.01;
@@ -1754,6 +1816,78 @@ export class HeliosUI {
       if (span <= 10) return 0.01;
       if (span <= 100) return 0.1;
       return 1;
+    };
+
+    const updateSliderVisual = (slider) => {
+      if (!slider) return;
+      const min = Number(slider.min);
+      const max = Number(slider.max);
+      const value = Number(slider.value);
+      if (!Number.isFinite(min) || !Number.isFinite(max) || !Number.isFinite(value) || min === max) return;
+      const pct = ((value - min) / (max - min)) * 100;
+      slider.style.setProperty('--pct', String(Math.max(0, Math.min(100, pct))));
+    };
+
+    const createSuggestedSliderControls = ({
+      value,
+      suggested,
+      step,
+      inputMin = null,
+      inputMax = null,
+      onCommit,
+    }) => {
+      const controls = document.createElement('div');
+      controls.className = 'helios-ui-slider-controls';
+
+      const slider = document.createElement('input');
+      slider.type = 'range';
+      slider.className = 'helios-ui-slider';
+      slider.min = String(suggested[0]);
+      slider.max = String(suggested[1]);
+      slider.step = String(step);
+
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.className = 'helios-ui-number';
+      input.step = String(step);
+      if (inputMin != null) input.min = String(inputMin);
+      else input.removeAttribute('min');
+      if (inputMax != null) input.max = String(inputMax);
+      else input.removeAttribute('max');
+
+      const set = (next) => {
+        const n = Number(next);
+        if (!Number.isFinite(n)) return;
+        const min = Number(slider.min);
+        const max = Number(slider.max);
+        const clamped = Math.max(min, Math.min(max, n));
+        slider.value = String(clamped);
+        input.value = String(n);
+        updateSliderVisual(slider);
+      };
+
+      set(value);
+
+      slider.addEventListener('input', () => {
+        input.value = String(slider.value);
+        updateSliderVisual(slider);
+        onCommit?.(slider.value);
+      });
+      input.addEventListener('change', () => {
+        set(input.value);
+        onCommit?.(input.value);
+      });
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          set(input.value);
+          onCommit?.(input.value);
+          input.blur();
+        }
+      });
+
+      controls.appendChild(slider);
+      controls.appendChild(input);
+      return { element: controls, slider, input, set };
     };
 
     const createTwoHandleRange = ({ min, max, value, step, onChange }) => {
@@ -1935,24 +2069,7 @@ export class HeliosUI {
       };
 
       const channels = mode === 'edge' ? edgeChannels : nodeChannels;
-
-      const channelSelect = document.createElement('select');
-      channelSelect.className = 'helios-ui-select';
-      for (const name of channels) {
-        const opt = document.createElement('option');
-        opt.value = name;
-        opt.textContent = name;
-        channelSelect.appendChild(opt);
-      }
       if (!channels.includes(state.channel)) state.channel = channels[0];
-      channelSelect.value = state.channel;
-
-      const channelRowControls = document.createElement('div');
-      channelRowControls.style.display = 'grid';
-      channelRowControls.style.gap = '6px';
-      channelRowControls.appendChild(channelSelect);
-
-      root.appendChild(createAlignedRowEl({ title: 'Channel', controls: channelRowControls }).row);
 
       const editorStack = new PanelStack();
       const editorBody = document.createElement('div');
@@ -2010,6 +2127,25 @@ export class HeliosUI {
             return isArrayLike && v.length === 3 && Array.from(v).every((x) => Number.isFinite(x));
           }
           if (isArrayLike) return v.length === 3 || v.length === 4;
+          if (v && typeof v === 'object') {
+            if (mode === 'edge') {
+              if (state.channel === 'color') {
+                const src = v.source ?? v.start ?? null;
+                const dst = v.target ?? v.end ?? null;
+                if (src != null && !isHexColorString(String(src))) return false;
+                if (dst != null && !isHexColorString(String(dst))) return false;
+                return src != null || dst != null;
+              }
+              if (state.channel === 'width' || state.channel === 'opacity' || state.channel === 'endpointSize') {
+                const src = Number(v.source ?? v.start);
+                const dst = Number(v.target ?? v.end);
+                const srcOk = Number.isFinite(src);
+                const dstOk = Number.isFinite(dst);
+                return srcOk || dstOk;
+              }
+            }
+            return false;
+          }
           if (typeof v === 'number') return Number.isFinite(v);
           if (typeof v === 'string') return isHexColorString(v);
           return false;
@@ -2115,7 +2251,7 @@ export class HeliosUI {
         for (const t of allowedTypes) {
           const opt = document.createElement('option');
           opt.value = t;
-          opt.textContent = t;
+          opt.textContent = MAPPER_TYPE_LABELS[t] ?? t;
           typeSelect.appendChild(opt);
         }
 
@@ -2123,7 +2259,7 @@ export class HeliosUI {
           const opt = document.createElement('option');
           opt.value = `custom:${preset.id}`;
           const label = typeof preset.label === 'string' ? preset.label.trim() : '';
-          opt.textContent = label && label.toLowerCase() !== 'custom' ? `custom: ${label}` : 'custom';
+          opt.textContent = label && label.toLowerCase() !== 'custom' ? `Custom: ${label}` : 'Custom';
           typeSelect.appendChild(opt);
         }
 
@@ -2165,7 +2301,8 @@ export class HeliosUI {
             base.domain = Array.isArray(prev.domain)
               ? prev.domain
               : (Array.isArray(live?.domain) ? live.domain : suggestDomainForAttribute(mode, attr));
-            base.range = Array.isArray(prev.range) ? prev.range : (Array.isArray(live?.range) ? live.range : [0, 1]);
+            const suggested = suggestRangeForChannel(mode, state.channel);
+            base.range = Array.isArray(prev.range) ? prev.range : (Array.isArray(live?.range) ? live.range : suggested);
           }
           if (nextType === 'colormap') {
             base.colormap = prev.colormap ?? live?.colormap ?? 'interpolateInferno';
@@ -2195,6 +2332,7 @@ export class HeliosUI {
             }
             return;
           }
+          pruneEphemeralCustomPresets(mode, state.channel);
           setPendingType(next);
         });
 
@@ -2299,22 +2437,134 @@ export class HeliosUI {
         }
 
         if (pendingType === 'constant' && isScalar) {
-          const input = document.createElement('input');
-          input.type = 'number';
-          input.className = 'helios-ui-number';
-          const fallbackValue = Number.isFinite(live?.value) ? live.value : 1;
-          const seeded = Number.isFinite(state.pending.value) ? state.pending.value : fallbackValue;
-          if (!Number.isFinite(state.pending.value)) {
-            state.pending = { ...state.pending, type: 'constant', value: seeded };
+          const wrap = document.createElement('div');
+          wrap.style.display = 'grid';
+          wrap.style.gap = '6px';
+          wrap.style.width = '100%';
+
+          const minAllowed = (() => {
+            if (state.channel === 'opacity') return 0;
+            if (state.channel === 'size' || state.channel === 'outline' || state.channel === 'width' || state.channel === 'endpointSize') return 0;
+            return null;
+          })();
+          const maxAllowed = state.channel === 'opacity' ? 1 : null;
+
+          const [suggestMin, suggestMax] = suggestRangeForChannel(mode, state.channel);
+          const step = suggestStepForRange(suggestMin, suggestMax);
+
+          const isEdgeSplitCapable = mode === 'edge' && (state.channel === 'width' || state.channel === 'opacity' || state.channel === 'endpointSize');
+          const pendingValue = state.pending.value ?? live?.value;
+          const isSplit =
+            isEdgeSplitCapable &&
+            pendingValue &&
+            typeof pendingValue === 'object' &&
+            ('source' in pendingValue || 'target' in pendingValue);
+
+          if (isEdgeSplitCapable) {
+            const toggleWrap = document.createElement('label');
+            toggleWrap.style.display = 'inline-flex';
+            toggleWrap.style.alignItems = 'center';
+            toggleWrap.style.gap = '6px';
+            toggleWrap.style.justifyContent = 'flex-end';
+
+            const toggle = document.createElement('input');
+            toggle.type = 'checkbox';
+            toggle.checked = Boolean(isSplit);
+            toggle.style.margin = '0';
+
+            const toggleText = document.createElement('span');
+            toggleText.textContent = 'Source/Target';
+            toggleText.style.color = 'var(--helios-ui-muted)';
+
+            toggleWrap.appendChild(toggle);
+            toggleWrap.appendChild(toggleText);
+            wrap.appendChild(toggleWrap);
+
+            toggle.addEventListener('change', () => {
+              const raw = state.pending.value ?? live?.value;
+              const seed = Number.isFinite(Number(raw)) ? Number(raw) : 1;
+              if (toggle.checked) {
+                state.pending = { ...state.pending, type: 'constant', value: { source: seed, target: seed } };
+              } else {
+                const src = raw && typeof raw === 'object' ? Number(raw.source ?? raw.start) : seed;
+                const next = Number.isFinite(src) ? src : seed;
+                state.pending = { ...state.pending, type: 'constant', value: next };
+              }
+              setDirty(true);
+              renderEditor();
+            });
           }
-          input.value = String(seeded);
-          input.addEventListener('change', () => {
-            const v = clampNumber(input.value);
-            if (v == null) return;
-            state.pending = { ...state.pending, type: 'constant', value: v };
+
+          const commit = (value, endpoint) => {
+            const n = clampNumber(value, { min: minAllowed, max: maxAllowed });
+            if (n == null) return;
+
+            if (isSplit) {
+              const current = state.pending.value && typeof state.pending.value === 'object' ? state.pending.value : {};
+              const next = endpoint === 'target'
+                ? { ...current, target: n }
+                : { ...current, source: n };
+              state.pending = { ...state.pending, type: 'constant', value: next };
+            } else {
+              state.pending = { ...state.pending, type: 'constant', value: n };
+            }
             setDirty(true);
-          });
-          editorBody.appendChild(createAlignedRowEl({ title: 'Value', controls: input }).row);
+          };
+
+          if (isSplit) {
+            const labelStyle = (el) => {
+              el.style.fontSize = '12px';
+              el.style.color = 'var(--helios-ui-muted)';
+            };
+
+            const sourceLabel = document.createElement('div');
+            sourceLabel.textContent = 'Source';
+            labelStyle(sourceLabel);
+            wrap.appendChild(sourceLabel);
+
+            const srcSeed = Number(pendingValue?.source ?? pendingValue?.start ?? 1);
+            const srcValue = Number.isFinite(srcSeed) ? srcSeed : 1;
+            wrap.appendChild(createSuggestedSliderControls({
+              value: srcValue,
+              suggested: [suggestMin, suggestMax],
+              step,
+              inputMin: minAllowed,
+              inputMax: maxAllowed,
+              onCommit: (v) => commit(v, 'source'),
+            }).element);
+
+            const targetLabel = document.createElement('div');
+            targetLabel.textContent = 'Target';
+            labelStyle(targetLabel);
+            wrap.appendChild(targetLabel);
+
+            const dstSeed = Number(pendingValue?.target ?? pendingValue?.end ?? srcValue);
+            const dstValue = Number.isFinite(dstSeed) ? dstSeed : srcValue;
+            wrap.appendChild(createSuggestedSliderControls({
+              value: dstValue,
+              suggested: [suggestMin, suggestMax],
+              step,
+              inputMin: minAllowed,
+              inputMax: maxAllowed,
+              onCommit: (v) => commit(v, 'target'),
+            }).element);
+          } else {
+            const fallbackValue = Number.isFinite(Number(live?.value)) ? Number(live.value) : 1;
+            const seeded = Number.isFinite(Number(state.pending.value)) ? Number(state.pending.value) : fallbackValue;
+            if (!Number.isFinite(Number(state.pending.value))) {
+              state.pending = { ...state.pending, type: 'constant', value: seeded };
+            }
+            wrap.appendChild(createSuggestedSliderControls({
+              value: seeded,
+              suggested: [suggestMin, suggestMax],
+              step,
+              inputMin: minAllowed,
+              inputMax: maxAllowed,
+              onCommit: (v) => commit(v),
+            }).element);
+          }
+
+          editorBody.appendChild(createAlignedRowEl({ title: 'Value', controls: wrap }).row);
         }
 
         if (pendingType === 'constant' && isPosition) {
@@ -2373,71 +2623,161 @@ export class HeliosUI {
 
         if (pendingType === 'constant' && isColor) {
           const wrap = document.createElement('div');
-          wrap.style.display = 'flex';
-          wrap.style.gap = '8px';
-          wrap.style.alignItems = 'center';
+          wrap.style.display = 'grid';
+          wrap.style.gap = '6px';
+          wrap.style.width = '100%';
 
-          const swatchWrap = document.createElement('div');
-          swatchWrap.className = 'helios-ui-color-swatch';
+          const isEdgeSplitCapable = mode === 'edge' && state.channel === 'color';
+          const pendingValue = state.pending.value ?? live?.value;
+          const isSplit =
+            isEdgeSplitCapable &&
+            pendingValue &&
+            typeof pendingValue === 'object' &&
+            ('source' in pendingValue || 'target' in pendingValue);
 
-          const swatch = document.createElement('div');
-          swatch.className = 'helios-ui-color-swatch__swatch';
+          const seedSingle = () => {
+            const seed = typeof pendingValue === 'string'
+              ? pendingValue
+              : (typeof live?.value === 'string' ? live.value : '#ffffff');
+            return typeof seed === 'string' && seed.length ? seed : '#ffffff';
+          };
 
-          const colorInput = document.createElement('input');
-          colorInput.type = 'color';
-          colorInput.className = 'helios-ui-color-swatch__input';
-          colorInput.setAttribute('aria-label', 'Color');
+          if (isEdgeSplitCapable) {
+            const toggleWrap = document.createElement('label');
+            toggleWrap.style.display = 'inline-flex';
+            toggleWrap.style.alignItems = 'center';
+            toggleWrap.style.gap = '6px';
+            toggleWrap.style.justifyContent = 'flex-end';
 
-          const alphaInput = document.createElement('input');
-          alphaInput.type = 'number';
-          alphaInput.className = 'helios-ui-number';
-          alphaInput.min = '0';
-          alphaInput.max = '1';
-          alphaInput.step = '0.01';
-          alphaInput.style.maxWidth = '88px';
-          alphaInput.title = 'Alpha';
+            const toggle = document.createElement('input');
+            toggle.type = 'checkbox';
+            toggle.checked = Boolean(isSplit);
+            toggle.style.margin = '0';
 
-          const alphaLabel = document.createElement('span');
-          alphaLabel.textContent = 'Alpha';
-          alphaLabel.style.color = 'var(--helios-ui-muted)';
+            const toggleText = document.createElement('span');
+            toggleText.textContent = 'Source/Target';
+            toggleText.style.color = 'var(--helios-ui-muted)';
 
-          if (!(typeof state.pending.value === 'string' && state.pending.value.length > 0)) {
-            const seed = typeof live?.value === 'string' && live.value.length > 0 ? live.value : '#ffffff';
-            state.pending = { ...state.pending, type: 'constant', value: seed };
+            toggleWrap.appendChild(toggle);
+            toggleWrap.appendChild(toggleText);
+            wrap.appendChild(toggleWrap);
+
+            toggle.addEventListener('change', () => {
+              const seed = seedSingle();
+              if (toggle.checked) {
+                state.pending = { ...state.pending, type: 'constant', value: { source: seed, target: seed } };
+              } else {
+                const raw = state.pending.value ?? live?.value;
+                const next = raw && typeof raw === 'object' ? String(raw.source ?? raw.start ?? seed) : seed;
+                state.pending = { ...state.pending, type: 'constant', value: next };
+              }
+              setDirty(true);
+              renderEditor();
+            });
           }
 
-          const liveValue = state.pending.value ?? live?.value ?? '#ffffff';
-          const liveColor = typeof liveValue === 'string' ? liveValue : '#ffffff';
-          const raw = liveColor.startsWith('#') ? liveColor.slice(1) : liveColor;
-          const baseHex = raw.length >= 6 ? `#${raw.slice(0, 6)}` : '#ffffff';
-          const alphaHex = raw.length === 8 ? raw.slice(6, 8) : 'ff';
-          const alpha = Math.round(parseInt(alphaHex, 16) / 255 * 100) / 100;
+          const makeColorControls = ({ label, getValue, setValue }) => {
+            const row = document.createElement('div');
+            row.style.display = 'flex';
+            row.style.gap = '8px';
+            row.style.alignItems = 'center';
+            row.style.width = '100%';
 
-          colorInput.value = baseHex;
-          alphaInput.value = String(Number.isFinite(alpha) ? alpha : 1);
+            if (label) {
+              const labelEl = document.createElement('div');
+              labelEl.textContent = label;
+              labelEl.style.fontSize = '12px';
+              labelEl.style.color = 'var(--helios-ui-muted)';
+              labelEl.style.minWidth = '52px';
+              row.appendChild(labelEl);
+            }
 
-          const syncSwatch = () => {
+            const swatchWrap = document.createElement('div');
+            swatchWrap.className = 'helios-ui-color-swatch';
+
+            const swatch = document.createElement('div');
+            swatch.className = 'helios-ui-color-swatch__swatch';
+
+            const colorInput = document.createElement('input');
+            colorInput.type = 'color';
+            colorInput.className = 'helios-ui-color-swatch__input';
+            colorInput.setAttribute('aria-label', label ? `${label} color` : 'Color');
+
+            const alphaInput = document.createElement('input');
+            alphaInput.type = 'number';
+            alphaInput.className = 'helios-ui-number';
+            alphaInput.min = '0';
+            alphaInput.max = '1';
+            alphaInput.step = '0.01';
+            alphaInput.style.maxWidth = '88px';
+            alphaInput.title = 'Alpha';
+
+            const alphaLabel = document.createElement('span');
+            alphaLabel.textContent = 'Alpha';
+            alphaLabel.style.color = 'var(--helios-ui-muted)';
+
+            const rawValue = getValue();
+            const liveColor = typeof rawValue === 'string' ? rawValue : '#ffffff';
+            const raw = liveColor.startsWith('#') ? liveColor.slice(1) : liveColor;
+            const baseHex = raw.length >= 6 ? `#${raw.slice(0, 6)}` : '#ffffff';
+            const alphaHex = raw.length === 8 ? raw.slice(6, 8) : 'ff';
+            const alpha = Math.round(parseInt(alphaHex, 16) / 255 * 100) / 100;
+
+            colorInput.value = baseHex;
+            alphaInput.value = String(Number.isFinite(alpha) ? alpha : 1);
             swatch.style.background = colorInput.value;
+
+            const commit = () => {
+              const a = clampNumber(alphaInput.value, { min: 0, max: 1 });
+              if (a == null) return;
+              setValue(toHex8(colorInput.value, a));
+              setDirty(true);
+              swatch.style.background = colorInput.value;
+            };
+            colorInput.addEventListener('input', commit);
+            alphaInput.addEventListener('change', commit);
+
+            swatchWrap.appendChild(swatch);
+            swatchWrap.appendChild(colorInput);
+            row.appendChild(swatchWrap);
+            row.appendChild(alphaLabel);
+            row.appendChild(alphaInput);
+            return row;
           };
-          syncSwatch();
 
-          const commit = () => {
-            const a = clampNumber(alphaInput.value, { min: 0, max: 1 });
-            if (a == null) return;
-            state.pending = { ...state.pending, type: 'constant', value: toHex8(colorInput.value, a) };
-            setDirty(true);
-            syncSwatch();
-          };
-          colorInput.addEventListener('input', commit);
-          alphaInput.addEventListener('change', commit);
-
-          swatchWrap.appendChild(swatch);
-          swatchWrap.appendChild(colorInput);
-
-          wrap.appendChild(swatchWrap);
-          wrap.appendChild(alphaLabel);
-          wrap.appendChild(alphaInput);
-          editorBody.appendChild(createAlignedRowEl({ title: 'Color', controls: wrap }).row);
+          if (isSplit) {
+            if (!state.pending.value || typeof state.pending.value !== 'object') {
+              const seed = seedSingle();
+              state.pending = { ...state.pending, type: 'constant', value: { source: seed, target: seed } };
+            }
+            wrap.appendChild(makeColorControls({
+              label: 'Source',
+              getValue: () => String(state.pending.value?.source ?? seedSingle()),
+              setValue: (v) => {
+                state.pending = { ...state.pending, type: 'constant', value: { ...(state.pending.value ?? {}), source: v } };
+              },
+            }));
+            wrap.appendChild(makeColorControls({
+              label: 'Target',
+              getValue: () => String(state.pending.value?.target ?? state.pending.value?.source ?? seedSingle()),
+              setValue: (v) => {
+                state.pending = { ...state.pending, type: 'constant', value: { ...(state.pending.value ?? {}), target: v } };
+              },
+            }));
+            editorBody.appendChild(createAlignedRowEl({ title: 'Color', controls: wrap }).row);
+          } else {
+            if (!(typeof state.pending.value === 'string' && state.pending.value.length > 0)) {
+              state.pending = { ...state.pending, type: 'constant', value: seedSingle() };
+            }
+            wrap.appendChild(makeColorControls({
+              label: null,
+              getValue: () => String(state.pending.value ?? seedSingle()),
+              setValue: (v) => {
+                state.pending = { ...state.pending, type: 'constant', value: v };
+              },
+            }));
+            editorBody.appendChild(createAlignedRowEl({ title: 'Color', controls: wrap }).row);
+          }
         }
 
         if (pendingType === 'linear') {
@@ -2467,6 +2807,7 @@ export class HeliosUI {
             const domain = attr ? suggestDomainForAttribute(mode, attr) : [0, 1];
             state.pending = { ...state.pending, type: 'linear', attributes: attr, domain };
             setDirty(true);
+            renderEditor();
           });
           editorBody.appendChild(createAlignedRowEl({ title: 'Attribute', controls: attrSelect }).row);
 
@@ -2480,7 +2821,7 @@ export class HeliosUI {
           for (const optVal of ['linear', 'log', 'log1p', 'logit', 'power']) {
             const opt = document.createElement('option');
             opt.value = optVal;
-            opt.textContent = optVal;
+            opt.textContent = optVal === 'log1p' ? 'Log1p' : `${optVal.slice(0, 1).toUpperCase()}${optVal.slice(1)}`;
             transformSelect.appendChild(opt);
           }
           transformSelect.value = String(state.pending.transformType ?? 'linear');
@@ -2561,14 +2902,16 @@ export class HeliosUI {
           d1.value = String(domain[1] ?? max);
 
           const commitDomainTyped = () => {
-            const a = clampNumber(d0.value, { min, max });
-            const b = clampNumber(d1.value, { min, max });
+            const a = clampNumber(d0.value);
+            const b = clampNumber(d1.value);
             if (a == null || b == null) return;
             const lo = Math.min(a, b);
             const hi = Math.max(a, b);
-            slider.aInput.value = String(lo);
-            slider.bInput.value = String(hi);
-            slider.setVisual(lo, hi);
+            const loSlider = Math.max(min, Math.min(max, lo));
+            const hiSlider = Math.max(min, Math.min(max, hi));
+            slider.aInput.value = String(loSlider);
+            slider.bInput.value = String(hiSlider);
+            slider.setVisual(loSlider, hiSlider);
             state.pending = { ...state.pending, type: 'linear', domain: [lo, hi] };
             setDirty(true);
           };
@@ -2582,28 +2925,66 @@ export class HeliosUI {
           editorBody.appendChild(createAlignedRowEl({ title: 'Domain', controls: domainWrap }).row);
 
           const rangeWrap = document.createElement('div');
-          rangeWrap.style.display = 'flex';
-          rangeWrap.style.gap = '8px';
-          const r0 = document.createElement('input');
-          r0.type = 'number';
-          r0.className = 'helios-ui-number';
-          const r1 = document.createElement('input');
-          r1.type = 'number';
-          r1.className = 'helios-ui-number';
-          const range = Array.isArray(state.pending.range) ? state.pending.range : [0, 1];
-          r0.value = String(range[0] ?? 0);
-          r1.value = String(range[1] ?? 1);
-          const commitRange = () => {
-            const a = clampNumber(r0.value);
-            const b = clampNumber(r1.value);
-            if (a == null || b == null) return;
-            state.pending = { ...state.pending, type: 'linear', range: [a, b] };
+          rangeWrap.style.display = 'grid';
+          rangeWrap.style.gap = '6px';
+          rangeWrap.style.width = '100%';
+
+          const minAllowed = (() => {
+            if (state.channel === 'opacity') return 0;
+            if (state.channel === 'size' || state.channel === 'outline' || state.channel === 'width' || state.channel === 'endpointSize') return 0;
+            return null;
+          })();
+          const maxAllowed = state.channel === 'opacity' ? 1 : null;
+
+          const suggestedRange = suggestRangeForChannel(mode, state.channel);
+          const stepOut = suggestStepForRange(suggestedRange[0], suggestedRange[1]);
+
+          const range = Array.isArray(state.pending.range) ? state.pending.range : suggestedRange;
+          if (!Array.isArray(state.pending.range)) {
+            state.pending = { ...state.pending, type: 'linear', range };
+          }
+
+          const commitRangeAt = (idx, value) => {
+            const n = clampNumber(value, { min: minAllowed, max: maxAllowed });
+            if (n == null) return;
+            const current = Array.isArray(state.pending.range) ? state.pending.range : suggestedRange;
+            const next = [current[0], current[1]];
+            next[idx] = n;
+            state.pending = { ...state.pending, type: 'linear', range: next };
             setDirty(true);
           };
-          r0.addEventListener('change', commitRange);
-          r1.addEventListener('change', commitRange);
-          rangeWrap.appendChild(r0);
-          rangeWrap.appendChild(r1);
+
+          const labelStyle = (el) => {
+            el.style.fontSize = '12px';
+            el.style.color = 'var(--helios-ui-muted)';
+          };
+
+          const minLabel = document.createElement('div');
+          minLabel.textContent = 'Min';
+          labelStyle(minLabel);
+          rangeWrap.appendChild(minLabel);
+          rangeWrap.appendChild(createSuggestedSliderControls({
+            value: Number(range[0] ?? suggestedRange[0]),
+            suggested: [suggestedRange[0], suggestedRange[1]],
+            step: stepOut,
+            inputMin: minAllowed,
+            inputMax: maxAllowed,
+            onCommit: (v) => commitRangeAt(0, v),
+          }).element);
+
+          const maxLabel = document.createElement('div');
+          maxLabel.textContent = 'Max';
+          labelStyle(maxLabel);
+          rangeWrap.appendChild(maxLabel);
+          rangeWrap.appendChild(createSuggestedSliderControls({
+            value: Number(range[1] ?? suggestedRange[1]),
+            suggested: [suggestedRange[0], suggestedRange[1]],
+            step: stepOut,
+            inputMin: minAllowed,
+            inputMax: maxAllowed,
+            onCommit: (v) => commitRangeAt(1, v),
+          }).element);
+
           editorBody.appendChild(createAlignedRowEl({ title: 'Range', controls: rangeWrap }).row);
         }
 
@@ -2630,6 +3011,7 @@ export class HeliosUI {
             const domain = attr ? suggestDomainForAttribute(mode, attr) : [0, 1];
             state.pending = { ...state.pending, type: 'colormap', attributes: attr, domain };
             setDirty(true);
+            renderEditor();
           });
           editorBody.appendChild(createAlignedRowEl({ title: 'Attribute', controls: attrSelect }).row);
 
@@ -2643,7 +3025,7 @@ export class HeliosUI {
           for (const optVal of ['linear', 'log', 'log1p', 'logit', 'power']) {
             const opt = document.createElement('option');
             opt.value = optVal;
-            opt.textContent = optVal;
+            opt.textContent = optVal === 'log1p' ? 'Log1p' : `${optVal.slice(0, 1).toUpperCase()}${optVal.slice(1)}`;
             transformSelect.appendChild(opt);
           }
           transformSelect.value = String(state.pending.transformType ?? 'linear');
@@ -2751,14 +3133,16 @@ export class HeliosUI {
           d1.value = String(domain[1] ?? max);
 
           const commitDomainTyped = () => {
-            const a = clampNumber(d0.value, { min, max });
-            const b = clampNumber(d1.value, { min, max });
+            const a = clampNumber(d0.value);
+            const b = clampNumber(d1.value);
             if (a == null || b == null) return;
             const lo = Math.min(a, b);
             const hi = Math.max(a, b);
-            slider.aInput.value = String(lo);
-            slider.bInput.value = String(hi);
-            slider.setVisual(lo, hi);
+            const loSlider = Math.max(min, Math.min(max, lo));
+            const hiSlider = Math.max(min, Math.min(max, hi));
+            slider.aInput.value = String(loSlider);
+            slider.bInput.value = String(hiSlider);
+            slider.setVisual(loSlider, hiSlider);
             state.pending = { ...state.pending, type: 'colormap', domain: [lo, hi] };
             setDirty(true);
           };
@@ -2786,27 +3170,28 @@ export class HeliosUI {
           clampWrap.appendChild(clampInput);
           clampWrap.appendChild(clampText);
 
-          const alphaInput = document.createElement('input');
-          alphaInput.type = 'number';
-          alphaInput.className = 'helios-ui-number';
-          alphaInput.min = '0';
-          alphaInput.max = '1';
-          alphaInput.step = '0.01';
-          alphaInput.value = String(clampNumber(state.pending.alpha ?? 1, { min: 0, max: 1 }) ?? 1);
+          const alphaSeed = clampNumber(state.pending.alpha ?? 1, { min: 0, max: 1 }) ?? 1;
+          const alphaControls = createSuggestedSliderControls({
+            value: alphaSeed,
+            suggested: [0, 1],
+            step: 0.01,
+            inputMin: 0,
+            inputMax: 1,
+            onCommit: (v) => {
+              const a = clampNumber(v, { min: 0, max: 1 });
+              if (a == null) return;
+              state.pending = { ...state.pending, type: 'colormap', alpha: a };
+              setDirty(true);
+            },
+          });
 
           clampInput.addEventListener('change', () => {
             state.pending = { ...state.pending, type: 'colormap', clamp: clampInput.checked };
             setDirty(true);
           });
-          alphaInput.addEventListener('change', () => {
-            const a = clampNumber(alphaInput.value, { min: 0, max: 1 });
-            if (a == null) return;
-            state.pending = { ...state.pending, type: 'colormap', alpha: a };
-            setDirty(true);
-          });
 
           advanced.appendChild(createAlignedRowEl({ title: 'Clamp', controls: clampWrap }).row);
-          advanced.appendChild(createAlignedRowEl({ title: 'Alpha', controls: alphaInput }).row);
+          advanced.appendChild(createAlignedRowEl({ title: 'Alpha', controls: alphaControls.element }).row);
 
           const advancedStack = new PanelStack();
           advancedStack.add({ id: `${mode}-mapper-advanced`, title: 'Advanced', collapsed: true, content: advanced });
@@ -2837,10 +3222,11 @@ export class HeliosUI {
         renderEditor();
       };
 
-      channelSelect.addEventListener('change', () => {
-        state.channel = channelSelect.value;
+      const setChannel = (next) => {
+        if (!channels.includes(next)) return;
+        state.channel = next;
         resetPendingFromLive();
-      });
+      };
 
       revertButton.addEventListener('click', () => {
         resetPendingFromLive();
@@ -2894,17 +3280,52 @@ export class HeliosUI {
       });
 
       resetPendingFromLive();
-      return root;
+      return { root, state, channels, setChannel };
     };
+
+    const nodeTab = createModeTab('node');
+    const edgeTab = createModeTab('edge');
+
+    let activeMode = 'node';
+
+    const channelSelect = document.createElement('select');
+    channelSelect.className = 'helios-ui-select helios-ui-select--compact';
+
+    const getActiveTab = () => (activeMode === 'edge' ? edgeTab : nodeTab);
+
+    const syncChannelSelect = () => {
+      const { channels, state } = getActiveTab();
+      channelSelect.textContent = '';
+      for (const name of channels) {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = CHANNEL_LABELS[name] ?? name;
+        channelSelect.appendChild(opt);
+      }
+      channelSelect.value = channels.includes(state.channel) ? state.channel : channels[0];
+    };
+
+    channelSelect.addEventListener('change', () => {
+      const tab = getActiveTab();
+      tab.setChannel(channelSelect.value);
+      syncChannelSelect();
+    });
+
+    syncChannelSelect();
 
     return this.createTabbedPanel({
       id: options.id ?? 'helios-ui-mappers',
       title: options.title ?? 'Mappers',
       position: options.position ?? { x: 16, y: 120 },
       dock: options.dock ?? 'top-left',
+      barRight: channelSelect,
+      onActiveChanged: (tabId) => {
+        activeMode = tabId === 'edges' ? 'edge' : 'node';
+        syncChannelSelect();
+      },
       tabs: [
-        { id: 'nodes', title: 'Nodes', content: createModeTab('node') },
-        { id: 'edges', title: 'Edges', content: createModeTab('edge') },
+        { id: 'nodes', title: 'Nodes', content: nodeTab.root },
+        { id: 'edges', title: 'Edges', content: edgeTab.root },
       ],
     });
   }

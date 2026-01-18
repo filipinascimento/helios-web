@@ -12,14 +12,25 @@ export class TabbedPanel {
 
     this.bar = document.createElement('div');
     this.bar.className = 'helios-ui-tabs__bar';
+    this.barLeft = document.createElement('div');
+    this.barLeft.className = 'helios-ui-tabs__bar-left';
+    this.barRight = document.createElement('div');
+    this.barRight.className = 'helios-ui-tabs__bar-right';
     this.content = document.createElement('div');
     this.content.className = 'helios-ui-tabs__content';
 
+    this.bar.appendChild(this.barLeft);
+    this.bar.appendChild(this.barRight);
     this.element.appendChild(this.bar);
     this.element.appendChild(this.content);
 
     this._tabs = new Map();
     this._activeId = null;
+    this._onActiveChanged = typeof options.onActiveChanged === 'function' ? options.onActiveChanged : null;
+
+    if (options.barRight) {
+      this.barRight.appendChild(resolveContainer(options.barRight));
+    }
 
     const tabs = options.tabs ?? [];
     for (const tab of tabs) this.addTab(tab);
@@ -41,7 +52,7 @@ export class TabbedPanel {
     panel.dataset.tabId = tab.id;
     panel.appendChild(resolveContainer(tab.content));
 
-    this.bar.appendChild(button);
+    this.barLeft.appendChild(button);
     this.content.appendChild(panel);
     this._tabs.set(tab.id, { id: tab.id, button, panel });
 
@@ -57,6 +68,13 @@ export class TabbedPanel {
       tab.button.dataset.active = active ? 'true' : 'false';
       tab.panel.dataset.active = active ? 'true' : 'false';
     }
+    if (this._onActiveChanged) {
+      try {
+        this._onActiveChanged(id);
+      } catch (_) {
+        // ignore callback failures
+      }
+    }
   }
 
   activeId() {
@@ -69,4 +87,3 @@ export class TabbedPanel {
     this._activeId = null;
   }
 }
-
