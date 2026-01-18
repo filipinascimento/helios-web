@@ -465,6 +465,113 @@ export const defaultStylesText = `
   opacity: 0.55;
 }
 
+.helios-ui-colormap-picker {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
+.helios-ui-colormap-thumb {
+  width: 100%;
+  height: 14px;
+  border-radius: 999px;
+  border: 1px solid var(--helios-ui-border);
+  background: linear-gradient(90deg, rgba(120, 120, 120, 1), rgba(40, 40, 40, 1));
+}
+
+.helios-ui-colormap-thumb--small {
+  height: 10px;
+  border-radius: 999px;
+}
+
+.helios-ui-colormap-picker__preview {
+  opacity: 0.95;
+}
+
+.helios-ui-colormap-picker {
+  position: relative;
+}
+
+.helios-ui-colormap-popover {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: calc(var(--helios-ui-z) + 200);
+  pointer-events: auto;
+}
+
+.helios-ui-colormap-popover__panel {
+  border: 1px solid var(--helios-ui-border);
+  border-radius: 10px;
+  padding: 0;
+  background: color-mix(in srgb, var(--helios-ui-bg-solid) 92%, transparent);
+  overflow: auto;
+  box-shadow: var(--helios-ui-shadow);
+}
+
+.helios-ui-colormap-picker__item {
+  appearance: none;
+  width: 100%;
+  display: grid;
+  gap: 5px;
+  padding: 7px 8px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.helios-ui-colormap-picker__item:hover {
+  background: color-mix(in srgb, var(--helios-ui-fg) 8%, transparent);
+  border-color: color-mix(in srgb, var(--helios-ui-fg) 14%, transparent);
+}
+
+.helios-ui-colormap-picker__item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--helios-ui-accent) 22%, transparent);
+}
+
+.helios-ui-colormap-picker__item-title {
+  font-weight: 600;
+}
+
+.helios-ui-colormap-section {
+  display: grid;
+  gap: 6px;
+  padding: 0 0 6px;
+}
+
+.helios-ui-colormap-section + .helios-ui-colormap-section {
+  border-top: 1px solid color-mix(in srgb, var(--helios-ui-border) 70%, transparent);
+}
+
+.helios-ui-colormap-section__title {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 4px 8px 4px;
+  background: color-mix(in srgb, var(--helios-ui-bg-solid) 96%, transparent);
+  font: 700 10.5px/1.2 var(--helios-ui-font);
+  color: var(--helios-ui-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.helios-ui-colormap-section__body {
+  display: grid;
+  gap: 2px;
+}
+
+.helios-ui-colormap-picker__note {
+  padding: 6px 6px 4px;
+  color: var(--helios-ui-muted);
+  font-size: 11px;
+}
+
 .helios-ui-progress {
   width: 100%;
   height: 10px;

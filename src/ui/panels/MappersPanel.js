@@ -9,6 +9,7 @@ import { clampNumber } from '../utils/numbers.js';
 import { toHex8 } from '../utils/colors.js';
 import { isPublicAttributeName } from '../utils/attributes.js';
 import { shallowCloneChannelConfig } from '../utils/channelConfig.js';
+import { colormapToCssGradient } from '../utils/colormapPreview.js';
 
 function collectColormapSuggestionNames() {
   const names = new Set();
@@ -26,6 +27,64 @@ function collectColormapSuggestionNames() {
     }
   }
   return Array.from(names).sort((a, b) => a.localeCompare(b));
+}
+
+function buildColormapCatalog() {
+  const entries = [];
+
+  const pushEntry = ({ key, label, group, searchExtras = [] }) => {
+    if (!key) return;
+    const safeLabel = String(label ?? key);
+    const terms = new Set([
+      String(key),
+      safeLabel,
+      String(group ?? ''),
+      String(group ?? '').toLowerCase(),
+      ...searchExtras.map((v) => String(v)),
+      ...searchExtras.map((v) => String(v).toLowerCase()),
+    ]);
+    entries.push({
+      key: String(key),
+      label: safeLabel,
+      group: String(group ?? 'other'),
+      search: Array.from(terms).join(' ').toLowerCase(),
+    });
+  };
+
+  for (const key of Object.keys(colormaps?.d3 ?? {})) {
+    pushEntry({ key, label: key, group: 'd3', searchExtras: ['d3:'] });
+  }
+
+  for (const key of Object.keys(colormaps?.cmasher ?? {})) {
+    const label = key.startsWith('cmasher_') ? key.slice('cmasher_'.length) : key;
+    const alias = key.startsWith('cmasher_') ? `cmasher:${label}` : key;
+    pushEntry({ key: alias, label, group: 'cmasher', searchExtras: [key, 'cmasher:', 'cmasher_'] });
+  }
+
+  for (const key of Object.keys(colormaps?.CET ?? {})) {
+    const label = key.startsWith('CET_') ? key.slice('CET_'.length) : key;
+    pushEntry({ key, label, group: 'CET', searchExtras: ['CET:'] });
+  }
+
+  for (const key of Object.keys(colormaps?.helios ?? {})) {
+    pushEntry({ key, label: key, group: 'helios', searchExtras: ['helios:'] });
+  }
+
+  const byGroup = new Map();
+  for (const entry of entries) {
+    let list = byGroup.get(entry.group);
+    if (!list) {
+      list = [];
+      byGroup.set(entry.group, list);
+    }
+    list.push(entry);
+  }
+
+  for (const list of byGroup.values()) {
+    list.sort((a, b) => a.label.localeCompare(b.label));
+  }
+
+  return { entries, byGroup };
 }
 
 function isHexColorString(value) {
@@ -85,6 +144,7 @@ export class MappersPanel {
     const edgeChannels = ['color', 'width', 'opacity'];
 
     const colormapNames = collectColormapSuggestionNames();
+    const colormapCatalog = buildColormapCatalog();
 
     let customPresetCounter = 1;
     const customPresetsByMode = {
@@ -1464,30 +1524,294 @@ export class MappersPanel {
           }).row);
 
           const nameWrap = document.createElement('div');
-          nameWrap.style.display = 'grid';
-          nameWrap.style.gap = '6px';
+          nameWrap.className = 'helios-ui-colormap-picker';
           const colormapInput = document.createElement('input');
           colormapInput.type = 'text';
-          colormapInput.className = 'helios-ui-text';
+          colormapInput.className = 'helios-ui-text helios-ui-colormap-picker__input';
           colormapInput.placeholder = 'interpolateInferno';
           colormapInput.value = String(state.pending.colormap ?? 'interpolateInferno');
 
-          const datalistId = `helios-ui-colormap-datalist-${Math.random().toString(16).slice(2)}`;
-          const datalist = document.createElement('datalist');
-          datalist.id = datalistId;
-          for (const name of colormapNames) {
-            const opt = document.createElement('option');
-            opt.value = name;
-            datalist.appendChild(opt);
-          }
-          colormapInput.setAttribute('list', datalistId);
-          nameWrap.appendChild(colormapInput);
-          nameWrap.appendChild(datalist);
+          const preview = document.createElement('div');
+          preview.className = 'helios-ui-colormap-picker__preview helios-ui-colormap-thumb';
 
-          colormapInput.addEventListener('change', () => {
-            state.pending = { ...state.pending, type: 'colormap', colormap: colormapInput.value || 'interpolateInferno' };
-            setDirty(true);
+          const popover = document.createElement('div');
+          popover.className = 'helios-ui-colormap-popover';
+          popover.hidden = true;
+
+          const popoverPanel = document.createElement('div');
+          popoverPanel.className = 'helios-ui-colormap-popover__panel';
+          popover.appendChild(popoverPanel);
+
+          const portalRoot = ui?.container ?? document.body;
+          portalRoot.appendChild(popover);
+          ui._controlCleanups.add(() => popover.remove());
+
+          const updatePreview = (nameRaw) => {
+            const name = colormapInput.value || 'interpolateInferno';
+            const gradient = colormapToCssGradient(name, { samples: 32 });
+            preview.style.background = gradient ?? 'linear-gradient(90deg, rgba(120,120,120,1), rgba(40,40,40,1))';
+          };
+
+          const renderPopover = (queryRaw) => {
+            popoverPanel.replaceChildren();
+
+            const query = String(queryRaw ?? '').trim().toLowerCase();
+            const tokens = query.split(/\s+/).filter(Boolean);
+            if (!tokens.length) {
+              const note = document.createElement('div');
+              note.className = 'helios-ui-colormap-picker__note';
+              note.textContent = 'Type to search colormaps (e.g. inferno, CET, cmasher).';
+              popoverPanel.appendChild(note);
+              return;
+            }
+
+            const matches = colormapCatalog.entries.filter((entry) => tokens.every((t) => entry.search.includes(t)));
+            if (!matches.length) {
+              const note = document.createElement('div');
+              note.className = 'helios-ui-colormap-picker__note';
+              note.textContent = 'No matches.';
+              popoverPanel.appendChild(note);
+              return;
+            }
+
+            const groupOrder = ['d3', 'cmasher', 'CET', 'helios', 'other'];
+            const matchesByGroup = new Map();
+            for (const entry of matches) {
+              const list = matchesByGroup.get(entry.group) ?? [];
+              list.push(entry);
+              matchesByGroup.set(entry.group, list);
+            }
+            for (const list of matchesByGroup.values()) {
+              list.sort((a, b) => a.label.localeCompare(b.label));
+            }
+
+            const capPerGroup = 60;
+            const capTotal = 220;
+            let total = 0;
+
+            for (const group of groupOrder) {
+              const list = matchesByGroup.get(group);
+              if (!list?.length) continue;
+
+              const section = document.createElement('div');
+              section.className = 'helios-ui-colormap-section';
+
+              const title = document.createElement('div');
+              title.className = 'helios-ui-colormap-section__title';
+              title.textContent = group;
+              section.appendChild(title);
+
+              const body = document.createElement('div');
+              body.className = 'helios-ui-colormap-section__body';
+
+              const visible = list.slice(0, capPerGroup);
+              for (const entry of visible) {
+                if (total >= capTotal) break;
+                total += 1;
+
+                const item = document.createElement('button');
+                item.type = 'button';
+                item.className = 'helios-ui-colormap-picker__item';
+                item.dataset.key = entry.key;
+
+                const itemTitle = document.createElement('div');
+                itemTitle.className = 'helios-ui-colormap-picker__item-title helios-ui-ellipsis';
+                itemTitle.textContent = entry.label;
+                itemTitle.title = `${entry.key}`;
+
+                const itemThumb = document.createElement('div');
+                itemThumb.className = 'helios-ui-colormap-thumb helios-ui-colormap-thumb--small';
+                const gradient = colormapToCssGradient(entry.key, { samples: 28 });
+                itemThumb.style.background = gradient ?? 'linear-gradient(90deg, rgba(120,120,120,1), rgba(40,40,40,1))';
+
+                item.appendChild(itemTitle);
+                item.appendChild(itemThumb);
+
+                item.addEventListener('pointerdown', (e) => {
+                  // Keep focus on the input while selecting.
+                  e.preventDefault();
+                  colormapInput.value = entry.key;
+                  state.pending = { ...state.pending, type: 'colormap', colormap: entry.key || 'interpolateInferno' };
+                  setDirty(true);
+                  updatePreview();
+                  popover.hidden = true;
+                });
+
+                body.appendChild(item);
+              }
+
+              if (list.length > capPerGroup) {
+                const note = document.createElement('div');
+                note.className = 'helios-ui-colormap-picker__note';
+                note.textContent = `Showing ${capPerGroup} of ${list.length} in ${group}.`;
+                body.appendChild(note);
+              }
+
+              section.appendChild(body);
+              popoverPanel.appendChild(section);
+              if (total >= capTotal) break;
+            }
+
+            if (matches.length > capTotal) {
+              const note = document.createElement('div');
+              note.className = 'helios-ui-colormap-picker__note';
+              note.textContent = `Showing ${capTotal} of ${matches.length}. Refine your search.`;
+              popoverPanel.appendChild(note);
+            }
+          };
+
+          const OFFSET = 6;
+          const MARGIN = 10;
+          const MIN_HEIGHT = 180;
+          const MIN_WIDTH = 240;
+          const MAX_WIDTH = 420;
+
+          const positionPopover = () => {
+            if (popover.hidden) return;
+            const anchor = colormapInput.getBoundingClientRect();
+            const vw = window.innerWidth;
+            const vh = window.innerHeight;
+
+            const spaceBelow = vh - anchor.bottom - MARGIN;
+            const spaceAbove = anchor.top - MARGIN;
+            const spaceRight = vw - anchor.right - MARGIN;
+            const spaceLeft = anchor.left - MARGIN;
+
+            popover.style.width = `${Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, anchor.width))}px`;
+            popover.style.left = '0px';
+            popover.style.top = '0px';
+            popover.style.maxHeight = '';
+
+            // Ensure we can measure the panel.
+            popover.style.visibility = 'hidden';
+            popover.hidden = false;
+            const measured = popover.getBoundingClientRect();
+            const desiredW = measured.width || Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, anchor.width));
+            const desiredH = measured.height || MIN_HEIGHT;
+
+            const canVertical = Math.max(spaceBelow, spaceAbove) >= MIN_HEIGHT;
+            const preferBelow = spaceBelow >= spaceAbove;
+            const canHorizontal = Math.max(spaceRight, spaceLeft) >= MIN_WIDTH;
+            const preferRight = spaceRight >= spaceLeft;
+
+            let placement = 'bottom';
+            if (canVertical) {
+              placement = preferBelow ? 'bottom' : 'top';
+            } else if (canHorizontal) {
+              placement = preferRight ? 'right' : 'left';
+            } else {
+              // Pick the side with the most room.
+              const best = [
+                { side: 'bottom', size: spaceBelow },
+                { side: 'top', size: spaceAbove },
+                { side: 'right', size: spaceRight },
+                { side: 'left', size: spaceLeft },
+              ].sort((a, b) => b.size - a.size)[0];
+              placement = best?.side ?? 'bottom';
+            }
+
+            let left = anchor.left;
+            let top = anchor.bottom + OFFSET;
+            let maxH = Math.max(80, spaceBelow);
+
+            if (placement === 'top') {
+              maxH = Math.max(80, spaceAbove);
+              top = Math.max(MARGIN, anchor.top - OFFSET - Math.min(desiredH, maxH));
+            } else if (placement === 'right') {
+              left = anchor.right + OFFSET;
+              top = anchor.top;
+              maxH = Math.max(80, vh - 2 * MARGIN);
+            } else if (placement === 'left') {
+              left = Math.max(MARGIN, anchor.left - OFFSET - desiredW);
+              top = anchor.top;
+              maxH = Math.max(80, vh - 2 * MARGIN);
+            }
+
+            // Clamp within viewport.
+            left = Math.max(MARGIN, Math.min(vw - MARGIN - desiredW, left));
+            top = Math.max(MARGIN, Math.min(vh - MARGIN - 80, top));
+
+            popover.style.width = `${Math.min(desiredW, vw - 2 * MARGIN)}px`;
+            popover.style.left = `${left}px`;
+            popover.style.top = `${top}px`;
+            popoverPanel.style.maxHeight = `${Math.min(maxH, vh - top - MARGIN)}px`;
+            popover.style.visibility = 'visible';
+          };
+
+          const openPopoverIfNeeded = () => {
+            const query = (colormapInput.value ?? '').trim();
+            if (!query) {
+              popover.hidden = true;
+              return;
+            }
+            renderPopover(query);
+            popover.hidden = false;
+            positionPopover();
+          };
+
+          const closePopover = () => {
+            popover.hidden = true;
+          };
+
+          const onDocPointerDown = (e) => {
+            const target = e.target;
+            if (popover.hidden) return;
+            if (target && (popover.contains(target) || nameWrap.contains(target))) return;
+            closePopover();
+          };
+
+          const onDocScroll = () => positionPopover();
+          const onWinResize = () => positionPopover();
+
+          document.addEventListener('pointerdown', onDocPointerDown, true);
+          document.addEventListener('scroll', onDocScroll, true);
+          window.addEventListener('resize', onWinResize);
+          ui._controlCleanups.add(() => document.removeEventListener('pointerdown', onDocPointerDown, true));
+          ui._controlCleanups.add(() => document.removeEventListener('scroll', onDocScroll, true));
+          ui._controlCleanups.add(() => window.removeEventListener('resize', onWinResize));
+
+          colormapInput.addEventListener('focus', () => openPopoverIfNeeded());
+          colormapInput.addEventListener('input', () => {
+            updatePreview();
+            openPopoverIfNeeded();
           });
+          colormapInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+              closePopover();
+              colormapInput.blur();
+            }
+            if (e.key === 'Enter') {
+              closePopover();
+              state.pending = {
+                ...state.pending,
+                type: 'colormap',
+                colormap: colormapInput.value || 'interpolateInferno',
+              };
+              setDirty(true);
+            }
+          });
+          colormapInput.addEventListener('change', () => {
+            state.pending = {
+              ...state.pending,
+              type: 'colormap',
+              colormap: colormapInput.value || 'interpolateInferno',
+            };
+            setDirty(true);
+            updatePreview();
+          });
+
+          nameWrap.addEventListener('focusout', () => {
+            // Close if focus has left the picker entirely.
+            queueMicrotask(() => {
+              if (!nameWrap.contains(document.activeElement) && !popover.contains(document.activeElement)) closePopover();
+            });
+          });
+
+          updatePreview();
+
+          nameWrap.appendChild(colormapInput);
+          nameWrap.appendChild(preview);
+
           editorBody.appendChild(createAlignedRow({
             title: 'Colormap',
             hint: 'Choose the named colormap/interpolator to use.',

@@ -32,6 +32,8 @@ Tips:
 - Use `alpha` to enforce a uniform opacity while keeping RGB from the colormap.
 - For discrete categories, prefer `colormapToScheme` to avoid banding from continuous ramps.
 
+If you’re using `HeliosUI`, the Mappers panel includes a searchable colormap picker with thumbnail previews to make it easier to browse ramps.
+
 ## Example: Basic demo node colors
 
 The bundled basic example (`docs/examples/basic/main.js`) maps node attribute `weight` through `createColormapScale('cmasher:rainforest')` and sizes nodes from the same attribute. Toggle the renderer via `?renderer=webgl` and edge transparency via `?edgeTransparency=weighted` to see how visuals react.
