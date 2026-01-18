@@ -1533,11 +1533,13 @@ export class MappersPanel {
 
           const nameWrap = document.createElement('div');
           nameWrap.className = 'helios-ui-colormap-picker';
-          const colormapDisplay = document.createElement('input');
-          colormapDisplay.type = 'text';
-          colormapDisplay.readOnly = true;
+          const colormapDisplay = document.createElement('button');
+          colormapDisplay.type = 'button';
           colormapDisplay.className = 'helios-ui-select helios-ui-colormap-picker__display';
-          colormapDisplay.placeholder = 'Select colormap…';
+
+          const colormapDisplayLabel = document.createElement('span');
+          colormapDisplayLabel.className = 'helios-ui-ellipsis';
+          colormapDisplay.appendChild(colormapDisplayLabel);
 
           const preview = document.createElement('div');
           preview.className = 'helios-ui-colormap-picker__preview helios-ui-colormap-thumb';
@@ -1583,7 +1585,8 @@ export class MappersPanel {
 
           const applySelectionToUi = (keyRaw) => {
             const key = String(keyRaw ?? '').trim() || 'interpolateInferno';
-            colormapDisplay.value = formatDisplayValue(key);
+            colormapDisplayLabel.textContent = formatDisplayValue(key);
+            colormapDisplay.title = colormapDisplayLabel.textContent;
             colormapDisplay.dataset.colormapKey = key;
             updatePreview(key);
           };
@@ -1842,6 +1845,7 @@ export class MappersPanel {
           };
 
           colormapDisplay.addEventListener('click', () => openPopover());
+          preview.addEventListener('click', () => openPopover());
           colormapDisplay.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault();

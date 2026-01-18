@@ -956,13 +956,36 @@ export class VisualAttributes {
     const isArrayLike = Array.isArray(value) || ArrayBuffer.isView(value);
     if (isArrayLike) {
       if (value.length === 4) {
-        const needsScale = value.some((v) => v > 1);
-        return needsScale ? value.map((v, i) => (i < 3 ? (v ?? 0) / 255 : v ?? 1)) : value;
+        const eps = 1e-6;
+        const maxRgb = Math.max(Number(value[0] ?? 0), Number(value[1] ?? 0), Number(value[2] ?? 0));
+        const needsScale = Number.isFinite(maxRgb) && maxRgb > 1 + eps;
+        if (needsScale) {
+          const a = Number(value[3] ?? 1);
+          return [
+            (Number(value[0] ?? 0) || 0) / 255,
+            (Number(value[1] ?? 0) || 0) / 255,
+            (Number(value[2] ?? 0) || 0) / 255,
+            a > 1 + eps ? a / 255 : a,
+          ].map((v) => Math.min(1, Math.max(0, v)));
+        }
+        return [
+          Math.min(1, Math.max(0, Number(value[0] ?? 0) || 0)),
+          Math.min(1, Math.max(0, Number(value[1] ?? 0) || 0)),
+          Math.min(1, Math.max(0, Number(value[2] ?? 0) || 0)),
+          Math.min(1, Math.max(0, Number(value[3] ?? 1) || 0)),
+        ];
       }
       if (value.length === 3) {
-        const needsScale = value.some((v) => v > 1);
-        const scaled = needsScale ? value.map((v) => (v ?? 0) / 255) : value;
-        return [scaled[0] ?? 0, scaled[1] ?? 0, scaled[2] ?? 0, 1];
+        const eps = 1e-6;
+        const maxRgb = Math.max(Number(value[0] ?? 0), Number(value[1] ?? 0), Number(value[2] ?? 0));
+        const needsScale = Number.isFinite(maxRgb) && maxRgb > 1 + eps;
+        const scale = needsScale ? 1 / 255 : 1;
+        return [
+          Math.min(1, Math.max(0, (Number(value[0] ?? 0) || 0) * scale)),
+          Math.min(1, Math.max(0, (Number(value[1] ?? 0) || 0) * scale)),
+          Math.min(1, Math.max(0, (Number(value[2] ?? 0) || 0) * scale)),
+          1,
+        ];
       }
     }
     if (typeof value === 'string') {

@@ -495,10 +495,17 @@ export const defaultStylesText = `
 
 .helios-ui-colormap-picker__display {
   max-width: none;
+  cursor: default;
+  user-select: none;
 }
 
 .helios-ui-colormap-picker {
   position: relative;
+}
+
+.helios-ui-colormap-picker__preview {
+  cursor: pointer;
+  user-select: none;
 }
 
 .helios-ui-colormap-popover {
@@ -532,7 +539,7 @@ export const defaultStylesText = `
 }
 
 .helios-ui-colormap-popover__list {
-  padding: 4px;
+  padding: 0;
   overflow: auto;
 }
 
@@ -549,6 +556,7 @@ export const defaultStylesText = `
   font: inherit;
   cursor: pointer;
   text-align: left;
+  user-select: none;
 }
 
 .helios-ui-colormap-picker__item:hover {
@@ -585,11 +593,13 @@ export const defaultStylesText = `
   color: var(--helios-ui-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  user-select: none;
 }
 
 .helios-ui-colormap-section__body {
   display: grid;
   gap: 2px;
+  padding: 0 4px;
 }
 
 .helios-ui-colormap-picker__note {

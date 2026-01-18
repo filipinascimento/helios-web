@@ -22,7 +22,7 @@ test.describe('mappers panel colormap picker', () => {
     const typeSelect = typeRow.locator('select.helios-ui-select').first();
     await typeSelect.selectOption('colormap');
 
-    const display = page.locator('input.helios-ui-colormap-picker__display').first();
+    const display = page.locator('button.helios-ui-colormap-picker__display').first();
     await expect(display).toBeVisible();
     await display.click();
 
