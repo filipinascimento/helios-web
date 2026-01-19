@@ -11,6 +11,7 @@ export const defaultStylesText = `
   --helios-ui-blur: 14px;
   --helios-ui-z: 50;
   --helios-ui-label-col: 140px;
+  --helios-ui-rule-keyword-width: 56px;
 
   position: absolute;
   inset: 0;
@@ -354,8 +355,20 @@ export const defaultStylesText = `
   white-space: nowrap;
 }
 
+.helios-ui-rule-keyword {
+  width: var(--helios-ui-rule-keyword-width);
+  flex: 0 0 var(--helios-ui-rule-keyword-width);
+  font-size: 12px;
+  color: var(--helios-ui-muted);
+  text-align: right;
+  white-space: nowrap;
+}
+
 .helios-ui-number {
-  width: 72px;
+  width: 58px;
+  flex: 0 1 58px;
+  min-width: 44px;
+  max-width: 100%;
   padding: 4px 6px;
   border-radius: 10px;
   border: 1px solid var(--helios-ui-border);
@@ -430,7 +443,9 @@ export const defaultStylesText = `
 }
 
 .helios-ui-row--slider .helios-ui-number {
-  width: 68px;
+  width: 54px;
+  flex-basis: 54px;
+  min-width: 40px;
   padding: 3px 6px;
   border-radius: 9px;
   max-width: 100%;

@@ -38,7 +38,7 @@ Note: mapper configs that rely on arbitrary JavaScript functions (e.g. `.transfo
 
 ## Example: Basic demo node colors
 
-The bundled basic example (`docs/examples/basic/main.js`) maps node attribute `weight` through `createColormapScale('cmasher:rainforest')` and sizes nodes from the same attribute. Toggle the renderer via `?renderer=webgl` and edge transparency via `?edgeTransparency=weighted` to see how visuals react.
+The bundled basic example (`docs/examples/basic/main.js`) starts with a serializable node color mapper (`$index` → `cmasher:rainforest` across the full index domain), so the UI doesn’t treat it as a custom preset. Toggle the renderer via `?renderer=webgl` and edge transparency via `?edgeTransparency=weighted` to see how visuals react.
 
 ## When things look flat
 

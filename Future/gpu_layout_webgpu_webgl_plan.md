@@ -150,6 +150,24 @@ CPU/WASM preprocessing (CSR build, Morton keys, sorting, tree building) can run 
 For WebGPU buffers, align to 16 bytes for performance (e.g. store `vec4<f32>` and pack extra fields).
 For WebGL2, prefer a single `RGBA32F` texture per array (position, velocity, flags) to keep shaders simple.
 
+### Edges for rendering (keep edge endpoints derived from node positions)
+
+To keep edges visually consistent with nodes (and to avoid duplicating large edge endpoint buffers), prefer an edge rendering representation that references endpoint **node ids**:
+
+- Store `edgeFrom[u32]` and `edgeTo[u32]` (or an equivalent packed format).
+- In the edge vertex shader, fetch node positions for those ids and construct the edge segment.
+
+This is especially important when positions are smoothed/interpolated on GPU:
+
+- Nodes and edges consume the same position source (`positionBuffer` / position texture).
+- No per-tick uploads of `_helios_visuals_edge_endpoints_position` are needed.
+- Memory/bandwidth scales with `N` rather than `E`.
+
+Backend notes:
+
+- WebGPU: straightforward with storage-buffer reads by index.
+- WebGL2: if we want to fetch node positions by index in the vertex shader, store positions in float textures and use `texelFetch` (similar in spirit to cosmo-graph). If we keep an explicit edge endpoint buffer in WebGL2, it will be much more expensive to keep it in sync at very large `E`.
+
 ### Edges (for attraction)
 
 Attraction needs an adjacency structure that is readable efficiently on GPU:

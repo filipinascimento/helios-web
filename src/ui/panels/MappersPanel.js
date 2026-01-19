@@ -113,7 +113,7 @@ export class MappersPanel {
   create() {
     const ui = this.ui;
     const helios = this.helios;
-    const network = helios?.network ?? null;
+    const net = () => helios?.network ?? null;
     const options = this.options ?? {};
 
     const tooltips = createTooltipManager();
@@ -165,7 +165,8 @@ export class MappersPanel {
       layout: 'Layout',
       constant: 'Constant',
       passthrough: 'Passthrough',
-      nodeAttribute: 'From Nodes',
+      nodeAttribute: 'Node Passthrough',
+      nodeToEdge: 'Node Passthrough',
       linear: 'Scale',
       colormap: 'Colormap',
     };
@@ -198,6 +199,7 @@ export class MappersPanel {
 	      if (!config) return false;
 	      const type = config.type ?? config.mode ?? null;
 	      if (type === 'layout') return true;
+	      if (type === 'nodeToEdge') return true;
 
 	      const rules = Array.isArray(config.rules) ? config.rules : [];
 	      const supportedRules =
@@ -282,6 +284,7 @@ export class MappersPanel {
     };
 
     const getAttributeInfo = (scope, rawName) => {
+      const network = net();
       if (!network) return null;
       if (rawName === '$index') return { dimension: 1, type: null };
       if (typeof rawName !== 'string' || !rawName.length) return null;
@@ -289,13 +292,21 @@ export class MappersPanel {
       if (scope === 'edge' && rawName.startsWith('@node.')) {
         const key = rawName.slice('@node.'.length);
         const resolved = resolveVisualAlias(key);
-        return network.getNodeAttributeInfo?.(resolved) ?? null;
+        try {
+          return network.getNodeAttributeInfo?.(resolved) ?? null;
+        } catch (_) {
+          return null;
+        }
       }
 
       const resolved = resolveVisualAlias(rawName);
-      return scope === 'edge'
-        ? (network.getEdgeAttributeInfo?.(resolved) ?? null)
-        : (network.getNodeAttributeInfo?.(resolved) ?? null);
+      try {
+        return scope === 'edge'
+          ? (network.getEdgeAttributeInfo?.(resolved) ?? null)
+          : (network.getNodeAttributeInfo?.(resolved) ?? null);
+      } catch (_) {
+        return null;
+      }
     };
 
     const isCompatibleAttribute = (scope, channel, mapperType, name) => {
@@ -324,7 +335,7 @@ export class MappersPanel {
       }
 
       if (mapperType === 'nodeAttribute') {
-        if (isColorChannel) return dim === 3 || dim === 4 || dim === 1;
+        if (isColorChannel) return dim === 3 || dim === 4;
         if (isScalarChannel) return dim === 1;
         return false;
       }
@@ -334,7 +345,7 @@ export class MappersPanel {
           return dim === 3;
         }
         if (isColorChannel) {
-          if (isEdge && typeof name === 'string' && name.startsWith('@node.')) return false;
+          if (isEdge && typeof name === 'string' && /^@nodes?\./.test(name)) return false;
           if (isEdge) return dim === 4 || dim === 8;
           return dim === 3 || dim === 4;
         }
@@ -352,17 +363,21 @@ export class MappersPanel {
     };
 
     const listAttributeNames = (scope, { channel, mapperType } = {}) => {
+      const network = net();
       if (!network) return [];
       const getNames = scope === 'edge' ? network.getEdgeAttributeNames : network.getNodeAttributeNames;
       if (typeof getNames !== 'function') return [];
-      const raw = getNames.call(network) ?? [];
+      let raw = [];
+      try {
+        raw = getNames.call(network) ?? [];
+      } catch (_) {
+        return [];
+      }
       const out = [];
 
       out.push('$index');
       if (scope === 'node') {
         out.push('color', 'size', 'outline', 'outlineColor', 'position');
-      } else {
-        out.push('edgeColor', 'edgeWidth', 'edgeOpacity', 'edgeEndpointPosition', 'edgeEndpointSize');
       }
 
       for (const name of raw) {
@@ -371,8 +386,14 @@ export class MappersPanel {
         out.push(name);
       }
 
-      if (scope === 'edge' && typeof network.getNodeAttributeNames === 'function') {
-        const nodeRaw = network.getNodeAttributeNames() ?? [];
+      const wantsNodeProxy = scope === 'edge' && mapperType !== 'passthrough';
+      if (wantsNodeProxy && typeof network.getNodeAttributeNames === 'function') {
+        let nodeRaw = [];
+        try {
+          nodeRaw = network.getNodeAttributeNames() ?? [];
+        } catch (_) {
+          nodeRaw = [];
+        }
         for (const name of nodeRaw) {
           if (typeof name !== 'string') continue;
           if (!isPublicAttributeName(name)) continue;
@@ -399,6 +420,7 @@ export class MappersPanel {
     };
 
     const computeScalarExtent = (scope, rawName) => {
+      const network = net();
       if (!network) return null;
       if (typeof rawName !== 'string' || !rawName) return null;
 
@@ -406,7 +428,7 @@ export class MappersPanel {
         const count = scope === 'edge'
           ? (network.edgeCount ?? network.edgesCount ?? null)
           : (network.nodeCount ?? network.nodesCount ?? null);
-        if (Number.isFinite(count) && count > 0) return { min: 0, max: Math.max(0, count - 1) };
+        if (Number.isFinite(count) && count > 0) return { min: 0, max: Math.max(1, count) };
         return null;
       }
 
@@ -443,6 +465,20 @@ export class MappersPanel {
       const extent = computeScalarExtent(scope, rawName);
       if (extent && Number.isFinite(extent.min) && Number.isFinite(extent.max)) return [extent.min, extent.max];
       return [0, 1];
+    };
+
+    const ensureUiMeta = (pending) => {
+      if (!pending || typeof pending !== 'object') return null;
+      const existing = pending.__ui && typeof pending.__ui === 'object' ? pending.__ui : null;
+      if (existing) return existing;
+      pending.__ui = {};
+      return pending.__ui;
+    };
+
+    const markDomainAuto = (pending, enabled) => {
+      const uiMeta = ensureUiMeta(pending);
+      if (!uiMeta) return;
+      uiMeta.domainAuto = Boolean(enabled);
     };
 
     const suggestRangeForChannel = (mode, channel) => {
@@ -705,6 +741,13 @@ export class MappersPanel {
 	        return pending;
 	      };
 
+	      const createRuleKeyword = (text) => {
+	        const el = document.createElement('div');
+	        el.className = 'helios-ui-rule-keyword';
+	        el.textContent = text;
+	        return el;
+	      };
+
 	      const createHex8ColorEditor = ({ label, value, onChange, showAlphaLabel = false, compact = true }) => {
 	        const row = document.createElement('div');
 	        row.style.display = 'flex';
@@ -798,6 +841,8 @@ export class MappersPanel {
 
           if (pendingType === 'layout' && allowedTypes.includes('layout')) return 'layout';
 
+          if (pendingType === 'nodeToEdge' && allowedTypes.includes('nodeAttribute')) return 'nodeAttribute';
+
           if (state.pending && isEditorTransferableConfig(state.pending) && allowedTypes.includes(pendingType)) {
             return pendingType;
           }
@@ -842,7 +887,7 @@ export class MappersPanel {
         ];
         typeSelect.value = availableKeys.includes(currentKey) ? currentKey : availableKeys[0];
 
-        const setPendingType = (nextType) => {
+        const buildPendingForType = (nextType) => {
           const prev = state.pending ?? {};
           const base = nextType === 'layout'
             ? { name: state.channel, type: nextType }
@@ -854,6 +899,9 @@ export class MappersPanel {
             };
           if (nextType === 'constant') {
             base.value = prev.value ?? live?.value;
+            if (base.value == null && (state.channel === 'opacity' || state.channel === 'width')) {
+              base.value = 1;
+            }
           }
           if (nextType === 'nodeAttribute') {
             base.nodeAttribute = prev.nodeAttribute ?? live?.nodeAttribute ?? '';
@@ -868,24 +916,32 @@ export class MappersPanel {
             const attr = typeof base.attributes === 'string' ? base.attributes : null;
             base.transformType = prev.transformType ?? live?.transformType ?? 'linear';
             base.transformPower = prev.transformPower ?? live?.transformPower ?? 1;
+            const hasDomain = Array.isArray(prev.domain) || Array.isArray(live?.domain);
             base.domain = Array.isArray(prev.domain)
               ? prev.domain
               : (Array.isArray(live?.domain) ? live.domain : suggestDomainForAttribute(mode, attr));
             const suggested = suggestRangeForChannel(mode, state.channel);
             base.range = Array.isArray(prev.range) ? prev.range : (Array.isArray(live?.range) ? live.range : suggested);
+            markDomainAuto(base, !hasDomain);
           }
           if (nextType === 'colormap') {
             base.colormap = prev.colormap ?? live?.colormap ?? 'interpolateInferno';
             const attr = typeof base.attributes === 'string' ? base.attributes : null;
             base.transformType = prev.transformType ?? live?.transformType ?? 'linear';
             base.transformPower = prev.transformPower ?? live?.transformPower ?? 1;
+            const hasDomain = Array.isArray(prev.domain) || Array.isArray(live?.domain);
             base.domain = Array.isArray(prev.domain)
               ? prev.domain
               : (Array.isArray(live?.domain) ? live.domain : suggestDomainForAttribute(mode, attr));
             base.alpha = prev.alpha ?? live?.alpha ?? 1;
             base.clamp = prev.clamp ?? live?.clamp ?? true;
+            markDomainAuto(base, !hasDomain);
           }
-          state.pending = base;
+          return base;
+        };
+
+        const setPendingType = (nextType) => {
+          state.pending = buildPendingForType(nextType);
           setDirty(true);
           renderEditor();
         };
@@ -914,6 +970,12 @@ export class MappersPanel {
 
         const pendingTypeKey = typeSelect.value;
         const pendingType = pendingTypeKey.startsWith('custom:') ? 'custom' : pendingTypeKey;
+        if (pendingType !== 'custom') {
+          const rawType = state.pending?.type ?? state.pending?.mode ?? null;
+          if (!rawType) {
+            state.pending = buildPendingForType(pendingType);
+          }
+        }
         const isColor = state.channel === 'color' || state.channel === 'outlineColor';
         const isScalar =
           state.channel === 'size' ||
@@ -988,9 +1050,21 @@ export class MappersPanel {
           const attrSelect = document.createElement('select');
           attrSelect.className = 'helios-ui-select';
           const names = listAttributeNames('node', { channel: state.channel, mapperType: 'nodeAttribute' });
+          const fromAttributes = () => {
+            const attrs = state.pending?.attributes ?? live?.attributes ?? live?.from ?? null;
+            if (typeof attrs === 'string' && attrs.startsWith('@node.')) return attrs.slice('@node.'.length);
+            if (typeof attrs === 'string' && attrs.startsWith('@nodes.')) return attrs.slice('@nodes.'.length);
+            if (Array.isArray(attrs)) {
+              for (const v of attrs) {
+                if (typeof v === 'string' && v.startsWith('@node.')) return v.slice('@node.'.length);
+                if (typeof v === 'string' && v.startsWith('@nodes.')) return v.slice('@nodes.'.length);
+              }
+            }
+            return '';
+          };
           const current = typeof state.pending.nodeAttribute === 'string'
             ? state.pending.nodeAttribute
-            : (typeof live?.nodeAttribute === 'string' ? live.nodeAttribute : '');
+            : (typeof live?.nodeAttribute === 'string' ? live.nodeAttribute : fromAttributes());
 
           const optBlank = document.createElement('option');
           optBlank.value = '';
@@ -1019,10 +1093,46 @@ export class MappersPanel {
             setDirty(true);
           });
           editorBody.appendChild(createAlignedRow({
-            title: 'From/To',
-            hint: 'Pick the edge input (edge attribute or a derived @node.* value).',
+            title: 'Node Attribute',
+            hint: 'Pick the node attribute to propagate to edge endpoints.',
             controls: attrSelect,
           }).row);
+
+          if (mode === 'edge') {
+            const endpointsSelect = document.createElement('select');
+            endpointsSelect.className = 'helios-ui-select helios-ui-select--compact';
+            const options = [
+              { value: 'both', label: 'Both' },
+              { value: 'source', label: 'Source' },
+              { value: 'destination', label: 'Target' },
+            ];
+            for (const optInfo of options) {
+              const opt = document.createElement('option');
+              opt.value = optInfo.value;
+              opt.textContent = optInfo.label;
+              endpointsSelect.appendChild(opt);
+            }
+            endpointsSelect.value = String(state.pending.endpoints ?? 'both');
+            endpointsSelect.addEventListener('change', () => {
+              const bare =
+                typeof state.pending.nodeAttribute === 'string' && state.pending.nodeAttribute.length
+                  ? state.pending.nodeAttribute
+                  : (attrSelect.value || current || undefined);
+              state.pending = {
+                ...state.pending,
+                type: 'nodeAttribute',
+                nodeAttribute: bare,
+                endpoints: endpointsSelect.value,
+                attributes: bare ? [`@node.${bare}`] : undefined,
+              };
+              setDirty(true);
+            });
+            editorBody.appendChild(createAlignedRow({
+              title: 'Endpoints',
+              hint: 'Whether the passthrough uses both endpoints or duplicates source/target.',
+              controls: endpointsSelect,
+            }).row);
+          }
         }
 
         if (pendingType === 'constant' && isScalar) {
@@ -1411,7 +1521,9 @@ export class MappersPanel {
           attrSelect.addEventListener('change', () => {
             const attr = attrSelect.value || undefined;
             const domain = attr ? suggestDomainForAttribute(mode, attr) : [0, 1];
-            state.pending = { ...state.pending, type: 'linear', attributes: attr, domain };
+            const nextPending = { ...state.pending, type: 'linear', attributes: attr, domain };
+            markDomainAuto(nextPending, true);
+            state.pending = nextPending;
             setDirty(true);
             renderEditor();
           });
@@ -1490,7 +1602,9 @@ export class MappersPanel {
           const domain = Array.isArray(state.pending.domain) ? state.pending.domain : [min, max];
 
           if (!Array.isArray(state.pending.domain) && domainAttr) {
-            state.pending = { ...state.pending, type: 'linear', domain: [min, max] };
+            const nextPending = { ...state.pending, type: 'linear', domain: [min, max] };
+            markDomainAuto(nextPending, true);
+            state.pending = nextPending;
           }
 
           const slider = new TwoHandleRange({
@@ -1499,7 +1613,9 @@ export class MappersPanel {
             step,
             value: domain,
             onChange: (next) => {
-              state.pending = { ...state.pending, type: 'linear', domain: next };
+              const nextPending = { ...state.pending, type: 'linear', domain: next };
+              markDomainAuto(nextPending, false);
+              state.pending = nextPending;
               setDirty(true);
               d0.value = String(next[0]);
               d1.value = String(next[1]);
@@ -1532,7 +1648,9 @@ export class MappersPanel {
             slider.aInput.value = String(loSlider);
             slider.bInput.value = String(hiSlider);
             slider.setVisual(loSlider, hiSlider);
-            state.pending = { ...state.pending, type: 'linear', domain: [lo, hi] };
+            const nextPending = { ...state.pending, type: 'linear', domain: [lo, hi] };
+            markDomainAuto(nextPending, false);
+            state.pending = nextPending;
             setDirty(true);
           };
           d0.addEventListener('change', commitDomainTyped);
@@ -1770,8 +1888,13 @@ export class MappersPanel {
 	                commitRule({ ...getLiveSpec(), out });
 	              });
 
+	              const ifLabel = createRuleKeyword(i === 0 ? 'if' : 'else if');
+	              const thenLabel = createRuleKeyword('then');
+
+	              condRow.appendChild(ifLabel);
 	              condRow.appendChild(opSelect);
 	              condRow.appendChild(rhsInput);
+	              condRow.appendChild(thenLabel);
 	              condRow.appendChild(outInput);
 	              tooltips.attachTooltip(opSelect, 'Condition operator.');
 	              tooltips.attachTooltip(rhsInput, 'Comparison value.');
@@ -1850,7 +1973,9 @@ export class MappersPanel {
           attrSelect.addEventListener('change', () => {
             const attr = attrSelect.value || undefined;
             const domain = attr ? suggestDomainForAttribute(mode, attr) : [0, 1];
-            state.pending = { ...state.pending, type: 'colormap', attributes: attr, domain };
+            const nextPending = { ...state.pending, type: 'colormap', attributes: attr, domain };
+            markDomainAuto(nextPending, true);
+            state.pending = nextPending;
             setDirty(true);
             renderEditor();
           });
@@ -1952,7 +2077,11 @@ export class MappersPanel {
 
           const portalRoot = ui?.container ?? document.body;
           portalRoot.appendChild(popover);
-          ui._controlCleanups.add(() => popover.remove());
+          const popoverCleanups = [];
+          const registerPopoverCleanup = (fn) => {
+            if (typeof fn === 'function') popoverCleanups.push(fn);
+          };
+          registerPopoverCleanup(() => popover.remove());
 
           const resolveDisplayEntry = (keyRaw) => {
             const key = String(keyRaw ?? '').trim();
@@ -2009,7 +2138,7 @@ export class MappersPanel {
                 thumbObserver.unobserve(el);
               }
             }, { root: popoverPanel, rootMargin: '64px' });
-            ui._controlCleanups.add(() => {
+            registerPopoverCleanup(() => {
               thumbObserver?.disconnect?.();
               thumbObserver = null;
             });
@@ -2232,9 +2361,9 @@ export class MappersPanel {
           document.addEventListener('pointerdown', onDocPointerDown, true);
           document.addEventListener('scroll', onDocScroll, true);
           window.addEventListener('resize', onWinResize);
-          ui._controlCleanups.add(() => document.removeEventListener('pointerdown', onDocPointerDown, true));
-          ui._controlCleanups.add(() => document.removeEventListener('scroll', onDocScroll, true));
-          ui._controlCleanups.add(() => window.removeEventListener('resize', onWinResize));
+          registerPopoverCleanup(() => document.removeEventListener('pointerdown', onDocPointerDown, true));
+          registerPopoverCleanup(() => document.removeEventListener('scroll', onDocScroll, true));
+          registerPopoverCleanup(() => window.removeEventListener('resize', onWinResize));
 
           const openPopover = ({ seedQuery } = {}) => {
             popover.hidden = false;
@@ -2245,9 +2374,9 @@ export class MappersPanel {
             queueMicrotask(() => searchInput.focus());
           };
 
-          colormapDisplay.addEventListener('click', () => openPopover());
-          preview.addEventListener('click', () => openPopover());
-          colormapDisplay.addEventListener('keydown', (e) => {
+          const onDisplayClick = () => openPopover();
+          const onPreviewClick = () => openPopover();
+          const onDisplayKeyDown = (e) => {
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault();
               openPopover();
@@ -2257,14 +2386,23 @@ export class MappersPanel {
               e.preventDefault();
               openPopover({ seedQuery: e.key });
             }
-          });
+          };
 
-          searchInput.addEventListener('input', () => {
+          colormapDisplay.addEventListener('click', onDisplayClick);
+          preview.addEventListener('click', onPreviewClick);
+          colormapDisplay.addEventListener('keydown', onDisplayKeyDown);
+          registerPopoverCleanup(() => colormapDisplay.removeEventListener('click', onDisplayClick));
+          registerPopoverCleanup(() => preview.removeEventListener('click', onPreviewClick));
+          registerPopoverCleanup(() => colormapDisplay.removeEventListener('keydown', onDisplayKeyDown));
+
+          const onSearchInput = () => {
             renderPopover(searchInput.value);
             positionPopover();
-          });
+          };
+          searchInput.addEventListener('input', onSearchInput);
+          registerPopoverCleanup(() => searchInput.removeEventListener('input', onSearchInput));
 
-          searchInput.addEventListener('keydown', (e) => {
+          const onSearchKeyDown = (e) => {
             if (e.key === 'Escape') {
               closePopover();
               colormapDisplay.focus();
@@ -2275,13 +2413,29 @@ export class MappersPanel {
               const typed = String(searchInput.value ?? '').trim();
               if (colormapCatalog.byKey.has(typed)) setSelectedColormap(typed);
             }
-          });
+          };
+          searchInput.addEventListener('keydown', onSearchKeyDown);
+          registerPopoverCleanup(() => searchInput.removeEventListener('keydown', onSearchKeyDown));
 
-          nameWrap.addEventListener('focusout', () => {
+          const onNameWrapFocusOut = () => {
             // Close if focus has left the picker entirely.
             queueMicrotask(() => {
               if (!nameWrap.contains(document.activeElement) && !popover.contains(document.activeElement)) closePopover();
             });
+          };
+          nameWrap.addEventListener('focusout', onNameWrapFocusOut);
+          registerPopoverCleanup(() => nameWrap.removeEventListener('focusout', onNameWrapFocusOut));
+
+          registerControl({
+            destroy() {
+              for (const cleanup of popoverCleanups.splice(0)) {
+                try {
+                  cleanup();
+                } catch (_) {
+                  // ignore
+                }
+              }
+            },
           });
 
           nameWrap.appendChild(colormapDisplay);
@@ -2306,7 +2460,9 @@ export class MappersPanel {
           const domain = Array.isArray(state.pending.domain) ? state.pending.domain : [min, max];
 
           if (!Array.isArray(state.pending.domain) && domainAttr) {
-            state.pending = { ...state.pending, type: 'colormap', domain: [min, max] };
+            const nextPending = { ...state.pending, type: 'colormap', domain: [min, max] };
+            markDomainAuto(nextPending, true);
+            state.pending = nextPending;
           }
 
           const slider = new TwoHandleRange({
@@ -2315,7 +2471,9 @@ export class MappersPanel {
             step,
             value: domain,
             onChange: (next) => {
-              state.pending = { ...state.pending, type: 'colormap', domain: next };
+              const nextPending = { ...state.pending, type: 'colormap', domain: next };
+              markDomainAuto(nextPending, false);
+              state.pending = nextPending;
               setDirty(true);
               d0.value = String(next[0]);
               d1.value = String(next[1]);
@@ -2348,7 +2506,9 @@ export class MappersPanel {
             slider.aInput.value = String(loSlider);
             slider.bInput.value = String(hiSlider);
             slider.setVisual(loSlider, hiSlider);
-            state.pending = { ...state.pending, type: 'colormap', domain: [lo, hi] };
+            const nextPending = { ...state.pending, type: 'colormap', domain: [lo, hi] };
+            markDomainAuto(nextPending, false);
+            state.pending = nextPending;
             setDirty(true);
           };
           d0.addEventListener('change', commitDomainTyped);
@@ -2548,6 +2708,8 @@ export class MappersPanel {
 		                commitRule({ ...getLiveSpec(), rhs });
 		              });
 
+		              const ifLabel = createRuleKeyword(i === 0 ? 'if' : 'else if');
+		              condRow.appendChild(ifLabel);
 		              condRow.appendChild(opSelect);
 		              condRow.appendChild(rhsInput);
 		              tooltips.attachTooltip(opSelect, 'Condition operator.');
@@ -2579,8 +2741,21 @@ export class MappersPanel {
 		                compact: true,
 		              });
 
+		              const outWrap = document.createElement('div');
+		              outWrap.style.display = 'flex';
+		              outWrap.style.gap = '8px';
+		              outWrap.style.alignItems = 'center';
+		              outWrap.style.width = '100%';
+
+		              outRow.style.flex = '1 1 auto';
+		              outRow.style.minWidth = '0';
+		              outRow.style.width = 'auto';
+
+		              outWrap.appendChild(createRuleKeyword('then'));
+		              outWrap.appendChild(outRow);
+
 		              item.appendChild(top);
-		              item.appendChild(outRow);
+		              item.appendChild(outWrap);
 		              rulesList.appendChild(item);
 		            }
 		          };
@@ -2695,6 +2870,48 @@ export class MappersPanel {
           setDirty(false);
         }
       });
+
+      const updateAutoDomainFromNetwork = () => {
+        const pending = state.pending;
+        if (!pending) return false;
+        const type = pending.type ?? pending.mode ?? null;
+        if (type !== 'linear' && type !== 'colormap') return false;
+        const attr = typeof pending.attributes === 'string' ? pending.attributes : null;
+        if (!attr) return false;
+
+        const uiMeta = pending.__ui && typeof pending.__ui === 'object' ? pending.__ui : null;
+        const domainAuto = uiMeta?.domainAuto === true || attr === '$index';
+        if (!domainAuto) return false;
+
+        const nextDomain = suggestDomainForAttribute(mode, attr);
+        const prevDomain = Array.isArray(pending.domain) ? pending.domain : null;
+        if (prevDomain && prevDomain[0] === nextDomain[0] && prevDomain[1] === nextDomain[1]) return false;
+
+        const nextPending = { ...pending, type, domain: nextDomain };
+        markDomainAuto(nextPending, true);
+        state.pending = nextPending;
+
+        // Keep visuals in sync when the editor wasn't mid-edit.
+        if (!state.dirty) {
+          applyConfig(mode, state.channel, nextPending);
+          setDirty(false);
+        }
+        return true;
+      };
+
+      // Recompute suggested domains when the underlying network changes.
+      const onNetworkReplaced = () => {
+        updateAutoDomainFromNetwork();
+        renderEditor();
+      };
+      let unsub = null;
+      if (helios?.on) {
+        unsub = helios.on('network:replaced', onNetworkReplaced);
+      } else if (helios?.addEventListener) {
+        helios.addEventListener('network:replaced', onNetworkReplaced);
+        unsub = () => helios.removeEventListener('network:replaced', onNetworkReplaced);
+      }
+      if (unsub) ui._controlCleanups.add(unsub);
 
       resetPendingFromLive();
       return { root, state, channels, setChannel };

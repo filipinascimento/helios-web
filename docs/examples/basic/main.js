@@ -1,6 +1,6 @@
 import HeliosNetwork, { AttributeType } from 'helios-network';
 // When consuming the published package use `import { Helios } from 'helios-web-next';`
-import { Helios, EVENTS, createColormapScale, HeliosUI } from '../../../src/index.js';
+import { Helios, EVENTS, HeliosUI } from '../../../src/index.js';
 
 // Set this to an object like { helios: true, mapper: true, scheduler: true } to re-enable debug logs.
 const DEFAULT_NODE_COUNT = 2_000;
@@ -267,7 +267,6 @@ async function bootstrap() {
   const heliosUI = new HeliosUI({ helios, theme: 'dark', allowDrag: true });
   heliosUI.createDemoPanel();
   heliosUI.createMetricsPanel();
-  heliosUI.createMappersPanel({ dock: 'top-right', position: { x: 16, y: 16 } });
   window.__heliosUI = heliosUI;
 
   const configureDemoMappers = () => {
@@ -275,24 +274,16 @@ async function bootstrap() {
     const hasWeight = Boolean(net?.hasNodeAttribute?.(nodeAttribute));
     console.log("Setting up mappers...", { hasWeight });
 
+    // Start with a serializable mapper so the UI doesn't show this as a custom preset.
+    // Color nodes by index across the full domain.
+    const maxIndex = Math.max(1, (net?.nodeCount ?? 1) - 1);
+    console.log("  Node colors ($index/rainforest)...");
+    helios.nodeMapper.channel('color').from('$index').colormap('cmasher:rainforest', { domain: [0, maxIndex], alpha: 1 }).done();
+
     if (hasWeight) {
-      // Showcase a colormap on nodes: map "weight" through a perceptual ramp.
-      const nodeColormap = createColormapScale('cmasher:rainforest', { domain: [0, 1], alpha: 1 });
-      console.log("  Node colors (weight)...");
-      helios.nodeMapper.channel('color').from(nodeAttribute).transform((v) => nodeColormap(v ?? 0)).done();
       console.log("  Node sizes (weight)...");
       helios.nodeMapper.channel('size').from(nodeAttribute).linear([0, 1], [1, 4]).done();
     } else {
-      // Fallback for loaded networks that don't contain the demo's "weight" attribute:
-      // color by index so something is always visible.
-      const inferno = createColormapScale('interpolateInferno', { domain: [0, 1], alpha: 1 });
-      const denom = Math.max(1, (net?.nodeCount ?? 1) - 1);
-      console.log("  Node colors ($index/inferno)...");
-      helios.nodeMapper.channel('color').from('$index').scale((value, _inputs, _item, ctx) => {
-        const index = Number(value ?? ctx?.index ?? 0);
-        const t = denom > 1 ? Math.max(0, Math.min(1, index / denom)) : 0;
-        return inferno(0.15 + t * 0.85);
-      }).done();
       console.log("  Node sizes (constant)...");
       helios.nodeMapper.channel('size').constant(2.5).done();
     }
@@ -305,6 +296,9 @@ async function bootstrap() {
   };
 
   configureDemoMappers();
+  // Create the Mappers panel after configuring demo mappers so it doesn't
+  // initialize from the non-serializable default mapper.
+  heliosUI.createMappersPanel({ dock: 'top-right', position: { x: 16, y: 16 } });
 
   helios.on(EVENTS.NETWORK_REPLACED, () => {
     configureDemoMappers();

@@ -1,0 +1,93 @@
+import { test, expect } from '@playwright/test';
+
+async function waitForDiagnostics(page) {
+  await page.waitForFunction(() => {
+    const diag = window.__HELIOS_DIAGNOSTICS__;
+    return diag && diag.ready;
+  });
+  return page.evaluate(() => window.__HELIOS_DIAGNOSTICS__);
+}
+
+function formatBrowserErrors(errors) {
+  return errors.map((e) => {
+    if (!e) return 'Unknown error';
+    const message = String(e.message ?? e);
+    const stack = e.stack ? `\n${e.stack}` : '';
+    return `${message}${stack}`;
+  }).join('\n\n');
+}
+
+test.describe('mappers panel', () => {
+  test('remains usable after network replacement disposes old network', async ({ page }, testInfo) => {
+    const errors = [];
+
+    page.on('pageerror', (error) => {
+      errors.push(error);
+    });
+
+    page.on('console', (msg) => {
+      if (msg.type() !== 'error') return;
+      errors.push(new Error(`console.error: ${msg.text()}`));
+    });
+
+    await page.goto('/tests/fixtures/demo.html?renderer=webgl&nodes=50&mappers=1&layout=none');
+    const diagnostics = await waitForDiagnostics(page);
+    expect(diagnostics.ready).toBe(true);
+
+    await page.waitForFunction(() => Boolean(window.__helios && window.__helios.ready));
+
+    const panel = page.locator('.helios-ui-panel[data-panel-id="helios-ui-mappers"]').first();
+    await expect(panel).toBeVisible();
+
+    const editorToggle = panel.getByRole('button', { name: 'Editor' }).first();
+    await expect(editorToggle).toBeVisible();
+    if ((await editorToggle.getAttribute('aria-expanded')) === 'false') {
+      await editorToggle.click();
+    }
+
+    const domainInputsBefore = panel.locator('.helios-ui-range2__values input[type="number"]');
+    await expect(domainInputsBefore).toHaveCount(2);
+    const domainMaxBefore = await domainInputsBefore.nth(1).inputValue();
+    expect(Number(domainMaxBefore)).toBeGreaterThanOrEqual(49);
+
+    await page.evaluate(async () => {
+      const HeliosNetwork = window.__helios?.network?.constructor;
+      if (!HeliosNetwork?.create) throw new Error('Unable to access HeliosNetwork constructor');
+      const network = await HeliosNetwork.create({ directed: false, initialNodes: 0 });
+      const nodes = network.addNodes(32);
+      const edges = [];
+      for (let i = 0; i < nodes.length; i += 1) {
+        edges.push([nodes[i], nodes[(i + 1) % nodes.length]]);
+      }
+      network.addEdges(edges);
+      await window.__helios.replaceNetwork(network, { disposeOld: true, keepCamera: true });
+    });
+
+    await page.waitForFunction(() => window.__helios?.network?.nodeCount === 32);
+    const domainInputsAfter = panel.locator('.helios-ui-range2__values input[type="number"]');
+    await expect(domainInputsAfter).toHaveCount(2);
+    await expect(domainInputsAfter.nth(1)).toHaveValue('32');
+
+    const typeSelectIndex = await panel.locator('select').evaluateAll((selects) => {
+      const isTypeSelect = (sel) => {
+        const options = Array.from(sel.options ?? []);
+        const labels = new Set(options.map((opt) => (opt.textContent ?? '').trim()));
+        return labels.has('Passthrough') && labels.has('Colormap') && labels.has('Constant');
+      };
+      return selects.findIndex(isTypeSelect);
+    });
+    expect(typeSelectIndex).toBeGreaterThanOrEqual(0);
+
+    const typeSelectLocator = panel.locator('select').nth(typeSelectIndex);
+    await typeSelectLocator.selectOption('passthrough');
+    await typeSelectLocator.selectOption('colormap');
+
+    if (errors.length) {
+      await testInfo.attach('browser-errors', {
+        body: formatBrowserErrors(errors),
+        contentType: 'text/plain',
+      });
+    }
+    expect(errors, formatBrowserErrors(errors)).toHaveLength(0);
+  });
+});
