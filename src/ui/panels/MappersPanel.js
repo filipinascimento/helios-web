@@ -126,6 +126,29 @@ export class MappersPanel {
       attachTooltip: tooltips.attachTooltip,
     });
 
+      const createAlignedActionRow = ({ title, hint, controls, action }) => {
+      const row = document.createElement('div');
+      row.className = 'helios-ui-row helios-ui-row--aligned';
+      const label = document.createElement('div');
+      label.className = 'helios-ui-label';
+      const titleRowEl = document.createElement('div');
+      titleRowEl.className = 'helios-ui-label__title-row';
+      const titleEl = document.createElement('div');
+      titleEl.className = 'helios-ui-label__title';
+      titleEl.textContent = title ?? '';
+      titleRowEl.appendChild(titleEl);
+      if (action) titleRowEl.appendChild(action);
+      label.appendChild(titleRowEl);
+      if (hint) tooltips.attachTooltip?.(titleEl, hint);
+
+      row.appendChild(label);
+      const controlWrap = document.createElement('div');
+      controlWrap.className = 'helios-ui-row__controls';
+      if (controls) controlWrap.appendChild(controls);
+      row.appendChild(controlWrap);
+      return { row, titleEl, controlWrap };
+    };
+
     const CHANNEL_LABELS = {
       color: 'Color',
       size: 'Size',
@@ -171,13 +194,22 @@ export class MappersPanel {
       return byChannel;
     };
 
-    const isEditorTransferableConfig = (config) => {
-      if (!config) return false;
-      const type = config.type ?? config.mode ?? null;
-      if (type === 'layout') return true;
+	    const isEditorTransferableConfig = (config) => {
+	      if (!config) return false;
+	      const type = config.type ?? config.mode ?? null;
+	      if (type === 'layout') return true;
 
-      // Editor currently doesn't represent exception rules.
-      if (Array.isArray(config.rules) && config.rules.length > 0) return false;
+	      const rules = Array.isArray(config.rules) ? config.rules : [];
+	      const supportedRules =
+	        rules.length === 0 ||
+	        rules.every((rule) => {
+	          const ui = rule?.__ui && typeof rule.__ui === 'object' ? rule.__ui : null;
+	          if (!ui) return false;
+	          if (typeof rule.when !== 'function') return false;
+	          // MVP: constant output rules only.
+	          return rule.value !== undefined;
+	        });
+	      if (!supportedRules) return false;
 
       // Any custom function makes the config non-roundtrippable for now.
       if (typeof config.transform === 'function' && !config.transformType) return false;
@@ -459,6 +491,38 @@ export class MappersPanel {
         dirty: false,
       };
 
+    const createSubsectionHeader = ({ title, action, tooltip }) => {
+      const wrap = document.createElement('div');
+      wrap.style.display = 'grid';
+      wrap.style.gap = '8px';
+      wrap.style.width = '100%';
+
+      const divider = document.createElement('div');
+      divider.style.height = '0';
+      divider.style.borderTop = '1px solid color-mix(in srgb, var(--helios-ui-border) 70%, transparent)';
+      divider.style.margin = '6px 0 2px';
+      wrap.appendChild(divider);
+
+      const header = document.createElement('div');
+      header.style.display = 'flex';
+      header.style.alignItems = 'center';
+      header.style.justifyContent = 'space-between';
+      header.style.gap = '8px';
+
+      const titleEl = document.createElement('div');
+      titleEl.textContent = title ?? '';
+      titleEl.style.fontWeight = '700';
+      titleEl.style.fontSize = '12px';
+      titleEl.style.color = 'var(--helios-ui-muted)';
+      titleEl.style.letterSpacing = '0.4px';
+      titleEl.style.textTransform = 'uppercase';
+      if (tooltip) tooltips.attachTooltip?.(titleEl, tooltip);
+      header.appendChild(titleEl);
+      if (action) header.appendChild(action);
+      wrap.appendChild(header);
+      return { wrap, header, titleEl };
+    };
+
       const channels = mode === 'edge' ? edgeChannels : nodeChannels;
       if (!channels.includes(state.channel)) state.channel = channels[0];
 
@@ -592,20 +656,127 @@ export class MappersPanel {
         if (!control) return;
         localControls.add(control);
       };
-      const destroyControls = () => {
-        for (const control of localControls) {
-          try {
-            control.destroy?.();
-          } catch (_) {
-            // ignore
-          }
-        }
-        localControls.clear();
-      };
+	      const destroyControls = () => {
+	        for (const control of localControls) {
+	          try {
+	            control.destroy?.();
+	          } catch (_) {
+	            // ignore
+	          }
+	        }
+	        localControls.clear();
+	      };
 
-      const renderEditor = () => {
-        destroyControls();
-        editorBody.textContent = '';
+	      const extractScalarForRule = (inputs) => {
+	        if (inputs == null) return inputs;
+	        if (typeof inputs === 'number') return inputs;
+	        if (Array.isArray(inputs) || ArrayBuffer.isView(inputs)) return inputs[0];
+	        if (typeof inputs === 'object') {
+	          const keys = Object.keys(inputs);
+	          if (keys.length) return inputs[keys[0]];
+	        }
+	        return inputs;
+	      };
+
+	      const buildRulePredicate = (spec) => {
+	        const op = spec?.op ?? 'eq';
+	        const rhsRaw = spec?.rhs;
+	        const rhs = rhsRaw != null ? Number(rhsRaw) : undefined;
+	        return (inputs) => {
+	          const vRaw = extractScalarForRule(inputs);
+	          if (op === 'nullish') return vRaw == null;
+	          if (op === 'nan') return vRaw != null && Number.isNaN(Number(vRaw));
+	          const v = Number(vRaw);
+	          if (!Number.isFinite(v)) return false;
+	          if (op === 'eq') return rhs != null && v === rhs;
+	          if (op === 'lt') return rhs != null && v < rhs;
+	          if (op === 'lte') return rhs != null && v <= rhs;
+	          if (op === 'gt') return rhs != null && v > rhs;
+	          if (op === 'gte') return rhs != null && v >= rhs;
+	          return false;
+	        };
+	      };
+
+	      const normalizeRuleList = (pending) => {
+	        if (!pending) return { rules: [] };
+	        if (!Array.isArray(pending.rules)) {
+	          return { ...pending, rules: [] };
+	        }
+	        return pending;
+	      };
+
+	      const createHex8ColorEditor = ({ label, value, onChange, showAlphaLabel = false, compact = true }) => {
+	        const row = document.createElement('div');
+	        row.style.display = 'flex';
+	        row.style.gap = '8px';
+	        row.style.alignItems = 'center';
+	        row.style.width = '100%';
+
+	        if (label) {
+	          const labelEl = document.createElement('div');
+	          labelEl.textContent = label;
+	          labelEl.style.fontSize = '12px';
+	          labelEl.style.color = 'var(--helios-ui-muted)';
+	          labelEl.style.minWidth = '76px';
+	          row.appendChild(labelEl);
+	        }
+
+	        const swatchWrap = document.createElement('div');
+	        swatchWrap.className = 'helios-ui-color-swatch';
+
+	        const swatch = document.createElement('div');
+	        swatch.className = 'helios-ui-color-swatch__swatch';
+
+	        const colorInput = document.createElement('input');
+	        colorInput.type = 'color';
+	        colorInput.className = 'helios-ui-color-swatch__input';
+	        colorInput.setAttribute('aria-label', label ? `${label} color` : 'Color');
+
+	        const alphaInput = document.createElement('input');
+	        alphaInput.type = 'number';
+	        alphaInput.className = 'helios-ui-number';
+	        alphaInput.min = '0';
+	        alphaInput.max = '1';
+	        alphaInput.step = '0.01';
+	        alphaInput.style.maxWidth = compact ? '72px' : '88px';
+	        alphaInput.title = 'Alpha';
+
+	        const alphaLabel = document.createElement('span');
+	        alphaLabel.textContent = 'Alpha';
+	        alphaLabel.style.color = 'var(--helios-ui-muted)';
+	        alphaLabel.style.display = showAlphaLabel ? '' : 'none';
+
+	        const rawValue = typeof value === 'string' ? value : '#ffffff';
+	        const raw = rawValue.startsWith('#') ? rawValue.slice(1) : rawValue;
+	        const baseHex = raw.length >= 6 ? `#${raw.slice(0, 6)}` : '#ffffff';
+	        const alphaHex = raw.length === 8 ? raw.slice(6, 8) : 'ff';
+	        const alpha = Math.round(parseInt(alphaHex, 16) / 255 * 100) / 100;
+
+	        colorInput.value = baseHex;
+	        alphaInput.value = String(Number.isFinite(alpha) ? alpha : 1);
+	        swatch.style.background = colorInput.value;
+
+	        const commit = () => {
+	          const a = clampNumber(alphaInput.value, { min: 0, max: 1 });
+	          if (a == null) return;
+	          onChange(toHex8(colorInput.value, a));
+	          setDirty(true);
+	          swatch.style.background = colorInput.value;
+	        };
+	        colorInput.addEventListener('input', commit);
+	        alphaInput.addEventListener('change', commit);
+
+	        swatchWrap.appendChild(swatch);
+	        swatchWrap.appendChild(colorInput);
+	        row.appendChild(swatchWrap);
+	        if (showAlphaLabel) row.appendChild(alphaLabel);
+	        row.appendChild(alphaInput);
+	        return row;
+	      };
+
+	      const renderEditor = () => {
+	        destroyControls();
+	        editorBody.textContent = '';
         const live = resolveLiveConfig(mode, state.channel);
 
         if (!state.pending) {
@@ -1212,12 +1383,13 @@ export class MappersPanel {
               controls: wrap,
             }).row);
           }
-        }
+	        }
 
-        if (pendingType === 'linear') {
-          const srcRow = document.createElement('div');
-          srcRow.style.display = 'grid';
-          srcRow.style.gap = '6px';
+	        if (pendingType === 'linear') {
+	          state.pending = normalizeRuleList(state.pending);
+	          const srcRow = document.createElement('div');
+	          srcRow.style.display = 'grid';
+	          srcRow.style.gap = '6px';
 
           const attrSelect = document.createElement('select');
           attrSelect.className = 'helios-ui-select';
@@ -1437,17 +1609,230 @@ export class MappersPanel {
           registerControl(maxControls);
           rangeWrap.appendChild(maxControls.element);
 
-          editorBody.appendChild(createAlignedRow({
-            title: 'Range',
-            hint: 'Output range produced after scaling.',
-            controls: rangeWrap,
-          }).row);
-        }
+	          editorBody.appendChild(createAlignedRow({
+	            title: 'Range',
+	            hint: 'Output range produced after scaling.',
+	            controls: rangeWrap,
+	          }).row);
 
-        if (pendingType === 'colormap') {
-          const attrSelect = document.createElement('select');
-          attrSelect.className = 'helios-ui-select';
-          const names = listAttributeNames(mode, { channel: state.channel, mapperType: 'colormap' });
+	          const advanced = document.createElement('div');
+
+		          const defaultWrap = document.createElement('div');
+		          defaultWrap.style.display = 'flex';
+		          defaultWrap.style.gap = '8px';
+		          defaultWrap.style.alignItems = 'center';
+		          defaultWrap.style.width = '100%';
+
+		          const defaultInput = document.createElement('input');
+		          defaultInput.type = 'number';
+		          defaultInput.className = 'helios-ui-number';
+		          defaultInput.style.width = '100%';
+		          defaultInput.style.flex = '1 1 auto';
+		          defaultInput.style.minWidth = '0';
+	          const defaultSeed = Number.isFinite(Number(state.pending.defaultValue)) ? Number(state.pending.defaultValue) : 0;
+	          defaultInput.value = String(defaultSeed);
+	          defaultInput.addEventListener('change', () => {
+	            const v = clampNumber(defaultInput.value);
+	            if (v == null) return;
+	            state.pending = { ...state.pending, type: 'linear', defaultValue: v };
+	            setDirty(true);
+	          });
+
+		          const clearDefault = document.createElement('button');
+		          clearDefault.type = 'button';
+		          clearDefault.className = 'helios-ui-button helios-ui-button--compact';
+		          clearDefault.textContent = '×';
+		          clearDefault.setAttribute('aria-label', 'Clear default value');
+		          clearDefault.addEventListener('click', () => {
+		            state.pending = { ...state.pending, type: 'linear', defaultValue: undefined };
+		            setDirty(true);
+		            renderEditor();
+		          });
+		          tooltips.attachTooltip(clearDefault, 'Clear the default value.');
+
+		          defaultWrap.appendChild(defaultInput);
+		          defaultWrap.appendChild(clearDefault);
+		          advanced.appendChild(createAlignedRow({
+		            title: 'Default',
+		            hint: 'Fallback value when input is missing/invalid.',
+		            controls: defaultWrap,
+		          }).row);
+
+		          const rulesWrap = document.createElement('div');
+		          rulesWrap.style.display = 'grid';
+		          rulesWrap.style.gap = '8px';
+		          rulesWrap.style.width = '100%';
+
+		          const rulesList = document.createElement('div');
+		          rulesList.style.display = 'grid';
+		          rulesList.style.gap = '8px';
+		          rulesWrap.appendChild(rulesList);
+
+	          const renderRulesList = () => {
+	            rulesList.textContent = '';
+	            const rules = Array.isArray(state.pending.rules) ? state.pending.rules : [];
+	            for (let i = 0; i < rules.length; i += 1) {
+	              const rule = rules[i];
+	              const spec = rule?.__ui && typeof rule.__ui === 'object'
+	                ? rule.__ui
+	                : { op: 'eq', rhs: -1, out: 0 };
+
+	              const item = document.createElement('div');
+	              item.style.display = 'grid';
+	              item.style.gap = '6px';
+	              item.style.padding = '8px';
+	              item.style.borderRadius = '10px';
+	              item.style.border = '1px solid color-mix(in srgb, var(--helios-ui-border) 70%, transparent)';
+	              item.style.background = 'color-mix(in srgb, var(--helios-ui-bg-solid) 85%, transparent)';
+
+	              const top = document.createElement('div');
+	              top.style.display = 'flex';
+	              top.style.gap = '8px';
+	              top.style.alignItems = 'center';
+	              top.style.justifyContent = 'space-between';
+
+	              const condRow = document.createElement('div');
+	              condRow.style.display = 'flex';
+	              condRow.style.gap = '8px';
+	              condRow.style.alignItems = 'center';
+	              condRow.style.flex = '1 1 auto';
+	              condRow.style.minWidth = '0';
+
+	              const opSelect = document.createElement('select');
+	              opSelect.className = 'helios-ui-select helios-ui-select--compact';
+	              opSelect.style.maxWidth = '72px';
+	              const ops = [
+	                { value: 'eq', label: '=' },
+	                { value: 'lt', label: '<' },
+	                { value: 'lte', label: '≤' },
+	                { value: 'gt', label: '>' },
+	                { value: 'gte', label: '≥' },
+	                { value: 'nan', label: 'NaN' },
+	                { value: 'nullish', label: 'null' },
+	              ];
+	              for (const op of ops) {
+	                const opt = document.createElement('option');
+	                opt.value = op.value;
+	                opt.textContent = op.label;
+	                opSelect.appendChild(opt);
+	              }
+	              opSelect.value = ops.some((o) => o.value === spec.op) ? spec.op : 'eq';
+
+	              const rhsInput = document.createElement('input');
+	              rhsInput.type = 'number';
+	              rhsInput.className = 'helios-ui-number';
+	              rhsInput.style.maxWidth = '96px';
+	              rhsInput.value = spec.rhs != null ? String(spec.rhs) : '';
+	              rhsInput.placeholder = 'value';
+
+	              const outInput = document.createElement('input');
+	              outInput.type = 'number';
+	              outInput.className = 'helios-ui-number';
+	              outInput.style.maxWidth = '140px';
+	              outInput.value = spec.out != null ? String(spec.out) : String(rule.value ?? 0);
+	              outInput.placeholder = 'output';
+
+	              const rhsVisible = () => ['eq', 'lt', 'lte', 'gt', 'gte'].includes(opSelect.value);
+	              rhsInput.style.display = rhsVisible() ? '' : 'none';
+
+	              const getLiveSpec = () => {
+	                const current = state.pending?.rules?.[i]?.__ui;
+	                return current && typeof current === 'object' ? current : spec;
+	              };
+
+	              const commitRule = (nextSpec) => {
+	                const predicate = buildRulePredicate(nextSpec);
+	                const out = nextSpec.out != null ? Number(nextSpec.out) : undefined;
+	                const nextRule = {
+	                  ...rule,
+	                  __ui: nextSpec,
+	                  when: (inputs) => predicate(inputs),
+	                  value: out,
+	                };
+	                const nextRules = rules.slice();
+	                nextRules[i] = nextRule;
+	                state.pending = { ...state.pending, type: 'linear', rules: nextRules };
+	                setDirty(true);
+	              };
+
+	              opSelect.addEventListener('change', () => {
+	                rhsInput.style.display = rhsVisible() ? '' : 'none';
+	                commitRule({ ...getLiveSpec(), op: opSelect.value });
+	              });
+
+	              rhsInput.addEventListener('change', () => {
+	                const rhs = clampNumber(rhsInput.value);
+	                commitRule({ ...getLiveSpec(), rhs });
+	              });
+
+	              outInput.addEventListener('change', () => {
+	                const out = clampNumber(outInput.value);
+	                commitRule({ ...getLiveSpec(), out });
+	              });
+
+	              condRow.appendChild(opSelect);
+	              condRow.appendChild(rhsInput);
+	              condRow.appendChild(outInput);
+	              tooltips.attachTooltip(opSelect, 'Condition operator.');
+	              tooltips.attachTooltip(rhsInput, 'Comparison value.');
+	              tooltips.attachTooltip(outInput, 'Override output.');
+
+	              const remove = document.createElement('button');
+	              remove.type = 'button';
+	              remove.className = 'helios-ui-button helios-ui-button--compact';
+	              remove.textContent = '×';
+	              remove.setAttribute('aria-label', 'Remove override');
+	              tooltips.attachTooltip(remove, 'Remove this override.');
+	              remove.addEventListener('click', () => {
+	                const nextRules = rules.filter((_, idx) => idx !== i);
+	                state.pending = { ...state.pending, type: 'linear', rules: nextRules };
+	                setDirty(true);
+	                renderRulesList();
+	              });
+
+	              top.appendChild(condRow);
+	              top.appendChild(remove);
+	              item.appendChild(top);
+	              rulesList.appendChild(item);
+	            }
+	          };
+
+	          const addRuleButton = document.createElement('button');
+	          addRuleButton.type = 'button';
+	          addRuleButton.className = 'helios-ui-button helios-ui-button--compact';
+	          addRuleButton.textContent = 'Add';
+	          addRuleButton.setAttribute('aria-label', 'Add override');
+	          tooltips.attachTooltip(addRuleButton, 'Add a value override (rule).');
+	          addRuleButton.addEventListener('click', () => {
+	            const spec = { op: 'eq', rhs: -1, out: 0 };
+	            const predicate = buildRulePredicate(spec);
+	            const nextRule = { __ui: spec, when: (inputs) => predicate(inputs), value: spec.out };
+	            const nextRules = [...(state.pending.rules ?? []), nextRule];
+	            state.pending = { ...state.pending, type: 'linear', rules: nextRules };
+	            setDirty(true);
+	            renderRulesList();
+	          });
+
+	          renderRulesList();
+	          const overridesSection = createSubsectionHeader({
+	            title: 'Overrides',
+	            tooltip: 'Rules applied before the base mapping.',
+	            action: addRuleButton,
+	          });
+	          overridesSection.wrap.appendChild(rulesWrap);
+	          advanced.appendChild(overridesSection.wrap);
+
+	          const advancedStack = new PanelStack();
+	          advancedStack.add({ id: `${mode}-mapper-advanced`, title: 'Advanced', collapsed: true, content: advanced });
+	          editorBody.appendChild(advancedStack.element);
+	          ui._controlCleanups.add(() => advancedStack.destroy());
+		        }
+
+	        if (pendingType === 'colormap') {
+	          state.pending = normalizeRuleList(state.pending);
+	          const attrSelect = document.createElement('select');
+	          attrSelect.className = 'helios-ui-select';
+	          const names = listAttributeNames(mode, { channel: state.channel, mapperType: 'colormap' });
           const current = typeof state.pending.attributes === 'string'
             ? state.pending.attributes
             : (typeof live?.attributes === 'string' ? live.attributes : '');
@@ -2020,17 +2405,216 @@ export class MappersPanel {
             hint: 'Clamp values outside the domain to the nearest end of the colormap.',
             controls: clampWrap,
           }).row);
-          advanced.appendChild(createAlignedRow({
-            title: 'Alpha',
-            hint: 'Overall opacity multiplier applied after colormapping.',
-            controls: alphaControls.element,
-          }).row);
+	          advanced.appendChild(createAlignedRow({
+	            title: 'Alpha',
+	            hint: 'Overall opacity multiplier applied after colormapping.',
+	            controls: alphaControls.element,
+	          }).row);
 
-          const advancedStack = new PanelStack();
-          advancedStack.add({ id: `${mode}-mapper-advanced`, title: 'Advanced', collapsed: true, content: advanced });
-          editorBody.appendChild(advancedStack.element);
-          ui._controlCleanups.add(() => advancedStack.destroy());
-        }
+		          const defaultWrap = document.createElement('div');
+		          defaultWrap.style.display = 'flex';
+		          defaultWrap.style.gap = '8px';
+		          defaultWrap.style.alignItems = 'center';
+		          defaultWrap.style.width = '100%';
+
+		          const defaultSeed = typeof state.pending.defaultValue === 'string' ? state.pending.defaultValue : '#888888ff';
+		          const defaultEditor = createHex8ColorEditor({
+		            label: null,
+		            value: defaultSeed,
+		            onChange: (v) => {
+		              state.pending = { ...state.pending, type: 'colormap', defaultValue: v };
+		            },
+		          });
+		          defaultEditor.style.flex = '1 1 auto';
+		          defaultEditor.style.minWidth = '0';
+
+		          const clearDefault = document.createElement('button');
+		          clearDefault.type = 'button';
+		          clearDefault.className = 'helios-ui-button helios-ui-button--compact';
+		          clearDefault.textContent = '×';
+		          clearDefault.setAttribute('aria-label', 'Clear default value');
+		          clearDefault.addEventListener('click', () => {
+		            state.pending = { ...state.pending, type: 'colormap', defaultValue: undefined };
+		            setDirty(true);
+		            renderEditor();
+		          });
+		          tooltips.attachTooltip(clearDefault, 'Clear the default value.');
+
+		          defaultWrap.appendChild(defaultEditor);
+		          defaultWrap.appendChild(clearDefault);
+
+		          advanced.appendChild(createAlignedRow({
+		            title: 'Default',
+		            hint: 'Fallback color when input is missing/invalid.',
+		            controls: defaultWrap,
+		          }).row);
+
+		          const rulesWrap = document.createElement('div');
+		          rulesWrap.style.display = 'grid';
+		          rulesWrap.style.gap = '8px';
+		          rulesWrap.style.width = '100%';
+
+		          const rulesList = document.createElement('div');
+		          rulesList.style.display = 'grid';
+		          rulesList.style.gap = '8px';
+		          rulesWrap.appendChild(rulesList);
+
+		          const renderRulesList = () => {
+		            rulesList.textContent = '';
+		            const rules = Array.isArray(state.pending.rules) ? state.pending.rules : [];
+		            for (let i = 0; i < rules.length; i += 1) {
+		              const rule = rules[i];
+		              const spec = rule?.__ui && typeof rule.__ui === 'object'
+		                ? rule.__ui
+		                : { op: 'eq', rhs: -1, out: '#888888ff' };
+
+		              const item = document.createElement('div');
+		              item.style.display = 'grid';
+		              item.style.gap = '6px';
+		              item.style.padding = '8px';
+		              item.style.borderRadius = '10px';
+		              item.style.border = '1px solid color-mix(in srgb, var(--helios-ui-border) 70%, transparent)';
+		              item.style.background = 'color-mix(in srgb, var(--helios-ui-bg-solid) 85%, transparent)';
+
+		              const top = document.createElement('div');
+		              top.style.display = 'flex';
+		              top.style.gap = '8px';
+		              top.style.alignItems = 'center';
+		              top.style.justifyContent = 'space-between';
+
+		              const condRow = document.createElement('div');
+		              condRow.style.display = 'flex';
+		              condRow.style.gap = '8px';
+		              condRow.style.alignItems = 'center';
+		              condRow.style.flex = '1 1 auto';
+		              condRow.style.minWidth = '0';
+
+		              const opSelect = document.createElement('select');
+		              opSelect.className = 'helios-ui-select helios-ui-select--compact';
+		              opSelect.style.maxWidth = '72px';
+		              const ops = [
+		                { value: 'eq', label: '=' },
+		                { value: 'lt', label: '<' },
+		                { value: 'lte', label: '≤' },
+	                { value: 'gt', label: '>' },
+	                { value: 'gte', label: '≥' },
+	                { value: 'nan', label: 'NaN' },
+	                { value: 'nullish', label: 'null' },
+	              ];
+	              for (const op of ops) {
+	                const opt = document.createElement('option');
+	                opt.value = op.value;
+	                opt.textContent = op.label;
+	                opSelect.appendChild(opt);
+	              }
+	              opSelect.value = ops.some((o) => o.value === spec.op) ? spec.op : 'eq';
+
+		              const rhsInput = document.createElement('input');
+		              rhsInput.type = 'number';
+		              rhsInput.className = 'helios-ui-number';
+		              rhsInput.style.maxWidth = '96px';
+		              rhsInput.value = spec.rhs != null ? String(spec.rhs) : '';
+		              rhsInput.placeholder = 'value';
+
+	              const rhsVisible = () => ['eq', 'lt', 'lte', 'gt', 'gte'].includes(opSelect.value);
+	              rhsInput.style.display = rhsVisible() ? '' : 'none';
+
+	              const getLiveSpec = () => {
+	                const current = state.pending?.rules?.[i]?.__ui;
+	                return current && typeof current === 'object' ? current : spec;
+	              };
+
+		              const commitRule = (nextSpec) => {
+		                const predicate = buildRulePredicate(nextSpec);
+		                const nextRule = {
+		                  ...rule,
+	                  __ui: nextSpec,
+	                  when: (inputs) => predicate(inputs),
+	                  value: nextSpec.out ?? rule.value,
+	                };
+	                const nextRules = rules.slice();
+	                nextRules[i] = nextRule;
+	                state.pending = { ...state.pending, type: 'colormap', rules: nextRules };
+	                setDirty(true);
+	              };
+
+	              opSelect.addEventListener('change', () => {
+	                rhsInput.style.display = rhsVisible() ? '' : 'none';
+	                commitRule({ ...getLiveSpec(), op: opSelect.value });
+	              });
+
+		              rhsInput.addEventListener('change', () => {
+		                const rhs = clampNumber(rhsInput.value);
+		                commitRule({ ...getLiveSpec(), rhs });
+		              });
+
+		              condRow.appendChild(opSelect);
+		              condRow.appendChild(rhsInput);
+		              tooltips.attachTooltip(opSelect, 'Condition operator.');
+		              tooltips.attachTooltip(rhsInput, 'Comparison value.');
+
+		              const remove = document.createElement('button');
+		              remove.type = 'button';
+		              remove.className = 'helios-ui-button helios-ui-button--compact';
+		              remove.textContent = '×';
+		              remove.setAttribute('aria-label', 'Remove override');
+		              tooltips.attachTooltip(remove, 'Remove this override.');
+		              remove.addEventListener('click', () => {
+		                const nextRules = rules.filter((_, idx) => idx !== i);
+		                state.pending = { ...state.pending, type: 'colormap', rules: nextRules };
+		                setDirty(true);
+		                renderRulesList();
+		              });
+
+		              top.appendChild(condRow);
+		              top.appendChild(remove);
+
+		              const outRow = createHex8ColorEditor({
+		                label: null,
+		                value: typeof spec.out === 'string' ? spec.out : String(rule.value ?? '#888888ff'),
+		                onChange: (v) => {
+		                  commitRule({ ...getLiveSpec(), out: v });
+		                },
+		                showAlphaLabel: false,
+		                compact: true,
+		              });
+
+		              item.appendChild(top);
+		              item.appendChild(outRow);
+		              rulesList.appendChild(item);
+		            }
+		          };
+
+		          renderRulesList();
+		          const addRuleButton = document.createElement('button');
+		          addRuleButton.type = 'button';
+		          addRuleButton.className = 'helios-ui-button helios-ui-button--compact';
+		          addRuleButton.textContent = 'Add';
+		          addRuleButton.setAttribute('aria-label', 'Add override');
+		          tooltips.attachTooltip(addRuleButton, 'Add a value override (rule).');
+		          addRuleButton.addEventListener('click', () => {
+		            const spec = { op: 'eq', rhs: -1, out: '#888888ff' };
+		            const predicate = buildRulePredicate(spec);
+		            const nextRule = { __ui: spec, when: (inputs) => predicate(inputs), value: spec.out };
+		            const nextRules = [...(state.pending.rules ?? []), nextRule];
+		            state.pending = { ...state.pending, type: 'colormap', rules: nextRules };
+		            setDirty(true);
+		            renderRulesList();
+		          });
+
+		          const overridesSection = createSubsectionHeader({
+		            title: 'Overrides',
+		            tooltip: 'Rules applied before the base mapping.',
+		            action: addRuleButton,
+		          });
+		          overridesSection.wrap.appendChild(rulesWrap);
+		          advanced.appendChild(overridesSection.wrap);
+
+		          const advancedStack = new PanelStack();
+		          advancedStack.add({ id: `${mode}-mapper-advanced`, title: 'Advanced', collapsed: true, content: advanced });
+		          editorBody.appendChild(advancedStack.element);
+		          ui._controlCleanups.add(() => advancedStack.destroy());
+	        }
 
         if (!isColor && !isScalar && pendingType !== 'passthrough') {
           const note = document.createElement('div');

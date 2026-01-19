@@ -34,6 +34,8 @@ Tips:
 
 If you’re using `HeliosUI`, the Mappers panel includes a searchable colormap picker with thumbnail previews to make it easier to browse ramps.
 
+Note: mapper configs that rely on arbitrary JavaScript functions (e.g. `.transform((v) => …)` or `.scale((v) => …)`) aren’t safely serializable. The UI focuses on declarative mappings (constant/passthrough/linear/colormap) plus “Default” and simple “Overrides” (rules like “-1 → gray”).
+
 ## Example: Basic demo node colors
 
 The bundled basic example (`docs/examples/basic/main.js`) maps node attribute `weight` through `createColormapScale('cmasher:rainforest')` and sizes nodes from the same attribute. Toggle the renderer via `?renderer=webgl` and edge transparency via `?edgeTransparency=weighted` to see how visuals react.
