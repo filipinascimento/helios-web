@@ -524,27 +524,166 @@ export class HeliosUI {
         return container;
       };
 
+      const clamp01 = (value) => {
+        const v = Number(value);
+        if (!Number.isFinite(v)) return 0;
+        return Math.max(0, Math.min(1, v));
+      };
+
+      const rgba01ToHex6 = (rgba) => {
+        const r = Math.round(255 * clamp01(rgba?.[0] ?? 0));
+        const g = Math.round(255 * clamp01(rgba?.[1] ?? 0));
+        const b = Math.round(255 * clamp01(rgba?.[2] ?? 0));
+        return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+      };
+
+      const createColorWithAlphaControls = ({ ariaLabel, getValue, setValue }) => {
+        const row = document.createElement('div');
+        row.style.display = 'flex';
+        row.style.gap = '8px';
+        row.style.alignItems = 'center';
+        row.style.width = '100%';
+
+        const swatchWrap = document.createElement('div');
+        swatchWrap.className = 'helios-ui-color-swatch';
+
+        const swatch = document.createElement('div');
+        swatch.className = 'helios-ui-color-swatch__swatch';
+
+        const colorInput = document.createElement('input');
+        colorInput.type = 'color';
+        colorInput.className = 'helios-ui-color-swatch__input';
+        colorInput.setAttribute('aria-label', ariaLabel);
+
+        const alphaInput = document.createElement('input');
+        alphaInput.type = 'number';
+        alphaInput.className = 'helios-ui-number';
+        alphaInput.min = '0';
+        alphaInput.max = '1';
+        alphaInput.step = '0.01';
+        alphaInput.style.maxWidth = '88px';
+        alphaInput.title = 'Alpha';
+        alphaInput.setAttribute('aria-label', `${ariaLabel} alpha`);
+
+        const alphaLabel = document.createElement('span');
+        alphaLabel.textContent = 'Alpha';
+        alphaLabel.style.color = 'var(--helios-ui-muted)';
+
+        const rawValue = getValue?.();
+
+        let baseHex = '#000000';
+        let alpha = 1;
+        if (typeof rawValue === 'string') {
+          const raw = rawValue.startsWith('#') ? rawValue.slice(1) : rawValue;
+          baseHex = raw.length >= 6 ? `#${raw.slice(0, 6)}` : '#000000';
+          const alphaHex = raw.length === 8 ? raw.slice(6, 8) : 'ff';
+          alpha = Math.round((parseInt(alphaHex, 16) / 255) * 100) / 100;
+        } else if (Array.isArray(rawValue) || ArrayBuffer.isView(rawValue)) {
+          baseHex = rgba01ToHex6(rawValue);
+          alpha = clamp01(rawValue?.[3] ?? 1);
+        }
+
+        colorInput.value = baseHex;
+        alphaInput.value = String(Number.isFinite(alpha) ? alpha : 1);
+        swatch.style.background = colorInput.value;
+
+        const commit = () => {
+          const a = clampNumber(alphaInput.value, { min: 0, max: 1 });
+          if (a == null) return;
+          setValue?.(toHex8(colorInput.value, a));
+          swatch.style.background = colorInput.value;
+        };
+
+        colorInput.addEventListener('input', commit);
+        alphaInput.addEventListener('change', commit);
+
+        swatchWrap.appendChild(swatch);
+        swatchWrap.appendChild(colorInput);
+        row.appendChild(swatchWrap);
+        row.appendChild(alphaLabel);
+        row.appendChild(alphaInput);
+        return row;
+      };
+
       const stack = new PanelStack();
       stack.add({
         id: 'network-io',
         title: 'Network',
         content: networkControls,
       });
+
       stack.add({
-        id: 'node-appearance',
-        title: 'Nodes',
+        id: 'appearance',
+        title: 'Appearance',
         content: (() => {
           const wrapper = document.createElement('div');
           wrapper.appendChild(themeRow);
-          wrapper.appendChild(createRows(['nodeSizeScale', 'nodeOpacityScale', 'nodeOutlineWidthScale']));
+
+          wrapper.appendChild(createAlignedRow({
+            title: 'Background',
+            hint: 'Clear/background color (including opacity).',
+            controls: createColorWithAlphaControls({
+              ariaLabel: 'Background color',
+              getValue: () => this.helios?.clearColor?.(),
+              setValue: (value) => this.helios?.clearColor?.(value),
+            }),
+          }).row);
+
+          const modeSelect = document.createElement('select');
+          modeSelect.className = 'helios-ui-select';
+          modeSelect.setAttribute('aria-label', 'Edge transparency mode');
+          tooltips.attachTooltip(modeSelect, 'How edges blend/accumulate when overlapping.');
+
+          const modes = [
+            { value: 'alpha', label: 'Alpha' },
+            { value: 'weighted', label: 'Weighted' },
+            { value: 'additive', label: 'Additive' },
+            { value: 'screen', label: 'Screen' },
+            { value: 'max', label: 'Max' },
+            { value: 'additive-normalized', label: 'Additive (normalized)' },
+            { value: 'additive-tonemapped', label: 'Additive (tonemapped)' },
+            { value: 'additive-normalized-bright', label: 'Additive (normalized bright)' },
+          ];
+          for (const info of modes) {
+            const opt = document.createElement('option');
+            opt.value = info.value;
+            opt.textContent = info.label;
+            modeSelect.appendChild(opt);
+          }
+
+          const syncEdgeMode = () => {
+            const current = this.helios?.edgeTransparencyMode?.();
+            const value = typeof current === 'string' ? current : 'alpha';
+            modeSelect.value = modes.some((m) => m.value === value) ? value : 'alpha';
+          };
+          syncEdgeMode();
+
+          modeSelect.addEventListener('change', () => {
+            this.helios?.edgeTransparencyMode?.(modeSelect.value);
+          });
+
+          wrapper.appendChild(createAlignedRow({
+            title: 'Edge Mode',
+            hint: 'Controls how overlapping edges are composited.',
+            controls: modeSelect,
+          }).row);
+
           return wrapper;
         })(),
       });
+
+      stack.add({
+        id: 'node-appearance',
+        title: 'Nodes',
+        content: createRows(['nodeSizeScale', 'nodeOpacityScale', 'nodeOutlineWidthScale']),
+      });
+
       stack.add({
         id: 'edge-appearance',
         title: 'Edges',
         content: createRows(['edgeWidthScale', 'edgeOpacityScale']),
       });
+
       stack.add({
         id: 'advanced-appearance',
         title: 'Advanced',
@@ -558,6 +697,7 @@ export class HeliosUI {
           'edgeEndpointTrim',
         ]),
       });
+
       content.appendChild(stack.element);
       this._controlCleanups.add(() => stack.destroy());
     } else {

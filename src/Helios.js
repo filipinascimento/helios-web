@@ -1329,6 +1329,16 @@ export class Helios extends EventTarget {
     return this.background(color);
   }
 
+  edgeTransparencyMode(mode) {
+    if (arguments.length === 0) return this._getGraphLayerProp('edgeTransparencyMode');
+    const next = String(mode ?? '');
+    const graphLayer = this.renderer?.graphLayer ?? null;
+    if (graphLayer?.isSupportedTransparencyMode && !graphLayer.isSupportedTransparencyMode(next)) {
+      return this;
+    }
+    return this._setGraphLayerProp('edgeTransparencyMode', next);
+  }
+
   /**
    * Pre-runs mapper application and (optionally) dense buffer rebuilds. Useful
    * for large graphs where the first geometry pass is expensive.
