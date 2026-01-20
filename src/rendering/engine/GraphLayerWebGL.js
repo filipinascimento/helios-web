@@ -995,6 +995,14 @@ export class GraphLayerWebGL extends GraphLayer {
 
     const variantKey = `c${needsColor ? 'A' : 'U'}|s${needsSize ? 'A' : 'U'}|o${needsOutlineWidth ? 'A' : 'U'}|oc${needsOutlineColor ? 'A' : 'U'}`;
     const variantChanged = this._nodeProgramKeyLast !== variantKey;
+    const viewsChanged = (
+      this._nodeViewsLast?.positions !== nodes.positions
+      || this._nodeViewsLast?.states !== nodes.states
+      || (needsColor && this._nodeViewsLast?.colors !== nodes.colors)
+      || (needsSize && this._nodeViewsLast?.sizes !== nodes.sizes)
+      || (needsOutlineWidth && this._nodeViewsLast?.outlineWidths !== nodes.outlineWidths)
+      || (needsOutlineColor && this._nodeViewsLast?.outlineColors !== nodes.outlineColors)
+    );
     const versionChanged = (
       this._nodeVersionsLast?.positions !== (versions.positions ?? 0)
       || (needsColor && this._nodeVersionsLast?.colors !== (versions.colors ?? 0))
@@ -1008,7 +1016,7 @@ export class GraphLayerWebGL extends GraphLayer {
     );
     this.nodeCount = count;
     if (!count) return;
-    if (!versionChanged) return;
+    if (!versionChanged && !viewsChanged) return;
 
     const { gl } = this;
     const cache = this.device?.resourceCache?.webgl;
@@ -1074,6 +1082,15 @@ export class GraphLayerWebGL extends GraphLayer {
       topology: versions.topology ?? 0,
     };
 
+    this._nodeViewsLast = {
+      positions: nodes.positions,
+      colors: nodes.colors,
+      sizes: nodes.sizes,
+      states: nodes.states,
+      outlineWidths: nodes.outlineWidths,
+      outlineColors: nodes.outlineColors,
+    };
+
     this._nodeProgramKeyLast = variantKey;
   }
 
@@ -1098,6 +1115,15 @@ export class GraphLayerWebGL extends GraphLayer {
 
     const variantKey = `c${needsColor ? 'A' : 'U'}|w${needsWidth ? 'A' : 'U'}|o${needsOpacity ? 'A' : 'U'}|es${needsEndpointSize ? 'A' : 'U'}`;
     const variantChanged = this._edgeProgramKeyLast !== variantKey;
+    const viewsChanged = (
+      this._edgeViewsLast?.segments !== edges.segments
+      || this._edgeViewsLast?.states !== edges.states
+      || this._edgeViewsLast?.endpointStates !== edges.endpointStates
+      || (needsColor && this._edgeViewsLast?.colors !== edges.colors)
+      || (needsOpacity && this._edgeViewsLast?.opacities !== edges.opacities)
+      || (needsWidth && this._edgeViewsLast?.widths !== edges.widths)
+      || (needsEndpointSize && this._edgeViewsLast?.endpointSizes !== edges.endpointSizes)
+    );
     const versionChanged = (
       this._edgeVersionsLast?.segments !== (versions.segments ?? 0)
       || (needsColor && this._edgeVersionsLast?.colors !== (versions.colors ?? 0))
@@ -1112,7 +1138,7 @@ export class GraphLayerWebGL extends GraphLayer {
     );
     this.edgeCount = count;
     if (!count) return;
-    if (!versionChanged) return;
+    if (!versionChanged && !viewsChanged) return;
 
     const { gl } = this;
     const cache = this.device?.resourceCache?.webgl;
@@ -1184,6 +1210,16 @@ export class GraphLayerWebGL extends GraphLayer {
       states: versions.states ?? 0,
       endpointStates: versions.endpointStates ?? 0,
       topology: versions.topology ?? 0,
+    };
+
+    this._edgeViewsLast = {
+      segments: edges.segments,
+      colors: edges.colors,
+      opacities: edges.opacities,
+      widths: edges.widths,
+      endpointSizes: edges.endpointSizes,
+      states: edges.states,
+      endpointStates: edges.endpointStates,
     };
 
     this._edgeProgramKeyLast = variantKey;

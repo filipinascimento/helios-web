@@ -153,6 +153,89 @@ test('nodeAttribute mapping registers node-to-edge passthrough and replaces prio
   });
 });
 
+test('nodeAttribute mapping retries node-to-edge registration when edge attribute removal fails once', () => {
+  class FakeBuffer {
+    constructor(dimension, type) {
+      this.dimension = dimension;
+      this.type = type;
+      this.view = new Float32Array(dimension * 4);
+      this.stride = dimension * Float32Array.BYTES_PER_ELEMENT;
+    }
+  }
+
+  class FakeNetwork {
+    constructor() {
+      this.nodeAttributes = new Map();
+      this.edgeAttributes = new Map();
+      this.nodeToEdgeCalls = [];
+      this.nodeToEdge = new Map();
+      this.removeEdgeCalls = 0;
+    }
+    defineNodeAttribute(name, type, dimension) {
+      if (!this.nodeAttributes.has(name)) {
+        this.nodeAttributes.set(name, new FakeBuffer(dimension, type));
+      }
+    }
+    defineEdgeAttribute(name, type, dimension) {
+      if (!this.edgeAttributes.has(name)) {
+        this.edgeAttributes.set(name, new FakeBuffer(dimension, type));
+      }
+    }
+    addDenseNodeAttributeBuffer() {}
+    addDenseEdgeAttributeBuffer() {}
+    removeNodeToEdgeAttribute(edge) {
+      this.nodeToEdge.delete(edge);
+    }
+    removeEdgeAttribute(name) {
+      this.removeEdgeCalls += 1;
+      if (this.removeEdgeCalls === 1) {
+        throw new Error('simulated removeEdgeAttribute failure');
+      }
+      this.edgeAttributes.delete(name);
+    }
+    hasNodeToEdgeAttribute(edge) {
+      return this.nodeToEdge.has(edge);
+    }
+    defineNodeToEdgeAttribute(source, edge, endpoints, doubleWidth) {
+      if (this.edgeAttributes.has(edge)) {
+        throw new Error(`Edge attribute "${edge}" already exists; remove it before registering a node-to-edge passthrough`);
+      }
+      const dim = this.nodeAttributes.get(source)?.dimension ?? 1;
+      const edgeDim = doubleWidth ? dim * 2 : dim;
+      this.edgeAttributes.set(edge, new FakeBuffer(edgeDim, AttributeType.Float));
+      this.nodeToEdgeCalls.push({ source, edge, endpoints, doubleWidth });
+      this.nodeToEdge.set(edge, { source, endpoints, doubleWidth });
+    }
+    getNodeAttributeBuffer(name) {
+      const buffer = this.nodeAttributes.get(name);
+      if (!buffer) throw new Error(`missing node attr ${name}`);
+      return buffer;
+    }
+    getEdgeAttributeBuffer(name) {
+      const buffer = this.edgeAttributes.get(name);
+      if (!buffer) throw new Error(`missing edge attr ${name}`);
+      return buffer;
+    }
+  }
+
+  const network = new FakeNetwork();
+  const mapper = new Mapper({ mode: 'edge', network });
+
+  // Ensure the target edge attribute already exists so the first defineNodeToEdgeAttribute will
+  // throw if removal fails.
+  network.defineEdgeAttribute(EDGE_ENDPOINTS_SIZE_ATTRIBUTE, AttributeType.Float, 2);
+
+  mapper.channel('endpointSize').nodeAttribute('size', 'source').done();
+
+  expect(network.nodeToEdgeCalls.at(-1)).toMatchObject({
+    edge: EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
+    endpoints: 'source',
+    doubleWidth: true,
+  });
+  expect(network.removeEdgeCalls).toBeGreaterThanOrEqual(2);
+  expect(network.hasNodeToEdgeAttribute(EDGE_ENDPOINTS_SIZE_ATTRIBUTE)).toBe(true);
+});
+
 test('default mappers expose sensible defaults', () => {
   const { nodeMapper, edgeMapper } = createDefaultMappers();
   const node = nodeMapper.mapItem({ attributes: {} }, { index: 3 });

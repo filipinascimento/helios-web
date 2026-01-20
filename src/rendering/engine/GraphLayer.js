@@ -620,9 +620,61 @@ export class GraphLayer extends Layer {
 
     // Reads must happen inside buffer access.
     try {
+      const augmentDerivedEdgeVersions = (geometry) => {
+        if (!geometry?.edges?.versions || typeof network?.hasNodeToEdgeAttribute !== 'function') return geometry;
+        const edgeVersions = geometry.edges.versions;
+        const derived = [
+          { attr: EDGE_COLOR_ATTRIBUTE, key: 'colors' },
+          { attr: EDGE_ENDPOINTS_POSITION_ATTRIBUTE, key: 'segments' },
+          { attr: EDGE_ENDPOINTS_SIZE_ATTRIBUTE, key: 'endpointSizes' },
+          { attr: EDGE_ENDPOINTS_STATE_ATTRIBUTE, key: 'endpointStates' },
+        ];
+        let passthroughs = null;
+        for (const { attr, key } of derived) {
+          if (!attr || !(key in edgeVersions)) continue;
+          let isDerived = false;
+          try {
+            isDerived = Boolean(network.hasNodeToEdgeAttribute(attr));
+          } catch (_) {
+            isDerived = false;
+          }
+          if (!isDerived) continue;
+
+          if (passthroughs == null && typeof network.getNodeToEdgePassthroughs === 'function') {
+            try {
+              passthroughs = network.getNodeToEdgePassthroughs();
+            } catch (_) {
+              passthroughs = [];
+            }
+          }
+          const entry = Array.isArray(passthroughs)
+            ? passthroughs.find((p) => p?.edgeName === attr)
+            : null;
+          const denseVersion = edgeVersions[key] ?? 0;
+          let edgeVersion = null;
+          if (typeof network.getEdgeAttributeVersion === 'function') {
+            try {
+              edgeVersion = network.getEdgeAttributeVersion(attr);
+            } catch (_) {
+              edgeVersion = null;
+            }
+          }
+          const parts = [`dense:${denseVersion}`];
+          if (edgeVersion != null) parts.push(`edge:${edgeVersion}`);
+          if (entry) {
+            parts.push(`src:${entry.sourceName}`);
+            parts.push(`endpoints:${entry.endpoints}`);
+            parts.push(`doubleWidth:${entry.doubleWidth ? 1 : 0}`);
+          }
+          edgeVersions[key] = parts.join('|');
+        }
+        return geometry;
+      };
+
       if (typeof network.withDenseBufferViews === 'function') {
         return network.withDenseBufferViews(requests, (views) => {
           const geometry = this.readDenseGraphFromViews(views, packing);
+          augmentDerivedEdgeVersions(geometry);
           return fn(geometry);
         });
       }
@@ -643,6 +695,7 @@ export class GraphLayer extends Layer {
             }
           }
           const geometry = this.readDenseGraphFromViews(views, packing);
+          augmentDerivedEdgeVersions(geometry);
           return fn(geometry);
         });
       }

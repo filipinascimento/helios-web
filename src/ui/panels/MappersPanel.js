@@ -309,13 +309,14 @@ export class MappersPanel {
       }
     };
 
-    const isCompatibleAttribute = (scope, channel, mapperType, name) => {
+    const isCompatibleAttribute = (scope, channel, mapperType, name, { targetMode } = {}) => {
       const info = getAttributeInfo(scope, name);
       if (!info) return false;
       if (info.type != null && !isNumericAttributeType(info.type)) return false;
 
       const dim = info.dimension ?? 1;
       const isEdge = scope === 'edge';
+      const edgeContext = isEdge || targetMode === 'edge';
       const isColorChannel = channel === 'color' || channel === 'outlineColor';
       const isPositionChannel = scope === 'node' && channel === 'position';
       const isScalarChannel =
@@ -335,7 +336,10 @@ export class MappersPanel {
       }
 
       if (mapperType === 'nodeAttribute') {
-        if (isColorChannel) return dim === 3 || dim === 4;
+        if (isColorChannel) {
+          if (edgeContext) return dim === 4;
+          return dim === 3 || dim === 4;
+        }
         if (isScalarChannel) return dim === 1;
         return false;
       }
@@ -362,7 +366,7 @@ export class MappersPanel {
       return true;
     };
 
-    const listAttributeNames = (scope, { channel, mapperType } = {}) => {
+    const listAttributeNames = (scope, { channel, mapperType, targetMode } = {}) => {
       const network = net();
       if (!network) return [];
       const getNames = scope === 'edge' ? network.getEdgeAttributeNames : network.getNodeAttributeNames;
@@ -409,7 +413,7 @@ export class MappersPanel {
       });
 
       if (channel && mapperType) {
-        return unique.filter((name) => isCompatibleAttribute(scope, channel, mapperType, name));
+        return unique.filter((name) => isCompatibleAttribute(scope, channel, mapperType, name, { targetMode }));
       }
       return unique;
     };
@@ -1046,11 +1050,11 @@ export class MappersPanel {
           }).row);
         }
 
-        if (pendingType === 'nodeAttribute') {
-          const attrSelect = document.createElement('select');
-          attrSelect.className = 'helios-ui-select';
-          const names = listAttributeNames('node', { channel: state.channel, mapperType: 'nodeAttribute' });
-          const fromAttributes = () => {
+          if (pendingType === 'nodeAttribute') {
+            const attrSelect = document.createElement('select');
+            attrSelect.className = 'helios-ui-select';
+            const names = listAttributeNames('node', { channel: state.channel, mapperType: 'nodeAttribute', targetMode: mode });
+            const fromAttributes = () => {
             const attrs = state.pending?.attributes ?? live?.attributes ?? live?.from ?? null;
             if (typeof attrs === 'string' && attrs.startsWith('@node.')) return attrs.slice('@node.'.length);
             if (typeof attrs === 'string' && attrs.startsWith('@nodes.')) return attrs.slice('@nodes.'.length);
@@ -1092,15 +1096,23 @@ export class MappersPanel {
             };
             setDirty(true);
           });
-          editorBody.appendChild(createAlignedRow({
-            title: 'Node Attribute',
-            hint: 'Pick the node attribute to propagate to edge endpoints.',
-            controls: attrSelect,
-          }).row);
+            state._nodePassthroughUi = { attrSelect, endpointsSelect: state._nodePassthroughUi?.endpointsSelect ?? null };
+            registerControl({
+              destroy() {
+                if (state._nodePassthroughUi?.attrSelect === attrSelect) {
+                  state._nodePassthroughUi = null;
+                }
+              },
+            });
+            editorBody.appendChild(createAlignedRow({
+              title: 'Node Attribute',
+              hint: 'Pick the node attribute to propagate to edge endpoints.',
+              controls: attrSelect,
+            }).row);
 
-          if (mode === 'edge') {
-            const endpointsSelect = document.createElement('select');
-            endpointsSelect.className = 'helios-ui-select helios-ui-select--compact';
+            if (mode === 'edge') {
+              const endpointsSelect = document.createElement('select');
+              endpointsSelect.className = 'helios-ui-select helios-ui-select--compact';
             const options = [
               { value: 'both', label: 'Both' },
               { value: 'source', label: 'Source' },
@@ -1125,15 +1137,35 @@ export class MappersPanel {
                 endpoints: endpointsSelect.value,
                 attributes: bare ? [`@node.${bare}`] : undefined,
               };
+              try {
+                if (window.__HELIOS_DEBUG_MAPPERS_PANEL__) {
+                  console.log('[HeliosUI][MappersPanel] endpoints change', {
+                    mode,
+                    channel: state.channel,
+                    nodeAttribute: bare,
+                    endpoints: endpointsSelect.value,
+                  });
+                }
+              } catch (_) {
+                // ignore
+              }
               setDirty(true);
             });
-            editorBody.appendChild(createAlignedRow({
-              title: 'Endpoints',
-              hint: 'Whether the passthrough uses both endpoints or duplicates source/target.',
-              controls: endpointsSelect,
-            }).row);
+              state._nodePassthroughUi = { attrSelect, endpointsSelect };
+              registerControl({
+                destroy() {
+                  if (state._nodePassthroughUi?.endpointsSelect === endpointsSelect) {
+                    state._nodePassthroughUi = null;
+                  }
+                },
+              });
+              editorBody.appendChild(createAlignedRow({
+                title: 'Endpoints',
+                hint: 'Whether the passthrough uses both endpoints or duplicates source/target.',
+                controls: endpointsSelect,
+              }).row);
+            }
           }
-        }
 
         if (pendingType === 'constant' && isScalar) {
           const wrap = document.createElement('div');
@@ -2826,6 +2858,36 @@ export class MappersPanel {
 
       applyButton.addEventListener('click', () => {
         if (!state.pending) return;
+        if (
+          mode === 'edge' &&
+          state.pending &&
+          (state.pending.type === 'nodeToEdge' || state.pending.type === 'nodeAttribute') &&
+          state._nodePassthroughUi
+        ) {
+          const { attrSelect, endpointsSelect } = state._nodePassthroughUi;
+          const bare = attrSelect?.value || state.pending.nodeAttribute || undefined;
+          const endpoints = endpointsSelect?.value || state.pending.endpoints || undefined;
+          state.pending = {
+            ...state.pending,
+            type: 'nodeAttribute',
+            nodeAttribute: bare,
+            endpoints,
+            attributes: bare ? [`@node.${bare}`] : state.pending.attributes,
+          };
+        }
+
+        try {
+          if (window.__HELIOS_DEBUG_MAPPERS_PANEL__) {
+            console.log('[HeliosUI][MappersPanel] apply click (before)', {
+              mode,
+              channel: state.channel,
+              pending: state.pending,
+              live: resolveLiveConfig(mode, state.channel),
+            });
+          }
+        } catch (_) {
+          // ignore
+        }
 
         if (mode === 'node' && state.channel === 'position') {
           const scheduler = helios?.scheduler ?? null;
@@ -2844,6 +2906,25 @@ export class MappersPanel {
 
         const ok = applyConfig(mode, state.channel, state.pending);
         if (ok) {
+          try {
+            if (window.__HELIOS_DEBUG_MAPPERS_PANEL__) {
+              const entry = helios?.network?.getNodeToEdgePassthroughs?.().find((p) => p.edgeName === '_helios_visuals_edge_color');
+              console.log('[HeliosUI][MappersPanel] apply click (after)', {
+                mode,
+                channel: state.channel,
+                live: resolveLiveConfig(mode, state.channel),
+                nodeToEdgeEdgeColor: entry ?? null,
+              });
+            }
+          } catch (_) {
+            // ignore
+          }
+
+          // Ensure visuals update immediately even if the scheduler is currently idle.
+          helios?.scheduler?.requestGeometry?.();
+          helios?.scheduler?.requestRender?.();
+          helios?.requestRender?.();
+
           if (
             mode === 'node' &&
             state.channel === 'outlineColor' &&

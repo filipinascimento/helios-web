@@ -700,7 +700,11 @@ export class Mapper {
   }) {
     if (!attribute || !sourceAttribute) return;
     this.unregisterNodeToEdge(attribute);
-    this.removeEdgeAttribute(attribute);
+    try {
+      this.removeEdgeAttribute(attribute);
+    } catch (error) {
+      console.warn(`Mapper failed to remove edge attribute ${attribute} for ${channelName}:`, error);
+    }
     try {
       this.network.defineNodeAttribute(sourceAttribute, type, sourceDimension);
     } catch (error) {
@@ -708,11 +712,30 @@ export class Mapper {
         console.warn(`Mapper failed to define node attribute ${sourceAttribute} for ${channelName}:`, error);
       }
     }
+    let passthroughOk = false;
     try {
       this.network.defineNodeToEdgeAttribute(sourceAttribute, attribute, endpoints, doubleWidth);
+      passthroughOk = true;
     } catch (error) {
-      if (!(error instanceof Error) || !error.message.includes('already')) {
+      const msg = error instanceof Error ? error.message : '';
+      if (typeof this.network?.removeEdgeAttribute === 'function' && /already exists/i.test(msg)) {
+        // Retry once so endpoint changes don't get ignored when removal fails silently.
+        try {
+          this.network.removeEdgeAttribute(attribute);
+          this.network.defineNodeToEdgeAttribute(sourceAttribute, attribute, endpoints, doubleWidth);
+          passthroughOk = true;
+        } catch (retryError) {
+          console.warn(`Mapper failed to redefine node-to-edge attribute for ${channelName}:`, retryError);
+        }
+      } else {
         console.warn(`Mapper failed to define node-to-edge attribute for ${channelName}:`, error);
+      }
+    }
+    if (passthroughOk && typeof this.network?.hasNodeToEdgeAttribute === 'function') {
+      try {
+        passthroughOk = Boolean(this.network.hasNodeToEdgeAttribute(attribute));
+      } catch (_) {
+        // ignore
       }
     }
     const sourceBuffer = this.safeGetAttributeBuffer('node', sourceAttribute);
@@ -720,9 +743,17 @@ export class Mapper {
     const expected = targetDimension ?? computePassthroughTargetDimension(sourceDimension, endpoints, doubleWidth);
     validateAttribute(sourceBuffer, sourceAttribute, type, sourceDimension);
     validateAttribute(edgeBuffer, attribute, type, expected);
-    this.nodeToEdgeRegistrations.add(attribute);
+    if (passthroughOk) {
+      this.nodeToEdgeRegistrations.add(attribute);
+    } else {
+      this.nodeToEdgeRegistrations.delete(attribute);
+    }
     this.registerDense('node', sourceAttribute);
     this.registerDense('edge', attribute);
+
+    // No explicit buffer bumps here: renderer invalidation for node-to-edge
+    // passthrough config changes is handled centrally in GraphLayer (derived
+    // version augmentation) to avoid surprising side-effects.
   }
 
   safeGetAttributeBuffer(scope, name) {
@@ -739,8 +770,12 @@ export class Mapper {
     if (!this.network?.removeEdgeAttribute || !name) return;
     try {
       this.network.removeEdgeAttribute(name);
-    } catch (_) {
-      // ignore failures when removing stale attributes
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : '';
+      if (/unknown edge attribute/i.test(msg) || /does not exist/i.test(msg)) {
+        return;
+      }
+      throw error;
     }
   }
 

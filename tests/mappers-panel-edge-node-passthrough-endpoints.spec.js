@@ -80,6 +80,36 @@ test.describe('mappers panel', () => {
     await endpointsSelect.selectOption({ label: 'Target' });
     await expect(applyButton).toBeEnabled();
 
+    const readEdgeColors = async () => page.evaluate(() => {
+      const net = window.__helios?.network;
+      if (!net?.updateDenseEdgeAttributeBuffer) throw new Error('Missing updateDenseEdgeAttributeBuffer');
+      net.updateDenseEdgeAttributeBuffer('_helios_visuals_edge_color');
+      const desc = net.getDenseEdgeAttributeView?.('_helios_visuals_edge_color') ?? null;
+      const view = desc?.view ?? null;
+      if (!view) throw new Error('Missing dense edge color buffer');
+      const first = Array.from(view.subarray(0, 8));
+      const start = first.slice(0, 4);
+      const end = first.slice(4, 8);
+      return { start, end };
+    });
+
+    const differs = (a, b) => a.some((v, i) => Math.abs(v - b[i]) > 1e-6);
+    const equals = (a, b) => !differs(a, b);
+
+    const initial = await readEdgeColors();
+    expect(differs(initial.start, initial.end)).toBe(true);
+
+    await endpointsSelect.selectOption({ label: 'Source' });
+    await applyButton.click();
+    const afterSource = await readEdgeColors();
+    expect(equals(afterSource.start, afterSource.end)).toBe(true);
+
+    await endpointsSelect.selectOption({ label: 'Target' });
+    await applyButton.click();
+    const afterTarget = await readEdgeColors();
+    expect(equals(afterTarget.start, afterTarget.end)).toBe(true);
+    expect(differs(afterSource.start, afterTarget.start)).toBe(true);
+
     if (errors.length) {
       await testInfo.attach('browser-errors', {
         body: formatBrowserErrors(errors),
@@ -89,4 +119,3 @@ test.describe('mappers panel', () => {
     expect(errors, formatBrowserErrors(errors)).toHaveLength(0);
   });
 });
-
