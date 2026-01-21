@@ -89,6 +89,10 @@ See [`docs/UI.md`](./UI.md) for the optional `HeliosUI` overlay (panels, docking
 
 See [`docs/states.md`](./states.md) for the bitmask-based node/edge state system (selected/highlighted/filtered/custom) and shader-applied styling.
 
+## Comparing with legacy Helios Web
+
+See [`docs/HELIOS_WEB_NEXT_VS_LEGACY.md`](./HELIOS_WEB_NEXT_VS_LEGACY.md) for a high-level summary of the biggest architectural differences and what Helios Web Next enables.
+
 ## Example Catalog
 
 - [`docs/examples/basic`](./examples/basic/README.md) – creates a handful of nodes, randomizes attributes, and maps them to colors so you can see both node and edge styling.

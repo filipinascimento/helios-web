@@ -931,17 +931,17 @@ export class GraphLayerWebGPU extends GraphLayer {
   getBlendForMode(mode) {
     switch (mode) {
       case 'additive':
-        return { key: 'additive', blend: { color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' }, alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' } } };
+        return { key: 'additive', fragment: 'edgeFragment', blend: { color: { srcFactor: 'src-alpha', dstFactor: 'one', operation: 'add' }, alpha: { srcFactor: 'src-alpha', dstFactor: 'one', operation: 'add' } } };
       case 'screen':
-        return { key: 'screen', blend: { color: { srcFactor: 'one', dstFactor: 'one-minus-src-color', operation: 'add' }, alpha: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' } } };
+        return { key: 'screen', fragment: 'edgePremulFragment', blend: { color: { srcFactor: 'one', dstFactor: 'one-minus-src', operation: 'add' }, alpha: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' } } };
       case 'max':
-        return { key: 'max', blend: { color: { srcFactor: 'one', dstFactor: 'one', operation: 'max' }, alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'max' } } };
+        return { key: 'max', fragment: 'edgeFragment', blend: { color: { srcFactor: 'src-alpha', dstFactor: 'one', operation: 'max' }, alpha: { srcFactor: 'src-alpha', dstFactor: 'one', operation: 'max' } } };
       default:
-        return { key: 'alpha', blend: { color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' }, alpha: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' } } };
+        return { key: 'alpha', fragment: 'edgeFragment', blend: { color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' }, alpha: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' } } };
     }
   }
 
-  createEdgePipelines(key, blend, edgeModule, depthStencil, useIndices, edgeVariant) {
+  createEdgePipelines(key, blend, edgeModule, depthStencil, fragmentEntryPoint, useIndices, edgeVariant) {
     const device = this.device?.device;
     if (!device || !edgeModule || !depthStencil) return;
     const linePipeline = device.createRenderPipeline({
@@ -949,7 +949,7 @@ export class GraphLayerWebGPU extends GraphLayer {
       vertex: { module: edgeModule, entryPoint: 'edgeVertex' },
       fragment: {
         module: edgeModule,
-        entryPoint: 'edgeFragment',
+        entryPoint: fragmentEntryPoint,
         targets: [{ format: this.device.format, blend }],
       },
       depthStencil: { ...depthStencil, depthWriteEnabled: false },
@@ -971,7 +971,7 @@ export class GraphLayerWebGPU extends GraphLayer {
       },
       fragment: {
         module: edgeModule,
-        entryPoint: 'edgeFragment',
+        entryPoint: fragmentEntryPoint,
         targets: [{ format: this.device.format, blend }],
       },
       depthStencil: { ...depthStencil, depthWriteEnabled: false },
@@ -986,7 +986,7 @@ export class GraphLayerWebGPU extends GraphLayer {
 
   getEdgePipelinesForMode(mode, gpuDevice, useIndices, edgeVariant) {
     if (!gpuDevice) return null;
-    const { key, blend } = this.getBlendForMode(mode);
+    const { key, blend, fragment } = this.getBlendForMode(mode);
     const variantKey = this.getEdgeVariantKey(useIndices, edgeVariant);
     const cacheKey = `${key}|${variantKey}`;
     if (key === 'alpha' && this.edgePipelineCache.has(cacheKey)) {
@@ -996,7 +996,7 @@ export class GraphLayerWebGPU extends GraphLayer {
       return { line: this.edgePipelineCache.get(cacheKey), quad: this.edgeQuadPipelineCache.get(cacheKey) };
     }
     const edgeModule = this.getEdgeModule(useIndices, edgeVariant);
-    this.createEdgePipelines(key, blend, edgeModule, this.baseDepthStencil, useIndices, edgeVariant);
+    this.createEdgePipelines(key, blend, edgeModule, this.baseDepthStencil, fragment ?? 'edgeFragment', useIndices, edgeVariant);
     return { line: this.edgePipelineCache.get(cacheKey), quad: this.edgeQuadPipelineCache.get(cacheKey) };
   }
 

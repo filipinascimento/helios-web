@@ -335,6 +335,22 @@ void main() {
   fragColor = v_color;
 }`;
 
+  const EDGE_PREMUL_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
+precision mediump float;
+
+in vec4 v_color;
+flat in uint v_discardFlag;
+out vec4 fragColor;
+
+void main() {
+  if (v_discardFlag != 0u) {
+    discard;
+  }
+  fragColor = vec4(v_color.rgb * v_color.a, v_color.a);
+}`;
+
+  const EDGE_PREMUL_QUAD_FRAGMENT_SOURCE = EDGE_PREMUL_FRAGMENT_SOURCE;
+
   const EDGE_QUAD_VERTEX_SOURCE = /* glsl */ `#version 300 es
 layout (location = 0) in vec2 a_corner;
 layout (location = 1) in vec3 a_start;
@@ -527,8 +543,10 @@ void main() {
     NODE_FRAGMENT_SOURCE,
     EDGE_VERTEX_SOURCE,
     EDGE_FRAGMENT_SOURCE,
+    EDGE_PREMUL_FRAGMENT_SOURCE,
     EDGE_QUAD_VERTEX_SOURCE,
     EDGE_QUAD_FRAGMENT_SOURCE,
+    EDGE_PREMUL_QUAD_FRAGMENT_SOURCE,
     EDGE_WEIGHTED_FRAGMENT_SOURCE,
     EDGE_WEIGHTED_QUAD_FRAGMENT_SOURCE,
     EDGE_RESOLVE_VERTEX_SOURCE,

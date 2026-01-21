@@ -636,7 +636,7 @@ export class HeliosUI {
 
           const modes = [
             { value: 'alpha', label: 'Alpha' },
-            { value: 'weighted', label: 'Weighted' },
+            { value: 'weighted', label: 'Smooth' },
             { value: 'additive', label: 'Additive' },
             { value: 'screen', label: 'Screen' },
             { value: 'max', label: 'Max' },
@@ -664,7 +664,7 @@ export class HeliosUI {
 
           wrapper.appendChild(createAlignedRow({
             title: 'Edge Mode',
-            hint: 'Controls how overlapping edges are composited.',
+            hint: 'Controls how overlapping edges are composited ("Smooth" reduces overlap artifacts).',
             controls: modeSelect,
           }).row);
 

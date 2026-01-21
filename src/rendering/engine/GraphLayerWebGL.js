@@ -165,7 +165,7 @@ export class GraphLayerWebGL extends GraphLayer {
     };
   }
 
-  getEdgeProgram(kind, edgeVariant, weighted = false) {
+  getEdgeProgram(kind, edgeVariant, weighted = false, premultiplyAlpha = false) {
     const gl = this.gl;
     if (!gl || !this.device) return null;
 
@@ -175,7 +175,7 @@ export class GraphLayerWebGL extends GraphLayer {
       ? edgeVariant
       : { color: true, width: true, opacity: true, endpointSize: true };
 
-    const key = `edge|${weighted ? 'w' : 'a'}|${isQuad ? 'q' : 'l'}|${v.color ? 'cA' : 'cU'}|${v.width ? 'wA' : 'wU'}|${v.opacity ? 'oA' : 'oU'}|${v.endpointSize ? 'esA' : 'esU'}`;
+    const key = `edge|${weighted ? 'w' : (premultiplyAlpha ? 'p' : 'a')}|${isQuad ? 'q' : 'l'}|${v.color ? 'cA' : 'cU'}|${v.width ? 'wA' : 'wU'}|${v.opacity ? 'oA' : 'oU'}|${v.endpointSize ? 'esA' : 'esU'}`;
     const sharedCache = this.device?.resourceCache?.webgl;
     const sharedKey = `graph:webgl:${this.stateSlotCount}:${key}`;
     if (sharedCache) {
@@ -192,7 +192,9 @@ export class GraphLayerWebGL extends GraphLayer {
         const vert = isQuad ? sources.EDGE_QUAD_VERTEX_SOURCE : sources.EDGE_VERTEX_SOURCE;
         const frag = weighted
           ? (isQuad ? sources.EDGE_WEIGHTED_QUAD_FRAGMENT_SOURCE : sources.EDGE_WEIGHTED_FRAGMENT_SOURCE)
-          : sources.EDGE_FRAGMENT_SOURCE;
+          : (premultiplyAlpha
+            ? (isQuad ? sources.EDGE_PREMUL_QUAD_FRAGMENT_SOURCE : sources.EDGE_PREMUL_FRAGMENT_SOURCE)
+            : sources.EDGE_FRAGMENT_SOURCE);
         const program = this.device.createProgram(vert, frag);
 
         const uniforms = {
@@ -244,7 +246,9 @@ export class GraphLayerWebGL extends GraphLayer {
     const vert = isQuad ? sources.EDGE_QUAD_VERTEX_SOURCE : sources.EDGE_VERTEX_SOURCE;
     const frag = weighted
       ? (isQuad ? sources.EDGE_WEIGHTED_QUAD_FRAGMENT_SOURCE : sources.EDGE_WEIGHTED_FRAGMENT_SOURCE)
-      : sources.EDGE_FRAGMENT_SOURCE;
+      : (premultiplyAlpha
+        ? (isQuad ? sources.EDGE_PREMUL_QUAD_FRAGMENT_SOURCE : sources.EDGE_PREMUL_FRAGMENT_SOURCE)
+        : sources.EDGE_FRAGMENT_SOURCE);
     const program = this.device.createProgram(vert, frag);
 
     const uniforms = {
@@ -853,12 +857,14 @@ export class GraphLayerWebGL extends GraphLayer {
         gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.nodeCount);
       };
 
+      const premultiplyEdgeAlpha = transparencyMode === 'screen';
+
       const drawEdges = () => {
         if (!this.edgeCount) return;
         gl.depthMask(false);
         const useQuads = this.edgeRenderingMode === 'quad';
         const kind = useQuads ? 'quad' : 'line';
-        const edgeEntry = this.getEdgeProgram(kind, edgeVariant, false);
+        const edgeEntry = this.getEdgeProgram(kind, edgeVariant, false, premultiplyEdgeAlpha);
         if (!edgeEntry?.program) return;
         gl.useProgram(edgeEntry.program);
         this.setEdgeUniforms(
@@ -949,7 +955,7 @@ export class GraphLayerWebGL extends GraphLayer {
     switch (mode) {
       case 'additive':
         gl.blendEquation(gl.FUNC_ADD);
-        gl.blendFunc(gl.ONE, gl.ONE);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
         break;
       case 'screen':
         gl.blendEquation(gl.FUNC_ADD);
@@ -957,7 +963,7 @@ export class GraphLayerWebGL extends GraphLayer {
         break;
       case 'max':
         gl.blendEquation(gl.MAX);
-        gl.blendFunc(gl.ONE, gl.ONE);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
         break;
       default:
         gl.blendEquation(gl.FUNC_ADD);

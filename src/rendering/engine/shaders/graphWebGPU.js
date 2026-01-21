@@ -620,7 +620,16 @@ fn edgeFragment(input : EdgeVertexOutput) -> @location(0) vec4<f32> {
     discard;
   }
   return vec4<f32>(input.color.rgb, input.color.a);
-}`;
+}
+
+@fragment
+fn edgePremulFragment(input : EdgeVertexOutput) -> @location(0) vec4<f32> {
+  if (input.discardFlag == 1u) {
+    discard;
+  }
+  return vec4<f32>(input.color.rgb * input.color.a, input.color.a);
+}
+`;
 
   const EDGE_WEIGHTED_WGSL = /* wgsl */ `
 ${EDGE_WGSL}

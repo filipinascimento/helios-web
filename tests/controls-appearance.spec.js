@@ -88,5 +88,10 @@ test.describe('controls panel: appearance section', () => {
 
     const mode = await page.evaluate(() => window.__helios.renderer?.graphLayer?.edgeTransparencyMode ?? null);
     expect(mode).toBe('additive');
+
+    // Regression: 'screen' should not throw on selection.
+    await edgeMode.selectOption({ value: 'screen' });
+    const screenMode = await page.evaluate(() => window.__helios.renderer?.graphLayer?.edgeTransparencyMode ?? null);
+    expect(screenMode).toBe('screen');
   });
 });
