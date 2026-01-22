@@ -2349,7 +2349,11 @@ export class Helios extends EventTarget {
 
   async _ensureIndexPickingTargets() {
     if (!this.indexPickingTracker) return;
-    const frame = this.scheduler?.currentFrame ?? {
+    const base = this.scheduler?.currentFrame ?? null;
+    // Scheduler.currentFrame may exist before the renderer/camera is ready.
+    // Always force a current camera/network so the AttributeTracker can render.
+    const frame = {
+      ...(base ?? null),
       network: this.network,
       timestamp: performance.now(),
       camera: this.renderer?.camera,

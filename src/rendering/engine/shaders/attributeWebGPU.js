@@ -1,4 +1,50 @@
-export const NODE_ATTRIBUTE_WGSL = /* wgsl */ `
+export function createAttributeWebGPUSources(options = {}) {
+  const nodeOptions = options?.node && typeof options.node === 'object' ? options.node : {};
+  const edgeOptions = options?.edge && typeof options.edge === 'object' ? options.edge : {};
+
+  const useNodeSizeBuffer = nodeOptions.size !== 'uniform';
+  const useNodeOutlineBuffer = nodeOptions.outline !== 'uniform';
+  const useNodeEncodedBuffer = nodeOptions.encoded !== 'none';
+  const useEdgeWidthBuffer = edgeOptions.width !== 'uniform';
+  const useEdgeEndpointSizeBuffer = edgeOptions.endpointSize !== 'uniform';
+
+  const NODE_VERTEX_INPUT = `
+struct VertexInput {
+  @location(0) corner : vec2<f32>,
+  @location(1) position : vec3<f32>,
+  ${useNodeSizeBuffer ? '@location(2) size : f32,' : ''}
+  ${useNodeEncodedBuffer ? '@location(3) encoded : vec4<u32>,' : ''}
+  ${useNodeOutlineBuffer ? '@location(4) outline : f32,' : ''}
+};
+`;
+
+  const NODE_SIZE_RAW_EXPR = useNodeSizeBuffer ? 'input.size' : 'globals.nodeRaw.x';
+  const NODE_OUTLINE_RAW_EXPR = useNodeOutlineBuffer ? 'input.outline' : 'globals.nodeRaw.y';
+
+  const EDGE_VERTEX_INPUT = `
+struct EdgeVertexInput {
+  @location(0) start : vec3<f32>,
+  @location(1) end : vec3<f32>,
+  ${useEdgeEndpointSizeBuffer ? '@location(3) endpointSize : vec2<f32>,' : ''}
+  @location(4) encoded : vec4<u32>,
+};
+`;
+
+  const EDGE_QUAD_VERTEX_INPUT = `
+struct EdgeQuadVertexInput {
+  @location(0) corner : vec2<f32>,
+  @location(1) start : vec3<f32>,
+  @location(2) end : vec3<f32>,
+  ${useEdgeWidthBuffer ? '@location(3) width : vec2<f32>,' : ''}
+  ${useEdgeEndpointSizeBuffer ? '@location(4) endpointSize : vec2<f32>,' : ''}
+  @location(5) encoded : vec4<u32>,
+};
+`;
+
+  const EDGE_WIDTH_PAIR_EXPR = useEdgeWidthBuffer ? 'input.width' : 'globals.edgeWidthRaw';
+  const EDGE_ENDPOINT_SIZE_PAIR_EXPR = useEdgeEndpointSizeBuffer ? 'input.endpointSize' : 'globals.edgeEndpointSizeRaw';
+
+  const NODE_WGSL = /* wgsl */ `
 struct Camera {
   viewProjection: mat4x4<f32>,
   view: mat4x4<f32>,
@@ -14,17 +60,16 @@ struct Globals {
   nodeOutline: vec2<f32>,
   edgeOpacity: vec2<f32>,
   edgeWidth: vec2<f32>,
+  nodeRaw: vec2<f32>, // x=nodeSizeRaw y=nodeOutlineRaw
   nodeOutlineColor: vec4<f32>,
   edgeTrim: f32,
-  _pad: vec3<f32>,
+  _pad0: f32,
+  edgeWidthRaw: vec2<f32>,
+  edgeEndpointSizeRaw: vec2<f32>,
+  _pad1: vec2<f32>,
 };
 
-struct VertexInput {
-  @location(0) corner : vec2<f32>,
-  @location(1) position : vec3<f32>,
-  @location(2) size : f32,
-  @location(3) encoded : vec4<u32>,
-};
+${NODE_VERTEX_INPUT}
 
 struct VertexOutput {
   @builtin(position) position : vec4<f32>,
@@ -34,7 +79,7 @@ struct VertexOutput {
   @location(3) upWorld : vec3<f32>,
   @location(4) viewDir : vec3<f32>,
   @location(5) radius : f32,
-  @location(6) @interpolate(flat) encoded : vec4<u32>,
+  ${useNodeEncodedBuffer ? '@location(6) @interpolate(flat) encoded : vec4<u32>,' : ''}
 };
 
 @group(0) @binding(0) var<uniform> camera : Camera;
@@ -42,8 +87,8 @@ struct VertexOutput {
 
 @vertex
 fn nodeVertex(input : VertexInput) -> VertexOutput {
-  let baseSize = globals.nodeSize.x + globals.nodeSize.y * input.size;
-  let outlineWidth = max(0.0, globals.nodeOutline.x + globals.nodeOutline.y * input.size);
+  let baseSize = globals.nodeSize.x + globals.nodeSize.y * ${NODE_SIZE_RAW_EXPR};
+  let outlineWidth = max(0.0, globals.nodeOutline.x + globals.nodeOutline.y * ${NODE_OUTLINE_RAW_EXPR});
   let fullSize = baseSize + outlineWidth;
   let radius = max(1.0, fullSize) * 0.5;
   var right = camera.right.xyz;
@@ -79,7 +124,7 @@ fn nodeVertex(input : VertexInput) -> VertexOutput {
   output.upWorld = up;
   output.viewDir = viewDir;
   output.radius = radius;
-  output.encoded = input.encoded;
+  ${useNodeEncodedBuffer ? 'output.encoded = input.encoded;' : '/* no encoded: occlusion pass */'}
   return output;
 }
 
@@ -117,7 +162,9 @@ fn nodeFragment(input : VertexOutput) -> FragmentOutput {
   } else {
     output.depth = input.position.z / input.position.w;
   }
-  output.color = vec4<f32>(vec4<f32>(input.encoded) / vec4<f32>(255.0));
+  ${useNodeEncodedBuffer
+    ? 'output.color = vec4<f32>(vec4<f32>(input.encoded) / vec4<f32>(255.0));'
+    : 'output.color = vec4<f32>(0.0, 0.0, 0.0, 0.0);'}
   return output;
 }
 
@@ -147,7 +194,7 @@ fn nodeDepthFragment(input : VertexOutput) -> FragmentOutput {
 }
 `;
 
-export const EDGE_ATTRIBUTE_WGSL = /* wgsl */ `
+  const EDGE_WGSL = /* wgsl */ `
 struct Camera {
   viewProjection: mat4x4<f32>,
   view: mat4x4<f32>,
@@ -163,27 +210,18 @@ struct Globals {
   nodeOutline: vec2<f32>,
   edgeOpacity: vec2<f32>,
   edgeWidth: vec2<f32>,
+  nodeRaw: vec2<f32>,
   nodeOutlineColor: vec4<f32>,
   edgeTrim: f32,
-  _pad: vec3<f32>,
+  _pad0: f32,
+  edgeWidthRaw: vec2<f32>,
+  edgeEndpointSizeRaw: vec2<f32>,
+  _pad1: vec2<f32>,
 };
 
-struct EdgeVertexInput {
-  @location(0) start : vec3<f32>,
-  @location(1) end : vec3<f32>,
-  @location(2) width : vec2<f32>,
-  @location(3) endpointSize : vec2<f32>,
-  @location(4) encoded : vec4<u32>,
-};
+${EDGE_VERTEX_INPUT}
 
-struct EdgeQuadVertexInput {
-  @location(0) corner : vec2<f32>,
-  @location(1) start : vec3<f32>,
-  @location(2) end : vec3<f32>,
-  @location(3) width : vec2<f32>,
-  @location(4) endpointSize : vec2<f32>,
-  @location(5) encoded : vec4<u32>,
-};
+${EDGE_QUAD_VERTEX_INPUT}
 
 fn packDepthToRGBA(v : f32) -> vec4<f32> {
   let bitShift = vec4<f32>(256.0 * 256.0 * 256.0, 256.0 * 256.0, 256.0, 1.0);
@@ -207,8 +245,9 @@ fn edgeVertex(input : EdgeVertexInput, @builtin(vertex_index) vertexIndex : u32)
   let dir = input.end - input.start;
   let dirLen = max(length(dir), 1e-5);
   let dirN = dir / vec3<f32>(dirLen);
-  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * input.endpointSize.x, 0.0) * 0.5;
-  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * input.endpointSize.y, 0.0) * 0.5;
+  let endpointSizePair = ${EDGE_ENDPOINT_SIZE_PAIR_EXPR};
+  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSizePair.x, 0.0) * 0.5;
+  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSizePair.y, 0.0) * 0.5;
   let trimStart = startRadius * globals.edgeTrim;
   let trimEnd = endRadius * globals.edgeTrim;
   let startPos = input.start + dirN * trimStart;
@@ -226,14 +265,16 @@ fn edgeQuadVertex(input : EdgeQuadVertexInput) -> EdgeVertexOutput {
   let dir = input.end - input.start;
   let dirLenWorld = max(length(dir), 1e-5);
   let dirN = dir / vec3<f32>(dirLenWorld);
-  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * input.endpointSize.x, 0.0) * 0.5;
-  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * input.endpointSize.y, 0.0) * 0.5;
+  let endpointSizePair = ${EDGE_ENDPOINT_SIZE_PAIR_EXPR};
+  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSizePair.x, 0.0) * 0.5;
+  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSizePair.y, 0.0) * 0.5;
   let trimStart = startRadius * globals.edgeTrim;
   let trimEnd = endRadius * globals.edgeTrim;
   let startPos = input.start + dirN * trimStart;
   let endPos = input.end - dirN * trimEnd;
   let segmentMix = clamp(input.corner.x, 0.0, 1.0);
-  let width = max(globals.edgeWidth.x + globals.edgeWidth.y * mix(input.width.x, input.width.y, segmentMix), 0.0);
+  let widthPair = ${EDGE_WIDTH_PAIR_EXPR};
+  let width = max(globals.edgeWidth.x + globals.edgeWidth.y * mix(widthPair.x, widthPair.y, segmentMix), 0.0);
   let clipStart = camera.viewProjection * vec4<f32>(startPos, 1.0);
   let clipEnd = camera.viewProjection * vec4<f32>(endPos, 1.0);
   let ndcStart = clipStart.xy / clipStart.w;
@@ -262,3 +303,10 @@ fn edgeDepthFragment(input : EdgeVertexOutput) -> @location(0) vec4<f32> {
   return packDepthToRGBA(input.position.z / input.position.w);
 }
 `;
+
+  return { nodeWGSL: NODE_WGSL, edgeWGSL: EDGE_WGSL };
+}
+
+const DEFAULT_SOURCES = createAttributeWebGPUSources();
+export const NODE_ATTRIBUTE_WGSL = DEFAULT_SOURCES.nodeWGSL;
+export const EDGE_ATTRIBUTE_WGSL = DEFAULT_SOURCES.edgeWGSL;
