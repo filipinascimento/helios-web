@@ -1655,8 +1655,8 @@ export class MappersPanel {
           });
           registerControl(slider);
 
-          const values = document.createElement('div');
-          values.className = 'helios-ui-range2__values';
+          const domainValues = document.createElement('div');
+          domainValues.className = 'helios-ui-range2__values';
           const d0 = document.createElement('input');
           d0.type = 'number';
           d0.className = 'helios-ui-number';
@@ -1688,10 +1688,10 @@ export class MappersPanel {
           d0.addEventListener('change', commitDomainTyped);
           d1.addEventListener('change', commitDomainTyped);
 
-          values.appendChild(d0);
-          values.appendChild(d1);
+          domainValues.appendChild(d0);
+          domainValues.appendChild(d1);
           domainWrap.appendChild(slider.element);
-          domainWrap.appendChild(values);
+          domainWrap.appendChild(domainValues);
           editorBody.appendChild(createAlignedRow({
             title: 'Domain',
             hint: 'Input range used for scaling (min/max).',
@@ -1700,69 +1700,82 @@ export class MappersPanel {
 
           const rangeWrap = document.createElement('div');
           rangeWrap.style.display = 'grid';
-          rangeWrap.style.gap = '6px';
+          rangeWrap.style.gap = '2px';
           rangeWrap.style.width = '100%';
 
           const minAllowed = state.channel === 'opacity' ? 0 : 0;
           const maxAllowed = state.channel === 'opacity' ? 1 : null;
 
           const suggestedRange = suggestRangeForChannel(mode, state.channel);
-          const stepOut = suggestStepForRange(suggestedRange[0], suggestedRange[1]);
+          const sliderMin = suggestedRange[0];
+          const sliderMax = suggestedRange[1];
+          const stepOut = suggestStepForRange(sliderMin, sliderMax);
 
           const range = Array.isArray(state.pending.range) ? state.pending.range : suggestedRange;
           if (!Array.isArray(state.pending.range)) {
             state.pending = { ...state.pending, type: 'linear', range };
           }
 
-          const commitRangeAt = (idx, value) => {
-            const n = clampNumber(value, { min: minAllowed, max: maxAllowed });
-            if (n == null) return;
-            const current = Array.isArray(state.pending.range) ? state.pending.range : suggestedRange;
-            const next = [current[0], current[1]];
-            next[idx] = n;
-            state.pending = { ...state.pending, type: 'linear', range: next };
+          const rangeSlider = new TwoHandleRange({
+            min: sliderMin,
+            max: sliderMax,
+            step: stepOut,
+            value: range,
+            onChange: (next) => {
+              state.pending = { ...state.pending, type: 'linear', range: next };
+              setDirty(true);
+              r0.value = String(next[0]);
+              r1.value = String(next[1]);
+            },
+          });
+          registerControl(rangeSlider);
+
+          const rangeValues = document.createElement('div');
+          rangeValues.className = 'helios-ui-range2__values';
+          const r0 = document.createElement('input');
+          r0.type = 'number';
+          r0.className = 'helios-ui-number';
+          r0.style.maxWidth = '96px';
+          r0.step = String(stepOut);
+          if (minAllowed != null) r0.min = String(minAllowed);
+          if (maxAllowed != null) r0.max = String(maxAllowed);
+          const r1 = document.createElement('input');
+          r1.type = 'number';
+          r1.className = 'helios-ui-number';
+          r1.style.maxWidth = '96px';
+          r1.step = String(stepOut);
+          if (minAllowed != null) r1.min = String(minAllowed);
+          if (maxAllowed != null) r1.max = String(maxAllowed);
+
+          r0.value = String(range[0] ?? suggestedRange[0]);
+          r1.value = String(range[1] ?? suggestedRange[1]);
+
+          const commitRangeTyped = () => {
+            const a = clampNumber(r0.value, { min: minAllowed, max: maxAllowed });
+            const b = clampNumber(r1.value, { min: minAllowed, max: maxAllowed });
+            if (a == null || b == null) return;
+            const lo = Math.min(a, b);
+            const hi = Math.max(a, b);
+            const loSlider = Math.max(sliderMin, Math.min(sliderMax, lo));
+            const hiSlider = Math.max(sliderMin, Math.min(sliderMax, hi));
+            rangeSlider.aInput.value = String(loSlider);
+            rangeSlider.bInput.value = String(hiSlider);
+            rangeSlider.setVisual(loSlider, hiSlider);
+            state.pending = { ...state.pending, type: 'linear', range: [lo, hi] };
             setDirty(true);
           };
+          r0.addEventListener('change', commitRangeTyped);
+          r1.addEventListener('change', commitRangeTyped);
 
-          const labelStyle = (el) => {
-            el.style.fontSize = '12px';
-            el.style.color = 'var(--helios-ui-muted)';
-          };
+          rangeValues.appendChild(r0);
+          rangeValues.appendChild(r1);
+          rangeWrap.appendChild(rangeSlider.element);
+          rangeWrap.appendChild(rangeValues);
 
-          const minLabel = document.createElement('div');
-          minLabel.textContent = 'Min';
-          labelStyle(minLabel);
-          rangeWrap.appendChild(minLabel);
-          const minControls = new SuggestedSliderControls({
-            value: Number(range[0] ?? suggestedRange[0]),
-            suggested: [suggestedRange[0], suggestedRange[1]],
-            step: stepOut,
-            inputMin: minAllowed,
-            inputMax: maxAllowed,
-            onCommit: (v) => commitRangeAt(0, v),
-          });
-          registerControl(minControls);
-          rangeWrap.appendChild(minControls.element);
-
-          const maxLabel = document.createElement('div');
-          maxLabel.textContent = 'Max';
-          labelStyle(maxLabel);
-          rangeWrap.appendChild(maxLabel);
-          const maxControls = new SuggestedSliderControls({
-            value: Number(range[1] ?? suggestedRange[1]),
-            suggested: [suggestedRange[0], suggestedRange[1]],
-            step: stepOut,
-            inputMin: minAllowed,
-            inputMax: maxAllowed,
-            onCommit: (v) => commitRangeAt(1, v),
-          });
-          registerControl(maxControls);
-          rangeWrap.appendChild(maxControls.element);
-
-	          editorBody.appendChild(createAlignedRow({
-	            title: 'Range',
-	            hint: 'Output range produced after scaling.',
-	            controls: rangeWrap,
+          editorBody.appendChild(createAlignedRow({
+            title: 'Range',
+            hint: 'Output range produced after scaling.',
+            controls: rangeWrap,
 	          }).row);
 
 	          const advanced = document.createElement('div');

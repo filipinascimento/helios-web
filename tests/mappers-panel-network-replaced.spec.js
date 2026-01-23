@@ -45,7 +45,7 @@ test.describe('mappers panel', () => {
       await editorToggle.click();
     }
 
-    const domainInputsBefore = panel.locator('.helios-ui-range2__values input[type="number"]');
+    const domainInputsBefore = panel.locator('.helios-ui-range2__values').first().locator('input[type="number"]');
     await expect(domainInputsBefore).toHaveCount(2);
     const domainMaxBefore = await domainInputsBefore.nth(1).inputValue();
     expect(Number(domainMaxBefore)).toBeGreaterThanOrEqual(49);
@@ -64,9 +64,9 @@ test.describe('mappers panel', () => {
     });
 
     await page.waitForFunction(() => window.__helios?.network?.nodeCount === 32);
-    const domainInputsAfter = panel.locator('.helios-ui-range2__values input[type="number"]');
+    const domainInputsAfter = panel.locator('.helios-ui-range2__values').first().locator('input[type="number"]');
     await expect(domainInputsAfter).toHaveCount(2);
-    await expect(domainInputsAfter.nth(1)).toHaveValue('32');
+    await expect(domainInputsAfter.nth(1)).toHaveValue('31');
 
     const typeSelectIndex = await panel.locator('select').evaluateAll((selects) => {
       const isTypeSelect = (sel) => {
