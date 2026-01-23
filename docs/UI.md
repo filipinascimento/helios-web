@@ -222,6 +222,12 @@ As the system grows, it’s typical to group panels by responsibility:
 
 The initial shipped demo panel is just a starting point and is meant to be replaced/extended.
 
+### Mappers panel options
+
+When creating the built-in Mappers panel, you can pass a few UI options:
+
+- `showDistributions` (default: `true`): render a small histogram above domain sliders when attribute data is available.
+
 ## Composing panels (tabs and stacks)
 
 If you want to group multiple “sub-panels” inside a single panel, you can use the helpers exported from the package:

@@ -878,6 +878,43 @@ export const defaultStylesText = `
   width: 100%;
 }
 
+.helios-ui-range2__histogram {
+  position: relative;
+  width: 100%;
+  height: 26px;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 2px;
+  align-items: end;
+  box-sizing: border-box;
+  overflow: visible;
+  --helios-ui-range2-thumb: var(--helios-ui-slider-thumb, 12px);
+  --helios-ui-range2-marker-w: 2px;
+  padding: 2px calc(var(--helios-ui-range2-thumb) / 2);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--helios-ui-fg) 6%, transparent);
+}
+
+.helios-ui-range2__histogram-bin {
+  width: 100%;
+  border-radius: 4px 4px 2px 2px;
+  background: color-mix(in srgb, var(--helios-ui-fg) 32%, transparent);
+  opacity: 0.9;
+}
+
+.helios-ui-range2__histogram-marker {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  width: var(--helios-ui-range2-marker-w);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--helios-ui-accent) 92%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--helios-ui-border) 60%, transparent);
+  pointer-events: none;
+  transform: translateX(calc(var(--helios-ui-range2-marker-w) / -2));
+}
+
 .helios-ui-dock {
   position: absolute;
   top: 0;

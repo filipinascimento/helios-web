@@ -115,6 +115,7 @@ export class MappersPanel {
     const helios = this.helios;
     const net = () => helios?.network ?? null;
     const options = this.options ?? {};
+    const showDistributions = options.showDistributions !== false;
 
     const tooltips = createTooltipManager();
     ui._controlCleanups.add(() => tooltips.destroy());
@@ -469,6 +470,91 @@ export class MappersPanel {
       const extent = computeScalarExtent(scope, rawName);
       if (extent && Number.isFinite(extent.min) && Number.isFinite(extent.max)) return [extent.min, extent.max];
       return [0, 1];
+    };
+
+    const resolveAttributeView = (scope, rawName) => {
+      if (!rawName) return null;
+      const network = net();
+      if (!network) return null;
+      const isNodeProxy = scope === 'edge' && rawName.startsWith('@node.');
+      const name = isNodeProxy ? rawName.slice('@node.'.length) : rawName;
+      try {
+        const buffer = isNodeProxy
+          ? network.getNodeAttributeBuffer?.(name)
+          : (scope === 'edge' ? network.getEdgeAttributeBuffer?.(name) : network.getNodeAttributeBuffer?.(name));
+        return buffer?.view ?? null;
+      } catch (_) {
+        return null;
+      }
+    };
+
+    const suggestHistogramBins = (count) => {
+      if (!Number.isFinite(count) || count <= 1) return 1;
+      const bins = Math.round(Math.sqrt(count));
+      return Math.max(8, Math.min(40, bins));
+    };
+
+    const buildHistogram = (view, min, max) => {
+      if (!view || typeof view.length !== 'number' || view.length <= 0) return null;
+      if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return null;
+      const bins = suggestHistogramBins(view.length);
+      const counts = new Array(bins).fill(0);
+      const span = max - min;
+      let maxCount = 0;
+      let seen = 0;
+      for (let i = 0; i < view.length; i += 1) {
+        const v = Number(view[i]);
+        if (!Number.isFinite(v)) continue;
+        let idx = Math.floor(((v - min) / span) * bins);
+        if (idx < 0) idx = 0;
+        if (idx >= bins) idx = bins - 1;
+        const next = counts[idx] + 1;
+        counts[idx] = next;
+        if (next > maxCount) maxCount = next;
+        seen += 1;
+      }
+      if (!seen || maxCount <= 0) return null;
+      return { counts, maxCount };
+    };
+
+    const createRangeHistogram = ({ view, min, max, range }) => {
+      const data = buildHistogram(view, min, max);
+      if (!data) return null;
+      const histogram = document.createElement('div');
+      histogram.className = 'helios-ui-range2__histogram';
+
+      for (const count of data.counts) {
+        const bar = document.createElement('div');
+        bar.className = 'helios-ui-range2__histogram-bin';
+        bar.style.height = `${Math.max(1, Math.round((count / data.maxCount) * 100))}%`;
+        histogram.appendChild(bar);
+      }
+
+      const minMarker = document.createElement('div');
+      minMarker.className = 'helios-ui-range2__histogram-marker';
+      const maxMarker = document.createElement('div');
+      maxMarker.className = 'helios-ui-range2__histogram-marker';
+      histogram.appendChild(minMarker);
+      histogram.appendChild(maxMarker);
+
+      const setMarkers = (lo, hi) => {
+        const span = max - min;
+        const toPct = (value) => {
+          if (span === 0) return 0;
+          const raw = (value - min) / span;
+          return Math.max(0, Math.min(1, raw));
+        };
+        const toLeft = (pct) =>
+          `calc(${pct} * (100% - var(--helios-ui-range2-thumb)) + (var(--helios-ui-range2-thumb) / 2))`;
+
+        const loPct = toPct(lo);
+        const hiPct = toPct(hi);
+        minMarker.style.left = toLeft(loPct);
+        maxMarker.style.left = toLeft(hiPct);
+      };
+      setMarkers(Number(range?.[0] ?? min), Number(range?.[1] ?? max));
+
+      return { element: histogram, setMarkers };
     };
 
     const ensureUiMeta = (pending) => {
@@ -1639,6 +1725,16 @@ export class MappersPanel {
             state.pending = nextPending;
           }
 
+          const domainHistogram = (showDistributions && domainAttr)
+            ? createRangeHistogram({
+              view: resolveAttributeView(mode, domainAttr),
+              min,
+              max,
+              range: domain,
+            })
+            : null;
+          if (domainHistogram) domainWrap.appendChild(domainHistogram.element);
+
           const slider = new TwoHandleRange({
             min,
             max,
@@ -1651,6 +1747,7 @@ export class MappersPanel {
               setDirty(true);
               d0.value = String(next[0]);
               d1.value = String(next[1]);
+              domainHistogram?.setMarkers(next[0], next[1]);
             },
           });
           registerControl(slider);
@@ -1684,6 +1781,7 @@ export class MappersPanel {
             markDomainAuto(nextPending, false);
             state.pending = nextPending;
             setDirty(true);
+            domainHistogram?.setMarkers(lo, hi);
           };
           d0.addEventListener('change', commitDomainTyped);
           d1.addEventListener('change', commitDomainTyped);
@@ -2510,6 +2608,16 @@ export class MappersPanel {
             state.pending = nextPending;
           }
 
+          const domainHistogram = (showDistributions && domainAttr)
+            ? createRangeHistogram({
+              view: resolveAttributeView(mode, domainAttr),
+              min,
+              max,
+              range: domain,
+            })
+            : null;
+          if (domainHistogram) domainWrap.appendChild(domainHistogram.element);
+
           const slider = new TwoHandleRange({
             min,
             max,
@@ -2522,6 +2630,7 @@ export class MappersPanel {
               setDirty(true);
               d0.value = String(next[0]);
               d1.value = String(next[1]);
+              domainHistogram?.setMarkers(next[0], next[1]);
             },
           });
           registerControl(slider);
@@ -2555,6 +2664,7 @@ export class MappersPanel {
             markDomainAuto(nextPending, false);
             state.pending = nextPending;
             setDirty(true);
+            domainHistogram?.setMarkers(lo, hi);
           };
           d0.addEventListener('change', commitDomainTyped);
           d1.addEventListener('change', commitDomainTyped);
