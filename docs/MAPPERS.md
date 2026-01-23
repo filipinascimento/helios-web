@@ -21,6 +21,8 @@ mapper.channel('color').categorical(['A', 'B', 'C'], palette).done();
 
 Available channels include `color`, `size`, `width`, and `opacity` on both node and edge mappers. Each channel supports either a constant value, a scale/transform function, or a colormap.
 
+Mapper-driven visuals allocate attribute buffers on demand. Channels in constant mode use uniforms and won’t create per-node/edge attributes unless another mapper needs them. Once created, buffers are kept around even if you switch back to constants.
+
 ## Colormap helpers
 
 - `createColormapScale(nameOrFn, { domain, clamp = true, alpha })` – returns a function mapping numeric values to `[r,g,b,a]` in 0–1 space. Accepts any built-in colormap key (CET, cmasher, helios, d3-scale-chromatic) or a custom interpolator function.

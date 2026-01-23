@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import HeliosNetwork, { AttributeType } from 'helios-network';
 import { VisualAttributes } from '../src/pipeline/VisualAttributes.js';
-import { Mapper } from '../src/pipeline/Mapper.js';
+import { Mapper, MapperCollection } from '../src/pipeline/Mapper.js';
 import {
   NODE_POSITION_ATTRIBUTE,
   NODE_COLOR_ATTRIBUTE,
@@ -19,7 +19,7 @@ import {
   EDGE_ENDPOINTS_STATE_ATTRIBUTE,
 } from '../src/pipeline/constants.js';
 
-test('creates missing visual attributes with expected shapes', async () => {
+test('creates required visual attributes with expected shapes', async () => {
   const network = await HeliosNetwork.create({ directed: false, initialNodes: 0, initialEdges: 0 });
   new VisualAttributes(network);
 
@@ -27,37 +27,9 @@ test('creates missing visual attributes with expected shapes', async () => {
   assert.equal(pos?.dimension, 3);
   assert.equal(pos?.type, AttributeType.Float);
 
-  const color = network.getNodeAttributeInfo(NODE_COLOR_ATTRIBUTE);
-  assert.equal(color?.dimension, 4);
-  assert.equal(color?.type, AttributeType.Float);
-
-  const size = network.getNodeAttributeInfo(NODE_SIZE_ATTRIBUTE);
-  assert.equal(size?.dimension, 1);
-  assert.equal(size?.type, AttributeType.Float);
-
   const state = network.getNodeAttributeInfo(NODE_STATE_ATTRIBUTE);
   assert.equal(state?.dimension, 1);
   assert.equal(state?.type, AttributeType.UnsignedInteger);
-
-  const outlineColor = network.getNodeAttributeInfo(NODE_OUTLINE_COLOR_ATTRIBUTE);
-  assert.equal(outlineColor?.dimension, 4);
-  assert.equal(outlineColor?.type, AttributeType.Float);
-
-  const outlineWidth = network.getNodeAttributeInfo(NODE_OUTLINE_WIDTH_ATTRIBUTE);
-  assert.equal(outlineWidth?.dimension, 1);
-  assert.equal(outlineWidth?.type, AttributeType.Float);
-
-  const edgeColor = network.getEdgeAttributeInfo(EDGE_COLOR_ATTRIBUTE);
-  assert.equal(edgeColor?.dimension, 8);
-  assert.equal(edgeColor?.type, AttributeType.Float);
-
-  const edgeOpacity = network.getEdgeAttributeInfo(EDGE_OPACITY_ATTRIBUTE);
-  assert.equal(edgeOpacity?.dimension, 2);
-  assert.equal(edgeOpacity?.type, AttributeType.Float);
-
-  const edgeWidth = network.getEdgeAttributeInfo(EDGE_WIDTH_ATTRIBUTE);
-  assert.equal(edgeWidth?.dimension, 2);
-  assert.equal(edgeWidth?.type, AttributeType.Float);
 
   const edgeState = network.getEdgeAttributeInfo(EDGE_STATE_ATTRIBUTE);
   assert.equal(edgeState?.dimension, 1);
@@ -67,21 +39,25 @@ test('creates missing visual attributes with expected shapes', async () => {
   assert.equal(endpointsPos?.dimension, 6);
   assert.equal(endpointsPos?.type, AttributeType.Float);
 
-  const endpointsSize = network.getEdgeAttributeInfo(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
-  assert.equal(endpointsSize?.dimension, 2);
-  assert.equal(endpointsSize?.type, AttributeType.Float);
-
   const endpointsState = network.getEdgeAttributeInfo(EDGE_ENDPOINTS_STATE_ATTRIBUTE);
   assert.equal(endpointsState?.dimension, 2);
   assert.equal(endpointsState?.type, AttributeType.UnsignedInteger);
+
+  assert.equal(network.hasNodeAttribute(NODE_COLOR_ATTRIBUTE), false);
+  assert.equal(network.hasNodeAttribute(NODE_SIZE_ATTRIBUTE), false);
+  assert.equal(network.hasNodeAttribute(NODE_OUTLINE_COLOR_ATTRIBUTE), false);
+  assert.equal(network.hasNodeAttribute(NODE_OUTLINE_WIDTH_ATTRIBUTE), false);
+  assert.equal(network.hasEdgeAttribute(EDGE_COLOR_ATTRIBUTE, true), false);
+  assert.equal(network.hasEdgeAttribute(EDGE_OPACITY_ATTRIBUTE, true), false);
+  assert.equal(network.hasEdgeAttribute(EDGE_WIDTH_ATTRIBUTE, true), false);
+  assert.equal(network.hasEdgeAttribute(EDGE_ENDPOINTS_SIZE_ATTRIBUTE, true), false);
 });
 
 test('repairs incompatible visual attribute metadata', async () => {
   const network = await HeliosNetwork.create({ directed: false, initialNodes: 0, initialEdges: 0 });
   // Seed with wrong metadata.
   network.defineNodeAttribute(NODE_POSITION_ATTRIBUTE, AttributeType.Float, 2);
-  network.defineEdgeAttribute(EDGE_COLOR_ATTRIBUTE, AttributeType.Integer, 3);
-  network.defineEdgeAttribute(EDGE_OPACITY_ATTRIBUTE, AttributeType.Integer, 1);
+  network.defineEdgeAttribute(EDGE_STATE_ATTRIBUTE, AttributeType.Float, 2);
 
   new VisualAttributes(network);
 
@@ -89,13 +65,9 @@ test('repairs incompatible visual attribute metadata', async () => {
   assert.equal(pos?.dimension, 3);
   assert.equal(pos?.type, AttributeType.Float);
 
-  const edgeColor = network.getEdgeAttributeInfo(EDGE_COLOR_ATTRIBUTE);
-  assert.equal(edgeColor?.dimension, 8);
-  assert.equal(edgeColor?.type, AttributeType.Float);
-
-  const edgeOpacity = network.getEdgeAttributeInfo(EDGE_OPACITY_ATTRIBUTE);
-  assert.equal(edgeOpacity?.dimension, 2);
-  assert.equal(edgeOpacity?.type, AttributeType.Float);
+  const edgeState = network.getEdgeAttributeInfo(EDGE_STATE_ATTRIBUTE);
+  assert.equal(edgeState?.dimension, 1);
+  assert.equal(edgeState?.type, AttributeType.UnsignedInteger);
 });
 
 test('does not overwrite zeroed nodes when positions are already initialized', async () => {
@@ -194,38 +166,34 @@ test('constant mappers update uniform config without bumping buffer versions', a
   const edgeMapper = new Mapper({ mode: 'edge', network });
   edgeMapper.channel('width').constant(1.25).done();
 
-  const nodePos = network.getNodeAttributeBuffer(NODE_POSITION_ATTRIBUTE);
-  const nodeColor = network.getNodeAttributeBuffer(NODE_COLOR_ATTRIBUTE);
-  const nodeSize = network.getNodeAttributeBuffer(NODE_SIZE_ATTRIBUTE);
-  const edgeColor = network.getEdgeAttributeBuffer(EDGE_COLOR_ATTRIBUTE);
-  const edgeOpacity = network.getEdgeAttributeBuffer(EDGE_OPACITY_ATTRIBUTE);
-  const edgeWidth = network.getEdgeAttributeBuffer(EDGE_WIDTH_ATTRIBUTE);
-  const edgeEndpointsPos = network.getEdgeAttributeBuffer(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
-  const edgeEndpointsSize = network.getEdgeAttributeBuffer(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
-
-  const before = {
-    nodePos: nodePos.version,
-    nodeColor: nodeColor.version,
-    nodeSize: nodeSize.version,
-    edgeColor: edgeColor.version,
-    edgeOpacity: edgeOpacity.version,
-    edgeWidth: edgeWidth.version,
-    edgeEndpointsPos: edgeEndpointsPos.version,
-    edgeEndpointsSize: edgeEndpointsSize.version,
-  };
-
   visuals.applyMappers({ nodeMapper, edgeMapper });
 
   assert.equal(network.__heliosVisualConfig?.node?.size?.mode, 'uniform');
   assert.equal(network.__heliosVisualConfig?.edge?.width?.mode, 'uniform');
 
-  // Applying constant mappers should not touch/bump dense visual buffers.
-  assert.equal(nodePos.version, before.nodePos);
-  assert.equal(nodeColor.version, before.nodeColor);
-  assert.equal(nodeSize.version, before.nodeSize);
-  assert.equal(edgeColor.version, before.edgeColor);
-  assert.equal(edgeOpacity.version, before.edgeOpacity);
-  assert.equal(edgeWidth.version, before.edgeWidth);
-  assert.equal(edgeEndpointsPos.version, before.edgeEndpointsPos);
-  assert.equal(edgeEndpointsSize.version, before.edgeEndpointsSize);
+  assert.equal(network.hasNodeAttribute(NODE_SIZE_ATTRIBUTE), false);
+  assert.equal(network.hasEdgeAttribute(EDGE_WIDTH_ATTRIBUTE, true), false);
+});
+
+test('node-to-edge passthrough downgrades when node channel is constant', async () => {
+  const network = await HeliosNetwork.create({ directed: false, initialNodes: 0, initialEdges: 0 });
+  const nodes = network.addNodes(2);
+  network.addEdges([{ from: nodes[0], to: nodes[1] }]);
+
+  const visuals = new VisualAttributes(network);
+  const nodeCollection = new MapperCollection('node', network, () => {});
+  const edgeCollection = new MapperCollection('edge', network, () => {});
+
+  nodeCollection.channel('color').constant('#ff0000').done();
+  edgeCollection.channel('color').from('@node.color').nodeToEdge().done();
+
+  const nodeMapper = nodeCollection.toCombinedMapper();
+  const edgeMapper = edgeCollection.toCombinedMapper({ nodeMapper });
+  visuals.applyMappers({ nodeMapper, edgeMapper });
+
+  assert.equal(network.__heliosVisualConfig?.edge?.color?.mode, 'uniform');
+  assert.equal(network.hasEdgeAttribute(EDGE_COLOR_ATTRIBUTE, true), false);
+  if (typeof network.hasNodeToEdgeAttribute === 'function') {
+    assert.equal(network.hasNodeToEdgeAttribute(EDGE_COLOR_ATTRIBUTE), false);
+  }
 });

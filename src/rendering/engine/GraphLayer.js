@@ -64,6 +64,8 @@ export class GraphLayer extends Layer {
     this.edgeWidthBase = 0;
     this.edgeWidthScale = 1;
     this.edgeEndpointTrim = Number.isFinite(options.edgeEndpointTrim) ? options.edgeEndpointTrim : 0.8;
+    this.nodeBlendWithEdges = options.nodeBlendWithEdges === true;
+    this.edgeDepthWrite = options.edgeDepthWrite === true;
     this.fallbackCameraUniforms = null;
     this.loggedWeightedActive = false;
 
@@ -329,20 +331,30 @@ export class GraphLayer extends Layer {
     const updates = [
       () => network.updateDenseNodeIndexBuffer?.(),
       () => network.updateDenseEdgeIndexBuffer?.(),
-      () => network.updateDenseNodeAttributeBuffer?.(NODE_POSITION_ATTRIBUTE),
-      () => network.updateDenseNodeAttributeBuffer?.(NODE_COLOR_ATTRIBUTE),
-      () => network.updateDenseNodeAttributeBuffer?.(NODE_SIZE_ATTRIBUTE),
-      () => network.updateDenseNodeAttributeBuffer?.(NODE_STATE_ATTRIBUTE),
-      () => network.updateDenseNodeAttributeBuffer?.(NODE_OUTLINE_WIDTH_ATTRIBUTE),
-      () => network.updateDenseNodeAttributeBuffer?.(NODE_OUTLINE_COLOR_ATTRIBUTE),
-      () => network.updateDenseEdgeAttributeBuffer?.(EDGE_COLOR_ATTRIBUTE),
-      () => network.updateDenseEdgeAttributeBuffer?.(EDGE_OPACITY_ATTRIBUTE),
-      () => network.updateDenseEdgeAttributeBuffer?.(EDGE_WIDTH_ATTRIBUTE),
-      () => network.updateDenseEdgeAttributeBuffer?.(EDGE_STATE_ATTRIBUTE),
-      () => network.updateDenseEdgeAttributeBuffer?.(EDGE_ENDPOINTS_POSITION_ATTRIBUTE),
-      () => network.updateDenseEdgeAttributeBuffer?.(EDGE_ENDPOINTS_SIZE_ATTRIBUTE),
-      () => network.updateDenseEdgeAttributeBuffer?.(EDGE_ENDPOINTS_STATE_ATTRIBUTE),
     ];
+    const addNode = (name) => {
+      if (typeof network.updateDenseNodeAttributeBuffer !== 'function') return;
+      if (typeof network.hasNodeAttribute === 'function' && !network.hasNodeAttribute(name)) return;
+      updates.push(() => network.updateDenseNodeAttributeBuffer(name));
+    };
+    const addEdge = (name) => {
+      if (typeof network.updateDenseEdgeAttributeBuffer !== 'function') return;
+      if (typeof network.hasEdgeAttribute === 'function' && !network.hasEdgeAttribute(name, true)) return;
+      updates.push(() => network.updateDenseEdgeAttributeBuffer(name));
+    };
+    addNode(NODE_POSITION_ATTRIBUTE);
+    addNode(NODE_COLOR_ATTRIBUTE);
+    addNode(NODE_SIZE_ATTRIBUTE);
+    addNode(NODE_STATE_ATTRIBUTE);
+    addNode(NODE_OUTLINE_WIDTH_ATTRIBUTE);
+    addNode(NODE_OUTLINE_COLOR_ATTRIBUTE);
+    addEdge(EDGE_COLOR_ATTRIBUTE);
+    addEdge(EDGE_OPACITY_ATTRIBUTE);
+    addEdge(EDGE_WIDTH_ATTRIBUTE);
+    addEdge(EDGE_STATE_ATTRIBUTE);
+    addEdge(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
+    addEdge(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+    addEdge(EDGE_ENDPOINTS_STATE_ATTRIBUTE);
     for (const fn of updates) {
       if (typeof fn !== 'function') continue;
       try {
@@ -663,6 +675,14 @@ export class GraphLayer extends Layer {
           if (edgeVersion != null) parts.push(`edge:${edgeVersion}`);
           if (entry) {
             parts.push(`src:${entry.sourceName}`);
+            if (entry.sourceName && typeof network.getNodeAttributeVersion === 'function') {
+              try {
+                const srcVersion = network.getNodeAttributeVersion(entry.sourceName);
+                if (srcVersion != null) parts.push(`srcVer:${srcVersion}`);
+              } catch (_) {
+                // Ignore missing source attribute version.
+              }
+            }
             parts.push(`endpoints:${entry.endpoints}`);
             parts.push(`doubleWidth:${entry.doubleWidth ? 1 : 0}`);
           }

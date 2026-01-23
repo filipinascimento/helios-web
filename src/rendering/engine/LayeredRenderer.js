@@ -210,6 +210,8 @@ export class LayeredRenderer {
       transparencyModeEdges: this.options.transparencyModeEdges,
       nodeOutlineColor: this.options.nodeOutlineColor,
       edgeEndpointTrim: this.options.edgeEndpointTrim,
+      nodeBlendWithEdges: this.options.nodeBlendWithEdges,
+      edgeDepthWrite: this.options.edgeDepthWrite,
       stateSlots: this.options.stateSlots,
     };
     if (this.device?.type === 'webgpu') {

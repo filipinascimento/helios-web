@@ -75,6 +75,8 @@ Some common renderer/graph-layer “global” knobs are available directly on `H
 - Getter: `helios.edgeWidthScale()`
 - Setter (chainable): `helios.edgeWidthScale(1.0).edgeWidthBase(0)`
 - Background/clear color: `helios.background('#0b1020')` (alias: `helios.clearColor(...)`)
+- Blend nodes with edge transparency modes: `helios.nodeBlendWithEdges(true)`
+- Allow edges to write depth: `helios.edgeDepthWrite(true)` (best for solid edges)
 
 ## Mapper docs
 

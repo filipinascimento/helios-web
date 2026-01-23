@@ -94,6 +94,14 @@ function normalizeAttributeName(name) {
   return VISUAL_ATTRIBUTE_MAP[trimmed] ?? trimmed;
 }
 
+const NODE_ATTRIBUTE_TO_CHANNEL = {
+  [NODE_COLOR_ATTRIBUTE]: 'color',
+  [NODE_SIZE_ATTRIBUTE]: 'size',
+  [NODE_OUTLINE_WIDTH_ATTRIBUTE]: 'outline',
+  [NODE_OUTLINE_COLOR_ATTRIBUTE]: 'outlineColor',
+  [NODE_POSITION_ATTRIBUTE]: 'position',
+};
+
 function computePassthroughTargetDimension(sourceDimension = 1, endpoints = 'both', doubleWidth = true) {
   const base = Math.max(1, sourceDimension || 1);
   if (endpoints === 'both') return base * 2;
@@ -390,6 +398,111 @@ function normalizeChannelConfig(name, config) {
   return normalized;
 }
 
+function isConstantChannel(config) {
+  return config?.type === 'constant' && (!config.rules || config.rules.length === 0);
+}
+
+function isEdgeNodePassthrough(config, def) {
+  return (
+    config &&
+    def?.nodeSource &&
+    (config.type === 'passthrough' || config.type === 'nodeToEdge' || config.type === 'nodeAttribute')
+  );
+}
+
+function resolveNodeChannelNameFromConfig(config, def) {
+  const attrs = normalizeAttributes(config?.attributes);
+  const hasAttributes = attrs.length > 0;
+  for (const attr of attrs) {
+    if (typeof attr !== 'string') continue;
+    if (!/^@nodes?\./.test(attr)) continue;
+    const normalized = normalizeAttributeName(attr);
+    const channelName = NODE_ATTRIBUTE_TO_CHANNEL[normalized];
+    if (channelName) return channelName;
+  }
+  if (config?.nodeAttribute) {
+    const normalized = normalizeAttributeName(config.nodeAttribute);
+    return NODE_ATTRIBUTE_TO_CHANNEL[normalized] ?? null;
+  }
+  if (!hasAttributes && def?.nodeSource) {
+    const normalized = normalizeAttributeName(def.nodeSource);
+    return NODE_ATTRIBUTE_TO_CHANNEL[normalized] ?? null;
+  }
+  return null;
+}
+
+function removeEdgeAttributeSafe(network, name, debug) {
+  if (!network?.removeEdgeAttribute || !name) return;
+  try {
+    network.removeEdgeAttribute(name);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : '';
+    if (/unknown edge attribute/i.test(msg) || /does not exist/i.test(msg) || /not defined/i.test(msg)) {
+      return;
+    }
+    debug?.log?.('mapper', 'Failed to remove edge attribute', { name, error });
+  }
+}
+
+function removeNodeToEdgeAttributeSafe(network, name, debug) {
+  if (!network?.removeNodeToEdgeAttribute || !name) return;
+  try {
+    network.removeNodeToEdgeAttribute(name);
+  } catch (error) {
+    debug?.log?.('mapper', 'Failed to remove node-to-edge attribute', { name, error });
+  }
+}
+
+function resolveEdgeChannelEntriesForNodeConstants(channelEntries, nodeMapper, network, debug) {
+  if (!channelEntries || !nodeMapper?.channels) return { entries: channelEntries, changed: false };
+  let changed = false;
+  for (const [name, config] of channelEntries.entries()) {
+    const def = CHANNEL_DEFS.edge?.[name];
+    if (!def || def.attribute === EDGE_ENDPOINTS_POSITION_ATTRIBUTE) continue;
+    if (!isEdgeNodePassthrough(config, def)) continue;
+    const nodeChannelName = resolveNodeChannelNameFromConfig(config, def);
+    if (!nodeChannelName) continue;
+    const nodeConfig = nodeMapper.channels.get(nodeChannelName);
+    if (!isConstantChannel(nodeConfig)) continue;
+    const constantValue = nodeConfig?.value ?? nodeConfig?.defaultValue;
+    if (constantValue === undefined) continue;
+    removeNodeToEdgeAttributeSafe(network, def.attribute, debug);
+    removeEdgeAttributeSafe(network, def.attribute, debug);
+    channelEntries.set(name, {
+      ...config,
+      type: 'constant',
+      value: constantValue,
+      attributes: undefined,
+      nodeAttribute: undefined,
+      endpoints: undefined,
+      transform: undefined,
+      scale: undefined,
+      domain: undefined,
+      range: undefined,
+      rules: [],
+    });
+    changed = true;
+  }
+  return { entries: channelEntries, changed };
+}
+
+export function resolveEdgeMapperForNodeConstants(edgeMapper, nodeMapper, options = {}) {
+  if (!edgeMapper || edgeMapper.mode !== 'edge' || !nodeMapper?.channels) return edgeMapper;
+  const network = options.network ?? edgeMapper.network ?? nodeMapper.network ?? null;
+  const debug = options.debug ?? null;
+  const entries = new Map();
+  for (const [name, config] of edgeMapper.channels.entries()) {
+    entries.set(name, { ...config, attributes: config.attributes ?? config.from });
+  }
+  const resolved = resolveEdgeChannelEntriesForNodeConstants(entries, nodeMapper, network, debug);
+  if (!resolved.changed) return edgeMapper;
+  const derived = new Mapper({ mode: 'edge', network });
+  for (const [name, config] of resolved.entries.entries()) {
+    derived.setChannel(name, config);
+  }
+  return derived;
+}
+
 class ChannelBuilder {
   constructor(mapper, name) {
     this.mapper = mapper;
@@ -571,6 +684,9 @@ export class Mapper {
     const defs = CHANNEL_DEFS[this.mode] ?? {};
     const def = defs[config.name];
     if (!def) return;
+    if (!this.shouldEnsureChannelBuffer(config, def)) {
+      return;
+    }
     const { attribute, type, dimension } = def;
     if (this.isNodePassthroughChannel(config, def)) {
       const sourceAttribute = this.resolveNodeSourceAttribute(config, def);
@@ -612,6 +728,17 @@ export class Mapper {
       validateAttribute(buffer, attribute, type, dimension);
       this.registerDense('edge', attribute);
     }
+  }
+
+  shouldEnsureChannelBuffer(config, def) {
+    if (!def) return false;
+    if (config.type === 'constant' && (!config.rules || config.rules.length === 0)) {
+      return (
+        def.attribute === NODE_POSITION_ATTRIBUTE ||
+        def.attribute === EDGE_ENDPOINTS_POSITION_ATTRIBUTE
+      );
+    }
+    return true;
   }
 
   isNodePassthroughChannel(config, def) {
@@ -772,7 +899,7 @@ export class Mapper {
       this.network.removeEdgeAttribute(name);
     } catch (error) {
       const msg = error instanceof Error ? error.message : '';
-      if (/unknown edge attribute/i.test(msg) || /does not exist/i.test(msg)) {
+      if (/unknown edge attribute/i.test(msg) || /does not exist/i.test(msg) || /not defined/i.test(msg)) {
         return;
       }
       throw error;
@@ -828,6 +955,7 @@ export function createDefaultMappers(network) {
   const edgeMapper = new Mapper({ mode: 'edge', network });
   edgeMapper.channel('color').from('@node.color').nodeToEdge().done();
   edgeMapper.channel('width').constant(1).done();
+  edgeMapper.channel('opacity').constant(1).done();
 
   return { nodeMapper, edgeMapper };
 }
@@ -919,18 +1047,26 @@ export class MapperCollection {
    * Merges all registered mappers into a single Mapper (channels override in
    * insertion order).
    */
-  toCombinedMapper() {
+  toCombinedMapper(options = {}) {
+    const nodeMapper = options?.nodeMapper ?? null;
     this.debug?.log('mapper', `Combining ${this.mode} mappers`, { count: this.mappers.size });
-    if (this.mappers.size === 1) {
+    if (this.mappers.size === 1 && !(this.mode === 'edge' && nodeMapper)) {
       // Fast path: no need to merge when only one mapper is registered.
       return this.mappers.values().next().value;
     }
     const combined = new Mapper({ mode: this.mode, network: this.network });
+    const channelEntries = new Map();
     for (const mapper of this.mappers.values()) {
       for (const [name, config] of mapper.channels.entries()) {
         const cloned = { ...config, attributes: config.attributes ?? config.from };
-        combined.setChannel(name, cloned);
+        channelEntries.set(name, cloned);
       }
+    }
+    if (this.mode === 'edge') {
+      resolveEdgeChannelEntriesForNodeConstants(channelEntries, nodeMapper, this.network, this.debug);
+    }
+    for (const [name, config] of channelEntries.entries()) {
+      combined.setChannel(name, config);
     }
     this.debug?.log('mapper', `Combined ${this.mode} mappers`, { channels: combined.channels.size });
     return combined;

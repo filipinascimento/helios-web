@@ -292,6 +292,7 @@ async function bootstrap() {
     helios.edgeMapper.channel('color').from('@node.color').nodeToEdge().done();
     console.log("  Edge width mapper...");
     helios.edgeMapper.channel('width').constant(1.5).done();
+    helios.edgeMapper.channel('opacity').constant(1).done();
     helios.requestRender();
   };
 

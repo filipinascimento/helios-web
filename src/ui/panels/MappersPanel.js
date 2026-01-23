@@ -432,7 +432,7 @@ export class MappersPanel {
         const count = scope === 'edge'
           ? (network.edgeCount ?? network.edgesCount ?? null)
           : (network.nodeCount ?? network.nodesCount ?? null);
-        if (Number.isFinite(count) && count > 0) return { min: 0, max: Math.max(1, count) };
+        if (Number.isFinite(count) && count > 0) return { min: 0, max: Math.max(0, count - 1) };
         return null;
       }
 

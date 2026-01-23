@@ -93,5 +93,22 @@ test.describe('controls panel: appearance section', () => {
     await edgeMode.selectOption({ value: 'screen' });
     const screenMode = await page.evaluate(() => window.__helios.renderer?.graphLayer?.edgeTransparencyMode ?? null);
     expect(screenMode).toBe('screen');
+
+    const advancedHeader = controlsPanel.getByRole('button', { name: 'Advanced' }).first();
+    if ((await advancedHeader.getAttribute('aria-expanded')) === 'false') {
+      await advancedHeader.click();
+    }
+
+    const nodeBlendToggle = controlsPanel.locator('input[type="checkbox"][aria-label="Blend Nodes With Edges"]').first();
+    await expect(nodeBlendToggle).toBeVisible();
+    await nodeBlendToggle.check();
+    const nodeBlendValue = await page.evaluate(() => window.__helios.renderer?.graphLayer?.nodeBlendWithEdges ?? null);
+    expect(nodeBlendValue).toBe(true);
+
+    const edgeDepthToggle = controlsPanel.locator('input[type="checkbox"][aria-label="Edge Depth Write"]').first();
+    await expect(edgeDepthToggle).toBeVisible();
+    await edgeDepthToggle.check();
+    const edgeDepthValue = await page.evaluate(() => window.__helios.renderer?.graphLayer?.edgeDepthWrite ?? null);
+    expect(edgeDepthValue).toBe(true);
   });
 });

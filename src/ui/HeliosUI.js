@@ -175,7 +175,8 @@ export class HeliosUI {
     const id = merged.id ?? `helios.${eventName}`;
     const label = merged.label ?? accessorName;
     const defaultValue = merged.defaultValue ?? null;
-    const attribute = UIAttribute.number({
+    const type = merged.type ?? 'number';
+    const makeAttribute = (factory) => factory({
       id,
       label,
       readOnly: Boolean(merged.readOnly ?? false),
@@ -191,6 +192,11 @@ export class HeliosUI {
       },
       set: (value) => accessor.call(this.helios, value),
     });
+    const attribute = type === 'boolean'
+      ? makeAttribute(UIAttribute.boolean)
+      : type === 'string'
+        ? makeAttribute(UIAttribute.string)
+        : makeAttribute(UIAttribute.number);
     this._boundAttributesById.set(id, attribute);
     this._ensureHeliosBindingListener();
     return attribute;
@@ -524,6 +530,31 @@ export class HeliosUI {
         return container;
       };
 
+      const createToggleRow = (accessorName) => {
+        const info = bindings?.[accessorName] ?? null;
+        if (!info || info.type !== 'boolean') return null;
+        if (typeof this.helios[accessorName] !== 'function') return null;
+        const attribute = this.bindHeliosAccessor(accessorName);
+        const toggle = document.createElement('input');
+        toggle.type = 'checkbox';
+        toggle.style.margin = '0';
+        toggle.setAttribute('aria-label', info.label ?? accessorName);
+        toggle.disabled = attribute.readOnly;
+        const unsub = attribute.subscribe((value) => {
+          toggle.checked = Boolean(value);
+        });
+        toggle.addEventListener('change', () => {
+          attribute.write(toggle.checked, { source: 'ui', event: 'change' });
+        });
+        const { row } = createAlignedRow({
+          title: info.label ?? accessorName,
+          hint: info.description ?? null,
+          controls: toggle,
+        });
+        this._controlCleanups.add(() => unsub());
+        return row;
+      };
+
       const clamp01 = (value) => {
         const v = Number(value);
         if (!Number.isFinite(v)) return 0;
@@ -688,14 +719,22 @@ export class HeliosUI {
         id: 'advanced-appearance',
         title: 'Advanced',
         collapsed: true,
-        content: createRows([
-          'nodeSizeBase',
-          'nodeOpacityBase',
-          'nodeOutlineWidthBase',
-          'edgeWidthBase',
-          'edgeOpacityBase',
-          'edgeEndpointTrim',
-        ]),
+        content: (() => {
+          const advanced = document.createElement('div');
+          advanced.appendChild(createRows([
+            'nodeSizeBase',
+            'nodeOpacityBase',
+            'nodeOutlineWidthBase',
+            'edgeWidthBase',
+            'edgeOpacityBase',
+            'edgeEndpointTrim',
+          ]));
+          const nodeBlendRow = createToggleRow('nodeBlendWithEdges');
+          if (nodeBlendRow) advanced.appendChild(nodeBlendRow);
+          const edgeDepthRow = createToggleRow('edgeDepthWrite');
+          if (edgeDepthRow) advanced.appendChild(edgeDepthRow);
+          return advanced;
+        })(),
       });
 
       content.appendChild(stack.element);

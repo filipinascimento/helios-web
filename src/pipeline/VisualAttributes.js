@@ -1,5 +1,6 @@
 import { AttributeType } from 'helios-network';
 import { VISUAL_ATTRIBUTE_NAMES, DEFAULT_VISUALS, VISUAL_ATTRIBUTE_MAP } from './constants.js';
+import { resolveEdgeMapperForNodeConstants } from './Mapper.js';
 
 const {
   NODE_COLOR_ATTRIBUTE,
@@ -89,43 +90,61 @@ export class VisualAttributes {
   }
 
   get nodePositions() {
-    return this.network.getNodeAttributeBuffer(NODE_POSITION_ATTRIBUTE).view;
+    return this.getNodeAttributeView(NODE_POSITION_ATTRIBUTE);
   }
 
   get nodeColors() {
-    return this.network.getNodeAttributeBuffer(NODE_COLOR_ATTRIBUTE).view;
+    return this.getNodeAttributeView(NODE_COLOR_ATTRIBUTE);
   }
 
   get nodeSizes() {
-    return this.network.getNodeAttributeBuffer(NODE_SIZE_ATTRIBUTE).view;
+    return this.getNodeAttributeView(NODE_SIZE_ATTRIBUTE);
   }
 
   get nodeStates() {
-    return this.network.getNodeAttributeBuffer(NODE_STATE_ATTRIBUTE).view;
+    return this.getNodeAttributeView(NODE_STATE_ATTRIBUTE);
   }
 
   get nodeOutlineWidths() {
-    return this.network.getNodeAttributeBuffer(NODE_OUTLINE_WIDTH_ATTRIBUTE).view;
+    return this.getNodeAttributeView(NODE_OUTLINE_WIDTH_ATTRIBUTE);
   }
 
   get nodeOutlineColors() {
-    return this.network.getNodeAttributeBuffer(NODE_OUTLINE_COLOR_ATTRIBUTE).view;
+    return this.getNodeAttributeView(NODE_OUTLINE_COLOR_ATTRIBUTE);
   }
 
   get edgeColors() {
-    return this.network.getEdgeAttributeBuffer(EDGE_COLOR_ATTRIBUTE).view;
+    return this.getEdgeAttributeView(EDGE_COLOR_ATTRIBUTE);
   }
 
   get edgeWidths() {
-    return this.network.getEdgeAttributeBuffer(EDGE_WIDTH_ATTRIBUTE).view;
+    return this.getEdgeAttributeView(EDGE_WIDTH_ATTRIBUTE);
   }
 
   get edgeOpacities() {
-    return this.network.getEdgeAttributeBuffer(EDGE_OPACITY_ATTRIBUTE).view;
+    return this.getEdgeAttributeView(EDGE_OPACITY_ATTRIBUTE);
   }
 
   get edgeStates() {
-    return this.network.getEdgeAttributeBuffer(EDGE_STATE_ATTRIBUTE).view;
+    return this.getEdgeAttributeView(EDGE_STATE_ATTRIBUTE);
+  }
+
+  getNodeAttributeView(name) {
+    if (!this.network) return null;
+    try {
+      return this.network.getNodeAttributeBuffer(name)?.view ?? null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  getEdgeAttributeView(name) {
+    if (!this.network) return null;
+    try {
+      return this.network.getEdgeAttributeBuffer(name)?.view ?? null;
+    } catch (_) {
+      return null;
+    }
   }
 
   /**
@@ -161,10 +180,15 @@ export class VisualAttributes {
 
   applyMappers({ nodeMapper, edgeMapper } = {}) {
     this.debug?.log('mapper', 'Applying mappers to visuals');
-    const visualConfig = this.buildVisualConstantConfig({ nodeMapper, edgeMapper });
+    const resolvedEdgeMapper =
+      nodeMapper && edgeMapper
+        ? resolveEdgeMapperForNodeConstants(edgeMapper, nodeMapper, { network: this.network, debug: this.debug })
+        : edgeMapper;
+    const visualConfig = this.buildVisualConstantConfig({ nodeMapper, edgeMapper: resolvedEdgeMapper });
+    this.ensureVisualAttributesForConfig({ nodeMapper, edgeMapper: resolvedEdgeMapper, visualConfig });
     this.setNetworkVisualConfig(visualConfig);
     if (nodeMapper) this.applyNodeMapper(nodeMapper, visualConfig);
-    if (edgeMapper) this.applyEdgeMapper(edgeMapper, visualConfig);
+    if (resolvedEdgeMapper) this.applyEdgeMapper(resolvedEdgeMapper, visualConfig);
     this.debug?.log('mapper', 'Finished applying mappers');
   }
 
@@ -178,9 +202,10 @@ export class VisualAttributes {
   }
 
   buildVisualConstantConfig({ nodeMapper, edgeMapper } = {}) {
+    const node = this.buildNodeConstantConfig(nodeMapper);
     return {
-      node: this.buildNodeConstantConfig(nodeMapper),
-      edge: this.buildEdgeConstantConfig(edgeMapper),
+      node,
+      edge: this.buildEdgeConstantConfig(edgeMapper, node),
     };
   }
 
@@ -205,7 +230,7 @@ export class VisualAttributes {
     };
   }
 
-  buildEdgeConstantConfig(mapper) {
+  buildEdgeConstantConfig(mapper, nodeConfig = null) {
     const channels = mapper?.channels;
     const get = (name) => channels?.get?.(name);
     const normalizePair = (v) => {
@@ -224,14 +249,23 @@ export class VisualAttributes {
     const width = get('width');
     const opacity = get('opacity');
     const endpointSize = get('endpointSize');
+    const nodeSizeFallback = nodeConfig?.size?.mode === 'uniform'
+      ? normalizePair(nodeConfig?.size?.value)
+      : undefined;
 
     return {
       color: color?.type === 'constant' ? { mode: 'uniform', value: normalizeColorPair(color.value) } : { mode: 'buffer' },
       width: width?.type === 'constant' ? { mode: 'uniform', value: normalizePair(width.value) } : { mode: 'buffer' },
-      opacity: opacity?.type === 'constant' ? { mode: 'uniform', value: normalizePair(opacity.value) } : { mode: 'buffer' },
+      opacity: opacity?.type === 'constant'
+        ? { mode: 'uniform', value: normalizePair(opacity.value) }
+        : (opacity == null
+          ? { mode: 'uniform', value: normalizePair(DEFAULT_EDGE_OPACITY) }
+          : { mode: 'buffer' }),
       endpointSize: endpointSize?.type === 'constant'
         ? { mode: 'uniform', value: normalizePair(endpointSize.value) }
-        : { mode: 'buffer' },
+        : (endpointSize == null && nodeSizeFallback
+          ? { mode: 'uniform', value: nodeSizeFallback }
+          : { mode: 'buffer' }),
     };
   }
 
@@ -317,7 +351,7 @@ export class VisualAttributes {
         width: visualConfig?.edge?.width?.mode === 'uniform' ? null : this.edgeWidths,
         endpointSize: (skipEndpointSize || visualConfig?.edge?.endpointSize?.mode === 'uniform')
           ? null
-          : this.network.getEdgeAttributeBuffer(EDGE_ENDPOINTS_SIZE_ATTRIBUTE).view,
+          : this.getEdgeAttributeView(EDGE_ENDPOINTS_SIZE_ATTRIBUTE),
       };
       const edgesView = this.network?.edgesView;
       if (!edgeIndices?.length) return;
@@ -351,19 +385,57 @@ export class VisualAttributes {
     this.debug?.log('mapper', 'Edge mapper applied', { edges: edgeIndices?.length ?? 0 });
   }
 
+
+  ensureVisualAttributesForConfig({ nodeMapper, edgeMapper, visualConfig } = {}) {
+    if (!this.network) return;
+    const nodeCfg = visualConfig?.node ?? null;
+    const edgeCfg = visualConfig?.edge ?? null;
+    const nodeSizeBuffer = nodeCfg?.size?.mode !== 'uniform';
+    const edgeEndpointSizeBuffer = edgeCfg?.endpointSize?.mode !== 'uniform';
+    const endpointSizeChannel = edgeMapper?.channels?.get?.('endpointSize') ?? null;
+    const nodeToEdgeRegistrations = edgeMapper?.nodeToEdgeRegistrations ?? new Set();
+
+    if (nodeCfg?.color?.mode !== 'uniform') {
+      this.ensureNodeAttribute(NODE_COLOR_ATTRIBUTE, AttributeType.Float, 4);
+    }
+    if (nodeSizeBuffer) {
+      this.ensureNodeAttribute(NODE_SIZE_ATTRIBUTE, AttributeType.Float, 1);
+    }
+    if (nodeCfg?.outline?.mode !== 'uniform') {
+      this.ensureNodeAttribute(NODE_OUTLINE_WIDTH_ATTRIBUTE, AttributeType.Float, 1);
+    }
+    if (nodeCfg?.outlineColor?.mode !== 'uniform') {
+      this.ensureNodeAttribute(NODE_OUTLINE_COLOR_ATTRIBUTE, AttributeType.Float, 4);
+    }
+
+    if (edgeCfg?.color?.mode !== 'uniform' && !nodeToEdgeRegistrations.has(EDGE_COLOR_ATTRIBUTE)) {
+      this.ensureEdgeAttribute(EDGE_COLOR_ATTRIBUTE, AttributeType.Float, 8);
+    }
+    if (edgeCfg?.opacity?.mode !== 'uniform') {
+      this.ensureEdgeAttribute(EDGE_OPACITY_ATTRIBUTE, AttributeType.Float, 2);
+    }
+    if (edgeCfg?.width?.mode !== 'uniform') {
+      this.ensureEdgeAttribute(EDGE_WIDTH_ATTRIBUTE, AttributeType.Float, 2);
+    }
+
+    if (edgeEndpointSizeBuffer) {
+      if (nodeToEdgeRegistrations.has(EDGE_ENDPOINTS_SIZE_ATTRIBUTE)) {
+        if (nodeSizeBuffer) {
+          this.ensureNodeToEdgeAttribute(NODE_SIZE_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE, 1);
+        }
+      } else if (!endpointSizeChannel && nodeSizeBuffer) {
+        this.ensureNodeToEdgeAttribute(NODE_SIZE_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE, 1);
+      } else if (endpointSizeChannel) {
+        this.ensureEdgeAttribute(EDGE_ENDPOINTS_SIZE_ATTRIBUTE, AttributeType.Float, 2);
+      }
+    }
+  }
+
   ensureAttributes() {
     this.ensureNodeAttribute(NODE_POSITION_ATTRIBUTE, AttributeType.Float, 3);
-    this.ensureNodeAttribute(NODE_COLOR_ATTRIBUTE, AttributeType.Float, 4);
-    this.ensureNodeAttribute(NODE_SIZE_ATTRIBUTE, AttributeType.Float, 1);
     this.ensureNodeAttribute(NODE_STATE_ATTRIBUTE, AttributeType.UnsignedInteger, 1);
-    this.ensureNodeAttribute(NODE_OUTLINE_WIDTH_ATTRIBUTE, AttributeType.Float, 1);
-    this.ensureNodeAttribute(NODE_OUTLINE_COLOR_ATTRIBUTE, AttributeType.Float, 4);
-    this.ensureEdgeAttribute(EDGE_COLOR_ATTRIBUTE, AttributeType.Float, 8);
-    this.ensureEdgeAttribute(EDGE_OPACITY_ATTRIBUTE, AttributeType.Float, 2);
-    this.ensureEdgeAttribute(EDGE_WIDTH_ATTRIBUTE, AttributeType.Float, 2);
     this.ensureEdgeAttribute(EDGE_STATE_ATTRIBUTE, AttributeType.UnsignedInteger, 1);
     this.ensureNodeToEdgeAttribute(NODE_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_POSITION_ATTRIBUTE, 3);
-    this.ensureNodeToEdgeAttribute(NODE_SIZE_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE, 1);
     this.ensureNodeToEdgeAttributeTyped(NODE_STATE_ATTRIBUTE, EDGE_ENDPOINTS_STATE_ATTRIBUTE, 1, AttributeType.UnsignedInteger);
   }
 
@@ -371,6 +443,12 @@ export class VisualAttributes {
     if (!this.network) return;
     const addDense = (method, name) => {
       if (typeof this.network[method] !== 'function') return;
+      if (method === 'addDenseNodeAttributeBuffer' && typeof this.network.hasNodeAttribute === 'function') {
+        if (!this.network.hasNodeAttribute(name)) return;
+      }
+      if (method === 'addDenseEdgeAttributeBuffer' && typeof this.network.hasEdgeAttribute === 'function') {
+        if (!this.network.hasEdgeAttribute(name, true)) return;
+      }
       try {
         this.network[method](name);
       } catch (error) {
@@ -390,6 +468,17 @@ export class VisualAttributes {
     addDense('addDenseEdgeAttributeBuffer', EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
     addDense('addDenseEdgeAttributeBuffer', EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
     addDense('addDenseEdgeAttributeBuffer', EDGE_ENDPOINTS_STATE_ATTRIBUTE);
+  }
+
+  registerDense(scope, name) {
+    const method =
+      scope === 'node' ? this.network?.addDenseNodeAttributeBuffer : this.network?.addDenseEdgeAttributeBuffer;
+    if (typeof method !== 'function') return;
+    try {
+      method.call(this.network, name);
+    } catch (_) {
+      // ignore duplicates or unsupported dense buffers
+    }
   }
 
   bumpNodeAttributes(...names) {
@@ -447,20 +536,30 @@ export class VisualAttributes {
     const updates = [
       () => this.network?.updateDenseNodeIndexBuffer?.(),
       () => this.network?.updateDenseEdgeIndexBuffer?.(),
-      () => this.network?.updateDenseNodeAttributeBuffer?.(NODE_POSITION_ATTRIBUTE),
-      () => this.network?.updateDenseNodeAttributeBuffer?.(NODE_COLOR_ATTRIBUTE),
-      () => this.network?.updateDenseNodeAttributeBuffer?.(NODE_SIZE_ATTRIBUTE),
-      () => this.network?.updateDenseNodeAttributeBuffer?.(NODE_STATE_ATTRIBUTE),
-      () => this.network?.updateDenseNodeAttributeBuffer?.(NODE_OUTLINE_WIDTH_ATTRIBUTE),
-      () => this.network?.updateDenseNodeAttributeBuffer?.(NODE_OUTLINE_COLOR_ATTRIBUTE),
-      () => this.network?.updateDenseEdgeAttributeBuffer?.(EDGE_COLOR_ATTRIBUTE),
-      () => this.network?.updateDenseEdgeAttributeBuffer?.(EDGE_OPACITY_ATTRIBUTE),
-      () => this.network?.updateDenseEdgeAttributeBuffer?.(EDGE_WIDTH_ATTRIBUTE),
-      () => this.network?.updateDenseEdgeAttributeBuffer?.(EDGE_STATE_ATTRIBUTE),
-      () => this.network?.updateDenseEdgeAttributeBuffer?.(EDGE_ENDPOINTS_POSITION_ATTRIBUTE),
-      () => this.network?.updateDenseEdgeAttributeBuffer?.(EDGE_ENDPOINTS_SIZE_ATTRIBUTE),
-      () => this.network?.updateDenseEdgeAttributeBuffer?.(EDGE_ENDPOINTS_STATE_ATTRIBUTE),
     ];
+    const addNode = (name) => {
+      if (typeof this.network?.updateDenseNodeAttributeBuffer !== 'function') return;
+      if (typeof this.network?.hasNodeAttribute === 'function' && !this.network.hasNodeAttribute(name)) return;
+      updates.push(() => this.network.updateDenseNodeAttributeBuffer(name));
+    };
+    const addEdge = (name) => {
+      if (typeof this.network?.updateDenseEdgeAttributeBuffer !== 'function') return;
+      if (typeof this.network?.hasEdgeAttribute === 'function' && !this.network.hasEdgeAttribute(name, true)) return;
+      updates.push(() => this.network.updateDenseEdgeAttributeBuffer(name));
+    };
+    addNode(NODE_POSITION_ATTRIBUTE);
+    addNode(NODE_COLOR_ATTRIBUTE);
+    addNode(NODE_SIZE_ATTRIBUTE);
+    addNode(NODE_STATE_ATTRIBUTE);
+    addNode(NODE_OUTLINE_WIDTH_ATTRIBUTE);
+    addNode(NODE_OUTLINE_COLOR_ATTRIBUTE);
+    addEdge(EDGE_COLOR_ATTRIBUTE);
+    addEdge(EDGE_OPACITY_ATTRIBUTE);
+    addEdge(EDGE_WIDTH_ATTRIBUTE);
+    addEdge(EDGE_STATE_ATTRIBUTE);
+    addEdge(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
+    addEdge(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+    addEdge(EDGE_ENDPOINTS_STATE_ATTRIBUTE);
 
     let touched = false;
     for (const fn of updates) {
@@ -523,15 +622,20 @@ export class VisualAttributes {
         }
       }
 
-      this.bumpNodeAttributes(
-        NODE_POSITION_ATTRIBUTE,
-        NODE_COLOR_ATTRIBUTE,
-        NODE_SIZE_ATTRIBUTE,
-        NODE_STATE_ATTRIBUTE,
-        NODE_OUTLINE_WIDTH_ATTRIBUTE,
-        NODE_OUTLINE_COLOR_ATTRIBUTE,
-      );
-      this.bumpEdgeAttributes(EDGE_ENDPOINTS_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE, EDGE_ENDPOINTS_STATE_ATTRIBUTE);
+      const bumpNode = [];
+      if (positionView) bumpNode.push(NODE_POSITION_ATTRIBUTE);
+      if (colorView) bumpNode.push(NODE_COLOR_ATTRIBUTE);
+      if (sizeView) bumpNode.push(NODE_SIZE_ATTRIBUTE);
+      if (stateView) bumpNode.push(NODE_STATE_ATTRIBUTE);
+      if (outlineWidthView) bumpNode.push(NODE_OUTLINE_WIDTH_ATTRIBUTE);
+      if (outlineColorView) bumpNode.push(NODE_OUTLINE_COLOR_ATTRIBUTE);
+      if (bumpNode.length) this.bumpNodeAttributes(...bumpNode);
+
+      const bumpEdge = [];
+      if (positionView) bumpEdge.push(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
+      if (sizeView) bumpEdge.push(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+      if (stateView) bumpEdge.push(EDGE_ENDPOINTS_STATE_ATTRIBUTE);
+      if (bumpEdge.length) this.bumpEdgeAttributes(...bumpEdge);
     });
   }
 
@@ -559,7 +663,12 @@ export class VisualAttributes {
         }
       }
 
-      this.bumpEdgeAttributes(EDGE_COLOR_ATTRIBUTE, EDGE_OPACITY_ATTRIBUTE, EDGE_WIDTH_ATTRIBUTE, EDGE_STATE_ATTRIBUTE);
+      const bumpEdge = [];
+      if (colorView) bumpEdge.push(EDGE_COLOR_ATTRIBUTE);
+      if (opacityView) bumpEdge.push(EDGE_OPACITY_ATTRIBUTE);
+      if (widthView) bumpEdge.push(EDGE_WIDTH_ATTRIBUTE);
+      if (stateView) bumpEdge.push(EDGE_STATE_ATTRIBUTE);
+      if (bumpEdge.length) this.bumpEdgeAttributes(...bumpEdge);
     });
   }
 
@@ -638,7 +747,12 @@ export class VisualAttributes {
     const hasAttribute = this.network.hasNodeAttribute(name);
 
     if (!hasAttribute) {
-      this.network.defineNodeAttribute(name, type, dimension);
+      try {
+        this.network.defineNodeAttribute(name, type, dimension);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : '';
+        if (!/already/i.test(msg)) throw error;
+      }
     } else if (attributeInfoMismatched(info, expected)) {
       const currentDim = info?.dimension ?? dimension;
       const shouldExpand = currentDim > 0 && currentDim < dimension;
@@ -678,6 +792,7 @@ export class VisualAttributes {
       // If no node capacity is allocated yet, buffer pointers may be unavailable; defer validation.
       if (this.network.nodeCapacity > 0) throw error;
     }
+    this.registerDense('node', name);
   }
 
   ensureEdgeAttribute(name, type, dimension) {
@@ -686,7 +801,12 @@ export class VisualAttributes {
     const hasAttribute = this.network.hasEdgeAttribute(name, true);
 
     if (!hasAttribute) {
-      this.network.defineEdgeAttribute(name, type, dimension);
+      try {
+        this.network.defineEdgeAttribute(name, type, dimension);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : '';
+        if (!/already/i.test(msg)) throw error;
+      }
     } else if (attributeInfoMismatched(info, expected)) {
       const currentDim = info?.dimension ?? dimension;
       const shouldExpand = currentDim > 0 && currentDim < dimension;
@@ -726,6 +846,7 @@ export class VisualAttributes {
       // If no edge capacity is allocated yet, buffer pointers may be unavailable; defer validation.
       if (this.network.edgeCapacity > 0) throw error;
     }
+    this.registerDense('edge', name);
   }
 
   ensureNodeToEdgeAttribute(sourceName, edgeName, sourceDimension) {
@@ -775,6 +896,8 @@ export class VisualAttributes {
       // If no edge capacity is allocated yet, buffer pointers may be unavailable; defer validation.
       if (this.network.edgeCapacity > 0) throw error;
     }
+    this.registerDense('node', sourceName);
+    this.registerDense('edge', edgeName);
   }
 
   ensureNodeToEdgeAttributeTyped(sourceName, edgeName, sourceDimension, type) {
@@ -799,6 +922,8 @@ export class VisualAttributes {
     } catch (error) {
       if (this.network.edgeCapacity > 0) throw error;
     }
+    this.registerDense('node', sourceName);
+    this.registerDense('edge', edgeName);
   }
 
   collectAttributeNames(mapper, mode) {
@@ -1075,49 +1200,64 @@ export class VisualAttributes {
     outlineWidthView,
     outlineColorView,
   ) {
-    const colorOffset = index * 4;
-    colorView[colorOffset + 0] = color[0];
-    colorView[colorOffset + 1] = color[1];
-    colorView[colorOffset + 2] = color[2];
-    colorView[colorOffset + 3] = color[3];
-
-    const sizeOffset = index;
-    sizeView[sizeOffset] = size;
-
-    outlineWidthView[sizeOffset] = outlineWidth;
-    const outlineOffset = index * 4;
-    outlineColorView[outlineOffset + 0] = outlineColor[0];
-    outlineColorView[outlineOffset + 1] = outlineColor[1];
-    outlineColorView[outlineOffset + 2] = outlineColor[2];
-    outlineColorView[outlineOffset + 3] = outlineColor[3];
-
-    const posOffset = index * 3;
-    if (!Number.isFinite(positionView[posOffset])) {
-      positionView[posOffset] = 0;
+    if (colorView) {
+      const colorOffset = index * 4;
+      colorView[colorOffset + 0] = color[0];
+      colorView[colorOffset + 1] = color[1];
+      colorView[colorOffset + 2] = color[2];
+      colorView[colorOffset + 3] = color[3];
     }
-    if (!Number.isFinite(positionView[posOffset + 1])) {
-      positionView[posOffset + 1] = 0;
+
+    if (sizeView) {
+      const sizeOffset = index;
+      sizeView[sizeOffset] = size;
     }
-    if (!Number.isFinite(positionView[posOffset + 2])) {
-      positionView[posOffset + 2] = 0;
+
+    if (outlineWidthView) {
+      const sizeOffset = index;
+      outlineWidthView[sizeOffset] = outlineWidth;
+    }
+    if (outlineColorView) {
+      const outlineOffset = index * 4;
+      outlineColorView[outlineOffset + 0] = outlineColor[0];
+      outlineColorView[outlineOffset + 1] = outlineColor[1];
+      outlineColorView[outlineOffset + 2] = outlineColor[2];
+      outlineColorView[outlineOffset + 3] = outlineColor[3];
+    }
+
+    if (positionView) {
+      const posOffset = index * 3;
+      if (!Number.isFinite(positionView[posOffset])) {
+        positionView[posOffset] = 0;
+      }
+      if (!Number.isFinite(positionView[posOffset + 1])) {
+        positionView[posOffset + 1] = 0;
+      }
+      if (!Number.isFinite(positionView[posOffset + 2])) {
+        positionView[posOffset + 2] = 0;
+      }
     }
   }
 
   writeEdgeDefaults(index, color, width, opacity, colorView, widthView, opacityView) {
-    const colorOffset = index * 8;
-    const rgba = this.toRgba(color);
-    colorView[colorOffset + 0] = rgba[0];
-    colorView[colorOffset + 1] = rgba[1];
-    colorView[colorOffset + 2] = rgba[2];
-    colorView[colorOffset + 3] = rgba[3];
-    colorView[colorOffset + 4] = rgba[0];
-    colorView[colorOffset + 5] = rgba[1];
-    colorView[colorOffset + 6] = rgba[2];
-    colorView[colorOffset + 7] = rgba[3];
+    if (colorView) {
+      const colorOffset = index * 8;
+      const rgba = this.toRgba(color);
+      colorView[colorOffset + 0] = rgba[0];
+      colorView[colorOffset + 1] = rgba[1];
+      colorView[colorOffset + 2] = rgba[2];
+      colorView[colorOffset + 3] = rgba[3];
+      colorView[colorOffset + 4] = rgba[0];
+      colorView[colorOffset + 5] = rgba[1];
+      colorView[colorOffset + 6] = rgba[2];
+      colorView[colorOffset + 7] = rgba[3];
+    }
 
-    const widthOffset = index * 2;
-    widthView[widthOffset] = width;
-    widthView[widthOffset + 1] = width;
+    if (widthView) {
+      const widthOffset = index * 2;
+      widthView[widthOffset] = width;
+      widthView[widthOffset + 1] = width;
+    }
 
     if (opacityView) {
       const opacityOffset = index * 2;

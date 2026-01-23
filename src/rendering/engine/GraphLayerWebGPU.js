@@ -345,9 +345,11 @@ export class GraphLayerWebGPU extends GraphLayer {
     return module;
   }
 
-  getNodePipeline(useIndices, variant) {
+  getNodePipeline(useIndices, variant, options = {}) {
     const useOutlineAttributes = Boolean(variant?.outlineWidthBuffer || variant?.outlineColorBuffer);
-    const key = this.getNodeVariantKey(useIndices, variant);
+    const blendKey = options.blendKey ?? 'alpha';
+    const depthMode = options.depthMode ?? 'depth';
+    const key = `${this.getNodeVariantKey(useIndices, variant)}|b:${blendKey}|d:${depthMode}`;
     if (this.nodePipelineCache.has(key)) return this.nodePipelineCache.get(key);
     const device = this.device?.device;
     const nodeModule = this.getNodeModule(useIndices, variant);
@@ -358,6 +360,10 @@ export class GraphLayerWebGPU extends GraphLayer {
       color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
       alpha: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
     };
+    const blend = options.blend ?? alphaBlend;
+    const depthStencil = depthMode === 'none'
+      ? { ...this.baseDepthStencil, depthWriteEnabled: false, depthCompare: 'always' }
+      : this.baseDepthStencil;
 
     const pipeline = device.createRenderPipeline({
       layout: device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
@@ -375,9 +381,9 @@ export class GraphLayerWebGPU extends GraphLayer {
       fragment: {
         module: nodeModule,
         entryPoint: 'nodeFragment',
-        targets: [{ format: this.device.format, blend: alphaBlend }],
+        targets: [{ format: this.device.format, blend }],
       },
-      depthStencil: this.baseDepthStencil,
+      depthStencil,
       primitive: { topology: 'triangle-strip' },
     });
 
@@ -814,6 +820,7 @@ export class GraphLayerWebGPU extends GraphLayer {
     const maxBindingSize = gpuDevice.limits?.maxStorageBufferBindingSize;
     const cameraUniforms = this.getCameraUniforms(camera);
     const transparencyMode = this.edgeTransparencyMode;
+    const nodeBlendWithEdges = this.nodeBlendWithEdges === true;
     const weightedRequested = transparencyMode === 'weighted'
       || transparencyMode === 'additive-normalized'
       || transparencyMode === 'additive-tonemapped'
@@ -869,7 +876,12 @@ export class GraphLayerWebGPU extends GraphLayer {
       : false;
 
     const useNodeOutlineAttributes = Boolean(nodeVariant?.outlineWidthBuffer || nodeVariant?.outlineColorBuffer);
-    const nodePipeline = this.getNodePipeline(useNodeIndices, nodeVariant);
+    const nodeBlend = nodeBlendWithEdges ? this.getBlendForMode(transparencyMode) : this.getBlendForMode('alpha');
+    const nodePipeline = this.getNodePipeline(useNodeIndices, nodeVariant, {
+      blendKey: nodeBlend.key,
+      blend: nodeBlend.blend,
+      depthMode: nodeBlendWithEdges ? 'none' : 'depth',
+    });
     if (!nodePipeline) return;
     const edgePipelines = this.getEdgePipelinesForMode(transparencyMode, gpuDevice, useEdgeIndices, edgeVariant);
 
@@ -921,6 +933,7 @@ export class GraphLayerWebGPU extends GraphLayer {
         geometry: { nodes: { count: nodeCount }, edges: { count: edgeCount } },
         is2D,
         drawNodes,
+        nodeBlendWithEdges,
         mode: transparencyMode,
       }));
     }
@@ -941,7 +954,7 @@ export class GraphLayerWebGPU extends GraphLayer {
     }
   }
 
-  createEdgePipelines(key, blend, edgeModule, depthStencil, fragmentEntryPoint, useIndices, edgeVariant) {
+  createEdgePipelines(key, blend, edgeModule, depthStencil, fragmentEntryPoint, useIndices, edgeVariant, depthWriteEnabled) {
     const device = this.device?.device;
     if (!device || !edgeModule || !depthStencil) return;
     const linePipeline = device.createRenderPipeline({
@@ -952,7 +965,7 @@ export class GraphLayerWebGPU extends GraphLayer {
         entryPoint: fragmentEntryPoint,
         targets: [{ format: this.device.format, blend }],
       },
-      depthStencil: { ...depthStencil, depthWriteEnabled: false },
+      depthStencil: { ...depthStencil, depthWriteEnabled: Boolean(depthWriteEnabled) },
       primitive: { topology: 'line-list' },
     });
 
@@ -974,12 +987,12 @@ export class GraphLayerWebGPU extends GraphLayer {
         entryPoint: fragmentEntryPoint,
         targets: [{ format: this.device.format, blend }],
       },
-      depthStencil: { ...depthStencil, depthWriteEnabled: false },
+      depthStencil: { ...depthStencil, depthWriteEnabled: Boolean(depthWriteEnabled) },
       primitive: { topology: 'triangle-strip' },
     });
 
     const variantKey = this.getEdgeVariantKey(useIndices, edgeVariant);
-    const cacheKey = `${key}|${variantKey}`;
+    const cacheKey = `${key}|${variantKey}|d${depthWriteEnabled ? 1 : 0}`;
     this.edgePipelineCache.set(cacheKey, linePipeline);
     this.edgeQuadPipelineCache.set(cacheKey, quadPipeline);
   }
@@ -988,7 +1001,8 @@ export class GraphLayerWebGPU extends GraphLayer {
     if (!gpuDevice) return null;
     const { key, blend, fragment } = this.getBlendForMode(mode);
     const variantKey = this.getEdgeVariantKey(useIndices, edgeVariant);
-    const cacheKey = `${key}|${variantKey}`;
+    const depthWriteEnabled = this.edgeDepthWrite === true;
+    const cacheKey = `${key}|${variantKey}|d${depthWriteEnabled ? 1 : 0}`;
     if (key === 'alpha' && this.edgePipelineCache.has(cacheKey)) {
       return { line: this.edgePipelineCache.get(cacheKey), quad: this.edgeQuadPipelineCache.get(cacheKey) };
     }
@@ -996,7 +1010,16 @@ export class GraphLayerWebGPU extends GraphLayer {
       return { line: this.edgePipelineCache.get(cacheKey), quad: this.edgeQuadPipelineCache.get(cacheKey) };
     }
     const edgeModule = this.getEdgeModule(useIndices, edgeVariant);
-    this.createEdgePipelines(key, blend, edgeModule, this.baseDepthStencil, fragment ?? 'edgeFragment', useIndices, edgeVariant);
+    this.createEdgePipelines(
+      key,
+      blend,
+      edgeModule,
+      this.baseDepthStencil,
+      fragment ?? 'edgeFragment',
+      useIndices,
+      edgeVariant,
+      depthWriteEnabled,
+    );
     return { line: this.edgePipelineCache.get(cacheKey), quad: this.edgeQuadPipelineCache.get(cacheKey) };
   }
 
@@ -1260,11 +1283,13 @@ export class GraphLayerWebGPU extends GraphLayer {
       alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
     };
 
+    const depthWriteEnabled = this.edgeDepthWrite === true;
     const needsRebuild =
       !this.weightedPipelineFormats ||
       this.weightedPipelineFormats.color !== colorFormat ||
       this.weightedPipelineFormats.weight !== weightFormat ||
       this.weightedPipelineFormats.swapchain !== swapchainFormat ||
+      this.weightedPipelineFormats.depthWriteEnabled !== depthWriteEnabled ||
       this.edgeWeightedUseIndices !== useEdgeIndices ||
       this.weightedPipelineFormats.edgeVariantKey !== this.getEdgeVariantKey(useEdgeIndices, edgeVariant);
 
@@ -1277,7 +1302,7 @@ export class GraphLayerWebGPU extends GraphLayer {
     if (needsRebuild) {
       const depthStencilAccumulate = {
         format: this.device.depthFormat ?? 'depth24plus',
-        depthWriteEnabled: false,
+        depthWriteEnabled,
         depthCompare: 'less-equal',
       };
 
@@ -1325,6 +1350,7 @@ export class GraphLayerWebGPU extends GraphLayer {
         color: colorFormat,
         weight: weightFormat,
         swapchain: swapchainFormat,
+        depthWriteEnabled,
         edgeVariantKey: this.getEdgeVariantKey(useEdgeIndices, edgeVariant),
       };
       this.edgeWeightedUseIndices = useEdgeIndices;
@@ -1425,7 +1451,7 @@ export class GraphLayerWebGPU extends GraphLayer {
     return pipeline;
   }
 
-  renderWeighted(context, { geometry, is2D, drawNodes, mode }) {
+  renderWeighted(context, { geometry, is2D, drawNodes, nodeBlendWithEdges, mode }) {
     this.counters.weightedAttachmentRenders = bumpCounter(this.counters.weightedAttachmentRenders);
     const commandEncoder = context.commandEncoder;
     const targetView = context.colorView;
@@ -1440,7 +1466,7 @@ export class GraphLayerWebGPU extends GraphLayer {
     };
 
     // Draw nodes first for 3D to populate depth, mirroring the existing ordering.
-    if (!is2D) {
+    if (!is2D && !nodeBlendWithEdges) {
       drawNodes(context.passEncoder);
     }
 
@@ -1511,7 +1537,7 @@ export class GraphLayerWebGPU extends GraphLayer {
     resolvePass.setVertexBuffer(0, context.quad);
     resolvePass.draw(4, 1, 0, 0);
 
-    if (is2D) {
+    if (is2D || nodeBlendWithEdges) {
       drawNodes(resolvePass);
     }
 

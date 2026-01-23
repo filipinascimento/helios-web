@@ -9,10 +9,20 @@ function formatNumber(value, precision = 3) {
 }
 
 function clampToRange(value, range) {
-  const v = Number(value);
+  let v = Number(value);
   if (!Number.isFinite(v)) return null;
   if (!range) return v;
-  return Math.max(range.min, Math.min(range.max, v));
+  const min = range.min;
+  const max = range.max;
+  if (min != null) {
+    const minNumber = Number(min);
+    if (Number.isFinite(minNumber)) v = Math.max(minNumber, v);
+  }
+  if (max != null) {
+    const maxNumber = Number(max);
+    if (Number.isFinite(maxNumber)) v = Math.min(maxNumber, v);
+  }
+  return v;
 }
 
 export function createSliderRow(attribute, options = {}) {
@@ -23,7 +33,19 @@ export function createSliderRow(attribute, options = {}) {
     max: attribute.max ?? 1,
   };
   const sliderRange = attribute.recommendedRange ?? attribute.domain ?? fallbackRange;
-  const inputRange = attribute.domain ?? sliderRange;
+  const inputMin = Object.prototype.hasOwnProperty.call(attribute.meta ?? {}, 'inputMin')
+    ? Number(attribute.meta?.inputMin)
+    : (attribute.domain?.min ?? sliderRange.min);
+  const inputMaxOverride = Object.prototype.hasOwnProperty.call(attribute.meta ?? {}, 'inputMax')
+    ? attribute.meta?.inputMax
+    : null;
+  const inputMax = inputMaxOverride === null
+    ? null
+    : (inputMaxOverride != null ? Number(inputMaxOverride) : (attribute.domain?.max ?? sliderRange.max));
+  const inputRange =
+    (Number.isFinite(inputMin) || Number.isFinite(inputMax))
+      ? { min: inputMin, max: inputMax }
+      : null;
   const step = options.step ?? attribute.step ?? 0.01;
 
   const row = document.createElement('div');
@@ -152,8 +174,8 @@ export function createSliderRow(attribute, options = {}) {
   valueInput.step = String(step);
   valueInput.disabled = attribute.readOnly;
   if (inputRange) {
-    valueInput.min = String(inputRange.min);
-    valueInput.max = String(inputRange.max);
+    if (Number.isFinite(inputRange.min)) valueInput.min = String(inputRange.min);
+    if (Number.isFinite(inputRange.max)) valueInput.max = String(inputRange.max);
   }
 
   const slider = document.createElement('input');

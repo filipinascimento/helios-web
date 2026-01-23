@@ -814,6 +814,8 @@ export class GraphLayerWebGL extends GraphLayer {
       const viewportWidth = viewport ? viewport[2] : (gl.drawingBufferWidth || this.size?.width || 1);
       const viewportHeight = viewport ? viewport[3] : (gl.drawingBufferHeight || this.size?.height || 1);
       const transparencyMode = this.edgeTransparencyMode;
+      const nodeBlendWithEdges = this.nodeBlendWithEdges === true;
+      const edgeDepthWrite = this.edgeDepthWrite === true;
 
       gl.enable(gl.DEPTH_TEST);
       gl.depthMask(true);
@@ -861,7 +863,14 @@ export class GraphLayerWebGL extends GraphLayer {
 
       const drawEdges = () => {
         if (!this.edgeCount) return;
-        gl.depthMask(false);
+        if (is2D) {
+          gl.disable(gl.DEPTH_TEST);
+          gl.depthMask(false);
+        } else {
+          gl.enable(gl.DEPTH_TEST);
+          gl.depthMask(edgeDepthWrite);
+          gl.depthFunc(gl.LEQUAL);
+        }
         const useQuads = this.edgeRenderingMode === 'quad';
         const kind = useQuads ? 'quad' : 'line';
         const edgeEntry = this.getEdgeProgram(kind, edgeVariant, false, premultiplyEdgeAlpha);
@@ -879,6 +888,26 @@ export class GraphLayerWebGL extends GraphLayer {
         );
         gl.bindVertexArray(useQuads ? this.edgeQuadVAO : this.edgeVAO);
         gl.drawArraysInstanced(useQuads ? gl.TRIANGLE_STRIP : gl.LINES, 0, useQuads ? 4 : 2, this.edgeCount);
+      };
+
+      const applyNodeBlend = () => {
+        if (nodeBlendWithEdges) {
+          this.applyEdgeBlend(gl, transparencyMode);
+        } else {
+          gl.blendEquation(gl.FUNC_ADD);
+          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        }
+      };
+
+      const setupNodeDepth = () => {
+        if (nodeBlendWithEdges || is2D) {
+          gl.disable(gl.DEPTH_TEST);
+          gl.depthMask(false);
+        } else {
+          gl.enable(gl.DEPTH_TEST);
+          gl.depthMask(true);
+          gl.depthFunc(gl.LEQUAL);
+        }
       };
 
       const weightedRequested = transparencyMode === 'weighted' || transparencyMode === 'additive-normalized' || transparencyMode === 'additive-tonemapped' || transparencyMode === 'additive-normalized-bright';
@@ -912,15 +941,13 @@ export class GraphLayerWebGL extends GraphLayer {
 
         // Always render nodes with standard alpha blending.
         gl.enable(gl.BLEND);
-        gl.blendEquation(gl.FUNC_ADD);
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
         if (is2D) {
           passes.push(() => {
             this.applyEdgeBlend(gl, transparencyMode);
             drawEdges();
-            gl.blendEquation(gl.FUNC_ADD);
-            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+            applyNodeBlend();
+            setupNodeDepth();
             drawNodes();
             gl.bindVertexArray(null);
             gl.depthMask(true);
@@ -929,11 +956,11 @@ export class GraphLayerWebGL extends GraphLayer {
           });
         } else {
           passes.push(() => {
+            applyNodeBlend();
+            setupNodeDepth();
             drawNodes();
             this.applyEdgeBlend(gl, transparencyMode);
             drawEdges();
-            gl.blendEquation(gl.FUNC_ADD);
-            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
             gl.bindVertexArray(null);
             gl.depthMask(true);
             gl.depthFunc(gl.LEQUAL);
@@ -1408,6 +1435,8 @@ export class GraphLayerWebGL extends GraphLayer {
   }) {
     const gl = this.gl;
     if (!gl || !this.weightedFramebuffer) return;
+    const nodeBlendWithEdges = this.nodeBlendWithEdges === true;
+    const edgeDepthWrite = this.edgeDepthWrite === true;
     this.counters.weightedFramebufferRenders = bumpCounter(this.counters.weightedFramebufferRenders);
     const mainFramebuffer = context.target?.handle ?? null;
     const mainDrawBuffers = mainFramebuffer ? [gl.COLOR_ATTACHMENT0] : [gl.BACK];
@@ -1432,7 +1461,7 @@ export class GraphLayerWebGL extends GraphLayer {
     const globalEdgeWidthScale = edgeWidthScale;
 
     // Draw nodes to the main framebuffer first in 3D to populate color and depth.
-    if (!is2D && this.nodeCount) {
+    if (!is2D && this.nodeCount && !nodeBlendWithEdges) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, mainFramebuffer);
       applyViewport();
       gl.enable(gl.DEPTH_TEST);
@@ -1448,7 +1477,7 @@ export class GraphLayerWebGL extends GraphLayer {
     gl.clearBufferfv(gl.COLOR, 1, new Float32Array([0, 0, 0, 0]));
     gl.clearBufferfv(gl.DEPTH, 0, new Float32Array([1]));
 
-    if (!is2D && this.nodeCount) {
+    if (!is2D && this.nodeCount && !nodeBlendWithEdges) {
       gl.colorMask(false, false, false, false);
       gl.disable(gl.BLEND);
       gl.depthMask(true);
@@ -1466,7 +1495,7 @@ export class GraphLayerWebGL extends GraphLayer {
       } else {
         gl.enable(gl.DEPTH_TEST);
       }
-      gl.depthMask(false);
+      gl.depthMask(!is2D && edgeDepthWrite);
 
       const vw = viewport ? viewport[2] : (this.weightedSize?.width ?? 1);
       const vh = viewport ? viewport[3] : (this.weightedSize?.height ?? 1);
@@ -1509,10 +1538,14 @@ export class GraphLayerWebGL extends GraphLayer {
     gl.bindVertexArray(this.edgeResolveVAO);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
 
-    if (is2D && this.nodeCount) {
+    if ((is2D || nodeBlendWithEdges) && this.nodeCount) {
       gl.enable(gl.BLEND);
-      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-      gl.depthMask(true);
+      if (nodeBlendWithEdges) {
+        this.applyEdgeBlend(gl, this.edgeTransparencyMode);
+      } else {
+        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      }
+      gl.depthMask(false);
       gl.disable(gl.DEPTH_TEST);
       gl.bindFramebuffer(gl.FRAMEBUFFER, mainFramebuffer);
       applyViewport();

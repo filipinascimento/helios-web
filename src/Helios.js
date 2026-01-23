@@ -275,8 +275,9 @@ export class Helios extends EventTarget {
       description: 'Scales mapped edge opacity',
       defaultValue: 1,
       domain: { min: 0, max: 4 },
-      recommendedRange: { min: 0.0, max: 2.0 },
+      recommendedRange: { min: 0.0, max: 1.0 },
       step: 0.01,
+      meta: { inputMin: 0, inputMax: null },
     },
     edgeOpacityBase: {
       type: 'number',
@@ -293,8 +294,9 @@ export class Helios extends EventTarget {
       description: 'Scales mapped node opacity',
       defaultValue: 1,
       domain: { min: 0, max: 4 },
-      recommendedRange: { min: 0.0, max: 2.0 },
+      recommendedRange: { min: 0.0, max: 1.0 },
       step: 0.01,
+      meta: { inputMin: 0, inputMax: null },
     },
     nodeOpacityBase: {
       type: 'number',
@@ -349,6 +351,18 @@ export class Helios extends EventTarget {
       domain: { min: 0, max: 3 },
       recommendedRange: { min: 0.0, max: 1.5 },
       step: 0.01,
+    },
+    nodeBlendWithEdges: {
+      type: 'boolean',
+      label: 'Blend Nodes With Edges',
+      description: 'Blend nodes using the edge transparency mode (weighted modes still use alpha; disables node depth testing)',
+      defaultValue: false,
+    },
+    edgeDepthWrite: {
+      type: 'boolean',
+      label: 'Edge Depth Write',
+      description: 'Enable depth testing and depth writes for edges (best for solid edges)',
+      defaultValue: false,
     },
     background: {
       type: 'color',
@@ -563,6 +577,8 @@ export class Helios extends EventTarget {
       edgeRendering: this.options.edgeRendering,
       transparencyModeEdges: this.options.transparencyModeEdges,
       edgeEndpointTrim: this.options.edgeEndpointTrim,
+      nodeBlendWithEdges: this.options.nodeBlendWithEdges,
+      edgeDepthWrite: this.options.edgeDepthWrite,
       stateSlots,
       ...options,
     });
@@ -598,10 +614,9 @@ export class Helios extends EventTarget {
     if (!this.mappersDirty) return true;
     if (!this.visuals) return false;
     try {
-      this.visuals.applyMappers({
-        nodeMapper: this.nodeMapper.toCombinedMapper(),
-        edgeMapper: this.edgeMapper.toCombinedMapper(),
-      });
+      const nodeMapper = this.nodeMapper.toCombinedMapper();
+      const edgeMapper = this.edgeMapper.toCombinedMapper({ nodeMapper });
+      this.visuals.applyMappers({ nodeMapper, edgeMapper });
       this.mappersDirty = false;
       return true;
     } catch (error) {
@@ -612,10 +627,9 @@ export class Helios extends EventTarget {
       });
       try {
         this._resetMappersToDefault(this.network);
-        this.visuals.applyMappers({
-          nodeMapper: this.nodeMapper.toCombinedMapper(),
-          edgeMapper: this.edgeMapper.toCombinedMapper(),
-        });
+        const nodeMapper = this.nodeMapper.toCombinedMapper();
+        const edgeMapper = this.edgeMapper.toCombinedMapper({ nodeMapper });
+        this.visuals.applyMappers({ nodeMapper, edgeMapper });
         this.mappersDirty = false;
         return true;
       } catch (fallbackError) {
@@ -1154,10 +1168,9 @@ export class Helios extends EventTarget {
     } else {
       // In manual mode, run initial geometry setup but don't start scheduler
       if (this.mappersDirty) {
-        this.visuals.applyMappers({
-          nodeMapper: this.nodeMapper.toCombinedMapper(),
-          edgeMapper: this.edgeMapper.toCombinedMapper(),
-        });
+        const nodeMapper = this.nodeMapper.toCombinedMapper();
+        const edgeMapper = this.edgeMapper.toCombinedMapper({ nodeMapper });
+        this.visuals.applyMappers({ nodeMapper, edgeMapper });
         this.mappersDirty = false;
       }
       this.firstGeometryUpdateComplete = true;
@@ -1315,6 +1328,16 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('edgeEndpointTrim', Number(value));
   }
 
+  nodeBlendWithEdges(value) {
+    if (arguments.length === 0) return this._getGraphLayerProp('nodeBlendWithEdges');
+    return this._setGraphLayerProp('nodeBlendWithEdges', Boolean(value));
+  }
+
+  edgeDepthWrite(value) {
+    if (arguments.length === 0) return this._getGraphLayerProp('edgeDepthWrite');
+    return this._setGraphLayerProp('edgeDepthWrite', Boolean(value));
+  }
+
   background(color) {
     if (arguments.length === 0) return this._getRendererProp('clearColor');
     const normalized = normalizeColorInput(color);
@@ -1350,10 +1373,9 @@ export class Helios extends EventTarget {
     this.debug.log('helios', 'Prewarming visuals before ready', { updateDenseBuffers });
     this.prewarmPromise = (async () => {
       if (this.mappersDirty) {
-        this.visuals.applyMappers({
-          nodeMapper: this.nodeMapper.toCombinedMapper(),
-          edgeMapper: this.edgeMapper.toCombinedMapper(),
-        });
+        const nodeMapper = this.nodeMapper.toCombinedMapper();
+        const edgeMapper = this.edgeMapper.toCombinedMapper({ nodeMapper });
+        this.visuals.applyMappers({ nodeMapper, edgeMapper });
         this.mappersDirty = false;
       }
       if (updateDenseBuffers) {
