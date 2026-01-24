@@ -1,3 +1,4 @@
+import { AttributeType } from 'helios-network';
 import { PanelManager } from './panels/PanelManager.js';
 import { UIAttribute } from './state/UIAttribute.js';
 import { ensureDefaultStyles } from './style/defaultStyles.js';
@@ -535,21 +536,43 @@ export class HeliosUI {
         if (!info || info.type !== 'boolean') return null;
         if (typeof this.helios[accessorName] !== 'function') return null;
         const attribute = this.bindHeliosAccessor(accessorName);
-        const toggle = document.createElement('input');
-        toggle.type = 'checkbox';
-        toggle.style.margin = '0';
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'helios-ui-toggle';
+        toggle.setAttribute('role', 'switch');
         toggle.setAttribute('aria-label', info.label ?? accessorName);
         toggle.disabled = attribute.readOnly;
+
+        const toggleThumb = document.createElement('span');
+        toggleThumb.className = 'helios-ui-toggle__thumb';
+        toggleThumb.setAttribute('aria-hidden', 'true');
+        const toggleText = document.createElement('span');
+        toggleText.className = 'helios-ui-toggle__text';
+        toggle.appendChild(toggleThumb);
+        toggle.appendChild(toggleText);
+
+        const syncToggle = (value) => {
+          const enabled = Boolean(value);
+          toggle.setAttribute('aria-checked', enabled ? 'true' : 'false');
+          toggleText.textContent = enabled ? 'On' : 'Off';
+        };
+
         const unsub = attribute.subscribe((value) => {
-          toggle.checked = Boolean(value);
+          syncToggle(value);
         });
-        toggle.addEventListener('change', () => {
-          attribute.write(toggle.checked, { source: 'ui', event: 'change' });
+
+        toggle.addEventListener('click', () => {
+          const next = toggle.getAttribute('aria-checked') !== 'true';
+          attribute.write(next, { source: 'ui', event: 'change' });
         });
+
+        const controls = document.createElement('div');
+        controls.className = 'helios-ui-row__controls';
+        controls.appendChild(toggle);
         const { row } = createAlignedRow({
           title: info.label ?? accessorName,
           hint: info.description ?? null,
-          controls: toggle,
+          controls,
         });
         this._controlCleanups.add(() => unsub());
         return row;
@@ -694,7 +717,7 @@ export class HeliosUI {
           });
 
           wrapper.appendChild(createAlignedRow({
-            title: 'Edge Mode',
+            title: 'Blend Mode',
             hint: 'Controls how overlapping edges are composited ("Smooth" reduces overlap artifacts).',
             controls: modeSelect,
           }).row);
@@ -1607,6 +1630,11 @@ export class HeliosUI {
     };
 
     const isNumericAttributeType = (type) => typeof type === 'number';
+    const isIntegerAttributeType = (type) =>
+      type === AttributeType.Integer ||
+      type === AttributeType.UnsignedInteger ||
+      type === AttributeType.BigInteger ||
+      type === AttributeType.UnsignedBigInteger;
 
     const resolveVisualAlias = (name) => {
       if (typeof name !== 'string') return name;
@@ -1740,7 +1768,7 @@ export class HeliosUI {
 
       if (rawName === '$index') {
         const count = scope === 'edge' ? (network.edgeCount ?? network.edgesCount ?? null) : (network.nodeCount ?? network.nodesCount ?? null);
-        if (Number.isFinite(count) && count > 0) return { min: 0, max: Math.max(0, count - 1) };
+        if (Number.isFinite(count) && count > 0) return { min: 0, max: Math.max(0, count - 1), isInteger: true };
         return null;
       }
 
@@ -1748,6 +1776,8 @@ export class HeliosUI {
       const isNodeProxy = scope === 'edge' && rawName.startsWith('@node.');
       const name = isNodeProxy ? rawName.slice('@node.'.length) : rawName;
       const resolved = resolveName(name);
+      const info = getAttributeInfo(scope, rawName);
+      const integerType = info?.type != null && isIntegerAttributeType(info.type);
 
       try {
         const buffer = isNodeProxy
@@ -1766,6 +1796,12 @@ export class HeliosUI {
           if (v > max) max = v;
         }
         if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+        if (integerType) {
+          const minInt = Math.floor(min);
+          const maxInt = Math.ceil(max);
+          if (minInt === maxInt) return { min: minInt, max: minInt + 1, isInteger: true };
+          return { min: minInt, max: maxInt, isInteger: true };
+        }
         if (min === max) return { min, max: min + 1 };
         return { min, max };
       } catch (_) {
@@ -1791,13 +1827,13 @@ export class HeliosUI {
       return [0, 1];
     };
 
-    const suggestStepForRange = (min, max) => {
+    const suggestStepForRange = (min, max, isInteger = false) => {
+      if (isInteger) return 1;
       const span = Math.abs(Number(max) - Number(min));
       if (!Number.isFinite(span) || span <= 0) return 0.01;
-      if (span <= 1) return 0.001;
-      if (span <= 10) return 0.01;
-      if (span <= 100) return 0.1;
-      return 1;
+      const magnitude = Math.floor(Math.log10(span));
+      const step = Math.pow(10, magnitude - 3);
+      return Math.max(step, 1e-6);
     };
 
     const isPercentileTransform = (transformType) => transformType === 'percentile' || transformType === 'quantile';
@@ -1946,7 +1982,9 @@ export class HeliosUI {
       const clampTo = (v) => {
         const n = Number(v);
         if (!Number.isFinite(n)) return null;
-        return Math.max(min, Math.min(max, n));
+        const snappedMin = Math.abs(n - min) <= step / 2 ? min : n;
+        const snappedMax = Math.abs(snappedMin - max) <= step / 2 ? max : snappedMin;
+        return Math.max(min, Math.min(max, snappedMax));
       };
 
       const setVisual = (lo, hi) => {
@@ -2906,7 +2944,8 @@ export class HeliosUI {
           const extent = percentile ? { min: 0, max: 1 } : computeScalarExtent(mode, domainAttr);
           const min = extent?.min ?? 0;
           const max = extent?.max ?? 1;
-          const step = percentile ? 0.01 : suggestStepForRange(min, max);
+          const isIntegerDomain = Boolean(extent?.isInteger);
+          const step = percentile ? 0.01 : suggestStepForRange(min, max, isIntegerDomain);
 
           if (percentile && (!Array.isArray(state.pending.domain) || state.pending.domain[0] !== 0 || state.pending.domain[1] !== 1)) {
             state.pending = { ...state.pending, type: 'linear', domain: [0, 1] };
@@ -2946,8 +2985,12 @@ export class HeliosUI {
             const a = clampNumber(d0.value);
             const b = clampNumber(d1.value);
             if (a == null || b == null) return;
-            const lo = Math.min(a, b);
-            const hi = Math.max(a, b);
+            let lo = Math.min(a, b);
+            let hi = Math.max(a, b);
+            if (isIntegerDomain) {
+              lo = Math.round(lo);
+              hi = Math.round(hi);
+            }
             const loSlider = Math.max(min, Math.min(max, lo));
             const hiSlider = Math.max(min, Math.min(max, hi));
             slider.aInput.value = String(loSlider);
@@ -3157,7 +3200,8 @@ export class HeliosUI {
           const extentAbs = divergent ? Math.max(Math.abs(min), Math.abs(max), 1) : null;
           const sliderMin = divergent ? -extentAbs : min;
           const sliderMax = divergent ? extentAbs : max;
-          const step = percentile ? 0.01 : suggestStepForRange(sliderMin, sliderMax);
+          const isIntegerDomain = Boolean(extent?.isInteger);
+          const step = percentile ? 0.01 : suggestStepForRange(sliderMin, sliderMax, isIntegerDomain);
 
           if (percentile && (!Array.isArray(state.pending.domain) || state.pending.domain[0] !== 0 || state.pending.domain[1] !== 1)) {
             state.pending = { ...state.pending, type: 'colormap', domain: [0, 1] };
@@ -3178,10 +3222,13 @@ export class HeliosUI {
             allowRangeDrag: !divergent,
             onChange: (next) => {
               const prevDomain = Array.isArray(state.pending.domain) ? state.pending.domain : domain;
-              const nextDomain = divergent ? resolveDivergentDomainFromSlider(next, prevDomain) : next;
-              state.pending = { ...state.pending, type: 'colormap', domain: nextDomain };
-              setDirty(true);
-              d0.value = String(nextDomain[0]);
+            let nextDomain = divergent ? resolveDivergentDomainFromSlider(next, prevDomain) : next;
+            if (isIntegerDomain) {
+              nextDomain = [Math.round(nextDomain[0]), Math.round(nextDomain[1])];
+            }
+            state.pending = { ...state.pending, type: 'colormap', domain: nextDomain };
+            setDirty(true);
+            d0.value = String(nextDomain[0]);
               d1.value = String(nextDomain[1]);
               if (divergent) {
                 slider.aInput.value = String(nextDomain[0]);
@@ -3209,8 +3256,12 @@ export class HeliosUI {
             const a = clampNumber(d0.value);
             const b = clampNumber(d1.value);
             if (a == null || b == null) return;
-            const lo = Math.min(a, b);
-            const hi = Math.max(a, b);
+            let lo = Math.min(a, b);
+            let hi = Math.max(a, b);
+            if (isIntegerDomain) {
+              lo = Math.round(lo);
+              hi = Math.round(hi);
+            }
             const maxAbs = divergent ? Math.max(Math.abs(lo), Math.abs(hi)) : null;
             const nextDomain = divergent ? [-maxAbs, maxAbs] : [lo, hi];
             const loSlider = Math.max(sliderMin, Math.min(sliderMax, nextDomain[0]));

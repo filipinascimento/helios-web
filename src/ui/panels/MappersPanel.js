@@ -1,3 +1,4 @@
+import { AttributeType } from 'helios-network';
 import { PanelStack } from './PanelStack.js';
 import { createAlignedRowEl } from '../controls/createAlignedRowEl.js';
 import { createTooltipManager } from '../controls/createTooltipManager.js';
@@ -102,6 +103,11 @@ function isHexColorString(value) {
 }
 
 const isNumericAttributeType = (type) => typeof type === 'number';
+const isIntegerAttributeType = (type) =>
+  type === AttributeType.Integer ||
+  type === AttributeType.UnsignedInteger ||
+  type === AttributeType.BigInteger ||
+  type === AttributeType.UnsignedBigInteger;
 
 export class MappersPanel {
   constructor(ui, options = {}) {
@@ -433,7 +439,7 @@ export class MappersPanel {
         const count = scope === 'edge'
           ? (network.edgeCount ?? network.edgesCount ?? null)
           : (network.nodeCount ?? network.nodesCount ?? null);
-        if (Number.isFinite(count) && count > 0) return { min: 0, max: Math.max(0, count - 1) };
+        if (Number.isFinite(count) && count > 0) return { min: 0, max: Math.max(0, count - 1), isInteger: true };
         return null;
       }
 
@@ -441,6 +447,8 @@ export class MappersPanel {
       const isNodeProxy = scope === 'edge' && rawName.startsWith('@node.');
       const name = isNodeProxy ? rawName.slice('@node.'.length) : rawName;
       const resolved = resolveName(name);
+      const info = getAttributeInfo(scope, rawName);
+      const integerType = info?.type != null && isIntegerAttributeType(info.type);
 
       try {
         const buffer = isNodeProxy
@@ -459,6 +467,12 @@ export class MappersPanel {
           if (v > max) max = v;
         }
         if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+        if (integerType) {
+          const minInt = Math.floor(min);
+          const maxInt = Math.ceil(max);
+          if (minInt === maxInt) return { min: minInt, max: minInt + 1, isInteger: true };
+          return { min: minInt, max: maxInt, isInteger: true };
+        }
         if (min === max) return { min, max: min + 1 };
         return { min, max };
       } catch (_) {
@@ -583,13 +597,13 @@ export class MappersPanel {
       return [0, 1];
     };
 
-    const suggestStepForRange = (min, max) => {
+    const suggestStepForRange = (min, max, isInteger = false) => {
+      if (isInteger) return 1;
       const span = Math.abs(Number(max) - Number(min));
       if (!Number.isFinite(span) || span <= 0) return 0.01;
-      if (span <= 1) return 0.001;
-      if (span <= 10) return 0.01;
-      if (span <= 100) return 0.1;
-      return 1;
+      const magnitude = Math.floor(Math.log10(span));
+      const step = Math.pow(10, magnitude - 3);
+      return Math.max(step, 1e-6);
     };
 
     const isPercentileTransform = (transformType) => transformType === 'percentile' || transformType === 'quantile';
@@ -1772,7 +1786,8 @@ export class MappersPanel {
           const extent = percentile ? { min: 0, max: 1 } : computeScalarExtent(mode, domainAttr);
           const min = extent?.min ?? 0;
           const max = extent?.max ?? 1;
-          const step = percentile ? 0.01 : suggestStepForRange(min, max);
+          const isIntegerDomain = Boolean(extent?.isInteger);
+          const step = percentile ? 0.01 : suggestStepForRange(min, max, isIntegerDomain);
 
           if (percentile && (!Array.isArray(state.pending.domain) || state.pending.domain[0] !== 0 || state.pending.domain[1] !== 1)) {
             const nextPending = { ...state.pending, type: 'linear', domain: [0, 1] };
@@ -1830,8 +1845,12 @@ export class MappersPanel {
             const a = clampNumber(d0.value);
             const b = clampNumber(d1.value);
             if (a == null || b == null) return;
-            const lo = Math.min(a, b);
-            const hi = Math.max(a, b);
+            let lo = Math.min(a, b);
+            let hi = Math.max(a, b);
+            if (isIntegerDomain) {
+              lo = Math.round(lo);
+              hi = Math.round(hi);
+            }
             const loSlider = Math.max(min, Math.min(max, lo));
             const hiSlider = Math.max(min, Math.min(max, hi));
             slider.aInput.value = String(loSlider);
@@ -2679,7 +2698,8 @@ export class MappersPanel {
           const extentAbs = divergent ? Math.max(Math.abs(min), Math.abs(max), 1) : null;
           const sliderMin = divergent ? -extentAbs : min;
           const sliderMax = divergent ? extentAbs : max;
-          const step = percentile ? 0.01 : suggestStepForRange(sliderMin, sliderMax);
+          const isIntegerDomain = Boolean(extent?.isInteger);
+          const step = percentile ? 0.01 : suggestStepForRange(sliderMin, sliderMax, isIntegerDomain);
 
           if (percentile && (!Array.isArray(state.pending.domain) || state.pending.domain[0] !== 0 || state.pending.domain[1] !== 1)) {
             const nextPending = { ...state.pending, type: 'colormap', domain: [0, 1] };
@@ -2716,7 +2736,10 @@ export class MappersPanel {
             allowRangeDrag: !divergent,
             onChange: (next) => {
               const prevDomain = Array.isArray(state.pending.domain) ? state.pending.domain : domain;
-              const nextDomain = divergent ? resolveDivergentDomainFromSlider(next, prevDomain) : next;
+              let nextDomain = divergent ? resolveDivergentDomainFromSlider(next, prevDomain) : next;
+              if (isIntegerDomain) {
+                nextDomain = [Math.round(nextDomain[0]), Math.round(nextDomain[1])];
+              }
               const nextPending = { ...state.pending, type: 'colormap', domain: nextDomain };
               markDomainAuto(nextPending, false);
               state.pending = nextPending;
@@ -2751,8 +2774,12 @@ export class MappersPanel {
             const a = clampNumber(d0.value);
             const b = clampNumber(d1.value);
             if (a == null || b == null) return;
-            const lo = Math.min(a, b);
-            const hi = Math.max(a, b);
+            let lo = Math.min(a, b);
+            let hi = Math.max(a, b);
+            if (isIntegerDomain) {
+              lo = Math.round(lo);
+              hi = Math.round(hi);
+            }
             const maxAbs = divergent ? Math.max(Math.abs(lo), Math.abs(hi)) : null;
             const nextDomain = divergent ? [-maxAbs, maxAbs] : [lo, hi];
             const loSlider = Math.max(sliderMin, Math.min(sliderMax, nextDomain[0]));

@@ -32,7 +32,9 @@ export class TwoHandleRange {
     const clampTo = (v) => {
       const n = Number(v);
       if (!Number.isFinite(n)) return null;
-      return Math.max(min, Math.min(max, n));
+      const snappedMin = Math.abs(n - min) <= step / 2 ? min : n;
+      const snappedMax = Math.abs(snappedMin - max) <= step / 2 ? max : snappedMin;
+      return Math.max(min, Math.min(max, snappedMax));
     };
 
     const setVisual = (lo, hi) => {
