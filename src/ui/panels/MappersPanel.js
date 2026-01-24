@@ -2111,16 +2111,12 @@ export class MappersPanel {
 	              });
 
 	              const ifLabel = createRuleKeyword(i === 0 ? 'if' : 'else if');
-	              const thenLabel = createRuleKeyword('then');
-
-	              condRow.appendChild(ifLabel);
-	              condRow.appendChild(opSelect);
-	              condRow.appendChild(rhsInput);
-	              condRow.appendChild(thenLabel);
-	              condRow.appendChild(outInput);
-	              tooltips.attachTooltip(opSelect, 'Condition operator.');
-	              tooltips.attachTooltip(rhsInput, 'Comparison value.');
-	              tooltips.attachTooltip(outInput, 'Override output.');
+              condRow.appendChild(ifLabel);
+              condRow.appendChild(opSelect);
+              condRow.appendChild(rhsInput);
+              tooltips.attachTooltip(opSelect, 'Condition operator.');
+              tooltips.attachTooltip(rhsInput, 'Comparison value.');
+              tooltips.attachTooltip(outInput, 'Override output.');
 
 	              const remove = document.createElement('button');
 	              remove.type = 'button';
@@ -2135,12 +2131,26 @@ export class MappersPanel {
 	                renderRulesList();
 	              });
 
-	              top.appendChild(condRow);
-	              top.appendChild(remove);
-	              item.appendChild(top);
-	              rulesList.appendChild(item);
-	            }
-	          };
+              top.appendChild(condRow);
+              top.appendChild(remove);
+
+              const outWrap = document.createElement('div');
+              outWrap.style.display = 'flex';
+              outWrap.style.gap = '8px';
+              outWrap.style.alignItems = 'center';
+              outWrap.style.width = '100%';
+
+              outInput.style.flex = '1 1 auto';
+              outInput.style.minWidth = '0';
+
+              outWrap.appendChild(createRuleKeyword('then'));
+              outWrap.appendChild(outInput);
+
+              item.appendChild(top);
+              item.appendChild(outWrap);
+              rulesList.appendChild(item);
+            }
+          };
 
 	          const addRuleButton = document.createElement('button');
 	          addRuleButton.type = 'button';
