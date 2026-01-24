@@ -368,6 +368,13 @@ export function colormapToScheme(input, count) {
 
 export function createColormapScale(colormapInput, options = {}) {
   const { domain = [0, 1], clamp = true, alpha } = options;
+  const clampSpec = (() => {
+    if (clamp && typeof clamp === 'object') {
+      return { min: clamp.min !== false, max: clamp.max !== false };
+    }
+    if (clamp === false) return { min: false, max: false };
+    return { min: true, max: true };
+  })();
   const interpolator = colormapToInterpolator(colormapInput);
   const sample = interpolator(0.5);
   const isArrayLike = (value) =>
@@ -379,8 +386,15 @@ export function createColormapScale(colormapInput, options = {}) {
   const [d0, d1] = domain;
   const denom = d1 - d0 || 1;
   return (value) => {
+    if (!clampSpec.min || !clampSpec.max) {
+      const lo = Math.min(d0, d1);
+      const hi = Math.max(d0, d1);
+      if (!clampSpec.min && value < lo) return undefined;
+      if (!clampSpec.max && value > hi) return undefined;
+    }
     const tRaw = (value - d0) / denom;
-    const t = clamp ? clamp01(tRaw) : tRaw;
+    const shouldClamp = clampSpec.min || clampSpec.max;
+    const t = shouldClamp ? clamp01(tRaw) : tRaw;
     const color = interpolatorReturnsArray ? [...interpolator(t)] : normalizeCssColor(interpolator(t));
     if (alpha != null) {
       color[3] = alpha;

@@ -25,7 +25,7 @@ Mapper-driven visuals allocate attribute buffers on demand. Channels in constant
 
 ## Colormap helpers
 
-- `createColormapScale(nameOrFn, { domain, clamp = true, alpha })` – returns a function mapping numeric values to `[r,g,b,a]` in 0–1 space. Accepts any built-in colormap key (CET, cmasher, helios, d3-scale-chromatic) or a custom interpolator function.
+- `createColormapScale(nameOrFn, { domain, clamp = true, alpha })` – returns a function mapping numeric values to `[r,g,b,a]` in 0–1 space. Accepts any built-in colormap key (CET, cmasher, helios, d3-scale-chromatic) or a custom interpolator function. `clamp` can be a boolean or `{ min, max }` for one-sided clamping (unclamped values return `undefined`).
 - `colormapToScheme(colormap, count)` – samples a colormap into a categorical palette of `count` colors.
 - `colormaps` – registry of available colormaps, including `colormaps.cmasher`, `colormaps.cet`, `colormaps.helios`, and d3 variants like `colormaps.d3.interpolateTurbo`.
 
@@ -37,6 +37,10 @@ Tips:
 If you’re using `HeliosUI`, the Mappers panel includes a searchable colormap picker with thumbnail previews to make it easier to browse ramps.
 
 Note: mapper configs that rely on arbitrary JavaScript functions (e.g. `.transform((v) => …)` or `.scale((v) => …)`) aren’t safely serializable. The UI focuses on declarative mappings (constant/passthrough/linear/colormap) plus “Default” and simple “Overrides” (rules like “-1 → gray”).
+
+## Built-in transforms
+
+Mapper channels support `transformType` for common pre-transforms (`log`, `log1p`, `logit`, `power`). Use `transformType: 'percentile'` (or `'quantile'`) to rank values across the current attribute buffer into a 0–1 range before scaling.
 
 ## Example: Basic demo node colors
 

@@ -1,5 +1,5 @@
 export class TwoHandleRange {
-  constructor({ min, max, value, step, onChange }) {
+  constructor({ min, max, value, step, onChange, allowRangeDrag = true }) {
     this.element = document.createElement('div');
     this.element.className = 'helios-ui-range2';
 
@@ -130,12 +130,16 @@ export class TwoHandleRange {
 
     const onAInput = () => commit('a');
     const onBInput = () => commit('b');
-    rangeEl.addEventListener('pointerdown', onRangePointerDown);
+    if (allowRangeDrag) {
+      rangeEl.addEventListener('pointerdown', onRangePointerDown);
+    }
     aInput.addEventListener('input', onAInput);
     bInput.addEventListener('input', onBInput);
 
     this._destroy = () => {
-      rangeEl.removeEventListener('pointerdown', onRangePointerDown);
+      if (allowRangeDrag) {
+        rangeEl.removeEventListener('pointerdown', onRangePointerDown);
+      }
       aInput.removeEventListener('input', onAInput);
       bInput.removeEventListener('input', onBInput);
       this.element.remove();

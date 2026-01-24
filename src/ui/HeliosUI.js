@@ -1800,6 +1800,47 @@ export class HeliosUI {
       return 1;
     };
 
+    const isPercentileTransform = (transformType) => transformType === 'percentile' || transformType === 'quantile';
+
+    const formatTransformLabel = (value) => {
+      if (value === 'log1p') return 'Log1p';
+      if (value === 'percentile' || value === 'quantile') return 'Percentile';
+      return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
+    };
+
+    const normalizeClampSetting = (clamp) => {
+      if (clamp && typeof clamp === 'object') {
+        return { min: clamp.min !== false, max: clamp.max !== false };
+      }
+      if (clamp === false) return { min: false, max: false };
+      return { min: true, max: true };
+    };
+
+    const resolveDivergentDomain = (domain, extent) => {
+      if (!Array.isArray(domain) || domain.length !== 2) {
+        const min = extent?.min ?? -1;
+        const max = extent?.max ?? 1;
+        const maxAbs = Math.max(Math.abs(min), Math.abs(max), 1);
+        return [-maxAbs, maxAbs];
+      }
+      const maxAbs = Math.max(Math.abs(domain[0]), Math.abs(domain[1]));
+      if (!Number.isFinite(maxAbs) || maxAbs === 0) return [-1, 1];
+      return [-maxAbs, maxAbs];
+    };
+
+    const resolveDivergentDomainFromSlider = (next, prev) => {
+      const prevAbs = Math.abs(prev?.[1] ?? prev?.[0] ?? 0);
+      const loAbs = Math.abs(next?.[0] ?? 0);
+      const hiAbs = Math.abs(next?.[1] ?? 0);
+      const loChanged = Math.abs(loAbs - prevAbs) > 1e-6;
+      const hiChanged = Math.abs(hiAbs - prevAbs) > 1e-6;
+      const maxAbs = loChanged && !hiChanged
+        ? loAbs
+        : (hiChanged && !loChanged ? hiAbs : Math.max(loAbs, hiAbs));
+      if (!Number.isFinite(maxAbs) || maxAbs === 0) return [-1, 1];
+      return [-maxAbs, maxAbs];
+    };
+
     const updateSliderVisual = (slider) => {
       if (!slider) return;
       const min = Number(slider.min);
@@ -1872,7 +1913,7 @@ export class HeliosUI {
       return { element: controls, slider, input, set };
     };
 
-    const createTwoHandleRange = ({ min, max, value, step, onChange }) => {
+    const createTwoHandleRange = ({ min, max, value, step, onChange, allowRangeDrag = true }) => {
       const wrap = document.createElement('div');
       wrap.className = 'helios-ui-range2';
 
@@ -1950,7 +1991,7 @@ export class HeliosUI {
       };
 
       // Dragging the highlighted range pans both thumbs together.
-      rangeEl.addEventListener('pointerdown', (event) => {
+      const onRangePointerDown = (event) => {
         // Only handle primary pointer interactions.
         if (event.button != null && event.button !== 0) return;
         event.preventDefault();
@@ -2011,7 +2052,10 @@ export class HeliosUI {
         window.addEventListener('pointermove', onMove);
         window.addEventListener('pointerup', onUp);
         window.addEventListener('pointercancel', onUp);
-      });
+      };
+      if (allowRangeDrag) {
+        rangeEl.addEventListener('pointerdown', onRangePointerDown);
+      }
 
       aInput.style.zIndex = '2';
       bInput.style.zIndex = '3';
@@ -2800,13 +2844,16 @@ export class HeliosUI {
 
           const transformSelect = document.createElement('select');
           transformSelect.className = 'helios-ui-select';
-          for (const optVal of ['linear', 'log', 'log1p', 'logit', 'power']) {
+          for (const optVal of ['linear', 'log', 'log1p', 'logit', 'power', 'percentile']) {
             const opt = document.createElement('option');
             opt.value = optVal;
-            opt.textContent = optVal === 'log1p' ? 'Log1p' : `${optVal.slice(0, 1).toUpperCase()}${optVal.slice(1)}`;
+            opt.textContent = formatTransformLabel(optVal);
             transformSelect.appendChild(opt);
           }
-          transformSelect.value = String(state.pending.transformType ?? 'linear');
+          const resolvedTransformType = state.pending.transformType === 'quantile'
+            ? 'percentile'
+            : (state.pending.transformType ?? 'linear');
+          transformSelect.value = String(resolvedTransformType);
 
           const powerInput = document.createElement('input');
           powerInput.type = 'number';
@@ -2817,8 +2864,16 @@ export class HeliosUI {
 
           transformSelect.addEventListener('change', () => {
             const nextType = transformSelect.value || 'linear';
+            const prevType = state.pending.transformType ?? 'linear';
             powerInput.hidden = nextType !== 'power';
-            state.pending = { ...state.pending, type: 'linear', transformType: nextType };
+            const nextPending = { ...state.pending, type: 'linear', transformType: nextType };
+            if (isPercentileTransform(nextType)) {
+              nextPending.domain = [0, 1];
+            } else if (isPercentileTransform(prevType)) {
+              const attr = typeof state.pending.attributes === 'string' ? state.pending.attributes : null;
+              nextPending.domain = attr ? suggestDomainForAttribute(mode, attr) : [0, 1];
+            }
+            state.pending = nextPending;
             if (nextType !== 'power') {
               state.pending = { ...state.pending, type: 'linear', transformPower: undefined };
             } else {
@@ -2846,15 +2901,19 @@ export class HeliosUI {
           domainWrap.style.width = '100%';
 
           const domainAttr = typeof state.pending.attributes === 'string' ? state.pending.attributes : null;
-          const extent = computeScalarExtent(mode, domainAttr);
+          const transformType = state.pending.transformType ?? 'linear';
+          const percentile = isPercentileTransform(transformType);
+          const extent = percentile ? { min: 0, max: 1 } : computeScalarExtent(mode, domainAttr);
           const min = extent?.min ?? 0;
           const max = extent?.max ?? 1;
-          const step = suggestStepForRange(min, max);
-          const domain = Array.isArray(state.pending.domain) ? state.pending.domain : [min, max];
+          const step = percentile ? 0.01 : suggestStepForRange(min, max);
 
-          if (!Array.isArray(state.pending.domain) && domainAttr) {
+          if (percentile && (!Array.isArray(state.pending.domain) || state.pending.domain[0] !== 0 || state.pending.domain[1] !== 1)) {
+            state.pending = { ...state.pending, type: 'linear', domain: [0, 1] };
+          } else if (!Array.isArray(state.pending.domain) && domainAttr) {
             state.pending = { ...state.pending, type: 'linear', domain: [min, max] };
           }
+          const domain = Array.isArray(state.pending.domain) ? state.pending.domain : [min, max];
 
           const slider = createTwoHandleRange({
             min,
@@ -3004,13 +3063,16 @@ export class HeliosUI {
 
           const transformSelect = document.createElement('select');
           transformSelect.className = 'helios-ui-select';
-          for (const optVal of ['linear', 'log', 'log1p', 'logit', 'power']) {
+          for (const optVal of ['linear', 'log', 'log1p', 'logit', 'power', 'percentile']) {
             const opt = document.createElement('option');
             opt.value = optVal;
-            opt.textContent = optVal === 'log1p' ? 'Log1p' : `${optVal.slice(0, 1).toUpperCase()}${optVal.slice(1)}`;
+            opt.textContent = formatTransformLabel(optVal);
             transformSelect.appendChild(opt);
           }
-          transformSelect.value = String(state.pending.transformType ?? 'linear');
+          const resolvedTransformType = state.pending.transformType === 'quantile'
+            ? 'percentile'
+            : (state.pending.transformType ?? 'linear');
+          transformSelect.value = String(resolvedTransformType);
 
           const powerInput = document.createElement('input');
           powerInput.type = 'number';
@@ -3021,8 +3083,16 @@ export class HeliosUI {
 
           transformSelect.addEventListener('change', () => {
             const nextType = transformSelect.value || 'linear';
+            const prevType = state.pending.transformType ?? 'linear';
             powerInput.hidden = nextType !== 'power';
-            state.pending = { ...state.pending, type: 'colormap', transformType: nextType };
+            const nextPending = { ...state.pending, type: 'colormap', transformType: nextType };
+            if (isPercentileTransform(nextType)) {
+              nextPending.domain = [0, 1];
+            } else if (isPercentileTransform(prevType)) {
+              const attr = typeof state.pending.attributes === 'string' ? state.pending.attributes : null;
+              nextPending.domain = attr ? suggestDomainForAttribute(mode, attr) : [0, 1];
+            }
+            state.pending = nextPending;
             if (nextType !== 'power') {
               state.pending = { ...state.pending, type: 'colormap', transformPower: undefined };
             } else {
@@ -3077,26 +3147,47 @@ export class HeliosUI {
           domainWrap.style.width = '100%';
 
           const domainAttr = typeof state.pending.attributes === 'string' ? state.pending.attributes : null;
-          const extent = computeScalarExtent(mode, domainAttr);
+          const transformType = state.pending.transformType ?? 'linear';
+          const percentile = isPercentileTransform(transformType);
+          const allowDivergent = !percentile;
+          const divergent = Boolean(state.pending.divergent) && allowDivergent;
+          const extent = percentile ? { min: 0, max: 1 } : computeScalarExtent(mode, domainAttr);
           const min = extent?.min ?? 0;
           const max = extent?.max ?? 1;
-          const step = suggestStepForRange(min, max);
-          const domain = Array.isArray(state.pending.domain) ? state.pending.domain : [min, max];
+          const extentAbs = divergent ? Math.max(Math.abs(min), Math.abs(max), 1) : null;
+          const sliderMin = divergent ? -extentAbs : min;
+          const sliderMax = divergent ? extentAbs : max;
+          const step = percentile ? 0.01 : suggestStepForRange(sliderMin, sliderMax);
 
-          if (!Array.isArray(state.pending.domain) && domainAttr) {
-            state.pending = { ...state.pending, type: 'colormap', domain: [min, max] };
+          if (percentile && (!Array.isArray(state.pending.domain) || state.pending.domain[0] !== 0 || state.pending.domain[1] !== 1)) {
+            state.pending = { ...state.pending, type: 'colormap', domain: [0, 1] };
+          } else if (!Array.isArray(state.pending.domain) && domainAttr) {
+            const nextDomain = divergent ? resolveDivergentDomain([min, max], extent) : [min, max];
+            state.pending = { ...state.pending, type: 'colormap', domain: nextDomain };
+          } else if (divergent && Array.isArray(state.pending.domain)) {
+            state.pending = { ...state.pending, type: 'colormap', domain: resolveDivergentDomain(state.pending.domain, extent) };
           }
 
+          const domain = Array.isArray(state.pending.domain) ? state.pending.domain : (divergent ? resolveDivergentDomain([min, max], extent) : [min, max]);
+
           const slider = createTwoHandleRange({
-            min,
-            max,
+            min: sliderMin,
+            max: sliderMax,
             step,
             value: domain,
+            allowRangeDrag: !divergent,
             onChange: (next) => {
-              state.pending = { ...state.pending, type: 'colormap', domain: next };
+              const prevDomain = Array.isArray(state.pending.domain) ? state.pending.domain : domain;
+              const nextDomain = divergent ? resolveDivergentDomainFromSlider(next, prevDomain) : next;
+              state.pending = { ...state.pending, type: 'colormap', domain: nextDomain };
               setDirty(true);
-              d0.value = String(next[0]);
-              d1.value = String(next[1]);
+              d0.value = String(nextDomain[0]);
+              d1.value = String(nextDomain[1]);
+              if (divergent) {
+                slider.aInput.value = String(nextDomain[0]);
+                slider.bInput.value = String(nextDomain[1]);
+                slider.setVisual(nextDomain[0], nextDomain[1]);
+              }
             },
           });
 
@@ -3120,13 +3211,17 @@ export class HeliosUI {
             if (a == null || b == null) return;
             const lo = Math.min(a, b);
             const hi = Math.max(a, b);
-            const loSlider = Math.max(min, Math.min(max, lo));
-            const hiSlider = Math.max(min, Math.min(max, hi));
+            const maxAbs = divergent ? Math.max(Math.abs(lo), Math.abs(hi)) : null;
+            const nextDomain = divergent ? [-maxAbs, maxAbs] : [lo, hi];
+            const loSlider = Math.max(sliderMin, Math.min(sliderMax, nextDomain[0]));
+            const hiSlider = Math.max(sliderMin, Math.min(sliderMax, nextDomain[1]));
             slider.aInput.value = String(loSlider);
             slider.bInput.value = String(hiSlider);
             slider.setVisual(loSlider, hiSlider);
-            state.pending = { ...state.pending, type: 'colormap', domain: [lo, hi] };
+            state.pending = { ...state.pending, type: 'colormap', domain: nextDomain };
             setDirty(true);
+            d0.value = String(nextDomain[0]);
+            d1.value = String(nextDomain[1]);
           };
           d0.addEventListener('change', commitDomainTyped);
           d1.addEventListener('change', commitDomainTyped);
@@ -3135,22 +3230,68 @@ export class HeliosUI {
           values.appendChild(d1);
           domainWrap.appendChild(slider.element);
           domainWrap.appendChild(values);
-          editorBody.appendChild(createAlignedRowEl({ title: 'Domain', controls: domainWrap }).row);
+          editorBody.appendChild(createAlignedRowEl({
+            title: 'Domain',
+            controls: domainWrap,
+            hint: percentile
+              ? 'Percentile range used to map values into the colormap (0 to 1).'
+              : (divergent
+                ? 'Symmetric range around zero used for divergent colormaps.'
+                : 'Input range used to map values into the colormap (min/max).'),
+          }).row);
 
           const advanced = document.createElement('div');
-          const clampWrap = document.createElement('label');
+          const divergentWrap = document.createElement('label');
+          divergentWrap.style.display = 'inline-flex';
+          divergentWrap.style.alignItems = 'center';
+          divergentWrap.style.gap = '6px';
+          const divergentInput = document.createElement('input');
+          divergentInput.type = 'checkbox';
+          divergentInput.checked = Boolean(state.pending.divergent) && allowDivergent;
+          divergentInput.disabled = !allowDivergent;
+          divergentInput.style.margin = '0';
+          const divergentText = document.createElement('span');
+          divergentText.textContent = 'Divergent';
+          divergentText.style.color = 'var(--helios-ui-muted)';
+          divergentWrap.appendChild(divergentInput);
+          divergentWrap.appendChild(divergentText);
+
+          const clampWrap = document.createElement('div');
           clampWrap.style.display = 'inline-flex';
           clampWrap.style.alignItems = 'center';
-          clampWrap.style.gap = '6px';
-          const clampInput = document.createElement('input');
-          clampInput.type = 'checkbox';
-          clampInput.checked = state.pending.clamp ?? true;
-          clampInput.style.margin = '0';
-          const clampText = document.createElement('span');
-          clampText.textContent = 'Clamp';
-          clampText.style.color = 'var(--helios-ui-muted)';
-          clampWrap.appendChild(clampInput);
-          clampWrap.appendChild(clampText);
+          clampWrap.style.gap = '10px';
+          const clampState = normalizeClampSetting(state.pending.clamp);
+          const clampMinInput = document.createElement('input');
+          clampMinInput.type = 'checkbox';
+          clampMinInput.checked = clampState.min;
+          clampMinInput.style.margin = '0';
+          const clampMinLabel = document.createElement('span');
+          clampMinLabel.textContent = 'Min';
+          clampMinLabel.style.color = 'var(--helios-ui-muted)';
+          const clampMaxInput = document.createElement('input');
+          clampMaxInput.type = 'checkbox';
+          clampMaxInput.checked = clampState.max;
+          clampMaxInput.style.margin = '0';
+          const clampMaxLabel = document.createElement('span');
+          clampMaxLabel.textContent = 'Max';
+          clampMaxLabel.style.color = 'var(--helios-ui-muted)';
+
+          const clampMinWrap = document.createElement('label');
+          clampMinWrap.style.display = 'inline-flex';
+          clampMinWrap.style.alignItems = 'center';
+          clampMinWrap.style.gap = '4px';
+          clampMinWrap.appendChild(clampMinInput);
+          clampMinWrap.appendChild(clampMinLabel);
+
+          const clampMaxWrap = document.createElement('label');
+          clampMaxWrap.style.display = 'inline-flex';
+          clampMaxWrap.style.alignItems = 'center';
+          clampMaxWrap.style.gap = '4px';
+          clampMaxWrap.appendChild(clampMaxInput);
+          clampMaxWrap.appendChild(clampMaxLabel);
+
+          clampWrap.appendChild(clampMinWrap);
+          clampWrap.appendChild(clampMaxWrap);
 
           const alphaSeed = clampNumber(state.pending.alpha ?? 1, { min: 0, max: 1 }) ?? 1;
           const alphaControls = createSuggestedSliderControls({
@@ -3167,12 +3308,38 @@ export class HeliosUI {
             },
           });
 
-          clampInput.addEventListener('change', () => {
-            state.pending = { ...state.pending, type: 'colormap', clamp: clampInput.checked };
+          const commitClamp = () => {
+            const nextClamp = { min: clampMinInput.checked, max: clampMaxInput.checked };
+            state.pending = { ...state.pending, type: 'colormap', clamp: nextClamp };
             setDirty(true);
+          };
+          clampMinInput.addEventListener('change', commitClamp);
+          clampMaxInput.addEventListener('change', commitClamp);
+
+          divergentInput.addEventListener('change', () => {
+            const nextDivergent = divergentInput.checked;
+            const fallbackDomain = domainAttr ? suggestDomainForAttribute(mode, domainAttr) : [0, 1];
+            const baseDomain = Array.isArray(state.pending.domain) ? state.pending.domain : fallbackDomain;
+            const nextDomain = nextDivergent ? resolveDivergentDomain(baseDomain, extent) : fallbackDomain;
+            state.pending = { ...state.pending, type: 'colormap', divergent: nextDivergent, domain: nextDomain };
+            setDirty(true);
+            renderEditor();
           });
 
-          advanced.appendChild(createAlignedRowEl({ title: 'Clamp', controls: clampWrap }).row);
+          advanced.appendChild(createAlignedRowEl({
+            title: 'Divergent',
+            controls: divergentWrap,
+            hint: allowDivergent
+              ? 'Lock the domain to a symmetric range around zero (for divergent colormaps).'
+              : 'Divergent mode is unavailable for percentile transforms.',
+          }).row);
+
+          advanced.appendChild(createAlignedRowEl({
+            title: 'Clamp',
+            controls: clampWrap,
+            hint: 'Clamp values outside the domain to the nearest end of the colormap.',
+          }).row);
+
           advanced.appendChild(createAlignedRowEl({ title: 'Alpha', controls: alphaControls.element }).row);
 
           const advancedStack = new PanelStack();

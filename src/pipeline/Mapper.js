@@ -219,6 +219,19 @@ function applyBuiltinTransform(transformType, value, power = 1) {
   return v;
 }
 
+function isPercentileTransformType(transformType) {
+  return transformType === 'percentile' || transformType === 'quantile';
+}
+
+function applyPercentileTransform(config, inputs) {
+  const value = Array.isArray(inputs) ? (inputs.length === 1 ? inputs[0] : undefined) : inputs;
+  const v = Number(value);
+  if (!Number.isFinite(v)) return undefined;
+  const lookup = config?.__percentileLookup;
+  if (typeof lookup !== 'function') return v;
+  return lookup(v);
+}
+
 function clampForDomainTransform(transformType, value) {
   const v = Number(value);
   if (!Number.isFinite(v)) return value;
@@ -233,6 +246,7 @@ function clampForDomainTransform(transformType, value) {
 function transformDomainIfNeeded(config, domain) {
   const type = config?.transformType;
   if (!type || type === 'linear') return domain;
+  if (isPercentileTransformType(type)) return domain;
   if (!Array.isArray(domain) || domain.length !== 2) return domain;
   const power = config?.transformPower;
   const d0 = clampForDomainTransform(type, domain[0]);
@@ -246,19 +260,40 @@ function transformDomainIfNeeded(config, domain) {
 function resolveTransformFn(config) {
   const type = config?.transformType;
   if (!type || type === 'linear') return undefined;
+  if (isPercentileTransformType(type)) {
+    return (inputs) => applyPercentileTransform(config, inputs);
+  }
   const power = config?.transformPower;
   return (inputs) => applyBuiltinTransform(type, inputs, power);
 }
 
 function applyScale(config, value, inputs, item, context) {
   if (config.type === 'colormap' || config.colormap) {
-    const domain = transformDomainIfNeeded(config, config.domain);
-    const scale = config.__colormapScale ?? createColormapScale(config.colormap ?? config.scale ?? config.range, {
-      domain,
-      alpha: config.alpha,
-      clamp: config.clamp ?? true,
+    const baseDomain = resolveDivergentDomain(config, config.domain);
+    const domain = transformDomainIfNeeded(config, baseDomain);
+    const clamp = config.clamp ?? true;
+    if (!Number.isFinite(Number(value))) return undefined;
+    const scaleKey = config.colormap ?? config.scale ?? config.range;
+    const scaleSignature = JSON.stringify({
+      key: scaleKey,
+      domain: Array.isArray(domain) ? domain : null,
+      alpha: config.alpha ?? null,
+      clamp,
     });
-    config.__colormapScale = scale;
+    if (config.__colormapScaleSignature !== scaleSignature) {
+      config.__colormapScale = createColormapScale(scaleKey, { domain, alpha: config.alpha, clamp });
+      config.__colormapScaleSignature = scaleSignature;
+    }
+    const scale = config.__colormapScale;
+    if (typeof scale === 'function' && Array.isArray(domain) && domain.length === 2) {
+      const [d0, d1] = domain;
+      const lo = Math.min(d0, d1);
+      const hi = Math.max(d0, d1);
+      const clampMin = typeof clamp === 'object' ? clamp.min !== false : clamp !== false;
+      const clampMax = typeof clamp === 'object' ? clamp.max !== false : clamp !== false;
+      if (!clampMin && Number.isFinite(lo) && value < lo) return undefined;
+      if (!clampMax && Number.isFinite(hi) && value > hi) return undefined;
+    }
     return scale(value, inputs, item, context);
   }
   if (config.type === 'linear') {
@@ -272,6 +307,87 @@ function applyScale(config, value, inputs, item, context) {
     return config.scale(value, inputs, item, context);
   }
   return value;
+}
+
+function resolveDivergentDomain(config, domain) {
+  if (!config?.divergent || isPercentileTransformType(config.transformType)) return domain;
+  if (!Array.isArray(domain) || domain.length !== 2) return [-1, 1];
+  const maxAbs = Math.max(Math.abs(domain[0] ?? 0), Math.abs(domain[1] ?? 0));
+  if (!Number.isFinite(maxAbs) || maxAbs === 0) return [-1, 1];
+  return [-maxAbs, maxAbs];
+}
+
+function buildPercentileLookup(values) {
+  if (!Array.isArray(values) || values.length === 0) return null;
+  const sorted = values.slice().sort((a, b) => a - b);
+  const denom = Math.max(1, sorted.length - 1);
+  return (value) => {
+    const v = Number(value);
+    if (!Number.isFinite(v)) return undefined;
+    let lo = 0;
+    let hi = sorted.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (sorted[mid] <= v) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    const idx = Math.max(0, lo - 1);
+    return denom === 0 ? 0 : idx / denom;
+  };
+}
+
+function buildPercentileLookupForIndex(count) {
+  const size = Number(count);
+  if (!Number.isFinite(size) || size <= 0) return null;
+  const denom = Math.max(1, size - 1);
+  return (value) => {
+    const v = Number(value);
+    if (!Number.isFinite(v)) return undefined;
+    const idx = Math.max(0, Math.min(size - 1, Math.floor(v)));
+    return denom === 0 ? 0 : idx / denom;
+  };
+}
+
+function resolvePercentileLookup(mapper, config) {
+  const network = mapper?.network;
+  if (!network) return null;
+  const attrs = normalizeAttributes(config?.attributes);
+  if (attrs.length !== 1) return null;
+  const attr = attrs[0];
+  if (typeof attr !== 'string') return null;
+  if (attr === '$index') {
+    const count = mapper.mode === 'edge'
+      ? (network.edgeCount ?? network.edgesCount ?? null)
+      : (network.nodeCount ?? network.nodesCount ?? null);
+    return buildPercentileLookupForIndex(count);
+  }
+  const isNodeProxy = mapper.mode === 'edge' && (attr.startsWith('@node.') || attr.startsWith('@nodes.'));
+  const name = attr.replace(/^@nodes?\./, '');
+  const resolved = normalizeAttributeName(name);
+  try {
+    const buffer = isNodeProxy
+      ? network.getNodeAttributeBuffer?.(resolved)
+      : (mapper.mode === 'edge' ? network.getEdgeAttributeBuffer?.(resolved) : network.getNodeAttributeBuffer?.(resolved));
+    if (!buffer?.view) return null;
+    if (Number.isFinite(buffer.dimension) && buffer.dimension !== 1) return null;
+    const values = [];
+    const count = isNodeProxy || mapper.mode === 'node'
+      ? (network.nodeCount ?? network.nodesCount ?? null)
+      : (network.edgeCount ?? network.edgesCount ?? null);
+    const limit = Number.isFinite(count) && count > 0
+      ? Math.min(buffer.view.length, count * (buffer.dimension ?? 1))
+      : buffer.view.length;
+    for (let i = 0; i < limit; i += 1) {
+      const v = Number(buffer.view[i]);
+      if (Number.isFinite(v)) values.push(v);
+    }
+    return buildPercentileLookup(values);
+  } catch (_) {
+    return null;
+  }
 }
 
 function buildNodeToEdgeValue(inputs) {
@@ -361,6 +477,7 @@ function normalizeChannelConfig(name, config) {
     colormap: config.colormap,
     alpha: config.alpha,
     clamp: config.clamp,
+    divergent: config.divergent,
     endpoints: normalizeEndpoints(config.endpoints ?? config.endpoint ?? 'both'),
     nodeAttribute: config.nodeAttribute ?? config.nodeAttr ?? undefined,
     domain: config.domain,
@@ -370,6 +487,15 @@ function normalizeChannelConfig(name, config) {
     defaultValue: config.defaultValue,
     rules: (config.rules ?? []).map((rule) => ({ ...rule })),
   };
+
+  if ((normalized.type === 'colormap' || normalized.colormap) && normalized.defaultValue === undefined) {
+    const clamp = normalized.clamp;
+    const clampMin = clamp && typeof clamp === 'object' ? clamp.min !== false : clamp !== false;
+    const clampMax = clamp && typeof clamp === 'object' ? clamp.max !== false : clamp !== false;
+    if (!clampMin && !clampMax) {
+      normalized.defaultValue = '#888888ff';
+    }
+  }
 
   if (typeof normalized.transform !== 'function') {
     const fn = resolveTransformFn(normalized);
@@ -545,6 +671,7 @@ class ChannelBuilder {
     if (options?.domain) this.config.domain = options.domain;
     if (options?.alpha != null) this.config.alpha = options.alpha;
     if (options?.clamp != null) this.config.clamp = options.clamp;
+    if (options?.divergent != null) this.config.divergent = options.divergent;
     return this;
   }
 
@@ -658,6 +785,7 @@ export class Mapper {
       this.unregisterChannel(previous);
     }
     const normalized = normalizeChannelConfig(name, config ?? {});
+    this.ensurePercentileLookup(normalized);
     this.ensureBuffersForChannel(normalized);
     this.channels.set(name, normalized);
     return this;
@@ -670,6 +798,7 @@ export class Mapper {
   mapItem(item, context = {}) {
     const result = {};
     for (const [name, config] of this.channels.entries()) {
+      this.ensurePercentileLookup(config);
       result[name] = computeChannelValue(config, item, context);
     }
     return result;
@@ -677,6 +806,15 @@ export class Mapper {
 
   mapItems(items, context = {}) {
     return items.map((item, index) => this.mapItem(item, { ...context, index }));
+  }
+
+  ensurePercentileLookup(config) {
+    if (!isPercentileTransformType(config?.transformType)) return;
+    if (typeof config.__percentileLookup === 'function') return;
+    const lookup = resolvePercentileLookup(this, config);
+    if (typeof lookup === 'function') {
+      config.__percentileLookup = lookup;
+    }
   }
 
   ensureBuffersForChannel(config) {
