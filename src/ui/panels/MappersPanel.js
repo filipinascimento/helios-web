@@ -689,6 +689,7 @@ export class MappersPanel {
       header.style.alignItems = 'center';
       header.style.justifyContent = 'space-between';
       header.style.gap = '8px';
+      header.style.flexWrap = 'wrap';
 
       const titleEl = document.createElement('div');
       titleEl.textContent = title ?? '';
@@ -699,7 +700,10 @@ export class MappersPanel {
       titleEl.style.textTransform = 'uppercase';
       if (tooltip) tooltips.attachTooltip?.(titleEl, tooltip);
       header.appendChild(titleEl);
-      if (action) header.appendChild(action);
+      if (action) {
+        action.style.marginLeft = 'auto';
+        header.appendChild(action);
+      }
       wrap.appendChild(header);
       return { wrap, header, titleEl };
     };
@@ -2018,29 +2022,32 @@ export class MappersPanel {
 	                : { op: 'eq', rhs: -1, out: 0 };
 
 	              const item = document.createElement('div');
-	              item.style.display = 'grid';
-	              item.style.gap = '6px';
-	              item.style.padding = '8px';
+              item.style.display = 'grid';
+              item.style.gap = '6px';
+              item.style.position = 'relative';
+              item.style.padding = '8px';
+              item.style.paddingRight = '36px';
 	              item.style.borderRadius = '10px';
 	              item.style.border = '1px solid color-mix(in srgb, var(--helios-ui-border) 70%, transparent)';
 	              item.style.background = 'color-mix(in srgb, var(--helios-ui-bg-solid) 85%, transparent)';
 
 	              const top = document.createElement('div');
-	              top.style.display = 'flex';
-	              top.style.gap = '8px';
-	              top.style.alignItems = 'center';
-	              top.style.justifyContent = 'space-between';
+              top.style.display = 'grid';
+              top.style.gap = '8px';
+              top.style.alignItems = 'center';
+              top.style.gridTemplateColumns = 'auto minmax(0, 1fr)';
 
-	              const condRow = document.createElement('div');
-	              condRow.style.display = 'flex';
-	              condRow.style.gap = '8px';
-	              condRow.style.alignItems = 'center';
-	              condRow.style.flex = '1 1 auto';
-	              condRow.style.minWidth = '0';
+              const condRow = document.createElement('div');
+              condRow.style.display = 'grid';
+              condRow.style.gridTemplateColumns = 'auto minmax(0, 1fr) minmax(0, 1fr)';
+              condRow.style.gap = '6px';
+              condRow.style.alignItems = 'center';
+              condRow.style.minWidth = '0';
 
 	              const opSelect = document.createElement('select');
-	              opSelect.className = 'helios-ui-select helios-ui-select--compact';
-	              opSelect.style.maxWidth = '72px';
+              opSelect.className = 'helios-ui-select helios-ui-select--compact';
+              opSelect.style.maxWidth = '56px';
+              opSelect.style.width = '100%';
 	              const ops = [
 	                { value: 'eq', label: '=' },
 	                { value: 'lt', label: '<' },
@@ -2061,14 +2068,17 @@ export class MappersPanel {
 	              const rhsInput = document.createElement('input');
 	              rhsInput.type = 'number';
 	              rhsInput.className = 'helios-ui-number';
-	              rhsInput.style.maxWidth = '96px';
+              rhsInput.style.maxWidth = 'none';
+              rhsInput.style.width = '100%';
 	              rhsInput.value = spec.rhs != null ? String(spec.rhs) : '';
 	              rhsInput.placeholder = 'value';
 
 	              const outInput = document.createElement('input');
 	              outInput.type = 'number';
 	              outInput.className = 'helios-ui-number';
-	              outInput.style.maxWidth = '140px';
+              outInput.style.maxWidth = '140px';
+              outInput.style.flex = '1 1 96px';
+              outInput.style.minWidth = '0';
 	              outInput.value = spec.out != null ? String(spec.out) : String(rule.value ?? 0);
 	              outInput.placeholder = 'output';
 
@@ -2118,12 +2128,15 @@ export class MappersPanel {
               tooltips.attachTooltip(rhsInput, 'Comparison value.');
               tooltips.attachTooltip(outInput, 'Override output.');
 
-	              const remove = document.createElement('button');
-	              remove.type = 'button';
-	              remove.className = 'helios-ui-button helios-ui-button--compact';
-	              remove.textContent = '×';
-	              remove.setAttribute('aria-label', 'Remove override');
-	              tooltips.attachTooltip(remove, 'Remove this override.');
+              const remove = document.createElement('button');
+              remove.type = 'button';
+              remove.className = 'helios-ui-button helios-ui-button--compact';
+              remove.textContent = '×';
+              remove.setAttribute('aria-label', 'Remove override');
+              tooltips.attachTooltip(remove, 'Remove this override.');
+              remove.style.position = 'absolute';
+              remove.style.top = '8px';
+              remove.style.right = '8px';
 	              remove.addEventListener('click', () => {
 	                const nextRules = rules.filter((_, idx) => idx !== i);
 	                state.pending = { ...state.pending, type: 'linear', rules: nextRules };
@@ -2132,22 +2145,22 @@ export class MappersPanel {
 	              });
 
               top.appendChild(condRow);
-              top.appendChild(remove);
 
               const outWrap = document.createElement('div');
-              outWrap.style.display = 'flex';
-              outWrap.style.gap = '8px';
+              outWrap.style.display = 'grid';
+              outWrap.style.gridTemplateColumns = 'auto minmax(0, 1fr)';
+              outWrap.style.gap = '6px';
               outWrap.style.alignItems = 'center';
               outWrap.style.width = '100%';
 
-              outInput.style.flex = '1 1 auto';
-              outInput.style.minWidth = '0';
+              outInput.style.width = '100%';
 
               outWrap.appendChild(createRuleKeyword('then'));
               outWrap.appendChild(outInput);
 
               item.appendChild(top);
               item.appendChild(outWrap);
+              item.appendChild(remove);
               rulesList.appendChild(item);
             }
           };
@@ -2990,27 +3003,30 @@ export class MappersPanel {
 		              const item = document.createElement('div');
 		              item.style.display = 'grid';
 		              item.style.gap = '6px';
+		              item.style.position = 'relative';
 		              item.style.padding = '8px';
+		              item.style.paddingRight = '36px';
 		              item.style.borderRadius = '10px';
 		              item.style.border = '1px solid color-mix(in srgb, var(--helios-ui-border) 70%, transparent)';
 		              item.style.background = 'color-mix(in srgb, var(--helios-ui-bg-solid) 85%, transparent)';
 
 		              const top = document.createElement('div');
-		              top.style.display = 'flex';
+		              top.style.display = 'grid';
 		              top.style.gap = '8px';
 		              top.style.alignItems = 'center';
-		              top.style.justifyContent = 'space-between';
+		              top.style.gridTemplateColumns = 'auto minmax(0, 1fr)';
 
 		              const condRow = document.createElement('div');
-		              condRow.style.display = 'flex';
-		              condRow.style.gap = '8px';
+		              condRow.style.display = 'grid';
+		              condRow.style.gridTemplateColumns = 'auto minmax(0, 1fr) minmax(0, 1fr)';
+		              condRow.style.gap = '6px';
 		              condRow.style.alignItems = 'center';
-		              condRow.style.flex = '1 1 auto';
 		              condRow.style.minWidth = '0';
 
 		              const opSelect = document.createElement('select');
-		              opSelect.className = 'helios-ui-select helios-ui-select--compact';
-		              opSelect.style.maxWidth = '72px';
+	              opSelect.className = 'helios-ui-select helios-ui-select--compact';
+	              opSelect.style.maxWidth = '56px';
+	              opSelect.style.width = '100%';
 		              const ops = [
 		                { value: 'eq', label: '=' },
 		                { value: 'lt', label: '<' },
@@ -3031,7 +3047,8 @@ export class MappersPanel {
 		              const rhsInput = document.createElement('input');
 		              rhsInput.type = 'number';
 		              rhsInput.className = 'helios-ui-number';
-		              rhsInput.style.maxWidth = '96px';
+		              rhsInput.style.maxWidth = 'none';
+		              rhsInput.style.width = '100%';
 		              rhsInput.value = spec.rhs != null ? String(spec.rhs) : '';
 		              rhsInput.placeholder = 'value';
 
@@ -3080,6 +3097,9 @@ export class MappersPanel {
 		              remove.textContent = '×';
 		              remove.setAttribute('aria-label', 'Remove override');
 		              tooltips.attachTooltip(remove, 'Remove this override.');
+		              remove.style.position = 'absolute';
+		              remove.style.top = '8px';
+		              remove.style.right = '8px';
 		              remove.addEventListener('click', () => {
 		                const nextRules = rules.filter((_, idx) => idx !== i);
 		                state.pending = { ...state.pending, type: 'colormap', rules: nextRules };
@@ -3088,7 +3108,6 @@ export class MappersPanel {
 		              });
 
 		              top.appendChild(condRow);
-		              top.appendChild(remove);
 
 		              const outRow = createHex8ColorEditor({
 		                label: null,
@@ -3101,20 +3120,20 @@ export class MappersPanel {
 		              });
 
 		              const outWrap = document.createElement('div');
-		              outWrap.style.display = 'flex';
-		              outWrap.style.gap = '8px';
+		              outWrap.style.display = 'grid';
+		              outWrap.style.gridTemplateColumns = 'auto minmax(0, 1fr)';
+		              outWrap.style.gap = '6px';
 		              outWrap.style.alignItems = 'center';
 		              outWrap.style.width = '100%';
 
-		              outRow.style.flex = '1 1 auto';
-		              outRow.style.minWidth = '0';
-		              outRow.style.width = 'auto';
+		              outRow.style.width = '100%';
 
 		              outWrap.appendChild(createRuleKeyword('then'));
 		              outWrap.appendChild(outRow);
 
 		              item.appendChild(top);
 		              item.appendChild(outWrap);
+		              item.appendChild(remove);
 		              rulesList.appendChild(item);
 		            }
 		          };

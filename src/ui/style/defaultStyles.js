@@ -66,6 +66,7 @@ export const defaultStylesText = `
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  container-type: inline-size;
 }
 
 .helios-ui-panel:not([data-dock="free"]) {
@@ -679,6 +680,7 @@ export const defaultStylesText = `
   display: flex;
   justify-content: flex-end;
   min-width: 0;
+  width: 100%;
 }
 
 .helios-ui-slider::-webkit-slider-runnable-track {
@@ -876,6 +878,30 @@ export const defaultStylesText = `
   gap: 8px;
   align-items: center;
   width: 100%;
+}
+
+.helios-ui-range2__values .helios-ui-number {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+@container (max-width: 280px) {
+  .helios-ui-row--aligned {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .helios-ui-label {
+    justify-items: start;
+    text-align: left;
+  }
+
+  .helios-ui-label__title-row {
+    justify-content: flex-start;
+  }
+
+  .helios-ui-row__controls {
+    justify-content: stretch;
+  }
 }
 
 .helios-ui-range2__histogram {
