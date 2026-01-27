@@ -1776,35 +1776,49 @@ export class HeliosUI {
       const resolved = resolveName(name);
       const info = getAttributeInfo(scope, rawName);
       const integerType = info?.type != null && isIntegerAttributeType(info.type);
+      const indices = scope === 'network'
+        ? [0]
+        : (isNodeProxy || scope === 'node')
+          ? network.nodeIndices
+          : network.edgeIndices;
+      if (!indices || typeof indices.length !== 'number' || indices.length === 0) return null;
 
-      try {
-        const buffer = isNodeProxy
-          ? network.getNodeAttributeBuffer?.(resolved)
-          : (scope === 'edge' ? network.getEdgeAttributeBuffer?.(resolved) : network.getNodeAttributeBuffer?.(resolved));
+      const compute = () => {
+        try {
+          const buffer = isNodeProxy
+            ? network.getNodeAttributeBuffer?.(resolved)
+            : (scope === 'edge' ? network.getEdgeAttributeBuffer?.(resolved) : network.getNodeAttributeBuffer?.(resolved));
 
-        const view = buffer?.view ?? null;
-        if (!view || typeof view.length !== 'number' || view.length <= 0) return null;
+          const view = buffer?.view ?? null;
+          if (!view || typeof view.length !== 'number' || view.length <= 0) return null;
 
-        let min = Infinity;
-        let max = -Infinity;
-        for (let i = 0; i < view.length; i += 1) {
-          const v = Number(view[i]);
-          if (!Number.isFinite(v)) continue;
-          if (v < min) min = v;
-          if (v > max) max = v;
+          let min = Infinity;
+          let max = -Infinity;
+          for (let i = 0; i < indices.length; i += 1) {
+            const idx = indices[i];
+            const v = Number(view[idx]);
+            if (!Number.isFinite(v)) continue;
+            if (v < min) min = v;
+            if (v > max) max = v;
+          }
+          if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+          if (integerType) {
+            const minInt = Math.floor(min);
+            const maxInt = Math.ceil(max);
+            if (minInt === maxInt) return { min: minInt, max: minInt + 1, isInteger: true };
+            return { min: minInt, max: maxInt, isInteger: true };
+          }
+          if (min === max) return { min, max: min + 1 };
+          return { min, max };
+        } catch (_) {
+          return null;
         }
-        if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
-        if (integerType) {
-          const minInt = Math.floor(min);
-          const maxInt = Math.ceil(max);
-          if (minInt === maxInt) return { min: minInt, max: minInt + 1, isInteger: true };
-          return { min: minInt, max: maxInt, isInteger: true };
-        }
-        if (min === max) return { min, max: min + 1 };
-        return { min, max };
-      } catch (_) {
-        return null;
+      };
+
+      if (typeof network.withBufferAccess === 'function') {
+        return network.withBufferAccess(compute);
       }
+      return compute();
     };
 
     const suggestDomainForAttribute = (scope, rawName) => {

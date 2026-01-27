@@ -1,5 +1,4 @@
 /** @typedef {import('helios-network').default} HeliosNetwork */
-
 import { LayerManager } from './layers/LayerManager.js';
 import { Scheduler } from './scheduler/Scheduler.js';
 import { StaticLayout, WorkerLayout } from './layouts/Layout.js';

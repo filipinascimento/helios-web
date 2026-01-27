@@ -41,6 +41,22 @@ const DENSE_GRAPH_EDGE_REQUESTS = [
 export class GraphLayer extends Layer {
   static NO_HOVER_INDEX = 0xffffffff;
 
+  isSupportedTransparencyMode(mode) {
+    switch (mode) {
+      case 'alpha':
+      case 'weighted':
+      case 'additive':
+      case 'screen':
+      case 'max':
+      case 'additive-normalized':
+      case 'additive-tonemapped':
+      case 'additive-normalized-bright':
+        return true;
+      default:
+        return false;
+    }
+  }
+
   constructor(options = {}) {
     super('graph-layer');
     this.emptyFloat = new Float32Array(0);
@@ -66,7 +82,6 @@ export class GraphLayer extends Layer {
     this.edgeEndpointTrim = Number.isFinite(options.edgeEndpointTrim) ? options.edgeEndpointTrim : 0.8;
     this.nodeBlendWithEdges = options.nodeBlendWithEdges === true;
     this.edgeDepthWrite = options.edgeDepthWrite === true;
-    this.fallbackCameraUniforms = null;
     this.loggedWeightedActive = false;
 
     const slots = this.stateSlotCount;
@@ -89,6 +104,26 @@ export class GraphLayer extends Layer {
     this.hoveredEdgeState = 0;
     this.resetStateStyles();
   }
+
+  getCameraUniforms(camera) {
+    if (camera?.getUniforms) {
+      const uniforms = camera.getUniforms();
+      if (!this.ensureFinite(uniforms?.viewProjection) || !this.ensureFinite(uniforms?.view)) {
+        return null;
+      }
+      return uniforms;
+    }
+    return null;
+  }
+
+  ensureFinite(array) {
+    if (!array) return false;
+    for (let i = 0; i < array.length; i += 1) {
+      if (!Number.isFinite(array[i])) return false;
+    }
+    return true;
+  }
+
 
   setHoveredNodeState(index, mask) {
     const nextIndex =
@@ -269,63 +304,6 @@ export class GraphLayer extends Layer {
     }
   }
 
-  isSupportedTransparencyMode(mode) {
-    return mode === 'alpha' ||
-      mode === 'weighted' ||
-      mode === 'additive' ||
-      mode === 'screen' ||
-      mode === 'max' ||
-      mode === 'additive-normalized' ||
-      mode === 'additive-tonemapped' ||
-      mode === 'additive-normalized-bright';
-  }
-
-  getCameraUniforms(camera) {
-    if (camera?.getUniforms) {
-      const uniforms = camera.getUniforms();
-      if (!this.ensureFinite(uniforms?.viewProjection) || !this.ensureFinite(uniforms?.view)) {
-        console.warn('GraphLayer: camera matrices invalid, falling back to identity.', {
-          view: uniforms?.view,
-          projection: uniforms?.projection,
-          viewProjection: uniforms?.viewProjection,
-        });
-        return this.getFallbackCameraUniforms();
-      }
-      return uniforms;
-    }
-    return this.getFallbackCameraUniforms();
-  }
-
-  ensureFinite(array) {
-    if (!array) return false;
-    for (let i = 0; i < array.length; i += 1) {
-      if (!Number.isFinite(array[i])) return false;
-    }
-    return true;
-  }
-
-  getFallbackCameraUniforms() {
-    if (!this.fallbackCameraUniforms) {
-      const identity = new Float32Array(16);
-      identity[0] = 1;
-      identity[5] = 1;
-      identity[10] = 1;
-      identity[15] = 1;
-      this.fallbackCameraUniforms = {
-        view: identity,
-        projection: identity,
-        viewProjection: identity,
-        position: new Float32Array([0, 0, 1]),
-        right: new Float32Array([1, 0, 0]),
-        up: new Float32Array([0, 1, 0]),
-        mode: '2d',
-        projectionType: 'orthographic',
-        viewport: { width: 1, height: 1, devicePixelRatio: 1 },
-      };
-    }
-    return this.fallbackCameraUniforms;
-  }
-
   updateDenseGraphBuffers(network) {
     if (!network) return false;
     const updates = [
@@ -451,14 +429,36 @@ export class GraphLayer extends Layer {
     const edgeEndpointSizeDesc = this.getAttributeView(network, 'edge', EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
     const edgeEndpointStatesDesc = this.getAttributeView(network, 'edge', EDGE_ENDPOINTS_STATE_ATTRIBUTE);
 
+    const assertDense = (desc, label) => {
+      if (!desc || !desc.view) {
+        throw new Error(`GraphLayer: missing dense ${label} buffer view`);
+      }
+    };
+
+    assertDense(nodeIndexDesc, 'node index');
+    assertDense(edgeIndexDesc, 'edge index');
+    assertDense(nodePositionsDesc, 'node positions');
+    assertDense(nodeColorsDesc, 'node colors');
+    assertDense(nodeSizesDesc, 'node sizes');
+    assertDense(nodeStatesDesc, 'node states');
+    assertDense(nodeOutlineWidthDesc, 'node outline width');
+    assertDense(nodeOutlineColorDesc, 'node outline color');
+    assertDense(edgeColorDesc, 'edge colors');
+    assertDense(edgeOpacityDesc, 'edge opacities');
+    assertDense(edgeWidthDesc, 'edge widths');
+    assertDense(edgeStatesDesc, 'edge states');
+    assertDense(edgeSegmentsDesc, 'edge endpoint positions');
+    assertDense(edgeEndpointSizeDesc, 'edge endpoint sizes');
+    assertDense(edgeEndpointStatesDesc, 'edge endpoint states');
+
     const nodes = {
-      positions: nodePositionsDesc?.view ?? this.emptyFloat,
-      colors: nodeColorsDesc?.view ?? this.emptyFloat,
-      sizes: nodeSizesDesc?.view ?? this.emptyFloat,
-      states: nodeStatesDesc?.view ?? this.emptyUint,
-      outlineWidths: nodeOutlineWidthDesc?.view ?? this.emptyFloat,
-      outlineColors: nodeOutlineColorDesc?.view ?? this.emptyFloat,
-      indices: nodeIndexDesc?.view ?? this.emptyUint,
+      positions: nodePositionsDesc.view,
+      colors: nodeColorsDesc.view,
+      sizes: nodeSizesDesc.view,
+      states: nodeStatesDesc.view,
+      outlineWidths: nodeOutlineWidthDesc.view,
+      outlineColors: nodeOutlineColorDesc.view,
+      indices: nodeIndexDesc.view,
       count:
         nodeIndexDesc?.count ??
         nodePositionsDesc?.count ??
@@ -479,14 +479,14 @@ export class GraphLayer extends Layer {
     };
 
     const edges = {
-      segments: edgeSegmentsDesc?.view ?? this.emptyFloat,
-      colors: edgeColorDesc?.view ?? this.emptyFloat,
-      opacities: edgeOpacityDesc?.view ?? this.emptyFloat,
-      widths: edgeWidthDesc?.view ?? this.emptyFloat,
-      endpointSizes: edgeEndpointSizeDesc?.view ?? this.emptyFloat,
-      endpointStates: edgeEndpointStatesDesc?.view ?? this.emptyUint,
-      indices: edgeIndexDesc?.view ?? this.emptyUint,
-      states: edgeStatesDesc?.view ?? this.emptyUint,
+      segments: edgeSegmentsDesc.view,
+      colors: edgeColorDesc.view,
+      opacities: edgeOpacityDesc.view,
+      widths: edgeWidthDesc.view,
+      endpointSizes: edgeEndpointSizeDesc.view,
+      endpointStates: edgeEndpointStatesDesc.view,
+      indices: edgeIndexDesc.view,
+      states: edgeStatesDesc.view,
       count:
         edgeIndexDesc?.count ??
         edgeSegmentsDesc?.count ??
@@ -511,7 +511,7 @@ export class GraphLayer extends Layer {
     return { nodes, edges };
   }
 
-  readDenseGraphFromViews(views, packing) {
+  readDenseGraphFromViews(views, packing, required = null) {
     if (!views) return this.readDenseGraph(null);
 
     const nodeIndexDesc = views.node?.index ?? null;
@@ -530,14 +530,41 @@ export class GraphLayer extends Layer {
     const edgeEndpointSizeDesc = views.edge?.[EDGE_ENDPOINTS_SIZE_ATTRIBUTE] ?? null;
     const edgeEndpointStatesDesc = views.edge?.[EDGE_ENDPOINTS_STATE_ATTRIBUTE] ?? null;
 
+    const isRequired = (scope, name) => (required ? required.has(`${scope}:${name}`) : true);
+    const assertDense = (desc, label) => {
+      if (!desc || !desc.view) {
+        throw new Error(`GraphLayer: missing dense ${label} buffer view`);
+      }
+    };
+
+    if (isRequired('node', 'index') || !packing?.node?.indicesAreIdentity) {
+      assertDense(nodeIndexDesc, 'node index');
+    }
+    if (isRequired('edge', 'index') || !packing?.edge?.indicesAreIdentity) {
+      assertDense(edgeIndexDesc, 'edge index');
+    }
+    if (isRequired('node', NODE_POSITION_ATTRIBUTE)) assertDense(nodePositionsDesc, 'node positions');
+    if (isRequired('node', NODE_COLOR_ATTRIBUTE)) assertDense(nodeColorsDesc, 'node colors');
+    if (isRequired('node', NODE_SIZE_ATTRIBUTE)) assertDense(nodeSizesDesc, 'node sizes');
+    if (isRequired('node', NODE_STATE_ATTRIBUTE)) assertDense(nodeStatesDesc, 'node states');
+    if (isRequired('node', NODE_OUTLINE_WIDTH_ATTRIBUTE)) assertDense(nodeOutlineWidthDesc, 'node outline width');
+    if (isRequired('node', NODE_OUTLINE_COLOR_ATTRIBUTE)) assertDense(nodeOutlineColorDesc, 'node outline color');
+    if (isRequired('edge', EDGE_COLOR_ATTRIBUTE)) assertDense(edgeColorDesc, 'edge colors');
+    if (isRequired('edge', EDGE_OPACITY_ATTRIBUTE)) assertDense(edgeOpacityDesc, 'edge opacities');
+    if (isRequired('edge', EDGE_WIDTH_ATTRIBUTE)) assertDense(edgeWidthDesc, 'edge widths');
+    if (isRequired('edge', EDGE_STATE_ATTRIBUTE)) assertDense(edgeStatesDesc, 'edge states');
+    if (isRequired('edge', EDGE_ENDPOINTS_POSITION_ATTRIBUTE)) assertDense(edgeSegmentsDesc, 'edge endpoint positions');
+    if (isRequired('edge', EDGE_ENDPOINTS_SIZE_ATTRIBUTE)) assertDense(edgeEndpointSizeDesc, 'edge endpoint sizes');
+    if (isRequired('edge', EDGE_ENDPOINTS_STATE_ATTRIBUTE)) assertDense(edgeEndpointStatesDesc, 'edge endpoint states');
+
     const nodes = {
-      positions: nodePositionsDesc?.view ?? this.emptyFloat,
-      colors: nodeColorsDesc?.view ?? this.emptyFloat,
-      sizes: nodeSizesDesc?.view ?? this.emptyFloat,
-      states: nodeStatesDesc?.view ?? this.emptyUint,
-      outlineWidths: nodeOutlineWidthDesc?.view ?? this.emptyFloat,
-      outlineColors: nodeOutlineColorDesc?.view ?? this.emptyFloat,
-      indices: nodeIndexDesc?.view ?? this.emptyUint,
+      positions: nodePositionsDesc?.view ?? null,
+      colors: nodeColorsDesc?.view ?? null,
+      sizes: nodeSizesDesc?.view ?? null,
+      states: nodeStatesDesc?.view ?? null,
+      outlineWidths: nodeOutlineWidthDesc?.view ?? null,
+      outlineColors: nodeOutlineColorDesc?.view ?? null,
+      indices: nodeIndexDesc?.view ?? null,
       count:
         nodeIndexDesc?.count ??
         nodePositionsDesc?.count ??
@@ -560,14 +587,14 @@ export class GraphLayer extends Layer {
     };
 
     const edges = {
-      segments: edgeSegmentsDesc?.view ?? this.emptyFloat,
-      colors: edgeColorDesc?.view ?? this.emptyFloat,
-      widths: edgeWidthDesc?.view ?? this.emptyFloat,
-      endpointSizes: edgeEndpointSizeDesc?.view ?? this.emptyFloat,
-      endpointStates: edgeEndpointStatesDesc?.view ?? this.emptyUint,
-      indices: edgeIndexDesc?.view ?? this.emptyUint,
-      opacities: edgeOpacityDesc?.view ?? this.emptyFloat,
-      states: edgeStatesDesc?.view ?? this.emptyUint,
+      segments: edgeSegmentsDesc?.view ?? null,
+      colors: edgeColorDesc?.view ?? null,
+      widths: edgeWidthDesc?.view ?? null,
+      endpointSizes: edgeEndpointSizeDesc?.view ?? null,
+      endpointStates: edgeEndpointStatesDesc?.view ?? null,
+      indices: edgeIndexDesc?.view ?? null,
+      opacities: edgeOpacityDesc?.view ?? null,
+      states: edgeStatesDesc?.view ?? null,
       count:
         edgeIndexDesc?.count ??
         edgeSegmentsDesc?.count ??
@@ -691,9 +718,11 @@ export class GraphLayer extends Layer {
         return geometry;
       };
 
+      const required = new Set(requests.map(([scope, name]) => `${scope}:${name}`));
+
       if (typeof network.withDenseBufferViews === 'function') {
         return network.withDenseBufferViews(requests, (views) => {
-          const geometry = this.readDenseGraphFromViews(views, packing);
+          const geometry = this.readDenseGraphFromViews(views, packing, required);
           augmentDerivedEdgeVersions(geometry);
           return fn(geometry);
         });
@@ -714,7 +743,7 @@ export class GraphLayer extends Layer {
                 : network.getDenseEdgeAttributeView?.(name);
             }
           }
-          const geometry = this.readDenseGraphFromViews(views, packing);
+          const geometry = this.readDenseGraphFromViews(views, packing, required);
           augmentDerivedEdgeVersions(geometry);
           return fn(geometry);
         });

@@ -54,26 +54,33 @@ export class StaticLayout extends Layout {
   }
 
   initialize() {
-    const positions = this.visuals.nodePositions;
     const activeNodes = this.network?.nodeIndices || [];
-    const [minX, minY, maxX, maxY] = this.bounds;
-    const width = Math.max(1, maxX - minX);
-    const height = Math.max(1, maxY - minY);
+    const apply = () => {
+      const positions = this.visuals.nodePositions;
+      const [minX, minY, maxX, maxY] = this.bounds;
+      const width = Math.max(1, maxX - minX);
+      const height = Math.max(1, maxY - minY);
 
-    for (let n = 0; n < activeNodes.length; n += 1) {
-      const node = activeNodes[n];
-      const offset = node * 3;
-      const x = positions[offset];
-      const y = positions[offset + 1];
-      if (Number.isFinite(x) && Number.isFinite(y)) {
-        continue;
+      for (let n = 0; n < activeNodes.length; n += 1) {
+        const node = activeNodes[n];
+        const offset = node * 3;
+        const x = positions[offset];
+        const y = positions[offset + 1];
+        if (Number.isFinite(x) && Number.isFinite(y)) {
+          continue;
+        }
+        positions[offset] = minX + (width * Math.random());
+        positions[offset + 1] = minY + (height * Math.random());
+        positions[offset + 2] = 0;
       }
-      positions[offset] = minX + (width * Math.random());
-      positions[offset + 1] = minY + (height * Math.random());
-      positions[offset + 2] = 0;
+      this._updateRequested = false;
+      this.emitUpdate({ positions });
+    };
+    if (typeof this.visuals?.withBufferAccess === 'function') {
+      this.visuals.withBufferAccess(apply);
+    } else {
+      apply();
     }
-    this._updateRequested = false;
-    this.emitUpdate({ positions });
   }
 }
 
@@ -110,7 +117,15 @@ export class WorkerLayout extends Layout {
       return false;
     }
     this.pending = true;
-    const positionsCopy = new Float32Array(this.visuals.nodePositions);
+    let positionsCopy = null;
+    const snapshot = () => {
+      positionsCopy = new Float32Array(this.visuals.nodePositions);
+    };
+    if (typeof this.visuals?.withBufferAccess === 'function') {
+      this.visuals.withBufferAccess(snapshot);
+    } else {
+      snapshot();
+    }
     const { nodeIndices, edges } = this.buildGraphPayload();
     this.worker.postMessage(
       {
@@ -127,16 +142,26 @@ export class WorkerLayout extends Layout {
 
   handleMessage(message) {
     if (message?.type === 'positions' && message.positions instanceof Float32Array) {
-      const view = this.visuals.nodePositions;
-      const count = Math.min(view.length, message.positions.length);
-      for (let i = 0; i < count; i += 1) {
-        view[i] = message.positions[i];
+      let view = null;
+      const apply = () => {
+        view = this.visuals.nodePositions;
+        const count = Math.min(view.length, message.positions.length);
+        for (let i = 0; i < count; i += 1) {
+          view[i] = message.positions[i];
+        }
+      };
+      if (typeof this.visuals?.withBufferAccess === 'function') {
+        this.visuals.withBufferAccess(apply);
+      } else {
+        apply();
       }
       this.pending = false;
       this._updateRequested = false;
       // Inform downstream consumers that position-dependent buffers changed.
       this.visuals?.markPositionsDirty?.();
-      this.emitUpdate({ positions: view });
+      if (view) {
+        this.emitUpdate({ positions: view });
+      }
       return true;
     }
     if (message?.type === 'ready') {

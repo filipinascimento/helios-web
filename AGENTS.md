@@ -37,6 +37,7 @@ Helios Web Next is a Vite-built library + demo that wires `helios-network` (WASM
   - `npm run test:e2e` (headless; covers WebGL path)
   - `npm run test:e2e:headed` (headed; catches “only breaks with a real window” issues)
   - `npm run test:e2e:webgpu` (headed WebGPU project; may skip if unsupported)
+- Always run tests for changes; do not add fallbacks or workarounds without explicit approval.
 
 ## Testing guidelines (to avoid flakiness)
 

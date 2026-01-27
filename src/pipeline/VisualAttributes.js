@@ -131,20 +131,26 @@ export class VisualAttributes {
 
   getNodeAttributeView(name) {
     if (!this.network) return null;
-    try {
-      return this.network.getNodeAttributeBuffer(name)?.view ?? null;
-    } catch (_) {
-      return null;
-    }
+    const read = () => {
+      try {
+        return this.network.getNodeAttributeBuffer(name)?.view ?? null;
+      } catch (_) {
+        return null;
+      }
+    };
+    return this.withBufferAccess(read);
   }
 
   getEdgeAttributeView(name) {
     if (!this.network) return null;
-    try {
-      return this.network.getEdgeAttributeBuffer(name)?.view ?? null;
-    } catch (_) {
-      return null;
-    }
+    const read = () => {
+      try {
+        return this.network.getEdgeAttributeBuffer(name)?.view ?? null;
+      } catch (_) {
+        return null;
+      }
+    };
+    return this.withBufferAccess(read);
   }
 
   /**
@@ -758,18 +764,20 @@ export class VisualAttributes {
       const shouldExpand = currentDim > 0 && currentDim < dimension;
       let preserved = null;
       if (shouldExpand) {
-        try {
-          const buffer = this.network.getNodeAttributeBuffer(name);
-          const count = buffer?.view ? Math.floor(buffer.view.length / currentDim) : 0;
-          preserved = expandAttributeData({
-            view: buffer?.view,
-            count,
-            fromDimension: currentDim,
-            toDimension: dimension,
-          });
-        } catch (_) {
-          preserved = null;
-        }
+        preserved = this.withBufferAccess(() => {
+          try {
+            const buffer = this.network.getNodeAttributeBuffer(name);
+            const count = buffer?.view ? Math.floor(buffer.view.length / currentDim) : 0;
+            return expandAttributeData({
+              view: buffer?.view,
+              count,
+              fromDimension: currentDim,
+              toDimension: dimension,
+            });
+          } catch (_) {
+            return null;
+          }
+        });
       }
       console.warn(
         `Attribute ${name} metadata mismatch: redefining with dimension ${dimension} type ${type} (saw dimension ${info?.dimension ?? 'unknown'}, type ${info?.type ?? 'unknown'}).` +
@@ -778,16 +786,20 @@ export class VisualAttributes {
       this.network.removeNodeAttribute(name);
       this.network.defineNodeAttribute(name, type, dimension);
       if (preserved) {
-        const buffer = this.network.getNodeAttributeBuffer(name);
-        if (buffer?.view) {
-          buffer.view.set(preserved.subarray(0, buffer.view.length));
-        }
+        this.withBufferAccess(() => {
+          const buffer = this.network.getNodeAttributeBuffer(name);
+          if (buffer?.view) {
+            buffer.view.set(preserved.subarray(0, buffer.view.length));
+          }
+        });
       }
     }
 
     try {
-      const buffer = this.network.getNodeAttributeBuffer(name);
-      validateAttribute(buffer, name, expected);
+      this.withBufferAccess(() => {
+        const buffer = this.network.getNodeAttributeBuffer(name);
+        validateAttribute(buffer, name, expected);
+      });
     } catch (error) {
       // If no node capacity is allocated yet, buffer pointers may be unavailable; defer validation.
       if (this.network.nodeCapacity > 0) throw error;
@@ -812,18 +824,20 @@ export class VisualAttributes {
       const shouldExpand = currentDim > 0 && currentDim < dimension;
       let preserved = null;
       if (shouldExpand) {
-        try {
-          const buffer = this.network.getEdgeAttributeBuffer(name);
-          const count = buffer?.view ? Math.floor(buffer.view.length / currentDim) : 0;
-          preserved = expandAttributeData({
-            view: buffer?.view,
-            count,
-            fromDimension: currentDim,
-            toDimension: dimension,
-          });
-        } catch (_) {
-          preserved = null;
-        }
+        preserved = this.withBufferAccess(() => {
+          try {
+            const buffer = this.network.getEdgeAttributeBuffer(name);
+            const count = buffer?.view ? Math.floor(buffer.view.length / currentDim) : 0;
+            return expandAttributeData({
+              view: buffer?.view,
+              count,
+              fromDimension: currentDim,
+              toDimension: dimension,
+            });
+          } catch (_) {
+            return null;
+          }
+        });
       }
       console.warn(
         `Edge attribute ${name} metadata mismatch: redefining with dimension ${dimension} type ${type} (saw dimension ${info?.dimension ?? 'unknown'}, type ${info?.type ?? 'unknown'}).` +
@@ -832,16 +846,20 @@ export class VisualAttributes {
       this.network.removeEdgeAttribute(name);
       this.network.defineEdgeAttribute(name, type, dimension);
       if (preserved) {
-        const buffer = this.network.getEdgeAttributeBuffer(name);
-        if (buffer?.view) {
-          buffer.view.set(preserved.subarray(0, buffer.view.length));
-        }
+        this.withBufferAccess(() => {
+          const buffer = this.network.getEdgeAttributeBuffer(name);
+          if (buffer?.view) {
+            buffer.view.set(preserved.subarray(0, buffer.view.length));
+          }
+        });
       }
     }
 
     try {
-      const buffer = this.network.getEdgeAttributeBuffer(name);
-      validateAttribute(buffer, name, expected);
+      this.withBufferAccess(() => {
+        const buffer = this.network.getEdgeAttributeBuffer(name);
+        validateAttribute(buffer, name, expected);
+      });
     } catch (error) {
       // If no edge capacity is allocated yet, buffer pointers may be unavailable; defer validation.
       if (this.network.edgeCapacity > 0) throw error;
@@ -862,18 +880,20 @@ export class VisualAttributes {
       const shouldExpand = currentDim > 0 && currentDim < targetDimension;
       let preserved = null;
       if (shouldExpand) {
-        try {
-          const buffer = this.network.getEdgeAttributeBuffer(edgeName);
-          const count = buffer?.view ? Math.floor(buffer.view.length / currentDim) : 0;
-          preserved = expandAttributeData({
-            view: buffer?.view,
-            count,
-            fromDimension: currentDim,
-            toDimension: targetDimension,
-          });
-        } catch (_) {
-          preserved = null;
-        }
+        preserved = this.withBufferAccess(() => {
+          try {
+            const buffer = this.network.getEdgeAttributeBuffer(edgeName);
+            const count = buffer?.view ? Math.floor(buffer.view.length / currentDim) : 0;
+            return expandAttributeData({
+              view: buffer?.view,
+              count,
+              fromDimension: currentDim,
+              toDimension: targetDimension,
+            });
+          } catch (_) {
+            return null;
+          }
+        });
       }
       console.warn(
         `Edge attribute ${edgeName} metadata mismatch: redefining with dimension ${targetDimension} type ${AttributeType.Float} (saw dimension ${info?.dimension ?? 'unknown'}, type ${info?.type ?? 'unknown'})` +
@@ -882,16 +902,20 @@ export class VisualAttributes {
       this.network.removeEdgeAttribute(edgeName);
       this.network.defineNodeToEdgeAttribute(sourceName, edgeName, 'both');
       if (preserved) {
-        const buffer = this.network.getEdgeAttributeBuffer(edgeName);
-        if (buffer?.view) {
-          buffer.view.set(preserved.subarray(0, buffer.view.length));
-        }
+        this.withBufferAccess(() => {
+          const buffer = this.network.getEdgeAttributeBuffer(edgeName);
+          if (buffer?.view) {
+            buffer.view.set(preserved.subarray(0, buffer.view.length));
+          }
+        });
       }
     }
 
     try {
-      const buffer = this.network.getEdgeAttributeBuffer(edgeName);
-      validateAttribute(buffer, edgeName, expected);
+      this.withBufferAccess(() => {
+        const buffer = this.network.getEdgeAttributeBuffer(edgeName);
+        validateAttribute(buffer, edgeName, expected);
+      });
     } catch (error) {
       // If no edge capacity is allocated yet, buffer pointers may be unavailable; defer validation.
       if (this.network.edgeCapacity > 0) throw error;
@@ -917,8 +941,10 @@ export class VisualAttributes {
     }
 
     try {
-      const buffer = this.network.getEdgeAttributeBuffer(edgeName);
-      validateAttribute(buffer, edgeName, expected);
+      this.withBufferAccess(() => {
+        const buffer = this.network.getEdgeAttributeBuffer(edgeName);
+        validateAttribute(buffer, edgeName, expected);
+      });
     } catch (error) {
       if (this.network.edgeCapacity > 0) throw error;
     }

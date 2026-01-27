@@ -367,27 +367,30 @@ function resolvePercentileLookup(mapper, config) {
   const isNodeProxy = mapper.mode === 'edge' && (attr.startsWith('@node.') || attr.startsWith('@nodes.'));
   const name = attr.replace(/^@nodes?\./, '');
   const resolved = normalizeAttributeName(name);
-  try {
-    const buffer = isNodeProxy
-      ? network.getNodeAttributeBuffer?.(resolved)
-      : (mapper.mode === 'edge' ? network.getEdgeAttributeBuffer?.(resolved) : network.getNodeAttributeBuffer?.(resolved));
-    if (!buffer?.view) return null;
-    if (Number.isFinite(buffer.dimension) && buffer.dimension !== 1) return null;
-    const values = [];
-    const count = isNodeProxy || mapper.mode === 'node'
-      ? (network.nodeCount ?? network.nodesCount ?? null)
-      : (network.edgeCount ?? network.edgesCount ?? null);
-    const limit = Number.isFinite(count) && count > 0
-      ? Math.min(buffer.view.length, count * (buffer.dimension ?? 1))
-      : buffer.view.length;
-    for (let i = 0; i < limit; i += 1) {
-      const v = Number(buffer.view[i]);
-      if (Number.isFinite(v)) values.push(v);
+  const indices = mapper.mode === 'edge' && !isNodeProxy ? network.edgeIndices : network.nodeIndices;
+  if (!indices || typeof indices.length !== 'number') return null;
+  const compute = () => {
+    try {
+      const buffer = isNodeProxy
+        ? network.getNodeAttributeBuffer?.(resolved)
+        : (mapper.mode === 'edge' ? network.getEdgeAttributeBuffer?.(resolved) : network.getNodeAttributeBuffer?.(resolved));
+      if (!buffer?.view) return null;
+      if (Number.isFinite(buffer.dimension) && buffer.dimension !== 1) return null;
+      const values = [];
+      for (let i = 0; i < indices.length; i += 1) {
+        const idx = indices[i];
+        const v = Number(buffer.view[idx]);
+        if (Number.isFinite(v)) values.push(v);
+      }
+      return buildPercentileLookup(values);
+    } catch (_) {
+      return null;
     }
-    return buildPercentileLookup(values);
-  } catch (_) {
-    return null;
+  };
+  if (typeof network.withBufferAccess === 'function') {
+    return network.withBufferAccess(compute);
   }
+  return compute();
 }
 
 function buildNodeToEdgeValue(inputs) {

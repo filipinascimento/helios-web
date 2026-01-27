@@ -546,35 +546,49 @@ export class MappersPanel {
       const resolved = resolveName(name);
       const info = getAttributeInfo(scope, rawName);
       const integerType = info?.type != null && isIntegerAttributeType(info.type);
+      const indices = scope === 'network'
+        ? [0]
+        : (isNodeProxy || scope === 'node')
+          ? network.nodeIndices
+          : network.edgeIndices;
+      if (!indices || typeof indices.length !== 'number' || indices.length === 0) return null;
 
-      try {
-        const buffer = isNodeProxy
-          ? network.getNodeAttributeBuffer?.(resolved)
-          : (scope === 'edge' ? network.getEdgeAttributeBuffer?.(resolved) : network.getNodeAttributeBuffer?.(resolved));
+      const compute = () => {
+        try {
+          const buffer = isNodeProxy
+            ? network.getNodeAttributeBuffer?.(resolved)
+            : (scope === 'edge' ? network.getEdgeAttributeBuffer?.(resolved) : network.getNodeAttributeBuffer?.(resolved));
 
-        const view = buffer?.view ?? null;
-        if (!view || typeof view.length !== 'number' || view.length <= 0) return null;
+          const view = buffer?.view ?? null;
+          if (!view || typeof view.length !== 'number' || view.length <= 0) return null;
 
-        let min = Infinity;
-        let max = -Infinity;
-        for (let i = 0; i < view.length; i += 1) {
-          const v = Number(view[i]);
-          if (!Number.isFinite(v)) continue;
-          if (v < min) min = v;
-          if (v > max) max = v;
+          let min = Infinity;
+          let max = -Infinity;
+          for (let i = 0; i < indices.length; i += 1) {
+            const idx = indices[i];
+            const v = Number(view[idx]);
+            if (!Number.isFinite(v)) continue;
+            if (v < min) min = v;
+            if (v > max) max = v;
+          }
+          if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+          if (integerType) {
+            const minInt = Math.floor(min);
+            const maxInt = Math.ceil(max);
+            if (minInt === maxInt) return { min: minInt, max: minInt + 1, isInteger: true };
+            return { min: minInt, max: maxInt, isInteger: true };
+          }
+          if (min === max) return { min, max: min + 1 };
+          return { min, max };
+        } catch (_) {
+          return null;
         }
-        if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
-        if (integerType) {
-          const minInt = Math.floor(min);
-          const maxInt = Math.ceil(max);
-          if (minInt === maxInt) return { min: minInt, max: minInt + 1, isInteger: true };
-          return { min: minInt, max: maxInt, isInteger: true };
-        }
-        if (min === max) return { min, max: min + 1 };
-        return { min, max };
-      } catch (_) {
-        return null;
+      };
+
+      if (typeof network.withBufferAccess === 'function') {
+        return network.withBufferAccess(compute);
       }
+      return compute();
     };
 
     const suggestDomainForAttribute = (scope, rawName) => {
@@ -654,19 +668,44 @@ export class MappersPanel {
     };
 
     const computeCategoryCounts = (scope, rawName) => {
-      const view = resolveAttributeView(scope, rawName);
-      if (!view || typeof view.length !== 'number') return { counts: new Map(), unknownCount: 0 };
-      const counts = new Map();
-      let unknownCount = 0;
-      for (let i = 0; i < view.length; i += 1) {
-        const id = Number(view[i]);
-        if (!Number.isFinite(id)) {
-          unknownCount += 1;
-          continue;
+      const network = net();
+      if (!network) return { counts: new Map(), unknownCount: 0 };
+      const isNodeProxy = scope === 'edge' && rawName?.startsWith('@node.');
+      const indices = scope === 'network'
+        ? [0]
+        : (isNodeProxy || scope === 'node')
+          ? network.nodeIndices
+          : network.edgeIndices;
+      if (!indices || typeof indices.length !== 'number') return { counts: new Map(), unknownCount: 0 };
+      const compute = () => {
+        const name = isNodeProxy ? rawName.slice('@node.'.length) : rawName;
+        let view = null;
+        try {
+          const buffer = isNodeProxy
+            ? network.getNodeAttributeBuffer?.(name)
+            : (scope === 'edge' ? network.getEdgeAttributeBuffer?.(name) : network.getNodeAttributeBuffer?.(name));
+          view = buffer?.view ?? null;
+        } catch (_) {
+          view = null;
         }
-        counts.set(id, (counts.get(id) ?? 0) + 1);
+        if (!view || typeof view.length !== 'number') return { counts: new Map(), unknownCount: 0 };
+        const counts = new Map();
+        let unknownCount = 0;
+        for (let i = 0; i < indices.length; i += 1) {
+          const idx = indices[i];
+          const id = Number(view[idx]);
+          if (!Number.isFinite(id)) {
+            unknownCount += 1;
+            continue;
+          }
+          counts.set(id, (counts.get(id) ?? 0) + 1);
+        }
+        return { counts, unknownCount };
+      };
+      if (typeof network.withBufferAccess === 'function') {
+        return network.withBufferAccess(compute);
       }
-      return { counts, unknownCount };
+      return compute();
     };
 
     const resolveCategoryEntries = (scope, rawName) => {
@@ -712,16 +751,18 @@ export class MappersPanel {
       return Math.max(8, Math.min(40, bins));
     };
 
-    const buildHistogram = (view, min, max) => {
+    const buildHistogram = (view, min, max, indices) => {
       if (!view || typeof view.length !== 'number' || view.length <= 0) return null;
       if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return null;
-      const bins = suggestHistogramBins(view.length);
+      if (!indices || typeof indices.length !== 'number' || indices.length <= 0) return null;
+      const bins = suggestHistogramBins(indices.length);
       const counts = new Array(bins).fill(0);
       const span = max - min;
       let maxCount = 0;
       let seen = 0;
-      for (let i = 0; i < view.length; i += 1) {
-        const v = Number(view[i]);
+      for (let i = 0; i < indices.length; i += 1) {
+        const idxValue = indices[i];
+        const v = Number(view[idxValue]);
         if (!Number.isFinite(v)) continue;
         let idx = Math.floor(((v - min) / span) * bins);
         if (idx < 0) idx = 0;
@@ -735,8 +776,20 @@ export class MappersPanel {
       return { counts, maxCount };
     };
 
-    const createRangeHistogram = ({ view, min, max, range }) => {
-      const data = buildHistogram(view, min, max);
+    const createRangeHistogram = ({ view, min, max, range, scope, rawName }) => {
+      const network = net();
+      if (!network) return null;
+      const isNodeProxy = scope === 'edge' && rawName?.startsWith('@node.');
+      const indices = scope === 'network'
+        ? [0]
+        : (isNodeProxy || scope === 'node')
+          ? network.nodeIndices
+          : network.edgeIndices;
+      if (!indices || typeof indices.length !== 'number' || indices.length === 0) return null;
+      const compute = () => buildHistogram(view, min, max, indices);
+      const data = typeof network.withBufferAccess === 'function'
+        ? network.withBufferAccess(compute)
+        : compute();
       if (!data) return null;
       const histogram = document.createElement('div');
       histogram.className = 'helios-ui-range2__histogram';
@@ -2052,6 +2105,8 @@ export class MappersPanel {
               min,
               max,
               range: domain,
+              scope: mode,
+              rawName: domainAttr,
             })
             : null;
           if (domainHistogram) domainWrap.appendChild(domainHistogram.element);
@@ -4139,6 +4194,8 @@ export class MappersPanel {
               min,
               max,
               range: domain,
+              scope: mode,
+              rawName: domainAttr,
             })
             : null;
           if (domainHistogram) domainWrap.appendChild(domainHistogram.element);
