@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "d3-scale-chromatic": "^3.1.0",
-    "helios-network": "^0.2.10"
+    "helios-network": "file:../helios-network-v2"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.1",

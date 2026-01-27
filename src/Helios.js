@@ -354,13 +354,13 @@ export class Helios extends EventTarget {
     },
     nodeBlendWithEdges: {
       type: 'boolean',
-      label: 'Blend Nodes',
+      label: 'Blend Nodes With Edges',
       description: 'Blend nodes using the edge transparency mode (weighted modes still use alpha; disables node depth testing)',
       defaultValue: false,
     },
     edgeDepthWrite: {
       type: 'boolean',
-      label: 'Edge Depth',
+      label: 'Edge Depth Write',
       description: 'Enable depth testing and depth writes for edges (best for solid edges)',
       defaultValue: false,
     },

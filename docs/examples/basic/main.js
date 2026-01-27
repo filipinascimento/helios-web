@@ -73,7 +73,9 @@ async function bootstrap() {
   console.log("Defining attributes...");
   const nodeAttribute = 'weight';
   const edgeAttribute = 'intensity';
+  const categoryAttribute = 'category';
   network.defineNodeAttribute(nodeAttribute, AttributeType.Float);
+  network.defineNodeAttribute(categoryAttribute, AttributeType.String);
   network.defineEdgeAttribute(edgeAttribute, AttributeType.Float);
 
   console.log("Adding nodes...");
@@ -81,13 +83,25 @@ async function bootstrap() {
   const nodes = network.addNodes(nodeCount);
 
   console.log("Filling node attributes...");
+  const weightValues = new Float32Array(nodes.length);
   network.withBufferAccess(() => {
     const view = network.getNodeAttributeBuffer(nodeAttribute).view;
     for (let i = 0; i < nodes.length; i += 1) {
       const value = Math.random();
       view[nodes[i]] = value;
+      weightValues[i] = value;
     }
   });
+
+  console.log("Assigning categorical buckets...");
+  const categoryCount = 8;
+  const total = Math.max(1, nodes.length);
+  for (let i = 0; i < nodes.length; i += 1) {
+    const bucket = Math.min(categoryCount - 1, Math.floor((i / total) * categoryCount));
+    const label = `category${bucket + 1}`;
+    network.setNodeStringAttribute(categoryAttribute, nodes[i], label);
+  }
+  network.categorizeNodeAttribute(categoryAttribute, { sortOrder: 'frequency' });
 
   function seedGridPositions() {
     // Predefine node positions so we can disable layout and still render nicely.
@@ -309,6 +323,7 @@ async function bootstrap() {
   console.log("Changing edge scaling...");
   // Make edges visibly thicker for the demo.
   helios.edgeWidthScale(1.0).edgeWidthBase(0);
+  helios.edgeOpacityScale(0.5);
   
 
   console.log("Picking");

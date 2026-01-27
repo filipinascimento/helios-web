@@ -18,6 +18,7 @@ export default defineConfig({
     // path outside this repo. Preserving symlinks keeps module URLs under
     // `node_modules/` so Vite can serve worker files without `/@fs/` escaping.
     preserveSymlinks: true,
+    dedupe: ['helios-network'],
   },
   server: {
     fs: {

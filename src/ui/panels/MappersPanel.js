@@ -4,7 +4,7 @@ import { createAlignedRowEl } from '../controls/createAlignedRowEl.js';
 import { createTooltipManager } from '../controls/createTooltipManager.js';
 import { SuggestedSliderControls } from '../controls/SuggestedSliderControls.js';
 import { TwoHandleRange } from '../controls/TwoHandleRange.js';
-import { colormaps } from '../../colors/colormaps.js';
+import { colormaps, resolveColormap, colormapToScheme } from '../../colors/colormaps.js';
 import { VISUAL_ATTRIBUTE_MAP } from '../../pipeline/constants.js';
 import { clampNumber } from '../utils/numbers.js';
 import { toHex8 } from '../utils/colors.js';
@@ -96,18 +96,105 @@ function buildColormapCatalog() {
   return { entries, byGroup, byKey };
 }
 
+function buildCategoricalPaletteCatalog() {
+  const entries = [];
+  const pushEntry = ({ key, label, group, isScheme }) => {
+    if (!key) return;
+    entries.push({ key, label: String(label ?? key), group: String(group ?? 'other'), isScheme: Boolean(isScheme) });
+  };
+
+  for (const [key, desc] of Object.entries(colormaps?.d3 ?? {})) {
+    const isScheme = Boolean(desc?.isScheme);
+    const label = key.startsWith('scheme') ? key.slice('scheme'.length) : key;
+    pushEntry({ key, label, group: isScheme ? 'd3 schemes' : 'd3 ramps', isScheme });
+  }
+
+  for (const [key, desc] of Object.entries(colormaps?.cmasher ?? {})) {
+    const isScheme = Boolean(desc?.isScheme);
+    const label = key.startsWith('cmasher_') ? key.slice('cmasher_'.length) : key;
+    const alias = key.startsWith('cmasher_') ? `cmasher:${label}` : key;
+    pushEntry({ key: alias, label, group: isScheme ? 'cmasher schemes' : 'cmasher ramps', isScheme });
+  }
+
+  for (const [key, desc] of Object.entries(colormaps?.CET ?? {})) {
+    const isScheme = Boolean(desc?.isScheme);
+    const label = key.startsWith('CET_') ? key.slice('CET_'.length) : key;
+    pushEntry({ key, label, group: isScheme ? 'CET schemes' : 'CET ramps', isScheme });
+  }
+
+  for (const [key, desc] of Object.entries(colormaps?.helios ?? {})) {
+    const isScheme = Boolean(desc?.isScheme);
+    pushEntry({ key, label: key, group: isScheme ? 'helios schemes' : 'helios ramps', isScheme });
+  }
+
+  entries.sort((a, b) => a.label.localeCompare(b.label));
+  return entries;
+}
+
 function isHexColorString(value) {
   if (typeof value !== 'string') return false;
   const hex = value.trim();
   return /^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(hex);
 }
 
-const isNumericAttributeType = (type) => typeof type === 'number';
+function rgbaToHex8(rgba) {
+  if (!Array.isArray(rgba) && !ArrayBuffer.isView(rgba)) return '#000000ff';
+  const r = Math.round(Math.max(0, Math.min(1, Number(rgba[0] ?? 0))) * 255);
+  const g = Math.round(Math.max(0, Math.min(1, Number(rgba[1] ?? 0))) * 255);
+  const b = Math.round(Math.max(0, Math.min(1, Number(rgba[2] ?? 0))) * 255);
+  const a = Math.round(Math.max(0, Math.min(1, Number(rgba[3] ?? 1))) * 255);
+  return `#${[r, g, b, a].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function colorFromIndex(index = 0) {
+  const hue = (index * 137.508) % 360;
+  const s = 0.6;
+  const l = 0.55;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => {
+    const k = (n + hue / 30) % 12;
+    const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+    return Math.round(255 * color);
+  };
+  return `#${[f(0), f(8), f(4), 255].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function naturalCompare(a, b) {
+  const left = String(a ?? '');
+  const right = String(b ?? '');
+  const re = /\d+|\D+/g;
+  const aParts = left.match(re) ?? [];
+  const bParts = right.match(re) ?? [];
+  const len = Math.max(aParts.length, bParts.length);
+  for (let i = 0; i < len; i += 1) {
+    const av = aParts[i] ?? '';
+    const bv = bParts[i] ?? '';
+    const aNum = Number(av);
+    const bNum = Number(bv);
+    const aIsNum = av && Number.isFinite(aNum);
+    const bIsNum = bv && Number.isFinite(bNum);
+    if (aIsNum && bIsNum && aNum !== bNum) return aNum - bNum;
+    if (aIsNum !== bIsNum) return aIsNum ? -1 : 1;
+    if (av !== bv) return av.localeCompare(bv);
+  }
+  return left.localeCompare(right);
+}
+
+const isNumericAttributeType = (type) =>
+  type === AttributeType.Boolean ||
+  type === AttributeType.Float ||
+  type === AttributeType.Integer ||
+  type === AttributeType.UnsignedInteger ||
+  type === AttributeType.Double ||
+  type === AttributeType.BigInteger ||
+  type === AttributeType.UnsignedBigInteger;
 const isIntegerAttributeType = (type) =>
   type === AttributeType.Integer ||
   type === AttributeType.UnsignedInteger ||
   type === AttributeType.BigInteger ||
   type === AttributeType.UnsignedBigInteger;
+const isCategoricalAttributeType = (type) => type === AttributeType.Category;
+const isStringAttributeType = (type) => type === AttributeType.String;
 
 export class MappersPanel {
   constructor(ui, options = {}) {
@@ -176,6 +263,7 @@ export class MappersPanel {
       nodeToEdge: 'Node Passthrough',
       linear: 'Scale',
       colormap: 'Colormap',
+      categorical: 'Categorical',
     };
 
     const nodeChannels = ['color', 'size', 'outline', 'outlineColor', 'position'];
@@ -184,6 +272,9 @@ export class MappersPanel {
 
     const colormapNames = collectColormapSuggestionNames();
     const colormapCatalog = buildColormapCatalog();
+    const categoricalPaletteCatalog = buildCategoricalPaletteCatalog();
+    const defaultCategoricalPalette =
+      categoricalPaletteCatalog.find((entry) => entry.isScheme)?.key || 'schemeTableau10';
 
     let customPresetCounter = 1;
     const customPresetsByMode = {
@@ -229,6 +320,7 @@ export class MappersPanel {
       if (type === 'passthrough') return true;
       if (type === 'linear') return true;
       if (type === 'nodeAttribute') return true;
+      if (type === 'categorical') return true;
 
       if (type === 'colormap' || config.colormap) {
         // Only support selecting named colormaps in the editor for now.
@@ -319,9 +411,14 @@ export class MappersPanel {
     const isCompatibleAttribute = (scope, channel, mapperType, name, { targetMode } = {}) => {
       const info = getAttributeInfo(scope, name);
       if (!info) return false;
-      if (info.type != null && !isNumericAttributeType(info.type)) return false;
-
       const dim = info.dimension ?? 1;
+      if (mapperType === 'categorical') {
+        if (scope === 'edge' && typeof name === 'string' && /^@nodes?\./.test(name)) return false;
+        if (dim !== 1) return false;
+        return isCategoricalAttributeType(info.type) || isStringAttributeType(info.type);
+      }
+
+      if (info.type != null && !isNumericAttributeType(info.type)) return false;
       const isEdge = scope === 'edge';
       const edgeContext = isEdge || targetMode === 'edge';
       const isColorChannel = channel === 'color' || channel === 'outlineColor';
@@ -502,6 +599,113 @@ export class MappersPanel {
       }
     };
 
+    const CATEGORY_STRING_LIMITS = {
+      maxLength: 128,
+      maxUnique: 256,
+      maxScan: 4000,
+    };
+
+    const scanStringCategorization = (scope, rawName) => {
+      const network = net();
+      if (!network) return { ok: false, reason: 'Network unavailable.' };
+      const name = resolveVisualAlias(rawName);
+      const read = scope === 'edge'
+        ? network.getEdgeStringAttribute?.bind(network)
+        : network.getNodeStringAttribute?.bind(network);
+      if (typeof read !== 'function') return { ok: false, reason: 'String attribute access is unavailable.' };
+      const indices = scope === 'edge' ? network.edgeIndices : network.nodeIndices;
+      const limit = Math.min(indices?.length ?? 0, CATEGORY_STRING_LIMITS.maxScan);
+      const uniques = new Set();
+      let maxLength = 0;
+      for (let i = 0; i < limit; i += 1) {
+        const idx = indices[i];
+        const value = read(name, idx);
+        if (typeof value !== 'string') continue;
+        const len = value.length;
+        if (len > maxLength) maxLength = len;
+        if (len > CATEGORY_STRING_LIMITS.maxLength) {
+          return { ok: false, reason: `String values exceed ${CATEGORY_STRING_LIMITS.maxLength} characters.` };
+        }
+        if (value && value !== '__NA__') {
+          uniques.add(value);
+          if (uniques.size > CATEGORY_STRING_LIMITS.maxUnique) {
+            return { ok: false, reason: `More than ${CATEGORY_STRING_LIMITS.maxUnique} unique values detected.` };
+          }
+        }
+      }
+      return { ok: true, uniqueCount: uniques.size, maxLength };
+    };
+
+    const resolveCategoryDictionary = (scope, rawName) => {
+      const network = net();
+      if (!network) return [];
+      if (typeof rawName !== 'string' || !rawName) return [];
+      const name = resolveVisualAlias(rawName);
+      try {
+        const getter = scope === 'edge'
+          ? network.getEdgeAttributeCategoryDictionary
+          : network.getNodeAttributeCategoryDictionary;
+        if (typeof getter !== 'function') return [];
+        const dict = getter.call(network, name);
+        return Array.isArray(dict?.entries) ? dict.entries : [];
+      } catch (_) {
+        return [];
+      }
+    };
+
+    const computeCategoryCounts = (scope, rawName) => {
+      const view = resolveAttributeView(scope, rawName);
+      if (!view || typeof view.length !== 'number') return { counts: new Map(), unknownCount: 0 };
+      const counts = new Map();
+      let unknownCount = 0;
+      for (let i = 0; i < view.length; i += 1) {
+        const id = Number(view[i]);
+        if (!Number.isFinite(id)) {
+          unknownCount += 1;
+          continue;
+        }
+        counts.set(id, (counts.get(id) ?? 0) + 1);
+      }
+      return { counts, unknownCount };
+    };
+
+    const resolveCategoryEntries = (scope, rawName) => {
+      const dictEntries = resolveCategoryDictionary(scope, rawName);
+      const { counts, unknownCount } = computeCategoryCounts(scope, rawName);
+      const entries = [];
+      const seen = new Set();
+      for (const entry of dictEntries) {
+        if (!entry) continue;
+        const id = Number(entry.id);
+        if (!Number.isFinite(id)) continue;
+        const rawLabel = typeof entry.label === 'string' ? entry.label : null;
+        const fallbackLabel = entry.label != null ? String(entry.label) : '';
+        const label = rawLabel && rawLabel.trim()
+          ? rawLabel
+          : (fallbackLabel && fallbackLabel.trim() ? fallbackLabel : `#${id}`);
+        entries.push({ id, label, count: counts.get(id) ?? 0 });
+        seen.add(id);
+      }
+      for (const [id, count] of counts.entries()) {
+        if (seen.has(id)) continue;
+        entries.push({ id, label: `#${id}`, count });
+      }
+      entries.unknownCount = unknownCount;
+      return entries;
+    };
+
+    const resolveCategoricalPalette = ({ paletteName, count, preferScheme }) => {
+      const resolved = resolveColormap(paletteName) ?? resolveColormap('schemeTableau10');
+      if (!resolved) {
+        return Array.from({ length: count }, (_, i) => colorFromIndex(i));
+      }
+      const useScheme = preferScheme && resolved.isScheme && typeof resolved.scheme === 'function';
+      const colors = useScheme
+        ? resolved.scheme(count)
+        : colormapToScheme(resolved, count);
+      return colors.map((color, i) => rgbaToHex8(color) ?? colorFromIndex(i));
+    };
+
     const suggestHistogramBins = (count) => {
       if (!Number.isFinite(count) || count <= 1) return 1;
       const bins = Math.round(Math.sqrt(count));
@@ -588,7 +792,7 @@ export class MappersPanel {
     const suggestRangeForChannel = (mode, channel) => {
       if (mode === 'node') {
         if (channel === 'size') return [1, 20];
-        if (channel === 'outline') return [0, 6];
+        if (channel === 'outline') return [0, 10];
       }
       if (mode === 'edge') {
         if (channel === 'width') return [0.5, 6];
@@ -721,6 +925,7 @@ export class MappersPanel {
       applyRow.style.display = 'flex';
       applyRow.style.justifyContent = 'flex-end';
       applyRow.style.gap = '8px';
+      applyRow.style.marginTop = '10px';
 
       const revertButton = document.createElement('button');
       revertButton.type = 'button';
@@ -805,6 +1010,20 @@ export class MappersPanel {
           return true;
         }
 
+        if (type === 'categorical') {
+          if (!(typeof state.pending.attributes === 'string' && state.pending.attributes.length > 0)) return false;
+          const info = getAttributeInfo(mode, state.pending.attributes);
+          if (info && isStringAttributeType(info.type)) return false;
+          const domain = state.pending.domain;
+          const range = state.pending.range;
+          if (!Array.isArray(domain) || !Array.isArray(range)) return false;
+          if (domain.length === 0 || domain.length !== range.length) return false;
+          const isColorChannel = state.channel === 'color' || state.channel === 'outlineColor';
+          return isColorChannel
+            ? range.every((value) => typeof value === 'string' && isHexColorString(value))
+            : range.every((value) => Number.isFinite(Number(value)));
+        }
+
         if (type === 'custom') {
           return true;
         }
@@ -829,10 +1048,10 @@ export class MappersPanel {
           channel === 'outline' ||
           channel === 'width' ||
           channel === 'opacity';
-        if (mode === 'edge' && isColor) return ['constant', 'passthrough', 'nodeAttribute', 'colormap'];
-        if (mode === 'edge' && isScalar) return ['constant', 'passthrough', 'nodeAttribute', 'linear'];
-        if (isColor) return ['constant', 'passthrough', 'colormap'];
-        if (isScalar) return ['constant', 'passthrough', 'linear'];
+        if (mode === 'edge' && isColor) return ['constant', 'passthrough', 'nodeAttribute', 'categorical', 'colormap'];
+        if (mode === 'edge' && isScalar) return ['constant', 'passthrough', 'nodeAttribute', 'categorical', 'linear'];
+        if (isColor) return ['constant', 'passthrough', 'categorical', 'colormap'];
+        if (isScalar) return ['constant', 'passthrough', 'categorical', 'linear'];
         return ['passthrough'];
       };
 
@@ -897,10 +1116,10 @@ export class MappersPanel {
 	        return el;
 	      };
 
-	      const createHex8ColorEditor = ({ label, value, onChange, showAlphaLabel = false, compact = true }) => {
+        const createHex8ColorEditor = ({ label, value, onChange, showAlphaLabel = false, compact = true }) => {
 	        const row = document.createElement('div');
 	        row.style.display = 'flex';
-	        row.style.gap = '8px';
+          row.style.gap = '4px';
 	        row.style.alignItems = 'center';
 	        row.style.width = '100%';
 
@@ -930,7 +1149,7 @@ export class MappersPanel {
 	        alphaInput.min = '0';
 	        alphaInput.max = '1';
 	        alphaInput.step = '0.01';
-	        alphaInput.style.maxWidth = compact ? '72px' : '88px';
+          alphaInput.style.maxWidth = compact ? '36px' : '52px';
 	        alphaInput.title = 'Alpha';
 
 	        const alphaLabel = document.createElement('span');
@@ -1085,6 +1304,29 @@ export class MappersPanel {
             base.alpha = prev.alpha ?? live?.alpha ?? 1;
             base.clamp = prev.clamp ?? live?.clamp ?? true;
             markDomainAuto(base, !hasDomain);
+          }
+          if (nextType === 'categorical') {
+            base.attributes = typeof base.attributes === 'string'
+              ? base.attributes
+              : (typeof prev.attributes === 'string' ? prev.attributes : (typeof live?.attributes === 'string' ? live.attributes : ''));
+            base.domain = Array.isArray(prev.domain)
+              ? prev.domain
+              : (Array.isArray(live?.domain) ? live.domain : []);
+            base.range = Array.isArray(prev.range)
+              ? prev.range
+              : (Array.isArray(live?.range) ? live.range : []);
+            base.defaultValue = prev.defaultValue ?? live?.defaultValue ?? '#888888ff';
+            const meta = { ...(prev.meta && typeof prev.meta === 'object' ? prev.meta : null), ...(live?.meta && typeof live.meta === 'object' ? live.meta : null) };
+            const nextMeta = meta && typeof meta === 'object' ? { ...meta } : {};
+            const categorical = nextMeta.categorical && typeof nextMeta.categorical === 'object'
+              ? { ...nextMeta.categorical }
+              : {};
+            if (!categorical.sortOrder) categorical.sortOrder = 'frequency';
+            if (categorical.maxCategories == null) categorical.maxCategories = null;
+            if (!categorical.palette) categorical.palette = defaultCategoricalPalette;
+            if (categorical.preferScheme == null) categorical.preferScheme = true;
+            nextMeta.categorical = categorical;
+            base.meta = nextMeta;
           }
           return base;
         };
@@ -2195,6 +2437,1156 @@ export class MappersPanel {
 	          editorBody.appendChild(advancedStack.element);
 	          ui._controlCleanups.add(() => advancedStack.destroy());
 		        }
+
+          if (pendingType === 'categorical') {
+            const ensureCategoricalMeta = () => {
+              const meta = state.pending.meta && typeof state.pending.meta === 'object' ? { ...state.pending.meta } : {};
+              const categorical = meta.categorical && typeof meta.categorical === 'object' ? { ...meta.categorical } : {};
+              if (!categorical.sortOrder) categorical.sortOrder = 'frequency';
+              if (categorical.maxCategories == null) categorical.maxCategories = null;
+              if (!categorical.palette) categorical.palette = defaultCategoricalPalette;
+              if (categorical.preferScheme == null) categorical.preferScheme = true;
+              if (!categorical.numericDirection) categorical.numericDirection = 'asc';
+              if (categorical.numericRange == null) categorical.numericRange = null;
+              meta.categorical = categorical;
+              return meta;
+            };
+
+            const updatePendingMeta = (meta) => {
+              state.pending = { ...state.pending, type: 'categorical', meta };
+            };
+
+            if (!state.pending.meta || typeof state.pending.meta !== 'object') {
+              state.pending = { ...state.pending, type: 'categorical', meta: ensureCategoricalMeta() };
+            }
+            const getCategoricalSettings = () => {
+              const metaNow = ensureCategoricalMeta();
+              const categoricalNow = metaNow.categorical ?? {};
+              const paletteNameNow = categoricalNow.palette ?? defaultCategoricalPalette;
+              const preferSchemeNow = categoricalNow.preferScheme !== false;
+              const sortOrderNow = categoricalNow.sortOrder ?? 'frequency';
+              const rawMax = categoricalNow.maxCategories;
+              const parsedMax = rawMax == null || rawMax === '' ? null : Number(rawMax);
+              const maxCategoriesNow = Number.isFinite(parsedMax)
+                ? Math.max(1, Math.floor(parsedMax))
+                : null;
+              return {
+                meta: metaNow,
+                categorical: categoricalNow,
+                paletteName: paletteNameNow,
+                preferScheme: preferSchemeNow,
+                sortOrder: sortOrderNow,
+                maxCategories: maxCategoriesNow,
+              };
+            };
+
+            const { paletteName, preferScheme, sortOrder, maxCategories } = getCategoricalSettings();
+
+            const attrSelect = document.createElement('select');
+            attrSelect.className = 'helios-ui-select';
+            const names = listAttributeNames(mode, { channel: state.channel, mapperType: 'categorical' });
+            const current = typeof state.pending.attributes === 'string'
+              ? state.pending.attributes
+              : (typeof live?.attributes === 'string' ? live.attributes : '');
+            const optBlank = document.createElement('option');
+            optBlank.value = '';
+            optBlank.textContent = names.length ? 'Select attribute…' : 'No categorical attributes';
+            attrSelect.appendChild(optBlank);
+            for (const name of names) {
+              const opt = document.createElement('option');
+              opt.value = name;
+              opt.textContent = name;
+              attrSelect.appendChild(opt);
+            }
+            attrSelect.value = names.includes(current) ? current : '';
+            attrSelect.addEventListener('change', () => {
+              const attr = attrSelect.value || undefined;
+              const nextMeta = ensureCategoricalMeta();
+              state.pending = {
+                ...state.pending,
+                type: 'categorical',
+                attributes: attr,
+                domain: [],
+                range: [],
+                meta: nextMeta,
+              };
+              setDirty(true);
+              renderEditor();
+            });
+            editorBody.appendChild(createAlignedRow({
+              title: 'Attribute',
+              hint: 'Pick the categorical attribute to drive colors.',
+              controls: attrSelect,
+            }).row);
+
+            const attrName = attrSelect.value || '';
+            const attrInfo = attrName ? getAttributeInfo(mode, attrName) : null;
+            if (!attrName) {
+              const note = document.createElement('div');
+              note.style.color = 'var(--helios-ui-muted)';
+              note.textContent = 'Select a categorical attribute to configure colors.';
+              editorBody.appendChild(note);
+            }
+
+            if (attrName && attrInfo && isStringAttributeType(attrInfo.type)) {
+              const scan = scanStringCategorization(mode, attrName);
+              const note = document.createElement('div');
+              note.style.color = 'var(--helios-ui-muted)';
+              note.textContent = scan.ok
+                ? `String attribute detected. ${scan.uniqueCount ?? 0} unique values (max length ${scan.maxLength ?? 0}).`
+                : `Cannot categorize: ${scan.reason}`;
+              editorBody.appendChild(note);
+
+              const convertButton = document.createElement('button');
+              convertButton.type = 'button';
+              convertButton.className = 'helios-ui-button helios-ui-button--compact';
+              convertButton.textContent = 'Convert to categorical';
+              convertButton.disabled = !scan.ok;
+              convertButton.addEventListener('click', () => {
+                const network = net();
+                if (!network) return;
+                const order = sortOrder === 'manual' ? 'frequency' : sortOrder;
+                try {
+                  if (mode === 'edge') {
+                    network.categorizeEdgeAttribute?.(attrName, { sortOrder: order });
+                  } else {
+                    network.categorizeNodeAttribute?.(attrName, { sortOrder: order });
+                  }
+                  state.pending = { ...state.pending, type: 'categorical', domain: [], range: [] };
+                  setDirty(true);
+                  renderEditor();
+                } catch (error) {
+                  console.warn('Failed to categorize string attribute', error);
+                }
+              });
+              editorBody.appendChild(createAlignedRow({
+                title: 'Categorize',
+                hint: 'Convert string values to categorical codes for mapping.',
+                controls: convertButton,
+              }).row);
+              syncApplyEnabled();
+              return;
+            }
+
+            if (attrName && attrInfo && !isCategoricalAttributeType(attrInfo.type)) {
+              const note = document.createElement('div');
+              note.style.color = 'var(--helios-ui-muted)';
+              note.textContent = 'Selected attribute is not categorical.';
+              editorBody.appendChild(note);
+              syncApplyEnabled();
+              return;
+            }
+
+            const entriesRaw = attrName ? resolveCategoryEntries(mode, attrName) : [];
+            if (!entriesRaw.length) {
+              const note = document.createElement('div');
+              note.style.color = 'var(--helios-ui-muted)';
+              note.textContent = 'No categories found for this attribute.';
+              editorBody.appendChild(note);
+              syncApplyEnabled();
+              return;
+            }
+
+            const pendingDomain = Array.isArray(state.pending.domain) ? state.pending.domain : [];
+            const entries = entriesRaw;
+            if (!entries.length) {
+              const note = document.createElement('div');
+              note.style.color = 'var(--helios-ui-muted)';
+              note.textContent = 'No categories found for this attribute.';
+              editorBody.appendChild(note);
+              syncApplyEnabled();
+              return;
+            }
+            const pendingRange = Array.isArray(state.pending.range) ? state.pending.range : [];
+            const entryIds = new Set(entries.map((entry) => entry.id));
+            const hasMissing = pendingDomain.some((id) => !entryIds.has(id));
+            const hasNew = entries.some((entry) => !pendingDomain.includes(entry.id));
+            const needsRebuild =
+              pendingDomain.length === 0 ||
+              pendingRange.length !== pendingDomain.length ||
+              hasMissing ||
+              hasNew;
+
+            const AUTO_MAX_CATEGORIES = 20;
+            const resolveMaxCategories = (count) => {
+              const { maxCategories, preferScheme, paletteName } = getCategoricalSettings();
+              if (maxCategories) return Math.min(count, maxCategories);
+              let cap = count;
+              if (preferScheme) {
+                const resolved = resolveColormap(paletteName);
+                if (resolved?.isScheme && typeof resolved.scheme === 'function') {
+                  const scheme = resolved.scheme();
+                  if (Array.isArray(scheme) && scheme.length) cap = Math.min(cap, scheme.length);
+                }
+              }
+              if (cap > AUTO_MAX_CATEGORIES) cap = AUTO_MAX_CATEGORIES;
+              return cap;
+            };
+
+            const buildOrderedEntries = () => {
+              const { sortOrder } = getCategoricalSettings();
+              const list = entries.slice();
+              if (sortOrder === 'alphabetical') {
+                list.sort((a, b) => a.label.localeCompare(b.label));
+              } else if (sortOrder === 'natural') {
+                list.sort((a, b) => naturalCompare(a.label, b.label));
+              } else if (sortOrder === 'manual') {
+                const order = Array.isArray(state.pending.domain) ? state.pending.domain : [];
+                const byId = new Map(list.map((entry) => [entry.id, entry]));
+                const ordered = order.map((id) => byId.get(id)).filter(Boolean);
+                const seen = new Set(ordered.map((entry) => entry.id));
+                for (const entry of list) {
+                  if (!seen.has(entry.id)) ordered.push(entry);
+                }
+                return ordered.slice(0, resolveMaxCategories(ordered.length));
+              } else {
+                list.sort((a, b) => (b.count - a.count) || a.label.localeCompare(b.label));
+              }
+              return list.slice(0, resolveMaxCategories(list.length));
+            };
+
+            const isColorChannel = state.channel === 'color' || state.channel === 'outlineColor';
+            const [suggestMin, suggestMax] = suggestRangeForChannel(mode, state.channel);
+            const numericStep = suggestStepForRange(suggestMin, suggestMax);
+            const resolveNumericSettings = () => {
+              const { categorical } = getCategoricalSettings();
+              const raw = Array.isArray(categorical?.numericRange) ? categorical.numericRange : [];
+              let min = Number(raw[0]);
+              let max = Number(raw[1]);
+              if (!Number.isFinite(min)) min = suggestMin;
+              if (!Number.isFinite(max)) max = suggestMax;
+              if (min === max) max = min + 1;
+              const direction = categorical?.numericDirection === 'desc' ? 'desc' : 'asc';
+              return { min, max, direction };
+            };
+            const buildNumericPalette = (count) => {
+              const { min, max, direction } = resolveNumericSettings();
+              if (!Number.isFinite(count) || count <= 1) return [min];
+              const span = max - min;
+              const values = Array.from({ length: count }, (_, i) => min + (span * i) / (count - 1));
+              return direction === 'desc' ? values.reverse() : values;
+            };
+
+            const applyOrdering = ({ forcePalette = false } = {}) => {
+              const { paletteName, preferScheme } = getCategoricalSettings();
+              const ordered = buildOrderedEntries();
+              const currentDomain = Array.isArray(state.pending.domain) ? state.pending.domain : [];
+              const currentRange = Array.isArray(state.pending.range) ? state.pending.range : [];
+              const colorById = new Map();
+              for (let i = 0; i < currentDomain.length; i += 1) {
+                colorById.set(currentDomain[i], currentRange[i]);
+              }
+              const palette = isColorChannel
+                ? resolveCategoricalPalette({
+                    paletteName,
+                    count: ordered.length,
+                    preferScheme,
+                  })
+                : buildNumericPalette(ordered.length);
+              const domain = ordered.map((entry) => entry.id);
+              const range = ordered.map((entry, idx) => {
+                if (!forcePalette && colorById.has(entry.id)) return colorById.get(entry.id);
+                if (isColorChannel) return palette[idx] ?? colorFromIndex(idx);
+                return palette[idx] ?? suggestMin;
+              });
+              const nextMeta = ensureCategoricalMeta();
+              const nextPending = { ...state.pending, type: 'categorical', domain, range, meta: nextMeta };
+              state.pending = nextPending;
+              setDirty(true);
+            };
+
+            if (needsRebuild) {
+              applyOrdering({ forcePalette: pendingDomain.length === 0 || pendingRange.length !== pendingDomain.length });
+            }
+
+            const orderSelect = document.createElement('select');
+            orderSelect.className = 'helios-ui-select';
+            const orderOptions = [
+              { value: 'frequency', label: 'Frequency' },
+              { value: 'alphabetical', label: 'Alphabetical' },
+              { value: 'natural', label: 'Natural' },
+              { value: 'manual', label: 'Manual' },
+            ];
+            for (const optInfo of orderOptions) {
+              const opt = document.createElement('option');
+              opt.value = optInfo.value;
+              opt.textContent = optInfo.label;
+              orderSelect.appendChild(opt);
+            }
+            orderSelect.value = orderOptions.some((o) => o.value === sortOrder) ? sortOrder : 'frequency';
+            orderSelect.addEventListener('change', () => {
+              const nextMeta = ensureCategoricalMeta();
+              nextMeta.categorical.sortOrder = orderSelect.value;
+              updatePendingMeta(nextMeta);
+              applyOrdering({ forcePalette: false });
+              renderEditor();
+            });
+            const maxWrap = document.createElement('div');
+            maxWrap.style.display = 'flex';
+            maxWrap.style.gap = '8px';
+            maxWrap.style.alignItems = 'center';
+            maxWrap.style.width = '100%';
+            const maxInput = document.createElement('input');
+            maxInput.type = 'number';
+            maxInput.className = 'helios-ui-number';
+            maxInput.min = '1';
+            maxInput.placeholder = 'Auto';
+            maxInput.value = maxCategories ? String(maxCategories) : '';
+            maxInput.addEventListener('change', () => {
+              const value = clampNumber(maxInput.value, { min: 1 });
+              const nextMeta = ensureCategoricalMeta();
+              nextMeta.categorical.maxCategories = Number.isFinite(value) ? Math.floor(value) : null;
+              updatePendingMeta(nextMeta);
+              applyOrdering({ forcePalette: false });
+              renderEditor();
+            });
+            maxWrap.appendChild(maxInput);
+            const buildFullWidthControl = ({ label, hint, control, alignRight = false }) => {
+              const wrap = document.createElement('div');
+              wrap.style.display = 'grid';
+              wrap.style.gap = '1px';
+              wrap.style.width = '100%';
+              const labelEl = document.createElement('div');
+              labelEl.textContent = label ?? '';
+              labelEl.style.fontSize = '12px';
+              labelEl.style.color = 'var(--helios-ui-muted)';
+              if (alignRight) {
+                labelEl.style.textAlign = 'right';
+                labelEl.style.alignSelf = 'end';
+              }
+              if (hint) tooltips.attachTooltip?.(labelEl, hint);
+              wrap.appendChild(labelEl);
+              wrap.appendChild(control);
+              return wrap;
+            };
+
+            let applyPaletteButton = null;
+            if (isColorChannel) {
+              const paletteEntries = categoricalPaletteCatalog.map((entry) => ({
+                ...entry,
+                search: `${entry.key} ${entry.label} ${entry.group}`.toLowerCase(),
+              }));
+              const paletteCatalog = (() => {
+                const byGroup = new Map();
+                const byKey = new Map();
+                for (const entry of paletteEntries) {
+                  const list = byGroup.get(entry.group) ?? [];
+                  list.push(entry);
+                  byGroup.set(entry.group, list);
+                  byKey.set(entry.key, entry);
+                }
+                for (const list of byGroup.values()) {
+                  list.sort((a, b) => a.label.localeCompare(b.label));
+                }
+                return { entries: paletteEntries, byGroup, byKey };
+              })();
+
+              const palettePicker = document.createElement('div');
+              palettePicker.className = 'helios-ui-colormap-picker';
+              const paletteDisplay = document.createElement('button');
+              paletteDisplay.type = 'button';
+              paletteDisplay.className = 'helios-ui-select helios-ui-colormap-picker__display';
+	
+              const paletteDisplayLabel = document.createElement('span');
+              paletteDisplayLabel.className = 'helios-ui-ellipsis';
+              paletteDisplay.appendChild(paletteDisplayLabel);
+
+              const palettePreview = document.createElement('div');
+              palettePreview.className = 'helios-ui-colormap-picker__preview helios-ui-colormap-thumb';
+
+              const palettePopover = document.createElement('div');
+              palettePopover.className = 'helios-ui-colormap-popover';
+              palettePopover.hidden = true;
+
+              const palettePopoverPanel = document.createElement('div');
+              palettePopoverPanel.className = 'helios-ui-colormap-popover__panel';
+              palettePopover.appendChild(palettePopoverPanel);
+
+              const paletteHeader = document.createElement('div');
+              paletteHeader.className = 'helios-ui-colormap-popover__header';
+              const paletteSearch = document.createElement('input');
+              paletteSearch.type = 'text';
+              paletteSearch.className = 'helios-ui-text helios-ui-colormap-popover__search';
+              paletteSearch.placeholder = 'Search palettes (e.g. tableau, scheme)…';
+              paletteHeader.appendChild(paletteSearch);
+              palettePopoverPanel.appendChild(paletteHeader);
+
+              const paletteList = document.createElement('div');
+              paletteList.className = 'helios-ui-colormap-popover__list';
+              palettePopoverPanel.appendChild(paletteList);
+
+              const palettePortal = ui?.container ?? document.body;
+              palettePortal.appendChild(palettePopover);
+              const paletteCleanups = [];
+              const registerPaletteCleanup = (fn) => {
+                if (typeof fn === 'function') paletteCleanups.push(fn);
+              };
+              registerPaletteCleanup(() => palettePopover.remove());
+
+              const paletteToCssGradient = (palette, { isScheme = false } = {}) => {
+                if (!Array.isArray(palette) || palette.length === 0) {
+                  return 'linear-gradient(90deg, rgba(120,120,120,1), rgba(40,40,40,1))';
+                }
+                if (palette.length === 1) {
+                  return `linear-gradient(90deg, ${palette[0]}, ${palette[0]})`;
+                }
+                if (isScheme) {
+                  const step = 100 / palette.length;
+                  const stops = palette.flatMap((color, idx) => {
+                    const start = (idx * step).toFixed(2);
+                    const end = ((idx + 1) * step).toFixed(2);
+                    return [`${color} ${start}%`, `${color} ${end}%`];
+                  });
+                  return `linear-gradient(90deg, ${stops.join(', ')})`;
+                }
+                const stops = palette.map((color, idx) => {
+                  const pct = (idx / (palette.length - 1)) * 100;
+                  return `${color} ${pct.toFixed(2)}%`;
+                });
+                return `linear-gradient(90deg, ${stops.join(', ')})`;
+              };
+
+              const resolvePaletteDisplay = (keyRaw) => {
+                const key = String(keyRaw ?? '').trim();
+                if (!key) return '';
+                const entry = paletteCatalog.byKey.get(key);
+                if (!entry) return key;
+                return `${entry.group}: ${entry.label}`;
+              };
+
+              const updatePalettePreview = (keyRaw) => {
+                const key = String(keyRaw ?? '').trim() || defaultCategoricalPalette;
+                const resolved = resolveColormap(key);
+                const palette = resolveCategoricalPalette({
+                  paletteName: key,
+                  count: 8,
+                  preferScheme,
+                });
+                palettePreview.style.backgroundImage = paletteToCssGradient(palette, { isScheme: resolved?.isScheme });
+              };
+
+              const applyPaletteUi = (keyRaw) => {
+                const key = String(keyRaw ?? '').trim() || defaultCategoricalPalette;
+                paletteDisplayLabel.textContent = resolvePaletteDisplay(key);
+                paletteDisplay.title = paletteDisplayLabel.textContent;
+                paletteDisplay.dataset.colormapKey = key;
+                updatePalettePreview(key);
+              };
+
+              const setSelectedPalette = (keyRaw) => {
+                const key = String(keyRaw ?? '').trim() || defaultCategoricalPalette;
+                const nextMeta = ensureCategoricalMeta();
+                nextMeta.categorical.palette = key;
+                updatePendingMeta(nextMeta);
+                applyPaletteUi(key);
+                applyOrdering({ forcePalette: true });
+                setDirty(true);
+              };
+
+              applyPaletteUi(paletteName);
+
+              let paletteObserver = null;
+              const ensurePaletteObserver = () => {
+                if (paletteObserver) return paletteObserver;
+                if (typeof IntersectionObserver !== 'function') return null;
+                paletteObserver = new IntersectionObserver((entries) => {
+                  for (const entry of entries) {
+                    if (!entry.isIntersecting) continue;
+                    const el = entry.target;
+                    const key = el?.dataset?.colormapKey;
+                    if (!key) continue;
+                    if (el.dataset.colormapReady === '1') continue;
+                    el.dataset.colormapReady = '1';
+                    const resolved = resolveColormap(key);
+                    const previewPalette = resolveCategoricalPalette({
+                      paletteName: key,
+                      count: 8,
+                      preferScheme,
+                    });
+                    el.style.backgroundImage = paletteToCssGradient(previewPalette, { isScheme: resolved?.isScheme });
+                    paletteObserver.unobserve(el);
+                  }
+                }, { root: palettePopoverPanel, rootMargin: '64px' });
+                registerPaletteCleanup(() => {
+                  paletteObserver?.disconnect?.();
+                  paletteObserver = null;
+                });
+                return paletteObserver;
+              };
+
+              const renderPalettePopover = (queryRaw) => {
+                paletteList.replaceChildren();
+                const query = String(queryRaw ?? '').trim().toLowerCase();
+                const tokens = query.split(/\s+/).filter(Boolean);
+                const matches = paletteCatalog.entries.filter((entry) => {
+                  if (preferScheme && !String(entry.key).startsWith('scheme')) return false;
+                  if (!tokens.length) return true;
+                  return tokens.every((t) => entry.search.includes(t));
+                });
+	
+                if (!matches.length) {
+                  const note = document.createElement('div');
+                  note.className = 'helios-ui-colormap-picker__note';
+                  note.textContent = 'No matches.';
+                  paletteList.appendChild(note);
+                  return;
+                }
+
+                const groupOrder = ['d3 schemes', 'd3 ramps', 'cmasher schemes', 'cmasher ramps', 'CET schemes', 'CET ramps', 'helios schemes', 'helios ramps', 'other'];
+                const matchesByGroup = new Map();
+                for (const entry of matches) {
+                  const list = matchesByGroup.get(entry.group) ?? [];
+                  list.push(entry);
+                  matchesByGroup.set(entry.group, list);
+                }
+                for (const list of matchesByGroup.values()) {
+                  list.sort((a, b) => a.label.localeCompare(b.label));
+                }
+
+                const capPerGroup = tokens.length ? 60 : 5000;
+                const capTotal = tokens.length ? 220 : 5000;
+                let total = 0;
+                const observer = ensurePaletteObserver();
+
+                for (const group of groupOrder) {
+                  const list = matchesByGroup.get(group);
+                  if (!list?.length) continue;
+
+                  const section = document.createElement('div');
+                  section.className = 'helios-ui-colormap-section';
+	
+                  const title = document.createElement('div');
+                  title.className = 'helios-ui-colormap-section__title';
+                  title.textContent = group;
+                  section.appendChild(title);
+	
+                  const body = document.createElement('div');
+                  body.className = 'helios-ui-colormap-section__body';
+	
+                  const visible = list.slice(0, capPerGroup);
+                  for (const entry of visible) {
+                    if (total >= capTotal) break;
+                    total += 1;
+
+                    const item = document.createElement('button');
+                    item.type = 'button';
+                    item.className = 'helios-ui-colormap-picker__item';
+                    item.dataset.key = entry.key;
+
+                    const itemTitle = document.createElement('div');
+                    itemTitle.className = 'helios-ui-colormap-picker__item-title helios-ui-ellipsis';
+                    itemTitle.textContent = entry.label;
+                    itemTitle.title = `${entry.key}`;
+
+                    const itemThumb = document.createElement('div');
+                    itemThumb.className = 'helios-ui-colormap-thumb helios-ui-colormap-thumb--small';
+                    itemThumb.dataset.colormapKey = entry.key;
+                    itemThumb.dataset.colormapReady = '0';
+                    itemThumb.style.backgroundImage = 'linear-gradient(90deg, rgba(60,60,60,1), rgba(30,30,30,1))';
+                    observer?.observe?.(itemThumb);
+
+                    item.appendChild(itemTitle);
+                    item.appendChild(itemThumb);
+
+                    item.addEventListener('pointerdown', (e) => {
+                      e.preventDefault();
+                      setSelectedPalette(entry.key);
+                      palettePopover.hidden = true;
+                    });
+
+                    body.appendChild(item);
+                  }
+
+                  if (list.length > capPerGroup) {
+                    const note = document.createElement('div');
+                    note.className = 'helios-ui-colormap-picker__note';
+                    note.textContent = `Showing ${capPerGroup} of ${list.length} in ${group}.`;
+                    body.appendChild(note);
+                  }
+
+                  section.appendChild(body);
+                  paletteList.appendChild(section);
+                  if (total >= capTotal) break;
+                }
+
+                if (matches.length > capTotal) {
+                  const note = document.createElement('div');
+                  note.className = 'helios-ui-colormap-picker__note';
+                  note.textContent = `Showing ${capTotal} of ${matches.length}. Refine your search.`;
+                  paletteList.appendChild(note);
+                }
+              };
+
+              const paletteOffset = 6;
+              const paletteMargin = 10;
+              const paletteMinHeight = 180;
+              const paletteMinWidth = 240;
+              const paletteMaxWidth = 420;
+              const paletteMaxHeight = 420;
+
+              const positionPalettePopover = () => {
+                if (palettePopover.hidden) return;
+                const anchor = paletteDisplay.getBoundingClientRect();
+                const vw = window.innerWidth;
+                const vh = window.innerHeight;
+
+                const spaceBelow = vh - anchor.bottom - paletteMargin;
+                const spaceAbove = anchor.top - paletteMargin;
+                const spaceRight = vw - anchor.right - paletteMargin;
+                const spaceLeft = anchor.left - paletteMargin;
+
+                palettePopover.style.width = `${Math.max(paletteMinWidth, Math.min(paletteMaxWidth, anchor.width))}px`;
+                palettePopover.style.left = '0px';
+                palettePopover.style.top = '0px';
+                palettePopover.hidden = false;
+
+                const measured = palettePopoverPanel.getBoundingClientRect();
+                const desiredW = measured.width || Math.max(paletteMinWidth, Math.min(paletteMaxWidth, anchor.width));
+                const desiredH = palettePopoverPanel.scrollHeight || measured.height || paletteMinHeight;
+
+                const canVertical = Math.max(spaceBelow, spaceAbove) >= paletteMinHeight;
+                const preferBelow = spaceBelow >= spaceAbove;
+                const canHorizontal = Math.max(spaceRight, spaceLeft) >= paletteMinWidth;
+                const preferRight = spaceRight >= spaceLeft;
+
+                let placement = 'bottom';
+                if (canVertical) {
+                  placement = preferBelow ? 'bottom' : 'top';
+                } else if (canHorizontal) {
+                  placement = preferRight ? 'right' : 'left';
+                } else {
+                  const best = [
+                    { side: 'bottom', size: spaceBelow },
+                    { side: 'top', size: spaceAbove },
+                    { side: 'right', size: spaceRight },
+                    { side: 'left', size: spaceLeft },
+                  ].sort((a, b) => b.size - a.size)[0];
+                  placement = best?.side ?? 'bottom';
+                }
+
+                let left = anchor.left;
+                let top = anchor.bottom + paletteOffset;
+                let maxH = Math.max(80, spaceBelow);
+	
+                if (placement === 'top') {
+                  maxH = Math.max(80, spaceAbove);
+                  top = Math.max(paletteMargin, anchor.top - paletteOffset - Math.min(desiredH, maxH));
+                } else if (placement === 'right') {
+                  left = anchor.right + paletteOffset;
+                  top = anchor.top;
+                  maxH = Math.max(80, vh - 2 * paletteMargin);
+                } else if (placement === 'left') {
+                  left = Math.max(paletteMargin, anchor.left - paletteOffset - desiredW);
+                  top = anchor.top;
+                  maxH = Math.max(80, vh - 2 * paletteMargin);
+                }
+
+                left = Math.max(paletteMargin, Math.min(vw - paletteMargin - desiredW, left));
+                top = Math.max(paletteMargin, Math.min(vh - paletteMargin - 80, top));
+	
+                palettePopover.style.width = `${Math.min(desiredW, vw - 2 * paletteMargin)}px`;
+                palettePopover.style.left = `${left}px`;
+                palettePopover.style.top = `${top}px`;
+	
+                const bottomLimit = placement === 'top' ? Math.max(paletteMargin, anchor.top - paletteOffset) : vh - paletteMargin;
+                const availableH = Math.max(120, bottomLimit - top);
+                palettePopoverPanel.style.maxHeight = `${Math.min(paletteMaxHeight, availableH)}px`;
+                paletteList.style.maxHeight = '';
+              };
+
+              const closePalettePopover = () => {
+                palettePopover.hidden = true;
+              };
+
+              const onPaletteDocPointerDown = (e) => {
+                const target = e.target;
+                if (palettePopover.hidden) return;
+                if (target && (palettePopover.contains(target) || palettePicker.contains(target))) return;
+                closePalettePopover();
+              };
+
+              let pendingPalettePosition = false;
+              const schedulePalettePosition = () => {
+                if (pendingPalettePosition) return;
+                pendingPalettePosition = true;
+                requestAnimationFrame(() => {
+                  pendingPalettePosition = false;
+                  positionPalettePopover();
+                });
+              };
+
+              const onPaletteDocScroll = (e) => {
+                if (palettePopover.hidden) return;
+                const target = e?.target;
+                if (target && palettePopoverPanel.contains(target)) return;
+                schedulePalettePosition();
+              };
+              const onPaletteResize = () => schedulePalettePosition();
+
+              document.addEventListener('pointerdown', onPaletteDocPointerDown, true);
+              document.addEventListener('scroll', onPaletteDocScroll, true);
+              window.addEventListener('resize', onPaletteResize);
+              registerPaletteCleanup(() => document.removeEventListener('pointerdown', onPaletteDocPointerDown, true));
+              registerPaletteCleanup(() => document.removeEventListener('scroll', onPaletteDocScroll, true));
+              registerPaletteCleanup(() => window.removeEventListener('resize', onPaletteResize));
+
+              const openPalettePopover = ({ seedQuery } = {}) => {
+                palettePopover.hidden = false;
+                paletteSearch.value = seedQuery != null ? String(seedQuery) : '';
+                renderPalettePopover(paletteSearch.value);
+                positionPalettePopover();
+                queueMicrotask(() => paletteSearch.focus());
+              };
+
+              const onPaletteDisplayClick = () => openPalettePopover();
+              const onPalettePreviewClick = () => openPalettePopover();
+              const onPaletteDisplayKeyDown = (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  openPalettePopover();
+                  return;
+                }
+                if (e.key && e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+                  e.preventDefault();
+                  openPalettePopover({ seedQuery: e.key });
+                }
+              };
+
+              paletteDisplay.addEventListener('click', onPaletteDisplayClick);
+              palettePreview.addEventListener('click', onPalettePreviewClick);
+              paletteDisplay.addEventListener('keydown', onPaletteDisplayKeyDown);
+              registerPaletteCleanup(() => paletteDisplay.removeEventListener('click', onPaletteDisplayClick));
+              registerPaletteCleanup(() => palettePreview.removeEventListener('click', onPalettePreviewClick));
+              registerPaletteCleanup(() => paletteDisplay.removeEventListener('keydown', onPaletteDisplayKeyDown));
+
+              const onPaletteSearch = () => {
+                renderPalettePopover(paletteSearch.value);
+                positionPalettePopover();
+              };
+              paletteSearch.addEventListener('input', onPaletteSearch);
+              registerPaletteCleanup(() => paletteSearch.removeEventListener('input', onPaletteSearch));
+
+              const onPaletteSearchKeyDown = (e) => {
+                if (e.key === 'Escape') {
+                  closePalettePopover();
+                  paletteDisplay.focus();
+                }
+                if (e.key === 'Enter' && (paletteSearch.value ?? '').trim()) {
+                  closePalettePopover();
+                  const typed = String(paletteSearch.value ?? '').trim();
+                  if (paletteCatalog.byKey.has(typed)) setSelectedPalette(typed);
+                }
+              };
+              paletteSearch.addEventListener('keydown', onPaletteSearchKeyDown);
+              registerPaletteCleanup(() => paletteSearch.removeEventListener('keydown', onPaletteSearchKeyDown));
+
+              const onPaletteFocusOut = () => {
+                queueMicrotask(() => {
+                  if (!palettePicker.contains(document.activeElement) && !palettePopover.contains(document.activeElement)) {
+                    closePalettePopover();
+                  }
+                });
+              };
+              palettePicker.addEventListener('focusout', onPaletteFocusOut);
+              registerPaletteCleanup(() => palettePicker.removeEventListener('focusout', onPaletteFocusOut));
+
+              registerControl({
+                destroy() {
+                  for (const cleanup of paletteCleanups.splice(0)) {
+                    try {
+                      cleanup();
+                    } catch (_) {
+                      // ignore
+                    }
+                  }
+                },
+              });
+
+              palettePicker.appendChild(paletteDisplay);
+              palettePicker.appendChild(palettePreview);
+
+              editorBody.appendChild(createAlignedRow({
+                title: 'Palette',
+                hint: 'Pick a categorical palette (schemes preferred when available).',
+                controls: palettePicker,
+              }).row);
+
+              const preferSchemeWrap = document.createElement('label');
+              preferSchemeWrap.style.display = 'inline-flex';
+              preferSchemeWrap.style.alignItems = 'center';
+              preferSchemeWrap.style.gap = '6px';
+              const preferSchemeInput = document.createElement('input');
+              preferSchemeInput.type = 'checkbox';
+              preferSchemeInput.checked = preferScheme;
+              preferSchemeInput.style.margin = '0';
+              const preferSchemeText = document.createElement('span');
+              preferSchemeText.textContent = 'Prefer scheme colors';
+              preferSchemeText.style.color = 'var(--helios-ui-muted)';
+              preferSchemeWrap.appendChild(preferSchemeInput);
+              preferSchemeWrap.appendChild(preferSchemeText);
+              preferSchemeInput.addEventListener('change', () => {
+                const nextMeta = ensureCategoricalMeta();
+                nextMeta.categorical.preferScheme = preferSchemeInput.checked;
+                updatePendingMeta(nextMeta);
+                applyOrdering({ forcePalette: true });
+                renderEditor();
+              });
+              editorBody.appendChild(createAlignedRow({
+                title: 'Scheme',
+                hint: 'Prefer discrete scheme colors when available for the selected palette.',
+                controls: preferSchemeWrap,
+              }).row);
+
+              applyPaletteButton = document.createElement('button');
+              applyPaletteButton.type = 'button';
+              applyPaletteButton.className = 'helios-ui-button helios-ui-button--compact';
+              applyPaletteButton.textContent = 'Apply palette';
+              applyPaletteButton.addEventListener('click', () => {
+                applyOrdering({ forcePalette: true });
+                renderEditor();
+              });
+            }
+
+            const orderedEntries = buildOrderedEntries();
+            const domain = Array.isArray(state.pending.domain) ? state.pending.domain : [];
+            const range = Array.isArray(state.pending.range) ? state.pending.range : [];
+
+            const list = document.createElement('div');
+            list.style.display = 'grid';
+            list.style.gap = '4px';
+            list.style.width = '100%';
+            orderedEntries.forEach((entry, idx) => {
+              const row = document.createElement('div');
+              row.style.display = 'grid';
+              row.style.gridTemplateColumns = 'minmax(0, 1fr) auto auto';
+              row.style.alignItems = 'center';
+              row.style.gap = '4px';
+	
+              const labelWrap = document.createElement('div');
+              labelWrap.style.display = 'grid';
+              labelWrap.style.gap = '1px';
+              labelWrap.style.minWidth = '0';
+              labelWrap.style.textAlign = 'right';
+              labelWrap.style.justifyItems = 'end';
+              const labelEl = document.createElement('div');
+              labelEl.className = 'helios-ui-ellipsis';
+              labelEl.textContent = entry.label ?? `#${entry.id}`;
+              labelEl.title = `${entry.label ?? entry.id} (id ${entry.id})`;
+              const countEl = document.createElement('div');
+              countEl.style.fontSize = '11px';
+              countEl.style.color = 'var(--helios-ui-muted)';
+              countEl.textContent = `count: ${entry.count ?? 0}`;
+              labelWrap.appendChild(labelEl);
+              labelWrap.appendChild(countEl);
+	
+              const valueEditor = (() => {
+                if (isColorChannel) {
+                  return createHex8ColorEditor({
+                    label: null,
+                    value: range[idx] ?? colorFromIndex(idx),
+                    onChange: (v) => {
+                      const nextDomain = domain.slice();
+                      const nextRange = range.slice();
+                      nextDomain[idx] = entry.id;
+                      nextRange[idx] = v;
+                      state.pending = { ...state.pending, type: 'categorical', domain: nextDomain, range: nextRange };
+                      setDirty(true);
+                    },
+                    compact: true,
+                  });
+                }
+                const raw = range[idx];
+                const seeded = Number.isFinite(Number(raw)) ? Number(raw) : (buildNumericPalette(orderedEntries.length)[idx] ?? suggestMin);
+                const controls = new SuggestedSliderControls({
+                  value: seeded,
+                  suggested: [suggestMin, suggestMax],
+                  step: numericStep,
+                  inputMin: suggestMin,
+                  inputMax: suggestMax,
+                  onCommit: (v) => {
+                    const n = clampNumber(v, { min: suggestMin, max: suggestMax });
+                    if (n == null) return;
+                    const nextDomain = domain.slice();
+                    const nextRange = range.slice();
+                    nextDomain[idx] = entry.id;
+                    nextRange[idx] = n;
+                    state.pending = { ...state.pending, type: 'categorical', domain: nextDomain, range: nextRange };
+                    setDirty(true);
+                  },
+                });
+                registerControl(controls);
+                controls.element.style.maxWidth = '150px';
+                controls.element.style.gap = '6px';
+                controls.input.style.maxWidth = '60px';
+                controls.input.style.height = '28px';
+                return controls.element;
+              })();
+
+              const buttons = document.createElement('div');
+              buttons.style.display = 'grid';
+              buttons.style.gap = '-2px';
+              buttons.style.width = '18px';
+              const up = document.createElement('button');
+              up.type = 'button';
+              up.className = 'helios-ui-button helios-ui-button--compact';
+              up.textContent = '↑';
+              up.disabled = idx === 0;
+              const down = document.createElement('button');
+              down.type = 'button';
+              down.className = 'helios-ui-button helios-ui-button--compact';
+              down.textContent = '↓';
+              down.disabled = idx === orderedEntries.length - 1;
+              up.style.padding = '0px 4px';
+              down.style.padding = '0px 4px';
+              up.style.lineHeight = '1';
+              down.style.lineHeight = '1';
+              up.style.minWidth = '0';
+              down.style.minWidth = '0';
+              up.style.height = '16px';
+              down.style.height = '16px';
+              up.style.border = 'none';
+              down.style.border = 'none';
+              up.style.background = 'transparent';
+              down.style.background = 'transparent';
+              up.style.cursor = 'pointer';
+              down.style.cursor = 'pointer';
+              up.style.color = 'var(--helios-ui-text)';
+              down.style.color = 'var(--helios-ui-text)';
+              up.style.opacity = up.disabled ? '0.4' : '1';
+              down.style.opacity = down.disabled ? '0.4' : '1';
+              const move = (delta) => {
+                const nextDomain = domain.slice();
+                const nextRange = range.slice();
+                const a = idx;
+                const b = idx + delta;
+                [nextDomain[a], nextDomain[b]] = [nextDomain[b], nextDomain[a]];
+                [nextRange[a], nextRange[b]] = [nextRange[b], nextRange[a]];
+                const nextMeta = ensureCategoricalMeta();
+                nextMeta.categorical.sortOrder = 'manual';
+                state.pending = { ...state.pending, type: 'categorical', domain: nextDomain, range: nextRange, meta: nextMeta };
+                setDirty(true);
+                renderEditor();
+              };
+              up.addEventListener('click', () => move(-1));
+              down.addEventListener('click', () => move(1));
+              buttons.appendChild(up);
+              buttons.appendChild(down);
+
+              row.appendChild(labelWrap);
+              row.appendChild(valueEditor);
+              row.appendChild(buttons);
+              list.appendChild(row);
+            });
+
+            const visibleIds = new Set(orderedEntries.map((entry) => entry.id));
+            let hiddenCount = 0;
+            for (const entry of entries) {
+              if (!visibleIds.has(entry.id)) hiddenCount += Number(entry.count ?? 0) || 0;
+            }
+            const othersCount = hiddenCount;
+            const othersRow = document.createElement('div');
+            othersRow.style.display = 'grid';
+            othersRow.style.gridTemplateColumns = 'minmax(0, 1fr) auto auto';
+            othersRow.style.alignItems = 'center';
+            othersRow.style.gap = '4px';
+
+            const othersLabelWrap = document.createElement('div');
+            othersLabelWrap.style.display = 'grid';
+            othersLabelWrap.style.gap = '1px';
+            othersLabelWrap.style.minWidth = '0';
+            othersLabelWrap.style.textAlign = 'right';
+            othersLabelWrap.style.justifyItems = 'end';
+            const othersLabel = document.createElement('div');
+            othersLabel.className = 'helios-ui-ellipsis';
+            othersLabel.textContent = 'Others';
+            othersLabel.title = 'Others (default)';
+            const othersCountEl = document.createElement('div');
+            othersCountEl.style.fontSize = '11px';
+            othersCountEl.style.color = 'var(--helios-ui-muted)';
+            othersCountEl.textContent = `count: ${othersCount}`;
+            othersLabelWrap.appendChild(othersLabel);
+            othersLabelWrap.appendChild(othersCountEl);
+
+            const othersEditor = (() => {
+              if (isColorChannel) {
+                return createHex8ColorEditor({
+                  label: null,
+                  value: typeof state.pending.defaultValue === 'string' ? state.pending.defaultValue : '#888888ff',
+                  onChange: (v) => {
+                    state.pending = { ...state.pending, type: 'categorical', defaultValue: v };
+                    setDirty(true);
+                  },
+                  compact: true,
+                });
+              }
+              const fallback = Number.isFinite(Number(state.pending.defaultValue))
+                ? Number(state.pending.defaultValue)
+                : suggestMin;
+              const controls = new SuggestedSliderControls({
+                value: fallback,
+                suggested: [suggestMin, suggestMax],
+                step: numericStep,
+                inputMin: suggestMin,
+                inputMax: suggestMax,
+                onCommit: (v) => {
+                  const n = clampNumber(v, { min: suggestMin, max: suggestMax });
+                  if (n == null) return;
+                  state.pending = { ...state.pending, type: 'categorical', defaultValue: n };
+                  setDirty(true);
+                },
+              });
+              registerControl(controls);
+              controls.element.style.maxWidth = '150px';
+              controls.element.style.gap = '6px';
+              controls.input.style.maxWidth = '60px';
+              controls.input.style.height = '28px';
+              return controls.element;
+            })();
+
+            const othersSpacer = document.createElement('div');
+            othersSpacer.style.width = '18px';
+            othersSpacer.style.height = '18px';
+
+            othersRow.appendChild(othersLabelWrap);
+            othersRow.appendChild(othersEditor);
+            othersRow.appendChild(othersSpacer);
+            list.appendChild(othersRow);
+
+            const listWrap = document.createElement('div');
+            listWrap.style.maxHeight = '240px';
+            listWrap.style.overflowY = 'auto';
+            listWrap.style.paddingRight = '4px';
+            listWrap.appendChild(list);
+
+            orderSelect.style.maxWidth = '170px';
+            orderSelect.style.width = '100%';
+            orderSelect.style.height = '34px';
+            maxInput.style.maxWidth = '100px';
+            maxInput.style.height = '34px';
+
+            let distributeButton = null;
+            if (!isColorChannel) {
+              distributeButton = document.createElement('button');
+              distributeButton.type = 'button';
+              distributeButton.className = 'helios-ui-button helios-ui-button--compact';
+              distributeButton.textContent = 'Distribute';
+              distributeButton.addEventListener('click', () => {
+                applyOrdering({ forcePalette: true });
+                renderEditor();
+              });
+            }
+
+            const categoriesSection = createSubsectionHeader({
+              title: 'Categories',
+              tooltip: 'Edit category colors and reorder manually when needed.',
+              action: isColorChannel ? applyPaletteButton : distributeButton,
+            });
+            const sectionBody = document.createElement('div');
+            sectionBody.style.display = 'grid';
+            sectionBody.style.gap = '8px';
+            sectionBody.style.width = '100%';
+
+            const topRow = document.createElement('div');
+            topRow.style.display = 'grid';
+            topRow.style.gridTemplateColumns = 'minmax(0, 1fr) auto';
+            topRow.style.gap = '4px';
+            topRow.style.alignItems = 'end';
+            topRow.appendChild(buildFullWidthControl({
+              label: 'Order',
+              hint: 'Sort categories by frequency (default), alphabetical, natural, or manual order.',
+              control: orderSelect,
+              alignRight: false,
+            }));
+            topRow.appendChild(buildFullWidthControl({
+              label: 'Max',
+              hint: 'Limit categories to a maximum (auto uses the palette size when applicable). Leave empty for auto.',
+              control: maxWrap,
+              alignRight: true,
+            }));
+            sectionBody.appendChild(topRow);
+
+            if (!isColorChannel) {
+              const { min: numericMin, max: numericMax, direction: numericDirection } = resolveNumericSettings();
+              const rangeWrap = document.createElement('div');
+              rangeWrap.style.display = 'flex';
+              rangeWrap.style.gap = '6px';
+              rangeWrap.style.alignItems = 'center';
+              const minInput = document.createElement('input');
+              minInput.type = 'number';
+              minInput.className = 'helios-ui-number';
+              minInput.value = String(numericMin);
+              const maxInput = document.createElement('input');
+              maxInput.type = 'number';
+              maxInput.className = 'helios-ui-number';
+              maxInput.value = String(numericMax);
+              minInput.style.maxWidth = '80px';
+              maxInput.style.maxWidth = '80px';
+              minInput.style.height = '30px';
+              maxInput.style.height = '30px';
+
+              const updateNumericRange = () => {
+                const minVal = clampNumber(minInput.value);
+                const maxVal = clampNumber(maxInput.value);
+                const nextMeta = ensureCategoricalMeta();
+                if (Number.isFinite(minVal) && Number.isFinite(maxVal)) {
+                  nextMeta.categorical.numericRange = [minVal, maxVal];
+                } else {
+                  nextMeta.categorical.numericRange = null;
+                }
+                updatePendingMeta(nextMeta);
+              };
+              minInput.addEventListener('change', () => {
+                updateNumericRange();
+              });
+              maxInput.addEventListener('change', () => {
+                updateNumericRange();
+              });
+              rangeWrap.appendChild(minInput);
+              rangeWrap.appendChild(maxInput);
+
+              const directionSelect = document.createElement('select');
+              directionSelect.className = 'helios-ui-select';
+              const ascOpt = document.createElement('option');
+              ascOpt.value = 'asc';
+              ascOpt.textContent = 'Ascending';
+              const descOpt = document.createElement('option');
+              descOpt.value = 'desc';
+              descOpt.textContent = 'Descending';
+              directionSelect.appendChild(ascOpt);
+              directionSelect.appendChild(descOpt);
+              directionSelect.value = numericDirection;
+              directionSelect.style.maxWidth = '140px';
+              directionSelect.style.height = '34px';
+              directionSelect.addEventListener('change', () => {
+                const nextMeta = ensureCategoricalMeta();
+                nextMeta.categorical.numericDirection = directionSelect.value === 'desc' ? 'desc' : 'asc';
+                updatePendingMeta(nextMeta);
+              });
+
+              const numericRow = document.createElement('div');
+              numericRow.style.display = 'grid';
+              numericRow.style.gridTemplateColumns = 'minmax(0, 1fr) auto';
+              numericRow.style.gap = '4px';
+              numericRow.style.alignItems = 'end';
+              numericRow.appendChild(buildFullWidthControl({
+                label: 'Range',
+                hint: 'Range used when distributing category values.',
+                control: rangeWrap,
+                alignRight: false,
+              }));
+              numericRow.appendChild(buildFullWidthControl({
+                label: 'Direction',
+                hint: 'Distribute values in ascending or descending order.',
+                control: directionSelect,
+                alignRight: true,
+              }));
+              sectionBody.appendChild(numericRow);
+            }
+            sectionBody.appendChild(listWrap);
+            categoriesSection.wrap.appendChild(sectionBody);
+            editorBody.appendChild(categoriesSection.wrap);
+
+          }
 
 	        if (pendingType === 'colormap') {
 	          state.pending = normalizeRuleList(state.pending);
@@ -3326,9 +4718,49 @@ export class MappersPanel {
         return true;
       };
 
+      let networkAttributeUnsub = null;
+      const attachNetworkAttributeListeners = () => {
+        if (networkAttributeUnsub) {
+          networkAttributeUnsub();
+          networkAttributeUnsub = null;
+        }
+        const network = net();
+        if (!network) return;
+        const handler = (event) => {
+          const scope = event?.detail?.scope;
+          if (scope && scope !== mode) return;
+          const type = event?.type ?? '';
+          if (type === 'attribute:changed') {
+            const op = event?.detail?.op ?? '';
+            if (op !== 'categorize' && op !== 'decategorize') return;
+          }
+          renderEditor();
+        };
+        if (typeof network.on === 'function') {
+          const unsubs = [
+            network.on('attribute:defined', handler),
+            network.on('attribute:removed', handler),
+            network.on('attribute:changed', handler),
+          ];
+          networkAttributeUnsub = () => {
+            for (const unsub of unsubs) unsub?.();
+          };
+        } else if (typeof network.addEventListener === 'function') {
+          network.addEventListener('attribute:defined', handler);
+          network.addEventListener('attribute:removed', handler);
+          network.addEventListener('attribute:changed', handler);
+          networkAttributeUnsub = () => {
+            network.removeEventListener('attribute:defined', handler);
+            network.removeEventListener('attribute:removed', handler);
+            network.removeEventListener('attribute:changed', handler);
+          };
+        }
+      };
+
       // Recompute suggested domains when the underlying network changes.
       const onNetworkReplaced = () => {
         updateAutoDomainFromNetwork();
+        attachNetworkAttributeListeners();
         renderEditor();
       };
       let unsub = null;
@@ -3339,6 +4771,9 @@ export class MappersPanel {
         unsub = () => helios.removeEventListener('network:replaced', onNetworkReplaced);
       }
       if (unsub) ui._controlCleanups.add(unsub);
+
+      attachNetworkAttributeListeners();
+      if (networkAttributeUnsub) ui._controlCleanups.add(() => networkAttributeUnsub?.());
 
       resetPendingFromLive();
       return { root, state, channels, setChannel };

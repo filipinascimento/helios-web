@@ -536,23 +536,21 @@ export class HeliosUI {
         if (!info || info.type !== 'boolean') return null;
         if (typeof this.helios[accessorName] !== 'function') return null;
         const attribute = this.bindHeliosAccessor(accessorName);
-        const toggle = document.createElement('button');
-        toggle.type = 'button';
+        const toggle = document.createElement('input');
+        toggle.type = 'checkbox';
         toggle.className = 'helios-ui-toggle';
-        toggle.setAttribute('role', 'switch');
         toggle.setAttribute('aria-label', info.label ?? accessorName);
         toggle.disabled = attribute.readOnly;
 
-        const toggleThumb = document.createElement('span');
-        toggleThumb.className = 'helios-ui-toggle__thumb';
-        toggleThumb.setAttribute('aria-hidden', 'true');
         const toggleText = document.createElement('span');
         toggleText.className = 'helios-ui-toggle__text';
-        toggle.appendChild(toggleThumb);
-        toggle.appendChild(toggleText);
+        toggleText.style.fontWeight = '600';
+        toggleText.style.fontSize = '12px';
+        toggleText.style.color = 'var(--helios-ui-muted)';
 
         const syncToggle = (value) => {
           const enabled = Boolean(value);
+          toggle.checked = enabled;
           toggle.setAttribute('aria-checked', enabled ? 'true' : 'false');
           toggleText.textContent = enabled ? 'On' : 'Off';
         };
@@ -561,14 +559,14 @@ export class HeliosUI {
           syncToggle(value);
         });
 
-        toggle.addEventListener('click', () => {
-          const next = toggle.getAttribute('aria-checked') !== 'true';
-          attribute.write(next, { source: 'ui', event: 'change' });
+        toggle.addEventListener('change', () => {
+          attribute.write(toggle.checked, { source: 'ui', event: 'change' });
         });
 
         const controls = document.createElement('div');
         controls.className = 'helios-ui-row__controls';
         controls.appendChild(toggle);
+        controls.appendChild(toggleText);
         const { row } = createAlignedRow({
           title: info.label ?? accessorName,
           hint: info.description ?? null,

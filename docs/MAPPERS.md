@@ -38,6 +38,41 @@ If you’re using `HeliosUI`, the Mappers panel includes a searchable colormap p
 
 Note: mapper configs that rely on arbitrary JavaScript functions (e.g. `.transform((v) => …)` or `.scale((v) => …)`) aren’t safely serializable. The UI focuses on declarative mappings (constant/passthrough/linear/colormap) plus “Default” and simple “Overrides” (rules like “-1 → gray”).
 
+## Categorical mapping
+
+Categorical channels map discrete attribute values to a fixed palette.
+
+```js
+mapper.channel('color').categorical(['A', 'B', 'C'], ['#ff6b6bff', '#4dabf7ff', '#51cf66ff']).done();
+```
+
+You can also set a categorical channel via config objects (useful for serialization):
+
+```js
+mapper.setChannel('color', {
+	attributes: 'community',
+	type: 'categorical',
+	domain: [0, 1, 2],
+	range: ['#ff6b6bff', '#4dabf7ff', '#51cf66ff'],
+	defaultValue: '#888888ff',
+	meta: {
+		categorical: {
+			sortOrder: 'frequency',
+			maxCategories: null,
+			palette: 'cmasher:ember',
+			preferScheme: true,
+		},
+	},
+});
+```
+
+In `HeliosUI`, the Mappers panel provides:
+
+- Attribute selection for categorical fields (including string attributes that can be converted to categorical).
+- Sorting by frequency, alphabetical, natural, or manual order.
+- Palette selection (with scheme preference) and optional max category limits.
+- Manual color edits and category reordering.
+
 ## Built-in transforms
 
 Mapper channels support `transformType` for common pre-transforms (`log`, `log1p`, `logit`, `power`). Use `transformType: 'percentile'` (or `'quantile'`) to rank values across the current attribute buffer into a 0–1 range before scaling.
