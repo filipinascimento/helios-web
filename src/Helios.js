@@ -330,7 +330,7 @@ export class Helios extends EventTarget {
       description: 'Scales mapped outline widths',
       defaultValue: 0,
       domain: { min: 0, max: 10 },
-      recommendedRange: { min: 0.0, max: 3.0 },
+      recommendedRange: { min: 0.0, max: 10.0 },
       step: 0.01,
     },
     nodeOutlineWidthBase: {
