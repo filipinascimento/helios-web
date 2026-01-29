@@ -46,6 +46,7 @@ export class Scheduler {
     this._attributeTimer = null;
     this._lastAttributeTime = -Infinity;
     this._lastAttributeRenderCount = 0;
+    this.renderPump = null;
     this.debug =
       options.debug && typeof options.debug.log === 'function'
         ? options.debug
@@ -75,6 +76,10 @@ export class Scheduler {
   setRenderCallback(callback) {
     this.renderCallback = callback;
     this.debug.log('scheduler', 'Render callback registered');
+  }
+
+  setRenderPump(callback) {
+    this.renderPump = typeof callback === 'function' ? callback : null;
   }
 
   requestLayout() {
@@ -317,6 +322,15 @@ export class Scheduler {
       }
       this._needsGeometry = false;
       this._needsRender = true;
+    }
+
+    if (this.renderPump && this.currentFrame) {
+      try {
+        const wantsRender = this.renderPump({ timestamp, frame: this.currentFrame });
+        if (wantsRender) this.requestRender();
+      } catch (error) {
+        console.warn('Scheduler render pump failed', error);
+      }
     }
 
     if (this.renderCallback && this.currentFrame && this._needsRender) {

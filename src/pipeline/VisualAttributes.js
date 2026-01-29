@@ -83,6 +83,7 @@ export class VisualAttributes {
   constructor(network, debug) {
     this.network = network;
     this.debug = debug;
+    this.positionDelegate = null;
     this.maxInitializedNodeId = -1;
     this.ensureAttributes();
     this.registerDenseBuffers();
@@ -90,6 +91,8 @@ export class VisualAttributes {
   }
 
   get nodePositions() {
+    const delegateView = this.positionDelegate?.getPositionView?.() ?? null;
+    if (delegateView) return delegateView;
     return this.getNodeAttributeView(NODE_POSITION_ATTRIBUTE);
   }
 
@@ -127,6 +130,14 @@ export class VisualAttributes {
 
   get edgeStates() {
     return this.getEdgeAttributeView(EDGE_STATE_ATTRIBUTE);
+  }
+
+  setPositionDelegate(delegate) {
+    this.positionDelegate = delegate ?? null;
+  }
+
+  clearPositionDelegate() {
+    this.positionDelegate = null;
   }
 
   getNodeAttributeView(name) {
@@ -586,6 +597,7 @@ export class VisualAttributes {
   }
 
   markPositionsDirty() {
+    this.positionDelegate?.markPositionsDirty?.();
     this.bumpNodeAttributes(NODE_POSITION_ATTRIBUTE, NODE_SIZE_ATTRIBUTE);
     this.bumpEdgeAttributes(EDGE_ENDPOINTS_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
   }

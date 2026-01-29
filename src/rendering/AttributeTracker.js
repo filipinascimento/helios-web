@@ -440,6 +440,7 @@ class WebGLAttributeRenderer {
       );
     }
 
+    const overrides = frame?.positionOverrides ?? null;
     return this.graphLayer.withDenseGraph(network, (geometry) => {
       if (!geometry) return null;
       const encoded = this.encodeAttributes(network, geometry, config);
@@ -551,7 +552,7 @@ class WebGLAttributeRenderer {
               topologyVersion: geometry.nodes.versions?.topology ?? 0,
               count: geometry.nodes.count,
               trackViewIdentity: true,
-            }, denseRequests);
+            });
           }
           if (nodeOutlineWidths) {
             cache.uploadArrayBuffer(gl, 'dense:node:outlineWidths', nodeOutlineWidths, {
@@ -595,7 +596,7 @@ class WebGLAttributeRenderer {
           gl.bufferData(gl.ARRAY_BUFFER, encoded.nodeEncoded.view, gl.DYNAMIC_DRAW);
         }
         gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, geometry.nodes.count);
-        });
+      });
       }
 
       if (geometry.edges.count && encoded.edgeEncoded && config.edgeAttribute) {
@@ -944,7 +945,7 @@ class WebGLAttributeRenderer {
 
       this.runner?.run?.(passes, { gl, device: this.device });
       return { ...this.targets, depthTargets: this.depthTargets };
-    }, denseRequests);
+    }, denseRequests, overrides);
   }
 
   readDepth(target, x, y) {
@@ -1480,6 +1481,8 @@ class WebGPUAttributeRenderer {
       );
     }
 
+    const overrides = frame?.positionOverrides ?? null;
+
     return this.graphLayer.withDenseGraph(network, (geometry) => {
       if (!geometry) return null;
       const encoded = this.encodeAttributes(network, geometry, config);
@@ -1932,7 +1935,7 @@ class WebGPUAttributeRenderer {
 
       this.runner?.run?.(passes, { device: this.device });
       return { ...this.targets, depthTargets: this.depthTargets };
-    }, denseRequests);
+    }, denseRequests, overrides);
   }
 }
 

@@ -58,6 +58,18 @@ declare module 'helios-network' {
     getEdgeAttributeBuffer<T extends ArrayBufferView = Float32Array>(name: string): AttributeBuffer<T>;
     getNetworkAttributeBuffer<T extends ArrayBufferView = Float32Array>(name: string): AttributeBuffer<T>;
 
+    interpolateNodeAttribute(
+      name: string,
+      target: Float32Array | number[],
+      options?: {
+        elapsedMs?: number;
+        layoutElapsedMs?: number;
+        smoothing?: number;
+        minDisplacementRatio?: number;
+        emitEvent?: boolean;
+      }
+    ): boolean;
+
     setNodeStringAttribute(name: string, index: number, value: string | null | undefined): void;
     getNodeStringAttribute(name: string, index: number): string | null;
 

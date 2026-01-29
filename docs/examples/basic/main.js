@@ -1,6 +1,8 @@
 import HeliosNetwork, { AttributeType } from 'helios-network';
 // When consuming the published package use `import { Helios } from 'helios-web-next';`
 import { Helios, EVENTS, HeliosUI } from '../../../src/index.js';
+import { UIAttribute } from '../../../src/ui/state/UIAttribute.js';
+import { createSliderRow } from '../../../src/ui/controls/createSliderRow.js';
 
 // Set this to an object like { helios: true, mapper: true, scheduler: true } to re-enable debug logs.
 const DEFAULT_NODE_COUNT = 2_000;
@@ -29,6 +31,15 @@ function resolveLayoutType() {
   if (normalized === 'none' || normalized === 'static') return 'none';
   if (normalized === 'jitter' || normalized === 'legacy') return 'jitter';
   return 'force3d';
+}
+
+function resolveLayoutIntervalMs() {
+  const params = new URLSearchParams(window.location.search);
+  const value = Number(params.get('layoutIntervalMs') ?? params.get('layoutInterval'));
+  if (Number.isFinite(value) && value >= 0) {
+    return Math.floor(value);
+  }
+  return 0;
 }
 
 function resolveEdgeTransparencyMode() {
@@ -226,6 +237,7 @@ async function bootstrap() {
   const target = document.getElementById('app');
   const mode = resolveMode();
   const layoutType = resolveLayoutType();
+  let layoutIntervalMs = resolveLayoutIntervalMs();
   const edgeTransparency = resolveEdgeTransparencyMode();
   const heliosOptions = {
     container: target,
@@ -239,6 +251,7 @@ async function bootstrap() {
             center: [0, 0, 0],
             radius: 220*Math.sqrt(nodeCount/1000),
             depth: mode === '3d' ? 140 : 0,
+            updateIntervalMs: layoutIntervalMs,
             // Slightly stronger forces for the demo; tweak via query params if needed.
             kRepulsion: 3,
             kAttraction: 0.003,
@@ -314,6 +327,200 @@ async function bootstrap() {
   // Create the Mappers panel after configuring demo mappers so it doesn't
   // initialize from the non-serializable default mapper.
   heliosUI.createMappersPanel({ dock: 'top-right', position: { x: 16, y: 16 } });
+
+  const createLayoutPanel = () => {
+    const content = document.createElement('div');
+
+    const createRow = (title, control) => {
+      const row = document.createElement('div');
+      row.className = 'helios-ui-row helios-ui-row--aligned';
+      const label = document.createElement('div');
+      label.className = 'helios-ui-label';
+      const titleRow = document.createElement('div');
+      titleRow.className = 'helios-ui-label__title-row';
+      const titleEl = document.createElement('div');
+      titleEl.className = 'helios-ui-label__title';
+      titleEl.textContent = title;
+      titleRow.appendChild(titleEl);
+      label.appendChild(titleRow);
+      row.appendChild(label);
+      const controlWrap = document.createElement('div');
+      controlWrap.className = 'helios-ui-row__controls';
+      if (control) controlWrap.appendChild(control);
+      row.appendChild(controlWrap);
+      return row;
+    };
+
+    const layoutSelect = document.createElement('select');
+    layoutSelect.className = 'helios-ui-select';
+    const options = [
+      { value: 'force3d', label: 'Force (worker)' },
+      { value: 'jitter', label: 'Jitter (worker)' },
+      { value: 'none', label: 'Static (no layout)' },
+    ];
+    for (const entry of options) {
+      const opt = document.createElement('option');
+      opt.value = entry.value;
+      opt.textContent = entry.label;
+      layoutSelect.appendChild(opt);
+    }
+    layoutSelect.value = layoutType;
+
+    const layoutIntervalSelect = document.createElement('select');
+    layoutIntervalSelect.className = 'helios-ui-select';
+    const intervalOptions = [
+      { value: 0, label: 'Real-time' },
+      { value: 250, label: '250 ms' },
+      { value: 1000, label: '1 s' },
+      { value: 2000, label: '2 s' },
+    ];
+    for (const entry of intervalOptions) {
+      const opt = document.createElement('option');
+      opt.value = String(entry.value);
+      opt.textContent = entry.label;
+      layoutIntervalSelect.appendChild(opt);
+    }
+    layoutIntervalSelect.value = String(layoutIntervalMs);
+
+    const interpolatorToggle = document.createElement('button');
+    interpolatorToggle.type = 'button';
+    interpolatorToggle.className = 'helios-ui-toggle';
+    interpolatorToggle.setAttribute('role', 'switch');
+    interpolatorToggle.setAttribute('aria-checked', 'false');
+    const toggleThumb = document.createElement('span');
+    toggleThumb.className = 'helios-ui-toggle__thumb';
+    toggleThumb.setAttribute('aria-hidden', 'true');
+    const toggleText = document.createElement('span');
+    toggleText.className = 'helios-ui-toggle__text';
+    toggleText.textContent = 'Off';
+    interpolatorToggle.appendChild(toggleThumb);
+    interpolatorToggle.appendChild(toggleText);
+
+    const updateInterpolatorLabel = () => {
+      const enabled = interpolatorToggle.getAttribute('aria-checked') === 'true';
+      toggleText.textContent = enabled ? 'On' : 'Off';
+    };
+
+    let interpolationSmoothness = 6;
+    let interpolationTargetRemaining = 0.1;
+
+    const smoothnessAttribute = UIAttribute.number({
+      id: 'interpolation-smoothness',
+      label: 'Interpolation smoothness',
+      min: 1,
+      max: 12,
+      step: 0.5,
+      get: () => interpolationSmoothness,
+      set: (value) => {
+        const next = Number(value);
+        if (!Number.isFinite(next)) return;
+        interpolationSmoothness = next;
+        if (interpolatorToggle.getAttribute('aria-checked') === 'true') {
+          applyInterpolation();
+        }
+      },
+    });
+
+    const remainingAttribute = UIAttribute.number({
+      id: 'interpolation-remaining',
+      label: 'Interpolation remaining',
+      min: 0.01,
+      max: 0.5,
+      step: 0.01,
+      get: () => interpolationTargetRemaining,
+      set: (value) => {
+        const next = Number(value);
+        if (!Number.isFinite(next)) return;
+        interpolationTargetRemaining = next;
+        if (interpolatorToggle.getAttribute('aria-checked') === 'true') {
+          applyInterpolation();
+        }
+      },
+    });
+
+    const smoothnessRow = createSliderRow(smoothnessAttribute, { step: 0.5, precision: 1 });
+    const remainingRow = createSliderRow(remainingAttribute, { step: 0.01, precision: 2 });
+
+    const applyInterpolation = () => {
+      const enabled = interpolatorToggle.getAttribute('aria-checked') === 'true';
+      const backend = typeof helios?.network?.interpolateNodeAttribute === 'function' ? 'network' : 'cpu';
+      smoothnessRow.element.style.display = backend === 'cpu' ? '' : 'none';
+      remainingRow.element.style.display = backend === 'cpu' ? 'none' : '';
+      const interpolationOptions = {
+        enabled,
+        backend,
+        minDisplacementRatio: 0.0005,
+      };
+      if (backend === 'cpu') {
+        interpolationOptions.smoothing = interpolationSmoothness;
+      } else {
+        interpolationOptions.autoSmoothing = true;
+        interpolationOptions.targetRemaining = interpolationTargetRemaining;
+      }
+      helios.interpolation(interpolationOptions);
+    };
+
+    const applyLayout = (value) => {
+      const bounds = [-500, -500, 500, 500];
+      if (value === 'none') {
+        seedGridPositions();
+        const layoutInstance = helios.createLayout({ type: 'static', options: { bounds } });
+        helios.layout(layoutInstance);
+        return;
+      }
+      const workerOptions = {
+        layout: value,
+        mode,
+        center: [0, 0, 0],
+        radius: 220 * Math.sqrt(nodeCount / 1000),
+        depth: mode === '3d' ? 140 : 0,
+        updateIntervalMs: layoutIntervalMs,
+        kRepulsion: 3,
+        kAttraction: 0.003,
+        kGravity: 0.0008,
+        repulsionStrategy: 'barnes-hut',
+        negativesPerNode: 64,
+        negativeSampling: true,
+      };
+      const layoutInstance = helios.createLayout({ type: 'worker', options: workerOptions });
+      helios.layout(layoutInstance);
+    };
+
+    layoutSelect.addEventListener('change', () => {
+      applyLayout(layoutSelect.value);
+    });
+
+    layoutIntervalSelect.addEventListener('change', () => {
+      const next = Number(layoutIntervalSelect.value);
+      layoutIntervalMs = Number.isFinite(next) ? Math.max(0, next) : 0;
+      applyLayout(layoutSelect.value);
+    });
+
+    interpolatorToggle.addEventListener('click', () => {
+      const next = interpolatorToggle.getAttribute('aria-checked') !== 'true';
+      interpolatorToggle.setAttribute('aria-checked', next ? 'true' : 'false');
+      updateInterpolatorLabel();
+      applyInterpolation();
+    });
+
+    applyInterpolation();
+
+    content.appendChild(createRow('Layout', layoutSelect));
+    content.appendChild(createRow('Layout interval', layoutIntervalSelect));
+    content.appendChild(createRow('Interpolation', interpolatorToggle));
+    content.appendChild(smoothnessRow.element);
+    content.appendChild(remainingRow.element);
+
+    return heliosUI.createPanel({
+      id: 'helios-ui-layout',
+      title: 'Layout',
+      dock: 'top-right',
+      position: { x: 16, y: 360 },
+      content,
+    });
+  };
+
+  createLayoutPanel();
 
   helios.on(EVENTS.NETWORK_REPLACED, () => {
     configureDemoMappers();

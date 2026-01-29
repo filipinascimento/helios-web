@@ -86,6 +86,11 @@
 ### CPU fallback (optional)
 - Interpolate into a cached CPU buffer when GPU not available.
 
+### Demo/support tasks (short-term)
+- Add a layout update interval option to worker layouts to demonstrate sparse updates.
+- Expose the interval in the demo UI so interpolation effects are visible.
+- Document that per-frame rendering can remain smooth even when layout updates are sparse.
+
 ---
 
 ## 5) Renderer/Layout Integration
@@ -122,6 +127,7 @@ interpolation: {
 ## 7) Docs
 - Add a new doc describing delegation usage and GPU interpolation.
 - Reference existing notes in `Future/gpu_position_interpolation_notes.md`.
+- Document buffer-copy tradeoffs (worker snapshots, CPU interpolation snapshots, dense repacks).
 
 ---
 

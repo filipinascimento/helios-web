@@ -116,6 +116,13 @@ export class WorkerLayout extends Layout {
     if (!this.worker || this.pending) {
       return false;
     }
+    const intervalMs = Number.isFinite(this.options.updateIntervalMs)
+      ? Math.max(0, this.options.updateIntervalMs)
+      : 0;
+    const now = performance.now();
+    if (intervalMs > 0 && this.lastUpdate && (now - this.lastUpdate) < intervalMs) {
+      return false;
+    }
     this.pending = true;
     let positionsCopy = null;
     const snapshot = () => {
@@ -130,13 +137,14 @@ export class WorkerLayout extends Layout {
     this.worker.postMessage(
       {
         type: 'tick',
-        timestamp: performance.now(),
+        timestamp: now,
         positions: positionsCopy,
         nodeIndices,
         edges,
       },
       [positionsCopy.buffer],
     );
+    this.lastUpdate = now;
     return false;
   }
 
@@ -160,7 +168,8 @@ export class WorkerLayout extends Layout {
       // Inform downstream consumers that position-dependent buffers changed.
       this.visuals?.markPositionsDirty?.();
       if (view) {
-        this.emitUpdate({ positions: view });
+        const layoutTimestamp = performance.now();
+        this.emitUpdate({ positions: view, timestamp: layoutTimestamp });
       }
       return true;
     }

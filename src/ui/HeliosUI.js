@@ -11,6 +11,7 @@ import { TabbedPanel } from './panels/TabbedPanel.js';
 import { colormaps } from '../colors/colormaps.js';
 import { VISUAL_ATTRIBUTE_MAP } from '../pipeline/constants.js';
 import { MappersPanel } from './panels/MappersPanel.js';
+import { LayoutPanel } from './panels/LayoutPanel.js';
 import { clampNumber } from './utils/numbers.js';
 import { toHex8 } from './utils/colors.js';
 import { isPublicAttributeName } from './utils/attributes.js';
@@ -3540,5 +3541,9 @@ export class HeliosUI {
         { id: 'edges', title: 'Edges', content: edgeTab.root },
       ],
     });
+  }
+
+  createLayoutPanel(options = {}) {
+    return new LayoutPanel(this, options).create();
   }
 }

@@ -621,7 +621,34 @@ export class GraphLayer extends Layer {
     return { nodes, edges };
   }
 
-  withDenseGraph(network, fn, explicitRequests = null) {
+  applyDenseOverrides(geometry, overrides) {
+    if (!geometry || !overrides) return geometry;
+    const nodeOverride = overrides?.nodes?.positions ?? null;
+    if (nodeOverride?.view) {
+      geometry.nodes.positions = nodeOverride.view;
+      if (Number.isFinite(nodeOverride.count)) {
+        geometry.nodes.count = nodeOverride.count;
+      }
+      if (geometry.nodes.versions) {
+        geometry.nodes.versions.positions = nodeOverride.version ?? geometry.nodes.versions.positions;
+        geometry.nodes.versions.topology = nodeOverride.topologyVersion ?? geometry.nodes.versions.topology;
+      }
+    }
+    const edgeOverride = overrides?.edges?.segments ?? null;
+    if (edgeOverride?.view) {
+      geometry.edges.segments = edgeOverride.view;
+      if (Number.isFinite(edgeOverride.count)) {
+        geometry.edges.count = edgeOverride.count;
+      }
+      if (geometry.edges.versions) {
+        geometry.edges.versions.segments = edgeOverride.version ?? geometry.edges.versions.segments;
+        geometry.edges.versions.topology = edgeOverride.topologyVersion ?? geometry.edges.versions.topology;
+      }
+    }
+    return geometry;
+  }
+
+  withDenseGraph(network, fn, explicitRequests = null, overrides = null) {
     if (!network) return fn(this.readDenseGraph(null));
     const packing = this.getDensePackingInfo(network);
     const requests = Array.isArray(explicitRequests) && explicitRequests.length
@@ -639,9 +666,28 @@ export class GraphLayer extends Layer {
       if (needEdgeIndex && !hasEdgeIndex) requests.unshift(['edge', 'index']);
     }
 
+    const activeRequests = requests.filter(([scope, name]) => {
+      if (name === 'index') return true;
+      if (scope === 'node' && typeof network.hasNodeAttribute === 'function') {
+        try {
+          return network.hasNodeAttribute(name);
+        } catch (_) {
+          return true;
+        }
+      }
+      if (scope === 'edge' && typeof network.hasEdgeAttribute === 'function') {
+        try {
+          return network.hasEdgeAttribute(name);
+        } catch (_) {
+          return true;
+        }
+      }
+      return true;
+    });
+
     // Updates must happen outside of buffer access.
     try {
-      for (const [scope, name] of requests) {
+      for (const [scope, name] of activeRequests) {
         if (scope !== 'node' && scope !== 'edge') continue;
         if (name === 'index') {
           if (scope === 'node') network.updateDenseNodeIndexBuffer?.();
@@ -718,20 +764,20 @@ export class GraphLayer extends Layer {
         return geometry;
       };
 
-      const required = new Set(requests.map(([scope, name]) => `${scope}:${name}`));
+      const required = new Set(activeRequests.map(([scope, name]) => `${scope}:${name}`));
 
       if (typeof network.withDenseBufferViews === 'function') {
-        return network.withDenseBufferViews(requests, (views) => {
+        return network.withDenseBufferViews(activeRequests, (views) => {
           const geometry = this.readDenseGraphFromViews(views, packing, required);
           augmentDerivedEdgeVersions(geometry);
-          return fn(geometry);
+          return fn(this.applyDenseOverrides(geometry, overrides));
         });
       }
 
       if (typeof network.withBufferAccess === 'function') {
         return network.withBufferAccess(() => {
           const views = { node: Object.create(null), edge: Object.create(null) };
-          for (const [scope, name] of requests) {
+          for (const [scope, name] of activeRequests) {
             if (scope !== 'node' && scope !== 'edge') continue;
             if (name === 'index') {
               views[scope].index = scope === 'node'
@@ -745,7 +791,7 @@ export class GraphLayer extends Layer {
           }
           const geometry = this.readDenseGraphFromViews(views, packing, required);
           augmentDerivedEdgeVersions(geometry);
-          return fn(geometry);
+          return fn(this.applyDenseOverrides(geometry, overrides));
         });
       }
 

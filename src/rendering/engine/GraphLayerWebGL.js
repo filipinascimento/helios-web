@@ -785,6 +785,7 @@ export class GraphLayerWebGL extends GraphLayer {
     const network = frame?.network;
     if (!network) return;
     const { camera } = frame ?? {};
+    const overrides = frame?.positionOverrides ?? null;
     const gl = context.gl;
     const cameraUniforms = this.getCameraUniforms(camera);
     if (!cameraUniforms) return;
@@ -846,7 +847,7 @@ export class GraphLayerWebGL extends GraphLayer {
           this._nodeVersionsLast = null;
         }
         return true;
-      }, requests);
+      }, requests, overrides);
       if (!ok) return;
 
       const drawNodes = () => {

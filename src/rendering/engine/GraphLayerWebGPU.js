@@ -815,6 +815,7 @@ export class GraphLayerWebGPU extends GraphLayer {
     const network = frame?.network;
     if (!network) return;
     const { camera } = frame ?? {};
+    const overrides = frame?.positionOverrides ?? null;
     const gpuDevice = this.device?.device;
     if (!gpuDevice) return;
     const maxBindingSize = gpuDevice.limits?.maxStorageBufferBindingSize;
@@ -868,7 +869,7 @@ export class GraphLayerWebGPU extends GraphLayer {
         this._edgeDataCache.count = 0;
       }
       return true;
-    }, requests);
+    }, requests, overrides);
     if (!ok || !this.cameraBuffer) return;
 
     weightedReady = weightedRequested && edgeCount > 0

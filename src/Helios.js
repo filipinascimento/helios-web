@@ -10,8 +10,12 @@ import { VisualAttributes } from './pipeline/VisualAttributes.js';
 import { createDefaultMappers, MapperCollection } from './pipeline/Mapper.js';
 import { createDebugLogger } from './utilities/DebugLogger.js';
 import { VISUAL_ATTRIBUTE_NAMES } from './pipeline/constants.js';
+import { CpuMirrorPositionDelegate, createPositionDelegateFromOptions } from './layouts/positions/PositionDelegate.js';
+import { CpuLinearPositionInterpolator } from './layouts/positions/PositionInterpolator.js';
 
 const {
+  NODE_POSITION_ATTRIBUTE,
+  EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
   NODE_STATE_ATTRIBUTE,
   EDGE_STATE_ATTRIBUTE,
   EDGE_ENDPOINTS_STATE_ATTRIBUTE,
@@ -408,6 +412,26 @@ export class Helios extends EventTarget {
     const container = options.container ?? document.getElementById('app') ?? document.body;
     this.layers = new LayerManager(container, { suppressBrowserGestures: options.suppressBrowserGestures !== false });
     this.visuals = new VisualAttributes(network, this.debug);
+    this._positionDelegate = null;
+    this._positionInterpolator = null;
+    this._positionOverrides = null;
+    this._positionDelegateSubscriptions = [];
+    this._positionInterpolationBackend = 'cpu';
+    this._positionInterpolationSource = 'network';
+    this._cpuInterpolationLastLayoutTimestamp = 0;
+    this._cpuInterpolationDeltaHistory = [];
+    this._networkInterpolation = {
+      active: false,
+      lastLayoutTimestamp: 0,
+      layoutElapsedMs: 16,
+      lastStepTimestamp: 0,
+      layoutDeltaHistory: [],
+      targetView: null,
+      targetLength: 0,
+    };
+    this._positionDelegationOptions = options.positions ?? null;
+    this._positionInterpolationOptions = options.interpolation ?? null;
+    this._configurePositioning(this._positionDelegationOptions, this._positionInterpolationOptions);
     this.nodeMapper = new MapperCollection('node', network, this.markMappersDirty, this.debug);
     this.edgeMapper = new MapperCollection('edge', network, this.markMappersDirty, this.debug);
     const optionMappers = options.mappers;
@@ -443,6 +467,14 @@ export class Helios extends EventTarget {
       attributeAutoUpdate: this.attributeUpdateOptions.autoUpdate,
       attributeMaxFps: this.attributeUpdateOptions.maxFps,
       attributeFrameSkip: this.attributeUpdateOptions.frameSkip,
+    });
+    this.scheduler.setRenderPump(({ timestamp }) => {
+      if (this.manualRendering) return false;
+      if (!this._positionInterpolator || this._positionInterpolationBackend !== 'cpu') return false;
+      const lastUpdate = this._positionInterpolator._lastUpdateTime ?? 0;
+      const durationMs = this._positionInterpolator.durationMs ?? 0;
+      const elapsed = timestamp - lastUpdate;
+      return durationMs > 0 && elapsed >= 0 && elapsed < durationMs;
     });
     if (options.prewarm === true) {
       this.prewarm({ updateDenseBuffers: options.prewarmDenseBuffers !== false });
@@ -686,6 +718,7 @@ export class Helios extends EventTarget {
     const prevNetwork = this.network;
     this.network = nextNetwork;
     this.visuals = new VisualAttributes(nextNetwork, this.debug);
+    this._configurePositioning(this._positionDelegationOptions, this._positionInterpolationOptions);
     this.visuals.seedMissingPositions(resolveSeedBoundsForLayout(layoutOption, this.layers.size, this.options.mode));
 
     if (options.mappers === null) {
@@ -710,11 +743,7 @@ export class Helios extends EventTarget {
 
     this._layout = this.createLayout(layoutOption);
     if (this._layout?.setUpdateListener) {
-      this._layout.setUpdateListener(() => {
-        this.visuals.markPositionsDirty();
-        this.scheduler.requestGeometry();
-        this.debug.log('layout', 'Layout requested geometry update');
-      });
+      this._layout.setUpdateListener((payload) => this._handleLayoutUpdate(payload));
     }
     await this._layout?.initialize?.();
     this._layout?.resize?.(this.layers.size);
@@ -1031,11 +1060,7 @@ export class Helios extends EventTarget {
   async initialize() {
     this.debug.log('helios', 'Initializing layout');
     if (this._layout?.setUpdateListener) {
-      this._layout.setUpdateListener(() => {
-        this.visuals.markPositionsDirty();
-        this.scheduler.requestGeometry();
-        this.debug.log('layout', 'Layout requested geometry update');
-      });
+      this._layout.setUpdateListener((payload) => this._handleLayoutUpdate(payload));
     }
     await this._layout?.initialize?.();
     this.debug.log('helios', 'Layout initialized', { layout: this._layout?.constructor?.name });
@@ -1129,6 +1154,24 @@ export class Helios extends EventTarget {
         timestamp: performance.now(),
         camera: this.renderer?.camera,
       };
+      const interpolationActive = this._advanceNetworkInterpolation(frame.timestamp);
+      const overrides = this._resolvePositionOverrides(frame.timestamp);
+      if (overrides) {
+        frame.positionOverrides = overrides;
+      }
+      if (interpolationActive) {
+        this.scheduler.requestGeometry();
+        this.scheduler.requestRender();
+      }
+      if (this._positionInterpolator && this._positionInterpolationBackend === 'cpu') {
+        const lastUpdate = this._positionInterpolator._lastUpdateTime ?? 0;
+        const durationMs = this._positionInterpolator.durationMs ?? 0;
+        const elapsed = frame.timestamp - lastUpdate;
+        if (durationMs > 0 && elapsed >= 0 && elapsed < durationMs) {
+          this.scheduler.requestGeometry();
+          this.scheduler.requestRender();
+        }
+      }
       if (!this.firstGeometryUpdateComplete) {
         this.firstGeometryUpdateComplete = true;
         this.debug.log('scheduler', 'First geometry frame ready', {
@@ -1155,6 +1198,12 @@ export class Helios extends EventTarget {
         const dt = now - this._lastRenderTime;
         this._lastRenderTime = now;
         this._frameId += 1;
+        if (this._positionInterpolator && this._positionInterpolationBackend === 'cpu') {
+          const overrides = this._resolvePositionOverrides(now);
+          if (overrides) {
+            frame.positionOverrides = overrides;
+          }
+        }
         this.emit(EVENTS.BEFORE_RENDER, { frameId: this._frameId, dt, frame, size: { ...this.size } });
         this.renderer.render(frame, this.size);
         this.emit(EVENTS.AFTER_RENDER, { frameId: this._frameId, dt, frame, size: { ...this.size } });
@@ -1201,6 +1250,265 @@ export class Helios extends EventTarget {
       layer.setEdgeStateStyle?.(slot, style);
     }
     return true;
+  }
+
+  _configurePositioning(positions = null, interpolation = null) {
+    this._positionDelegationOptions = positions ?? null;
+    this._positionInterpolationOptions = interpolation ?? null;
+    if (this._positionDelegate) {
+      this._detachPositionDelegate();
+    }
+    const wantsNetworkBackend = interpolation?.backend === 'network';
+    const wantsCpuBackend = interpolation?.backend === 'cpu';
+    const wantsAutoBackend = interpolation?.backend == null || interpolation?.backend === 'auto';
+    const networkSupportsInterpolation = typeof this.network?.interpolateNodeAttribute === 'function';
+    const backend = (!wantsCpuBackend && (wantsNetworkBackend || wantsAutoBackend) && networkSupportsInterpolation)
+      ? 'network'
+      : 'cpu';
+    if (wantsNetworkBackend && !networkSupportsInterpolation) {
+      this.debug?.log?.('layout', 'Network interpolation unavailable; falling back to CPU backend');
+    }
+    this._positionInterpolationBackend = backend;
+    let delegate = positions?.delegate ?? createPositionDelegateFromOptions(positions);
+    let wantsDelegate = positions?.source === 'delegate' || Boolean(positions?.delegate);
+    if (backend === 'network' && interpolation?.enabled) {
+      if (!delegate) {
+        delegate = new CpuMirrorPositionDelegate({ syncToNetwork: false });
+      }
+      wantsDelegate = true;
+    }
+    this._positionInterpolationSource = wantsDelegate ? 'delegate' : 'network';
+    if (wantsDelegate && delegate) {
+      this._attachPositionDelegate(delegate);
+    } else {
+      this.visuals?.clearPositionDelegate?.();
+      this._positionDelegate = null;
+    }
+    if (interpolation?.enabled && backend !== 'network') {
+      this._positionInterpolator = new CpuLinearPositionInterpolator(interpolation);
+    } else {
+      this._positionInterpolator = null;
+    }
+    if (backend !== 'network') {
+      this._networkInterpolation.active = false;
+      this._networkInterpolation.lastStepTimestamp = 0;
+    }
+  }
+
+  _attachPositionDelegate(delegate) {
+    if (!delegate) return;
+    this._positionDelegate = delegate;
+    this._positionDelegate.attach?.({ network: this.network, visuals: this.visuals, debug: this.debug });
+    this.visuals?.setPositionDelegate?.(delegate);
+    this._positionDelegateSubscriptions = [];
+    const events = this.network?.constructor?.EVENTS ?? this.network?.EVENTS ?? null;
+    if (events && typeof this.network?.on === 'function') {
+      const types = [
+        events.nodesAdded,
+        events.nodesRemoved,
+        events.edgesAdded,
+        events.edgesRemoved,
+        events.topologyChanged,
+        events.attributeChanged,
+        events.attributeDefined,
+        events.attributeRemoved,
+      ].filter(Boolean);
+      for (const type of types) {
+        const unsub = this.network.on(type, (event) => {
+          this._positionDelegate?.onNetworkEvent?.(event);
+          this._positionDelegate?.markPositionsDirty?.();
+          this._layout?.requestUpdate?.();
+          this.scheduler.requestLayout('data');
+          this.scheduler.requestGeometry();
+          this.scheduler.requestRender();
+        });
+        if (typeof unsub === 'function') this._positionDelegateSubscriptions.push(unsub);
+      }
+    }
+  }
+
+  _detachPositionDelegate() {
+    for (const unsub of this._positionDelegateSubscriptions ?? []) {
+      try {
+        unsub?.();
+      } catch (_) {
+        // ignore
+      }
+    }
+    this._positionDelegateSubscriptions = [];
+    this._positionDelegate?.detach?.();
+    this._positionDelegate = null;
+    this.visuals?.clearPositionDelegate?.();
+  }
+
+  _getDenseOverridesFromNetwork() {
+    if (!this.network) return null;
+    try {
+      const nodeDesc = this.network.getDenseNodeAttributeView?.(NODE_POSITION_ATTRIBUTE);
+      const edgeDesc = this.network.getDenseEdgeAttributeView?.(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
+      if (!nodeDesc?.view) return null;
+      return {
+        nodes: {
+          positions: {
+            view: nodeDesc.view,
+            version: nodeDesc.version ?? 0,
+            topologyVersion: nodeDesc.topologyVersion ?? 0,
+            count: nodeDesc.count ?? Math.floor((nodeDesc.view.length ?? 0) / 3),
+          },
+        },
+        edges: edgeDesc?.view
+          ? {
+              segments: {
+                view: edgeDesc.view,
+                version: edgeDesc.version ?? 0,
+                topologyVersion: edgeDesc.topologyVersion ?? 0,
+                count: edgeDesc.count ?? Math.floor((edgeDesc.view.length ?? 0) / 6),
+              },
+            }
+          : null,
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  _captureNetworkInterpolationTarget(payload = null, timestamp = performance.now()) {
+    if (!this.network) return false;
+    let source = payload?.positions ?? null;
+    if (!source && this._positionInterpolationSource === 'delegate') {
+      source = this._positionDelegate?.getPositionView?.() ?? null;
+    }
+    let sourceLength = source?.length ?? 0;
+    if (!sourceLength) {
+      const info = this.network.getNodeAttributeInfo?.(NODE_POSITION_ATTRIBUTE);
+      const dimension = Number.isFinite(info?.dimension) ? Math.max(1, Math.floor(info.dimension)) : 1;
+      const capacity = Number.isFinite(this.network.nodeCapacity)
+        ? Math.max(0, Math.floor(this.network.nodeCapacity))
+        : 0;
+      sourceLength = capacity * dimension;
+    }
+    if (!sourceLength) return false;
+    if (!source) {
+      if (this._positionInterpolationSource === 'delegate') {
+        source = this._positionDelegate?.getPositionView?.() ?? null;
+      }
+      source = this.visuals?.getNodeAttributeView?.(NODE_POSITION_ATTRIBUTE) ?? null;
+    }
+    if (!source) return false;
+    const target = ArrayBuffer.isView(source) ? source : Float32Array.from(source);
+    const state = this._networkInterpolation;
+    state.targetView = target;
+    state.targetLength = target.length;
+    if (state.lastLayoutTimestamp) {
+      let elapsed = timestamp - state.lastLayoutTimestamp;
+      if (!Number.isFinite(elapsed) || elapsed <= 0) elapsed = 16;
+      const clamped = Math.min(2500, Math.max(10, elapsed));
+      state.layoutElapsedMs = this._averageLayoutElapsed(state.layoutDeltaHistory, clamped);
+    }
+    state.lastLayoutTimestamp = timestamp;
+    state.lastStepTimestamp = 0;
+    state.active = true;
+    return true;
+  }
+
+  _advanceNetworkInterpolation(timestamp = performance.now()) {
+    if (this._positionInterpolationBackend !== 'network' || !this._networkInterpolation.active) {
+      return false;
+    }
+    const state = this._networkInterpolation;
+    const target = state.targetView;
+    if (!target || !this.network?.interpolateNodeAttribute) {
+      state.active = false;
+      return false;
+    }
+    let elapsedMs = 16;
+    if (state.lastStepTimestamp) {
+      elapsedMs = timestamp - state.lastStepTimestamp;
+      if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) elapsedMs = 16;
+    }
+    state.lastStepTimestamp = timestamp;
+    const options = this._positionInterpolationOptions ?? {};
+    const hasSmoothing = Number.isFinite(options.smoothing);
+    const autoSmoothing = options.autoSmoothing === true || (!hasSmoothing && options.autoSmoothing !== false);
+    let smoothing = hasSmoothing ? options.smoothing : 6;
+    if (autoSmoothing) {
+      const targetRemaining = Number.isFinite(options.targetRemaining)
+        ? Math.min(0.5, Math.max(0.01, options.targetRemaining))
+        : 0.1;
+      smoothing = -Math.log(targetRemaining);
+    }
+    const minDisplacementRatio = Number.isFinite(options.minDisplacementRatio)
+      ? options.minDisplacementRatio
+      : 0.0005;
+    const continueInterpolation = this.network.interpolateNodeAttribute(
+      NODE_POSITION_ATTRIBUTE,
+      target,
+      {
+        elapsedMs,
+        layoutElapsedMs: state.layoutElapsedMs,
+        smoothing,
+        minDisplacementRatio,
+        emitEvent: false,
+      },
+    );
+    state.active = Boolean(continueInterpolation);
+    return state.active;
+  }
+
+  _capturePositionSnapshot(timestamp = performance.now()) {
+    if (!this._positionInterpolator) return;
+    const overrides = this._positionDelegate?.getDenseOverrides?.() ?? this._getDenseOverridesFromNetwork();
+    if (overrides) {
+      this._positionInterpolator.capture(overrides, timestamp);
+    }
+  }
+
+  _averageLayoutElapsed(history, elapsedMs) {
+    if (!Array.isArray(history)) return elapsedMs;
+    history.push(elapsedMs);
+    if (history.length > 5) {
+      history.shift();
+    }
+    let sum = 0;
+    for (const value of history) sum += value;
+    return sum / history.length;
+  }
+
+  _resolvePositionOverrides(timestamp = performance.now()) {
+    if (this._positionInterpolator) {
+      const interpolated = this._positionInterpolator.getOverrides(timestamp);
+      if (interpolated) return interpolated;
+    }
+    if (this._positionDelegate && this._positionInterpolationBackend !== 'network') {
+      return this._positionDelegate.getDenseOverrides?.() ?? null;
+    }
+    return null;
+  }
+
+  _handleLayoutUpdate(payload = null) {
+    const timestamp = payload?.timestamp ?? performance.now();
+    if (this._positionInterpolationBackend === 'network') {
+      this._captureNetworkInterpolationTarget(payload, timestamp);
+      this.scheduler.requestGeometry();
+      this.scheduler.requestRender();
+      this.debug.log('layout', 'Layout queued network interpolation');
+      return;
+    }
+    if (this._positionInterpolator && this._positionInterpolationOptions?.durationMs == null) {
+      if (this._cpuInterpolationLastLayoutTimestamp) {
+        let elapsed = timestamp - this._cpuInterpolationLastLayoutTimestamp;
+        if (!Number.isFinite(elapsed) || elapsed <= 0) elapsed = 16;
+        const clamped = Math.min(2500, Math.max(10, elapsed));
+        this._positionInterpolator.durationMs = this._averageLayoutElapsed(this._cpuInterpolationDeltaHistory, clamped);
+      }
+      this._cpuInterpolationLastLayoutTimestamp = timestamp;
+    }
+    this.visuals.markPositionsDirty();
+    this._positionDelegate?.markPositionsDirty?.();
+    this._positionDelegate?.syncToNetwork?.();
+    this._capturePositionSnapshot(timestamp);
+    this.scheduler.requestGeometry();
+    this.debug.log('layout', 'Layout requested geometry update');
   }
 
   _applyPendingRendererProps() {
@@ -1703,10 +2011,7 @@ export class Helios extends EventTarget {
     this._layout?.dispose?.();
     this._layout = layout;
     this.debug.log('layout', 'Layout replaced', { layout: layout?.constructor?.name });
-    this._layout.setUpdateListener(() => {
-      this.visuals.markPositionsDirty();
-      this.scheduler.requestGeometry();
-    });
+    this._layout.setUpdateListener((payload) => this._handleLayoutUpdate(payload));
     this.debug.log('layout', 'Initializing new layout instance');
     this._layout.initialize?.();
     this._layout.resize?.(this.layers.size);
@@ -1717,8 +2022,34 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  positions(options) {
+    if (arguments.length === 0) {
+      return this._positionDelegationOptions;
+    }
+    this._configurePositioning(options, this._positionInterpolationOptions);
+    this._layout?.requestUpdate?.();
+    this.scheduler.requestLayout('data');
+    this.scheduler.requestGeometry();
+    this.scheduler.requestRender();
+    return this;
+  }
+
+  interpolation(options) {
+    if (arguments.length === 0) {
+      return this._positionInterpolationOptions;
+    }
+    this._configurePositioning(this._positionDelegationOptions, options);
+    this._layout?.requestUpdate?.();
+    this.scheduler.requestLayout('data');
+    this.scheduler.requestGeometry();
+    this.scheduler.requestRender();
+    return this;
+  }
+
   // Backwards-compatible aliases.
   setLayout(layout) { return this.layout(layout); }
+  setPositions(options) { return this.positions(options); }
+  setInterpolation(options) { return this.interpolation(options); }
   setMappers(mappers) { return this.mappers(mappers); }
   setNodeState(indices, mask, options) { return this.nodeState(indices, mask, options); }
   setEdgeState(indices, mask, options) { return this.edgeState(indices, mask, options); }
@@ -1771,6 +2102,10 @@ export class Helios extends EventTarget {
       network: this.network,
       timestamp: performance.now(),
     };
+    const overrides = this._resolvePositionOverrides(frame.timestamp);
+    if (overrides) {
+      frame.positionOverrides = overrides;
+    }
     this.attributeTracker?.render(frame, true);
     if (this.renderer && typeof this.renderer.render === 'function') {
       this.counters.renderFrames = bumpCounter(this.counters.renderFrames);
@@ -1804,6 +2139,10 @@ export class Helios extends EventTarget {
       timestamp: performance.now(),
       camera: this.renderer?.camera,
     };
+    const overrides = this._resolvePositionOverrides(frame.timestamp);
+    if (overrides) {
+      frame.positionOverrides = overrides;
+    }
     return this.attributeTracker.render(frame, true);
   }
 
@@ -2379,6 +2718,10 @@ export class Helios extends EventTarget {
       timestamp: performance.now(),
       camera: this.renderer?.camera,
     };
+    const overrides = this._resolvePositionOverrides(frame.timestamp);
+    if (overrides) {
+      frame.positionOverrides = overrides;
+    }
     await this.indexPickingTracker.render(frame, true);
   }
 
@@ -2503,6 +2846,11 @@ export class Helios extends EventTarget {
     this.indexPickingTracker?.destroy?.();
     this.indexPickingTracker = null;
     this.renderer?.destroy?.();
+    if (this._networkInterpolation) {
+      this._networkInterpolation.targetView = null;
+      this._networkInterpolation.targetLength = 0;
+      this._networkInterpolation.active = false;
+    }
     this.layers.destroy();
   }
 }
