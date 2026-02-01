@@ -75,8 +75,11 @@ both the rendering stack and the documentation example stay functional.
   advertise that they should run continuously or only when explicitly marked
   dirty.
 - **Layouts (`src/layouts`)** – base class + `StaticLayout` fallback +
-  `WorkerLayout` that proxies work to `src/workers/layoutWorker.js`. Workers can
-  push updated positions back to the main thread without touching DOM/APIs.
+  `WorkerLayout` that proxies work to `src/workers/layoutWorker.js`, plus
+  `D3Force3DLayout` for the d3-force-3d worker. Workers can push updated
+  positions back to the main thread without touching DOM/APIs.
+
+By default, Helios uses the d3-force-3d worker layout and interpolation is enabled.
 - **Rendering (`src/rendering`)** – the new modular `LayeredRenderer` chooses
   WebGPU when available (falling back to WebGL2) and exposes layers, materials,
   shader overrides, framebuffer capture/present helpers, and projection

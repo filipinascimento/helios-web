@@ -52,10 +52,13 @@ html, body {
 Key entry points:
 
 - `Helios` – prepares layers, connects the scheduler, kick-starts rendering
-- `StaticLayout`, `WorkerLayout` – ready-to-use layout implementations
+- `StaticLayout`, `WorkerLayout`, `D3Force3DLayout` – ready-to-use layout implementations
 - `Mapper` – flexible mapping utility for visual channels; mapped values land in
   sparse attributes and trigger dense buffer rebuilds automatically
 - `HeliosUI` – optional HTML overlay UI (panel manager + attribute bindings)
+
+By default, Helios uses the d3-force-3d worker layout and interpolation is enabled. Pass
+`layout` or `interpolation` options to override.
 
 ## Events
 

@@ -26,10 +26,11 @@ function resolveMode() {
 function resolveLayoutType() {
   const params = new URLSearchParams(window.location.search);
   const layout = params.get('layout');
-  if (!layout) return 'force3d';
+  if (!layout) return 'd3force3d';
   const normalized = layout.toLowerCase();
   if (normalized === 'none' || normalized === 'static') return 'none';
   if (normalized === 'jitter' || normalized === 'legacy') return 'jitter';
+  if (normalized === 'd3force3d' || normalized === 'd3-force-3d') return 'd3force3d';
   return 'force3d';
 }
 
@@ -243,24 +244,34 @@ async function bootstrap() {
     container: target,
     layout: layoutType === 'none'
       ? { type: 'static', options: { bounds: [-500, -500, 500, 500] } }
-      : {
-          type: 'worker',
-          options: {
-            layout: layoutType,
-            mode,
-            center: [0, 0, 0],
-            radius: 220*Math.sqrt(nodeCount/1000),
-            depth: mode === '3d' ? 140 : 0,
-            updateIntervalMs: layoutIntervalMs,
-            // Slightly stronger forces for the demo; tweak via query params if needed.
-            kRepulsion: 3,
-            kAttraction: 0.003,
-            kGravity: 0.0008,
-            repulsionStrategy: 'barnes-hut',
-            negativesPerNode: 64,
-            negativeSampling: true,
+      : layoutType === 'd3force3d'
+        ? {
+            type: 'd3force3d',
+            options: {
+              settings: {
+                use2D: mode !== '3d',
+              },
+              updateIntervalMs: layoutIntervalMs,
+            },
+          }
+        : {
+            type: 'worker',
+            options: {
+              layout: layoutType,
+              mode,
+              center: [0, 0, 0],
+              radius: 220*Math.sqrt(nodeCount/1000),
+              depth: mode === '3d' ? 140 : 0,
+              updateIntervalMs: layoutIntervalMs,
+              // Slightly stronger forces for the demo; tweak via query params if needed.
+              kRepulsion: 3,
+              kAttraction: 0.003,
+              kGravity: 0.0008,
+              repulsionStrategy: 'barnes-hut',
+              negativesPerNode: 64,
+              negativeSampling: true,
+            },
           },
-        },
     mode,
     projection: 'perspective',
     transparencyModeEdges: edgeTransparency,
@@ -355,6 +366,7 @@ async function bootstrap() {
     layoutSelect.className = 'helios-ui-select';
     const options = [
       { value: 'force3d', label: 'Force (worker)' },
+      { value: 'd3force3d', label: 'D3 Force 3D (worker)' },
       { value: 'jitter', label: 'Jitter (worker)' },
       { value: 'none', label: 'Static (no layout)' },
     ];
@@ -386,7 +398,7 @@ async function bootstrap() {
     interpolatorToggle.type = 'button';
     interpolatorToggle.className = 'helios-ui-toggle';
     interpolatorToggle.setAttribute('role', 'switch');
-    interpolatorToggle.setAttribute('aria-checked', 'false');
+    interpolatorToggle.setAttribute('aria-checked', 'true');
     const toggleThumb = document.createElement('span');
     toggleThumb.className = 'helios-ui-toggle__thumb';
     toggleThumb.setAttribute('aria-hidden', 'true');
@@ -400,6 +412,7 @@ async function bootstrap() {
       const enabled = interpolatorToggle.getAttribute('aria-checked') === 'true';
       toggleText.textContent = enabled ? 'On' : 'Off';
     };
+    updateInterpolatorLabel();
 
     let interpolationSmoothness = 6;
     let interpolationTargetRemaining = 0.1;
@@ -485,6 +498,19 @@ async function bootstrap() {
       if (value === 'none') {
         seedGridPositions();
         const layoutInstance = helios.createLayout({ type: 'static', options: { bounds } });
+        helios.layout(layoutInstance);
+        return;
+      }
+      if (value === 'd3force3d') {
+        const layoutInstance = helios.createLayout({
+          type: 'd3force3d',
+          options: {
+            settings: {
+              use2D: mode !== '3d',
+            },
+            updateIntervalMs: layoutIntervalMs,
+          },
+        });
         helios.layout(layoutInstance);
         return;
       }

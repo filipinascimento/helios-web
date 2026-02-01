@@ -15,8 +15,9 @@
     "test": "node --test tests/*.test.js"
   },
   "dependencies": {
+    "d3-force-3d": "github:filipinascimento/d3-force-3d",
     "d3-scale-chromatic": "^3.1.0",
-    "helios-network": "helios-network"
+    "helios-network": "^0.5.6"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.1",

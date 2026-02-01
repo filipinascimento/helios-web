@@ -76,7 +76,7 @@ export class GraphLayer extends Layer {
     this.nodeOutlineColor = options.nodeOutlineColor ?? [0, 0, 0, 1];
     this.nodeOutlineUseAttributes = options.nodeOutlineUseAttributes === true;
     this.edgeOpacityBase = 0;
-    this.edgeOpacityScale = 1;
+    this.edgeOpacityScale = 0.5;
     this.edgeWidthBase = 0;
     this.edgeWidthScale = 1;
     this.edgeEndpointTrim = Number.isFinite(options.edgeEndpointTrim) ? options.edgeEndpointTrim : 0.8;

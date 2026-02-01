@@ -2,6 +2,7 @@ export { Helios } from './Helios.js';
 export { default } from './Helios.js';
 export { EVENTS } from './Helios.js';
 export { StaticLayout, WorkerLayout, Layout } from './layouts/Layout.js';
+export { D3Force3DLayout } from './layouts/d3force3dLayoutWorker.js';
 export {
 	PositionDelegate,
 	CpuMirrorPositionDelegate,

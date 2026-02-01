@@ -2,6 +2,7 @@
 import { LayerManager } from './layers/LayerManager.js';
 import { Scheduler } from './scheduler/Scheduler.js';
 import { StaticLayout, WorkerLayout } from './layouts/Layout.js';
+import { D3Force3DLayout } from './layouts/d3force3dLayoutWorker.js';
 import { createRenderer } from './rendering/createRenderer.js';
 import { AttributeTracker } from './rendering/AttributeTracker.js';
 import { PerformanceMonitor } from './utilities/PerformanceMonitor.js';
@@ -191,6 +192,25 @@ function resolveSeedBoundsForLayout(layoutOption, size, mode) {
     };
   }
 
+  if (layoutOption?.type === 'd3force3d' || layoutOption?.type === 'd3-force-3d') {
+    const bounds = layoutOption?.options?.bounds ?? null;
+    if (Array.isArray(bounds) && bounds.length >= 4) {
+      const minX = Number(bounds[0]);
+      const minY = Number(bounds[1]);
+      const maxX = Number(bounds[2]);
+      const maxY = Number(bounds[3]);
+      if ([minX, minY, maxX, maxY].every(Number.isFinite)) {
+        return {
+          width: Math.max(1, maxX - minX),
+          height: Math.max(1, maxY - minY),
+          depth: 0,
+          mode: safeMode,
+          center: [(minX + maxX) * 0.5, (minY + maxY) * 0.5, 0],
+        };
+      }
+    }
+  }
+
   const bounds = layoutOption?.options?.bounds ?? null;
   if (Array.isArray(bounds) && bounds.length >= 4) {
     const minX = Number(bounds[0]);
@@ -276,7 +296,7 @@ export class Helios extends EventTarget {
       type: 'number',
       label: 'Edge Opacity Scale',
       description: 'Scales mapped edge opacity',
-      defaultValue: 1,
+      defaultValue: 0.5,
       domain: { min: 0, max: 4 },
       recommendedRange: { min: 0.0, max: 1.0 },
       step: 0.01,
@@ -398,6 +418,20 @@ export class Helios extends EventTarget {
       throw new Error('Helios requires a helios-network instance');
     }
     super();
+    if (!Object.prototype.hasOwnProperty.call(options, 'layout')) {
+      const mode = options.mode ?? '2d';
+      options.layout = {
+        type: 'd3force3d',
+        options: {
+          settings: {
+            use2D: mode !== '3d',
+          },
+        },
+      };
+    }
+    if (!Object.prototype.hasOwnProperty.call(options, 'interpolation')) {
+      options.interpolation = { enabled: true, backend: 'auto' };
+    }
     this.network = network;
     this.options = options;
     this.debug = createDebugLogger(options.debug);
@@ -615,6 +649,7 @@ export class Helios extends EventTarget {
     });
     this.renderer = renderer;
     this._applyPendingRendererProps();
+    this._refreshUIBindings();
     this._applyCachedStateStyles();
     this.attributeTracker?.destroy?.();
     this.attributeTracker = new AttributeTracker(this.renderer);
@@ -754,6 +789,7 @@ export class Helios extends EventTarget {
 
     if (recreateRenderer) {
       await this._createRendererAndTrackers();
+      this._refreshUIBindings();
       if (frameNetwork) {
         this.requestFrameNetwork({ paddingPx: options.framePaddingPx ?? 24 });
       } else {
@@ -763,6 +799,7 @@ export class Helios extends EventTarget {
       this.attributeTracker = new AttributeTracker(this.renderer);
       this.attributeTracker.resize(this.layers.size);
       this._applyPickingConfig();
+      this._refreshUIBindings();
       if (frameNetwork) {
         this.requestFrameNetwork({ paddingPx: options.framePaddingPx ?? 24 });
       } else {
@@ -1537,6 +1574,16 @@ export class Helios extends EventTarget {
     }
   }
 
+  _refreshUIBindings() {
+    const bindings = this.constructor.UI_BINDINGS ?? null;
+    if (!bindings) return;
+    for (const name of Object.keys(bindings)) {
+      if (typeof this[name] !== 'function') continue;
+      const value = this[name]();
+      this._emitUIBindingChange(name, value);
+    }
+  }
+
   _getGraphLayerProp(name) {
     if (this.renderer?.graphLayer && name in this.renderer.graphLayer) {
       return this.renderer.graphLayer[name];
@@ -1717,6 +1764,11 @@ export class Helios extends EventTarget {
       const workerOptions = { ...(layoutOption.options ?? {}), mode: this.options.mode ?? '2d' };
       this.debug.log('layout', 'Using worker layout', workerOptions);
       return new WorkerLayout(this.network, this.visuals, workerOptions);
+    }
+    if (layoutOption?.type === 'd3force3d' || layoutOption?.type === 'd3-force-3d') {
+      const workerOptions = { ...(layoutOption.options ?? {}), mode: this.options.mode ?? '2d' };
+      this.debug.log('layout', 'Using d3-force-3d layout', workerOptions);
+      return new D3Force3DLayout(this.network, this.visuals, workerOptions);
     }
     const w = this.layers.size.width;
     const h = this.layers.size.height;

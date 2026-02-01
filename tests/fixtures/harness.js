@@ -20,6 +20,7 @@ function resolveLayoutType(params) {
   const normalized = layout.toLowerCase();
   if (normalized === 'none' || normalized === 'static') return 'none';
   if (normalized === 'jitter' || normalized === 'legacy') return 'jitter';
+  if (normalized === 'd3force3d' || normalized === 'd3-force-3d') return 'd3force3d';
   return 'force3d';
 }
 
@@ -158,22 +159,31 @@ export async function bootstrapDemoFixture() {
       projection: 'perspective',
       layout: layoutType === 'none'
         ? { type: 'static', options: { bounds: [-500, -500, 500, 500] } }
-        : {
-            type: 'worker',
-            options: {
-              layout: layoutType,
-              mode,
-              center: [0, 0, 0],
-              radius: 220,
-              depth: mode === '3d' ? 140 : 0,
-              kRepulsion: 2,
-              kAttraction: 0.004,
-              kGravity: 0.0008,
-              repulsionStrategy: 'barnes-hut',
-              negativesPerNode: 32,
-              negativeSampling: true,
+        : layoutType === 'd3force3d'
+          ? {
+              type: 'd3force3d',
+              options: {
+                settings: {
+                  use2D: mode !== '3d',
+                },
+              },
+            }
+          : {
+              type: 'worker',
+              options: {
+                layout: layoutType,
+                mode,
+                center: [0, 0, 0],
+                radius: 220,
+                depth: mode === '3d' ? 140 : 0,
+                kRepulsion: 2,
+                kAttraction: 0.004,
+                kGravity: 0.0008,
+                repulsionStrategy: 'barnes-hut',
+                negativesPerNode: 32,
+                negativeSampling: true,
+              },
             },
-          },
     };
     if (rendererPreference) {
       heliosOptions.renderer = rendererPreference;
