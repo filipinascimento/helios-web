@@ -622,6 +622,9 @@ export class Helios extends EventTarget {
     if (typeof this.renderer.resize === 'function') {
       this.renderer.resize(this.layers.size);
     }
+    if (this.mappersDirty) {
+      this._applyMappersSafely();
+    }
     if (this.renderer?.camera?.setChangeListener) {
       this.renderer.camera.setChangeListener(() => {
         this.scheduler.requestRender();
@@ -1095,6 +1098,9 @@ export class Helios extends EventTarget {
     if (typeof this.renderer.resize === 'function') {
       this.renderer.resize(this.layers.size);
     }
+    if (this.mappersDirty) {
+      this._applyMappersSafely();
+    }
     this.scheduler.setAttributeCallback(
       (frame) => {
         if (!frame) return;
@@ -1267,6 +1273,9 @@ export class Helios extends EventTarget {
       : 'cpu';
     if (wantsNetworkBackend && !networkSupportsInterpolation) {
       this.debug?.log?.('layout', 'Network interpolation unavailable; falling back to CPU backend');
+    }
+    if (interpolation?.backend && !['network', 'cpu', 'auto'].includes(interpolation.backend)) {
+      this.debug?.log?.('layout', 'Unsupported interpolation backend; falling back to CPU backend');
     }
     this._positionInterpolationBackend = backend;
     let delegate = positions?.delegate ?? createPositionDelegateFromOptions(positions);

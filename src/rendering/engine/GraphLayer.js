@@ -83,7 +83,6 @@ export class GraphLayer extends Layer {
     this.nodeBlendWithEdges = options.nodeBlendWithEdges === true;
     this.edgeDepthWrite = options.edgeDepthWrite === true;
     this.loggedWeightedActive = false;
-
     const slots = this.stateSlotCount;
     this.nodeStateScale = new Float32Array(slots * 4);
     this.nodeStateColorMul = new Float32Array(slots * 4);

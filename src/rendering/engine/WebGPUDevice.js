@@ -63,6 +63,7 @@ export class WebGPUDevice {
     const bufferLimitRatio = Math.min(Math.max(this.options.bufferLimitRatio ?? 1, 0), 1);
     const adapterStorageLimit = this.adapter.limits?.maxStorageBufferBindingSize;
     const adapterBufferLimit = this.adapter.limits?.maxBufferSize;
+    const adapterStorageBuffersPerStage = this.adapter.limits?.maxStorageBuffersPerShaderStage;
     // Request higher limits (browser default is often 128 MB for storage and 256 MB for buffers).
     const baseStorageLimit = 128 * 1024 * 1024;
     const baseBufferLimit = 256 * 1024 * 1024;
@@ -78,6 +79,9 @@ export class WebGPUDevice {
     }
     if (requestedBufferLimit) {
       requiredLimits.maxBufferSize = requestedBufferLimit;
+    }
+    if (adapterStorageBuffersPerStage && adapterStorageBuffersPerStage > 8) {
+      requiredLimits.maxStorageBuffersPerShaderStage = Math.min(adapterStorageBuffersPerStage, 10);
     }
     this.requestedLimits = Object.keys(requiredLimits).length ? requiredLimits : null;
     this.device = await this.adapter.requestDevice(this.requestedLimits ? { requiredLimits } : {});

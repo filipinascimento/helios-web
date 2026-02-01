@@ -6,6 +6,7 @@ This document explains how Helios’ position interpolation works end‑to‑end
 
 - **Network backend**: The WASM/C interpolation path, driven by `helios-network`.
 - **CPU backend**: The JavaScript interpolator path, driven by `CpuLinearPositionInterpolator`.
+- **GPU backend**: A shader‑side interpolation path (WebGL2/WebGPU) that blends source/target positions in the vertex shader.
 - **Target positions**: The latest layout output (the “goal” positions to interpolate toward).
 - **Source positions**: The positions currently in the renderer/visual buffers.
 - **Delegate**: A `PositionDelegate` that can mirror positions on the JS side.
@@ -27,6 +28,7 @@ Both pipelines are triggered by layout updates. The layout emits a “positions 
 
 - `interpolation.backend: 'cpu'` → CPU pipeline.
 - `interpolation.backend: 'network'` → WASM pipeline (if supported).
+- `interpolation.backend: 'gpu'` → Shader pipeline (WebGL2/WebGPU).
 - `interpolation.backend: 'auto'` (default) → WASM if available, otherwise CPU.
 
 ---

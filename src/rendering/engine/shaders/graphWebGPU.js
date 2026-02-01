@@ -38,6 +38,9 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
     ? 'let outlineBaseColor = nodeOutlineColors.data[index];'
     : 'let outlineBaseColor = globals.nodeOutlineColor;';
 
+  const NODE_TARGET_BINDING = '';
+  const EDGE_TARGET_BINDING = '';
+
   const NODE_WGSL = /* wgsl */ `
 const USE_NODE_INDICES : bool = ${useNodeIndices ? 'true' : 'false'};
 const USE_NODE_COLOR_BUFFER : bool = ${useNodeColorBuffer ? 'true' : 'false'};
@@ -122,6 +125,7 @@ struct NodeColors {
 	@group(0) @binding(4) var<storage, read> nodeColors : NodeColors;
 	@group(0) @binding(5) var<storage, read> nodeStates : NodeStates;
   ${NODE_OUTLINE_STORAGE_BINDINGS}
+  ${NODE_TARGET_BINDING}
 	@group(0) @binding(6) var<uniform> globals : Globals;
 	struct Hover {
 	  nodeIndex: u32,
@@ -157,7 +161,7 @@ fn nodeVertex(input : VertexInput) -> VertexOutput {
     index = nodeIndices.data[input.instance];
   }
   let baseOffset = index * 3u;
-  let basePosition = vec3<f32>(
+  var basePosition = vec3<f32>(
     nodePositions.data[baseOffset + 0u],
     nodePositions.data[baseOffset + 1u],
     nodePositions.data[baseOffset + 2u]
@@ -381,6 +385,7 @@ struct EdgeStates {
 	@group(0) @binding(6) var<storage, read> edgeOpacities : EdgeOpacities;
 	@group(0) @binding(7) var<storage, read> edgeStates : EdgeStates;
 	@group(0) @binding(8) var<storage, read> edgeEndpointStates : EdgeEndpointStates;
+  ${EDGE_TARGET_BINDING}
 	@group(0) @binding(9) var<uniform> globals : Globals;
 	@group(0) @binding(10) var<uniform> hover : Hover;
 
@@ -574,8 +579,8 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
       }
     }
   }
-  let t = clamp(input.corner.x, 0.0, 1.0);
-  let width = max((globals.edgeWidth.x + globals.edgeWidth.y * mix(endpointWidth.x, endpointWidth.y, t)) * widthMul, 1e-3);
+  let cornerT = clamp(input.corner.x, 0.0, 1.0);
+  let width = max((globals.edgeWidth.x + globals.edgeWidth.y * mix(endpointWidth.x, endpointWidth.y, cornerT)) * widthMul, 1e-3);
   let dirRaw = endPos - startPos;
   let dirLenWorld = max(length(dirRaw), 1e-5);
   let dir = dirRaw / vec3<f32>(dirLenWorld);
@@ -597,15 +602,15 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   let halfWidth = max(width, 1.0) * 0.5;
   let pixelToNdc = vec2<f32>(2.0 / max(camera.viewport.x, 1.0), 2.0 / max(camera.viewport.y, 1.0));
   let offsetNdc = perp * halfWidth * pixelToNdc;
-  var clipPos = clipStart + (clipEnd - clipStart) * t;
+  var clipPos = clipStart + (clipEnd - clipStart) * cornerT;
   let adjusted = clipPos.xy + offsetNdc * input.corner.y * 1.5;
   clipPos = vec4<f32>(adjusted.x, adjusted.y, clipPos.z, clipPos.w);
   var output : EdgeVertexOutput;
   output.position = clipPos;
   let colorStart = select(globals.edgeColorStart, edgeColors.data[edgeId * 2u], USE_EDGE_COLOR_BUFFER);
   let colorEnd = select(globals.edgeColorEnd, edgeColors.data[edgeId * 2u + 1u], USE_EDGE_COLOR_BUFFER);
-  let blended = mix(colorStart, colorEnd, t);
-  let blendedOpacity = mix(opacityPair.x, opacityPair.y, t);
+  let blended = mix(colorStart, colorEnd, cornerT);
+  let blendedOpacity = mix(opacityPair.x, opacityPair.y, cornerT);
   let opacity = clamp(globals.edgeOpacity.x + globals.edgeOpacity.y * blendedOpacity, 0.0, 1.0) * opacityMul;
   let alpha = clamp(opacity * blended.a, 0.0, 1.0);
   let rgb = clamp(blended.rgb * rgbMul + rgbAdd, vec3<f32>(0.0), vec3<f32>(1.0));

@@ -40,11 +40,16 @@ export function createGraphWebGLSources(stateSlots = 4, options = {}) {
     : '';
   const NODE_VERTEX_OUTLINE_COLOR_EXPR = useNodeOutlineColorAttribute ? 'a_outlineColor' : 'u_outlineColor';
 
+  const NODE_POSITION_TARGET_DECL = '';
+  const POSITION_INTERPOLATION_UNIFORM = '';
+  const EDGE_POSITION_TARGET_DECL = '';
+  const EDGE_QUAD_POSITION_TARGET_DECL = '';
+
   const NODE_VERTEX_SOURCE = /* glsl */ `#version 300 es
 layout (location = 0) in vec2 a_corner;
 layout (location = 1) in vec3 a_position;
 layout (location = 4) in uint a_state;
-${NODE_VERTEX_COLOR_DECL}${NODE_VERTEX_SIZE_DECL}${NODE_VERTEX_OUTLINE_WIDTH_DECL}${NODE_VERTEX_OUTLINE_COLOR_DECL}
+${NODE_VERTEX_COLOR_DECL}${NODE_VERTEX_SIZE_DECL}${NODE_VERTEX_OUTLINE_WIDTH_DECL}${NODE_VERTEX_OUTLINE_COLOR_DECL}${NODE_POSITION_TARGET_DECL}
 
 uniform mat4 u_viewProjection;
 uniform mat4 u_view;
@@ -52,6 +57,7 @@ uniform vec3 u_cameraPosition;
 uniform vec3 u_cameraUp;
 uniform vec3 u_cameraRight;
 uniform bool u_is2D;
+${POSITION_INTERPOLATION_UNIFORM}
 uniform float u_nodeOpacityBase;
 uniform float u_nodeOpacityScale;
 uniform float u_nodeSizeBase;
@@ -112,6 +118,7 @@ flat out uint v_discardFlag;
 	  }
   v_discardFlag = discardFlag;
 
+  vec3 position = a_position;
   float baseSize = (u_nodeSizeBase + u_nodeSizeScale * ${NODE_VERTEX_SIZE_EXPR}) * sizeMul;
   float outlineWidth = max(0.0, (u_outlineWidthBase + u_outlineWidthScale * ${NODE_VERTEX_OUTLINE_RAW_EXPR}) * outlineMul);
   float fullSize = baseSize + outlineWidth;
@@ -123,7 +130,7 @@ flat out uint v_discardFlag;
     right = normalize(right);
     up = normalize(up);
   } else {
-    viewDir = u_cameraPosition - a_position;
+    viewDir = u_cameraPosition - position;
     float viewLen = length(viewDir);
     viewDir = viewLen > 1e-5 ? viewDir / viewLen : vec3(0.0, 0.0, 1.0);
     right = u_cameraRight - viewDir * dot(u_cameraRight, viewDir);
@@ -131,7 +138,7 @@ flat out uint v_discardFlag;
     right = rightLen > 1e-5 ? right / rightLen : normalize(cross(u_cameraUp, viewDir));
     up = normalize(cross(viewDir, right));
   }
-  vec3 world = a_position + (right * a_corner.x + up * a_corner.y) * radius;
+  vec3 world = position + (right * a_corner.x + up * a_corner.y) * radius;
   gl_Position = u_viewProjection * vec4(world, 1.0);
   vec4 baseColorIn = ${NODE_VERTEX_COLOR_EXPR};
   vec3 rgb = clamp(baseColorIn.rgb * rgbMul + rgbAdd, 0.0, 1.0);
@@ -142,7 +149,7 @@ flat out uint v_discardFlag;
   v_outlineColor = vec4(outlineColorIn.rgb, clamp(outlineAlpha, 0.0, 1.0));
   v_outlineThreshold = outlineWidth / max(fullSize, 1e-5);
   v_local = a_corner;
-  v_centerWorld = a_position;
+  v_centerWorld = position;
   v_rightWorld = right;
   v_upWorld = up;
   v_viewDir = viewDir;
@@ -215,6 +222,7 @@ void main() {
   const EDGE_VERTEX_SOURCE = /* glsl */ `#version 300 es
 layout (location = 0) in vec3 a_start;
 layout (location = 1) in vec3 a_end;
+${EDGE_POSITION_TARGET_DECL}
 ${useEdgeColorAttribute ? 'layout (location = 2) in vec4 a_colorStart;\nlayout (location = 3) in vec4 a_colorEnd;\n' : 'uniform vec4 u_edgeColorStart;\nuniform vec4 u_edgeColorEnd;\n'}
 ${useEdgeWidthAttribute ? 'layout (location = 4) in vec2 a_width;\n' : 'uniform vec2 u_edgeWidth;\n'}
 ${useEdgeEndpointSizeAttribute ? 'layout (location = 5) in vec2 a_endpointSize;\n' : 'uniform vec2 u_edgeEndpointSize;\n'}
@@ -223,6 +231,7 @@ layout (location = 7) in uint a_state;
 layout (location = 8) in uvec2 a_endpointState;
 
 uniform mat4 u_viewProjection;
+${POSITION_INTERPOLATION_UNIFORM}
 uniform float u_edgeOpacityBase;
 uniform float u_edgeOpacityScale;
 uniform float u_edgeWidthBase;
@@ -295,15 +304,17 @@ flat out uint v_discardFlag;
     }
   }
 
-  vec3 dir = a_end - a_start;
+  vec3 start = a_start;
+  vec3 end = a_end;
+  vec3 dir = end - start;
   float dirLen = max(length(dir), 1e-5);
   vec3 dirN = dir / dirLen;
   float startRadius = max(u_nodeSizeBase + u_nodeSizeScale * a_endpointSize.x, 0.0) * 0.5 * startSizeMul;
   float endRadius = max(u_nodeSizeBase + u_nodeSizeScale * a_endpointSize.y, 0.0) * 0.5 * endSizeMul;
   float trimStart = startRadius * u_edgeEndpointTrim;
   float trimEnd = endRadius * u_edgeEndpointTrim;
-  vec3 startPos = a_start + dirN * trimStart;
-  vec3 endPos = a_end - dirN * trimEnd;
+  vec3 startPos = start + dirN * trimStart;
+  vec3 endPos = end - dirN * trimEnd;
   bool isEnd = (gl_VertexID & 1) == 1;
   vec3 pos = isEnd ? endPos : startPos;
   vec4 baseColor = isEnd
@@ -355,6 +366,7 @@ void main() {
 layout (location = 0) in vec2 a_corner;
 layout (location = 1) in vec3 a_start;
 layout (location = 2) in vec3 a_end;
+${EDGE_QUAD_POSITION_TARGET_DECL}
 ${useEdgeWidthAttribute ? 'layout (location = 3) in vec2 a_width;\n' : 'uniform vec2 u_edgeWidth;\n'}
 ${useEdgeColorAttribute ? 'layout (location = 4) in vec4 a_colorStart;\nlayout (location = 5) in vec4 a_colorEnd;\n' : 'uniform vec4 u_edgeColorStart;\nuniform vec4 u_edgeColorEnd;\n'}
 ${useEdgeEndpointSizeAttribute ? 'layout (location = 6) in vec2 a_endpointSize;\n' : 'uniform vec2 u_edgeEndpointSize;\n'}
@@ -363,6 +375,7 @@ layout (location = 8) in uint a_state;
 layout (location = 9) in uvec2 a_endpointState;
 
 uniform mat4 u_viewProjection;
+${POSITION_INTERPOLATION_UNIFORM}
 uniform vec2 u_viewport;
 uniform float u_edgeOpacityBase;
 uniform float u_edgeOpacityScale;
@@ -436,7 +449,9 @@ flat out uint v_discardFlag;
     }
   }
 
-  vec3 dir = a_end - a_start;
+  vec3 start = a_start;
+  vec3 end = a_end;
+  vec3 dir = end - start;
   float dirLenWorld = max(length(dir), 1e-5);
   vec3 dirN = dir / dirLenWorld;
   vec2 endpointSizePair = ${useEdgeEndpointSizeAttribute ? 'a_endpointSize' : 'u_edgeEndpointSize'};
@@ -444,8 +459,8 @@ flat out uint v_discardFlag;
   float endRadius = max(u_nodeSizeBase + u_nodeSizeScale * endpointSizePair.y, 0.0) * 0.5 * endSizeMul;
   float trimStart = startRadius * u_edgeEndpointTrim;
   float trimEnd = endRadius * u_edgeEndpointTrim;
-  vec3 startPos = a_start + dirN * trimStart;
-  vec3 endPos = a_end - dirN * trimEnd;
+  vec3 startPos = start + dirN * trimStart;
+  vec3 endPos = end - dirN * trimEnd;
 
   float segmentMix = clamp(a_corner.x, 0.0, 1.0);
   vec2 widthPair = ${useEdgeWidthAttribute ? 'a_width' : 'u_edgeWidth'};

@@ -106,7 +106,7 @@ export class GraphLayerWebGPU extends GraphLayer {
       size: this.cameraArray.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-    const globalsFloats = 68 + this.stateSlotCount * 24;
+    const globalsFloats = 70 + this.stateSlotCount * 24;
     this.globalsArray = new Float32Array(globalsFloats);
     this.globalsBuffer = device.device.createBuffer({
       size: this.globalsArray.byteLength,
@@ -160,7 +160,6 @@ export class GraphLayerWebGPU extends GraphLayer {
         { binding: 7, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
       ],
     });
-
     this.nodeBindGroupLayoutOutline = device.device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
@@ -179,7 +178,6 @@ export class GraphLayerWebGPU extends GraphLayer {
         { binding: 9, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
       ],
     });
-
     this.edgeBindGroupLayout = device.device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
@@ -199,7 +197,6 @@ export class GraphLayerWebGPU extends GraphLayer {
         { binding: 10, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
       ],
     });
-
     this.nodeModules.clear();
     this.edgeModules.clear();
     this.edgeWeightedModules.clear();
@@ -353,7 +350,9 @@ export class GraphLayerWebGPU extends GraphLayer {
     if (this.nodePipelineCache.has(key)) return this.nodePipelineCache.get(key);
     const device = this.device?.device;
     const nodeModule = this.getNodeModule(useIndices, variant);
-    const bindGroupLayout = useOutlineAttributes ? this.nodeBindGroupLayoutOutline : this.nodeBindGroupLayout;
+    const bindGroupLayout = useOutlineAttributes
+      ? this.nodeBindGroupLayoutOutline
+      : this.nodeBindGroupLayout;
     if (!device || !nodeModule || !bindGroupLayout || !this.baseDepthStencil) return null;
 
     const alphaBlend = {
@@ -417,7 +416,6 @@ export class GraphLayerWebGPU extends GraphLayer {
     const v = nodeVariant && typeof nodeVariant === 'object'
       ? nodeVariant
       : { colorBuffer: true, sizeBuffer: true, outlineWidthBuffer: this.nodeOutlineUseAttributes === true, outlineColorBuffer: this.nodeOutlineUseAttributes === true };
-
     if (v.sizeBuffer && !sizes) {
       throw new Error('Node sizes buffer is missing; dense buffers must include sizes when node.size is varying.');
     }
@@ -573,20 +571,21 @@ export class GraphLayerWebGPU extends GraphLayer {
       }
 
       if (outlineBuffersChanged || !this.nodeBindGroupOutline) {
+        const entries = [
+          { binding: 0, resource: { buffer: this.cameraBuffer } },
+          { binding: 1, resource: { buffer: indicesBuffer } },
+          { binding: 2, resource: { buffer: this.nodeBuffersGpu.positions.buffer } },
+          { binding: 3, resource: { buffer: this.nodeBuffersGpu.sizes.buffer } },
+          { binding: 4, resource: { buffer: this.nodeBuffersGpu.colors.buffer } },
+          { binding: 5, resource: { buffer: this.nodeBuffersGpu.states.buffer } },
+          { binding: 6, resource: { buffer: this.globalsBuffer } },
+          { binding: 7, resource: { buffer: this.hoverBuffer } },
+          { binding: 8, resource: { buffer: this.nodeBuffersGpu.outlineWidths.buffer } },
+          { binding: 9, resource: { buffer: this.nodeBuffersGpu.outlineColors.buffer } },
+        ];
         this.nodeBindGroupOutline = device.createBindGroup({
           layout: this.nodeBindGroupLayoutOutline,
-          entries: [
-            { binding: 0, resource: { buffer: this.cameraBuffer } },
-            { binding: 1, resource: { buffer: indicesBuffer } },
-            { binding: 2, resource: { buffer: this.nodeBuffersGpu.positions.buffer } },
-            { binding: 3, resource: { buffer: this.nodeBuffersGpu.sizes.buffer } },
-            { binding: 4, resource: { buffer: this.nodeBuffersGpu.colors.buffer } },
-            { binding: 5, resource: { buffer: this.nodeBuffersGpu.states.buffer } },
-            { binding: 6, resource: { buffer: this.globalsBuffer } },
-            { binding: 7, resource: { buffer: this.hoverBuffer } },
-            { binding: 8, resource: { buffer: this.nodeBuffersGpu.outlineWidths.buffer } },
-            { binding: 9, resource: { buffer: this.nodeBuffersGpu.outlineColors.buffer } },
-          ],
+          entries,
         });
         this._nodeBuffersLastOutline = {
           indices: indicesBuffer,
@@ -605,18 +604,19 @@ export class GraphLayerWebGPU extends GraphLayer {
     }
 
     if (buffersChanged || !this.nodeBindGroup) {
+      const entries = [
+        { binding: 0, resource: { buffer: this.cameraBuffer } },
+        { binding: 1, resource: { buffer: indicesBuffer } },
+        { binding: 2, resource: { buffer: this.nodeBuffersGpu.positions.buffer } },
+        { binding: 3, resource: { buffer: this.nodeBuffersGpu.sizes.buffer } },
+        { binding: 4, resource: { buffer: this.nodeBuffersGpu.colors.buffer } },
+        { binding: 5, resource: { buffer: this.nodeBuffersGpu.states.buffer } },
+        { binding: 6, resource: { buffer: this.globalsBuffer } },
+        { binding: 7, resource: { buffer: this.hoverBuffer } },
+      ];
       this.nodeBindGroup = device.createBindGroup({
         layout: this.nodeBindGroupLayout,
-        entries: [
-          { binding: 0, resource: { buffer: this.cameraBuffer } },
-          { binding: 1, resource: { buffer: indicesBuffer } },
-          { binding: 2, resource: { buffer: this.nodeBuffersGpu.positions.buffer } },
-          { binding: 3, resource: { buffer: this.nodeBuffersGpu.sizes.buffer } },
-          { binding: 4, resource: { buffer: this.nodeBuffersGpu.colors.buffer } },
-          { binding: 5, resource: { buffer: this.nodeBuffersGpu.states.buffer } },
-          { binding: 6, resource: { buffer: this.globalsBuffer } },
-          { binding: 7, resource: { buffer: this.hoverBuffer } },
-        ],
+        entries,
       });
       this._nodeBuffersLast = {
         indices: indicesBuffer,
@@ -634,7 +634,6 @@ export class GraphLayerWebGPU extends GraphLayer {
     const v = edgeVariant && typeof edgeVariant === 'object'
       ? edgeVariant
       : { colorBuffer: true, widthBuffer: true, opacityBuffer: true, endpointSizeBuffer: true };
-
     if (v.colorBuffer && !colors) {
       throw new Error('Edge colors buffer is missing; dense buffers must include colors when edge.color is varying.');
     }
@@ -720,13 +719,13 @@ export class GraphLayerWebGPU extends GraphLayer {
           trackViewIdentity: true,
         }, storageUsage);
       }
-      resourceCache.uploadBuffer(device, device.queue, 'dense:edge:segments', segments, {
-        label: 'Edge segment buffer',
-        version: versions.segments ?? 0,
-        topologyVersion: versions.topology ?? 0,
-        count: edgeCount,
-        trackViewIdentity: true,
-      }, storageUsage);
+    resourceCache.uploadBuffer(device, device.queue, 'dense:edge:segments', segments, {
+      label: 'Edge segment buffer',
+      version: versions.segments ?? 0,
+      topologyVersion: versions.topology ?? 0,
+      count: edgeCount,
+      trackViewIdentity: true,
+    }, storageUsage);
       if (v.colorBuffer) {
         resourceCache.uploadBuffer(device, device.queue, 'dense:edge:colors', colors, {
           label: 'Edge color buffer',
@@ -781,21 +780,22 @@ export class GraphLayerWebGPU extends GraphLayer {
     }
 
     if (buffersChanged || !this.edgeBindGroup) {
+      const entries = [
+        { binding: 0, resource: { buffer: this.cameraBuffer } },
+        { binding: 1, resource: { buffer: indicesBuffer } },
+        { binding: 2, resource: { buffer: this.edgeBuffersGpu.segments.buffer } },
+        { binding: 3, resource: { buffer: this.edgeBuffersGpu.colors.buffer } },
+        { binding: 4, resource: { buffer: this.edgeBuffersGpu.widths.buffer } },
+        { binding: 5, resource: { buffer: this.edgeBuffersGpu.endpointSizes.buffer } },
+        { binding: 6, resource: { buffer: this.edgeBuffersGpu.opacities.buffer } },
+        { binding: 7, resource: { buffer: this.edgeBuffersGpu.states.buffer } },
+        { binding: 8, resource: { buffer: this.edgeBuffersGpu.endpointStates.buffer } },
+        { binding: 9, resource: { buffer: this.globalsBuffer } },
+        { binding: 10, resource: { buffer: this.hoverBuffer } },
+      ];
       this.edgeBindGroup = device.createBindGroup({
         layout: this.edgeBindGroupLayout,
-        entries: [
-          { binding: 0, resource: { buffer: this.cameraBuffer } },
-          { binding: 1, resource: { buffer: indicesBuffer } },
-          { binding: 2, resource: { buffer: this.edgeBuffersGpu.segments.buffer } },
-          { binding: 3, resource: { buffer: this.edgeBuffersGpu.colors.buffer } },
-          { binding: 4, resource: { buffer: this.edgeBuffersGpu.widths.buffer } },
-          { binding: 5, resource: { buffer: this.edgeBuffersGpu.endpointSizes.buffer } },
-          { binding: 6, resource: { buffer: this.edgeBuffersGpu.opacities.buffer } },
-          { binding: 7, resource: { buffer: this.edgeBuffersGpu.states.buffer } },
-          { binding: 8, resource: { buffer: this.edgeBuffersGpu.endpointStates.buffer } },
-          { binding: 9, resource: { buffer: this.globalsBuffer } },
-          { binding: 10, resource: { buffer: this.hoverBuffer } },
-        ],
+        entries,
       });
       this._edgeBuffersLast = {
         indices: indicesBuffer,
@@ -834,7 +834,9 @@ export class GraphLayerWebGPU extends GraphLayer {
     let is2D = cameraUniforms?.mode === '2d';
 
     const passes = [];
-    const schema = GraphVisualSchema.fromNetwork(network, { nodeOutlineUseAttributes: this.nodeOutlineUseAttributes === true });
+    const schema = GraphVisualSchema.fromNetwork(network, {
+      nodeOutlineUseAttributes: this.nodeOutlineUseAttributes === true,
+    });
     const visualConfig = schema.visualConfig;
     const { requests, nodeVariant, edgeVariant } = schema.getDenseRequests();
 
@@ -958,8 +960,9 @@ export class GraphLayerWebGPU extends GraphLayer {
   createEdgePipelines(key, blend, edgeModule, depthStencil, fragmentEntryPoint, useIndices, edgeVariant, depthWriteEnabled) {
     const device = this.device?.device;
     if (!device || !edgeModule || !depthStencil) return;
+    const edgeLayout = this.edgeBindGroupLayout;
     const linePipeline = device.createRenderPipeline({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [this.edgeBindGroupLayout] }),
+      layout: device.createPipelineLayout({ bindGroupLayouts: [edgeLayout] }),
       vertex: { module: edgeModule, entryPoint: 'edgeVertex' },
       fragment: {
         module: edgeModule,
@@ -971,7 +974,7 @@ export class GraphLayerWebGPU extends GraphLayer {
     });
 
     const quadPipeline = device.createRenderPipeline({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [this.edgeBindGroupLayout] }),
+      layout: device.createPipelineLayout({ bindGroupLayouts: [edgeLayout] }),
       vertex: {
         module: edgeModule,
         entryPoint: 'edgeQuadVertex',
@@ -1172,7 +1175,6 @@ export class GraphLayerWebGPU extends GraphLayer {
     this.globalsArray.set(this.edgeStateScale, offset); offset += slots * 4;
     this.globalsArray.set(this.edgeStateColorMul, offset); offset += slots * 4;
     this.globalsArray.set(this.edgeStateColorAdd, offset); offset += slots * 4;
-
     device.queue.writeBuffer(this.globalsBuffer, 0, this.globalsArray);
   }
 

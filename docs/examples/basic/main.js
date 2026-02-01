@@ -403,6 +403,23 @@ async function bootstrap() {
 
     let interpolationSmoothness = 6;
     let interpolationTargetRemaining = 0.1;
+    let interpolationBackend = 'auto';
+
+    const backendSelect = document.createElement('select');
+    backendSelect.className = 'helios-ui-select';
+    backendSelect.setAttribute('aria-label', 'Interpolation backend');
+    const backendOptions = [
+      { value: 'auto', label: 'Auto' },
+      { value: 'cpu', label: 'CPU' },
+      { value: 'network', label: 'Network' },
+    ];
+    for (const entry of backendOptions) {
+      const option = document.createElement('option');
+      option.value = entry.value;
+      option.textContent = entry.label;
+      backendSelect.appendChild(option);
+    }
+    backendSelect.value = interpolationBackend;
 
     const smoothnessAttribute = UIAttribute.number({
       id: 'interpolation-smoothness',
@@ -443,7 +460,10 @@ async function bootstrap() {
 
     const applyInterpolation = () => {
       const enabled = interpolatorToggle.getAttribute('aria-checked') === 'true';
-      const backend = typeof helios?.network?.interpolateNodeAttribute === 'function' ? 'network' : 'cpu';
+      let backend = interpolationBackend;
+      if (backend === 'auto') {
+        backend = typeof helios?.network?.interpolateNodeAttribute === 'function' ? 'network' : 'cpu';
+      }
       smoothnessRow.element.style.display = backend === 'cpu' ? '' : 'none';
       remainingRow.element.style.display = backend === 'cpu' ? 'none' : '';
       const interpolationOptions = {
@@ -503,11 +523,17 @@ async function bootstrap() {
       applyInterpolation();
     });
 
+    backendSelect.addEventListener('change', () => {
+      interpolationBackend = backendSelect.value;
+      applyInterpolation();
+    });
+
     applyInterpolation();
 
     content.appendChild(createRow('Layout', layoutSelect));
     content.appendChild(createRow('Layout interval', layoutIntervalSelect));
     content.appendChild(createRow('Interpolation', interpolatorToggle));
+    content.appendChild(createRow('Interpolation backend', backendSelect));
     content.appendChild(smoothnessRow.element);
     content.appendChild(remainingRow.element);
 

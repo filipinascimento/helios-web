@@ -72,7 +72,7 @@ helios.interpolation({
 ## Recommended patterns
 - **Fast, continuous layouts:** network-owned positions + no interpolation.
 - **Sparse layout updates:** delegate-owned positions + network interpolation.
-- **External/GPU layouts:** delegate that exposes GPU buffers (planned), with GPU interpolation.
+- **External layouts:** delegate that exposes external buffers (planned).
 
 ## Demo tip
 In the basic demo, set the layout update interval to 1–2 seconds to make interpolation visible.

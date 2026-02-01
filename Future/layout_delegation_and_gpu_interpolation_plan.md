@@ -1,11 +1,10 @@
-# Layout Delegation + GPU Interpolation Plan (Helios Web Next)
+# Layout Delegation Plan (Helios Web Next)
 
 **Date:** 2026-01-26
 
 ## Goals
 - Make layout algorithms modular by delegating position ownership to a pluggable object.
-- Allow renderer/layout to consume positions from network attributes, a delegate, or GPU buffers.
-- Enable GPU-based interpolation of positions for smooth visuals without duplicating large buffers.
+- Allow renderer/layout to consume positions from network attributes or a delegate.
 - Ensure delegated positions respond to network structural changes before the next render.
 
 ## Non‑Goals (for initial rollout)
@@ -69,31 +68,7 @@
 
 ---
 
-## 4) GPU Position Interpolator
-**Objective:** Smoothly interpolate positions on GPU between layout updates without copying buffers.
-
-### Interface
-- `prepare(a, b, t)`
-- `getInterpolatedPositionSource()`
-
-### WebGPU path
-- Use buffers A & B; interpolation in shader/compute step.
-- Expose interpolated buffer to renderer.
-
-### WebGL2 path
-- Use two attribute buffers; interpolation in vertex shader with uniform `t`.
-
-### CPU fallback (optional)
-- Interpolate into a cached CPU buffer when GPU not available.
-
-### Demo/support tasks (short-term)
-- Add a layout update interval option to worker layouts to demonstrate sparse updates.
-- Expose the interval in the demo UI so interpolation effects are visible.
-- Document that per-frame rendering can remain smooth even when layout updates are sparse.
-
----
-
-## 5) Renderer/Layout Integration
+## 4) Renderer/Layout Integration
 **Objective:** Make selection of position ownership and interpolation explicit.
 
 ### Proposed config
@@ -104,7 +79,7 @@ positions: {
 }
 interpolation: {
   enabled: boolean,
-  type: "gpu" | "cpu",
+  type: "cpu",
 }
 ```
 
@@ -114,19 +89,17 @@ interpolation: {
 
 ---
 
-## 6) Tests
+## 5) Tests
 - Unit tests for `PositionDelegate` lifecycle.
 - Renderer tests for interpolated position selection.
 - Event bridge tests with simulated network changes.
 - Add a small set of delegation examples for testing:
   - Example A: CPU delegate that mirrors positions with minimal logic.
-  - Example B: GPU delegate that provides buffers for rendering.
 
 ---
 
-## 7) Docs
-- Add a new doc describing delegation usage and GPU interpolation.
-- Reference existing notes in `Future/gpu_position_interpolation_notes.md`.
+## 6) Docs
+- Add a new doc describing delegation usage.
 - Document buffer-copy tradeoffs (worker snapshots, CPU interpolation snapshots, dense repacks).
 
 ---
@@ -134,6 +107,4 @@ interpolation: {
 ## Phased Delivery
 **Phase 1:** Delegation + PositionSource + event bridge (CPU only).
 
-**Phase 2:** GPU interpolation (WebGPU + WebGL2).
-
-**Phase 3:** Tighten APIs + finalize docs/examples.
+**Phase 2:** Tighten APIs + finalize docs/examples.

@@ -790,7 +790,9 @@ export class GraphLayerWebGL extends GraphLayer {
     const cameraUniforms = this.getCameraUniforms(camera);
     if (!cameraUniforms) return;
 
-    const schema = GraphVisualSchema.fromNetwork(network, { nodeOutlineUseAttributes: this.nodeOutlineUseAttributes === true });
+    const schema = GraphVisualSchema.fromNetwork(network, {
+      nodeOutlineUseAttributes: this.nodeOutlineUseAttributes === true,
+    });
     const visualConfig = schema.visualConfig;
     const { requests, nodeVariant: schemaNodeVariant } = schema.getDenseRequests();
     const nodeVariant = this.resolveNodeVariant({
