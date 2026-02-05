@@ -398,7 +398,7 @@ async function bootstrap() {
     interpolatorToggle.type = 'button';
     interpolatorToggle.className = 'helios-ui-toggle';
     interpolatorToggle.setAttribute('role', 'switch');
-    interpolatorToggle.setAttribute('aria-checked', 'true');
+    interpolatorToggle.setAttribute('aria-checked', 'false');
     const toggleThumb = document.createElement('span');
     toggleThumb.className = 'helios-ui-toggle__thumb';
     toggleThumb.setAttribute('aria-hidden', 'true');

@@ -24,6 +24,8 @@ const defaultSettings = {
   alphaDecay: 1 - Math.pow(0.001, 1 / 300),
   alphaTarget: 0,
   alphaMin: 0.001,
+  recenter: true,
+  center: [0, 0, 0],
 };
 
 const state = {
@@ -38,7 +40,38 @@ const state = {
   gravityForce: null,
   collisionForce: null,
   lastEdgeCount: 0,
+  tickCount: 0,
 };
+
+function computeStdDev(buffer, use2D) {
+  if (!buffer || !buffer.length) return 0;
+  const stride = 3;
+  const count = Math.floor(buffer.length / stride);
+  if (count <= 0) return 0;
+  const dims = use2D ? 2 : 3;
+  let sum = 0;
+  let n = 0;
+  for (let i = 0; i < count; i += 1) {
+    const base = i * stride;
+    sum += buffer[base];
+    sum += buffer[base + 1];
+    if (!use2D) sum += buffer[base + 2];
+    n += dims;
+  }
+  const mean = sum / n;
+  let varianceSum = 0;
+  for (let i = 0; i < count; i += 1) {
+    const base = i * stride;
+    const dx = buffer[base] - mean;
+    const dy = buffer[base + 1] - mean;
+    varianceSum += dx * dx + dy * dy;
+    if (!use2D) {
+      const dz = buffer[base + 2] - mean;
+      varianceSum += dz * dz;
+    }
+  }
+  return Math.sqrt(varianceSum / n);
+}
 
 function d3GravityForce() {
   let nodes = [];
@@ -216,8 +249,39 @@ function updateStrengths() {
 
 function stepSimulation(buffer) {
   if (!state.simulation) return;
-  state.simulation.tick();
   const use2D = state.settings.use2D;
+  if (state.tickCount === 0) {
+    const stdDev = computeStdDev(buffer, use2D);
+    console.log('[d3force3d] positions stddev before tick 1:', stdDev);
+  }
+  state.simulation.tick();
+  if (state.settings.recenter !== false && state.nodes.length) {
+    let sumX = 0;
+    let sumY = 0;
+    let sumZ = 0;
+    for (let i = 0; i < state.nodes.length; i += 1) {
+      const node = state.nodes[i];
+      sumX += node.x;
+      sumY += node.y;
+      sumZ += node.z;
+    }
+    const count = state.nodes.length;
+    const center = Array.isArray(state.settings.center) ? state.settings.center : [0, 0, 0];
+    const cx = Number.isFinite(center[0]) ? center[0] : 0;
+    const cy = Number.isFinite(center[1]) ? center[1] : 0;
+    const cz = Number.isFinite(center[2]) ? center[2] : 0;
+    const dx = cx - (sumX / count);
+    const dy = cy - (sumY / count);
+    const dz = cz - (sumZ / count);
+    if (dx || dy || dz) {
+      for (let i = 0; i < state.nodes.length; i += 1) {
+        const node = state.nodes[i];
+        node.x += dx;
+        node.y += dy;
+        node.z += dz;
+      }
+    }
+  }
   for (let i = 0; i < state.nodes.length; i += 1) {
     const node = state.nodes[i];
     const base = i * 3;
@@ -226,6 +290,12 @@ function stepSimulation(buffer) {
     buffer[base + 2] = use2D ? 0 : node.z / POSITION_SCALE;
   }
   state.settings.alpha = state.simulation.alpha();
+  if (state.tickCount < 2) {
+    const stdDev = computeStdDev(buffer, use2D);
+    const label = state.tickCount === 0 ? 'after tick 1' : 'after tick 2';
+    console.log(`[d3force3d] positions stddev ${label}:`, stdDev);
+  }
+  state.tickCount += 1;
 }
 
 self.onmessage = (event) => {

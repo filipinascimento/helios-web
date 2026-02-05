@@ -16,6 +16,8 @@ const DEFAULT_SETTINGS = {
   alphaDecay: 1 - Math.pow(0.001, 1 / 300),
   alphaTarget: 0,
   alphaMin: 0.001,
+  recenter: true,
+  center: [0, 0, 0],
 };
 
 const DEFAULT_OPTIONS = {
@@ -23,6 +25,37 @@ const DEFAULT_OPTIONS = {
   settings: {},
   mode: '2d',
 };
+
+function resolveSeedBounds(options = {}) {
+  const mode = options.mode === '3d' ? '3d' : '2d';
+  const bounds = options.bounds ?? null;
+  if (Array.isArray(bounds) && bounds.length >= 4) {
+    const minX = Number(bounds[0]);
+    const minY = Number(bounds[1]);
+    const maxX = Number(bounds[2]);
+    const maxY = Number(bounds[3]);
+    if ([minX, minY, maxX, maxY].every(Number.isFinite)) {
+      return {
+        width: Math.max(1, maxX - minX),
+        height: Math.max(1, maxY - minY),
+        depth: 0,
+        mode,
+        center: [(minX + maxX) * 0.5, (minY + maxY) * 0.5, 0],
+      };
+    }
+  }
+
+  const settingsCenter = Array.isArray(options.settings?.center) ? options.settings.center : [0, 0, 0];
+  const radius = Number.isFinite(options.radius) ? Math.max(1, options.radius) : 150;
+  const depth = Number.isFinite(options.depth) ? Math.max(0, options.depth) : 0;
+  return {
+    width: radius,
+    height: radius,
+    depth: mode === '3d' ? depth : 0,
+    mode,
+    center: settingsCenter,
+  };
+}
 
 export class D3Force3DLayout extends Layout {
   constructor(network, visuals, options = {}) {
@@ -42,6 +75,7 @@ export class D3Force3DLayout extends Layout {
     this.pending = false;
     this.lastUpdate = 0;
     this.optionsDirty = true;
+    this.seededPositions = false;
   }
 
   async initialize() {
@@ -64,6 +98,10 @@ export class D3Force3DLayout extends Layout {
   step() {
     if (!this.worker || this.pending) {
       return false;
+    }
+    if (!this.seededPositions) {
+      this.visuals?.seedMissingPositions?.(resolveSeedBounds(this.options));
+      this.seededPositions = true;
     }
     const intervalMs = Number.isFinite(this.options.updateIntervalMs)
       ? Math.max(0, this.options.updateIntervalMs)

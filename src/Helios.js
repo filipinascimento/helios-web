@@ -172,8 +172,8 @@ function inferNetworkFormatFromName(name) {
 
 function resolveSeedBoundsForLayout(layoutOption, size, mode) {
   const safeMode = mode === '3d' ? '3d' : '2d';
-  const width = Math.max(1, size?.width ?? 1);
-  const height = Math.max(1, size?.height ?? 1);
+  const width = Math.max(1, size?.width ?? 1)*0.01;
+  const height = Math.max(1, size?.height ?? 1)*0.01;
   const minSide = Math.max(1, Math.min(width, height));
   const base = { width: minSide, height: minSide, depth: 0, mode: safeMode, center: [0, 0, 0] };
 
@@ -1364,9 +1364,9 @@ export class Helios extends EventTarget {
           this._positionDelegate?.onNetworkEvent?.(event);
           this._positionDelegate?.markPositionsDirty?.();
           this._layout?.requestUpdate?.();
-          this.scheduler.requestLayout('data');
-          this.scheduler.requestGeometry();
-          this.scheduler.requestRender();
+          this.scheduler?.requestLayout?.('data');
+          this.scheduler?.requestGeometry?.();
+          this.scheduler?.requestRender?.();
         });
         if (typeof unsub === 'function') this._positionDelegateSubscriptions.push(unsub);
       }
