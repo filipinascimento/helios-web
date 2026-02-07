@@ -85,7 +85,9 @@ By default, Helios uses the d3-force-3d worker layout and interpolation is enabl
   shader overrides, framebuffer capture/present helpers, and projection
   utilities. The default graph layer still uploads raw attribute views (no
   extra copies) and draws edges before nodes. Force selection via the Helios
-  option `renderer: 'webgl' | 'webgpu'` when needed.
+  option `renderer: 'webgl' | 'webgpu'` when needed. When using WebGPU, the
+  option `webgpuBackend: 'dense' | 'indirect'` selects the dense (default) or
+  indirect backend.
 
 Development docs and test commands live in `DEVELOPING.md`.
 - **Attribute mapping (`src/pipeline/Mapper.js`)** – helper to convert arbitrary

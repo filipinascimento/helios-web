@@ -504,6 +504,7 @@ export class Helios extends EventTarget {
     });
     this.scheduler.setRenderPump(({ timestamp }) => {
       if (this.manualRendering) return false;
+      if (!this._supportsInterpolation()) return false;
       if (!this._positionInterpolator || this._positionInterpolationBackend !== 'cpu') return false;
       const lastUpdate = this._positionInterpolator._lastUpdateTime ?? 0;
       const durationMs = this._positionInterpolator.durationMs ?? 0;
@@ -636,6 +637,7 @@ export class Helios extends EventTarget {
       clearColor: this.options.clearColor,
       forceWebGL: this.options.renderer === 'webgl',
       forceWebGPU: this.options.renderer === 'webgpu',
+      webgpuBackend: this.options.webgpuBackend,
       mode: this.options.mode ?? '2d',
       projection: this.options.projection ?? 'perspective',
       suppressBrowserGestures: this.options.suppressBrowserGestures !== false,
@@ -651,6 +653,7 @@ export class Helios extends EventTarget {
     this._applyPendingRendererProps();
     this._refreshUIBindings();
     this._applyCachedStateStyles();
+    this._configurePositioning(this._positionDelegationOptions, this._positionInterpolationOptions);
     this.attributeTracker?.destroy?.();
     this.attributeTracker = new AttributeTracker(this.renderer);
     this.attributeTracker.resize(this.layers.size);
@@ -1119,6 +1122,7 @@ export class Helios extends EventTarget {
       clearColor: this.options.clearColor,
       forceWebGL: this.options.renderer === 'webgl',
       forceWebGPU: this.options.renderer === 'webgpu',
+      webgpuBackend: this.options.webgpuBackend,
       mode: this.options.mode ?? '2d',
       projection: this.options.projection ?? 'perspective',
       suppressBrowserGestures: this.options.suppressBrowserGestures !== false,
@@ -1130,6 +1134,7 @@ export class Helios extends EventTarget {
     this.debug.log('helios', 'Renderer created', { renderer: this.renderer?.constructor?.name });
     this._applyPendingRendererProps();
     this._applyCachedStateStyles();
+    this._configurePositioning(this._positionDelegationOptions, this._positionInterpolationOptions);
     this.attributeTracker = new AttributeTracker(this.renderer);
     this.attributeTracker.resize(this.layers.size);
     if (typeof this.renderer.resize === 'function') {
@@ -1197,8 +1202,12 @@ export class Helios extends EventTarget {
         timestamp: performance.now(),
         camera: this.renderer?.camera,
       };
-      const interpolationActive = this._advanceNetworkInterpolation(frame.timestamp);
-      const overrides = this._resolvePositionOverrides(frame.timestamp);
+      const interpolationActive = this._supportsInterpolation()
+        ? this._advanceNetworkInterpolation(frame.timestamp)
+        : false;
+      const overrides = this._supportsPositionOverrides()
+        ? this._resolvePositionOverrides(frame.timestamp)
+        : null;
       if (overrides) {
         frame.positionOverrides = overrides;
       }
@@ -1206,7 +1215,7 @@ export class Helios extends EventTarget {
         this.scheduler.requestGeometry();
         this.scheduler.requestRender();
       }
-      if (this._positionInterpolator && this._positionInterpolationBackend === 'cpu') {
+      if (this._supportsInterpolation() && this._positionInterpolator && this._positionInterpolationBackend === 'cpu') {
         const lastUpdate = this._positionInterpolator._lastUpdateTime ?? 0;
         const durationMs = this._positionInterpolator.durationMs ?? 0;
         const elapsed = frame.timestamp - lastUpdate;
@@ -1241,7 +1250,7 @@ export class Helios extends EventTarget {
         const dt = now - this._lastRenderTime;
         this._lastRenderTime = now;
         this._frameId += 1;
-        if (this._positionInterpolator && this._positionInterpolationBackend === 'cpu') {
+        if (this._supportsPositionOverrides() && this._positionInterpolator && this._positionInterpolationBackend === 'cpu') {
           const overrides = this._resolvePositionOverrides(now);
           if (overrides) {
             frame.positionOverrides = overrides;
@@ -1296,14 +1305,28 @@ export class Helios extends EventTarget {
   }
 
   _configurePositioning(positions = null, interpolation = null) {
-    this._positionDelegationOptions = positions ?? null;
-    this._positionInterpolationOptions = interpolation ?? null;
+    const supportsOverrides = this._supportsPositionOverrides();
+    const supportsInterpolation = this._supportsInterpolation();
+    const nextPositions = positions ?? null;
+    let nextInterpolation = interpolation ?? null;
+    if (!supportsOverrides && (nextPositions?.source === 'delegate' || nextPositions?.delegate)) {
+      this.debug?.log?.('layout', 'Position overrides disabled for WebGPU indirect backend');
+    }
+    if (!supportsInterpolation && nextInterpolation?.enabled) {
+      this.debug?.log?.('layout', 'Interpolation disabled for WebGPU indirect backend');
+      nextInterpolation = { ...nextInterpolation, enabled: false };
+    }
+    const resolvedPositions = supportsOverrides
+      ? nextPositions
+      : (nextPositions ? { ...nextPositions, source: 'network', delegate: null, buffer: null } : null);
+    this._positionDelegationOptions = resolvedPositions ?? null;
+    this._positionInterpolationOptions = nextInterpolation ?? null;
     if (this._positionDelegate) {
       this._detachPositionDelegate();
     }
-    const wantsNetworkBackend = interpolation?.backend === 'network';
-    const wantsCpuBackend = interpolation?.backend === 'cpu';
-    const wantsAutoBackend = interpolation?.backend == null || interpolation?.backend === 'auto';
+    const wantsNetworkBackend = nextInterpolation?.backend === 'network';
+    const wantsCpuBackend = nextInterpolation?.backend === 'cpu';
+    const wantsAutoBackend = nextInterpolation?.backend == null || nextInterpolation?.backend === 'auto';
     const networkSupportsInterpolation = typeof this.network?.interpolateNodeAttribute === 'function';
     const backend = (!wantsCpuBackend && (wantsNetworkBackend || wantsAutoBackend) && networkSupportsInterpolation)
       ? 'network'
@@ -1311,13 +1334,13 @@ export class Helios extends EventTarget {
     if (wantsNetworkBackend && !networkSupportsInterpolation) {
       this.debug?.log?.('layout', 'Network interpolation unavailable; falling back to CPU backend');
     }
-    if (interpolation?.backend && !['network', 'cpu', 'auto'].includes(interpolation.backend)) {
+    if (nextInterpolation?.backend && !['network', 'cpu', 'auto'].includes(nextInterpolation.backend)) {
       this.debug?.log?.('layout', 'Unsupported interpolation backend; falling back to CPU backend');
     }
     this._positionInterpolationBackend = backend;
-    let delegate = positions?.delegate ?? createPositionDelegateFromOptions(positions);
-    let wantsDelegate = positions?.source === 'delegate' || Boolean(positions?.delegate);
-    if (backend === 'network' && interpolation?.enabled) {
+    let delegate = resolvedPositions?.delegate ?? createPositionDelegateFromOptions(resolvedPositions);
+    let wantsDelegate = resolvedPositions?.source === 'delegate' || Boolean(resolvedPositions?.delegate);
+    if (backend === 'network' && nextInterpolation?.enabled) {
       if (!delegate) {
         delegate = new CpuMirrorPositionDelegate({ syncToNetwork: false });
       }
@@ -1330,8 +1353,8 @@ export class Helios extends EventTarget {
       this.visuals?.clearPositionDelegate?.();
       this._positionDelegate = null;
     }
-    if (interpolation?.enabled && backend !== 'network') {
-      this._positionInterpolator = new CpuLinearPositionInterpolator(interpolation);
+    if (nextInterpolation?.enabled && backend !== 'network') {
+      this._positionInterpolator = new CpuLinearPositionInterpolator(nextInterpolation);
     } else {
       this._positionInterpolator = null;
     }
@@ -1339,6 +1362,23 @@ export class Helios extends EventTarget {
       this._networkInterpolation.active = false;
       this._networkInterpolation.lastStepTimestamp = 0;
     }
+  }
+
+  _isIndirectWebgpuBackend() {
+    const backend = this.options?.webgpuBackend;
+    if (backend !== 'indirect') return false;
+    if (this.options?.renderer === 'webgl') return false;
+    const deviceType = this.renderer?.device?.type ?? null;
+    if (deviceType) return deviceType === 'webgpu';
+    return this.options?.renderer === 'webgpu';
+  }
+
+  _supportsPositionOverrides() {
+    return !this._isIndirectWebgpuBackend();
+  }
+
+  _supportsInterpolation() {
+    return !this._isIndirectWebgpuBackend();
   }
 
   _attachPositionDelegate(delegate) {
@@ -1419,6 +1459,7 @@ export class Helios extends EventTarget {
   }
 
   _captureNetworkInterpolationTarget(payload = null, timestamp = performance.now()) {
+    if (!this._supportsInterpolation()) return false;
     if (!this.network) return false;
     let source = payload?.positions ?? null;
     if (!source && this._positionInterpolationSource === 'delegate') {
@@ -1458,6 +1499,7 @@ export class Helios extends EventTarget {
   }
 
   _advanceNetworkInterpolation(timestamp = performance.now()) {
+    if (!this._supportsInterpolation()) return false;
     if (this._positionInterpolationBackend !== 'network' || !this._networkInterpolation.active) {
       return false;
     }
@@ -1502,6 +1544,7 @@ export class Helios extends EventTarget {
   }
 
   _capturePositionSnapshot(timestamp = performance.now()) {
+    if (!this._supportsPositionOverrides()) return;
     if (!this._positionInterpolator) return;
     const overrides = this._positionDelegate?.getDenseOverrides?.() ?? this._getDenseOverridesFromNetwork();
     if (overrides) {
@@ -1521,6 +1564,7 @@ export class Helios extends EventTarget {
   }
 
   _resolvePositionOverrides(timestamp = performance.now()) {
+    if (!this._supportsPositionOverrides()) return null;
     if (this._positionInterpolator) {
       const interpolated = this._positionInterpolator.getOverrides(timestamp);
       if (interpolated) return interpolated;
@@ -1533,11 +1577,19 @@ export class Helios extends EventTarget {
 
   _handleLayoutUpdate(payload = null) {
     const timestamp = payload?.timestamp ?? performance.now();
-    if (this._positionInterpolationBackend === 'network') {
+    if (this._positionInterpolationBackend === 'network' && this._supportsInterpolation()) {
       this._captureNetworkInterpolationTarget(payload, timestamp);
       this.scheduler.requestGeometry();
       this.scheduler.requestRender();
       this.debug.log('layout', 'Layout queued network interpolation');
+      return;
+    }
+    if (!this._supportsInterpolation()) {
+      this.visuals.markPositionsDirty();
+      this._positionDelegate?.markPositionsDirty?.();
+      this._positionDelegate?.syncToNetwork?.();
+      this.scheduler.requestGeometry();
+      this.debug.log('layout', 'Layout requested geometry update (interpolation disabled)');
       return;
     }
     if (this._positionInterpolator && this._positionInterpolationOptions?.durationMs == null) {
@@ -1732,8 +1784,14 @@ export class Helios extends EventTarget {
    */
   async prewarm(options = {}) {
     if (this.prewarmPromise) return this.prewarmPromise;
-    const { updateDenseBuffers = true } = options;
-    this.debug.log('helios', 'Prewarming visuals before ready', { updateDenseBuffers });
+    const backend = this.options?.webgpuBackend;
+    const indirectMode = backend === 'indirect';
+    const wantsDenseBuffers = options.updateDenseBuffers !== false;
+    const updateDenseBuffers = wantsDenseBuffers && !indirectMode;
+    this.debug.log('helios', 'Prewarming visuals before ready', {
+      updateDenseBuffers,
+      skippedDenseForIndirect: wantsDenseBuffers && indirectMode,
+    });
     this.prewarmPromise = (async () => {
       if (this.mappersDirty) {
         const nodeMapper = this.nodeMapper.toCombinedMapper();
@@ -2163,7 +2221,7 @@ export class Helios extends EventTarget {
       network: this.network,
       timestamp: performance.now(),
     };
-    const overrides = this._resolvePositionOverrides(frame.timestamp);
+    const overrides = this._supportsPositionOverrides() ? this._resolvePositionOverrides(frame.timestamp) : null;
     if (overrides) {
       frame.positionOverrides = overrides;
     }
@@ -2200,7 +2258,7 @@ export class Helios extends EventTarget {
       timestamp: performance.now(),
       camera: this.renderer?.camera,
     };
-    const overrides = this._resolvePositionOverrides(frame.timestamp);
+    const overrides = this._supportsPositionOverrides() ? this._resolvePositionOverrides(frame.timestamp) : null;
     if (overrides) {
       frame.positionOverrides = overrides;
     }
@@ -2779,7 +2837,7 @@ export class Helios extends EventTarget {
       timestamp: performance.now(),
       camera: this.renderer?.camera,
     };
-    const overrides = this._resolvePositionOverrides(frame.timestamp);
+    const overrides = this._supportsPositionOverrides() ? this._resolvePositionOverrides(frame.timestamp) : null;
     if (overrides) {
       frame.positionOverrides = overrides;
     }

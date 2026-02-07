@@ -118,6 +118,16 @@ function decodePacked(bytes, offset = 0) {
   return value - 1;
 }
 
+function decodePackedUint32(bytes, offset = 0) {
+  if (!bytes) return -1;
+  if (bytes instanceof Uint32Array) {
+    const raw = bytes[offset] ?? 0;
+    return Number(raw) - 1;
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset + offset * (bytes.BYTES_PER_ELEMENT ?? 1), 4);
+  return Number(view.getUint32(0, true)) - 1;
+}
+
 const ENCODE_FORMAT = 'u8x4';
 const INDEX_SENTINEL = '$index';
 
@@ -173,6 +183,233 @@ function ensureEncodedReady(network, scope, attrName) {
     : 'updateDenseColorEncodedEdgeAttribute';
   network[defineFn]?.(source, encodedName, { format: ENCODE_FORMAT });
   network[updateFn]?.(encodedName);
+}
+
+function getSparseEncodedName(scope, sourceName) {
+  return `_helios_sparse_encoded_${scope}_${sourceName || 'index'}`;
+}
+
+function getSparseEncodedApi(scope) {
+  return scope === 'node'
+    ? {
+      defineFn: 'defineSparseColorEncodedNodeAttribute',
+      updateFn: 'updateSparseColorEncodedNodeAttribute',
+      getFn: 'getSparseColorEncodedNodeAttributeView',
+    }
+    : {
+      defineFn: 'defineSparseColorEncodedEdgeAttribute',
+      updateFn: 'updateSparseColorEncodedEdgeAttribute',
+      getFn: 'getSparseColorEncodedEdgeAttributeView',
+    };
+}
+
+function getSparseEncodedDesc(network, scope, attrName) {
+  if (!network || !attrName) return null;
+  const source = attrName === 'index' ? INDEX_SENTINEL : attrName;
+  const encodedName = getSparseEncodedName(scope, source);
+  const api = getSparseEncodedApi(scope);
+  const getter = network?.[api.getFn];
+  if (typeof getter !== 'function') return null;
+  const desc = getter.call(network, encodedName);
+  return desc ?? null;
+}
+
+function ensureSparseEncodedReady(network, scope, attrName) {
+  if (!network || !attrName) return;
+  const source = attrName === 'index' ? INDEX_SENTINEL : attrName;
+  const encodedName = getSparseEncodedName(scope, source);
+  const api = getSparseEncodedApi(scope);
+  if (typeof network?.[api.defineFn] === 'function') {
+    network[api.defineFn](source, encodedName, { format: ENCODE_FORMAT });
+  }
+  if (typeof network?.[api.updateFn] === 'function') {
+    network[api.updateFn](encodedName);
+  }
+}
+
+function isIndirectGraphLayer(layer) {
+  return Boolean(
+    layer
+    && typeof layer.withSparseGraph === 'function'
+    && typeof layer.resolveIndirectEdgeVariant === 'function',
+  );
+}
+
+function safeGetAttributeBuffer(network, scope, name) {
+  if (!network || !name) return null;
+  const getter = scope === 'node' ? network.getNodeAttributeBuffer : network.getEdgeAttributeBuffer;
+  if (typeof getter !== 'function') return null;
+  try {
+    return getter.call(network, name) ?? null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function normalizeNodeSourceEndpoints(value) {
+  if (value === 'source' || value === 'from') return 1;
+  if (value === 'destination' || value === 'target' || value === 'to') return 2;
+  return 0;
+}
+
+function toPackedInteger(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return Math.trunc(numeric);
+}
+
+function writeEncodedValue(bytes, offset, value) {
+  const packedValue = toPackedInteger(value);
+  if (packedValue == null) {
+    bytes[offset] = 0;
+    bytes[offset + 1] = 0;
+    bytes[offset + 2] = 0;
+    bytes[offset + 3] = 0;
+    return;
+  }
+  const encoded = (packedValue + 1) >>> 0;
+  bytes[offset] = encoded & 0xff;
+  bytes[offset + 1] = (encoded >>> 8) & 0xff;
+  bytes[offset + 2] = (encoded >>> 16) & 0xff;
+  bytes[offset + 3] = (encoded >>> 24) & 0xff;
+}
+
+function mixVersions(primary, secondary = 0) {
+  const a = Number.isFinite(primary) ? Number(primary) : 0;
+  const b = Number.isFinite(secondary) ? Number(secondary) : 0;
+  return ((a >>> 0) * 1315423911 + (b >>> 0)) >>> 0;
+}
+
+function packActiveValues(source, indices, dimension) {
+  if (!source || !indices) return null;
+  const count = indices.length ?? 0;
+  if (!count) return new Float32Array(0);
+  const dim = Math.max(1, Math.floor(dimension || 1));
+  const packed = new Float32Array(count * dim);
+  for (let i = 0; i < count; i += 1) {
+    const sourceIndex = indices[i] ?? 0;
+    const sourceBase = sourceIndex * dim;
+    const targetBase = i * dim;
+    for (let d = 0; d < dim; d += 1) {
+      packed[targetBase + d] = source[sourceBase + d] ?? 0;
+    }
+  }
+  return packed;
+}
+
+function packEdgeSegmentsFromSparse(nodePositions, edgeEndpoints, edgeIndices) {
+  if (!nodePositions || !edgeEndpoints || !edgeIndices) return null;
+  const edgeCount = edgeIndices.length ?? 0;
+  if (!edgeCount) return new Float32Array(0);
+  const packed = new Float32Array(edgeCount * 6);
+  for (let i = 0; i < edgeCount; i += 1) {
+    const edgeId = edgeIndices[i] ?? 0;
+    const edgeBase = edgeId * 2;
+    const sourceId = edgeEndpoints[edgeBase] ?? 0;
+    const targetId = edgeEndpoints[edgeBase + 1] ?? 0;
+    const sourceBase = sourceId * 3;
+    const targetBase = targetId * 3;
+    const outBase = i * 6;
+    packed[outBase + 0] = nodePositions[sourceBase + 0] ?? 0;
+    packed[outBase + 1] = nodePositions[sourceBase + 1] ?? 0;
+    packed[outBase + 2] = nodePositions[sourceBase + 2] ?? 0;
+    packed[outBase + 3] = nodePositions[targetBase + 0] ?? 0;
+    packed[outBase + 4] = nodePositions[targetBase + 1] ?? 0;
+    packed[outBase + 5] = nodePositions[targetBase + 2] ?? 0;
+  }
+  return packed;
+}
+
+function packNodeSourcedEdgePairs(nodeValues, edgeEndpoints, edgeIndices, endpointsMode) {
+  if (!nodeValues || !edgeEndpoints || !edgeIndices) return null;
+  const edgeCount = edgeIndices.length ?? 0;
+  if (!edgeCount) return new Float32Array(0);
+  const packed = new Float32Array(edgeCount * 2);
+  for (let i = 0; i < edgeCount; i += 1) {
+    const edgeId = edgeIndices[i] ?? 0;
+    const edgeBase = edgeId * 2;
+    const sourceId = edgeEndpoints[edgeBase] ?? 0;
+    const targetId = edgeEndpoints[edgeBase + 1] ?? 0;
+    const sourceValue = nodeValues[sourceId] ?? 0;
+    const targetValue = nodeValues[targetId] ?? 0;
+    const outBase = i * 2;
+    if (endpointsMode === 1) {
+      packed[outBase + 0] = sourceValue;
+      packed[outBase + 1] = sourceValue;
+    } else if (endpointsMode === 2) {
+      packed[outBase + 0] = targetValue;
+      packed[outBase + 1] = targetValue;
+    } else {
+      packed[outBase + 0] = sourceValue;
+      packed[outBase + 1] = targetValue;
+    }
+  }
+  return packed;
+}
+
+function encodeActiveValues(attrName, attrView, activeIndices) {
+  if (!attrName || !activeIndices) return null;
+  const count = activeIndices.length ?? 0;
+  if (!count) return new Uint8Array(0);
+  const encoded = new Uint8Array(count * 4);
+  const useIndex = attrName === INDEX_SENTINEL || attrName === 'index' || attrName === '$index';
+  for (let i = 0; i < count; i += 1) {
+    const sourceIndex = activeIndices[i] ?? 0;
+    const sourceValue = useIndex ? sourceIndex : attrView?.[sourceIndex];
+    writeEncodedValue(encoded, i * 4, sourceValue);
+  }
+  return encoded;
+}
+
+function encodeActiveValuesUint32(attrName, attrView, activeIndices) {
+  if (!attrName || !activeIndices) return null;
+  const count = activeIndices.length ?? 0;
+  if (!count) return new Uint32Array(0);
+  const encoded = new Uint32Array(count);
+  const useIndex = attrName === INDEX_SENTINEL || attrName === 'index' || attrName === '$index';
+  for (let i = 0; i < count; i += 1) {
+    const sourceIndex = activeIndices[i] ?? 0;
+    const sourceValue = useIndex ? sourceIndex : attrView?.[sourceIndex];
+    const packedValue = toPackedInteger(sourceValue);
+    encoded[i] = packedValue == null ? 0 : ((packedValue + 1) >>> 0);
+  }
+  return encoded;
+}
+
+function packActiveEncodedValues(encodedDesc, activeIndices) {
+  if (!encodedDesc || !activeIndices) return null;
+  const count = activeIndices.length ?? 0;
+  if (!count) return new Uint8Array(0);
+  const source = encodedDesc?.view ?? encodedDesc;
+  if (!source || typeof source.length !== 'number') return null;
+  const packed = new Uint8Array(count * 4);
+
+  if (source.BYTES_PER_ELEMENT === 1) {
+    for (let i = 0; i < count; i += 1) {
+      const sourceIndex = activeIndices[i] ?? 0;
+      const sourceBase = sourceIndex * 4;
+      const outBase = i * 4;
+      packed[outBase + 0] = source[sourceBase + 0] ?? 0;
+      packed[outBase + 1] = source[sourceBase + 1] ?? 0;
+      packed[outBase + 2] = source[sourceBase + 2] ?? 0;
+      packed[outBase + 3] = source[sourceBase + 3] ?? 0;
+    }
+    return packed;
+  }
+
+  if (source.BYTES_PER_ELEMENT === 4) {
+    for (let i = 0; i < count; i += 1) {
+      const sourceIndex = activeIndices[i] ?? 0;
+      const value = source[sourceIndex] ?? 0;
+      packed[i * 4 + 0] = value & 0xff;
+      packed[i * 4 + 1] = (value >>> 8) & 0xff;
+      packed[i * 4 + 2] = (value >>> 16) & 0xff;
+      packed[i * 4 + 3] = (value >>> 24) & 0xff;
+    }
+    return packed;
+  }
+
+  return null;
 }
 
 class WebGLAttributeRenderer {
@@ -987,13 +1224,14 @@ class WebGLAttributeRenderer {
   }
 }
 
-class WebGPUAttributeRenderer {
+export class WebGPUAttributeRenderer {
   constructor(graphLayer, pool, runner) {
     this.graphLayer = graphLayer;
     this.pool = pool;
     this.runner = runner;
     this.device = null;
     this.targetFormat = 'rgba8unorm';
+    this.depthColorFormat = 'rgba8unorm';
     this.trackDepth = false;
     this.nodePipeline = null;
     this.nodeDepthPipeline = null;
@@ -1017,13 +1255,35 @@ class WebGPUAttributeRenderer {
     this.size = null;
   }
 
+  canUseR32UintTarget(gpu) {
+    if (!gpu) return false;
+    try {
+      const probe = gpu.createTexture({
+        size: { width: 1, height: 1, depthOrArrayLayers: 1 },
+        format: 'r32uint',
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+      });
+      probe.destroy?.();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   initialize(device) {
     if (this.device) return;
     if (!device || device.type !== 'webgpu') return;
     this.device = device;
-    // Prefer a linear format for attribute targets so encoded indices round-trip without swizzling/gamma.
-    const preferredFormat = (device.format && !device.format.includes('srgb')) ? device.format : null;
-    this.targetFormat = preferredFormat && preferredFormat.startsWith('rgba') ? preferredFormat : 'rgba8unorm';
+    const indirectMode = isIndirectGraphLayer(this.graphLayer);
+    if (indirectMode && this.canUseR32UintTarget(device.device)) {
+      this.targetFormat = 'r32uint';
+      this.depthColorFormat = 'rgba8unorm';
+    } else {
+      // Prefer a linear format for attribute targets so encoded indices round-trip without swizzling/gamma.
+      const preferredFormat = (device.format && !device.format.includes('srgb')) ? device.format : null;
+      this.targetFormat = preferredFormat && preferredFormat.startsWith('rgba') ? preferredFormat : 'rgba8unorm';
+      this.depthColorFormat = this.targetFormat;
+    }
     const cache = device.resourceCache?.webgpu;
     const quad = new Float32Array([
       -1, -1,
@@ -1111,6 +1371,7 @@ class WebGPUAttributeRenderer {
       edgeEndpointSizeUniform ? 'eEndU' : 'eEndB',
       this.graphLayer?.edgeRenderingMode === 'quad' ? 'quad' : 'line',
       this.targetFormat,
+      this.depthColorFormat,
       this.device?.depthFormat ?? 'depth24plus',
     ].join(':');
 
@@ -1125,6 +1386,8 @@ class WebGPUAttributeRenderer {
         width: edgeWidthUniform ? 'uniform' : 'buffer',
         endpointSize: edgeEndpointSizeUniform ? 'uniform' : 'buffer',
       },
+      encodedOutputMode: this.targetFormat === 'r32uint' ? 'uint32' : 'rgba8',
+      encodedInputMode: this.targetFormat === 'r32uint' ? 'uint32' : 'u8x4',
     });
 
     const nodeModule = gpu.createShaderModule({ code: sources.nodeWGSL });
@@ -1136,7 +1399,7 @@ class WebGPUAttributeRenderer {
       { arrayStride: 8, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }], stepMode: 'vertex' },
       { arrayStride: 12, attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x3' }], stepMode: 'instance' },
       ...(!nodeSizeUniform ? [{ arrayStride: 4, attributes: [{ shaderLocation: 2, offset: 0, format: 'float32' }], stepMode: 'instance' }] : []),
-      { arrayStride: 4, attributes: [{ shaderLocation: 3, offset: 0, format: 'uint8x4' }], stepMode: 'instance' },
+      { arrayStride: 4, attributes: [{ shaderLocation: 3, offset: 0, format: this.targetFormat === 'r32uint' ? 'uint32' : 'uint8x4' }], stepMode: 'instance' },
       ...(!nodeOutlineUniform ? [{ arrayStride: 4, attributes: [{ shaderLocation: 4, offset: 0, format: 'float32' }], stepMode: 'instance' }] : []),
     ];
     const nodeSlots = [
@@ -1157,7 +1420,7 @@ class WebGPUAttributeRenderer {
         stepMode: 'instance',
       },
       ...(!edgeEndpointSizeUniform ? [{ arrayStride: 8, attributes: [{ shaderLocation: 3, offset: 0, format: 'float32x2' }], stepMode: 'instance' }] : []),
-      { arrayStride: 4, attributes: [{ shaderLocation: 4, offset: 0, format: 'uint8x4' }], stepMode: 'instance' },
+      { arrayStride: 4, attributes: [{ shaderLocation: 4, offset: 0, format: this.targetFormat === 'r32uint' ? 'uint32' : 'uint8x4' }], stepMode: 'instance' },
     ];
     const edgeLineSlots = [
       'segments',
@@ -1177,7 +1440,7 @@ class WebGPUAttributeRenderer {
       },
       ...(!edgeWidthUniform ? [{ arrayStride: 8, attributes: [{ shaderLocation: 3, offset: 0, format: 'float32x2' }], stepMode: 'instance' }] : []),
       ...(!edgeEndpointSizeUniform ? [{ arrayStride: 8, attributes: [{ shaderLocation: 4, offset: 0, format: 'float32x2' }], stepMode: 'instance' }] : []),
-      { arrayStride: 4, attributes: [{ shaderLocation: 5, offset: 0, format: 'uint8x4' }], stepMode: 'instance' },
+      { arrayStride: 4, attributes: [{ shaderLocation: 5, offset: 0, format: this.targetFormat === 'r32uint' ? 'uint32' : 'uint8x4' }], stepMode: 'instance' },
     ];
     const edgeQuadSlots = [
       'edgeCorner',
@@ -1200,7 +1463,7 @@ class WebGPUAttributeRenderer {
     const nodeDepthPipeline = gpu.createRenderPipeline({
       layout: nodeLayout,
       vertex: { module: nodeModule, entryPoint: 'nodeVertex', buffers: nodeVertexBuffers },
-      fragment: { module: nodeModule, entryPoint: 'nodeDepthFragment', targets: [{ format: this.targetFormat }] },
+      fragment: { module: nodeModule, entryPoint: 'nodeDepthFragment', targets: [{ format: this.depthColorFormat }] },
       depthStencil: { format: depthFormat, depthWriteEnabled: true, depthCompare: 'less-equal' },
       primitive: { topology: 'triangle-strip' },
     });
@@ -1215,7 +1478,7 @@ class WebGPUAttributeRenderer {
     const edgeDepthPipeline = gpu.createRenderPipeline({
       layout: edgeLayout,
       vertex: { module: edgeModule, entryPoint: 'edgeVertex', buffers: edgeLineVertexBuffers },
-      fragment: { module: edgeModule, entryPoint: 'edgeDepthFragment', targets: [{ format: this.targetFormat }] },
+      fragment: { module: edgeModule, entryPoint: 'edgeDepthFragment', targets: [{ format: this.depthColorFormat }] },
       depthStencil: { format: depthFormat, depthWriteEnabled: true, depthCompare: 'less-equal' },
       primitive: { topology: 'line-list' },
     });
@@ -1230,7 +1493,7 @@ class WebGPUAttributeRenderer {
     const edgeQuadDepthPipeline = gpu.createRenderPipeline({
       layout: edgeLayout,
       vertex: { module: edgeModule, entryPoint: 'edgeQuadVertex', buffers: edgeQuadVertexBuffers },
-      fragment: { module: edgeModule, entryPoint: 'edgeDepthFragment', targets: [{ format: this.targetFormat }] },
+      fragment: { module: edgeModule, entryPoint: 'edgeDepthFragment', targets: [{ format: this.depthColorFormat }] },
       depthStencil: { format: depthFormat, depthWriteEnabled: true, depthCompare: 'less-equal' },
       primitive: { topology: 'triangle-strip' },
     });
@@ -1313,6 +1576,7 @@ class WebGPUAttributeRenderer {
       nodeSizeUniform ? 'nSizeU' : 'nSizeB',
       nodeOutlineUniform ? 'nOutU' : 'nOutB',
       this.targetFormat,
+      this.depthColorFormat,
       this.device?.depthFormat ?? 'depth24plus',
     ].join(':');
 
@@ -1329,6 +1593,8 @@ class WebGPUAttributeRenderer {
         width: 'uniform',
         endpointSize: 'uniform',
       },
+      encodedOutputMode: this.targetFormat === 'r32uint' ? 'uint32' : 'rgba8',
+      encodedInputMode: this.targetFormat === 'r32uint' ? 'uint32' : 'u8x4',
     });
 
     const nodeModule = gpu.createShaderModule({ code: sources.nodeWGSL });
@@ -1358,7 +1624,7 @@ class WebGPUAttributeRenderer {
     const nodeDepthPipeline = gpu.createRenderPipeline({
       layout: nodeLayout,
       vertex: { module: nodeModule, entryPoint: 'nodeVertex', buffers: nodeVertexBuffers },
-      fragment: { module: nodeModule, entryPoint: 'nodeDepthFragment', targets: [{ format: this.targetFormat }] },
+      fragment: { module: nodeModule, entryPoint: 'nodeDepthFragment', targets: [{ format: this.depthColorFormat }] },
       depthStencil: { format: depthFormat, depthWriteEnabled: true, depthCompare: 'less-equal' },
       primitive: { topology: 'triangle-strip' },
     });
@@ -1419,14 +1685,14 @@ class WebGPUAttributeRenderer {
       ? this.pool.get(this.device, 'attr-node-depth-color', width, height, {
         depth: true,
         filter: 'nearest',
-        format: this.targetFormat,
+        format: this.depthColorFormat,
       })
       : null;
     this.depthTargets.edge = this.trackDepth
       ? this.pool.get(this.device, 'attr-edge-depth-color', width, height, {
         depth: true,
         filter: 'nearest',
-        format: this.targetFormat,
+        format: this.depthColorFormat,
       })
       : null;
   }
@@ -1440,100 +1706,245 @@ class WebGPUAttributeRenderer {
     return { nodeEncoded, edgeEncoded };
   }
 
-  render(frame, size, config) {
-    if (!this.device || !frame?.network) return null;
-    const network = frame.network;
-    const camera = frame.camera;
-    const scale = config.resolutionScale ?? 1;
-    this.resize(size, scale, config.trackDepth);
-    const cameraUniforms = this.graphLayer.getCameraUniforms(camera);
-    if (!cameraUniforms) return null;
-    const useQuads = this.graphLayer.edgeRenderingMode === 'quad';
-    ensureEncodedReady(network, 'node', config.nodeAttribute);
-    ensureEncodedReady(network, 'edge', config.edgeAttribute);
+  getIndirectEdgeSourceRequests(edgeVariant) {
+    if (!edgeVariant || typeof edgeVariant !== 'object') {
+      return { width: null, endpointSize: null };
+    }
+    const widthSource = edgeVariant.widthSource === 'node'
+      ? (edgeVariant.widthNodeAttribute ?? NODE_SIZE_ATTRIBUTE)
+      : null;
+    const endpointSizeSource = edgeVariant.endpointSizeSource === 'node'
+      ? (edgeVariant.endpointSizeNodeAttribute ?? NODE_SIZE_ATTRIBUTE)
+      : null;
+    return {
+      width: widthSource && widthSource !== NODE_SIZE_ATTRIBUTE ? widthSource : null,
+      endpointSize: endpointSizeSource && endpointSizeSource !== NODE_SIZE_ATTRIBUTE ? endpointSizeSource : null,
+    };
+  }
 
-    const schema = GraphVisualSchema.fromNetwork(network, {
-      nodeOutlineUseAttributes: this.graphLayer?.nodeOutlineUseAttributes === true,
+  buildIndirectPreparedGeometry(network, sparse, config, options = {}) {
+    const {
+      useQuads = true,
+      nodeSizeUniform = false,
+      nodeOutlineUniform = true,
+      edgeWidthUniform = false,
+      edgeEndpointSizeUniform = true,
+      edgeVariant = null,
+      useIntegerEncoding = this.targetFormat === 'r32uint',
+    } = options;
+
+    const nodeIndices = sparse?.nodes?.indices ?? null;
+    const edgeIndices = sparse?.edges?.indices ?? null;
+    const nodeCount = nodeIndices?.length ?? 0;
+    const edgeCount = edgeIndices?.length ?? 0;
+
+    const nodePositions = packActiveValues(sparse?.nodes?.positions, nodeIndices, 3);
+    if (nodeCount && (!nodePositions || nodePositions.length !== nodeCount * 3)) {
+      throw new Error('AttributeTracker: indirect mode requires sparse node positions.');
+    }
+
+    const nodeSizes = !nodeSizeUniform ? packActiveValues(sparse?.nodes?.sizes, nodeIndices, 1) : null;
+    const nodeOutlineWidths = !nodeOutlineUniform ? packActiveValues(sparse?.nodes?.outlineWidths, nodeIndices, 1) : null;
+    if (!nodeSizeUniform && nodeCount && (!nodeSizes || nodeSizes.length !== nodeCount)) {
+      throw new Error('AttributeTracker: indirect mode requires sparse node sizes.');
+    }
+    if (!nodeOutlineUniform && nodeCount && (!nodeOutlineWidths || nodeOutlineWidths.length !== nodeCount)) {
+      throw new Error('AttributeTracker: indirect mode requires sparse node outline widths.');
+    }
+
+    const edgeSegments = (config.edgeAttribute && edgeCount)
+      ? packEdgeSegmentsFromSparse(sparse?.nodes?.positions, sparse?.edges?.endpoints, edgeIndices)
+      : null;
+    if (config.edgeAttribute && edgeCount && (!edgeSegments || edgeSegments.length !== edgeCount * 6)) {
+      throw new Error('AttributeTracker: indirect mode requires sparse edge endpoints and node positions.');
+    }
+
+    const widthFromNode = edgeVariant?.widthSource === 'node';
+    const endpointSizeFromNode = edgeVariant?.endpointSizeSource === 'node';
+    const widthEndpointsMode = normalizeNodeSourceEndpoints(edgeVariant?.widthEndpoints);
+    const endpointSizeEndpointsMode = normalizeNodeSourceEndpoints(edgeVariant?.endpointSizeEndpoints);
+
+    let edgeWidths = null;
+    if (config.edgeAttribute && useQuads && !edgeWidthUniform) {
+      if (widthFromNode) {
+        const widthSource = sparse?.nodeEdgeSources?.width?.view ?? sparse?.nodes?.sizes;
+        edgeWidths = packNodeSourcedEdgePairs(widthSource, sparse?.edges?.endpoints, edgeIndices, widthEndpointsMode);
+      } else {
+        edgeWidths = packActiveValues(sparse?.edges?.widths, edgeIndices, 2);
+      }
+      if (edgeCount && (!edgeWidths || edgeWidths.length !== edgeCount * 2)) {
+        throw new Error('AttributeTracker: indirect mode requires edge widths (or node width source) for quad edges.');
+      }
+    }
+
+    let edgeEndpointSizes = null;
+    if (config.edgeAttribute && !edgeEndpointSizeUniform) {
+      if (endpointSizeFromNode) {
+        const endpointSource = sparse?.nodeEdgeSources?.endpointSize?.view ?? sparse?.nodes?.sizes;
+        edgeEndpointSizes = packNodeSourcedEdgePairs(
+          endpointSource,
+          sparse?.edges?.endpoints,
+          edgeIndices,
+          endpointSizeEndpointsMode,
+        );
+      } else {
+        edgeEndpointSizes = packActiveValues(sparse?.edges?.endpointSizes, edgeIndices, 2);
+      }
+      if (edgeCount && (!edgeEndpointSizes || edgeEndpointSizes.length !== edgeCount * 2)) {
+        throw new Error('AttributeTracker: indirect mode requires edge endpoint sizes.');
+      }
+    }
+
+    const nodeAttrName = config.nodeAttribute;
+    const edgeAttrName = config.edgeAttribute;
+    const sparseNodeEncoded = useIntegerEncoding ? null : getSparseEncodedDesc(network, 'node', nodeAttrName);
+    const sparseEdgeEncoded = useIntegerEncoding ? null : getSparseEncodedDesc(network, 'edge', edgeAttrName);
+
+    const nodeAttr = (nodeAttrName && nodeAttrName !== INDEX_SENTINEL && nodeAttrName !== 'index')
+      ? safeGetAttributeBuffer(network, 'node', nodeAttrName)
+      : null;
+    const edgeAttr = (edgeAttrName && edgeAttrName !== INDEX_SENTINEL && edgeAttrName !== 'index')
+      ? safeGetAttributeBuffer(network, 'edge', edgeAttrName)
+      : null;
+
+    if (nodeAttrName && nodeAttrName !== INDEX_SENTINEL && nodeAttrName !== 'index' && nodeCount && !nodeAttr?.view && !sparseNodeEncoded?.view) {
+      throw new Error(`AttributeTracker: missing sparse node attribute "${nodeAttrName}" for indirect tracking.`);
+    }
+    if (edgeAttrName && edgeAttrName !== INDEX_SENTINEL && edgeAttrName !== 'index' && edgeCount && !edgeAttr?.view && !sparseEdgeEncoded?.view) {
+      throw new Error(`AttributeTracker: missing sparse edge attribute "${edgeAttrName}" for indirect tracking.`);
+    }
+
+    const nodeEncodedFromSparse = useIntegerEncoding ? null : packActiveEncodedValues(sparseNodeEncoded, nodeIndices);
+    const edgeEncodedFromSparse = useIntegerEncoding ? null : packActiveEncodedValues(sparseEdgeEncoded, edgeIndices);
+
+    const nodeEncodedView = useIntegerEncoding
+      ? encodeActiveValuesUint32(nodeAttrName, nodeAttr?.view ?? null, nodeIndices)
+      : (nodeEncodedFromSparse ?? encodeActiveValues(nodeAttrName, nodeAttr?.view ?? null, nodeIndices));
+    const edgeEncodedView = useIntegerEncoding
+      ? encodeActiveValuesUint32(edgeAttrName, edgeAttr?.view ?? null, edgeIndices)
+      : (edgeEncodedFromSparse ?? encodeActiveValues(edgeAttrName, edgeAttr?.view ?? null, edgeIndices));
+
+    const nodeTopologyVersion = sparse?.nodes?.versions?.topology ?? 0;
+    const edgeTopologyVersion = sparse?.edges?.versions?.topology ?? 0;
+    const nodeWidthVersion = sparse?.nodeEdgeSources?.width?.version ?? sparse?.nodes?.versions?.sizes ?? 0;
+    const nodeEndpointSizeVersion = sparse?.nodeEdgeSources?.endpointSize?.version ?? sparse?.nodes?.versions?.sizes ?? 0;
+    const edgeSegmentVersion = mixVersions(
+      sparse?.edges?.versions?.endpoints ?? 0,
+      sparse?.nodes?.versions?.positions ?? 0,
+    );
+
+    const geometry = {
+      nodes: {
+        positions: nodePositions,
+        sizes: nodeSizes,
+        outlineWidths: nodeOutlineWidths,
+        count: nodeCount,
+        versions: {
+          positions: sparse?.nodes?.versions?.positions ?? 0,
+          sizes: sparse?.nodes?.versions?.sizes ?? 0,
+          outlineWidths: sparse?.nodes?.versions?.outlineWidths ?? 0,
+          topology: nodeTopologyVersion,
+        },
+      },
+      edges: {
+        segments: edgeSegments,
+        widths: edgeWidths,
+        endpointSizes: edgeEndpointSizes,
+        count: edgeCount,
+        versions: {
+          segments: edgeSegmentVersion,
+          widths: widthFromNode ? nodeWidthVersion : (sparse?.edges?.versions?.widths ?? 0),
+          endpointSizes: endpointSizeFromNode ? nodeEndpointSizeVersion : (sparse?.edges?.versions?.endpointSizes ?? 0),
+          topology: edgeTopologyVersion,
+        },
+      },
+    };
+
+    const encoded = {
+      nodeEncoded: nodeEncodedView
+        ? {
+          view: nodeEncodedView,
+          version: mixVersions(
+            sparseNodeEncoded?.version ?? nodeAttr?.version ?? nodeTopologyVersion,
+            nodeTopologyVersion,
+          ),
+        }
+        : null,
+      edgeEncoded: edgeEncodedView
+        ? {
+          view: edgeEncodedView,
+          version: mixVersions(
+            sparseEdgeEncoded?.version ?? edgeAttr?.version ?? edgeTopologyVersion,
+            edgeTopologyVersion,
+          ),
+        }
+        : null,
+    };
+
+    return { geometry, encoded };
+  }
+
+  renderPreparedGeometry(geometry, encoded, config, options = {}) {
+    if (!geometry) return null;
+    const {
+      size,
+      cameraUniforms,
+      useQuads,
+      nodeSizeUniform,
+      nodeOutlineUniform,
+      edgeWidthUniform,
+      edgeEndpointSizeUniform,
+      nodeCfg,
+      edgeCfg,
+    } = options;
+
+    const nodeSizes = (!nodeSizeUniform) ? geometry.nodes.sizes : null;
+    const nodeOutlineWidths = (!nodeOutlineUniform) ? geometry.nodes.outlineWidths : null;
+    const edgeWidths = (useQuads && !edgeWidthUniform) ? geometry.edges.widths : null;
+    const edgeEndpointSizes = (!edgeEndpointSizeUniform) ? geometry.edges.endpointSizes : null;
+
+    const gpu = this.device.device;
+
+    const pipelines = this.getPipelinesForVariant({
+      nodeSizeUniform,
+      nodeOutlineUniform,
+      edgeWidthUniform,
+      edgeEndpointSizeUniform,
     });
-    const nodeVariant = schema?.getNodeVariant?.() ?? null;
-    const edgeVariant = schema?.getEdgeVariant?.() ?? null;
-    const visualConfig = schema?.visualConfig ?? null;
-    const nodeCfg = visualConfig?.node ?? null;
-    const edgeCfg = visualConfig?.edge ?? null;
+    if (!pipelines) return null;
 
-    // Match the renderer defaults (see WebGL path for rationale).
-    const nodeSizeUniform = nodeVariant ? (nodeVariant.sizeBuffer === false) : false;
-    const nodeOutlineUniform = nodeVariant ? (nodeVariant.outlineWidthBuffer === false) : true;
-    const edgeWidthUniform = edgeVariant ? (edgeVariant.widthBuffer === false) : false;
-    const edgeEndpointSizeUniform = edgeVariant ? (edgeVariant.endpointSizeBuffer === false) : true;
+    const occlusionPipelines = this.getNodeOcclusionPipelinesForVariant({
+      nodeSizeUniform,
+      nodeOutlineUniform,
+    });
+    const is2D = cameraUniforms.mode === '2d';
+    const zoom2D = is2D ? Math.max(1e-3, cameraUniforms.view?.[0] ?? 1) : 1;
+    const edgeWidthFactor = is2D ? (zoom2D / EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL) : 1.0;
+    const edgeWidthBase = this.graphLayer.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
+    const edgeWidthScale = this.graphLayer.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
 
-    const denseRequests = [];
-    if (config.nodeAttribute || config.edgeAttribute) {
-      denseRequests.push(['node', NODE_POSITION_ATTRIBUTE]);
-      if (!nodeSizeUniform) denseRequests.push(['node', NODE_SIZE_ATTRIBUTE]);
-      if (!nodeOutlineUniform) denseRequests.push(['node', VISUAL_ATTRIBUTE_NAMES.NODE_OUTLINE_WIDTH_ATTRIBUTE]);
-    }
-    if (config.edgeAttribute) {
-      denseRequests.push(
-        ['edge', EDGE_ENDPOINTS_POSITION_ATTRIBUTE],
-        ...((useQuads && !edgeWidthUniform) ? [['edge', EDGE_WIDTH_ATTRIBUTE]] : []),
-        ...(edgeEndpointSizeUniform ? [] : [['edge', EDGE_ENDPOINTS_SIZE_ATTRIBUTE]]),
-      );
-    }
-
-    const overrides = frame?.positionOverrides ?? null;
-
-    return this.graphLayer.withDenseGraph(network, (geometry) => {
-      if (!geometry) return null;
-      const encoded = this.encodeAttributes(network, geometry, config);
-
-      const nodeSizes = (!nodeSizeUniform) ? geometry.nodes.sizes : null;
-      const nodeOutlineWidths = (!nodeOutlineUniform) ? geometry.nodes.outlineWidths : null;
-      const edgeWidths = (useQuads && !edgeWidthUniform) ? geometry.edges.widths : null;
-      const edgeEndpointSizes = (!edgeEndpointSizeUniform) ? geometry.edges.endpointSizes : null;
-
-      const gpu = this.device.device;
-
-      const pipelines = this.getPipelinesForVariant({
-        nodeSizeUniform,
-        nodeOutlineUniform,
-        edgeWidthUniform,
-        edgeEndpointSizeUniform,
-      });
-      if (!pipelines) return null;
-
-      const occlusionPipelines = this.getNodeOcclusionPipelinesForVariant({
-        nodeSizeUniform,
-        nodeOutlineUniform,
-      });
-      const is2D = cameraUniforms.mode === '2d';
-      const zoom2D = is2D ? Math.max(1e-3, cameraUniforms.view?.[0] ?? 1) : 1;
-      const edgeWidthFactor = is2D ? (zoom2D / EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL) : 1.0;
-      const edgeWidthBase = this.graphLayer.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
-      const edgeWidthScale = this.graphLayer.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
-
-      const cameraBuffer = gpu.createBuffer({
-        size: 48 * 4,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-        mappedAtCreation: true,
-      });
-      const cameraArray = new Float32Array(cameraBuffer.getMappedRange());
-      cameraArray.set(cameraUniforms.viewProjection, 0);
-      cameraArray.set(cameraUniforms.view, 16);
-      cameraArray.set(cameraUniforms.position ?? [0, 0, 0], 32);
-      cameraArray[35] = is2D ? 1 : 0;
-      cameraArray.set(cameraUniforms.up ?? [0, 1, 0], 36);
-      cameraArray.set(cameraUniforms.right ?? [1, 0, 0], 40);
-      const viewportWidth = cameraUniforms.viewport?.width ?? size.width ?? 1;
-      const viewportHeight = cameraUniforms.viewport?.height ?? size.height ?? 1;
-      const pixelRatio = cameraUniforms.viewport?.devicePixelRatio ?? size.devicePixelRatio ?? 1;
-      const drawWidth = viewportWidth * pixelRatio;
-      const drawHeight = viewportHeight * pixelRatio;
-      cameraArray[44] = drawWidth;
-      cameraArray[45] = drawHeight;
-      cameraArray[46] = drawWidth > 0 ? 1 / drawWidth : 0;
-      cameraArray[47] = drawHeight > 0 ? 1 / drawHeight : 0;
-      cameraBuffer.unmap();
+    const cameraBuffer = gpu.createBuffer({
+      size: 48 * 4,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      mappedAtCreation: true,
+    });
+    const cameraArray = new Float32Array(cameraBuffer.getMappedRange());
+    cameraArray.set(cameraUniforms.viewProjection, 0);
+    cameraArray.set(cameraUniforms.view, 16);
+    cameraArray.set(cameraUniforms.position ?? [0, 0, 0], 32);
+    cameraArray[35] = is2D ? 1 : 0;
+    cameraArray.set(cameraUniforms.up ?? [0, 1, 0], 36);
+    cameraArray.set(cameraUniforms.right ?? [1, 0, 0], 40);
+    const viewportWidth = cameraUniforms.viewport?.width ?? size.width ?? 1;
+    const viewportHeight = cameraUniforms.viewport?.height ?? size.height ?? 1;
+    const pixelRatio = cameraUniforms.viewport?.devicePixelRatio ?? size.devicePixelRatio ?? 1;
+    const drawWidth = viewportWidth * pixelRatio;
+    const drawHeight = viewportHeight * pixelRatio;
+    cameraArray[44] = drawWidth;
+    cameraArray[45] = drawHeight;
+    cameraArray[46] = drawWidth > 0 ? 1 / drawWidth : 0;
+    cameraArray[47] = drawHeight > 0 ? 1 / drawHeight : 0;
+    cameraBuffer.unmap();
 
     const globalsBuffer = gpu.createBuffer({
       size: 24 * 4,
@@ -1569,7 +1980,6 @@ class WebGPUAttributeRenderer {
     globalsArray[23] = 0;
     globalsBuffer.unmap();
 
-    // Bind groups depend on per-frame camera/global buffers; refresh every render.
     this.nodeBindGroup = gpu.createBindGroup({
       layout: this.nodeBindGroupLayout,
       entries: [
@@ -1590,312 +2000,266 @@ class WebGPUAttributeRenderer {
     const encoder = gpu.createCommandEncoder();
     const passes = [];
 
-      const resourceCache = this.device?.resourceCache?.webgpu;
-      const vertexUsage = GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST;
-      const uploadVertex = (key, source, meta) => {
-        if (!resourceCache || !source) return null;
-        return resourceCache.uploadBuffer(gpu, gpu.queue, key, source, { ...meta, trackViewIdentity: true }, vertexUsage);
-      };
+    const resourceCache = this.device?.resourceCache?.webgpu;
+    const vertexUsage = GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST;
+    const uploadVertex = (key, source, meta) => {
+      if (!resourceCache || !source) return null;
+      return resourceCache.uploadBuffer(gpu, gpu.queue, key, source, { ...meta, trackViewIdentity: true }, vertexUsage);
+    };
 
-      const bindVertexSlots = (pass, slots, buffersBySlot) => {
-        for (let i = 0; i < slots.length; i += 1) {
-          const slot = slots[i];
-          const buf = buffersBySlot[slot];
-          if (!buf) return false;
-          pass.setVertexBuffer(i, buf);
-        }
-        return true;
-      };
-
-      const nodePositionBuffer = geometry.nodes.count
-        ? uploadVertex('attr:webgpu:node:positions', geometry.nodes.positions, {
-          label: 'AttributeTracker node positions',
-          version: geometry.nodes.versions?.positions ?? 0,
-          topologyVersion: geometry.nodes.versions?.topology ?? 0,
-          count: geometry.nodes.count,
-        })
-        : null;
-
-      const needNodeSize = pipelines.nodeSlots.includes('size');
-      const needNodeOutline = pipelines.nodeSlots.includes('outline');
-
-      const nodeSizeBuffer = (geometry.nodes.count && needNodeSize)
-        ? uploadVertex('attr:webgpu:node:sizes', nodeSizes, {
-          label: 'AttributeTracker node sizes',
-          version: geometry.nodes.versions?.sizes ?? 0,
-          topologyVersion: geometry.nodes.versions?.topology ?? 0,
-          count: geometry.nodes.count,
-        })
-        : null;
-
-      const nodeOutlineBuffer = (geometry.nodes.count && needNodeOutline)
-        ? uploadVertex('attr:webgpu:node:outlineWidths', nodeOutlineWidths, {
-          label: 'AttributeTracker node outline widths',
-          version: geometry.nodes.versions?.outlineWidths ?? 0,
-          topologyVersion: geometry.nodes.versions?.topology ?? 0,
-          count: geometry.nodes.count,
-        })
-        : null;
-
-      if (needNodeSize && (!nodeSizes || nodeSizes.length !== geometry.nodes.count)) {
-        throw new Error('AttributeTracker: expected dense node sizes buffer but it was missing or wrong length');
+    const bindVertexSlots = (pass, slots, buffersBySlot) => {
+      for (let i = 0; i < slots.length; i += 1) {
+        const slot = slots[i];
+        const buf = buffersBySlot[slot];
+        if (!buf) return false;
+        pass.setVertexBuffer(i, buf);
       }
-      if (needNodeOutline && (!nodeOutlineWidths || nodeOutlineWidths.length !== geometry.nodes.count)) {
-        throw new Error('AttributeTracker: expected dense node outlineWidths buffer but it was missing or wrong length');
+      return true;
+    };
+
+    const nodePositionBuffer = geometry.nodes.count
+      ? uploadVertex('attr:webgpu:node:positions', geometry.nodes.positions, {
+        label: 'AttributeTracker node positions',
+        version: geometry.nodes.versions?.positions ?? 0,
+        topologyVersion: geometry.nodes.versions?.topology ?? 0,
+        count: geometry.nodes.count,
+      })
+      : null;
+
+    const needNodeSize = pipelines.nodeSlots.includes('size');
+    const needNodeOutline = pipelines.nodeSlots.includes('outline');
+
+    const nodeSizeBuffer = (geometry.nodes.count && needNodeSize)
+      ? uploadVertex('attr:webgpu:node:sizes', nodeSizes, {
+        label: 'AttributeTracker node sizes',
+        version: geometry.nodes.versions?.sizes ?? 0,
+        topologyVersion: geometry.nodes.versions?.topology ?? 0,
+        count: geometry.nodes.count,
+      })
+      : null;
+
+    const nodeOutlineBuffer = (geometry.nodes.count && needNodeOutline)
+      ? uploadVertex('attr:webgpu:node:outlineWidths', nodeOutlineWidths, {
+        label: 'AttributeTracker node outline widths',
+        version: geometry.nodes.versions?.outlineWidths ?? 0,
+        topologyVersion: geometry.nodes.versions?.topology ?? 0,
+        count: geometry.nodes.count,
+      })
+      : null;
+
+    if (needNodeSize && (!nodeSizes || nodeSizes.length !== geometry.nodes.count)) {
+      throw new Error('AttributeTracker: expected dense node sizes buffer but it was missing or wrong length');
+    }
+    if (needNodeOutline && (!nodeOutlineWidths || nodeOutlineWidths.length !== geometry.nodes.count)) {
+      throw new Error('AttributeTracker: expected dense node outlineWidths buffer but it was missing or wrong length');
+    }
+    const nodeEncodedBuffer = (geometry.nodes.count && encoded.nodeEncoded?.view && config.nodeAttribute)
+      ? resourceCache?.uploadBuffer(
+        gpu,
+        gpu.queue,
+        `attr:webgpu:node:encoded:${config.nodeAttribute || 'index'}`,
+        encoded.nodeEncoded.view,
+        {
+          label: 'AttributeTracker node encoded',
+          version: encoded.nodeEncoded.version ?? 0,
+          topologyVersion: 0,
+          count: geometry.nodes.count,
+          trackViewIdentity: false,
+        },
+        vertexUsage,
+      )
+      : null;
+
+    const edgeSegmentsBuffer = (geometry.edges.count && config.edgeAttribute)
+      ? uploadVertex('attr:webgpu:edge:segments', geometry.edges.segments, {
+        label: 'AttributeTracker edge segments',
+        version: geometry.edges.versions?.segments ?? 0,
+        topologyVersion: geometry.edges.versions?.topology ?? 0,
+        count: geometry.edges.count,
+      })
+      : null;
+
+    const edgeSlots = config.edgeAttribute
+      ? (useQuads ? pipelines.edgeQuadSlots : pipelines.edgeLineSlots)
+      : [];
+    const needEdgeWidths = config.edgeAttribute && edgeSlots.includes('widths');
+    const needEdgeEndpointSizes = config.edgeAttribute && edgeSlots.includes('endpointSizes');
+
+    if (needEdgeWidths) {
+      const expected = (geometry.edges.count ?? 0) * 2;
+      if (!edgeWidths || edgeWidths.length !== expected) {
+        throw new Error('AttributeTracker: expected dense edge widths buffer (vec2 per edge) but it was missing or wrong length');
       }
-      const nodeEncodedBuffer = (geometry.nodes.count && encoded.nodeEncoded?.view && config.nodeAttribute)
-        ? resourceCache?.uploadBuffer(
-          gpu,
-          gpu.queue,
-          `attr:webgpu:node:encoded:${config.nodeAttribute || 'index'}`,
-          encoded.nodeEncoded.view,
-          {
-            label: 'AttributeTracker node encoded',
-            version: encoded.nodeEncoded.version ?? 0,
-            topologyVersion: 0,
-            count: geometry.nodes.count,
-            // Do not rely on view identity alone: WASM may reuse the same backing memory.
-            trackViewIdentity: false,
+    }
+    if (needEdgeEndpointSizes) {
+      const expected = (geometry.edges.count ?? 0) * 2;
+      if (!edgeEndpointSizes || edgeEndpointSizes.length !== expected) {
+        throw new Error('AttributeTracker: expected dense edge endpointSizes buffer (vec2 per edge) but it was missing or wrong length');
+      }
+    }
+
+    const edgeWidthsBuffer = (geometry.edges.count && needEdgeWidths)
+      ? uploadVertex('attr:webgpu:edge:widths', edgeWidths, {
+        label: 'AttributeTracker edge widths',
+        version: geometry.edges.versions?.widths ?? 0,
+        topologyVersion: geometry.edges.versions?.topology ?? 0,
+        count: geometry.edges.count,
+      })
+      : null;
+
+    const edgeEndpointSizeBuffer = (geometry.edges.count && needEdgeEndpointSizes)
+      ? uploadVertex('attr:webgpu:edge:endpointSizes', edgeEndpointSizes, {
+        label: 'AttributeTracker edge endpoint sizes',
+        version: geometry.edges.versions?.endpointSizes ?? 0,
+        topologyVersion: geometry.edges.versions?.topology ?? 0,
+        count: geometry.edges.count,
+      })
+      : null;
+    const edgeEncodedBuffer = (geometry.edges.count && encoded.edgeEncoded?.view && config.edgeAttribute)
+      ? resourceCache?.uploadBuffer(
+        gpu,
+        gpu.queue,
+        `attr:webgpu:edge:encoded:${config.edgeAttribute || 'index'}`,
+        encoded.edgeEncoded.view,
+        {
+          label: 'AttributeTracker edge encoded',
+          version: encoded.edgeEncoded.version ?? 0,
+          topologyVersion: 0,
+          count: geometry.edges.count,
+          trackViewIdentity: false,
+        },
+        vertexUsage,
+      )
+      : null;
+
+    const nodeBuffersBySlot = {
+      corner: this.cornerBuffer,
+      position: nodePositionBuffer,
+      size: nodeSizeBuffer,
+      encoded: nodeEncodedBuffer,
+      outline: nodeOutlineBuffer,
+    };
+    const canBindNode = geometry.nodes.count && config.nodeAttribute
+      ? pipelines.nodeSlots.every((slot) => Boolean(nodeBuffersBySlot[slot]))
+      : false;
+
+    const edgeLineBuffersBySlot = {
+      segments: edgeSegmentsBuffer,
+      endpointSizes: edgeEndpointSizeBuffer,
+      encoded: edgeEncodedBuffer,
+    };
+    const edgeQuadBuffersBySlot = {
+      edgeCorner: this.edgeCornerBuffer,
+      segments: edgeSegmentsBuffer,
+      widths: edgeWidthsBuffer,
+      endpointSizes: edgeEndpointSizeBuffer,
+      encoded: edgeEncodedBuffer,
+    };
+    const canBindEdge = geometry.edges.count && config.edgeAttribute
+      ? (useQuads
+        ? pipelines.edgeQuadSlots.every((slot) => Boolean(edgeQuadBuffersBySlot[slot]))
+        : pipelines.edgeLineSlots.every((slot) => Boolean(edgeLineBuffersBySlot[slot])))
+      : false;
+
+    if (canBindNode) {
+      passes.push(() => {
+        const pass = encoder.beginRenderPass({
+          colorAttachments: [{
+            view: this.targets.edge.texture.createView(),
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+            loadOp: 'clear',
+            storeOp: 'store',
+          }],
+          depthStencilAttachment: {
+            view: this.targets.edge.depthTexture.createView(),
+            depthClearValue: 1,
+            depthLoadOp: 'clear',
+            depthStoreOp: 'store',
           },
-          vertexUsage,
-        )
-        : null;
-
-      const edgeSegmentsBuffer = (geometry.edges.count && config.edgeAttribute)
-        ? uploadVertex('attr:webgpu:edge:segments', geometry.edges.segments, {
-          label: 'AttributeTracker edge segments',
-          version: geometry.edges.versions?.segments ?? 0,
-          topologyVersion: geometry.edges.versions?.topology ?? 0,
-          count: geometry.edges.count,
-        })
-        : null;
-
-      const edgeSlots = config.edgeAttribute
-        ? (useQuads ? pipelines.edgeQuadSlots : pipelines.edgeLineSlots)
-        : [];
-      const needEdgeWidths = config.edgeAttribute && edgeSlots.includes('widths');
-      const needEdgeEndpointSizes = config.edgeAttribute && edgeSlots.includes('endpointSizes');
-
-      if (needEdgeWidths) {
-        const expected = (geometry.edges.count ?? 0) * 2;
-        if (!edgeWidths || edgeWidths.length !== expected) {
-          throw new Error('AttributeTracker: expected dense edge widths buffer (vec2 per edge) but it was missing or wrong length');
-        }
-      }
-      if (needEdgeEndpointSizes) {
-        const expected = (geometry.edges.count ?? 0) * 2;
-        if (!edgeEndpointSizes || edgeEndpointSizes.length !== expected) {
-          throw new Error('AttributeTracker: expected dense edge endpointSizes buffer (vec2 per edge) but it was missing or wrong length');
-        }
-      }
-
-      const edgeWidthsBuffer = (geometry.edges.count && needEdgeWidths)
-        ? uploadVertex('attr:webgpu:edge:widths', edgeWidths, {
-          label: 'AttributeTracker edge widths',
-          version: geometry.edges.versions?.widths ?? 0,
-          topologyVersion: geometry.edges.versions?.topology ?? 0,
-          count: geometry.edges.count,
-        })
-        : null;
-
-      const edgeEndpointSizeBuffer = (geometry.edges.count && needEdgeEndpointSizes)
-        ? uploadVertex('attr:webgpu:edge:endpointSizes', edgeEndpointSizes, {
-          label: 'AttributeTracker edge endpoint sizes',
-          version: geometry.edges.versions?.endpointSizes ?? 0,
-          topologyVersion: geometry.edges.versions?.topology ?? 0,
-          count: geometry.edges.count,
-        })
-        : null;
-      const edgeEncodedBuffer = (geometry.edges.count && encoded.edgeEncoded?.view && config.edgeAttribute)
-        ? resourceCache?.uploadBuffer(
-          gpu,
-          gpu.queue,
-          `attr:webgpu:edge:encoded:${config.edgeAttribute || 'index'}`,
-          encoded.edgeEncoded.view,
-          {
-            label: 'AttributeTracker edge encoded',
-            version: encoded.edgeEncoded.version ?? 0,
-            topologyVersion: 0,
-            count: geometry.edges.count,
-            trackViewIdentity: false,
-          },
-          vertexUsage,
-        )
-        : null;
-
-      const nodeBuffersBySlot = {
-        corner: this.cornerBuffer,
-        position: nodePositionBuffer,
-        size: nodeSizeBuffer,
-        encoded: nodeEncodedBuffer,
-        outline: nodeOutlineBuffer,
-      };
-      const canBindNode = geometry.nodes.count && config.nodeAttribute
-        ? pipelines.nodeSlots.every((slot) => Boolean(nodeBuffersBySlot[slot]))
-        : false;
-
-      const edgeLineBuffersBySlot = {
-        segments: edgeSegmentsBuffer,
-        endpointSizes: edgeEndpointSizeBuffer,
-        encoded: edgeEncodedBuffer,
-      };
-      const edgeQuadBuffersBySlot = {
-        edgeCorner: this.edgeCornerBuffer,
-        segments: edgeSegmentsBuffer,
-        widths: edgeWidthsBuffer,
-        endpointSizes: edgeEndpointSizeBuffer,
-        encoded: edgeEncodedBuffer,
-      };
-      const canBindEdge = geometry.edges.count && config.edgeAttribute
-        ? (useQuads
-          ? pipelines.edgeQuadSlots.every((slot) => Boolean(edgeQuadBuffersBySlot[slot]))
-          : pipelines.edgeLineSlots.every((slot) => Boolean(edgeLineBuffersBySlot[slot])))
-        : false;
-
-	    // Render node ids into a temp target and copy into the dedicated node target.
-	    // This avoids intermittent cases where directly rendering into the node target yields an empty texture.
-      if (canBindNode) {
-	      passes.push(() => {
-	        const pass = encoder.beginRenderPass({
-	          colorAttachments: [{
-	            view: this.targets.edge.texture.createView(),
-	            clearValue: { r: 0, g: 0, b: 0, a: 0 },
-	            loadOp: 'clear',
-	            storeOp: 'store',
-	          }],
-	          depthStencilAttachment: {
-	            view: this.targets.edge.depthTexture.createView(),
-	            depthClearValue: 1,
-	            depthLoadOp: 'clear',
-	            depthStoreOp: 'store',
-	          },
-	        });
-          pass.setPipeline(pipelines.nodePipeline);
-	        pass.setBindGroup(0, this.nodeBindGroup);
-          bindVertexSlots(pass, pipelines.nodeSlots, nodeBuffersBySlot);
-	        pass.draw(4, geometry.nodes.count, 0, 0);
-	        pass.end();
-	      });
-
-	      passes.push(() => {
-	        encoder.copyTextureToTexture(
-	          { texture: this.targets.edge.texture, mipLevel: 0, origin: { x: 0, y: 0, z: 0 } },
-	          { texture: this.targets.node.texture, mipLevel: 0, origin: { x: 0, y: 0, z: 0 } },
-	          { width: this.targets.edge.width, height: this.targets.edge.height, depthOrArrayLayers: 1 },
-	        );
         });
-	    }
+        pass.setPipeline(pipelines.nodePipeline);
+        pass.setBindGroup(0, this.nodeBindGroup);
+        bindVertexSlots(pass, pipelines.nodeSlots, nodeBuffersBySlot);
+        pass.draw(4, geometry.nodes.count, 0, 0);
+        pass.end();
+      });
 
-      if (canBindEdge) {
-	      passes.push(() => {
-          const occlusionNodeBuffers = {
-            corner: this.cornerBuffer,
-            position: nodePositionBuffer,
-            size: nodeSizeBuffer,
-            outline: nodeOutlineBuffer,
-          };
-          const canBindOcclusion = Boolean(occlusionPipelines)
-            && occlusionPipelines.nodeSlots.every((slot) => Boolean(occlusionNodeBuffers[slot]));
-	        const pass = encoder.beginRenderPass({
-	          colorAttachments: [{
-	            view: this.targets.edge.texture.createView(),
-	            clearValue: { r: 0, g: 0, b: 0, a: 0 },
-	            loadOp: 'clear',
-	            storeOp: 'store',
-	          }],
-	          depthStencilAttachment: {
-	            view: this.targets.edge.depthTexture.createView(),
-	            depthClearValue: 1,
-	            depthLoadOp: 'clear',
-	            depthStoreOp: 'store',
-	          },
-	        });
-	        // Match the WebGL path: draw nodes with a zero-encoded color so they occlude edges via depth,
-	        // but keep the edge target reserved for edge ids.
-          if (geometry.nodes.count && this.nodeBindGroup && canBindOcclusion) {
-            pass.setPipeline(occlusionPipelines.nodePipeline);
-            pass.setBindGroup(0, this.nodeBindGroup);
-            bindVertexSlots(pass, occlusionPipelines.nodeSlots, occlusionNodeBuffers);
-            pass.draw(4, geometry.nodes.count, 0, 0);
-          }
+      passes.push(() => {
+        encoder.copyTextureToTexture(
+          { texture: this.targets.edge.texture, mipLevel: 0, origin: { x: 0, y: 0, z: 0 } },
+          { texture: this.targets.node.texture, mipLevel: 0, origin: { x: 0, y: 0, z: 0 } },
+          { width: this.targets.edge.width, height: this.targets.edge.height, depthOrArrayLayers: 1 },
+        );
+      });
+    }
 
-          const useQuad = this.graphLayer.edgeRenderingMode === 'quad';
-          pass.setPipeline(useQuad ? pipelines.edgeQuadPipeline : pipelines.edgePipeline);
-	        pass.setBindGroup(0, this.edgeBindGroup);
-          if (useQuad) {
-            bindVertexSlots(pass, pipelines.edgeQuadSlots, edgeQuadBuffersBySlot);
-            pass.draw(4, geometry.edges.count, 0, 0);
-          } else {
-            bindVertexSlots(pass, pipelines.edgeLineSlots, edgeLineBuffersBySlot);
-            pass.draw(2, geometry.edges.count, 0, 0);
-          }
-	        pass.end();
-	      });
-	    }
-
-      if (config.trackDepth) {
-        const nodeDepthBuffersBySlot = {
-          ...nodeBuffersBySlot,
+    if (canBindEdge) {
+      passes.push(() => {
+        const occlusionNodeBuffers = {
+          corner: this.cornerBuffer,
+          position: nodePositionBuffer,
+          size: nodeSizeBuffer,
+          outline: nodeOutlineBuffer,
         };
-        const canBindNodeDepth = geometry.nodes.count
-          && this.depthTargets.node
-          && this.nodeBindGroup
-          && pipelines.nodeSlots.every((slot) => Boolean(nodeDepthBuffersBySlot[slot]));
+        const canBindOcclusion = Boolean(occlusionPipelines)
+          && occlusionPipelines.nodeSlots.every((slot) => Boolean(occlusionNodeBuffers[slot]));
+        const pass = encoder.beginRenderPass({
+          colorAttachments: [{
+            view: this.targets.edge.texture.createView(),
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+            loadOp: 'clear',
+            storeOp: 'store',
+          }],
+          depthStencilAttachment: {
+            view: this.targets.edge.depthTexture.createView(),
+            depthClearValue: 1,
+            depthLoadOp: 'clear',
+            depthStoreOp: 'store',
+          },
+        });
+        if (geometry.nodes.count && this.nodeBindGroup && canBindOcclusion) {
+          pass.setPipeline(occlusionPipelines.nodePipeline);
+          pass.setBindGroup(0, this.nodeBindGroup);
+          bindVertexSlots(pass, occlusionPipelines.nodeSlots, occlusionNodeBuffers);
+          pass.draw(4, geometry.nodes.count, 0, 0);
+        }
 
-        const canBindEdgeDepth = geometry.edges.count
-          && this.depthTargets.edge
-          && this.edgeBindGroup
-          && (useQuads
-            ? pipelines.edgeQuadSlots.every((slot) => Boolean(edgeQuadBuffersBySlot[slot]))
-            : pipelines.edgeLineSlots.every((slot) => Boolean(edgeLineBuffersBySlot[slot])));
+        const useQuad = this.graphLayer.edgeRenderingMode === 'quad';
+        pass.setPipeline(useQuad ? pipelines.edgeQuadPipeline : pipelines.edgePipeline);
+        pass.setBindGroup(0, this.edgeBindGroup);
+        if (useQuad) {
+          bindVertexSlots(pass, pipelines.edgeQuadSlots, edgeQuadBuffersBySlot);
+          pass.draw(4, geometry.edges.count, 0, 0);
+        } else {
+          bindVertexSlots(pass, pipelines.edgeLineSlots, edgeLineBuffersBySlot);
+          pass.draw(2, geometry.edges.count, 0, 0);
+        }
+        pass.end();
+      });
+    }
 
-        if (canBindNodeDepth && this.depthTargets.edge) {
-	        passes.push(() => {
-	          const pass = encoder.beginRenderPass({
-	            colorAttachments: [{
-	              view: this.depthTargets.edge.texture.createView(),
-	              clearValue: { r: 0, g: 0, b: 0, a: 0 },
-	              loadOp: 'clear',
-	              storeOp: 'store',
-	            }],
-	            depthStencilAttachment: {
-	              view: this.depthTargets.edge.depthTexture.createView(),
-	              depthClearValue: 1,
-	              depthLoadOp: 'clear',
-	              depthStoreOp: 'store',
-	            },
-	          });
-            pass.setPipeline(pipelines.nodeDepthPipeline);
-	          pass.setBindGroup(0, this.nodeBindGroup);
-            bindVertexSlots(pass, pipelines.nodeSlots, nodeDepthBuffersBySlot);
-	          pass.draw(4, geometry.nodes.count, 0, 0);
-	          pass.end();
-	        });
+    if (config.trackDepth) {
+      const nodeDepthBuffersBySlot = {
+        ...nodeBuffersBySlot,
+      };
+      const canBindNodeDepth = geometry.nodes.count
+        && this.depthTargets.node
+        && this.nodeBindGroup
+        && pipelines.nodeSlots.every((slot) => Boolean(nodeDepthBuffersBySlot[slot]));
 
-	        passes.push(() => {
-	          encoder.copyTextureToTexture(
-	            { texture: this.depthTargets.edge.texture, mipLevel: 0, origin: { x: 0, y: 0, z: 0 } },
-	            { texture: this.depthTargets.node.texture, mipLevel: 0, origin: { x: 0, y: 0, z: 0 } },
-	            { width: this.depthTargets.edge.width, height: this.depthTargets.edge.height, depthOrArrayLayers: 1 },
-	          );
-	        });
-	      }
+      const canBindEdgeDepth = geometry.edges.count
+        && this.depthTargets.edge
+        && this.edgeBindGroup
+        && (useQuads
+          ? pipelines.edgeQuadSlots.every((slot) => Boolean(edgeQuadBuffersBySlot[slot]))
+          : pipelines.edgeLineSlots.every((slot) => Boolean(edgeLineBuffersBySlot[slot])));
 
-        if (canBindEdgeDepth) {
-	        passes.push(() => {
-	          const useQuad = this.graphLayer.edgeRenderingMode === 'quad';
-            const occlusionNodeBuffers = {
-              corner: this.cornerBuffer,
-              position: nodePositionBuffer,
-              size: nodeSizeBuffer,
-              outline: nodeOutlineBuffer,
-            };
-            const canBindOcclusion = Boolean(occlusionPipelines)
-              && occlusionPipelines.nodeSlots.every((slot) => Boolean(occlusionNodeBuffers[slot]));
-	          const pass = encoder.beginRenderPass({
-	            colorAttachments: [{
-	              view: this.depthTargets.edge.texture.createView(),
-	              clearValue: { r: 0, g: 0, b: 0, a: 0 },
+      if (canBindNodeDepth && this.depthTargets.edge) {
+        passes.push(() => {
+          const pass = encoder.beginRenderPass({
+            colorAttachments: [{
+              view: this.depthTargets.edge.texture.createView(),
+              clearValue: { r: 0, g: 0, b: 0, a: 0 },
               loadOp: 'clear',
               storeOp: 'store',
             }],
@@ -1905,27 +2269,67 @@ class WebGPUAttributeRenderer {
               depthLoadOp: 'clear',
               depthStoreOp: 'store',
             },
-	          });
-	          // Depth-only nodes first (packed depth in color) so edge depth is occluded by nodes.
-            if (geometry.nodes.count && this.nodeBindGroup && canBindOcclusion) {
-              pass.setPipeline(occlusionPipelines.nodeDepthPipeline);
-              pass.setBindGroup(0, this.nodeBindGroup);
-              bindVertexSlots(pass, occlusionPipelines.nodeSlots, occlusionNodeBuffers);
-              pass.draw(4, geometry.nodes.count, 0, 0);
-            }
-            pass.setPipeline(useQuad ? pipelines.edgeQuadDepthPipeline : pipelines.edgeDepthPipeline);
-	          pass.setBindGroup(0, this.edgeBindGroup);
-            if (useQuad) {
-              bindVertexSlots(pass, pipelines.edgeQuadSlots, edgeQuadBuffersBySlot);
-              pass.draw(4, geometry.edges.count, 0, 0);
-            } else {
-              bindVertexSlots(pass, pipelines.edgeLineSlots, edgeLineBuffersBySlot);
-              pass.draw(2, geometry.edges.count, 0, 0);
-            }
-	          pass.end();
-	        });
-	      }
-	    }
+          });
+          pass.setPipeline(pipelines.nodeDepthPipeline);
+          pass.setBindGroup(0, this.nodeBindGroup);
+          bindVertexSlots(pass, pipelines.nodeSlots, nodeDepthBuffersBySlot);
+          pass.draw(4, geometry.nodes.count, 0, 0);
+          pass.end();
+        });
+
+        passes.push(() => {
+          encoder.copyTextureToTexture(
+            { texture: this.depthTargets.edge.texture, mipLevel: 0, origin: { x: 0, y: 0, z: 0 } },
+            { texture: this.depthTargets.node.texture, mipLevel: 0, origin: { x: 0, y: 0, z: 0 } },
+            { width: this.depthTargets.edge.width, height: this.depthTargets.edge.height, depthOrArrayLayers: 1 },
+          );
+        });
+      }
+
+      if (canBindEdgeDepth) {
+        passes.push(() => {
+          const useQuad = this.graphLayer.edgeRenderingMode === 'quad';
+          const occlusionNodeBuffers = {
+            corner: this.cornerBuffer,
+            position: nodePositionBuffer,
+            size: nodeSizeBuffer,
+            outline: nodeOutlineBuffer,
+          };
+          const canBindOcclusion = Boolean(occlusionPipelines)
+            && occlusionPipelines.nodeSlots.every((slot) => Boolean(occlusionNodeBuffers[slot]));
+          const pass = encoder.beginRenderPass({
+            colorAttachments: [{
+              view: this.depthTargets.edge.texture.createView(),
+              clearValue: { r: 0, g: 0, b: 0, a: 0 },
+              loadOp: 'clear',
+              storeOp: 'store',
+            }],
+            depthStencilAttachment: {
+              view: this.depthTargets.edge.depthTexture.createView(),
+              depthClearValue: 1,
+              depthLoadOp: 'clear',
+              depthStoreOp: 'store',
+            },
+          });
+          if (geometry.nodes.count && this.nodeBindGroup && canBindOcclusion) {
+            pass.setPipeline(occlusionPipelines.nodeDepthPipeline);
+            pass.setBindGroup(0, this.nodeBindGroup);
+            bindVertexSlots(pass, occlusionPipelines.nodeSlots, occlusionNodeBuffers);
+            pass.draw(4, geometry.nodes.count, 0, 0);
+          }
+          pass.setPipeline(useQuad ? pipelines.edgeQuadDepthPipeline : pipelines.edgeDepthPipeline);
+          pass.setBindGroup(0, this.edgeBindGroup);
+          if (useQuad) {
+            bindVertexSlots(pass, pipelines.edgeQuadSlots, edgeQuadBuffersBySlot);
+            pass.draw(4, geometry.edges.count, 0, 0);
+          } else {
+            bindVertexSlots(pass, pipelines.edgeLineSlots, edgeLineBuffersBySlot);
+            pass.draw(2, geometry.edges.count, 0, 0);
+          }
+          pass.end();
+        });
+      }
+    }
 
     passes.push(() => {
       gpu.queue.submit([encoder.finish()]);
@@ -1933,8 +2337,109 @@ class WebGPUAttributeRenderer {
       globalsBuffer.destroy();
     });
 
-      this.runner?.run?.(passes, { device: this.device });
-      return { ...this.targets, depthTargets: this.depthTargets };
+    this.runner?.run?.(passes, { device: this.device });
+    return { ...this.targets, depthTargets: this.depthTargets };
+  }
+
+  render(frame, size, config) {
+    if (!this.device || !frame?.network) return null;
+    const network = frame.network;
+    const camera = frame.camera;
+    const scale = config.resolutionScale ?? 1;
+    this.resize(size, scale, config.trackDepth);
+    const cameraUniforms = this.graphLayer.getCameraUniforms(camera);
+    if (!cameraUniforms) return null;
+    const useQuads = this.graphLayer.edgeRenderingMode === 'quad';
+    const indirectMode = isIndirectGraphLayer(this.graphLayer);
+
+    const schema = GraphVisualSchema.fromNetwork(network, {
+      nodeOutlineUseAttributes: this.graphLayer?.nodeOutlineUseAttributes === true,
+    });
+    const nodeVariant = schema?.getNodeVariant?.() ?? null;
+    const edgeVariant = schema?.getEdgeVariant?.() ?? null;
+    const visualConfig = schema?.visualConfig ?? null;
+    const nodeCfg = visualConfig?.node ?? null;
+    const edgeCfg = visualConfig?.edge ?? null;
+
+    const nodeSizeUniform = nodeVariant ? (nodeVariant.sizeBuffer === false) : false;
+    const nodeOutlineUniform = nodeVariant ? (nodeVariant.outlineWidthBuffer === false) : true;
+    const edgeWidthUniform = edgeVariant ? (edgeVariant.widthBuffer === false) : false;
+    const edgeEndpointSizeUniform = edgeVariant ? (edgeVariant.endpointSizeBuffer === false) : true;
+
+    const renderOptions = {
+      size,
+      cameraUniforms,
+      useQuads,
+      nodeSizeUniform,
+      nodeOutlineUniform,
+      edgeWidthUniform,
+      edgeEndpointSizeUniform,
+      nodeCfg,
+      edgeCfg,
+    };
+
+    if (indirectMode) {
+      const useIntegerEncoding = this.targetFormat === 'r32uint';
+      if (!useIntegerEncoding) {
+        ensureSparseEncodedReady(network, 'node', config.nodeAttribute);
+        ensureSparseEncodedReady(network, 'edge', config.edgeAttribute);
+      }
+      let topologyVersions = { node: 0, edge: 0 };
+      if (typeof network.getTopologyVersions === 'function') {
+        try {
+          topologyVersions = network.getTopologyVersions() ?? topologyVersions;
+        } catch (_) {
+          topologyVersions = { node: 0, edge: 0 };
+        }
+      }
+      const nodeIndices = network.nodeIndices ?? null;
+      const edgeIndices = network.edgeIndices ?? null;
+      const indirectEdgeVariant = this.graphLayer.resolveIndirectEdgeVariant?.(visualConfig) ?? null;
+      const edgeSourceRequests = this.getIndirectEdgeSourceRequests(indirectEdgeVariant);
+      return this.graphLayer.withSparseGraph(
+        network,
+        topologyVersions,
+        { node: nodeIndices, edge: edgeIndices },
+        edgeSourceRequests,
+        (sparseGeometry) => {
+          if (!sparseGeometry) return null;
+          const prepared = this.buildIndirectPreparedGeometry(network, sparseGeometry, config, {
+            useQuads,
+            nodeSizeUniform,
+            nodeOutlineUniform,
+            edgeWidthUniform,
+            edgeEndpointSizeUniform,
+            edgeVariant: indirectEdgeVariant,
+            useIntegerEncoding,
+          });
+          return this.renderPreparedGeometry(prepared.geometry, prepared.encoded, config, renderOptions);
+        },
+      );
+    }
+
+    ensureEncodedReady(network, 'node', config.nodeAttribute);
+    ensureEncodedReady(network, 'edge', config.edgeAttribute);
+
+    const denseRequests = [];
+    if (config.nodeAttribute || config.edgeAttribute) {
+      denseRequests.push(['node', NODE_POSITION_ATTRIBUTE]);
+      if (!nodeSizeUniform) denseRequests.push(['node', NODE_SIZE_ATTRIBUTE]);
+      if (!nodeOutlineUniform) denseRequests.push(['node', VISUAL_ATTRIBUTE_NAMES.NODE_OUTLINE_WIDTH_ATTRIBUTE]);
+    }
+    if (config.edgeAttribute) {
+      denseRequests.push(
+        ['edge', EDGE_ENDPOINTS_POSITION_ATTRIBUTE],
+        ...((useQuads && !edgeWidthUniform) ? [['edge', EDGE_WIDTH_ATTRIBUTE]] : []),
+        ...(edgeEndpointSizeUniform ? [] : [['edge', EDGE_ENDPOINTS_SIZE_ATTRIBUTE]]),
+      );
+    }
+
+    const overrides = frame?.positionOverrides ?? null;
+
+    return this.graphLayer.withDenseGraph(network, (geometry) => {
+      if (!geometry) return null;
+      const encoded = this.encodeAttributes(network, geometry, config);
+      return this.renderPreparedGeometry(geometry, encoded, config, renderOptions);
     }, denseRequests, overrides);
   }
 }
@@ -2163,10 +2668,13 @@ export class AttributeTracker {
       const format = device.type === 'webgpu'
         ? (this.webgpu?.targetFormat || device.format)
         : device.format;
+      const useUintTarget = device.type === 'webgpu' && format === 'r32uint';
       const useBgra = device.type === 'webgpu' && typeof format === 'string' && format.startsWith('bgra');
-      const decoded = useBgra
-        ? decodePacked(new Uint8Array([pixels[2], pixels[1], pixels[0], pixels[3]]), 0)
-        : decodePacked(pixels, 0);
+      const decoded = useUintTarget
+        ? decodePackedUint32(pixels, 0)
+        : (useBgra
+          ? decodePacked(new Uint8Array([pixels[2], pixels[1], pixels[0], pixels[3]]), 0)
+          : decodePacked(pixels, 0));
       results[key] = decoded;
       if (this.options.trackDepth) {
         if (device.type === 'webgl2') {

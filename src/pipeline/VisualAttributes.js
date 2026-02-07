@@ -28,6 +28,36 @@ const {
   DEFAULT_NODE_OUTLINE_WIDTH,
 } = DEFAULT_VISUALS;
 
+const EDGE_CHANNEL_TO_ATTRIBUTE = {
+  color: EDGE_COLOR_ATTRIBUTE,
+  width: EDGE_WIDTH_ATTRIBUTE,
+  opacity: EDGE_OPACITY_ATTRIBUTE,
+  endpointSize: EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
+  endpointPosition: EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
+  endpointState: EDGE_ENDPOINTS_STATE_ATTRIBUTE,
+};
+
+const EDGE_CHANNEL_DEFAULT_NODE_ATTRIBUTE = {
+  color: NODE_COLOR_ATTRIBUTE,
+  width: NODE_SIZE_ATTRIBUTE,
+  opacity: NODE_SIZE_ATTRIBUTE,
+  endpointSize: NODE_SIZE_ATTRIBUTE,
+  endpointPosition: NODE_POSITION_ATTRIBUTE,
+  endpointState: NODE_STATE_ATTRIBUTE,
+};
+
+function normalizeEndpoints(value) {
+  if (value === 'source' || value === 'from') return 'source';
+  if (value === 'destination' || value === 'target' || value === 'to') return 'destination';
+  return 'both';
+}
+
+function normalizeAttributeName(name) {
+  if (typeof name !== 'string') return name;
+  const trimmed = name.replace(/^@nodes?\./, '');
+  return VISUAL_ATTRIBUTE_MAP[trimmed] ?? trimmed;
+}
+
 function validateAttribute(buffer, name, expected) {
   if (!buffer) {
     throw new Error(`Attribute ${name} is missing`);
@@ -270,7 +300,7 @@ export class VisualAttributes {
       ? normalizePair(nodeConfig?.size?.value)
       : undefined;
 
-    return {
+    const config = {
       color: color?.type === 'constant' ? { mode: 'uniform', value: normalizeColorPair(color.value) } : { mode: 'buffer' },
       width: width?.type === 'constant' ? { mode: 'uniform', value: normalizePair(width.value) } : { mode: 'buffer' },
       opacity: opacity?.type === 'constant'
@@ -284,6 +314,89 @@ export class VisualAttributes {
           ? { mode: 'uniform', value: nodeSizeFallback }
           : { mode: 'buffer' }),
     };
+    return this.augmentEdgeSourceConfig(config, mapper);
+  }
+
+  augmentEdgeSourceConfig(edgeConfig, mapper) {
+    if (!edgeConfig) return edgeConfig;
+    const passthroughs = typeof this.network?.getNodeToEdgePassthroughs === 'function'
+      ? this.network.getNodeToEdgePassthroughs()
+      : null;
+    const passthroughMap = new Map();
+    if (Array.isArray(passthroughs)) {
+      for (const entry of passthroughs) {
+        if (!entry?.edgeName) continue;
+        passthroughMap.set(entry.edgeName, entry);
+      }
+    }
+
+    const inferNodeAttributeFromConfig = (config) => {
+      if (!config) return null;
+      if (typeof config.nodeAttribute === 'string') {
+        return normalizeAttributeName(config.nodeAttribute);
+      }
+      const attrs = config.attributes ?? config.from;
+      const list = Array.isArray(attrs) ? attrs : (attrs ? [attrs] : []);
+      for (const attr of list) {
+        if (typeof attr !== 'string') continue;
+        if (!/^@nodes?\\./.test(attr)) continue;
+        return normalizeAttributeName(attr);
+      }
+      return null;
+    };
+
+    const inferNodeSourceFromMapper = (channelName) => {
+      const channel = mapper?.channels?.get?.(channelName);
+      if (!channel) return null;
+      const type = channel.type ?? channel.mode;
+      if (type !== 'passthrough' && type !== 'nodeToEdge' && type !== 'nodeAttribute') return null;
+      return {
+        source: 'node',
+        endpoints: normalizeEndpoints(channel.endpoints ?? channel.endpoint),
+        doubleWidth: channel.doubleWidth !== false,
+        nodeAttribute: inferNodeAttributeFromConfig(channel),
+      };
+    };
+
+    const channels = ['color', 'width', 'opacity', 'endpointSize'];
+    for (const channelName of channels) {
+      const entry = edgeConfig[channelName];
+      if (!entry || typeof entry !== 'object') continue;
+      const mode = entry.mode ?? 'buffer';
+      if (mode === 'uniform') {
+        entry.source = entry.source ?? 'uniform';
+        continue;
+      }
+      const edgeAttr = EDGE_CHANNEL_TO_ATTRIBUTE[channelName];
+      const passthrough = edgeAttr ? passthroughMap.get(edgeAttr) : null;
+      if (passthrough) {
+        entry.source = 'node';
+        entry.nodeAttribute = passthrough.sourceName ?? entry.nodeAttribute;
+        entry.endpoints = normalizeEndpoints(passthrough.endpoints);
+        entry.doubleWidth = passthrough.doubleWidth !== false;
+      } else {
+        const inferred = inferNodeSourceFromMapper(channelName);
+        if (inferred) {
+          entry.source = inferred.source;
+          entry.nodeAttribute = inferred.nodeAttribute ?? entry.nodeAttribute;
+          entry.endpoints = inferred.endpoints;
+          entry.doubleWidth = inferred.doubleWidth;
+        } else if (!entry.source) {
+          entry.source = 'edge';
+        }
+      }
+      if (entry.source === 'node') {
+        entry.endpoints = normalizeEndpoints(entry.endpoints);
+        if (entry.doubleWidth == null) entry.doubleWidth = true;
+        if (!entry.nodeAttribute) {
+          entry.nodeAttribute = EDGE_CHANNEL_DEFAULT_NODE_ATTRIBUTE[channelName] ?? null;
+        } else if (typeof entry.nodeAttribute === 'string') {
+          entry.nodeAttribute = normalizeAttributeName(entry.nodeAttribute);
+        }
+      }
+    }
+
+    return edgeConfig;
   }
 
   applyNodeMapper(mapper, visualConfig) {
@@ -412,10 +525,21 @@ export class VisualAttributes {
     const endpointSizeChannel = edgeMapper?.channels?.get?.('endpointSize') ?? null;
     const nodeToEdgeRegistrations = edgeMapper?.nodeToEdgeRegistrations ?? new Set();
 
+    const edgeUsesNodeColor = edgeCfg?.color?.source === 'node';
+    const edgeUsesNodeSize = edgeCfg?.width?.source === 'node'
+      || edgeCfg?.opacity?.source === 'node'
+      || edgeCfg?.endpointSize?.source === 'node';
+
     if (nodeCfg?.color?.mode !== 'uniform') {
       this.ensureNodeAttribute(NODE_COLOR_ATTRIBUTE, AttributeType.Float, 4);
     }
+    if (edgeUsesNodeColor) {
+      this.ensureNodeAttribute(NODE_COLOR_ATTRIBUTE, AttributeType.Float, 4);
+    }
     if (nodeSizeBuffer) {
+      this.ensureNodeAttribute(NODE_SIZE_ATTRIBUTE, AttributeType.Float, 1);
+    }
+    if (edgeUsesNodeSize) {
       this.ensureNodeAttribute(NODE_SIZE_ATTRIBUTE, AttributeType.Float, 1);
     }
     if (nodeCfg?.outline?.mode !== 'uniform') {

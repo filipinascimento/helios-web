@@ -197,3 +197,23 @@ test('node-to-edge passthrough downgrades when node channel is constant', async 
     assert.equal(network.hasNodeToEdgeAttribute(EDGE_COLOR_ATTRIBUTE), false);
   }
 });
+
+test('visual config records node-sourced edge channels with custom node attributes', async () => {
+  const network = await HeliosNetwork.create({ directed: false, initialNodes: 0, initialEdges: 0 });
+  const nodes = network.addNodes(2);
+  network.addEdges([{ from: nodes[0], to: nodes[1] }]);
+  network.defineNodeAttribute('weight', AttributeType.Float, 1);
+
+  const visuals = new VisualAttributes(network);
+  const edgeMapper = new Mapper({ mode: 'edge', network });
+  edgeMapper.channel('width').nodeAttribute('weight', 'source').done();
+
+  visuals.applyMappers({ edgeMapper });
+
+  const widthCfg = network.__heliosVisualConfig?.edge?.width;
+  assert.equal(widthCfg?.mode, 'buffer');
+  assert.equal(widthCfg?.source, 'node');
+  assert.equal(widthCfg?.nodeAttribute, 'weight');
+  assert.equal(widthCfg?.endpoints, 'source');
+  assert.equal(widthCfg?.doubleWidth, true);
+});

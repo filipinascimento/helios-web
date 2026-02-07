@@ -1,5 +1,6 @@
 import { GraphLayerWebGL } from './GraphLayerWebGL.js';
 import { GraphLayerWebGPU } from './GraphLayerWebGPU.js';
+import { GraphLayerWebGPUIndirect } from './GraphLayerWebGPUIndirect.js';
 import { WebGL2Device } from './WebGL2Device.js';
 import { WebGPUDevice } from './WebGPUDevice.js';
 import { Camera } from '../Camera.js';
@@ -215,7 +216,10 @@ export class LayeredRenderer {
       stateSlots: this.options.stateSlots,
     };
     if (this.device?.type === 'webgpu') {
-      this.graphLayer = new GraphLayerWebGPU(options);
+      const backend = this.options.webgpuBackend === 'indirect' ? 'indirect' : 'dense';
+      this.graphLayer = backend === 'indirect'
+        ? new GraphLayerWebGPUIndirect(options)
+        : new GraphLayerWebGPU(options);
     } else {
       this.graphLayer = new GraphLayerWebGL(options);
     }

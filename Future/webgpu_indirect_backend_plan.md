@@ -138,6 +138,26 @@ Plan:
 - Hard error with actionable message if buffers exceed limits.
 - Avoid silent fallback unless explicitly approved.
 
+### Range slicing optimization (optional but recommended)
+
+We can reduce buffer sizes by slicing sparse buffers to the **active index range** when it is narrower than capacity.
+
+Approach:
+- Use `nodeValidRange` / `edgeValidRange` to compute `[start, end)` per scope **before** entering `withBufferAccess`.
+- Upload only the subarray slice for each sparse attribute:
+  - `baseIndex = start`
+  - `count = end - start`
+  - `slice = view.subarray(baseIndex * strideElems, (baseIndex + count) * strideElems)`
+- Pass `nodeBase` / `edgeBase` to shaders and index with `id - base`.
+- Apply the same base offset to:
+  - `edgesView` (edge endpoints buffer)
+  - edge-sourced attributes
+  - node-sourced edge reads (use `nodeBase`)
+
+Notes:
+- This does **not** require contiguity of active nodes, only that all active node indices fall within `[start, end)`.
+- If the valid range is still large (near capacity), slicing won’t help and the full buffer should be used.
+
 ## Testing plan
 
 - Add regression tests for node→edge passthrough channels:

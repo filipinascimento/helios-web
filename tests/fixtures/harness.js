@@ -8,6 +8,12 @@ function resolveRendererPreference(params) {
   return null;
 }
 
+function resolveWebgpuBackend(params) {
+  const backend = (params.get('webgpuBackend') ?? '').toLowerCase();
+  if (backend === 'indirect' || backend === 'dense') return backend;
+  return null;
+}
+
 function resolveMode(params) {
   const mode = params.get('mode');
   if (mode && mode.toLowerCase() === '3d') return '3d';
@@ -106,6 +112,7 @@ export async function bootstrapDemoFixture() {
     const pickTest = resolvePickTestMode(params);
     const mappersUi = resolveMappersUi(params);
     const rendererPreference = resolveRendererPreference(params);
+    const webgpuBackend = resolveWebgpuBackend(params);
 
     const container = document.getElementById('app');
     const network = await HeliosNetwork.create({ directed: false, initialNodes: 0 });
@@ -187,6 +194,9 @@ export async function bootstrapDemoFixture() {
     };
     if (rendererPreference) {
       heliosOptions.renderer = rendererPreference;
+    }
+    if (webgpuBackend) {
+      heliosOptions.webgpuBackend = webgpuBackend;
     }
 
     const helios = new Helios(network, heliosOptions);

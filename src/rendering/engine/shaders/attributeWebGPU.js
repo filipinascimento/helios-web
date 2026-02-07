@@ -1,6 +1,10 @@
 export function createAttributeWebGPUSources(options = {}) {
   const nodeOptions = options?.node && typeof options.node === 'object' ? options.node : {};
   const edgeOptions = options?.edge && typeof options.edge === 'object' ? options.edge : {};
+  const encodedOutputMode = options?.encodedOutputMode === 'uint32' ? 'uint32' : 'rgba8';
+  const encodedInputMode = options?.encodedInputMode === 'uint32' ? 'uint32' : 'u8x4';
+  const useUintTarget = encodedOutputMode === 'uint32';
+  const useUintInput = encodedInputMode === 'uint32';
 
   const useNodeSizeBuffer = nodeOptions.size !== 'uniform';
   const useNodeOutlineBuffer = nodeOptions.outline !== 'uniform';
@@ -8,12 +12,50 @@ export function createAttributeWebGPUSources(options = {}) {
   const useEdgeWidthBuffer = edgeOptions.width !== 'uniform';
   const useEdgeEndpointSizeBuffer = edgeOptions.endpointSize !== 'uniform';
 
+  const NODE_ENCODED_INPUT_DECL = useNodeEncodedBuffer
+    ? (useUintInput ? '@location(3) encoded : u32,' : '@location(3) encoded : vec4<u32>,')
+    : '';
+  const EDGE_ENCODED_INPUT_DECL = useUintInput ? 'u32' : 'vec4<u32>';
+  const NODE_ENCODED_VARYING_DECL = useNodeEncodedBuffer
+    ? (useUintInput
+      ? '@location(6) @interpolate(flat) encoded : u32,'
+      : '@location(6) @interpolate(flat) encoded : vec4<u32>,')
+    : '';
+  const EDGE_ENCODED_VARYING_DECL = useUintInput ? 'u32' : 'vec4<u32>';
+  const NODE_FRAGMENT_COLOR_TYPE = useUintTarget ? 'u32' : 'vec4<f32>';
+  const NODE_FRAGMENT_ENCODED_EXPR = useNodeEncodedBuffer
+    ? (
+      useUintTarget
+        ? (
+          useUintInput
+            ? 'output.color = input.encoded;'
+            : 'output.color = input.encoded.x | (input.encoded.y << 8u) | (input.encoded.z << 16u) | (input.encoded.w << 24u);'
+        )
+        : (
+          useUintInput
+            ? 'output.color = vec4<f32>(f32(input.encoded & 255u), f32((input.encoded >> 8u) & 255u), f32((input.encoded >> 16u) & 255u), f32((input.encoded >> 24u) & 255u)) / vec4<f32>(255.0);'
+            : 'output.color = vec4<f32>(vec4<f32>(input.encoded) / vec4<f32>(255.0));'
+        )
+    )
+    : (useUintTarget ? 'output.color = 0u;' : 'output.color = vec4<f32>(0.0, 0.0, 0.0, 0.0);');
+  const EDGE_FRAGMENT_ENCODED_EXPR = useUintTarget
+    ? (
+      useUintInput
+        ? 'return input.encoded;'
+        : 'return input.encoded.x | (input.encoded.y << 8u) | (input.encoded.z << 16u) | (input.encoded.w << 24u);'
+    )
+    : (
+      useUintInput
+        ? 'return vec4<f32>(f32(input.encoded & 255u), f32((input.encoded >> 8u) & 255u), f32((input.encoded >> 16u) & 255u), f32((input.encoded >> 24u) & 255u)) / vec4<f32>(255.0);'
+        : 'return vec4<f32>(vec4<f32>(input.encoded) / vec4<f32>(255.0));'
+    );
+
   const NODE_VERTEX_INPUT = `
 struct VertexInput {
   @location(0) corner : vec2<f32>,
   @location(1) position : vec3<f32>,
   ${useNodeSizeBuffer ? '@location(2) size : f32,' : ''}
-  ${useNodeEncodedBuffer ? '@location(3) encoded : vec4<u32>,' : ''}
+  ${NODE_ENCODED_INPUT_DECL}
   ${useNodeOutlineBuffer ? '@location(4) outline : f32,' : ''}
 };
 `;
@@ -26,7 +68,7 @@ struct EdgeVertexInput {
   @location(0) start : vec3<f32>,
   @location(1) end : vec3<f32>,
   ${useEdgeEndpointSizeBuffer ? '@location(3) endpointSize : vec2<f32>,' : ''}
-  @location(4) encoded : vec4<u32>,
+  @location(4) encoded : ${EDGE_ENCODED_INPUT_DECL},
 };
 `;
 
@@ -37,7 +79,7 @@ struct EdgeQuadVertexInput {
   @location(2) end : vec3<f32>,
   ${useEdgeWidthBuffer ? '@location(3) width : vec2<f32>,' : ''}
   ${useEdgeEndpointSizeBuffer ? '@location(4) endpointSize : vec2<f32>,' : ''}
-  @location(5) encoded : vec4<u32>,
+  @location(5) encoded : ${EDGE_ENCODED_INPUT_DECL},
 };
 `;
 
@@ -79,7 +121,7 @@ struct VertexOutput {
   @location(3) upWorld : vec3<f32>,
   @location(4) viewDir : vec3<f32>,
   @location(5) radius : f32,
-  ${useNodeEncodedBuffer ? '@location(6) @interpolate(flat) encoded : vec4<u32>,' : ''}
+  ${NODE_ENCODED_VARYING_DECL}
 };
 
 @group(0) @binding(0) var<uniform> camera : Camera;
@@ -129,6 +171,11 @@ fn nodeVertex(input : VertexInput) -> VertexOutput {
 }
 
 struct FragmentOutput {
+  @location(0) color : ${NODE_FRAGMENT_COLOR_TYPE},
+  @builtin(frag_depth) depth : f32,
+};
+
+struct DepthFragmentOutput {
   @location(0) color : vec4<f32>,
   @builtin(frag_depth) depth : f32,
 };
@@ -162,15 +209,13 @@ fn nodeFragment(input : VertexOutput) -> FragmentOutput {
   } else {
     output.depth = input.position.z / input.position.w;
   }
-  ${useNodeEncodedBuffer
-    ? 'output.color = vec4<f32>(vec4<f32>(input.encoded) / vec4<f32>(255.0));'
-    : 'output.color = vec4<f32>(0.0, 0.0, 0.0, 0.0);'}
+  ${NODE_FRAGMENT_ENCODED_EXPR}
   return output;
 }
 
 @fragment
-fn nodeDepthFragment(input : VertexOutput) -> FragmentOutput {
-  var output : FragmentOutput;
+fn nodeDepthFragment(input : VertexOutput) -> DepthFragmentOutput {
+  var output : DepthFragmentOutput;
   let dist = length(input.local);
   if (dist > 1.0) {
     discard;
@@ -233,7 +278,7 @@ fn packDepthToRGBA(v : f32) -> vec4<f32> {
 
 struct EdgeVertexOutput {
   @builtin(position) position : vec4<f32>,
-  @location(0) @interpolate(flat) encoded : vec4<u32>,
+  @location(0) @interpolate(flat) encoded : ${EDGE_ENCODED_VARYING_DECL},
 };
 
 @group(0) @binding(0) var<uniform> camera : Camera;
@@ -294,8 +339,8 @@ fn edgeQuadVertex(input : EdgeQuadVertexInput) -> EdgeVertexOutput {
 }
 
 @fragment
-fn edgeFragment(input : EdgeVertexOutput) -> @location(0) vec4<f32> {
-  return vec4<f32>(vec4<f32>(input.encoded) / vec4<f32>(255.0));
+fn edgeFragment(input : EdgeVertexOutput) -> @location(0) ${useUintTarget ? 'u32' : 'vec4<f32>'} {
+  ${EDGE_FRAGMENT_ENCODED_EXPR}
 }
 
 @fragment

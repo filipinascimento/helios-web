@@ -16,6 +16,13 @@ function resolveRendererPreference() {
   return null;
 }
 
+function resolveWebgpuBackend() {
+  const params = new URLSearchParams(window.location.search);
+  const backend = (params.get('webgpuBackend') ?? '').toLowerCase();
+  if (backend === 'indirect' || backend === 'dense') return backend;
+  return null;
+}
+
 function resolveMode() {
   const params = new URLSearchParams(window.location.search);
   const mode = params.get('mode');
@@ -240,6 +247,7 @@ async function bootstrap() {
   const layoutType = resolveLayoutType();
   let layoutIntervalMs = resolveLayoutIntervalMs();
   const edgeTransparency = resolveEdgeTransparencyMode();
+  const webgpuBackend = resolveWebgpuBackend();
   const heliosOptions = {
     container: target,
     layout: layoutType === 'none'
@@ -284,6 +292,9 @@ async function bootstrap() {
   if (rendererPreference) {
     heliosOptions.renderer = rendererPreference;
   }
+  if (webgpuBackend) {
+    heliosOptions.webgpuBackend = webgpuBackend;
+  }
 
 
   if (layoutType === 'none') {
@@ -298,6 +309,7 @@ async function bootstrap() {
   console.log("Waiting for helios to be ready...");
   await helios.ready;
  
+  const usesIndirectBackend = webgpuBackend === 'indirect' && helios.renderer?.device?.type === 'webgpu';
 
   console.log("Helios is ready!");
 
@@ -472,6 +484,16 @@ async function bootstrap() {
     const remainingRow = createSliderRow(remainingAttribute, { step: 0.01, precision: 2 });
 
     const applyInterpolation = () => {
+      if (usesIndirectBackend) {
+        interpolatorToggle.setAttribute('aria-checked', 'false');
+        updateInterpolatorLabel();
+        interpolatorToggle.disabled = true;
+        backendSelect.disabled = true;
+        smoothnessRow.element.style.display = 'none';
+        remainingRow.element.style.display = 'none';
+        helios.interpolation({ enabled: false, backend: interpolationBackend });
+        return;
+      }
       const enabled = interpolatorToggle.getAttribute('aria-checked') === 'true';
       let backend = interpolationBackend;
       if (backend === 'auto') {
