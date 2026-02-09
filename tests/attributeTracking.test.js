@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { AttributeTracker, WebGPUAttributeRenderer } from '../src/rendering/AttributeTracker.js';
+import {
+  AttributeTracker,
+  WebGLIndirectAttributeRenderer,
+  WebGPUAttributeRenderer,
+} from '../src/rendering/AttributeTracker.js';
 
 test('AttributeTracker defaults to 0.5 resolution scale', () => {
   const tracker = new AttributeTracker();
@@ -303,4 +307,285 @@ test('WebGPUAttributeRenderer bypasses sparse encoded APIs for indirect r32uint 
   assert.equal(calls.sparseUpdateEdge, 0);
   assert.equal(calls.denseDefineNode, 0);
   assert.equal(calls.denseUpdateNode, 0);
+});
+
+test('WebGLIndirectAttributeRenderer uses sparse encoded APIs only', () => {
+  const calls = {
+    sparseDefineNode: 0,
+    sparseUpdateNode: 0,
+    sparseDefineEdge: 0,
+    sparseUpdateEdge: 0,
+    denseDefineNode: 0,
+    denseUpdateNode: 0,
+    denseDefineEdge: 0,
+    denseUpdateEdge: 0,
+  };
+  const network = {
+    nodeIndices: new Uint32Array(0),
+    edgeIndices: new Uint32Array(0),
+    getTopologyVersions() {
+      return { node: 1, edge: 1 };
+    },
+    defineSparseColorEncodedNodeAttribute() {
+      calls.sparseDefineNode += 1;
+    },
+    updateSparseColorEncodedNodeAttribute() {
+      calls.sparseUpdateNode += 1;
+    },
+    defineSparseColorEncodedEdgeAttribute() {
+      calls.sparseDefineEdge += 1;
+    },
+    updateSparseColorEncodedEdgeAttribute() {
+      calls.sparseUpdateEdge += 1;
+    },
+    defineDenseColorEncodedNodeAttribute() {
+      calls.denseDefineNode += 1;
+    },
+    updateDenseColorEncodedNodeAttribute() {
+      calls.denseUpdateNode += 1;
+    },
+    defineDenseColorEncodedEdgeAttribute() {
+      calls.denseDefineEdge += 1;
+    },
+    updateDenseColorEncodedEdgeAttribute() {
+      calls.denseUpdateEdge += 1;
+    },
+  };
+  const graphLayer = {
+    isIndirectWebGL: true,
+    getCameraUniforms() {
+      return {
+        mode: '2d',
+        viewProjection: new Float32Array(16),
+      };
+    },
+    withSparseGraph() {
+      return { node: null, edge: null };
+    },
+  };
+
+  const renderer = new WebGLIndirectAttributeRenderer(graphLayer, null, null);
+  renderer.gl = {};
+  renderer.resize = () => {};
+
+  const result = renderer.render(
+    { network, camera: {} },
+    { width: 1, height: 1, devicePixelRatio: 1 },
+    { nodeAttribute: 'rank', edgeAttribute: 'weight', resolutionScale: 1, trackDepth: false },
+  );
+
+  assert.ok(result);
+  assert.equal(calls.sparseDefineNode > 0, true);
+  assert.equal(calls.sparseUpdateNode > 0, true);
+  assert.equal(calls.sparseDefineEdge > 0, true);
+  assert.equal(calls.sparseUpdateEdge > 0, true);
+  assert.equal(calls.denseDefineNode, 0);
+  assert.equal(calls.denseUpdateNode, 0);
+  assert.equal(calls.denseDefineEdge, 0);
+  assert.equal(calls.denseUpdateEdge, 0);
+});
+
+test('WebGLIndirectAttributeRenderer uses quad geometry for edge tracking in quad mode', () => {
+  const drawModes = [];
+  const gl = {
+    TEXTURE0: 0,
+    TEXTURE_2D: 3553,
+    POINTS: 0,
+    LINES: 1,
+    TRIANGLE_STRIP: 5,
+    FRAMEBUFFER: 36160,
+    COLOR_BUFFER_BIT: 16384,
+    DEPTH_BUFFER_BIT: 256,
+    BLEND: 3042,
+    DEPTH_TEST: 2929,
+    LEQUAL: 515,
+    SRC_ALPHA: 770,
+    ONE_MINUS_SRC_ALPHA: 771,
+    RGBA8UI: 36220,
+    RGBA_INTEGER: 36249,
+    UNSIGNED_BYTE: 5121,
+    RG32UI: 33338,
+    RG_INTEGER: 33320,
+    UNSIGNED_INT: 5125,
+    R32F: 33326,
+    RED: 6403,
+    RG32F: 33328,
+    RG: 33319,
+    ARRAY_BUFFER: 34962,
+    DYNAMIC_DRAW: 35048,
+    activeTexture() {},
+    bindTexture() {},
+    texParameteri() {},
+    texImage2D() {},
+    pixelStorei() {},
+    useProgram() {},
+    uniformMatrix4fv() {},
+    uniform1i() {},
+    uniform1f() {},
+    uniform2f() {},
+    uniform3f() {},
+    bindVertexArray() {},
+    drawArraysInstanced(mode) { drawModes.push(mode); },
+    disable() {},
+    enable() {},
+    depthMask() {},
+    depthFunc() {},
+    blendFunc() {},
+    bindFramebuffer() {},
+    viewport() {},
+    clearColor() {},
+    clear() {},
+    bindBuffer() {},
+    bufferData() {},
+    getParameter() { return 16384; },
+  };
+
+  const graphLayer = {
+    isIndirectWebGL: true,
+    edgeRenderingMode: 'quad',
+    nodeOutlineUseAttributes: false,
+    nodeSizeBase: 0,
+    nodeSizeScale: 1,
+    edgeWidthBase: 0,
+    edgeWidthScale: 1,
+    edgeEndpointTrim: 0.8,
+    getCameraUniforms() {
+      return {
+        mode: '2d',
+        viewProjection: new Float32Array(16),
+      };
+    },
+    resolveIndirectEdgeVariant() {
+      return {
+        widthBuffer: true,
+        widthSource: 'edge',
+        widthEndpoints: 'both',
+        endpointSizeBuffer: true,
+        endpointSizeSource: 'edge',
+        endpointSizeEndpoints: 'both',
+      };
+    },
+    withSparseGraph(_network, _versions, _indices, _edgeSources, fn) {
+      return fn({
+        nodes: {
+          positions: new Float32Array(0),
+          sizes: new Float32Array(0),
+          indices: new Uint32Array(0),
+          versions: { positions: 1, sizes: 1, indices: 1 },
+        },
+        edges: {
+          endpoints: new Uint32Array([0, 1]),
+          widths: new Float32Array([2, 2]),
+          endpointSizes: new Float32Array([1, 1]),
+          indices: new Uint32Array([0]),
+          versions: { endpoints: 1, widths: 1, endpointSizes: 1, indices: 1 },
+        },
+        nodeEdgeSources: {},
+      });
+    },
+  };
+
+  const renderer = new WebGLIndirectAttributeRenderer(graphLayer, null, {
+    run(passes) {
+      for (const pass of passes) pass();
+    },
+  });
+  renderer.gl = gl;
+  renderer.device = { type: 'webgl2' };
+  renderer.resize = function resizeMock() {
+    this.size = { width: 1, height: 1 };
+    this.targets = { node: { handle: null }, edge: { handle: null } };
+    this.depthTargets = { node: null, edge: null };
+  };
+  renderer.programs = {
+    node: {},
+    nodeOcclusion: {},
+    nodeDepth: {},
+    edge: {},
+    edgeDepth: {},
+    edgeQuad: {},
+    edgeQuadDepth: {},
+  };
+  const nodeUniforms = {
+    u_viewProjection: 0,
+    u_nodePositions: 0,
+    u_nodeSizes: 0,
+    u_nodeEncoded: 0,
+    u_useNodeIdBuffer: 0,
+    u_useNodeSize: 0,
+    u_useEncodedTexture: 0,
+    u_nodeSizeBase: 0,
+    u_nodeSizeScale: 0,
+  };
+  const edgeUniforms = {
+    u_viewProjection: 0,
+    u_viewport: 0,
+    u_nodePositions: 0,
+    u_edgeEndpoints: 0,
+    u_edgeEncoded: 0,
+    u_edgeWidths: 0,
+    u_edgeEndpointSizes: 0,
+    u_nodeWidthSource: 0,
+    u_nodeEndpointSizeSource: 0,
+    u_useEdgeIdBuffer: 0,
+    u_useEncodedTexture: 0,
+    u_edgeWidthSource: 0,
+    u_edgeWidthEndpoints: 0,
+    u_edgeEndpointSizeSource: 0,
+    u_edgeEndpointSizeEndpoints: 0,
+    u_hasEdgeWidths: 0,
+    u_hasEdgeEndpointSizes: 0,
+    u_hasNodeWidthSource: 0,
+    u_hasNodeEndpointSizeSource: 0,
+    u_defaultEdgeWidth: 0,
+    u_defaultEdgeEndpointSize: 0,
+    u_edgeWidthBase: 0,
+    u_edgeWidthScale: 0,
+    u_nodeSizeBase: 0,
+    u_nodeSizeScale: 0,
+    u_edgeEndpointTrim: 0,
+  };
+  renderer.uniforms = {
+    node: nodeUniforms,
+    nodeOcclusion: nodeUniforms,
+    nodeDepth: nodeUniforms,
+    edge: edgeUniforms,
+    edgeDepth: edgeUniforms,
+    edgeQuad: edgeUniforms,
+    edgeQuadDepth: edgeUniforms,
+  };
+  renderer.nodeVao = {};
+  renderer.edgeVao = {};
+  renderer.edgeQuadVao = {};
+  renderer.nodeIdBuffer = {};
+  renderer.edgeIdBuffer = {};
+  renderer.textures = {
+    nodePositions: {},
+    nodeSizes: {},
+    nodeEncoded: {},
+    edgeEndpoints: {},
+    edgeWidths: {},
+    edgeEndpointSizes: {},
+    nodeWidthSource: {},
+    nodeEndpointSizeSource: {},
+    edgeEncoded: {},
+  };
+
+  const network = {
+    nodeIndices: new Uint32Array(0),
+    edgeIndices: new Uint32Array([0]),
+    getTopologyVersions() {
+      return { node: 1, edge: 1 };
+    },
+  };
+
+  const result = renderer.render(
+    { network, camera: {} },
+    { width: 1, height: 1, devicePixelRatio: 1 },
+    { nodeAttribute: null, edgeAttribute: '$index', resolutionScale: 1, trackDepth: false },
+  );
+
+  assert.ok(result);
+  assert.equal(drawModes.includes(gl.TRIANGLE_STRIP), true);
+  assert.equal(drawModes.includes(gl.LINES), false);
 });

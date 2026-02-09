@@ -20,10 +20,78 @@ test('Helios.prewarm skips dense buffer updates for indirect WebGPU backend', as
   assert.equal(denseUpdates, 0);
 });
 
+test('Helios.prewarm skips dense buffer updates for indirect WebGL backend', async () => {
+  let denseUpdates = 0;
+  const helios = Object.create(Helios.prototype);
+  helios.options = { webglBackend: 'indirect', renderer: 'webgl' };
+  helios.prewarmPromise = null;
+  helios.mappersDirty = false;
+  helios.debug = { log: () => {} };
+  helios.visuals = {
+    applyMappers: () => {},
+    updateDenseBuffers: () => { denseUpdates += 1; },
+  };
+  helios.scheduler = { requestGeometry: () => {} };
+
+  await helios.prewarm();
+  assert.equal(denseUpdates, 0);
+});
+
 test('Helios.prewarm keeps dense update behavior for non-indirect backends', async () => {
   let denseUpdates = 0;
   const helios = Object.create(Helios.prototype);
   helios.options = { webgpuBackend: 'dense', renderer: 'webgpu' };
+  helios.prewarmPromise = null;
+  helios.mappersDirty = false;
+  helios.debug = { log: () => {} };
+  helios.visuals = {
+    applyMappers: () => {},
+    updateDenseBuffers: () => { denseUpdates += 1; },
+  };
+  helios.scheduler = { requestGeometry: () => {} };
+
+  await helios.prewarm();
+  assert.equal(denseUpdates, 1);
+});
+
+test('Helios.prewarm keeps dense update behavior for explicit dense WebGL backend', async () => {
+  let denseUpdates = 0;
+  const helios = Object.create(Helios.prototype);
+  helios.options = { webglBackend: 'dense', renderer: 'webgl' };
+  helios.prewarmPromise = null;
+  helios.mappersDirty = false;
+  helios.debug = { log: () => {} };
+  helios.visuals = {
+    applyMappers: () => {},
+    updateDenseBuffers: () => { denseUpdates += 1; },
+  };
+  helios.scheduler = { requestGeometry: () => {} };
+
+  await helios.prewarm();
+  assert.equal(denseUpdates, 1);
+});
+
+test('Helios.prewarm keeps dense update behavior for default WebGL backend', async () => {
+  let denseUpdates = 0;
+  const helios = Object.create(Helios.prototype);
+  helios.options = { renderer: 'webgl' };
+  helios.prewarmPromise = null;
+  helios.mappersDirty = false;
+  helios.debug = { log: () => {} };
+  helios.visuals = {
+    applyMappers: () => {},
+    updateDenseBuffers: () => { denseUpdates += 1; },
+  };
+  helios.scheduler = { requestGeometry: () => {} };
+
+  await helios.prewarm();
+  assert.equal(denseUpdates, 1);
+});
+
+test('Helios.prewarm keeps dense update behavior for default WebGPU backend', async () => {
+  let denseUpdates = 0;
+  const helios = Object.create(Helios.prototype);
+  helios.options = { renderer: 'webgpu' };
   helios.prewarmPromise = null;
   helios.mappersDirty = false;
   helios.debug = { log: () => {} };

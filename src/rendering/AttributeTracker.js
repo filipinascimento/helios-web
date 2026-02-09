@@ -109,6 +109,322 @@ void main() {
   fragColor = packDepthToRGBA(gl_FragCoord.z);
 }`;
 
+const PACK_UINT_GLSL = /* glsl */ `
+uvec4 packUintToRGBA(uint value) {
+  return uvec4(
+    value & 255u,
+    (value >> 8u) & 255u,
+    (value >> 16u) & 255u,
+    (value >> 24u) & 255u
+  );
+}`;
+
+const INDIRECT_TEXTURE_INDEX_GLSL = /* glsl */ `
+ivec2 textureCoord(sampler2D tex, uint index) {
+  ivec2 size = textureSize(tex, 0);
+  int width = max(size.x, 1);
+  int i = int(index);
+  return ivec2(i % width, i / width);
+}
+
+ivec2 textureCoord(usampler2D tex, uint index) {
+  ivec2 size = textureSize(tex, 0);
+  int width = max(size.x, 1);
+  int i = int(index);
+  return ivec2(i % width, i / width);
+}`;
+
+const WEBGL_INDIRECT_TRACK_NODE_VERTEX = /* glsl */ `#version 300 es
+precision highp float;
+precision highp int;
+precision highp usampler2D;
+${PACK_UINT_GLSL}
+${INDIRECT_TEXTURE_INDEX_GLSL}
+
+layout(location = 0) in uint a_nodeId;
+
+uniform mat4 u_viewProjection;
+uniform sampler2D u_nodePositions;
+uniform sampler2D u_nodeSizes;
+uniform sampler2D u_nodeOutlineWidths;
+uniform usampler2D u_nodeEncoded;
+uniform vec3 u_cameraPosition;
+uniform vec3 u_cameraUp;
+uniform vec3 u_cameraRight;
+uniform int u_is2D;
+uniform vec2 u_viewport;
+uniform int u_useNodeIdBuffer;
+uniform int u_useNodeSize;
+uniform int u_useNodeOutline;
+uniform int u_useEncodedTexture;
+uniform float u_nodeSizeBase;
+uniform float u_nodeSizeScale;
+uniform float u_nodeOutline;
+uniform float u_outlineWidthBase;
+uniform float u_outlineWidthScale;
+
+out vec4 v_encoded;
+
+void main() {
+  uint nodeId = (u_useNodeIdBuffer == 1) ? a_nodeId : uint(gl_InstanceID);
+  vec3 position = texelFetch(u_nodePositions, textureCoord(u_nodePositions, nodeId), 0).xyz;
+  float rawSize = (u_useNodeSize == 1)
+    ? texelFetch(u_nodeSizes, textureCoord(u_nodeSizes, nodeId), 0).x
+    : 1.0;
+  float rawOutline = (u_useNodeOutline == 1)
+    ? texelFetch(u_nodeOutlineWidths, textureCoord(u_nodeOutlineWidths, nodeId), 0).x
+    : u_nodeOutline;
+  float outlineWidth = max(0.0, u_outlineWidthBase + u_outlineWidthScale * rawOutline);
+  float fullSize = max(1.0, u_nodeSizeBase + u_nodeSizeScale * rawSize + outlineWidth);
+  float radius = fullSize * 0.5;
+  vec3 right = u_cameraRight;
+  if (u_is2D == 0) {
+    vec3 viewDir = u_cameraPosition - position;
+    float viewLen = length(viewDir);
+    viewDir = viewLen > 1e-5 ? viewDir / viewLen : vec3(0.0, 0.0, 1.0);
+    right = u_cameraRight - viewDir * dot(u_cameraRight, viewDir);
+    float rightLen = length(right);
+    right = rightLen > 1e-5 ? right / rightLen : normalize(cross(u_cameraUp, viewDir));
+  } else {
+    right = normalize(right);
+  }
+  vec4 clipCenter = u_viewProjection * vec4(position, 1.0);
+  vec4 clipOffset = u_viewProjection * vec4(position + right * radius, 1.0);
+  vec2 ndcCenter = clipCenter.xy / clipCenter.w;
+  vec2 ndcOffset = clipOffset.xy / clipOffset.w;
+  vec2 pixelScale = vec2(max(u_viewport.x, 1.0), max(u_viewport.y, 1.0)) * 0.5;
+  float radiusPx = length((ndcOffset - ndcCenter) * pixelScale);
+  gl_Position = clipCenter;
+  gl_PointSize = max(1.0, radiusPx * 2.0);
+  uvec4 encoded = (u_useEncodedTexture == 1)
+    ? texelFetch(u_nodeEncoded, textureCoord(u_nodeEncoded, nodeId), 0)
+    : packUintToRGBA(nodeId + 1u);
+  v_encoded = vec4(encoded) / 255.0;
+}`;
+
+const WEBGL_INDIRECT_TRACK_NODE_FRAGMENT = /* glsl */ `#version 300 es
+precision highp float;
+
+in vec4 v_encoded;
+out vec4 fragColor;
+
+void main() {
+  vec2 local = gl_PointCoord * 2.0 - 1.0;
+  if (dot(local, local) > 1.0) discard;
+  fragColor = v_encoded;
+}`;
+
+const WEBGL_INDIRECT_TRACK_NODE_OCCLUSION_FRAGMENT = /* glsl */ `#version 300 es
+precision highp float;
+
+out vec4 fragColor;
+
+void main() {
+  vec2 local = gl_PointCoord * 2.0 - 1.0;
+  if (dot(local, local) > 1.0) discard;
+  fragColor = vec4(0.0);
+}`;
+
+const WEBGL_INDIRECT_TRACK_NODE_DEPTH_FRAGMENT = /* glsl */ `#version 300 es
+precision highp float;
+${PACK_DEPTH_GLSL}
+
+out vec4 fragColor;
+
+void main() {
+  vec2 local = gl_PointCoord * 2.0 - 1.0;
+  if (dot(local, local) > 1.0) discard;
+  fragColor = packDepthToRGBA(gl_FragCoord.z);
+}`;
+
+const WEBGL_INDIRECT_TRACK_EDGE_VERTEX = /* glsl */ `#version 300 es
+precision highp float;
+precision highp int;
+precision highp usampler2D;
+${PACK_UINT_GLSL}
+${INDIRECT_TEXTURE_INDEX_GLSL}
+
+layout(location = 0) in uint a_edgeId;
+
+uniform mat4 u_viewProjection;
+uniform sampler2D u_nodePositions;
+uniform usampler2D u_edgeEndpoints;
+uniform usampler2D u_edgeEncoded;
+uniform int u_useEdgeIdBuffer;
+uniform int u_useEncodedTexture;
+
+out vec4 v_encoded;
+
+void main() {
+  uint edgeId = (u_useEdgeIdBuffer == 1) ? a_edgeId : uint(gl_InstanceID);
+  uvec2 endpoints = texelFetch(u_edgeEndpoints, textureCoord(u_edgeEndpoints, edgeId), 0).xy;
+  uint nodeId = ((gl_VertexID & 1) == 0) ? endpoints.x : endpoints.y;
+  vec3 position = texelFetch(u_nodePositions, textureCoord(u_nodePositions, nodeId), 0).xyz;
+  gl_Position = u_viewProjection * vec4(position, 1.0);
+  uvec4 encoded = (u_useEncodedTexture == 1)
+    ? texelFetch(u_edgeEncoded, textureCoord(u_edgeEncoded, edgeId), 0)
+    : packUintToRGBA(edgeId + 1u);
+  v_encoded = vec4(encoded) / 255.0;
+}`;
+
+const WEBGL_INDIRECT_TRACK_EDGE_QUAD_VERTEX = /* glsl */ `#version 300 es
+precision highp float;
+precision highp int;
+precision highp usampler2D;
+${PACK_UINT_GLSL}
+${INDIRECT_TEXTURE_INDEX_GLSL}
+
+layout(location = 0) in vec2 a_corner;
+layout(location = 1) in uint a_edgeId;
+
+uniform mat4 u_viewProjection;
+uniform vec2 u_viewport;
+uniform sampler2D u_nodePositions;
+uniform usampler2D u_edgeEndpoints;
+uniform usampler2D u_edgeEncoded;
+uniform sampler2D u_edgeWidths;
+uniform sampler2D u_edgeEndpointSizes;
+uniform sampler2D u_nodeWidthSource;
+uniform sampler2D u_nodeEndpointSizeSource;
+uniform int u_useEdgeIdBuffer;
+uniform int u_useEncodedTexture;
+uniform int u_edgeWidthSource;
+uniform int u_edgeWidthEndpoints;
+uniform int u_edgeEndpointSizeSource;
+uniform int u_edgeEndpointSizeEndpoints;
+uniform int u_hasEdgeWidths;
+uniform int u_hasEdgeEndpointSizes;
+uniform int u_hasNodeWidthSource;
+uniform int u_hasNodeEndpointSizeSource;
+uniform vec2 u_defaultEdgeWidth;
+uniform vec2 u_defaultEdgeEndpointSize;
+uniform float u_edgeWidthBase;
+uniform float u_edgeWidthScale;
+uniform float u_nodeSizeBase;
+uniform float u_nodeSizeScale;
+uniform float u_edgeEndpointTrim;
+
+out vec4 v_encoded;
+
+vec3 fetchNodePos(uint id) {
+  return texelFetch(u_nodePositions, textureCoord(u_nodePositions, id), 0).xyz;
+}
+
+float fetchNodeScalar(sampler2D sourceTex, uint nodeId, int hasSource, float fallbackValue) {
+  if (hasSource == 0) return fallbackValue;
+  return texelFetch(sourceTex, textureCoord(sourceTex, nodeId), 0).x;
+}
+
+vec2 resolveNodePair(
+  sampler2D sourceTex,
+  uint sourceId,
+  uint targetId,
+  int hasSource,
+  int endpointsMode,
+  vec2 fallbackPair
+) {
+  float sourceValue = fetchNodeScalar(sourceTex, sourceId, hasSource, fallbackPair.x);
+  float targetValue = fetchNodeScalar(sourceTex, targetId, hasSource, fallbackPair.y);
+  if (endpointsMode == 1) return vec2(sourceValue, sourceValue);
+  if (endpointsMode == 2) return vec2(targetValue, targetValue);
+  return vec2(sourceValue, targetValue);
+}
+
+vec2 fetchEdgeWidthPair(uint edgeId, uint sourceId, uint targetId) {
+  if (u_edgeWidthSource == 1) {
+    return resolveNodePair(
+      u_nodeWidthSource,
+      sourceId,
+      targetId,
+      u_hasNodeWidthSource,
+      u_edgeWidthEndpoints,
+      u_defaultEdgeWidth
+    );
+  }
+  if (u_hasEdgeWidths == 0) return u_defaultEdgeWidth;
+  return texelFetch(u_edgeWidths, textureCoord(u_edgeWidths, edgeId), 0).xy;
+}
+
+vec2 fetchEdgeEndpointSizePair(uint edgeId, uint sourceId, uint targetId) {
+  if (u_edgeEndpointSizeSource == 1) {
+    return resolveNodePair(
+      u_nodeEndpointSizeSource,
+      sourceId,
+      targetId,
+      u_hasNodeEndpointSizeSource,
+      u_edgeEndpointSizeEndpoints,
+      u_defaultEdgeEndpointSize
+    );
+  }
+  if (u_hasEdgeEndpointSizes == 0) return u_defaultEdgeEndpointSize;
+  return texelFetch(u_edgeEndpointSizes, textureCoord(u_edgeEndpointSizes, edgeId), 0).xy;
+}
+
+void main() {
+  uint edgeId = (u_useEdgeIdBuffer == 1) ? a_edgeId : uint(gl_InstanceID);
+  uvec2 endpoints = texelFetch(u_edgeEndpoints, textureCoord(u_edgeEndpoints, edgeId), 0).xy;
+  uint sourceId = endpoints.x;
+  uint targetId = endpoints.y;
+
+  vec3 sourcePos = fetchNodePos(sourceId);
+  vec3 targetPos = fetchNodePos(targetId);
+  vec3 dir = targetPos - sourcePos;
+  float dirLenWorld = max(length(dir), 1e-5);
+  vec3 dirN = dir / dirLenWorld;
+
+  vec2 endpointSizePair = fetchEdgeEndpointSizePair(edgeId, sourceId, targetId);
+  float startRadius = max(u_nodeSizeBase + u_nodeSizeScale * endpointSizePair.x, 0.0) * 0.5;
+  float endRadius = max(u_nodeSizeBase + u_nodeSizeScale * endpointSizePair.y, 0.0) * 0.5;
+  float trimStart = startRadius * u_edgeEndpointTrim;
+  float trimEnd = endRadius * u_edgeEndpointTrim;
+  vec3 startPos = sourcePos + dirN * trimStart;
+  vec3 endPos = targetPos - dirN * trimEnd;
+
+  float segmentMix = clamp(a_corner.x, 0.0, 1.0);
+  vec2 widthPair = fetchEdgeWidthPair(edgeId, sourceId, targetId);
+  float rawWidth = mix(widthPair.x, widthPair.y, segmentMix);
+  float width = max(u_edgeWidthBase + u_edgeWidthScale * rawWidth, 0.0);
+
+  vec4 clipStart = u_viewProjection * vec4(startPos, 1.0);
+  vec4 clipEnd = u_viewProjection * vec4(endPos, 1.0);
+  vec2 ndcStart = clipStart.xy / clipStart.w;
+  vec2 ndcEnd = clipEnd.xy / clipEnd.w;
+  vec2 ndcDir = ndcEnd - ndcStart;
+  float dirLen = max(length(ndcDir), 1e-5);
+  vec2 perp = vec2(-ndcDir.y, ndcDir.x) / dirLen;
+  float halfWidth = max(width, 1.0) * 0.5;
+  vec2 pixelToNdc = vec2(2.0 / max(u_viewport.x, 1.0), 2.0 / max(u_viewport.y, 1.0));
+  vec2 offsetNdc = perp * halfWidth * pixelToNdc;
+  vec4 clipPos = mix(clipStart, clipEnd, segmentMix);
+  clipPos.xy += offsetNdc * a_corner.y * 1.5;
+  gl_Position = clipPos;
+
+  uvec4 encoded = (u_useEncodedTexture == 1)
+    ? texelFetch(u_edgeEncoded, textureCoord(u_edgeEncoded, edgeId), 0)
+    : packUintToRGBA(edgeId + 1u);
+  v_encoded = vec4(encoded) / 255.0;
+}`;
+
+const WEBGL_INDIRECT_TRACK_EDGE_FRAGMENT = /* glsl */ `#version 300 es
+precision highp float;
+
+in vec4 v_encoded;
+out vec4 fragColor;
+
+void main() {
+  fragColor = v_encoded;
+}`;
+
+const WEBGL_INDIRECT_TRACK_EDGE_DEPTH_FRAGMENT = /* glsl */ `#version 300 es
+precision highp float;
+${PACK_DEPTH_GLSL}
+
+out vec4 fragColor;
+
+void main() {
+  fragColor = packDepthToRGBA(gl_FragCoord.z);
+}`;
+
 function decodePacked(bytes, offset = 0) {
   const r = bytes[offset] ?? 0;
   const g = bytes[offset + 1] ?? 0;
@@ -1212,6 +1528,1069 @@ class WebGLAttributeRenderer {
       }
       console.warn('AttributeTracker: depth readPixels error', { postErr, type, depthFormat: target.depthFormat });
       this.depthReadSupported = false; // stop spamming on platforms that reject depth readback
+      return null;
+    }
+    let depth = pixel[0];
+    if (type === gl.UNSIGNED_INT || type === gl.UNSIGNED_SHORT) {
+      const bits = target.depthBits ?? this.depthBits ?? (type === gl.UNSIGNED_SHORT ? 16 : 24);
+      const maxVal = Math.max(1, (2 ** bits) - 1);
+      depth = depth / maxVal;
+    }
+    return Number.isFinite(depth) ? depth : null;
+  }
+}
+
+export class WebGLIndirectAttributeRenderer {
+  constructor(graphLayer, pool, runner) {
+    this.graphLayer = graphLayer;
+    this.pool = pool;
+    this.runner = runner;
+    this.gl = null;
+    this.device = null;
+    this.trackDepth = false;
+    this.depthBits = 16;
+    this.depthReadSupported = true;
+    this.targets = { node: null, edge: null };
+    this.depthTargets = { node: null, edge: null };
+    this.size = null;
+
+    this.programs = {
+      node: null,
+      nodeOcclusion: null,
+      nodeDepth: null,
+      edge: null,
+      edgeQuad: null,
+      edgeDepth: null,
+      edgeQuadDepth: null,
+    };
+    this.uniforms = {
+      node: null,
+      nodeOcclusion: null,
+      nodeDepth: null,
+      edge: null,
+      edgeDepth: null,
+    };
+
+    this.nodeVao = null;
+    this.edgeVao = null;
+    this.edgeQuadVao = null;
+    this.edgeQuadBuffer = null;
+    this.nodeIdBuffer = null;
+    this.edgeIdBuffer = null;
+    this.bufferMeta = {
+      nodeIds: null,
+      edgeIds: null,
+    };
+
+    this.textures = {
+      nodePositions: null,
+      nodeSizes: null,
+      nodeOutlineWidths: null,
+      nodeEncoded: null,
+      edgeEndpoints: null,
+      edgeWidths: null,
+      edgeEndpointSizes: null,
+      nodeWidthSource: null,
+      nodeEndpointSizeSource: null,
+      edgeEncoded: null,
+    };
+    this.textureMeta = {
+      nodePositions: null,
+      nodeSizes: null,
+      nodeOutlineWidths: null,
+      nodeEncoded: null,
+      edgeEndpoints: null,
+      edgeWidths: null,
+      edgeEndpointSizes: null,
+      nodeWidthSource: null,
+      nodeEndpointSizeSource: null,
+      edgeEncoded: null,
+    };
+  }
+
+  initialize(device) {
+    if (this.gl) return;
+    if (!device || device.type !== 'webgl2') return;
+    this.device = device;
+    this.gl = device.gl;
+    this.initializePrograms();
+    this.initializeGeometry();
+    this.initializeTextures();
+  }
+
+  initializePrograms() {
+    const { gl, device } = this;
+    const resolveUniforms = (program, names) => {
+      const out = {};
+      for (const name of names) out[name] = gl.getUniformLocation(program, name);
+      return out;
+    };
+
+    this.programs.node = device.createProgram(
+      WEBGL_INDIRECT_TRACK_NODE_VERTEX,
+      WEBGL_INDIRECT_TRACK_NODE_FRAGMENT,
+    );
+    this.programs.nodeOcclusion = device.createProgram(
+      WEBGL_INDIRECT_TRACK_NODE_VERTEX,
+      WEBGL_INDIRECT_TRACK_NODE_OCCLUSION_FRAGMENT,
+    );
+    this.programs.nodeDepth = device.createProgram(
+      WEBGL_INDIRECT_TRACK_NODE_VERTEX,
+      WEBGL_INDIRECT_TRACK_NODE_DEPTH_FRAGMENT,
+    );
+    this.programs.edge = device.createProgram(
+      WEBGL_INDIRECT_TRACK_EDGE_VERTEX,
+      WEBGL_INDIRECT_TRACK_EDGE_FRAGMENT,
+    );
+    this.programs.edgeQuad = device.createProgram(
+      WEBGL_INDIRECT_TRACK_EDGE_QUAD_VERTEX,
+      WEBGL_INDIRECT_TRACK_EDGE_FRAGMENT,
+    );
+    this.programs.edgeDepth = device.createProgram(
+      WEBGL_INDIRECT_TRACK_EDGE_VERTEX,
+      WEBGL_INDIRECT_TRACK_EDGE_DEPTH_FRAGMENT,
+    );
+    this.programs.edgeQuadDepth = device.createProgram(
+      WEBGL_INDIRECT_TRACK_EDGE_QUAD_VERTEX,
+      WEBGL_INDIRECT_TRACK_EDGE_DEPTH_FRAGMENT,
+    );
+
+    const nodeUniformNames = [
+      'u_viewProjection',
+      'u_nodePositions',
+      'u_nodeSizes',
+      'u_nodeOutlineWidths',
+      'u_nodeEncoded',
+      'u_cameraPosition',
+      'u_cameraUp',
+      'u_cameraRight',
+      'u_is2D',
+      'u_viewport',
+      'u_useNodeIdBuffer',
+      'u_useNodeSize',
+      'u_useNodeOutline',
+      'u_useEncodedTexture',
+      'u_nodeSizeBase',
+      'u_nodeSizeScale',
+      'u_nodeOutline',
+      'u_outlineWidthBase',
+      'u_outlineWidthScale',
+    ];
+    this.uniforms.node = resolveUniforms(this.programs.node, nodeUniformNames);
+    this.uniforms.nodeOcclusion = resolveUniforms(this.programs.nodeOcclusion, nodeUniformNames);
+    this.uniforms.nodeDepth = resolveUniforms(this.programs.nodeDepth, nodeUniformNames);
+    this.uniforms.edge = resolveUniforms(this.programs.edge, [
+      'u_viewProjection',
+      'u_nodePositions',
+      'u_edgeEndpoints',
+      'u_edgeEncoded',
+      'u_useEdgeIdBuffer',
+      'u_useEncodedTexture',
+    ]);
+    this.uniforms.edgeDepth = resolveUniforms(this.programs.edgeDepth, [
+      'u_viewProjection',
+      'u_nodePositions',
+      'u_edgeEndpoints',
+      'u_edgeEncoded',
+      'u_useEdgeIdBuffer',
+      'u_useEncodedTexture',
+    ]);
+    const edgeQuadUniformNames = [
+      'u_viewProjection',
+      'u_viewport',
+      'u_nodePositions',
+      'u_edgeEndpoints',
+      'u_edgeEncoded',
+      'u_edgeWidths',
+      'u_edgeEndpointSizes',
+      'u_nodeWidthSource',
+      'u_nodeEndpointSizeSource',
+      'u_useEdgeIdBuffer',
+      'u_useEncodedTexture',
+      'u_edgeWidthSource',
+      'u_edgeWidthEndpoints',
+      'u_edgeEndpointSizeSource',
+      'u_edgeEndpointSizeEndpoints',
+      'u_hasEdgeWidths',
+      'u_hasEdgeEndpointSizes',
+      'u_hasNodeWidthSource',
+      'u_hasNodeEndpointSizeSource',
+      'u_defaultEdgeWidth',
+      'u_defaultEdgeEndpointSize',
+      'u_edgeWidthBase',
+      'u_edgeWidthScale',
+      'u_nodeSizeBase',
+      'u_nodeSizeScale',
+      'u_edgeEndpointTrim',
+    ];
+    this.uniforms.edgeQuad = resolveUniforms(this.programs.edgeQuad, edgeQuadUniformNames);
+    this.uniforms.edgeQuadDepth = resolveUniforms(this.programs.edgeQuadDepth, edgeQuadUniformNames);
+  }
+
+  initializeGeometry() {
+    const { gl } = this;
+    this.nodeIdBuffer = gl.createBuffer();
+    this.edgeIdBuffer = gl.createBuffer();
+    this.edgeQuadBuffer = gl.createBuffer();
+
+    this.nodeVao = gl.createVertexArray();
+    gl.bindVertexArray(this.nodeVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeIdBuffer);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribIPointer(0, 1, gl.UNSIGNED_INT, 4, 0);
+    gl.vertexAttribDivisor(0, 1);
+
+    this.edgeVao = gl.createVertexArray();
+    gl.bindVertexArray(this.edgeVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeIdBuffer);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribIPointer(0, 1, gl.UNSIGNED_INT, 4, 0);
+    gl.vertexAttribDivisor(0, 1);
+
+    const edgeQuadCorners = new Float32Array([
+      0, 1,
+      0, -1,
+      1, 1,
+      1, -1,
+    ]);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeQuadBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, edgeQuadCorners, gl.STATIC_DRAW);
+
+    this.edgeQuadVao = gl.createVertexArray();
+    gl.bindVertexArray(this.edgeQuadVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeQuadBuffer);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 8, 0);
+    gl.vertexAttribDivisor(0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeIdBuffer);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribIPointer(1, 1, gl.UNSIGNED_INT, 4, 0);
+    gl.vertexAttribDivisor(1, 1);
+
+    gl.bindVertexArray(null);
+    gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  }
+
+  createTexture() {
+    const { gl } = this;
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    return tex;
+  }
+
+  initializeTextures() {
+    const { gl } = this;
+    this.textures.nodePositions = this.createTexture();
+    this.textures.nodeSizes = this.createTexture();
+    this.textures.nodeOutlineWidths = this.createTexture();
+    this.textures.nodeEncoded = this.createTexture();
+    this.textures.edgeEndpoints = this.createTexture();
+    this.textures.edgeWidths = this.createTexture();
+    this.textures.edgeEndpointSizes = this.createTexture();
+    this.textures.nodeWidthSource = this.createTexture();
+    this.textures.nodeEndpointSizeSource = this.createTexture();
+    this.textures.edgeEncoded = this.createTexture();
+
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+
+    gl.bindTexture(gl.TEXTURE_2D, this.textures.nodePositions);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB32F, 1, 1, 0, gl.RGB, gl.FLOAT, new Float32Array([0, 0, 0]));
+
+    gl.bindTexture(gl.TEXTURE_2D, this.textures.nodeSizes);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, 1, 1, 0, gl.RED, gl.FLOAT, new Float32Array([1]));
+
+    gl.bindTexture(gl.TEXTURE_2D, this.textures.nodeOutlineWidths);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, 1, 1, 0, gl.RED, gl.FLOAT, new Float32Array([0]));
+
+    gl.bindTexture(gl.TEXTURE_2D, this.textures.nodeEncoded);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8UI, 1, 1, 0, gl.RGBA_INTEGER, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 0]));
+
+    gl.bindTexture(gl.TEXTURE_2D, this.textures.edgeEndpoints);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG32UI, 1, 1, 0, gl.RG_INTEGER, gl.UNSIGNED_INT, new Uint32Array([0, 0]));
+
+    gl.bindTexture(gl.TEXTURE_2D, this.textures.edgeWidths);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG32F, 1, 1, 0, gl.RG, gl.FLOAT, new Float32Array([1, 1]));
+
+    gl.bindTexture(gl.TEXTURE_2D, this.textures.edgeEndpointSizes);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG32F, 1, 1, 0, gl.RG, gl.FLOAT, new Float32Array([1, 1]));
+
+    gl.bindTexture(gl.TEXTURE_2D, this.textures.nodeWidthSource);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, 1, 1, 0, gl.RED, gl.FLOAT, new Float32Array([1]));
+
+    gl.bindTexture(gl.TEXTURE_2D, this.textures.nodeEndpointSizeSource);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, 1, 1, 0, gl.RED, gl.FLOAT, new Float32Array([1]));
+
+    gl.bindTexture(gl.TEXTURE_2D, this.textures.edgeEncoded);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8UI, 1, 1, 0, gl.RGBA_INTEGER, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 0]));
+    gl.bindTexture(gl.TEXTURE_2D, null);
+  }
+
+  destroy() {
+    const { gl } = this;
+    if (!gl) return;
+    Object.values(this.programs).forEach((program) => {
+      if (program) gl.deleteProgram(program);
+    });
+    if (this.nodeVao) gl.deleteVertexArray(this.nodeVao);
+    if (this.edgeVao) gl.deleteVertexArray(this.edgeVao);
+    if (this.edgeQuadVao) gl.deleteVertexArray(this.edgeQuadVao);
+    if (this.nodeIdBuffer) gl.deleteBuffer(this.nodeIdBuffer);
+    if (this.edgeIdBuffer) gl.deleteBuffer(this.edgeIdBuffer);
+    if (this.edgeQuadBuffer) gl.deleteBuffer(this.edgeQuadBuffer);
+    Object.values(this.textures).forEach((texture) => {
+      if (texture) gl.deleteTexture(texture);
+    });
+    this.targets = { node: null, edge: null };
+    this.depthTargets = { node: null, edge: null };
+    this.gl = null;
+    this.device = null;
+  }
+
+  resize(size, scale, trackDepth) {
+    if (!size) return;
+    const pixelRatio = size.devicePixelRatio ?? 1;
+    const width = Math.max(1, Math.floor((size.width ?? 1) * pixelRatio * scale));
+    const height = Math.max(1, Math.floor((size.height ?? 1) * pixelRatio * scale));
+    if (this.size && this.size.width === width && this.size.height === height && this.trackDepth === (trackDepth === true)) {
+      return;
+    }
+    this.trackDepth = trackDepth === true;
+    this.size = { width, height };
+    const tagNode = this.trackDepth ? 'attr-node-indirect-depth-cap' : 'attr-node-indirect';
+    const tagEdge = this.trackDepth ? 'attr-edge-indirect-depth-cap' : 'attr-edge-indirect';
+    this.targets.node = this.pool.get(this.device, tagNode, width, height, { depth: true, filter: 'nearest' });
+    this.targets.edge = this.pool.get(this.device, tagEdge, width, height, { depth: true, filter: 'nearest' });
+    this.depthTargets.node = this.trackDepth
+      ? this.pool.get(this.device, 'attr-node-indirect-depth-color', width, height, { depth: true, filter: 'nearest' })
+      : null;
+    this.depthTargets.edge = this.trackDepth
+      ? this.pool.get(this.device, 'attr-edge-indirect-depth-color', width, height, { depth: true, filter: 'nearest' })
+      : null;
+    this.depthBits = this.trackDepth ? 16 : this.depthBits;
+  }
+
+  getTextureLayout(count) {
+    const max = this.gl.getParameter(this.gl.MAX_TEXTURE_SIZE) ?? 16384;
+    const safeCount = Math.max(1, Math.floor(Number(count) || 0));
+    const width = Math.min(max, safeCount);
+    const height = Math.ceil(safeCount / width);
+    if (height > max) {
+      throw new Error(
+        `WebGL indirect attribute tracking requires texture dimensions <= MAX_TEXTURE_SIZE (${max}), `
+        + `got ${safeCount} texels -> ${width}x${height}.`,
+      );
+    }
+    return { width, height };
+  }
+
+  uploadTexture2D(texture, view, components, count, formatInfo, type) {
+    const { gl } = this;
+    const { width, height } = this.getTextureLayout(count);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
+    if (height === 1) {
+      const valueCount = width * components;
+      const directView = (view.length === valueCount) ? view : view.subarray(0, valueCount);
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        formatInfo.internalFormat,
+        width,
+        1,
+        0,
+        formatInfo.format,
+        type,
+        directView,
+      );
+      return;
+    }
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      formatInfo.internalFormat,
+      width,
+      height,
+      0,
+      formatInfo.format,
+      type,
+      null,
+    );
+    let remaining = count;
+    let srcOffset = 0;
+    for (let y = 0; y < height && remaining > 0; y += 1) {
+      const rowTexels = Math.min(width, remaining);
+      const valueCount = rowTexels * components;
+      const rowView = view.subarray(srcOffset, srcOffset + valueCount);
+      gl.texSubImage2D(
+        gl.TEXTURE_2D,
+        0,
+        0,
+        y,
+        rowTexels,
+        1,
+        formatInfo.format,
+        type,
+        rowView,
+      );
+      srcOffset += valueCount;
+      remaining -= rowTexels;
+    }
+  }
+
+  isSameView(meta, view, version, count) {
+    return Boolean(
+      meta
+      && meta.version === (version ?? 0)
+      && meta.count === count
+      && meta.buffer === view?.buffer
+      && meta.byteOffset === (view?.byteOffset ?? 0)
+      && meta.byteLength === (view?.byteLength ?? 0),
+    );
+  }
+
+  rememberView(slot, view, version, count) {
+    this.textureMeta[slot] = {
+      version: version ?? 0,
+      count,
+      buffer: view?.buffer ?? null,
+      byteOffset: view?.byteOffset ?? 0,
+      byteLength: view?.byteLength ?? 0,
+    };
+  }
+
+  uploadFloatTexture(slot, texture, view, components, count, version) {
+    if (!view || !texture || !count) return false;
+    if (this.isSameView(this.textureMeta[slot], view, version, count)) return true;
+    const { gl } = this;
+    const formatInfo = components === 1
+      ? { internalFormat: gl.R32F, format: gl.RED }
+      : (components === 2
+        ? { internalFormat: gl.RG32F, format: gl.RG }
+        : (components === 3
+          ? { internalFormat: gl.RGB32F, format: gl.RGB }
+          : { internalFormat: gl.RGBA32F, format: gl.RGBA }));
+    this.uploadTexture2D(texture, view, components, count, formatInfo, gl.FLOAT);
+    this.rememberView(slot, view, version, count);
+    return true;
+  }
+
+  uploadUintTexture(slot, texture, view, components, count, version) {
+    if (!view || !texture || !count) return false;
+    if (this.isSameView(this.textureMeta[slot], view, version, count)) return true;
+    const { gl } = this;
+    const formatInfo = components === 2
+      ? { internalFormat: gl.RG32UI, format: gl.RG_INTEGER }
+      : { internalFormat: gl.R32UI, format: gl.RED_INTEGER };
+    this.uploadTexture2D(texture, view, components, count, formatInfo, gl.UNSIGNED_INT);
+    this.rememberView(slot, view, version, count);
+    return true;
+  }
+
+  normalizeEncodedDescriptor(desc) {
+    const sourceView = desc?.view ?? null;
+    if (!sourceView) return null;
+    if (sourceView.BYTES_PER_ELEMENT === 1) {
+      const count = Math.floor((sourceView.length ?? 0) / 4);
+      return count > 0
+        ? { sourceView, bytesView: sourceView, count, version: desc?.version ?? 0 }
+        : null;
+    }
+    if (sourceView.BYTES_PER_ELEMENT === 4) {
+      const count = sourceView.length ?? 0;
+      const bytesView = new Uint8Array(sourceView.buffer, sourceView.byteOffset, sourceView.byteLength);
+      return count > 0
+        ? { sourceView, bytesView, count, version: desc?.version ?? 0 }
+        : null;
+    }
+    return null;
+  }
+
+  uploadEncodedTexture(slot, texture, encoded) {
+    if (!encoded || !texture || !encoded.count) return false;
+    if (this.isSameView(this.textureMeta[slot], encoded.sourceView, encoded.version, encoded.count)) return true;
+    const { gl } = this;
+    this.uploadTexture2D(
+      texture,
+      encoded.bytesView,
+      4,
+      encoded.count,
+      { internalFormat: gl.RGBA8UI, format: gl.RGBA_INTEGER },
+      gl.UNSIGNED_BYTE,
+    );
+    this.rememberView(slot, encoded.sourceView, encoded.version, encoded.count);
+    return true;
+  }
+
+  uploadIdBuffer(slot, buffer, view, version, count) {
+    if (!view || !buffer) return false;
+    const meta = this.bufferMeta[slot];
+    const same = Boolean(
+      meta
+      && meta.version === (version ?? 0)
+      && meta.count === count
+      && meta.buffer === view.buffer
+      && meta.byteOffset === view.byteOffset
+      && meta.byteLength === view.byteLength,
+    );
+    if (!same) {
+      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, buffer);
+      this.gl.bufferData(this.gl.ARRAY_BUFFER, view, this.gl.DYNAMIC_DRAW);
+      this.bufferMeta[slot] = {
+        version: version ?? 0,
+        count,
+        buffer: view.buffer,
+        byteOffset: view.byteOffset,
+        byteLength: view.byteLength,
+      };
+    }
+    return true;
+  }
+
+  bindTexture(unit, texture) {
+    const { gl } = this;
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+  }
+
+  isIndexAttribute(name) {
+    return name === INDEX_SENTINEL || name === 'index' || name === '$index';
+  }
+
+  mapEndpointMode(value) {
+    return value === 'source' ? 1 : (value === 'destination' ? 2 : 0);
+  }
+
+  toPair(value, fallback = [1, 1]) {
+    if (Array.isArray(value)) {
+      const a = Number(value[0]);
+      const b = Number(value[1]);
+      return [Number.isFinite(a) ? a : fallback[0], Number.isFinite(b) ? b : fallback[1]];
+    }
+    const scalar = Number(value);
+    if (Number.isFinite(scalar)) return [scalar, scalar];
+    return fallback;
+  }
+
+  resolveEdgeVariant(visualConfig) {
+    if (typeof this.graphLayer?.resolveIndirectEdgeVariant === 'function') {
+      return this.graphLayer.resolveIndirectEdgeVariant(visualConfig);
+    }
+    const edgeCfg = visualConfig?.edge ?? null;
+    const normalize = (entry, fallbackSource = 'edge') => ({
+      mode: entry?.mode ?? 'buffer',
+      source: entry?.source ?? fallbackSource,
+      endpoints: entry?.endpoints ?? 'both',
+      nodeAttribute: entry?.nodeAttribute ?? null,
+    });
+    const color = normalize(edgeCfg?.color, 'edge');
+    const width = normalize(edgeCfg?.width, 'edge');
+    const opacity = normalize(edgeCfg?.opacity, 'edge');
+    const endpointSize = normalize(edgeCfg?.endpointSize, 'edge');
+    return {
+      colorBuffer: color.mode !== 'uniform',
+      colorSource: color.source,
+      colorEndpoints: color.endpoints,
+      colorNodeAttribute: color.nodeAttribute,
+      widthBuffer: width.mode !== 'uniform',
+      widthSource: width.source,
+      widthEndpoints: width.endpoints,
+      widthNodeAttribute: width.nodeAttribute,
+      opacityBuffer: opacity.mode !== 'uniform',
+      opacitySource: opacity.source,
+      opacityEndpoints: opacity.endpoints,
+      opacityNodeAttribute: opacity.nodeAttribute,
+      endpointSizeBuffer: endpointSize.mode !== 'uniform',
+      endpointSizeSource: endpointSize.source,
+      endpointSizeEndpoints: endpointSize.endpoints,
+      endpointSizeNodeAttribute: endpointSize.nodeAttribute,
+    };
+  }
+
+  setNodeUniforms(uniforms, cameraUniforms, options) {
+    const { gl } = this;
+    gl.uniformMatrix4fv(uniforms.u_viewProjection, false, cameraUniforms.viewProjection);
+    gl.uniform1i(uniforms.u_nodePositions, 0);
+    gl.uniform1i(uniforms.u_nodeSizes, 1);
+    gl.uniform1i(uniforms.u_nodeOutlineWidths, 9);
+    gl.uniform1i(uniforms.u_nodeEncoded, 2);
+    gl.uniform3f(
+      uniforms.u_cameraPosition,
+      cameraUniforms.position?.[0] ?? 0,
+      cameraUniforms.position?.[1] ?? 0,
+      cameraUniforms.position?.[2] ?? 1,
+    );
+    gl.uniform3f(
+      uniforms.u_cameraUp,
+      cameraUniforms.up?.[0] ?? 0,
+      cameraUniforms.up?.[1] ?? 1,
+      cameraUniforms.up?.[2] ?? 0,
+    );
+    gl.uniform3f(
+      uniforms.u_cameraRight,
+      cameraUniforms.right?.[0] ?? 1,
+      cameraUniforms.right?.[1] ?? 0,
+      cameraUniforms.right?.[2] ?? 0,
+    );
+    gl.uniform1i(uniforms.u_is2D, cameraUniforms.mode === '2d' ? 1 : 0);
+    gl.uniform2f(uniforms.u_viewport, this.size.width, this.size.height);
+    gl.uniform1i(uniforms.u_useNodeIdBuffer, options.useNodeIdBuffer ? 1 : 0);
+    gl.uniform1i(uniforms.u_useNodeSize, options.useNodeSize ? 1 : 0);
+    gl.uniform1i(uniforms.u_useNodeOutline, options.useNodeOutline ? 1 : 0);
+    gl.uniform1i(uniforms.u_useEncodedTexture, options.useEncodedTexture ? 1 : 0);
+    gl.uniform1f(uniforms.u_nodeSizeBase, this.graphLayer.nodeSizeBase);
+    gl.uniform1f(uniforms.u_nodeSizeScale, this.graphLayer.nodeSizeScale);
+    gl.uniform1f(uniforms.u_nodeOutline, options.nodeOutlineValue ?? 0);
+    gl.uniform1f(uniforms.u_outlineWidthBase, this.graphLayer.nodeOutlineWidthBase ?? 0);
+    gl.uniform1f(uniforms.u_outlineWidthScale, this.graphLayer.nodeOutlineWidthScale ?? 0);
+  }
+
+  setEdgeUniforms(uniforms, cameraUniforms, options) {
+    const { gl } = this;
+    gl.uniformMatrix4fv(uniforms.u_viewProjection, false, cameraUniforms.viewProjection);
+    gl.uniform1i(uniforms.u_nodePositions, 0);
+    gl.uniform1i(uniforms.u_edgeEndpoints, 3);
+    gl.uniform1i(uniforms.u_edgeEncoded, 4);
+    gl.uniform1i(uniforms.u_useEdgeIdBuffer, options.useEdgeIdBuffer ? 1 : 0);
+    gl.uniform1i(uniforms.u_useEncodedTexture, options.useEncodedTexture ? 1 : 0);
+  }
+
+  setEdgeQuadUniforms(uniforms, cameraUniforms, options) {
+    const { gl } = this;
+    const is2D = cameraUniforms?.mode === '2d';
+    const zoom2D = is2D ? Math.max(1e-3, cameraUniforms?.view?.[0] ?? 1) : 1;
+    const edgeWidthFactor = is2D ? (zoom2D / EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL) : 1.0;
+    const globalEdgeWidthBase = (this.graphLayer.edgeWidthBase ?? 0)
+      * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL
+      * edgeWidthFactor;
+    const globalEdgeWidthScale = (this.graphLayer.edgeWidthScale ?? 1)
+      * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL
+      * edgeWidthFactor;
+    gl.uniformMatrix4fv(uniforms.u_viewProjection, false, cameraUniforms.viewProjection);
+    gl.uniform2f(uniforms.u_viewport, this.size.width, this.size.height);
+    gl.uniform1i(uniforms.u_nodePositions, 0);
+    gl.uniform1i(uniforms.u_edgeEndpoints, 3);
+    gl.uniform1i(uniforms.u_edgeEncoded, 4);
+    gl.uniform1i(uniforms.u_edgeWidths, 5);
+    gl.uniform1i(uniforms.u_edgeEndpointSizes, 6);
+    gl.uniform1i(uniforms.u_nodeWidthSource, 7);
+    gl.uniform1i(uniforms.u_nodeEndpointSizeSource, 8);
+    gl.uniform1i(uniforms.u_useEdgeIdBuffer, options.useEdgeIdBuffer ? 1 : 0);
+    gl.uniform1i(uniforms.u_useEncodedTexture, options.useEncodedTexture ? 1 : 0);
+    gl.uniform1i(uniforms.u_edgeWidthSource, options.edgeWidthSource === 'node' ? 1 : 0);
+    gl.uniform1i(uniforms.u_edgeWidthEndpoints, this.mapEndpointMode(options.edgeWidthEndpoints));
+    gl.uniform1i(uniforms.u_edgeEndpointSizeSource, options.edgeEndpointSizeSource === 'node' ? 1 : 0);
+    gl.uniform1i(
+      uniforms.u_edgeEndpointSizeEndpoints,
+      this.mapEndpointMode(options.edgeEndpointSizeEndpoints),
+    );
+    gl.uniform1i(uniforms.u_hasEdgeWidths, options.hasEdgeWidths ? 1 : 0);
+    gl.uniform1i(uniforms.u_hasEdgeEndpointSizes, options.hasEdgeEndpointSizes ? 1 : 0);
+    gl.uniform1i(uniforms.u_hasNodeWidthSource, options.hasNodeWidthSource ? 1 : 0);
+    gl.uniform1i(
+      uniforms.u_hasNodeEndpointSizeSource,
+      options.hasNodeEndpointSizeSource ? 1 : 0,
+    );
+    gl.uniform2f(uniforms.u_defaultEdgeWidth, options.defaultEdgeWidth[0], options.defaultEdgeWidth[1]);
+    gl.uniform2f(
+      uniforms.u_defaultEdgeEndpointSize,
+      options.defaultEdgeEndpointSize[0],
+      options.defaultEdgeEndpointSize[1],
+    );
+    gl.uniform1f(uniforms.u_edgeWidthBase, globalEdgeWidthBase);
+    gl.uniform1f(uniforms.u_edgeWidthScale, globalEdgeWidthScale);
+    gl.uniform1f(uniforms.u_nodeSizeBase, this.graphLayer.nodeSizeBase ?? 0);
+    gl.uniform1f(uniforms.u_nodeSizeScale, this.graphLayer.nodeSizeScale ?? 1);
+    gl.uniform1f(uniforms.u_edgeEndpointTrim, this.graphLayer.edgeEndpointTrim ?? 0.8);
+  }
+
+  render(frame, size, config) {
+    if (!this.gl || !frame?.network) return null;
+    const network = frame.network;
+    const camera = frame.camera;
+    const scale = config.resolutionScale ?? 1;
+    this.resize(size, scale, config.trackDepth);
+    const cameraUniforms = this.graphLayer.getCameraUniforms(camera);
+    if (!cameraUniforms) return null;
+    const schema = GraphVisualSchema.fromNetwork(network, {
+      nodeOutlineUseAttributes: this.graphLayer?.nodeOutlineUseAttributes === true,
+    });
+    const visualConfig = schema?.visualConfig ?? null;
+    const nodeConfig = visualConfig?.node ?? null;
+    const nodeVariant = schema?.getNodeVariant?.() ?? null;
+    const edgeConfig = visualConfig?.edge ?? null;
+    const edgeVariant = this.resolveEdgeVariant(visualConfig);
+    const useQuads = this.graphLayer?.edgeRenderingMode === 'quad';
+    const nodeOutlineUniform = nodeVariant ? (nodeVariant.outlineWidthBuffer === false) : true;
+    const nodeOutlineValue = nodeConfig?.outline?.mode === 'uniform'
+      ? Number(nodeConfig?.outline?.value ?? 0)
+      : 0;
+    const defaultEdgeWidth = this.toPair(edgeConfig?.width?.value, [1, 1]);
+    const defaultEdgeEndpointSize = this.toPair(edgeConfig?.endpointSize?.value, [1, 1]);
+    const edgeNodeAttributes = {
+      width: edgeVariant?.widthSource === 'node'
+        ? (edgeVariant.widthNodeAttribute ?? NODE_SIZE_ATTRIBUTE)
+        : null,
+      opacity: edgeVariant?.opacitySource === 'node'
+        ? (edgeVariant.opacityNodeAttribute ?? NODE_SIZE_ATTRIBUTE)
+        : null,
+      endpointSize: edgeVariant?.endpointSizeSource === 'node'
+        ? (edgeVariant.endpointSizeNodeAttribute ?? NODE_SIZE_ATTRIBUTE)
+        : null,
+    };
+    const customEdgeNodeAttributes = {
+      width: edgeNodeAttributes.width && edgeNodeAttributes.width !== NODE_SIZE_ATTRIBUTE
+        ? edgeNodeAttributes.width
+        : null,
+      opacity: edgeNodeAttributes.opacity && edgeNodeAttributes.opacity !== NODE_SIZE_ATTRIBUTE
+        ? edgeNodeAttributes.opacity
+        : null,
+      endpointSize: edgeNodeAttributes.endpointSize && edgeNodeAttributes.endpointSize !== NODE_SIZE_ATTRIBUTE
+        ? edgeNodeAttributes.endpointSize
+        : null,
+    };
+    const usesDefaultNodeSize = Boolean(
+      (edgeNodeAttributes.width && edgeNodeAttributes.width === NODE_SIZE_ATTRIBUTE)
+      || (edgeNodeAttributes.opacity && edgeNodeAttributes.opacity === NODE_SIZE_ATTRIBUTE)
+      || (edgeNodeAttributes.endpointSize && edgeNodeAttributes.endpointSize === NODE_SIZE_ATTRIBUTE),
+    );
+
+    const nodeIsIndex = this.isIndexAttribute(config.nodeAttribute);
+    const edgeIsIndex = this.isIndexAttribute(config.edgeAttribute);
+    if (config.nodeAttribute && !nodeIsIndex) {
+      ensureSparseEncodedReady(network, 'node', config.nodeAttribute);
+    }
+    if (config.edgeAttribute && !edgeIsIndex) {
+      ensureSparseEncodedReady(network, 'edge', config.edgeAttribute);
+    }
+
+    let topologyVersions = { node: 0, edge: 0 };
+    if (typeof network.getTopologyVersions === 'function') {
+      try {
+        topologyVersions = network.getTopologyVersions() ?? topologyVersions;
+      } catch (_) {
+        topologyVersions = { node: 0, edge: 0 };
+      }
+    }
+
+    const nodeIndices = network.nodeIndices ?? null;
+    const edgeIndices = network.edgeIndices ?? null;
+    return this.graphLayer.withSparseGraph(
+      network,
+      topologyVersions,
+      { node: nodeIndices, edge: edgeIndices },
+      customEdgeNodeAttributes,
+      (sparse) => {
+        if (!sparse) return null;
+        const { gl } = this;
+        const nodes = sparse.nodes ?? {};
+        const edges = sparse.edges ?? {};
+        const nodePositions = nodes.positions ?? null;
+        const nodeSizes = nodes.sizes ?? null;
+        const nodeOutlineWidths = nodes.outlineWidths ?? null;
+        const nodeWidthSource = sparse.nodeEdgeSources?.width?.view ?? (usesDefaultNodeSize ? nodeSizes : null);
+        const nodeEndpointSizeSource = sparse.nodeEdgeSources?.endpointSize?.view
+          ?? (usesDefaultNodeSize ? nodeSizes : null);
+        const edgeEndpoints = edges.endpoints ?? null;
+
+        const totalNodeCount = Math.floor((nodePositions?.length ?? 0) / 3);
+        const totalEdgeCount = Math.floor((edgeEndpoints?.length ?? 0) / 2);
+        const drawNodeCount = nodes.indices ? (nodes.indices.length ?? 0) : totalNodeCount;
+        const drawEdgeCount = edges.indices ? (edges.indices.length ?? 0) : totalEdgeCount;
+
+        if ((config.nodeAttribute || config.edgeAttribute) && drawNodeCount > 0 && !nodePositions) {
+          throw new Error('AttributeTracker: indirect WebGL mode requires sparse node positions.');
+        }
+        if (config.edgeAttribute && drawEdgeCount > 0 && !edgeEndpoints) {
+          throw new Error('AttributeTracker: indirect WebGL mode requires sparse edge endpoints.');
+        }
+
+        if (totalNodeCount > 0 && nodePositions) {
+          this.uploadFloatTexture(
+            'nodePositions',
+            this.textures.nodePositions,
+            nodePositions,
+            3,
+            totalNodeCount,
+            nodes.versions?.positions ?? 0,
+          );
+        }
+        if (totalNodeCount > 0 && nodeSizes) {
+          const sizeCount = nodeSizes.length ?? 0;
+          this.uploadFloatTexture(
+            'nodeSizes',
+            this.textures.nodeSizes,
+            nodeSizes,
+            1,
+            sizeCount,
+            nodes.versions?.sizes ?? 0,
+          );
+        }
+        if (totalNodeCount > 0 && nodeOutlineWidths) {
+          const outlineCount = nodeOutlineWidths.length ?? 0;
+          this.uploadFloatTexture(
+            'nodeOutlineWidths',
+            this.textures.nodeOutlineWidths,
+            nodeOutlineWidths,
+            1,
+            outlineCount,
+            nodes.versions?.outlineWidths ?? 0,
+          );
+        }
+        if (totalNodeCount > 0 && nodeWidthSource) {
+          this.uploadFloatTexture(
+            'nodeWidthSource',
+            this.textures.nodeWidthSource,
+            nodeWidthSource,
+            1,
+            nodeWidthSource.length ?? 0,
+            sparse.nodeEdgeSources?.width?.version ?? nodes.versions?.sizes ?? 0,
+          );
+        }
+        if (totalNodeCount > 0 && nodeEndpointSizeSource) {
+          this.uploadFloatTexture(
+            'nodeEndpointSizeSource',
+            this.textures.nodeEndpointSizeSource,
+            nodeEndpointSizeSource,
+            1,
+            nodeEndpointSizeSource.length ?? 0,
+            sparse.nodeEdgeSources?.endpointSize?.version ?? nodes.versions?.sizes ?? 0,
+          );
+        }
+        if (totalEdgeCount > 0 && edgeEndpoints) {
+          this.uploadUintTexture(
+            'edgeEndpoints',
+            this.textures.edgeEndpoints,
+            edgeEndpoints,
+            2,
+            totalEdgeCount,
+            edges.versions?.endpoints ?? 0,
+          );
+        }
+        if (totalEdgeCount > 0 && edges.widths) {
+          const edgeWidthCount = Math.floor((edges.widths.length ?? 0) / 2);
+          this.uploadFloatTexture(
+            'edgeWidths',
+            this.textures.edgeWidths,
+            edges.widths,
+            2,
+            edgeWidthCount,
+            edges.versions?.widths ?? 0,
+          );
+        }
+        if (totalEdgeCount > 0 && edges.endpointSizes) {
+          const edgeEndpointSizeCount = Math.floor((edges.endpointSizes.length ?? 0) / 2);
+          this.uploadFloatTexture(
+            'edgeEndpointSizes',
+            this.textures.edgeEndpointSizes,
+            edges.endpointSizes,
+            2,
+            edgeEndpointSizeCount,
+            edges.versions?.endpointSizes ?? 0,
+          );
+        }
+
+        const nodeEncodedDesc = (!nodeIsIndex && config.nodeAttribute)
+          ? getSparseEncodedDesc(network, 'node', config.nodeAttribute)
+          : null;
+        const edgeEncodedDesc = (!edgeIsIndex && config.edgeAttribute)
+          ? getSparseEncodedDesc(network, 'edge', config.edgeAttribute)
+          : null;
+
+        if (config.nodeAttribute && !nodeIsIndex && drawNodeCount > 0 && !nodeEncodedDesc?.view) {
+          throw new Error(`AttributeTracker: missing sparse encoded node attribute "${config.nodeAttribute}" for indirect WebGL tracking.`);
+        }
+        if (config.edgeAttribute && !edgeIsIndex && drawEdgeCount > 0 && !edgeEncodedDesc?.view) {
+          throw new Error(`AttributeTracker: missing sparse encoded edge attribute "${config.edgeAttribute}" for indirect WebGL tracking.`);
+        }
+
+        const nodeEncoded = this.normalizeEncodedDescriptor(nodeEncodedDesc);
+        const edgeEncoded = this.normalizeEncodedDescriptor(edgeEncodedDesc);
+        if (nodeEncoded) {
+          this.uploadEncodedTexture('nodeEncoded', this.textures.nodeEncoded, nodeEncoded);
+        }
+        if (edgeEncoded) {
+          this.uploadEncodedTexture('edgeEncoded', this.textures.edgeEncoded, edgeEncoded);
+        }
+
+        const useNodeIdBuffer = Boolean(nodes.indices && drawNodeCount > 0);
+        const useEdgeIdBuffer = Boolean(edges.indices && drawEdgeCount > 0);
+        if (useNodeIdBuffer) {
+          this.uploadIdBuffer('nodeIds', this.nodeIdBuffer, nodes.indices, nodes.versions?.indices, drawNodeCount);
+        }
+        if (useEdgeIdBuffer) {
+          this.uploadIdBuffer('edgeIds', this.edgeIdBuffer, edges.indices, edges.versions?.indices, drawEdgeCount);
+        }
+
+        const drawNodeArgs = {
+          useNodeIdBuffer,
+          useNodeSize: Boolean(nodeSizes),
+          useNodeOutline: !nodeOutlineUniform && Boolean(nodeOutlineWidths),
+          nodeOutlineValue: nodeOutlineValue,
+          useEncodedTexture: Boolean(config.nodeAttribute && !nodeIsIndex && nodeEncoded),
+        };
+        const drawEdgeArgs = {
+          useEdgeIdBuffer,
+          useEncodedTexture: Boolean(config.edgeAttribute && !edgeIsIndex && edgeEncoded),
+          useQuads,
+          edgeWidthSource: edgeVariant?.widthSource ?? 'edge',
+          edgeWidthEndpoints: edgeVariant?.widthEndpoints ?? 'both',
+          edgeEndpointSizeSource: edgeVariant?.endpointSizeSource ?? 'edge',
+          edgeEndpointSizeEndpoints: edgeVariant?.endpointSizeEndpoints ?? 'both',
+          hasEdgeWidths: Boolean(edgeVariant?.widthBuffer && edgeVariant?.widthSource !== 'node' && edges.widths),
+          hasEdgeEndpointSizes: Boolean(
+            edgeVariant?.endpointSizeBuffer
+            && edgeVariant?.endpointSizeSource !== 'node'
+            && edges.endpointSizes,
+          ),
+          hasNodeWidthSource: Boolean(nodeWidthSource),
+          hasNodeEndpointSizeSource: Boolean(nodeEndpointSizeSource),
+          defaultEdgeWidth,
+          defaultEdgeEndpointSize,
+        };
+
+        const setupNodeDraw = (program, uniforms) => {
+          gl.useProgram(program);
+          this.setNodeUniforms(uniforms, cameraUniforms, drawNodeArgs);
+          this.bindTexture(0, this.textures.nodePositions);
+          this.bindTexture(1, this.textures.nodeSizes);
+          this.bindTexture(9, this.textures.nodeOutlineWidths);
+          this.bindTexture(2, this.textures.nodeEncoded);
+          gl.bindVertexArray(this.nodeVao);
+          gl.drawArraysInstanced(gl.POINTS, 0, 1, drawNodeCount);
+        };
+
+        const setupEdgeDraw = (program, uniforms) => {
+          gl.useProgram(program);
+          if (drawEdgeArgs.useQuads) {
+            this.setEdgeQuadUniforms(uniforms, cameraUniforms, drawEdgeArgs);
+          } else {
+            this.setEdgeUniforms(uniforms, cameraUniforms, drawEdgeArgs);
+          }
+          this.bindTexture(0, this.textures.nodePositions);
+          this.bindTexture(3, this.textures.edgeEndpoints);
+          this.bindTexture(4, this.textures.edgeEncoded);
+          if (drawEdgeArgs.useQuads) {
+            this.bindTexture(5, this.textures.edgeWidths);
+            this.bindTexture(6, this.textures.edgeEndpointSizes);
+            this.bindTexture(7, this.textures.nodeWidthSource);
+            this.bindTexture(8, this.textures.nodeEndpointSizeSource);
+            gl.bindVertexArray(this.edgeQuadVao);
+            gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, drawEdgeCount);
+          } else {
+            gl.bindVertexArray(this.edgeVao);
+            gl.drawArraysInstanced(gl.LINES, 0, 2, drawEdgeCount);
+          }
+        };
+
+        gl.disable(gl.BLEND);
+        gl.enable(gl.DEPTH_TEST);
+        gl.depthMask(true);
+        gl.depthFunc(gl.LEQUAL);
+
+        const passes = [];
+
+        if (config.nodeAttribute && drawNodeCount > 0) {
+          passes.push(() => {
+            gl.bindFramebuffer(gl.FRAMEBUFFER, this.targets.node?.handle ?? null);
+            gl.viewport(0, 0, this.size.width, this.size.height);
+            gl.clearColor(0, 0, 0, 0);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+            setupNodeDraw(this.programs.node, this.uniforms.node);
+          });
+        }
+
+        if (config.edgeAttribute && drawEdgeCount > 0) {
+          passes.push(() => {
+            gl.bindFramebuffer(gl.FRAMEBUFFER, this.targets.edge?.handle ?? null);
+            gl.viewport(0, 0, this.size.width, this.size.height);
+            gl.clearColor(0, 0, 0, 0);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+            if (drawNodeCount > 0) {
+              setupNodeDraw(this.programs.nodeOcclusion, this.uniforms.nodeOcclusion);
+            }
+            setupEdgeDraw(
+              drawEdgeArgs.useQuads ? this.programs.edgeQuad : this.programs.edge,
+              drawEdgeArgs.useQuads ? this.uniforms.edgeQuad : this.uniforms.edge,
+            );
+          });
+        }
+
+        if (config.trackDepth) {
+          if (config.nodeAttribute && drawNodeCount > 0 && this.depthTargets.node) {
+            passes.push(() => {
+              gl.bindFramebuffer(gl.FRAMEBUFFER, this.depthTargets.node.handle);
+              gl.viewport(0, 0, this.size.width, this.size.height);
+              gl.clearColor(0, 0, 0, 0);
+              gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+              setupNodeDraw(this.programs.nodeDepth, this.uniforms.nodeDepth);
+            });
+          }
+          if (config.edgeAttribute && drawEdgeCount > 0 && this.depthTargets.edge) {
+            passes.push(() => {
+              gl.bindFramebuffer(gl.FRAMEBUFFER, this.depthTargets.edge.handle);
+              gl.viewport(0, 0, this.size.width, this.size.height);
+              gl.clearColor(0, 0, 0, 0);
+              gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+              if (drawNodeCount > 0) {
+                setupNodeDraw(this.programs.nodeDepth, this.uniforms.nodeDepth);
+              }
+              setupEdgeDraw(
+                drawEdgeArgs.useQuads ? this.programs.edgeQuadDepth : this.programs.edgeDepth,
+                drawEdgeArgs.useQuads ? this.uniforms.edgeQuadDepth : this.uniforms.edgeDepth,
+              );
+            });
+          }
+        }
+
+        passes.push(() => {
+          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+          gl.bindVertexArray(null);
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+          gl.depthMask(true);
+          gl.enable(gl.DEPTH_TEST);
+          gl.depthFunc(gl.LEQUAL);
+        });
+
+        this.runner?.run?.(passes, { gl, device: this.device });
+        return { ...this.targets, depthTargets: this.depthTargets };
+      },
+    );
+  }
+
+  readDepth(target, x, y) {
+    if (!this.trackDepth || !this.depthReadSupported) return null;
+    if (!target?.depthTexture && !target?.depthRenderbuffer) return null;
+    const { gl } = this;
+    const type = target.depthType
+      ?? (target.depthFormat === gl.DEPTH_COMPONENT32F ? gl.FLOAT : gl.UNSIGNED_SHORT);
+    const pixel = type === gl.UNSIGNED_INT
+      ? new Uint32Array(1)
+      : (type === gl.UNSIGNED_SHORT ? new Uint16Array(1) : new Float32Array(1));
+    gl.bindFramebuffer(gl.FRAMEBUFFER, target.handle);
+    gl.getError();
+    try {
+      gl.readPixels(x, y, 1, 1, gl.DEPTH_COMPONENT, type, pixel);
+    } catch (error) {
+      console.warn('AttributeTracker: depth read failed', error);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      return null;
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    const postErr = gl.getError();
+    if (postErr !== gl.NO_ERROR) {
+      const canTryFloat = target.depthFormat === gl.DEPTH_COMPONENT32F && type !== gl.FLOAT;
+      if (canTryFloat) {
+        return this.readDepth({ ...target, depthType: gl.FLOAT }, x, y);
+      }
+      console.warn('AttributeTracker: depth readPixels error', { postErr, type, depthFormat: target.depthFormat });
+      this.depthReadSupported = false;
       return null;
     }
     let depth = pixel[0];
@@ -2452,6 +3831,8 @@ export class AttributeTracker {
     this.edgeAttribute = null;
     this.options = { resolutionScale: 0.5, autoRender: true };
     this.webgl = null;
+    this.webglIndirect = null;
+    this._activeWebglRenderer = null;
     this.webgpu = null;
     this.size = renderer?.size ?? null;
     this.lastTargets = null;
@@ -2589,6 +3970,7 @@ export class AttributeTracker {
   resize(size) {
     this.size = size;
     this.webgl?.resize?.(size, this.options.resolutionScale);
+    this.webglIndirect?.resize?.(size, this.options.resolutionScale);
     this.webgpu?.resize?.(size, this.options.resolutionScale);
     this._lastSignature = null;
   }
@@ -2606,11 +3988,16 @@ export class AttributeTracker {
     const trackDepth = this.options.trackDepth === true;
     let didRender = false;
     if (device.type === 'webgl2') {
-      if (!this.webgl) {
-        this.webgl = new WebGLAttributeRenderer(this.graphLayer, this.targetPool, this.runner);
-        this.webgl.initialize(device);
+      const indirectMode = isIndirectGraphLayer(this.graphLayer) && this.graphLayer?.isIndirectWebGL === true;
+      const webglRenderer = indirectMode ? 'webglIndirect' : 'webgl';
+      if (!this[webglRenderer]) {
+        this[webglRenderer] = indirectMode
+          ? new WebGLIndirectAttributeRenderer(this.graphLayer, this.targetPool, this.runner)
+          : new WebGLAttributeRenderer(this.graphLayer, this.targetPool, this.runner);
+        this[webglRenderer].initialize(device);
       }
-      this.lastTargets = this.webgl.render(frame, this.size ?? this.renderer.size, {
+      this._activeWebglRenderer = this[webglRenderer];
+      this.lastTargets = this[webglRenderer].render(frame, this.size ?? this.renderer.size, {
         nodeAttribute: this.nodeAttribute,
         edgeAttribute: this.edgeAttribute,
         resolutionScale: this.options.resolutionScale,
@@ -2678,7 +4065,8 @@ export class AttributeTracker {
       results[key] = decoded;
       if (this.options.trackDepth) {
         if (device.type === 'webgl2') {
-          const depthTarget = key === 'node' ? this.webgl?.depthTargets?.node : this.webgl?.depthTargets?.edge;
+          const webglTracker = this._activeWebglRenderer ?? this.webglIndirect ?? this.webgl;
+          const depthTarget = key === 'node' ? webglTracker?.depthTargets?.node : webglTracker?.depthTargets?.edge;
           if (depthTarget) {
             const depthPixels = await device.readPixels(depthTarget, { x: clampedX, y: clampedY, width: 1, height: 1 });
             const depthBytes = depthPixels instanceof Uint8Array ? depthPixels : new Uint8Array(depthPixels);
@@ -2687,7 +4075,7 @@ export class AttributeTracker {
               : depthBytes;
             results[`${key}Depth`] = unpackDepthRGBA(reordered, 0);
           } else {
-            const depth = this.webgl?.readDepth?.(target, clampedX, clampedY);
+            const depth = webglTracker?.readDepth?.(target, clampedX, clampedY);
             results[`${key}Depth`] = depth;
           }
         } else if (device.type === 'webgpu') {
@@ -2714,8 +4102,11 @@ export class AttributeTracker {
 
   destroy() {
     this.webgl?.destroy?.();
+    this.webglIndirect?.destroy?.();
     this.webgpu?.destroy?.();
     this.webgl = null;
+    this.webglIndirect = null;
+    this._activeWebglRenderer = null;
     this.webgpu = null;
     this.lastTargets = null;
     this.targetPool?.releaseAll?.(this.renderer?.device);

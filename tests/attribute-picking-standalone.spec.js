@@ -100,8 +100,9 @@ test('standalone attribute picking returns node and edge indices', async ({ page
   expect(picked.edgePick?.edge).toBe(picked.edgePixel?.value);
 });
 
-async function expectDeterministicPick(page, renderer) {
-  const url = `/tests/fixtures/standalone-pick.html?renderer=${renderer}`;
+async function expectDeterministicPick(page, renderer, extraParams = '') {
+  const query = extraParams ? `&${extraParams}` : '';
+  const url = `/tests/fixtures/standalone-pick.html?renderer=${renderer}${query}`;
   await page.goto(url);
   await page.waitForFunction(() => window.__helios || window.__heliosError, { timeout: 5000 });
   const support = await page.evaluate(() => Boolean(window.__helios) && (!window.__helios?.renderer || window.__helios.renderer.device));
@@ -140,13 +141,18 @@ test('deterministic picking hits expected indices (webgl)', async ({ page }) => 
   await expectDeterministicPick(page, 'webgl');
 });
 
-test('deterministic picking hits expected indices (webgpu when available)', async ({ page }) => {
-  await page.goto('/tests/fixtures/blank.html');
-  const supported = await page.evaluate(async () => {
-    if (!navigator.gpu) return false;
-    const adapter = await navigator.gpu.requestAdapter();
-    return Boolean(adapter);
-  });
-  test.skip(!supported, 'WebGPU not available in browser');
-  await expectDeterministicPick(page, 'webgpu');
+test('deterministic picking hits expected indices (webgl dense)', async ({ page }) => {
+  await expectDeterministicPick(page, 'webgl', 'webglBackend=dense');
+});
+
+test('deterministic picking hits expected indices (webgl indirect)', async ({ page }) => {
+  await expectDeterministicPick(page, 'webgl', 'webglBackend=indirect');
+});
+
+test('@webgpu deterministic picking hits expected indices (webgpu dense)', async ({ page }) => {
+  await expectDeterministicPick(page, 'webgpu', 'webgpuBackend=dense');
+});
+
+test('@webgpu deterministic picking hits expected indices (webgpu indirect)', async ({ page }) => {
+  await expectDeterministicPick(page, 'webgpu', 'webgpuBackend=indirect');
 });

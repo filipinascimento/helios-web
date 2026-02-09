@@ -1,7 +1,8 @@
 import { test, expect } from '@playwright/test';
 
-async function runStateVisualCheck(page, renderer) {
-  await page.goto(`/tests/fixtures/standalone-pick.html?renderer=${renderer}`);
+async function runStateVisualCheck(page, renderer, extraQuery = '') {
+  const querySuffix = extraQuery ? `&${extraQuery}` : '';
+  await page.goto(`/tests/fixtures/standalone-pick.html?renderer=${renderer}${querySuffix}`);
   await page.waitForFunction(() => window.__helios || window.__heliosError, { timeout: 5000 });
   const error = await page.evaluate(() => window.__heliosError ?? null);
   if (error) throw new Error(`fixture failed: ${error}`);
@@ -84,8 +85,9 @@ async function runStateVisualCheck(page, renderer) {
   expect(result.afterSlot3MaxGreen).toBeGreaterThan(result.beforeMaxGreen);
 }
 
-async function runNoStateVisualCheck(page, renderer) {
-  await page.goto(`/tests/fixtures/standalone-pick.html?renderer=${renderer}`);
+async function runNoStateVisualCheck(page, renderer, extraQuery = '') {
+  const querySuffix = extraQuery ? `&${extraQuery}` : '';
+  await page.goto(`/tests/fixtures/standalone-pick.html?renderer=${renderer}${querySuffix}`);
   await page.waitForFunction(() => window.__helios || window.__heliosError, { timeout: 5000 });
   const error = await page.evaluate(() => window.__heliosError ?? null);
   if (error) throw new Error(`fixture failed: ${error}`);
@@ -152,8 +154,16 @@ test('state styling affects WebGL rendering', async ({ page }) => {
   await runStateVisualCheck(page, 'webgl');
 });
 
+test('state styling affects WebGL indirect rendering', async ({ page }) => {
+  await runStateVisualCheck(page, 'webgl', 'webglBackend=indirect');
+});
+
 test('no-state styling + discard affects WebGL rendering', async ({ page }) => {
   await runNoStateVisualCheck(page, 'webgl');
+});
+
+test('no-state styling + discard affects WebGL indirect rendering', async ({ page }) => {
+  await runNoStateVisualCheck(page, 'webgl', 'webglBackend=indirect');
 });
 
 test('@webgpu state styling affects WebGPU rendering', async ({ page }) => {

@@ -638,6 +638,7 @@ export class Helios extends EventTarget {
       forceWebGL: this.options.renderer === 'webgl',
       forceWebGPU: this.options.renderer === 'webgpu',
       webgpuBackend: this.options.webgpuBackend,
+      webglBackend: this.options.webglBackend,
       mode: this.options.mode ?? '2d',
       projection: this.options.projection ?? 'perspective',
       suppressBrowserGestures: this.options.suppressBrowserGestures !== false,
@@ -1123,6 +1124,7 @@ export class Helios extends EventTarget {
       forceWebGL: this.options.renderer === 'webgl',
       forceWebGPU: this.options.renderer === 'webgpu',
       webgpuBackend: this.options.webgpuBackend,
+      webglBackend: this.options.webglBackend,
       mode: this.options.mode ?? '2d',
       projection: this.options.projection ?? 'perspective',
       suppressBrowserGestures: this.options.suppressBrowserGestures !== false,
@@ -1310,10 +1312,10 @@ export class Helios extends EventTarget {
     const nextPositions = positions ?? null;
     let nextInterpolation = interpolation ?? null;
     if (!supportsOverrides && (nextPositions?.source === 'delegate' || nextPositions?.delegate)) {
-      this.debug?.log?.('layout', 'Position overrides disabled for WebGPU indirect backend');
+      this.debug?.log?.('layout', 'Position overrides disabled for indirect backend');
     }
     if (!supportsInterpolation && nextInterpolation?.enabled) {
-      this.debug?.log?.('layout', 'Interpolation disabled for WebGPU indirect backend');
+      this.debug?.log?.('layout', 'Interpolation disabled for indirect backend');
       nextInterpolation = { ...nextInterpolation, enabled: false };
     }
     const resolvedPositions = supportsOverrides
@@ -1364,21 +1366,34 @@ export class Helios extends EventTarget {
     }
   }
 
-  _isIndirectWebgpuBackend() {
-    const backend = this.options?.webgpuBackend;
-    if (backend !== 'indirect') return false;
-    if (this.options?.renderer === 'webgl') return false;
+  _isIndirectRendererBackend() {
+    const rendererPreference = this.options?.renderer ?? null;
     const deviceType = this.renderer?.device?.type ?? null;
-    if (deviceType) return deviceType === 'webgpu';
-    return this.options?.renderer === 'webgpu';
+    if (deviceType === 'webgpu') {
+      return this.options?.webgpuBackend === 'indirect';
+    }
+    if (deviceType === 'webgl2') {
+      return this.options?.webglBackend === 'indirect';
+    }
+    if (rendererPreference === 'webgpu') {
+      return this.options?.webgpuBackend === 'indirect';
+    }
+    if (rendererPreference === 'webgl') {
+      return this.options?.webglBackend === 'indirect';
+    }
+    return false;
+  }
+
+  _isIndirectWebgpuBackend() {
+    return this._isIndirectRendererBackend();
   }
 
   _supportsPositionOverrides() {
-    return !this._isIndirectWebgpuBackend();
+    return !this._isIndirectRendererBackend();
   }
 
   _supportsInterpolation() {
-    return !this._isIndirectWebgpuBackend();
+    return !this._isIndirectRendererBackend();
   }
 
   _attachPositionDelegate(delegate) {
@@ -1784,8 +1799,9 @@ export class Helios extends EventTarget {
    */
   async prewarm(options = {}) {
     if (this.prewarmPromise) return this.prewarmPromise;
-    const backend = this.options?.webgpuBackend;
-    const indirectMode = backend === 'indirect';
+    const webgpuIndirect = this.options?.renderer === 'webgpu' && this.options?.webgpuBackend === 'indirect';
+    const webglIndirect = this.options?.renderer === 'webgl' && this.options?.webglBackend === 'indirect';
+    const indirectMode = webgpuIndirect || webglIndirect;
     const wantsDenseBuffers = options.updateDenseBuffers !== false;
     const updateDenseBuffers = wantsDenseBuffers && !indirectMode;
     this.debug.log('helios', 'Prewarming visuals before ready', {

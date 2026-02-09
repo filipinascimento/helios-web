@@ -19,9 +19,8 @@ test.describe('mappers panel', () => {
 
     await typeLabel.hover();
 
-    const tooltip = page.locator('.helios-ui-tooltip[data-open="true"]');
-    await expect(tooltip).toBeVisible();
-    await expect(tooltip).toContainText('Select how this channel is driven');
+    const tooltips = page.locator('.helios-ui-tooltip[data-open="true"]');
+    await expect(tooltips.first()).toBeVisible();
+    await expect(tooltips.first()).toContainText('Select how this channel is driven');
   });
 });
-

@@ -23,6 +23,13 @@ function resolveWebgpuBackend() {
   return null;
 }
 
+function resolveWebglBackend() {
+  const params = new URLSearchParams(window.location.search);
+  const backend = (params.get('webglBackend') ?? '').toLowerCase();
+  if (backend === 'indirect' || backend === 'dense') return backend;
+  return null;
+}
+
 function resolveMode() {
   const params = new URLSearchParams(window.location.search);
   const mode = params.get('mode');
@@ -248,6 +255,7 @@ async function bootstrap() {
   let layoutIntervalMs = resolveLayoutIntervalMs();
   const edgeTransparency = resolveEdgeTransparencyMode();
   const webgpuBackend = resolveWebgpuBackend();
+  const webglBackend = resolveWebglBackend();
   const heliosOptions = {
     container: target,
     layout: layoutType === 'none'
@@ -295,6 +303,9 @@ async function bootstrap() {
   if (webgpuBackend) {
     heliosOptions.webgpuBackend = webgpuBackend;
   }
+  if (webglBackend) {
+    heliosOptions.webglBackend = webglBackend;
+  }
 
 
   if (layoutType === 'none') {
@@ -309,7 +320,10 @@ async function bootstrap() {
   console.log("Waiting for helios to be ready...");
   await helios.ready;
  
-  const usesIndirectBackend = webgpuBackend === 'indirect' && helios.renderer?.device?.type === 'webgpu';
+  const usesIndirectBackend = (
+    (webgpuBackend === 'indirect' && helios.renderer?.device?.type === 'webgpu')
+    || (webglBackend === 'indirect' && helios.renderer?.device?.type === 'webgl2')
+  );
 
   console.log("Helios is ready!");
 

@@ -1,4 +1,5 @@
 import { GraphLayerWebGL } from './GraphLayerWebGL.js';
+import { GraphLayerWebGLIndirect } from './GraphLayerWebGLIndirect.js';
 import { GraphLayerWebGPU } from './GraphLayerWebGPU.js';
 import { GraphLayerWebGPUIndirect } from './GraphLayerWebGPUIndirect.js';
 import { WebGL2Device } from './WebGL2Device.js';
@@ -221,7 +222,10 @@ export class LayeredRenderer {
         ? new GraphLayerWebGPUIndirect(options)
         : new GraphLayerWebGPU(options);
     } else {
-      this.graphLayer = new GraphLayerWebGL(options);
+      const backend = this.options.webglBackend === 'indirect' ? 'indirect' : 'dense';
+      this.graphLayer = backend === 'indirect'
+        ? new GraphLayerWebGLIndirect(options)
+        : new GraphLayerWebGL(options);
     }
     // Keep the graph layer first to match previous ordering.
     this.layers.unshift(this.graphLayer);
