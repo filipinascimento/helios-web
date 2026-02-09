@@ -290,6 +290,123 @@ test('WebGPUAttributeRenderer exposes shared candidates for identity indirect sp
   });
 });
 
+test('WebGPUAttributeRenderer uses raw sparse index buffers for r32uint indirect index tracking', () => {
+  const renderer = new WebGPUAttributeRenderer({}, null, null);
+  renderer.targetFormat = 'r32uint';
+  const nodeIndices = new Uint32Array([2, 0]);
+  const edgeIndices = new Uint32Array([1]);
+  const sparse = {
+    nodes: {
+      positions: new Float32Array([
+        0, 0, 0,
+        10, 0, 0,
+        20, 0, 0,
+      ]),
+      sizes: new Float32Array([1, 5, 9]),
+      outlineWidths: new Float32Array([0.1, 0.2, 0.3]),
+      indices: nodeIndices,
+      versions: {
+        positions: 11,
+        sizes: 12,
+        outlineWidths: 13,
+        indices: 15,
+        topology: 14,
+      },
+    },
+    edges: {
+      endpoints: new Uint32Array([0, 1, 1, 2]),
+      widths: new Float32Array([1, 2, 3, 4]),
+      endpointSizes: new Float32Array([5, 6, 7, 8]),
+      indices: edgeIndices,
+      versions: {
+        endpoints: 21,
+        widths: 22,
+        endpointSizes: 23,
+        indices: 25,
+        topology: 24,
+      },
+    },
+    nodeEdgeSources: {},
+  };
+
+  const prepared = renderer.buildIndirectPreparedGeometry({}, sparse, {
+    nodeAttribute: '$index',
+    edgeAttribute: '$index',
+  }, {
+    useQuads: true,
+    nodeSizeUniform: false,
+    nodeOutlineUniform: false,
+    edgeWidthUniform: false,
+    edgeEndpointSizeUniform: false,
+    edgeVariant: {
+      widthSource: 'edge',
+      endpointSizeSource: 'edge',
+    },
+  });
+
+  assert.strictEqual(prepared.encoded.nodeEncoded.view, nodeIndices);
+  assert.strictEqual(prepared.encoded.edgeEncoded.view, edgeIndices);
+  assert.equal(prepared.encoded.nodeEncoded.rawIndex, true);
+  assert.equal(prepared.encoded.edgeEncoded.rawIndex, true);
+  assert.deepEqual(prepared.shared.nodeIndices, {
+    key: 'indirect:node:indices',
+    version: 15,
+    topologyVersion: 14,
+    count: 2,
+    byteLength: nodeIndices.byteLength,
+  });
+  assert.deepEqual(prepared.shared.edgeIndices, {
+    key: 'indirect:edge:indices',
+    version: 25,
+    topologyVersion: 24,
+    count: 1,
+    byteLength: edgeIndices.byteLength,
+  });
+});
+
+test('WebGPUAttributeRenderer rejects non-integer tracked attributes in r32uint indirect mode', () => {
+  const renderer = new WebGPUAttributeRenderer({}, null, null);
+  renderer.targetFormat = 'r32uint';
+  const sparse = {
+    nodes: {
+      positions: new Float32Array([0, 0, 0]),
+      sizes: new Float32Array([1]),
+      outlineWidths: new Float32Array([0.1]),
+      indices: new Uint32Array([0]),
+      versions: { positions: 1, sizes: 1, outlineWidths: 1, indices: 1, topology: 1 },
+    },
+    edges: {
+      endpoints: new Uint32Array(0),
+      widths: new Float32Array(0),
+      endpointSizes: new Float32Array(0),
+      indices: new Uint32Array(0),
+      versions: { endpoints: 1, widths: 1, endpointSizes: 1, indices: 1, topology: 1 },
+    },
+    nodeEdgeSources: {},
+  };
+  const network = {
+    getNodeAttributeBuffer(name) {
+      if (name === 'score') return { view: new Float32Array([1.25]), dimension: 1, version: 7 };
+      return null;
+    },
+    getEdgeAttributeBuffer() { return null; },
+  };
+
+  assert.throws(() => {
+    renderer.buildIndirectPreparedGeometry(network, sparse, {
+      nodeAttribute: 'score',
+      edgeAttribute: null,
+    }, {
+      useQuads: true,
+      nodeSizeUniform: false,
+      nodeOutlineUniform: false,
+      edgeWidthUniform: false,
+      edgeEndpointSizeUniform: false,
+      useIntegerEncoding: true,
+    });
+  }, /must be a scalar Integer\/UnsignedInteger\/Category-style buffer/);
+});
+
 test('WebGPUAttributeRenderer resolves shared buffers only when metadata matches', () => {
   const renderer = new WebGPUAttributeRenderer({}, null, null);
   const sharedBuffer = { id: 'shared' };

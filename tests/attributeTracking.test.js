@@ -309,7 +309,7 @@ test('WebGPUAttributeRenderer bypasses sparse encoded APIs for indirect r32uint 
   assert.equal(calls.denseUpdateNode, 0);
 });
 
-test('WebGLIndirectAttributeRenderer uses sparse encoded APIs only', () => {
+test('WebGLIndirectAttributeRenderer does not eagerly update sparse encoded APIs', () => {
   const calls = {
     sparseDefineNode: 0,
     sparseUpdateNode: 0,
@@ -375,14 +375,106 @@ test('WebGLIndirectAttributeRenderer uses sparse encoded APIs only', () => {
   );
 
   assert.ok(result);
-  assert.equal(calls.sparseDefineNode > 0, true);
-  assert.equal(calls.sparseUpdateNode > 0, true);
-  assert.equal(calls.sparseDefineEdge > 0, true);
-  assert.equal(calls.sparseUpdateEdge > 0, true);
+  assert.equal(calls.sparseDefineNode, 0);
+  assert.equal(calls.sparseUpdateNode, 0);
+  assert.equal(calls.sparseDefineEdge, 0);
+  assert.equal(calls.sparseUpdateEdge, 0);
   assert.equal(calls.denseDefineNode, 0);
   assert.equal(calls.denseUpdateNode, 0);
   assert.equal(calls.denseDefineEdge, 0);
   assert.equal(calls.denseUpdateEdge, 0);
+});
+
+test('WebGLIndirectAttributeRenderer does not eagerly touch sparse encoded readiness across frames', () => {
+  const calls = {
+    sparseDefineNode: 0,
+    sparseUpdateNode: 0,
+    sparseDefineEdge: 0,
+    sparseUpdateEdge: 0,
+  };
+  const network = {
+    nodeIndices: new Uint32Array(0),
+    edgeIndices: new Uint32Array(0),
+    getTopologyVersions() {
+      return { node: 7, edge: 11 };
+    },
+    getNodeAttributeVersion() {
+      return 23;
+    },
+    getEdgeAttributeVersion() {
+      return 29;
+    },
+    defineSparseColorEncodedNodeAttribute() {
+      calls.sparseDefineNode += 1;
+    },
+    updateSparseColorEncodedNodeAttribute() {
+      calls.sparseUpdateNode += 1;
+    },
+    getSparseColorEncodedNodeAttributeView() {
+      return { view: new Uint8Array(0), version: 1 };
+    },
+    defineSparseColorEncodedEdgeAttribute() {
+      calls.sparseDefineEdge += 1;
+    },
+    updateSparseColorEncodedEdgeAttribute() {
+      calls.sparseUpdateEdge += 1;
+    },
+    getSparseColorEncodedEdgeAttributeView() {
+      return { view: new Uint8Array(0), version: 1 };
+    },
+  };
+  const graphLayer = {
+    isIndirectWebGL: true,
+    getCameraUniforms() {
+      return {
+        mode: '2d',
+        viewProjection: new Float32Array(16),
+      };
+    },
+    withSparseGraph() {
+      return { node: null, edge: null };
+    },
+  };
+
+  const renderer = new WebGLIndirectAttributeRenderer(graphLayer, null, null);
+  renderer.gl = {};
+  renderer.resize = () => {};
+
+  const config = {
+    nodeAttribute: 'rank',
+    edgeAttribute: 'weight',
+    resolutionScale: 1,
+    trackDepth: false,
+  };
+  renderer.render({ network, camera: {} }, { width: 1, height: 1, devicePixelRatio: 1 }, config);
+  renderer.render({ network, camera: {} }, { width: 1, height: 1, devicePixelRatio: 1 }, config);
+
+  assert.equal(calls.sparseDefineNode, 0);
+  assert.equal(calls.sparseUpdateNode, 0);
+  assert.equal(calls.sparseDefineEdge, 0);
+  assert.equal(calls.sparseUpdateEdge, 0);
+});
+
+test('WebGLIndirectAttributeRenderer resolves integer tracked attributes for shader-side packing', () => {
+  const renderer = new WebGLIndirectAttributeRenderer({ isIndirectWebGL: true }, null, null);
+  const network = {
+    getNodeAttributeBuffer(name) {
+      if (name === 'rank') return { view: new Int32Array([3, 7]), dimension: 1, version: 5 };
+      if (name === 'weight') return { view: new Uint32Array([11, 13]), dimension: 1, version: 9 };
+      if (name === 'score') return { view: new Float32Array([1.5, 2.5]), dimension: 1, version: 12 };
+      return null;
+    },
+  };
+
+  const nodeSigned = renderer.resolveTrackedAttributeDescriptor(network, 'node', 'rank');
+  const nodeUnsigned = renderer.resolveTrackedAttributeDescriptor(network, 'node', 'weight');
+  const nodeFloat = renderer.resolveTrackedAttributeDescriptor(network, 'node', 'score');
+  const index = renderer.resolveTrackedAttributeDescriptor(network, 'node', '$index');
+
+  assert.equal(nodeSigned?.mode, 3);
+  assert.equal(nodeUnsigned?.mode, 4);
+  assert.equal(nodeFloat, null);
+  assert.equal(index, null);
 });
 
 test('WebGLIndirectAttributeRenderer uses quad geometry for edge tracking in quad mode', () => {

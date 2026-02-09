@@ -818,9 +818,14 @@ export class GraphLayerWebGPUIndirect extends GraphLayerWebGPU {
     const resourceCache = this.device?.resourceCache?.webgpu;
     if (!resourceCache?.buffers) return { buffers: {} };
     const keys = [
+      'indirect:node:indices',
       'indirect:node:positions',
       'indirect:node:sizes',
       'indirect:node:outlineWidths',
+      'indirect:node:edgeSource:width',
+      'indirect:node:edgeSource:endpointSize',
+      'indirect:edge:indices',
+      'indirect:edge:endpoints',
       'indirect:edge:widths',
       'indirect:edge:endpointSizes',
     ];
