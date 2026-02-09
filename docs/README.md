@@ -94,6 +94,10 @@ See [`docs/UI.md`](./UI.md) for the optional `HeliosUI` overlay (panels, docking
 
 See [`docs/states.md`](./states.md) for the bitmask-based node/edge state system (selected/highlighted/filtered/custom) and shader-applied styling.
 
+## Backend and mode requirements
+
+See [`docs/rendering-mode-requirements.md`](./rendering-mode-requirements.md) for a concise matrix of WebGPU/WebGL dense-vs-indirect requirements, extension gates, and sizing limits.
+
 ## Comparing with legacy Helios Web
 
 See [`docs/HELIOS_WEB_NEXT_VS_LEGACY.md`](./HELIOS_WEB_NEXT_VS_LEGACY.md) for a high-level summary of the biggest architectural differences and what Helios Web Next enables.
