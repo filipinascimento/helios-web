@@ -356,7 +356,7 @@ export class GraphLayerWebGPUIndirect extends GraphLayerWebGPU {
     const outlineModeChanged = this._nodeOutlineUseAttributesLast !== useOutlineAttributes;
     this._nodeOutlineUseAttributesLast = useOutlineAttributes;
 
-    const storageUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
+    const storageUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.VERTEX;
     const resourceCache = this.device?.resourceCache?.webgpu;
     if (!resourceCache) {
       throw new Error('WebGPU resource cache is missing; expected device.resourceCache.webgpu.');
@@ -643,7 +643,7 @@ export class GraphLayerWebGPUIndirect extends GraphLayerWebGPU {
       throw new Error('Edge states buffer is missing for indirect rendering.');
     }
 
-    const storageUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
+    const storageUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.VERTEX;
     const resourceCache = this.device?.resourceCache?.webgpu;
     if (!resourceCache) {
       throw new Error('WebGPU resource cache is missing; expected device.resourceCache.webgpu.');
@@ -812,6 +812,23 @@ export class GraphLayerWebGPUIndirect extends GraphLayerWebGPU {
       this._edgeBuffersLastByKey.set(bindGroupKey, usedBuffers);
     }
     this.edgeBindGroup = this.edgeBindGroups.get(bindGroupKey) ?? null;
+  }
+
+  getSharedSparseResources() {
+    const resourceCache = this.device?.resourceCache?.webgpu;
+    if (!resourceCache?.buffers) return { buffers: {} };
+    const keys = [
+      'indirect:node:positions',
+      'indirect:node:sizes',
+      'indirect:node:outlineWidths',
+      'indirect:edge:widths',
+      'indirect:edge:endpointSizes',
+    ];
+    const buffers = {};
+    for (const key of keys) {
+      buffers[key] = resourceCache.buffers.get(key) ?? null;
+    }
+    return { buffers };
   }
 
   withSparseGraph(network, topologyVersions, indices, edgeNodeAttributes, fn) {

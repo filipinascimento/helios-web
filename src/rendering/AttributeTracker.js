@@ -613,6 +613,29 @@ function packActiveValues(source, indices, dimension) {
   return packed;
 }
 
+function isIdentityIndices(indices, count) {
+  if (!indices) return false;
+  const expected = Math.max(0, count ?? 0);
+  const length = indices.length ?? 0;
+  if (length !== expected) return false;
+  for (let i = 0; i < length; i += 1) {
+    if ((indices[i] ?? 0) !== i) return false;
+  }
+  return true;
+}
+
+function selectActiveValues(source, indices, dimension) {
+  if (!source || !indices) return { view: null, direct: false };
+  const dim = Math.max(1, Math.floor(dimension || 1));
+  const count = indices.length ?? 0;
+  if (!count) return { view: new Float32Array(0), direct: false };
+  const sourceCount = Math.floor((source.length ?? 0) / dim);
+  if (count === sourceCount && isIdentityIndices(indices, count)) {
+    return { view: source, direct: true };
+  }
+  return { view: packActiveValues(source, indices, dim), direct: false };
+}
+
 function packEdgeSegmentsFromSparse(nodePositions, edgeEndpoints, edgeIndices) {
   if (!nodePositions || !edgeEndpoints || !edgeIndices) return null;
   const edgeCount = edgeIndices.length ?? 0;
@@ -2066,6 +2089,38 @@ export class WebGLIndirectAttributeRenderer {
     return value === 'source' ? 1 : (value === 'destination' ? 2 : 0);
   }
 
+  getSharedGraphResources() {
+    const provider = this.graphLayer?.getSharedSparseResources;
+    if (typeof provider !== 'function') return null;
+    try {
+      return provider.call(this.graphLayer);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  resolveSharedTexture({
+    slot,
+    localTexture,
+    sharedResources,
+    sharedTextureKey,
+    sharedMetaKey,
+    view,
+    version,
+    count,
+    upload,
+  }) {
+    const sharedTexture = sharedResources?.textures?.[sharedTextureKey] ?? null;
+    const sharedMeta = sharedResources?.textureMeta?.[sharedMetaKey] ?? null;
+    if (sharedTexture && view && count > 0 && this.isSameView(sharedMeta, view, version, count)) {
+      // Keep local meta invalidated so fallback uploads cannot be skipped.
+      this.textureMeta[slot] = null;
+      return sharedTexture;
+    }
+    upload?.();
+    return localTexture;
+  }
+
   toPair(value, fallback = [1, 1]) {
     if (Array.isArray(value)) {
       const a = Number(value[0]);
@@ -2310,89 +2365,194 @@ export class WebGLIndirectAttributeRenderer {
           throw new Error('AttributeTracker: indirect WebGL mode requires sparse edge endpoints.');
         }
 
+        const sharedResources = this.getSharedGraphResources();
+        const drawTextures = {
+          nodePositions: this.textures.nodePositions,
+          nodeSizes: this.textures.nodeSizes,
+          nodeOutlineWidths: this.textures.nodeOutlineWidths,
+          nodeEncoded: this.textures.nodeEncoded,
+          edgeEndpoints: this.textures.edgeEndpoints,
+          edgeWidths: this.textures.edgeWidths,
+          edgeEndpointSizes: this.textures.edgeEndpointSizes,
+          nodeWidthSource: this.textures.nodeWidthSource,
+          nodeEndpointSizeSource: this.textures.nodeEndpointSizeSource,
+          edgeEncoded: this.textures.edgeEncoded,
+        };
+
+        const nodePositionVersion = nodes.versions?.positions ?? 0;
+        const nodeSizeVersion = nodes.versions?.sizes ?? 0;
+        const nodeOutlineVersion = nodes.versions?.outlineWidths ?? 0;
+        const nodeWidthSourceVersion = sparse.nodeEdgeSources?.width?.version ?? nodeSizeVersion;
+        const nodeEndpointSizeSourceVersion = sparse.nodeEdgeSources?.endpointSize?.version ?? nodeSizeVersion;
+        const edgeEndpointsVersion = edges.versions?.endpoints ?? 0;
+        const edgeWidthVersion = edges.versions?.widths ?? 0;
+        const edgeEndpointSizeVersion = edges.versions?.endpointSizes ?? 0;
+
         if (totalNodeCount > 0 && nodePositions) {
-          this.uploadFloatTexture(
-            'nodePositions',
-            this.textures.nodePositions,
-            nodePositions,
-            3,
-            totalNodeCount,
-            nodes.versions?.positions ?? 0,
-          );
+          drawTextures.nodePositions = this.resolveSharedTexture({
+            slot: 'nodePositions',
+            localTexture: this.textures.nodePositions,
+            sharedResources,
+            sharedTextureKey: 'nodePositions',
+            sharedMetaKey: 'nodePositions',
+            view: nodePositions,
+            version: nodePositionVersion,
+            count: totalNodeCount,
+            upload: () => this.uploadFloatTexture(
+              'nodePositions',
+              this.textures.nodePositions,
+              nodePositions,
+              3,
+              totalNodeCount,
+              nodePositionVersion,
+            ),
+          });
         }
         if (totalNodeCount > 0 && nodeSizes) {
           const sizeCount = nodeSizes.length ?? 0;
-          this.uploadFloatTexture(
-            'nodeSizes',
-            this.textures.nodeSizes,
-            nodeSizes,
-            1,
-            sizeCount,
-            nodes.versions?.sizes ?? 0,
-          );
+          drawTextures.nodeSizes = this.resolveSharedTexture({
+            slot: 'nodeSizes',
+            localTexture: this.textures.nodeSizes,
+            sharedResources,
+            sharedTextureKey: 'nodeSizes',
+            sharedMetaKey: 'nodeSizes',
+            view: nodeSizes,
+            version: nodeSizeVersion,
+            count: sizeCount,
+            upload: () => this.uploadFloatTexture(
+              'nodeSizes',
+              this.textures.nodeSizes,
+              nodeSizes,
+              1,
+              sizeCount,
+              nodeSizeVersion,
+            ),
+          });
         }
         if (totalNodeCount > 0 && nodeOutlineWidths) {
           const outlineCount = nodeOutlineWidths.length ?? 0;
-          this.uploadFloatTexture(
-            'nodeOutlineWidths',
-            this.textures.nodeOutlineWidths,
-            nodeOutlineWidths,
-            1,
-            outlineCount,
-            nodes.versions?.outlineWidths ?? 0,
-          );
+          drawTextures.nodeOutlineWidths = this.resolveSharedTexture({
+            slot: 'nodeOutlineWidths',
+            localTexture: this.textures.nodeOutlineWidths,
+            sharedResources,
+            sharedTextureKey: 'nodeOutlineWidths',
+            sharedMetaKey: 'nodeOutlineWidths',
+            view: nodeOutlineWidths,
+            version: nodeOutlineVersion,
+            count: outlineCount,
+            upload: () => this.uploadFloatTexture(
+              'nodeOutlineWidths',
+              this.textures.nodeOutlineWidths,
+              nodeOutlineWidths,
+              1,
+              outlineCount,
+              nodeOutlineVersion,
+            ),
+          });
         }
         if (totalNodeCount > 0 && nodeWidthSource) {
-          this.uploadFloatTexture(
-            'nodeWidthSource',
-            this.textures.nodeWidthSource,
-            nodeWidthSource,
-            1,
-            nodeWidthSource.length ?? 0,
-            sparse.nodeEdgeSources?.width?.version ?? nodes.versions?.sizes ?? 0,
-          );
+          const sourceCount = nodeWidthSource.length ?? 0;
+          drawTextures.nodeWidthSource = this.resolveSharedTexture({
+            slot: 'nodeWidthSource',
+            localTexture: this.textures.nodeWidthSource,
+            sharedResources,
+            sharedTextureKey: 'nodeWidthSource',
+            sharedMetaKey: 'nodeEdgeWidths',
+            view: nodeWidthSource,
+            version: nodeWidthSourceVersion,
+            count: sourceCount,
+            upload: () => this.uploadFloatTexture(
+              'nodeWidthSource',
+              this.textures.nodeWidthSource,
+              nodeWidthSource,
+              1,
+              sourceCount,
+              nodeWidthSourceVersion,
+            ),
+          });
         }
         if (totalNodeCount > 0 && nodeEndpointSizeSource) {
-          this.uploadFloatTexture(
-            'nodeEndpointSizeSource',
-            this.textures.nodeEndpointSizeSource,
-            nodeEndpointSizeSource,
-            1,
-            nodeEndpointSizeSource.length ?? 0,
-            sparse.nodeEdgeSources?.endpointSize?.version ?? nodes.versions?.sizes ?? 0,
-          );
+          const sourceCount = nodeEndpointSizeSource.length ?? 0;
+          drawTextures.nodeEndpointSizeSource = this.resolveSharedTexture({
+            slot: 'nodeEndpointSizeSource',
+            localTexture: this.textures.nodeEndpointSizeSource,
+            sharedResources,
+            sharedTextureKey: 'nodeEndpointSizeSource',
+            sharedMetaKey: 'nodeEdgeEndpointSizes',
+            view: nodeEndpointSizeSource,
+            version: nodeEndpointSizeSourceVersion,
+            count: sourceCount,
+            upload: () => this.uploadFloatTexture(
+              'nodeEndpointSizeSource',
+              this.textures.nodeEndpointSizeSource,
+              nodeEndpointSizeSource,
+              1,
+              sourceCount,
+              nodeEndpointSizeSourceVersion,
+            ),
+          });
         }
         if (totalEdgeCount > 0 && edgeEndpoints) {
-          this.uploadUintTexture(
-            'edgeEndpoints',
-            this.textures.edgeEndpoints,
-            edgeEndpoints,
-            2,
-            totalEdgeCount,
-            edges.versions?.endpoints ?? 0,
-          );
+          drawTextures.edgeEndpoints = this.resolveSharedTexture({
+            slot: 'edgeEndpoints',
+            localTexture: this.textures.edgeEndpoints,
+            sharedResources,
+            sharedTextureKey: 'edgeEndpoints',
+            sharedMetaKey: 'edgeEndpoints',
+            view: edgeEndpoints,
+            version: edgeEndpointsVersion,
+            count: totalEdgeCount,
+            upload: () => this.uploadUintTexture(
+              'edgeEndpoints',
+              this.textures.edgeEndpoints,
+              edgeEndpoints,
+              2,
+              totalEdgeCount,
+              edgeEndpointsVersion,
+            ),
+          });
         }
         if (totalEdgeCount > 0 && edges.widths) {
           const edgeWidthCount = Math.floor((edges.widths.length ?? 0) / 2);
-          this.uploadFloatTexture(
-            'edgeWidths',
-            this.textures.edgeWidths,
-            edges.widths,
-            2,
-            edgeWidthCount,
-            edges.versions?.widths ?? 0,
-          );
+          drawTextures.edgeWidths = this.resolveSharedTexture({
+            slot: 'edgeWidths',
+            localTexture: this.textures.edgeWidths,
+            sharedResources,
+            sharedTextureKey: 'edgeWidths',
+            sharedMetaKey: 'edgeWidths',
+            view: edges.widths,
+            version: edgeWidthVersion,
+            count: edgeWidthCount,
+            upload: () => this.uploadFloatTexture(
+              'edgeWidths',
+              this.textures.edgeWidths,
+              edges.widths,
+              2,
+              edgeWidthCount,
+              edgeWidthVersion,
+            ),
+          });
         }
         if (totalEdgeCount > 0 && edges.endpointSizes) {
           const edgeEndpointSizeCount = Math.floor((edges.endpointSizes.length ?? 0) / 2);
-          this.uploadFloatTexture(
-            'edgeEndpointSizes',
-            this.textures.edgeEndpointSizes,
-            edges.endpointSizes,
-            2,
-            edgeEndpointSizeCount,
-            edges.versions?.endpointSizes ?? 0,
-          );
+          drawTextures.edgeEndpointSizes = this.resolveSharedTexture({
+            slot: 'edgeEndpointSizes',
+            localTexture: this.textures.edgeEndpointSizes,
+            sharedResources,
+            sharedTextureKey: 'edgeEndpointSizes',
+            sharedMetaKey: 'edgeEndpointSizes',
+            view: edges.endpointSizes,
+            version: edgeEndpointSizeVersion,
+            count: edgeEndpointSizeCount,
+            upload: () => this.uploadFloatTexture(
+              'edgeEndpointSizes',
+              this.textures.edgeEndpointSizes,
+              edges.endpointSizes,
+              2,
+              edgeEndpointSizeCount,
+              edgeEndpointSizeVersion,
+            ),
+          });
         }
 
         const nodeEncodedDesc = (!nodeIsIndex && config.nodeAttribute)
@@ -2457,10 +2617,10 @@ export class WebGLIndirectAttributeRenderer {
         const setupNodeDraw = (program, uniforms) => {
           gl.useProgram(program);
           this.setNodeUniforms(uniforms, cameraUniforms, drawNodeArgs);
-          this.bindTexture(0, this.textures.nodePositions);
-          this.bindTexture(1, this.textures.nodeSizes);
-          this.bindTexture(9, this.textures.nodeOutlineWidths);
-          this.bindTexture(2, this.textures.nodeEncoded);
+          this.bindTexture(0, drawTextures.nodePositions);
+          this.bindTexture(1, drawTextures.nodeSizes);
+          this.bindTexture(9, drawTextures.nodeOutlineWidths);
+          this.bindTexture(2, drawTextures.nodeEncoded);
           gl.bindVertexArray(this.nodeVao);
           gl.drawArraysInstanced(gl.POINTS, 0, 1, drawNodeCount);
         };
@@ -2472,14 +2632,14 @@ export class WebGLIndirectAttributeRenderer {
           } else {
             this.setEdgeUniforms(uniforms, cameraUniforms, drawEdgeArgs);
           }
-          this.bindTexture(0, this.textures.nodePositions);
-          this.bindTexture(3, this.textures.edgeEndpoints);
-          this.bindTexture(4, this.textures.edgeEncoded);
+          this.bindTexture(0, drawTextures.nodePositions);
+          this.bindTexture(3, drawTextures.edgeEndpoints);
+          this.bindTexture(4, drawTextures.edgeEncoded);
           if (drawEdgeArgs.useQuads) {
-            this.bindTexture(5, this.textures.edgeWidths);
-            this.bindTexture(6, this.textures.edgeEndpointSizes);
-            this.bindTexture(7, this.textures.nodeWidthSource);
-            this.bindTexture(8, this.textures.nodeEndpointSizeSource);
+            this.bindTexture(5, drawTextures.edgeWidths);
+            this.bindTexture(6, drawTextures.edgeEndpointSizes);
+            this.bindTexture(7, drawTextures.nodeWidthSource);
+            this.bindTexture(8, drawTextures.nodeEndpointSizeSource);
             gl.bindVertexArray(this.edgeQuadVao);
             gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, drawEdgeCount);
           } else {
@@ -3101,6 +3261,37 @@ export class WebGPUAttributeRenderer {
     };
   }
 
+  getSharedGraphResources() {
+    const provider = this.graphLayer?.getSharedSparseResources;
+    if (typeof provider !== 'function') return null;
+    try {
+      return provider.call(this.graphLayer);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  resolveSharedWebGPUBuffer(sharedResources, candidate, uploadFallback) {
+    const key = candidate?.key;
+    if (key) {
+      const entry = sharedResources?.buffers?.[key] ?? null;
+      const vertexUsageBit = (typeof GPUBufferUsage !== 'undefined' && Number.isFinite(GPUBufferUsage?.VERTEX))
+        ? GPUBufferUsage.VERTEX
+        : 0;
+      const hasVertexUsage = (vertexUsageBit === 0 || entry?.usage == null)
+        ? true
+        : ((entry.usage & vertexUsageBit) !== 0);
+      const sameVersion = candidate?.version == null || entry?.version === candidate.version;
+      const sameTopology = candidate?.topologyVersion == null || entry?.topologyVersion === candidate.topologyVersion;
+      const sameCount = candidate?.count == null || entry?.count === candidate.count;
+      const sameByteLength = candidate?.byteLength == null || entry?.byteLength === candidate.byteLength;
+      if (entry?.buffer && hasVertexUsage && sameVersion && sameTopology && sameCount && sameByteLength) {
+        return entry.buffer;
+      }
+    }
+    return uploadFallback?.() ?? null;
+  }
+
   buildIndirectPreparedGeometry(network, sparse, config, options = {}) {
     const {
       useQuads = true,
@@ -3117,13 +3308,20 @@ export class WebGPUAttributeRenderer {
     const nodeCount = nodeIndices?.length ?? 0;
     const edgeCount = edgeIndices?.length ?? 0;
 
-    const nodePositions = packActiveValues(sparse?.nodes?.positions, nodeIndices, 3);
+    const nodePositionsSelection = selectActiveValues(sparse?.nodes?.positions, nodeIndices, 3);
+    const nodePositions = nodePositionsSelection.view;
     if (nodeCount && (!nodePositions || nodePositions.length !== nodeCount * 3)) {
       throw new Error('AttributeTracker: indirect mode requires sparse node positions.');
     }
 
-    const nodeSizes = !nodeSizeUniform ? packActiveValues(sparse?.nodes?.sizes, nodeIndices, 1) : null;
-    const nodeOutlineWidths = !nodeOutlineUniform ? packActiveValues(sparse?.nodes?.outlineWidths, nodeIndices, 1) : null;
+    const nodeSizesSelection = !nodeSizeUniform
+      ? selectActiveValues(sparse?.nodes?.sizes, nodeIndices, 1)
+      : null;
+    const nodeOutlineSelection = !nodeOutlineUniform
+      ? selectActiveValues(sparse?.nodes?.outlineWidths, nodeIndices, 1)
+      : null;
+    const nodeSizes = nodeSizesSelection?.view ?? null;
+    const nodeOutlineWidths = nodeOutlineSelection?.view ?? null;
     if (!nodeSizeUniform && nodeCount && (!nodeSizes || nodeSizes.length !== nodeCount)) {
       throw new Error('AttributeTracker: indirect mode requires sparse node sizes.');
     }
@@ -3144,12 +3342,15 @@ export class WebGPUAttributeRenderer {
     const endpointSizeEndpointsMode = normalizeNodeSourceEndpoints(edgeVariant?.endpointSizeEndpoints);
 
     let edgeWidths = null;
+    let edgeWidthsDirect = false;
     if (config.edgeAttribute && useQuads && !edgeWidthUniform) {
       if (widthFromNode) {
         const widthSource = sparse?.nodeEdgeSources?.width?.view ?? sparse?.nodes?.sizes;
         edgeWidths = packNodeSourcedEdgePairs(widthSource, sparse?.edges?.endpoints, edgeIndices, widthEndpointsMode);
       } else {
-        edgeWidths = packActiveValues(sparse?.edges?.widths, edgeIndices, 2);
+        const widthSelection = selectActiveValues(sparse?.edges?.widths, edgeIndices, 2);
+        edgeWidths = widthSelection.view;
+        edgeWidthsDirect = widthSelection.direct;
       }
       if (edgeCount && (!edgeWidths || edgeWidths.length !== edgeCount * 2)) {
         throw new Error('AttributeTracker: indirect mode requires edge widths (or node width source) for quad edges.');
@@ -3157,6 +3358,7 @@ export class WebGPUAttributeRenderer {
     }
 
     let edgeEndpointSizes = null;
+    let edgeEndpointSizesDirect = false;
     if (config.edgeAttribute && !edgeEndpointSizeUniform) {
       if (endpointSizeFromNode) {
         const endpointSource = sparse?.nodeEdgeSources?.endpointSize?.view ?? sparse?.nodes?.sizes;
@@ -3167,7 +3369,9 @@ export class WebGPUAttributeRenderer {
           endpointSizeEndpointsMode,
         );
       } else {
-        edgeEndpointSizes = packActiveValues(sparse?.edges?.endpointSizes, edgeIndices, 2);
+        const endpointSelection = selectActiveValues(sparse?.edges?.endpointSizes, edgeIndices, 2);
+        edgeEndpointSizes = endpointSelection.view;
+        edgeEndpointSizesDirect = endpointSelection.direct;
       }
       if (edgeCount && (!edgeEndpointSizes || edgeEndpointSizes.length !== edgeCount * 2)) {
         throw new Error('AttributeTracker: indirect mode requires edge endpoint sizes.');
@@ -3211,6 +3415,11 @@ export class WebGPUAttributeRenderer {
       sparse?.edges?.versions?.endpoints ?? 0,
       sparse?.nodes?.versions?.positions ?? 0,
     );
+    const nodePositionVersion = sparse?.nodes?.versions?.positions ?? 0;
+    const nodeSizeVersion = sparse?.nodes?.versions?.sizes ?? 0;
+    const nodeOutlineVersion = sparse?.nodes?.versions?.outlineWidths ?? 0;
+    const edgeWidthVersion = sparse?.edges?.versions?.widths ?? 0;
+    const edgeEndpointSizeVersion = sparse?.edges?.versions?.endpointSizes ?? 0;
 
     const geometry = {
       nodes: {
@@ -3260,7 +3469,55 @@ export class WebGPUAttributeRenderer {
         : null,
     };
 
-    return { geometry, encoded };
+    const shared = {
+      nodePositions: nodePositionsSelection.direct
+        ? {
+          key: 'indirect:node:positions',
+          version: nodePositionVersion,
+          topologyVersion: nodeTopologyVersion,
+          count: nodeCount,
+          byteLength: nodePositions?.byteLength ?? 0,
+        }
+        : null,
+      nodeSizes: nodeSizesSelection?.direct
+        ? {
+          key: 'indirect:node:sizes',
+          version: nodeSizeVersion,
+          topologyVersion: nodeTopologyVersion,
+          count: nodeCount,
+          byteLength: nodeSizes?.byteLength ?? 0,
+        }
+        : null,
+      nodeOutlineWidths: nodeOutlineSelection?.direct
+        ? {
+          key: 'indirect:node:outlineWidths',
+          version: nodeOutlineVersion,
+          topologyVersion: nodeTopologyVersion,
+          count: nodeCount,
+          byteLength: nodeOutlineWidths?.byteLength ?? 0,
+        }
+        : null,
+      edgeWidths: (edgeWidthsDirect && !widthFromNode)
+        ? {
+          key: 'indirect:edge:widths',
+          version: edgeWidthVersion,
+          topologyVersion: edgeTopologyVersion,
+          count: edgeCount,
+          byteLength: edgeWidths?.byteLength ?? 0,
+        }
+        : null,
+      edgeEndpointSizes: (edgeEndpointSizesDirect && !endpointSizeFromNode)
+        ? {
+          key: 'indirect:edge:endpointSizes',
+          version: edgeEndpointSizeVersion,
+          topologyVersion: edgeTopologyVersion,
+          count: edgeCount,
+          byteLength: edgeEndpointSizes?.byteLength ?? 0,
+        }
+        : null,
+    };
+
+    return { geometry, encoded, shared };
   }
 
   renderPreparedGeometry(geometry, encoded, config, options = {}) {
@@ -3275,6 +3532,7 @@ export class WebGPUAttributeRenderer {
       edgeEndpointSizeUniform,
       nodeCfg,
       edgeCfg,
+      sharedCandidates = null,
     } = options;
 
     const nodeSizes = (!nodeSizeUniform) ? geometry.nodes.sizes : null;
@@ -3380,6 +3638,7 @@ export class WebGPUAttributeRenderer {
     const passes = [];
 
     const resourceCache = this.device?.resourceCache?.webgpu;
+    const sharedResources = this.getSharedGraphResources();
     const vertexUsage = GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST;
     const uploadVertex = (key, source, meta) => {
       if (!resourceCache || !source) return null;
@@ -3397,33 +3656,45 @@ export class WebGPUAttributeRenderer {
     };
 
     const nodePositionBuffer = geometry.nodes.count
-      ? uploadVertex('attr:webgpu:node:positions', geometry.nodes.positions, {
-        label: 'AttributeTracker node positions',
-        version: geometry.nodes.versions?.positions ?? 0,
-        topologyVersion: geometry.nodes.versions?.topology ?? 0,
-        count: geometry.nodes.count,
-      })
+      ? this.resolveSharedWebGPUBuffer(
+        sharedResources,
+        sharedCandidates?.nodePositions ?? null,
+        () => uploadVertex('attr:webgpu:node:positions', geometry.nodes.positions, {
+          label: 'AttributeTracker node positions',
+          version: geometry.nodes.versions?.positions ?? 0,
+          topologyVersion: geometry.nodes.versions?.topology ?? 0,
+          count: geometry.nodes.count,
+        }),
+      )
       : null;
 
     const needNodeSize = pipelines.nodeSlots.includes('size');
     const needNodeOutline = pipelines.nodeSlots.includes('outline');
 
     const nodeSizeBuffer = (geometry.nodes.count && needNodeSize)
-      ? uploadVertex('attr:webgpu:node:sizes', nodeSizes, {
-        label: 'AttributeTracker node sizes',
-        version: geometry.nodes.versions?.sizes ?? 0,
-        topologyVersion: geometry.nodes.versions?.topology ?? 0,
-        count: geometry.nodes.count,
-      })
+      ? this.resolveSharedWebGPUBuffer(
+        sharedResources,
+        sharedCandidates?.nodeSizes ?? null,
+        () => uploadVertex('attr:webgpu:node:sizes', nodeSizes, {
+          label: 'AttributeTracker node sizes',
+          version: geometry.nodes.versions?.sizes ?? 0,
+          topologyVersion: geometry.nodes.versions?.topology ?? 0,
+          count: geometry.nodes.count,
+        }),
+      )
       : null;
 
     const nodeOutlineBuffer = (geometry.nodes.count && needNodeOutline)
-      ? uploadVertex('attr:webgpu:node:outlineWidths', nodeOutlineWidths, {
-        label: 'AttributeTracker node outline widths',
-        version: geometry.nodes.versions?.outlineWidths ?? 0,
-        topologyVersion: geometry.nodes.versions?.topology ?? 0,
-        count: geometry.nodes.count,
-      })
+      ? this.resolveSharedWebGPUBuffer(
+        sharedResources,
+        sharedCandidates?.nodeOutlineWidths ?? null,
+        () => uploadVertex('attr:webgpu:node:outlineWidths', nodeOutlineWidths, {
+          label: 'AttributeTracker node outline widths',
+          version: geometry.nodes.versions?.outlineWidths ?? 0,
+          topologyVersion: geometry.nodes.versions?.topology ?? 0,
+          count: geometry.nodes.count,
+        }),
+      )
       : null;
 
     if (needNodeSize && (!nodeSizes || nodeSizes.length !== geometry.nodes.count)) {
@@ -3478,21 +3749,29 @@ export class WebGPUAttributeRenderer {
     }
 
     const edgeWidthsBuffer = (geometry.edges.count && needEdgeWidths)
-      ? uploadVertex('attr:webgpu:edge:widths', edgeWidths, {
-        label: 'AttributeTracker edge widths',
-        version: geometry.edges.versions?.widths ?? 0,
-        topologyVersion: geometry.edges.versions?.topology ?? 0,
-        count: geometry.edges.count,
-      })
+      ? this.resolveSharedWebGPUBuffer(
+        sharedResources,
+        sharedCandidates?.edgeWidths ?? null,
+        () => uploadVertex('attr:webgpu:edge:widths', edgeWidths, {
+          label: 'AttributeTracker edge widths',
+          version: geometry.edges.versions?.widths ?? 0,
+          topologyVersion: geometry.edges.versions?.topology ?? 0,
+          count: geometry.edges.count,
+        }),
+      )
       : null;
 
     const edgeEndpointSizeBuffer = (geometry.edges.count && needEdgeEndpointSizes)
-      ? uploadVertex('attr:webgpu:edge:endpointSizes', edgeEndpointSizes, {
-        label: 'AttributeTracker edge endpoint sizes',
-        version: geometry.edges.versions?.endpointSizes ?? 0,
-        topologyVersion: geometry.edges.versions?.topology ?? 0,
-        count: geometry.edges.count,
-      })
+      ? this.resolveSharedWebGPUBuffer(
+        sharedResources,
+        sharedCandidates?.edgeEndpointSizes ?? null,
+        () => uploadVertex('attr:webgpu:edge:endpointSizes', edgeEndpointSizes, {
+          label: 'AttributeTracker edge endpoint sizes',
+          version: geometry.edges.versions?.endpointSizes ?? 0,
+          topologyVersion: geometry.edges.versions?.topology ?? 0,
+          count: geometry.edges.count,
+        }),
+      )
       : null;
     const edgeEncodedBuffer = (geometry.edges.count && encoded.edgeEncoded?.view && config.edgeAttribute)
       ? resourceCache?.uploadBuffer(
@@ -3791,7 +4070,10 @@ export class WebGPUAttributeRenderer {
             edgeVariant: indirectEdgeVariant,
             useIntegerEncoding,
           });
-          return this.renderPreparedGeometry(prepared.geometry, prepared.encoded, config, renderOptions);
+          return this.renderPreparedGeometry(prepared.geometry, prepared.encoded, config, {
+            ...renderOptions,
+            sharedCandidates: prepared.shared ?? null,
+          });
         },
       );
     }

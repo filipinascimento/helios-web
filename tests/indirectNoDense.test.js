@@ -187,4 +187,147 @@ test('WebGPUAttributeRenderer packs indirect tracking data from sparse buffers',
   assert.deepEqual(Array.from(prepared.geometry.edges.endpointSizes), [7, 8]);
   assert.deepEqual(Array.from(prepared.encoded.nodeEncoded.view), [3, 0, 0, 0, 1, 0, 0, 0]);
   assert.deepEqual(Array.from(prepared.encoded.edgeEncoded.view), [2, 0, 0, 0]);
+  assert.equal(prepared.shared.nodePositions, null);
+  assert.equal(prepared.shared.nodeSizes, null);
+  assert.equal(prepared.shared.nodeOutlineWidths, null);
+  assert.equal(prepared.shared.edgeWidths, null);
+  assert.equal(prepared.shared.edgeEndpointSizes, null);
+});
+
+test('WebGPUAttributeRenderer exposes shared candidates for identity indirect sparse views', () => {
+  const renderer = new WebGPUAttributeRenderer({}, null, null);
+  const nodePositions = new Float32Array([
+    0, 0, 0,
+    10, 0, 0,
+  ]);
+  const nodeSizes = new Float32Array([1, 2]);
+  const nodeOutlineWidths = new Float32Array([0.1, 0.2]);
+  const edgeEndpoints = new Uint32Array([0, 1]);
+  const edgeWidths = new Float32Array([3, 4]);
+  const edgeEndpointSizes = new Float32Array([5, 6]);
+  const sparse = {
+    nodes: {
+      positions: nodePositions,
+      sizes: nodeSizes,
+      outlineWidths: nodeOutlineWidths,
+      indices: new Uint32Array([0, 1]),
+      versions: {
+        positions: 101,
+        sizes: 102,
+        outlineWidths: 103,
+        topology: 104,
+      },
+    },
+    edges: {
+      endpoints: edgeEndpoints,
+      widths: edgeWidths,
+      endpointSizes: edgeEndpointSizes,
+      indices: new Uint32Array([0]),
+      versions: {
+        endpoints: 201,
+        widths: 202,
+        endpointSizes: 203,
+        topology: 204,
+      },
+    },
+    nodeEdgeSources: {},
+  };
+
+  const prepared = renderer.buildIndirectPreparedGeometry({}, sparse, {
+    nodeAttribute: '$index',
+    edgeAttribute: '$index',
+  }, {
+    useQuads: true,
+    nodeSizeUniform: false,
+    nodeOutlineUniform: false,
+    edgeWidthUniform: false,
+    edgeEndpointSizeUniform: false,
+    edgeVariant: {
+      widthSource: 'edge',
+      endpointSizeSource: 'edge',
+    },
+  });
+
+  assert.strictEqual(prepared.geometry.nodes.positions, nodePositions);
+  assert.strictEqual(prepared.geometry.nodes.sizes, nodeSizes);
+  assert.strictEqual(prepared.geometry.nodes.outlineWidths, nodeOutlineWidths);
+  assert.strictEqual(prepared.geometry.edges.widths, edgeWidths);
+  assert.strictEqual(prepared.geometry.edges.endpointSizes, edgeEndpointSizes);
+  assert.deepEqual(prepared.shared.nodePositions, {
+    key: 'indirect:node:positions',
+    version: 101,
+    topologyVersion: 104,
+    count: 2,
+    byteLength: nodePositions.byteLength,
+  });
+  assert.deepEqual(prepared.shared.nodeSizes, {
+    key: 'indirect:node:sizes',
+    version: 102,
+    topologyVersion: 104,
+    count: 2,
+    byteLength: nodeSizes.byteLength,
+  });
+  assert.deepEqual(prepared.shared.nodeOutlineWidths, {
+    key: 'indirect:node:outlineWidths',
+    version: 103,
+    topologyVersion: 104,
+    count: 2,
+    byteLength: nodeOutlineWidths.byteLength,
+  });
+  assert.deepEqual(prepared.shared.edgeWidths, {
+    key: 'indirect:edge:widths',
+    version: 202,
+    topologyVersion: 204,
+    count: 1,
+    byteLength: edgeWidths.byteLength,
+  });
+  assert.deepEqual(prepared.shared.edgeEndpointSizes, {
+    key: 'indirect:edge:endpointSizes',
+    version: 203,
+    topologyVersion: 204,
+    count: 1,
+    byteLength: edgeEndpointSizes.byteLength,
+  });
+});
+
+test('WebGPUAttributeRenderer resolves shared buffers only when metadata matches', () => {
+  const renderer = new WebGPUAttributeRenderer({}, null, null);
+  const sharedBuffer = { id: 'shared' };
+  let fallbackCalls = 0;
+  const fallback = () => {
+    fallbackCalls += 1;
+    return { id: `fallback-${fallbackCalls}` };
+  };
+
+  const sharedResources = {
+    buffers: {
+      'indirect:node:positions': {
+        buffer: sharedBuffer,
+        version: 3,
+        topologyVersion: 5,
+        count: 7,
+        byteLength: 84,
+      },
+    },
+  };
+
+  const reused = renderer.resolveSharedWebGPUBuffer(sharedResources, {
+    key: 'indirect:node:positions',
+    version: 3,
+    topologyVersion: 5,
+    count: 7,
+    byteLength: 84,
+  }, fallback);
+  assert.strictEqual(reused, sharedBuffer);
+  assert.equal(fallbackCalls, 0);
+
+  const uploaded = renderer.resolveSharedWebGPUBuffer(sharedResources, {
+    key: 'indirect:node:positions',
+    version: 4,
+    topologyVersion: 5,
+    count: 7,
+    byteLength: 84,
+  }, fallback);
+  assert.deepEqual(uploaded, { id: 'fallback-1' });
+  assert.equal(fallbackCalls, 1);
 });

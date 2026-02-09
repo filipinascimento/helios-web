@@ -589,3 +589,280 @@ test('WebGLIndirectAttributeRenderer uses quad geometry for edge tracking in qua
   assert.equal(drawModes.includes(gl.TRIANGLE_STRIP), true);
   assert.equal(drawModes.includes(gl.LINES), false);
 });
+
+test('WebGLIndirectAttributeRenderer reuses shared sparse graph textures when metadata matches', () => {
+  const gl = {
+    TEXTURE0: 0,
+    TEXTURE_2D: 3553,
+    POINTS: 0,
+    LINES: 1,
+    TRIANGLE_STRIP: 5,
+    FRAMEBUFFER: 36160,
+    COLOR_BUFFER_BIT: 16384,
+    DEPTH_BUFFER_BIT: 256,
+    BLEND: 3042,
+    DEPTH_TEST: 2929,
+    LEQUAL: 515,
+    SRC_ALPHA: 770,
+    ONE_MINUS_SRC_ALPHA: 771,
+    ARRAY_BUFFER: 34962,
+    DYNAMIC_DRAW: 35048,
+    useProgram() {},
+    uniformMatrix4fv() {},
+    uniform1i() {},
+    uniform1f() {},
+    uniform2f() {},
+    uniform3f() {},
+    bindVertexArray() {},
+    drawArraysInstanced() {},
+    disable() {},
+    enable() {},
+    depthMask() {},
+    depthFunc() {},
+    blendFunc() {},
+    bindFramebuffer() {},
+    viewport() {},
+    clearColor() {},
+    clear() {},
+    bindBuffer() {},
+    bufferData() {},
+  };
+
+  const nodePositions = new Float32Array([
+    0, 0, 0,
+    1, 1, 1,
+  ]);
+  const nodeSizes = new Float32Array([2, 3]);
+  const nodeOutlineWidths = new Float32Array([0.1, 0.2]);
+  const nodeWidthSource = new Float32Array([2, 3]);
+  const nodeEndpointSizeSource = new Float32Array([4, 5]);
+  const edgeEndpoints = new Uint32Array([0, 1]);
+  const edgeWidths = new Float32Array([1.5, 2.5]);
+  const edgeEndpointSizes = new Float32Array([0.4, 0.6]);
+
+  const shared = {
+    nodePositions: { id: 'shared-nodePositions' },
+    nodeSizes: { id: 'shared-nodeSizes' },
+    nodeOutlineWidths: { id: 'shared-nodeOutlineWidths' },
+    nodeWidthSource: { id: 'shared-nodeWidthSource' },
+    nodeEndpointSizeSource: { id: 'shared-nodeEndpointSizeSource' },
+    edgeEndpoints: { id: 'shared-edgeEndpoints' },
+    edgeWidths: { id: 'shared-edgeWidths' },
+    edgeEndpointSizes: { id: 'shared-edgeEndpointSizes' },
+  };
+
+  const metaFor = (view, version, count) => ({
+    version,
+    count,
+    buffer: view.buffer,
+    byteOffset: view.byteOffset,
+    byteLength: view.byteLength,
+  });
+
+  const graphLayer = {
+    isIndirectWebGL: true,
+    edgeRenderingMode: 'quad',
+    nodeOutlineUseAttributes: false,
+    nodeSizeBase: 0,
+    nodeSizeScale: 1,
+    edgeWidthBase: 0,
+    edgeWidthScale: 1,
+    edgeEndpointTrim: 0.8,
+    getCameraUniforms() {
+      return {
+        mode: '2d',
+        viewProjection: new Float32Array(16),
+      };
+    },
+    resolveIndirectEdgeVariant() {
+      return {
+        widthBuffer: true,
+        widthSource: 'node',
+        widthEndpoints: 'both',
+        endpointSizeBuffer: true,
+        endpointSizeSource: 'node',
+        endpointSizeEndpoints: 'both',
+      };
+    },
+    getSharedSparseResources() {
+      return {
+        textures: { ...shared },
+        textureMeta: {
+          nodePositions: metaFor(nodePositions, 11, 2),
+          nodeSizes: metaFor(nodeSizes, 12, 2),
+          nodeOutlineWidths: metaFor(nodeOutlineWidths, 13, 2),
+          nodeEdgeWidths: metaFor(nodeWidthSource, 14, 2),
+          nodeEdgeEndpointSizes: metaFor(nodeEndpointSizeSource, 15, 2),
+          edgeEndpoints: metaFor(edgeEndpoints, 21, 1),
+          edgeWidths: metaFor(edgeWidths, 22, 1),
+          edgeEndpointSizes: metaFor(edgeEndpointSizes, 23, 1),
+        },
+      };
+    },
+    withSparseGraph(_network, _versions, _indices, _edgeSources, fn) {
+      return fn({
+        nodes: {
+          positions: nodePositions,
+          sizes: nodeSizes,
+          outlineWidths: nodeOutlineWidths,
+          indices: null,
+          versions: { positions: 11, sizes: 12, outlineWidths: 13 },
+        },
+        edges: {
+          endpoints: edgeEndpoints,
+          widths: edgeWidths,
+          endpointSizes: edgeEndpointSizes,
+          indices: null,
+          versions: { endpoints: 21, widths: 22, endpointSizes: 23 },
+        },
+        nodeEdgeSources: {
+          width: { view: nodeWidthSource, version: 14 },
+          endpointSize: { view: nodeEndpointSizeSource, version: 15 },
+        },
+      });
+    },
+  };
+
+  const renderer = new WebGLIndirectAttributeRenderer(graphLayer, null, {
+    run(passes) {
+      for (const pass of passes) pass();
+    },
+  });
+  renderer.gl = gl;
+  renderer.device = { type: 'webgl2' };
+  renderer.resize = function resizeMock() {
+    this.size = { width: 1, height: 1 };
+    this.targets = { node: { handle: null }, edge: { handle: null } };
+    this.depthTargets = { node: null, edge: null };
+  };
+  renderer.programs = {
+    node: {},
+    nodeOcclusion: {},
+    nodeDepth: {},
+    edge: {},
+    edgeDepth: {},
+    edgeQuad: {},
+    edgeQuadDepth: {},
+  };
+  const nodeUniforms = {
+    u_viewProjection: 0,
+    u_nodePositions: 0,
+    u_nodeSizes: 0,
+    u_nodeOutlineWidths: 0,
+    u_nodeEncoded: 0,
+    u_cameraPosition: 0,
+    u_cameraUp: 0,
+    u_cameraRight: 0,
+    u_is2D: 0,
+    u_viewport: 0,
+    u_useNodeIdBuffer: 0,
+    u_useNodeSize: 0,
+    u_useNodeOutline: 0,
+    u_useEncodedTexture: 0,
+    u_nodeSizeBase: 0,
+    u_nodeSizeScale: 0,
+    u_nodeOutline: 0,
+    u_outlineWidthBase: 0,
+    u_outlineWidthScale: 0,
+  };
+  const edgeUniforms = {
+    u_viewProjection: 0,
+    u_viewport: 0,
+    u_nodePositions: 0,
+    u_edgeEndpoints: 0,
+    u_edgeEncoded: 0,
+    u_edgeWidths: 0,
+    u_edgeEndpointSizes: 0,
+    u_nodeWidthSource: 0,
+    u_nodeEndpointSizeSource: 0,
+    u_useEdgeIdBuffer: 0,
+    u_useEncodedTexture: 0,
+    u_edgeWidthSource: 0,
+    u_edgeWidthEndpoints: 0,
+    u_edgeEndpointSizeSource: 0,
+    u_edgeEndpointSizeEndpoints: 0,
+    u_hasEdgeWidths: 0,
+    u_hasEdgeEndpointSizes: 0,
+    u_hasNodeWidthSource: 0,
+    u_hasNodeEndpointSizeSource: 0,
+    u_defaultEdgeWidth: 0,
+    u_defaultEdgeEndpointSize: 0,
+    u_edgeWidthBase: 0,
+    u_edgeWidthScale: 0,
+    u_nodeSizeBase: 0,
+    u_nodeSizeScale: 0,
+    u_edgeEndpointTrim: 0,
+  };
+  renderer.uniforms = {
+    node: nodeUniforms,
+    nodeOcclusion: nodeUniforms,
+    nodeDepth: nodeUniforms,
+    edge: edgeUniforms,
+    edgeDepth: edgeUniforms,
+    edgeQuad: edgeUniforms,
+    edgeQuadDepth: edgeUniforms,
+  };
+  renderer.nodeVao = {};
+  renderer.edgeVao = {};
+  renderer.edgeQuadVao = {};
+  renderer.nodeIdBuffer = {};
+  renderer.edgeIdBuffer = {};
+  renderer.textures = {
+    nodePositions: { id: 'local-nodePositions' },
+    nodeSizes: { id: 'local-nodeSizes' },
+    nodeOutlineWidths: { id: 'local-nodeOutlineWidths' },
+    nodeEncoded: { id: 'local-nodeEncoded' },
+    edgeEndpoints: { id: 'local-edgeEndpoints' },
+    edgeWidths: { id: 'local-edgeWidths' },
+    edgeEndpointSizes: { id: 'local-edgeEndpointSizes' },
+    nodeWidthSource: { id: 'local-nodeWidthSource' },
+    nodeEndpointSizeSource: { id: 'local-nodeEndpointSizeSource' },
+    edgeEncoded: { id: 'local-edgeEncoded' },
+  };
+
+  const uploads = [];
+  renderer.uploadFloatTexture = (slot) => {
+    uploads.push(`float:${slot}`);
+    return true;
+  };
+  renderer.uploadUintTexture = (slot) => {
+    uploads.push(`uint:${slot}`);
+    return true;
+  };
+
+  const boundTextures = [];
+  renderer.bindTexture = (unit, texture) => {
+    boundTextures.push({ unit, texture });
+  };
+
+  const network = {
+    nodeIndices: new Uint32Array([0, 1]),
+    edgeIndices: new Uint32Array([0]),
+    getTopologyVersions() {
+      return { node: 1, edge: 1 };
+    },
+  };
+
+  const result = renderer.render(
+    { network, camera: {} },
+    { width: 1, height: 1, devicePixelRatio: 1 },
+    { nodeAttribute: '$index', edgeAttribute: '$index', resolutionScale: 1, trackDepth: false },
+  );
+
+  const boundByUnit = new Map();
+  for (const entry of boundTextures) {
+    if (!boundByUnit.has(entry.unit)) boundByUnit.set(entry.unit, []);
+    boundByUnit.get(entry.unit).push(entry.texture);
+  }
+
+  assert.ok(result);
+  assert.deepEqual(uploads, []);
+  assert.equal(boundByUnit.get(0)?.includes(shared.nodePositions), true);
+  assert.equal(boundByUnit.get(1)?.includes(shared.nodeSizes), true);
+  assert.equal(boundByUnit.get(9)?.includes(shared.nodeOutlineWidths), true);
+  assert.equal(boundByUnit.get(3)?.includes(shared.edgeEndpoints), true);
+  assert.equal(boundByUnit.get(5)?.includes(shared.edgeWidths), true);
+  assert.equal(boundByUnit.get(6)?.includes(shared.edgeEndpointSizes), true);
+  assert.equal(boundByUnit.get(7)?.includes(shared.nodeWidthSource), true);
+  assert.equal(boundByUnit.get(8)?.includes(shared.nodeEndpointSizeSource), true);
+});

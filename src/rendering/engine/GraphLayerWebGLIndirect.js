@@ -1505,6 +1505,31 @@ export class GraphLayerWebGLIndirect extends GraphLayer {
     this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
   }
 
+  getSharedSparseResources() {
+    return {
+      textures: {
+        nodePositions: this.nodeTextures.positions ?? null,
+        nodeSizes: this.nodeTextures.sizes ?? null,
+        nodeOutlineWidths: this.nodeTextures.outlineWidths ?? null,
+        nodeWidthSource: this.nodeTextures.edgeWidthSource ?? null,
+        nodeEndpointSizeSource: this.nodeTextures.edgeEndpointSizeSource ?? null,
+        edgeEndpoints: this.edgeTextures.endpoints ?? null,
+        edgeWidths: this.edgeTextures.widths ?? null,
+        edgeEndpointSizes: this.edgeTextures.endpointSizes ?? null,
+      },
+      textureMeta: {
+        nodePositions: this.textureMeta.nodePositions ?? null,
+        nodeSizes: this.textureMeta.nodeSizes ?? null,
+        nodeOutlineWidths: this.textureMeta.nodeOutlineWidths ?? null,
+        nodeEdgeWidths: this.textureMeta.nodeEdgeWidths ?? null,
+        nodeEdgeEndpointSizes: this.textureMeta.nodeEdgeEndpointSizes ?? null,
+        edgeEndpoints: this.textureMeta.edgeEndpoints ?? null,
+        edgeWidths: this.textureMeta.edgeWidths ?? null,
+        edgeEndpointSizes: this.textureMeta.edgeEndpointSizes ?? null,
+      },
+    };
+  }
+
   render(context, frame) {
     if (!context || context.type !== 'webgl2') return;
     const network = frame?.network;
