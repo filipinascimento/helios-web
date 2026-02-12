@@ -5184,6 +5184,11 @@ export class WebGPUAttributeRenderer {
 
     if (indirectMode) {
       const useIntegerEncoding = this.targetFormat === 'r32uint';
+      const canUseDirectIndirectPath = Boolean(
+        this.device?.device
+        && this.nodeIndirectBindGroupLayout
+        && this.edgeIndirectBindGroupLayout,
+      );
       let topologyVersions = { node: 0, edge: 0 };
       if (typeof network.getTopologyVersions === 'function') {
         try {
@@ -5192,7 +5197,10 @@ export class WebGPUAttributeRenderer {
           topologyVersions = { node: 0, edge: 0 };
         }
       }
-      if (!useIntegerEncoding) {
+      // Only prepare sparse encoded attributes for the legacy prepared-geometry fallback path.
+      // The direct indirect path can encode from tracked int/uint sources in-shader even when
+      // the target format is rgba8 (i.e. when r32uint attachments are unavailable).
+      if (!useIntegerEncoding && !canUseDirectIndirectPath) {
         ensureSparseEncodedReadyCached(
           this.sparseEncodedReadyCache,
           network,
@@ -5219,11 +5227,6 @@ export class WebGPUAttributeRenderer {
         edgeSourceRequests,
         (sparseGeometry) => {
           if (!sparseGeometry) return null;
-          const canUseDirectIndirectPath = Boolean(
-            this.device?.device
-            && this.nodeIndirectBindGroupLayout
-            && this.edgeIndirectBindGroupLayout,
-          );
           if (!canUseDirectIndirectPath) {
             const prepared = this.buildIndirectPreparedGeometry(network, sparseGeometry, config, {
               useQuads,

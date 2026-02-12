@@ -309,6 +309,91 @@ test('WebGPUAttributeRenderer bypasses sparse encoded APIs for indirect r32uint 
   assert.equal(calls.denseUpdateNode, 0);
 });
 
+test('WebGPUAttributeRenderer bypasses sparse encoded APIs for indirect rgba8 direct path', () => {
+  const calls = {
+    sparseDefineNode: 0,
+    sparseUpdateNode: 0,
+    sparseDefineEdge: 0,
+    sparseUpdateEdge: 0,
+  };
+  const network = {
+    nodeIndices: new Uint32Array(0),
+    edgeIndices: new Uint32Array(0),
+    getTopologyVersions() {
+      return { node: 1, edge: 1 };
+    },
+    defineSparseColorEncodedNodeAttribute() {
+      calls.sparseDefineNode += 1;
+    },
+    updateSparseColorEncodedNodeAttribute() {
+      calls.sparseUpdateNode += 1;
+    },
+    defineSparseColorEncodedEdgeAttribute() {
+      calls.sparseDefineEdge += 1;
+    },
+    updateSparseColorEncodedEdgeAttribute() {
+      calls.sparseUpdateEdge += 1;
+    },
+  };
+  const graphLayer = {
+    edgeRenderingMode: 'line',
+    nodeOutlineUseAttributes: false,
+    getCameraUniforms() {
+      return {
+        mode: '2d',
+        viewProjection: new Float32Array(16),
+        view: new Float32Array(16),
+        position: [0, 0, 1],
+        up: [0, 1, 0],
+        right: [1, 0, 0],
+        viewport: { width: 1, height: 1, devicePixelRatio: 1 },
+      };
+    },
+    resolveIndirectEdgeVariant() {
+      return {};
+    },
+    withSparseGraph(_net, _versions, _indices, _edgeSources, fn) {
+      return fn({
+        nodes: {
+          positions: new Float32Array(0),
+          sizes: new Float32Array(0),
+          outlineWidths: new Float32Array(0),
+          indices: new Uint32Array(0),
+          versions: { positions: 1, sizes: 1, outlineWidths: 1, topology: 1 },
+        },
+        edges: {
+          endpoints: new Uint32Array(0),
+          widths: new Float32Array(0),
+          endpointSizes: new Float32Array(0),
+          indices: new Uint32Array(0),
+          versions: { endpoints: 1, widths: 1, endpointSizes: 1, topology: 1 },
+        },
+        nodeEdgeSources: {},
+      });
+    },
+  };
+
+  const renderer = new WebGPUAttributeRenderer(graphLayer, null, null);
+  renderer.device = { type: 'webgpu', device: {} };
+  renderer.targetFormat = 'rgba8unorm';
+  renderer.nodeIndirectBindGroupLayout = {};
+  renderer.edgeIndirectBindGroupLayout = {};
+  renderer.resize = () => {};
+  renderer.renderIndirectSparseGeometry = () => ({ node: null, edge: null });
+
+  const result = renderer.render(
+    { network, camera: {} },
+    { width: 1, height: 1, devicePixelRatio: 1 },
+    { nodeAttribute: '$index', edgeAttribute: '$index', resolutionScale: 1, trackDepth: false },
+  );
+
+  assert.ok(result);
+  assert.equal(calls.sparseDefineNode, 0);
+  assert.equal(calls.sparseUpdateNode, 0);
+  assert.equal(calls.sparseDefineEdge, 0);
+  assert.equal(calls.sparseUpdateEdge, 0);
+});
+
 test('WebGLIndirectAttributeRenderer does not eagerly update sparse encoded APIs', () => {
   const calls = {
     sparseDefineNode: 0,

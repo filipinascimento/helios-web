@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:https": "vite --host --mode https",
     "build": "vite build",
     "preview": "vite preview",
     "test:e2e": "playwright test",
