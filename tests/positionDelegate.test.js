@@ -1,0 +1,127 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { Helios, PositionDelegate } from '../src/index.js';
+import { GraphLayer } from '../src/rendering/engine/GraphLayer.js';
+
+function createVersionedNetwork() {
+  let topologyVersion = 1;
+  let nodeIndices = new Uint32Array([0, 1]);
+  let edgeIndices = new Uint32Array([0]);
+  const positionView = new Float32Array([
+    0, 0, 0,
+    1, 1, 1,
+  ]);
+  return {
+    network: {
+      withBufferAccess: (fn) => fn(),
+      getTopologyVersions: () => ({ node: topologyVersion, edge: topologyVersion }),
+      getNodeAttributeBuffer: (name) => {
+        if (name === '_helios_visuals_position') return { view: positionView, version: topologyVersion };
+        if (name === '$index') return { version: topologyVersion };
+        return null;
+      },
+      getEdgeAttributeBuffer: (name) => {
+        if (name === '$index') return { version: topologyVersion };
+        return null;
+      },
+      get nodeIndices() { return nodeIndices; },
+      get edgeIndices() { return edgeIndices; },
+    },
+    setTopologyVersion: (value) => { topologyVersion = value; },
+    replaceNodeIndices: (next) => { nodeIndices = next; },
+    replaceEdgeIndices: (next) => { edgeIndices = next; },
+  };
+}
+
+test('PositionDelegate is abstract', () => {
+  assert.throws(
+    () => new PositionDelegate(),
+    /abstract/i,
+  );
+});
+
+test('PositionDelegate synchronizes when topology/index versions change', () => {
+  class TrackingDelegate extends PositionDelegate {
+    constructor() {
+      super();
+      this.syncCount = 0;
+      this.positionView = null;
+    }
+
+    synchronizeTopology({ network }) {
+      this.syncCount += 1;
+      this.positionView = network?.getNodeAttributeBuffer?.('_helios_visuals_position')?.view ?? null;
+    }
+
+    getNodePositionView(context) {
+      this.ensureSynchronized(context);
+      return this.positionView;
+    }
+  }
+
+  const { network, setTopologyVersion, replaceNodeIndices, replaceEdgeIndices } = createVersionedNetwork();
+  const delegate = new TrackingDelegate();
+  delegate.onAttach({ network });
+  assert.equal(delegate.syncCount, 1);
+  assert.ok(delegate.getVersion({ network }) >= 1);
+
+  delegate.getNodePositionView({ network });
+  assert.equal(delegate.syncCount, 1);
+
+  setTopologyVersion(2);
+  delegate.getNodePositionView({ network });
+  assert.equal(delegate.syncCount, 2);
+
+  replaceNodeIndices(new Uint32Array([0, 1, 2]));
+  delegate.getNodePositionView({ network });
+  assert.equal(delegate.syncCount, 3);
+
+  replaceEdgeIndices(new Uint32Array([0, 1]));
+  delegate.getNodePositionView({ network });
+  assert.equal(delegate.syncCount, 4);
+});
+
+test('Helios.positions validates delegates as PositionDelegate instances', () => {
+  const helios = Object.create(Helios.prototype);
+  helios.debug = { log: () => {} };
+  helios._positionsConfig = { source: 'network', delegate: null };
+  helios._activePositionDelegate = null;
+  helios._resetInterpolationRuntime = () => {};
+  helios._applyPositionPipelineToRenderer = () => true;
+  helios.scheduler = { requestGeometry: () => {}, requestRender: () => {} };
+
+  assert.throws(
+    () => helios.positions({ source: 'delegate', delegate: { getNodePositionView: () => null } }),
+    /PositionDelegate/,
+  );
+});
+
+test('GraphLayer calls delegate synchronization guard before reading resources', () => {
+  class TrackingDelegate extends PositionDelegate {
+    constructor() {
+      super();
+      this.syncCount = 0;
+      this.view = null;
+    }
+
+    synchronizeTopology({ network }) {
+      this.syncCount += 1;
+      this.view = network?.getNodeAttributeBuffer?.('_helios_visuals_position')?.view ?? null;
+    }
+
+    getNodePositionView(context) {
+      this.ensureSynchronized(context);
+      return this.view;
+    }
+  }
+
+  const { network } = createVersionedNetwork();
+  const delegate = new TrackingDelegate();
+  const graphLayer = new GraphLayer();
+  graphLayer.setPositionDelegate(delegate);
+  delegate.onAttach({ network });
+
+  const override = graphLayer.resolvePositionSourceOverride(network, { backend: 'webgl2' });
+  assert.ok(override?.view instanceof Float32Array);
+  assert.ok(delegate.syncCount >= 1);
+});

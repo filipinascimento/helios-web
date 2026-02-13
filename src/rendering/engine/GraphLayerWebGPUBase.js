@@ -105,7 +105,7 @@ export class GraphLayerWebGPUBase extends GraphLayer {
       size: this.cameraArray.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-    const globalsFloats = 70 + this.stateSlotCount * 24;
+    const globalsFloats = 74 + this.stateSlotCount * 24;
     this.globalsArray = new Float32Array(globalsFloats);
     this.globalsBuffer = device.device.createBuffer({
       size: this.globalsArray.byteLength,
@@ -157,6 +157,7 @@ export class GraphLayerWebGPUBase extends GraphLayer {
         { binding: 5, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
         { binding: 6, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
         { binding: 7, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 10, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
       ],
     });
     this.nodeBindGroupLayoutOutline = device.device.createBindGroupLayout({
@@ -175,6 +176,7 @@ export class GraphLayerWebGPUBase extends GraphLayer {
         { binding: 7, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
         { binding: 8, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
         { binding: 9, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        { binding: 10, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
       ],
     });
     this.edgeBindGroupLayout = device.device.createBindGroupLayout({
@@ -620,6 +622,13 @@ export class GraphLayerWebGPUBase extends GraphLayer {
     this.globalsArray.set(this.edgeStateScale, offset); offset += slots * 4;
     this.globalsArray.set(this.edgeStateColorMul, offset); offset += slots * 4;
     this.globalsArray.set(this.edgeStateColorAdd, offset); offset += slots * 4;
+    const interpolation = this.getPositionInterpolationState?.() ?? this.positionInterpolation ?? null;
+    this.globalsArray[offset++] = interpolation?.enabled === true
+      ? Math.max(0, Math.min(1, Number(interpolation.factor ?? 1)))
+      : 1;
+    this.globalsArray[offset++] = interpolation?.enabled === true ? 1 : 0;
+    this.globalsArray[offset++] = 0;
+    this.globalsArray[offset++] = 0;
     device.queue.writeBuffer(this.globalsBuffer, 0, this.globalsArray);
   }
 

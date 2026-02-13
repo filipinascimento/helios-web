@@ -38,7 +38,7 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
     ? 'let outlineBaseColor = nodeOutlineColors.data[index];'
     : 'let outlineBaseColor = globals.nodeOutlineColor;';
 
-  const NODE_TARGET_BINDING = '';
+  const NODE_TARGET_BINDING = '@group(0) @binding(10) var<storage, read> nodePositionsFrom : NodePositionsFrom;';
   const EDGE_TARGET_BINDING = '';
 
   const NODE_WGSL = /* wgsl */ `
@@ -88,6 +88,7 @@ struct Globals {
   edgeStateScale: array<vec4<f32>, ${STATE_SLOTS}>,
   edgeStateColorMul: array<vec4<f32>, ${STATE_SLOTS}>,
   edgeStateColorAdd: array<vec4<f32>, ${STATE_SLOTS}>,
+  positionInterpolation: vec4<f32>, // x=factor y=enabled
 };
 
 struct NodeIndices {
@@ -95,6 +96,10 @@ struct NodeIndices {
 };
 
 struct NodePositions {
+  data: array<f32>, // packed xyz triplets
+};
+
+struct NodePositionsFrom {
   data: array<f32>, // packed xyz triplets
 };
 
@@ -161,10 +166,21 @@ fn nodeVertex(input : VertexInput) -> VertexOutput {
     index = nodeIndices.data[input.instance];
   }
   let baseOffset = index * 3u;
-  var basePosition = vec3<f32>(
+  let basePositionTo = vec3<f32>(
     nodePositions.data[baseOffset + 0u],
     nodePositions.data[baseOffset + 1u],
     nodePositions.data[baseOffset + 2u]
+  );
+  let basePositionFrom = vec3<f32>(
+    nodePositionsFrom.data[baseOffset + 0u],
+    nodePositionsFrom.data[baseOffset + 1u],
+    nodePositionsFrom.data[baseOffset + 2u]
+  );
+  let interpolationT = clamp(globals.positionInterpolation.x, 0.0, 1.0);
+  var basePosition = select(
+    basePositionTo,
+    mix(basePositionFrom, basePositionTo, interpolationT),
+    globals.positionInterpolation.y > 0.5
   );
   let rawSize = select(globals.nodeRaw.x, nodeSizes.data[index], USE_NODE_SIZE_BUFFER);
 	  var state = nodeStates.data[index];

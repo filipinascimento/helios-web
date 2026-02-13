@@ -8,20 +8,21 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
     edgeIndices: 1,
     edgeEndpoints: 2,
     nodePositions: 3,
-    nodeSizes: 4,
-    nodeColors: 5,
-    nodeStates: 6,
-    edgeColors: 7,
-    edgeWidths: 8,
-    edgeEndpointSizes: 9,
-    edgeOpacities: 10,
-    edgeStates: 11,
-    globals: 12,
-    hover: 13,
-    edgeNodeColorSource: 14,
-    edgeNodeWidthSource: 15,
-    edgeNodeOpacitySource: 16,
-    edgeNodeEndpointSizeSource: 17,
+    nodePositionsFrom: 4,
+    nodeSizes: 5,
+    nodeColors: 6,
+    nodeStates: 7,
+    edgeColors: 8,
+    edgeWidths: 9,
+    edgeEndpointSizes: 10,
+    edgeOpacities: 11,
+    edgeStates: 12,
+    globals: 13,
+    hover: 14,
+    edgeNodeColorSource: 15,
+    edgeNodeWidthSource: 16,
+    edgeNodeOpacitySource: 17,
+    edgeNodeEndpointSizeSource: 18,
   };
   const bindingMap = bindings ?? defaultBindings;
   const hasBinding = (name) => {
@@ -129,6 +130,7 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
   addBinding('edgeIndices', true, 'EdgeIndices');
   addBinding('edgeEndpoints', true, 'EdgeEndpoints');
   addBinding('nodePositions', true, 'NodePositions');
+  addBinding('nodePositionsFrom', true, 'NodePositionsFrom');
   addBinding('nodeSizes', true, 'NodeSizes');
   addBinding('nodeColors', true, 'NodeColors');
   addBinding('nodeStates', true, 'NodeStates');
@@ -190,6 +192,7 @@ struct Globals {
   edgeStateScale: array<vec4<f32>, ${STATE_SLOTS}>,
   edgeStateColorMul: array<vec4<f32>, ${STATE_SLOTS}>,
   edgeStateColorAdd: array<vec4<f32>, ${STATE_SLOTS}>,
+  positionInterpolation: vec4<f32>, // x=factor y=enabled
 };
 
 struct EdgeIndices {
@@ -201,6 +204,10 @@ struct EdgeEndpoints {
 };
 
 struct NodePositions {
+  data: array<f32>, // packed xyz triplets
+};
+
+struct NodePositionsFrom {
   data: array<f32>, // packed xyz triplets
 };
 
@@ -293,16 +300,30 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
   let targetId = endpoints.y;
   let sourceBase = sourceId * 3u;
   let targetBase = targetId * 3u;
-  var startPos = vec3<f32>(
+  let startPosTo = vec3<f32>(
     nodePositions.data[sourceBase + 0u],
     nodePositions.data[sourceBase + 1u],
     nodePositions.data[sourceBase + 2u]
   );
-  var endPos = vec3<f32>(
+  let endPosTo = vec3<f32>(
     nodePositions.data[targetBase + 0u],
     nodePositions.data[targetBase + 1u],
     nodePositions.data[targetBase + 2u]
   );
+  let startPosFrom = vec3<f32>(
+    nodePositionsFrom.data[sourceBase + 0u],
+    nodePositionsFrom.data[sourceBase + 1u],
+    nodePositionsFrom.data[sourceBase + 2u]
+  );
+  let endPosFrom = vec3<f32>(
+    nodePositionsFrom.data[targetBase + 0u],
+    nodePositionsFrom.data[targetBase + 1u],
+    nodePositionsFrom.data[targetBase + 2u]
+  );
+  let interpolationT = clamp(globals.positionInterpolation.x, 0.0, 1.0);
+  let interpolationEnabled = globals.positionInterpolation.y > 0.5;
+  var startPos = select(startPosTo, mix(startPosFrom, startPosTo, interpolationT), interpolationEnabled);
+  var endPos = select(endPosTo, mix(endPosFrom, endPosTo, interpolationT), interpolationEnabled);
   var state = edgeStates.data[edgeId];
   if (hover.edgeIndex != 0xffffffffu && edgeId == hover.edgeIndex) {
     state = state | hover.edgeState;
@@ -415,16 +436,30 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   let targetId = endpoints.y;
   let sourceBase = sourceId * 3u;
   let targetBase = targetId * 3u;
-  var startPos = vec3<f32>(
+  let startPosTo = vec3<f32>(
     nodePositions.data[sourceBase + 0u],
     nodePositions.data[sourceBase + 1u],
     nodePositions.data[sourceBase + 2u]
   );
-  var endPos = vec3<f32>(
+  let endPosTo = vec3<f32>(
     nodePositions.data[targetBase + 0u],
     nodePositions.data[targetBase + 1u],
     nodePositions.data[targetBase + 2u]
   );
+  let startPosFrom = vec3<f32>(
+    nodePositionsFrom.data[sourceBase + 0u],
+    nodePositionsFrom.data[sourceBase + 1u],
+    nodePositionsFrom.data[sourceBase + 2u]
+  );
+  let endPosFrom = vec3<f32>(
+    nodePositionsFrom.data[targetBase + 0u],
+    nodePositionsFrom.data[targetBase + 1u],
+    nodePositionsFrom.data[targetBase + 2u]
+  );
+  let interpolationT = clamp(globals.positionInterpolation.x, 0.0, 1.0);
+  let interpolationEnabled = globals.positionInterpolation.y > 0.5;
+  var startPos = select(startPosTo, mix(startPosFrom, startPosTo, interpolationT), interpolationEnabled);
+  var endPos = select(endPosTo, mix(endPosFrom, endPosTo, interpolationT), interpolationEnabled);
   var state = edgeStates.data[edgeId];
   if (hover.edgeIndex != 0xffffffffu && edgeId == hover.edgeIndex) {
     state = state | hover.edgeState;

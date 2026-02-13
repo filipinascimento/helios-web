@@ -49,6 +49,19 @@ await helios.ready;
 The same API powers the example under `docs/examples/basic/main.js`, making it
 easy to copy-paste a working setup into your own application.
 
+Interpolation timing can run in adaptive mode (average recent layout intervals)
+or a fixed override:
+
+```js
+helios.interpolation({ durationMode: 'adaptive', adaptiveDurationSamples: 5, adaptiveDurationWindowMs: 5000 });
+helios.interpolation({ fixedDurationMs: 160 }); // forces fixed timing
+helios.interpolation({ durationMode: 'adaptive' }); // switch back
+```
+
+Position delegation now uses an abstract `PositionDelegate` contract, so delegates
+can safely synchronize against topology/index version changes before handing
+buffers to the renderer.
+
 ## Headless Smoke Test
 
 Run `npm run test:e2e` to boot the basic example in a headless Chromium session

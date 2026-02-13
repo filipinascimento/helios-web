@@ -10,6 +10,7 @@ import { bumpCounter } from './utilities/counters.js';
 import { VisualAttributes } from './pipeline/VisualAttributes.js';
 import { createDefaultMappers, MapperCollection } from './pipeline/Mapper.js';
 import { createDebugLogger } from './utilities/DebugLogger.js';
+import { PositionDelegate } from './delegates/PositionDelegate.js';
 import { VISUAL_ATTRIBUTE_NAMES } from './pipeline/constants.js';
 
 const {
@@ -235,6 +236,119 @@ function getBaseFilename(name) {
   const withoutKnown = trimmed.replace(/\.(bxnet|zxnet|xnet)$/i, '');
   if (withoutKnown !== trimmed) return withoutKnown;
   return trimmed.replace(/\.[^/.]+$/, '') || trimmed;
+}
+
+const POSITION_INTERPOLATION_DEFAULTS = Object.freeze({
+  enabled: false,
+  mode: 'gpu',
+  durationMode: 'fixed',
+  durationMs: 140,
+  adaptiveDuration: false,
+  adaptiveDurationSamples: 5,
+  adaptiveDurationWindowMs: 5000,
+  adaptiveDurationScale: 1,
+  adaptiveDurationMinMs: 16,
+  adaptiveDurationMaxMs: 5000,
+  easing: 'linear',
+  smoothing: 6,
+  minDisplacementRatio: 0.0005,
+});
+
+function normalizeInterpolationMode(value, fallback = POSITION_INTERPOLATION_DEFAULTS.mode) {
+  const raw = String(value ?? fallback).trim().toLowerCase();
+  if (!raw) return fallback;
+  if (raw === 'javascript' || raw === 'js' || raw === 'cpu') return 'javascript';
+  if (raw === 'network' || raw === 'wasm' || raw === 'native') return 'network';
+  if (raw === 'gpu' || raw === 'shader') return 'gpu';
+  return fallback;
+}
+
+function normalizeInterpolationDurationMode(value, fallback = POSITION_INTERPOLATION_DEFAULTS.durationMode) {
+  if (typeof value === 'boolean') {
+    return value ? 'adaptive' : 'fixed';
+  }
+  const raw = String(value ?? fallback).trim().toLowerCase();
+  if (!raw) return fallback;
+  if (raw === 'adaptive' || raw === 'auto' || raw === 'dynamic') return 'adaptive';
+  if (raw === 'fixed' || raw === 'manual' || raw === 'constant') return 'fixed';
+  return fallback;
+}
+
+function normalizeInterpolationEasing(value, fallback = POSITION_INTERPOLATION_DEFAULTS.easing) {
+  const raw = String(value ?? fallback).trim().toLowerCase();
+  if (!raw) return 'linear';
+  // Smoothstep looked unstable for frequent layout updates; keep a single interpolation curve for now.
+  return 'linear';
+}
+
+function clamp01(value, fallback = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  if (numeric <= 0) return 0;
+  if (numeric >= 1) return 1;
+  return numeric;
+}
+
+function normalizeNonNegativeNumber(value, fallback, min = 0, max = Number.POSITIVE_INFINITY) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  const clampedMin = Math.max(min, numeric);
+  return Math.min(max, clampedMin);
+}
+
+function normalizePositiveInteger(value, fallback, min = 1, max = Number.POSITIVE_INFINITY) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  const rounded = Math.floor(numeric);
+  if (rounded < min) return min;
+  if (rounded > max) return max;
+  return rounded;
+}
+
+function resolveInterpolationDurationMode(config) {
+  const fallback = config?.adaptiveDuration === true ? 'adaptive' : POSITION_INTERPOLATION_DEFAULTS.durationMode;
+  return normalizeInterpolationDurationMode(config?.durationMode, fallback);
+}
+
+function applyInterpolationEasing(mode, t) {
+  const clamped = clamp01(t, 0);
+  if (mode !== 'linear') return clamped;
+  return clamped;
+}
+
+function arePositionArraysEqual(a, b, epsilon = 1e-6) {
+  if (!a || !b) return false;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (Math.abs((a[i] ?? 0) - (b[i] ?? 0)) > epsilon) return false;
+  }
+  return true;
+}
+
+function mixPositionsArray(from, to, out, t) {
+  if (!from || !to || !out) return out;
+  const factor = clamp01(t, 1);
+  const count = Math.min(from.length, to.length, out.length);
+  for (let i = 0; i < count; i += 1) {
+    out[i] = from[i] + (to[i] - from[i]) * factor;
+  }
+  return out;
+}
+
+function computePositionDisplacementRatio(from, to) {
+  if (!from || !to || from.length !== to.length || from.length === 0) return 0;
+  let maxDelta = 0;
+  let maxMagnitude = 0;
+  for (let i = 0; i < from.length; i += 1) {
+    const a = Number(from[i] ?? 0);
+    const b = Number(to[i] ?? 0);
+    const delta = Math.abs(b - a);
+    if (delta > maxDelta) maxDelta = delta;
+    const magnitude = Math.max(Math.abs(a), Math.abs(b));
+    if (magnitude > maxMagnitude) maxMagnitude = magnitude;
+  }
+  if (maxDelta <= 0) return 0;
+  return maxDelta / Math.max(1, maxMagnitude);
 }
 
 export const EVENTS = Object.freeze({
@@ -476,7 +590,98 @@ export class Helios extends EventTarget {
       attributeMaxFps: this.attributeUpdateOptions.maxFps,
       attributeFrameSkip: this.attributeUpdateOptions.frameSkip,
     });
-    this.scheduler.setRenderPump(() => false);
+    const initialPositionDelegate = this._validatePositionDelegate(options.positions?.delegate ?? null);
+    const initialPositionSource = options.positions?.source === 'delegate' ? 'delegate' : 'network';
+    if (initialPositionSource === 'delegate' && !initialPositionDelegate) {
+      throw new Error('positions({ source: "delegate" }) requires a non-null delegate');
+    }
+    this._positionsConfig = {
+      source: initialPositionSource,
+      delegate: initialPositionDelegate,
+    };
+    this._activePositionDelegate = null;
+    const interpolationOptions = options.interpolation ?? null;
+    const interpolationDurationMode = normalizeInterpolationDurationMode(
+      interpolationOptions?.durationMode ?? interpolationOptions?.durationStrategy,
+      interpolationOptions?.fixedDurationMs != null
+        ? 'fixed'
+        : interpolationOptions?.adaptiveDuration === true
+          ? 'adaptive'
+          : POSITION_INTERPOLATION_DEFAULTS.durationMode,
+    );
+    this._interpolationConfig = {
+      ...POSITION_INTERPOLATION_DEFAULTS,
+      ...(interpolationOptions && typeof interpolationOptions === 'object' ? interpolationOptions : {}),
+      mode: normalizeInterpolationMode(interpolationOptions?.mode ?? interpolationOptions?.type),
+      easing: normalizeInterpolationEasing(interpolationOptions?.easing),
+      enabled: interpolationOptions?.enabled === true,
+      durationMode: interpolationDurationMode,
+      durationMs: normalizeNonNegativeNumber(
+        interpolationOptions?.fixedDurationMs ?? interpolationOptions?.durationMs ?? interpolationOptions?.duration,
+        POSITION_INTERPOLATION_DEFAULTS.durationMs,
+      ),
+      adaptiveDuration: interpolationDurationMode === 'adaptive',
+      adaptiveDurationSamples: normalizePositiveInteger(
+        interpolationOptions?.adaptiveDurationSamples,
+        POSITION_INTERPOLATION_DEFAULTS.adaptiveDurationSamples,
+        1,
+        120,
+      ),
+      adaptiveDurationWindowMs: normalizeNonNegativeNumber(
+        interpolationOptions?.adaptiveDurationWindowMs,
+        POSITION_INTERPOLATION_DEFAULTS.adaptiveDurationWindowMs,
+        100,
+        60000,
+      ),
+      adaptiveDurationScale: normalizeNonNegativeNumber(
+        interpolationOptions?.adaptiveDurationScale,
+        POSITION_INTERPOLATION_DEFAULTS.adaptiveDurationScale,
+        0,
+        16,
+      ),
+      adaptiveDurationMinMs: normalizeNonNegativeNumber(
+        interpolationOptions?.adaptiveDurationMinMs,
+        POSITION_INTERPOLATION_DEFAULTS.adaptiveDurationMinMs,
+        0,
+        60000,
+      ),
+      adaptiveDurationMaxMs: normalizeNonNegativeNumber(
+        interpolationOptions?.adaptiveDurationMaxMs,
+        POSITION_INTERPOLATION_DEFAULTS.adaptiveDurationMaxMs,
+        0,
+        60000,
+      ),
+      smoothing: normalizeNonNegativeNumber(
+        interpolationOptions?.smoothing,
+        POSITION_INTERPOLATION_DEFAULTS.smoothing,
+      ),
+      minDisplacementRatio: normalizeNonNegativeNumber(
+        interpolationOptions?.minDisplacementRatio,
+        POSITION_INTERPOLATION_DEFAULTS.minDisplacementRatio,
+      ),
+    };
+    this._interpolationRuntime = {
+      active: false,
+      startedAt: 0,
+      lastFrameAt: 0,
+      lastTargetUpdateAt: 0,
+      layoutElapsedMs: 16,
+      sourcePositions: null,
+      targetPositions: null,
+      mixedPositions: null,
+      sourceVersion: 0,
+      targetVersion: 0,
+      sourceCount: 0,
+      factor: 1,
+      delegateVersion: null,
+      sourceWebGPUBuffer: null,
+      sourceWebGLTexture: null,
+      sourceTextureMeta: null,
+      lastRenderedPositions: null,
+      effectiveDurationMs: this._interpolationConfig.durationMs,
+      layoutIntervalsMs: [],
+    };
+    this.scheduler.setRenderPump(({ timestamp }) => this._runInterpolationRenderPump(timestamp));
     if (options.prewarm === true) {
       this.prewarm();
     }
@@ -616,6 +821,7 @@ export class Helios extends EventTarget {
     });
     this.renderer = renderer;
     this._applyPendingRendererProps();
+    this._applyPositionPipelineToRenderer();
     this._refreshUIBindings();
     this._applyCachedStateStyles();
     this.attributeTracker?.destroy?.();
@@ -693,6 +899,8 @@ export class Helios extends EventTarget {
     if (isLayoutInstance(layoutOption)) {
       throw new Error('replaceNetwork requires options.layout when Helios was constructed with a layout instance');
     }
+    const activePositionDelegate =
+      this._positionsConfig?.source === 'delegate' ? this._positionsConfig.delegate : null;
 
     const wasRunning = !this.manualRendering && this.scheduler?.running === true;
     const cameraState = keepCamera ? this._snapshotCameraState() : null;
@@ -704,6 +912,8 @@ export class Helios extends EventTarget {
       edge: this._picking?.edge?.enabled === true,
       options: { ...(this._picking?.options ?? {}) },
     };
+
+    this._detachPositionDelegate(activePositionDelegate);
 
     this.scheduler?.stop?.();
     this._detachPickingListeners();
@@ -724,6 +934,8 @@ export class Helios extends EventTarget {
     this.network = nextNetwork;
     this.visuals = new VisualAttributes(nextNetwork, this.debug);
     this.visuals.seedMissingPositions(resolveSeedBoundsForLayout(layoutOption, this.layers.size, this.options.mode));
+    this._attachPositionDelegate(activePositionDelegate);
+    this._resetInterpolationRuntime({ keepIntervalHistory: false });
 
     if (options.mappers === null) {
       this.nodeMapper = new MapperCollection('node', nextNetwork, this.markMappersDirty, this.debug);
@@ -755,6 +967,7 @@ export class Helios extends EventTarget {
 
     if (recreateRenderer) {
       await this._createRendererAndTrackers();
+      this._applyPositionPipelineToRenderer();
       this._refreshUIBindings();
       if (frameNetwork) {
         this.requestFrameNetwork({ paddingPx: options.framePaddingPx ?? 24 });
@@ -765,6 +978,7 @@ export class Helios extends EventTarget {
       this.attributeTracker = new AttributeTracker(this.renderer);
       this.attributeTracker.resize(this.layers.size);
       this._applyPickingConfig();
+      this._applyPositionPipelineToRenderer();
       this._refreshUIBindings();
       if (frameNetwork) {
         this.requestFrameNetwork({ paddingPx: options.framePaddingPx ?? 24 });
@@ -1065,6 +1279,9 @@ export class Helios extends EventTarget {
 
   async initialize() {
     this.debug.log('helios', 'Initializing layout');
+    const activePositionDelegate =
+      this._positionsConfig?.source === 'delegate' ? this._positionsConfig.delegate : null;
+    this._attachPositionDelegate(activePositionDelegate);
     if (this._layout?.setUpdateListener) {
       this._layout.setUpdateListener((payload) => this._handleLayoutUpdate(payload));
     }
@@ -1095,6 +1312,7 @@ export class Helios extends EventTarget {
     });
     this.debug.log('helios', 'Renderer created', { renderer: this.renderer?.constructor?.name });
     this._applyPendingRendererProps();
+    this._applyPositionPipelineToRenderer();
     this._applyCachedStateStyles();
     this.attributeTracker = new AttributeTracker(this.renderer);
     this.attributeTracker.resize(this.layers.size);
@@ -1237,7 +1455,409 @@ export class Helios extends EventTarget {
     return true;
   }
 
-  _handleLayoutUpdate() {
+  _withPositionBufferAccess(fn) {
+    if (typeof this.visuals?.withBufferAccess === 'function') {
+      return this.visuals.withBufferAccess(fn);
+    }
+    if (typeof this.network?.withBufferAccess === 'function') {
+      return this.network.withBufferAccess(fn);
+    }
+    return fn();
+  }
+
+  _readNodePositionViewUnsafe() {
+    try {
+      return this.network?.getNodeAttributeBuffer?.(NODE_POSITION_ATTRIBUTE)?.view ?? null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  _snapshotNodePositions(reuseBuffer = null) {
+    let snapshot = null;
+    this._withPositionBufferAccess(() => {
+      const view = this._readNodePositionViewUnsafe();
+      if (!view || !Number.isFinite(view.length) || view.length <= 0) {
+        snapshot = null;
+        return;
+      }
+      const out = reuseBuffer && reuseBuffer.length === view.length
+        ? reuseBuffer
+        : new Float32Array(view.length);
+      out.set(view);
+      snapshot = out;
+    });
+    return snapshot;
+  }
+
+  _writeNodePositions(values) {
+    if (!values || !Number.isFinite(values.length) || values.length <= 0) return false;
+    let wrote = false;
+    this._withPositionBufferAccess(() => {
+      const view = this._readNodePositionViewUnsafe();
+      if (!view || !Number.isFinite(view.length) || view.length <= 0) return;
+      const count = Math.min(view.length, values.length);
+      if (count <= 0) return;
+      view.set(values.subarray(0, count), 0);
+      wrote = true;
+    });
+    return wrote;
+  }
+
+  _recordLayoutIntervalSample(intervalMs, now = performance.now()) {
+    const runtime = this._interpolationRuntime ?? {};
+    const config = this._interpolationConfig ?? POSITION_INTERPOLATION_DEFAULTS;
+    const dt = Number(intervalMs);
+    if (!Number.isFinite(dt) || dt <= 0) return;
+    const maxSamples = normalizePositiveInteger(
+      config.adaptiveDurationSamples,
+      POSITION_INTERPOLATION_DEFAULTS.adaptiveDurationSamples,
+      1,
+      120,
+    );
+    const windowMs = normalizeNonNegativeNumber(
+      config.adaptiveDurationWindowMs,
+      POSITION_INTERPOLATION_DEFAULTS.adaptiveDurationWindowMs,
+      100,
+      60000,
+    );
+    const samples = Array.isArray(runtime.layoutIntervalsMs) ? runtime.layoutIntervalsMs : [];
+    samples.push({ dt, ts: now });
+    const cutoff = now - windowMs;
+    const recent = samples.filter((entry) => entry && Number.isFinite(entry.ts) && entry.ts >= cutoff);
+    if (recent.length > maxSamples) {
+      recent.splice(0, recent.length - maxSamples);
+    }
+    runtime.layoutIntervalsMs = recent;
+    this._interpolationRuntime = runtime;
+  }
+
+  _resolveInterpolationDurationMs(now = performance.now()) {
+    const runtime = this._interpolationRuntime ?? {};
+    const config = this._interpolationConfig ?? POSITION_INTERPOLATION_DEFAULTS;
+    const durationMode = resolveInterpolationDurationMode(config);
+    const fixedDuration = normalizeNonNegativeNumber(
+      config.durationMs,
+      POSITION_INTERPOLATION_DEFAULTS.durationMs,
+      0,
+      60000,
+    );
+    if (durationMode !== 'adaptive') {
+      return fixedDuration;
+    }
+    const samples = Array.isArray(runtime.layoutIntervalsMs) ? runtime.layoutIntervalsMs : [];
+    if (samples.length === 0) {
+      return fixedDuration;
+    }
+    const maxSamples = normalizePositiveInteger(
+      config.adaptiveDurationSamples,
+      POSITION_INTERPOLATION_DEFAULTS.adaptiveDurationSamples,
+      1,
+      120,
+    );
+    const windowMs = normalizeNonNegativeNumber(
+      config.adaptiveDurationWindowMs,
+      POSITION_INTERPOLATION_DEFAULTS.adaptiveDurationWindowMs,
+      100,
+      60000,
+    );
+    const cutoff = now - windowMs;
+    const recent = samples.filter((entry) => entry && Number.isFinite(entry.ts) && entry.ts >= cutoff);
+    if (recent.length === 0) {
+      return fixedDuration;
+    }
+    const windowed = recent.length > maxSamples ? recent.slice(recent.length - maxSamples) : recent;
+    const sum = windowed.reduce((acc, entry) => acc + entry.dt, 0);
+    const average = sum / windowed.length;
+    const scale = normalizeNonNegativeNumber(
+      config.adaptiveDurationScale,
+      POSITION_INTERPOLATION_DEFAULTS.adaptiveDurationScale,
+      0,
+      16,
+    );
+    const minDuration = normalizeNonNegativeNumber(
+      config.adaptiveDurationMinMs,
+      POSITION_INTERPOLATION_DEFAULTS.adaptiveDurationMinMs,
+      0,
+      60000,
+    );
+    const maxDuration = normalizeNonNegativeNumber(
+      config.adaptiveDurationMaxMs,
+      POSITION_INTERPOLATION_DEFAULTS.adaptiveDurationMaxMs,
+      minDuration,
+      60000,
+    );
+    const adaptive = average * scale;
+    if (!Number.isFinite(adaptive)) return fixedDuration;
+    return Math.max(minDuration, Math.min(maxDuration, adaptive));
+  }
+
+  _computeInterpolationFactor(now = performance.now()) {
+    const runtime = this._interpolationRuntime ?? null;
+    const config = this._interpolationConfig ?? POSITION_INTERPOLATION_DEFAULTS;
+    if (!runtime) return 1;
+    const durationMs = Number.isFinite(runtime.effectiveDurationMs)
+      ? Math.max(0, Number(runtime.effectiveDurationMs))
+      : this._resolveInterpolationDurationMs(now);
+    runtime.effectiveDurationMs = durationMs;
+    if (durationMs <= 0) return 1;
+    const startedAt = Number.isFinite(runtime.startedAt) ? runtime.startedAt : now;
+    const elapsed = Math.max(0, now - startedAt);
+    const linear = clamp01(elapsed / durationMs, 1);
+    return applyInterpolationEasing(config.easing, linear);
+  }
+
+  _resolveInterpolationSourceSnapshot(now, targetPositions) {
+    if (!targetPositions || !targetPositions.length) return null;
+    const runtime = this._interpolationRuntime ?? null;
+    if (!runtime) return new Float32Array(targetPositions);
+    const count = targetPositions.length;
+    const source = runtime.sourcePositions;
+    const target = runtime.targetPositions;
+    if (
+      runtime.active === true
+      && source && target
+      && source.length === count
+      && target.length === count
+    ) {
+      const factor = this._computeInterpolationFactor(now);
+      const mixed = new Float32Array(count);
+      mixPositionsArray(source, target, mixed, factor);
+      return mixed;
+    }
+    if (runtime.lastRenderedPositions && runtime.lastRenderedPositions.length === count) {
+      return new Float32Array(runtime.lastRenderedPositions);
+    }
+    return new Float32Array(targetPositions);
+  }
+
+  _prepareInterpolationRuntimeForTarget(targetPositions, now, layoutElapsedMs) {
+    const runtime = this._interpolationRuntime ?? {};
+    const config = this._interpolationConfig ?? POSITION_INTERPOLATION_DEFAULTS;
+    const mode = normalizeInterpolationMode(config.mode);
+    const sourcePositions = this._resolveInterpolationSourceSnapshot(now, targetPositions);
+    const sourceCount = Math.floor((targetPositions?.length ?? 0) / 3);
+    const displacementRatio = computePositionDisplacementRatio(sourcePositions, targetPositions);
+    const minDisplacement = Number.isFinite(config.minDisplacementRatio)
+      ? Math.max(0, Number(config.minDisplacementRatio))
+      : POSITION_INTERPOLATION_DEFAULTS.minDisplacementRatio;
+    const durationMs = this._resolveInterpolationDurationMs(now);
+    const shouldInterpolate = Boolean(
+      config.enabled === true
+      && sourcePositions
+      && targetPositions
+      && sourcePositions.length === targetPositions.length
+      && durationMs > 0
+      && displacementRatio >= minDisplacement
+      && !arePositionArraysEqual(sourcePositions, targetPositions),
+    );
+
+    runtime.active = shouldInterpolate;
+    runtime.startedAt = now;
+    runtime.lastFrameAt = now;
+    runtime.lastTargetUpdateAt = now;
+    runtime.layoutElapsedMs = Number.isFinite(layoutElapsedMs) ? Math.max(1, layoutElapsedMs) : 16;
+    runtime.sourcePositions = sourcePositions;
+    runtime.targetPositions = targetPositions;
+    runtime.mixedPositions = runtime.mixedPositions && runtime.mixedPositions.length === targetPositions.length
+      ? runtime.mixedPositions
+      : new Float32Array(targetPositions.length);
+    runtime.sourceVersion = ((runtime.sourceVersion ?? 0) + 1) % Number.MAX_SAFE_INTEGER;
+    runtime.targetVersion = ((runtime.targetVersion ?? 0) + 1) % Number.MAX_SAFE_INTEGER;
+    runtime.sourceCount = sourceCount;
+    runtime.factor = shouldInterpolate ? 0 : 1;
+    runtime.sourceWebGPUBuffer = null;
+    runtime.sourceWebGLTexture = null;
+    runtime.sourceTextureMeta = null;
+    runtime.delegateVersion = null;
+    runtime.effectiveDurationMs = durationMs;
+    runtime.lastRenderedPositions = sourcePositions
+      ? new Float32Array(shouldInterpolate ? sourcePositions : targetPositions)
+      : null;
+    this._interpolationRuntime = runtime;
+
+    if (shouldInterpolate && mode !== 'gpu' && sourcePositions) {
+      this._writeNodePositions(sourcePositions);
+    }
+
+    return { shouldInterpolate, mode, displacementRatio, durationMs };
+  }
+
+  _stepJavascriptInterpolation(now) {
+    const runtime = this._interpolationRuntime ?? null;
+    if (!runtime?.sourcePositions || !runtime?.targetPositions) return false;
+    if (!runtime.mixedPositions || runtime.mixedPositions.length !== runtime.targetPositions.length) {
+      runtime.mixedPositions = new Float32Array(runtime.targetPositions.length);
+    }
+    const factor = this._computeInterpolationFactor(now);
+    runtime.factor = factor;
+    runtime.lastFrameAt = now;
+    mixPositionsArray(runtime.sourcePositions, runtime.targetPositions, runtime.mixedPositions, factor);
+    if (runtime.lastRenderedPositions && runtime.lastRenderedPositions.length === runtime.mixedPositions.length) {
+      runtime.lastRenderedPositions.set(runtime.mixedPositions);
+    } else {
+      runtime.lastRenderedPositions = new Float32Array(runtime.mixedPositions);
+    }
+    const wrote = this._writeNodePositions(runtime.mixedPositions);
+    if (wrote) {
+      this.visuals?.markPositionsDirty?.();
+      this.scheduler?.requestGeometry?.();
+    }
+    return factor < 1;
+  }
+
+  _stepNetworkInterpolation(now) {
+    const runtime = this._interpolationRuntime ?? null;
+    if (!runtime?.targetPositions) return false;
+    if (typeof this.network?.interpolateNodeAttribute !== 'function') {
+      return this._stepJavascriptInterpolation(now);
+    }
+    const elapsedMs = Math.max(
+      1,
+      Number.isFinite(runtime.lastFrameAt) && runtime.lastFrameAt > 0 ? (now - runtime.lastFrameAt) : 16,
+    );
+    runtime.lastFrameAt = now;
+    let shouldContinue = false;
+    try {
+      shouldContinue = this.network.interpolateNodeAttribute(
+        NODE_POSITION_ATTRIBUTE,
+        runtime.targetPositions,
+        {
+          elapsedMs,
+          layoutElapsedMs: Number.isFinite(runtime.layoutElapsedMs) ? runtime.layoutElapsedMs : elapsedMs,
+          smoothing: Number.isFinite(this._interpolationConfig?.smoothing)
+            ? Number(this._interpolationConfig.smoothing)
+            : POSITION_INTERPOLATION_DEFAULTS.smoothing,
+          minDisplacementRatio: Number.isFinite(this._interpolationConfig?.minDisplacementRatio)
+            ? Math.max(0, Number(this._interpolationConfig.minDisplacementRatio))
+            : POSITION_INTERPOLATION_DEFAULTS.minDisplacementRatio,
+          emitEvent: false,
+        },
+      ) === true;
+    } catch (error) {
+      this.debug.log('layout', 'WASM interpolation failed; falling back to javascript interpolation', { error });
+      return this._stepJavascriptInterpolation(now);
+    }
+    this.visuals?.markPositionsDirty?.();
+    this.scheduler?.requestGeometry?.();
+    const current = this._snapshotNodePositions(runtime.lastRenderedPositions);
+    if (current) runtime.lastRenderedPositions = current;
+    return shouldContinue;
+  }
+
+  _stepGpuInterpolation(now) {
+    const runtime = this._interpolationRuntime ?? null;
+    if (!runtime?.sourcePositions || !runtime?.targetPositions) return false;
+    const factor = this._computeInterpolationFactor(now);
+    runtime.factor = factor;
+    runtime.lastFrameAt = now;
+    if (
+      runtime.lastRenderedPositions
+      && runtime.lastRenderedPositions.length === runtime.targetPositions.length
+    ) {
+      mixPositionsArray(
+        runtime.sourcePositions,
+        runtime.targetPositions,
+        runtime.lastRenderedPositions,
+        factor,
+      );
+    } else {
+      runtime.lastRenderedPositions = new Float32Array(runtime.targetPositions);
+      mixPositionsArray(
+        runtime.sourcePositions,
+        runtime.targetPositions,
+        runtime.lastRenderedPositions,
+        factor,
+      );
+    }
+    return factor < 1;
+  }
+
+  _runInterpolationRenderPump(timestamp = performance.now()) {
+    const now = Number.isFinite(timestamp) ? timestamp : performance.now();
+    const runtime = this._interpolationRuntime ?? null;
+    const config = this._interpolationConfig ?? POSITION_INTERPOLATION_DEFAULTS;
+    if (!runtime || config.enabled !== true || runtime.active !== true) {
+      this._applyPositionPipelineToRenderer();
+      return false;
+    }
+    const mode = normalizeInterpolationMode(config.mode);
+    let keepRunning = false;
+    if (mode === 'javascript') {
+      keepRunning = this._stepJavascriptInterpolation(now);
+    } else if (mode === 'network') {
+      keepRunning = this._stepNetworkInterpolation(now);
+    } else {
+      keepRunning = this._stepGpuInterpolation(now);
+    }
+    runtime.active = keepRunning;
+    if (!keepRunning) {
+      runtime.factor = 1;
+      if (runtime.targetPositions) {
+        if (mode !== 'gpu') {
+          this._writeNodePositions(runtime.targetPositions);
+          this.visuals?.markPositionsDirty?.();
+          this.scheduler?.requestGeometry?.();
+        }
+        runtime.lastRenderedPositions = new Float32Array(runtime.targetPositions);
+      }
+      runtime.sourcePositions = null;
+      runtime.targetPositions = null;
+      runtime.mixedPositions = null;
+      runtime.sourceCount = 0;
+      runtime.sourceWebGPUBuffer = null;
+      runtime.sourceWebGLTexture = null;
+      runtime.sourceTextureMeta = null;
+    }
+    this._applyPositionPipelineToRenderer();
+    return keepRunning;
+  }
+
+  _handleLayoutUpdate(payload = {}) {
+    const now = Number.isFinite(payload?.timestamp) ? Number(payload.timestamp) : performance.now();
+    const previousTargetAt = Number.isFinite(this._interpolationRuntime?.lastTargetUpdateAt)
+      ? this._interpolationRuntime.lastTargetUpdateAt
+      : now;
+    const layoutElapsedMs = Number.isFinite(payload?.layoutElapsedMs)
+      ? Math.max(1, Number(payload.layoutElapsedMs))
+      : Math.max(1, now - previousTargetAt);
+    this._recordLayoutIntervalSample(layoutElapsedMs, now);
+    const targetPositions = this._snapshotNodePositions();
+    if (targetPositions && this._interpolationConfig?.enabled === true) {
+      const { shouldInterpolate, mode, displacementRatio, durationMs } = this._prepareInterpolationRuntimeForTarget(
+        targetPositions,
+        now,
+        layoutElapsedMs,
+      );
+      if (shouldInterpolate) {
+        this.scheduler.requestRender();
+      }
+      this.debug.log('layout', 'Layout update prepared interpolation', {
+        mode,
+        enabled: shouldInterpolate,
+        displacementRatio,
+        durationMs,
+        durationMode: resolveInterpolationDurationMode(this._interpolationConfig),
+        adaptiveDuration: this._interpolationConfig?.adaptiveDuration === true,
+      });
+    } else if (targetPositions) {
+      const runtime = this._interpolationRuntime ?? {};
+      runtime.active = false;
+      runtime.factor = 1;
+      runtime.lastTargetUpdateAt = now;
+      runtime.layoutElapsedMs = layoutElapsedMs;
+      runtime.effectiveDurationMs = this._resolveInterpolationDurationMs(now);
+      runtime.lastRenderedPositions = new Float32Array(targetPositions);
+      runtime.sourcePositions = null;
+      runtime.targetPositions = null;
+      runtime.mixedPositions = null;
+      runtime.sourceCount = 0;
+      runtime.sourceWebGPUBuffer = null;
+      runtime.sourceWebGLTexture = null;
+      runtime.sourceTextureMeta = null;
+      this._interpolationRuntime = runtime;
+    }
+    this._applyPositionPipelineToRenderer();
     this.visuals.markPositionsDirty();
     this.scheduler.requestGeometry();
     this.debug.log('layout', 'Layout requested geometry update');
@@ -1258,6 +1878,129 @@ export class Helios extends EventTarget {
       }
       this._pendingGraphLayerProps.clear();
     }
+  }
+
+  _invokePositionDelegateHook(delegate, hookNames) {
+    if (!delegate || !hookNames?.length) return;
+    const context = {
+      helios: this,
+      network: this.network,
+      visuals: this.visuals,
+      renderer: this.renderer ?? null,
+      scheduler: this.scheduler ?? null,
+    };
+    for (const hookName of hookNames) {
+      if (typeof delegate?.[hookName] !== 'function') continue;
+      try {
+        delegate[hookName](context);
+      } catch (error) {
+        this.debug.log('layout', `Position delegate ${hookName} failed`, { error });
+      }
+      return;
+    }
+  }
+
+  _validatePositionDelegate(delegate) {
+    if (!delegate) return null;
+    if (!(delegate instanceof PositionDelegate)) {
+      throw new TypeError(
+        'positions({ source: "delegate" }) expects delegate to be an instance of PositionDelegate',
+      );
+    }
+    const hasProvider = (
+      typeof delegate.getNodePositionView === 'function'
+      || typeof delegate.getPositionView === 'function'
+      || typeof delegate.getWebGPUPositionBuffer === 'function'
+      || typeof delegate.getWebGLPositionTexture === 'function'
+      || typeof delegate.getGpuPositionResource === 'function'
+      || typeof delegate.getPositionResource === 'function'
+    );
+    if (!hasProvider) {
+      throw new Error(
+        'PositionDelegate must expose at least one position provider (CPU view, WebGL texture, or WebGPU buffer)',
+      );
+    }
+    return delegate;
+  }
+
+  _attachPositionDelegate(delegate) {
+    const next = delegate ?? null;
+    if (!next || this._activePositionDelegate === next) return;
+    this._activePositionDelegate = next;
+    this._invokePositionDelegateHook(next, ['onAttach', 'attach']);
+  }
+
+  _detachPositionDelegate(delegate) {
+    const active = delegate ?? this._activePositionDelegate ?? null;
+    if (!active) return;
+    this._invokePositionDelegateHook(active, ['onDetach', 'detach']);
+    if (this._activePositionDelegate === active) {
+      this._activePositionDelegate = null;
+    }
+  }
+
+  _resetInterpolationRuntime({ keepLastRendered = false, keepIntervalHistory = true } = {}) {
+    const runtime = this._interpolationRuntime ?? {};
+    const previousIntervals = Array.isArray(runtime.layoutIntervalsMs) ? runtime.layoutIntervalsMs : [];
+    runtime.active = false;
+    runtime.startedAt = 0;
+    runtime.lastFrameAt = 0;
+    runtime.lastTargetUpdateAt = 0;
+    runtime.layoutElapsedMs = 16;
+    runtime.sourcePositions = null;
+    runtime.targetPositions = null;
+    runtime.mixedPositions = null;
+    runtime.sourceVersion = 0;
+    runtime.targetVersion = 0;
+    runtime.sourceCount = 0;
+    runtime.factor = 1;
+    runtime.delegateVersion = null;
+    runtime.sourceWebGPUBuffer = null;
+    runtime.sourceWebGLTexture = null;
+    runtime.sourceTextureMeta = null;
+    runtime.effectiveDurationMs = this._resolveInterpolationDurationMs(performance.now());
+    runtime.layoutIntervalsMs = keepIntervalHistory ? previousIntervals : [];
+    if (!keepLastRendered) {
+      runtime.lastRenderedPositions = null;
+    }
+    this._interpolationRuntime = runtime;
+    this._applyPositionPipelineToRenderer();
+    return runtime;
+  }
+
+  _applyPositionPipelineToRenderer() {
+    const graphLayer = this.renderer?.graphLayer ?? null;
+    if (!graphLayer) return false;
+    const activeDelegate = this._positionsConfig?.source === 'delegate'
+      ? (this._positionsConfig?.delegate ?? null)
+      : null;
+    if (typeof graphLayer.setPositionDelegate === 'function') {
+      graphLayer.setPositionDelegate(activeDelegate);
+    } else {
+      graphLayer.positionDelegate = activeDelegate;
+    }
+
+    const config = this._interpolationConfig ?? POSITION_INTERPOLATION_DEFAULTS;
+    const runtime = this._interpolationRuntime ?? {};
+    const useGpuInterpolation = config.enabled === true
+      && normalizeInterpolationMode(config.mode) === 'gpu'
+      && runtime.active === true;
+    const interpolationState = {
+      enabled: useGpuInterpolation,
+      factor: useGpuInterpolation ? clamp01(runtime.factor, 1) : 1,
+      sourceVersion: Number.isFinite(runtime.sourceVersion) ? runtime.sourceVersion : 0,
+      sourceCount: Number.isFinite(runtime.sourceCount) ? runtime.sourceCount : 0,
+      sourceView: useGpuInterpolation ? (runtime.sourcePositions ?? null) : null,
+      sourceWebGPUBuffer: useGpuInterpolation ? (runtime.sourceWebGPUBuffer ?? null) : null,
+      sourceWebGLTexture: useGpuInterpolation ? (runtime.sourceWebGLTexture ?? null) : null,
+      sourceTextureMeta: useGpuInterpolation ? (runtime.sourceTextureMeta ?? null) : null,
+    };
+    if (typeof graphLayer.setPositionInterpolationState === 'function') {
+      graphLayer.setPositionInterpolationState(interpolationState);
+    } else {
+      graphLayer.positionInterpolation = interpolationState;
+    }
+    return true;
   }
 
   _refreshUIBindings() {
@@ -1768,13 +2511,198 @@ export class Helios extends EventTarget {
   }
 
   positions(options) {
-    if (arguments.length === 0) return null;
-    throw new Error('positions(options) was removed: Helios now runs indirect-only without position delegation.');
+    if (arguments.length === 0) {
+      return {
+        source: this._positionsConfig?.source ?? 'network',
+        delegate: this._positionsConfig?.delegate ?? null,
+      };
+    }
+    if (options == null) {
+      options = { source: 'network', delegate: null };
+    }
+    if (typeof options !== 'object') {
+      throw new TypeError('positions(options) expects an object or null');
+    }
+    const current = this._positionsConfig ?? { source: 'network', delegate: null };
+    const hasDelegate = Object.prototype.hasOwnProperty.call(options, 'delegate');
+    const hasSource = Object.prototype.hasOwnProperty.call(options, 'source');
+    let nextDelegate = hasDelegate ? (options.delegate ?? null) : (current.delegate ?? null);
+    if (nextDelegate) {
+      nextDelegate = this._validatePositionDelegate(nextDelegate);
+    }
+    let nextSource = hasSource ? String(options.source ?? current.source).toLowerCase() : (current.source ?? 'network');
+    if (nextSource !== 'delegate') nextSource = 'network';
+    if (!hasSource && hasDelegate) {
+      nextSource = nextDelegate ? 'delegate' : 'network';
+    }
+    if (nextSource === 'delegate' && !nextDelegate) {
+      throw new Error('positions({ source: "delegate" }) requires a non-null delegate');
+    }
+    const prevActiveDelegate = current.source === 'delegate' ? (current.delegate ?? null) : null;
+    const nextActiveDelegate = nextSource === 'delegate' ? nextDelegate : null;
+    const changed = current.source !== nextSource || current.delegate !== nextDelegate;
+    if (!changed) {
+      this._applyPositionPipelineToRenderer();
+      return this;
+    }
+    if (prevActiveDelegate && prevActiveDelegate !== nextActiveDelegate) {
+      this._detachPositionDelegate(prevActiveDelegate);
+    }
+    this._positionsConfig = {
+      source: nextSource,
+      delegate: nextDelegate,
+    };
+    if (nextActiveDelegate && nextActiveDelegate !== prevActiveDelegate) {
+      this._attachPositionDelegate(nextActiveDelegate);
+    }
+    this._resetInterpolationRuntime({ keepLastRendered: false });
+    this._applyPositionPipelineToRenderer();
+    this.scheduler.requestGeometry();
+    this.scheduler.requestRender();
+    return this;
   }
 
   interpolation(options) {
-    if (arguments.length === 0) return null;
-    throw new Error('interpolation(options) was removed: Helios now runs indirect-only without interpolation.');
+    if (arguments.length === 0) {
+      const config = this._interpolationConfig ?? POSITION_INTERPOLATION_DEFAULTS;
+      const durationMode = resolveInterpolationDurationMode(config);
+      return {
+        ...config,
+        durationMode,
+        adaptiveDuration: durationMode === 'adaptive',
+        fixedDurationMs: config.durationMs,
+        active: this._interpolationRuntime?.active === true,
+        factor: clamp01(this._interpolationRuntime?.factor, 1),
+        effectiveDurationMs: Number.isFinite(this._interpolationRuntime?.effectiveDurationMs)
+          ? this._interpolationRuntime.effectiveDurationMs
+          : this._resolveInterpolationDurationMs(performance.now()),
+      };
+    }
+    let updates = options;
+    if (typeof updates === 'string') {
+      updates = { mode: updates, enabled: true };
+    }
+    if (updates == null) {
+      updates = { enabled: false };
+    }
+    if (typeof updates !== 'object') {
+      throw new TypeError('interpolation(options) expects an object, string mode, or null');
+    }
+    const current = this._interpolationConfig ?? { ...POSITION_INTERPOLATION_DEFAULTS };
+    const next = { ...current };
+    if (Object.prototype.hasOwnProperty.call(updates, 'enabled')) {
+      next.enabled = updates.enabled === true;
+    }
+    const hasDurationModeUpdate = (
+      Object.prototype.hasOwnProperty.call(updates, 'durationMode')
+      || Object.prototype.hasOwnProperty.call(updates, 'durationStrategy')
+    );
+    const hasAdaptiveDurationUpdate = Object.prototype.hasOwnProperty.call(updates, 'adaptiveDuration');
+    const hasFixedDurationUpdate = Object.prototype.hasOwnProperty.call(updates, 'fixedDurationMs');
+    if (
+      Object.prototype.hasOwnProperty.call(updates, 'mode')
+      || Object.prototype.hasOwnProperty.call(updates, 'type')
+    ) {
+      next.mode = normalizeInterpolationMode(
+        updates.mode ?? updates.type,
+        current.mode ?? POSITION_INTERPOLATION_DEFAULTS.mode,
+      );
+    }
+    if (hasDurationModeUpdate) {
+      next.durationMode = normalizeInterpolationDurationMode(
+        updates.durationMode ?? updates.durationStrategy,
+        resolveInterpolationDurationMode(current),
+      );
+      next.adaptiveDuration = next.durationMode === 'adaptive';
+    }
+    if (hasAdaptiveDurationUpdate) {
+      next.adaptiveDuration = updates.adaptiveDuration === true;
+      next.durationMode = next.adaptiveDuration ? 'adaptive' : 'fixed';
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(updates, 'durationMs')
+      || Object.prototype.hasOwnProperty.call(updates, 'duration')
+      || Object.prototype.hasOwnProperty.call(updates, 'fixedDurationMs')
+    ) {
+      next.durationMs = normalizeNonNegativeNumber(
+        updates.fixedDurationMs ?? updates.durationMs ?? updates.duration,
+        current.durationMs,
+        0,
+        60000,
+      );
+    }
+    if (hasFixedDurationUpdate && !hasDurationModeUpdate && !hasAdaptiveDurationUpdate) {
+      next.durationMode = 'fixed';
+      next.adaptiveDuration = false;
+    }
+    if (Object.prototype.hasOwnProperty.call(updates, 'adaptiveDurationSamples')) {
+      next.adaptiveDurationSamples = normalizePositiveInteger(
+        updates.adaptiveDurationSamples,
+        current.adaptiveDurationSamples,
+        1,
+        120,
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(updates, 'adaptiveDurationWindowMs')) {
+      next.adaptiveDurationWindowMs = normalizeNonNegativeNumber(
+        updates.adaptiveDurationWindowMs,
+        current.adaptiveDurationWindowMs,
+        100,
+        60000,
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(updates, 'adaptiveDurationScale')) {
+      next.adaptiveDurationScale = normalizeNonNegativeNumber(
+        updates.adaptiveDurationScale,
+        current.adaptiveDurationScale,
+        0,
+        16,
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(updates, 'adaptiveDurationMinMs')) {
+      next.adaptiveDurationMinMs = normalizeNonNegativeNumber(
+        updates.adaptiveDurationMinMs,
+        current.adaptiveDurationMinMs,
+        0,
+        60000,
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(updates, 'adaptiveDurationMaxMs')) {
+      next.adaptiveDurationMaxMs = normalizeNonNegativeNumber(
+        updates.adaptiveDurationMaxMs,
+        current.adaptiveDurationMaxMs,
+        0,
+        60000,
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(updates, 'easing')) {
+      next.easing = normalizeInterpolationEasing(updates.easing, current.easing);
+    }
+    if (Object.prototype.hasOwnProperty.call(updates, 'smoothing')) {
+      next.smoothing = normalizeNonNegativeNumber(updates.smoothing, current.smoothing);
+    }
+    if (Object.prototype.hasOwnProperty.call(updates, 'minDisplacementRatio')) {
+      next.minDisplacementRatio = normalizeNonNegativeNumber(
+        updates.minDisplacementRatio,
+        current.minDisplacementRatio,
+      );
+    }
+    next.durationMode = normalizeInterpolationDurationMode(
+      next.durationMode,
+      next.adaptiveDuration === true ? 'adaptive' : 'fixed',
+    );
+    next.adaptiveDuration = next.durationMode === 'adaptive';
+    const modeChanged = normalizeInterpolationMode(current.mode) !== normalizeInterpolationMode(next.mode);
+    const disabled = current.enabled === true && next.enabled !== true;
+    this._interpolationConfig = next;
+    if (modeChanged || disabled) {
+      this._resetInterpolationRuntime({ keepLastRendered: true });
+    } else if (this._interpolationRuntime) {
+      this._interpolationRuntime.effectiveDurationMs = this._resolveInterpolationDurationMs(performance.now());
+    }
+    this._applyPositionPipelineToRenderer();
+    this.scheduler.requestRender();
+    return this;
   }
 
   // Backwards-compatible aliases.
@@ -1828,10 +2756,13 @@ export class Helios extends EventTarget {
     //   });
     //   this.mappersDirty = false;
     // }
+    const timestamp = performance.now();
+    this._runInterpolationRenderPump(timestamp);
     // Create frame and render
     const frame = {
       network: this.network,
-      timestamp: performance.now(),
+      timestamp,
+      camera: this.renderer?.camera,
     };
     this.attributeTracker?.render(frame, true);
     if (this.renderer && typeof this.renderer.render === 'function') {
@@ -2548,6 +3479,8 @@ export class Helios extends EventTarget {
 
   destroy() {
     this.scheduler.stop();
+    this._detachPositionDelegate(this._activePositionDelegate ?? this._positionsConfig?.delegate ?? null);
+    this._activePositionDelegate = null;
     this._layout?.dispose?.();
     for (const entry of this._listenHandlers.values()) {
       this.removeEventListener(entry.type, entry.listener, entry.capture);

@@ -78,6 +78,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     }
     push('edgeEndpoints', GPUShaderStage.VERTEX);
     push('nodePositions', GPUShaderStage.VERTEX);
+    push('nodePositionsFrom', GPUShaderStage.VERTEX);
     push('nodeStates', GPUShaderStage.VERTEX);
     push('edgeStates', GPUShaderStage.VERTEX);
     if (useEdgeColorNode) {
@@ -320,6 +321,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
   updateNodeBuffersGpuIndirect(nodes, device, maxBindingSize, nodeVariant, uploads = {}, edgeSources = null) {
     const {
       positions,
+      positionBuffer,
       sizes,
       colors,
       states,
@@ -340,7 +342,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     const uploadSizes = Boolean(uploads.sizes) || v.sizeBuffer;
     const uploadPositions = uploads.positions !== false;
     const uploadStates = uploads.states !== false;
-    if (!positions && nodeCount) {
+    if (!positions && !positionBuffer && nodeCount) {
       throw new Error('Node positions buffer is missing for indirect rendering.');
     }
     if (uploadSizes && !sizes && nodeCount) {
@@ -376,17 +378,30 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       checkBindingSize(label, requiredBytes);
       return resourceCache.ensureBuffer(device, key, requiredBytes, storageUsage, label);
     };
+    const interpolationState = this.getPositionInterpolationState?.() ?? this.positionInterpolation ?? null;
+    const interpolationEnabled = interpolationState?.enabled === true;
+    const interpolationSourceBuffer = interpolationState?.sourceWebGPUBuffer ?? null;
+    const interpolationSourceView = interpolationState?.sourceView ?? null;
+    const interpolationSourceVersion = Number.isFinite(interpolationState?.sourceVersion)
+      ? Number(interpolationState.sourceVersion)
+      : 0;
+    const interpolationSourceCount = Number.isFinite(interpolationState?.sourceCount)
+      ? Math.max(0, Math.floor(Number(interpolationState.sourceCount)))
+      : Math.floor((interpolationSourceView?.length ?? 0) / 3);
+    const delegatePositionBuffer = positionBuffer ?? null;
 
     if (!indices && nodeCount) {
       throw new Error('Node index buffer is missing for indirect rendering.');
     }
 
     this.nodeBuffersGpu.indices = ensure('indirect:node:indices', indices?.byteLength ?? 4, 'Node index buffer');
-    this.nodeBuffersGpu.positions = ensure(
-      'indirect:node:positions',
-      positions?.byteLength ?? 12,
-      'Node position buffer',
-    );
+    this.nodeBuffersGpu.positions = delegatePositionBuffer
+      ? { buffer: delegatePositionBuffer }
+      : ensure(
+        'indirect:node:positions',
+        positions?.byteLength ?? 12,
+        'Node position buffer',
+      );
     this.nodeBuffersGpu.sizes = ensure(
       'indirect:node:sizes',
       uploadSizes ? (sizes?.byteLength ?? 4) : 4,
@@ -402,6 +417,21 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       uploadStates ? (states?.byteLength ?? 4) : 4,
       'Node state buffer',
     );
+    if (interpolationEnabled) {
+      if (interpolationSourceBuffer) {
+        this.nodeBuffersGpu.positionsFrom = { buffer: interpolationSourceBuffer };
+      } else if (interpolationSourceView) {
+        this.nodeBuffersGpu.positionsFrom = ensure(
+          'indirect:node:positionsFrom',
+          interpolationSourceView?.byteLength ?? 12,
+          'Node interpolation source position buffer',
+        );
+      } else {
+        this.nodeBuffersGpu.positionsFrom = this.nodeBuffersGpu.positions;
+      }
+    } else {
+      this.nodeBuffersGpu.positionsFrom = this.nodeBuffersGpu.positions;
+    }
 
     if (useOutlineAttributes) {
       this.nodeBuffersGpu.outlineWidths = ensure(
@@ -419,6 +449,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     const buffersChanged = (
       this._nodeBuffersLast?.indices !== this.nodeBuffersGpu.indices?.buffer
       || this._nodeBuffersLast?.positions !== this.nodeBuffersGpu.positions?.buffer
+      || this._nodeBuffersLast?.positionsFrom !== this.nodeBuffersGpu.positionsFrom?.buffer
       || this._nodeBuffersLast?.sizes !== this.nodeBuffersGpu.sizes?.buffer
       || this._nodeBuffersLast?.colors !== this.nodeBuffersGpu.colors?.buffer
       || this._nodeBuffersLast?.states !== this.nodeBuffersGpu.states?.buffer
@@ -432,12 +463,21 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
         count: nodeCount,
         trackViewIdentity: true,
       }, storageUsage);
-      if (uploadPositions) {
+      if (uploadPositions && !delegatePositionBuffer && positions) {
         resourceCache.uploadBuffer(device, device.queue, 'indirect:node:positions', positions, {
           label: 'Node position buffer',
           version: versions.positions ?? 0,
           topologyVersion: versions.topology ?? 0,
           count: nodeCount,
+          trackViewIdentity: true,
+        }, storageUsage);
+      }
+      if (interpolationEnabled && !interpolationSourceBuffer && interpolationSourceView) {
+        resourceCache.uploadBuffer(device, device.queue, 'indirect:node:positionsFrom', interpolationSourceView, {
+          label: 'Node interpolation source position buffer',
+          version: interpolationSourceVersion,
+          topologyVersion: versions.topology ?? 0,
+          count: interpolationSourceCount || nodeCount,
           trackViewIdentity: true,
         }, storageUsage);
       }
@@ -515,6 +555,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       const outlineBuffersChanged = outlineModeChanged
         || this._nodeBuffersLastOutline?.indices !== this.nodeBuffersGpu.indices?.buffer
         || this._nodeBuffersLastOutline?.positions !== this.nodeBuffersGpu.positions?.buffer
+        || this._nodeBuffersLastOutline?.positionsFrom !== this.nodeBuffersGpu.positionsFrom?.buffer
         || this._nodeBuffersLastOutline?.sizes !== this.nodeBuffersGpu.sizes?.buffer
         || this._nodeBuffersLastOutline?.colors !== this.nodeBuffersGpu.colors?.buffer
         || this._nodeBuffersLastOutline?.states !== this.nodeBuffersGpu.states?.buffer
@@ -554,6 +595,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
           { binding: 7, resource: { buffer: this.hoverBuffer } },
           { binding: 8, resource: { buffer: this.nodeBuffersGpu.outlineWidths.buffer } },
           { binding: 9, resource: { buffer: this.nodeBuffersGpu.outlineColors.buffer } },
+          { binding: 10, resource: { buffer: this.nodeBuffersGpu.positionsFrom.buffer } },
         ];
         this.nodeBindGroupOutline = device.createBindGroup({
           layout: this.nodeBindGroupLayoutOutline,
@@ -562,6 +604,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
         this._nodeBuffersLastOutline = {
           indices: this.nodeBuffersGpu.indices.buffer,
           positions: this.nodeBuffersGpu.positions.buffer,
+          positionsFrom: this.nodeBuffersGpu.positionsFrom.buffer,
           sizes: this.nodeBuffersGpu.sizes.buffer,
           colors: this.nodeBuffersGpu.colors.buffer,
           states: this.nodeBuffersGpu.states.buffer,
@@ -585,6 +628,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
         { binding: 5, resource: { buffer: this.nodeBuffersGpu.states.buffer } },
         { binding: 6, resource: { buffer: this.globalsBuffer } },
         { binding: 7, resource: { buffer: this.hoverBuffer } },
+        { binding: 10, resource: { buffer: this.nodeBuffersGpu.positionsFrom.buffer } },
       ];
       this.nodeBindGroup = device.createBindGroup({
         layout: this.nodeBindGroupLayout,
@@ -593,6 +637,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       this._nodeBuffersLast = {
         indices: this.nodeBuffersGpu.indices.buffer,
         positions: this.nodeBuffersGpu.positions.buffer,
+        positionsFrom: this.nodeBuffersGpu.positionsFrom.buffer,
         sizes: this.nodeBuffersGpu.sizes.buffer,
         colors: this.nodeBuffersGpu.colors.buffer,
         states: this.nodeBuffersGpu.states.buffer,
@@ -694,6 +739,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       edgeIndices: this.edgeBuffersGpu.indices?.buffer ?? null,
       edgeEndpoints: this.edgeBuffersGpu.endpoints?.buffer ?? null,
       nodePositions: this.nodeBuffersGpu.positions?.buffer ?? null,
+      nodePositionsFrom: this.nodeBuffersGpu.positionsFrom?.buffer ?? this.nodeBuffersGpu.positions?.buffer ?? null,
       nodeStates: this.nodeBuffersGpu.states?.buffer ?? null,
       edgeStates: this.edgeBuffersGpu.states?.buffer ?? null,
       edgeColors: this.edgeBuffersGpu.colors?.buffer ?? null,
@@ -787,6 +833,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       push('edgeIndices', currentBuffers.edgeIndices);
       push('edgeEndpoints', currentBuffers.edgeEndpoints);
       push('nodePositions', currentBuffers.nodePositions);
+      push('nodePositionsFrom', currentBuffers.nodePositionsFrom);
       push('nodeStates', currentBuffers.nodeStates);
       push('edgeStates', currentBuffers.edgeStates);
       push('edgeColors', currentBuffers.edgeColors);
@@ -816,10 +863,13 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
 
   getSharedSparseResources() {
     const resourceCache = this.device?.resourceCache?.webgpu;
-    if (!resourceCache?.buffers) return { buffers: {} };
+    if (!resourceCache?.buffers) {
+      return { buffers: {} };
+    }
     const keys = [
       'indirect:node:indices',
       'indirect:node:positions',
+      'indirect:node:positionsFrom',
       'indirect:node:sizes',
       'indirect:node:outlineWidths',
       'indirect:node:edgeSource:width',
@@ -832,6 +882,25 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     const buffers = {};
     for (const key of keys) {
       buffers[key] = resourceCache.buffers.get(key) ?? null;
+    }
+    if (!buffers['indirect:node:positions'] && this.nodeBuffersGpu.positions?.buffer) {
+      buffers['indirect:node:positions'] = {
+        buffer: this.nodeBuffersGpu.positions.buffer,
+        version: null,
+        topologyVersion: null,
+        count: this._nodeDataCache?.count ?? null,
+        byteLength: this.nodeBuffersGpu.positions.buffer?.size ?? null,
+      };
+    }
+    if (!buffers['indirect:node:positionsFrom'] && this.nodeBuffersGpu.positionsFrom?.buffer) {
+      const interpolation = this.getPositionInterpolationState?.() ?? this.positionInterpolation ?? null;
+      buffers['indirect:node:positionsFrom'] = {
+        buffer: this.nodeBuffersGpu.positionsFrom.buffer,
+        version: interpolation?.sourceVersion ?? null,
+        topologyVersion: null,
+        count: interpolation?.sourceCount ?? this._nodeDataCache?.count ?? null,
+        byteLength: this.nodeBuffersGpu.positionsFrom.buffer?.size ?? null,
+      };
     }
     return { buffers };
   }
@@ -891,6 +960,15 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       const edgeOpacities = safeGet('edge', EDGE_OPACITY_ATTRIBUTE);
       const edgeEndpointSizes = safeGet('edge', EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
       const edgeStates = safeGet('edge', EDGE_STATE_ATTRIBUTE);
+      const positionOverride = this.resolvePositionSourceOverride(network, {
+        backend: 'webgpu',
+        device: this.device?.device ?? null,
+      });
+      const resolvedNodePositions = positionOverride?.view ?? nodePositions?.view ?? null;
+      const resolvedNodePositionVersion = Number.isFinite(positionOverride?.version)
+        ? Number(positionOverride.version)
+        : (nodePositions?.version ?? 0);
+      const resolvedNodePositionBuffer = positionOverride?.webgpuBuffer ?? null;
 
       const nodeEdgeSources = {
         color: resolveNodeSource(edgeNodeAttributes?.color, 4, 'edge color source'),
@@ -900,7 +978,8 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       };
 
       const nodes = {
-        positions: nodePositions?.view ?? null,
+        positions: resolvedNodePositions,
+        positionBuffer: resolvedNodePositionBuffer,
         sizes: nodeSizes?.view ?? null,
         colors: nodeColors?.view ?? null,
         states: nodeStates?.view ?? null,
@@ -909,7 +988,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
         indices: nodeIndices,
         count: nodeIndices?.length ?? 0,
         versions: {
-          positions: nodePositions?.version ?? 0,
+          positions: resolvedNodePositionVersion,
           sizes: nodeSizes?.version ?? 0,
           colors: nodeColors?.version ?? 0,
           states: nodeStates?.version ?? 0,

@@ -28,5 +28,8 @@ test('webgpu renderer uses indirect graph layer @webgpu', async ({ page }) => {
   });
   expect(info.graphLayer).toBe('GraphLayerWebGPU');
   expect(info.hasInterpolationApi).toBe(true);
-  expect(info.interpolation).toBe(null);
+  expect(info.interpolation).toMatchObject({
+    enabled: false,
+    mode: 'gpu',
+  });
 });

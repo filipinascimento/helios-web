@@ -63,6 +63,17 @@ export class GraphLayer extends Layer {
     this.hoveredNodeState = 0;
     this.hoveredEdgeIndex = GraphLayer.NO_HOVER_INDEX;
     this.hoveredEdgeState = 0;
+    this.positionDelegate = null;
+    this.positionInterpolation = {
+      enabled: false,
+      factor: 1,
+      sourceVersion: 0,
+      sourceCount: 0,
+      sourceView: null,
+      sourceWebGPUBuffer: null,
+      sourceWebGLTexture: null,
+      sourceTextureMeta: null,
+    };
     this.resetStateStyles();
   }
 
@@ -263,5 +274,121 @@ export class GraphLayer extends Layer {
     if (this.isSupportedTransparencyMode(mode)) {
       this.edgeTransparencyMode = mode;
     }
+  }
+
+  setPositionDelegate(delegate = null) {
+    this.positionDelegate = delegate ?? null;
+    return this;
+  }
+
+  setPositionInterpolationState(state = null) {
+    const enabled = state?.enabled === true;
+    const factor = Number.isFinite(state?.factor) ? Math.max(0, Math.min(1, Number(state.factor))) : 1;
+    this.positionInterpolation = {
+      enabled,
+      factor,
+      sourceVersion: Number.isFinite(state?.sourceVersion) ? Number(state.sourceVersion) : 0,
+      sourceCount: Number.isFinite(state?.sourceCount) ? Math.max(0, Math.floor(Number(state.sourceCount))) : 0,
+      sourceView: state?.sourceView ?? null,
+      sourceWebGPUBuffer: state?.sourceWebGPUBuffer ?? null,
+      sourceWebGLTexture: state?.sourceWebGLTexture ?? null,
+      sourceTextureMeta: state?.sourceTextureMeta ?? null,
+    };
+    return this;
+  }
+
+  getPositionInterpolationState() {
+    return this.positionInterpolation ?? null;
+  }
+
+  resolvePositionSourceOverride(network, backendContext = {}) {
+    const delegate = this.positionDelegate;
+    if (!delegate || !network) return null;
+
+    const context = {
+      network,
+      graphLayer: this,
+      backend: backendContext.backend ?? null,
+      device: backendContext.device ?? null,
+      gl: backendContext.gl ?? null,
+    };
+
+    const ensureSynchronized = (reason = 'delegate-access') => {
+      if (typeof delegate.ensureSynchronized !== 'function') return;
+      try {
+        delegate.ensureSynchronized({ ...context, reason });
+      } catch (error) {
+        console.warn('GraphLayer: position delegate synchronization failed', error);
+      }
+    };
+
+    const pickValue = (...fns) => {
+      for (const fn of fns) {
+        if (typeof fn !== 'function') continue;
+        ensureSynchronized(`before:${fn.name || 'callback'}`);
+        try {
+          const value = fn.call(delegate, context);
+          if (value != null) return value;
+        } catch (error) {
+          console.warn('GraphLayer: position delegate callback failed', error);
+        }
+      }
+      return null;
+    };
+
+    ensureSynchronized('resolve-position-override');
+    const view = pickValue(delegate.getNodePositionView, delegate.getPositionView);
+    const versionRaw = pickValue(delegate.getVersion);
+    const gpuShared = pickValue(delegate.getGpuPositionResource, delegate.getPositionResource);
+    const webgpuRaw = pickValue(delegate.getWebGPUPositionBuffer);
+    const webglRaw = pickValue(delegate.getWebGLPositionTexture);
+
+    const normalizeBuffer = (raw) => {
+      if (!raw) return null;
+      if (raw.buffer) return raw.buffer;
+      return raw;
+    };
+
+    const normalizeTexture = (raw) => {
+      if (!raw) return null;
+      if (raw.texture) return raw.texture;
+      return raw;
+    };
+
+    const version =
+      Number.isFinite(versionRaw)
+        ? Number(versionRaw)
+        : (Number.isFinite(delegate.version) ? Number(delegate.version) : 0);
+    const countFromView = view && Number.isFinite(view.length)
+      ? Math.floor((view.length ?? 0) / 3)
+      : 0;
+    const count = Number.isFinite(gpuShared?.count)
+      ? Math.max(0, Math.floor(Number(gpuShared.count)))
+      : (Number.isFinite(webgpuRaw?.count)
+        ? Math.max(0, Math.floor(Number(webgpuRaw.count)))
+        : (Number.isFinite(webglRaw?.count)
+          ? Math.max(0, Math.floor(Number(webglRaw.count)))
+          : countFromView));
+    const webgpuBuffer = normalizeBuffer(webgpuRaw) ?? normalizeBuffer(gpuShared);
+    const webglTexture = normalizeTexture(webglRaw) ?? normalizeTexture(gpuShared);
+    const webglTextureVersion = Number.isFinite(webglRaw?.version)
+      ? Number(webglRaw.version)
+      : (Number.isFinite(gpuShared?.version) ? Number(gpuShared.version) : version);
+    const webglTextureCount = Number.isFinite(webglRaw?.count)
+      ? Math.max(0, Math.floor(Number(webglRaw.count)))
+      : count;
+    const webglTextureMeta = webglRaw?.meta ?? null;
+
+    if (!view && !webgpuBuffer && !webglTexture) return null;
+    return {
+      view: view ?? null,
+      version,
+      count,
+      webgpuBuffer: webgpuBuffer ?? null,
+      webglTexture: webglTexture ?? null,
+      webglTextureVersion,
+      webglTextureCount,
+      webglTextureMeta,
+    };
   }
 }

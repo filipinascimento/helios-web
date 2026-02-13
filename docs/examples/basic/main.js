@@ -1,10 +1,12 @@
 import HeliosNetwork, { AttributeType } from 'helios-network';
 // When consuming the published package use `import { Helios } from 'helios-web-next';`
-import { Helios, EVENTS, HeliosUI } from '../../../src/index.js';
+import { Helios, EVENTS, HeliosUI, PositionDelegate } from '../../../src/index.js';
 
 // Set this to an object like { helios: true, mapper: true, scheduler: true } to re-enable debug logs.
 const DEFAULT_NODE_COUNT = 2_000;
 const DEBUG_CONFIG = null;
+const DEFAULT_ADAPTIVE_DURATION_SAMPLES = 5;
+const DEFAULT_ADAPTIVE_DURATION_WINDOW_MS = 5000;
 
 function resolveRendererPreference() {
   const params = new URLSearchParams(window.location.search);
@@ -39,6 +41,73 @@ function resolveLayoutIntervalMs() {
     return Math.floor(value);
   }
   return 0;
+}
+
+function resolvePositionSource() {
+  const params = new URLSearchParams(window.location.search);
+  const source = String(params.get('positionSource') ?? params.get('positionsSource') ?? 'network')
+    .trim()
+    .toLowerCase();
+  if (source === 'delegate') return 'delegate';
+  return 'network';
+}
+
+function resolveInterpolationMode() {
+  const params = new URLSearchParams(window.location.search);
+  const mode = String(params.get('interpolationMode') ?? params.get('interpolation') ?? 'gpu')
+    .trim()
+    .toLowerCase();
+  if (mode === 'javascript' || mode === 'js' || mode === 'cpu') return 'javascript';
+  if (mode === 'network' || mode === 'wasm' || mode === 'native') return 'network';
+  if (mode === 'gpu' || mode === 'shader') return 'gpu';
+  return 'gpu';
+}
+
+function resolveInterpolationEnabled(defaultMode = 'gpu') {
+  const params = new URLSearchParams(window.location.search);
+  const raw = params.get('interpolationEnabled') ?? params.get('interpolate');
+  if (raw == null) return defaultMode !== 'none';
+  const normalized = String(raw).trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+}
+
+function resolveInterpolationDurationMs() {
+  const params = new URLSearchParams(window.location.search);
+  const value = Number(
+    params.get('interpolationFixedDurationMs')
+    ?? params.get('interpolationDurationMs')
+    ?? params.get('interpolationDuration'),
+  );
+  if (Number.isFinite(value) && value >= 0) {
+    return Math.floor(value);
+  }
+  return 160;
+}
+
+function resolveInterpolationAdaptiveDuration() {
+  const params = new URLSearchParams(window.location.search);
+  const raw = params.get('interpolationAdaptive') ?? params.get('adaptiveInterpolationDuration');
+  if (raw == null) return true;
+  const normalized = String(raw).trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+}
+
+function normalizeInterpolationDurationMode(value, fallback = 'adaptive') {
+  const raw = String(value ?? fallback).trim().toLowerCase();
+  if (raw === 'adaptive' || raw === 'auto' || raw === 'dynamic') return 'adaptive';
+  if (raw === 'fixed' || raw === 'manual' || raw === 'constant') return 'fixed';
+  return fallback;
+}
+
+function resolveInterpolationDurationMode() {
+  const params = new URLSearchParams(window.location.search);
+  const raw = params.get('interpolationDurationMode')
+    ?? params.get('interpolationDurationStrategy')
+    ?? params.get('interpolationTiming');
+  if (raw != null) {
+    return normalizeInterpolationDurationMode(raw, 'adaptive');
+  }
+  return resolveInterpolationAdaptiveDuration() ? 'adaptive' : 'fixed';
 }
 
 function resolveEdgeTransparencyMode() {
@@ -237,7 +306,28 @@ async function bootstrap() {
   const mode = resolveMode();
   const layoutType = resolveLayoutType();
   let layoutIntervalMs = resolveLayoutIntervalMs();
+  let positionSource = resolvePositionSource();
+  let interpolationMode = resolveInterpolationMode();
+  let interpolationEnabled = resolveInterpolationEnabled(interpolationMode);
+  let interpolationDurationMs = resolveInterpolationDurationMs();
+  let interpolationDurationMode = resolveInterpolationDurationMode();
   const edgeTransparency = resolveEdgeTransparencyMode();
+  class DemoNetworkPositionDelegate extends PositionDelegate {
+    constructor() {
+      super();
+      this.positionView = null;
+    }
+
+    synchronizeTopology({ network: activeNetwork }) {
+      this.positionView = activeNetwork?.getNodeAttributeBuffer?.('_helios_visuals_position')?.view ?? null;
+    }
+
+    getNodePositionView(context) {
+      this.ensureSynchronized(context);
+      return this.positionView ?? null;
+    }
+  }
+  const positionDelegate = new DemoNetworkPositionDelegate();
   const heliosOptions = {
     container: target,
     layout: layoutType === 'none'
@@ -273,6 +363,22 @@ async function bootstrap() {
     mode,
     projection: 'perspective',
     transparencyModeEdges: edgeTransparency,
+    positions: positionSource === 'delegate'
+      ? { source: 'delegate', delegate: positionDelegate }
+      : { source: 'network' },
+    interpolation: {
+      enabled: interpolationEnabled,
+      mode: interpolationMode,
+      durationMode: interpolationDurationMode,
+      fixedDurationMs: interpolationDurationMs,
+      durationMs: interpolationDurationMs,
+      adaptiveDuration: interpolationDurationMode === 'adaptive',
+      adaptiveDurationSamples: DEFAULT_ADAPTIVE_DURATION_SAMPLES,
+      adaptiveDurationWindowMs: DEFAULT_ADAPTIVE_DURATION_WINDOW_MS,
+      easing: 'linear',
+      smoothing: 6,
+      minDisplacementRatio: 0.0005,
+    },
     debug: DEBUG_CONFIG,
     // Warm up mapper application so first render is quick on large graphs.
     // prewarm: true,
@@ -439,8 +545,116 @@ async function bootstrap() {
       applyLayout(layoutSelect.value);
     });
 
+    const positionSourceSelect = document.createElement('select');
+    positionSourceSelect.className = 'helios-ui-select';
+    [
+      { value: 'network', label: 'Network buffers' },
+      { value: 'delegate', label: 'Delegated buffers' },
+    ].forEach((entry) => {
+      const opt = document.createElement('option');
+      opt.value = entry.value;
+      opt.textContent = entry.label;
+      positionSourceSelect.appendChild(opt);
+    });
+    positionSourceSelect.value = positionSource;
+    positionSourceSelect.addEventListener('change', () => {
+      positionSource = positionSourceSelect.value === 'delegate' ? 'delegate' : 'network';
+      if (positionSource === 'delegate') {
+        helios.positions({ source: 'delegate', delegate: positionDelegate });
+      } else {
+        helios.positions({ source: 'network' });
+      }
+    });
+
+    const applyInterpolationSettings = () => {
+      helios.interpolation({
+        enabled: interpolationEnabled,
+        mode: interpolationMode,
+        durationMode: interpolationDurationMode,
+        fixedDurationMs: interpolationDurationMs,
+        durationMs: interpolationDurationMs,
+        adaptiveDuration: interpolationDurationMode === 'adaptive',
+        adaptiveDurationSamples: DEFAULT_ADAPTIVE_DURATION_SAMPLES,
+        adaptiveDurationWindowMs: DEFAULT_ADAPTIVE_DURATION_WINDOW_MS,
+        easing: 'linear',
+      });
+    };
+
+    const interpolationModeSelect = document.createElement('select');
+    interpolationModeSelect.className = 'helios-ui-select';
+    [
+      { value: 'gpu', label: 'GPU shader' },
+      { value: 'javascript', label: 'JavaScript CPU' },
+      { value: 'network', label: 'Helios network (WASM)' },
+    ].forEach((entry) => {
+      const opt = document.createElement('option');
+      opt.value = entry.value;
+      opt.textContent = entry.label;
+      interpolationModeSelect.appendChild(opt);
+    });
+    interpolationModeSelect.value = interpolationMode;
+    interpolationModeSelect.addEventListener('change', () => {
+      interpolationMode = interpolationModeSelect.value;
+      applyInterpolationSettings();
+    });
+
+    const interpolationDurationSelect = document.createElement('select');
+    interpolationDurationSelect.className = 'helios-ui-select';
+    [
+      { value: 0, label: 'Off (snap)' },
+      { value: 80, label: '80 ms' },
+      { value: 160, label: '160 ms' },
+      { value: 320, label: '320 ms' },
+      { value: 640, label: '640 ms' },
+    ].forEach((entry) => {
+      const opt = document.createElement('option');
+      opt.value = String(entry.value);
+      opt.textContent = entry.label;
+      interpolationDurationSelect.appendChild(opt);
+    });
+    interpolationDurationSelect.value = String(interpolationDurationMs);
+    interpolationDurationSelect.addEventListener('change', () => {
+      const next = Number(interpolationDurationSelect.value);
+      interpolationDurationMs = Number.isFinite(next) ? Math.max(0, next) : 0;
+      applyInterpolationSettings();
+    });
+
+    const interpolationAdaptiveInput = document.createElement('input');
+    interpolationAdaptiveInput.type = 'checkbox';
+    interpolationAdaptiveInput.checked = interpolationDurationMode === 'adaptive';
+    interpolationAdaptiveInput.addEventListener('change', () => {
+      interpolationDurationMode = interpolationAdaptiveInput.checked ? 'adaptive' : 'fixed';
+      syncInterpolationTimingState();
+      applyInterpolationSettings();
+    });
+
+    const interpolationTimingControl = document.createElement('div');
+    interpolationTimingControl.style.display = 'flex';
+    interpolationTimingControl.style.alignItems = 'center';
+    interpolationTimingControl.style.gap = '8px';
+    interpolationTimingControl.appendChild(interpolationDurationSelect);
+    const interpolationAdaptiveLabel = document.createElement('label');
+    interpolationAdaptiveLabel.style.display = 'inline-flex';
+    interpolationAdaptiveLabel.style.alignItems = 'center';
+    interpolationAdaptiveLabel.style.gap = '4px';
+    interpolationAdaptiveLabel.style.whiteSpace = 'nowrap';
+    interpolationAdaptiveLabel.appendChild(interpolationAdaptiveInput);
+    const interpolationAdaptiveText = document.createElement('span');
+    interpolationAdaptiveText.textContent = 'Adaptive';
+    interpolationAdaptiveLabel.appendChild(interpolationAdaptiveText);
+    interpolationTimingControl.appendChild(interpolationAdaptiveLabel);
+
+    const syncInterpolationTimingState = () => {
+      interpolationDurationSelect.disabled = interpolationDurationMode === 'adaptive';
+      interpolationAdaptiveInput.checked = interpolationDurationMode === 'adaptive';
+    };
+    syncInterpolationTimingState();
+
     content.appendChild(createRow('Layout', layoutSelect));
     content.appendChild(createRow('Layout interval', layoutIntervalSelect));
+    content.appendChild(createRow('Position source', positionSourceSelect));
+    content.appendChild(createRow('Interpolator', interpolationModeSelect));
+    content.appendChild(createRow('Interpolation timing', interpolationTimingControl));
 
     return heliosUI.createPanel({
       id: 'helios-ui-layout',

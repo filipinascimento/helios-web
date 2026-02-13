@@ -232,6 +232,9 @@ layout (location = 1) in uint a_nodeId;
 
 uniform mat4 u_viewProjection;
 uniform sampler2D u_nodePositions;${nodeColorDecl}${nodeSizeDecl}${nodeOutlineDecl}${nodeOutlineColorDecl}
+uniform sampler2D u_nodePositionsFrom;
+uniform float u_nodeInterpolationFactor;
+uniform int u_nodeInterpolationEnabled;
 uniform vec3 u_cameraPosition;
 uniform vec3 u_cameraUp;
 uniform vec3 u_cameraRight;
@@ -270,7 +273,11 @@ flat out uint v_discardFlag;
 ${TEXTURE_INDEX_HELPERS}
 
 vec3 fetchNodePos(uint id) {
-  return texelFetch(u_nodePositions, textureCoord(u_nodePositions, id), 0).xyz;
+  vec3 toPos = texelFetch(u_nodePositions, textureCoord(u_nodePositions, id), 0).xyz;
+  if (u_nodeInterpolationEnabled == 0) return toPos;
+  vec3 fromPos = texelFetch(u_nodePositionsFrom, textureCoord(u_nodePositionsFrom, id), 0).xyz;
+  float t = clamp(u_nodeInterpolationFactor, 0.0, 1.0);
+  return mix(fromPos, toPos, t);
 }
 ${nodeFetchColor}
 ${nodeFetchSize}
@@ -411,6 +418,9 @@ layout (location = 0) in uint a_edgeId;
 
 uniform mat4 u_viewProjection;
 uniform sampler2D u_nodePositions;
+uniform sampler2D u_nodePositionsFrom;
+uniform float u_nodeInterpolationFactor;
+uniform int u_nodeInterpolationEnabled;
 ${edgeColorSourceNode ? 'uniform sampler2D u_nodeEdgeColors;\nuniform int u_hasNodeColors;' : ''}
 ${edgeOpacitySourceNode ? 'uniform sampler2D u_nodeOpacitySource;\nuniform int u_hasNodeOpacitySource;' : ''}${edgeColorDecl}${edgeOpacityDecl}
 uniform usampler2D u_edgeEndpoints;
@@ -437,7 +447,11 @@ flat out uint v_discardFlag;
 ${TEXTURE_INDEX_HELPERS}
 
 vec3 fetchNodePos(uint id) {
-  return texelFetch(u_nodePositions, textureCoord(u_nodePositions, id), 0).xyz;
+  vec3 toPos = texelFetch(u_nodePositions, textureCoord(u_nodePositions, id), 0).xyz;
+  if (u_nodeInterpolationEnabled == 0) return toPos;
+  vec3 fromPos = texelFetch(u_nodePositionsFrom, textureCoord(u_nodePositionsFrom, id), 0).xyz;
+  float t = clamp(u_nodeInterpolationFactor, 0.0, 1.0);
+  return mix(fromPos, toPos, t);
 }
 
 uint fetchEdgeState(uint id) {
@@ -529,6 +543,9 @@ layout (location = 1) in uint a_edgeId;
 uniform mat4 u_viewProjection;
 uniform vec2 u_viewport;
 uniform sampler2D u_nodePositions;
+uniform sampler2D u_nodePositionsFrom;
+uniform float u_nodeInterpolationFactor;
+uniform int u_nodeInterpolationEnabled;
 ${edgeColorSourceNode ? 'uniform sampler2D u_nodeEdgeColors;\nuniform int u_hasNodeColors;' : ''}
 ${edgeWidthSourceNode ? 'uniform sampler2D u_nodeWidthSource;\nuniform int u_hasNodeWidthSource;' : ''}
 ${edgeOpacitySourceNode ? 'uniform sampler2D u_nodeOpacitySource;\nuniform int u_hasNodeOpacitySource;' : ''}
@@ -570,7 +587,11 @@ flat out uint v_discardFlag;
 ${TEXTURE_INDEX_HELPERS}
 
 vec3 fetchNodePos(uint id) {
-  return texelFetch(u_nodePositions, textureCoord(u_nodePositions, id), 0).xyz;
+  vec3 toPos = texelFetch(u_nodePositions, textureCoord(u_nodePositions, id), 0).xyz;
+  if (u_nodeInterpolationEnabled == 0) return toPos;
+  vec3 fromPos = texelFetch(u_nodePositionsFrom, textureCoord(u_nodePositionsFrom, id), 0).xyz;
+  float t = clamp(u_nodeInterpolationFactor, 0.0, 1.0);
+  return mix(fromPos, toPos, t);
 }
 
 uint fetchEdgeState(uint id) {

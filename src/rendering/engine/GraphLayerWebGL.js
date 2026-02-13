@@ -134,6 +134,9 @@ const NODE_UNIFORM_NAMES = [
   'u_nodeOutlineColors',
   'u_nodeStates',
   'u_nodePositions',
+  'u_nodePositionsFrom',
+  'u_nodeInterpolationFactor',
+  'u_nodeInterpolationEnabled',
   'u_nodeColors',
   'u_nodeSizes',
   'u_cameraPosition',
@@ -168,6 +171,9 @@ const NODE_UNIFORM_NAMES = [
 const EDGE_UNIFORM_NAMES = [
   'u_viewProjection',
   'u_nodePositions',
+  'u_nodePositionsFrom',
+  'u_nodeInterpolationFactor',
+  'u_nodeInterpolationEnabled',
   'u_nodeEdgeColors',
   'u_edgeColors',
   'u_edgeStates',
@@ -204,6 +210,9 @@ const EDGE_QUAD_UNIFORM_NAMES = [
   'u_viewProjection',
   'u_viewport',
   'u_nodePositions',
+  'u_nodePositionsFrom',
+  'u_nodeInterpolationFactor',
+  'u_nodeInterpolationEnabled',
   'u_nodeEdgeColors',
   'u_edgeColors',
   'u_edgeEndpoints',
@@ -676,6 +685,7 @@ export class GraphLayerWebGL extends GraphLayer {
 
     this.nodeTextures = {
       positions: null,
+      positionsFrom: null,
       colors: null,
       sizes: null,
       states: null,
@@ -697,6 +707,7 @@ export class GraphLayerWebGL extends GraphLayer {
     };
     this.textureMeta = {
       nodePositions: null,
+      nodePositionsFrom: null,
       nodeColors: null,
       nodeSizes: null,
       nodeStates: null,
@@ -978,6 +989,8 @@ export class GraphLayerWebGL extends GraphLayer {
     this.weightedWeight = null;
     this.weightedDepth = null;
     this.weightedSize = null;
+    this._activeNodePositionTexture = null;
+    this._activeNodePositionTextureMeta = null;
   }
 
   ensureWeightedTargets(width, height) {
@@ -1171,6 +1184,7 @@ export class GraphLayerWebGL extends GraphLayer {
 
   initializeTextures() {
     this.nodeTextures.positions = this.createTexture();
+    this.nodeTextures.positionsFrom = this.createTexture();
     this.nodeTextures.colors = this.createTexture();
     this.nodeTextures.sizes = this.createTexture();
     this.nodeTextures.states = this.createTexture();
@@ -1276,18 +1290,39 @@ export class GraphLayerWebGL extends GraphLayer {
       const edgeNodeEndpointSize = edgeNodeAttributes?.endpointSize
         ? safeGet('node', edgeNodeAttributes.endpointSize)
         : null;
+      const positionOverride = this.resolvePositionSourceOverride(network, {
+        backend: 'webgl',
+        gl: this.gl,
+        device: this.device,
+      });
+      const resolvedNodePositions = positionOverride?.view ?? nodePositions?.view ?? null;
+      const resolvedNodePositionVersion = Number.isFinite(positionOverride?.version)
+        ? Number(positionOverride.version)
+        : (nodePositions?.version ?? 0);
+      const resolvedNodePositionTexture = positionOverride?.webglTexture ?? null;
+      const resolvedNodePositionTextureVersion = Number.isFinite(positionOverride?.webglTextureVersion)
+        ? Number(positionOverride.webglTextureVersion)
+        : resolvedNodePositionVersion;
+      const resolvedNodePositionTextureCount = Number.isFinite(positionOverride?.webglTextureCount)
+        ? Math.max(0, Math.floor(Number(positionOverride.webglTextureCount)))
+        : Math.floor((resolvedNodePositions?.length ?? 0) / 3);
+      const resolvedNodePositionTextureMeta = positionOverride?.webglTextureMeta ?? null;
 
       const nodes = {
-        positions: nodePositions?.view ?? null,
+        positions: resolvedNodePositions,
         colors: nodeColors?.view ?? null,
         sizes: nodeSizes?.view ?? null,
         states: nodeStates?.view ?? null,
         outlineWidths: nodeOutlineWidths?.view ?? null,
         outlineColors: nodeOutlineColors?.view ?? null,
+        positionTexture: resolvedNodePositionTexture,
+        positionTextureVersion: resolvedNodePositionTextureVersion,
+        positionTextureCount: resolvedNodePositionTextureCount,
+        positionTextureMeta: resolvedNodePositionTextureMeta,
         indices: nodeIndices,
         count: nodeIndices?.length ?? 0,
         versions: {
-          positions: nodePositions?.version ?? 0,
+          positions: resolvedNodePositionVersion,
           colors: nodeColors?.version ?? 0,
           sizes: nodeSizes?.version ?? 0,
           states: nodeStates?.version ?? 0,
@@ -1505,9 +1540,12 @@ export class GraphLayerWebGL extends GraphLayer {
   }
 
   getSharedSparseResources() {
+    const nodePositionsTexture = this._activeNodePositionTexture ?? this.nodeTextures.positions ?? null;
+    const nodePositionsMeta = this._activeNodePositionTextureMeta ?? this.textureMeta.nodePositions ?? null;
     return {
       textures: {
-        nodePositions: this.nodeTextures.positions ?? null,
+        nodePositions: nodePositionsTexture,
+        nodePositionsFrom: this.nodeTextures.positionsFrom ?? null,
         nodeSizes: this.nodeTextures.sizes ?? null,
         nodeOutlineWidths: this.nodeTextures.outlineWidths ?? null,
         nodeWidthSource: this.nodeTextures.edgeWidthSource ?? null,
@@ -1517,7 +1555,8 @@ export class GraphLayerWebGL extends GraphLayer {
         edgeEndpointSizes: this.edgeTextures.endpointSizes ?? null,
       },
       textureMeta: {
-        nodePositions: this.textureMeta.nodePositions ?? null,
+        nodePositions: nodePositionsMeta,
+        nodePositionsFrom: this.textureMeta.nodePositionsFrom ?? null,
         nodeSizes: this.textureMeta.nodeSizes ?? null,
         nodeOutlineWidths: this.textureMeta.nodeOutlineWidths ?? null,
         nodeEdgeWidths: this.textureMeta.nodeEdgeWidths ?? null,
@@ -1666,20 +1705,72 @@ export class GraphLayerWebGL extends GraphLayer {
         const nodeEndpointSizeSource = geometry.nodeEdgeSources?.endpointSize?.view
           ?? (usesDefaultNodeSize ? (hasNodeSizesForEdges ? nodes.sizes : null) : null);
         const mapEndpointMode = (value) => (value === 'source' ? 1 : (value === 'destination' ? 2 : 0));
+        const interpolationState = this.getPositionInterpolationState?.() ?? this.positionInterpolation ?? null;
+        const interpolationEnabled = interpolationState?.enabled === true;
+        const interpolationFactor = clamp01(interpolationState?.factor, 1);
+        const interpolationSourceView = interpolationState?.sourceView ?? null;
+        const interpolationSourceVersion = Number.isFinite(interpolationState?.sourceVersion)
+          ? Number(interpolationState.sourceVersion)
+          : 0;
+        const interpolationSourceCount = Number.isFinite(interpolationState?.sourceCount)
+          ? Math.max(0, Math.floor(Number(interpolationState.sourceCount)))
+          : Math.floor((interpolationSourceView?.length ?? 0) / 3);
+        const delegateNodePositionTexture = nodes.positionTexture ?? null;
+        const delegateNodeTextureMeta = delegateNodePositionTexture
+          ? {
+            version: nodes.positionTextureVersion ?? nodes.versions?.positions ?? 0,
+            count: nodes.positionTextureCount ?? Math.floor((nodes.positions?.length ?? 0) / 3),
+            buffer: delegateNodePositionTexture,
+            byteOffset: 0,
+            byteLength: 0,
+          }
+          : null;
+        const activeNodePositionTexture = delegateNodePositionTexture ?? this.nodeTextures.positions ?? null;
+        const activeNodePositionMeta = delegateNodeTextureMeta ?? this.textureMeta.nodePositions ?? null;
+        const interpolationSourceTexture = interpolationState?.sourceWebGLTexture ?? null;
+        const interpolationSourceTextureMeta = interpolationState?.sourceTextureMeta ?? null;
+        const activeNodePositionFromTexture = interpolationSourceTexture ?? this.nodeTextures.positionsFrom ?? null;
+        const resolvedNodePositionFromTexture = interpolationEnabled
+          ? (activeNodePositionFromTexture ?? activeNodePositionTexture)
+          : activeNodePositionTexture;
+        this._activeNodePositionTexture = activeNodePositionTexture;
+        this._activeNodePositionTextureMeta = activeNodePositionMeta;
 
         this.nodeCount = this.uploadIdBuffer('nodeIds', this.nodeIdBuffer, nodes.indices, nodes.versions?.indices, nodes.count);
         this.edgeCount = this.uploadIdBuffer('edgeIds', this.edgeIdBuffer, edges.indices, edges.versions?.indices, edges.count);
 
-        if (this.nodeCount > 0 && nodes.positions) {
-          const positionCount = Math.floor((nodes.positions.length ?? 0) / 3);
-          this.uploadFloatTexture(
-            'nodePositions',
-            this.nodeTextures.positions,
-            nodes.positions,
-            3,
-            positionCount,
-            nodes.versions?.positions ?? 0,
-          );
+        if (this.nodeCount > 0) {
+          if (!activeNodePositionTexture) {
+            throw new Error('WebGL2 indirect rendering requires a node position texture.');
+          }
+          if (!delegateNodePositionTexture && !nodes.positions) {
+            throw new Error('WebGL2 indirect rendering requires node position values.');
+          }
+          if (!delegateNodePositionTexture && nodes.positions) {
+            const positionCount = Math.floor((nodes.positions.length ?? 0) / 3);
+            this.uploadFloatTexture(
+              'nodePositions',
+              this.nodeTextures.positions,
+              nodes.positions,
+              3,
+              positionCount,
+              nodes.versions?.positions ?? 0,
+            );
+          }
+          if (interpolationEnabled && !interpolationSourceTexture && interpolationSourceView) {
+            this.uploadFloatTexture(
+              'nodePositionsFrom',
+              this.nodeTextures.positionsFrom,
+              interpolationSourceView,
+              3,
+              interpolationSourceCount,
+              interpolationSourceVersion,
+            );
+          } else if (interpolationSourceTextureMeta) {
+            this.textureMeta.nodePositionsFrom = interpolationSourceTextureMeta;
+          } else if (!interpolationEnabled) {
+            this.textureMeta.nodePositionsFrom = this.textureMeta.nodePositions;
+          }
           if (hasNodeSizesForNodes) {
             const sizeCount = nodes.sizes.length ?? 0;
             this.uploadFloatTexture(
@@ -1907,7 +1998,7 @@ export class GraphLayerWebGL extends GraphLayer {
           passViewportWidth = viewportWidth,
           passViewportHeight = viewportHeight,
         } = {}) => {
-          if (!this.edgeCount || !edges.endpoints || !nodes.positions) return;
+          if (!this.edgeCount || !edges.endpoints || !activeNodePositionTexture) return;
           const hasEdgeColors = Boolean(edgeVariant?.colorBuffer && edgeVariant?.colorSource !== 'node' && edges.colors);
           const hasNodeColorsForEdgeChannel = Boolean(nodeColorSource);
           const hasEdgeWidths = Boolean(edgeVariant?.widthBuffer && edgeVariant?.widthSource !== 'node' && edges.widths);
@@ -1937,6 +2028,9 @@ export class GraphLayerWebGL extends GraphLayer {
             setMat4(uniforms, 'u_viewProjection', cameraUniforms.viewProjection);
             set2f(uniforms, 'u_viewport', passViewportWidth, passViewportHeight);
             set1i(uniforms, 'u_nodePositions', 0);
+            set1i(uniforms, 'u_nodePositionsFrom', 12);
+            set1f(uniforms, 'u_nodeInterpolationFactor', interpolationFactor);
+            set1i(uniforms, 'u_nodeInterpolationEnabled', interpolationEnabled ? 1 : 0);
             set1i(uniforms, 'u_nodeEdgeColors', 5);
             set1i(uniforms, 'u_edgeColors', 2);
             set1i(uniforms, 'u_edgeEndpoints', 3);
@@ -2043,7 +2137,8 @@ export class GraphLayerWebGL extends GraphLayer {
             set1f(uniforms, 'u_nodeSizeBase', this.nodeSizeBase);
             set1f(uniforms, 'u_nodeSizeScale', this.nodeSizeScale);
             set1f(uniforms, 'u_edgeEndpointTrim', this.edgeEndpointTrim);
-            this.bindTexture(0, this.nodeTextures.positions);
+            this.bindTexture(0, activeNodePositionTexture);
+            this.bindTexture(12, resolvedNodePositionFromTexture ?? activeNodePositionTexture);
             this.bindTexture(5, this.nodeTextures.edgeColorSource);
             this.bindTexture(2, this.edgeTextures.colors);
             this.bindTexture(3, this.edgeTextures.endpoints);
@@ -2066,6 +2161,9 @@ export class GraphLayerWebGL extends GraphLayer {
           gl.useProgram(edgeEntry.program);
           setMat4(uniforms, 'u_viewProjection', cameraUniforms.viewProjection);
           set1i(uniforms, 'u_nodePositions', 0);
+          set1i(uniforms, 'u_nodePositionsFrom', 12);
+          set1f(uniforms, 'u_nodeInterpolationFactor', interpolationFactor);
+          set1i(uniforms, 'u_nodeInterpolationEnabled', interpolationEnabled ? 1 : 0);
           set1i(uniforms, 'u_nodeEdgeColors', 5);
           set1i(uniforms, 'u_edgeColors', 2);
           set1i(uniforms, 'u_edgeStates', 15);
@@ -2129,7 +2227,8 @@ export class GraphLayerWebGL extends GraphLayer {
           set2f(uniforms, 'u_defaultNodeOpacitySource', defaultNodeOpacity[0], defaultNodeOpacity[1]);
           set1f(uniforms, 'u_edgeOpacityBase', this.edgeOpacityBase);
           set1f(uniforms, 'u_edgeOpacityScale', this.edgeOpacityScale);
-          this.bindTexture(0, this.nodeTextures.positions);
+          this.bindTexture(0, activeNodePositionTexture);
+          this.bindTexture(12, resolvedNodePositionFromTexture ?? activeNodePositionTexture);
           this.bindTexture(5, this.nodeTextures.edgeColorSource);
           this.bindTexture(2, this.edgeTextures.colors);
           this.bindTexture(15, this.edgeTextures.states);
@@ -2141,13 +2240,16 @@ export class GraphLayerWebGL extends GraphLayer {
         };
 
         const drawNodes = () => {
-          if (!this.nodeCount || !nodes.positions) return;
+          if (!this.nodeCount || !activeNodePositionTexture) return;
           const nodeEntry = nodeProgramEntry;
           if (!nodeEntry?.program) return;
           const uniforms = nodeEntry.uniforms;
           gl.useProgram(nodeEntry.program);
           setMat4(uniforms, 'u_viewProjection', cameraUniforms.viewProjection);
           set1i(uniforms, 'u_nodePositions', 0);
+          set1i(uniforms, 'u_nodePositionsFrom', 15);
+          set1f(uniforms, 'u_nodeInterpolationFactor', interpolationFactor);
+          set1i(uniforms, 'u_nodeInterpolationEnabled', interpolationEnabled ? 1 : 0);
           set1i(uniforms, 'u_nodeColors', 1);
           set1i(uniforms, 'u_nodeSizes', 4);
           set1i(uniforms, 'u_nodeOutlineWidths', 12);
@@ -2224,7 +2326,8 @@ export class GraphLayerWebGL extends GraphLayer {
             nodeDefaultOutlineColor[2],
             nodeDefaultOutlineColor[3],
           );
-          this.bindTexture(0, this.nodeTextures.positions);
+          this.bindTexture(0, activeNodePositionTexture);
+          this.bindTexture(15, resolvedNodePositionFromTexture ?? activeNodePositionTexture);
           this.bindTexture(1, this.nodeTextures.colors);
           this.bindTexture(4, this.nodeTextures.sizes);
           this.bindTexture(12, this.nodeTextures.outlineWidths);
