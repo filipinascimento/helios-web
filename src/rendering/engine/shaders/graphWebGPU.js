@@ -168,7 +168,7 @@ struct Globals {
   nodeOutline: vec2<f32>, // base, scale (applied to node size attribute)
   edgeOpacity: vec2<f32>, // base, scale
   edgeWidth: vec2<f32>, // base, scale
-  _pad0: vec2<f32>,
+  _pad0: vec2<f32>, // x=semanticZoomExponent
   nodeColor: vec4<f32>,
   nodeRaw: vec2<f32>, // x=nodeSizeRaw y=nodeOutlineRaw
   _pad1: vec2<f32>,
@@ -285,6 +285,22 @@ fn selectNodeColor(sourceColor: vec4<f32>, targetColor: vec4<f32>, endpoints: u3
   return ColorPair(targetColor, targetColor);
 }
 
+fn semanticZoomScale() -> f32 {
+  let is2D = camera.position.w > 0.5;
+  if (!is2D) {
+    return 1.0;
+  }
+  let exponent = globals._pad0.x;
+  if (exponent <= 0.0 || exponent != exponent) {
+    return 1.0;
+  }
+  let zoom2D = max(abs(camera.view[0][0]), 1e-3);
+  if (exponent == 1.0) {
+    return 1.0 / zoom2D;
+  }
+  return 1.0 / pow(zoom2D, exponent);
+}
+
 struct EdgeVertexOutput {
   @builtin(position) position : vec4<f32>,
   @location(0) color : vec4<f32>,
@@ -386,8 +402,9 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
   let dirRaw = endPos - startPos;
   let dirLen = max(length(dirRaw), 1e-5);
   let dir = dirRaw / vec3<f32>(dirLen);
-  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.x, 0.0) * 0.5 * startSizeMul;
-  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.y, 0.0) * 0.5 * endSizeMul;
+  let semanticScale = semanticZoomScale();
+  let startRadius = max((globals.nodeSize.x + globals.nodeSize.y * endpointSize.x) * startSizeMul, 0.0) * 0.5 * semanticScale;
+  let endRadius = max((globals.nodeSize.x + globals.nodeSize.y * endpointSize.y) * endSizeMul, 0.0) * 0.5 * semanticScale;
   let trimStart = startRadius * globals.edgeTrim.x;
   let trimEnd = endRadius * globals.edgeTrim.x;
   startPos = startPos + dir * trimStart;
@@ -411,7 +428,7 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
   ${edgeOpacityNodeSnippet}
 
   let color = select(colorStart, colorEnd, (vertexIndex & 1u) == 1u);
-  let width = (globals.edgeWidth.x + globals.edgeWidth.y * select(endpointWidth.x, endpointWidth.y, (vertexIndex & 1u) == 1u)) * widthMul;
+  let width = (globals.edgeWidth.x + globals.edgeWidth.y * select(endpointWidth.x, endpointWidth.y, (vertexIndex & 1u) == 1u)) * widthMul * semanticScale;
   let attrOpacity = select(opacityPair.x, opacityPair.y, (vertexIndex & 1u) == 1u);
   let opacity = clamp(globals.edgeOpacity.x + globals.edgeOpacity.y * attrOpacity, 0.0, 1.0) * opacityMul;
   let rgb = clamp(color.rgb * rgbMul + rgbAdd, vec3<f32>(0.0), vec3<f32>(1.0));
@@ -522,8 +539,9 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   let dirRaw = endPos - startPos;
   let dirLen = max(length(dirRaw), 1e-5);
   let dir = dirRaw / vec3<f32>(dirLen);
-  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.x, 0.0) * 0.5 * startSizeMul;
-  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSize.y, 0.0) * 0.5 * endSizeMul;
+  let semanticScale = semanticZoomScale();
+  let startRadius = max((globals.nodeSize.x + globals.nodeSize.y * endpointSize.x) * startSizeMul, 0.0) * 0.5 * semanticScale;
+  let endRadius = max((globals.nodeSize.x + globals.nodeSize.y * endpointSize.y) * endSizeMul, 0.0) * 0.5 * semanticScale;
   let trimStart = startRadius * globals.edgeTrim.x;
   let trimEnd = endRadius * globals.edgeTrim.x;
   startPos = startPos + dir * trimStart;
@@ -543,7 +561,7 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   ${edgeOpacityNodeSnippet}
 
   let cornerT = clamp(input.corner.x, 0.0, 1.0);
-  let width = max((globals.edgeWidth.x + globals.edgeWidth.y * mix(endpointWidth.x, endpointWidth.y, cornerT)) * widthMul, 1e-3);
+  let width = max((globals.edgeWidth.x + globals.edgeWidth.y * mix(endpointWidth.x, endpointWidth.y, cornerT)) * widthMul, 1e-3) * semanticScale;
   let clipStart = camera.viewProjection * vec4<f32>(startPos, 1.0);
   let clipEnd = camera.viewProjection * vec4<f32>(endPos, 1.0);
   let ndcStart = clipStart.xy / clipStart.w;

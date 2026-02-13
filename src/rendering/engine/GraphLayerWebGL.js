@@ -143,6 +143,8 @@ const NODE_UNIFORM_NAMES = [
   'u_cameraUp',
   'u_cameraRight',
   'u_is2D',
+  'u_zoom2D',
+  'u_semanticZoomExponent',
   'u_hasNodeColors',
   'u_hasNodeSizes',
   'u_hasNodeOutlineWidths',
@@ -258,6 +260,8 @@ const EDGE_QUAD_UNIFORM_NAMES = [
   'u_nodeSizeBase',
   'u_nodeSizeScale',
   'u_edgeEndpointTrim',
+  'u_zoom2D',
+  'u_semanticZoomExponent',
   'u_hoverEdgeIndex',
   'u_hoverEdgeState',
   'u_nodeNoStateScale',
@@ -1579,6 +1583,7 @@ export class GraphLayerWebGL extends GraphLayer {
     const edgeWidthFactor = is2D ? (zoom2D / EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL) : 1.0;
     const globalEdgeWidthBase = this.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
     const globalEdgeWidthScale = this.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
+    const semanticZoomExponent = Number.isFinite(this.semanticZoomExponent) ? this.semanticZoomExponent : 0;
 
     let topologyVersions = { node: 0, edge: 0 };
     if (typeof network.getTopologyVersions === 'function') {
@@ -2137,6 +2142,8 @@ export class GraphLayerWebGL extends GraphLayer {
             set1f(uniforms, 'u_nodeSizeBase', this.nodeSizeBase);
             set1f(uniforms, 'u_nodeSizeScale', this.nodeSizeScale);
             set1f(uniforms, 'u_edgeEndpointTrim', this.edgeEndpointTrim);
+            set1f(uniforms, 'u_zoom2D', zoom2D);
+            set1f(uniforms, 'u_semanticZoomExponent', semanticZoomExponent);
             this.bindTexture(0, activeNodePositionTexture);
             this.bindTexture(12, resolvedNodePositionFromTexture ?? activeNodePositionTexture);
             this.bindTexture(5, this.nodeTextures.edgeColorSource);
@@ -2277,6 +2284,8 @@ export class GraphLayerWebGL extends GraphLayer {
             cameraUniforms.right?.[2] ?? 0,
           );
           set1i(uniforms, 'u_is2D', cameraUniforms?.mode === '2d' ? 1 : 0);
+          set1f(uniforms, 'u_zoom2D', zoom2D);
+          set1f(uniforms, 'u_semanticZoomExponent', semanticZoomExponent);
           set1i(uniforms, 'u_hasNodeColors', hasNodeColorsForNodes ? 1 : 0);
           set1i(uniforms, 'u_hasNodeSizes', hasNodeSizesForNodes ? 1 : 0);
           set1i(uniforms, 'u_hasNodeOutlineWidths', hasNodeOutlineWidthsForNodes ? 1 : 0);

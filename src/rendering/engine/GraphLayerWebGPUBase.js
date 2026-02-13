@@ -536,6 +536,7 @@ export class GraphLayerWebGPUBase extends GraphLayer {
     const edgeEndpointSizePair = (edgeCfg?.endpointSize?.mode === 'uniform' && Array.isArray(edgeCfg?.endpointSize?.value)) ? edgeCfg.endpointSize.value : [1, 1];
     const is2D = cameraUniforms?.mode === '2d';
     const zoom2D = is2D ? Math.max(1e-3, cameraUniforms?.view?.[0] ?? 1) : 1;
+    const semanticZoomExponent = Number.isFinite(this.semanticZoomExponent) ? this.semanticZoomExponent : 0;
     const edgeWidthFactor = is2D ? (zoom2D / EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL) : 1.0;
     const edgeWidthBase = this.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
     const edgeWidthScale = this.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
@@ -551,8 +552,8 @@ export class GraphLayerWebGPUBase extends GraphLayer {
     this.globalsArray[offset++] = this.edgeOpacityScale;
     this.globalsArray[offset++] = edgeWidthBase;
     this.globalsArray[offset++] = edgeWidthScale;
-    // _pad0
-    this.globalsArray[offset++] = 0;
+    // _pad0.x = semantic zoom exponent, _pad0.y reserved
+    this.globalsArray[offset++] = semanticZoomExponent;
     this.globalsArray[offset++] = 0;
 
     // nodeColor

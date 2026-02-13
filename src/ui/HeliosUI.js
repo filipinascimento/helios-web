@@ -745,6 +745,7 @@ export class HeliosUI {
           const advanced = document.createElement('div');
           advanced.appendChild(createRows([
             'nodeSizeBase',
+            'semanticZoomExponent',
             'nodeOpacityBase',
             'nodeOutlineWidthBase',
             'edgeWidthBase',

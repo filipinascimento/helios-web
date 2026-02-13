@@ -1005,6 +1005,8 @@ export class WebGLAttributeRenderer {
       'u_cameraUp',
       'u_cameraRight',
       'u_is2D',
+      'u_zoom2D',
+      'u_semanticZoomExponent',
       'u_viewport',
       'u_useNodeIdBuffer',
       'u_useNodeSize',
@@ -1075,6 +1077,8 @@ export class WebGLAttributeRenderer {
       'u_nodeSizeBase',
       'u_nodeSizeScale',
       'u_edgeEndpointTrim',
+      'u_zoom2D',
+      'u_semanticZoomExponent',
     ];
     this.uniforms.edgeQuad = resolveUniforms(this.programs.edgeQuad, edgeQuadUniformNames);
     this.uniforms.edgeQuadDepth = resolveUniforms(this.programs.edgeQuadDepth, edgeQuadUniformNames);
@@ -1595,6 +1599,11 @@ export class WebGLAttributeRenderer {
 
   setNodeUniforms(uniforms, cameraUniforms, options) {
     const { gl } = this;
+    const is2D = cameraUniforms?.mode === '2d';
+    const zoom2D = is2D ? Math.max(1e-3, cameraUniforms?.view?.[0] ?? 1) : 1;
+    const semanticZoomExponent = Number.isFinite(this.graphLayer?.semanticZoomExponent)
+      ? this.graphLayer.semanticZoomExponent
+      : 0;
     gl.uniformMatrix4fv(uniforms.u_viewProjection, false, cameraUniforms.viewProjection);
     gl.uniform1i(uniforms.u_nodePositions, 0);
     gl.uniform1i(uniforms.u_nodeSizes, 1);
@@ -1622,14 +1631,16 @@ export class WebGLAttributeRenderer {
       cameraUniforms.right?.[2] ?? 0,
     );
     gl.uniform1i(uniforms.u_is2D, cameraUniforms.mode === '2d' ? 1 : 0);
+    gl.uniform1f(uniforms.u_zoom2D, zoom2D);
+    gl.uniform1f(uniforms.u_semanticZoomExponent, semanticZoomExponent);
     gl.uniform2f(uniforms.u_viewport, this.size.width, this.size.height);
     gl.uniform1i(uniforms.u_useNodeIdBuffer, options.useNodeIdBuffer ? 1 : 0);
     gl.uniform1i(uniforms.u_useNodeSize, options.useNodeSize ? 1 : 0);
     gl.uniform1i(uniforms.u_useNodeOutline, options.useNodeOutline ? 1 : 0);
     gl.uniform1i(uniforms.u_useEncodedTexture, options.useEncodedTexture ? 1 : 0);
     gl.uniform1i(uniforms.u_trackedNodeValueMode, options.trackedNodeValueMode ?? TRACKED_VALUE_MODE.INDEX);
-    gl.uniform1f(uniforms.u_nodeSizeBase, this.graphLayer.nodeSizeBase);
-    gl.uniform1f(uniforms.u_nodeSizeScale, this.graphLayer.nodeSizeScale);
+    gl.uniform1f(uniforms.u_nodeSizeBase, this.graphLayer.nodeSizeBase ?? 0);
+    gl.uniform1f(uniforms.u_nodeSizeScale, this.graphLayer.nodeSizeScale ?? 1);
     gl.uniform1f(uniforms.u_nodeOutline, options.nodeOutlineValue ?? 0);
     gl.uniform1f(uniforms.u_outlineWidthBase, this.graphLayer.nodeOutlineWidthBase ?? 0);
     gl.uniform1f(uniforms.u_outlineWidthScale, this.graphLayer.nodeOutlineWidthScale ?? 0);
@@ -1653,6 +1664,9 @@ export class WebGLAttributeRenderer {
     const { gl } = this;
     const is2D = cameraUniforms?.mode === '2d';
     const zoom2D = is2D ? Math.max(1e-3, cameraUniforms?.view?.[0] ?? 1) : 1;
+    const semanticZoomExponent = Number.isFinite(this.graphLayer?.semanticZoomExponent)
+      ? this.graphLayer.semanticZoomExponent
+      : 0;
     const edgeWidthFactor = is2D ? (zoom2D / EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL) : 1.0;
     const globalEdgeWidthBase = (this.graphLayer.edgeWidthBase ?? 0)
       * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL
@@ -1700,6 +1714,8 @@ export class WebGLAttributeRenderer {
     gl.uniform1f(uniforms.u_nodeSizeBase, this.graphLayer.nodeSizeBase ?? 0);
     gl.uniform1f(uniforms.u_nodeSizeScale, this.graphLayer.nodeSizeScale ?? 1);
     gl.uniform1f(uniforms.u_edgeEndpointTrim, this.graphLayer.edgeEndpointTrim ?? 0.8);
+    gl.uniform1f(uniforms.u_zoom2D, zoom2D);
+    gl.uniform1f(uniforms.u_semanticZoomExponent, semanticZoomExponent);
   }
 
   render(frame, size, config) {
@@ -3292,6 +3308,9 @@ export class WebGPUAttributeRenderer {
     });
     const is2D = cameraUniforms.mode === '2d';
     const zoom2D = is2D ? Math.max(1e-3, cameraUniforms.view?.[0] ?? 1) : 1;
+    const semanticZoomExponent = Number.isFinite(this.graphLayer?.semanticZoomExponent)
+      ? this.graphLayer.semanticZoomExponent
+      : 0;
     const edgeWidthFactor = is2D ? (zoom2D / EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL) : 1.0;
     const edgeWidthBase = this.graphLayer.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
     const edgeWidthScale = this.graphLayer.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
@@ -3342,7 +3361,7 @@ export class WebGPUAttributeRenderer {
     globalsArray[14] = this.graphLayer.nodeOutlineColor?.[2] ?? 0;
     globalsArray[15] = this.graphLayer.nodeOutlineColor?.[3] ?? 1;
     globalsArray[16] = this.graphLayer.edgeEndpointTrim;
-    globalsArray[17] = 0;
+    globalsArray[17] = semanticZoomExponent;
     const edgeWidthPair = edgeCfg?.width?.value;
     globalsArray[18] = edgeWidthUniform ? Number(edgeWidthPair?.[0] ?? 1) : 1;
     globalsArray[19] = edgeWidthUniform ? Number(edgeWidthPair?.[1] ?? 1) : 1;
@@ -3809,6 +3828,9 @@ export class WebGPUAttributeRenderer {
 
     const is2D = cameraUniforms.mode === '2d';
     const zoom2D = is2D ? Math.max(1e-3, cameraUniforms.view?.[0] ?? 1) : 1;
+    const semanticZoomExponent = Number.isFinite(this.graphLayer?.semanticZoomExponent)
+      ? this.graphLayer.semanticZoomExponent
+      : 0;
     const edgeWidthFactor = is2D ? (zoom2D / EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL) : 1.0;
     const edgeWidthBase = this.graphLayer.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
     const edgeWidthScale = this.graphLayer.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
@@ -3859,7 +3881,7 @@ export class WebGPUAttributeRenderer {
     globalsArray[14] = this.graphLayer.nodeOutlineColor?.[2] ?? 0;
     globalsArray[15] = this.graphLayer.nodeOutlineColor?.[3] ?? 1;
     globalsArray[16] = this.graphLayer.edgeEndpointTrim;
-    globalsArray[17] = 0;
+    globalsArray[17] = semanticZoomExponent;
     const edgeWidthPair = edgeCfg?.width?.value;
     globalsArray[18] = edgeWidthUniform ? Number(edgeWidthPair?.[0] ?? 1) : 1;
     globalsArray[19] = edgeWidthUniform ? Number(edgeWidthPair?.[1] ?? 1) : 1;

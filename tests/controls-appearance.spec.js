@@ -110,5 +110,15 @@ test.describe('controls panel: appearance section', () => {
     await edgeDepthToggle.check();
     const edgeDepthValue = await page.evaluate(() => window.__helios.renderer?.graphLayer?.edgeDepthWrite ?? null);
     expect(edgeDepthValue).toBe(true);
+
+    const semanticZoomRow = controlsPanel
+      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Semantic Zoom Exponent"))')
+      .first();
+    await expect(semanticZoomRow).toBeVisible();
+    const semanticZoomInput = semanticZoomRow.locator('input[type="number"]').first();
+    await semanticZoomInput.fill('0.65');
+    await semanticZoomInput.dispatchEvent('change');
+    const semanticZoomExponent = await page.evaluate(() => window.__helios.renderer?.graphLayer?.semanticZoomExponent ?? null);
+    expect(semanticZoomExponent).toBeCloseTo(0.65, 3);
   });
 });

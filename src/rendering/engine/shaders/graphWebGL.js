@@ -239,6 +239,8 @@ uniform vec3 u_cameraPosition;
 uniform vec3 u_cameraUp;
 uniform vec3 u_cameraRight;
 uniform int u_is2D;
+uniform float u_zoom2D;
+uniform float u_semanticZoomExponent;
 uniform vec4 u_defaultNodeColor;
 uniform float u_defaultNodeSize;
 uniform float u_nodeOpacityBase;
@@ -319,11 +321,14 @@ void main() {
   v_discardFlag = discardFlag;
 
   vec3 position = fetchNodePos(a_nodeId);
+  float semanticScale = (u_is2D == 1 && u_semanticZoomExponent > 0.0)
+    ? (1.0 / pow(max(u_zoom2D, 1e-3), u_semanticZoomExponent))
+    : 1.0;
   float rawSize = fetchNodeSize(a_nodeId);
   float baseSize = (u_nodeSizeBase + u_nodeSizeScale * rawSize) * sizeMul;
   float rawOutline = fetchNodeOutlineWidth(a_nodeId);
   float outlineWidth = max(0.0, (u_outlineWidthBase + u_outlineWidthScale * rawOutline) * outlineMul);
-  float fullSize = baseSize + outlineWidth;
+  float fullSize = (baseSize + outlineWidth) * semanticScale;
   float radius = max(1.0, fullSize) * 0.5;
 
   vec3 right = u_cameraRight;
@@ -581,6 +586,8 @@ uniform float u_edgeOpacityScale;
 uniform float u_nodeSizeBase;
 uniform float u_nodeSizeScale;
 uniform float u_edgeEndpointTrim;
+uniform float u_zoom2D;
+uniform float u_semanticZoomExponent;
 
 out vec4 v_color;
 flat out uint v_discardFlag;
@@ -708,8 +715,11 @@ void main() {
       u_defaultNodeEndpointSizeSource
     )`
     : 'fetchEdgeEndpointSizePair(a_edgeId)'};
-  float startRadius = max(u_nodeSizeBase + u_nodeSizeScale * endpointSizePair.x, 0.0) * 0.5 * startSizeMul;
-  float endRadius = max(u_nodeSizeBase + u_nodeSizeScale * endpointSizePair.y, 0.0) * 0.5 * endSizeMul;
+  float semanticScale = (u_semanticZoomExponent > 0.0)
+    ? (1.0 / pow(max(u_zoom2D, 1e-3), u_semanticZoomExponent))
+    : 1.0;
+  float startRadius = max((u_nodeSizeBase + u_nodeSizeScale * endpointSizePair.x) * startSizeMul, 0.0) * 0.5 * semanticScale;
+  float endRadius = max((u_nodeSizeBase + u_nodeSizeScale * endpointSizePair.y) * endSizeMul, 0.0) * 0.5 * semanticScale;
   float trimStart = startRadius * u_edgeEndpointTrim;
   float trimEnd = endRadius * u_edgeEndpointTrim;
   vec3 startPos = sourcePos + dirN * trimStart;
@@ -727,7 +737,7 @@ void main() {
     )`
     : 'fetchEdgeWidthPair(a_edgeId)'};
   float rawWidth = mix(widthPair.x, widthPair.y, segmentMix);
-  float width = max((u_edgeWidthBase + u_edgeWidthScale * rawWidth) * widthMul, 0.0);
+  float width = max((u_edgeWidthBase + u_edgeWidthScale * rawWidth) * widthMul, 0.0) * semanticScale;
 
   vec4 clipStart = u_viewProjection * vec4(startPos, 1.0);
   vec4 clipEnd = u_viewProjection * vec4(endPos, 1.0);

@@ -4,7 +4,7 @@ import { Helios } from '../src/index.js';
 
 test('graph-layer accessors emit ui:binding-change events', () => {
   const helios = Object.create(Helios.prototype);
-  helios.renderer = { graphLayer: { nodeSizeScale: 1 } };
+  helios.renderer = { graphLayer: { nodeSizeScale: 1, semanticZoomExponent: 0.25 } };
   helios.scheduler = { requestRender: () => {} };
   helios._pendingGraphLayerProps = new Map();
   helios._pendingRendererProps = new Map();
@@ -21,6 +21,11 @@ test('graph-layer accessors emit ui:binding-change events', () => {
   assert.equal(events[0].type, 'ui:binding-change');
   assert.equal(events[0].detail.id, 'helios.nodeSizeScale');
   assert.equal(events[0].detail.value, 2);
+
+  helios.semanticZoomExponent(0.5);
+  assert.equal(events.length, 2);
+  assert.equal(events[1].detail.id, 'helios.semanticZoomExponent');
+  assert.equal(events[1].detail.value, 0.5);
 });
 
 test('renderer accessors emit ui:binding-change events', () => {
@@ -42,4 +47,3 @@ test('renderer accessors emit ui:binding-change events', () => {
   assert.equal(events[0].type, 'ui:binding-change');
   assert.equal(events[0].detail.id, 'helios.clearColor');
 });
-

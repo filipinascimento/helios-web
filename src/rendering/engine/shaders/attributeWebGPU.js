@@ -121,6 +121,22 @@ struct Globals {
   _pad1: vec2<f32>,
 };
 
+fn semanticZoomScale(camera : Camera, globals : Globals) -> f32 {
+  let is2D = camera.position.w > 0.5;
+  if (!is2D) {
+    return 1.0;
+  }
+  let exponent = globals._pad0;
+  if (exponent <= 0.0 || exponent != exponent) {
+    return 1.0;
+  }
+  let zoom2D = max(abs(camera.view[0][0]), 1e-3);
+  if (exponent == 1.0) {
+    return 1.0 / zoom2D;
+  }
+  return 1.0 / pow(zoom2D, exponent);
+}
+
 ${NODE_VERTEX_INPUT}
 
 struct VertexOutput {
@@ -139,9 +155,10 @@ struct VertexOutput {
 
 @vertex
 fn nodeVertex(input : VertexInput) -> VertexOutput {
+  let semanticScale = semanticZoomScale(camera, globals);
   let baseSize = globals.nodeSize.x + globals.nodeSize.y * ${NODE_SIZE_RAW_EXPR};
   let outlineWidth = max(0.0, globals.nodeOutline.x + globals.nodeOutline.y * ${NODE_OUTLINE_RAW_EXPR});
-  let fullSize = baseSize + outlineWidth;
+  let fullSize = (baseSize + outlineWidth) * semanticScale;
   let radius = max(1.0, fullSize) * 0.5;
   var right = camera.right.xyz;
   var up = camera.up.xyz;
@@ -274,6 +291,22 @@ struct Globals {
   _pad1: vec2<f32>,
 };
 
+fn semanticZoomScale(camera : Camera, globals : Globals) -> f32 {
+  let is2D = camera.position.w > 0.5;
+  if (!is2D) {
+    return 1.0;
+  }
+  let exponent = globals._pad0;
+  if (exponent <= 0.0 || exponent != exponent) {
+    return 1.0;
+  }
+  let zoom2D = max(abs(camera.view[0][0]), 1e-3);
+  if (exponent == 1.0) {
+    return 1.0 / zoom2D;
+  }
+  return 1.0 / pow(zoom2D, exponent);
+}
+
 ${EDGE_VERTEX_INPUT}
 
 ${EDGE_QUAD_VERTEX_INPUT}
@@ -301,8 +334,9 @@ fn edgeVertex(input : EdgeVertexInput, @builtin(vertex_index) vertexIndex : u32)
   let dirLen = max(length(dir), 1e-5);
   let dirN = dir / vec3<f32>(dirLen);
   let endpointSizePair = ${EDGE_ENDPOINT_SIZE_PAIR_EXPR};
-  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSizePair.x, 0.0) * 0.5;
-  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSizePair.y, 0.0) * 0.5;
+  let semanticScale = semanticZoomScale(camera, globals);
+  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSizePair.x, 0.0) * 0.5 * semanticScale;
+  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSizePair.y, 0.0) * 0.5 * semanticScale;
   let trimStart = startRadius * globals.edgeTrim;
   let trimEnd = endRadius * globals.edgeTrim;
   let startPos = input.start + dirN * trimStart;
@@ -321,15 +355,16 @@ fn edgeQuadVertex(input : EdgeQuadVertexInput) -> EdgeVertexOutput {
   let dirLenWorld = max(length(dir), 1e-5);
   let dirN = dir / vec3<f32>(dirLenWorld);
   let endpointSizePair = ${EDGE_ENDPOINT_SIZE_PAIR_EXPR};
-  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSizePair.x, 0.0) * 0.5;
-  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSizePair.y, 0.0) * 0.5;
+  let semanticScale = semanticZoomScale(camera, globals);
+  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSizePair.x, 0.0) * 0.5 * semanticScale;
+  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointSizePair.y, 0.0) * 0.5 * semanticScale;
   let trimStart = startRadius * globals.edgeTrim;
   let trimEnd = endRadius * globals.edgeTrim;
   let startPos = input.start + dirN * trimStart;
   let endPos = input.end - dirN * trimEnd;
   let segmentMix = clamp(input.corner.x, 0.0, 1.0);
   let widthPair = ${EDGE_WIDTH_PAIR_EXPR};
-  let width = max(globals.edgeWidth.x + globals.edgeWidth.y * mix(widthPair.x, widthPair.y, segmentMix), 0.0);
+  let width = max(globals.edgeWidth.x + globals.edgeWidth.y * mix(widthPair.x, widthPair.y, segmentMix), 0.0) * semanticScale;
   let clipStart = camera.viewProjection * vec4<f32>(startPos, 1.0);
   let clipEnd = camera.viewProjection * vec4<f32>(endPos, 1.0);
   let ndcStart = clipStart.xy / clipStart.w;
@@ -462,6 +497,22 @@ fn selectNodePair(sourceValue: f32, targetValue: f32, endpoints: u32) -> vec2<f3
   }
   return vec2<f32>(targetValue, targetValue);
 }
+
+fn semanticZoomScale(camera : Camera, globals : Globals) -> f32 {
+  let is2D = camera.position.w > 0.5;
+  if (!is2D) {
+    return 1.0;
+  }
+  let exponent = globals._pad0;
+  if (exponent <= 0.0 || exponent != exponent) {
+    return 1.0;
+  }
+  let zoom2D = max(abs(camera.view[0][0]), 1e-3);
+  if (exponent == 1.0) {
+    return 1.0 / zoom2D;
+  }
+  return 1.0 / pow(zoom2D, exponent);
+}
 `;
 
   const nodeWGSL = /* wgsl */ `
@@ -503,8 +554,9 @@ fn nodeVertex(input : NodeVertexInput) -> NodeVertexOutput {
   );
   let rawSize = ${NODE_SIZE_EXPR};
   let rawOutline = ${NODE_OUTLINE_EXPR};
+  let semanticScale = semanticZoomScale(camera, globals);
   let outlineWidth = max(0.0, globals.nodeOutline.x + globals.nodeOutline.y * rawOutline);
-  let fullSize = max(1.0, globals.nodeSize.x + globals.nodeSize.y * rawSize + outlineWidth);
+  let fullSize = max(1.0, globals.nodeSize.x + globals.nodeSize.y * rawSize + outlineWidth) * semanticScale;
   let radius = fullSize * 0.5;
 
   var right = camera.right.xyz;
@@ -687,8 +739,9 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32, @builtin(instance_index)
   let dirLen = max(length(dirRaw), 1e-5);
   let dir = dirRaw / vec3<f32>(dirLen);
   let endpointPair = edgeEndpointSizePair(edgeId, sourceId, targetId);
-  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointPair.x, 0.0) * 0.5;
-  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointPair.y, 0.0) * 0.5;
+  let semanticScale = semanticZoomScale(camera, globals);
+  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointPair.x, 0.0) * 0.5 * semanticScale;
+  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointPair.y, 0.0) * 0.5 * semanticScale;
   let trimStart = startRadius * globals.edgeTrim;
   let trimEnd = endRadius * globals.edgeTrim;
   let startPos = sourcePos + dir * trimStart;
@@ -712,15 +765,16 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeLineVertexOutput {
   let dirLenWorld = max(length(dirRaw), 1e-5);
   let dir = dirRaw / vec3<f32>(dirLenWorld);
   let endpointPair = edgeEndpointSizePair(edgeId, sourceId, targetId);
-  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointPair.x, 0.0) * 0.5;
-  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointPair.y, 0.0) * 0.5;
+  let semanticScale = semanticZoomScale(camera, globals);
+  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointPair.x, 0.0) * 0.5 * semanticScale;
+  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointPair.y, 0.0) * 0.5 * semanticScale;
   let trimStart = startRadius * globals.edgeTrim;
   let trimEnd = endRadius * globals.edgeTrim;
   let startPos = sourcePos + dir * trimStart;
   let endPos = targetPos - dir * trimEnd;
   let segmentMix = clamp(input.corner.x, 0.0, 1.0);
   let widthPair = edgeWidthPair(edgeId, sourceId, targetId);
-  let width = max(globals.edgeWidth.x + globals.edgeWidth.y * mix(widthPair.x, widthPair.y, segmentMix), 0.0);
+  let width = max(globals.edgeWidth.x + globals.edgeWidth.y * mix(widthPair.x, widthPair.y, segmentMix), 0.0) * semanticScale;
   let clipStart = camera.viewProjection * vec4<f32>(startPos, 1.0);
   let clipEnd = camera.viewProjection * vec4<f32>(endPos, 1.0);
   let ndcStart = clipStart.xy / clipStart.w;

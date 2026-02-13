@@ -57,6 +57,8 @@ uniform vec3 u_cameraPosition;
 uniform vec3 u_cameraUp;
 uniform vec3 u_cameraRight;
 uniform bool u_is2D;
+uniform float u_zoom2D;
+uniform float u_semanticZoomExponent;
 uniform float u_nodeSizeBase;
 uniform float u_nodeSizeScale;
 uniform float u_outlineWidthBase;
@@ -73,7 +75,10 @@ ${NODE_VERTEX_ENCODED_VARYING}
 void main() {
   float baseSize = u_nodeSizeBase + u_nodeSizeScale * ${NODE_VERTEX_SIZE_EXPR};
   float outlineWidth = max(0.0, u_outlineWidthBase + u_outlineWidthScale * ${NODE_VERTEX_OUTLINE_EXPR});
-  float fullSize = baseSize + outlineWidth;
+  float semanticScale = (u_is2D && u_semanticZoomExponent > 0.0)
+    ? (1.0 / pow(max(u_zoom2D, 1e-3), u_semanticZoomExponent))
+    : 1.0;
+  float fullSize = (baseSize + outlineWidth) * semanticScale;
   float radius = max(1.0, fullSize) * 0.5;
   vec3 right = u_cameraRight;
   vec3 up = u_cameraUp;
@@ -112,6 +117,8 @@ uniform float u_edgeWidthScale;
 uniform float u_nodeSizeBase;
 uniform float u_nodeSizeScale;
 uniform float u_edgeEndpointTrim;
+uniform float u_zoom2D;
+uniform float u_semanticZoomExponent;
 
 flat out uvec4 v_encoded;
 
@@ -119,9 +126,12 @@ void main() {
   vec3 dir = a_end - a_start;
   float dirLen = max(length(dir), 1e-5);
   vec3 dirN = dir / dirLen;
+  float semanticScale = (u_semanticZoomExponent > 0.0)
+    ? (1.0 / pow(max(u_zoom2D, 1e-3), u_semanticZoomExponent))
+    : 1.0;
   vec2 endpointSizePair = ${EDGE_VERTEX_ENDPOINT_EXPR};
-  float startRadius = max(u_nodeSizeBase + u_nodeSizeScale * endpointSizePair.x, 0.0) * 0.5;
-  float endRadius = max(u_nodeSizeBase + u_nodeSizeScale * endpointSizePair.y, 0.0) * 0.5;
+  float startRadius = max(u_nodeSizeBase + u_nodeSizeScale * endpointSizePair.x, 0.0) * 0.5 * semanticScale;
+  float endRadius = max(u_nodeSizeBase + u_nodeSizeScale * endpointSizePair.y, 0.0) * 0.5 * semanticScale;
   float trimStart = startRadius * u_edgeEndpointTrim;
   float trimEnd = endRadius * u_edgeEndpointTrim;
   vec3 startPos = a_start + dirN * trimStart;
@@ -145,6 +155,8 @@ uniform float u_edgeWidthScale;
 uniform float u_nodeSizeBase;
 uniform float u_nodeSizeScale;
 uniform float u_edgeEndpointTrim;
+uniform float u_zoom2D;
+uniform float u_semanticZoomExponent;
 
 flat out uvec4 v_encoded;
 
@@ -152,9 +164,12 @@ void main() {
   vec3 dir = a_end - a_start;
   float dirLenWorld = max(length(dir), 1e-5);
   vec3 dirN = dir / dirLenWorld;
+  float semanticScale = (u_semanticZoomExponent > 0.0)
+    ? (1.0 / pow(max(u_zoom2D, 1e-3), u_semanticZoomExponent))
+    : 1.0;
   vec2 endpointSizePair = ${EDGE_QUAD_ENDPOINT_EXPR};
-  float startRadius = max(u_nodeSizeBase + u_nodeSizeScale * endpointSizePair.x, 0.0) * 0.5;
-  float endRadius = max(u_nodeSizeBase + u_nodeSizeScale * endpointSizePair.y, 0.0) * 0.5;
+  float startRadius = max(u_nodeSizeBase + u_nodeSizeScale * endpointSizePair.x, 0.0) * 0.5 * semanticScale;
+  float endRadius = max(u_nodeSizeBase + u_nodeSizeScale * endpointSizePair.y, 0.0) * 0.5 * semanticScale;
   float trimStart = startRadius * u_edgeEndpointTrim;
   float trimEnd = endRadius * u_edgeEndpointTrim;
   vec3 startPos = a_start + dirN * trimStart;
@@ -162,7 +177,7 @@ void main() {
 
   float segmentMix = clamp(a_corner.x, 0.0, 1.0);
   vec2 widthPair = ${EDGE_QUAD_WIDTH_EXPR};
-  float width = max(u_edgeWidthBase + u_edgeWidthScale * mix(widthPair.x, widthPair.y, segmentMix), 0.0);
+  float width = max(u_edgeWidthBase + u_edgeWidthScale * mix(widthPair.x, widthPair.y, segmentMix), 0.0) * semanticScale;
   vec4 clipStart = u_viewProjection * vec4(startPos, 1.0);
   vec4 clipEnd = u_viewProjection * vec4(endPos, 1.0);
   vec2 ndcStart = clipStart.xy / clipStart.w;

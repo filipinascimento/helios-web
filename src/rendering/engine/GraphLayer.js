@@ -33,6 +33,9 @@ export class GraphLayer extends Layer {
     this.nodeOpacityScale = 1;
     this.nodeSizeBase = 0;
     this.nodeSizeScale = 1;
+    this.semanticZoomExponent = Number.isFinite(options.semanticZoomExponent)
+      ? options.semanticZoomExponent
+      : 0;
     this.nodeOutlineWidthBase = 0;
     this.nodeOutlineWidthScale = 0;
     this.nodeOutlineColor = options.nodeOutlineColor ?? [0, 0, 0, 1];

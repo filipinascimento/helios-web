@@ -459,6 +459,15 @@ export class Helios extends EventTarget {
       recommendedRange: { min: 0.0, max: 10.0 },
       step: 0.01,
     },
+    semanticZoomExponent: {
+      type: 'number',
+      label: 'Semantic Zoom Exponent',
+      description: 'Compensates node and edge sizes as camera zoom changes (0 = geometric zoom only)',
+      defaultValue: 0,
+      domain: { min: 0, max: 2 },
+      recommendedRange: { min: 0.0, max: 1.0 },
+      step: 0.01,
+    },
     nodeOutlineWidthScale: {
       type: 'number',
       label: 'Outline Width Scale',
@@ -2089,6 +2098,13 @@ export class Helios extends EventTarget {
   nodeSizeBase(value) {
     if (arguments.length === 0) return this._getGraphLayerProp('nodeSizeBase');
     return this._setGraphLayerProp('nodeSizeBase', Number(value));
+  }
+
+  semanticZoomExponent(value) {
+    if (arguments.length === 0) return this._getGraphLayerProp('semanticZoomExponent');
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return this;
+    return this._setGraphLayerProp('semanticZoomExponent', numeric);
   }
 
   nodeOutlineWidthScale(value) {
