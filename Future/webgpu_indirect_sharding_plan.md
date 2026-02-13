@@ -28,7 +28,7 @@ mode) can fail even when total GPU memory is still available.
 
 ## Non-goals (first cut)
 
-- Rewriting dense backend sharding in the same milestone.
+- Rewriting non-sharding renderer architecture in the same milestone.
 - Automatic multi-adapter/multi-device support.
 - Perfectly minimizing draw-call count in v1.
 

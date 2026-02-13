@@ -1,61 +1,47 @@
 # WebGPU performance improvements (Safari-focused)
 
-This note tracks actionable ideas from profiling a very large graph (e.g. ~2M nodes) where Safari/WebGL2 outperforms Safari/WebGPU under comparable render settings (including weighted transparency).
+This note tracks actionable ideas from profiling a very large graph (for example ~2M nodes) where Safari/WebGL2 can outperform Safari/WebGPU under comparable render settings (including weighted transparency).
 
 ## Current observations (from this repo’s code paths)
 
-- Dense buffers are now snapshotted via `updateAndGetDenseBufferViews()` and consumed as typed views in one call (`src/rendering/engine/GraphLayer.js`), reducing JS↔WASM crossings and per-buffer name lookups.
-- WebGPU can now skip `nodeIndices` / `edgeIndices` indirection when dense packing is identity/contiguous (via `getDenseNodePackingInfo()` / `getDenseEdgePackingInfo()`), avoiding extra storage reads in the vertex stage.
-- WebGL2 path uses classic instanced vertex attributes (VAO + divisors) and does not do a storage-buffer “vertex pulling + indirection” pattern (`src/rendering/engine/GraphLayerWebGL.js`).
-- WebGPU weighted transparency path does multipass rendering every frame and currently recreates a weighted resolve bind group (and texture views) every frame (`src/rendering/engine/GraphLayerWebGPU.js:961`).
+- WebGL2 uses a mature instanced-attribute path that often maps well to Apple GPU drivers.
+- WebGPU weighted transparency remains multipass and can introduce meaningful pass/setup overhead.
+- Large sparse/indexed resources can still hit per-binding/per-buffer limits before total memory is exhausted.
+- Runtime mapper edits can trigger pipeline/bind-group churn if not tightly cached.
 
 ## Why WebGL2 can beat WebGPU on Safari (likely reasons)
 
-- WebGPU vertex stage is doing storage-buffer reads plus an extra indirection (`indices[instance] -> id -> fetch positions/colors/...`), which can be slower than the WebGL instanced-attribute path on Apple GPUs.
-- Weighted transparency adds extra render passes and format/attachment overhead; Safari’s WebGPU pipeline/pass overhead can be higher than the mature WebGL driver stack.
-- CPU-side per-frame overhead from `updateDenseGraphBuffers()` can be non-trivial because `helios-network` alias descriptors still call into WASM to resolve pointers/versions.
+- WebGPU vertex pulling through storage buffers can be slower than the WebGL instanced-attribute path on some Apple GPU/driver combinations.
+- Weighted transparency adds extra render passes and attachment management.
+- CPU overhead from per-frame resource checks/rebinds can become visible at very large scales.
 
-## Potential improvements in `helios-web-next` (no `helios-network` changes required)
+## Potential improvements in `helios-web-next`
 
-Ordered roughly by expected FPS / interaction gains for large, mostly-static graphs on Safari.
+Ordered roughly by expected impact for large, mostly-static graphs on Safari.
 
-### 1) LOD / interaction heuristics during camera motion (highest perceived win)
+### 1) LOD / interaction heuristics during camera motion
 
 During active camera drag/zoom:
-- temporarily reduce edge cost (lower internal resolution for weighted pass, drop weighted mode, or draw fewer edges)
+- temporarily reduce edge cost (internal resolution, edge mode, or sampled edge subset)
 - restore full quality after a short idle delay
 
-### 2) WebGPU vertex-buffer instancing path (match WebGL2’s access pattern)
+### 2) WebGPU instancing path prototype
 
-Longer-term: store positions/colors/sizes/states as vertex buffers with `stepMode: 'instance'` rather than storage buffers.
+Longer-term: benchmark a path using vertex-buffer instancing (`stepMode: 'instance'`) for frequently-read channels and compare against current storage-buffer pulling.
 
-This makes WebGPU’s fetch path much closer to the WebGL2 instanced-attribute path that Safari performs well on.
+### 3) Reduce weighted-pass churn
 
-### 3) Remove per-frame weighted bind group/view churn on WebGPU
+- Cache weighted texture views across frames.
+- Recreate resolve bind groups only when resources actually change (resize/reallocation).
 
-In `GraphLayerWebGPU`:
-- Cache `GPUTextureView`s for the weighted textures and recreate only on resize/reallocation.
-- Only recreate the weighted resolve bind group when its resources change (resize, texture recreated), not every frame.
+### 4) Tighten per-frame resource gating
 
-### 4) Don’t call `updateDenseGraphBuffers()` every frame unless needed (CPU-side win)
+- Gate uploads by stable signatures (topology + attribute versions + resource shape).
+- Keep memory-identity safety checks for view invalidation scenarios.
 
-Idea: gate `GraphLayer.updateDenseGraphBuffers(network)` behind a cached “dense signature” (topology versions + visuals versions) and only call updates when something changes.
+## Suggested measurement checklist
 
-Considerations:
-- Pure version gating is risky if WASM memory grows and invalidates typed-array views without bumping attribute versions.
-- A safer gate can include a “heap identity” check when available (e.g. `network.module.HEAPU8.buffer` pointer identity, if exposed), or a network-provided “memory generation” counter.
-
-## Recommendations for `helios-network` (things to consider upstream)
-
-These were addressed in `helios-network` and are no longer tracked here (fast pointer/version access, cached valid-range queries, aliased descriptor early-outs, and identity/contiguous packing info).
-
-## Suggested measurement checklist (so changes are measurable)
-
-- Split CPU vs GPU time: toggle nodes-only, edges-only, and weighted off/on.
-- Compare WebGPU shader variants:
-  - with vs without `nodeIndices` / `edgeIndices`
-  - storage buffers vs instanced vertex buffers (if prototyped)
-- Measure `updateDenseGraphBuffers` time with:
-  - current per-frame calls
-  - gated calls (version + safety key)
-  - upstream reduced string/WASM lookup overhead (if adopted in `helios-network`)
+- Split CPU vs GPU time: nodes-only, edges-only, weighted off/on.
+- Compare WebGPU variants with different data access patterns.
+- Track bind-group/pipeline cache hit rates during mapper edits.
+- Measure upload volume per frame and per interaction state.

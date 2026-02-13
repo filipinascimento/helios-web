@@ -391,7 +391,7 @@ This is a suggested ordering that keeps WebGL2 feasibility in mind (2D-first) wh
   - R. let's aim for full 2M first. We can always add “active subset” optimizations later.
 - How should positions be shared between layout and renderer?
   - unify on WebGPU instanced vertex buffers (recommended long-term)
-  - or keep renderer’s current “dense attribute buffers” and add an override just for positions
+  - or keep renderer’s current sparse attribute buffers and add an override just for positions
 - For WebGPU repulsion accumulation: do we commit to fixed-point atomics, or use a render-pass accumulation trick to avoid atomics?
 
 ## Summary: recommended approach so far (2D + 3D)
@@ -466,6 +466,6 @@ These items directly support GPU layout (especially 3D/WebGPU) and reduce JS ove
 
 ### Zero-copy + versions
 
-8) **Versioned dense views for new buffers**
+8) **Versioned sparse views for new buffers**
    - Expose stable pointers + versions for: Morton keys, sorted indices, CSR arrays, and tree arrays.
    - Make it cheap for JS to detect “needs re-upload to GPU”.

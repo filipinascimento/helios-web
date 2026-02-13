@@ -103,8 +103,7 @@ function expandAttributeData({ view, count, fromDimension, toDimension }) {
 
 /**
  * Ensures required visual attributes exist on the Helios network, seeds defaults,
- * and provides helpers to apply mappers into sparse buffers while marking dense
- * buffers dirty for rebuild.
+ * and provides helpers to apply mappers into sparse buffers.
  */
 export class VisualAttributes {
   /**
@@ -113,16 +112,12 @@ export class VisualAttributes {
   constructor(network, debug) {
     this.network = network;
     this.debug = debug;
-    this.positionDelegate = null;
     this.maxInitializedNodeId = -1;
     this.ensureAttributes();
-    this.registerDenseBuffers();
     this.seedMissingEdgeOpacity();
   }
 
   get nodePositions() {
-    const delegateView = this.positionDelegate?.getPositionView?.() ?? null;
-    if (delegateView) return delegateView;
     return this.getNodeAttributeView(NODE_POSITION_ATTRIBUTE);
   }
 
@@ -160,14 +155,6 @@ export class VisualAttributes {
 
   get edgeStates() {
     return this.getEdgeAttributeView(EDGE_STATE_ATTRIBUTE);
-  }
-
-  setPositionDelegate(delegate) {
-    this.positionDelegate = delegate ?? null;
-  }
-
-  clearPositionDelegate() {
-    this.positionDelegate = null;
   }
 
   getNodeAttributeView(name) {
@@ -580,48 +567,6 @@ export class VisualAttributes {
     this.ensureNodeToEdgeAttributeTyped(NODE_STATE_ATTRIBUTE, EDGE_ENDPOINTS_STATE_ATTRIBUTE, 1, AttributeType.UnsignedInteger);
   }
 
-  registerDenseBuffers() {
-    if (!this.network) return;
-    const addDense = (method, name) => {
-      if (typeof this.network[method] !== 'function') return;
-      if (method === 'addDenseNodeAttributeBuffer' && typeof this.network.hasNodeAttribute === 'function') {
-        if (!this.network.hasNodeAttribute(name)) return;
-      }
-      if (method === 'addDenseEdgeAttributeBuffer' && typeof this.network.hasEdgeAttribute === 'function') {
-        if (!this.network.hasEdgeAttribute(name, true)) return;
-      }
-      try {
-        this.network[method](name);
-      } catch (error) {
-        // Ignore duplicate registration or unsupported dense buffers.
-      }
-    };
-    addDense('addDenseNodeAttributeBuffer', NODE_POSITION_ATTRIBUTE);
-    addDense('addDenseNodeAttributeBuffer', NODE_COLOR_ATTRIBUTE);
-    addDense('addDenseNodeAttributeBuffer', NODE_SIZE_ATTRIBUTE);
-    addDense('addDenseNodeAttributeBuffer', NODE_STATE_ATTRIBUTE);
-    addDense('addDenseNodeAttributeBuffer', NODE_OUTLINE_WIDTH_ATTRIBUTE);
-    addDense('addDenseNodeAttributeBuffer', NODE_OUTLINE_COLOR_ATTRIBUTE);
-    addDense('addDenseEdgeAttributeBuffer', EDGE_COLOR_ATTRIBUTE);
-    addDense('addDenseEdgeAttributeBuffer', EDGE_OPACITY_ATTRIBUTE);
-    addDense('addDenseEdgeAttributeBuffer', EDGE_WIDTH_ATTRIBUTE);
-    addDense('addDenseEdgeAttributeBuffer', EDGE_STATE_ATTRIBUTE);
-    addDense('addDenseEdgeAttributeBuffer', EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
-    addDense('addDenseEdgeAttributeBuffer', EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
-    addDense('addDenseEdgeAttributeBuffer', EDGE_ENDPOINTS_STATE_ATTRIBUTE);
-  }
-
-  registerDense(scope, name) {
-    const method =
-      scope === 'node' ? this.network?.addDenseNodeAttributeBuffer : this.network?.addDenseEdgeAttributeBuffer;
-    if (typeof method !== 'function') return;
-    try {
-      method.call(this.network, name);
-    } catch (_) {
-      // ignore duplicates or unsupported dense buffers
-    }
-  }
-
   bumpNodeAttributes(...names) {
     const targets =
       names && names.length
@@ -669,59 +614,7 @@ export class VisualAttributes {
     }
   }
 
-  /**
-   * Forces dense buffers to be rebuilt if supported by the network. Useful to
-   * warm up large graphs before the first render.
-   */
-  updateDenseBuffers() {
-    const updates = [
-      () => this.network?.updateDenseNodeIndexBuffer?.(),
-      () => this.network?.updateDenseEdgeIndexBuffer?.(),
-    ];
-    const addNode = (name) => {
-      if (typeof this.network?.updateDenseNodeAttributeBuffer !== 'function') return;
-      if (typeof this.network?.hasNodeAttribute === 'function' && !this.network.hasNodeAttribute(name)) return;
-      updates.push(() => this.network.updateDenseNodeAttributeBuffer(name));
-    };
-    const addEdge = (name) => {
-      if (typeof this.network?.updateDenseEdgeAttributeBuffer !== 'function') return;
-      if (typeof this.network?.hasEdgeAttribute === 'function' && !this.network.hasEdgeAttribute(name, true)) return;
-      updates.push(() => this.network.updateDenseEdgeAttributeBuffer(name));
-    };
-    addNode(NODE_POSITION_ATTRIBUTE);
-    addNode(NODE_COLOR_ATTRIBUTE);
-    addNode(NODE_SIZE_ATTRIBUTE);
-    addNode(NODE_STATE_ATTRIBUTE);
-    addNode(NODE_OUTLINE_WIDTH_ATTRIBUTE);
-    addNode(NODE_OUTLINE_COLOR_ATTRIBUTE);
-    addEdge(EDGE_COLOR_ATTRIBUTE);
-    addEdge(EDGE_OPACITY_ATTRIBUTE);
-    addEdge(EDGE_WIDTH_ATTRIBUTE);
-    addEdge(EDGE_STATE_ATTRIBUTE);
-    addEdge(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
-    addEdge(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
-    addEdge(EDGE_ENDPOINTS_STATE_ATTRIBUTE);
-
-    let touched = false;
-    for (const fn of updates) {
-      if (typeof fn !== 'function') continue;
-      try {
-        fn();
-        touched = true;
-      } catch (error) {
-        this.debug?.log('visuals', 'Failed to update dense buffer during prewarm', { error });
-      }
-    }
-    return touched;
-  }
-
-  markAllDenseDirty() {
-    this.bumpNodeAttributes();
-    this.bumpEdgeAttributes();
-  }
-
   markPositionsDirty() {
-    this.positionDelegate?.markPositionsDirty?.();
     this.bumpNodeAttributes(NODE_POSITION_ATTRIBUTE, NODE_SIZE_ATTRIBUTE);
     this.bumpEdgeAttributes(EDGE_ENDPOINTS_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
   }
@@ -940,7 +833,6 @@ export class VisualAttributes {
       // If no node capacity is allocated yet, buffer pointers may be unavailable; defer validation.
       if (this.network.nodeCapacity > 0) throw error;
     }
-    this.registerDense('node', name);
   }
 
   ensureEdgeAttribute(name, type, dimension) {
@@ -1000,7 +892,6 @@ export class VisualAttributes {
       // If no edge capacity is allocated yet, buffer pointers may be unavailable; defer validation.
       if (this.network.edgeCapacity > 0) throw error;
     }
-    this.registerDense('edge', name);
   }
 
   ensureNodeToEdgeAttribute(sourceName, edgeName, sourceDimension) {
@@ -1056,8 +947,6 @@ export class VisualAttributes {
       // If no edge capacity is allocated yet, buffer pointers may be unavailable; defer validation.
       if (this.network.edgeCapacity > 0) throw error;
     }
-    this.registerDense('node', sourceName);
-    this.registerDense('edge', edgeName);
   }
 
   ensureNodeToEdgeAttributeTyped(sourceName, edgeName, sourceDimension, type) {
@@ -1084,8 +973,6 @@ export class VisualAttributes {
     } catch (error) {
       if (this.network.edgeCapacity > 0) throw error;
     }
-    this.registerDense('node', sourceName);
-    this.registerDense('edge', edgeName);
   }
 
   collectAttributeNames(mapper, mode) {

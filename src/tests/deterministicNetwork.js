@@ -107,8 +107,12 @@ export async function createDeterministicHelios(container, renderer = 'webgl') {
     '_helios_visuals_edge_width',
     '_helios_visuals_edge_opacity',
   );
-
-  helios.visuals.markAllDenseDirty();
+  helios.visuals.bumpNodeAttributes(
+    '_helios_visuals_position',
+    '_helios_visuals_color',
+    '_helios_visuals_size',
+  );
+  helios.visuals.markPositionsDirty();
   helios.scheduler.requestGeometry();
 
   return { helios, colors };

@@ -6,7 +6,7 @@ The goal of Helios Web Next is not “the same code, updated” — it’s a cle
 
 - Wraps the **`helios-network` WASM core** (graph + typed attributes + serialization)
 - Uses a **layered rendering stack** that targets **WebGPU first** and falls back to **WebGL2**
-- Makes visuals and interactivity more scalable via **mappers**, **dense buffers**, and **bitmask states**
+- Makes visuals and interactivity more scalable via **mappers**, **indirect sparse/indexed pipelines**, and **bitmask states**
 - Has a strong emphasis on **repeatable correctness** via Playwright E2E tests
 
 ## Biggest architectural shifts
@@ -47,7 +47,7 @@ Helios Web Next uses a **LayerManager + LayeredRenderer** approach:
 - Easier extension points: additional rendering passes, frame capture, debug overlays, custom graph layers.
 - Less coupling between UI, data, and GPU implementation details.
 
-### 3) Visual pipeline: ad-hoc per-feature updates → mappers + dense-buffer rebuild model
+### 3) Visual pipeline: ad-hoc per-feature updates → mappers + indirect sparse/indexed model
 
 Legacy Helios Web computes/updates many visual properties inside the renderer-driven core and maintains a mixture of buffers and per-feature logic.
 
@@ -55,7 +55,7 @@ Helios Web Next formalizes this via the pipeline in `src/pipeline/`:
 
 - **`Mapper`** utilities convert arbitrary node/edge attributes into visual channels (color, size, width, etc.).
 - Mapped values are written into **sparse visual attributes** on the `helios-network`.
-- The renderer consumes **dense buffers** built from those attributes; when mappers change data, dense buffers are flagged dirty and rebuilt.
+- The renderer consumes **indirect sparse/indexed buffers** built directly from those attributes.
 
 **Advantages**
 

@@ -1,7 +1,7 @@
 # Basic Example
 
 This example mirrors the snippet in the main README and exercises the mapper +
-visuals flow that feeds dense buffers directly from `helios-network` each frame:
+visuals flow that feeds indirect rendering directly from `helios-network` sparse/indexed buffers:
 
 1. Creates a `helios-network` instance.
 2. Defines float attributes on nodes and edges.
@@ -9,7 +9,7 @@ visuals flow that feeds dense buffers directly from `helios-network` each frame:
 4. Boots a `Helios` renderer with the worker layout.
 5. Maps the attributes to node and edge colors via `Mapper` descriptors.
 
-The source lives in [`docs/examples/basic/main.js`](../../../for_reference/older-tests/main_debug_backup.js). Start the Vite dev server and visit `http://localhost:5173` to see it in action.
+The source lives in [`docs/examples/basic/main.js`](./main.js). Start the Vite dev server and visit `http://localhost:5173` to see it in action.
 
 For details on how the node colors and sizes are mapped (including the colormap used in this example), see [`docs/MAPPERS.md`](../MAPPERS.md).
 

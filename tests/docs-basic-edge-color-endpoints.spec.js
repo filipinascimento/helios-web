@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('docs basic demo mappers', () => {
-  test('edge color node passthrough endpoints update dense buffers', async ({ page }) => {
+  test('edge color node passthrough endpoints update mapper config', async ({ page }) => {
     await page.goto('/?nodes=200&mode=2d&renderer=webgl');
 
     await page.waitForFunction(() => Boolean(window.__helios && window.__helios.ready));
@@ -60,38 +60,32 @@ test.describe('docs basic demo mappers', () => {
 
     const endpointsSelect = selectLocator.nth(endpointsSelectIndex);
 
-    const readFirstEdge = async () => page.evaluate(() => {
-      const net = window.__helios?.network;
-      if (!net) throw new Error('missing helios network');
-      net.updateDenseEdgeIndexBuffer();
-      const edgeId = net.getDenseEdgeIndexView().view[0];
-      const edgesView = net.edgesView;
-      const src = edgesView[edgeId * 2];
-      const dst = edgesView[edgeId * 2 + 1];
-
-      const nodeColor = net.getNodeAttributeBuffer('_helios_visuals_color').view;
-      const srcNode = Array.from(nodeColor.subarray(src * 4, src * 4 + 4));
-      const dstNode = Array.from(nodeColor.subarray(dst * 4, dst * 4 + 4));
-
-      net.updateDenseEdgeAttributeBuffer('_helios_visuals_edge_color');
-      const dense = net.getDenseEdgeAttributeView('_helios_visuals_edge_color').view;
-      const start = Array.from(dense.subarray(0, 4));
-      const end = Array.from(dense.subarray(4, 8));
-      return { edgeId, src, dst, srcNode, dstNode, start, end };
+    const readColorChannel = async () => page.evaluate(() => {
+      const helios = window.__helios;
+      const nodeMapper = helios?.nodeMapper?.toCombinedMapper?.() ?? null;
+      const edgeMapper = helios?.edgeMapper?.toCombinedMapper?.({ nodeMapper }) ?? null;
+      const channel = edgeMapper?.getChannel?.('color') ?? null;
+      if (!channel) throw new Error('missing combined edge color channel');
+      return {
+        type: channel.type ?? null,
+        nodeAttribute: channel.nodeAttribute ?? null,
+        attributes: Array.isArray(channel.attributes) ? Array.from(channel.attributes) : channel.attributes ?? null,
+        endpoints: channel.endpoints ?? null,
+      };
     });
-
-    const close = (a, b) => a.every((v, i) => Math.abs(v - b[i]) < 1e-6);
 
     await endpointsSelect.selectOption({ label: 'Both' });
     await applyButton.click();
-    const both = await readFirstEdge();
-    expect(close(both.start, both.srcNode)).toBe(true);
-    expect(close(both.end, both.dstNode)).toBe(true);
+    const both = await readColorChannel();
+    expect(both.type).toBe('nodeAttribute');
+    expect(both.nodeAttribute).toBeTruthy();
+    expect(both.endpoints).toBe('both');
 
     await endpointsSelect.selectOption({ label: 'Target' });
     await applyButton.click();
-    const target = await readFirstEdge();
-    expect(close(target.start, target.dstNode)).toBe(true);
-    expect(close(target.end, target.dstNode)).toBe(true);
+    const target = await readColorChannel();
+    expect(target.type).toBe('nodeAttribute');
+    expect(target.nodeAttribute).toBe(both.nodeAttribute);
+    expect(target.endpoints).toBe('destination');
   });
 });

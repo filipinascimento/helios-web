@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   AttributeTracker,
-  WebGLIndirectAttributeRenderer,
+  WebGLAttributeRenderer,
   WebGPUAttributeRenderer,
 } from '../src/rendering/AttributeTracker.js';
 
@@ -55,8 +55,6 @@ test('WebGPUAttributeRenderer uses sparse encoded APIs only for indirect mode', 
   const calls = {
     sparseDefineNode: 0,
     sparseUpdateNode: 0,
-    denseDefineNode: 0,
-    denseUpdateNode: 0,
   };
   const network = {
     nodeIndices: new Uint32Array(0),
@@ -72,12 +70,6 @@ test('WebGPUAttributeRenderer uses sparse encoded APIs only for indirect mode', 
     },
     getSparseColorEncodedNodeAttributeView() {
       return { view: new Uint8Array(0), version: 1 };
-    },
-    defineDenseColorEncodedNodeAttribute() {
-      calls.denseDefineNode += 1;
-    },
-    updateDenseColorEncodedNodeAttribute() {
-      calls.denseUpdateNode += 1;
     },
     withBufferAccess(fn) {
       return fn();
@@ -97,7 +89,7 @@ test('WebGPUAttributeRenderer uses sparse encoded APIs only for indirect mode', 
         viewport: { width: 1, height: 1, devicePixelRatio: 1 },
       };
     },
-    resolveIndirectEdgeVariant() {
+    resolveEdgeVariant() {
       return {};
     },
     withSparseGraph(_net, _versions, _indices, _edgeSources, fn) {
@@ -135,82 +127,6 @@ test('WebGPUAttributeRenderer uses sparse encoded APIs only for indirect mode', 
   assert.ok(result);
   assert.equal(calls.sparseDefineNode > 0, true);
   assert.equal(calls.sparseUpdateNode > 0, true);
-  assert.equal(calls.denseDefineNode, 0);
-  assert.equal(calls.denseUpdateNode, 0);
-});
-
-test('WebGPUAttributeRenderer keeps sparse encoded APIs disabled for dense mode', () => {
-  const calls = {
-    sparseDefineNode: 0,
-    sparseUpdateNode: 0,
-    denseDefineNode: 0,
-    denseUpdateNode: 0,
-  };
-  const network = {
-    defineSparseColorEncodedNodeAttribute() {
-      calls.sparseDefineNode += 1;
-    },
-    updateSparseColorEncodedNodeAttribute() {
-      calls.sparseUpdateNode += 1;
-    },
-    defineDenseColorEncodedNodeAttribute() {
-      calls.denseDefineNode += 1;
-    },
-    updateDenseColorEncodedNodeAttribute() {
-      calls.denseUpdateNode += 1;
-    },
-  };
-  const graphLayer = {
-    edgeRenderingMode: 'line',
-    nodeOutlineUseAttributes: false,
-    getCameraUniforms() {
-      return {
-        mode: '2d',
-        viewProjection: new Float32Array(16),
-        view: new Float32Array(16),
-        position: [0, 0, 1],
-        up: [0, 1, 0],
-        right: [1, 0, 0],
-        viewport: { width: 1, height: 1, devicePixelRatio: 1 },
-      };
-    },
-    withDenseGraph(_net, fn) {
-      return fn({
-        nodes: {
-          positions: new Float32Array(0),
-          sizes: new Float32Array(0),
-          outlineWidths: new Float32Array(0),
-          count: 0,
-          versions: { positions: 1, sizes: 1, outlineWidths: 1, topology: 1 },
-        },
-        edges: {
-          segments: new Float32Array(0),
-          widths: new Float32Array(0),
-          endpointSizes: new Float32Array(0),
-          count: 0,
-          versions: { segments: 1, widths: 1, endpointSizes: 1, topology: 1 },
-        },
-      });
-    },
-  };
-
-  const renderer = new WebGPUAttributeRenderer(graphLayer, null, null);
-  renderer.device = { type: 'webgpu' };
-  renderer.resize = () => {};
-  renderer.renderPreparedGeometry = () => ({ node: null, edge: null });
-  renderer.encodeAttributes = () => ({ nodeEncoded: null, edgeEncoded: null });
-
-  const result = renderer.render(
-    { network, camera: {} },
-    { width: 1, height: 1, devicePixelRatio: 1 },
-    { nodeAttribute: '$index', edgeAttribute: null, resolutionScale: 1, trackDepth: false },
-  );
-
-  assert.ok(result);
-  assert.equal(calls.sparseDefineNode, 0);
-  assert.equal(calls.sparseUpdateNode, 0);
-  assert.equal(calls.denseDefineNode > 0, true);
-  assert.equal(calls.denseUpdateNode > 0, true);
 });
 
 test('WebGPUAttributeRenderer bypasses sparse encoded APIs for indirect r32uint mode', () => {
@@ -219,8 +135,6 @@ test('WebGPUAttributeRenderer bypasses sparse encoded APIs for indirect r32uint 
     sparseUpdateNode: 0,
     sparseDefineEdge: 0,
     sparseUpdateEdge: 0,
-    denseDefineNode: 0,
-    denseUpdateNode: 0,
   };
   const network = {
     nodeIndices: new Uint32Array(0),
@@ -240,12 +154,6 @@ test('WebGPUAttributeRenderer bypasses sparse encoded APIs for indirect r32uint 
     updateSparseColorEncodedEdgeAttribute() {
       calls.sparseUpdateEdge += 1;
     },
-    defineDenseColorEncodedNodeAttribute() {
-      calls.denseDefineNode += 1;
-    },
-    updateDenseColorEncodedNodeAttribute() {
-      calls.denseUpdateNode += 1;
-    },
     withBufferAccess(fn) {
       return fn();
     },
@@ -264,7 +172,7 @@ test('WebGPUAttributeRenderer bypasses sparse encoded APIs for indirect r32uint 
         viewport: { width: 1, height: 1, devicePixelRatio: 1 },
       };
     },
-    resolveIndirectEdgeVariant() {
+    resolveEdgeVariant() {
       return {};
     },
     withSparseGraph(_net, _versions, _indices, _edgeSources, fn) {
@@ -305,8 +213,6 @@ test('WebGPUAttributeRenderer bypasses sparse encoded APIs for indirect r32uint 
   assert.equal(calls.sparseUpdateNode, 0);
   assert.equal(calls.sparseDefineEdge, 0);
   assert.equal(calls.sparseUpdateEdge, 0);
-  assert.equal(calls.denseDefineNode, 0);
-  assert.equal(calls.denseUpdateNode, 0);
 });
 
 test('WebGPUAttributeRenderer bypasses sparse encoded APIs for indirect rgba8 direct path', () => {
@@ -349,7 +255,7 @@ test('WebGPUAttributeRenderer bypasses sparse encoded APIs for indirect rgba8 di
         viewport: { width: 1, height: 1, devicePixelRatio: 1 },
       };
     },
-    resolveIndirectEdgeVariant() {
+    resolveEdgeVariant() {
       return {};
     },
     withSparseGraph(_net, _versions, _indices, _edgeSources, fn) {
@@ -394,16 +300,12 @@ test('WebGPUAttributeRenderer bypasses sparse encoded APIs for indirect rgba8 di
   assert.equal(calls.sparseUpdateEdge, 0);
 });
 
-test('WebGLIndirectAttributeRenderer does not eagerly update sparse encoded APIs', () => {
+test('WebGLAttributeRenderer does not eagerly update sparse encoded APIs', () => {
   const calls = {
     sparseDefineNode: 0,
     sparseUpdateNode: 0,
     sparseDefineEdge: 0,
     sparseUpdateEdge: 0,
-    denseDefineNode: 0,
-    denseUpdateNode: 0,
-    denseDefineEdge: 0,
-    denseUpdateEdge: 0,
   };
   const network = {
     nodeIndices: new Uint32Array(0),
@@ -423,21 +325,8 @@ test('WebGLIndirectAttributeRenderer does not eagerly update sparse encoded APIs
     updateSparseColorEncodedEdgeAttribute() {
       calls.sparseUpdateEdge += 1;
     },
-    defineDenseColorEncodedNodeAttribute() {
-      calls.denseDefineNode += 1;
-    },
-    updateDenseColorEncodedNodeAttribute() {
-      calls.denseUpdateNode += 1;
-    },
-    defineDenseColorEncodedEdgeAttribute() {
-      calls.denseDefineEdge += 1;
-    },
-    updateDenseColorEncodedEdgeAttribute() {
-      calls.denseUpdateEdge += 1;
-    },
   };
   const graphLayer = {
-    isIndirectWebGL: true,
     getCameraUniforms() {
       return {
         mode: '2d',
@@ -449,7 +338,7 @@ test('WebGLIndirectAttributeRenderer does not eagerly update sparse encoded APIs
     },
   };
 
-  const renderer = new WebGLIndirectAttributeRenderer(graphLayer, null, null);
+  const renderer = new WebGLAttributeRenderer(graphLayer, null, null);
   renderer.gl = {};
   renderer.resize = () => {};
 
@@ -464,13 +353,9 @@ test('WebGLIndirectAttributeRenderer does not eagerly update sparse encoded APIs
   assert.equal(calls.sparseUpdateNode, 0);
   assert.equal(calls.sparseDefineEdge, 0);
   assert.equal(calls.sparseUpdateEdge, 0);
-  assert.equal(calls.denseDefineNode, 0);
-  assert.equal(calls.denseUpdateNode, 0);
-  assert.equal(calls.denseDefineEdge, 0);
-  assert.equal(calls.denseUpdateEdge, 0);
 });
 
-test('WebGLIndirectAttributeRenderer does not eagerly touch sparse encoded readiness across frames', () => {
+test('WebGLAttributeRenderer does not eagerly touch sparse encoded readiness across frames', () => {
   const calls = {
     sparseDefineNode: 0,
     sparseUpdateNode: 0,
@@ -509,7 +394,6 @@ test('WebGLIndirectAttributeRenderer does not eagerly touch sparse encoded readi
     },
   };
   const graphLayer = {
-    isIndirectWebGL: true,
     getCameraUniforms() {
       return {
         mode: '2d',
@@ -521,7 +405,7 @@ test('WebGLIndirectAttributeRenderer does not eagerly touch sparse encoded readi
     },
   };
 
-  const renderer = new WebGLIndirectAttributeRenderer(graphLayer, null, null);
+  const renderer = new WebGLAttributeRenderer(graphLayer, null, null);
   renderer.gl = {};
   renderer.resize = () => {};
 
@@ -540,8 +424,8 @@ test('WebGLIndirectAttributeRenderer does not eagerly touch sparse encoded readi
   assert.equal(calls.sparseUpdateEdge, 0);
 });
 
-test('WebGLIndirectAttributeRenderer resolves integer tracked attributes for shader-side packing', () => {
-  const renderer = new WebGLIndirectAttributeRenderer({ isIndirectWebGL: true }, null, null);
+test('WebGLAttributeRenderer resolves integer tracked attributes for shader-side packing', () => {
+  const renderer = new WebGLAttributeRenderer({ }, null, null);
   const network = {
     getNodeAttributeBuffer(name) {
       if (name === 'rank') return { view: new Int32Array([3, 7]), dimension: 1, version: 5 };
@@ -562,7 +446,7 @@ test('WebGLIndirectAttributeRenderer resolves integer tracked attributes for sha
   assert.equal(index, null);
 });
 
-test('WebGLIndirectAttributeRenderer uses quad geometry for edge tracking in quad mode', () => {
+test('WebGLAttributeRenderer uses quad geometry for edge tracking in quad mode', () => {
   const drawModes = [];
   const gl = {
     TEXTURE0: 0,
@@ -618,7 +502,6 @@ test('WebGLIndirectAttributeRenderer uses quad geometry for edge tracking in qua
   };
 
   const graphLayer = {
-    isIndirectWebGL: true,
     edgeRenderingMode: 'quad',
     nodeOutlineUseAttributes: false,
     nodeSizeBase: 0,
@@ -632,7 +515,7 @@ test('WebGLIndirectAttributeRenderer uses quad geometry for edge tracking in qua
         viewProjection: new Float32Array(16),
       };
     },
-    resolveIndirectEdgeVariant() {
+    resolveEdgeVariant() {
       return {
         widthBuffer: true,
         widthSource: 'edge',
@@ -662,7 +545,7 @@ test('WebGLIndirectAttributeRenderer uses quad geometry for edge tracking in qua
     },
   };
 
-  const renderer = new WebGLIndirectAttributeRenderer(graphLayer, null, {
+  const renderer = new WebGLAttributeRenderer(graphLayer, null, {
     run(passes) {
       for (const pass of passes) pass();
     },
@@ -767,7 +650,7 @@ test('WebGLIndirectAttributeRenderer uses quad geometry for edge tracking in qua
   assert.equal(drawModes.includes(gl.LINES), false);
 });
 
-test('WebGLIndirectAttributeRenderer reuses shared sparse graph textures when metadata matches', () => {
+test('WebGLAttributeRenderer reuses shared sparse graph textures when metadata matches', () => {
   const gl = {
     TEXTURE0: 0,
     TEXTURE_2D: 3553,
@@ -837,7 +720,6 @@ test('WebGLIndirectAttributeRenderer reuses shared sparse graph textures when me
   });
 
   const graphLayer = {
-    isIndirectWebGL: true,
     edgeRenderingMode: 'quad',
     nodeOutlineUseAttributes: false,
     nodeSizeBase: 0,
@@ -851,7 +733,7 @@ test('WebGLIndirectAttributeRenderer reuses shared sparse graph textures when me
         viewProjection: new Float32Array(16),
       };
     },
-    resolveIndirectEdgeVariant() {
+    resolveEdgeVariant() {
       return {
         widthBuffer: true,
         widthSource: 'node',
@@ -900,7 +782,7 @@ test('WebGLIndirectAttributeRenderer reuses shared sparse graph textures when me
     },
   };
 
-  const renderer = new WebGLIndirectAttributeRenderer(graphLayer, null, {
+  const renderer = new WebGLAttributeRenderer(graphLayer, null, {
     run(passes) {
       for (const pass of passes) pass();
     },

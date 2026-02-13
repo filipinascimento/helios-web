@@ -181,8 +181,6 @@ test('nodeAttribute mapping retries node-to-edge registration when edge attribut
         this.edgeAttributes.set(name, new FakeBuffer(dimension, type));
       }
     }
-    addDenseNodeAttributeBuffer() {}
-    addDenseEdgeAttributeBuffer() {}
     removeNodeToEdgeAttribute(edge) {
       this.nodeToEdge.delete(edge);
     }

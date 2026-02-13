@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { GraphLayerWebGPUIndirect } from '../src/rendering/engine/GraphLayerWebGPUIndirect.js';
+import { GraphLayerWebGPU } from '../src/rendering/engine/GraphLayerWebGPU.js';
 
 
 test('indirect edge variant key changes when node attribute changes', () => {
-  const layer = new GraphLayerWebGPUIndirect();
-  const variantA = layer.resolveIndirectEdgeVariant({
+  const layer = new GraphLayerWebGPU();
+  const variantA = layer.resolveEdgeVariant({
     edge: {
       width: {
         mode: 'buffer',
@@ -16,7 +16,7 @@ test('indirect edge variant key changes when node attribute changes', () => {
       },
     },
   });
-  const variantB = layer.resolveIndirectEdgeVariant({
+  const variantB = layer.resolveEdgeVariant({
     edge: {
       width: {
         mode: 'buffer',

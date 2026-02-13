@@ -1,82 +1,265 @@
-export function createGraphWebGLSources(stateSlots = 4, options = {}) {
-  const STATE_SLOTS = Math.max(0, Math.min(32, Math.floor(Number(stateSlots) || 0)));
+function resolveNodeOptions(options = {}) {
+  const node = options?.node && typeof options.node === 'object' ? options.node : {};
+  const mode = (value) => (value === 'uniform' ? 'uniform' : 'buffer');
+  return {
+    color: mode(node.color),
+    size: mode(node.size),
+    outline: mode(node.outline),
+    outlineColor: mode(node.outlineColor),
+  };
+}
 
-  const nodeOptions = options?.node && typeof options.node === 'object' ? options.node : {};
-  const edgeOptions = options?.edge && typeof options.edge === 'object' ? options.edge : {};
+function resolveEdgeOptions(options = {}) {
+  const edge = options?.edge && typeof options.edge === 'object' ? options.edge : {};
+  const channel = (entry, fallbackSource = 'edge') => ({
+    mode: entry?.mode === 'uniform' ? 'uniform' : 'buffer',
+    source: entry?.source === 'node' ? 'node' : fallbackSource,
+    endpoints: (entry?.endpoints === 'source' || entry?.endpoints === 'from')
+      ? 'source'
+      : ((entry?.endpoints === 'destination' || entry?.endpoints === 'target' || entry?.endpoints === 'to')
+        ? 'destination'
+        : 'both'),
+  });
+  return {
+    color: channel(edge.color, 'edge'),
+    width: channel(edge.width, 'edge'),
+    opacity: channel(edge.opacity, 'edge'),
+    endpointSize: channel(edge.endpointSize, 'edge'),
+  };
+}
 
-  // Back-compat: previous API used a single toggle for outline width + outline color as attributes.
-  if (options?.useNodeOutlineAttributes === true) {
-    if (nodeOptions.outline == null) nodeOptions.outline = 'attribute';
-    if (nodeOptions.outlineColor == null) nodeOptions.outlineColor = 'attribute';
-  }
+export function createGraphWebGLSources(options = {}) {
+  const node = resolveNodeOptions(options);
+  const edge = resolveEdgeOptions(options);
+  const stateSlots = Math.max(1, Math.min(32, Number(options?.stateSlots) || 4));
 
-  const useNodeColorAttribute = nodeOptions.color !== 'uniform';
-  const useNodeSizeAttribute = nodeOptions.size !== 'uniform';
-  const useNodeOutlineWidthAttribute = nodeOptions.outline !== 'uniform';
-  const useNodeOutlineColorAttribute = nodeOptions.outlineColor !== 'uniform';
+  const nodeColorBuffer = node.color !== 'uniform';
+  const nodeSizeBuffer = node.size !== 'uniform';
+  const nodeOutlineBuffer = node.outline !== 'uniform';
+  const nodeOutlineColorBuffer = node.outlineColor !== 'uniform';
 
-  const useEdgeColorAttribute = edgeOptions.color !== 'uniform';
-  const useEdgeWidthAttribute = edgeOptions.width !== 'uniform';
-  const useEdgeOpacityAttribute = edgeOptions.opacity !== 'uniform';
-  const useEdgeEndpointSizeAttribute = edgeOptions.endpointSize !== 'uniform';
+  const edgeColorSourceNode = edge.color.source === 'node';
+  const edgeWidthSourceNode = edge.width.source === 'node';
+  const edgeOpacitySourceNode = edge.opacity.source === 'node';
+  const edgeEndpointSizeSourceNode = edge.endpointSize.source === 'node';
+  const edgeColorBuffer = edge.color.mode !== 'uniform' && !edgeColorSourceNode;
+  const edgeWidthBuffer = edge.width.mode !== 'uniform' && !edgeWidthSourceNode;
+  const edgeOpacityBuffer = edge.opacity.mode !== 'uniform' && !edgeOpacitySourceNode;
+  const edgeEndpointSizeBuffer = edge.endpointSize.mode !== 'uniform' && !edgeEndpointSizeSourceNode;
 
-  const NODE_VERTEX_COLOR_DECL = useNodeColorAttribute
-    ? /* glsl */ 'layout (location = 2) in vec4 a_color;\n'
-    : /* glsl */ 'uniform vec4 u_nodeColor;\n';
-  const NODE_VERTEX_COLOR_EXPR = useNodeColorAttribute ? 'a_color' : 'u_nodeColor';
+  const edgeColorEndpoints = edge.color.endpoints === 'source' ? 1 : (edge.color.endpoints === 'destination' ? 2 : 0);
+  const edgeWidthEndpoints = edge.width.endpoints === 'source' ? 1 : (edge.width.endpoints === 'destination' ? 2 : 0);
+  const edgeOpacityEndpoints = edge.opacity.endpoints === 'source' ? 1 : (edge.opacity.endpoints === 'destination' ? 2 : 0);
+  const edgeEndpointSizeEndpoints = edge.endpointSize.endpoints === 'source'
+    ? 1
+    : (edge.endpointSize.endpoints === 'destination' ? 2 : 0);
 
-  const NODE_VERTEX_SIZE_DECL = useNodeSizeAttribute
-    ? /* glsl */ 'layout (location = 3) in float a_size;\n'
-    : /* glsl */ 'uniform float u_nodeSize;\n';
-  const NODE_VERTEX_SIZE_EXPR = useNodeSizeAttribute ? 'a_size' : 'u_nodeSize';
-
-  const NODE_VERTEX_OUTLINE_WIDTH_DECL = useNodeOutlineWidthAttribute
-    ? /* glsl */ 'layout (location = 5) in float a_outline;\n'
-    : /* glsl */ 'uniform float u_nodeOutline;\n';
-  const NODE_VERTEX_OUTLINE_RAW_EXPR = useNodeOutlineWidthAttribute ? 'a_outline' : 'u_nodeOutline';
-
-  const NODE_VERTEX_OUTLINE_COLOR_DECL = useNodeOutlineColorAttribute
-    ? /* glsl */ 'layout (location = 6) in vec4 a_outlineColor;\n'
+  const nodeColorDecl = nodeColorBuffer
+    ? `
+uniform sampler2D u_nodeColors;
+uniform int u_hasNodeColors;`
     : '';
-  const NODE_VERTEX_OUTLINE_COLOR_EXPR = useNodeOutlineColorAttribute ? 'a_outlineColor' : 'u_outlineColor';
+  const nodeSizeDecl = nodeSizeBuffer
+    ? `
+uniform sampler2D u_nodeSizes;
+uniform int u_hasNodeSizes;`
+    : '';
+  const nodeOutlineDecl = nodeOutlineBuffer
+    ? `
+uniform sampler2D u_nodeOutlineWidths;
+uniform int u_hasNodeOutlineWidths;`
+    : '';
+  const nodeOutlineColorDecl = nodeOutlineColorBuffer
+    ? `
+uniform sampler2D u_nodeOutlineColors;
+uniform int u_hasNodeOutlineColors;`
+    : '';
 
-  const NODE_POSITION_TARGET_DECL = '';
-  const POSITION_INTERPOLATION_UNIFORM = '';
-  const EDGE_POSITION_TARGET_DECL = '';
-  const EDGE_QUAD_POSITION_TARGET_DECL = '';
+const nodeFetchColor = nodeColorBuffer
+    ? `
+vec4 fetchNodeColor(uint id) {
+  if (u_hasNodeColors == 0) return u_defaultNodeColor;
+  return texelFetch(u_nodeColors, textureCoord(u_nodeColors, id), 0);
+}`
+    : `
+vec4 fetchNodeColor(uint id) {
+  return u_defaultNodeColor;
+}`;
 
-  const NODE_VERTEX_SOURCE = /* glsl */ `#version 300 es
+  const nodeFetchSize = nodeSizeBuffer
+    ? `
+float fetchNodeSize(uint id) {
+  if (u_hasNodeSizes == 0) return u_defaultNodeSize;
+  return texelFetch(u_nodeSizes, textureCoord(u_nodeSizes, id), 0).x;
+}`
+    : `
+float fetchNodeSize(uint id) {
+  return u_defaultNodeSize;
+}`;
+
+  const nodeFetchOutline = nodeOutlineBuffer
+    ? `
+float fetchNodeOutlineWidth(uint id) {
+  if (u_hasNodeOutlineWidths == 0) return u_nodeOutline;
+  return texelFetch(u_nodeOutlineWidths, textureCoord(u_nodeOutlineWidths, id), 0).x;
+}`
+    : `
+float fetchNodeOutlineWidth(uint id) {
+  return u_nodeOutline;
+}`;
+
+  const nodeFetchOutlineColor = nodeOutlineColorBuffer
+    ? `
+vec4 fetchNodeOutlineColor(uint id) {
+  if (u_hasNodeOutlineColors == 0) return u_outlineColor;
+  return texelFetch(u_nodeOutlineColors, textureCoord(u_nodeOutlineColors, id), 0);
+}`
+    : `
+vec4 fetchNodeOutlineColor(uint id) {
+  return u_outlineColor;
+}`;
+
+  const nodeFetchState = `
+uint fetchNodeState(uint id) {
+  if (u_hasNodeStates == 0) return 0u;
+  return texelFetch(u_nodeStates, textureCoord(u_nodeStates, id), 0).x;
+}`;
+
+  const edgeColorDecl = edgeColorBuffer
+    ? `
+uniform sampler2D u_edgeColors;
+uniform int u_hasEdgeColors;`
+    : '';
+  const edgeOpacityDecl = edgeOpacityBuffer
+    ? `
+uniform sampler2D u_edgeOpacities;
+uniform int u_hasEdgeOpacities;`
+    : '';
+  const edgeWidthDecl = edgeWidthBuffer
+    ? `
+uniform sampler2D u_edgeWidths;
+uniform int u_hasEdgeWidths;`
+    : '';
+  const edgeEndpointSizeDecl = edgeEndpointSizeBuffer
+    ? `
+uniform sampler2D u_edgeEndpointSizes;
+uniform int u_hasEdgeEndpointSizes;`
+    : '';
+
+  const edgeFetchColor = edgeColorBuffer
+    ? `
+vec4 fetchEdgeColor(uint id, bool target) {
+  if (u_hasEdgeColors == 0) return target ? u_defaultEdgeColorEnd : u_defaultEdgeColorStart;
+  int offset = int(id) * 2 + (target ? 1 : 0);
+  return texelFetch(u_edgeColors, textureCoord(u_edgeColors, uint(offset)), 0);
+}`
+    : `
+vec4 fetchEdgeColor(uint id, bool target) {
+  return target ? u_defaultEdgeColorEnd : u_defaultEdgeColorStart;
+}`;
+
+  const edgeFetchOpacity = edgeOpacityBuffer
+    ? `
+vec2 fetchEdgeOpacityPair(uint edgeId) {
+  if (u_hasEdgeOpacities == 0) return u_defaultEdgeOpacity;
+  return texelFetch(u_edgeOpacities, textureCoord(u_edgeOpacities, edgeId), 0).xy;
+}`
+    : `
+vec2 fetchEdgeOpacityPair(uint edgeId) {
+  return u_defaultEdgeOpacity;
+}`;
+
+  const edgeFetchWidth = edgeWidthBuffer
+    ? `
+vec2 fetchEdgeWidthPair(uint edgeId) {
+  if (u_hasEdgeWidths == 0) return u_defaultEdgeWidth;
+  return texelFetch(u_edgeWidths, textureCoord(u_edgeWidths, edgeId), 0).xy;
+}`
+    : `
+vec2 fetchEdgeWidthPair(uint edgeId) {
+  return u_defaultEdgeWidth;
+}`;
+
+  const edgeFetchEndpointSize = edgeEndpointSizeBuffer
+    ? `
+vec2 fetchEdgeEndpointSizePair(uint edgeId) {
+  if (u_hasEdgeEndpointSizes == 0) return u_defaultEdgeEndpointSize;
+  return texelFetch(u_edgeEndpointSizes, textureCoord(u_edgeEndpointSizes, edgeId), 0).xy;
+}`
+    : `
+vec2 fetchEdgeEndpointSizePair(uint edgeId) {
+  return u_defaultEdgeEndpointSize;
+}`;
+
+  const edgeColorNodeBlock = edgeColorSourceNode
+    ? `
+  vec4 nodeSourceColor = fetchNodeColor(sourceId);
+  vec4 nodeTargetColor = fetchNodeColor(targetId);
+  if (${edgeColorEndpoints} == 1) {
+    sourceColor = nodeSourceColor;
+    targetColor = nodeSourceColor;
+  } else if (${edgeColorEndpoints} == 2) {
+    sourceColor = nodeTargetColor;
+    targetColor = nodeTargetColor;
+  } else {
+    sourceColor = nodeSourceColor;
+    targetColor = nodeTargetColor;
+  }`
+    : '';
+
+  const TEXTURE_INDEX_HELPERS = `
+ivec2 textureCoord(sampler2D tex, uint index) {
+  ivec2 size = textureSize(tex, 0);
+  int width = max(size.x, 1);
+  int i = int(index);
+  return ivec2(i % width, i / width);
+}
+
+ivec2 textureCoord(usampler2D tex, uint index) {
+  ivec2 size = textureSize(tex, 0);
+  int width = max(size.x, 1);
+  int i = int(index);
+  return ivec2(i % width, i / width);
+}`;
+
+  const NODE_VERTEX_SOURCE = `#version 300 es
+precision highp float;
+precision highp int;
+precision highp usampler2D;
+
 layout (location = 0) in vec2 a_corner;
-layout (location = 1) in vec3 a_position;
-layout (location = 4) in uint a_state;
-${NODE_VERTEX_COLOR_DECL}${NODE_VERTEX_SIZE_DECL}${NODE_VERTEX_OUTLINE_WIDTH_DECL}${NODE_VERTEX_OUTLINE_COLOR_DECL}${NODE_POSITION_TARGET_DECL}
+layout (location = 1) in uint a_nodeId;
 
 uniform mat4 u_viewProjection;
-uniform mat4 u_view;
+uniform sampler2D u_nodePositions;${nodeColorDecl}${nodeSizeDecl}${nodeOutlineDecl}${nodeOutlineColorDecl}
 uniform vec3 u_cameraPosition;
 uniform vec3 u_cameraUp;
 uniform vec3 u_cameraRight;
-uniform bool u_is2D;
-${POSITION_INTERPOLATION_UNIFORM}
+uniform int u_is2D;
+uniform vec4 u_defaultNodeColor;
+uniform float u_defaultNodeSize;
 uniform float u_nodeOpacityBase;
 uniform float u_nodeOpacityScale;
 uniform float u_nodeSizeBase;
 uniform float u_nodeSizeScale;
-	uniform float u_outlineWidthBase;
-	uniform float u_outlineWidthScale;
-  uniform vec4 u_outlineColor;
-	uniform uint u_hoverNodeIndex;
-	uniform uint u_hoverNodeState;
-	uniform vec4 u_nodeNoStateScale; // x=sizeMul y=opacityMul z=outlineMul w=discard(>0.5)
-	uniform vec4 u_nodeNoStateColorMul;
-	uniform vec4 u_nodeNoStateColorAdd;
-	uniform vec4 u_nodeStateScale[${STATE_SLOTS}]; // x=sizeMul y=opacityMul z=outlineMul w=discard(>0.5)
-	uniform vec4 u_nodeStateColorMul[${STATE_SLOTS}];
-	uniform vec4 u_nodeStateColorAdd[${STATE_SLOTS}];
+uniform float u_nodeOutline;
+uniform float u_outlineWidthBase;
+uniform float u_outlineWidthScale;
+uniform vec4 u_outlineColor;
+uniform usampler2D u_nodeStates;
+uniform int u_hasNodeStates;
+uniform uint u_hoverNodeIndex;
+uniform uint u_hoverNodeState;
+uniform vec4 u_nodeNoStateScale;
+uniform vec4 u_nodeNoStateColorMul;
+uniform vec4 u_nodeNoStateColorAdd;
+uniform vec4 u_nodeStateScale[${stateSlots}];
+uniform vec4 u_nodeStateColorMul[${stateSlots}];
+uniform vec4 u_nodeStateColorAdd[${stateSlots}];
 
 out vec4 v_color;
 out vec2 v_local;
-  out vec4 v_outlineColor;
+out vec4 v_outlineColor;
 out float v_outlineThreshold;
 out vec3 v_centerWorld;
 out vec3 v_rightWorld;
@@ -84,49 +267,62 @@ out vec3 v_upWorld;
 out vec3 v_viewDir;
 out float v_radius;
 flat out uint v_discardFlag;
+${TEXTURE_INDEX_HELPERS}
 
-	void main() {
-	  uint state = a_state;
-	  if (u_hoverNodeIndex != 4294967295u && uint(gl_InstanceID) == u_hoverNodeIndex) {
-	    state |= u_hoverNodeState;
-	  }
-	  float sizeMul = 1.0;
-	  float opacityMul = 1.0;
-	  float outlineMul = 1.0;
-	  vec3 rgbMul = vec3(1.0);
-	  vec3 rgbAdd = vec3(0.0);
-	  uint discardFlag = 0u;
-	  if (state == 0u) {
-	    vec4 scale = u_nodeNoStateScale;
-	    sizeMul *= scale.x;
-	    opacityMul *= scale.y;
-	    outlineMul *= scale.z;
-	    rgbMul *= u_nodeNoStateColorMul.rgb;
-	    rgbAdd += u_nodeNoStateColorAdd.rgb;
-	    discardFlag = uint(scale.w > 0.5);
-	  } else {
-	    for (int i = 0; i < ${STATE_SLOTS}; i += 1) {
-	      float enabled = float((state >> uint(i)) & 1u);
-	      vec4 scale = u_nodeStateScale[i];
-	      sizeMul *= mix(1.0, scale.x, enabled);
-	      opacityMul *= mix(1.0, scale.y, enabled);
-	      outlineMul *= mix(1.0, scale.z, enabled);
-	      rgbMul *= mix(vec3(1.0), u_nodeStateColorMul[i].rgb, enabled);
-	      rgbAdd += u_nodeStateColorAdd[i].rgb * enabled;
-	      discardFlag |= uint((scale.w > 0.5) && (enabled > 0.5));
-	    }
-	  }
+vec3 fetchNodePos(uint id) {
+  return texelFetch(u_nodePositions, textureCoord(u_nodePositions, id), 0).xyz;
+}
+${nodeFetchColor}
+${nodeFetchSize}
+${nodeFetchOutline}
+${nodeFetchOutlineColor}
+${nodeFetchState}
+
+void main() {
+  uint state = fetchNodeState(a_nodeId);
+  if (u_hoverNodeIndex != 4294967295u && a_nodeId == u_hoverNodeIndex) {
+    state |= u_hoverNodeState;
+  }
+  float sizeMul = 1.0;
+  float opacityMul = 1.0;
+  float outlineMul = 1.0;
+  vec3 rgbMul = vec3(1.0);
+  vec3 rgbAdd = vec3(0.0);
+  uint discardFlag = 0u;
+  if (state == 0u) {
+    vec4 scale = u_nodeNoStateScale;
+    sizeMul *= scale.x;
+    opacityMul *= scale.y;
+    outlineMul *= scale.z;
+    rgbMul *= u_nodeNoStateColorMul.rgb;
+    rgbAdd += u_nodeNoStateColorAdd.rgb;
+    discardFlag = uint(scale.w > 0.5);
+  } else {
+    for (int i = 0; i < ${stateSlots}; i += 1) {
+      float enabled = float((state >> uint(i)) & 1u);
+      vec4 scale = u_nodeStateScale[i];
+      sizeMul *= mix(1.0, scale.x, enabled);
+      opacityMul *= mix(1.0, scale.y, enabled);
+      outlineMul *= mix(1.0, scale.z, enabled);
+      rgbMul *= mix(vec3(1.0), u_nodeStateColorMul[i].rgb, enabled);
+      rgbAdd += u_nodeStateColorAdd[i].rgb * enabled;
+      discardFlag |= uint((scale.w > 0.5) && (enabled > 0.5));
+    }
+  }
   v_discardFlag = discardFlag;
 
-  vec3 position = a_position;
-  float baseSize = (u_nodeSizeBase + u_nodeSizeScale * ${NODE_VERTEX_SIZE_EXPR}) * sizeMul;
-  float outlineWidth = max(0.0, (u_outlineWidthBase + u_outlineWidthScale * ${NODE_VERTEX_OUTLINE_RAW_EXPR}) * outlineMul);
+  vec3 position = fetchNodePos(a_nodeId);
+  float rawSize = fetchNodeSize(a_nodeId);
+  float baseSize = (u_nodeSizeBase + u_nodeSizeScale * rawSize) * sizeMul;
+  float rawOutline = fetchNodeOutlineWidth(a_nodeId);
+  float outlineWidth = max(0.0, (u_outlineWidthBase + u_outlineWidthScale * rawOutline) * outlineMul);
   float fullSize = baseSize + outlineWidth;
   float radius = max(1.0, fullSize) * 0.5;
+
   vec3 right = u_cameraRight;
   vec3 up = u_cameraUp;
   vec3 viewDir = vec3(0.0, 0.0, 1.0);
-  if (u_is2D) {
+  if (u_is2D == 1) {
     right = normalize(right);
     up = normalize(up);
   } else {
@@ -138,13 +334,16 @@ flat out uint v_discardFlag;
     right = rightLen > 1e-5 ? right / rightLen : normalize(cross(u_cameraUp, viewDir));
     up = normalize(cross(viewDir, right));
   }
+
   vec3 world = position + (right * a_corner.x + up * a_corner.y) * radius;
   gl_Position = u_viewProjection * vec4(world, 1.0);
-  vec4 baseColorIn = ${NODE_VERTEX_COLOR_EXPR};
-  vec3 rgb = clamp(baseColorIn.rgb * rgbMul + rgbAdd, 0.0, 1.0);
-  float alpha = clamp(u_nodeOpacityBase + u_nodeOpacityScale * baseColorIn.a, 0.0, 1.0) * opacityMul;
+
+  vec4 baseColor = fetchNodeColor(a_nodeId);
+  vec3 rgb = clamp(baseColor.rgb * rgbMul + rgbAdd, 0.0, 1.0);
+  float alpha = clamp(u_nodeOpacityBase + u_nodeOpacityScale * baseColor.a, 0.0, 1.0) * opacityMul;
   v_color = vec4(rgb, clamp(alpha, 0.0, 1.0));
-  vec4 outlineColorIn = ${NODE_VERTEX_OUTLINE_COLOR_EXPR};
+
+  vec4 outlineColorIn = fetchNodeOutlineColor(a_nodeId);
   float outlineAlpha = clamp(u_nodeOpacityBase + u_nodeOpacityScale * outlineColorIn.a, 0.0, 1.0) * opacityMul;
   v_outlineColor = vec4(outlineColorIn.rgb, clamp(outlineAlpha, 0.0, 1.0));
   v_outlineThreshold = outlineWidth / max(fullSize, 1e-5);
@@ -154,10 +353,12 @@ flat out uint v_discardFlag;
   v_upWorld = up;
   v_viewDir = viewDir;
   v_radius = radius;
-}`;
+}
+`;
 
-  const NODE_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
+  const NODE_FRAGMENT_SOURCE = `#version 300 es
 precision highp float;
+precision highp int;
 
 in vec4 v_color;
 in vec2 v_local;
@@ -171,7 +372,7 @@ in float v_radius;
 flat in uint v_discardFlag;
 
 uniform mat4 u_viewProjection;
-uniform bool u_is2D;
+uniform int u_is2D;
 
 out vec4 fragColor;
 
@@ -187,9 +388,7 @@ void main() {
   if (v_outlineThreshold > 0.0 && dist > (1.0 - v_outlineThreshold)) {
     fragColor = v_outlineColor;
   }
-
-  // Write depth as if the quad represents a sphere in 3D mode.
-  if (!u_is2D) {
+  if (u_is2D == 0) {
     float radius = v_radius;
     float xyLenSq = dot(v_local * radius, v_local * radius);
     float zOffset = sqrt(max(radius * radius - xyLenSq, 0.0));
@@ -200,271 +399,315 @@ void main() {
     float depth = clip.z / clip.w;
     gl_FragDepth = depth * 0.5 + 0.5;
   }
-}`;
+}
+`;
 
-  const EDGE_WEIGHTED_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
-precision mediump float;
+  const EDGE_VERTEX_SOURCE = `#version 300 es
+precision highp float;
+precision highp int;
+precision highp usampler2D;
 
-in vec4 v_color;
-flat in uint v_discardFlag;
-layout (location = 0) out vec4 fragAccum;
-layout (location = 1) out vec4 fragWeight;
-
-void main() {
-  if (v_discardFlag != 0u) {
-    discard;
-  }
-  float weight = v_color.a;
-  fragAccum = vec4(v_color.rgb * weight, weight);
-  fragWeight = vec4(weight, 0.0, 0.0, 0.0);
-}`;
-
-  const EDGE_VERTEX_SOURCE = /* glsl */ `#version 300 es
-layout (location = 0) in vec3 a_start;
-layout (location = 1) in vec3 a_end;
-${EDGE_POSITION_TARGET_DECL}
-${useEdgeColorAttribute ? 'layout (location = 2) in vec4 a_colorStart;\nlayout (location = 3) in vec4 a_colorEnd;\n' : 'uniform vec4 u_edgeColorStart;\nuniform vec4 u_edgeColorEnd;\n'}
-${useEdgeWidthAttribute ? 'layout (location = 4) in vec2 a_width;\n' : 'uniform vec2 u_edgeWidth;\n'}
-${useEdgeEndpointSizeAttribute ? 'layout (location = 5) in vec2 a_endpointSize;\n' : 'uniform vec2 u_edgeEndpointSize;\n'}
-${useEdgeOpacityAttribute ? 'layout (location = 6) in vec2 a_opacity;\n' : 'uniform vec2 u_edgeOpacity;\n'}
-layout (location = 7) in uint a_state;
-layout (location = 8) in uvec2 a_endpointState;
+layout (location = 0) in uint a_edgeId;
 
 uniform mat4 u_viewProjection;
-${POSITION_INTERPOLATION_UNIFORM}
+uniform sampler2D u_nodePositions;
+${edgeColorSourceNode ? 'uniform sampler2D u_nodeEdgeColors;\nuniform int u_hasNodeColors;' : ''}
+${edgeOpacitySourceNode ? 'uniform sampler2D u_nodeOpacitySource;\nuniform int u_hasNodeOpacitySource;' : ''}${edgeColorDecl}${edgeOpacityDecl}
+uniform usampler2D u_edgeEndpoints;
+uniform usampler2D u_edgeStates;
+uniform int u_hasEdgeStates;
+uniform uint u_hoverEdgeIndex;
+uniform uint u_hoverEdgeState;
+uniform vec4 u_edgeNoStateScale;
+uniform vec4 u_edgeNoStateColorMul;
+uniform vec4 u_edgeNoStateColorAdd;
+uniform vec4 u_edgeStateScale[${stateSlots}];
+uniform vec4 u_edgeStateColorMul[${stateSlots}];
+uniform vec4 u_edgeStateColorAdd[${stateSlots}];
+uniform vec4 u_defaultNodeEdgeColor;
+uniform vec4 u_defaultEdgeColorStart;
+uniform vec4 u_defaultEdgeColorEnd;
+uniform vec2 u_defaultEdgeOpacity;
+uniform vec2 u_defaultNodeOpacitySource;
 uniform float u_edgeOpacityBase;
 uniform float u_edgeOpacityScale;
-uniform float u_edgeWidthBase;
-uniform float u_edgeWidthScale;
-	uniform float u_nodeSizeBase;
-	uniform float u_nodeSizeScale;
-	uniform float u_edgeEndpointTrim;
-	uniform uint u_hoverEdgeIndex;
-	uniform uint u_hoverEdgeState;
-	uniform vec4 u_nodeNoStateScale; // x=sizeMul used for endpoint sizes
-	uniform vec4 u_nodeStateScale[${STATE_SLOTS}]; // x=sizeMul (used for endpoint sizes)
-	uniform vec4 u_edgeNoStateScale; // x=widthMul y=opacityMul w=discard(>0.5)
-	uniform vec4 u_edgeNoStateColorMul;
-	uniform vec4 u_edgeNoStateColorAdd;
-	uniform vec4 u_edgeStateScale[${STATE_SLOTS}]; // x=widthMul y=opacityMul w=discard(>0.5)
-	uniform vec4 u_edgeStateColorMul[${STATE_SLOTS}];
-	uniform vec4 u_edgeStateColorAdd[${STATE_SLOTS}];
 
 out vec4 v_color;
 flat out uint v_discardFlag;
+${TEXTURE_INDEX_HELPERS}
 
-	void main() {
-	  uint state = a_state;
-	  if (u_hoverEdgeIndex != 4294967295u && uint(gl_InstanceID) == u_hoverEdgeIndex) {
-	    state |= u_hoverEdgeState;
-	  }
-	  float widthMul = 1.0;
-	  float opacityMul = 1.0;
-	  vec3 rgbMul = vec3(1.0);
-	  vec3 rgbAdd = vec3(0.0);
-	  uint discardFlag = 0u;
-	  if (state == 0u) {
-	    vec4 scale = u_edgeNoStateScale;
-	    widthMul *= scale.x;
-	    opacityMul *= scale.y;
-	    rgbMul *= u_edgeNoStateColorMul.rgb;
-	    rgbAdd += u_edgeNoStateColorAdd.rgb;
-	    discardFlag = uint(scale.w > 0.5);
-	  } else {
-	    for (int i = 0; i < ${STATE_SLOTS}; i += 1) {
-	      float enabled = float((state >> uint(i)) & 1u);
-	      vec4 scale = u_edgeStateScale[i];
-	      widthMul *= mix(1.0, scale.x, enabled);
-	      opacityMul *= mix(1.0, scale.y, enabled);
-	      rgbMul *= mix(vec3(1.0), u_edgeStateColorMul[i].rgb, enabled);
-	      rgbAdd += u_edgeStateColorAdd[i].rgb * enabled;
-	      discardFlag |= uint((scale.w > 0.5) && (enabled > 0.5));
-	    }
-	  }
-  v_discardFlag = discardFlag;
+vec3 fetchNodePos(uint id) {
+  return texelFetch(u_nodePositions, textureCoord(u_nodePositions, id), 0).xyz;
+}
 
-  float startSizeMul = 1.0;
-  float endSizeMul = 1.0;
-  if (a_endpointState.x == 0u) {
-    startSizeMul *= u_nodeNoStateScale.x;
+uint fetchEdgeState(uint id) {
+  if (u_hasEdgeStates == 0) return 0u;
+  return texelFetch(u_edgeStates, textureCoord(u_edgeStates, id), 0).x;
+}
+
+${edgeColorSourceNode ? `
+vec4 fetchNodeColor(uint id) {
+  if (u_hasNodeColors == 0) return u_defaultNodeEdgeColor;
+  return texelFetch(u_nodeEdgeColors, textureCoord(u_nodeEdgeColors, id), 0);
+}` : ''}
+
+${edgeFetchColor}
+
+${edgeOpacitySourceNode ? `
+float fetchNodeOpacity(uint id, float fallbackValue) {
+  if (u_hasNodeOpacitySource == 0) return fallbackValue;
+  return texelFetch(u_nodeOpacitySource, textureCoord(u_nodeOpacitySource, id), 0).x;
+}
+
+vec2 resolveNodeOpacityPair(uint sourceId, uint targetId, int endpointsMode, vec2 fallbackPair) {
+  float sourceValue = fetchNodeOpacity(sourceId, fallbackPair.x);
+  float targetValue = fetchNodeOpacity(targetId, fallbackPair.y);
+  if (endpointsMode == 1) return vec2(sourceValue, sourceValue);
+  if (endpointsMode == 2) return vec2(targetValue, targetValue);
+  return vec2(sourceValue, targetValue);
+}` : ''}
+
+${edgeFetchOpacity}
+
+void main() {
+  uint state = fetchEdgeState(a_edgeId);
+  if (u_hoverEdgeIndex != 4294967295u && a_edgeId == u_hoverEdgeIndex) {
+    state |= u_hoverEdgeState;
+  }
+  float opacityMul = 1.0;
+  vec3 rgbMul = vec3(1.0);
+  vec3 rgbAdd = vec3(0.0);
+  uint discardFlag = 0u;
+  if (state == 0u) {
+    vec4 scale = u_edgeNoStateScale;
+    opacityMul *= scale.y;
+    rgbMul *= u_edgeNoStateColorMul.rgb;
+    rgbAdd += u_edgeNoStateColorAdd.rgb;
+    discardFlag = uint(scale.w > 0.5);
   } else {
-    for (int i = 0; i < ${STATE_SLOTS}; i += 1) {
-      float enabledStart = float((a_endpointState.x >> uint(i)) & 1u);
-      float slotMul = u_nodeStateScale[i].x;
-      startSizeMul *= mix(1.0, slotMul, enabledStart);
+    for (int i = 0; i < ${stateSlots}; i += 1) {
+      float enabled = float((state >> uint(i)) & 1u);
+      vec4 scale = u_edgeStateScale[i];
+      opacityMul *= mix(1.0, scale.y, enabled);
+      rgbMul *= mix(vec3(1.0), u_edgeStateColorMul[i].rgb, enabled);
+      rgbAdd += u_edgeStateColorAdd[i].rgb * enabled;
+      discardFlag |= uint((scale.w > 0.5) && (enabled > 0.5));
     }
   }
-  if (a_endpointState.y == 0u) {
-    endSizeMul *= u_nodeNoStateScale.x;
-  } else {
-    for (int i = 0; i < ${STATE_SLOTS}; i += 1) {
-      float enabledEnd = float((a_endpointState.y >> uint(i)) & 1u);
-      float slotMul = u_nodeStateScale[i].x;
-      endSizeMul *= mix(1.0, slotMul, enabledEnd);
-    }
-  }
 
-  vec3 start = a_start;
-  vec3 end = a_end;
-  vec3 dir = end - start;
-  float dirLen = max(length(dir), 1e-5);
-  vec3 dirN = dir / dirLen;
-  float startRadius = max(u_nodeSizeBase + u_nodeSizeScale * a_endpointSize.x, 0.0) * 0.5 * startSizeMul;
-  float endRadius = max(u_nodeSizeBase + u_nodeSizeScale * a_endpointSize.y, 0.0) * 0.5 * endSizeMul;
-  float trimStart = startRadius * u_edgeEndpointTrim;
-  float trimEnd = endRadius * u_edgeEndpointTrim;
-  vec3 startPos = start + dirN * trimStart;
-  vec3 endPos = end - dirN * trimEnd;
-  bool isEnd = (gl_VertexID & 1) == 1;
-  vec3 pos = isEnd ? endPos : startPos;
-  vec4 baseColor = isEnd
-    ? ${useEdgeColorAttribute ? 'a_colorEnd' : 'u_edgeColorEnd'}
-    : ${useEdgeColorAttribute ? 'a_colorStart' : 'u_edgeColorStart'};
-  vec3 rgb = clamp(baseColor.rgb * rgbMul + rgbAdd, 0.0, 1.0);
-  vec4 color = vec4(rgb, baseColor.a);
-  vec2 widthPair = ${useEdgeWidthAttribute ? 'a_width' : 'u_edgeWidth'};
-  float width = (isEnd ? widthPair.y : widthPair.x) * widthMul;
+  uvec2 endpoints = texelFetch(u_edgeEndpoints, textureCoord(u_edgeEndpoints, a_edgeId), 0).xy;
+  uint sourceId = endpoints.x;
+  uint targetId = endpoints.y;
+  uint nodeId = (gl_VertexID & 1) == 0 ? sourceId : targetId;
+  vec3 pos = fetchNodePos(nodeId);
   gl_Position = u_viewProjection * vec4(pos, 1.0);
-  vec2 opacityPair = ${useEdgeOpacityAttribute ? 'a_opacity' : 'u_edgeOpacity'};
-  float rawOpacity = isEnd ? opacityPair.y : opacityPair.x;
-  float opacity = clamp(u_edgeOpacityBase + u_edgeOpacityScale * rawOpacity, 0.0, 1.0) * opacityMul;
-  float alpha = clamp(opacity * color.a, 0.0, 1.0);
-  v_color = vec4(color.rgb, alpha);
-}`;
 
-  const EDGE_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
-precision mediump float;
+  vec4 sourceColor = fetchEdgeColor(a_edgeId, false);
+  vec4 targetColor = fetchEdgeColor(a_edgeId, true);
+${edgeColorNodeBlock}
+  bool isTarget = (gl_VertexID & 1) == 1;
+  vec4 baseColor = isTarget ? targetColor : sourceColor;
+  vec2 opacityPair = ${edgeOpacitySourceNode
+    ? `resolveNodeOpacityPair(sourceId, targetId, ${edgeOpacityEndpoints}, u_defaultNodeOpacitySource)`
+    : 'fetchEdgeOpacityPair(a_edgeId)'};
+  float rawOpacity = isTarget ? opacityPair.y : opacityPair.x;
+  float opacity = clamp(u_edgeOpacityBase + u_edgeOpacityScale * rawOpacity, 0.0, 1.0);
+  vec3 rgb = clamp(baseColor.rgb * rgbMul + rgbAdd, 0.0, 1.0);
+  v_color = vec4(rgb, clamp(baseColor.a * opacity * opacityMul, 0.0, 1.0));
+  v_discardFlag = discardFlag;
+}
+`;
 
-in vec4 v_color;
-flat in uint v_discardFlag;
-out vec4 fragColor;
+  const EDGE_QUAD_VERTEX_SOURCE = `#version 300 es
+precision highp float;
+precision highp int;
+precision highp usampler2D;
 
-void main() {
-  if (v_discardFlag != 0u) {
-    discard;
-  }
-  fragColor = v_color;
-}`;
-
-  const EDGE_PREMUL_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
-precision mediump float;
-
-in vec4 v_color;
-flat in uint v_discardFlag;
-out vec4 fragColor;
-
-void main() {
-  if (v_discardFlag != 0u) {
-    discard;
-  }
-  fragColor = vec4(v_color.rgb * v_color.a, v_color.a);
-}`;
-
-  const EDGE_PREMUL_QUAD_FRAGMENT_SOURCE = EDGE_PREMUL_FRAGMENT_SOURCE;
-
-  const EDGE_QUAD_VERTEX_SOURCE = /* glsl */ `#version 300 es
 layout (location = 0) in vec2 a_corner;
-layout (location = 1) in vec3 a_start;
-layout (location = 2) in vec3 a_end;
-${EDGE_QUAD_POSITION_TARGET_DECL}
-${useEdgeWidthAttribute ? 'layout (location = 3) in vec2 a_width;\n' : 'uniform vec2 u_edgeWidth;\n'}
-${useEdgeColorAttribute ? 'layout (location = 4) in vec4 a_colorStart;\nlayout (location = 5) in vec4 a_colorEnd;\n' : 'uniform vec4 u_edgeColorStart;\nuniform vec4 u_edgeColorEnd;\n'}
-${useEdgeEndpointSizeAttribute ? 'layout (location = 6) in vec2 a_endpointSize;\n' : 'uniform vec2 u_edgeEndpointSize;\n'}
-${useEdgeOpacityAttribute ? 'layout (location = 7) in vec2 a_opacity;\n' : 'uniform vec2 u_edgeOpacity;\n'}
-layout (location = 8) in uint a_state;
-layout (location = 9) in uvec2 a_endpointState;
+layout (location = 1) in uint a_edgeId;
 
 uniform mat4 u_viewProjection;
-${POSITION_INTERPOLATION_UNIFORM}
 uniform vec2 u_viewport;
-uniform float u_edgeOpacityBase;
-uniform float u_edgeOpacityScale;
+uniform sampler2D u_nodePositions;
+${edgeColorSourceNode ? 'uniform sampler2D u_nodeEdgeColors;\nuniform int u_hasNodeColors;' : ''}
+${edgeWidthSourceNode ? 'uniform sampler2D u_nodeWidthSource;\nuniform int u_hasNodeWidthSource;' : ''}
+${edgeOpacitySourceNode ? 'uniform sampler2D u_nodeOpacitySource;\nuniform int u_hasNodeOpacitySource;' : ''}
+${edgeEndpointSizeSourceNode ? 'uniform sampler2D u_nodeEndpointSizeSource;\nuniform int u_hasNodeEndpointSizeSource;' : ''}${edgeColorDecl}${edgeWidthDecl}${edgeOpacityDecl}${edgeEndpointSizeDecl}
+uniform usampler2D u_edgeEndpoints;
+uniform usampler2D u_edgeStates;
+uniform usampler2D u_edgeEndpointStates;
+uniform int u_hasEdgeStates;
+uniform int u_hasEdgeEndpointStates;
+uniform uint u_hoverEdgeIndex;
+uniform uint u_hoverEdgeState;
+uniform vec4 u_nodeNoStateScale;
+uniform vec4 u_nodeStateScale[${stateSlots}];
+uniform vec4 u_edgeNoStateScale;
+uniform vec4 u_edgeNoStateColorMul;
+uniform vec4 u_edgeNoStateColorAdd;
+uniform vec4 u_edgeStateScale[${stateSlots}];
+uniform vec4 u_edgeStateColorMul[${stateSlots}];
+uniform vec4 u_edgeStateColorAdd[${stateSlots}];
+uniform vec4 u_defaultNodeEdgeColor;
+uniform vec4 u_defaultEdgeColorStart;
+uniform vec4 u_defaultEdgeColorEnd;
+uniform vec2 u_defaultEdgeWidth;
+uniform vec2 u_defaultNodeWidthSource;
+uniform vec2 u_defaultEdgeOpacity;
+uniform vec2 u_defaultNodeOpacitySource;
+uniform vec2 u_defaultEdgeEndpointSize;
+uniform vec2 u_defaultNodeEndpointSizeSource;
 uniform float u_edgeWidthBase;
 uniform float u_edgeWidthScale;
-	uniform float u_nodeSizeBase;
-	uniform float u_nodeSizeScale;
-	uniform float u_edgeEndpointTrim;
-	uniform uint u_hoverEdgeIndex;
-	uniform uint u_hoverEdgeState;
-	uniform vec4 u_nodeNoStateScale; // x=sizeMul used for endpoint sizes
-	uniform vec4 u_nodeStateScale[${STATE_SLOTS}]; // x=sizeMul (used for endpoint sizes)
-	uniform vec4 u_edgeNoStateScale; // x=widthMul y=opacityMul w=discard(>0.5)
-	uniform vec4 u_edgeNoStateColorMul;
-	uniform vec4 u_edgeNoStateColorAdd;
-	uniform vec4 u_edgeStateScale[${STATE_SLOTS}]; // x=widthMul y=opacityMul w=discard(>0.5)
-	uniform vec4 u_edgeStateColorMul[${STATE_SLOTS}];
-	uniform vec4 u_edgeStateColorAdd[${STATE_SLOTS}];
+uniform float u_edgeOpacityBase;
+uniform float u_edgeOpacityScale;
+uniform float u_nodeSizeBase;
+uniform float u_nodeSizeScale;
+uniform float u_edgeEndpointTrim;
 
 out vec4 v_color;
 flat out uint v_discardFlag;
+${TEXTURE_INDEX_HELPERS}
 
-	void main() {
-	  uint state = a_state;
-	  if (u_hoverEdgeIndex != 4294967295u && uint(gl_InstanceID) == u_hoverEdgeIndex) {
-	    state |= u_hoverEdgeState;
-	  }
-	  float widthMul = 1.0;
-	  float opacityMul = 1.0;
-	  vec3 rgbMul = vec3(1.0);
-	  vec3 rgbAdd = vec3(0.0);
-	  uint discardFlag = 0u;
-	  if (state == 0u) {
-	    vec4 scale = u_edgeNoStateScale;
-	    widthMul *= scale.x;
-	    opacityMul *= scale.y;
-	    rgbMul *= u_edgeNoStateColorMul.rgb;
-	    rgbAdd += u_edgeNoStateColorAdd.rgb;
-	    discardFlag = uint(scale.w > 0.5);
-	  } else {
-	    for (int i = 0; i < ${STATE_SLOTS}; i += 1) {
-	      float enabled = float((state >> uint(i)) & 1u);
-	      vec4 scale = u_edgeStateScale[i];
-	      widthMul *= mix(1.0, scale.x, enabled);
-	      opacityMul *= mix(1.0, scale.y, enabled);
-	      rgbMul *= mix(vec3(1.0), u_edgeStateColorMul[i].rgb, enabled);
-	      rgbAdd += u_edgeStateColorAdd[i].rgb * enabled;
-	      discardFlag |= uint((scale.w > 0.5) && (enabled > 0.5));
-	    }
-	  }
-  v_discardFlag = discardFlag;
+vec3 fetchNodePos(uint id) {
+  return texelFetch(u_nodePositions, textureCoord(u_nodePositions, id), 0).xyz;
+}
 
+uint fetchEdgeState(uint id) {
+  if (u_hasEdgeStates == 0) return 0u;
+  return texelFetch(u_edgeStates, textureCoord(u_edgeStates, id), 0).x;
+}
+
+uvec2 fetchEdgeEndpointStatePair(uint edgeId) {
+  if (u_hasEdgeEndpointStates == 0) return uvec2(0u, 0u);
+  return texelFetch(u_edgeEndpointStates, textureCoord(u_edgeEndpointStates, edgeId), 0).xy;
+}
+
+${edgeColorSourceNode ? `
+vec4 fetchNodeColor(uint id) {
+  if (u_hasNodeColors == 0) return u_defaultNodeEdgeColor;
+  return texelFetch(u_nodeEdgeColors, textureCoord(u_nodeEdgeColors, id), 0);
+}` : ''}
+
+${edgeFetchColor}
+
+${edgeWidthSourceNode || edgeOpacitySourceNode || edgeEndpointSizeSourceNode ? `
+float fetchNodeScalar(sampler2D sourceTex, uint nodeId, int hasSource, float fallbackValue) {
+  if (hasSource == 0) return fallbackValue;
+  return texelFetch(sourceTex, textureCoord(sourceTex, nodeId), 0).x;
+}
+
+vec2 resolveNodePair(
+  sampler2D sourceTex,
+  uint sourceId,
+  uint targetId,
+  int hasSource,
+  int endpointsMode,
+  vec2 fallbackPair
+) {
+  float sourceValue = fetchNodeScalar(sourceTex, sourceId, hasSource, fallbackPair.x);
+  float targetValue = fetchNodeScalar(sourceTex, targetId, hasSource, fallbackPair.y);
+  if (endpointsMode == 1) return vec2(sourceValue, sourceValue);
+  if (endpointsMode == 2) return vec2(targetValue, targetValue);
+  return vec2(sourceValue, targetValue);
+}` : ''}
+
+${edgeFetchWidth}
+${edgeFetchOpacity}
+${edgeFetchEndpointSize}
+
+void main() {
+  uint state = fetchEdgeState(a_edgeId);
+  if (u_hoverEdgeIndex != 4294967295u && a_edgeId == u_hoverEdgeIndex) {
+    state |= u_hoverEdgeState;
+  }
+  float widthMul = 1.0;
+  float opacityMul = 1.0;
+  vec3 rgbMul = vec3(1.0);
+  vec3 rgbAdd = vec3(0.0);
+  uint discardFlag = 0u;
+  if (state == 0u) {
+    vec4 scale = u_edgeNoStateScale;
+    widthMul *= scale.x;
+    opacityMul *= scale.y;
+    rgbMul *= u_edgeNoStateColorMul.rgb;
+    rgbAdd += u_edgeNoStateColorAdd.rgb;
+    discardFlag = uint(scale.w > 0.5);
+  } else {
+    for (int i = 0; i < ${stateSlots}; i += 1) {
+      float enabled = float((state >> uint(i)) & 1u);
+      vec4 scale = u_edgeStateScale[i];
+      widthMul *= mix(1.0, scale.x, enabled);
+      opacityMul *= mix(1.0, scale.y, enabled);
+      rgbMul *= mix(vec3(1.0), u_edgeStateColorMul[i].rgb, enabled);
+      rgbAdd += u_edgeStateColorAdd[i].rgb * enabled;
+      discardFlag |= uint((scale.w > 0.5) && (enabled > 0.5));
+    }
+  }
+
+  uvec2 endpoints = texelFetch(u_edgeEndpoints, textureCoord(u_edgeEndpoints, a_edgeId), 0).xy;
+  uint sourceId = endpoints.x;
+  uint targetId = endpoints.y;
+
+  uvec2 endpointStatePair = fetchEdgeEndpointStatePair(a_edgeId);
   float startSizeMul = 1.0;
   float endSizeMul = 1.0;
-  if (a_endpointState.x == 0u) {
+  if (endpointStatePair.x == 0u) {
     startSizeMul *= u_nodeNoStateScale.x;
   } else {
-    for (int i = 0; i < ${STATE_SLOTS}; i += 1) {
-      float enabledStart = float((a_endpointState.x >> uint(i)) & 1u);
+    for (int i = 0; i < ${stateSlots}; i += 1) {
+      float enabledStart = float((endpointStatePair.x >> uint(i)) & 1u);
       float slotMul = u_nodeStateScale[i].x;
       startSizeMul *= mix(1.0, slotMul, enabledStart);
     }
   }
-  if (a_endpointState.y == 0u) {
+  if (endpointStatePair.y == 0u) {
     endSizeMul *= u_nodeNoStateScale.x;
   } else {
-    for (int i = 0; i < ${STATE_SLOTS}; i += 1) {
-      float enabledEnd = float((a_endpointState.y >> uint(i)) & 1u);
+    for (int i = 0; i < ${stateSlots}; i += 1) {
+      float enabledEnd = float((endpointStatePair.y >> uint(i)) & 1u);
       float slotMul = u_nodeStateScale[i].x;
       endSizeMul *= mix(1.0, slotMul, enabledEnd);
     }
   }
 
-  vec3 start = a_start;
-  vec3 end = a_end;
-  vec3 dir = end - start;
+  vec3 sourcePos = fetchNodePos(sourceId);
+  vec3 targetPos = fetchNodePos(targetId);
+  vec3 dir = targetPos - sourcePos;
   float dirLenWorld = max(length(dir), 1e-5);
   vec3 dirN = dir / dirLenWorld;
-  vec2 endpointSizePair = ${useEdgeEndpointSizeAttribute ? 'a_endpointSize' : 'u_edgeEndpointSize'};
+
+  vec2 endpointSizePair = ${edgeEndpointSizeSourceNode
+    ? `resolveNodePair(
+      u_nodeEndpointSizeSource,
+      sourceId,
+      targetId,
+      u_hasNodeEndpointSizeSource,
+      ${edgeEndpointSizeEndpoints},
+      u_defaultNodeEndpointSizeSource
+    )`
+    : 'fetchEdgeEndpointSizePair(a_edgeId)'};
   float startRadius = max(u_nodeSizeBase + u_nodeSizeScale * endpointSizePair.x, 0.0) * 0.5 * startSizeMul;
   float endRadius = max(u_nodeSizeBase + u_nodeSizeScale * endpointSizePair.y, 0.0) * 0.5 * endSizeMul;
   float trimStart = startRadius * u_edgeEndpointTrim;
   float trimEnd = endRadius * u_edgeEndpointTrim;
-  vec3 startPos = start + dirN * trimStart;
-  vec3 endPos = end - dirN * trimEnd;
+  vec3 startPos = sourcePos + dirN * trimStart;
+  vec3 endPos = targetPos - dirN * trimEnd;
 
   float segmentMix = clamp(a_corner.x, 0.0, 1.0);
-  vec2 widthPair = ${useEdgeWidthAttribute ? 'a_width' : 'u_edgeWidth'};
-  float width = max((u_edgeWidthBase + u_edgeWidthScale * mix(widthPair.x, widthPair.y, segmentMix)) * widthMul, 0.0);
+  vec2 widthPair = ${edgeWidthSourceNode
+    ? `resolveNodePair(
+      u_nodeWidthSource,
+      sourceId,
+      targetId,
+      u_hasNodeWidthSource,
+      ${edgeWidthEndpoints},
+      u_defaultNodeWidthSource
+    )`
+    : 'fetchEdgeWidthPair(a_edgeId)'};
+  float rawWidth = mix(widthPair.x, widthPair.y, segmentMix);
+  float width = max((u_edgeWidthBase + u_edgeWidthScale * rawWidth) * widthMul, 0.0);
+
   vec4 clipStart = u_viewProjection * vec4(startPos, 1.0);
   vec4 clipEnd = u_viewProjection * vec4(endPos, 1.0);
   vec2 ndcStart = clipStart.xy / clipStart.w;
@@ -478,20 +721,65 @@ flat out uint v_discardFlag;
   vec4 clipPos = mix(clipStart, clipEnd, segmentMix);
   clipPos.xy += offsetNdc * a_corner.y * 1.5;
   gl_Position = clipPos;
-  vec4 colorStart = ${useEdgeColorAttribute ? 'a_colorStart' : 'u_edgeColorStart'};
-  vec4 colorEnd = ${useEdgeColorAttribute ? 'a_colorEnd' : 'u_edgeColorEnd'};
-  vec4 blended = mix(colorStart, colorEnd, segmentMix);
-  vec3 rgb = clamp(blended.rgb * rgbMul + rgbAdd, 0.0, 1.0);
-  vec2 opacityPair = ${useEdgeOpacityAttribute ? 'a_opacity' : 'u_edgeOpacity'};
-  float opacity = clamp(u_edgeOpacityBase + u_edgeOpacityScale * mix(opacityPair.x, opacityPair.y, segmentMix), 0.0, 1.0) * opacityMul;
-  float alpha = clamp(opacity * blended.a, 0.0, 1.0);
-  v_color = vec4(rgb, alpha);
-}`;
 
-  const EDGE_QUAD_FRAGMENT_SOURCE = EDGE_FRAGMENT_SOURCE;
+  vec4 sourceColor = fetchEdgeColor(a_edgeId, false);
+  vec4 targetColor = fetchEdgeColor(a_edgeId, true);
+${edgeColorNodeBlock}
+  vec4 blendedColor = mix(sourceColor, targetColor, segmentMix);
+  vec2 opacityPair = ${edgeOpacitySourceNode
+    ? `resolveNodePair(
+      u_nodeOpacitySource,
+      sourceId,
+      targetId,
+      u_hasNodeOpacitySource,
+      ${edgeOpacityEndpoints},
+      u_defaultNodeOpacitySource
+    )`
+    : 'fetchEdgeOpacityPair(a_edgeId)'};
+  float rawOpacity = mix(opacityPair.x, opacityPair.y, segmentMix);
+  float opacity = clamp(u_edgeOpacityBase + u_edgeOpacityScale * rawOpacity, 0.0, 1.0);
+  vec3 rgb = clamp(blendedColor.rgb * rgbMul + rgbAdd, 0.0, 1.0);
+  v_color = vec4(rgb, clamp(blendedColor.a * opacity * opacityMul, 0.0, 1.0));
+  v_discardFlag = discardFlag;
+}
+`;
+
+  const EDGE_FRAGMENT_SOURCE = `#version 300 es
+precision highp float;
+
+in vec4 v_color;
+flat in uint v_discardFlag;
+out vec4 fragColor;
+
+void main() {
+  if (v_discardFlag != 0u) {
+    discard;
+  }
+  fragColor = v_color;
+}
+`;
+
+  const EDGE_WEIGHTED_FRAGMENT_SOURCE = `#version 300 es
+precision highp float;
+
+in vec4 v_color;
+flat in uint v_discardFlag;
+layout (location = 0) out vec4 fragAccum;
+layout (location = 1) out vec4 fragWeight;
+
+void main() {
+  if (v_discardFlag != 0u) {
+    discard;
+  }
+  float weight = v_color.a;
+  fragAccum = vec4(v_color.rgb * weight, weight);
+  fragWeight = vec4(weight, 0.0, 0.0, 0.0);
+}
+`;
+
   const EDGE_WEIGHTED_QUAD_FRAGMENT_SOURCE = EDGE_WEIGHTED_FRAGMENT_SOURCE;
 
-  const EDGE_RESOLVE_VERTEX_SOURCE = /* glsl */ `#version 300 es
+  const EDGE_RESOLVE_VERTEX_SOURCE = `#version 300 es
 layout (location = 0) in vec2 a_position;
 layout (location = 1) in vec2 a_uv;
 out vec2 v_uv;
@@ -499,10 +787,11 @@ out vec2 v_uv;
 void main() {
   gl_Position = vec4(a_position, 0.0, 1.0);
   v_uv = a_uv;
-}`;
+}
+`;
 
-  const EDGE_RESOLVE_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
-precision mediump float;
+  const EDGE_RESOLVE_FRAGMENT_SOURCE = `#version 300 es
+precision highp float;
 in vec2 v_uv;
 uniform sampler2D u_colorAccum;
 uniform sampler2D u_weightAccum;
@@ -515,10 +804,11 @@ void main() {
   vec3 resolved = accum / denom;
   float alpha = clamp(weight, 0.0, 1.0);
   fragColor = vec4(resolved * alpha, alpha);
-}`;
+}
+`;
 
-  const EDGE_RESOLVE_TONEMAP_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
-precision mediump float;
+  const EDGE_RESOLVE_TONEMAP_FRAGMENT_SOURCE = `#version 300 es
+precision highp float;
 in vec2 v_uv;
 uniform sampler2D u_colorAccum;
 uniform sampler2D u_weightAccum;
@@ -532,10 +822,11 @@ void main() {
   vec3 tonemapped = resolved / (resolved + vec3(1.0));
   float alpha = clamp(weight, 0.0, 1.0);
   fragColor = vec4(tonemapped, alpha);
-}`;
+}
+`;
 
-  const EDGE_RESOLVE_BOOST_FRAGMENT_SOURCE = /* glsl */ `#version 300 es
-precision mediump float;
+  const EDGE_RESOLVE_BOOST_FRAGMENT_SOURCE = `#version 300 es
+precision highp float;
 in vec2 v_uv;
 uniform sampler2D u_colorAccum;
 uniform sampler2D u_weightAccum;
@@ -551,17 +842,15 @@ void main() {
   vec3 tonemapped = boosted / (boosted + vec3(1.0));
   float alpha = clamp(weight, 0.0, 1.0);
   fragColor = vec4(tonemapped, alpha);
-}`;
+}
+`;
 
   return {
     NODE_VERTEX_SOURCE,
     NODE_FRAGMENT_SOURCE,
     EDGE_VERTEX_SOURCE,
-    EDGE_FRAGMENT_SOURCE,
-    EDGE_PREMUL_FRAGMENT_SOURCE,
     EDGE_QUAD_VERTEX_SOURCE,
-    EDGE_QUAD_FRAGMENT_SOURCE,
-    EDGE_PREMUL_QUAD_FRAGMENT_SOURCE,
+    EDGE_FRAGMENT_SOURCE,
     EDGE_WEIGHTED_FRAGMENT_SOURCE,
     EDGE_WEIGHTED_QUAD_FRAGMENT_SOURCE,
     EDGE_RESOLVE_VERTEX_SOURCE,
@@ -570,3 +859,5 @@ void main() {
     EDGE_RESOLVE_BOOST_FRAGMENT_SOURCE,
   };
 }
+
+export default createGraphWebGLSources;

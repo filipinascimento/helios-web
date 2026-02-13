@@ -1,10 +1,10 @@
 # WebGPU: Variant-Specific BindGroup Layouts (Future)
 
 ## Context
-We already support mapper-driven **uniform vs dense-buffer** selection.
+We already support mapper-driven **uniform vs per-item-buffer** selection.
 
 - WebGL: constant channels avoid attribute uploads/binds (true “don’t bind what you don’t need”).
-- WebGPU: constant channels avoid dense updates/uploads **and** compile shader variants that do not read the per-item buffers, but we still bind a “full” bind group layout that includes bindings for those buffers.
+- WebGPU: constant channels avoid unnecessary updates/uploads **and** compile shader variants that do not read per-item buffers, but we still bind a “full” bind group layout that includes bindings for those buffers.
 
 This is correct and usually fast enough, but it does not fully satisfy the aesthetic/CPU-side goal: **don’t bind what you don’t need**.
 
@@ -21,7 +21,7 @@ Potential wins:
 - Cleaner invariant: bound resources reflect actual shader usage.
 
 Potential non-wins / costs:
-- Likely small or unmeasurable improvement compared to the already-achieved wins (no dense update + no upload + shader variant).
+- Likely small or unmeasurable improvement compared to the already-achieved wins (fewer updates + no redundant upload + shader variant).
 - More bind group layouts and bind groups to cache/manage.
 - More pipeline layouts (because pipeline layouts depend on bind group layouts).
 
@@ -45,8 +45,8 @@ Introduce **variant-specific bind group layouts** (and bind groups) that match t
   - Conditionally include: colors, widths, opacities, endpointSizes.
 
 ### Resource reuse / constraints
-- Keep existing `device.resourceCache.webgpu` keys unchanged (e.g. `dense:node:positions`, `dense:edge:segments`).
-- No changes to the “no JS copies of dense buffers” rule: uploads must still come directly from the typed-array views.
+- Keep existing `device.resourceCache.webgpu` keying strategy stable (for example by channel + scope + usage).
+- No changes to the “no JS copies of renderer buffers” rule: uploads must still come directly from typed-array views.
 - Bind group differences should only affect which buffers are *bound*, not how buffers are allocated or uploaded.
 
 ## What to test / measure

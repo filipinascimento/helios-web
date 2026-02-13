@@ -1,19 +1,3 @@
-import {
-  NODE_POSITION_ATTRIBUTE,
-  NODE_COLOR_ATTRIBUTE,
-  NODE_SIZE_ATTRIBUTE,
-  NODE_STATE_ATTRIBUTE,
-  NODE_OUTLINE_WIDTH_ATTRIBUTE,
-  NODE_OUTLINE_COLOR_ATTRIBUTE,
-  EDGE_COLOR_ATTRIBUTE,
-  EDGE_OPACITY_ATTRIBUTE,
-  EDGE_WIDTH_ATTRIBUTE,
-  EDGE_STATE_ATTRIBUTE,
-  EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
-  EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
-  EDGE_ENDPOINTS_STATE_ATTRIBUTE,
-} from '../../pipeline/constants.js';
-
 function getMode(entry) {
   return entry && typeof entry === 'object' ? entry.mode : null;
 }
@@ -64,31 +48,5 @@ export class GraphVisualSchema {
       opacityBuffer: !isUniform(edgeCfg?.opacity),
       endpointSizeBuffer: !isUniform(edgeCfg?.endpointSize),
     };
-  }
-
-  getDenseRequests() {
-    const nodeVariant = this.getNodeVariant();
-    const edgeVariant = this.getEdgeVariant();
-    const requests = [];
-
-    // Nodes: positions + states are always needed for layout/state coloring.
-    requests.push(['node', NODE_POSITION_ATTRIBUTE]);
-    requests.push(['node', NODE_STATE_ATTRIBUTE]);
-    if (nodeVariant.sizeBuffer) requests.push(['node', NODE_SIZE_ATTRIBUTE]);
-    if (nodeVariant.colorBuffer) requests.push(['node', NODE_COLOR_ATTRIBUTE]);
-    if (nodeVariant.outlineWidthBuffer) requests.push(['node', NODE_OUTLINE_WIDTH_ATTRIBUTE]);
-    if (nodeVariant.outlineColorBuffer) requests.push(['node', NODE_OUTLINE_COLOR_ATTRIBUTE]);
-
-    // Edges: geometry + states always needed.
-    requests.push(['edge', EDGE_ENDPOINTS_POSITION_ATTRIBUTE]);
-    requests.push(['edge', EDGE_ENDPOINTS_STATE_ATTRIBUTE]);
-    requests.push(['edge', EDGE_STATE_ATTRIBUTE]);
-
-    if (edgeVariant.colorBuffer) requests.push(['edge', EDGE_COLOR_ATTRIBUTE]);
-    if (edgeVariant.opacityBuffer) requests.push(['edge', EDGE_OPACITY_ATTRIBUTE]);
-    if (edgeVariant.widthBuffer) requests.push(['edge', EDGE_WIDTH_ATTRIBUTE]);
-    if (edgeVariant.endpointSizeBuffer) requests.push(['edge', EDGE_ENDPOINTS_SIZE_ATTRIBUTE]);
-
-    return { requests, nodeVariant, edgeVariant };
   }
 }

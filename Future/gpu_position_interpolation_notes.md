@@ -168,11 +168,11 @@ For the near term (CPU/WASM layout stays as-is), start with:
 ## Related implementation touchpoints in this repo (non-exhaustive)
 
 - Layout positions live in `_helios_visuals_position` (see `src/layouts/Layout.js` and `src/pipeline/constants.js`).
-- Dense buffer uploads happen in:
+- Position-related uploads currently happen in:
   - WebGL: `src/rendering/engine/GraphLayerWebGL.js`
   - WebGPU: `src/rendering/engine/GraphLayerWebGPU.js`
-- Position data is read via `GraphLayer` using dense views (`src/rendering/engine/GraphLayer.js`), and uploaded through the resource cache (`src/rendering/resources/WebGPUResourceCache.js`).
-- Edge geometry currently comes from a dense edge endpoint attribute (`_helios_visuals_edge_endpoints_position`), which is convenient but makes per-snapshot uploads large for big `E`. For smooth interpolation at scale, prefer edge endpoint ids and shader fetches.
+- Position data is read via sparse/indexed graph views and uploaded through the resource cache (`src/rendering/resources/WebGPUResourceCache.js`).
+- Edge geometry currently comes from `_helios_visuals_edge_endpoints_position`, which is convenient but makes per-snapshot uploads large for big `E`. For smooth interpolation at scale, prefer edge endpoint ids and shader fetches.
 
 ## Recommended future changes to `helios-network` (C/WASM)
 

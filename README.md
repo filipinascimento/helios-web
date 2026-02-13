@@ -20,8 +20,8 @@ npm run test    # runs the node colormap unit test
 
 Point your browser at `http://localhost:5173` to interact with the bundled
 example (located in `docs/examples/basic`). It creates a sample graph, applies
-worker layout updates, and renders it via dense buffers pulled straight from
-`helios-network` so you can verify the stack end-to-end.
+worker layout updates, and renders it through the indirect pipelines backed by
+`helios-network` sparse/indexed buffers so you can verify the stack end-to-end.
 
 ## Documentation & Examples
 
@@ -68,7 +68,8 @@ both the rendering stack and the documentation example stay functional.
   `ResizeObserver` hook.
 - **Visuals & mapping (`src/pipeline/*.js`)** – ensure visual attributes live
   directly inside the `helios-network` object, seed defaults, validate
-  dimensions/types, and mark dense buffers dirty when mappers write into sparse
+  dimensions/types, and keep sparse visual buffers in sync when mappers write
+  into attributes
   attributes.
 - **Scheduler (`src/scheduler/Scheduler.js`)** – lightweight coordinator that
   sequences layout ticks, geometry updates, and draw calls. Layouts can
@@ -79,20 +80,19 @@ both the rendering stack and the documentation example stay functional.
   `D3Force3DLayout` for the d3-force-3d worker. Workers can push updated
   positions back to the main thread without touching DOM/APIs.
 
-By default, Helios uses the d3-force-3d worker layout and interpolation is enabled.
+By default, Helios uses the d3-force-3d worker layout.
 - **Rendering (`src/rendering`)** – the new modular `LayeredRenderer` chooses
   WebGPU when available (falling back to WebGL2) and exposes layers, materials,
   shader overrides, framebuffer capture/present helpers, and projection
   utilities. The default graph layer still uploads raw attribute views (no
   extra copies) and draws edges before nodes. Force selection via the Helios
-  option `renderer: 'webgl' | 'webgpu'` when needed. When using WebGPU, the
-  option `webgpuBackend: 'dense' | 'indirect'` selects the dense (default) or
-  indirect backend.
+  option `renderer: 'webgl' | 'webgpu'` when needed. Helios now runs indirect
+  rendering only on both WebGPU and WebGL2.
 
 Development docs and test commands live in `DEVELOPING.md`.
 - **Attribute mapping (`src/pipeline/Mapper.js`)** – helper to convert arbitrary
   node/edge attributes into colors or sizes; mapped values are written into
-  sparse visual attributes and flagged for dense rebuilds.
+  sparse visual attributes.
 
 The demo in `docs/examples/basic/main.js` showcases how to instantiate a
 network, define visual attributes, and kick off Helios with a worker-driven

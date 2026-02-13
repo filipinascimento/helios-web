@@ -100,7 +100,7 @@ interpolation: {
 
 ## 6) Docs
 - Add a new doc describing delegation usage.
-- Document buffer-copy tradeoffs (worker snapshots, CPU interpolation snapshots, dense repacks).
+- Document buffer-copy tradeoffs (worker snapshots, CPU interpolation snapshots, sparse/indexed repacks).
 
 ---
 

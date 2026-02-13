@@ -863,11 +863,9 @@ export class Mapper {
     if (this.mode === 'node') {
       const buffer = this.safeGetAttributeBuffer('node', attribute);
       validateAttribute(buffer, attribute, type, dimension);
-      this.registerDense('node', attribute);
     } else {
       const buffer = this.safeGetAttributeBuffer('edge', attribute);
       validateAttribute(buffer, attribute, type, dimension);
-      this.registerDense('edge', attribute);
     }
   }
 
@@ -1016,8 +1014,6 @@ export class Mapper {
     } else {
       this.nodeToEdgeRegistrations.delete(attribute);
     }
-    this.registerDense('node', sourceAttribute);
-    this.registerDense('edge', attribute);
 
     // No explicit buffer bumps here: renderer invalidation for node-to-edge
     // passthrough config changes is handled centrally in GraphLayer (derived
@@ -1044,17 +1040,6 @@ export class Mapper {
         return;
       }
       throw error;
-    }
-  }
-
-  registerDense(scope, name) {
-    const method =
-      scope === 'node' ? this.network?.addDenseNodeAttributeBuffer : this.network?.addDenseEdgeAttributeBuffer;
-    if (typeof method !== 'function') return;
-    try {
-      method.call(this.network, name);
-    } catch (_) {
-      // ignore duplicates or unsupported dense buffers
     }
   }
 

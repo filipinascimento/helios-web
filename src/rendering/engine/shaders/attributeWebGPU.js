@@ -362,7 +362,7 @@ fn edgeDepthFragment(input : EdgeVertexOutput) -> @location(0) vec4<f32> {
   return { nodeWGSL: NODE_WGSL, edgeWGSL: EDGE_WGSL };
 }
 
-export function createAttributeWebGPUIndirectTrackSources(options = {}) {
+export function createAttributeWebGPUTrackSources(options = {}) {
   const node = options?.node && typeof options.node === 'object' ? options.node : {};
   const edge = options?.edge && typeof options.edge === 'object' ? options.edge : {};
   const encodedOutputMode = options?.encodedOutputMode === 'uint32' ? 'uint32' : 'rgba8';

@@ -329,7 +329,11 @@ test.describe('webgpu visual (headed)', () => {
 
       const sampleMean = async (mode) => {
         helios.renderer?.setEdgeTransparencyMode?.(mode);
-        helios.visuals.markAllDenseDirty();
+        helios.visuals.bumpEdgeAttributes?.(
+          '_helios_visuals_edge_color',
+          '_helios_visuals_edge_width',
+          '_helios_visuals_edge_opacity',
+        );
         helios.scheduler.requestGeometry();
         helios.renderer.render({ network, timestamp: performance.now(), camera: helios.renderer.camera });
         await new Promise((resolve) => setTimeout(resolve, 80));

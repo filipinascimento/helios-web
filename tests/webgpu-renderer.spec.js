@@ -12,18 +12,21 @@ async function waitForDiagnostics(page) {
   return diag;
 }
 
-test('webgpu indirect backend disables interpolation @webgpu', async ({ page }) => {
-  await page.goto('/tests/fixtures/demo.html?renderer=webgpu&webgpuBackend=indirect');
+test('webgpu renderer uses indirect graph layer @webgpu', async ({ page }) => {
+  await page.goto('/tests/fixtures/demo.html?renderer=webgpu');
   const diagnostics = await waitForDiagnostics(page);
   expect(diagnostics.renderer.toLowerCase()).toContain('webgpu');
 
   const info = await page.evaluate(() => {
     const helios = window.__helios;
+    const hasInterpolationApi = typeof helios?.interpolation === 'function';
     return {
       graphLayer: helios?.renderer?.graphLayer?.constructor?.name ?? null,
-      interpolation: helios?.interpolation?.() ?? null,
+      hasInterpolationApi,
+      interpolation: hasInterpolationApi ? helios.interpolation() : undefined,
     };
   });
-  expect(info.graphLayer).toBe('GraphLayerWebGPUIndirect');
-  expect(info.interpolation?.enabled).toBe(false);
+  expect(info.graphLayer).toBe('GraphLayerWebGPU');
+  expect(info.hasInterpolationApi).toBe(true);
+  expect(info.interpolation).toBe(null);
 });

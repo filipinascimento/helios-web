@@ -26,7 +26,11 @@ async function createOverlapScreenshot(page, mode = 'alpha') {
     opacities.set([0.2, 0.2], edges[1] * 2);
 
     helios.renderer?.setEdgeTransparencyMode?.(transparencyModeEdges);
-    helios.visuals.markAllDenseDirty();
+    helios.visuals.bumpEdgeAttributes?.(
+      '_helios_visuals_edge_color',
+      '_helios_visuals_edge_width',
+      '_helios_visuals_edge_opacity',
+    );
     helios.scheduler.requestGeometry();
     helios.renderer.render({ network, timestamp: performance.now(), camera: helios.renderer.camera });
     await new Promise((resolve) => setTimeout(resolve, 50));

@@ -23,7 +23,7 @@ export async function createOutlineColorHelios(container, renderer = 'webgl') {
 
   const [n0, n1] = network.addNodes(2);
 
-  // Add a single edge so dense graph/index buffers include both nodes.
+  // Add a single edge so both nodes are present in edge endpoint mapping.
   network.addEdges([{ from: n0, to: n1 }]);
 
   network.withBufferAccess(() => {
@@ -90,10 +90,7 @@ export async function createOutlineColorHelios(container, renderer = 'webgl') {
     helios.renderer.camera.updateMatrices?.();
   }
 
-  // Make sure the network exposes dense buffers used by the renderers.
-  helios.visuals?.registerDenseBuffers?.();
-
-  // Make sure the dense buffers exist before tests read pixels.
+  // Ensure updated buffers are visible to the renderer before pixel reads.
   helios.visuals.bumpNodeAttributes(
     NODE_POSITION_ATTRIBUTE,
     NODE_COLOR_ATTRIBUTE,
@@ -102,7 +99,6 @@ export async function createOutlineColorHelios(container, renderer = 'webgl') {
     NODE_OUTLINE_COLOR_ATTRIBUTE,
   );
   helios.visuals.markPositionsDirty();
-  helios.visuals.markAllDenseDirty();
   helios.scheduler.requestGeometry();
 
   return { helios };

@@ -54,11 +54,10 @@ Key entry points:
 - `Helios` – prepares layers, connects the scheduler, kick-starts rendering
 - `StaticLayout`, `WorkerLayout`, `D3Force3DLayout` – ready-to-use layout implementations
 - `Mapper` – flexible mapping utility for visual channels; mapped values land in
-  sparse attributes and trigger dense buffer rebuilds automatically
+  sparse attributes
 - `HeliosUI` – optional HTML overlay UI (panel manager + attribute bindings)
 
-By default, Helios uses the d3-force-3d worker layout and interpolation is enabled. Pass
-`layout` or `interpolation` options to override.
+By default, Helios uses the d3-force-3d worker layout.
 
 ## Events
 
@@ -96,7 +95,7 @@ See [`docs/states.md`](./states.md) for the bitmask-based node/edge state system
 
 ## Backend and mode requirements
 
-See [`docs/rendering-mode-requirements.md`](./rendering-mode-requirements.md) for a concise matrix of WebGPU/WebGL dense-vs-indirect requirements, extension gates, and sizing limits.
+See [`docs/rendering-mode-requirements.md`](./rendering-mode-requirements.md) for indirect WebGPU/WebGL requirements, extension gates, and sizing limits.
 
 ## Comparing with legacy Helios Web
 

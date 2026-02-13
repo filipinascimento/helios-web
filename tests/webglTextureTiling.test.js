@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { GraphLayerWebGLIndirect } from '../src/rendering/engine/GraphLayerWebGLIndirect.js';
-import { WebGLIndirectAttributeRenderer } from '../src/rendering/AttributeTracker.js';
-import { createGraphWebGLIndirectSources } from '../src/rendering/engine/shaders/graphWebGLIndirect.js';
+import { GraphLayerWebGL } from '../src/rendering/engine/GraphLayerWebGL.js';
+import { WebGLAttributeRenderer } from '../src/rendering/AttributeTracker.js';
+import { createGraphWebGLSources } from '../src/rendering/engine/shaders/graphWebGL.js';
 
 function createMockGL(maxTextureSize = 4) {
   const calls = {
@@ -36,16 +36,16 @@ function createMockGL(maxTextureSize = 4) {
   return { gl, calls };
 }
 
-test('GraphLayerWebGLIndirect computes tiled texture layout for >MAX_TEXTURE_SIZE texels', () => {
-  const layer = new GraphLayerWebGLIndirect();
+test('GraphLayerWebGL computes tiled texture layout for >MAX_TEXTURE_SIZE texels', () => {
+  const layer = new GraphLayerWebGL();
   const { gl } = createMockGL(16384);
   layer.gl = gl;
   const layout = layer.getTextureLayout(50000);
   assert.deepEqual(layout, { width: 16384, height: 4 });
 });
 
-test('GraphLayerWebGLIndirect uploads multi-row textures with texSubImage2D slices', () => {
-  const layer = new GraphLayerWebGLIndirect();
+test('GraphLayerWebGL uploads multi-row textures with texSubImage2D slices', () => {
+  const layer = new GraphLayerWebGL();
   const { gl, calls } = createMockGL(4);
   layer.gl = gl;
 
@@ -61,8 +61,8 @@ test('GraphLayerWebGLIndirect uploads multi-row textures with texSubImage2D slic
   assert.equal(calls.texSubImage2D[1][8].length, 1);
 });
 
-test('WebGLIndirectAttributeRenderer tiles integer textures across rows', () => {
-  const renderer = new WebGLIndirectAttributeRenderer({}, null, null);
+test('WebGLAttributeRenderer tiles integer textures across rows', () => {
+  const renderer = new WebGLAttributeRenderer({}, null, null);
   const { gl, calls } = createMockGL(2);
   renderer.gl = gl;
 
@@ -78,8 +78,8 @@ test('WebGLIndirectAttributeRenderer tiles integer textures across rows', () => 
   assert.equal(calls.texSubImage2D[1][8].length, 2);
 });
 
-test('graphWebGLIndirect shaders use textureCoord indexing instead of fixed y=0 fetches', () => {
-  const sources = createGraphWebGLIndirectSources();
+test('graphWebGL shaders use textureCoord indexing instead of fixed y=0 fetches', () => {
+  const sources = createGraphWebGLSources();
   assert.match(sources.NODE_VERTEX_SOURCE, /textureCoord/);
   assert.equal(sources.NODE_VERTEX_SOURCE.includes('ivec2(int(id), 0)'), false);
   assert.equal(sources.EDGE_VERTEX_SOURCE.includes('ivec2(int(a_edgeId), 0)'), false);

@@ -1,8 +1,7 @@
 import { test, expect } from '@playwright/test';
 
-async function runStateVisualCheck(page, renderer, extraQuery = '') {
-  const querySuffix = extraQuery ? `&${extraQuery}` : '';
-  await page.goto(`/tests/fixtures/standalone-pick.html?renderer=${renderer}${querySuffix}`);
+async function runStateVisualCheck(page, renderer) {
+  await page.goto(`/tests/fixtures/standalone-pick.html?renderer=${renderer}`);
   await page.waitForFunction(() => window.__helios || window.__heliosError, { timeout: 5000 });
   const error = await page.evaluate(() => window.__heliosError ?? null);
   if (error) throw new Error(`fixture failed: ${error}`);
@@ -29,7 +28,7 @@ async function runStateVisualCheck(page, renderer, extraQuery = '') {
     };
 
     const renderMain = async () => {
-      await helios.prewarm?.({ updateDenseBuffers: true });
+      await helios.prewarm?.();
       // Remove edge contribution so the assertions validate node state styling specifically.
       if (helios.renderer?.graphLayer) {
         helios.renderer.graphLayer.edgeOpacityBase = 0;
@@ -85,9 +84,8 @@ async function runStateVisualCheck(page, renderer, extraQuery = '') {
   expect(result.afterSlot3MaxGreen).toBeGreaterThan(result.beforeMaxGreen);
 }
 
-async function runNoStateVisualCheck(page, renderer, extraQuery = '') {
-  const querySuffix = extraQuery ? `&${extraQuery}` : '';
-  await page.goto(`/tests/fixtures/standalone-pick.html?renderer=${renderer}${querySuffix}`);
+async function runNoStateVisualCheck(page, renderer) {
+  await page.goto(`/tests/fixtures/standalone-pick.html?renderer=${renderer}`);
   await page.waitForFunction(() => window.__helios || window.__heliosError, { timeout: 5000 });
   const error = await page.evaluate(() => window.__heliosError ?? null);
   if (error) throw new Error(`fixture failed: ${error}`);
@@ -105,7 +103,7 @@ async function runNoStateVisualCheck(page, renderer, extraQuery = '') {
     }
 
     const renderMain = async () => {
-      await helios.prewarm?.({ updateDenseBuffers: true });
+      await helios.prewarm?.();
       helios.renderer.render({ network: helios.network, camera: helios.renderer.camera });
     };
 
@@ -154,16 +152,8 @@ test('state styling affects WebGL rendering', async ({ page }) => {
   await runStateVisualCheck(page, 'webgl');
 });
 
-test('state styling affects WebGL indirect rendering', async ({ page }) => {
-  await runStateVisualCheck(page, 'webgl', 'webglBackend=indirect');
-});
-
 test('no-state styling + discard affects WebGL rendering', async ({ page }) => {
   await runNoStateVisualCheck(page, 'webgl');
-});
-
-test('no-state styling + discard affects WebGL indirect rendering', async ({ page }) => {
-  await runNoStateVisualCheck(page, 'webgl', 'webglBackend=indirect');
 });
 
 test('@webgpu state styling affects WebGPU rendering', async ({ page }) => {

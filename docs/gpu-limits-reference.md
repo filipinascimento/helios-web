@@ -38,16 +38,6 @@ Using current payload sizes from `rendering-mode-requirements.md`:
 
 Practical node cap in the common varying-color case: `~8.39M`.
 
-### Edges (Dense)
-
-- Segments (`24 * E`): `E <= 5592405`
-- Colors (`32 * E`, varying): `E <= 4194304`
-- Widths/opacities/endpointSizes (`8 * E`, varying): `E <= 16777216`
-- States (`4 * E`): `E <= 33554432`
-- Endpoint states (`8 * E`): `E <= 16777216`
-
-Practical dense edge cap in the varying-color case: `~4.19M`.
-
 ### Edges (Indirect)
 
 - Indices (`4 * E`): `E <= 33554432`

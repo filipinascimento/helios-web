@@ -76,7 +76,6 @@ test('edges render with correct relative widths', async ({ page }, testInfo) => 
       '_helios_visuals_edge_opacity',
     );
     helios.visuals.markPositionsDirty();
-    helios.visuals.markAllDenseDirty();
     helios.scheduler.requestGeometry();
     window.__edgeIds = Array.from(edges);
     window.__helios = helios;
@@ -112,34 +111,6 @@ test('edges render with correct relative widths', async ({ page }, testInfo) => 
     const { width, height } = renderer.size ?? { width: 0, height: 0 };
     const rect = { x: 0, y: 0, width, height };
     const data = await Promise.resolve(renderer.readPixels(null, rect));
-    const denseColors = (() => {
-      try {
-        return Array.from(helios.network.getDenseEdgeAttributeView('_helios_visuals_edge_color')?.view?.slice(0, 16) ?? []);
-      } catch (_) {
-        return null;
-      }
-    })();
-    const denseWidths = (() => {
-      try {
-        return Array.from(helios.network.getDenseEdgeAttributeView('_helios_visuals_edge_width')?.view?.slice(0, 8) ?? []);
-      } catch (_) {
-        return null;
-      }
-    })();
-    const denseSegments = (() => {
-      try {
-        return Array.from(
-          helios.network.getDenseEdgeAttributeView('_helios_visuals_edge_endpoints_position')?.view?.slice(0, 24) ?? [],
-        );
-      } catch (_) {
-        return null;
-      }
-    })();
-    let denseEdgeCount = 0;
-    helios.network.updateDenseEdgeIndexBuffer();
-    helios.network.withBufferAccess(() => {
-      denseEdgeCount = helios.network.getDenseEdgeIndexView()?.count ?? 0;
-    });
     if (!data || !width || !height) {
       return {
         width,
@@ -151,7 +122,6 @@ test('edges render with correct relative widths', async ({ page }, testInfo) => 
         redMax: 0,
         blueMax: 0,
         edgeIds: window.__edgeIds ?? [],
-        denseEdgeCount,
         samples: window.__edgeColorSample ?? null,
         dataLength: data ? data.length : 0,
       };
@@ -182,13 +152,9 @@ test('edges render with correct relative widths', async ({ page }, testInfo) => 
       redMax,
       blueMax,
       edgeIds: window.__edgeIds ?? [],
-      denseEdgeCount,
       samples: window.__edgeColorSample ?? null,
       dataLength,
       edgeCount: renderer.graphLayer?.edgeCount ?? null,
-      denseColors,
-      denseWidths,
-      denseSegments,
       schedulerState: {
         running: helios.scheduler?.running ?? null,
         needsRender: helios.scheduler?._needsRender ?? null,

@@ -44,7 +44,7 @@ async function runOutlineColorVisualCheck(page, renderer) {
     }
 
     const renderMain = async () => {
-      await helios.prewarm?.({ updateDenseBuffers: true });
+      await helios.prewarm?.();
       helios.renderer.render({ network: helios.network, camera: helios.renderer.camera, timestamp: performance.now() });
     };
 
@@ -67,23 +67,6 @@ async function runOutlineColorVisualCheck(page, renderer) {
 
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
     await renderMain();
-
-    let denseOutlineColors = null;
-    let denseNodeIndices = null;
-    try {
-      helios.network.updateDenseNodeAttributeBuffer?.('_helios_visuals_outline_color');
-      helios.network.updateDenseNodeIndexBuffer?.();
-      helios.network.withBufferAccess(() => {
-        denseOutlineColors = Array.from(
-          helios.network.getDenseNodeAttributeView?.('_helios_visuals_outline_color')?.view?.slice(0, 16) ?? [],
-        );
-        denseNodeIndices = Array.from(
-          helios.network.getDenseNodeIndexView?.()?.view?.slice(0, 8) ?? [],
-        );
-      });
-    } catch (_) {
-      // ignore
-    }
 
     const bytes = await helios.renderer.readPixels(offscreen, { x: 0, y: 0, width: mainWidth, height: mainHeight });
     const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
@@ -115,8 +98,6 @@ async function runOutlineColorVisualCheck(page, renderer) {
       maxR,
       maxG,
       maxB,
-      denseOutlineColors,
-      denseNodeIndices,
       mainWidth,
       mainHeight,
     };

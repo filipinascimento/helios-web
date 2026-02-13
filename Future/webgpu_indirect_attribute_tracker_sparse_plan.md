@@ -101,7 +101,7 @@ Introduce a dedicated indirect tracker path that is index-driven on GPU:
   - non-`r32uint` fallback path
   - node-sourced edge width/endpoint-size variants
   - picking correctness for node and edge attributes
-- Confirm no dense buffers are requested in indirect tracker mode.
+- Confirm no legacy packed-buffer requests are emitted in tracker mode.
 
 ## Expected benefits
 

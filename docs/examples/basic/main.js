@@ -1,8 +1,6 @@
 import HeliosNetwork, { AttributeType } from 'helios-network';
 // When consuming the published package use `import { Helios } from 'helios-web-next';`
 import { Helios, EVENTS, HeliosUI } from '../../../src/index.js';
-import { UIAttribute } from '../../../src/ui/state/UIAttribute.js';
-import { createSliderRow } from '../../../src/ui/controls/createSliderRow.js';
 
 // Set this to an object like { helios: true, mapper: true, scheduler: true } to re-enable debug logs.
 const DEFAULT_NODE_COUNT = 2_000;
@@ -13,20 +11,6 @@ function resolveRendererPreference() {
   const renderer = params.get('renderer');
   if (renderer === 'webgl') return 'webgl';
   if (renderer === 'webgpu') return 'webgpu';
-  return null;
-}
-
-function resolveWebgpuBackend() {
-  const params = new URLSearchParams(window.location.search);
-  const backend = (params.get('webgpuBackend') ?? '').toLowerCase();
-  if (backend === 'indirect' || backend === 'dense') return backend;
-  return null;
-}
-
-function resolveWebglBackend() {
-  const params = new URLSearchParams(window.location.search);
-  const backend = (params.get('webglBackend') ?? '').toLowerCase();
-  if (backend === 'indirect' || backend === 'dense') return backend;
   return null;
 }
 
@@ -254,8 +238,6 @@ async function bootstrap() {
   const layoutType = resolveLayoutType();
   let layoutIntervalMs = resolveLayoutIntervalMs();
   const edgeTransparency = resolveEdgeTransparencyMode();
-  const webgpuBackend = resolveWebgpuBackend();
-  const webglBackend = resolveWebglBackend();
   const heliosOptions = {
     container: target,
     layout: layoutType === 'none'
@@ -292,19 +274,12 @@ async function bootstrap() {
     projection: 'perspective',
     transparencyModeEdges: edgeTransparency,
     debug: DEBUG_CONFIG,
-    // Warm up mapper application and dense buffers so first render is quick on large graphs.
+    // Warm up mapper application so first render is quick on large graphs.
     // prewarm: true,
-    // prewarmDenseBuffers: true,
   };
   const rendererPreference = resolveRendererPreference();
   if (rendererPreference) {
     heliosOptions.renderer = rendererPreference;
-  }
-  if (webgpuBackend) {
-    heliosOptions.webgpuBackend = webgpuBackend;
-  }
-  if (webglBackend) {
-    heliosOptions.webglBackend = webglBackend;
   }
 
 
@@ -319,11 +294,6 @@ async function bootstrap() {
 
   console.log("Waiting for helios to be ready...");
   await helios.ready;
- 
-  const usesIndirectBackend = (
-    (webgpuBackend === 'indirect' && helios.renderer?.device?.type === 'webgpu')
-    || (webglBackend === 'indirect' && helios.renderer?.device?.type === 'webgl2')
-  );
 
   console.log("Helios is ready!");
 
@@ -420,115 +390,6 @@ async function bootstrap() {
     }
     layoutIntervalSelect.value = String(layoutIntervalMs);
 
-    const interpolatorToggle = document.createElement('button');
-    interpolatorToggle.type = 'button';
-    interpolatorToggle.className = 'helios-ui-toggle';
-    interpolatorToggle.setAttribute('role', 'switch');
-    interpolatorToggle.setAttribute('aria-checked', 'false');
-    const toggleThumb = document.createElement('span');
-    toggleThumb.className = 'helios-ui-toggle__thumb';
-    toggleThumb.setAttribute('aria-hidden', 'true');
-    const toggleText = document.createElement('span');
-    toggleText.className = 'helios-ui-toggle__text';
-    toggleText.textContent = 'Off';
-    interpolatorToggle.appendChild(toggleThumb);
-    interpolatorToggle.appendChild(toggleText);
-
-    const updateInterpolatorLabel = () => {
-      const enabled = interpolatorToggle.getAttribute('aria-checked') === 'true';
-      toggleText.textContent = enabled ? 'On' : 'Off';
-    };
-    updateInterpolatorLabel();
-
-    let interpolationSmoothness = 6;
-    let interpolationTargetRemaining = 0.1;
-    let interpolationBackend = 'auto';
-
-    const backendSelect = document.createElement('select');
-    backendSelect.className = 'helios-ui-select';
-    backendSelect.setAttribute('aria-label', 'Interpolation backend');
-    const backendOptions = [
-      { value: 'auto', label: 'Auto' },
-      { value: 'cpu', label: 'CPU' },
-      { value: 'network', label: 'Network' },
-    ];
-    for (const entry of backendOptions) {
-      const option = document.createElement('option');
-      option.value = entry.value;
-      option.textContent = entry.label;
-      backendSelect.appendChild(option);
-    }
-    backendSelect.value = interpolationBackend;
-
-    const smoothnessAttribute = UIAttribute.number({
-      id: 'interpolation-smoothness',
-      label: 'Interpolation smoothness',
-      min: 1,
-      max: 12,
-      step: 0.5,
-      get: () => interpolationSmoothness,
-      set: (value) => {
-        const next = Number(value);
-        if (!Number.isFinite(next)) return;
-        interpolationSmoothness = next;
-        if (interpolatorToggle.getAttribute('aria-checked') === 'true') {
-          applyInterpolation();
-        }
-      },
-    });
-
-    const remainingAttribute = UIAttribute.number({
-      id: 'interpolation-remaining',
-      label: 'Interpolation remaining',
-      min: 0.01,
-      max: 0.5,
-      step: 0.01,
-      get: () => interpolationTargetRemaining,
-      set: (value) => {
-        const next = Number(value);
-        if (!Number.isFinite(next)) return;
-        interpolationTargetRemaining = next;
-        if (interpolatorToggle.getAttribute('aria-checked') === 'true') {
-          applyInterpolation();
-        }
-      },
-    });
-
-    const smoothnessRow = createSliderRow(smoothnessAttribute, { step: 0.5, precision: 1 });
-    const remainingRow = createSliderRow(remainingAttribute, { step: 0.01, precision: 2 });
-
-    const applyInterpolation = () => {
-      if (usesIndirectBackend) {
-        interpolatorToggle.setAttribute('aria-checked', 'false');
-        updateInterpolatorLabel();
-        interpolatorToggle.disabled = true;
-        backendSelect.disabled = true;
-        smoothnessRow.element.style.display = 'none';
-        remainingRow.element.style.display = 'none';
-        helios.interpolation({ enabled: false, backend: interpolationBackend });
-        return;
-      }
-      const enabled = interpolatorToggle.getAttribute('aria-checked') === 'true';
-      let backend = interpolationBackend;
-      if (backend === 'auto') {
-        backend = typeof helios?.network?.interpolateNodeAttribute === 'function' ? 'network' : 'cpu';
-      }
-      smoothnessRow.element.style.display = backend === 'cpu' ? '' : 'none';
-      remainingRow.element.style.display = backend === 'cpu' ? 'none' : '';
-      const interpolationOptions = {
-        enabled,
-        backend,
-        minDisplacementRatio: 0.0005,
-      };
-      if (backend === 'cpu') {
-        interpolationOptions.smoothing = interpolationSmoothness;
-      } else {
-        interpolationOptions.autoSmoothing = true;
-        interpolationOptions.targetRemaining = interpolationTargetRemaining;
-      }
-      helios.interpolation(interpolationOptions);
-    };
-
     const applyLayout = (value) => {
       const bounds = [-500, -500, 500, 500];
       if (value === 'none') {
@@ -578,26 +439,8 @@ async function bootstrap() {
       applyLayout(layoutSelect.value);
     });
 
-    interpolatorToggle.addEventListener('click', () => {
-      const next = interpolatorToggle.getAttribute('aria-checked') !== 'true';
-      interpolatorToggle.setAttribute('aria-checked', next ? 'true' : 'false');
-      updateInterpolatorLabel();
-      applyInterpolation();
-    });
-
-    backendSelect.addEventListener('change', () => {
-      interpolationBackend = backendSelect.value;
-      applyInterpolation();
-    });
-
-    applyInterpolation();
-
     content.appendChild(createRow('Layout', layoutSelect));
     content.appendChild(createRow('Layout interval', layoutIntervalSelect));
-    content.appendChild(createRow('Interpolation', interpolatorToggle));
-    content.appendChild(createRow('Interpolation backend', backendSelect));
-    content.appendChild(smoothnessRow.element);
-    content.appendChild(remainingRow.element);
 
     return heliosUI.createPanel({
       id: 'helios-ui-layout',

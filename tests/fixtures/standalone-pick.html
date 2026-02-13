@@ -26,8 +26,6 @@
         try {
           const params = new URLSearchParams(window.location.search);
           const renderer = params.get('renderer');
-          const webglBackend = params.get('webglBackend');
-          const webgpuBackend = params.get('webgpuBackend');
           const container = document.getElementById('app');
           const network = await HeliosNetwork.create({ directed: false, initialNodes: 0 });
           network.defineNodeAttribute('_helios_visuals_position', AttributeType.Float, 3);
@@ -59,8 +57,6 @@
             layout: { type: 'static', options: { bounds: [-100, -100, 100, 100] } },
             mode: '2d',
             renderer,
-            webglBackend: webglBackend === 'indirect' || webglBackend === 'dense' ? webglBackend : undefined,
-            webgpuBackend: webgpuBackend === 'indirect' || webgpuBackend === 'dense' ? webgpuBackend : undefined,
           });
           await helios.ready;
           helios.renderer?.camera?.setTarget?.([0, 0, 0]);

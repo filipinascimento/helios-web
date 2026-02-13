@@ -1,329 +1,752 @@
-import {
-  createGraphWebGLSources,
-} from './shaders/graphWebGL.js';
-import { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './GraphLayerCommon.js';
 import { GraphLayer } from './GraphLayer.js';
-import { FrameGraphRunner } from './framegraph/FrameGraphRunner.js';
-import { bumpCounter } from '../../utilities/counters.js';
 import { GraphVisualSchema } from '../schema/GraphVisualSchema.js';
+import {
+  VISUAL_ATTRIBUTE_NAMES,
+  DEFAULT_NODE_COLOR,
+  DEFAULT_EDGE_COLOR,
+  DEFAULT_EDGE_OPACITY,
+  DEFAULT_NODE_SIZE,
+  DEFAULT_EDGE_WIDTH,
+} from '../../pipeline/constants.js';
+import { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './GraphLayerCommon.js';
+import { createGraphWebGLSources } from './shaders/graphWebGL.js';
+
+const {
+  NODE_COLOR_ATTRIBUTE,
+  NODE_POSITION_ATTRIBUTE,
+  NODE_SIZE_ATTRIBUTE,
+  NODE_STATE_ATTRIBUTE,
+  NODE_OUTLINE_WIDTH_ATTRIBUTE,
+  NODE_OUTLINE_COLOR_ATTRIBUTE,
+  EDGE_COLOR_ATTRIBUTE,
+  EDGE_WIDTH_ATTRIBUTE,
+  EDGE_OPACITY_ATTRIBUTE,
+  EDGE_STATE_ATTRIBUTE,
+  EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
+  EDGE_ENDPOINTS_STATE_ATTRIBUTE,
+} = VISUAL_ATTRIBUTE_NAMES;
+
+function normalizeEndpoints(value) {
+  if (value === 'source' || value === 'from') return 'source';
+  if (value === 'destination' || value === 'target' || value === 'to') return 'destination';
+  return 'both';
+}
+
+function clamp01(value, fallback = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  if (numeric <= 0) return 0;
+  if (numeric >= 1) return 1;
+  return numeric;
+}
+
+function toNumber(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function toRgba(value, fallback = DEFAULT_EDGE_COLOR) {
+  if (Array.isArray(value) || ArrayBuffer.isView(value)) {
+    const len = value.length ?? 0;
+    if (len >= 4) {
+      return [
+        clamp01(value[0], fallback[0] ?? 0),
+        clamp01(value[1], fallback[1] ?? 0),
+        clamp01(value[2], fallback[2] ?? 0),
+        clamp01(value[3], fallback[3] ?? 1),
+      ];
+    }
+    if (len >= 3) {
+      return [
+        clamp01(value[0], fallback[0] ?? 0),
+        clamp01(value[1], fallback[1] ?? 0),
+        clamp01(value[2], fallback[2] ?? 0),
+        fallback[3] ?? 1,
+      ];
+    }
+  }
+  if (value && typeof value === 'object') {
+    if ('source' in value) return toRgba(value.source, fallback);
+  }
+  return [
+    clamp01(fallback[0], 0),
+    clamp01(fallback[1], 0),
+    clamp01(fallback[2], 0),
+    clamp01(fallback[3], 1),
+  ];
+}
+
+function toColorPair(value, fallback = [DEFAULT_EDGE_COLOR, DEFAULT_EDGE_COLOR]) {
+  const fallbackStart = toRgba(fallback?.[0] ?? DEFAULT_EDGE_COLOR, DEFAULT_EDGE_COLOR);
+  const fallbackEnd = toRgba(fallback?.[1] ?? fallbackStart, fallbackStart);
+  if (Array.isArray(value) || ArrayBuffer.isView(value)) {
+    const len = value.length ?? 0;
+    if (len >= 2 && (Array.isArray(value[0]) || ArrayBuffer.isView(value[0]) || (value[0] && typeof value[0] === 'object'))) {
+      const start = toRgba(value[0], fallbackStart);
+      const end = toRgba(value[1], start);
+      return [start, end];
+    }
+    if (len >= 8) {
+      const start = toRgba([value[0], value[1], value[2], value[3]], fallbackStart);
+      const end = toRgba([value[4], value[5], value[6], value[7]], fallbackEnd);
+      return [start, end];
+    }
+    if (len >= 4) {
+      const rgba = toRgba(value, fallbackStart);
+      return [rgba, rgba];
+    }
+  }
+  if (value && typeof value === 'object') {
+    const start = 'source' in value ? toRgba(value.source, fallbackStart) : toRgba(value, fallbackStart);
+    const end = 'target' in value ? toRgba(value.target, start) : start;
+    return [start, end];
+  }
+  return [fallbackStart, fallbackEnd];
+}
+
+function toScalarPair(value, fallback = [1, 1]) {
+  const fallbackA = toNumber(fallback?.[0], 1);
+  const fallbackB = toNumber(fallback?.[1], fallbackA);
+  if (Array.isArray(value) || ArrayBuffer.isView(value)) {
+    const len = value.length ?? 0;
+    if (len >= 2) {
+      const a = toNumber(value[0], fallbackA);
+      const b = toNumber(value[1], a);
+      return [a, b];
+    }
+    if (len >= 1) {
+      const scalar = toNumber(value[0], fallbackA);
+      return [scalar, scalar];
+    }
+  }
+  if (value && typeof value === 'object') {
+    const start = ('source' in value) ? toNumber(value.source, fallbackA) : fallbackA;
+    const end = ('target' in value) ? toNumber(value.target, start) : start;
+    return [start, end];
+  }
+  const scalar = toNumber(value, fallbackA);
+  return [scalar, scalar];
+}
+
+const NODE_UNIFORM_NAMES = [
+  'u_viewProjection',
+  'u_nodeOutlineWidths',
+  'u_nodeOutlineColors',
+  'u_nodeStates',
+  'u_nodePositions',
+  'u_nodeColors',
+  'u_nodeSizes',
+  'u_cameraPosition',
+  'u_cameraUp',
+  'u_cameraRight',
+  'u_is2D',
+  'u_hasNodeColors',
+  'u_hasNodeSizes',
+  'u_hasNodeOutlineWidths',
+  'u_hasNodeOutlineColors',
+  'u_hasNodeStates',
+  'u_defaultNodeColor',
+  'u_defaultNodeSize',
+  'u_hoverNodeIndex',
+  'u_hoverNodeState',
+  'u_nodeNoStateScale',
+  'u_nodeNoStateColorMul',
+  'u_nodeNoStateColorAdd',
+  'u_nodeStateScale[0]',
+  'u_nodeStateColorMul[0]',
+  'u_nodeStateColorAdd[0]',
+  'u_nodeOpacityBase',
+  'u_nodeOpacityScale',
+  'u_nodeSizeBase',
+  'u_nodeSizeScale',
+  'u_nodeOutline',
+  'u_outlineWidthBase',
+  'u_outlineWidthScale',
+  'u_outlineColor',
+];
+
+const EDGE_UNIFORM_NAMES = [
+  'u_viewProjection',
+  'u_nodePositions',
+  'u_nodeEdgeColors',
+  'u_edgeColors',
+  'u_edgeStates',
+  'u_edgeOpacities',
+  'u_nodeOpacitySource',
+  'u_edgeEndpoints',
+  'u_hasEdgeStates',
+  'u_hoverEdgeIndex',
+  'u_hoverEdgeState',
+  'u_edgeNoStateScale',
+  'u_edgeNoStateColorMul',
+  'u_edgeNoStateColorAdd',
+  'u_edgeStateScale[0]',
+  'u_edgeStateColorMul[0]',
+  'u_edgeStateColorAdd[0]',
+  'u_edgeColorSource',
+  'u_edgeColorEndpoints',
+  'u_edgeOpacitySource',
+  'u_edgeOpacityEndpoints',
+  'u_hasEdgeColors',
+  'u_hasNodeColors',
+  'u_hasEdgeOpacities',
+  'u_hasNodeOpacitySource',
+  'u_defaultNodeEdgeColor',
+  'u_defaultEdgeColorStart',
+  'u_defaultEdgeColorEnd',
+  'u_defaultEdgeOpacity',
+  'u_defaultNodeOpacitySource',
+  'u_edgeOpacityBase',
+  'u_edgeOpacityScale',
+];
+
+const EDGE_QUAD_UNIFORM_NAMES = [
+  'u_viewProjection',
+  'u_viewport',
+  'u_nodePositions',
+  'u_nodeEdgeColors',
+  'u_edgeColors',
+  'u_edgeEndpoints',
+  'u_edgeStates',
+  'u_edgeEndpointStates',
+  'u_edgeWidths',
+  'u_edgeOpacities',
+  'u_edgeEndpointSizes',
+  'u_nodeWidthSource',
+  'u_nodeOpacitySource',
+  'u_nodeEndpointSizeSource',
+  'u_edgeColorSource',
+  'u_edgeColorEndpoints',
+  'u_edgeWidthSource',
+  'u_edgeWidthEndpoints',
+  'u_edgeOpacitySource',
+  'u_edgeOpacityEndpoints',
+  'u_edgeEndpointSizeSource',
+  'u_edgeEndpointSizeEndpoints',
+  'u_hasEdgeColors',
+  'u_hasNodeColors',
+  'u_hasEdgeStates',
+  'u_hasEdgeEndpointStates',
+  'u_hasEdgeWidths',
+  'u_hasEdgeOpacities',
+  'u_hasEdgeEndpointSizes',
+  'u_hasNodeWidthSource',
+  'u_hasNodeOpacitySource',
+  'u_hasNodeEndpointSizeSource',
+  'u_defaultNodeEdgeColor',
+  'u_defaultEdgeColorStart',
+  'u_defaultEdgeColorEnd',
+  'u_defaultEdgeWidth',
+  'u_defaultNodeWidthSource',
+  'u_defaultEdgeOpacity',
+  'u_defaultNodeOpacitySource',
+  'u_defaultEdgeEndpointSize',
+  'u_defaultNodeEndpointSizeSource',
+  'u_edgeWidthBase',
+  'u_edgeWidthScale',
+  'u_edgeOpacityBase',
+  'u_edgeOpacityScale',
+  'u_nodeSizeBase',
+  'u_nodeSizeScale',
+  'u_edgeEndpointTrim',
+  'u_hoverEdgeIndex',
+  'u_hoverEdgeState',
+  'u_nodeNoStateScale',
+  'u_nodeStateScale[0]',
+  'u_edgeNoStateScale',
+  'u_edgeNoStateColorMul',
+  'u_edgeNoStateColorAdd',
+  'u_edgeStateScale[0]',
+  'u_edgeStateColorMul[0]',
+  'u_edgeStateColorAdd[0]',
+];
+
+const DEFAULT_STATE_SCALE = new Float32Array([1, 1, 1, 0]);
+const DEFAULT_STATE_COLOR_MUL = new Float32Array([1, 1, 1, 1]);
+const DEFAULT_STATE_COLOR_ADD = new Float32Array([0, 0, 0, 0]);
+
+const NODE_VERTEX_SOURCE = `#version 300 es
+precision highp float;
+precision highp int;
+
+layout (location = 0) in uint a_nodeId;
+
+uniform mat4 u_viewProjection;
+uniform sampler2D u_nodePositions;
+uniform sampler2D u_nodeColors;
+uniform sampler2D u_nodeSizes;
+uniform vec3 u_cameraPosition;
+uniform vec3 u_cameraUp;
+uniform vec3 u_cameraRight;
+uniform int u_is2D;
+uniform vec2 u_viewport;
+uniform int u_hasNodeColors;
+uniform int u_hasNodeSizes;
+uniform vec4 u_defaultNodeColor;
+uniform float u_defaultNodeSize;
+uniform float u_nodeSizeBase;
+uniform float u_nodeSizeScale;
+
+out vec4 v_color;
+
+vec3 fetchNodePos(uint id) {
+  return texelFetch(u_nodePositions, ivec2(int(id), 0), 0).xyz;
+}
+
+vec4 fetchNodeColor(uint id) {
+  if (u_hasNodeColors == 0) return u_defaultNodeColor;
+  return texelFetch(u_nodeColors, ivec2(int(id), 0), 0);
+}
+
+float fetchNodeSize(uint id) {
+  if (u_hasNodeSizes == 0) return u_defaultNodeSize;
+  return texelFetch(u_nodeSizes, ivec2(int(id), 0), 0).x;
+}
+
+void main() {
+  vec3 position = fetchNodePos(a_nodeId);
+  float rawSize = fetchNodeSize(a_nodeId);
+  float fullSize = max(1.0, u_nodeSizeBase + u_nodeSizeScale * rawSize);
+  float radius = fullSize * 0.5;
+
+  vec3 right = u_cameraRight;
+  vec3 up = u_cameraUp;
+  if (u_is2D == 1) {
+    right = normalize(right);
+    up = normalize(up);
+  } else {
+    vec3 viewDir = u_cameraPosition - position;
+    float viewLen = length(viewDir);
+    viewDir = viewLen > 1e-5 ? viewDir / viewLen : vec3(0.0, 0.0, 1.0);
+    right = u_cameraRight - viewDir * dot(u_cameraRight, viewDir);
+    float rightLen = length(right);
+    right = rightLen > 1e-5 ? right / rightLen : normalize(cross(u_cameraUp, viewDir));
+    up = normalize(cross(viewDir, right));
+  }
+
+  vec4 clipCenter = u_viewProjection * vec4(position, 1.0);
+  vec4 clipOffset = u_viewProjection * vec4(position + right * radius, 1.0);
+  vec2 ndcCenter = clipCenter.xy / clipCenter.w;
+  vec2 ndcOffset = clipOffset.xy / clipOffset.w;
+  vec2 pixelScale = vec2(max(u_viewport.x, 1.0), max(u_viewport.y, 1.0)) * 0.5;
+  float radiusPx = length((ndcOffset - ndcCenter) * pixelScale);
+  gl_PointSize = max(1.0, radiusPx * 2.0);
+  gl_Position = clipCenter;
+  v_color = fetchNodeColor(a_nodeId);
+}
+`;
+
+const NODE_FRAGMENT_SOURCE = `#version 300 es
+precision highp float;
+
+in vec4 v_color;
+out vec4 fragColor;
+
+void main() {
+  vec2 local = gl_PointCoord * 2.0 - 1.0;
+  if (dot(local, local) > 1.0) discard;
+  fragColor = v_color;
+}
+`;
+
+const EDGE_VERTEX_SOURCE = `#version 300 es
+precision highp float;
+precision highp int;
+precision highp usampler2D;
+
+layout (location = 0) in uint a_edgeId;
+
+uniform mat4 u_viewProjection;
+uniform sampler2D u_nodePositions;
+uniform sampler2D u_nodeColors;
+uniform sampler2D u_nodeEdgeColors;
+uniform sampler2D u_edgeColors;
+uniform sampler2D u_edgeOpacities;
+uniform sampler2D u_nodeOpacitySource;
+uniform usampler2D u_edgeEndpoints;
+uniform int u_edgeColorSource; // 0=edge, 1=node
+uniform int u_edgeColorEndpoints; // 0=both, 1=source, 2=destination
+uniform int u_edgeOpacitySource; // 0=edge, 1=node
+uniform int u_edgeOpacityEndpoints; // 0=both, 1=source, 2=destination
+uniform int u_hasEdgeColors;
+uniform int u_hasNodeColors;
+uniform int u_hasEdgeOpacities;
+uniform int u_hasNodeOpacitySource;
+uniform vec4 u_defaultNodeEdgeColor;
+uniform vec4 u_defaultEdgeColorStart;
+uniform vec4 u_defaultEdgeColorEnd;
+uniform vec2 u_defaultEdgeOpacity;
+uniform vec2 u_defaultNodeOpacitySource;
+uniform float u_edgeOpacityBase;
+uniform float u_edgeOpacityScale;
+
+out vec4 v_color;
+
+vec3 fetchNodePos(uint id) {
+  return texelFetch(u_nodePositions, ivec2(int(id), 0), 0).xyz;
+}
+
+vec4 fetchNodeColor(uint id) {
+  if (u_hasNodeColors == 0) return u_defaultNodeEdgeColor;
+  return texelFetch(u_nodeEdgeColors, ivec2(int(id), 0), 0);
+}
+
+vec4 fetchEdgeColor(uint id, bool target) {
+  if (u_hasEdgeColors == 0) return target ? u_defaultEdgeColorEnd : u_defaultEdgeColorStart;
+  int offset = int(id) * 2 + (target ? 1 : 0);
+  return texelFetch(u_edgeColors, ivec2(offset, 0), 0);
+}
+
+float fetchNodeOpacity(uint id, float fallbackValue) {
+  if (u_hasNodeOpacitySource == 0) return fallbackValue;
+  return texelFetch(u_nodeOpacitySource, ivec2(int(id), 0), 0).x;
+}
+
+vec2 resolveNodeOpacityPair(uint sourceId, uint targetId, int endpointsMode, vec2 fallbackPair) {
+  float sourceValue = fetchNodeOpacity(sourceId, fallbackPair.x);
+  float targetValue = fetchNodeOpacity(targetId, fallbackPair.y);
+  if (endpointsMode == 1) return vec2(sourceValue, sourceValue);
+  if (endpointsMode == 2) return vec2(targetValue, targetValue);
+  return vec2(sourceValue, targetValue);
+}
+
+vec2 fetchEdgeOpacityPair(uint id, uint sourceId, uint targetId) {
+  if (u_edgeOpacitySource == 1) {
+    return resolveNodeOpacityPair(sourceId, targetId, u_edgeOpacityEndpoints, u_defaultNodeOpacitySource);
+  }
+  if (u_hasEdgeOpacities == 0) return u_defaultEdgeOpacity;
+  return texelFetch(u_edgeOpacities, ivec2(int(id), 0), 0).xy;
+}
+
+void main() {
+  uvec2 endpoints = texelFetch(u_edgeEndpoints, ivec2(int(a_edgeId), 0), 0).xy;
+  uint sourceId = endpoints.x;
+  uint targetId = endpoints.y;
+  uint nodeId = (gl_VertexID & 1) == 0 ? sourceId : targetId;
+  vec3 pos = fetchNodePos(nodeId);
+  gl_Position = u_viewProjection * vec4(pos, 1.0);
+
+  vec4 sourceColor = fetchEdgeColor(a_edgeId, false);
+  vec4 targetColor = fetchEdgeColor(a_edgeId, true);
+  if (u_edgeColorSource == 1) {
+    vec4 nodeSourceColor = fetchNodeColor(sourceId);
+    vec4 nodeTargetColor = fetchNodeColor(targetId);
+    if (u_edgeColorEndpoints == 1) {
+      sourceColor = nodeSourceColor;
+      targetColor = nodeSourceColor;
+    } else if (u_edgeColorEndpoints == 2) {
+      sourceColor = nodeTargetColor;
+      targetColor = nodeTargetColor;
+    } else {
+      sourceColor = nodeSourceColor;
+      targetColor = nodeTargetColor;
+    }
+  }
+  bool isTarget = (gl_VertexID & 1) == 1;
+  vec4 baseColor = isTarget ? targetColor : sourceColor;
+  vec2 opacityPair = fetchEdgeOpacityPair(a_edgeId, sourceId, targetId);
+  float rawOpacity = isTarget ? opacityPair.y : opacityPair.x;
+  float opacity = clamp(u_edgeOpacityBase + u_edgeOpacityScale * rawOpacity, 0.0, 1.0);
+  v_color = vec4(baseColor.rgb, clamp(baseColor.a * opacity, 0.0, 1.0));
+}
+`;
+
+const EDGE_QUAD_VERTEX_SOURCE = `#version 300 es
+precision highp float;
+precision highp int;
+precision highp usampler2D;
+
+layout (location = 0) in vec2 a_corner;
+layout (location = 1) in uint a_edgeId;
+
+uniform mat4 u_viewProjection;
+uniform vec2 u_viewport;
+uniform sampler2D u_nodePositions;
+uniform sampler2D u_nodeEdgeColors;
+uniform sampler2D u_edgeColors;
+uniform usampler2D u_edgeEndpoints;
+uniform sampler2D u_edgeWidths;
+uniform sampler2D u_edgeOpacities;
+uniform sampler2D u_edgeEndpointSizes;
+uniform sampler2D u_nodeWidthSource;
+uniform sampler2D u_nodeOpacitySource;
+uniform sampler2D u_nodeEndpointSizeSource;
+uniform int u_edgeColorSource; // 0=edge, 1=node
+uniform int u_edgeColorEndpoints; // 0=both, 1=source, 2=destination
+uniform int u_edgeWidthSource; // 0=edge, 1=node
+uniform int u_edgeWidthEndpoints; // 0=both, 1=source, 2=destination
+uniform int u_edgeOpacitySource; // 0=edge, 1=node
+uniform int u_edgeOpacityEndpoints; // 0=both, 1=source, 2=destination
+uniform int u_edgeEndpointSizeSource; // 0=edge, 1=node
+uniform int u_edgeEndpointSizeEndpoints; // 0=both, 1=source, 2=destination
+uniform int u_hasEdgeColors;
+uniform int u_hasNodeColors;
+uniform int u_hasEdgeWidths;
+uniform int u_hasEdgeOpacities;
+uniform int u_hasEdgeEndpointSizes;
+uniform int u_hasNodeWidthSource;
+uniform int u_hasNodeOpacitySource;
+uniform int u_hasNodeEndpointSizeSource;
+uniform vec4 u_defaultNodeEdgeColor;
+uniform vec4 u_defaultEdgeColorStart;
+uniform vec4 u_defaultEdgeColorEnd;
+uniform vec2 u_defaultEdgeWidth;
+uniform vec2 u_defaultEdgeOpacity;
+uniform vec2 u_defaultNodeOpacitySource;
+uniform vec2 u_defaultEdgeEndpointSize;
+uniform float u_edgeWidthBase;
+uniform float u_edgeWidthScale;
+uniform float u_edgeOpacityBase;
+uniform float u_edgeOpacityScale;
+uniform float u_nodeSizeBase;
+uniform float u_nodeSizeScale;
+uniform float u_edgeEndpointTrim;
+
+out vec4 v_color;
+
+vec3 fetchNodePos(uint id) {
+  return texelFetch(u_nodePositions, ivec2(int(id), 0), 0).xyz;
+}
+
+vec4 fetchNodeColor(uint id) {
+  if (u_hasNodeColors == 0) return u_defaultNodeEdgeColor;
+  return texelFetch(u_nodeEdgeColors, ivec2(int(id), 0), 0);
+}
+
+vec4 fetchEdgeColor(uint id, bool target) {
+  if (u_hasEdgeColors == 0) return target ? u_defaultEdgeColorEnd : u_defaultEdgeColorStart;
+  int offset = int(id) * 2 + (target ? 1 : 0);
+  return texelFetch(u_edgeColors, ivec2(offset, 0), 0);
+}
+
+float fetchNodeScalar(sampler2D sourceTex, uint nodeId, int hasSource, float fallbackValue) {
+  if (hasSource == 0) return fallbackValue;
+  return texelFetch(sourceTex, ivec2(int(nodeId), 0), 0).x;
+}
+
+vec2 resolveNodePair(
+  sampler2D sourceTex,
+  uint sourceId,
+  uint targetId,
+  int hasSource,
+  int endpointsMode,
+  vec2 fallbackPair
+) {
+  float sourceValue = fetchNodeScalar(sourceTex, sourceId, hasSource, fallbackPair.x);
+  float targetValue = fetchNodeScalar(sourceTex, targetId, hasSource, fallbackPair.y);
+  if (endpointsMode == 1) return vec2(sourceValue, sourceValue);
+  if (endpointsMode == 2) return vec2(targetValue, targetValue);
+  return vec2(sourceValue, targetValue);
+}
+
+vec2 fetchEdgeWidthPair(uint edgeId, uint sourceId, uint targetId) {
+  if (u_edgeWidthSource == 1) {
+    return resolveNodePair(
+      u_nodeWidthSource,
+      sourceId,
+      targetId,
+      u_hasNodeWidthSource,
+      u_edgeWidthEndpoints,
+      u_defaultEdgeWidth
+    );
+  }
+  if (u_hasEdgeWidths == 0) return u_defaultEdgeWidth;
+  return texelFetch(u_edgeWidths, ivec2(int(edgeId), 0), 0).xy;
+}
+
+vec2 fetchEdgeOpacityPair(uint edgeId, uint sourceId, uint targetId) {
+  if (u_edgeOpacitySource == 1) {
+    return resolveNodePair(
+      u_nodeOpacitySource,
+      sourceId,
+      targetId,
+      u_hasNodeOpacitySource,
+      u_edgeOpacityEndpoints,
+      u_defaultNodeOpacitySource
+    );
+  }
+  if (u_hasEdgeOpacities == 0) return u_defaultEdgeOpacity;
+  return texelFetch(u_edgeOpacities, ivec2(int(edgeId), 0), 0).xy;
+}
+
+vec2 fetchEdgeEndpointSizePair(uint edgeId, uint sourceId, uint targetId) {
+  if (u_edgeEndpointSizeSource == 1) {
+    return resolveNodePair(
+      u_nodeEndpointSizeSource,
+      sourceId,
+      targetId,
+      u_hasNodeEndpointSizeSource,
+      u_edgeEndpointSizeEndpoints,
+      u_defaultEdgeEndpointSize
+    );
+  }
+  if (u_hasEdgeEndpointSizes == 0) return u_defaultEdgeEndpointSize;
+  return texelFetch(u_edgeEndpointSizes, ivec2(int(edgeId), 0), 0).xy;
+}
+
+void main() {
+  uvec2 endpoints = texelFetch(u_edgeEndpoints, ivec2(int(a_edgeId), 0), 0).xy;
+  uint sourceId = endpoints.x;
+  uint targetId = endpoints.y;
+
+  vec3 sourcePos = fetchNodePos(sourceId);
+  vec3 targetPos = fetchNodePos(targetId);
+  vec3 dir = targetPos - sourcePos;
+  float dirLenWorld = max(length(dir), 1e-5);
+  vec3 dirN = dir / dirLenWorld;
+
+  vec2 endpointSizePair = fetchEdgeEndpointSizePair(a_edgeId, sourceId, targetId);
+  float startRadius = max(u_nodeSizeBase + u_nodeSizeScale * endpointSizePair.x, 0.0) * 0.5;
+  float endRadius = max(u_nodeSizeBase + u_nodeSizeScale * endpointSizePair.y, 0.0) * 0.5;
+  float trimStart = startRadius * u_edgeEndpointTrim;
+  float trimEnd = endRadius * u_edgeEndpointTrim;
+  vec3 startPos = sourcePos + dirN * trimStart;
+  vec3 endPos = targetPos - dirN * trimEnd;
+
+  float segmentMix = clamp(a_corner.x, 0.0, 1.0);
+  vec2 widthPair = fetchEdgeWidthPair(a_edgeId, sourceId, targetId);
+  float rawWidth = mix(widthPair.x, widthPair.y, segmentMix);
+  float width = max(u_edgeWidthBase + u_edgeWidthScale * rawWidth, 0.0);
+
+  vec4 clipStart = u_viewProjection * vec4(startPos, 1.0);
+  vec4 clipEnd = u_viewProjection * vec4(endPos, 1.0);
+  vec2 ndcStart = clipStart.xy / clipStart.w;
+  vec2 ndcEnd = clipEnd.xy / clipEnd.w;
+  vec2 ndcDir = ndcEnd - ndcStart;
+  float dirLen = max(length(ndcDir), 1e-5);
+  vec2 perp = vec2(-ndcDir.y, ndcDir.x) / dirLen;
+  float halfWidth = max(width, 1.0) * 0.5;
+  vec2 pixelToNdc = vec2(2.0 / max(u_viewport.x, 1.0), 2.0 / max(u_viewport.y, 1.0));
+  vec2 offsetNdc = perp * halfWidth * pixelToNdc;
+  vec4 clipPos = mix(clipStart, clipEnd, segmentMix);
+  clipPos.xy += offsetNdc * a_corner.y * 1.5;
+  gl_Position = clipPos;
+
+  vec4 sourceColor = fetchEdgeColor(a_edgeId, false);
+  vec4 targetColor = fetchEdgeColor(a_edgeId, true);
+  if (u_edgeColorSource == 1) {
+    vec4 nodeSourceColor = fetchNodeColor(sourceId);
+    vec4 nodeTargetColor = fetchNodeColor(targetId);
+    if (u_edgeColorEndpoints == 1) {
+      sourceColor = nodeSourceColor;
+      targetColor = nodeSourceColor;
+    } else if (u_edgeColorEndpoints == 2) {
+      sourceColor = nodeTargetColor;
+      targetColor = nodeTargetColor;
+    } else {
+      sourceColor = nodeSourceColor;
+      targetColor = nodeTargetColor;
+    }
+  }
+  vec4 blendedColor = mix(sourceColor, targetColor, segmentMix);
+  vec2 opacityPair = fetchEdgeOpacityPair(a_edgeId, sourceId, targetId);
+  float rawOpacity = mix(opacityPair.x, opacityPair.y, segmentMix);
+  float opacity = clamp(u_edgeOpacityBase + u_edgeOpacityScale * rawOpacity, 0.0, 1.0);
+  v_color = vec4(blendedColor.rgb, clamp(blendedColor.a * opacity, 0.0, 1.0));
+}
+`;
+
+const EDGE_FRAGMENT_SOURCE = `#version 300 es
+precision highp float;
+
+in vec4 v_color;
+out vec4 fragColor;
+
+void main() {
+  fragColor = v_color;
+}
+`;
 
 export class GraphLayerWebGL extends GraphLayer {
   constructor(options = {}) {
     super(options);
     this.device = null;
     this.gl = null;
-    this.frameGraph = new FrameGraphRunner();
+
+    this.nodeProgram = null;
+    this.edgeProgram = null;
+    this.edgeQuadProgram = null;
+    this.nodeVao = null;
+    this.nodeQuadBuffer = null;
+    this.edgeVao = null;
+    this.edgeQuadVao = null;
+    this.edgeQuadBuffer = null;
+    this.nodeIdBuffer = null;
+    this.edgeIdBuffer = null;
+
+    this.nodeTextures = {
+      positions: null,
+      colors: null,
+      sizes: null,
+      states: null,
+      outlineWidths: null,
+      outlineColors: null,
+      edgeColorSource: null,
+      edgeWidthSource: null,
+      edgeOpacitySource: null,
+      edgeEndpointSizeSource: null,
+    };
+    this.edgeTextures = {
+      endpoints: null,
+      colors: null,
+      widths: null,
+      opacities: null,
+      endpointSizes: null,
+      states: null,
+      endpointStates: null,
+    };
+    this.textureMeta = {
+      nodePositions: null,
+      nodeColors: null,
+      nodeSizes: null,
+      nodeStates: null,
+      nodeOutlineWidths: null,
+      nodeOutlineColors: null,
+      nodeEdgeColors: null,
+      nodeEdgeWidths: null,
+      nodeEdgeOpacities: null,
+      nodeEdgeEndpointSizes: null,
+      edgeEndpoints: null,
+      edgeColors: null,
+      edgeWidths: null,
+      edgeOpacities: null,
+      edgeEndpointSizes: null,
+      edgeStates: null,
+      edgeEndpointStates: null,
+    };
+    this.bufferMeta = {
+      nodeIds: null,
+      edgeIds: null,
+    };
+
+    this.nodeCount = 0;
+    this.edgeCount = 0;
+    this.warnedWeightedFallback = false;
 
     this.nodeProgramCache = new Map();
     this.edgeProgramCache = new Map();
     this.edgeQuadProgramCache = new Map();
     this.edgeWeightedProgramCache = new Map();
     this.edgeWeightedQuadProgramCache = new Map();
-    this.edgeProgram = null;
-    this.edgeQuadProgram = null;
-    this.edgeWeightedProgram = null;
-    this.edgeWeightedQuadProgram = null;
+    this._ownedPrograms = new Set();
+
     this.edgeResolveProgram = null;
-    this._nodeProgramKeyLast = null;
-    this._edgeProgramKeyLast = null;
-    this.edgeUniformViewProjection = null;
-    this.edgeUniformOpacityBase = null;
-    this.edgeUniformOpacityScale = null;
-    this.edgeUniformWidthBase = null;
-    this.edgeUniformWidthScale = null;
-    this.edgeUniformNodeSizeBase = null;
-    this.edgeUniformNodeSizeScale = null;
-    this.edgeUniformEndpointTrim = null;
-    this.edgeUniformNodeNoStateScale = null;
-    this.edgeUniformNodeStateScale = null;
-    this.edgeUniformNoStateScale = null;
-    this.edgeUniformNoStateColorMul = null;
-    this.edgeUniformNoStateColorAdd = null;
-    this.edgeUniformStateScale = null;
-    this.edgeUniformStateColorMul = null;
-    this.edgeUniformStateColorAdd = null;
-    this.edgeQuadUniformViewProjection = null;
-    this.edgeQuadUniformViewport = null;
-    this.edgeQuadUniformOpacityBase = null;
-    this.edgeQuadUniformOpacityScale = null;
-    this.edgeQuadUniformWidthBase = null;
-    this.edgeQuadUniformWidthScale = null;
-    this.edgeQuadUniformNodeSizeBase = null;
-    this.edgeQuadUniformNodeSizeScale = null;
-    this.edgeQuadUniformEndpointTrim = null;
-    this.edgeQuadUniformNodeNoStateScale = null;
-    this.edgeQuadUniformNodeStateScale = null;
-    this.edgeQuadUniformNoStateScale = null;
-    this.edgeQuadUniformNoStateColorMul = null;
-    this.edgeQuadUniformNoStateColorAdd = null;
-    this.edgeQuadUniformStateScale = null;
-    this.edgeQuadUniformStateColorMul = null;
-    this.edgeQuadUniformStateColorAdd = null;
-    this.edgeWeightedUniformViewProjection = null;
-    this.edgeWeightedUniformOpacityBase = null;
-    this.edgeWeightedUniformOpacityScale = null;
-    this.edgeWeightedUniformWidthBase = null;
-    this.edgeWeightedUniformWidthScale = null;
-    this.edgeWeightedUniformNodeSizeBase = null;
-    this.edgeWeightedUniformNodeSizeScale = null;
-    this.edgeWeightedUniformEndpointTrim = null;
-    this.edgeWeightedUniformNodeNoStateScale = null;
-    this.edgeWeightedUniformNodeStateScale = null;
-    this.edgeWeightedUniformNoStateScale = null;
-    this.edgeWeightedUniformNoStateColorMul = null;
-    this.edgeWeightedUniformNoStateColorAdd = null;
-    this.edgeWeightedUniformStateScale = null;
-    this.edgeWeightedUniformStateColorMul = null;
-    this.edgeWeightedUniformStateColorAdd = null;
-    this.edgeWeightedQuadUniformViewProjection = null;
-    this.edgeWeightedQuadUniformViewport = null;
-    this.edgeWeightedQuadUniformOpacityBase = null;
-    this.edgeWeightedQuadUniformOpacityScale = null;
-    this.edgeWeightedQuadUniformWidthBase = null;
-    this.edgeWeightedQuadUniformWidthScale = null;
-    this.edgeWeightedQuadUniformNodeSizeBase = null;
-    this.edgeWeightedQuadUniformNodeSizeScale = null;
-    this.edgeWeightedQuadUniformEndpointTrim = null;
-    this.edgeWeightedQuadUniformNodeNoStateScale = null;
-    this.edgeWeightedQuadUniformNodeStateScale = null;
-    this.edgeWeightedQuadUniformNoStateScale = null;
-    this.edgeWeightedQuadUniformNoStateColorMul = null;
-    this.edgeWeightedQuadUniformNoStateColorAdd = null;
-    this.edgeWeightedQuadUniformStateScale = null;
-    this.edgeWeightedQuadUniformStateColorMul = null;
-    this.edgeWeightedQuadUniformStateColorAdd = null;
     this.edgeResolveUniformColor = null;
     this.edgeResolveUniformWeight = null;
-    this.edgeResolveVAO = null;
-    this.edgeResolveBuffer = null;
     this.edgeResolveTonemapProgram = null;
     this.edgeResolveTonemapUniformColor = null;
     this.edgeResolveTonemapUniformWeight = null;
     this.edgeResolveBoostProgram = null;
     this.edgeResolveBoostUniformColor = null;
     this.edgeResolveBoostUniformWeight = null;
-    this.nodeVAO = null;
-    this.nodeBuffers = {};
-    this.edgeVAO = null;
-    this.edgeQuadVAO = null;
-    this.edgeBuffers = {};
-    this.nodeQuadBuffer = null;
-    this.edgeQuadBuffer = null;
+    this.edgeResolveVAO = null;
+    this.edgeResolveBuffer = null;
     this.weightedFramebuffer = null;
     this.weightedColor = null;
     this.weightedWeight = null;
     this.weightedDepth = null;
     this.weightedSize = null;
-    this.nodeCount = 0;
-    this.edgeCount = 0;
     this.weightedSupported = null;
-    this.warnedWeightedFallback = false;
-    this._nodeVersionsLast = null;
-    this._nodeOutlineUseAttrsLast = false;
-    this._edgeVersionsLast = null;
-    this._shaderSources = null;
-    this.counters = { weightedFramebufferRenders: 0 };
-  }
-
-  getVisualConfig(network) {
-    const cfg = network && network.__heliosVisualConfig;
-    return cfg && typeof cfg === 'object' ? cfg : null;
-  }
-
-  resolveNodeVariant(useOutlineAttributesOrVariant, visualConfig) {
-    if (useOutlineAttributesOrVariant && typeof useOutlineAttributesOrVariant === 'object') {
-      return {
-        color: useOutlineAttributesOrVariant.color !== false,
-        size: useOutlineAttributesOrVariant.size !== false,
-        outline: useOutlineAttributesOrVariant.outline === true,
-        outlineColor: useOutlineAttributesOrVariant.outlineColor === true,
-      };
-    }
-
-    const outlineToggle = useOutlineAttributesOrVariant === true;
-    const nodeCfg = visualConfig?.node;
-    return {
-      color: nodeCfg?.color?.mode !== 'uniform',
-      size: nodeCfg?.size?.mode !== 'uniform',
-      outline: nodeCfg?.outline?.mode !== 'uniform' ? true : false,
-      outlineColor: nodeCfg?.outlineColor?.mode !== 'uniform' ? true : false,
-      // If no visualConfig, preserve previous behavior: only outline used a toggle.
-      ...(visualConfig ? null : { outline: outlineToggle, outlineColor: outlineToggle }),
-    };
-  }
-
-  resolveEdgeVariant(visualConfig) {
-    const edgeCfg = visualConfig?.edge;
-    if (!edgeCfg) {
-      return { color: true, width: true, opacity: true, endpointSize: true };
-    }
-    return {
-      color: edgeCfg?.color?.mode !== 'uniform',
-      width: edgeCfg?.width?.mode !== 'uniform',
-      opacity: edgeCfg?.opacity?.mode !== 'uniform',
-      endpointSize: edgeCfg?.endpointSize?.mode !== 'uniform',
-    };
-  }
-
-  getEdgeProgram(kind, edgeVariant, weighted = false, premultiplyAlpha = false) {
-    const gl = this.gl;
-    if (!gl || !this.device) return null;
-
-    const isQuad = kind === 'quad';
-
-    const v = edgeVariant && typeof edgeVariant === 'object'
-      ? edgeVariant
-      : { color: true, width: true, opacity: true, endpointSize: true };
-
-    const key = `edge|${weighted ? 'w' : (premultiplyAlpha ? 'p' : 'a')}|${isQuad ? 'q' : 'l'}|${v.color ? 'cA' : 'cU'}|${v.width ? 'wA' : 'wU'}|${v.opacity ? 'oA' : 'oU'}|${v.endpointSize ? 'esA' : 'esU'}`;
-    const sharedCache = this.device?.resourceCache?.webgl;
-    const sharedKey = `graph:webgl:${this.stateSlotCount}:${key}`;
-    if (sharedCache) {
-      return sharedCache.getOrCreateProgram(sharedKey, () => {
-        const sources = createGraphWebGLSources(this.stateSlotCount, {
-          edge: {
-            color: v.color ? 'attribute' : 'uniform',
-            width: v.width ? 'attribute' : 'uniform',
-            opacity: v.opacity ? 'attribute' : 'uniform',
-            endpointSize: v.endpointSize ? 'attribute' : 'uniform',
-          },
-        });
-
-        const vert = isQuad ? sources.EDGE_QUAD_VERTEX_SOURCE : sources.EDGE_VERTEX_SOURCE;
-        const frag = weighted
-          ? (isQuad ? sources.EDGE_WEIGHTED_QUAD_FRAGMENT_SOURCE : sources.EDGE_WEIGHTED_FRAGMENT_SOURCE)
-          : (premultiplyAlpha
-            ? (isQuad ? sources.EDGE_PREMUL_QUAD_FRAGMENT_SOURCE : sources.EDGE_PREMUL_FRAGMENT_SOURCE)
-            : sources.EDGE_FRAGMENT_SOURCE);
-        const program = this.device.createProgram(vert, frag);
-
-        const uniforms = {
-          viewProjection: gl.getUniformLocation(program, 'u_viewProjection'),
-          viewport: gl.getUniformLocation(program, 'u_viewport'),
-          opacityBase: gl.getUniformLocation(program, 'u_edgeOpacityBase'),
-          opacityScale: gl.getUniformLocation(program, 'u_edgeOpacityScale'),
-          widthBase: gl.getUniformLocation(program, 'u_edgeWidthBase'),
-          widthScale: gl.getUniformLocation(program, 'u_edgeWidthScale'),
-          nodeSizeBase: gl.getUniformLocation(program, 'u_nodeSizeBase'),
-          nodeSizeScale: gl.getUniformLocation(program, 'u_nodeSizeScale'),
-          endpointTrim: gl.getUniformLocation(program, 'u_edgeEndpointTrim'),
-          hoverIndex: gl.getUniformLocation(program, 'u_hoverEdgeIndex'),
-          hoverState: gl.getUniformLocation(program, 'u_hoverEdgeState'),
-          nodeNoStateScale: gl.getUniformLocation(program, 'u_nodeNoStateScale'),
-          nodeStateScale: gl.getUniformLocation(program, 'u_nodeStateScale[0]'),
-          noStateScale: gl.getUniformLocation(program, 'u_edgeNoStateScale'),
-          noStateColorMul: gl.getUniformLocation(program, 'u_edgeNoStateColorMul'),
-          noStateColorAdd: gl.getUniformLocation(program, 'u_edgeNoStateColorAdd'),
-          stateScale: gl.getUniformLocation(program, 'u_edgeStateScale[0]'),
-          stateColorMul: gl.getUniformLocation(program, 'u_edgeStateColorMul[0]'),
-          stateColorAdd: gl.getUniformLocation(program, 'u_edgeStateColorAdd[0]'),
-          edgeColorStart: gl.getUniformLocation(program, 'u_edgeColorStart'),
-          edgeColorEnd: gl.getUniformLocation(program, 'u_edgeColorEnd'),
-          edgeWidth: gl.getUniformLocation(program, 'u_edgeWidth'),
-          edgeOpacity: gl.getUniformLocation(program, 'u_edgeOpacity'),
-          edgeEndpointSize: gl.getUniformLocation(program, 'u_edgeEndpointSize'),
-        };
-
-        return { key, program, uniforms, variant: v };
-      });
-    }
-
-    // Fallback for unexpected device setups.
-    const cache = weighted
-      ? (isQuad ? this.edgeWeightedQuadProgramCache : this.edgeWeightedProgramCache)
-      : (isQuad ? this.edgeQuadProgramCache : this.edgeProgramCache);
-    if (cache.has(key)) return cache.get(key);
-
-    const sources = createGraphWebGLSources(this.stateSlotCount, {
-      edge: {
-        color: v.color ? 'attribute' : 'uniform',
-        width: v.width ? 'attribute' : 'uniform',
-        opacity: v.opacity ? 'attribute' : 'uniform',
-        endpointSize: v.endpointSize ? 'attribute' : 'uniform',
-      },
-    });
-
-    const vert = isQuad ? sources.EDGE_QUAD_VERTEX_SOURCE : sources.EDGE_VERTEX_SOURCE;
-    const frag = weighted
-      ? (isQuad ? sources.EDGE_WEIGHTED_QUAD_FRAGMENT_SOURCE : sources.EDGE_WEIGHTED_FRAGMENT_SOURCE)
-      : (premultiplyAlpha
-        ? (isQuad ? sources.EDGE_PREMUL_QUAD_FRAGMENT_SOURCE : sources.EDGE_PREMUL_FRAGMENT_SOURCE)
-        : sources.EDGE_FRAGMENT_SOURCE);
-    const program = this.device.createProgram(vert, frag);
-
-    const uniforms = {
-      viewProjection: gl.getUniformLocation(program, 'u_viewProjection'),
-      viewport: gl.getUniformLocation(program, 'u_viewport'),
-      opacityBase: gl.getUniformLocation(program, 'u_edgeOpacityBase'),
-      opacityScale: gl.getUniformLocation(program, 'u_edgeOpacityScale'),
-      widthBase: gl.getUniformLocation(program, 'u_edgeWidthBase'),
-      widthScale: gl.getUniformLocation(program, 'u_edgeWidthScale'),
-      nodeSizeBase: gl.getUniformLocation(program, 'u_nodeSizeBase'),
-      nodeSizeScale: gl.getUniformLocation(program, 'u_nodeSizeScale'),
-      endpointTrim: gl.getUniformLocation(program, 'u_edgeEndpointTrim'),
-      hoverIndex: gl.getUniformLocation(program, 'u_hoverEdgeIndex'),
-      hoverState: gl.getUniformLocation(program, 'u_hoverEdgeState'),
-      nodeNoStateScale: gl.getUniformLocation(program, 'u_nodeNoStateScale'),
-      nodeStateScale: gl.getUniformLocation(program, 'u_nodeStateScale[0]'),
-      noStateScale: gl.getUniformLocation(program, 'u_edgeNoStateScale'),
-      noStateColorMul: gl.getUniformLocation(program, 'u_edgeNoStateColorMul'),
-      noStateColorAdd: gl.getUniformLocation(program, 'u_edgeNoStateColorAdd'),
-      stateScale: gl.getUniformLocation(program, 'u_edgeStateScale[0]'),
-      stateColorMul: gl.getUniformLocation(program, 'u_edgeStateColorMul[0]'),
-      stateColorAdd: gl.getUniformLocation(program, 'u_edgeStateColorAdd[0]'),
-      edgeColorStart: gl.getUniformLocation(program, 'u_edgeColorStart'),
-      edgeColorEnd: gl.getUniformLocation(program, 'u_edgeColorEnd'),
-      edgeWidth: gl.getUniformLocation(program, 'u_edgeWidth'),
-      edgeOpacity: gl.getUniformLocation(program, 'u_edgeOpacity'),
-      edgeEndpointSize: gl.getUniformLocation(program, 'u_edgeEndpointSize'),
-    };
-
-    const entry = { key, program, uniforms, variant: v };
-    cache.set(key, entry);
-    return entry;
-  }
-
-  setEdgeUniforms(gl, uniforms, cameraUniforms, viewportWidth, viewportHeight, edgeWidthBase, edgeWidthScale, edgeConfig = null) {
-    if (!gl || !uniforms || !cameraUniforms) return;
-    if (uniforms.viewProjection) gl.uniformMatrix4fv(uniforms.viewProjection, false, cameraUniforms.viewProjection);
-    if (uniforms.viewport) gl.uniform2f(uniforms.viewport, viewportWidth, viewportHeight);
-    if (uniforms.opacityBase) gl.uniform1f(uniforms.opacityBase, this.edgeOpacityBase);
-    if (uniforms.opacityScale) gl.uniform1f(uniforms.opacityScale, this.edgeOpacityScale);
-    if (uniforms.widthBase) gl.uniform1f(uniforms.widthBase, edgeWidthBase);
-    if (uniforms.widthScale) gl.uniform1f(uniforms.widthScale, edgeWidthScale);
-    if (uniforms.nodeSizeBase) gl.uniform1f(uniforms.nodeSizeBase, this.nodeSizeBase);
-    if (uniforms.nodeSizeScale) gl.uniform1f(uniforms.nodeSizeScale, this.nodeSizeScale);
-    if (uniforms.endpointTrim) gl.uniform1f(uniforms.endpointTrim, this.edgeEndpointTrim);
-    if (uniforms.hoverIndex) gl.uniform1ui(uniforms.hoverIndex, this.hoveredEdgeIndex >>> 0);
-    if (uniforms.hoverState) gl.uniform1ui(uniforms.hoverState, this.hoveredEdgeState >>> 0);
-    if (uniforms.nodeNoStateScale) gl.uniform4fv(uniforms.nodeNoStateScale, this.nodeNoStateScale);
-    if (uniforms.nodeStateScale) gl.uniform4fv(uniforms.nodeStateScale, this.nodeStateScale);
-    if (uniforms.noStateScale) gl.uniform4fv(uniforms.noStateScale, this.edgeNoStateScale);
-    if (uniforms.noStateColorMul) gl.uniform4fv(uniforms.noStateColorMul, this.edgeNoStateColorMul);
-    if (uniforms.noStateColorAdd) gl.uniform4fv(uniforms.noStateColorAdd, this.edgeNoStateColorAdd);
-    if (uniforms.stateScale) gl.uniform4fv(uniforms.stateScale, this.edgeStateScale);
-    if (uniforms.stateColorMul) gl.uniform4fv(uniforms.stateColorMul, this.edgeStateColorMul);
-    if (uniforms.stateColorAdd) gl.uniform4fv(uniforms.stateColorAdd, this.edgeStateColorAdd);
-
-    if (uniforms.edgeColorStart && edgeConfig?.color?.mode === 'uniform' && Array.isArray(edgeConfig?.color?.value)) {
-      const pair = edgeConfig.color.value;
-      const start = pair?.[0];
-      const end = pair?.[1];
-      if (Array.isArray(start)) gl.uniform4f(uniforms.edgeColorStart, start[0] ?? 0, start[1] ?? 0, start[2] ?? 0, start[3] ?? 1);
-      if (Array.isArray(end)) gl.uniform4f(uniforms.edgeColorEnd, end[0] ?? 0, end[1] ?? 0, end[2] ?? 0, end[3] ?? 1);
-    }
-    if (uniforms.edgeWidth && edgeConfig?.width?.mode === 'uniform' && Array.isArray(edgeConfig?.width?.value)) {
-      const pair = edgeConfig.width.value;
-      gl.uniform2f(uniforms.edgeWidth, pair?.[0] ?? 0, pair?.[1] ?? 0);
-    }
-    if (uniforms.edgeOpacity && edgeConfig?.opacity?.mode === 'uniform' && Array.isArray(edgeConfig?.opacity?.value)) {
-      const pair = edgeConfig.opacity.value;
-      gl.uniform2f(uniforms.edgeOpacity, pair?.[0] ?? 1, pair?.[1] ?? 1);
-    }
-    if (uniforms.edgeEndpointSize && edgeConfig?.endpointSize?.mode === 'uniform' && Array.isArray(edgeConfig?.endpointSize?.value)) {
-      const pair = edgeConfig.endpointSize.value;
-      gl.uniform2f(uniforms.edgeEndpointSize, pair?.[0] ?? 1, pair?.[1] ?? 1);
-    }
   }
 
   initialize(device, size) {
@@ -333,652 +756,193 @@ export class GraphLayerWebGL extends GraphLayer {
     super.initialize(device, size);
     this.device = device;
     this.gl = device.gl;
-    this.initializeWebGL2();
-    this.resize(size);
+    this.initializePrograms();
+    this.initializeGeometry();
+    this.initializeTextures();
   }
 
   resize(size) {
     super.resize(size);
-    // Matrices are updated per-frame from the camera.
   }
 
   destroy() {
-    const gl = this.gl;
+    const { gl } = this;
     if (!gl) return;
-    if (this.nodeVAO) gl.deleteVertexArray(this.nodeVAO);
-    if (this.edgeVAO) gl.deleteVertexArray(this.edgeVAO);
-    if (this.edgeQuadVAO) gl.deleteVertexArray(this.edgeQuadVAO);
-    // Programs are owned by the device-level resource cache so they can be
-    // reused across passes. Do not delete them here.
+    for (const program of this._ownedPrograms) {
+      gl.deleteProgram(program);
+    }
+    this._ownedPrograms.clear();
     this.nodeProgramCache.clear();
     this.edgeProgramCache.clear();
     this.edgeQuadProgramCache.clear();
     this.edgeWeightedProgramCache.clear();
     this.edgeWeightedQuadProgramCache.clear();
-    this.edgeProgram = null;
-    this.edgeQuadProgram = null;
-    this.edgeWeightedProgram = null;
-    this.edgeWeightedQuadProgram = null;
-    this.edgeResolveProgram = null;
-    this.edgeResolveTonemapProgram = null;
-    this.edgeResolveBoostProgram = null;
-    if (this.nodeQuadBuffer) gl.deleteBuffer(this.nodeQuadBuffer);
-    if (this.edgeQuadBuffer) gl.deleteBuffer(this.edgeQuadBuffer);
+    if (this.edgeResolveProgram) gl.deleteProgram(this.edgeResolveProgram);
+    if (this.edgeResolveTonemapProgram) gl.deleteProgram(this.edgeResolveTonemapProgram);
+    if (this.edgeResolveBoostProgram) gl.deleteProgram(this.edgeResolveBoostProgram);
     if (this.edgeResolveVAO) gl.deleteVertexArray(this.edgeResolveVAO);
     if (this.edgeResolveBuffer) gl.deleteBuffer(this.edgeResolveBuffer);
-    // Dense buffers are owned by the device-level resource cache so they can be
-    // reused across passes (e.g. attribute picking). Do not delete them here.
-    if (this.weightedFramebuffer) gl.deleteFramebuffer(this.weightedFramebuffer);
-    if (this.weightedColor) gl.deleteTexture(this.weightedColor);
-    if (this.weightedWeight) gl.deleteTexture(this.weightedWeight);
-    if (this.weightedDepth) gl.deleteRenderbuffer(this.weightedDepth);
+    this.destroyWeightedTargets();
+    if (this.nodeVao) gl.deleteVertexArray(this.nodeVao);
+    if (this.nodeQuadBuffer) gl.deleteBuffer(this.nodeQuadBuffer);
+    if (this.edgeVao) gl.deleteVertexArray(this.edgeVao);
+    if (this.edgeQuadVao) gl.deleteVertexArray(this.edgeQuadVao);
+    if (this.edgeQuadBuffer) gl.deleteBuffer(this.edgeQuadBuffer);
+    if (this.nodeIdBuffer) gl.deleteBuffer(this.nodeIdBuffer);
+    if (this.edgeIdBuffer) gl.deleteBuffer(this.edgeIdBuffer);
+    Object.values(this.nodeTextures).forEach((tex) => tex && gl.deleteTexture(tex));
+    Object.values(this.edgeTextures).forEach((tex) => tex && gl.deleteTexture(tex));
   }
 
-  setEdgeRenderingMode(mode) {
-    super.setEdgeRenderingMode(mode);
-  }
-
-  initializeWebGL2() {
+  initializePrograms() {
     const { gl } = this;
-    const cache = this.device?.resourceCache?.webgl;
-    this._shaderSources = createGraphWebGLSources(this.stateSlotCount);
-    const {
-      NODE_VERTEX_SOURCE,
-      NODE_FRAGMENT_SOURCE,
-      EDGE_VERTEX_SOURCE,
-      EDGE_FRAGMENT_SOURCE,
-      EDGE_QUAD_VERTEX_SOURCE,
-      EDGE_QUAD_FRAGMENT_SOURCE,
-      EDGE_WEIGHTED_FRAGMENT_SOURCE,
-      EDGE_WEIGHTED_QUAD_FRAGMENT_SOURCE,
-      EDGE_RESOLVE_VERTEX_SOURCE,
-      EDGE_RESOLVE_FRAGMENT_SOURCE,
-      EDGE_RESOLVE_TONEMAP_FRAGMENT_SOURCE,
-      EDGE_RESOLVE_BOOST_FRAGMENT_SOURCE,
-    } = this._shaderSources;
     const extColorBufferFloat = gl.getExtension('EXT_color_buffer_float');
     const extColorBufferHalfFloat = gl.getExtension('EXT_color_buffer_half_float');
     const extFloatBlend = gl.getExtension('EXT_float_blend');
     const canDrawMultiple = (gl.getParameter(gl.MAX_COLOR_ATTACHMENTS) ?? 1) >= 2;
     this.weightedSupported = Boolean(
-      gl.drawBuffers &&
-        canDrawMultiple &&
-        (extColorBufferFloat || extColorBufferHalfFloat) &&
-        extFloatBlend,
+      gl.drawBuffers
+      && canDrawMultiple
+      && (extColorBufferFloat || extColorBufferHalfFloat)
+      && extFloatBlend,
     );
-
-    const defaultEdgeVariant = { color: true, width: true, opacity: true, endpointSize: true };
-    const defaultEdgeEntry = this.getEdgeProgram('line', defaultEdgeVariant, false);
-    const defaultEdgeQuadEntry = this.getEdgeProgram('quad', defaultEdgeVariant, false);
-    this.edgeProgram = defaultEdgeEntry?.program ?? null;
-    this.edgeQuadProgram = defaultEdgeQuadEntry?.program ?? null;
-
-    // Prime node program cache with the default variant.
     this.nodeProgramCache.clear();
-    this.getNodeProgram(false, { NODE_VERTEX_SOURCE, NODE_FRAGMENT_SOURCE });
-    this.edgeUniformViewProjection = defaultEdgeEntry?.uniforms?.viewProjection ?? null;
-    this.edgeUniformOpacityBase = defaultEdgeEntry?.uniforms?.opacityBase ?? null;
-    this.edgeUniformOpacityScale = defaultEdgeEntry?.uniforms?.opacityScale ?? null;
-    this.edgeUniformWidthBase = defaultEdgeEntry?.uniforms?.widthBase ?? null;
-    this.edgeUniformWidthScale = defaultEdgeEntry?.uniforms?.widthScale ?? null;
-    this.edgeUniformNodeSizeBase = defaultEdgeEntry?.uniforms?.nodeSizeBase ?? null;
-    this.edgeUniformNodeSizeScale = defaultEdgeEntry?.uniforms?.nodeSizeScale ?? null;
-    this.edgeUniformEndpointTrim = defaultEdgeEntry?.uniforms?.endpointTrim ?? null;
-    this.edgeUniformHoverIndex = defaultEdgeEntry?.uniforms?.hoverIndex ?? null;
-    this.edgeUniformHoverState = defaultEdgeEntry?.uniforms?.hoverState ?? null;
-    this.edgeUniformNodeNoStateScale = defaultEdgeEntry?.uniforms?.nodeNoStateScale ?? null;
-    this.edgeUniformNodeStateScale = defaultEdgeEntry?.uniforms?.nodeStateScale ?? null;
-    this.edgeUniformNoStateScale = defaultEdgeEntry?.uniforms?.noStateScale ?? null;
-    this.edgeUniformNoStateColorMul = defaultEdgeEntry?.uniforms?.noStateColorMul ?? null;
-    this.edgeUniformNoStateColorAdd = defaultEdgeEntry?.uniforms?.noStateColorAdd ?? null;
-    this.edgeUniformStateScale = defaultEdgeEntry?.uniforms?.stateScale ?? null;
-    this.edgeUniformStateColorMul = defaultEdgeEntry?.uniforms?.stateColorMul ?? null;
-    this.edgeUniformStateColorAdd = defaultEdgeEntry?.uniforms?.stateColorAdd ?? null;
-    this.edgeQuadUniformViewProjection = defaultEdgeQuadEntry?.uniforms?.viewProjection ?? null;
-    this.edgeQuadUniformViewport = defaultEdgeQuadEntry?.uniforms?.viewport ?? null;
-    this.edgeQuadUniformOpacityBase = defaultEdgeQuadEntry?.uniforms?.opacityBase ?? null;
-    this.edgeQuadUniformOpacityScale = defaultEdgeQuadEntry?.uniforms?.opacityScale ?? null;
-    this.edgeQuadUniformWidthBase = defaultEdgeQuadEntry?.uniforms?.widthBase ?? null;
-    this.edgeQuadUniformWidthScale = defaultEdgeQuadEntry?.uniforms?.widthScale ?? null;
-    this.edgeQuadUniformNodeSizeBase = defaultEdgeQuadEntry?.uniforms?.nodeSizeBase ?? null;
-    this.edgeQuadUniformNodeSizeScale = defaultEdgeQuadEntry?.uniforms?.nodeSizeScale ?? null;
-    this.edgeQuadUniformEndpointTrim = defaultEdgeQuadEntry?.uniforms?.endpointTrim ?? null;
-    this.edgeQuadUniformHoverIndex = defaultEdgeQuadEntry?.uniforms?.hoverIndex ?? null;
-    this.edgeQuadUniformHoverState = defaultEdgeQuadEntry?.uniforms?.hoverState ?? null;
-    this.edgeQuadUniformNodeNoStateScale = defaultEdgeQuadEntry?.uniforms?.nodeNoStateScale ?? null;
-    this.edgeQuadUniformNodeStateScale = defaultEdgeQuadEntry?.uniforms?.nodeStateScale ?? null;
-    this.edgeQuadUniformNoStateScale = defaultEdgeQuadEntry?.uniforms?.noStateScale ?? null;
-    this.edgeQuadUniformNoStateColorMul = defaultEdgeQuadEntry?.uniforms?.noStateColorMul ?? null;
-    this.edgeQuadUniformNoStateColorAdd = defaultEdgeQuadEntry?.uniforms?.noStateColorAdd ?? null;
-    this.edgeQuadUniformStateScale = defaultEdgeQuadEntry?.uniforms?.stateScale ?? null;
-    this.edgeQuadUniformStateColorMul = defaultEdgeQuadEntry?.uniforms?.stateColorMul ?? null;
-    this.edgeQuadUniformStateColorAdd = defaultEdgeQuadEntry?.uniforms?.stateColorAdd ?? null;
-
-    this.nodeQuadBuffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeQuadBuffer);
-    const quad = new Float32Array([
-      -1, -1,
-      1, -1,
-      -1, 1,
-      1, 1,
-    ]);
-    gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
-
-    this.nodeVAO = gl.createVertexArray();
-    gl.bindVertexArray(this.nodeVAO);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeQuadBuffer);
-    gl.enableVertexAttribArray(0);
-    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-
-    this.nodeBuffers.positions = cache?.ensureBuffer(gl, 'dense:node:positions') ?? gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.positions);
-    gl.enableVertexAttribArray(1);
-    gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 0, 0);
-    gl.vertexAttribDivisor(1, 1);
-
-    this.nodeBuffers.colors = cache?.ensureBuffer(gl, 'dense:node:colors') ?? gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.colors);
-    gl.enableVertexAttribArray(2);
-    gl.vertexAttribPointer(2, 4, gl.FLOAT, false, 0, 0);
-    gl.vertexAttribDivisor(2, 1);
-
-    this.nodeBuffers.sizes = cache?.ensureBuffer(gl, 'dense:node:sizes') ?? gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.sizes);
-    gl.enableVertexAttribArray(3);
-    gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 0, 0);
-    gl.vertexAttribDivisor(3, 1);
-
-    this.nodeBuffers.states = cache?.ensureBuffer(gl, 'dense:node:states') ?? gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.states);
-    gl.enableVertexAttribArray(4);
-    gl.vertexAttribIPointer(4, 1, gl.UNSIGNED_INT, 0, 0);
-    gl.vertexAttribDivisor(4, 1);
-
-    this.nodeBuffers.outlineWidths = cache?.ensureBuffer(gl, 'dense:node:outlineWidths') ?? gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.outlineWidths);
-    gl.enableVertexAttribArray(5);
-    gl.vertexAttribPointer(5, 1, gl.FLOAT, false, 0, 0);
-    gl.vertexAttribDivisor(5, 1);
-
-    this.nodeBuffers.outlineColors = cache?.ensureBuffer(gl, 'dense:node:outlineColors') ?? gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffers.outlineColors);
-    gl.enableVertexAttribArray(6);
-    gl.vertexAttribPointer(6, 4, gl.FLOAT, false, 0, 0);
-    gl.vertexAttribDivisor(6, 1);
-    gl.bindVertexArray(null);
-
-    this.edgeVAO = gl.createVertexArray();
-    gl.bindVertexArray(this.edgeVAO);
-    this.edgeBuffers.segments = cache?.ensureBuffer(gl, 'dense:edge:segments') ?? gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.segments);
-    gl.enableVertexAttribArray(0);
-    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 24, 0);
-    gl.vertexAttribDivisor(0, 1);
-
-    gl.enableVertexAttribArray(1);
-    gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 24, 12);
-    gl.vertexAttribDivisor(1, 1);
-
-    this.edgeBuffers.colors = cache?.ensureBuffer(gl, 'dense:edge:colors') ?? gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.colors);
-    gl.enableVertexAttribArray(2);
-    gl.vertexAttribPointer(2, 4, gl.FLOAT, false, 32, 0);
-    gl.vertexAttribDivisor(2, 1);
-    gl.enableVertexAttribArray(3);
-    gl.vertexAttribPointer(3, 4, gl.FLOAT, false, 32, 16);
-    gl.vertexAttribDivisor(3, 1);
-    this.edgeBuffers.widths = cache?.ensureBuffer(gl, 'dense:edge:widths') ?? (this.edgeBuffers.widths || gl.createBuffer());
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.widths);
-    gl.enableVertexAttribArray(4);
-    gl.vertexAttribPointer(4, 2, gl.FLOAT, false, 8, 0);
-    gl.vertexAttribDivisor(4, 1);
-    this.edgeBuffers.endpointSizes = cache?.ensureBuffer(gl, 'dense:edge:endpointSizes') ?? gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.endpointSizes);
-    gl.enableVertexAttribArray(5);
-    gl.vertexAttribPointer(5, 2, gl.FLOAT, false, 0, 0);
-    gl.vertexAttribDivisor(5, 1);
-    this.edgeBuffers.opacities = cache?.ensureBuffer(gl, 'dense:edge:opacities') ?? gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.opacities);
-    gl.enableVertexAttribArray(6);
-    gl.vertexAttribPointer(6, 2, gl.FLOAT, false, 0, 0);
-    gl.vertexAttribDivisor(6, 1);
-
-    this.edgeBuffers.states = cache?.ensureBuffer(gl, 'dense:edge:states') ?? gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.states);
-    gl.enableVertexAttribArray(7);
-    gl.vertexAttribIPointer(7, 1, gl.UNSIGNED_INT, 0, 0);
-    gl.vertexAttribDivisor(7, 1);
-
-    this.edgeBuffers.endpointStates = cache?.ensureBuffer(gl, 'dense:edge:endpointStates') ?? gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.endpointStates);
-    gl.enableVertexAttribArray(8);
-    gl.vertexAttribIPointer(8, 2, gl.UNSIGNED_INT, 0, 0);
-    gl.vertexAttribDivisor(8, 1);
-    gl.bindVertexArray(null);
-
-    this.edgeQuadBuffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeQuadBuffer);
-    const edgeQuad = new Float32Array([
-      0, 1,
-      0, -1,
-      1, 1,
-      1, -1,
-    ]);
-    gl.bufferData(gl.ARRAY_BUFFER, edgeQuad, gl.STATIC_DRAW);
-
-    this.edgeResolveBuffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeResolveBuffer);
-    const resolveQuad = new Float32Array([
-      -1, -1, 0, 0,
-      1, -1, 1, 0,
-      -1, 1, 0, 1,
-      -1, 1, 0, 1,
-      1, -1, 1, 0,
-      1, 1, 1, 1,
-    ]);
-    gl.bufferData(gl.ARRAY_BUFFER, resolveQuad, gl.STATIC_DRAW);
-
-    this.edgeResolveVAO = gl.createVertexArray();
-    gl.bindVertexArray(this.edgeResolveVAO);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeResolveBuffer);
-    gl.enableVertexAttribArray(0);
-    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 16, 0);
-    gl.enableVertexAttribArray(1);
-    gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 16, 8);
-
-    this.edgeQuadVAO = gl.createVertexArray();
-    gl.bindVertexArray(this.edgeQuadVAO);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeQuadBuffer);
-    gl.enableVertexAttribArray(0);
-    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.segments);
-    gl.enableVertexAttribArray(1);
-    gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 24, 0);
-    gl.vertexAttribDivisor(1, 1);
-
-    gl.enableVertexAttribArray(2);
-    gl.vertexAttribPointer(2, 3, gl.FLOAT, false, 24, 12);
-    gl.vertexAttribDivisor(2, 1);
-
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.widths);
-    gl.enableVertexAttribArray(3);
-    gl.vertexAttribPointer(3, 2, gl.FLOAT, false, 8, 0);
-    gl.vertexAttribDivisor(3, 1);
-
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.colors);
-    gl.enableVertexAttribArray(4);
-    gl.vertexAttribPointer(4, 4, gl.FLOAT, false, 32, 0);
-    gl.vertexAttribDivisor(4, 1);
-    gl.enableVertexAttribArray(5);
-    gl.vertexAttribPointer(5, 4, gl.FLOAT, false, 32, 16);
-    gl.vertexAttribDivisor(5, 1);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.endpointSizes);
-    gl.enableVertexAttribArray(6);
-    gl.vertexAttribPointer(6, 2, gl.FLOAT, false, 0, 0);
-    gl.vertexAttribDivisor(6, 1);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.opacities);
-    gl.enableVertexAttribArray(7);
-    gl.vertexAttribPointer(7, 2, gl.FLOAT, false, 0, 0);
-    gl.vertexAttribDivisor(7, 1);
-
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.states);
-    gl.enableVertexAttribArray(8);
-    gl.vertexAttribIPointer(8, 1, gl.UNSIGNED_INT, 0, 0);
-    gl.vertexAttribDivisor(8, 1);
-
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffers.endpointStates);
-    gl.enableVertexAttribArray(9);
-    gl.vertexAttribIPointer(9, 2, gl.UNSIGNED_INT, 0, 0);
-    gl.vertexAttribDivisor(9, 1);
-    gl.bindVertexArray(null);
+    this.edgeProgramCache.clear();
+    this.edgeQuadProgramCache.clear();
+    this.edgeWeightedProgramCache.clear();
+    this.edgeWeightedQuadProgramCache.clear();
   }
 
-  getNodeProgram(useOutlineAttributesOrVariant, fallbackSources = null, visualConfig = null) {
-    const variant = this.resolveNodeVariant(useOutlineAttributesOrVariant, visualConfig);
-    const key = `node|${variant.color ? 'cA' : 'cU'}|${variant.size ? 'sA' : 'sU'}|${variant.outline ? 'oA' : 'oU'}|${variant.outlineColor ? 'ocA' : 'ocU'}`;
-    const gl = this.gl;
-    if (!gl || !this.device) return null;
-
-    const sharedCache = this.device?.resourceCache?.webgl;
-    const sharedKey = `graph:webgl:${this.stateSlotCount}:${key}`;
-    if (sharedCache && !fallbackSources) {
-      return sharedCache.getOrCreateProgram(sharedKey, () => {
-        const sources = createGraphWebGLSources(this.stateSlotCount, {
-          node: {
-            color: variant.color ? 'attribute' : 'uniform',
-            size: variant.size ? 'attribute' : 'uniform',
-            outline: variant.outline ? 'attribute' : 'uniform',
-            outlineColor: variant.outlineColor ? 'attribute' : 'uniform',
-          },
-        });
-        const program = this.device.createProgram(sources.NODE_VERTEX_SOURCE, sources.NODE_FRAGMENT_SOURCE);
-        const uniforms = {
-          viewProjection: gl.getUniformLocation(program, 'u_viewProjection'),
-          view: gl.getUniformLocation(program, 'u_view'),
-          cameraPosition: gl.getUniformLocation(program, 'u_cameraPosition'),
-          cameraUp: gl.getUniformLocation(program, 'u_cameraUp'),
-          cameraRight: gl.getUniformLocation(program, 'u_cameraRight'),
-          is2D: gl.getUniformLocation(program, 'u_is2D'),
-          opacityBase: gl.getUniformLocation(program, 'u_nodeOpacityBase'),
-          opacityScale: gl.getUniformLocation(program, 'u_nodeOpacityScale'),
-          sizeBase: gl.getUniformLocation(program, 'u_nodeSizeBase'),
-          sizeScale: gl.getUniformLocation(program, 'u_nodeSizeScale'),
-          outlineWidthBase: gl.getUniformLocation(program, 'u_outlineWidthBase'),
-          outlineWidthScale: gl.getUniformLocation(program, 'u_outlineWidthScale'),
-          outlineColor: gl.getUniformLocation(program, 'u_outlineColor'),
-          nodeColor: gl.getUniformLocation(program, 'u_nodeColor'),
-          nodeSize: gl.getUniformLocation(program, 'u_nodeSize'),
-          nodeOutline: gl.getUniformLocation(program, 'u_nodeOutline'),
-          hoverIndex: gl.getUniformLocation(program, 'u_hoverNodeIndex'),
-          hoverState: gl.getUniformLocation(program, 'u_hoverNodeState'),
-          noStateScale: gl.getUniformLocation(program, 'u_nodeNoStateScale'),
-          noStateColorMul: gl.getUniformLocation(program, 'u_nodeNoStateColorMul'),
-          noStateColorAdd: gl.getUniformLocation(program, 'u_nodeNoStateColorAdd'),
-          stateScale: gl.getUniformLocation(program, 'u_nodeStateScale[0]'),
-          stateColorMul: gl.getUniformLocation(program, 'u_nodeStateColorMul[0]'),
-          stateColorAdd: gl.getUniformLocation(program, 'u_nodeStateColorAdd[0]'),
-        };
-        return { key, program, uniforms, variant };
-      });
+  resolveUniformLocations(program, names) {
+    const out = {};
+    for (const name of names) {
+      out[name] = this.gl.getUniformLocation(program, name);
     }
+    return out;
+  }
 
-    if (this.nodeProgramCache.has(key)) return this.nodeProgramCache.get(key);
-
-    let sources = fallbackSources;
-    if (!sources) {
-      sources = createGraphWebGLSources(this.stateSlotCount, {
-        node: {
-          color: variant.color ? 'attribute' : 'uniform',
-          size: variant.size ? 'attribute' : 'uniform',
-          outline: variant.outline ? 'attribute' : 'uniform',
-          outlineColor: variant.outlineColor ? 'attribute' : 'uniform',
-        },
-      });
+  resolveNodeVariant(visualConfig) {
+    const nodeCfg = visualConfig?.node ?? null;
+    if (!nodeCfg) {
+      return {
+        colorBuffer: true,
+        sizeBuffer: true,
+        outlineWidthBuffer: this.nodeOutlineUseAttributes === true,
+        outlineColorBuffer: this.nodeOutlineUseAttributes === true,
+      };
     }
-    const program = this.device.createProgram(sources.NODE_VERTEX_SOURCE, sources.NODE_FRAGMENT_SOURCE);
-    const uniforms = {
-      viewProjection: gl.getUniformLocation(program, 'u_viewProjection'),
-      view: gl.getUniformLocation(program, 'u_view'),
-      cameraPosition: gl.getUniformLocation(program, 'u_cameraPosition'),
-      cameraUp: gl.getUniformLocation(program, 'u_cameraUp'),
-      cameraRight: gl.getUniformLocation(program, 'u_cameraRight'),
-      is2D: gl.getUniformLocation(program, 'u_is2D'),
-      opacityBase: gl.getUniformLocation(program, 'u_nodeOpacityBase'),
-      opacityScale: gl.getUniformLocation(program, 'u_nodeOpacityScale'),
-      sizeBase: gl.getUniformLocation(program, 'u_nodeSizeBase'),
-      sizeScale: gl.getUniformLocation(program, 'u_nodeSizeScale'),
-      outlineWidthBase: gl.getUniformLocation(program, 'u_outlineWidthBase'),
-      outlineWidthScale: gl.getUniformLocation(program, 'u_outlineWidthScale'),
-      outlineColor: gl.getUniformLocation(program, 'u_outlineColor'),
-      nodeColor: gl.getUniformLocation(program, 'u_nodeColor'),
-      nodeSize: gl.getUniformLocation(program, 'u_nodeSize'),
-      nodeOutline: gl.getUniformLocation(program, 'u_nodeOutline'),
-      hoverIndex: gl.getUniformLocation(program, 'u_hoverNodeIndex'),
-      hoverState: gl.getUniformLocation(program, 'u_hoverNodeState'),
-      noStateScale: gl.getUniformLocation(program, 'u_nodeNoStateScale'),
-      noStateColorMul: gl.getUniformLocation(program, 'u_nodeNoStateColorMul'),
-      noStateColorAdd: gl.getUniformLocation(program, 'u_nodeNoStateColorAdd'),
-      stateScale: gl.getUniformLocation(program, 'u_nodeStateScale[0]'),
-      stateColorMul: gl.getUniformLocation(program, 'u_nodeStateColorMul[0]'),
-      stateColorAdd: gl.getUniformLocation(program, 'u_nodeStateColorAdd[0]'),
+    return {
+      colorBuffer: nodeCfg?.color?.mode !== 'uniform',
+      sizeBuffer: nodeCfg?.size?.mode !== 'uniform',
+      outlineWidthBuffer: nodeCfg?.outline?.mode !== 'uniform',
+      outlineColorBuffer: nodeCfg?.outlineColor?.mode !== 'uniform',
     };
-    const entry = { key, program, uniforms, variant };
-    this.nodeProgramCache.set(key, entry);
+  }
+
+  getNodeVariantKey(variant) {
+    return `c:${variant?.colorBuffer ? 'B' : 'U'}|s:${variant?.sizeBuffer ? 'B' : 'U'}|o:${variant?.outlineWidthBuffer ? 'B' : 'U'}|oc:${variant?.outlineColorBuffer ? 'B' : 'U'}`;
+  }
+
+  getEdgeVariantKey(variant) {
+    return [
+      `c:${variant?.colorBuffer ? 'B' : 'U'}:${variant?.colorSource}:${variant?.colorEndpoints}`,
+      `w:${variant?.widthBuffer ? 'B' : 'U'}:${variant?.widthSource}:${variant?.widthEndpoints}`,
+      `o:${variant?.opacityBuffer ? 'B' : 'U'}:${variant?.opacitySource}:${variant?.opacityEndpoints}`,
+      `es:${variant?.endpointSizeBuffer ? 'B' : 'U'}:${variant?.endpointSizeSource}:${variant?.endpointSizeEndpoints}`,
+    ].join('|');
+  }
+
+  getProgramEntry(cache, key, buildSources, uniformNames) {
+    if (cache.has(key)) return cache.get(key);
+    const sharedCache = this.device?.resourceCache?.webgl;
+    const sharedKey = `graph:webgl:indirect:${key}`;
+    let entry;
+    if (sharedCache) {
+      entry = sharedCache.getOrCreateProgram(sharedKey, () => {
+        const sources = buildSources();
+        const program = this.device.createProgram(sources.vertex, sources.fragment);
+        const uniforms = this.resolveUniformLocations(program, uniformNames);
+        return { program, uniforms };
+      });
+    } else {
+      const sources = buildSources();
+      const program = this.device.createProgram(sources.vertex, sources.fragment);
+      const uniforms = this.resolveUniformLocations(program, uniformNames);
+      entry = { program, uniforms };
+      this._ownedPrograms.add(program);
+    }
+    cache.set(key, entry);
     return entry;
   }
 
-  setNodeUniforms(gl, uniforms, cameraUniforms, is2D, nodeConfig = null) {
-    if (!gl || !uniforms || !cameraUniforms) return;
-    if (uniforms.viewProjection) gl.uniformMatrix4fv(uniforms.viewProjection, false, cameraUniforms.viewProjection);
-    if (uniforms.view) gl.uniformMatrix4fv(uniforms.view, false, cameraUniforms.view);
-    if (uniforms.cameraPosition) gl.uniform3fv(uniforms.cameraPosition, cameraUniforms.position);
-    if (uniforms.cameraUp) gl.uniform3fv(uniforms.cameraUp, cameraUniforms.up);
-    if (uniforms.cameraRight) gl.uniform3fv(uniforms.cameraRight, cameraUniforms.right);
-    if (uniforms.is2D) gl.uniform1i(uniforms.is2D, is2D ? 1 : 0);
-    if (uniforms.opacityBase) gl.uniform1f(uniforms.opacityBase, this.nodeOpacityBase);
-    if (uniforms.opacityScale) gl.uniform1f(uniforms.opacityScale, this.nodeOpacityScale);
-    if (uniforms.sizeBase) gl.uniform1f(uniforms.sizeBase, this.nodeSizeBase);
-    if (uniforms.sizeScale) gl.uniform1f(uniforms.sizeScale, this.nodeSizeScale);
-    if (uniforms.outlineWidthBase) gl.uniform1f(uniforms.outlineWidthBase, this.nodeOutlineWidthBase);
-    if (uniforms.outlineWidthScale) gl.uniform1f(uniforms.outlineWidthScale, this.nodeOutlineWidthScale);
-    if (uniforms.nodeColor && nodeConfig?.color?.mode === 'uniform' && Array.isArray(nodeConfig?.color?.value)) {
-      gl.uniform4f(
-        uniforms.nodeColor,
-        nodeConfig.color.value[0] ?? 0,
-        nodeConfig.color.value[1] ?? 0,
-        nodeConfig.color.value[2] ?? 0,
-        nodeConfig.color.value[3] ?? 1,
-      );
-    }
-    if (uniforms.nodeSize && nodeConfig?.size?.mode === 'uniform' && Number.isFinite(nodeConfig?.size?.value)) {
-      gl.uniform1f(uniforms.nodeSize, nodeConfig.size.value);
-    }
-    if (uniforms.nodeOutline && nodeConfig?.outline?.mode === 'uniform' && Number.isFinite(nodeConfig?.outline?.value)) {
-      gl.uniform1f(uniforms.nodeOutline, nodeConfig.outline.value);
-    }
-
-    const outlineColor = (nodeConfig?.outlineColor?.mode === 'uniform' && Array.isArray(nodeConfig?.outlineColor?.value))
-      ? nodeConfig.outlineColor.value
-      : this.nodeOutlineColor;
-    if (uniforms.outlineColor) {
-      gl.uniform4f(
-        uniforms.outlineColor,
-        outlineColor?.[0] ?? 0,
-        outlineColor?.[1] ?? 0,
-        outlineColor?.[2] ?? 0,
-        outlineColor?.[3] ?? 1,
-      );
-    }
-    if (uniforms.hoverIndex) gl.uniform1ui(uniforms.hoverIndex, this.hoveredNodeIndex >>> 0);
-    if (uniforms.hoverState) gl.uniform1ui(uniforms.hoverState, this.hoveredNodeState >>> 0);
-    if (uniforms.stateScale) gl.uniform4fv(uniforms.stateScale, this.nodeStateScale);
-    if (uniforms.stateColorMul) gl.uniform4fv(uniforms.stateColorMul, this.nodeStateColorMul);
-    if (uniforms.stateColorAdd) gl.uniform4fv(uniforms.stateColorAdd, this.nodeStateColorAdd);
-    if (uniforms.noStateScale) gl.uniform4fv(uniforms.noStateScale, this.nodeNoStateScale);
-    if (uniforms.noStateColorMul) gl.uniform4fv(uniforms.noStateColorMul, this.nodeNoStateColorMul);
-    if (uniforms.noStateColorAdd) gl.uniform4fv(uniforms.noStateColorAdd, this.nodeNoStateColorAdd);
+  buildIndirectShaderOptions(nodeVariant, edgeVariant) {
+    return {
+      stateSlots: this.stateSlotCount,
+      node: {
+        color: nodeVariant?.colorBuffer ? 'buffer' : 'uniform',
+        size: nodeVariant?.sizeBuffer ? 'buffer' : 'uniform',
+        outline: nodeVariant?.outlineWidthBuffer ? 'buffer' : 'uniform',
+        outlineColor: nodeVariant?.outlineColorBuffer ? 'buffer' : 'uniform',
+      },
+      edge: {
+        color: {
+          mode: edgeVariant?.colorBuffer ? 'buffer' : 'uniform',
+          source: edgeVariant?.colorSource === 'node' ? 'node' : 'edge',
+          endpoints: edgeVariant?.colorEndpoints ?? 'both',
+        },
+        width: {
+          mode: edgeVariant?.widthBuffer ? 'buffer' : 'uniform',
+          source: edgeVariant?.widthSource === 'node' ? 'node' : 'edge',
+          endpoints: edgeVariant?.widthEndpoints ?? 'both',
+        },
+        opacity: {
+          mode: edgeVariant?.opacityBuffer ? 'buffer' : 'uniform',
+          source: edgeVariant?.opacitySource === 'node' ? 'node' : 'edge',
+          endpoints: edgeVariant?.opacityEndpoints ?? 'both',
+        },
+        endpointSize: {
+          mode: edgeVariant?.endpointSizeBuffer ? 'buffer' : 'uniform',
+          source: edgeVariant?.endpointSizeSource === 'node' ? 'node' : 'edge',
+          endpoints: edgeVariant?.endpointSizeEndpoints ?? 'both',
+        },
+      },
+    };
   }
 
-  render(context, frame) {
-    if (!context || context.type !== 'webgl2') return;
-    const network = frame?.network;
-    if (!network) return;
-    const { camera } = frame ?? {};
-    const overrides = frame?.positionOverrides ?? null;
-    const gl = context.gl;
-    const cameraUniforms = this.getCameraUniforms(camera);
-    if (!cameraUniforms) return;
+  getNodeProgram(nodeVariant) {
+    const key = `node|${this.getNodeVariantKey(nodeVariant)}`;
+    return this.getProgramEntry(
+      this.nodeProgramCache,
+      key,
+      () => {
+        const sources = createGraphWebGLSources(this.buildIndirectShaderOptions(nodeVariant, null));
+        return { vertex: sources.NODE_VERTEX_SOURCE, fragment: sources.NODE_FRAGMENT_SOURCE };
+      },
+      NODE_UNIFORM_NAMES,
+    );
+  }
 
-    const schema = GraphVisualSchema.fromNetwork(network, {
-      nodeOutlineUseAttributes: this.nodeOutlineUseAttributes === true,
-    });
-    const visualConfig = schema.visualConfig;
-    const { requests, nodeVariant: schemaNodeVariant } = schema.getDenseRequests();
-    const nodeVariant = this.resolveNodeVariant({
-      color: schemaNodeVariant.colorBuffer,
-      size: schemaNodeVariant.sizeBuffer,
-      outline: schemaNodeVariant.outlineWidthBuffer,
-      outlineColor: schemaNodeVariant.outlineColorBuffer,
-    }, visualConfig);
-    const edgeVariant = this.resolveEdgeVariant(visualConfig);
-    const edgeCfg = visualConfig?.edge ?? null;
-
-    let renderedWeighted = false;
-    const passes = [];
-    const geometryCounts = { nodes: { count: 0 }, edges: { count: 0 } };
-    {
-      const is2D = cameraUniforms.mode === '2d';
-      const zoom2D = is2D ? Math.max(1e-3, cameraUniforms.view?.[0] ?? 1) : 1;
-      const edgeWidthFactor = is2D ? (zoom2D / EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL) : 1.0;
-      const globalEdgeWidthBase = this.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
-      const globalEdgeWidthScale = this.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
-      const viewport = context.viewport;
-      const viewportWidth = viewport ? viewport[2] : (gl.drawingBufferWidth || this.size?.width || 1);
-      const viewportHeight = viewport ? viewport[3] : (gl.drawingBufferHeight || this.size?.height || 1);
-      const transparencyMode = this.edgeTransparencyMode;
-      const nodeBlendWithEdges = this.nodeBlendWithEdges === true;
-      const edgeDepthWrite = this.edgeDepthWrite === true;
-
-      gl.enable(gl.DEPTH_TEST);
-      gl.depthMask(true);
-      gl.depthFunc(gl.LEQUAL);
-      gl.clear(gl.DEPTH_BUFFER_BIT);
-
-      if (is2D) {
-        gl.disable(gl.DEPTH_TEST);
-        gl.depthMask(false);
-      } else {
-        gl.enable(gl.DEPTH_TEST);
-        gl.depthMask(true);
-      }
-      const ok = this.withDenseGraph(network, (geometry) => {
-        if (!geometry) return false;
-        geometryCounts.nodes.count = geometry.nodes.count ?? 0;
-        geometryCounts.edges.count = geometry.edges.count ?? 0;
-        if (geometryCounts.edges.count) {
-          this.uploadEdgesWebGL2(geometry.edges, visualConfig);
-        } else {
-          this.edgeCount = 0;
-          this._edgeVersionsLast = null;
-        }
-        if (geometryCounts.nodes.count) {
-          this.uploadNodesWebGL2(geometry.nodes, nodeVariant);
-        } else {
-          this.nodeCount = 0;
-          this._nodeVersionsLast = null;
-        }
-        return true;
-      }, requests, overrides);
-      if (!ok) return;
-
-      const drawNodes = () => {
-        if (!this.nodeCount) return;
-        const nodeEntry = this.getNodeProgram(nodeVariant, null, visualConfig);
-        if (!nodeEntry?.program) return;
-        gl.useProgram(nodeEntry.program);
-        this.setNodeUniforms(gl, nodeEntry.uniforms, cameraUniforms, is2D, visualConfig?.node ?? null);
-        gl.bindVertexArray(this.nodeVAO);
-        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.nodeCount);
-      };
-
-      const premultiplyEdgeAlpha = transparencyMode === 'screen';
-
-      const drawEdges = () => {
-        if (!this.edgeCount) return;
-        if (is2D) {
-          gl.disable(gl.DEPTH_TEST);
-          gl.depthMask(false);
-        } else {
-          gl.enable(gl.DEPTH_TEST);
-          gl.depthMask(edgeDepthWrite);
-          gl.depthFunc(gl.LEQUAL);
-        }
-        const useQuads = this.edgeRenderingMode === 'quad';
-        const kind = useQuads ? 'quad' : 'line';
-        const edgeEntry = this.getEdgeProgram(kind, edgeVariant, false, premultiplyEdgeAlpha);
-        if (!edgeEntry?.program) return;
-        gl.useProgram(edgeEntry.program);
-        this.setEdgeUniforms(
-          gl,
-          edgeEntry.uniforms,
-          cameraUniforms,
-          viewportWidth,
-          viewportHeight,
-          globalEdgeWidthBase,
-          globalEdgeWidthScale,
-          edgeCfg,
-        );
-        gl.bindVertexArray(useQuads ? this.edgeQuadVAO : this.edgeVAO);
-        gl.drawArraysInstanced(useQuads ? gl.TRIANGLE_STRIP : gl.LINES, 0, useQuads ? 4 : 2, this.edgeCount);
-      };
-
-      const applyNodeBlend = () => {
-        if (nodeBlendWithEdges) {
-          this.applyEdgeBlend(gl, transparencyMode);
-        } else {
-          gl.blendEquation(gl.FUNC_ADD);
-          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-        }
-      };
-
-      const setupNodeDepth = () => {
-        if (nodeBlendWithEdges || is2D) {
-          gl.disable(gl.DEPTH_TEST);
-          gl.depthMask(false);
-        } else {
-          gl.enable(gl.DEPTH_TEST);
-          gl.depthMask(true);
-          gl.depthFunc(gl.LEQUAL);
-        }
-      };
-
-      const weightedRequested = transparencyMode === 'weighted' || transparencyMode === 'additive-normalized' || transparencyMode === 'additive-tonemapped' || transparencyMode === 'additive-normalized-bright';
-      const weightedReady = weightedRequested && geometryCounts.edges.count > 0
-        ? this.prepareWeightedWebGL(viewportWidth, viewportHeight)
-        : false;
-
-      if (weightedReady) {
-        if (!this.loggedWeightedActive) {
-          console.info(`GraphLayerWebGL: using weighted multipass for '${transparencyMode}'`);
-          this.loggedWeightedActive = true;
-        }
-        passes.push(() => this.renderWeightedWebGL(context, {
-          geometry: geometryCounts,
-          is2D,
-          cameraUniforms,
-          edgeWidthBase: globalEdgeWidthBase,
-          edgeWidthScale: globalEdgeWidthScale,
-          viewport,
-          visualConfig,
-          nodeVariant,
-          edgeVariant,
-        }));
-        renderedWeighted = true;
-      }
-      if (!weightedReady) {
-        if (weightedRequested && geometry.edges.count && !this.warnedWeightedFallback) {
-          console.warn('Weighted edge transparency is not available in WebGL2; falling back to alpha.');
-          this.warnedWeightedFallback = true;
-        }
-
-        // Always render nodes with standard alpha blending.
-        gl.enable(gl.BLEND);
-
-        if (is2D) {
-          passes.push(() => {
-            this.applyEdgeBlend(gl, transparencyMode);
-            drawEdges();
-            applyNodeBlend();
-            setupNodeDepth();
-            drawNodes();
-            gl.bindVertexArray(null);
-            gl.depthMask(true);
-            gl.depthFunc(gl.LEQUAL);
-            gl.enable(gl.DEPTH_TEST);
-          });
-        } else {
-          passes.push(() => {
-            applyNodeBlend();
-            setupNodeDepth();
-            drawNodes();
-            this.applyEdgeBlend(gl, transparencyMode);
-            drawEdges();
-            gl.bindVertexArray(null);
-            gl.depthMask(true);
-            gl.depthFunc(gl.LEQUAL);
-            gl.enable(gl.DEPTH_TEST);
-          });
-        }
-      }
-    }
-
-    if (renderedWeighted) {
-      this.frameGraph.run(passes, context);
-      return;
-    }
-
-    this.frameGraph.run(passes, context);
+  getEdgeProgram(kind, nodeVariant, edgeVariant, weighted = false) {
+    const suffix = kind === 'quad' ? 'edge-quad' : 'edge-line';
+    const cache = weighted
+      ? (kind === 'quad' ? this.edgeWeightedQuadProgramCache : this.edgeWeightedProgramCache)
+      : (kind === 'quad' ? this.edgeQuadProgramCache : this.edgeProgramCache);
+    const uniformNames = kind === 'quad' ? EDGE_QUAD_UNIFORM_NAMES : EDGE_UNIFORM_NAMES;
+    const key = `${suffix}|${weighted ? 'w' : 'a'}|${this.getNodeVariantKey(nodeVariant)}|${this.getEdgeVariantKey(edgeVariant)}`;
+    return this.getProgramEntry(
+      cache,
+      key,
+      () => {
+        const sources = createGraphWebGLSources(this.buildIndirectShaderOptions(nodeVariant, edgeVariant));
+        return {
+          vertex: kind === 'quad' ? sources.EDGE_QUAD_VERTEX_SOURCE : sources.EDGE_VERTEX_SOURCE,
+          fragment: weighted
+            ? (kind === 'quad' ? sources.EDGE_WEIGHTED_QUAD_FRAGMENT_SOURCE : sources.EDGE_WEIGHTED_FRAGMENT_SOURCE)
+            : sources.EDGE_FRAGMENT_SOURCE,
+        };
+      },
+      uniformNames,
+    );
   }
 
   applyEdgeBlend(gl, mode) {
@@ -1002,354 +966,8 @@ export class GraphLayerWebGL extends GraphLayer {
     }
   }
 
-  uploadNodesWebGL2(nodes, variant) {
-    const count = nodes?.count ?? 0;
-    const versions = nodes?.versions ?? {};
-
-    const v = variant && typeof variant === 'object'
-      ? variant
-      : { color: true, size: true, outline: this.nodeOutlineUseAttributes === true, outlineColor: this.nodeOutlineUseAttributes === true };
-
-    const needsColor = v.color === true;
-    const needsSize = v.size === true;
-    const needsOutlineWidth = v.outline === true;
-    const needsOutlineColor = v.outlineColor === true;
-
-    if (!nodes || !nodes.positions || !nodes.states) {
-      this.nodeCount = 0;
-      return;
-    }
-
-    if ((needsColor && !nodes.colors) || (needsSize && !nodes.sizes)) {
-      this.nodeCount = 0;
-      return;
-    }
-    if ((needsOutlineWidth && !nodes.outlineWidths) || (needsOutlineColor && !nodes.outlineColors)) {
-      this.nodeCount = 0;
-      return;
-    }
-
-    const variantKey = `c${needsColor ? 'A' : 'U'}|s${needsSize ? 'A' : 'U'}|o${needsOutlineWidth ? 'A' : 'U'}|oc${needsOutlineColor ? 'A' : 'U'}`;
-    const variantChanged = this._nodeProgramKeyLast !== variantKey;
-    const viewsChanged = (
-      this._nodeViewsLast?.positions !== nodes.positions
-      || this._nodeViewsLast?.states !== nodes.states
-      || (needsColor && this._nodeViewsLast?.colors !== nodes.colors)
-      || (needsSize && this._nodeViewsLast?.sizes !== nodes.sizes)
-      || (needsOutlineWidth && this._nodeViewsLast?.outlineWidths !== nodes.outlineWidths)
-      || (needsOutlineColor && this._nodeViewsLast?.outlineColors !== nodes.outlineColors)
-    );
-    const versionChanged = (
-      this._nodeVersionsLast?.positions !== (versions.positions ?? 0)
-      || (needsColor && this._nodeVersionsLast?.colors !== (versions.colors ?? 0))
-      || (needsSize && this._nodeVersionsLast?.sizes !== (versions.sizes ?? 0))
-      || this._nodeVersionsLast?.states !== (versions.states ?? 0)
-      || (needsOutlineWidth && this._nodeVersionsLast?.outlineWidths !== (versions.outlineWidths ?? 0))
-      || (needsOutlineColor && this._nodeVersionsLast?.outlineColors !== (versions.outlineColors ?? 0))
-      || this._nodeVersionsLast?.topology !== (versions.topology ?? 0)
-      || this.nodeCount !== count
-      || variantChanged
-    );
-    this.nodeCount = count;
-    if (!count) return;
-    if (!versionChanged && !viewsChanged) return;
-
-    const { gl } = this;
-    const cache = this.device?.resourceCache?.webgl;
-    gl.bindVertexArray(this.nodeVAO);
-    cache?.uploadArrayBuffer(gl, 'dense:node:positions', nodes.positions, {
-      version: versions.positions ?? 0,
-      topologyVersion: versions.topology ?? 0,
-      count,
-      trackViewIdentity: true,
-    });
-
-    if (needsColor) {
-      cache?.uploadArrayBuffer(gl, 'dense:node:colors', nodes.colors, {
-        version: versions.colors ?? 0,
-        topologyVersion: versions.topology ?? 0,
-        count,
-        trackViewIdentity: true,
-      });
-    }
-
-    if (needsSize) {
-      cache?.uploadArrayBuffer(gl, 'dense:node:sizes', nodes.sizes, {
-        version: versions.sizes ?? 0,
-        topologyVersion: versions.topology ?? 0,
-        count,
-        trackViewIdentity: true,
-      });
-    }
-
-    cache?.uploadArrayBuffer(gl, 'dense:node:states', nodes.states, {
-      version: versions.states ?? 0,
-      topologyVersion: versions.topology ?? 0,
-      count,
-      trackViewIdentity: true,
-    });
-
-    if (needsOutlineWidth) {
-      cache?.uploadArrayBuffer(gl, 'dense:node:outlineWidths', nodes.outlineWidths, {
-        version: versions.outlineWidths ?? 0,
-        topologyVersion: versions.topology ?? 0,
-        count,
-        trackViewIdentity: true,
-      });
-    }
-
-    if (needsOutlineColor) {
-      cache?.uploadArrayBuffer(gl, 'dense:node:outlineColors', nodes.outlineColors, {
-        version: versions.outlineColors ?? 0,
-        topologyVersion: versions.topology ?? 0,
-        count,
-        trackViewIdentity: true,
-      });
-    }
-    gl.bindVertexArray(null);
-
-    this._nodeVersionsLast = {
-      positions: versions.positions ?? 0,
-      colors: versions.colors ?? 0,
-      sizes: versions.sizes ?? 0,
-      states: versions.states ?? 0,
-      outlineWidths: versions.outlineWidths ?? 0,
-      outlineColors: versions.outlineColors ?? 0,
-      topology: versions.topology ?? 0,
-    };
-
-    this._nodeViewsLast = {
-      positions: nodes.positions,
-      colors: nodes.colors,
-      sizes: nodes.sizes,
-      states: nodes.states,
-      outlineWidths: nodes.outlineWidths,
-      outlineColors: nodes.outlineColors,
-    };
-
-    this._nodeProgramKeyLast = variantKey;
-  }
-
-  uploadEdgesWebGL2(edges, visualConfig) {
-    const count = edges?.count ?? 0;
-    const versions = edges?.versions ?? {};
-
-    const edgeCfg = visualConfig?.edge;
-    const needsColor = edgeCfg?.color?.mode !== 'uniform';
-    const needsWidth = edgeCfg?.width?.mode !== 'uniform';
-    const needsOpacity = edgeCfg?.opacity?.mode !== 'uniform';
-    const needsEndpointSize = edgeCfg?.endpointSize?.mode !== 'uniform';
-
-    if (!edges || !edges.segments || !edges.states || !edges.endpointStates) {
-      this.edgeCount = 0;
-      return;
-    }
-    if ((needsColor && !edges.colors) || (needsWidth && !edges.widths) || (needsOpacity && !edges.opacities) || (needsEndpointSize && !edges.endpointSizes)) {
-      this.edgeCount = 0;
-      return;
-    }
-
-    const variantKey = `c${needsColor ? 'A' : 'U'}|w${needsWidth ? 'A' : 'U'}|o${needsOpacity ? 'A' : 'U'}|es${needsEndpointSize ? 'A' : 'U'}`;
-    const variantChanged = this._edgeProgramKeyLast !== variantKey;
-    const viewsChanged = (
-      this._edgeViewsLast?.segments !== edges.segments
-      || this._edgeViewsLast?.states !== edges.states
-      || this._edgeViewsLast?.endpointStates !== edges.endpointStates
-      || (needsColor && this._edgeViewsLast?.colors !== edges.colors)
-      || (needsOpacity && this._edgeViewsLast?.opacities !== edges.opacities)
-      || (needsWidth && this._edgeViewsLast?.widths !== edges.widths)
-      || (needsEndpointSize && this._edgeViewsLast?.endpointSizes !== edges.endpointSizes)
-    );
-    const versionChanged = (
-      this._edgeVersionsLast?.segments !== (versions.segments ?? 0)
-      || (needsColor && this._edgeVersionsLast?.colors !== (versions.colors ?? 0))
-      || (needsOpacity && this._edgeVersionsLast?.opacities !== (versions.opacities ?? 0))
-      || (needsWidth && this._edgeVersionsLast?.widths !== (versions.widths ?? 0))
-      || (needsEndpointSize && this._edgeVersionsLast?.endpointSizes !== (versions.endpointSizes ?? 0))
-      || this._edgeVersionsLast?.states !== (versions.states ?? 0)
-      || this._edgeVersionsLast?.endpointStates !== (versions.endpointStates ?? 0)
-      || this._edgeVersionsLast?.topology !== (versions.topology ?? 0)
-      || this.edgeCount !== count
-      || variantChanged
-    );
-    this.edgeCount = count;
-    if (!count) return;
-    if (!versionChanged && !viewsChanged) return;
-
-    const { gl } = this;
-    const cache = this.device?.resourceCache?.webgl;
-    gl.bindVertexArray(this.edgeVAO);
-    cache?.uploadArrayBuffer(gl, 'dense:edge:segments', edges.segments, {
-      version: versions.segments ?? 0,
-      topologyVersion: versions.topology ?? 0,
-      count,
-      trackViewIdentity: true,
-    });
-
-    if (needsColor) {
-      cache?.uploadArrayBuffer(gl, 'dense:edge:colors', edges.colors, {
-        version: versions.colors ?? 0,
-        topologyVersion: versions.topology ?? 0,
-        count,
-        trackViewIdentity: true,
-      });
-    }
-    gl.bindVertexArray(null);
-
-    if (needsOpacity) {
-      cache?.uploadArrayBuffer(gl, 'dense:edge:opacities', edges.opacities, {
-        version: versions.opacities ?? 0,
-        topologyVersion: versions.topology ?? 0,
-        count,
-        trackViewIdentity: true,
-      });
-    }
-
-    if (needsWidth) {
-      cache?.uploadArrayBuffer(gl, 'dense:edge:widths', edges.widths, {
-        version: versions.widths ?? 0,
-        topologyVersion: versions.topology ?? 0,
-        count,
-        trackViewIdentity: true,
-      });
-    }
-
-    if (needsEndpointSize) {
-      cache?.uploadArrayBuffer(gl, 'dense:edge:endpointSizes', edges.endpointSizes, {
-        version: versions.endpointSizes ?? 0,
-        topologyVersion: versions.topology ?? 0,
-        count,
-        trackViewIdentity: true,
-      });
-    }
-
-    cache?.uploadArrayBuffer(gl, 'dense:edge:states', edges.states, {
-      version: versions.states ?? 0,
-      topologyVersion: versions.topology ?? 0,
-      count,
-      trackViewIdentity: true,
-    });
-
-    cache?.uploadArrayBuffer(gl, 'dense:edge:endpointStates', edges.endpointStates, {
-      version: versions.endpointStates ?? 0,
-      topologyVersion: versions.topology ?? 0,
-      count,
-      trackViewIdentity: true,
-    });
-
-    this._edgeVersionsLast = {
-      segments: versions.segments ?? 0,
-      colors: versions.colors ?? 0,
-      opacities: versions.opacities ?? 0,
-      widths: versions.widths ?? 0,
-      endpointSizes: versions.endpointSizes ?? 0,
-      states: versions.states ?? 0,
-      endpointStates: versions.endpointStates ?? 0,
-      topology: versions.topology ?? 0,
-    };
-
-    this._edgeViewsLast = {
-      segments: edges.segments,
-      colors: edges.colors,
-      opacities: edges.opacities,
-      widths: edges.widths,
-      endpointSizes: edges.endpointSizes,
-      states: edges.states,
-      endpointStates: edges.endpointStates,
-    };
-
-    this._edgeProgramKeyLast = variantKey;
-  }
-
-  ensureWeightedPrograms() {
-    const gl = this.gl;
-    if (!gl || !this.weightedSupported) return false;
-    if (!this._shaderSources) {
-      this._shaderSources = createGraphWebGLSources(this.stateSlotCount);
-    }
-    const {
-      EDGE_VERTEX_SOURCE,
-      EDGE_QUAD_VERTEX_SOURCE,
-      EDGE_WEIGHTED_FRAGMENT_SOURCE,
-      EDGE_WEIGHTED_QUAD_FRAGMENT_SOURCE,
-      EDGE_RESOLVE_VERTEX_SOURCE,
-      EDGE_RESOLVE_FRAGMENT_SOURCE,
-      EDGE_RESOLVE_TONEMAP_FRAGMENT_SOURCE,
-      EDGE_RESOLVE_BOOST_FRAGMENT_SOURCE,
-    } = this._shaderSources;
-    const sharedCache = this.device?.resourceCache?.webgl;
-    const getSharedProgram = (cacheKey, vert, frag) => {
-      if (!sharedCache) return { program: this.device.createProgram(vert, frag) };
-      return sharedCache.getOrCreateProgram(`graph:webgl:${this.stateSlotCount}:program:${cacheKey}`, () => ({
-        program: this.device.createProgram(vert, frag),
-      }));
-    };
-
-    if (!this.edgeWeightedProgram) {
-      this.edgeWeightedProgram = getSharedProgram('edgeWeighted', EDGE_VERTEX_SOURCE, EDGE_WEIGHTED_FRAGMENT_SOURCE).program;
-      this.edgeWeightedUniformViewProjection = gl.getUniformLocation(this.edgeWeightedProgram, 'u_viewProjection');
-      this.edgeWeightedUniformOpacityBase = gl.getUniformLocation(this.edgeWeightedProgram, 'u_edgeOpacityBase');
-      this.edgeWeightedUniformOpacityScale = gl.getUniformLocation(this.edgeWeightedProgram, 'u_edgeOpacityScale');
-      this.edgeWeightedUniformWidthBase = gl.getUniformLocation(this.edgeWeightedProgram, 'u_edgeWidthBase');
-      this.edgeWeightedUniformWidthScale = gl.getUniformLocation(this.edgeWeightedProgram, 'u_edgeWidthScale');
-      this.edgeWeightedUniformNodeSizeBase = gl.getUniformLocation(this.edgeWeightedProgram, 'u_nodeSizeBase');
-      this.edgeWeightedUniformNodeSizeScale = gl.getUniformLocation(this.edgeWeightedProgram, 'u_nodeSizeScale');
-      this.edgeWeightedUniformEndpointTrim = gl.getUniformLocation(this.edgeWeightedProgram, 'u_edgeEndpointTrim');
-      this.edgeWeightedUniformHoverIndex = gl.getUniformLocation(this.edgeWeightedProgram, 'u_hoverEdgeIndex');
-      this.edgeWeightedUniformHoverState = gl.getUniformLocation(this.edgeWeightedProgram, 'u_hoverEdgeState');
-      this.edgeWeightedUniformNodeNoStateScale = gl.getUniformLocation(this.edgeWeightedProgram, 'u_nodeNoStateScale');
-      this.edgeWeightedUniformNodeStateScale = gl.getUniformLocation(this.edgeWeightedProgram, 'u_nodeStateScale[0]');
-      this.edgeWeightedUniformNoStateScale = gl.getUniformLocation(this.edgeWeightedProgram, 'u_edgeNoStateScale');
-      this.edgeWeightedUniformNoStateColorMul = gl.getUniformLocation(this.edgeWeightedProgram, 'u_edgeNoStateColorMul');
-      this.edgeWeightedUniformNoStateColorAdd = gl.getUniformLocation(this.edgeWeightedProgram, 'u_edgeNoStateColorAdd');
-      this.edgeWeightedUniformStateScale = gl.getUniformLocation(this.edgeWeightedProgram, 'u_edgeStateScale[0]');
-      this.edgeWeightedUniformStateColorMul = gl.getUniformLocation(this.edgeWeightedProgram, 'u_edgeStateColorMul[0]');
-      this.edgeWeightedUniformStateColorAdd = gl.getUniformLocation(this.edgeWeightedProgram, 'u_edgeStateColorAdd[0]');
-    }
-
-    if (!this.edgeWeightedQuadProgram) {
-      this.edgeWeightedQuadProgram = getSharedProgram(
-        'edgeWeightedQuad',
-        EDGE_QUAD_VERTEX_SOURCE,
-        EDGE_WEIGHTED_QUAD_FRAGMENT_SOURCE,
-      ).program;
-      this.edgeWeightedQuadUniformViewProjection = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_viewProjection');
-      this.edgeWeightedQuadUniformViewport = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_viewport');
-      this.edgeWeightedQuadUniformOpacityBase = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_edgeOpacityBase');
-      this.edgeWeightedQuadUniformOpacityScale = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_edgeOpacityScale');
-      this.edgeWeightedQuadUniformWidthBase = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_edgeWidthBase');
-      this.edgeWeightedQuadUniformWidthScale = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_edgeWidthScale');
-      this.edgeWeightedQuadUniformNodeSizeBase = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_nodeSizeBase');
-      this.edgeWeightedQuadUniformNodeSizeScale = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_nodeSizeScale');
-      this.edgeWeightedQuadUniformEndpointTrim = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_edgeEndpointTrim');
-      this.edgeWeightedQuadUniformHoverIndex = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_hoverEdgeIndex');
-      this.edgeWeightedQuadUniformHoverState = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_hoverEdgeState');
-      this.edgeWeightedQuadUniformNodeNoStateScale = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_nodeNoStateScale');
-      this.edgeWeightedQuadUniformNodeStateScale = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_nodeStateScale[0]');
-      this.edgeWeightedQuadUniformNoStateScale = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_edgeNoStateScale');
-      this.edgeWeightedQuadUniformNoStateColorMul = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_edgeNoStateColorMul');
-      this.edgeWeightedQuadUniformNoStateColorAdd = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_edgeNoStateColorAdd');
-      this.edgeWeightedQuadUniformStateScale = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_edgeStateScale[0]');
-      this.edgeWeightedQuadUniformStateColorMul = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_edgeStateColorMul[0]');
-      this.edgeWeightedQuadUniformStateColorAdd = gl.getUniformLocation(this.edgeWeightedQuadProgram, 'u_edgeStateColorAdd[0]');
-    }
-
-    const ensureResolveProgram = (key, fragSource) => {
-      if (this[key]) return;
-      this[key] = getSharedProgram(key, EDGE_RESOLVE_VERTEX_SOURCE, fragSource).program;
-      this[`${key.replace('Program', 'UniformColor')}`] = gl.getUniformLocation(this[key], 'u_colorAccum');
-      this[`${key.replace('Program', 'UniformWeight')}`] = gl.getUniformLocation(this[key], 'u_weightAccum');
-    };
-
-    ensureResolveProgram('edgeResolveProgram', EDGE_RESOLVE_FRAGMENT_SOURCE);
-    ensureResolveProgram('edgeResolveTonemapProgram', EDGE_RESOLVE_TONEMAP_FRAGMENT_SOURCE);
-    ensureResolveProgram('edgeResolveBoostProgram', EDGE_RESOLVE_BOOST_FRAGMENT_SOURCE);
-
-    return Boolean(this.edgeWeightedProgram && this.edgeWeightedQuadProgram && this.edgeResolveProgram);
-  }
-
   destroyWeightedTargets() {
-    const gl = this.gl;
+    const { gl } = this;
     if (!gl) return;
     if (this.weightedFramebuffer) gl.deleteFramebuffer(this.weightedFramebuffer);
     if (this.weightedColor) gl.deleteTexture(this.weightedColor);
@@ -1364,7 +982,7 @@ export class GraphLayerWebGL extends GraphLayer {
 
   ensureWeightedTargets(width, height) {
     if (!this.weightedSupported) return false;
-    const gl = this.gl;
+    const { gl } = this;
     if (!gl) return false;
     const targetWidth = Math.max(1, Math.floor(width));
     const targetHeight = Math.max(1, Math.floor(height));
@@ -1404,7 +1022,7 @@ export class GraphLayerWebGL extends GraphLayer {
 
     const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
     if (status !== gl.FRAMEBUFFER_COMPLETE) {
-      console.warn('Weighted transparency framebuffer is incomplete, falling back to alpha.', status);
+      console.warn('GraphLayerWebGL: weighted framebuffer incomplete, falling back to alpha.', status);
       this.destroyWeightedTargets();
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       return false;
@@ -1421,144 +1039,1381 @@ export class GraphLayerWebGL extends GraphLayer {
     return true;
   }
 
-  prepareWeightedWebGL(width, height) {
-    return this.ensureWeightedPrograms() && this.ensureWeightedTargets(width, height);
+  ensureResolvePrograms() {
+    const { gl } = this;
+    if (!gl) return false;
+    if (this.edgeResolveProgram && this.edgeResolveTonemapProgram && this.edgeResolveBoostProgram) return true;
+
+    const sharedCache = this.device?.resourceCache?.webgl;
+    const getProgram = (cacheKey, vert, frag) => {
+      if (!sharedCache) return this.device.createProgram(vert, frag);
+      const entry = sharedCache.getOrCreateProgram(cacheKey, () => ({ program: this.device.createProgram(vert, frag) }));
+      return entry?.program ?? null;
+    };
+    const sources = createGraphWebGLSources();
+    this.edgeResolveProgram = getProgram(
+      'graph:webgl:indirect:resolve:base',
+      sources.EDGE_RESOLVE_VERTEX_SOURCE,
+      sources.EDGE_RESOLVE_FRAGMENT_SOURCE,
+    );
+    this.edgeResolveTonemapProgram = getProgram(
+      'graph:webgl:indirect:resolve:tonemap',
+      sources.EDGE_RESOLVE_VERTEX_SOURCE,
+      sources.EDGE_RESOLVE_TONEMAP_FRAGMENT_SOURCE,
+    );
+    this.edgeResolveBoostProgram = getProgram(
+      'graph:webgl:indirect:resolve:boost',
+      sources.EDGE_RESOLVE_VERTEX_SOURCE,
+      sources.EDGE_RESOLVE_BOOST_FRAGMENT_SOURCE,
+    );
+    if (!this.edgeResolveProgram || !this.edgeResolveTonemapProgram || !this.edgeResolveBoostProgram) return false;
+    this.edgeResolveUniformColor = gl.getUniformLocation(this.edgeResolveProgram, 'u_colorAccum');
+    this.edgeResolveUniformWeight = gl.getUniformLocation(this.edgeResolveProgram, 'u_weightAccum');
+    this.edgeResolveTonemapUniformColor = gl.getUniformLocation(this.edgeResolveTonemapProgram, 'u_colorAccum');
+    this.edgeResolveTonemapUniformWeight = gl.getUniformLocation(this.edgeResolveTonemapProgram, 'u_weightAccum');
+    this.edgeResolveBoostUniformColor = gl.getUniformLocation(this.edgeResolveBoostProgram, 'u_colorAccum');
+    this.edgeResolveBoostUniformWeight = gl.getUniformLocation(this.edgeResolveBoostProgram, 'u_weightAccum');
+    return true;
   }
 
-  renderWeightedWebGL(context, {
-    geometry,
-    is2D,
-    cameraUniforms,
-    edgeWidthBase,
-    edgeWidthScale,
-    viewport,
-    visualConfig,
-    nodeVariant,
-    edgeVariant,
-  }) {
-    const gl = this.gl;
-    if (!gl || !this.weightedFramebuffer) return;
-    const nodeBlendWithEdges = this.nodeBlendWithEdges === true;
-    const edgeDepthWrite = this.edgeDepthWrite === true;
-    this.counters.weightedFramebufferRenders = bumpCounter(this.counters.weightedFramebufferRenders);
-    const mainFramebuffer = context.target?.handle ?? null;
-    const mainDrawBuffers = mainFramebuffer ? [gl.COLOR_ATTACHMENT0] : [gl.BACK];
-    const applyViewport = () => {
-      if (viewport) {
-        gl.viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
-      } else {
-        gl.viewport(0, 0, this.weightedSize?.width ?? gl.drawingBufferWidth, this.weightedSize?.height ?? gl.drawingBufferHeight);
-      }
-    };
+  prepareWeightedWebGL(width, height) {
+    return this.ensureResolvePrograms() && this.ensureWeightedTargets(width, height);
+  }
 
-    const drawNodesAlpha = () => {
-      const nodeEntry = this.getNodeProgram(nodeVariant, null, visualConfig);
-      if (!nodeEntry?.program) return;
-      gl.useProgram(nodeEntry.program);
-      this.setNodeUniforms(gl, nodeEntry.uniforms, cameraUniforms, is2D, visualConfig?.node ?? null);
-      gl.bindVertexArray(this.nodeVAO);
-      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.nodeCount);
-    };
+  initializeGeometry() {
+    const { gl } = this;
+    this.nodeQuadBuffer = gl.createBuffer();
+    this.nodeIdBuffer = gl.createBuffer();
+    this.edgeIdBuffer = gl.createBuffer();
+    this.edgeQuadBuffer = gl.createBuffer();
 
-    const globalEdgeWidthBase = edgeWidthBase;
-    const globalEdgeWidthScale = edgeWidthScale;
+    const nodeQuad = new Float32Array([
+      -1, -1,
+      1, -1,
+      -1, 1,
+      1, 1,
+    ]);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeQuadBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, nodeQuad, gl.STATIC_DRAW);
 
-    // Draw nodes to the main framebuffer first in 3D to populate color and depth.
-    if (!is2D && this.nodeCount && !nodeBlendWithEdges) {
-      gl.bindFramebuffer(gl.FRAMEBUFFER, mainFramebuffer);
-      applyViewport();
-      gl.enable(gl.DEPTH_TEST);
-      gl.depthMask(true);
-      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-      drawNodesAlpha();
-    }
+    this.nodeVao = gl.createVertexArray();
+    gl.bindVertexArray(this.nodeVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeQuadBuffer);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 8, 0);
+    gl.vertexAttribDivisor(0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeIdBuffer);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribIPointer(1, 1, gl.UNSIGNED_INT, 4, 0);
+    gl.vertexAttribDivisor(1, 1);
 
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.weightedFramebuffer);
-    gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
-    applyViewport();
-    gl.clearBufferfv(gl.COLOR, 0, new Float32Array([0, 0, 0, 0]));
-    gl.clearBufferfv(gl.COLOR, 1, new Float32Array([0, 0, 0, 0]));
-    gl.clearBufferfv(gl.DEPTH, 0, new Float32Array([1]));
+    this.edgeVao = gl.createVertexArray();
+    gl.bindVertexArray(this.edgeVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeIdBuffer);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribIPointer(0, 1, gl.UNSIGNED_INT, 4, 0);
+    gl.vertexAttribDivisor(0, 1);
 
-    if (!is2D && this.nodeCount && !nodeBlendWithEdges) {
-      gl.colorMask(false, false, false, false);
-      gl.disable(gl.BLEND);
-      gl.depthMask(true);
-      gl.enable(gl.DEPTH_TEST);
-      drawNodesAlpha();
-      gl.colorMask(true, true, true, true);
-    }
+    const edgeQuadCorners = new Float32Array([
+      0, 1,
+      0, -1,
+      1, 1,
+      1, -1,
+    ]);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeQuadBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, edgeQuadCorners, gl.STATIC_DRAW);
 
-    if (geometry.edges.count) {
-      const useQuads = this.edgeRenderingMode === 'quad';
-      gl.enable(gl.BLEND);
-      gl.blendFunc(gl.ONE, gl.ONE);
-      if (is2D) {
-        gl.disable(gl.DEPTH_TEST);
-      } else {
-        gl.enable(gl.DEPTH_TEST);
-      }
-      gl.depthMask(!is2D && edgeDepthWrite);
+    this.edgeQuadVao = gl.createVertexArray();
+    gl.bindVertexArray(this.edgeQuadVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeQuadBuffer);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 8, 0);
+    gl.vertexAttribDivisor(0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeIdBuffer);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribIPointer(1, 1, gl.UNSIGNED_INT, 4, 0);
+    gl.vertexAttribDivisor(1, 1);
 
-      const vw = viewport ? viewport[2] : (this.weightedSize?.width ?? 1);
-      const vh = viewport ? viewport[3] : (this.weightedSize?.height ?? 1);
-      const kind = useQuads ? 'quad' : 'line';
-      const edgeEntry = this.getEdgeProgram(kind, edgeVariant, true);
-      if (edgeEntry?.program) {
-        gl.useProgram(edgeEntry.program);
-        this.setEdgeUniforms(gl, edgeEntry.uniforms, cameraUniforms, vw, vh, globalEdgeWidthBase, globalEdgeWidthScale, visualConfig?.edge ?? null);
-        gl.bindVertexArray(useQuads ? this.edgeQuadVAO : this.edgeVAO);
-        gl.drawArraysInstanced(useQuads ? gl.TRIANGLE_STRIP : gl.LINES, 0, useQuads ? 4 : 2, this.edgeCount);
-      }
-    }
+    this.edgeResolveBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeResolveBuffer);
+    const resolveQuad = new Float32Array([
+      -1, -1, 0, 0,
+      1, -1, 1, 0,
+      -1, 1, 0, 1,
+      -1, 1, 0, 1,
+      1, -1, 1, 0,
+      1, 1, 1, 1,
+    ]);
+    gl.bufferData(gl.ARRAY_BUFFER, resolveQuad, gl.STATIC_DRAW);
 
-    gl.bindFramebuffer(gl.FRAMEBUFFER, mainFramebuffer);
-    gl.drawBuffers(mainDrawBuffers);
-    applyViewport();
-    gl.disable(gl.DEPTH_TEST);
-    gl.depthMask(false);
-    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-    let resolveProgram = this.edgeResolveProgram;
-    let resolveUniformColor = this.edgeResolveUniformColor;
-    let resolveUniformWeight = this.edgeResolveUniformWeight;
-    if (this.edgeTransparencyMode === 'additive-tonemapped') {
-      resolveProgram = this.edgeResolveTonemapProgram ?? resolveProgram;
-      resolveUniformColor = this.edgeResolveTonemapUniformColor ?? resolveUniformColor;
-      resolveUniformWeight = this.edgeResolveTonemapUniformWeight ?? resolveUniformWeight;
-    } else if (this.edgeTransparencyMode === 'additive-normalized-bright') {
-      resolveProgram = this.edgeResolveBoostProgram ?? resolveProgram;
-      resolveUniformColor = this.edgeResolveBoostUniformColor ?? resolveUniformColor;
-      resolveUniformWeight = this.edgeResolveBoostUniformWeight ?? resolveUniformWeight;
-    }
-
-    gl.useProgram(resolveProgram);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.weightedColor);
-    gl.uniform1i(resolveUniformColor, 0);
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.weightedWeight);
-    gl.uniform1i(resolveUniformWeight, 1);
+    this.edgeResolveVAO = gl.createVertexArray();
     gl.bindVertexArray(this.edgeResolveVAO);
-    gl.drawArrays(gl.TRIANGLES, 0, 6);
-
-    if ((is2D || nodeBlendWithEdges) && this.nodeCount) {
-      gl.enable(gl.BLEND);
-      if (nodeBlendWithEdges) {
-        this.applyEdgeBlend(gl, this.edgeTransparencyMode);
-      } else {
-        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-      }
-      gl.depthMask(false);
-      gl.disable(gl.DEPTH_TEST);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, mainFramebuffer);
-      applyViewport();
-      drawNodesAlpha();
-    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeResolveBuffer);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 16, 0);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 16, 8);
 
     gl.bindVertexArray(null);
-    gl.depthMask(true);
-    gl.enable(gl.DEPTH_TEST);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    gl.depthFunc(gl.LEQUAL);
+    gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  }
+
+  createTexture() {
+    const tex = this.gl.createTexture();
+    this.gl.bindTexture(this.gl.TEXTURE_2D, tex);
+    this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
+    this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
+    this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
+    this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
+    this.gl.bindTexture(this.gl.TEXTURE_2D, null);
+    return tex;
+  }
+
+  initializeTextures() {
+    this.nodeTextures.positions = this.createTexture();
+    this.nodeTextures.colors = this.createTexture();
+    this.nodeTextures.sizes = this.createTexture();
+    this.nodeTextures.states = this.createTexture();
+    this.nodeTextures.outlineWidths = this.createTexture();
+    this.nodeTextures.outlineColors = this.createTexture();
+    this.nodeTextures.edgeColorSource = this.createTexture();
+    this.nodeTextures.edgeWidthSource = this.createTexture();
+    this.nodeTextures.edgeOpacitySource = this.createTexture();
+    this.nodeTextures.edgeEndpointSizeSource = this.createTexture();
+    this.edgeTextures.endpoints = this.createTexture();
+    this.edgeTextures.colors = this.createTexture();
+    this.edgeTextures.widths = this.createTexture();
+    this.edgeTextures.opacities = this.createTexture();
+    this.edgeTextures.endpointSizes = this.createTexture();
+    this.edgeTextures.states = this.createTexture();
+    this.edgeTextures.endpointStates = this.createTexture();
+  }
+
+  resolveEdgeVariant(visualConfig) {
+    const edgeCfg = visualConfig?.edge ?? null;
+    const normalize = (entry, fallbackSource = 'edge') => {
+      if (!entry || typeof entry !== 'object') {
+        return {
+          mode: 'buffer',
+          source: fallbackSource,
+          endpoints: 'both',
+          doubleWidth: true,
+          nodeAttribute: null,
+        };
+      }
+      return {
+        mode: entry.mode ?? 'buffer',
+        source: entry.source ?? fallbackSource,
+        endpoints: normalizeEndpoints(entry.endpoints),
+        doubleWidth: entry.doubleWidth !== false,
+        nodeAttribute: entry.nodeAttribute ?? null,
+      };
+    };
+    const color = normalize(edgeCfg?.color, 'edge');
+    const width = normalize(edgeCfg?.width, 'edge');
+    const opacity = normalize(edgeCfg?.opacity, 'edge');
+    const endpointSize = normalize(edgeCfg?.endpointSize, 'edge');
+    return {
+      colorBuffer: color.mode !== 'uniform',
+      colorSource: color.source,
+      colorEndpoints: color.endpoints,
+      colorNodeAttribute: color.nodeAttribute,
+      colorDoubleWidth: color.doubleWidth,
+      widthBuffer: width.mode !== 'uniform',
+      widthSource: width.source,
+      widthEndpoints: width.endpoints,
+      widthNodeAttribute: width.nodeAttribute,
+      widthDoubleWidth: width.doubleWidth,
+      opacityBuffer: opacity.mode !== 'uniform',
+      opacitySource: opacity.source,
+      opacityEndpoints: opacity.endpoints,
+      opacityNodeAttribute: opacity.nodeAttribute,
+      opacityDoubleWidth: opacity.doubleWidth,
+      endpointSizeBuffer: endpointSize.mode !== 'uniform',
+      endpointSizeSource: endpointSize.source,
+      endpointSizeEndpoints: endpointSize.endpoints,
+      endpointSizeNodeAttribute: endpointSize.nodeAttribute,
+      endpointSizeDoubleWidth: endpointSize.doubleWidth,
+    };
+  }
+
+  withSparseGraph(network, topologyVersions, indices, edgeNodeAttributes, fn) {
+    if (!network) return fn(null);
+    if (typeof network.withBufferAccess !== 'function') {
+      console.warn('GraphLayerWebGL: network does not support buffer access sessions');
+      return false;
+    }
+    const nodeIndices = indices?.node ?? null;
+    const edgeIndices = indices?.edge ?? null;
+    return network.withBufferAccess(() => {
+      const safeGet = (scope, name) => {
+        if (!name) return null;
+        const getter = scope === 'node' ? network.getNodeAttributeBuffer : network.getEdgeAttributeBuffer;
+        if (typeof getter !== 'function') return null;
+        try {
+          return getter.call(network, name);
+        } catch (_) {
+          return null;
+        }
+      };
+
+      const nodePositions = safeGet('node', NODE_POSITION_ATTRIBUTE);
+      const nodeColors = safeGet('node', NODE_COLOR_ATTRIBUTE);
+      const nodeSizes = safeGet('node', NODE_SIZE_ATTRIBUTE);
+      const nodeStates = safeGet('node', NODE_STATE_ATTRIBUTE);
+      const nodeOutlineWidths = safeGet('node', NODE_OUTLINE_WIDTH_ATTRIBUTE);
+      const nodeOutlineColors = safeGet('node', NODE_OUTLINE_COLOR_ATTRIBUTE);
+      const edgeColors = safeGet('edge', EDGE_COLOR_ATTRIBUTE);
+      const edgeWidths = safeGet('edge', EDGE_WIDTH_ATTRIBUTE);
+      const edgeOpacities = safeGet('edge', EDGE_OPACITY_ATTRIBUTE);
+      const edgeEndpointSizes = safeGet('edge', EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+      const edgeStates = safeGet('edge', EDGE_STATE_ATTRIBUTE);
+      const edgeEndpointStates = safeGet('edge', EDGE_ENDPOINTS_STATE_ATTRIBUTE);
+
+      const edgeNodeColor = edgeNodeAttributes?.color ? safeGet('node', edgeNodeAttributes.color) : null;
+      const edgeNodeWidth = edgeNodeAttributes?.width ? safeGet('node', edgeNodeAttributes.width) : null;
+      const edgeNodeOpacity = edgeNodeAttributes?.opacity ? safeGet('node', edgeNodeAttributes.opacity) : null;
+      const edgeNodeEndpointSize = edgeNodeAttributes?.endpointSize
+        ? safeGet('node', edgeNodeAttributes.endpointSize)
+        : null;
+
+      const nodes = {
+        positions: nodePositions?.view ?? null,
+        colors: nodeColors?.view ?? null,
+        sizes: nodeSizes?.view ?? null,
+        states: nodeStates?.view ?? null,
+        outlineWidths: nodeOutlineWidths?.view ?? null,
+        outlineColors: nodeOutlineColors?.view ?? null,
+        indices: nodeIndices,
+        count: nodeIndices?.length ?? 0,
+        versions: {
+          positions: nodePositions?.version ?? 0,
+          colors: nodeColors?.version ?? 0,
+          sizes: nodeSizes?.version ?? 0,
+          states: nodeStates?.version ?? 0,
+          outlineWidths: nodeOutlineWidths?.version ?? 0,
+          outlineColors: nodeOutlineColors?.version ?? 0,
+          indices: topologyVersions?.node ?? 0,
+          topology: topologyVersions?.node ?? 0,
+        },
+      };
+
+      const edges = {
+        endpoints: network.edgesView ?? null,
+        colors: edgeColors?.view ?? null,
+        widths: edgeWidths?.view ?? null,
+        opacities: edgeOpacities?.view ?? null,
+        endpointSizes: edgeEndpointSizes?.view ?? null,
+        states: edgeStates?.view ?? null,
+        endpointStates: edgeEndpointStates?.view ?? null,
+        indices: edgeIndices,
+        count: edgeIndices?.length ?? 0,
+        versions: {
+          endpoints: topologyVersions?.edge ?? 0,
+          colors: edgeColors?.version ?? 0,
+          widths: edgeWidths?.version ?? 0,
+          opacities: edgeOpacities?.version ?? 0,
+          endpointSizes: edgeEndpointSizes?.version ?? 0,
+          states: edgeStates?.version ?? 0,
+          endpointStates: edgeEndpointStates?.version ?? 0,
+          indices: topologyVersions?.edge ?? 0,
+          topology: topologyVersions?.edge ?? 0,
+        },
+      };
+
+      const nodeEdgeSources = {
+        color: edgeNodeColor?.view
+          ? {
+            attribute: edgeNodeAttributes.color,
+            view: edgeNodeColor.view,
+            version: edgeNodeColor.version ?? 0,
+          }
+          : null,
+        width: edgeNodeWidth?.view
+          ? {
+            attribute: edgeNodeAttributes.width,
+            view: edgeNodeWidth.view,
+            version: edgeNodeWidth.version ?? 0,
+          }
+          : null,
+        opacity: edgeNodeOpacity?.view
+          ? {
+            attribute: edgeNodeAttributes.opacity,
+            view: edgeNodeOpacity.view,
+            version: edgeNodeOpacity.version ?? 0,
+          }
+          : null,
+        endpointSize: edgeNodeEndpointSize?.view
+          ? {
+            attribute: edgeNodeAttributes.endpointSize,
+            view: edgeNodeEndpointSize.view,
+            version: edgeNodeEndpointSize.version ?? 0,
+          }
+          : null,
+      };
+
+      return fn({ nodes, edges, nodeEdgeSources });
+    });
+  }
+
+  getTextureLayout(count) {
+    const max = this.gl.getParameter(this.gl.MAX_TEXTURE_SIZE) ?? 16384;
+    const safeCount = Math.max(1, Math.floor(Number(count) || 0));
+    const width = Math.min(max, safeCount);
+    const height = Math.ceil(safeCount / width);
+    if (height > max) {
+      throw new Error(
+        `WebGL2 indirect requires texture dimensions <= MAX_TEXTURE_SIZE (${max}), `
+        + `got ${safeCount} texels -> ${width}x${height}.`,
+      );
+    }
+    return { width, height };
+  }
+
+  uploadTexture2D(texture, view, components, count, formatInfo, type) {
+    const { gl } = this;
+    const { width, height } = this.getTextureLayout(count);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
+    if (height === 1) {
+      const valueCount = width * components;
+      const directView = (view.length === valueCount) ? view : view.subarray(0, valueCount);
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        formatInfo.internalFormat,
+        width,
+        1,
+        0,
+        formatInfo.format,
+        type,
+        directView,
+      );
+      return;
+    }
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      formatInfo.internalFormat,
+      width,
+      height,
+      0,
+      formatInfo.format,
+      type,
+      null,
+    );
+    let remaining = count;
+    let srcOffset = 0;
+    for (let y = 0; y < height && remaining > 0; y += 1) {
+      const rowTexels = Math.min(width, remaining);
+      const valueCount = rowTexels * components;
+      const rowView = view.subarray(srcOffset, srcOffset + valueCount);
+      gl.texSubImage2D(
+        gl.TEXTURE_2D,
+        0,
+        0,
+        y,
+        rowTexels,
+        1,
+        formatInfo.format,
+        type,
+        rowView,
+      );
+      srcOffset += valueCount;
+      remaining -= rowTexels;
+    }
+  }
+
+  isSameView(meta, view, version, count) {
+    return Boolean(
+      meta
+      && meta.version === (version ?? 0)
+      && meta.count === count
+      && meta.buffer === view?.buffer
+      && meta.byteOffset === (view?.byteOffset ?? 0)
+      && meta.byteLength === (view?.byteLength ?? 0),
+    );
+  }
+
+  rememberView(slot, view, version, count) {
+    this.textureMeta[slot] = {
+      version: version ?? 0,
+      count,
+      buffer: view?.buffer ?? null,
+      byteOffset: view?.byteOffset ?? 0,
+      byteLength: view?.byteLength ?? 0,
+    };
+  }
+
+  uploadFloatTexture(slot, texture, view, components, count, version) {
+    if (!view || !texture || !count) return false;
+    if (this.isSameView(this.textureMeta[slot], view, version, count)) return true;
+    const { gl } = this;
+    const formatInfo = components === 1
+      ? { internalFormat: gl.R32F, format: gl.RED }
+      : (components === 2
+        ? { internalFormat: gl.RG32F, format: gl.RG }
+        : (components === 3
+          ? { internalFormat: gl.RGB32F, format: gl.RGB }
+          : { internalFormat: gl.RGBA32F, format: gl.RGBA }));
+    this.uploadTexture2D(texture, view, components, count, formatInfo, gl.FLOAT);
+    this.rememberView(slot, view, version, count);
+    return true;
+  }
+
+  uploadUintTexture(slot, texture, view, components, count, version) {
+    if (!view || !texture || !count) return false;
+    if (this.isSameView(this.textureMeta[slot], view, version, count)) return true;
+    const { gl } = this;
+    const formatInfo = components === 2
+      ? { internalFormat: gl.RG32UI, format: gl.RG_INTEGER }
+      : { internalFormat: gl.R32UI, format: gl.RED_INTEGER };
+    this.uploadTexture2D(texture, view, components, count, formatInfo, gl.UNSIGNED_INT);
+    this.rememberView(slot, view, version, count);
+    return true;
+  }
+
+  uploadIdBuffer(slot, buffer, view, version, count) {
+    if (!view || !buffer) return 0;
+    const meta = this.bufferMeta[slot];
+    const same = Boolean(
+      meta
+      && meta.version === (version ?? 0)
+      && meta.count === count
+      && meta.buffer === view.buffer
+      && meta.byteOffset === view.byteOffset
+      && meta.byteLength === view.byteLength,
+    );
+    if (!same) {
+      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, buffer);
+      this.gl.bufferData(this.gl.ARRAY_BUFFER, view, this.gl.DYNAMIC_DRAW);
+      this.bufferMeta[slot] = {
+        version: version ?? 0,
+        count,
+        buffer: view.buffer,
+        byteOffset: view.byteOffset,
+        byteLength: view.byteLength,
+      };
+    }
+    return count;
+  }
+
+  bindTexture(unit, texture) {
+    this.gl.activeTexture(this.gl.TEXTURE0 + unit);
+    this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
+  }
+
+  getSharedSparseResources() {
+    return {
+      textures: {
+        nodePositions: this.nodeTextures.positions ?? null,
+        nodeSizes: this.nodeTextures.sizes ?? null,
+        nodeOutlineWidths: this.nodeTextures.outlineWidths ?? null,
+        nodeWidthSource: this.nodeTextures.edgeWidthSource ?? null,
+        nodeEndpointSizeSource: this.nodeTextures.edgeEndpointSizeSource ?? null,
+        edgeEndpoints: this.edgeTextures.endpoints ?? null,
+        edgeWidths: this.edgeTextures.widths ?? null,
+        edgeEndpointSizes: this.edgeTextures.endpointSizes ?? null,
+      },
+      textureMeta: {
+        nodePositions: this.textureMeta.nodePositions ?? null,
+        nodeSizes: this.textureMeta.nodeSizes ?? null,
+        nodeOutlineWidths: this.textureMeta.nodeOutlineWidths ?? null,
+        nodeEdgeWidths: this.textureMeta.nodeEdgeWidths ?? null,
+        nodeEdgeEndpointSizes: this.textureMeta.nodeEdgeEndpointSizes ?? null,
+        edgeEndpoints: this.textureMeta.edgeEndpoints ?? null,
+        edgeWidths: this.textureMeta.edgeWidths ?? null,
+        edgeEndpointSizes: this.textureMeta.edgeEndpointSizes ?? null,
+      },
+    };
+  }
+
+  render(context, frame) {
+    if (!context || context.type !== 'webgl2') return;
+    const network = frame?.network;
+    if (!network) return;
+    const cameraUniforms = this.getCameraUniforms(frame?.camera);
+    if (!cameraUniforms) return;
+    const is2D = cameraUniforms.mode === '2d';
+    const zoom2D = is2D ? Math.max(1e-3, cameraUniforms.view?.[0] ?? 1) : 1;
+    const edgeWidthFactor = is2D ? (zoom2D / EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL) : 1.0;
+    const globalEdgeWidthBase = this.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
+    const globalEdgeWidthScale = this.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
+
+    let topologyVersions = { node: 0, edge: 0 };
+    if (typeof network.getTopologyVersions === 'function') {
+      try {
+        topologyVersions = network.getTopologyVersions() ?? topologyVersions;
+      } catch (_) {
+        topologyVersions = { node: 0, edge: 0 };
+      }
+    }
+    const nodeIndices = network.nodeIndices ?? null;
+    const edgeIndices = network.edgeIndices ?? null;
+
+    const schema = GraphVisualSchema.fromNetwork(network, {
+      nodeOutlineUseAttributes: this.nodeOutlineUseAttributes === true,
+    });
+    const visualConfig = schema?.visualConfig ?? null;
+    const nodeVariant = this.resolveNodeVariant(visualConfig);
+    const nodeConfig = visualConfig?.node ?? null;
+    const edgeConfig = visualConfig?.edge ?? null;
+    const edgeVariant = this.resolveEdgeVariant(visualConfig);
+    const nodeProgramEntry = this.getNodeProgram(nodeVariant);
+    const edgeLineProgramEntry = this.getEdgeProgram('line', nodeVariant, edgeVariant);
+    const edgeQuadProgramEntry = this.getEdgeProgram('quad', nodeVariant, edgeVariant);
+    const edgeLineWeightedProgramEntry = this.getEdgeProgram('line', nodeVariant, edgeVariant, true);
+    const edgeQuadWeightedProgramEntry = this.getEdgeProgram('quad', nodeVariant, edgeVariant, true);
+    const nodeColorBufferEnabled = nodeVariant ? nodeVariant.colorBuffer !== false : true;
+    const nodeSizeBufferEnabled = nodeVariant ? nodeVariant.sizeBuffer !== false : true;
+    const nodeOutlineBufferEnabled = nodeVariant ? nodeVariant.outlineWidthBuffer === true : false;
+    const nodeOutlineColorBufferEnabled = nodeVariant ? nodeVariant.outlineColorBuffer === true : false;
+
+    const nodeDefaultColor = (nodeConfig?.color?.mode === 'uniform')
+      ? toRgba(nodeConfig?.color?.value, DEFAULT_NODE_COLOR)
+      : toRgba(DEFAULT_NODE_COLOR, DEFAULT_NODE_COLOR);
+    const nodeDefaultSize = (nodeConfig?.size?.mode === 'uniform')
+      ? toNumber(nodeConfig?.size?.value, DEFAULT_NODE_SIZE)
+      : DEFAULT_NODE_SIZE;
+    const nodeDefaultOutline = (nodeConfig?.outline?.mode === 'uniform')
+      ? toNumber(nodeConfig?.outline?.value, 0)
+      : 0;
+    const nodeDefaultOutlineColor = (nodeConfig?.outlineColor?.mode === 'uniform')
+      ? toRgba(nodeConfig?.outlineColor?.value, this.nodeOutlineColor)
+      : toRgba(this.nodeOutlineColor, this.nodeOutlineColor);
+
+    const defaultEdgeColorPair = (edgeConfig?.color?.mode === 'uniform')
+      ? toColorPair(edgeConfig?.color?.value, [DEFAULT_EDGE_COLOR, DEFAULT_EDGE_COLOR])
+      : [toRgba(DEFAULT_EDGE_COLOR, DEFAULT_EDGE_COLOR), toRgba(DEFAULT_EDGE_COLOR, DEFAULT_EDGE_COLOR)];
+    const defaultEdgeWidth = (edgeConfig?.width?.mode === 'uniform')
+      ? toScalarPair(edgeConfig?.width?.value, [DEFAULT_EDGE_WIDTH, DEFAULT_EDGE_WIDTH])
+      : [DEFAULT_EDGE_WIDTH, DEFAULT_EDGE_WIDTH];
+    const defaultEdgeOpacity = (edgeConfig?.opacity?.mode === 'uniform')
+      ? toScalarPair(edgeConfig?.opacity?.value, [DEFAULT_EDGE_OPACITY, DEFAULT_EDGE_OPACITY])
+      : [DEFAULT_EDGE_OPACITY, DEFAULT_EDGE_OPACITY];
+    const defaultEdgeEndpointSize = (edgeConfig?.endpointSize?.mode === 'uniform')
+      ? toScalarPair(edgeConfig?.endpointSize?.value, [1, 1])
+      : [1, 1];
+    const edgeNodeAttributes = {
+      color: edgeVariant?.colorSource === 'node'
+        ? (edgeVariant.colorNodeAttribute ?? NODE_COLOR_ATTRIBUTE)
+        : null,
+      width: edgeVariant?.widthSource === 'node'
+        ? (edgeVariant.widthNodeAttribute ?? NODE_SIZE_ATTRIBUTE)
+        : null,
+      opacity: edgeVariant?.opacitySource === 'node'
+        ? (edgeVariant.opacityNodeAttribute ?? NODE_SIZE_ATTRIBUTE)
+        : null,
+      endpointSize: edgeVariant?.endpointSizeSource === 'node'
+        ? (edgeVariant.endpointSizeNodeAttribute ?? NODE_SIZE_ATTRIBUTE)
+        : null,
+    };
+    const customEdgeNodeAttributes = {
+      color: edgeNodeAttributes.color && edgeNodeAttributes.color !== NODE_COLOR_ATTRIBUTE
+        ? edgeNodeAttributes.color
+        : null,
+      width: edgeNodeAttributes.width && edgeNodeAttributes.width !== NODE_SIZE_ATTRIBUTE
+        ? edgeNodeAttributes.width
+        : null,
+      opacity: edgeNodeAttributes.opacity && edgeNodeAttributes.opacity !== NODE_SIZE_ATTRIBUTE
+        ? edgeNodeAttributes.opacity
+        : null,
+      endpointSize: edgeNodeAttributes.endpointSize && edgeNodeAttributes.endpointSize !== NODE_SIZE_ATTRIBUTE
+        ? edgeNodeAttributes.endpointSize
+        : null,
+    };
+    const usesDefaultNodeColor = Boolean(edgeNodeAttributes.color && edgeNodeAttributes.color === NODE_COLOR_ATTRIBUTE);
+    const usesDefaultNodeSize = Boolean(
+      (edgeNodeAttributes.width && edgeNodeAttributes.width === NODE_SIZE_ATTRIBUTE)
+      || (edgeNodeAttributes.opacity && edgeNodeAttributes.opacity === NODE_SIZE_ATTRIBUTE)
+      || (edgeNodeAttributes.endpointSize && edgeNodeAttributes.endpointSize === NODE_SIZE_ATTRIBUTE),
+    );
+    const defaultNodeSourceScalar = toNumber(nodeDefaultSize, DEFAULT_NODE_SIZE);
+    const defaultNodeWidth = usesDefaultNodeSize
+      ? [defaultNodeSourceScalar, defaultNodeSourceScalar]
+      : defaultEdgeWidth;
+    const defaultNodeOpacity = usesDefaultNodeSize
+      ? [defaultNodeSourceScalar, defaultNodeSourceScalar]
+      : defaultEdgeOpacity;
+    const defaultNodeEndpointSize = usesDefaultNodeSize
+      ? [defaultNodeSourceScalar, defaultNodeSourceScalar]
+      : defaultEdgeEndpointSize;
+
+    this.withSparseGraph(
+      network,
+      topologyVersions,
+      { node: nodeIndices, edge: edgeIndices },
+      customEdgeNodeAttributes,
+      (geometry) => {
+        if (!geometry) return false;
+        const { gl } = this;
+        const nodes = geometry.nodes;
+        const edges = geometry.edges;
+        const hasNodeColorsForNodes = Boolean(nodeColorBufferEnabled && nodes.colors);
+        const hasNodeSizesForNodes = Boolean(nodeSizeBufferEnabled && nodes.sizes);
+        const hasNodeStatesForNodes = Boolean(nodes.states);
+        const hasNodeOutlineWidthsForNodes = Boolean(nodeOutlineBufferEnabled && nodes.outlineWidths);
+        const hasNodeOutlineColorsForNodes = Boolean(nodeOutlineColorBufferEnabled && nodes.outlineColors);
+        const hasNodeColorsForEdges = Boolean(nodes.colors);
+        const hasNodeSizesForEdges = Boolean(nodes.sizes);
+        const nodeColorSource = geometry.nodeEdgeSources?.color?.view
+          ?? (usesDefaultNodeColor ? (hasNodeColorsForEdges ? nodes.colors : null) : null);
+        const nodeWidthSource = geometry.nodeEdgeSources?.width?.view
+          ?? (usesDefaultNodeSize ? (hasNodeSizesForEdges ? nodes.sizes : null) : null);
+        const nodeOpacitySource = geometry.nodeEdgeSources?.opacity?.view
+          ?? (usesDefaultNodeSize ? (hasNodeSizesForEdges ? nodes.sizes : null) : null);
+        const nodeEndpointSizeSource = geometry.nodeEdgeSources?.endpointSize?.view
+          ?? (usesDefaultNodeSize ? (hasNodeSizesForEdges ? nodes.sizes : null) : null);
+        const mapEndpointMode = (value) => (value === 'source' ? 1 : (value === 'destination' ? 2 : 0));
+
+        this.nodeCount = this.uploadIdBuffer('nodeIds', this.nodeIdBuffer, nodes.indices, nodes.versions?.indices, nodes.count);
+        this.edgeCount = this.uploadIdBuffer('edgeIds', this.edgeIdBuffer, edges.indices, edges.versions?.indices, edges.count);
+
+        if (this.nodeCount > 0 && nodes.positions) {
+          const positionCount = Math.floor((nodes.positions.length ?? 0) / 3);
+          this.uploadFloatTexture(
+            'nodePositions',
+            this.nodeTextures.positions,
+            nodes.positions,
+            3,
+            positionCount,
+            nodes.versions?.positions ?? 0,
+          );
+          if (hasNodeSizesForNodes) {
+            const sizeCount = nodes.sizes.length ?? 0;
+            this.uploadFloatTexture(
+              'nodeSizes',
+              this.nodeTextures.sizes,
+              nodes.sizes,
+              1,
+              sizeCount,
+              nodes.versions?.sizes ?? 0,
+            );
+          }
+          if (hasNodeStatesForNodes) {
+            const stateCount = nodes.states.length ?? 0;
+            this.uploadUintTexture(
+              'nodeStates',
+              this.nodeTextures.states,
+              nodes.states,
+              1,
+              stateCount,
+              nodes.versions?.states ?? 0,
+            );
+          }
+          if (hasNodeColorsForNodes) {
+            const colorCount = Math.floor((nodes.colors.length ?? 0) / 4);
+            this.uploadFloatTexture(
+              'nodeColors',
+              this.nodeTextures.colors,
+              nodes.colors,
+              4,
+              colorCount,
+              nodes.versions?.colors ?? 0,
+            );
+          }
+          if (hasNodeOutlineWidthsForNodes) {
+            const outlineCount = nodes.outlineWidths.length ?? 0;
+            this.uploadFloatTexture(
+              'nodeOutlineWidths',
+              this.nodeTextures.outlineWidths,
+              nodes.outlineWidths,
+              1,
+              outlineCount,
+              nodes.versions?.outlineWidths ?? 0,
+            );
+          }
+          if (hasNodeOutlineColorsForNodes) {
+            const outlineColorCount = Math.floor((nodes.outlineColors.length ?? 0) / 4);
+            this.uploadFloatTexture(
+              'nodeOutlineColors',
+              this.nodeTextures.outlineColors,
+              nodes.outlineColors,
+              4,
+              outlineColorCount,
+              nodes.versions?.outlineColors ?? 0,
+            );
+          }
+          if (nodeColorSource) {
+            const sourceCount = Math.floor((nodeColorSource.length ?? 0) / 4);
+            this.uploadFloatTexture(
+              'nodeEdgeColors',
+              this.nodeTextures.edgeColorSource,
+              nodeColorSource,
+              4,
+              sourceCount,
+              geometry.nodeEdgeSources?.color?.version ?? nodes.versions?.colors ?? 0,
+            );
+          }
+          if (nodeWidthSource) {
+            this.uploadFloatTexture(
+              'nodeEdgeWidths',
+              this.nodeTextures.edgeWidthSource,
+              nodeWidthSource,
+              1,
+              nodeWidthSource.length ?? 0,
+              geometry.nodeEdgeSources?.width?.version ?? nodes.versions?.sizes ?? 0,
+            );
+          }
+          if (nodeOpacitySource) {
+            this.uploadFloatTexture(
+              'nodeEdgeOpacities',
+              this.nodeTextures.edgeOpacitySource,
+              nodeOpacitySource,
+              1,
+              nodeOpacitySource.length ?? 0,
+              geometry.nodeEdgeSources?.opacity?.version ?? nodes.versions?.sizes ?? 0,
+            );
+          }
+          if (nodeEndpointSizeSource) {
+            this.uploadFloatTexture(
+              'nodeEdgeEndpointSizes',
+              this.nodeTextures.edgeEndpointSizeSource,
+              nodeEndpointSizeSource,
+              1,
+              nodeEndpointSizeSource.length ?? 0,
+              geometry.nodeEdgeSources?.endpointSize?.version ?? nodes.versions?.sizes ?? 0,
+            );
+          }
+        }
+        if (this.edgeCount > 0 && edges.endpoints) {
+          const endpointCount = Math.floor((edges.endpoints.length ?? 0) / 2);
+          this.uploadUintTexture(
+            'edgeEndpoints',
+            this.edgeTextures.endpoints,
+            edges.endpoints,
+            2,
+            endpointCount,
+            edges.versions?.endpoints ?? 0,
+          );
+          if (edges.colors) {
+            const edgeColorCount = Math.floor((edges.colors.length ?? 0) / 8);
+            this.uploadFloatTexture(
+              'edgeColors',
+              this.edgeTextures.colors,
+              edges.colors,
+              4,
+              edgeColorCount * 2,
+              edges.versions?.colors ?? 0,
+            );
+          }
+          if (edges.widths) {
+            const edgeWidthCount = Math.floor((edges.widths.length ?? 0) / 2);
+            this.uploadFloatTexture(
+              'edgeWidths',
+              this.edgeTextures.widths,
+              edges.widths,
+              2,
+              edgeWidthCount,
+              edges.versions?.widths ?? 0,
+            );
+          }
+          if (edges.opacities) {
+            const edgeOpacityCount = Math.floor((edges.opacities.length ?? 0) / 2);
+            this.uploadFloatTexture(
+              'edgeOpacities',
+              this.edgeTextures.opacities,
+              edges.opacities,
+              2,
+              edgeOpacityCount,
+              edges.versions?.opacities ?? 0,
+            );
+          }
+          if (edges.endpointSizes) {
+            const edgeEndpointSizeCount = Math.floor((edges.endpointSizes.length ?? 0) / 2);
+            this.uploadFloatTexture(
+              'edgeEndpointSizes',
+              this.edgeTextures.endpointSizes,
+              edges.endpointSizes,
+              2,
+              edgeEndpointSizeCount,
+              edges.versions?.endpointSizes ?? 0,
+            );
+          }
+          if (edges.states) {
+            const edgeStateCount = edges.states.length ?? 0;
+            this.uploadUintTexture(
+              'edgeStates',
+              this.edgeTextures.states,
+              edges.states,
+              1,
+              edgeStateCount,
+              edges.versions?.states ?? 0,
+            );
+          }
+          if (edges.endpointStates) {
+            const edgeEndpointStateCount = Math.floor((edges.endpointStates.length ?? 0) / 2);
+            this.uploadUintTexture(
+              'edgeEndpointStates',
+              this.edgeTextures.endpointStates,
+              edges.endpointStates,
+              2,
+              edgeEndpointStateCount,
+              edges.versions?.endpointStates ?? 0,
+            );
+          }
+        }
+
+        const viewport = context.viewport;
+        const viewportWidth = viewport ? viewport[2] : (gl.drawingBufferWidth || this.size.width || 1);
+        const viewportHeight = viewport ? viewport[3] : (gl.drawingBufferHeight || this.size.height || 1);
+        const transparencyMode = this.edgeTransparencyMode;
+        const nodeBlendWithEdges = this.nodeBlendWithEdges === true;
+        const edgeDepthWrite = this.edgeDepthWrite === true;
+
+        gl.enable(gl.DEPTH_TEST);
+        gl.depthMask(true);
+        gl.depthFunc(gl.LEQUAL);
+        gl.enable(gl.BLEND);
+        gl.blendEquation(gl.FUNC_ADD);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+        const set1i = (uniforms, name, value) => {
+          const loc = uniforms[name];
+          if (loc) gl.uniform1i(loc, value);
+        };
+        const set1f = (uniforms, name, value) => {
+          const loc = uniforms[name];
+          if (loc) gl.uniform1f(loc, value);
+        };
+        const set1ui = (uniforms, name, value) => {
+          const loc = uniforms[name];
+          if (loc) gl.uniform1ui(loc, value >>> 0);
+        };
+        const set2f = (uniforms, name, a, b) => {
+          const loc = uniforms[name];
+          if (loc) gl.uniform2f(loc, a, b);
+        };
+        const set3f = (uniforms, name, a, b, c) => {
+          const loc = uniforms[name];
+          if (loc) gl.uniform3f(loc, a, b, c);
+        };
+        const set4f = (uniforms, name, a, b, c, d) => {
+          const loc = uniforms[name];
+          if (loc) gl.uniform4f(loc, a, b, c, d);
+        };
+        const set4fv = (uniforms, name, value) => {
+          const loc = uniforms[name];
+          if (loc) gl.uniform4fv(loc, value);
+        };
+        const setMat4 = (uniforms, name, value) => {
+          const loc = uniforms[name];
+          if (loc) gl.uniformMatrix4fv(loc, false, value);
+        };
+
+        const drawEdges = ({
+          weighted = false,
+          passViewportWidth = viewportWidth,
+          passViewportHeight = viewportHeight,
+        } = {}) => {
+          if (!this.edgeCount || !edges.endpoints || !nodes.positions) return;
+          const hasEdgeColors = Boolean(edgeVariant?.colorBuffer && edgeVariant?.colorSource !== 'node' && edges.colors);
+          const hasNodeColorsForEdgeChannel = Boolean(nodeColorSource);
+          const hasEdgeWidths = Boolean(edgeVariant?.widthBuffer && edgeVariant?.widthSource !== 'node' && edges.widths);
+          const hasEdgeOpacities = Boolean(
+            edgeVariant?.opacityBuffer
+            && edgeVariant?.opacitySource !== 'node'
+            && edges.opacities,
+          );
+          const hasEdgeStates = Boolean(edges.states);
+          const hasEdgeEndpointStates = Boolean(edges.endpointStates);
+          const hasEdgeEndpointSizes = Boolean(
+            edgeVariant?.endpointSizeBuffer
+            && edgeVariant?.endpointSizeSource !== 'node'
+            && edges.endpointSizes,
+          );
+          const hasNodeWidthSource = Boolean(nodeWidthSource);
+          const hasNodeOpacitySource = Boolean(nodeOpacitySource);
+          const hasNodeEndpointSizeSource = Boolean(nodeEndpointSizeSource);
+          const colorEndpointMode = mapEndpointMode(edgeVariant?.colorEndpoints);
+          const opacityEndpointMode = mapEndpointMode(edgeVariant?.opacityEndpoints);
+
+          if (this.edgeRenderingMode === 'quad') {
+            const edgeEntry = weighted ? edgeQuadWeightedProgramEntry : edgeQuadProgramEntry;
+            if (!edgeEntry?.program) return;
+            const uniforms = edgeEntry.uniforms;
+            gl.useProgram(edgeEntry.program);
+            setMat4(uniforms, 'u_viewProjection', cameraUniforms.viewProjection);
+            set2f(uniforms, 'u_viewport', passViewportWidth, passViewportHeight);
+            set1i(uniforms, 'u_nodePositions', 0);
+            set1i(uniforms, 'u_nodeEdgeColors', 5);
+            set1i(uniforms, 'u_edgeColors', 2);
+            set1i(uniforms, 'u_edgeEndpoints', 3);
+            set1i(uniforms, 'u_edgeStates', 15);
+            set1i(uniforms, 'u_edgeEndpointStates', 16);
+            set1i(uniforms, 'u_edgeWidths', 6);
+            set1i(uniforms, 'u_edgeOpacities', 10);
+            set1i(uniforms, 'u_edgeEndpointSizes', 7);
+            set1i(uniforms, 'u_nodeWidthSource', 8);
+            set1i(uniforms, 'u_nodeOpacitySource', 11);
+            set1i(uniforms, 'u_nodeEndpointSizeSource', 9);
+            set1i(uniforms, 'u_edgeColorSource', edgeVariant?.colorSource === 'node' ? 1 : 0);
+            set1i(uniforms, 'u_edgeColorEndpoints', colorEndpointMode);
+            set1i(uniforms, 'u_edgeWidthSource', edgeVariant?.widthSource === 'node' ? 1 : 0);
+            set1i(uniforms, 'u_edgeWidthEndpoints', mapEndpointMode(edgeVariant?.widthEndpoints));
+            set1i(uniforms, 'u_edgeOpacitySource', edgeVariant?.opacitySource === 'node' ? 1 : 0);
+            set1i(uniforms, 'u_edgeOpacityEndpoints', opacityEndpointMode);
+            set1i(uniforms, 'u_edgeEndpointSizeSource', edgeVariant?.endpointSizeSource === 'node' ? 1 : 0);
+            set1i(uniforms, 'u_edgeEndpointSizeEndpoints', mapEndpointMode(edgeVariant?.endpointSizeEndpoints));
+            set1i(uniforms, 'u_hasEdgeColors', hasEdgeColors ? 1 : 0);
+            set1i(uniforms, 'u_hasNodeColors', hasNodeColorsForEdgeChannel ? 1 : 0);
+            set1i(uniforms, 'u_hasEdgeStates', hasEdgeStates ? 1 : 0);
+            set1i(uniforms, 'u_hasEdgeEndpointStates', hasEdgeEndpointStates ? 1 : 0);
+            set1i(uniforms, 'u_hasEdgeWidths', hasEdgeWidths ? 1 : 0);
+            set1i(uniforms, 'u_hasEdgeOpacities', hasEdgeOpacities ? 1 : 0);
+            set1i(uniforms, 'u_hasEdgeEndpointSizes', hasEdgeEndpointSizes ? 1 : 0);
+            set1i(uniforms, 'u_hasNodeWidthSource', hasNodeWidthSource ? 1 : 0);
+            set1i(uniforms, 'u_hasNodeOpacitySource', hasNodeOpacitySource ? 1 : 0);
+            set1i(uniforms, 'u_hasNodeEndpointSizeSource', hasNodeEndpointSizeSource ? 1 : 0);
+            set1ui(uniforms, 'u_hoverEdgeIndex', this.hoveredEdgeIndex);
+            set1ui(uniforms, 'u_hoverEdgeState', this.hoveredEdgeState);
+            set4fv(uniforms, 'u_nodeNoStateScale', this.nodeNoStateScale);
+            set4fv(
+              uniforms,
+              'u_nodeStateScale[0]',
+              (this.nodeStateScale && this.nodeStateScale.length > 0) ? this.nodeStateScale : DEFAULT_STATE_SCALE,
+            );
+            set4fv(uniforms, 'u_edgeNoStateScale', this.edgeNoStateScale);
+            set4fv(uniforms, 'u_edgeNoStateColorMul', this.edgeNoStateColorMul);
+            set4fv(uniforms, 'u_edgeNoStateColorAdd', this.edgeNoStateColorAdd);
+            set4fv(
+              uniforms,
+              'u_edgeStateScale[0]',
+              (this.edgeStateScale && this.edgeStateScale.length > 0) ? this.edgeStateScale : DEFAULT_STATE_SCALE,
+            );
+            set4fv(
+              uniforms,
+              'u_edgeStateColorMul[0]',
+              (this.edgeStateColorMul && this.edgeStateColorMul.length > 0) ? this.edgeStateColorMul : DEFAULT_STATE_COLOR_MUL,
+            );
+            set4fv(
+              uniforms,
+              'u_edgeStateColorAdd[0]',
+              (this.edgeStateColorAdd && this.edgeStateColorAdd.length > 0) ? this.edgeStateColorAdd : DEFAULT_STATE_COLOR_ADD,
+            );
+            set4f(
+              uniforms,
+              'u_defaultNodeEdgeColor',
+              nodeDefaultColor[0],
+              nodeDefaultColor[1],
+              nodeDefaultColor[2],
+              nodeDefaultColor[3],
+            );
+            set4f(
+              uniforms,
+              'u_defaultEdgeColorStart',
+              defaultEdgeColorPair[0][0],
+              defaultEdgeColorPair[0][1],
+              defaultEdgeColorPair[0][2],
+              defaultEdgeColorPair[0][3],
+            );
+            set4f(
+              uniforms,
+              'u_defaultEdgeColorEnd',
+              defaultEdgeColorPair[1][0],
+              defaultEdgeColorPair[1][1],
+              defaultEdgeColorPair[1][2],
+              defaultEdgeColorPair[1][3],
+            );
+            const quadDefaultEdgeWidth = edgeVariant?.widthSource === 'node' ? defaultNodeWidth : defaultEdgeWidth;
+            const quadDefaultEdgeEndpointSize = edgeVariant?.endpointSizeSource === 'node'
+              ? defaultNodeEndpointSize
+              : defaultEdgeEndpointSize;
+            set2f(uniforms, 'u_defaultEdgeWidth', quadDefaultEdgeWidth[0], quadDefaultEdgeWidth[1]);
+            set2f(uniforms, 'u_defaultNodeWidthSource', defaultNodeWidth[0], defaultNodeWidth[1]);
+            set2f(uniforms, 'u_defaultEdgeOpacity', defaultEdgeOpacity[0], defaultEdgeOpacity[1]);
+            set2f(uniforms, 'u_defaultNodeOpacitySource', defaultNodeOpacity[0], defaultNodeOpacity[1]);
+            set2f(
+              uniforms,
+              'u_defaultEdgeEndpointSize',
+              quadDefaultEdgeEndpointSize[0],
+              quadDefaultEdgeEndpointSize[1],
+            );
+            set2f(
+              uniforms,
+              'u_defaultNodeEndpointSizeSource',
+              defaultNodeEndpointSize[0],
+              defaultNodeEndpointSize[1],
+            );
+            set1f(uniforms, 'u_edgeWidthBase', globalEdgeWidthBase);
+            set1f(uniforms, 'u_edgeWidthScale', globalEdgeWidthScale);
+            set1f(uniforms, 'u_edgeOpacityBase', this.edgeOpacityBase);
+            set1f(uniforms, 'u_edgeOpacityScale', this.edgeOpacityScale);
+            set1f(uniforms, 'u_nodeSizeBase', this.nodeSizeBase);
+            set1f(uniforms, 'u_nodeSizeScale', this.nodeSizeScale);
+            set1f(uniforms, 'u_edgeEndpointTrim', this.edgeEndpointTrim);
+            this.bindTexture(0, this.nodeTextures.positions);
+            this.bindTexture(5, this.nodeTextures.edgeColorSource);
+            this.bindTexture(2, this.edgeTextures.colors);
+            this.bindTexture(3, this.edgeTextures.endpoints);
+            this.bindTexture(6, this.edgeTextures.widths);
+            this.bindTexture(10, this.edgeTextures.opacities);
+            this.bindTexture(7, this.edgeTextures.endpointSizes);
+            this.bindTexture(8, this.nodeTextures.edgeWidthSource);
+            this.bindTexture(11, this.nodeTextures.edgeOpacitySource);
+            this.bindTexture(9, this.nodeTextures.edgeEndpointSizeSource);
+            this.bindTexture(15, this.edgeTextures.states);
+            this.bindTexture(16, this.edgeTextures.endpointStates);
+            gl.bindVertexArray(this.edgeQuadVao);
+            gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.edgeCount);
+            return;
+          }
+
+          const edgeEntry = weighted ? edgeLineWeightedProgramEntry : edgeLineProgramEntry;
+          if (!edgeEntry?.program) return;
+          const uniforms = edgeEntry.uniforms;
+          gl.useProgram(edgeEntry.program);
+          setMat4(uniforms, 'u_viewProjection', cameraUniforms.viewProjection);
+          set1i(uniforms, 'u_nodePositions', 0);
+          set1i(uniforms, 'u_nodeEdgeColors', 5);
+          set1i(uniforms, 'u_edgeColors', 2);
+          set1i(uniforms, 'u_edgeStates', 15);
+          set1i(uniforms, 'u_edgeOpacities', 10);
+          set1i(uniforms, 'u_nodeOpacitySource', 11);
+          set1i(uniforms, 'u_edgeEndpoints', 3);
+          set1i(uniforms, 'u_edgeColorSource', edgeVariant?.colorSource === 'node' ? 1 : 0);
+          set1i(uniforms, 'u_edgeColorEndpoints', colorEndpointMode);
+          set1i(uniforms, 'u_edgeOpacitySource', edgeVariant?.opacitySource === 'node' ? 1 : 0);
+          set1i(uniforms, 'u_edgeOpacityEndpoints', opacityEndpointMode);
+          set1i(uniforms, 'u_hasEdgeColors', hasEdgeColors ? 1 : 0);
+          set1i(uniforms, 'u_hasNodeColors', hasNodeColorsForEdgeChannel ? 1 : 0);
+          set1i(uniforms, 'u_hasEdgeStates', hasEdgeStates ? 1 : 0);
+          set1i(uniforms, 'u_hasEdgeOpacities', hasEdgeOpacities ? 1 : 0);
+          set1i(uniforms, 'u_hasNodeOpacitySource', hasNodeOpacitySource ? 1 : 0);
+          set1ui(uniforms, 'u_hoverEdgeIndex', this.hoveredEdgeIndex);
+          set1ui(uniforms, 'u_hoverEdgeState', this.hoveredEdgeState);
+          set4fv(uniforms, 'u_edgeNoStateScale', this.edgeNoStateScale);
+          set4fv(uniforms, 'u_edgeNoStateColorMul', this.edgeNoStateColorMul);
+          set4fv(uniforms, 'u_edgeNoStateColorAdd', this.edgeNoStateColorAdd);
+          set4fv(
+            uniforms,
+            'u_edgeStateScale[0]',
+            (this.edgeStateScale && this.edgeStateScale.length > 0) ? this.edgeStateScale : DEFAULT_STATE_SCALE,
+          );
+          set4fv(
+            uniforms,
+            'u_edgeStateColorMul[0]',
+            (this.edgeStateColorMul && this.edgeStateColorMul.length > 0) ? this.edgeStateColorMul : DEFAULT_STATE_COLOR_MUL,
+          );
+          set4fv(
+            uniforms,
+            'u_edgeStateColorAdd[0]',
+            (this.edgeStateColorAdd && this.edgeStateColorAdd.length > 0) ? this.edgeStateColorAdd : DEFAULT_STATE_COLOR_ADD,
+          );
+          set4f(
+            uniforms,
+            'u_defaultNodeEdgeColor',
+            nodeDefaultColor[0],
+            nodeDefaultColor[1],
+            nodeDefaultColor[2],
+            nodeDefaultColor[3],
+          );
+          set4f(
+            uniforms,
+            'u_defaultEdgeColorStart',
+            defaultEdgeColorPair[0][0],
+            defaultEdgeColorPair[0][1],
+            defaultEdgeColorPair[0][2],
+            defaultEdgeColorPair[0][3],
+          );
+          set4f(
+            uniforms,
+            'u_defaultEdgeColorEnd',
+            defaultEdgeColorPair[1][0],
+            defaultEdgeColorPair[1][1],
+            defaultEdgeColorPair[1][2],
+            defaultEdgeColorPair[1][3],
+          );
+          set2f(uniforms, 'u_defaultEdgeOpacity', defaultEdgeOpacity[0], defaultEdgeOpacity[1]);
+          set2f(uniforms, 'u_defaultNodeOpacitySource', defaultNodeOpacity[0], defaultNodeOpacity[1]);
+          set1f(uniforms, 'u_edgeOpacityBase', this.edgeOpacityBase);
+          set1f(uniforms, 'u_edgeOpacityScale', this.edgeOpacityScale);
+          this.bindTexture(0, this.nodeTextures.positions);
+          this.bindTexture(5, this.nodeTextures.edgeColorSource);
+          this.bindTexture(2, this.edgeTextures.colors);
+          this.bindTexture(15, this.edgeTextures.states);
+          this.bindTexture(10, this.edgeTextures.opacities);
+          this.bindTexture(11, this.nodeTextures.edgeOpacitySource);
+          this.bindTexture(3, this.edgeTextures.endpoints);
+          gl.bindVertexArray(this.edgeVao);
+          gl.drawArraysInstanced(gl.LINES, 0, 2, this.edgeCount);
+        };
+
+        const drawNodes = () => {
+          if (!this.nodeCount || !nodes.positions) return;
+          const nodeEntry = nodeProgramEntry;
+          if (!nodeEntry?.program) return;
+          const uniforms = nodeEntry.uniforms;
+          gl.useProgram(nodeEntry.program);
+          setMat4(uniforms, 'u_viewProjection', cameraUniforms.viewProjection);
+          set1i(uniforms, 'u_nodePositions', 0);
+          set1i(uniforms, 'u_nodeColors', 1);
+          set1i(uniforms, 'u_nodeSizes', 4);
+          set1i(uniforms, 'u_nodeOutlineWidths', 12);
+          set1i(uniforms, 'u_nodeOutlineColors', 13);
+          set1i(uniforms, 'u_nodeStates', 14);
+          set3f(
+            uniforms,
+            'u_cameraPosition',
+            cameraUniforms.position?.[0] ?? 0,
+            cameraUniforms.position?.[1] ?? 0,
+            cameraUniforms.position?.[2] ?? 1,
+          );
+          set3f(
+            uniforms,
+            'u_cameraUp',
+            cameraUniforms.up?.[0] ?? 0,
+            cameraUniforms.up?.[1] ?? 1,
+            cameraUniforms.up?.[2] ?? 0,
+          );
+          set3f(
+            uniforms,
+            'u_cameraRight',
+            cameraUniforms.right?.[0] ?? 1,
+            cameraUniforms.right?.[1] ?? 0,
+            cameraUniforms.right?.[2] ?? 0,
+          );
+          set1i(uniforms, 'u_is2D', cameraUniforms?.mode === '2d' ? 1 : 0);
+          set1i(uniforms, 'u_hasNodeColors', hasNodeColorsForNodes ? 1 : 0);
+          set1i(uniforms, 'u_hasNodeSizes', hasNodeSizesForNodes ? 1 : 0);
+          set1i(uniforms, 'u_hasNodeOutlineWidths', hasNodeOutlineWidthsForNodes ? 1 : 0);
+          set1i(uniforms, 'u_hasNodeOutlineColors', hasNodeOutlineColorsForNodes ? 1 : 0);
+          set1i(uniforms, 'u_hasNodeStates', hasNodeStatesForNodes ? 1 : 0);
+          set1ui(uniforms, 'u_hoverNodeIndex', this.hoveredNodeIndex);
+          set1ui(uniforms, 'u_hoverNodeState', this.hoveredNodeState);
+          set4fv(uniforms, 'u_nodeNoStateScale', this.nodeNoStateScale);
+          set4fv(uniforms, 'u_nodeNoStateColorMul', this.nodeNoStateColorMul);
+          set4fv(uniforms, 'u_nodeNoStateColorAdd', this.nodeNoStateColorAdd);
+          set4fv(
+            uniforms,
+            'u_nodeStateScale[0]',
+            (this.nodeStateScale && this.nodeStateScale.length > 0) ? this.nodeStateScale : DEFAULT_STATE_SCALE,
+          );
+          set4fv(
+            uniforms,
+            'u_nodeStateColorMul[0]',
+            (this.nodeStateColorMul && this.nodeStateColorMul.length > 0) ? this.nodeStateColorMul : DEFAULT_STATE_COLOR_MUL,
+          );
+          set4fv(
+            uniforms,
+            'u_nodeStateColorAdd[0]',
+            (this.nodeStateColorAdd && this.nodeStateColorAdd.length > 0) ? this.nodeStateColorAdd : DEFAULT_STATE_COLOR_ADD,
+          );
+          set4f(
+            uniforms,
+            'u_defaultNodeColor',
+            nodeDefaultColor[0],
+            nodeDefaultColor[1],
+            nodeDefaultColor[2],
+            nodeDefaultColor[3],
+          );
+          set1f(uniforms, 'u_defaultNodeSize', nodeDefaultSize);
+          set1f(uniforms, 'u_nodeOpacityBase', this.nodeOpacityBase);
+          set1f(uniforms, 'u_nodeOpacityScale', this.nodeOpacityScale);
+          set1f(uniforms, 'u_nodeSizeBase', this.nodeSizeBase);
+          set1f(uniforms, 'u_nodeSizeScale', this.nodeSizeScale);
+          set1f(uniforms, 'u_nodeOutline', nodeDefaultOutline);
+          set1f(uniforms, 'u_outlineWidthBase', this.nodeOutlineWidthBase);
+          set1f(uniforms, 'u_outlineWidthScale', this.nodeOutlineWidthScale);
+          set4f(
+            uniforms,
+            'u_outlineColor',
+            nodeDefaultOutlineColor[0],
+            nodeDefaultOutlineColor[1],
+            nodeDefaultOutlineColor[2],
+            nodeDefaultOutlineColor[3],
+          );
+          this.bindTexture(0, this.nodeTextures.positions);
+          this.bindTexture(1, this.nodeTextures.colors);
+          this.bindTexture(4, this.nodeTextures.sizes);
+          this.bindTexture(12, this.nodeTextures.outlineWidths);
+          this.bindTexture(13, this.nodeTextures.outlineColors);
+          this.bindTexture(14, this.nodeTextures.states);
+          gl.bindVertexArray(this.nodeVao);
+          gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.nodeCount);
+        };
+
+        const applyViewport = () => {
+          if (viewport) {
+            gl.viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+          } else {
+            gl.viewport(0, 0, viewportWidth, viewportHeight);
+          }
+        };
+
+        const weightedRequested = transparencyMode === 'weighted'
+          || transparencyMode === 'additive-normalized'
+          || transparencyMode === 'additive-tonemapped'
+          || transparencyMode === 'additive-normalized-bright';
+        const weightedReady = weightedRequested && this.edgeCount > 0
+          ? this.prepareWeightedWebGL(viewportWidth, viewportHeight)
+          : false;
+
+        if (weightedReady) {
+          if (!this.loggedWeightedActive) {
+            console.info(`GraphLayerWebGL: using weighted multipass for '${transparencyMode}'`);
+            this.loggedWeightedActive = true;
+          }
+          const mainFramebuffer = context.target?.handle ?? null;
+          const mainDrawBuffers = mainFramebuffer ? [gl.COLOR_ATTACHMENT0] : [gl.BACK];
+
+          if (!is2D && this.nodeCount && !nodeBlendWithEdges) {
+            gl.bindFramebuffer(gl.FRAMEBUFFER, mainFramebuffer);
+            if (mainFramebuffer) gl.drawBuffers(mainDrawBuffers);
+            applyViewport();
+            gl.enable(gl.DEPTH_TEST);
+            gl.depthMask(true);
+            gl.depthFunc(gl.LEQUAL);
+            gl.enable(gl.BLEND);
+            gl.blendEquation(gl.FUNC_ADD);
+            gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+            drawNodes();
+          }
+
+          gl.bindFramebuffer(gl.FRAMEBUFFER, this.weightedFramebuffer);
+          gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+          applyViewport();
+          gl.clearBufferfv(gl.COLOR, 0, new Float32Array([0, 0, 0, 0]));
+          gl.clearBufferfv(gl.COLOR, 1, new Float32Array([0, 0, 0, 0]));
+          gl.clearBufferfv(gl.DEPTH, 0, new Float32Array([1]));
+
+          if (!is2D && this.nodeCount && !nodeBlendWithEdges) {
+            gl.colorMask(false, false, false, false);
+            gl.disable(gl.BLEND);
+            gl.enable(gl.DEPTH_TEST);
+            gl.depthMask(true);
+            gl.depthFunc(gl.LEQUAL);
+            drawNodes();
+            gl.colorMask(true, true, true, true);
+          }
+
+          if (this.edgeCount) {
+            gl.enable(gl.BLEND);
+            gl.blendEquation(gl.FUNC_ADD);
+            gl.blendFunc(gl.ONE, gl.ONE);
+            if (is2D) {
+              gl.disable(gl.DEPTH_TEST);
+              gl.depthMask(false);
+            } else {
+              gl.enable(gl.DEPTH_TEST);
+              gl.depthMask(edgeDepthWrite);
+              gl.depthFunc(gl.LEQUAL);
+            }
+            const weightedViewportWidth = viewport ? viewport[2] : (this.weightedSize?.width ?? viewportWidth);
+            const weightedViewportHeight = viewport ? viewport[3] : (this.weightedSize?.height ?? viewportHeight);
+            drawEdges({
+              weighted: true,
+              passViewportWidth: weightedViewportWidth,
+              passViewportHeight: weightedViewportHeight,
+            });
+          }
+
+          gl.bindFramebuffer(gl.FRAMEBUFFER, mainFramebuffer);
+          if (mainFramebuffer) gl.drawBuffers(mainDrawBuffers);
+          applyViewport();
+          gl.disable(gl.DEPTH_TEST);
+          gl.depthMask(false);
+          gl.enable(gl.BLEND);
+          gl.blendEquation(gl.FUNC_ADD);
+          gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+
+          let resolveProgram = this.edgeResolveProgram;
+          let resolveUniformColor = this.edgeResolveUniformColor;
+          let resolveUniformWeight = this.edgeResolveUniformWeight;
+          if (transparencyMode === 'additive-tonemapped') {
+            resolveProgram = this.edgeResolveTonemapProgram ?? resolveProgram;
+            resolveUniformColor = this.edgeResolveTonemapUniformColor ?? resolveUniformColor;
+            resolveUniformWeight = this.edgeResolveTonemapUniformWeight ?? resolveUniformWeight;
+          } else if (transparencyMode === 'additive-normalized-bright') {
+            resolveProgram = this.edgeResolveBoostProgram ?? resolveProgram;
+            resolveUniformColor = this.edgeResolveBoostUniformColor ?? resolveUniformColor;
+            resolveUniformWeight = this.edgeResolveBoostUniformWeight ?? resolveUniformWeight;
+          }
+
+          if (resolveProgram) {
+            gl.useProgram(resolveProgram);
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, this.weightedColor);
+            if (resolveUniformColor) gl.uniform1i(resolveUniformColor, 0);
+            gl.activeTexture(gl.TEXTURE1);
+            gl.bindTexture(gl.TEXTURE_2D, this.weightedWeight);
+            if (resolveUniformWeight) gl.uniform1i(resolveUniformWeight, 1);
+            gl.bindVertexArray(this.edgeResolveVAO);
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+          }
+
+          if ((is2D || nodeBlendWithEdges) && this.nodeCount) {
+            gl.enable(gl.BLEND);
+            if (nodeBlendWithEdges) {
+              this.applyEdgeBlend(gl, transparencyMode);
+            } else {
+              gl.blendEquation(gl.FUNC_ADD);
+              gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+            }
+            gl.depthMask(false);
+            gl.disable(gl.DEPTH_TEST);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, mainFramebuffer);
+            if (mainFramebuffer) gl.drawBuffers(mainDrawBuffers);
+            applyViewport();
+            drawNodes();
+          }
+        } else {
+          if (weightedRequested && this.edgeCount > 0 && !this.warnedWeightedFallback) {
+            console.warn('Weighted edge transparency is not available in WebGL2 indirect; falling back to alpha.');
+            this.warnedWeightedFallback = true;
+          }
+
+          const applyNodeBlend = () => {
+            if (nodeBlendWithEdges) {
+              this.applyEdgeBlend(gl, transparencyMode);
+            } else {
+              gl.blendEquation(gl.FUNC_ADD);
+              gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+            }
+          };
+
+          const setupNodeDepth = () => {
+            if (nodeBlendWithEdges || is2D) {
+              gl.disable(gl.DEPTH_TEST);
+              gl.depthMask(false);
+            } else {
+              gl.enable(gl.DEPTH_TEST);
+              gl.depthMask(true);
+              gl.depthFunc(gl.LEQUAL);
+            }
+          };
+
+          if (is2D) {
+            this.applyEdgeBlend(gl, transparencyMode);
+            gl.disable(gl.DEPTH_TEST);
+            gl.depthMask(false);
+            drawEdges();
+            applyNodeBlend();
+            setupNodeDepth();
+            drawNodes();
+          } else {
+            applyNodeBlend();
+            setupNodeDepth();
+            drawNodes();
+            this.applyEdgeBlend(gl, transparencyMode);
+            gl.enable(gl.DEPTH_TEST);
+            gl.depthMask(edgeDepthWrite);
+            gl.depthFunc(gl.LEQUAL);
+            drawEdges();
+          }
+        }
+
+        gl.bindVertexArray(null);
+        gl.depthMask(true);
+        gl.enable(gl.DEPTH_TEST);
+        gl.depthFunc(gl.LEQUAL);
+        gl.blendEquation(gl.FUNC_ADD);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        return true;
+      },
+    );
   }
 }
+
+export default GraphLayerWebGL;

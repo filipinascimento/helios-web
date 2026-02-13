@@ -21,8 +21,8 @@ test.describe('colormap regressions', () => {
       ];
 
       const helios = window.__helios;
-      if (!helios?.renderer?.graphLayer?.nodeBuffers?.colors) {
-        return { error: 'Missing graph layer node color buffer' };
+      if (!helios?.network?.withBufferAccess) {
+        return { error: 'Missing network buffer access' };
       }
 
       const { createColormapScale } = await import('/src/colors/colormaps.js');
@@ -37,17 +37,19 @@ test.describe('colormap regressions', () => {
       // Wait for mapper + buffer upload to complete.
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 
-      const gl = helios?.renderer?.device?.gl;
-      const colorsBuffer = helios.renderer.graphLayer.nodeBuffers.colors;
-      const nodeCount = helios.renderer.graphLayer.nodeCount ?? helios.network?.nodeCount ?? 0;
-      if (!gl || typeof gl.getBufferSubData !== 'function') {
-        return { error: 'WebGL2 getBufferSubData unavailable' };
-      }
+      const nodeCount = helios.network?.nodeCount ?? 0;
       if (!nodeCount) return { error: 'Node count unavailable' };
 
-      const gpuColors = new Float32Array(nodeCount * 4);
-      gl.bindBuffer(gl.ARRAY_BUFFER, colorsBuffer);
-      gl.getBufferSubData(gl.ARRAY_BUFFER, 0, gpuColors);
+      let mappedColors = null;
+      helios.network.withBufferAccess(() => {
+        const view = helios.network.getNodeAttributeBuffer('_helios_visuals_color')?.view ?? null;
+        if (!view) return;
+        mappedColors = new Float32Array(view.length);
+        mappedColors.set(view);
+      });
+      if (!mappedColors) {
+        return { error: 'Missing mapped node colors buffer' };
+      }
 
       const bad = [];
       const maxAbsDiff = (a, b) => Math.max(
@@ -59,7 +61,12 @@ test.describe('colormap regressions', () => {
 
       for (const id of ids) {
         const offset = id * 4;
-        const actual = [gpuColors[offset], gpuColors[offset + 1], gpuColors[offset + 2], gpuColors[offset + 3]];
+        const actual = [
+          mappedColors[offset],
+          mappedColors[offset + 1],
+          mappedColors[offset + 2],
+          mappedColors[offset + 3],
+        ];
         const expected = expectedScale(id);
         const diff = maxAbsDiff(actual, expected);
         const isBlack = actual[0] === 0 && actual[1] === 0 && actual[2] === 0;

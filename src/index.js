@@ -3,13 +3,6 @@ export { default } from './Helios.js';
 export { EVENTS } from './Helios.js';
 export { StaticLayout, WorkerLayout, Layout } from './layouts/Layout.js';
 export { D3Force3DLayout } from './layouts/d3force3dLayoutWorker.js';
-export {
-	PositionDelegate,
-	CpuMirrorPositionDelegate,
-	ExternalBufferPositionDelegate,
-	createPositionDelegateFromOptions,
-} from './layouts/positions/PositionDelegate.js';
-export { CpuLinearPositionInterpolator } from './layouts/positions/PositionInterpolator.js';
 export { Mapper, createDefaultMappers, VISUAL_ATTRIBUTES } from './pipeline/Mapper.js';
 export { MapperCollection } from './pipeline/Mapper.js';
 export { VisualAttributes } from './pipeline/VisualAttributes.js';

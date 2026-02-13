@@ -1,7 +1,5 @@
 import { GraphLayerWebGL } from './GraphLayerWebGL.js';
-import { GraphLayerWebGLIndirect } from './GraphLayerWebGLIndirect.js';
 import { GraphLayerWebGPU } from './GraphLayerWebGPU.js';
-import { GraphLayerWebGPUIndirect } from './GraphLayerWebGPUIndirect.js';
 import { WebGL2Device } from './WebGL2Device.js';
 import { WebGPUDevice } from './WebGPUDevice.js';
 import { Camera } from '../Camera.js';
@@ -217,15 +215,9 @@ export class LayeredRenderer {
       stateSlots: this.options.stateSlots,
     };
     if (this.device?.type === 'webgpu') {
-      const backend = this.options.webgpuBackend === 'indirect' ? 'indirect' : 'dense';
-      this.graphLayer = backend === 'indirect'
-        ? new GraphLayerWebGPUIndirect(options)
-        : new GraphLayerWebGPU(options);
+      this.graphLayer = new GraphLayerWebGPU(options);
     } else {
-      const backend = this.options.webglBackend === 'indirect' ? 'indirect' : 'dense';
-      this.graphLayer = backend === 'indirect'
-        ? new GraphLayerWebGLIndirect(options)
-        : new GraphLayerWebGL(options);
+      this.graphLayer = new GraphLayerWebGL(options);
     }
     // Keep the graph layer first to match previous ordering.
     this.layers.unshift(this.graphLayer);
