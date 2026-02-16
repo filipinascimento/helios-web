@@ -340,11 +340,14 @@ export class GraphLayer extends Layer {
     };
 
     ensureSynchronized('resolve-position-override');
-    const view = pickValue(delegate.getNodePositionView, delegate.getPositionView);
-    const versionRaw = pickValue(delegate.getVersion);
     const gpuShared = pickValue(delegate.getGpuPositionResource, delegate.getPositionResource);
     const webgpuRaw = pickValue(delegate.getWebGPUPositionBuffer);
     const webglRaw = pickValue(delegate.getWebGLPositionTexture);
+    const versionRaw = pickValue(delegate.getVersion);
+    const hasGpuResource = Boolean(gpuShared || webgpuRaw || webglRaw);
+    const view = hasGpuResource
+      ? null
+      : pickValue(delegate.getNodePositionView, delegate.getPositionView);
 
     const normalizeBuffer = (raw) => {
       if (!raw) return null;
@@ -365,13 +368,20 @@ export class GraphLayer extends Layer {
     const countFromView = view && Number.isFinite(view.length)
       ? Math.floor((view.length ?? 0) / 3)
       : 0;
+    const countFromActiveIndices = (() => {
+      try {
+        return Math.max(0, Math.floor(Number(network?.nodeIndices?.length ?? 0)));
+      } catch (_) {
+        return 0;
+      }
+    })();
     const count = Number.isFinite(gpuShared?.count)
       ? Math.max(0, Math.floor(Number(gpuShared.count)))
       : (Number.isFinite(webgpuRaw?.count)
         ? Math.max(0, Math.floor(Number(webgpuRaw.count)))
         : (Number.isFinite(webglRaw?.count)
           ? Math.max(0, Math.floor(Number(webglRaw.count)))
-          : countFromView));
+          : (countFromView || countFromActiveIndices)));
     const webgpuBuffer = normalizeBuffer(webgpuRaw) ?? normalizeBuffer(gpuShared);
     const webglTexture = normalizeTexture(webglRaw) ?? normalizeTexture(gpuShared);
     const webglTextureVersion = Number.isFinite(webglRaw?.version)

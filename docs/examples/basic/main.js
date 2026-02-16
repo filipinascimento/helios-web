@@ -31,6 +31,7 @@ function resolveLayoutType() {
   if (normalized === 'none' || normalized === 'static') return 'none';
   if (normalized === 'jitter' || normalized === 'legacy') return 'jitter';
   if (normalized === 'd3force3d' || normalized === 'd3-force-3d') return 'd3force3d';
+  if (normalized === 'gpuforce' || normalized === 'gpu-force' || normalized === 'gpu') return 'gpuforce';
   return 'force3d';
 }
 
@@ -332,6 +333,29 @@ async function bootstrap() {
     container: target,
     layout: layoutType === 'none'
       ? { type: 'static', options: { bounds: [-500, -500, 500, 500] } }
+      : layoutType === 'gpuforce'
+        ? {
+            type: 'gpu-force',
+            options: {
+              mode,
+              center: [0, 0, 0],
+              radius: 220 * Math.sqrt(nodeCount / 1000),
+              depth: mode === '3d' ? 140 : 0,
+              updateIntervalMs: layoutIntervalMs,
+              sampleCount2D: 64,
+              sampleCount3D: 96,
+              maxNeighborsPerNode: 64,
+              outputScale: 6,
+              linkDistance: 1,
+              kRepulsion: 0.07,
+              kAttraction: 0.62,
+              kGravity: 0.00035,
+              eta: 0.04,
+              damping: 0.92,
+              maxStep: 2.5,
+              alphaDecay: 0.001,
+            },
+          }
       : layoutType === 'd3force3d'
         ? {
             type: 'd3force3d',
@@ -400,6 +424,9 @@ async function bootstrap() {
 
   console.log("Waiting for helios to be ready...");
   await helios.ready;
+  positionSource = helios.positions()?.source === 'delegate' ? 'delegate' : 'network';
+  window.__snapshotDelegatePositions = () => helios.snapshotDelegatePositions();
+  window.__syncDelegatePositionsToNetwork = () => helios.syncDelegatePositionsToNetwork();
 
   console.log("Helios is ready!");
 
@@ -468,6 +495,7 @@ async function bootstrap() {
     layoutSelect.className = 'helios-ui-select';
     const options = [
       { value: 'force3d', label: 'Force (worker)' },
+      { value: 'gpuforce', label: 'Force (GPU/WebGPU)' },
       { value: 'd3force3d', label: 'D3 Force 3D (worker)' },
       { value: 'jitter', label: 'Jitter (worker)' },
       { value: 'none', label: 'Static (no layout)' },
@@ -512,6 +540,32 @@ async function bootstrap() {
               use2D: mode !== '3d',
             },
             updateIntervalMs: layoutIntervalMs,
+          },
+        });
+        helios.layout(layoutInstance);
+        return;
+      }
+      if (value === 'gpuforce') {
+        const layoutInstance = helios.createLayout({
+          type: 'gpu-force',
+          options: {
+            mode,
+            center: [0, 0, 0],
+            radius: 220 * Math.sqrt(nodeCount / 1000),
+            depth: mode === '3d' ? 140 : 0,
+            updateIntervalMs: layoutIntervalMs,
+            sampleCount2D: 64,
+            sampleCount3D: 96,
+            maxNeighborsPerNode: 64,
+            outputScale: 6,
+            linkDistance: 1,
+            kRepulsion: 0.07,
+            kAttraction: 0.62,
+            kGravity: 0.00035,
+            eta: 0.04,
+            damping: 0.92,
+            maxStep: 2.5,
+            alphaDecay: 0.001,
           },
         });
         helios.layout(layoutInstance);

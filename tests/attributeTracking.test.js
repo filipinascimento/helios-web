@@ -300,6 +300,175 @@ test('WebGPUAttributeRenderer bypasses sparse encoded APIs for indirect rgba8 di
   assert.equal(calls.sparseUpdateEdge, 0);
 });
 
+test('WebGPUAttributeRenderer accepts delegate node position buffers without CPU position views', () => {
+  const originalGpuBufferUsage = globalThis.GPUBufferUsage;
+  globalThis.GPUBufferUsage = {
+    UNIFORM: 0x40,
+    COPY_DST: 0x08,
+    STORAGE: 0x80,
+    VERTEX: 0x20,
+  };
+  const createFakeBuffer = (size = 256) => {
+    const data = new ArrayBuffer(size);
+    return {
+      size,
+      getMappedRange() {
+        return data;
+      },
+      unmap() {},
+      destroy() {},
+    };
+  };
+  const pass = {
+    setPipeline() {},
+    setBindGroup() {},
+    setVertexBuffer() {},
+    draw() {},
+    end() {},
+  };
+  const gpu = {
+    createBuffer({ size = 256 }) {
+      return createFakeBuffer(size);
+    },
+    createBindGroup() {
+      return {};
+    },
+    createCommandEncoder() {
+      return {
+        beginRenderPass() {
+          return pass;
+        },
+        copyTextureToTexture() {},
+        finish() {
+          return {};
+        },
+      };
+    },
+    queue: {
+      submit() {},
+    },
+  };
+  const sharedNodePositionBuffer = createFakeBuffer(12);
+  const renderer = new WebGPUAttributeRenderer({
+    edgeRenderingMode: 'line',
+    nodeOpacityBase: 1,
+    nodeOpacityScale: 1,
+    nodeSizeBase: 0,
+    nodeSizeScale: 1,
+    nodeOutlineWidthBase: 0,
+    nodeOutlineWidthScale: 1,
+    edgeOpacityBase: 1,
+    edgeOpacityScale: 1,
+    edgeWidthBase: 0,
+    edgeWidthScale: 1,
+    nodeOutlineColor: [0, 0, 0, 1],
+    edgeEndpointTrim: 0.8,
+    semanticZoomExponent: 0,
+  }, null, {
+    run(passes) {
+      for (const fn of passes) fn();
+    },
+  });
+  renderer.device = {
+    device: gpu,
+    resourceCache: {
+      webgpu: {
+        uploadBuffer(_gpuDevice, _queue, _key, _source, _meta, _usage) {
+          return createFakeBuffer(256);
+        },
+      },
+    },
+  };
+  renderer.nodeIndirectBindGroupLayout = {};
+  renderer.edgeIndirectBindGroupLayout = {};
+  renderer.cornerBuffer = createFakeBuffer(64);
+  renderer.edgeCornerBuffer = createFakeBuffer(64);
+  renderer.getIndirectPipelinesForVariant = () => ({
+    nodePipeline: {},
+    nodeOcclusionPipeline: {},
+    edgePipeline: {},
+    edgeQuadPipeline: {},
+    nodeDepthPipeline: {},
+    edgeDepthPipeline: {},
+    edgeQuadDepthPipeline: {},
+  });
+  renderer.ensureZeroStorageBuffer = () => createFakeBuffer(16);
+  renderer.resolveSharedWebGPUBuffer = (_shared, _candidate, fallback) => (typeof fallback === 'function' ? fallback() : null);
+  renderer.getSharedGraphResources = () => null;
+  renderer.targets = {
+    node: {
+      width: 1,
+      height: 1,
+      texture: { createView: () => ({}) },
+      depthTexture: { createView: () => ({}) },
+    },
+    edge: {
+      width: 1,
+      height: 1,
+      texture: { createView: () => ({}) },
+      depthTexture: { createView: () => ({}) },
+    },
+  };
+  renderer.depthTargets = null;
+
+  try {
+    const result = renderer.renderIndirectSparseGeometry(
+      { getNodeAttributeBuffer: () => null, getEdgeAttributeBuffer: () => null },
+      {
+        nodes: {
+          positions: null,
+          positionBuffer: sharedNodePositionBuffer,
+          sizes: null,
+          outlineWidths: null,
+          indices: new Uint32Array([0]),
+          versions: { positions: 2, indices: 2, topology: 2 },
+        },
+        edges: {
+          endpoints: new Uint32Array(0),
+          widths: null,
+          endpointSizes: null,
+          indices: new Uint32Array(0),
+          versions: { topology: 0 },
+        },
+        nodeEdgeSources: {},
+      },
+      {
+        nodeAttribute: '$index',
+        edgeAttribute: null,
+        trackDepth: false,
+      },
+      {
+        size: { width: 1, height: 1, devicePixelRatio: 1 },
+        cameraUniforms: {
+          mode: '2d',
+          viewProjection: new Float32Array(16),
+          view: new Float32Array(16),
+          position: [0, 0, 1],
+          up: [0, 1, 0],
+          right: [1, 0, 0],
+          viewport: { width: 1, height: 1, devicePixelRatio: 1 },
+        },
+        useQuads: false,
+        nodeSizeUniform: true,
+        nodeOutlineUniform: true,
+        edgeWidthUniform: true,
+        edgeEndpointSizeUniform: true,
+        nodeCfg: { size: { value: 1 }, outline: { value: 0 } },
+        edgeCfg: { width: { value: [1, 1] }, endpointSize: { value: [1, 1] } },
+        edgeVariant: null,
+      },
+    );
+
+    assert.ok(result);
+  } finally {
+    if (originalGpuBufferUsage === undefined) {
+      delete globalThis.GPUBufferUsage;
+    } else {
+      globalThis.GPUBufferUsage = originalGpuBufferUsage;
+    }
+  }
+});
+
 test('WebGLAttributeRenderer does not eagerly update sparse encoded APIs', () => {
   const calls = {
     sparseDefineNode: 0,

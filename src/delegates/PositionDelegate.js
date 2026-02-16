@@ -118,14 +118,22 @@ export class PositionDelegate {
     this._context = merged;
     const network = merged.network ?? null;
     if (!network) return false;
-    const snapshot = this.captureNetworkVersionSnapshot(network);
-    const versionKey = this._snapshotKey(snapshot);
     const previous = this._versionSnapshot;
-    const indicesReplaced = Boolean(
-      previous
-      && (previous.nodeIndicesRef !== snapshot.nodeIndicesRef || previous.edgeIndicesRef !== snapshot.edgeIndicesRef),
-    );
-    const changed = this._topologyDirty || versionKey !== this._versionKey || indicesReplaced;
+    let snapshot = context.versionSnapshot ?? null;
+    if (!snapshot) {
+      try {
+        snapshot = this.captureNetworkVersionSnapshot(network);
+      } catch (_) {
+        return false;
+      }
+    }
+    const lostNodeIndices = previous?.nodeIndicesRef && !snapshot?.nodeIndicesRef;
+    const lostEdgeIndices = previous?.edgeIndicesRef && !snapshot?.edgeIndicesRef;
+    if (!this._topologyDirty && (lostNodeIndices || lostEdgeIndices)) {
+      return false;
+    }
+    const versionKey = this._snapshotKey(snapshot);
+    const changed = this._topologyDirty || versionKey !== this._versionKey;
     if (!changed) return false;
     this.synchronizeTopology({
       ...merged,

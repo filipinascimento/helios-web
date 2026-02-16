@@ -124,6 +124,45 @@ test('positions() configures delegation and propagates to graph layer', () => {
   assert.equal(graphLayerState.delegate, null);
 });
 
+test('snapshotDelegatePositions() returns delegate snapshots for inspection', async () => {
+  const { helios } = createPositionHarness([0, 0, 0, 1, 1, 0]);
+  const expected = new Float32Array([4, 5, 0, 6, 7, 0]);
+  class SnapshotDelegate extends PositionDelegate {
+    synchronizeTopology() {}
+    getNodePositionView() { return null; }
+    snapshotNodePositions() { return new Float32Array(expected); }
+  }
+  const delegate = new SnapshotDelegate();
+  helios.positions({ source: 'delegate', delegate });
+
+  const snapshot = await helios.snapshotDelegatePositions();
+  assert.ok(snapshot instanceof Float32Array);
+  assert.deepEqual(Array.from(snapshot), Array.from(expected));
+});
+
+test('syncDelegatePositionsToNetwork() copies delegate positions into network buffers', async () => {
+  const harness = createPositionHarness([0, 0, 0, 1, 1, 0]);
+  const { helios, positions, getDirtyCalls, getGeometryCalls, getRenderCalls } = harness;
+  const next = new Float32Array([10, 20, 0, 30, 40, 0]);
+  class SyncDelegate extends PositionDelegate {
+    synchronizeTopology() {}
+    getNodePositionView() { return null; }
+    snapshotNodePositions() { return new Float32Array(next); }
+  }
+  const delegate = new SyncDelegate();
+  helios.positions({ source: 'delegate', delegate });
+  const dirtyBefore = getDirtyCalls();
+  const geometryBefore = getGeometryCalls();
+  const renderBefore = getRenderCalls();
+
+  const wrote = await helios.syncDelegatePositionsToNetwork();
+  assert.equal(wrote, true);
+  almostEqualArray(Array.from(positions), Array.from(next));
+  assert.equal(getDirtyCalls(), dirtyBefore + 1);
+  assert.equal(getGeometryCalls(), geometryBefore + 1);
+  assert.equal(getRenderCalls(), renderBefore + 1);
+});
+
 test('interpolation() exposes and updates interpolation settings', () => {
   const { helios, graphLayerState, getRenderCalls } = createPositionHarness([0, 0, 0]);
 
@@ -389,5 +428,41 @@ test('gpu interpolation keeps target positions untouched and propagates shader s
   assert.equal(graphLayerState.interpolation.enabled, true);
 
   assert.equal(helios._runInterpolationRenderPump(220), false);
+  assert.equal(graphLayerState.interpolation.enabled, false);
+});
+
+test('layout updates skip CPU position snapshots when delegate source is active', () => {
+  const { helios, graphLayerState } = createPositionHarness([
+    10, 10, 0,
+    20, 20, 0,
+  ]);
+
+  class GpuDelegate extends PositionDelegate {
+    synchronizeTopology() {}
+    getGpuPositionResource() {
+      return { buffer: { label: 'gpu-pos' }, count: 2, version: 1 };
+    }
+    getNodePositionView() {
+      throw new Error('CPU position view should not be requested for GPU delegates.');
+    }
+  }
+
+  const delegate = new GpuDelegate();
+  helios.positions({ source: 'delegate', delegate });
+  helios._interpolationConfig = {
+    enabled: true,
+    mode: 'gpu',
+    durationMs: 100,
+    easing: 'linear',
+    smoothing: 6,
+    minDisplacementRatio: 0,
+  };
+  helios._snapshotNodePositions = () => {
+    throw new Error('Layout update should not snapshot CPU positions while delegate source is active.');
+  };
+
+  helios._handleLayoutUpdate({ timestamp: 100 });
+  assert.equal(helios._interpolationRuntime.active, false);
+  assert.equal(helios._interpolationRuntime.lastRenderedPositions, null);
   assert.equal(graphLayerState.interpolation.enabled, false);
 });

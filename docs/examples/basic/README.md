@@ -18,6 +18,8 @@ For details on how the node colors and sizes are mapped (including the colormap 
 - The example now defaults to a 3D-ready force-directed layout with Barnes–Hut repulsion and damping safeguards.
 - Pass `?layout=jitter` to switch back to the legacy jitter layout.
 - Pass `?layout=d3force3d` to use the d3-force-3d worker layout.
+- Pass `?layout=gpuforce` to run the WebGPU force layout via a position delegate.
+- In DevTools, use `await window.__snapshotDelegatePositions()` to inspect delegate positions, and `await window.__syncDelegatePositionsToNetwork()` to copy delegate positions into network buffers.
 - Pass `?mode=3d` to enable the depth axis; otherwise it runs in 2D.
 - Pass `?edgeTransparency=weighted` to enable weighted blended transparency for edges (falls back to alpha if unsupported; implemented as an offscreen accumulate + resolve pass).
 - Pass `?interpolationDurationMode=adaptive` (default) to average recent layout update intervals for interpolation timing.

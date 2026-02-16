@@ -964,11 +964,13 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
         backend: 'webgpu',
         device: this.device?.device ?? null,
       });
-      const resolvedNodePositions = positionOverride?.view ?? nodePositions?.view ?? null;
+      const resolvedNodePositionBuffer = positionOverride?.webgpuBuffer ?? null;
+      const resolvedNodePositions = resolvedNodePositionBuffer
+        ? (positionOverride?.view ?? null)
+        : (positionOverride?.view ?? nodePositions?.view ?? null);
       const resolvedNodePositionVersion = Number.isFinite(positionOverride?.version)
         ? Number(positionOverride.version)
         : (nodePositions?.version ?? 0);
-      const resolvedNodePositionBuffer = positionOverride?.webgpuBuffer ?? null;
 
       const nodeEdgeSources = {
         color: resolveNodeSource(edgeNodeAttributes?.color, 4, 'edge color source'),

@@ -52,7 +52,7 @@ html, body {
 Key entry points:
 
 - `Helios` – prepares layers, connects the scheduler, kick-starts rendering
-- `StaticLayout`, `WorkerLayout`, `D3Force3DLayout` – ready-to-use layout implementations
+- `StaticLayout`, `WorkerLayout`, `D3Force3DLayout`, `GpuForceLayout` – ready-to-use layout implementations
 - `Mapper` – flexible mapping utility for visual channels; mapped values land in
   sparse attributes
 - `HeliosUI` – optional HTML overlay UI (panel manager + attribute bindings)

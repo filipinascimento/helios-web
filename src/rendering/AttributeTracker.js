@@ -3910,6 +3910,7 @@ export class WebGPUAttributeRenderer {
     const edgeTopology = edges.versions?.topology ?? 0;
 
     const nodePositionsView = nodes.positions ?? null;
+    const nodePositionsDirectBuffer = nodes.positionBuffer ?? null;
     const nodeSizesView = nodes.sizes ?? null;
     const nodeOutlineView = nodes.outlineWidths ?? null;
     const edgeEndpointsView = edges.endpoints ?? null;
@@ -3918,7 +3919,11 @@ export class WebGPUAttributeRenderer {
     const nodeWidthSourceView = sparse.nodeEdgeSources?.width?.view ?? nodeSizesView;
     const nodeEndpointSourceView = sparse.nodeEdgeSources?.endpointSize?.view ?? nodeSizesView;
 
-    if (((config.nodeAttribute && nodeCount > 0) || (config.edgeAttribute && edgeCount > 0)) && !nodePositionsView) {
+    if (
+      ((config.nodeAttribute && nodeCount > 0) || (config.edgeAttribute && edgeCount > 0))
+      && !nodePositionsView
+      && !nodePositionsDirectBuffer
+    ) {
       throw new Error('AttributeTracker: indirect WebGPU mode requires sparse node positions.');
     }
     if (config.nodeAttribute && nodeCount > 0 && !nodeSizeUniform && !nodeSizesView) {
@@ -3972,7 +3977,7 @@ export class WebGPUAttributeRenderer {
       : zeroStorage;
 
     const nodePositionsBuffer = ((config.nodeAttribute && nodeCount > 0) || (config.edgeAttribute && edgeCount > 0))
-      ? resolveStorage({
+      ? (nodePositionsDirectBuffer ?? resolveStorage({
         key: 'indirect:node:positions',
         version: nodes.versions?.positions ?? 0,
         topologyVersion: nodeTopology,
@@ -3982,7 +3987,7 @@ export class WebGPUAttributeRenderer {
         version: nodes.versions?.positions ?? 0,
         topologyVersion: nodeTopology,
         count: nodeCount,
-      }))
+      })))
       : zeroStorage;
 
     const nodeSizesBuffer = (config.nodeAttribute && !nodeSizeUniform && nodeCount > 0)

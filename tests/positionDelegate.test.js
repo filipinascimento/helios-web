@@ -125,3 +125,168 @@ test('GraphLayer calls delegate synchronization guard before reading resources',
   assert.ok(override?.view instanceof Float32Array);
   assert.ok(delegate.syncCount >= 1);
 });
+
+test('GraphLayer prefers GPU delegate resources without requesting CPU position views', () => {
+  class GpuBackedDelegate extends PositionDelegate {
+    constructor() {
+      super();
+      this.syncCount = 0;
+      this.cpuViewCalls = 0;
+      this.resource = {
+        buffer: { label: 'gpu-positions' },
+        count: 2,
+        version: 11,
+      };
+    }
+
+    synchronizeTopology() {
+      this.syncCount += 1;
+    }
+
+    getGpuPositionResource(context) {
+      this.ensureSynchronized(context);
+      return this.resource;
+    }
+
+    getNodePositionView(context) {
+      this.ensureSynchronized(context);
+      this.cpuViewCalls += 1;
+      return new Float32Array([0, 0, 0, 1, 1, 1]);
+    }
+  }
+
+  const { network } = createVersionedNetwork();
+  const delegate = new GpuBackedDelegate();
+  const graphLayer = new GraphLayer();
+  graphLayer.setPositionDelegate(delegate);
+  delegate.onAttach({ network });
+
+  const override = graphLayer.resolvePositionSourceOverride(network, { backend: 'webgpu' });
+  assert.equal(delegate.syncCount, 1);
+  assert.equal(delegate.cpuViewCalls, 0);
+  assert.equal(override?.webgpuBuffer, delegate.resource.buffer);
+  assert.equal(override?.count, 2);
+  assert.ok(Number.isFinite(override?.version));
+});
+
+test('GraphLayer can resolve delegate positions during buffer access without resync throws', () => {
+  class TrackingDelegate extends PositionDelegate {
+    constructor() {
+      super();
+      this.syncCount = 0;
+      this.view = null;
+    }
+
+    synchronizeTopology({ network }) {
+      this.syncCount += 1;
+      this.view = network?.getNodeAttributeBuffer?.('_helios_visuals_position')?.view ?? null;
+    }
+
+    getNodePositionView(context) {
+      this.ensureSynchronized(context);
+      return this.view;
+    }
+  }
+
+  let inBufferAccess = false;
+  const nodeIndices = new Uint32Array([0, 1]);
+  const edgeIndices = new Uint32Array([0]);
+  const positionView = new Float32Array([
+    0, 0, 0,
+    1, 1, 1,
+  ]);
+  const network = {
+    withBufferAccess: (fn) => {
+      inBufferAccess = true;
+      try {
+        return fn();
+      } finally {
+        inBufferAccess = false;
+      }
+    },
+    getTopologyVersions: () => ({ node: 1, edge: 1 }),
+    getNodeAttributeBuffer: (name) => {
+      if (name === '_helios_visuals_position') return { view: positionView, version: 1 };
+      if (name === '$index') return { version: 1 };
+      return null;
+    },
+    getEdgeAttributeBuffer: (name) => {
+      if (name === '$index') return { version: 1 };
+      return null;
+    },
+    get nodeIndices() {
+      if (inBufferAccess) {
+        throw new Error('Cannot perform nodeIndices during buffer access');
+      }
+      return nodeIndices;
+    },
+    get edgeIndices() {
+      if (inBufferAccess) {
+        throw new Error('Cannot perform edgeIndices during buffer access');
+      }
+      return edgeIndices;
+    },
+  };
+
+  const delegate = new TrackingDelegate();
+  const graphLayer = new GraphLayer();
+  graphLayer.setPositionDelegate(delegate);
+  delegate.onAttach({ network });
+  assert.equal(delegate.syncCount, 1);
+
+  const override = network.withBufferAccess(() => graphLayer.resolvePositionSourceOverride(network, { backend: 'webgpu' }));
+  assert.ok(override?.view instanceof Float32Array);
+  assert.equal(delegate.syncCount, 1);
+});
+
+test('PositionDelegate does not resynchronize on active-index reference churn when versions are unchanged', () => {
+  class TrackingDelegate extends PositionDelegate {
+    constructor() {
+      super();
+      this.syncCount = 0;
+      this.view = null;
+    }
+
+    synchronizeTopology({ network }) {
+      this.syncCount += 1;
+      this.view = network?.getNodeAttributeBuffer?.('_helios_visuals_position')?.view ?? null;
+    }
+
+    getNodePositionView(context) {
+      this.ensureSynchronized(context);
+      return this.view;
+    }
+  }
+
+  const positionView = new Float32Array([
+    0, 0, 0,
+    1, 1, 1,
+  ]);
+  const network = {
+    withBufferAccess: (fn) => fn(),
+    getTopologyVersions: () => ({ node: 1, edge: 1 }),
+    getNodeAttributeBuffer: (name) => {
+      if (name === '_helios_visuals_position') return { view: positionView, version: 1 };
+      if (name === '$index') return { version: 1 };
+      return null;
+    },
+    getEdgeAttributeBuffer: (name) => {
+      if (name === '$index') return { version: 1 };
+      return null;
+    },
+    get nodeIndices() {
+      return new Uint32Array([0, 1]);
+    },
+    get edgeIndices() {
+      return new Uint32Array([0]);
+    },
+  };
+
+  const delegate = new TrackingDelegate();
+  delegate.onAttach({ network });
+  assert.equal(delegate.syncCount, 1);
+
+  delegate.getNodePositionView({ network });
+  delegate.getNodePositionView({ network });
+  assert.equal(delegate.syncCount, 1);
+});

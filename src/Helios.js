@@ -3,6 +3,7 @@ import { LayerManager } from './layers/LayerManager.js';
 import { Scheduler } from './scheduler/Scheduler.js';
 import { StaticLayout, WorkerLayout } from './layouts/Layout.js';
 import { D3Force3DLayout } from './layouts/d3force3dLayoutWorker.js';
+import { GpuForceLayout } from './layouts/GpuForceLayout.js';
 import { createRenderer } from './rendering/createRenderer.js';
 import { AttributeTracker } from './rendering/AttributeTracker.js';
 import { PerformanceMonitor } from './utilities/PerformanceMonitor.js';
@@ -177,6 +178,19 @@ function resolveSeedBoundsForLayout(layoutOption, size, mode) {
 
   if (!layoutOption || isLayoutInstance(layoutOption)) return base;
   if (layoutOption?.type === 'worker') {
+    const opts = layoutOption.options ?? {};
+    const radius = Number.isFinite(opts.radius) ? Math.max(1, opts.radius) : 150;
+    const depth = Number.isFinite(opts.depth) ? Math.max(0, opts.depth) : 0;
+    const center = Array.isArray(opts.center) ? opts.center : [0, 0, 0];
+    return {
+      width: radius,
+      height: radius,
+      depth: safeMode === '3d' ? depth : 0,
+      mode: safeMode,
+      center,
+    };
+  }
+  if (layoutOption?.type === 'gpu-force' || layoutOption?.type === 'gpuforce') {
     const opts = layoutOption.options ?? {};
     const radius = Number.isFinite(opts.radius) ? Math.max(1, opts.radius) : 150;
     const depth = Number.isFinite(opts.depth) ? Math.max(0, opts.depth) : 0;
@@ -1831,7 +1845,9 @@ export class Helios extends EventTarget {
       ? Math.max(1, Number(payload.layoutElapsedMs))
       : Math.max(1, now - previousTargetAt);
     this._recordLayoutIntervalSample(layoutElapsedMs, now);
-    const targetPositions = this._snapshotNodePositions();
+    const delegateSourceActive = this._positionsConfig?.source === 'delegate'
+      && Boolean(this._positionsConfig?.delegate);
+    const targetPositions = delegateSourceActive ? null : this._snapshotNodePositions();
     if (targetPositions && this._interpolationConfig?.enabled === true) {
       const { shouldInterpolate, mode, displacementRatio, durationMs } = this._prepareInterpolationRuntimeForTarget(
         targetPositions,
@@ -1849,14 +1865,14 @@ export class Helios extends EventTarget {
         durationMode: resolveInterpolationDurationMode(this._interpolationConfig),
         adaptiveDuration: this._interpolationConfig?.adaptiveDuration === true,
       });
-    } else if (targetPositions) {
+    } else if (targetPositions || delegateSourceActive) {
       const runtime = this._interpolationRuntime ?? {};
       runtime.active = false;
       runtime.factor = 1;
       runtime.lastTargetUpdateAt = now;
       runtime.layoutElapsedMs = layoutElapsedMs;
       runtime.effectiveDurationMs = this._resolveInterpolationDurationMs(now);
-      runtime.lastRenderedPositions = new Float32Array(targetPositions);
+      runtime.lastRenderedPositions = targetPositions ? new Float32Array(targetPositions) : null;
       runtime.sourcePositions = null;
       runtime.targetPositions = null;
       runtime.mixedPositions = null;
@@ -1891,13 +1907,7 @@ export class Helios extends EventTarget {
 
   _invokePositionDelegateHook(delegate, hookNames) {
     if (!delegate || !hookNames?.length) return;
-    const context = {
-      helios: this,
-      network: this.network,
-      visuals: this.visuals,
-      renderer: this.renderer ?? null,
-      scheduler: this.scheduler ?? null,
-    };
+    const context = this._buildPositionDelegateContext();
     for (const hookName of hookNames) {
       if (typeof delegate?.[hookName] !== 'function') continue;
       try {
@@ -1907,6 +1917,22 @@ export class Helios extends EventTarget {
       }
       return;
     }
+  }
+
+  _buildPositionDelegateContext(extra = {}) {
+    const renderer = this.renderer ?? null;
+    const rendererDevice = renderer?.device ?? null;
+    return {
+      helios: this,
+      network: this.network,
+      visuals: this.visuals,
+      renderer,
+      scheduler: this.scheduler ?? null,
+      backend: rendererDevice?.type ?? null,
+      device: rendererDevice?.device ?? null,
+      gl: rendererDevice?.gl ?? null,
+      ...extra,
+    };
   }
 
   _validatePositionDelegate(delegate) {
@@ -2202,6 +2228,15 @@ export class Helios extends EventTarget {
   createLayout(layoutOption) {
     if (isLayoutInstance(layoutOption)) {
       return layoutOption;
+    }
+    if (layoutOption?.type === 'gpu-force' || layoutOption?.type === 'gpuforce') {
+      const gpuOptions = {
+        ...(layoutOption.options ?? {}),
+        mode: this.options.mode ?? '2d',
+        helios: this,
+      };
+      this.debug.log('layout', 'Using GPU force layout', { ...gpuOptions, helios: undefined });
+      return new GpuForceLayout(this.network, this.visuals, gpuOptions);
     }
     if (layoutOption?.type === 'worker') {
       const workerOptions = { ...(layoutOption.options ?? {}), mode: this.options.mode ?? '2d' };
@@ -2576,6 +2611,41 @@ export class Helios extends EventTarget {
     this.scheduler.requestGeometry();
     this.scheduler.requestRender();
     return this;
+  }
+
+  async snapshotDelegatePositions(options = {}) {
+    const delegate = options?.delegate ?? this._positionsConfig?.delegate ?? this._activePositionDelegate ?? null;
+    if (!delegate) return null;
+    const context = this._buildPositionDelegateContext(options);
+    if (typeof delegate.snapshotNodePositions === 'function') {
+      return delegate.snapshotNodePositions(context);
+    }
+    let view = null;
+    if (typeof delegate.getNodePositionView === 'function') {
+      view = delegate.getNodePositionView(context);
+    } else if (typeof delegate.getPositionView === 'function') {
+      view = delegate.getPositionView(context);
+    }
+    if (!view || !Number.isFinite(view.length) || view.length <= 0) return null;
+    return new Float32Array(view);
+  }
+
+  async syncDelegatePositionsToNetwork(options = {}) {
+    const delegate = options?.delegate ?? this._positionsConfig?.delegate ?? this._activePositionDelegate ?? null;
+    if (!delegate) return false;
+    const context = this._buildPositionDelegateContext(options);
+    let wrote = false;
+    if (typeof delegate.synchronizeNodePositionsToNetwork === 'function') {
+      wrote = await delegate.synchronizeNodePositionsToNetwork(context);
+    } else {
+      const snapshot = await this.snapshotDelegatePositions({ ...options, delegate });
+      wrote = this._writeNodePositions(snapshot);
+    }
+    if (!wrote) return false;
+    this.visuals?.markPositionsDirty?.();
+    this.scheduler?.requestGeometry?.();
+    this.scheduler?.requestRender?.();
+    return true;
   }
 
   interpolation(options) {

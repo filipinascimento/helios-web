@@ -21,6 +21,7 @@ function resolveLayoutType(params) {
   if (normalized === 'none' || normalized === 'static') return 'none';
   if (normalized === 'jitter' || normalized === 'legacy') return 'jitter';
   if (normalized === 'd3force3d' || normalized === 'd3-force-3d') return 'd3force3d';
+  if (normalized === 'gpuforce' || normalized === 'gpu-force' || normalized === 'gpu') return 'gpuforce';
   return 'force3d';
 }
 
@@ -159,6 +160,28 @@ export async function bootstrapDemoFixture() {
       projection: 'perspective',
       layout: layoutType === 'none'
         ? { type: 'static', options: { bounds: [-500, -500, 500, 500] } }
+        : layoutType === 'gpuforce'
+          ? {
+              type: 'gpu-force',
+              options: {
+                mode,
+                center: [0, 0, 0],
+                radius: 220,
+                depth: mode === '3d' ? 140 : 0,
+                sampleCount2D: 64,
+                sampleCount3D: 96,
+                maxNeighborsPerNode: 64,
+                outputScale: 6,
+                kRepulsion: 0.07,
+                kAttraction: 0.62,
+                kGravity: 0.00035,
+                eta: 0.04,
+                damping: 0.92,
+                maxStep: 2.5,
+                alphaDecay: 0.001,
+                updateIntervalMs: 0,
+              },
+          }
         : layoutType === 'd3force3d'
           ? {
               type: 'd3force3d',
