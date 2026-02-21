@@ -69,6 +69,88 @@ declare module 'helios-network' {
     modularity: number;
   }
 
+  export enum DimensionDifferenceMethod {
+    Forward = 0,
+    Backward = 1,
+    Central = 2,
+    LeastSquares = 3,
+  }
+
+  export interface DimensionOptions {
+    maxLevel?: number;
+    method?: DimensionDifferenceMethod | 'forward' | 'backward' | 'central' | 'centered' | 'leastsquares' | 'fw' | 'bk' | 'ce' | 'ls';
+    order?: number;
+    nodes?: ArrayLike<number> | null;
+  }
+
+  export interface NodeDimensionResult {
+    capacity: Uint32Array;
+    dimension: Float32Array;
+    maxLevel: number;
+    method: number;
+    order: number;
+  }
+
+  export interface DimensionResult {
+    selectedCount: number;
+    averageCapacity: Float32Array;
+    globalDimension: Float32Array;
+    averageNodeDimension: Float32Array;
+    nodeDimensionStddev: Float32Array;
+    maxLevel: number;
+    method: number;
+    order: number;
+  }
+
+  export interface DimensionProgress {
+    phase: number;
+    progressCurrent: number;
+    progressTotal: number;
+    processedNodes: number;
+    nodeCount: number;
+    maxLevel: number;
+    method: number;
+    order: number;
+  }
+
+  export interface DimensionStepOptions {
+    budget?: number;
+    timeoutMs?: number | null;
+    chunkBudget?: number;
+  }
+
+  export interface DimensionSession {
+    getProgress(): DimensionProgress;
+    step(options?: DimensionStepOptions): DimensionProgress;
+    run(options?: {
+      stepOptions?: DimensionStepOptions;
+      yield?: (progress?: DimensionProgress) => void | Promise<void>;
+      yieldMs?: number;
+      onProgress?: (progress: DimensionProgress) => void;
+      signal?: AbortSignal;
+      maxIterations?: number;
+    }): Promise<DimensionProgress>;
+    finalize(options?: {
+      outNodeMaxDimensionAttribute?: string | null;
+      outNodeDimensionLevelsAttribute?: string | null;
+      dimensionLevelsEncoding?: 'vector' | 'string' | 'array' | 'numeric' | 'json' | 'csv';
+      dimensionLevelsStringPrecision?: number;
+    }): DimensionResult;
+    isComplete(): boolean;
+    isFailed(): boolean;
+    isFinalized(): boolean;
+    cancel(reason?: string): void;
+    dispose(): void;
+  }
+
+  export interface DimensionSessionOptions extends DimensionOptions {
+    captureNodeDimensionProfiles?: boolean;
+    outNodeMaxDimensionAttribute?: string | null;
+    outNodeDimensionLevelsAttribute?: string | null;
+    dimensionLevelsEncoding?: 'vector' | 'string' | 'array' | 'numeric' | 'json' | 'csv';
+    dimensionLevelsStringPrecision?: number;
+  }
+
   export interface LeidenSession {
     getProgress(): LeidenProgress;
     isComplete(): boolean;
@@ -146,6 +228,9 @@ declare module 'helios-network' {
 
     leidenModularity(options?: LeidenOptions): LeidenResult;
     createLeidenSession(options?: LeidenOptions): LeidenSession;
+    measureNodeDimension(node: number, options?: DimensionOptions): NodeDimensionResult;
+    measureDimension(options?: DimensionOptions): DimensionResult;
+    createDimensionSession(options?: DimensionSessionOptions): DimensionSession;
 
     readonly nodeIndices: Uint32Array;
     readonly edgeIndices: Uint32Array;

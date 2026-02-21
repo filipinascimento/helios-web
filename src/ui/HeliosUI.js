@@ -1076,6 +1076,33 @@ export class HeliosUI {
       el.disabled = Boolean(disabled);
     };
 
+    const normalizeDimensionMethod = (value) => {
+      const normalized = String(value ?? '').trim().toLowerCase();
+      if (normalized === 'forward' || normalized === 'fw') return 'forward';
+      if (normalized === 'backward' || normalized === 'bk') return 'backward';
+      if (normalized === 'central' || normalized === 'centered' || normalized === 'ce') return 'central';
+      return 'leastsquares';
+    };
+
+    const maxOrderForDimensionMethod = (method) => {
+      const normalized = normalizeDimensionMethod(method);
+      if (normalized === 'forward' || normalized === 'backward') return 6;
+      if (normalized === 'central') return 4;
+      return 32;
+    };
+
+    const maxFiniteArrayValue = (values) => {
+      if (!values || typeof values.length !== 'number') return NaN;
+      let max = Number.NEGATIVE_INFINITY;
+      for (let i = 0; i < values.length; i += 1) {
+        const v = Number(values[i]);
+        if (Number.isFinite(v) && v > max) {
+          max = v;
+        }
+      }
+      return Number.isFinite(max) ? max : NaN;
+    };
+
     // --- Leiden --------------------------------------------------------------
     const leiden = document.createElement('div');
 
@@ -1283,16 +1310,274 @@ export class HeliosUI {
     leidenInnerStack.add({ id: 'metrics-leiden-advanced', title: 'Advanced', collapsed: true, content: advanced });
     leidenInnerStack.element.style.marginTop = '6px';
 
-    // --- State + wiring ------------------------------------------------------
-    let running = false;
-    let abortController = null;
+    // --- Dimensionality ------------------------------------------------------
+    const dimension = document.createElement('div');
 
-    const setStatus = (text) => {
-      const next = text ?? '';
-      statusEl.textContent = next;
+    const dimensionMethodSelect = document.createElement('select');
+    dimensionMethodSelect.className = 'helios-ui-select';
+    dimensionMethodSelect.dataset.testid = 'metrics-dimension-method';
+    const dimensionMethodValue = normalizeDimensionMethod(options?.dimension?.method ?? 'leastsquares');
+    for (const entry of [
+      { value: 'leastsquares', label: 'Least Squares (LS)' },
+      { value: 'central', label: 'Centered Difference (CE)' },
+      { value: 'backward', label: 'Backward Difference (BK)' },
+      { value: 'forward', label: 'Forward Difference (FW)' },
+    ]) {
+      const opt = document.createElement('option');
+      opt.value = entry.value;
+      opt.textContent = entry.label;
+      dimensionMethodSelect.appendChild(opt);
+    }
+    dimensionMethodSelect.value = dimensionMethodValue;
+
+    const dimensionMaxLevelInput = document.createElement('input');
+    dimensionMaxLevelInput.type = 'number';
+    dimensionMaxLevelInput.className = 'helios-ui-number';
+    dimensionMaxLevelInput.value = String(options?.dimension?.maxLevel ?? 12);
+    dimensionMaxLevelInput.dataset.testid = 'metrics-dimension-maxLevel';
+
+    const dimensionOrderInput = document.createElement('input');
+    dimensionOrderInput.type = 'number';
+    dimensionOrderInput.className = 'helios-ui-number';
+    dimensionOrderInput.value = String(options?.dimension?.order ?? 2);
+    dimensionOrderInput.dataset.testid = 'metrics-dimension-order';
+
+    const dimensionOutMaxAttrInput = document.createElement('input');
+    dimensionOutMaxAttrInput.type = 'text';
+    dimensionOutMaxAttrInput.className = 'helios-ui-text';
+    dimensionOutMaxAttrInput.placeholder = 'dimension_max';
+    dimensionOutMaxAttrInput.value = String(options?.dimension?.outNodeMaxDimensionAttribute ?? 'dimension_max');
+    dimensionOutMaxAttrInput.dataset.testid = 'metrics-dimension-outMaxAttr';
+
+    const dimensionOutLevelsAttrInput = document.createElement('input');
+    dimensionOutLevelsAttrInput.type = 'text';
+    dimensionOutLevelsAttrInput.className = 'helios-ui-text';
+    dimensionOutLevelsAttrInput.placeholder = 'dimension_levels';
+    dimensionOutLevelsAttrInput.value = String(options?.dimension?.outNodeDimensionLevelsAttribute ?? '');
+    dimensionOutLevelsAttrInput.dataset.testid = 'metrics-dimension-outLevelsAttr';
+
+    const dimensionSaveLevelsCheckbox = document.createElement('input');
+    dimensionSaveLevelsCheckbox.type = 'checkbox';
+    dimensionSaveLevelsCheckbox.dataset.testid = 'metrics-dimension-saveLevels';
+    dimensionSaveLevelsCheckbox.checked = Boolean(
+      options?.dimension?.saveLevelsDistribution
+      ?? options?.dimension?.saveNodeDimensionLevels
+      ?? options?.dimension?.outNodeDimensionLevelsAttribute
+    );
+
+    const dimensionSaveLevelsWrap = document.createElement('label');
+    dimensionSaveLevelsWrap.style.display = 'inline-flex';
+    dimensionSaveLevelsWrap.style.alignItems = 'center';
+    dimensionSaveLevelsWrap.style.gap = '6px';
+    const dimensionSaveLevelsText = document.createElement('span');
+    dimensionSaveLevelsText.textContent = 'Write Levels Distribution';
+    dimensionSaveLevelsWrap.appendChild(dimensionSaveLevelsCheckbox);
+    dimensionSaveLevelsWrap.appendChild(dimensionSaveLevelsText);
+
+    const dimensionLevelsEncodingSelect = document.createElement('select');
+    dimensionLevelsEncodingSelect.className = 'helios-ui-select';
+    dimensionLevelsEncodingSelect.dataset.testid = 'metrics-dimension-levelsEncoding';
+    for (const entry of [
+      { value: 'vector', label: 'Vector (Float)' },
+      { value: 'string', label: 'String (JSON)' },
+    ]) {
+      const opt = document.createElement('option');
+      opt.value = entry.value;
+      opt.textContent = entry.label;
+      dimensionLevelsEncodingSelect.appendChild(opt);
+    }
+    const initialLevelsEncoding = String(options?.dimension?.dimensionLevelsEncoding ?? 'vector').trim().toLowerCase();
+    dimensionLevelsEncodingSelect.value = initialLevelsEncoding === 'string' ? 'string' : 'vector';
+
+    const dimensionLevelsPrecisionInput = document.createElement('input');
+    dimensionLevelsPrecisionInput.type = 'number';
+    dimensionLevelsPrecisionInput.className = 'helios-ui-number';
+    dimensionLevelsPrecisionInput.min = '0';
+    dimensionLevelsPrecisionInput.max = '12';
+    dimensionLevelsPrecisionInput.step = '1';
+    dimensionLevelsPrecisionInput.value = String(options?.dimension?.dimensionLevelsStringPrecision ?? 6);
+    dimensionLevelsPrecisionInput.dataset.testid = 'metrics-dimension-levelsPrecision';
+
+    const dimensionActionWrap = document.createElement('div');
+    dimensionActionWrap.style.display = 'inline-flex';
+    dimensionActionWrap.style.alignItems = 'center';
+    dimensionActionWrap.style.gap = '6px';
+
+    const dimensionCalcButton = document.createElement('button');
+    dimensionCalcButton.type = 'button';
+    dimensionCalcButton.className = 'helios-ui-button';
+    dimensionCalcButton.textContent = 'Calculate';
+    dimensionCalcButton.dataset.testid = 'metrics-dimension-calc';
+
+    const dimensionCancelButton = document.createElement('button');
+    dimensionCancelButton.type = 'button';
+    dimensionCancelButton.className = 'helios-ui-button';
+    dimensionCancelButton.textContent = 'Cancel';
+    dimensionCancelButton.dataset.testid = 'metrics-dimension-cancel';
+    dimensionCancelButton.disabled = true;
+
+    dimensionActionWrap.appendChild(dimensionCalcButton);
+    dimensionActionWrap.appendChild(dimensionCancelButton);
+
+    const dimensionStatusEl = document.createElement('div');
+    dimensionStatusEl.className = 'helios-ui-label__hint';
+    dimensionStatusEl.dataset.testid = 'metrics-dimension-status';
+    dimensionStatusEl.textContent = '';
+
+    const { row: dimensionActionsRow } = createAlignedRow({
+      title: 'Dimensionality',
+      hint: 'Run multiscale dimension measurement with incremental progress',
+      controls: dimensionActionWrap,
+    });
+    dimension.appendChild(dimensionActionsRow);
+
+    const { row: dimensionMethodRow } = createAlignedRow({
+      title: 'Method',
+      hint: 'Dimension estimator: LS, CE, BK, or FW',
+      controls: dimensionMethodSelect,
+    });
+    dimension.appendChild(dimensionMethodRow);
+
+    const dimensionMaxLevelRow = createLinearSliderRow({
+      title: 'Max Level',
+      hint: 'Largest concentric geodesic level r',
+      valueInput: dimensionMaxLevelInput,
+      range: { min: 1, max: 128 },
+      step: 1,
+    });
+    dimension.appendChild(dimensionMaxLevelRow.row);
+
+    const dimensionOrderRow = createLinearSliderRow({
+      title: 'Order',
+      hint: 'Estimator order (LS window order or finite-difference order)',
+      valueInput: dimensionOrderInput,
+      range: { min: 1, max: 32 },
+      step: 1,
+    });
+    dimension.appendChild(dimensionOrderRow.row);
+
+    const dimensionStats = document.createElement('div');
+    dimensionStats.className = 'helios-ui-stats';
+    const dimensionGlobalMaxValue = makeValue('—');
+    dimensionGlobalMaxValue.dataset.testid = 'metrics-dimension-globalMax';
+    const dimensionSelectedCountValue = makeValue('—');
+    dimensionSelectedCountValue.dataset.testid = 'metrics-dimension-selectedCount';
+    const dimensionElapsedValue = makeValue('—');
+    dimensionElapsedValue.dataset.testid = 'metrics-dimension-elapsed';
+
+    dimensionStats.appendChild(createStat('Global Dmax', dimensionGlobalMaxValue).stat);
+    dimensionStats.appendChild(createStat('Nodes', dimensionSelectedCountValue).stat);
+    dimensionStats.appendChild(createStat('Elapsed', dimensionElapsedValue).stat);
+    dimensionStats.style.marginTop = '2px';
+
+    const dimensionProgressWrap = document.createElement('div');
+    dimensionProgressWrap.style.display = 'grid';
+    dimensionProgressWrap.style.gridTemplateColumns = 'minmax(0, 1fr) auto';
+    dimensionProgressWrap.style.columnGap = '8px';
+    dimensionProgressWrap.style.rowGap = '2px';
+    dimensionProgressWrap.style.alignItems = 'center';
+    dimensionProgressWrap.style.width = '100%';
+
+    const dimensionProgressEl = document.createElement('progress');
+    dimensionProgressEl.className = 'helios-ui-progress';
+    dimensionProgressEl.max = 1;
+    dimensionProgressEl.value = 0;
+    dimensionProgressEl.dataset.testid = 'metrics-dimension-progress';
+
+    const dimensionProgressPct = makeValue('0%');
+    dimensionProgressPct.dataset.testid = 'metrics-dimension-progressPct';
+    dimensionProgressWrap.appendChild(dimensionProgressEl);
+    dimensionProgressWrap.appendChild(dimensionProgressPct);
+
+    dimensionStatusEl.style.gridColumn = '1 / -1';
+    dimensionStatusEl.style.marginTop = '0px';
+    dimensionStatusEl.style.fontSize = '10px';
+    dimensionStatusEl.style.lineHeight = '1.1';
+    dimensionStatusEl.style.whiteSpace = 'nowrap';
+    dimensionStatusEl.style.overflow = 'hidden';
+    dimensionStatusEl.style.textOverflow = 'ellipsis';
+    dimensionStatusEl.style.maxWidth = '100%';
+    dimensionStatusEl.style.minWidth = '0';
+    dimensionProgressWrap.appendChild(dimensionStatusEl);
+
+    const { row: dimensionProgressRow } = createAlignedRow({
+      title: 'Progress',
+      hint: 'Incremental progress while measuring selected nodes',
+      controls: dimensionProgressWrap,
+    });
+    dimension.appendChild(dimensionProgressRow);
+
+    dimension.appendChild(dimensionStats);
+    dimensionStats.style.marginBottom = '8px';
+
+    const dimensionAdvanced = document.createElement('div');
+    dimensionAdvanced.appendChild(createAlignedRow({
+      title: 'Output Dmax',
+      hint: 'Writes maximum local dimension per node (Float, dim 1)',
+      controls: dimensionOutMaxAttrInput,
+    }).row);
+    dimensionAdvanced.appendChild(createAlignedRow({
+      title: 'Save Levels',
+      hint: 'Enable writing the local dimension distribution across concentric levels',
+      controls: dimensionSaveLevelsWrap,
+    }).row);
+    dimensionAdvanced.appendChild(createAlignedRow({
+      title: 'Output Levels',
+      hint: 'Optional full per-level local dimension profile per node',
+      controls: dimensionOutLevelsAttrInput,
+    }).row);
+    dimensionAdvanced.appendChild(createAlignedRow({
+      title: 'Levels Encoding',
+      hint: 'Vector writes Float dimension=maxLevel+1; String writes JSON array string',
+      controls: dimensionLevelsEncodingSelect,
+    }).row);
+
+    const dimensionPrecisionRow = createLinearSliderRow({
+      title: 'String Precision',
+      hint: 'Applied only when Levels Encoding is String',
+      valueInput: dimensionLevelsPrecisionInput,
+      range: { min: 0, max: 12 },
+      step: 1,
+    });
+    dimensionAdvanced.appendChild(dimensionPrecisionRow.row);
+
+    const dimensionYieldMsInput = document.createElement('input');
+    dimensionYieldMsInput.type = 'number';
+    dimensionYieldMsInput.className = 'helios-ui-number';
+    dimensionYieldMsInput.value = String(options?.dimension?.worker?.yieldMs ?? options?.worker?.yieldMs ?? 0);
+    dimensionYieldMsInput.dataset.testid = 'metrics-dimension-yieldMs';
+
+    const dimensionTimeoutMsInput = document.createElement('input');
+    dimensionTimeoutMsInput.type = 'number';
+    dimensionTimeoutMsInput.className = 'helios-ui-number';
+    dimensionTimeoutMsInput.value = String(options?.dimension?.worker?.timeoutMs ?? options?.worker?.timeoutMs ?? 60);
+    dimensionTimeoutMsInput.dataset.testid = 'metrics-dimension-timeoutMs';
+
+    const dimensionChunkBudgetInput = document.createElement('input');
+    dimensionChunkBudgetInput.type = 'number';
+    dimensionChunkBudgetInput.className = 'helios-ui-number';
+    dimensionChunkBudgetInput.value = String(options?.dimension?.worker?.chunkBudget ?? options?.worker?.chunkBudget ?? 200);
+    dimensionChunkBudgetInput.dataset.testid = 'metrics-dimension-chunkBudget';
+
+    dimensionAdvanced.appendChild(createLinearSliderRow({ title: 'Yield (ms)', hint: 'Delay between step() calls', valueInput: dimensionYieldMsInput, range: { min: 0, max: 100 }, step: 1 }).row);
+    dimensionAdvanced.appendChild(createLinearSliderRow({ title: 'Timeout (ms)', hint: 'Max time per step() (slider shows 0–500ms suggestion)', valueInput: dimensionTimeoutMsInput, range: { min: 0, max: 500 }, step: 1, inputMin: 0, inputMax: null, clampInput: false }).row);
+    dimensionAdvanced.appendChild(createLinearSliderRow({ title: 'Chunk Budget', hint: 'Nodes processed per step() chunk', valueInput: dimensionChunkBudgetInput, range: { min: 1, max: 10_000 }, step: 1 }).row);
+
+    const dimensionInnerStack = new PanelStack();
+    dimensionInnerStack.add({ id: 'metrics-dimension-advanced', title: 'Advanced', collapsed: true, content: dimensionAdvanced });
+    dimensionInnerStack.element.style.marginTop = '6px';
+
+    // --- State + wiring ------------------------------------------------------
+    let leidenRunning = false;
+    let leidenAbortController = null;
+    let dimensionRunning = false;
+    let dimensionAbortController = null;
+
+    const setLeidenStatus = (text) => {
+      statusEl.textContent = text ?? '';
     };
 
-    const setProgress = (current, total) => {
+    const setLeidenProgress = (current, total) => {
       if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(current) || current < 0) {
         progressEl.removeAttribute('value');
         progressPct.textContent = '—';
@@ -1303,24 +1588,86 @@ export class HeliosUI {
       progressPct.textContent = `${Math.round(pct * 100)}%`;
     };
 
-    const setRunning = (nextRunning) => {
-      running = Boolean(nextRunning);
-      setDisabled(calcButton, running);
-      setDisabled(cancelButton, !running);
-      setDisabled(weightSelect, running);
-      setDisabled(resolutionInput, running);
-      setDisabled(resolutionRow.slider, running);
-      setDisabled(seedInput, running);
-      setDisabled(seedRow.slider, running);
-      setDisabled(maxLevelsInput, running);
-      setDisabled(levelsRow.slider, running);
-      setDisabled(maxPassesInput, running);
-      setDisabled(passesRow.slider, running);
-      setDisabled(outAttributeInput, running);
-      setDisabled(yieldMsInput, running);
-      setDisabled(timeoutMsInput, running);
-      setDisabled(chunkBudgetInput, running);
+    const setLeidenRunning = (nextRunning) => {
+      leidenRunning = Boolean(nextRunning);
+      setDisabled(calcButton, leidenRunning);
+      setDisabled(cancelButton, !leidenRunning);
+      setDisabled(weightSelect, leidenRunning);
+      setDisabled(resolutionInput, leidenRunning);
+      setDisabled(resolutionRow.slider, leidenRunning);
+      setDisabled(seedInput, leidenRunning);
+      setDisabled(seedRow.slider, leidenRunning);
+      setDisabled(maxLevelsInput, leidenRunning);
+      setDisabled(levelsRow.slider, leidenRunning);
+      setDisabled(maxPassesInput, leidenRunning);
+      setDisabled(passesRow.slider, leidenRunning);
+      setDisabled(outAttributeInput, leidenRunning);
+      setDisabled(yieldMsInput, leidenRunning);
+      setDisabled(timeoutMsInput, leidenRunning);
+      setDisabled(chunkBudgetInput, leidenRunning);
     };
+
+    const setDimensionStatus = (text) => {
+      dimensionStatusEl.textContent = text ?? '';
+    };
+
+    const setDimensionProgress = (current, total) => {
+      if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(current) || current < 0) {
+        dimensionProgressEl.removeAttribute('value');
+        dimensionProgressPct.textContent = '—';
+        return;
+      }
+      const pct = Math.max(0, Math.min(1, current / total));
+      dimensionProgressEl.value = pct;
+      dimensionProgressPct.textContent = `${Math.round(pct * 100)}%`;
+    };
+
+    const setDimensionRunning = (nextRunning) => {
+      dimensionRunning = Boolean(nextRunning);
+      setDisabled(dimensionCalcButton, dimensionRunning);
+      setDisabled(dimensionCancelButton, !dimensionRunning);
+      setDisabled(dimensionMethodSelect, dimensionRunning);
+      setDisabled(dimensionMaxLevelInput, dimensionRunning);
+      setDisabled(dimensionMaxLevelRow.slider, dimensionRunning);
+      setDisabled(dimensionOrderInput, dimensionRunning);
+      setDisabled(dimensionOrderRow.slider, dimensionRunning);
+      setDisabled(dimensionOutMaxAttrInput, dimensionRunning);
+      setDisabled(dimensionSaveLevelsCheckbox, dimensionRunning);
+      setDisabled(dimensionOutLevelsAttrInput, dimensionRunning || !dimensionSaveLevelsCheckbox.checked);
+      setDisabled(dimensionLevelsEncodingSelect, dimensionRunning || !dimensionSaveLevelsCheckbox.checked);
+      setDisabled(dimensionLevelsPrecisionInput, dimensionRunning || !dimensionSaveLevelsCheckbox.checked || dimensionLevelsEncodingSelect.value !== 'string');
+      setDisabled(dimensionPrecisionRow.slider, dimensionRunning || !dimensionSaveLevelsCheckbox.checked || dimensionLevelsEncodingSelect.value !== 'string');
+      setDisabled(dimensionYieldMsInput, dimensionRunning);
+      setDisabled(dimensionTimeoutMsInput, dimensionRunning);
+      setDisabled(dimensionChunkBudgetInput, dimensionRunning);
+    };
+
+    const refreshDimensionOrderLimits = () => {
+      const method = normalizeDimensionMethod(dimensionMethodSelect.value);
+      const methodMaxOrder = maxOrderForDimensionMethod(method);
+      dimensionOrderInput.max = String(methodMaxOrder);
+      dimensionOrderRow.slider.max = String(methodMaxOrder);
+      const currentOrder = Math.max(1, Number(dimensionOrderInput.value) || 1);
+      if (currentOrder > methodMaxOrder) {
+        dimensionOrderRow.write(methodMaxOrder);
+      } else {
+        dimensionOrderRow.write(currentOrder);
+      }
+    };
+
+    const refreshDimensionLevelEncodingControls = () => {
+      const saveLevels = Boolean(dimensionSaveLevelsCheckbox.checked);
+      const allowPrecision = saveLevels && dimensionLevelsEncodingSelect.value === 'string';
+      setDisabled(dimensionOutLevelsAttrInput, dimensionRunning || !saveLevels);
+      setDisabled(dimensionLevelsEncodingSelect, dimensionRunning || !saveLevels);
+      setDisabled(dimensionLevelsPrecisionInput, dimensionRunning || !allowPrecision);
+      setDisabled(dimensionPrecisionRow.slider, dimensionRunning || !allowPrecision);
+    };
+
+    dimensionMethodSelect.addEventListener('change', refreshDimensionOrderLimits);
+    dimensionOutLevelsAttrInput.addEventListener('input', refreshDimensionLevelEncodingControls);
+    dimensionSaveLevelsCheckbox.addEventListener('change', refreshDimensionLevelEncodingControls);
+    dimensionLevelsEncodingSelect.addEventListener('change', refreshDimensionLevelEncodingControls);
 
     const refreshEdgeWeightOptions = () => {
       const network = net();
@@ -1344,19 +1691,27 @@ export class HeliosUI {
 
     const refreshAll = () => {
       refreshEdgeWeightOptions();
+      refreshDimensionOrderLimits();
+      refreshDimensionLevelEncodingControls();
     };
 
-    const cancelRun = () => {
-      if (!abortController) return;
-      abortController.abort();
+    const cancelLeidenRun = () => {
+      if (!leidenAbortController) return;
+      leidenAbortController.abort();
     };
 
-    cancelButton.addEventListener('click', cancelRun);
+    const cancelDimensionRun = () => {
+      if (!dimensionAbortController) return;
+      dimensionAbortController.abort();
+    };
+
+    cancelButton.addEventListener('click', cancelLeidenRun);
+    dimensionCancelButton.addEventListener('click', cancelDimensionRun);
 
     const runLeiden = async () => {
       const network = net();
       if (!network || typeof network.createLeidenSession !== 'function') {
-        setStatus('Leiden is not available on this network');
+        setLeidenStatus('Leiden is not available on this network');
         return;
       }
 
@@ -1371,13 +1726,13 @@ export class HeliosUI {
       const chunkBudget = Math.max(1, Number(chunkBudgetInput.value) || 20000);
       const yieldMs = Math.max(0, Number(yieldMsInput.value) || 0);
 
-      setStatus('Starting…');
-      setProgress(0, 1);
+      setLeidenStatus('Starting…');
+      setLeidenProgress(0, 1);
       modularityValue.textContent = '—';
       communityValue.textContent = '—';
       elapsedValue.textContent = '—';
-      setRunning(true);
-      abortController = new AbortController();
+      setLeidenRunning(true);
+      leidenAbortController = new AbortController();
 
       const started = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
       try {
@@ -1391,26 +1746,26 @@ export class HeliosUI {
         });
 
         const result = await session.runWorker({
-          signal: abortController.signal,
+          signal: leidenAbortController.signal,
           yieldMs,
           stepOptions: { timeoutMs, chunkBudget },
           onProgress: (progress) => {
             if (!progress) return;
-            setProgress(progress.progressCurrent, progress.progressTotal);
+            setLeidenProgress(progress.progressCurrent, progress.progressTotal);
             const phase = progress.phase ?? 0;
             const level = progress.level ?? 0;
             const maxL = progress.maxLevels ?? 0;
             const pass = progress.pass ?? 0;
             const maxP = progress.maxPasses ?? 0;
             const communities = progress.communityCount ?? 0;
-            setStatus(`Running… phase ${phase} • level ${level}/${maxL} • pass ${pass}/${maxP} • k=${communities}`);
+            setLeidenStatus(`Running… phase ${phase} • level ${level}/${maxL} • pass ${pass}/${maxP} • k=${communities}`);
           },
         });
 
         const ended = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
         const elapsedMs = Math.max(0, ended - started);
-        setProgress(1, 1);
-        setStatus(`Done • wrote "${outNodeCommunityAttribute}"`);
+        setLeidenProgress(1, 1);
+        setLeidenStatus(`Done • wrote "${outNodeCommunityAttribute}"`);
         modularityValue.textContent = formatNumber(result?.modularity ?? NaN, 6);
         communityValue.textContent = String(result?.communityCount ?? '—');
         elapsedValue.textContent = `${Math.round(elapsedMs)} ms`;
@@ -1418,21 +1773,128 @@ export class HeliosUI {
         this.helios?.requestRender?.();
       } catch (error) {
         const message = error?.message ?? String(error);
-        const aborted = abortController?.signal?.aborted || message.toLowerCase().includes('aborted') || message.toLowerCase().includes('canceled');
+        const lower = message.toLowerCase();
+        const aborted = leidenAbortController?.signal?.aborted || lower.includes('aborted') || lower.includes('canceled');
         if (aborted) {
-          setStatus('Canceled');
+          setLeidenStatus('Canceled');
         } else {
-          setStatus(message);
+          setLeidenStatus(message);
         }
       } finally {
-        abortController = null;
-        setRunning(false);
+        leidenAbortController = null;
+        setLeidenRunning(false);
+      }
+    };
+
+    const runDimension = async () => {
+      const network = net();
+      if (!network || typeof network.createDimensionSession !== 'function') {
+        setDimensionStatus('Dimension session is not available on this network');
+        return;
+      }
+
+      refreshDimensionOrderLimits();
+      const method = normalizeDimensionMethod(dimensionMethodSelect.value);
+      const maxLevel = Math.max(0, Number(dimensionMaxLevelInput.value) || 0);
+      const methodMaxOrder = maxOrderForDimensionMethod(method);
+      const order = Math.min(methodMaxOrder, Math.max(1, Number(dimensionOrderInput.value) || 1));
+      dimensionOrderRow.write(order);
+
+      const outNodeMaxDimensionAttribute = dimensionOutMaxAttrInput.value.trim() || null;
+      const saveLevels = Boolean(dimensionSaveLevelsCheckbox.checked);
+      let outNodeDimensionLevelsAttribute = null;
+      if (saveLevels) {
+        outNodeDimensionLevelsAttribute = dimensionOutLevelsAttrInput.value.trim() || 'dimension_levels';
+        dimensionOutLevelsAttrInput.value = outNodeDimensionLevelsAttribute;
+      }
+      const dimensionLevelsEncoding = dimensionLevelsEncodingSelect.value === 'string' ? 'string' : 'vector';
+      const dimensionLevelsStringPrecision = Math.max(0, Math.min(12, Number(dimensionLevelsPrecisionInput.value) || 0));
+
+      const timeoutMs = Math.max(0, Number(dimensionTimeoutMsInput.value) || 0);
+      const chunkBudget = Math.max(1, Number(dimensionChunkBudgetInput.value) || 200);
+      const yieldMs = Math.max(0, Number(dimensionYieldMsInput.value) || 0);
+
+      setDimensionStatus('Starting…');
+      setDimensionProgress(0, 1);
+      dimensionGlobalMaxValue.textContent = '—';
+      dimensionSelectedCountValue.textContent = '—';
+      dimensionElapsedValue.textContent = '—';
+      setDimensionRunning(true);
+      dimensionAbortController = new AbortController();
+
+      const started = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+      let session = null;
+      try {
+        session = network.createDimensionSession({
+          maxLevel,
+          method,
+          order,
+          captureNodeDimensionProfiles: Boolean(outNodeDimensionLevelsAttribute),
+          outNodeMaxDimensionAttribute,
+          outNodeDimensionLevelsAttribute,
+          dimensionLevelsEncoding,
+          dimensionLevelsStringPrecision,
+        });
+
+        await session.run({
+          signal: dimensionAbortController.signal,
+          yieldMs,
+          stepOptions: { timeoutMs, chunkBudget },
+          onProgress: (progress) => {
+            if (!progress) return;
+            setDimensionProgress(progress.progressCurrent, progress.progressTotal);
+            const phase = progress.phase ?? 0;
+            const processed = progress.processedNodes ?? progress.progressCurrent ?? 0;
+            const total = progress.nodeCount ?? progress.progressTotal ?? 0;
+            setDimensionStatus(`Running… phase ${phase} • ${processed}/${total} nodes`);
+          },
+        });
+
+        const result = session.finalize({
+          outNodeMaxDimensionAttribute,
+          outNodeDimensionLevelsAttribute,
+          dimensionLevelsEncoding,
+          dimensionLevelsStringPrecision,
+        });
+        const ended = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+        const elapsedMs = Math.max(0, ended - started);
+        const dmax = maxFiniteArrayValue(result?.globalDimension);
+
+        const writes = [];
+        if (outNodeMaxDimensionAttribute) writes.push(`"${outNodeMaxDimensionAttribute}"`);
+        if (outNodeDimensionLevelsAttribute) writes.push(`"${outNodeDimensionLevelsAttribute}"`);
+        setDimensionProgress(1, 1);
+        setDimensionStatus(writes.length ? `Done • wrote ${writes.join(', ')}` : 'Done');
+        dimensionGlobalMaxValue.textContent = formatNumber(dmax, 4);
+        dimensionSelectedCountValue.textContent = String(result?.selectedCount ?? '—');
+        dimensionElapsedValue.textContent = `${Math.round(elapsedMs)} ms`;
+        refreshAll();
+        this.helios?.requestRender?.();
+      } catch (error) {
+        const message = error?.message ?? String(error);
+        const lower = message.toLowerCase();
+        const aborted = dimensionAbortController?.signal?.aborted || lower.includes('aborted') || lower.includes('canceled');
+        if (aborted) {
+          setDimensionStatus('Canceled');
+        } else {
+          setDimensionStatus(message);
+        }
+      } finally {
+        if (session && typeof session.dispose === 'function') {
+          session.dispose();
+        }
+        dimensionAbortController = null;
+        setDimensionRunning(false);
       }
     };
 
     calcButton.addEventListener('click', () => {
-      if (running) return;
+      if (leidenRunning) return;
       runLeiden();
+    });
+    dimensionCalcButton.addEventListener('click', () => {
+      if (dimensionRunning) return;
+      runDimension();
     });
 
     refreshAll();
@@ -1445,15 +1907,27 @@ export class HeliosUI {
       title: 'Communities (Leiden)',
       collapsed: options?.collapsedLeiden ?? true,
       content: (() => {
-      const wrapper = document.createElement('div');
-      wrapper.appendChild(leiden);
-      wrapper.appendChild(leidenInnerStack.element);
-      return wrapper;
+        const wrapper = document.createElement('div');
+        wrapper.appendChild(leiden);
+        wrapper.appendChild(leidenInnerStack.element);
+        return wrapper;
+      })(),
+    });
+    stack.add({
+      id: 'metrics-dimension',
+      title: 'Dimensionality',
+      collapsed: options?.collapsedDimension ?? true,
+      content: (() => {
+        const wrapper = document.createElement('div');
+        wrapper.appendChild(dimension);
+        wrapper.appendChild(dimensionInnerStack.element);
+        return wrapper;
       })(),
     });
     content.appendChild(stack.element);
     this._controlCleanups.add(() => stack.destroy());
     this._controlCleanups.add(() => leidenInnerStack.destroy());
+    this._controlCleanups.add(() => dimensionInnerStack.destroy());
 
     this._controlCleanups.add(() => {
       for (const cleanup of tooltipCleanups) cleanup();
@@ -1462,7 +1936,8 @@ export class HeliosUI {
 
     // Refresh on network changes (and cancel any in-flight run).
     const onNetworkReplaced = () => {
-      cancelRun();
+      cancelLeidenRun();
+      cancelDimensionRun();
       refreshAll();
     };
     let unsub = null;
