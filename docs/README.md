@@ -97,6 +97,11 @@ See [`docs/states.md`](./states.md) for the bitmask-based node/edge state system
 
 See [`docs/rendering-mode-requirements.md`](./rendering-mode-requirements.md) for indirect WebGPU/WebGL requirements, extension gates, and sizing limits.
 
+## GPU Force layout internals
+
+See [`docs/gpu-force-layout.md`](./gpu-force-layout.md) for the WebGPU force algorithm details (equations, parameters, GPU/CPU split, and delegate synchronization behavior).
+For a prose-first deep dive with full equation listing and pseudo algorithms, see [`docs/gpu-force-layout-prose.md`](./gpu-force-layout-prose.md).
+
 ## Comparing with legacy Helios Web
 
 See [`docs/HELIOS_WEB_NEXT_VS_LEGACY.md`](./HELIOS_WEB_NEXT_VS_LEGACY.md) for a high-level summary of the biggest architectural differences and what Helios Web Next enables.

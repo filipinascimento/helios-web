@@ -34,6 +34,66 @@ declare module 'helios-network' {
     format?: 'uint8array' | 'arraybuffer' | 'base64' | 'blob';
   }
 
+  export interface LeidenOptions {
+    resolution?: number;
+    edgeWeightAttribute?: string | null;
+    outNodeCommunityAttribute?: string;
+    categoricalCommunities?: boolean;
+    seed?: number;
+    maxLevels?: number;
+    maxPasses?: number;
+    passes?: number;
+  }
+
+  export interface LeidenStepOptions {
+    budget?: number;
+    timeoutMs?: number | null;
+    chunkBudget?: number;
+  }
+
+  export interface LeidenProgress {
+    progressCurrent: number;
+    progressTotal: number;
+    phase: number;
+    level: number;
+    maxLevels: number;
+    pass: number;
+    maxPasses: number;
+    visitedThisPass?: number;
+    nodeCount?: number;
+    communityCount?: number;
+  }
+
+  export interface LeidenResult {
+    communityCount: number;
+    modularity: number;
+  }
+
+  export interface LeidenSession {
+    getProgress(): LeidenProgress;
+    isComplete(): boolean;
+    isFinalized(): boolean;
+    step(options?: LeidenStepOptions): LeidenProgress;
+    run(options?: {
+      stepOptions?: LeidenStepOptions;
+      yield?: () => void | Promise<void>;
+      maxIterations?: number;
+    }): Promise<LeidenProgress>;
+    runWorker(options?: {
+      outNodeCommunityAttribute?: string;
+      categoricalCommunities?: boolean;
+      yieldMs?: number;
+      stepOptions?: LeidenStepOptions;
+      onProgress?: (progress: LeidenProgress) => void;
+      signal?: AbortSignal;
+    }): Promise<LeidenResult>;
+    finalize(options?: {
+      outNodeCommunityAttribute?: string;
+      categoricalCommunities?: boolean;
+    }): LeidenResult;
+    dispose(): void;
+  }
+
   export default class HeliosNetwork {
     static create(options?: HeliosNetworkOptions): Promise<HeliosNetwork>;
     static createSync(options?: HeliosNetworkOptions): HeliosNetwork;
@@ -83,6 +143,9 @@ declare module 'helios-network' {
     hasEdgeIndex(index: number): boolean;
     hasNodeIndices(indices: Iterable<number> | Uint32Array): boolean[];
     hasEdgeIndices(indices: Iterable<number> | Uint32Array): boolean[];
+
+    leidenModularity(options?: LeidenOptions): LeidenResult;
+    createLeidenSession(options?: LeidenOptions): LeidenSession;
 
     readonly nodeIndices: Uint32Array;
     readonly edgeIndices: Uint32Array;

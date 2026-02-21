@@ -1104,7 +1104,7 @@ export class HeliosUI {
     const maxPassesInput = document.createElement('input');
     maxPassesInput.type = 'number';
     maxPassesInput.className = 'helios-ui-number';
-    maxPassesInput.value = String(options?.leiden?.maxPasses ?? 8);
+    maxPassesInput.value = String(options?.leiden?.passes ?? options?.leiden?.maxPasses ?? 8);
     maxPassesInput.dataset.testid = 'metrics-leiden-maxPasses';
 
     const outAttributeInput = document.createElement('input');
