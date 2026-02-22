@@ -21,7 +21,7 @@ await helios.ready;
 
 const ui = new HeliosUI({ helios, theme: 'dark' });
 ui.createDemoPanel(); // "Controls" panel (theme + a sample slider)
-ui.createMetricsPanel(); // "Metrics" panel (Leiden + Dimensionality sessions)
+ui.createMetricsPanel(); // "Metrics" panel (Degree, Strength, Clustering, Eigenvector, Betweenness, Leiden, Dimensionality)
 ```
 
 HeliosUI attaches to Helios’ built-in HTML overlay layer by default (via `helios.layers.addLayer('ui', ...)`).

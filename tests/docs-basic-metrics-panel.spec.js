@@ -142,4 +142,183 @@ test.describe('docs basic demo metrics panel', () => {
     expect(snapshot.dimLevelsSample).toMatch(/^\[/);
     expect(Number.isFinite(snapshot.maxValue)).toBeTruthy();
   });
+
+  test('renders new metric interfaces and runs available measurements', async ({ page }, testInfo) => {
+    await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=180');
+
+    await page.waitForFunction(() => Boolean(window.__helios && window.__helios.ready));
+    await page.waitForFunction(() => Boolean(window.__heliosUI));
+
+    const panel = page.locator('.helios-ui-panel[data-panel-id="helios-ui-metrics"]');
+    await expect(panel).toBeVisible();
+
+    const openSubpanel = async (title) => {
+      const header = panel.locator('button.helios-ui-subpanel__header', { hasText: title });
+      const item = header.locator('..');
+      if ((await item.getAttribute('data-collapsed')) === 'true') {
+        await header.click();
+      }
+      return item;
+    };
+
+    const support = await page.evaluate(() => {
+      const net = window.__helios?.network;
+      return {
+        degree: typeof net?.measureDegree === 'function',
+        strength: typeof net?.measureStrength === 'function',
+        clustering: typeof net?.measureLocalClusteringCoefficient === 'function',
+        eigenvector: typeof net?.measureEigenvectorCentrality === 'function',
+        betweenness: typeof net?.measureBetweennessCentrality === 'function',
+      };
+    });
+
+    await page.evaluate(() => {
+      const net = window.__helios?.network;
+      if (!net || typeof net.defineEdgeAttribute !== 'function' || typeof net.getEdgeAttributeBuffer !== 'function') return;
+      try {
+        net.getEdgeAttributeBuffer('metrics_weight_test');
+      } catch (_) {
+        net.defineEdgeAttribute('metrics_weight_test', 2, 1);
+      }
+      const edgeBuffer = net.getEdgeAttributeBuffer('metrics_weight_test');
+      const edgeIndices = net.edgeIndices ?? [];
+      for (let i = 0; i < edgeIndices.length; i += 1) {
+        const edge = edgeIndices[i];
+        edgeBuffer.view[edge] = 1 + ((i % 11) / 10);
+      }
+      if (typeof edgeBuffer.bumpVersion === 'function') edgeBuffer.bumpVersion();
+    });
+
+    const degreeItem = await openSubpanel('Degree');
+    const degreeAdvancedHeader = degreeItem.locator('button.helios-ui-subpanel__header', { hasText: 'Advanced' });
+    const degreeAdvancedItem = degreeAdvancedHeader.locator('..');
+    if ((await degreeAdvancedItem.getAttribute('data-collapsed')) === 'true') {
+      await degreeAdvancedHeader.click();
+    }
+    await panel.locator('[data-testid="metrics-degree-outAttr"]').fill('degree_test');
+    await panel.locator('[data-testid="metrics-degree-calc"]').click();
+
+    const strengthItem = await openSubpanel('Strength');
+    const strengthAdvancedHeader = strengthItem.locator('button.helios-ui-subpanel__header', { hasText: 'Advanced' });
+    const strengthAdvancedItem = strengthAdvancedHeader.locator('..');
+    if ((await strengthAdvancedItem.getAttribute('data-collapsed')) === 'true') {
+      await strengthAdvancedHeader.click();
+    }
+    await panel.locator('[data-testid="metrics-strength-weight"]').selectOption('');
+    await panel.locator('[data-testid="metrics-strength-outAttr"]').fill('strength_test');
+    await panel.locator('[data-testid="metrics-strength-calc"]').click();
+
+    const clusteringItem = await openSubpanel('Local Clustering');
+    const clusteringAdvancedHeader = clusteringItem.locator('button.helios-ui-subpanel__header', { hasText: 'Advanced' });
+    const clusteringAdvancedItem = clusteringAdvancedHeader.locator('..');
+    if ((await clusteringAdvancedItem.getAttribute('data-collapsed')) === 'true') {
+      await clusteringAdvancedHeader.click();
+    }
+    await panel.locator('[data-testid="metrics-clustering-variant"]').selectOption('unweighted');
+    await panel.locator('[data-testid="metrics-clustering-outAttr"]').fill('clustering_test');
+    await panel.locator('[data-testid="metrics-clustering-calc"]').click();
+
+    const eigenItem = await openSubpanel('Eigenvector Centrality');
+    const eigenAdvancedHeader = eigenItem.locator('button.helios-ui-subpanel__header', { hasText: 'Advanced' });
+    const eigenAdvancedItem = eigenAdvancedHeader.locator('..');
+    if ((await eigenAdvancedItem.getAttribute('data-collapsed')) === 'true') {
+      await eigenAdvancedHeader.click();
+    }
+    await panel.locator('[data-testid="metrics-eigen-maxIterations"]').fill('48');
+    await panel.locator('[data-testid="metrics-eigen-tolerance"]').fill('1e-6');
+    await panel.locator('[data-testid="metrics-eigen-outAttr"]').fill('eigen_test');
+    await panel.locator('[data-testid="metrics-eigen-calc"]').click();
+
+    const betweennessItem = await openSubpanel('Betweenness Centrality');
+    const betweennessAdvancedHeader = betweennessItem.locator('button.helios-ui-subpanel__header', { hasText: 'Advanced' });
+    const betweennessAdvancedItem = betweennessAdvancedHeader.locator('..');
+    if ((await betweennessAdvancedItem.getAttribute('data-collapsed')) === 'true') {
+      await betweennessAdvancedHeader.click();
+    }
+    await panel.locator('[data-testid="metrics-betweenness-weight"]').selectOption('');
+    await panel.locator('[data-testid="metrics-betweenness-outAttr"]').fill('betweenness_test');
+    await panel.locator('[data-testid="metrics-betweenness-calc"]').click();
+
+    const degreeStatus = panel.locator('[data-testid="metrics-degree-status"]');
+    const strengthStatus = panel.locator('[data-testid="metrics-strength-status"]');
+    const clusteringStatus = panel.locator('[data-testid="metrics-clustering-status"]');
+    const eigenStatus = panel.locator('[data-testid="metrics-eigen-status"]');
+    const betweennessStatus = panel.locator('[data-testid="metrics-betweenness-status"]');
+
+    await expect(degreeStatus).toHaveText(/Done|not available/i);
+    await expect(strengthStatus).toHaveText(/Done|not available/i);
+    await expect(clusteringStatus).toHaveText(/Done|not available/i);
+    await expect(eigenStatus).toHaveText(/Done|not available/i);
+    await expect(betweennessStatus).toHaveText(/Done|not available/i);
+
+    const snapshot = await page.evaluate(() => {
+      const net = window.__helios?.network;
+      const node = net?.nodeIndices?.[0] ?? 0;
+      const hasAttr = (name) => {
+        try {
+          return Boolean(net?.hasNodeAttribute?.(name) || net?._nodeAttributes?.has?.(name));
+        } catch (_) {
+          return false;
+        }
+      };
+      const getValue = (name) => {
+        try {
+          const view = net?.getNodeAttributeBuffer?.(name)?.view;
+          if (!view) return null;
+          return Number(view[node]);
+        } catch (_) {
+          return null;
+        }
+      };
+      return {
+        support: {
+          degree: typeof net?.measureDegree === 'function',
+          strength: typeof net?.measureStrength === 'function',
+          clustering: typeof net?.measureLocalClusteringCoefficient === 'function',
+          eigenvector: typeof net?.measureEigenvectorCentrality === 'function',
+          betweenness: typeof net?.measureBetweennessCentrality === 'function',
+        },
+        attrs: {
+          degree: hasAttr('degree_test'),
+          strength: hasAttr('strength_test'),
+          clustering: hasAttr('clustering_test'),
+          eigenvector: hasAttr('eigen_test'),
+          betweenness: hasAttr('betweenness_test'),
+        },
+        values: {
+          degree: getValue('degree_test'),
+          strength: getValue('strength_test'),
+          clustering: getValue('clustering_test'),
+          eigenvector: getValue('eigen_test'),
+          betweenness: getValue('betweenness_test'),
+        },
+      };
+    });
+
+    await testInfo.attach('new-metrics-panel-state', {
+      body: JSON.stringify({ support, snapshot }, null, 2),
+      contentType: 'application/json',
+    });
+
+    if (snapshot.support.degree) {
+      expect(snapshot.attrs.degree).toBeTruthy();
+      expect(Number.isFinite(snapshot.values.degree)).toBeTruthy();
+    }
+    if (snapshot.support.strength) {
+      expect(snapshot.attrs.strength).toBeTruthy();
+      expect(Number.isFinite(snapshot.values.strength)).toBeTruthy();
+    }
+    if (snapshot.support.clustering) {
+      expect(snapshot.attrs.clustering).toBeTruthy();
+      expect(Number.isFinite(snapshot.values.clustering)).toBeTruthy();
+    }
+    if (snapshot.support.eigenvector) {
+      expect(snapshot.attrs.eigenvector).toBeTruthy();
+      expect(Number.isFinite(snapshot.values.eigenvector)).toBeTruthy();
+    }
+    if (snapshot.support.betweenness) {
+      expect(snapshot.attrs.betweenness).toBeTruthy();
+      expect(Number.isFinite(snapshot.values.betweenness)).toBeTruthy();
+    }
+  });
 });

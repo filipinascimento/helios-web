@@ -16,6 +16,7 @@ declare module 'helios-network' {
     readonly view: T;
     readonly type: AttributeType;
     readonly dimension: number;
+    bumpVersion?: () => void;
   }
 
   export interface NodeNeighbors {
@@ -74,6 +75,84 @@ declare module 'helios-network' {
     Backward = 1,
     Central = 2,
     LeastSquares = 3,
+  }
+
+  export enum NeighborDirection {
+    Out = 0,
+    In = 1,
+    Both = 2,
+  }
+
+  export enum StrengthMeasure {
+    Sum = 0,
+    Average = 1,
+    Maximum = 2,
+    Minimum = 3,
+  }
+
+  export enum ClusteringCoefficientVariant {
+    Unweighted = 0,
+    Onnela = 1,
+    Newman = 2,
+  }
+
+  export enum MeasurementExecutionMode {
+    Auto = 0,
+    SingleThread = 1,
+    Parallel = 2,
+  }
+
+  export interface NodeMetricResult {
+    nodeIndices: Uint32Array;
+    values: Float32Array;
+    valuesByNode: Float32Array;
+  }
+
+  export interface DegreeOptions {
+    direction?: NeighborDirection | 'out' | 'in' | 'both' | 'outgoing' | 'incoming' | 'all' | 'union';
+    nodes?: ArrayLike<number> | null;
+  }
+
+  export interface StrengthOptions extends DegreeOptions {
+    edgeWeightAttribute?: string | null;
+    measure?: StrengthMeasure | 'sum' | 'average' | 'avg' | 'mean' | 'maximum' | 'max' | 'minimum' | 'min';
+  }
+
+  export interface LocalClusteringOptions extends DegreeOptions {
+    edgeWeightAttribute?: string | null;
+    variant?: ClusteringCoefficientVariant | 'unweighted' | 'onnela' | 'newman' | 'weighted' | 'barrat' | 'binary';
+  }
+
+  export interface EigenvectorCentralityOptions extends DegreeOptions {
+    edgeWeightAttribute?: string | null;
+    executionMode?: MeasurementExecutionMode | 'auto' | 'single-thread' | 'single' | 'sequential' | 'parallel' | 'native';
+    maxIterations?: number;
+    tolerance?: number;
+    initialValues?: Float32Array | Array<number> | null;
+  }
+
+  export interface BetweennessCentralityOptions {
+    edgeWeightAttribute?: string | null;
+    executionMode?: MeasurementExecutionMode | 'auto' | 'single-thread' | 'single' | 'sequential' | 'parallel' | 'native';
+    sourceNodes?: ArrayLike<number> | null;
+    normalize?: boolean;
+    accumulate?: boolean;
+    initialValues?: Float32Array | Array<number> | null;
+    nodes?: ArrayLike<number> | null;
+  }
+
+  export interface EigenvectorCentralityResult extends NodeMetricResult {
+    direction: NeighborDirection;
+    eigenvalue: number;
+    delta: number;
+    iterations: number;
+    converged: boolean;
+  }
+
+  export interface BetweennessCentralityResult extends NodeMetricResult {
+    processedSources: number;
+    normalize: boolean;
+    accumulate: boolean;
   }
 
   export interface DimensionOptions {
@@ -228,6 +307,11 @@ declare module 'helios-network' {
 
     leidenModularity(options?: LeidenOptions): LeidenResult;
     createLeidenSession(options?: LeidenOptions): LeidenSession;
+    measureDegree(options?: DegreeOptions): NodeMetricResult & { direction: NeighborDirection };
+    measureStrength(options?: StrengthOptions): NodeMetricResult & { direction: NeighborDirection; measure: StrengthMeasure };
+    measureLocalClusteringCoefficient(options?: LocalClusteringOptions): NodeMetricResult & { direction: NeighborDirection; variant: ClusteringCoefficientVariant };
+    measureEigenvectorCentrality(options?: EigenvectorCentralityOptions): EigenvectorCentralityResult;
+    measureBetweennessCentrality(options?: BetweennessCentralityOptions): BetweennessCentralityResult;
     measureNodeDimension(node: number, options?: DimensionOptions): NodeDimensionResult;
     measureDimension(options?: DimensionOptions): DimensionResult;
     createDimensionSession(options?: DimensionSessionOptions): DimensionSession;

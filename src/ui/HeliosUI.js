@@ -1040,6 +1040,7 @@ export class HeliosUI {
     };
 
     const net = () => this.helios?.network ?? null;
+    const defer = (ms = 0) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 
     const formatNumber = (value, digits = 3) => {
       if (!Number.isFinite(value)) return '—';
@@ -1103,12 +1104,732 @@ export class HeliosUI {
       return Number.isFinite(max) ? max : NaN;
     };
 
+    const summarizeFiniteValues = (values) => {
+      if (!values || typeof values.length !== 'number') {
+        return {
+          count: 0,
+          min: NaN,
+          max: NaN,
+          mean: NaN,
+        };
+      }
+      let count = 0;
+      let min = Number.POSITIVE_INFINITY;
+      let max = Number.NEGATIVE_INFINITY;
+      let sum = 0;
+      for (let i = 0; i < values.length; i += 1) {
+        const v = Number(values[i]);
+        if (!Number.isFinite(v)) continue;
+        count += 1;
+        sum += v;
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+      return {
+        count,
+        min: count > 0 ? min : NaN,
+        max: count > 0 ? max : NaN,
+        mean: count > 0 ? sum / count : NaN,
+      };
+    };
+
+    const writeNodeMetricValues = (network, attributeName, result) => {
+      if (!network || !attributeName || typeof attributeName !== 'string') return false;
+      const trimmed = attributeName.trim();
+      if (!trimmed) return false;
+
+      let buffer = null;
+      try {
+        buffer = network.getNodeAttributeBuffer(trimmed);
+      } catch (_) {
+        if (typeof network.defineNodeAttribute !== 'function') return false;
+        network.defineNodeAttribute(trimmed, AttributeType.Float, 1);
+        buffer = network.getNodeAttributeBuffer(trimmed);
+      }
+      const view = buffer?.view ?? null;
+      if (!view || typeof view.length !== 'number') return false;
+
+      const full = result?.valuesByNode;
+      if (full && typeof full.length === 'number') {
+        const n = Math.min(view.length, full.length);
+        for (let i = 0; i < n; i += 1) {
+          const v = Number(full[i]);
+          view[i] = Number.isFinite(v) ? v : 0;
+        }
+      } else {
+        const nodeIndices = result?.nodeIndices;
+        const values = result?.values;
+        if (!nodeIndices || !values || typeof nodeIndices.length !== 'number' || typeof values.length !== 'number') {
+          return false;
+        }
+        const n = Math.min(nodeIndices.length, values.length);
+        for (let i = 0; i < n; i += 1) {
+          const node = Number(nodeIndices[i]);
+          if (!Number.isInteger(node) || node < 0 || node >= view.length) continue;
+          const v = Number(values[i]);
+          view[node] = Number.isFinite(v) ? v : 0;
+        }
+      }
+
+      if (typeof buffer.bumpVersion === 'function') {
+        buffer.bumpVersion();
+      }
+      return true;
+    };
+
+    const styleStatusHint = (el) => {
+      if (!el) return;
+      el.className = 'helios-ui-label__hint';
+      el.style.marginTop = '0px';
+      el.style.fontSize = '10px';
+      el.style.lineHeight = '1.2';
+      el.style.whiteSpace = 'normal';
+      el.style.overflow = 'visible';
+      el.style.textOverflow = 'clip';
+      el.style.maxWidth = '100%';
+      el.style.minWidth = '0';
+    };
+
+    const reportMeasurementError = (metricName, error, context = null) => {
+      const err = error instanceof Error ? error : new Error(String(error));
+      const message = err?.message ?? String(err);
+      const detail = err?.stack ? `${message}\n${err.stack}` : message;
+      if (typeof globalThis !== 'undefined' && typeof globalThis.reportError === 'function') {
+        try {
+          globalThis.reportError(err);
+        } catch {}
+      }
+      // eslint-disable-next-line no-console
+      console.error(`[HeliosUI] ${metricName} failed`, { error: err, context });
+      return detail;
+    };
+
+    const normalizeNeighborDirection = (value) => {
+      const normalized = String(value ?? '').trim().toLowerCase();
+      if (normalized === 'out' || normalized === 'outgoing') return 'out';
+      if (normalized === 'in' || normalized === 'incoming') return 'in';
+      return 'both';
+    };
+
+    const normalizeStrengthMeasure = (value) => {
+      const normalized = String(value ?? '').trim().toLowerCase();
+      if (normalized === 'average' || normalized === 'avg' || normalized === 'mean') return 'average';
+      if (normalized === 'maximum' || normalized === 'max') return 'maximum';
+      if (normalized === 'minimum' || normalized === 'min') return 'minimum';
+      return 'sum';
+    };
+
+    const normalizeClusteringVariant = (value) => {
+      const normalized = String(value ?? '').trim().toLowerCase();
+      if (normalized === 'onnela') return 'onnela';
+      if (normalized === 'newman' || normalized === 'barrat' || normalized === 'weighted') return 'newman';
+      return 'unweighted';
+    };
+
+    const createDirectionSelect = (testid, initialValue = 'both') => {
+      const select = document.createElement('select');
+      select.className = 'helios-ui-select';
+      if (testid) select.dataset.testid = testid;
+      for (const entry of [
+        { value: 'both', label: 'Both' },
+        { value: 'in', label: 'In' },
+        { value: 'out', label: 'Out' },
+      ]) {
+        const opt = document.createElement('option');
+        opt.value = entry.value;
+        opt.textContent = entry.label;
+        select.appendChild(opt);
+      }
+      select.value = normalizeNeighborDirection(initialValue);
+      return select;
+    };
+
+    const edgeWeightSelects = [];
+    const createEdgeWeightSelect = (testid, initialValue = '') => {
+      const select = document.createElement('select');
+      select.className = 'helios-ui-select';
+      if (testid) select.dataset.testid = testid;
+      select.dataset.initialValue = initialValue ? String(initialValue) : '';
+      edgeWeightSelects.push(select);
+      return select;
+    };
+
+    // --- Degree --------------------------------------------------------------
+    const degree = document.createElement('div');
+
+    const degreeDirectionSelect = createDirectionSelect('metrics-degree-direction', options?.degree?.direction ?? 'both');
+    const degreeOutAttrInput = document.createElement('input');
+    degreeOutAttrInput.type = 'text';
+    degreeOutAttrInput.className = 'helios-ui-text';
+    degreeOutAttrInput.placeholder = 'degree';
+    degreeOutAttrInput.value = String(options?.degree?.outNodeAttribute ?? 'degree');
+    degreeOutAttrInput.dataset.testid = 'metrics-degree-outAttr';
+
+    const degreeActionWrap = document.createElement('div');
+    degreeActionWrap.style.display = 'inline-flex';
+    degreeActionWrap.style.alignItems = 'center';
+    degreeActionWrap.style.gap = '6px';
+
+    const degreeCalcButton = document.createElement('button');
+    degreeCalcButton.type = 'button';
+    degreeCalcButton.className = 'helios-ui-button';
+    degreeCalcButton.textContent = 'Calculate';
+    degreeCalcButton.dataset.testid = 'metrics-degree-calc';
+    degreeActionWrap.appendChild(degreeCalcButton);
+
+    const degreeStatusEl = document.createElement('div');
+    degreeStatusEl.dataset.testid = 'metrics-degree-status';
+    degreeStatusEl.textContent = '';
+    styleStatusHint(degreeStatusEl);
+
+    degree.appendChild(createAlignedRow({
+      title: 'Degree',
+      hint: 'Node degree (unweighted)',
+      controls: degreeActionWrap,
+    }).row);
+    degree.appendChild(createAlignedRow({
+      title: 'Direction',
+      hint: 'For directed networks: In, Out, or Both',
+      controls: degreeDirectionSelect,
+    }).row);
+    degree.appendChild(createAlignedRow({
+      title: 'Status',
+      hint: 'Latest run status',
+      controls: degreeStatusEl,
+    }).row);
+
+    const degreeStats = document.createElement('div');
+    degreeStats.className = 'helios-ui-stats';
+    const degreeMaxValue = makeValue('—');
+    degreeMaxValue.dataset.testid = 'metrics-degree-max';
+    const degreeMeanValue = makeValue('—');
+    degreeMeanValue.dataset.testid = 'metrics-degree-mean';
+    const degreeElapsedValue = makeValue('—');
+    degreeElapsedValue.dataset.testid = 'metrics-degree-elapsed';
+    degreeStats.appendChild(createStat('Max', degreeMaxValue).stat);
+    degreeStats.appendChild(createStat('Mean', degreeMeanValue).stat);
+    degreeStats.appendChild(createStat('Elapsed', degreeElapsedValue).stat);
+    degreeStats.style.marginTop = '2px';
+    degreeStats.style.marginBottom = '8px';
+    degree.appendChild(degreeStats);
+
+    const degreeAdvanced = document.createElement('div');
+    degreeAdvanced.appendChild(createAlignedRow({
+      title: 'Output Attr',
+      hint: 'Writes Float node degree values',
+      controls: degreeOutAttrInput,
+    }).row);
+    const degreeInnerStack = new PanelStack();
+    degreeInnerStack.add({ id: 'metrics-degree-advanced', title: 'Advanced', collapsed: true, content: degreeAdvanced });
+    degreeInnerStack.element.style.marginTop = '6px';
+
+    // --- Strength ------------------------------------------------------------
+    const strength = document.createElement('div');
+
+    const strengthDirectionSelect = createDirectionSelect('metrics-strength-direction', options?.strength?.direction ?? 'both');
+    const strengthMeasureSelect = document.createElement('select');
+    strengthMeasureSelect.className = 'helios-ui-select';
+    strengthMeasureSelect.dataset.testid = 'metrics-strength-measure';
+    for (const entry of [
+      { value: 'sum', label: 'Sum' },
+      { value: 'average', label: 'Average' },
+      { value: 'maximum', label: 'Maximum' },
+      { value: 'minimum', label: 'Minimum' },
+    ]) {
+      const opt = document.createElement('option');
+      opt.value = entry.value;
+      opt.textContent = entry.label;
+      strengthMeasureSelect.appendChild(opt);
+    }
+    strengthMeasureSelect.value = normalizeStrengthMeasure(options?.strength?.measure ?? 'sum');
+
+    const strengthWeightSelect = createEdgeWeightSelect('metrics-strength-weight', options?.strength?.edgeWeightAttribute ?? '');
+    const strengthOutAttrInput = document.createElement('input');
+    strengthOutAttrInput.type = 'text';
+    strengthOutAttrInput.className = 'helios-ui-text';
+    strengthOutAttrInput.placeholder = 'strength';
+    strengthOutAttrInput.value = String(options?.strength?.outNodeAttribute ?? 'strength');
+    strengthOutAttrInput.dataset.testid = 'metrics-strength-outAttr';
+
+    const strengthActionWrap = document.createElement('div');
+    strengthActionWrap.style.display = 'inline-flex';
+    strengthActionWrap.style.alignItems = 'center';
+    strengthActionWrap.style.gap = '6px';
+
+    const strengthCalcButton = document.createElement('button');
+    strengthCalcButton.type = 'button';
+    strengthCalcButton.className = 'helios-ui-button';
+    strengthCalcButton.textContent = 'Calculate';
+    strengthCalcButton.dataset.testid = 'metrics-strength-calc';
+    strengthActionWrap.appendChild(strengthCalcButton);
+
+    const strengthStatusEl = document.createElement('div');
+    strengthStatusEl.dataset.testid = 'metrics-strength-status';
+    strengthStatusEl.textContent = '';
+    styleStatusHint(strengthStatusEl);
+
+    strength.appendChild(createAlignedRow({
+      title: 'Strength',
+      hint: 'Weighted node degree summary',
+      controls: strengthActionWrap,
+    }).row);
+    strength.appendChild(createAlignedRow({
+      title: 'Direction',
+      hint: 'For directed networks: In, Out, or Both',
+      controls: strengthDirectionSelect,
+    }).row);
+    strength.appendChild(createAlignedRow({
+      title: 'Measure',
+      hint: 'Aggregation over incident edge weights',
+      controls: strengthMeasureSelect,
+    }).row);
+    strength.appendChild(createAlignedRow({
+      title: 'Edge Weight',
+      hint: 'Optional edge weight attribute',
+      controls: strengthWeightSelect,
+    }).row);
+    strength.appendChild(createAlignedRow({
+      title: 'Status',
+      hint: 'Latest run status',
+      controls: strengthStatusEl,
+    }).row);
+
+    const strengthStats = document.createElement('div');
+    strengthStats.className = 'helios-ui-stats';
+    const strengthMaxValue = makeValue('—');
+    strengthMaxValue.dataset.testid = 'metrics-strength-max';
+    const strengthMeanValue = makeValue('—');
+    strengthMeanValue.dataset.testid = 'metrics-strength-mean';
+    const strengthElapsedValue = makeValue('—');
+    strengthElapsedValue.dataset.testid = 'metrics-strength-elapsed';
+    strengthStats.appendChild(createStat('Max', strengthMaxValue).stat);
+    strengthStats.appendChild(createStat('Mean', strengthMeanValue).stat);
+    strengthStats.appendChild(createStat('Elapsed', strengthElapsedValue).stat);
+    strengthStats.style.marginTop = '2px';
+    strengthStats.style.marginBottom = '8px';
+    strength.appendChild(strengthStats);
+
+    const strengthAdvanced = document.createElement('div');
+    strengthAdvanced.appendChild(createAlignedRow({
+      title: 'Output Attr',
+      hint: 'Writes Float node strength values',
+      controls: strengthOutAttrInput,
+    }).row);
+    const strengthInnerStack = new PanelStack();
+    strengthInnerStack.add({ id: 'metrics-strength-advanced', title: 'Advanced', collapsed: true, content: strengthAdvanced });
+    strengthInnerStack.element.style.marginTop = '6px';
+
+    // --- Local Clustering ----------------------------------------------------
+    const clustering = document.createElement('div');
+
+    const clusteringDirectionSelect = createDirectionSelect('metrics-clustering-direction', options?.clustering?.direction ?? 'both');
+    const clusteringVariantSelect = document.createElement('select');
+    clusteringVariantSelect.className = 'helios-ui-select';
+    clusteringVariantSelect.dataset.testid = 'metrics-clustering-variant';
+    for (const entry of [
+      { value: 'unweighted', label: 'Unweighted' },
+      { value: 'onnela', label: 'Onnela (Weighted)' },
+      { value: 'newman', label: 'Newman (Weighted)' },
+    ]) {
+      const opt = document.createElement('option');
+      opt.value = entry.value;
+      opt.textContent = entry.label;
+      clusteringVariantSelect.appendChild(opt);
+    }
+    clusteringVariantSelect.value = normalizeClusteringVariant(options?.clustering?.variant ?? 'unweighted');
+
+    const clusteringWeightSelect = createEdgeWeightSelect('metrics-clustering-weight', options?.clustering?.edgeWeightAttribute ?? '');
+    const clusteringOutAttrInput = document.createElement('input');
+    clusteringOutAttrInput.type = 'text';
+    clusteringOutAttrInput.className = 'helios-ui-text';
+    clusteringOutAttrInput.placeholder = 'clustering';
+    clusteringOutAttrInput.value = String(options?.clustering?.outNodeAttribute ?? 'clustering');
+    clusteringOutAttrInput.dataset.testid = 'metrics-clustering-outAttr';
+
+    const clusteringActionWrap = document.createElement('div');
+    clusteringActionWrap.style.display = 'inline-flex';
+    clusteringActionWrap.style.alignItems = 'center';
+    clusteringActionWrap.style.gap = '6px';
+
+    const clusteringCalcButton = document.createElement('button');
+    clusteringCalcButton.type = 'button';
+    clusteringCalcButton.className = 'helios-ui-button';
+    clusteringCalcButton.textContent = 'Calculate';
+    clusteringCalcButton.dataset.testid = 'metrics-clustering-calc';
+    clusteringActionWrap.appendChild(clusteringCalcButton);
+
+    const clusteringStatusEl = document.createElement('div');
+    clusteringStatusEl.dataset.testid = 'metrics-clustering-status';
+    clusteringStatusEl.textContent = '';
+    styleStatusHint(clusteringStatusEl);
+
+    clustering.appendChild(createAlignedRow({
+      title: 'Local Clustering',
+      hint: 'Local clustering coefficient',
+      controls: clusteringActionWrap,
+    }).row);
+    clustering.appendChild(createAlignedRow({
+      title: 'Variant',
+      hint: 'Unweighted, Onnela, or Newman formulation',
+      controls: clusteringVariantSelect,
+    }).row);
+    clustering.appendChild(createAlignedRow({
+      title: 'Direction',
+      hint: 'For directed networks: In, Out, or Both',
+      controls: clusteringDirectionSelect,
+    }).row);
+    clustering.appendChild(createAlignedRow({
+      title: 'Edge Weight',
+      hint: 'Required for weighted variants',
+      controls: clusteringWeightSelect,
+    }).row);
+    clustering.appendChild(createAlignedRow({
+      title: 'Status',
+      hint: 'Latest run status',
+      controls: clusteringStatusEl,
+    }).row);
+
+    const clusteringStats = document.createElement('div');
+    clusteringStats.className = 'helios-ui-stats';
+    const clusteringMaxValue = makeValue('—');
+    clusteringMaxValue.dataset.testid = 'metrics-clustering-max';
+    const clusteringMeanValue = makeValue('—');
+    clusteringMeanValue.dataset.testid = 'metrics-clustering-mean';
+    const clusteringElapsedValue = makeValue('—');
+    clusteringElapsedValue.dataset.testid = 'metrics-clustering-elapsed';
+    clusteringStats.appendChild(createStat('Max', clusteringMaxValue).stat);
+    clusteringStats.appendChild(createStat('Mean', clusteringMeanValue).stat);
+    clusteringStats.appendChild(createStat('Elapsed', clusteringElapsedValue).stat);
+    clusteringStats.style.marginTop = '2px';
+    clusteringStats.style.marginBottom = '8px';
+    clustering.appendChild(clusteringStats);
+
+    const clusteringAdvanced = document.createElement('div');
+    clusteringAdvanced.appendChild(createAlignedRow({
+      title: 'Output Attr',
+      hint: 'Writes Float local clustering coefficients',
+      controls: clusteringOutAttrInput,
+    }).row);
+    const clusteringInnerStack = new PanelStack();
+    clusteringInnerStack.add({ id: 'metrics-clustering-advanced', title: 'Advanced', collapsed: true, content: clusteringAdvanced });
+    clusteringInnerStack.element.style.marginTop = '6px';
+
+    // --- Eigenvector Centrality ---------------------------------------------
+    const eigenvector = document.createElement('div');
+
+    const eigenvectorDirectionSelect = createDirectionSelect('metrics-eigen-direction', options?.eigenvector?.direction ?? 'both');
+    const eigenvectorWeightSelect = createEdgeWeightSelect('metrics-eigen-weight', options?.eigenvector?.edgeWeightAttribute ?? '');
+
+    const eigenvectorMaxIterationsInput = document.createElement('input');
+    eigenvectorMaxIterationsInput.type = 'number';
+    eigenvectorMaxIterationsInput.className = 'helios-ui-number';
+    eigenvectorMaxIterationsInput.value = String(options?.eigenvector?.maxIterations ?? 256);
+    eigenvectorMaxIterationsInput.dataset.testid = 'metrics-eigen-maxIterations';
+
+    const eigenvectorToleranceInput = document.createElement('input');
+    eigenvectorToleranceInput.type = 'number';
+    eigenvectorToleranceInput.className = 'helios-ui-number';
+    eigenvectorToleranceInput.value = String(options?.eigenvector?.tolerance ?? 1e-6);
+    eigenvectorToleranceInput.dataset.testid = 'metrics-eigen-tolerance';
+
+    const eigenvectorOutAttrInput = document.createElement('input');
+    eigenvectorOutAttrInput.type = 'text';
+    eigenvectorOutAttrInput.className = 'helios-ui-text';
+    eigenvectorOutAttrInput.placeholder = 'eigenvector_centrality';
+    eigenvectorOutAttrInput.value = String(options?.eigenvector?.outNodeAttribute ?? 'eigenvector_centrality');
+    eigenvectorOutAttrInput.dataset.testid = 'metrics-eigen-outAttr';
+
+    const eigenvectorActionWrap = document.createElement('div');
+    eigenvectorActionWrap.style.display = 'inline-flex';
+    eigenvectorActionWrap.style.alignItems = 'center';
+    eigenvectorActionWrap.style.gap = '6px';
+
+    const eigenvectorCalcButton = document.createElement('button');
+    eigenvectorCalcButton.type = 'button';
+    eigenvectorCalcButton.className = 'helios-ui-button';
+    eigenvectorCalcButton.textContent = 'Calculate';
+    eigenvectorCalcButton.dataset.testid = 'metrics-eigen-calc';
+    eigenvectorActionWrap.appendChild(eigenvectorCalcButton);
+
+    const eigenvectorCancelButton = document.createElement('button');
+    eigenvectorCancelButton.type = 'button';
+    eigenvectorCancelButton.className = 'helios-ui-button';
+    eigenvectorCancelButton.textContent = 'Cancel';
+    eigenvectorCancelButton.dataset.testid = 'metrics-eigen-cancel';
+    eigenvectorCancelButton.disabled = true;
+    eigenvectorActionWrap.appendChild(eigenvectorCancelButton);
+
+    const eigenvectorStatusEl = document.createElement('div');
+    eigenvectorStatusEl.dataset.testid = 'metrics-eigen-status';
+    eigenvectorStatusEl.textContent = '';
+    styleStatusHint(eigenvectorStatusEl);
+
+    eigenvector.appendChild(createAlignedRow({
+      title: 'Eigenvector Centrality',
+      hint: 'Power iteration centrality',
+      controls: eigenvectorActionWrap,
+    }).row);
+    eigenvector.appendChild(createAlignedRow({
+      title: 'Direction',
+      hint: 'For directed networks: In, Out, or Both',
+      controls: eigenvectorDirectionSelect,
+    }).row);
+    eigenvector.appendChild(createAlignedRow({
+      title: 'Edge Weight',
+      hint: 'Optional edge weight attribute',
+      controls: eigenvectorWeightSelect,
+    }).row);
+    const eigenvectorMaxIterationsRow = createLinearSliderRow({
+      title: 'Max Iterations',
+      hint: 'Maximum power-iteration steps',
+      valueInput: eigenvectorMaxIterationsInput,
+      range: { min: 1, max: 2048 },
+      step: 1,
+    });
+    eigenvector.appendChild(eigenvectorMaxIterationsRow.row);
+    const eigenvectorToleranceRow = createLogSliderRow({
+      title: 'Tolerance',
+      hint: 'Convergence threshold • log scale',
+      valueInput: eigenvectorToleranceInput,
+      minExp: -12,
+      maxExp: -1,
+      stepExp: 0.05,
+    });
+    eigenvector.appendChild(eigenvectorToleranceRow.row);
+    eigenvector.appendChild(createAlignedRow({
+      title: 'Status',
+      hint: 'Latest run status',
+      controls: eigenvectorStatusEl,
+    }).row);
+
+    const eigenvectorProgressWrap = document.createElement('div');
+    eigenvectorProgressWrap.style.display = 'grid';
+    eigenvectorProgressWrap.style.gridTemplateColumns = 'minmax(0, 1fr) auto';
+    eigenvectorProgressWrap.style.columnGap = '8px';
+    eigenvectorProgressWrap.style.rowGap = '2px';
+    eigenvectorProgressWrap.style.alignItems = 'center';
+    eigenvectorProgressWrap.style.width = '100%';
+
+    const eigenvectorProgressEl = document.createElement('progress');
+    eigenvectorProgressEl.className = 'helios-ui-progress';
+    eigenvectorProgressEl.max = 1;
+    eigenvectorProgressEl.value = 0;
+    eigenvectorProgressEl.dataset.testid = 'metrics-eigen-progress';
+
+    const eigenvectorProgressPct = makeValue('0%');
+    eigenvectorProgressPct.dataset.testid = 'metrics-eigen-progressPct';
+    eigenvectorProgressWrap.appendChild(eigenvectorProgressEl);
+    eigenvectorProgressWrap.appendChild(eigenvectorProgressPct);
+
+    const { row: eigenvectorProgressRow } = createAlignedRow({
+      title: 'Progress',
+      hint: 'Chunked power-iteration progress',
+      controls: eigenvectorProgressWrap,
+    });
+    eigenvector.appendChild(eigenvectorProgressRow);
+
+    const eigenvectorStats = document.createElement('div');
+    eigenvectorStats.className = 'helios-ui-stats';
+    const eigenvectorMaxValue = makeValue('—');
+    eigenvectorMaxValue.dataset.testid = 'metrics-eigen-max';
+    const eigenvectorEigenvalueValue = makeValue('—');
+    eigenvectorEigenvalueValue.dataset.testid = 'metrics-eigen-eigenvalue';
+    const eigenvectorElapsedValue = makeValue('—');
+    eigenvectorElapsedValue.dataset.testid = 'metrics-eigen-elapsed';
+    eigenvectorStats.appendChild(createStat('Max', eigenvectorMaxValue).stat);
+    eigenvectorStats.appendChild(createStat('Eigenvalue', eigenvectorEigenvalueValue).stat);
+    eigenvectorStats.appendChild(createStat('Elapsed', eigenvectorElapsedValue).stat);
+    eigenvectorStats.style.marginTop = '2px';
+    eigenvectorStats.style.marginBottom = '8px';
+    eigenvector.appendChild(eigenvectorStats);
+
+    const eigenvectorAdvanced = document.createElement('div');
+    eigenvectorAdvanced.appendChild(createAlignedRow({
+      title: 'Output Attr',
+      hint: 'Writes Float eigenvector-centrality values',
+      controls: eigenvectorOutAttrInput,
+    }).row);
+
+    const eigenvectorChunkIterationsInput = document.createElement('input');
+    eigenvectorChunkIterationsInput.type = 'number';
+    eigenvectorChunkIterationsInput.className = 'helios-ui-number';
+    eigenvectorChunkIterationsInput.value = String(options?.eigenvector?.chunkIterations ?? 16);
+    eigenvectorChunkIterationsInput.dataset.testid = 'metrics-eigen-chunkIterations';
+    const eigenvectorChunkIterationsRow = createLinearSliderRow({
+      title: 'Chunk Iterations',
+      hint: 'Iterations per chunk before yielding',
+      valueInput: eigenvectorChunkIterationsInput,
+      range: { min: 1, max: 256 },
+      step: 1,
+    });
+    eigenvectorAdvanced.appendChild(eigenvectorChunkIterationsRow.row);
+
+    const eigenvectorYieldMsInput = document.createElement('input');
+    eigenvectorYieldMsInput.type = 'number';
+    eigenvectorYieldMsInput.className = 'helios-ui-number';
+    eigenvectorYieldMsInput.value = String(options?.eigenvector?.yieldMs ?? 0);
+    eigenvectorYieldMsInput.dataset.testid = 'metrics-eigen-yieldMs';
+    const eigenvectorYieldRow = createLinearSliderRow({
+      title: 'Yield (ms)',
+      hint: 'Delay between chunks to keep UI responsive',
+      valueInput: eigenvectorYieldMsInput,
+      range: { min: 0, max: 100 },
+      step: 1,
+    });
+    eigenvectorAdvanced.appendChild(eigenvectorYieldRow.row);
+    const eigenvectorInnerStack = new PanelStack();
+    eigenvectorInnerStack.add({ id: 'metrics-eigen-advanced', title: 'Advanced', collapsed: true, content: eigenvectorAdvanced });
+    eigenvectorInnerStack.element.style.marginTop = '6px';
+
+    // --- Betweenness Centrality ---------------------------------------------
+    const betweenness = document.createElement('div');
+
+    const betweennessWeightSelect = createEdgeWeightSelect('metrics-betweenness-weight', options?.betweenness?.edgeWeightAttribute ?? '');
+    const betweennessNormalizeCheckbox = document.createElement('input');
+    betweennessNormalizeCheckbox.type = 'checkbox';
+    betweennessNormalizeCheckbox.dataset.testid = 'metrics-betweenness-normalize';
+    betweennessNormalizeCheckbox.checked = options?.betweenness?.normalize !== false;
+
+    const betweennessOutAttrInput = document.createElement('input');
+    betweennessOutAttrInput.type = 'text';
+    betweennessOutAttrInput.className = 'helios-ui-text';
+    betweennessOutAttrInput.placeholder = 'betweenness_centrality';
+    betweennessOutAttrInput.value = String(options?.betweenness?.outNodeAttribute ?? 'betweenness_centrality');
+    betweennessOutAttrInput.dataset.testid = 'metrics-betweenness-outAttr';
+
+    const betweennessActionWrap = document.createElement('div');
+    betweennessActionWrap.style.display = 'inline-flex';
+    betweennessActionWrap.style.alignItems = 'center';
+    betweennessActionWrap.style.gap = '6px';
+
+    const betweennessCalcButton = document.createElement('button');
+    betweennessCalcButton.type = 'button';
+    betweennessCalcButton.className = 'helios-ui-button';
+    betweennessCalcButton.textContent = 'Calculate';
+    betweennessCalcButton.dataset.testid = 'metrics-betweenness-calc';
+    betweennessActionWrap.appendChild(betweennessCalcButton);
+
+    const betweennessCancelButton = document.createElement('button');
+    betweennessCancelButton.type = 'button';
+    betweennessCancelButton.className = 'helios-ui-button';
+    betweennessCancelButton.textContent = 'Cancel';
+    betweennessCancelButton.dataset.testid = 'metrics-betweenness-cancel';
+    betweennessCancelButton.disabled = true;
+    betweennessActionWrap.appendChild(betweennessCancelButton);
+
+    const betweennessStatusEl = document.createElement('div');
+    betweennessStatusEl.dataset.testid = 'metrics-betweenness-status';
+    betweennessStatusEl.textContent = '';
+    styleStatusHint(betweennessStatusEl);
+
+    betweenness.appendChild(createAlignedRow({
+      title: 'Betweenness Centrality',
+      hint: 'Brandes shortest-path centrality',
+      controls: betweennessActionWrap,
+    }).row);
+    betweenness.appendChild(createAlignedRow({
+      title: 'Edge Weight',
+      hint: 'Optional edge weight attribute',
+      controls: betweennessWeightSelect,
+    }).row);
+    betweenness.appendChild(createAlignedRow({
+      title: 'Normalize',
+      hint: 'Normalize values by graph size',
+      controls: betweennessNormalizeCheckbox,
+    }).row);
+    betweenness.appendChild(createAlignedRow({
+      title: 'Status',
+      hint: 'Latest run status',
+      controls: betweennessStatusEl,
+    }).row);
+
+    const betweennessProgressWrap = document.createElement('div');
+    betweennessProgressWrap.style.display = 'grid';
+    betweennessProgressWrap.style.gridTemplateColumns = 'minmax(0, 1fr) auto';
+    betweennessProgressWrap.style.columnGap = '8px';
+    betweennessProgressWrap.style.rowGap = '2px';
+    betweennessProgressWrap.style.alignItems = 'center';
+    betweennessProgressWrap.style.width = '100%';
+
+    const betweennessProgressEl = document.createElement('progress');
+    betweennessProgressEl.className = 'helios-ui-progress';
+    betweennessProgressEl.max = 1;
+    betweennessProgressEl.value = 0;
+    betweennessProgressEl.dataset.testid = 'metrics-betweenness-progress';
+
+    const betweennessProgressPct = makeValue('0%');
+    betweennessProgressPct.dataset.testid = 'metrics-betweenness-progressPct';
+    betweennessProgressWrap.appendChild(betweennessProgressEl);
+    betweennessProgressWrap.appendChild(betweennessProgressPct);
+
+    const { row: betweennessProgressRow } = createAlignedRow({
+      title: 'Progress',
+      hint: 'Chunked source-node progress',
+      controls: betweennessProgressWrap,
+    });
+    betweenness.appendChild(betweennessProgressRow);
+
+    const betweennessStats = document.createElement('div');
+    betweennessStats.className = 'helios-ui-stats';
+    const betweennessMaxValue = makeValue('—');
+    betweennessMaxValue.dataset.testid = 'metrics-betweenness-max';
+    const betweennessSourceCountValue = makeValue('—');
+    betweennessSourceCountValue.dataset.testid = 'metrics-betweenness-sourceCount';
+    const betweennessElapsedValue = makeValue('—');
+    betweennessElapsedValue.dataset.testid = 'metrics-betweenness-elapsed';
+    betweennessStats.appendChild(createStat('Max', betweennessMaxValue).stat);
+    betweennessStats.appendChild(createStat('Sources', betweennessSourceCountValue).stat);
+    betweennessStats.appendChild(createStat('Elapsed', betweennessElapsedValue).stat);
+    betweennessStats.style.marginTop = '2px';
+    betweennessStats.style.marginBottom = '8px';
+    betweenness.appendChild(betweennessStats);
+
+    const betweennessAdvanced = document.createElement('div');
+    betweennessAdvanced.appendChild(createAlignedRow({
+      title: 'Output Attr',
+      hint: 'Writes Float betweenness-centrality values',
+      controls: betweennessOutAttrInput,
+    }).row);
+
+    const betweennessSourceChunkInput = document.createElement('input');
+    betweennessSourceChunkInput.type = 'number';
+    betweennessSourceChunkInput.className = 'helios-ui-number';
+    betweennessSourceChunkInput.value = String(options?.betweenness?.sourceChunkSize ?? 64);
+    betweennessSourceChunkInput.dataset.testid = 'metrics-betweenness-sourceChunk';
+    const betweennessSourceChunkRow = createLinearSliderRow({
+      title: 'Source Chunk',
+      hint: 'Number of source nodes processed per chunk',
+      valueInput: betweennessSourceChunkInput,
+      range: { min: 1, max: 512 },
+      step: 1,
+    });
+    betweennessAdvanced.appendChild(betweennessSourceChunkRow.row);
+
+    const betweennessYieldMsInput = document.createElement('input');
+    betweennessYieldMsInput.type = 'number';
+    betweennessYieldMsInput.className = 'helios-ui-number';
+    betweennessYieldMsInput.value = String(options?.betweenness?.yieldMs ?? 0);
+    betweennessYieldMsInput.dataset.testid = 'metrics-betweenness-yieldMs';
+    const betweennessYieldRow = createLinearSliderRow({
+      title: 'Yield (ms)',
+      hint: 'Delay between source chunks',
+      valueInput: betweennessYieldMsInput,
+      range: { min: 0, max: 100 },
+      step: 1,
+    });
+    betweennessAdvanced.appendChild(betweennessYieldRow.row);
+    const betweennessInnerStack = new PanelStack();
+    betweennessInnerStack.add({ id: 'metrics-betweenness-advanced', title: 'Advanced', collapsed: true, content: betweennessAdvanced });
+    betweennessInnerStack.element.style.marginTop = '6px';
+
     // --- Leiden --------------------------------------------------------------
     const leiden = document.createElement('div');
 
     const weightSelect = document.createElement('select');
     weightSelect.className = 'helios-ui-select';
     weightSelect.dataset.testid = 'metrics-leiden-weight';
+    weightSelect.dataset.initialValue = String(options?.leiden?.edgeWeightAttribute ?? '');
+    edgeWeightSelects.push(weightSelect);
 
     const resolutionInput = document.createElement('input');
     resolutionInput.type = 'number';
@@ -1572,6 +2293,120 @@ export class HeliosUI {
     let leidenAbortController = null;
     let dimensionRunning = false;
     let dimensionAbortController = null;
+    let degreeRunning = false;
+    let strengthRunning = false;
+    let clusteringRunning = false;
+    let eigenvectorRunning = false;
+    let betweennessRunning = false;
+    let eigenvectorAbortController = null;
+    let betweennessAbortController = null;
+
+    const setDegreeStatus = (text) => {
+      const value = text ?? '';
+      degreeStatusEl.textContent = value;
+      degreeStatusEl.title = value;
+    };
+
+    const setDegreeRunning = (nextRunning) => {
+      degreeRunning = Boolean(nextRunning);
+      setDisabled(degreeCalcButton, degreeRunning);
+      setDisabled(degreeDirectionSelect, degreeRunning);
+      setDisabled(degreeOutAttrInput, degreeRunning);
+    };
+
+    const setStrengthStatus = (text) => {
+      const value = text ?? '';
+      strengthStatusEl.textContent = value;
+      strengthStatusEl.title = value;
+    };
+
+    const setStrengthRunning = (nextRunning) => {
+      strengthRunning = Boolean(nextRunning);
+      setDisabled(strengthCalcButton, strengthRunning);
+      setDisabled(strengthDirectionSelect, strengthRunning);
+      setDisabled(strengthMeasureSelect, strengthRunning);
+      setDisabled(strengthWeightSelect, strengthRunning);
+      setDisabled(strengthOutAttrInput, strengthRunning);
+    };
+
+    const setClusteringStatus = (text) => {
+      const value = text ?? '';
+      clusteringStatusEl.textContent = value;
+      clusteringStatusEl.title = value;
+    };
+
+    const setClusteringRunning = (nextRunning) => {
+      clusteringRunning = Boolean(nextRunning);
+      setDisabled(clusteringCalcButton, clusteringRunning);
+      setDisabled(clusteringVariantSelect, clusteringRunning);
+      setDisabled(clusteringDirectionSelect, clusteringRunning);
+      setDisabled(clusteringWeightSelect, clusteringRunning || clusteringVariantSelect.value === 'unweighted');
+      setDisabled(clusteringOutAttrInput, clusteringRunning);
+    };
+
+    const setEigenvectorStatus = (text) => {
+      const value = text ?? '';
+      eigenvectorStatusEl.textContent = value;
+      eigenvectorStatusEl.title = value;
+    };
+
+    const setEigenvectorProgress = (current, total) => {
+      if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(current) || current < 0) {
+        eigenvectorProgressEl.removeAttribute('value');
+        eigenvectorProgressPct.textContent = '—';
+        return;
+      }
+      const pct = Math.max(0, Math.min(1, current / total));
+      eigenvectorProgressEl.value = pct;
+      eigenvectorProgressPct.textContent = `${Math.round(pct * 100)}%`;
+    };
+
+    const setEigenvectorRunning = (nextRunning) => {
+      eigenvectorRunning = Boolean(nextRunning);
+      setDisabled(eigenvectorCalcButton, eigenvectorRunning);
+      setDisabled(eigenvectorCancelButton, !eigenvectorRunning);
+      setDisabled(eigenvectorDirectionSelect, eigenvectorRunning);
+      setDisabled(eigenvectorWeightSelect, eigenvectorRunning);
+      setDisabled(eigenvectorMaxIterationsInput, eigenvectorRunning);
+      setDisabled(eigenvectorMaxIterationsRow.slider, eigenvectorRunning);
+      setDisabled(eigenvectorToleranceInput, eigenvectorRunning);
+      setDisabled(eigenvectorToleranceRow.slider, eigenvectorRunning);
+      setDisabled(eigenvectorOutAttrInput, eigenvectorRunning);
+      setDisabled(eigenvectorChunkIterationsInput, eigenvectorRunning);
+      setDisabled(eigenvectorChunkIterationsRow.slider, eigenvectorRunning);
+      setDisabled(eigenvectorYieldMsInput, eigenvectorRunning);
+      setDisabled(eigenvectorYieldRow.slider, eigenvectorRunning);
+    };
+
+    const setBetweennessStatus = (text) => {
+      const value = text ?? '';
+      betweennessStatusEl.textContent = value;
+      betweennessStatusEl.title = value;
+    };
+
+    const setBetweennessProgress = (current, total) => {
+      if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(current) || current < 0) {
+        betweennessProgressEl.removeAttribute('value');
+        betweennessProgressPct.textContent = '—';
+        return;
+      }
+      const pct = Math.max(0, Math.min(1, current / total));
+      betweennessProgressEl.value = pct;
+      betweennessProgressPct.textContent = `${Math.round(pct * 100)}%`;
+    };
+
+    const setBetweennessRunning = (nextRunning) => {
+      betweennessRunning = Boolean(nextRunning);
+      setDisabled(betweennessCalcButton, betweennessRunning);
+      setDisabled(betweennessCancelButton, !betweennessRunning);
+      setDisabled(betweennessWeightSelect, betweennessRunning);
+      setDisabled(betweennessNormalizeCheckbox, betweennessRunning);
+      setDisabled(betweennessOutAttrInput, betweennessRunning);
+      setDisabled(betweennessSourceChunkInput, betweennessRunning);
+      setDisabled(betweennessSourceChunkRow.slider, betweennessRunning);
+      setDisabled(betweennessYieldMsInput, betweennessRunning);
+      setDisabled(betweennessYieldRow.slider, betweennessRunning);
+    };
 
     const setLeidenStatus = (text) => {
       statusEl.textContent = text ?? '';
@@ -1669,28 +2504,44 @@ export class HeliosUI {
     dimensionSaveLevelsCheckbox.addEventListener('change', refreshDimensionLevelEncodingControls);
     dimensionLevelsEncodingSelect.addEventListener('change', refreshDimensionLevelEncodingControls);
 
+    const refreshClusteringWeightControls = () => {
+      setDisabled(clusteringWeightSelect, clusteringRunning || clusteringVariantSelect.value === 'unweighted');
+    };
+
+    clusteringVariantSelect.addEventListener('change', refreshClusteringWeightControls);
+
     const refreshEdgeWeightOptions = () => {
       const network = net();
-      const existing = weightSelect.value;
-      weightSelect.textContent = '';
-      const optNone = document.createElement('option');
-      optNone.value = '';
-      optNone.textContent = 'None';
-      weightSelect.appendChild(optNone);
-      if (network && typeof network.getEdgeAttributeNames === 'function') {
-        const names = (network.getEdgeAttributeNames() ?? []).filter((name) => isPublicAttributeName(name));
+      const names = network && typeof network.getEdgeAttributeNames === 'function'
+        ? (network.getEdgeAttributeNames() ?? []).filter((name) => isPublicAttributeName(name))
+        : [];
+      for (const select of edgeWeightSelects) {
+        const existing = select.value;
+        const preferred = select.dataset.initialValue ?? '';
+        select.textContent = '';
+        const optNone = document.createElement('option');
+        optNone.value = '';
+        optNone.textContent = 'None';
+        select.appendChild(optNone);
         for (const name of names) {
           const opt = document.createElement('option');
           opt.value = name;
           opt.textContent = name;
-          weightSelect.appendChild(opt);
+          select.appendChild(opt);
+        }
+        if (existing && Array.from(select.options).some((o) => o.value === existing)) {
+          select.value = existing;
+        } else if (preferred && Array.from(select.options).some((o) => o.value === preferred)) {
+          select.value = preferred;
+        } else {
+          select.value = '';
         }
       }
-      weightSelect.value = existing && Array.from(weightSelect.options).some((o) => o.value === existing) ? existing : '';
     };
 
     const refreshAll = () => {
       refreshEdgeWeightOptions();
+      refreshClusteringWeightControls();
       refreshDimensionOrderLimits();
       refreshDimensionLevelEncodingControls();
     };
@@ -1705,8 +2556,332 @@ export class HeliosUI {
       dimensionAbortController.abort();
     };
 
+    const cancelEigenvectorRun = () => {
+      if (!eigenvectorAbortController) return;
+      eigenvectorAbortController.abort();
+    };
+
+    const cancelBetweennessRun = () => {
+      if (!betweennessAbortController) return;
+      betweennessAbortController.abort();
+    };
+
     cancelButton.addEventListener('click', cancelLeidenRun);
     dimensionCancelButton.addEventListener('click', cancelDimensionRun);
+    eigenvectorCancelButton.addEventListener('click', cancelEigenvectorRun);
+    betweennessCancelButton.addEventListener('click', cancelBetweennessRun);
+
+    const runDegree = () => {
+      const network = net();
+      if (!network || typeof network.measureDegree !== 'function') {
+        setDegreeStatus('Degree measurement is not available on this network');
+        return;
+      }
+      const direction = normalizeNeighborDirection(degreeDirectionSelect.value);
+      const outNodeAttribute = degreeOutAttrInput.value.trim();
+
+      setDegreeStatus('Running…');
+      degreeMaxValue.textContent = '—';
+      degreeMeanValue.textContent = '—';
+      degreeElapsedValue.textContent = '—';
+      setDegreeRunning(true);
+
+      const started = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+      try {
+        const result = network.measureDegree({ direction });
+        const ended = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+        const summary = summarizeFiniteValues(result?.values ?? result?.valuesByNode);
+        const wrote = outNodeAttribute ? writeNodeMetricValues(network, outNodeAttribute, result) : false;
+        degreeMaxValue.textContent = formatNumber(summary.max, 4);
+        degreeMeanValue.textContent = formatNumber(summary.mean, 4);
+        degreeElapsedValue.textContent = `${Math.round(Math.max(0, ended - started))} ms`;
+        setDegreeStatus(wrote ? `Done • wrote "${outNodeAttribute}"` : 'Done');
+        refreshAll();
+        this.helios?.requestRender?.();
+      } catch (error) {
+        setDegreeStatus(error?.message ?? String(error));
+      } finally {
+        setDegreeRunning(false);
+      }
+    };
+
+    const runStrength = () => {
+      const network = net();
+      if (!network || typeof network.measureStrength !== 'function') {
+        setStrengthStatus('Strength measurement is not available on this network');
+        return;
+      }
+      const direction = normalizeNeighborDirection(strengthDirectionSelect.value);
+      const measure = normalizeStrengthMeasure(strengthMeasureSelect.value);
+      const edgeWeightAttribute = strengthWeightSelect.value ? String(strengthWeightSelect.value) : null;
+      const outNodeAttribute = strengthOutAttrInput.value.trim();
+
+      setStrengthStatus('Running…');
+      strengthMaxValue.textContent = '—';
+      strengthMeanValue.textContent = '—';
+      strengthElapsedValue.textContent = '—';
+      setStrengthRunning(true);
+
+      const started = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+      try {
+        const result = network.measureStrength({
+          direction,
+          measure,
+          edgeWeightAttribute,
+        });
+        const ended = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+        const summary = summarizeFiniteValues(result?.values ?? result?.valuesByNode);
+        const wrote = outNodeAttribute ? writeNodeMetricValues(network, outNodeAttribute, result) : false;
+        strengthMaxValue.textContent = formatNumber(summary.max, 4);
+        strengthMeanValue.textContent = formatNumber(summary.mean, 4);
+        strengthElapsedValue.textContent = `${Math.round(Math.max(0, ended - started))} ms`;
+        setStrengthStatus(wrote ? `Done • wrote "${outNodeAttribute}"` : 'Done');
+        refreshAll();
+        this.helios?.requestRender?.();
+      } catch (error) {
+        setStrengthStatus(error?.message ?? String(error));
+      } finally {
+        setStrengthRunning(false);
+      }
+    };
+
+    const runClustering = () => {
+      const network = net();
+      if (!network || typeof network.measureLocalClusteringCoefficient !== 'function') {
+        setClusteringStatus('Local clustering measurement is not available on this network');
+        return;
+      }
+      const direction = normalizeNeighborDirection(clusteringDirectionSelect.value);
+      const variant = normalizeClusteringVariant(clusteringVariantSelect.value);
+      const edgeWeightAttribute = clusteringWeightSelect.value ? String(clusteringWeightSelect.value) : null;
+      if (variant !== 'unweighted' && !edgeWeightAttribute) {
+        setClusteringStatus('Choose an edge weight attribute for weighted variants');
+        return;
+      }
+      const outNodeAttribute = clusteringOutAttrInput.value.trim();
+
+      setClusteringStatus('Running…');
+      clusteringMaxValue.textContent = '—';
+      clusteringMeanValue.textContent = '—';
+      clusteringElapsedValue.textContent = '—';
+      setClusteringRunning(true);
+
+      const started = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+      try {
+        const result = network.measureLocalClusteringCoefficient({
+          direction,
+          variant,
+          edgeWeightAttribute: variant === 'unweighted' ? null : edgeWeightAttribute,
+        });
+        const ended = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+        const summary = summarizeFiniteValues(result?.values ?? result?.valuesByNode);
+        const wrote = outNodeAttribute ? writeNodeMetricValues(network, outNodeAttribute, result) : false;
+        clusteringMaxValue.textContent = formatNumber(summary.max, 4);
+        clusteringMeanValue.textContent = formatNumber(summary.mean, 4);
+        clusteringElapsedValue.textContent = `${Math.round(Math.max(0, ended - started))} ms`;
+        setClusteringStatus(wrote ? `Done • wrote "${outNodeAttribute}"` : 'Done');
+        refreshAll();
+        this.helios?.requestRender?.();
+      } catch (error) {
+        setClusteringStatus(error?.message ?? String(error));
+      } finally {
+        setClusteringRunning(false);
+      }
+    };
+
+    const runEigenvector = async () => {
+      const network = net();
+      if (!network || typeof network.measureEigenvectorCentrality !== 'function') {
+        setEigenvectorStatus('Eigenvector centrality is not available on this network');
+        return;
+      }
+
+      const direction = normalizeNeighborDirection(eigenvectorDirectionSelect.value);
+      const edgeWeightAttribute = eigenvectorWeightSelect.value ? String(eigenvectorWeightSelect.value) : null;
+      const maxIterations = Math.max(1, Number(eigenvectorMaxIterationsInput.value) || 1);
+      const chunkIterations = Math.max(1, Number(eigenvectorChunkIterationsInput.value) || 1);
+      const yieldMs = Math.max(0, Number(eigenvectorYieldMsInput.value) || 0);
+      const toleranceRaw = Number(eigenvectorToleranceInput.value);
+      const tolerance = Number.isFinite(toleranceRaw) && toleranceRaw > 0 ? toleranceRaw : 1e-6;
+      const outNodeAttribute = eigenvectorOutAttrInput.value.trim();
+
+      setEigenvectorStatus('Starting…');
+      setEigenvectorProgress(0, maxIterations);
+      eigenvectorMaxValue.textContent = '—';
+      eigenvectorEigenvalueValue.textContent = '—';
+      eigenvectorElapsedValue.textContent = '—';
+      setEigenvectorRunning(true);
+      eigenvectorAbortController = new AbortController();
+      const signal = eigenvectorAbortController.signal;
+
+      const started = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+      let processedIterations = 0;
+      let currentValues = null;
+      let lastResult = null;
+      try {
+        while (processedIterations < maxIterations) {
+          if (signal.aborted) {
+            throw new Error('Canceled');
+          }
+          const remaining = maxIterations - processedIterations;
+          const stepIterations = Math.max(1, Math.min(chunkIterations, remaining));
+          lastResult = network.measureEigenvectorCentrality({
+            direction,
+            edgeWeightAttribute,
+            maxIterations: stepIterations,
+            tolerance,
+            initialValues: currentValues,
+            executionMode: 'single-thread',
+          });
+          currentValues = lastResult?.valuesByNode ?? currentValues;
+          const stepDone = Math.max(1, Number(lastResult?.iterations ?? stepIterations));
+          processedIterations = Math.min(maxIterations, processedIterations + stepDone);
+          setEigenvectorProgress(processedIterations, maxIterations);
+          setEigenvectorStatus(`Running… ${processedIterations}/${maxIterations} iterations`);
+          if (lastResult?.converged) break;
+          await defer(yieldMs);
+        }
+        if (!currentValues) {
+          throw new Error('Eigenvector centrality returned no values');
+        }
+        const ended = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+        const summary = summarizeFiniteValues(currentValues);
+        const resultForWrite = lastResult?.valuesByNode ? lastResult : { valuesByNode: currentValues };
+        const wrote = outNodeAttribute ? writeNodeMetricValues(network, outNodeAttribute, resultForWrite) : false;
+        const converged = lastResult?.converged ? 'converged' : 'max iterations reached';
+        const iterations = processedIterations;
+        setEigenvectorProgress(1, 1);
+        eigenvectorMaxValue.textContent = formatNumber(summary.max, 6);
+        eigenvectorEigenvalueValue.textContent = formatNumber(Number(lastResult?.eigenvalue ?? NaN), 6);
+        eigenvectorElapsedValue.textContent = `${Math.round(Math.max(0, ended - started))} ms`;
+        const writeMsg = wrote ? ` • wrote "${outNodeAttribute}"` : '';
+        setEigenvectorStatus(`Done • ${converged} in ${iterations} iterations${writeMsg}`);
+        refreshAll();
+        this.helios?.requestRender?.();
+      } catch (error) {
+        const message = error?.message ?? String(error);
+        const lower = message.toLowerCase();
+        const aborted = signal.aborted || lower.includes('aborted') || lower.includes('canceled');
+        if (aborted) {
+          setEigenvectorStatus('Canceled');
+        } else {
+          const detail = reportMeasurementError('Eigenvector centrality', error, {
+            direction,
+            edgeWeightAttribute,
+            maxIterations,
+            chunkIterations,
+            tolerance,
+            processedIterations,
+          });
+          setEigenvectorStatus(detail);
+        }
+      } finally {
+        eigenvectorAbortController = null;
+        setEigenvectorRunning(false);
+      }
+    };
+
+    const runBetweenness = async () => {
+      const network = net();
+      if (!network || typeof network.measureBetweennessCentrality !== 'function') {
+        setBetweennessStatus('Betweenness centrality is not available on this network');
+        return;
+      }
+      const edgeWeightAttribute = betweennessWeightSelect.value ? String(betweennessWeightSelect.value) : null;
+      const normalize = Boolean(betweennessNormalizeCheckbox.checked);
+      const sourceChunkSize = Math.max(1, Number(betweennessSourceChunkInput.value) || 1);
+      const yieldMs = Math.max(0, Number(betweennessYieldMsInput.value) || 0);
+      const outNodeAttribute = betweennessOutAttrInput.value.trim();
+
+      const sourceNodes = Uint32Array.from(network.nodeIndices ?? []);
+      const totalSources = sourceNodes.length >>> 0;
+      if (!totalSources) {
+        setBetweennessStatus('No active nodes to process');
+        betweennessMaxValue.textContent = '—';
+        betweennessSourceCountValue.textContent = '0';
+        betweennessElapsedValue.textContent = '0 ms';
+        setBetweennessProgress(1, 1);
+        return;
+      }
+
+      setBetweennessStatus('Starting…');
+      setBetweennessProgress(0, totalSources);
+      betweennessMaxValue.textContent = '—';
+      betweennessSourceCountValue.textContent = '—';
+      betweennessElapsedValue.textContent = '—';
+      setBetweennessRunning(true);
+      betweennessAbortController = new AbortController();
+      const signal = betweennessAbortController.signal;
+
+      const started = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+      let processedSources = 0;
+      let valuesByNode = null;
+      try {
+        while (processedSources < totalSources) {
+          if (signal.aborted) {
+            throw new Error('Canceled');
+          }
+          const chunk = sourceNodes.subarray(processedSources, Math.min(totalSources, processedSources + sourceChunkSize));
+          const partial = network.measureBetweennessCentrality({
+            edgeWeightAttribute,
+            normalize: false,
+            sourceNodes: chunk,
+            accumulate: processedSources > 0,
+            initialValues: valuesByNode,
+            executionMode: 'single-thread',
+          });
+          valuesByNode = partial?.valuesByNode ?? valuesByNode;
+          processedSources += chunk.length;
+          setBetweennessProgress(processedSources, totalSources);
+          setBetweennessStatus(`Running… ${processedSources}/${totalSources} sources`);
+          await defer(yieldMs);
+        }
+        if (!valuesByNode) {
+          throw new Error('Betweenness centrality returned no values');
+        }
+        let finalValues = valuesByNode;
+        if (normalize) {
+          const n = Math.max(0, Number(network.nodeCount) || 0);
+          const denom = (n - 1) * (n - 2);
+          const scale = denom > 0 ? (network.directed ? (1 / denom) : (2 / denom)) : 0;
+          const normalizedValues = new Float32Array(finalValues.length);
+          for (let i = 0; i < finalValues.length; i += 1) {
+            normalizedValues[i] = finalValues[i] * scale;
+          }
+          finalValues = normalizedValues;
+        }
+        const ended = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+        const summary = summarizeFiniteValues(finalValues);
+        const wrote = outNodeAttribute ? writeNodeMetricValues(network, outNodeAttribute, { valuesByNode: finalValues }) : false;
+        setBetweennessProgress(1, 1);
+        betweennessMaxValue.textContent = formatNumber(summary.max, 6);
+        betweennessSourceCountValue.textContent = String(processedSources);
+        betweennessElapsedValue.textContent = `${Math.round(Math.max(0, ended - started))} ms`;
+        const writeMsg = wrote ? ` • wrote "${outNodeAttribute}"` : '';
+        setBetweennessStatus(`Done${writeMsg}`);
+        refreshAll();
+        this.helios?.requestRender?.();
+      } catch (error) {
+        const message = error?.message ?? String(error);
+        const lower = message.toLowerCase();
+        const aborted = signal.aborted || lower.includes('aborted') || lower.includes('canceled');
+        if (aborted) {
+          setBetweennessStatus('Canceled');
+        } else {
+          const detail = reportMeasurementError('Betweenness centrality', error, {
+            edgeWeightAttribute,
+            normalize,
+            sourceChunkSize,
+            processedSources,
+            totalSources,
+          });
+          setBetweennessStatus(detail);
+        }
+      } finally {
+        betweennessAbortController = null;
+        setBetweennessRunning(false);
+      }
+    };
 
     const runLeiden = async () => {
       const network = net();
@@ -1888,6 +3063,27 @@ export class HeliosUI {
       }
     };
 
+    degreeCalcButton.addEventListener('click', () => {
+      if (degreeRunning) return;
+      runDegree();
+    });
+    strengthCalcButton.addEventListener('click', () => {
+      if (strengthRunning) return;
+      runStrength();
+    });
+    clusteringCalcButton.addEventListener('click', () => {
+      if (clusteringRunning) return;
+      runClustering();
+    });
+    eigenvectorCalcButton.addEventListener('click', () => {
+      if (eigenvectorRunning) return;
+      runEigenvector();
+    });
+    betweennessCalcButton.addEventListener('click', () => {
+      if (betweennessRunning) return;
+      runBetweenness();
+    });
+
     calcButton.addEventListener('click', () => {
       if (leidenRunning) return;
       runLeiden();
@@ -1902,6 +3098,61 @@ export class HeliosUI {
     // Status is rendered under the Progress bar.
 
     const stack = new PanelStack();
+    stack.add({
+      id: 'metrics-degree',
+      title: 'Degree',
+      collapsed: options?.collapsedDegree ?? true,
+      content: (() => {
+        const wrapper = document.createElement('div');
+        wrapper.appendChild(degree);
+        wrapper.appendChild(degreeInnerStack.element);
+        return wrapper;
+      })(),
+    });
+    stack.add({
+      id: 'metrics-strength',
+      title: 'Strength',
+      collapsed: options?.collapsedStrength ?? true,
+      content: (() => {
+        const wrapper = document.createElement('div');
+        wrapper.appendChild(strength);
+        wrapper.appendChild(strengthInnerStack.element);
+        return wrapper;
+      })(),
+    });
+    stack.add({
+      id: 'metrics-clustering',
+      title: 'Local Clustering',
+      collapsed: options?.collapsedClustering ?? true,
+      content: (() => {
+        const wrapper = document.createElement('div');
+        wrapper.appendChild(clustering);
+        wrapper.appendChild(clusteringInnerStack.element);
+        return wrapper;
+      })(),
+    });
+    stack.add({
+      id: 'metrics-eigen',
+      title: 'Eigenvector Centrality',
+      collapsed: options?.collapsedEigenvector ?? true,
+      content: (() => {
+        const wrapper = document.createElement('div');
+        wrapper.appendChild(eigenvector);
+        wrapper.appendChild(eigenvectorInnerStack.element);
+        return wrapper;
+      })(),
+    });
+    stack.add({
+      id: 'metrics-betweenness',
+      title: 'Betweenness Centrality',
+      collapsed: options?.collapsedBetweenness ?? true,
+      content: (() => {
+        const wrapper = document.createElement('div');
+        wrapper.appendChild(betweenness);
+        wrapper.appendChild(betweennessInnerStack.element);
+        return wrapper;
+      })(),
+    });
     stack.add({
       id: 'metrics-leiden',
       title: 'Communities (Leiden)',
@@ -1926,6 +3177,11 @@ export class HeliosUI {
     });
     content.appendChild(stack.element);
     this._controlCleanups.add(() => stack.destroy());
+    this._controlCleanups.add(() => degreeInnerStack.destroy());
+    this._controlCleanups.add(() => strengthInnerStack.destroy());
+    this._controlCleanups.add(() => clusteringInnerStack.destroy());
+    this._controlCleanups.add(() => eigenvectorInnerStack.destroy());
+    this._controlCleanups.add(() => betweennessInnerStack.destroy());
     this._controlCleanups.add(() => leidenInnerStack.destroy());
     this._controlCleanups.add(() => dimensionInnerStack.destroy());
 
@@ -1938,6 +3194,8 @@ export class HeliosUI {
     const onNetworkReplaced = () => {
       cancelLeidenRun();
       cancelDimensionRun();
+      cancelEigenvectorRun();
+      cancelBetweennessRun();
       refreshAll();
     };
     let unsub = null;
