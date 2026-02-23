@@ -44,6 +44,13 @@ network.addNodes(5);
 
 const helios = new Helios(network, { container: '#app' });
 await helios.ready;
+
+// Optional SVG labels overlay (off by default).
+helios.labels({
+  enabled: true,
+  maxVisible: 120,
+  source: null, // auto fallback: Label -> Name -> id
+});
 ```
 
 The same API powers the example under `docs/examples/basic/main.js`, making it

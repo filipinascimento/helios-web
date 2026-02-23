@@ -94,6 +94,55 @@ test.describe('controls panel: appearance section', () => {
     const screenMode = await page.evaluate(() => window.__helios.renderer?.graphLayer?.edgeTransparencyMode ?? null);
     expect(screenMode).toBe('screen');
 
+    const labelsHeader = controlsPanel.getByRole('button', { name: 'Labels' }).first();
+    if ((await labelsHeader.getAttribute('aria-expanded')) === 'false') {
+      await labelsHeader.click();
+    }
+
+    const showLabelsToggle = controlsPanel.locator('input[type="checkbox"][aria-label="Show Labels"]').first();
+    await expect(showLabelsToggle).toBeVisible();
+    await showLabelsToggle.check();
+    const labelsEnabled = await page.evaluate(() => window.__helios.labels().enabled === true);
+    expect(labelsEnabled).toBe(true);
+
+    const maxLabelsRow = controlsPanel
+      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Max Labels"))')
+      .first();
+    const maxLabelsInput = maxLabelsRow.locator('input[type="number"]').first();
+    await maxLabelsInput.fill('18');
+    await maxLabelsInput.dispatchEvent('change');
+    const maxLabels = await page.evaluate(() => window.__helios.labels().maxVisible ?? null);
+    expect(maxLabels).toBe(18);
+
+    const labelSource = controlsPanel.locator('select[aria-label="Label source attribute"]').first();
+    await expect(labelSource).toBeVisible();
+    const sourceValues = await labelSource.locator('option').evaluateAll((opts) => opts.map((opt) => opt.value));
+    expect(sourceValues).toContain('');
+    expect(sourceValues).toContain('$index');
+    await labelSource.selectOption('$index');
+    const labelSourceValue = await page.evaluate(() => window.__helios.labelSource?.() ?? null);
+    expect(labelSourceValue).toBe('$id');
+
+    const labelFontFamily = controlsPanel.locator('input[aria-label="Label font family"]').first();
+    await expect(labelFontFamily).toBeVisible();
+    await labelFontFamily.fill('Menlo, monospace');
+    await labelFontFamily.dispatchEvent('change');
+    const fontFamily = await page.evaluate(() => window.__helios.labelFontFamily?.() ?? '');
+    expect(fontFamily).toContain('Menlo');
+
+    const labelFill = controlsPanel.locator('input[type="color"][aria-label="Label fill color"]').first();
+    const labelFillAlpha = controlsPanel.locator('input[type="number"][aria-label="Label fill color alpha"]').first();
+    await expect(labelFill).toBeVisible();
+    await expect(labelFillAlpha).toBeVisible();
+    await labelFillAlpha.fill('0.75');
+    await labelFillAlpha.dispatchEvent('change');
+    await labelFill.evaluate((el, value) => {
+      el.value = value;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }, '#00ff00');
+    const labelFillValue = await page.evaluate(() => String(window.__helios.labelFill?.() ?? ''));
+    expect(labelFillValue.toLowerCase()).toContain('#00ff00');
+
     const advancedHeader = controlsPanel.getByRole('button', { name: 'Advanced' }).first();
     if ((await advancedHeader.getAttribute('aria-expanded')) === 'false') {
       await advancedHeader.click();

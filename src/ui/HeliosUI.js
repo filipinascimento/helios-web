@@ -658,6 +658,103 @@ export class HeliosUI {
         return row;
       };
 
+      const createLabelSourceSelect = () => {
+        const select = document.createElement('select');
+        select.className = 'helios-ui-select';
+        select.setAttribute('aria-label', 'Label source attribute');
+
+        const readNodeAttributeNames = () => {
+          const network = this.helios?.network ?? null;
+          if (!network || typeof network.getNodeAttributeNames !== 'function') return [];
+          try {
+            const raw = network.getNodeAttributeNames() ?? [];
+            const out = [];
+            for (const name of raw) {
+              if (typeof name !== 'string') continue;
+              if (!isPublicAttributeName(name)) continue;
+              out.push(name);
+            }
+            out.sort((a, b) => a.localeCompare(b));
+            return out;
+          } catch (_) {
+            return [];
+          }
+        };
+
+        const refreshOptions = () => {
+          const currentRaw = this.helios?.labelSource?.();
+          const current = typeof currentRaw === 'string' ? currentRaw.trim() : '';
+          const currentUi = current === '$id' ? '$index' : current;
+
+          const options = [
+            { value: '', label: 'Auto (Label, Name, id)' },
+            { value: '$index', label: '$index (node id)' },
+          ];
+          const seen = new Set(options.map((entry) => entry.value));
+          for (const name of readNodeAttributeNames()) {
+            if (seen.has(name)) continue;
+            options.push({ value: name, label: name });
+            seen.add(name);
+          }
+          if (currentUi && !seen.has(currentUi)) {
+            options.push({ value: currentUi, label: `${currentUi} (custom)` });
+            seen.add(currentUi);
+          }
+
+          select.replaceChildren();
+          for (const entry of options) {
+            const opt = document.createElement('option');
+            opt.value = entry.value;
+            opt.textContent = entry.label;
+            select.appendChild(opt);
+          }
+          select.value = seen.has(currentUi) ? currentUi : '';
+        };
+
+        select.addEventListener('change', () => {
+          const next = String(select.value ?? '').trim();
+          if (!next) {
+            this.helios?.labelSource?.(null);
+          } else if (next === '$index') {
+            this.helios?.labelSource?.('$id');
+          } else {
+            this.helios?.labelSource?.(next);
+          }
+          refreshOptions();
+        });
+
+        const onNetworkReplaced = () => refreshOptions();
+        let unsubscribe = null;
+        if (this.helios?.on) {
+          unsubscribe = this.helios.on('network:replaced', onNetworkReplaced);
+        } else if (this.helios?.addEventListener) {
+          this.helios.addEventListener('network:replaced', onNetworkReplaced);
+          unsubscribe = () => this.helios.removeEventListener('network:replaced', onNetworkReplaced);
+        }
+
+        refreshOptions();
+        return {
+          element: select,
+          destroy() {
+            if (typeof unsubscribe === 'function') unsubscribe();
+          },
+        };
+      };
+
+      const createLabelFontFamilyInput = () => {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'helios-ui-text';
+        input.placeholder = 'ui-sans-serif, system-ui, sans-serif';
+        input.setAttribute('aria-label', 'Label font family');
+        input.value = String(this.helios?.labelFontFamily?.() ?? '');
+        input.addEventListener('change', () => {
+          const next = String(input.value ?? '').trim();
+          this.helios?.labelFontFamily?.(next);
+        });
+        return input;
+      };
+
       const stack = new PanelStack();
       stack.add({
         id: 'network-io',
@@ -721,6 +818,58 @@ export class HeliosUI {
             controls: modeSelect,
           }).row);
 
+          return wrapper;
+        })(),
+      });
+
+      stack.add({
+        id: 'labels',
+        title: 'Labels',
+        content: (() => {
+          const wrapper = document.createElement('div');
+          const enableRow = createToggleRow('labelsEnabled');
+          if (enableRow) wrapper.appendChild(enableRow);
+
+          wrapper.appendChild(createRows([
+            'labelsMaxVisible',
+            'labelsFontSizeScale',
+            'labelsMinScreenRadius',
+            'labelsOutlineWidth',
+          ]));
+
+          const labelSourceControl = createLabelSourceSelect();
+          wrapper.appendChild(createAlignedRow({
+            title: 'Source',
+            hint: 'Node attribute used for labels. Empty = auto fallback (Label, Name, id).',
+            controls: labelSourceControl.element,
+          }).row);
+          this._controlCleanups.add(() => labelSourceControl.destroy());
+
+          wrapper.appendChild(createAlignedRow({
+            title: 'Font Family',
+            hint: 'CSS font-family used by SVG labels.',
+            controls: createLabelFontFamilyInput(),
+          }).row);
+
+          wrapper.appendChild(createAlignedRow({
+            title: 'Fill',
+            hint: 'Label text color + alpha.',
+            controls: createColorWithAlphaControls({
+              ariaLabel: 'Label fill color',
+              getValue: () => this.helios?.labelFill?.(),
+              setValue: (value) => this.helios?.labelFill?.(value),
+            }),
+          }).row);
+
+          wrapper.appendChild(createAlignedRow({
+            title: 'Outline',
+            hint: 'Label outline/halo color + alpha.',
+            controls: createColorWithAlphaControls({
+              ariaLabel: 'Label outline color',
+              getValue: () => this.helios?.labelOutlineColor?.(),
+              setValue: (value) => this.helios?.labelOutlineColor?.(value),
+            }),
+          }).row);
           return wrapper;
         })(),
       });

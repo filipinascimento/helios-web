@@ -13,6 +13,7 @@ import { createDefaultMappers, MapperCollection } from './pipeline/Mapper.js';
 import { createDebugLogger } from './utilities/DebugLogger.js';
 import { PositionDelegate } from './delegates/PositionDelegate.js';
 import { VISUAL_ATTRIBUTE_NAMES } from './pipeline/constants.js';
+import { SvgLabelController } from './labels/SvgLabelController.js';
 
 const {
   NODE_POSITION_ATTRIBUTE,
@@ -521,6 +522,48 @@ export class Helios extends EventTarget {
       description: 'Enable depth testing and depth writes for edges (best for solid edges)',
       defaultValue: false,
     },
+    labelsEnabled: {
+      type: 'boolean',
+      label: 'Show Labels',
+      description: 'Enable SVG node labels',
+      defaultValue: false,
+    },
+    labelsMaxVisible: {
+      type: 'number',
+      label: 'Max Labels',
+      description: 'Maximum number of labels rendered at once',
+      defaultValue: 120,
+      domain: { min: 0, max: 5000 },
+      recommendedRange: { min: 20, max: 400 },
+      step: 1,
+    },
+    labelsFontSizeScale: {
+      type: 'number',
+      label: 'Label Size Scale',
+      description: 'Global multiplier for label font size',
+      defaultValue: 1,
+      domain: { min: 0.25, max: 8 },
+      recommendedRange: { min: 0.5, max: 2.5 },
+      step: 0.05,
+    },
+    labelsMinScreenRadius: {
+      type: 'number',
+      label: 'Min Node Radius',
+      description: 'Minimum apparent node radius (px) required before labels are considered',
+      defaultValue: 0,
+      domain: { min: 0, max: 200 },
+      recommendedRange: { min: 0, max: 24 },
+      step: 0.5,
+    },
+    labelsOutlineWidth: {
+      type: 'number',
+      label: 'Label Outline Width',
+      description: 'Label stroke/halo width',
+      defaultValue: 2,
+      domain: { min: 0, max: 16 },
+      recommendedRange: { min: 0, max: 6 },
+      step: 0.25,
+    },
     background: {
       type: 'color',
       label: 'Background',
@@ -773,6 +816,7 @@ export class Helios extends EventTarget {
       nodeNoState: null,
       edgeNoState: null,
     };
+    this._labels = new SvgLabelController(this, options.labels ?? {});
     this.size = { ...this.layers.size };
     this.removeResizeListener = null;
     this.firstGeometryUpdateComplete = false;
@@ -864,6 +908,7 @@ export class Helios extends EventTarget {
       });
     }
     this._applyPickingConfig();
+    this._labels?.requestFullReselect?.('renderer-created');
   }
 
   _resetMappersToDefault(network = this.network) {
@@ -959,6 +1004,7 @@ export class Helios extends EventTarget {
     this.visuals.seedMissingPositions(resolveSeedBoundsForLayout(layoutOption, this.layers.size, this.options.mode));
     this._attachPositionDelegate(activePositionDelegate);
     this._resetInterpolationRuntime({ keepIntervalHistory: false });
+    this._labels?.requestFullReselect?.('network-replaced');
 
     if (options.mappers === null) {
       this.nodeMapper = new MapperCollection('node', nextNetwork, this.markMappersDirty, this.debug);
@@ -1034,6 +1080,7 @@ export class Helios extends EventTarget {
       nodeCount: nextNetwork?.nodeCount ?? null,
       edgeCount: nextNetwork?.edgeCount ?? null,
     });
+    this._labels?.requestFullReselect?.('network-replaced-emitted');
 
     if (disposeOld && prevNetwork && typeof prevNetwork.dispose === 'function') {
       try {
@@ -1382,6 +1429,7 @@ export class Helios extends EventTarget {
       this.attributeTracker?.resize(size);
       this.indexPickingTracker?.resize(size);
       this._layout?.resize?.(size);
+      this._labels?.requestFullReselect?.('resize');
       this._tryPendingFrameNetwork();
       if (!this.manualRendering) {
         this.scheduler.requestGeometry();
@@ -1432,6 +1480,7 @@ export class Helios extends EventTarget {
         this._frameId += 1;
         this.emit(EVENTS.BEFORE_RENDER, { frameId: this._frameId, dt, frame, size: { ...this.size } });
         this.renderer.render(frame, this.size);
+        this._labels?.update?.({ timestamp: now });
         this.emit(EVENTS.AFTER_RENDER, { frameId: this._frameId, dt, frame, size: { ...this.size } });
       }
     });
@@ -1885,6 +1934,7 @@ export class Helios extends EventTarget {
     this._applyPositionPipelineToRenderer();
     this.visuals.markPositionsDirty();
     this.scheduler.requestGeometry();
+    this._labels?.requestFullReselect?.('layout-update');
     this.debug.log('layout', 'Layout requested geometry update');
   }
 
@@ -2059,10 +2109,12 @@ export class Helios extends EventTarget {
     if (this.renderer?.graphLayer && name in this.renderer.graphLayer) {
       this.renderer.graphLayer[name] = value;
       this.scheduler.requestRender();
+      this._labels?.requestFullReselect?.(`graph-prop:${name}`);
       this._emitUIBindingChange(name, value);
       return this;
     }
     this._pendingGraphLayerProps.set(name, value);
+    this._labels?.requestFullReselect?.(`graph-prop-pending:${name}`);
     this._emitUIBindingChange(name, value);
     return this;
   }
@@ -2196,6 +2248,85 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('edgeTransparencyMode', next);
   }
 
+  labels(options) {
+    if (arguments.length === 0) {
+      return this._labels?.getConfig?.() ?? { enabled: false };
+    }
+    if (options == null) {
+      this._labels?.setConfig?.({ enabled: false });
+    } else if (typeof options === 'object') {
+      this._labels?.setConfig?.(options);
+    } else {
+      throw new TypeError('labels(options) expects an object or null');
+    }
+    this._labels?.requestFullReselect?.('api');
+    this.scheduler?.requestRender?.();
+    this._refreshUIBindings();
+    return this;
+  }
+
+  labelsEnabled(value) {
+    if (arguments.length === 0) return this.labels()?.enabled === true;
+    return this.labels({ enabled: value === true });
+  }
+
+  labelsMaxVisible(value) {
+    if (arguments.length === 0) return Number(this.labels()?.maxVisible ?? 0);
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return this;
+    return this.labels({ maxVisible: Math.max(0, Math.floor(numeric)) });
+  }
+
+  labelsFontSizeScale(value) {
+    if (arguments.length === 0) return Number(this.labels()?.fontSizeScale ?? 1);
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return this;
+    return this.labels({ fontSizeScale: Math.max(0.25, numeric) });
+  }
+
+  labelsMinScreenRadius(value) {
+    if (arguments.length === 0) return Number(this.labels()?.minScreenRadiusPx ?? 0);
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return this;
+    return this.labels({ minScreenRadiusPx: Math.max(0, numeric) });
+  }
+
+  labelsOutlineWidth(value) {
+    if (arguments.length === 0) return Number(this.labels()?.outlineWidth ?? 0);
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return this;
+    return this.labels({ outlineWidth: Math.max(0, numeric) });
+  }
+
+  labelFill(color) {
+    if (arguments.length === 0) return this.labels()?.fill ?? null;
+    if (typeof color === 'string' && color.trim()) return this.labels({ fill: color.trim() });
+    const normalized = normalizeColorInput(color);
+    if (normalized) return this.labels({ fill: normalized });
+    throw new Error('labelFill(color) expects a CSS color string or [r,g,b(,a)]');
+  }
+
+  labelOutlineColor(color) {
+    if (arguments.length === 0) return this.labels()?.outlineColor ?? null;
+    if (typeof color === 'string' && color.trim()) return this.labels({ outlineColor: color.trim() });
+    const normalized = normalizeColorInput(color);
+    if (normalized) return this.labels({ outlineColor: normalized });
+    throw new Error('labelOutlineColor(color) expects a CSS color string or [r,g,b(,a)]');
+  }
+
+  labelFontFamily(value) {
+    if (arguments.length === 0) return this.labels()?.fontFamily ?? '';
+    const next = String(value ?? '').trim();
+    return this.labels({ fontFamily: next });
+  }
+
+  labelSource(value) {
+    if (arguments.length === 0) return this.labels()?.source ?? null;
+    if (typeof value === 'function') return this.labels({ source: value });
+    const next = value == null ? null : String(value).trim();
+    return this.labels({ source: next || null });
+  }
+
   /**
    * Pre-runs mapper application before first render. Useful for large graphs
    * where the first geometry pass is expensive.
@@ -2269,6 +2400,7 @@ export class Helios extends EventTarget {
     this._layout?.requestUpdate?.();
     this.scheduler.requestLayout('data');
     this.scheduler.requestGeometry();
+    this._labels?.requestFullReselect?.('add-nodes');
     return nodes;
   }
 
@@ -2284,6 +2416,7 @@ export class Helios extends EventTarget {
     this._layout?.requestUpdate?.();
     this.scheduler.requestLayout('data');
     this.scheduler.requestGeometry();
+    this._labels?.requestFullReselect?.('add-edges');
     return edgeIndices;
   }
 
@@ -2302,6 +2435,7 @@ export class Helios extends EventTarget {
     this._layout?.requestUpdate?.();
     this.scheduler.requestLayout('data');
     this.scheduler.requestGeometry();
+    this._labels?.requestFullReselect?.('network-changed');
   }
 
   nodeState(indices, mask, options = {}) {
@@ -2336,6 +2470,7 @@ export class Helios extends EventTarget {
       this.visuals.bumpEdgeAttributes(EDGE_ENDPOINTS_STATE_ATTRIBUTE);
     });
     this.scheduler.requestGeometry();
+    this._labels?.requestFullReselect?.('node-state');
     return this;
   }
 
@@ -2610,6 +2745,7 @@ export class Helios extends EventTarget {
     this._applyPositionPipelineToRenderer();
     this.scheduler.requestGeometry();
     this.scheduler.requestRender();
+    this._labels?.requestFullReselect?.('positions-config');
     return this;
   }
 
@@ -2795,6 +2931,7 @@ export class Helios extends EventTarget {
   setLayout(layout) { return this.layout(layout); }
   setPositions(options) { return this.positions(options); }
   setInterpolation(options) { return this.interpolation(options); }
+  setLabels(options) { return this.labels(options); }
   setMappers(mappers) { return this.mappers(mappers); }
   setNodeState(indices, mask, options) { return this.nodeState(indices, mask, options); }
   setEdgeState(indices, mask, options) { return this.edgeState(indices, mask, options); }
@@ -3525,6 +3662,8 @@ export class Helios extends EventTarget {
         this.emit(EVENTS.EDGE_HOVER, { state: 'in', index: next.index, depth: next.depth, x, y, clientX, clientY });
       }
       this._picking.hover = { ...next };
+      this._labels?.requestFullReselect?.('hover-change');
+      this.scheduler?.requestRender?.();
     } finally {
       this._picking._inFlight = false;
       if (this._picking._rerun) {
@@ -3561,6 +3700,8 @@ export class Helios extends EventTarget {
       });
     }
     this._picking.hover = { kind: null, index: -1, depth: null };
+    this._labels?.requestFullReselect?.('hover-reset');
+    this.scheduler?.requestRender?.();
   }
 
   destroy() {
@@ -3584,6 +3725,8 @@ export class Helios extends EventTarget {
     this.indexPickingTracker?.destroy?.();
     this.indexPickingTracker = null;
     this.renderer?.destroy?.();
+    this._labels?.destroy?.();
+    this._labels = null;
     this.layers.destroy();
   }
 }
