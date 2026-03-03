@@ -8,6 +8,7 @@ import { createAlignedRowEl } from './controls/createAlignedRowEl.js';
 import { createTooltipManager } from './controls/createTooltipManager.js';
 import { PanelStack } from './panels/PanelStack.js';
 import { TabbedPanel } from './panels/TabbedPanel.js';
+import { TwoHandleRange } from './controls/TwoHandleRange.js';
 import { colormaps } from '../colors/colormaps.js';
 import { VISUAL_ATTRIBUTE_MAP } from '../pipeline/constants.js';
 import { MappersPanel } from './panels/MappersPanel.js';
@@ -919,6 +920,632 @@ export class HeliosUI {
       id: options.id ?? 'helios-ui-demo',
       title: options.title ?? 'Controls',
       position: options.position ?? { x: 16, y: 16 },
+      dock: options.dock ?? 'top-left',
+      content,
+    });
+  }
+
+  createFilterPanel(options = {}) {
+    const content = document.createElement('div');
+    content.className = 'helios-ui-filter';
+
+    const FILTER_IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+    const FILTER_SCOPE_RENDER = 'render';
+    const FILTER_SCOPE_RENDER_LAYOUT = 'render+layout';
+    const FILTER_RANGE_EPSILON = 1e-9;
+    const updateIntervalMs = Number.isFinite(options?.updateIntervalMs)
+      ? Math.max(0, Math.floor(options.updateIntervalMs))
+      : Number.isFinite(options?.debounceMs)
+        ? Math.max(0, Math.floor(options.debounceMs))
+        : 32;
+
+    const isNumericAttributeType = (type) => typeof type === 'number';
+    const isIntegerAttributeType = (type) =>
+      type === AttributeType.Integer ||
+      type === AttributeType.UnsignedInteger ||
+      type === AttributeType.BigInteger ||
+      type === AttributeType.UnsignedBigInteger;
+
+    const listNumericAttributeNames = (scope) => {
+      const network = this.helios?.network ?? null;
+      if (!network) return [];
+      const getNames = scope === 'edge'
+        ? network.getEdgeAttributeNames
+        : network.getNodeAttributeNames;
+      const getInfo = scope === 'edge'
+        ? network.getEdgeAttributeInfo
+        : network.getNodeAttributeInfo;
+      if (typeof getNames !== 'function' || typeof getInfo !== 'function') return [];
+      const raw = getNames.call(network) ?? [];
+      const out = [];
+      for (const name of raw) {
+        if (typeof name !== 'string') continue;
+        if (!isPublicAttributeName(name)) continue;
+        if (!FILTER_IDENTIFIER_RE.test(name)) continue;
+        const info = getInfo.call(network, name);
+        if (!info || info.dimension !== 1 || !isNumericAttributeType(info.type)) continue;
+        out.push(name);
+      }
+      out.sort((a, b) => a.localeCompare(b));
+      return out;
+    };
+
+    const computeNumericExtent = (scope, attributeName) => {
+      const network = this.helios?.network ?? null;
+      if (!network || typeof attributeName !== 'string' || !attributeName) return null;
+      try {
+        const indices = scope === 'edge' ? network.edgeIndices : network.nodeIndices;
+        if (!indices || !indices.length) return null;
+        const getBuffer = scope === 'edge'
+          ? network.getEdgeAttributeBuffer
+          : network.getNodeAttributeBuffer;
+        const getInfo = scope === 'edge'
+          ? network.getEdgeAttributeInfo
+          : network.getNodeAttributeInfo;
+        if (typeof getBuffer !== 'function') return null;
+        const buffer = getBuffer.call(network, attributeName);
+        const info = typeof getInfo === 'function' ? getInfo.call(network, attributeName) : null;
+        const isInteger = Boolean(info && isIntegerAttributeType(info.type));
+        const read = () => {
+          const view = buffer?.view ?? null;
+          if (!view || !view.length) return null;
+          let min = Infinity;
+          let max = -Infinity;
+          for (let i = 0; i < indices.length; i += 1) {
+            const id = indices[i];
+            const value = Number(view[id]);
+            if (!Number.isFinite(value)) continue;
+            if (value < min) min = value;
+            if (value > max) max = value;
+          }
+          if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+          if (isInteger) {
+            const minInt = Math.floor(min);
+            const maxInt = Math.ceil(max);
+            if (minInt === maxInt) {
+              return { min: minInt, max: minInt + 1, isInteger: true };
+            }
+            return { min: minInt, max: maxInt, isInteger: true };
+          }
+          if (min === max) return { min, max: min + 1, isInteger: false };
+          return { min, max, isInteger: false };
+        };
+        if (typeof network.withBufferAccess === 'function') {
+          try {
+            return network.withBufferAccess(read);
+          } catch (_) {
+            return read();
+          }
+        }
+        return read();
+      } catch (_) {
+        return null;
+      }
+    };
+
+    const suggestHistogramBins = (count) => {
+      if (!Number.isFinite(count) || count <= 1) return 1;
+      return Math.max(8, Math.min(40, Math.round(Math.sqrt(count))));
+    };
+
+    const buildHistogram = (view, min, max, indices) => {
+      if (!view || typeof view.length !== 'number' || view.length <= 0) return null;
+      if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return null;
+      if (!indices || typeof indices.length !== 'number' || indices.length <= 0) return null;
+      const bins = suggestHistogramBins(indices.length);
+      const counts = new Array(bins).fill(0);
+      const span = max - min;
+      let maxCount = 0;
+      let seen = 0;
+      for (let i = 0; i < indices.length; i += 1) {
+        const idxValue = indices[i];
+        const value = Number(view[idxValue]);
+        if (!Number.isFinite(value)) continue;
+        let idx = Math.floor(((value - min) / span) * bins);
+        if (idx < 0) idx = 0;
+        if (idx >= bins) idx = bins - 1;
+        const next = counts[idx] + 1;
+        counts[idx] = next;
+        if (next > maxCount) maxCount = next;
+        seen += 1;
+      }
+      if (!seen || maxCount <= 0) return null;
+      return { counts, maxCount };
+    };
+
+    const suggestStepFromExtent = (extent) => {
+      if (!extent) return 0.01;
+      if (extent.isInteger) return 1;
+      const span = Math.abs(Number(extent.max) - Number(extent.min));
+      if (!Number.isFinite(span) || span <= 0) return 0.01;
+      return Math.max(span / 400, 1e-6);
+    };
+
+    const toQueryNumber = (value) => {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) return null;
+      if (numeric === 0) return '0';
+      return String(Number(numeric.toPrecision(12)));
+    };
+
+    const formatRangeInputValue = (value, isInteger = false) => {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) return '';
+      if (isInteger) return String(Math.round(numeric));
+      return String(Number(numeric.toPrecision(12)));
+    };
+
+    const clampRangeToExtent = (range, extent) => {
+      if (!extent) return null;
+      const loRaw = Number(Array.isArray(range) ? range[0] : extent.min);
+      const hiRaw = Number(Array.isArray(range) ? range[1] : extent.max);
+      const lo = Number.isFinite(loRaw) ? Math.max(extent.min, Math.min(extent.max, loRaw)) : extent.min;
+      const hi = Number.isFinite(hiRaw) ? Math.max(extent.min, Math.min(extent.max, hiRaw)) : extent.max;
+      return lo <= hi ? [lo, hi] : [hi, lo];
+    };
+
+    const rangesClose = (range, extent) => {
+      if (!Array.isArray(range) || !extent) return false;
+      return Math.abs(Number(range[0]) - Number(extent.min)) <= FILTER_RANGE_EPSILON
+        && Math.abs(Number(range[1]) - Number(extent.max)) <= FILTER_RANGE_EPSILON;
+    };
+
+    const buildRangeQuery = (attribute, range) => {
+      if (!attribute || !Array.isArray(range)) return null;
+      const lo = toQueryNumber(range[0]);
+      const hi = toQueryNumber(range[1]);
+      if (lo == null || hi == null) return null;
+      return `${attribute} >= ${lo} AND ${attribute} <= ${hi}`;
+    };
+
+    const createRangeHistogram = ({ scope, attributeName, range, extent }) => {
+      const network = this.helios?.network ?? null;
+      if (!network || !extent || !attributeName) return null;
+      let data = null;
+      try {
+        const indices = scope === 'edge' ? network.edgeIndices : network.nodeIndices;
+        if (!indices || !indices.length) return null;
+        const getBuffer = scope === 'edge'
+          ? network.getEdgeAttributeBuffer
+          : network.getNodeAttributeBuffer;
+        if (typeof getBuffer !== 'function') return null;
+        const buffer = getBuffer.call(network, attributeName);
+        const compute = () => {
+          const view = buffer?.view ?? null;
+          if (!view || !view.length) return null;
+          return buildHistogram(view, extent.min, extent.max, indices);
+        };
+        if (typeof network.withBufferAccess === 'function') {
+          try {
+            data = network.withBufferAccess(compute);
+          } catch (_) {
+            data = compute();
+          }
+        } else {
+          data = compute();
+        }
+      } catch (_) {
+        data = null;
+      }
+      if (!data) return null;
+
+      const histogram = document.createElement('div');
+      histogram.className = 'helios-ui-range2__histogram';
+      for (const count of data.counts) {
+        const bar = document.createElement('div');
+        bar.className = 'helios-ui-range2__histogram-bin';
+        bar.style.height = `${Math.max(1, Math.round((count / data.maxCount) * 100))}%`;
+        histogram.appendChild(bar);
+      }
+
+      const minMarker = document.createElement('div');
+      minMarker.className = 'helios-ui-range2__histogram-marker';
+      const maxMarker = document.createElement('div');
+      maxMarker.className = 'helios-ui-range2__histogram-marker';
+      histogram.appendChild(minMarker);
+      histogram.appendChild(maxMarker);
+
+      const setMarkers = (lo, hi) => {
+        const span = extent.max - extent.min;
+        const toPct = (value) => {
+          if (span === 0) return 0;
+          const raw = (value - extent.min) / span;
+          return Math.max(0, Math.min(1, raw));
+        };
+        const toLeft = (pct) =>
+          `calc(${pct} * (100% - var(--helios-ui-range2-thumb)) + (var(--helios-ui-range2-thumb) / 2))`;
+        minMarker.style.left = toLeft(toPct(lo));
+        maxMarker.style.left = toLeft(toPct(hi));
+      };
+      setMarkers(Number(range?.[0] ?? extent.min), Number(range?.[1] ?? extent.max));
+      return { element: histogram, setMarkers };
+    };
+
+    const tabState = {
+      node: {
+        scope: 'node',
+        attrKey: 'nodeQuery',
+        selectTestId: 'controls-filter-node-attribute',
+        sliderMinTestId: 'controls-filter-node-min-slider',
+        sliderMaxTestId: 'controls-filter-node-max-slider',
+        minInputTestId: 'controls-filter-node-min',
+        maxInputTestId: 'controls-filter-node-max',
+        select: null,
+        sliderHost: null,
+        histogramHost: null,
+        valuesHost: null,
+        minInput: null,
+        maxInput: null,
+        slider: null,
+        histogram: null,
+        setMarkers: null,
+        extent: null,
+        range: null,
+      },
+      edge: {
+        scope: 'edge',
+        attrKey: 'edgeQuery',
+        selectTestId: 'controls-filter-edge-attribute',
+        sliderMinTestId: 'controls-filter-edge-min-slider',
+        sliderMaxTestId: 'controls-filter-edge-max-slider',
+        minInputTestId: 'controls-filter-edge-min',
+        maxInputTestId: 'controls-filter-edge-max',
+        select: null,
+        sliderHost: null,
+        histogramHost: null,
+        valuesHost: null,
+        minInput: null,
+        maxInput: null,
+        slider: null,
+        histogram: null,
+        setMarkers: null,
+        extent: null,
+        range: null,
+      },
+    };
+
+    const setRangeInUi = (scopeState, nextRange) => {
+      if (!scopeState.extent) return;
+      let clamped = clampRangeToExtent(nextRange, scopeState.extent);
+      if (!clamped) return;
+      if (scopeState.extent.isInteger) {
+        clamped = clampRangeToExtent([Math.round(clamped[0]), Math.round(clamped[1])], scopeState.extent);
+        if (!clamped) return;
+      }
+      scopeState.range = clamped;
+      if (scopeState.slider) {
+        scopeState.slider.aInput.value = String(clamped[0]);
+        scopeState.slider.bInput.value = String(clamped[1]);
+        scopeState.slider.setVisual(clamped[0], clamped[1]);
+      }
+      scopeState.setMarkers?.(clamped[0], clamped[1]);
+      if (scopeState.minInput) {
+        scopeState.minInput.value = formatRangeInputValue(clamped[0], scopeState.extent.isInteger);
+      }
+      if (scopeState.maxInput) {
+        scopeState.maxInput.value = formatRangeInputValue(clamped[1], scopeState.extent.isInteger);
+      }
+    };
+
+    const disableRangeInputs = (scopeState) => {
+      if (scopeState.minInput) {
+        scopeState.minInput.disabled = true;
+        scopeState.minInput.value = '';
+      }
+      if (scopeState.maxInput) {
+        scopeState.maxInput.disabled = true;
+        scopeState.maxInput.value = '';
+      }
+    };
+
+    const enableRangeInputs = (scopeState) => {
+      if (!scopeState.extent) return;
+      const isInteger = Boolean(scopeState.extent.isInteger);
+      const step = isInteger ? '1' : 'any';
+      const min = formatRangeInputValue(scopeState.extent.min, isInteger);
+      const max = formatRangeInputValue(scopeState.extent.max, isInteger);
+      if (scopeState.minInput) {
+        scopeState.minInput.disabled = false;
+        scopeState.minInput.step = step;
+        scopeState.minInput.min = min;
+        scopeState.minInput.max = max;
+      }
+      if (scopeState.maxInput) {
+        scopeState.maxInput.disabled = false;
+        scopeState.maxInput.step = step;
+        scopeState.maxInput.min = min;
+        scopeState.maxInput.max = max;
+      }
+    };
+
+    const fillAttributeSelect = (scopeState) => {
+      const names = listNumericAttributeNames(scopeState.scope);
+      const previous = String(scopeState.select?.value ?? '').trim();
+      scopeState.select.replaceChildren();
+
+      const noneOption = document.createElement('option');
+      noneOption.value = '';
+      noneOption.textContent = names.length ? 'No filter' : 'No numeric attributes';
+      scopeState.select.appendChild(noneOption);
+      for (const name of names) {
+        const option = document.createElement('option');
+        option.value = name;
+        option.textContent = name;
+        scopeState.select.appendChild(option);
+      }
+      scopeState.select.value = names.includes(previous) ? previous : '';
+    };
+
+    const destroyScopeControls = (scopeState) => {
+      if (scopeState.slider) {
+        scopeState.slider.destroy();
+        scopeState.slider = null;
+      }
+      scopeState.histogram = null;
+      scopeState.setMarkers = null;
+      scopeState.sliderHost?.replaceChildren();
+      scopeState.histogramHost?.replaceChildren();
+      disableRangeInputs(scopeState);
+    };
+
+    const rebuildScopeControls = (scopeState, { resetRange = false } = {}) => {
+      destroyScopeControls(scopeState);
+      const attribute = String(scopeState.select?.value ?? '').trim();
+      if (!attribute) {
+        scopeState.extent = null;
+        scopeState.range = null;
+        disableRangeInputs(scopeState);
+        return;
+      }
+      const extent = computeNumericExtent(scopeState.scope, attribute);
+      if (!extent) {
+        scopeState.extent = null;
+        scopeState.range = null;
+        disableRangeInputs(scopeState);
+        return;
+      }
+      scopeState.extent = extent;
+      enableRangeInputs(scopeState);
+      scopeState.range = resetRange || !Array.isArray(scopeState.range)
+        ? [extent.min, extent.max]
+        : clampRangeToExtent(scopeState.range, extent);
+
+      const slider = new TwoHandleRange({
+        min: extent.min,
+        max: extent.max,
+        value: scopeState.range,
+        step: suggestStepFromExtent(extent),
+        onChange: (nextRange) => {
+          setRangeInUi(scopeState, nextRange);
+          scheduleApply();
+        },
+      });
+      slider.aInput.dataset.testid = scopeState.sliderMinTestId;
+      slider.bInput.dataset.testid = scopeState.sliderMaxTestId;
+      scopeState.slider = slider;
+      scopeState.sliderHost.appendChild(slider.element);
+
+      const histogram = createRangeHistogram({
+        scope: scopeState.scope,
+        attributeName: attribute,
+        range: scopeState.range,
+        extent: scopeState.extent,
+      });
+      if (histogram) {
+        scopeState.histogram = histogram.element;
+        scopeState.setMarkers = histogram.setMarkers;
+        scopeState.histogramHost.appendChild(histogram.element);
+      }
+      setRangeInUi(scopeState, scopeState.range);
+    };
+
+    const getScopeQuery = (scopeState) => {
+      const attribute = String(scopeState.select?.value ?? '').trim();
+      if (!attribute || !scopeState.extent || !Array.isArray(scopeState.range)) return null;
+      if (rangesClose(scopeState.range, scopeState.extent)) return null;
+      return buildRangeQuery(attribute, scopeState.range);
+    };
+
+    let applyTimer = null;
+    let lastApplyAt = 0;
+    const clearApplyTimer = () => {
+      if (applyTimer != null) {
+        clearTimeout(applyTimer);
+        applyTimer = null;
+      }
+    };
+
+    const layoutCheckbox = document.createElement('input');
+    layoutCheckbox.type = 'checkbox';
+    layoutCheckbox.dataset.testid = 'controls-filter-layout';
+
+    const applyFilterNow = () => {
+      clearApplyTimer();
+      lastApplyAt = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+        ? performance.now()
+        : Date.now();
+      try {
+        const nodeQuery = getScopeQuery(tabState.node);
+        const edgeQuery = getScopeQuery(tabState.edge);
+        if (!nodeQuery && !edgeQuery) {
+          this.helios?.clearGraphFilter?.();
+          return;
+        }
+        const options = {
+          scope: layoutCheckbox.checked ? FILTER_SCOPE_RENDER_LAYOUT : FILTER_SCOPE_RENDER,
+        };
+        if (nodeQuery) options.nodeQuery = nodeQuery;
+        if (edgeQuery) options.edgeQuery = edgeQuery;
+        this.helios?.setGraphFilter?.(options);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('[HeliosUI] Failed to apply graph filter', error);
+      }
+    };
+
+    const scheduleApply = () => {
+      const now = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+        ? performance.now()
+        : Date.now();
+      const elapsed = Math.max(0, now - lastApplyAt);
+      if (elapsed >= updateIntervalMs) {
+        applyFilterNow();
+        return;
+      }
+      clearApplyTimer();
+      applyTimer = setTimeout(applyFilterNow, Math.max(0, updateIntervalMs - elapsed));
+    };
+
+    const createScopeContent = (scopeState) => {
+      const pane = document.createElement('div');
+      pane.style.display = 'grid';
+      pane.style.gap = '8px';
+
+      const select = document.createElement('select');
+      select.className = 'helios-ui-select';
+      select.style.maxWidth = 'none';
+      select.dataset.testid = scopeState.selectTestId;
+      scopeState.select = select;
+      fillAttributeSelect(scopeState);
+
+      const histogramHost = document.createElement('div');
+      histogramHost.style.width = '100%';
+      scopeState.histogramHost = histogramHost;
+
+      const sliderHost = document.createElement('div');
+      sliderHost.style.width = '100%';
+      scopeState.sliderHost = sliderHost;
+
+      const valuesHost = document.createElement('div');
+      valuesHost.className = 'helios-ui-range2__values';
+      valuesHost.style.width = '100%';
+      scopeState.valuesHost = valuesHost;
+
+      const minInput = document.createElement('input');
+      minInput.type = 'number';
+      minInput.className = 'helios-ui-number';
+      minInput.dataset.testid = scopeState.minInputTestId;
+      minInput.disabled = true;
+      scopeState.minInput = minInput;
+
+      const maxInput = document.createElement('input');
+      maxInput.type = 'number';
+      maxInput.className = 'helios-ui-number';
+      maxInput.dataset.testid = scopeState.maxInputTestId;
+      maxInput.disabled = true;
+      scopeState.maxInput = maxInput;
+
+      const commitFromInputs = () => {
+        if (!scopeState.extent) return;
+        const loRaw = Number(scopeState.minInput?.value);
+        const hiRaw = Number(scopeState.maxInput?.value);
+        if (!Number.isFinite(loRaw) || !Number.isFinite(hiRaw)) {
+          setRangeInUi(scopeState, scopeState.range ?? [scopeState.extent.min, scopeState.extent.max]);
+          return;
+        }
+        setRangeInUi(scopeState, [loRaw, hiRaw]);
+        scheduleApply();
+      };
+
+      minInput.addEventListener('change', commitFromInputs);
+      maxInput.addEventListener('change', commitFromInputs);
+      minInput.addEventListener('blur', commitFromInputs);
+      maxInput.addEventListener('blur', commitFromInputs);
+      minInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          commitFromInputs();
+        }
+      });
+      maxInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          commitFromInputs();
+        }
+      });
+
+      valuesHost.appendChild(minInput);
+      valuesHost.appendChild(maxInput);
+
+      select.addEventListener('change', () => {
+        rebuildScopeControls(scopeState, { resetRange: true });
+        scheduleApply();
+      });
+
+      pane.appendChild(select);
+      pane.appendChild(histogramHost);
+      pane.appendChild(sliderHost);
+      pane.appendChild(valuesHost);
+      rebuildScopeControls(scopeState, { resetRange: true });
+      return pane;
+    };
+
+    const tabs = new TabbedPanel({
+      variant: 'panel',
+      tabs: [
+        { id: 'nodes', title: 'Nodes', content: createScopeContent(tabState.node) },
+        { id: 'edges', title: 'Edges', content: createScopeContent(tabState.edge) },
+      ],
+    });
+    this._controlCleanups.add(() => tabs.destroy());
+
+    const layoutWrap = document.createElement('label');
+    layoutWrap.style.display = 'inline-flex';
+    layoutWrap.style.alignItems = 'center';
+    layoutWrap.style.gap = '6px';
+    layoutWrap.style.marginTop = '6px';
+    layoutWrap.style.userSelect = 'none';
+    layoutWrap.appendChild(layoutCheckbox);
+    const layoutText = document.createElement('span');
+    layoutText.textContent = 'Apply to layout';
+    layoutWrap.appendChild(layoutText);
+    layoutCheckbox.addEventListener('change', () => scheduleApply());
+
+    const syncScopeFromFilter = () => {
+      const filter = this.helios?.getGraphFilter?.() ?? null;
+      layoutCheckbox.checked = filter?.scope === FILTER_SCOPE_RENDER_LAYOUT;
+    };
+
+    const refreshFromNetwork = () => {
+      fillAttributeSelect(tabState.node);
+      fillAttributeSelect(tabState.edge);
+      rebuildScopeControls(tabState.node, { resetRange: false });
+      rebuildScopeControls(tabState.edge, { resetRange: false });
+    };
+
+    const onNetworkReplaced = () => {
+      refreshFromNetwork();
+      scheduleApply();
+    };
+
+    const onFilterChanged = () => {
+      syncScopeFromFilter();
+    };
+
+    let unsubNetwork = null;
+    let unsubFilter = null;
+    if (this.helios?.on) {
+      unsubNetwork = this.helios.on('network:replaced', onNetworkReplaced);
+      unsubFilter = this.helios.on('graph:filter-changed', onFilterChanged);
+    } else if (this.helios?.addEventListener) {
+      this.helios.addEventListener('network:replaced', onNetworkReplaced);
+      this.helios.addEventListener('graph:filter-changed', onFilterChanged);
+      unsubNetwork = () => this.helios.removeEventListener('network:replaced', onNetworkReplaced);
+      unsubFilter = () => this.helios.removeEventListener('graph:filter-changed', onFilterChanged);
+    }
+    if (unsubNetwork) this._controlCleanups.add(unsubNetwork);
+    if (unsubFilter) this._controlCleanups.add(unsubFilter);
+    this._controlCleanups.add(() => clearApplyTimer());
+
+    syncScopeFromFilter();
+
+    content.appendChild(tabs.element);
+    content.appendChild(layoutWrap);
+
+    return this.createPanel({
+      id: options.id ?? 'helios-ui-filter',
+      title: options.title ?? 'Filter',
+      position: options.position ?? { x: 16, y: 250 },
       dock: options.dock ?? 'top-left',
       content,
     });

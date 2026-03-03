@@ -366,6 +366,73 @@ function computePositionDisplacementRatio(from, to) {
   return maxDelta / Math.max(1, maxMagnitude);
 }
 
+const GRAPH_FILTER_SCOPE_RENDER = 'render';
+const GRAPH_FILTER_SCOPE_RENDER_LAYOUT = 'render+layout';
+const GRAPH_FILTER_ALLOWED_OPTION_KEYS = Object.freeze([
+  'nodeQuery',
+  'edgeQuery',
+  'nodeSelector',
+  'edgeSelector',
+  'nodeSelection',
+  'edgeSelection',
+  'orderNodesBy',
+  'orderEdgesBy',
+]);
+
+function normalizeGraphFilterScope(value, fallback = GRAPH_FILTER_SCOPE_RENDER) {
+  const raw = String(value ?? fallback).trim().toLowerCase();
+  if (raw === GRAPH_FILTER_SCOPE_RENDER_LAYOUT || raw === 'layout' || raw === 'render_layout') {
+    return GRAPH_FILTER_SCOPE_RENDER_LAYOUT;
+  }
+  return GRAPH_FILTER_SCOPE_RENDER;
+}
+
+function normalizeGraphFilterOptions(options = {}) {
+  const out = {};
+  for (const key of GRAPH_FILTER_ALLOWED_OPTION_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(options, key)) {
+      out[key] = options[key];
+    }
+  }
+  return out;
+}
+
+function hasGraphFilterCriteria(options = {}) {
+  for (const key of GRAPH_FILTER_ALLOWED_OPTION_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(options, key)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function safeNumber(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function safeLength(value) {
+  const length = Number(value?.length);
+  return Number.isFinite(length) && length >= 0 ? Math.floor(length) : 0;
+}
+
+function computeFilterTopologyVersion(baseVersion, filterVersion) {
+  const base = safeNumber(baseVersion, 0);
+  const delta = safeNumber(filterVersion, 0);
+  const sum = base + delta;
+  if (sum >= Number.MAX_SAFE_INTEGER) {
+    return sum % Number.MAX_SAFE_INTEGER;
+  }
+  if (sum < 0) return 0;
+  return sum;
+}
+
+function bumpVersionCounter(value) {
+  const current = safeNumber(value, 0);
+  if (current >= Number.MAX_SAFE_INTEGER - 1) return 0;
+  return current + 1;
+}
+
 export const EVENTS = Object.freeze({
   LAYOUT_START: 'layout:start',
   LAYOUT_STOP: 'layout:stop',
@@ -388,6 +455,7 @@ export const EVENTS = Object.freeze({
   RESIZE: 'resize',
   CAMERA_MOVE: 'camera:move',
   NETWORK_REPLACED: 'network:replaced',
+  GRAPH_FILTER_CHANGED: 'graph:filter-changed',
 });
 
 export class Helios extends EventTarget {
@@ -810,6 +878,20 @@ export class Helios extends EventTarget {
       dblclick: (event) => this._handlePointerClick(event, true),
     };
     this._pendingFrameNetwork = null;
+    this._graphFilterState = this._graphFilterState ?? {
+      enabled: false,
+      scope: GRAPH_FILTER_SCOPE_RENDER,
+      options: null,
+      signature: null,
+      nodeIndices: null,
+      edgeIndices: null,
+      filteredNetwork: null,
+      renderNetwork: network,
+      layoutNetwork: network,
+      version: 0,
+      stats: null,
+      lastError: null,
+    };
     this._stateStyleCache = {
       nodeSlots: new Map(),
       edgeSlots: new Map(),
@@ -952,6 +1034,331 @@ export class Helios extends EventTarget {
     }
   }
 
+  _ensureGraphFilterState() {
+    if (this._graphFilterState) return this._graphFilterState;
+    const baseNetwork = this.network ?? null;
+    this._graphFilterState = {
+      enabled: false,
+      scope: GRAPH_FILTER_SCOPE_RENDER,
+      options: null,
+      signature: null,
+      nodeIndices: null,
+      edgeIndices: null,
+      filteredNetwork: null,
+      renderNetwork: baseNetwork,
+      layoutNetwork: baseNetwork,
+      version: 0,
+      stats: null,
+      lastError: null,
+    };
+    return this._graphFilterState;
+  }
+
+  _captureGraphFilterSignature(state) {
+    const network = this.network ?? null;
+    let topologyNode = 0;
+    let topologyEdge = 0;
+    if (typeof network?.getTopologyVersions === 'function') {
+      try {
+        const versions = network.getTopologyVersions() ?? {};
+        topologyNode = safeNumber(versions.node, 0);
+        topologyEdge = safeNumber(versions.edge, 0);
+      } catch (_) {
+        topologyNode = 0;
+        topologyEdge = 0;
+      }
+    } else {
+      topologyNode = safeNumber(network?.nodeCount, 0);
+      topologyEdge = safeNumber(network?.edgeCount, 0);
+    }
+    const options = state?.options ?? {};
+    const nodeSelector = options?.nodeSelector ?? null;
+    const edgeSelector = options?.edgeSelector ?? null;
+    const nodeSelection = options?.nodeSelection ?? null;
+    const edgeSelection = options?.edgeSelection ?? null;
+    return {
+      topologyNode,
+      topologyEdge,
+      nodeSelectorRef: nodeSelector,
+      edgeSelectorRef: edgeSelector,
+      nodeSelectorVersion: safeNumber(nodeSelector?.version, 0),
+      edgeSelectorVersion: safeNumber(edgeSelector?.version, 0),
+      nodeSelectionRef: nodeSelection,
+      edgeSelectionRef: edgeSelection,
+      nodeSelectionVersion: safeNumber(nodeSelection?.version, 0),
+      edgeSelectionVersion: safeNumber(edgeSelection?.version, 0),
+      nodeSelectionLength: safeLength(nodeSelection),
+      edgeSelectionLength: safeLength(edgeSelection),
+    };
+  }
+
+  _isSameGraphFilterSignature(a, b) {
+    if (!a || !b) return false;
+    return (
+      a.topologyNode === b.topologyNode
+      && a.topologyEdge === b.topologyEdge
+      && a.nodeSelectorRef === b.nodeSelectorRef
+      && a.edgeSelectorRef === b.edgeSelectorRef
+      && a.nodeSelectorVersion === b.nodeSelectorVersion
+      && a.edgeSelectorVersion === b.edgeSelectorVersion
+      && a.nodeSelectionRef === b.nodeSelectionRef
+      && a.edgeSelectionRef === b.edgeSelectionRef
+      && a.nodeSelectionVersion === b.nodeSelectionVersion
+      && a.edgeSelectionVersion === b.edgeSelectionVersion
+      && a.nodeSelectionLength === b.nodeSelectionLength
+      && a.edgeSelectionLength === b.edgeSelectionLength
+    );
+  }
+
+  _createFilteredNetworkProxy({ baseNetwork, nodeIndices, edgeIndices, version }) {
+    const safeNodeIndices = nodeIndices instanceof Uint32Array ? nodeIndices : new Uint32Array(0);
+    const safeEdgeIndices = edgeIndices instanceof Uint32Array ? edgeIndices : new Uint32Array(0);
+    try {
+      safeNodeIndices.version = safeNumber(version, 0);
+    } catch (_) {
+      // ignore non-extensible typed arrays
+    }
+    try {
+      safeEdgeIndices.version = safeNumber(version, 0);
+    } catch (_) {
+      // ignore non-extensible typed arrays
+    }
+    return new Proxy(baseNetwork, {
+      get(target, property) {
+        if (property === 'nodeIndices') return safeNodeIndices;
+        if (property === 'edgeIndices') return safeEdgeIndices;
+        if (property === 'nodeCount') return safeNodeIndices.length;
+        if (property === 'edgeCount') return safeEdgeIndices.length;
+        if (property === '__heliosFilterVersion') return safeNumber(version, 0);
+        if (property === '__heliosBaseNetwork') return target;
+        if (property === 'getTopologyVersions') {
+          return () => {
+            let raw = { node: 0, edge: 0 };
+            if (typeof target.getTopologyVersions === 'function') {
+              try {
+                raw = target.getTopologyVersions() ?? raw;
+              } catch (_) {
+                raw = { node: 0, edge: 0 };
+              }
+            }
+            return {
+              node: computeFilterTopologyVersion(raw.node, version),
+              edge: computeFilterTopologyVersion(raw.edge, version),
+            };
+          };
+        }
+        const value = Reflect.get(target, property, target);
+        if (typeof value === 'function') {
+          return value.bind(target);
+        }
+        return value;
+      },
+      set(target, property, value) {
+        return Reflect.set(target, property, value, target);
+      },
+    });
+  }
+
+  _refreshGraphFilterNetworks({ force = false, throwOnError = false } = {}) {
+    const state = this._ensureGraphFilterState();
+    const baseNetwork = this.network ?? null;
+    if (!baseNetwork || state.enabled !== true || !state.options) {
+      state.signature = null;
+      state.nodeIndices = null;
+      state.edgeIndices = null;
+      state.filteredNetwork = null;
+      state.renderNetwork = baseNetwork;
+      state.layoutNetwork = baseNetwork;
+      state.stats = null;
+      state.lastError = null;
+      if (this._syncLayoutNetworkFromFilter()) {
+        this._layout?.requestUpdate?.();
+        this.scheduler?.requestLayout?.('filter-sync');
+      }
+      return state;
+    }
+
+    const nextSignature = this._captureGraphFilterSignature(state);
+    const unchanged = !force && this._isSameGraphFilterSignature(nextSignature, state.signature);
+    if (unchanged) {
+      state.renderNetwork = state.filteredNetwork ?? baseNetwork;
+      state.layoutNetwork = state.scope === GRAPH_FILTER_SCOPE_RENDER_LAYOUT
+        ? (state.renderNetwork ?? baseNetwork)
+        : baseNetwork;
+      if (this._syncLayoutNetworkFromFilter()) {
+        this._layout?.requestUpdate?.();
+        this.scheduler?.requestLayout?.('filter-sync');
+      }
+      return state;
+    }
+
+    try {
+      if (typeof baseNetwork.filterSubgraph !== 'function') {
+        throw new Error('Current helios-network build does not support filterSubgraph(options)');
+      }
+      const result = baseNetwork.filterSubgraph({ ...state.options });
+      const nodeIndices = result?.nodeIndices instanceof Uint32Array
+        ? result.nodeIndices
+        : new Uint32Array(0);
+      const edgeIndices = result?.edgeIndices instanceof Uint32Array
+        ? result.edgeIndices
+        : new Uint32Array(0);
+      state.version = bumpVersionCounter(state.version);
+      state.nodeIndices = nodeIndices;
+      state.edgeIndices = edgeIndices;
+      state.filteredNetwork = this._createFilteredNetworkProxy({
+        baseNetwork,
+        nodeIndices,
+        edgeIndices,
+        version: state.version,
+      });
+      state.renderNetwork = state.filteredNetwork;
+      state.layoutNetwork = state.scope === GRAPH_FILTER_SCOPE_RENDER_LAYOUT
+        ? state.filteredNetwork
+        : baseNetwork;
+      state.signature = nextSignature;
+      state.lastError = null;
+      state.stats = {
+        nodeCount: nodeIndices.length,
+        edgeCount: edgeIndices.length,
+        baseNodeCount: safeLength(baseNetwork?.nodeIndices),
+        baseEdgeCount: safeLength(baseNetwork?.edgeIndices),
+      };
+      if (this._syncLayoutNetworkFromFilter()) {
+        this._layout?.requestUpdate?.();
+        this.scheduler?.requestLayout?.('filter-sync');
+      }
+      return state;
+    } catch (error) {
+      state.lastError = error;
+      state.signature = nextSignature;
+      state.nodeIndices = null;
+      state.edgeIndices = null;
+      state.filteredNetwork = null;
+      state.renderNetwork = baseNetwork;
+      state.layoutNetwork = baseNetwork;
+      state.stats = null;
+      if (this._syncLayoutNetworkFromFilter()) {
+        this._layout?.requestUpdate?.();
+        this.scheduler?.requestLayout?.('filter-sync');
+      }
+      if (throwOnError) throw error;
+      this.debug?.log?.('helios', 'Graph filter refresh failed; falling back to base network', { error });
+      return state;
+    }
+  }
+
+  _syncLayoutNetworkFromFilter() {
+    const layout = this._layout ?? null;
+    if (!layout || typeof layout !== 'object') return false;
+    const nextLayoutNetwork = this._ensureGraphFilterState().layoutNetwork ?? this.network ?? null;
+    if (!nextLayoutNetwork || layout.network === nextLayoutNetwork) return false;
+    layout.network = nextLayoutNetwork;
+    return true;
+  }
+
+  _afterGraphFilterMutation(reason = 'filter') {
+    this._refreshGraphFilterNetworks({ force: false, throwOnError: false });
+    const layoutNetworkChanged = this._syncLayoutNetworkFromFilter();
+    this._layout?.requestUpdate?.();
+    this.scheduler?.requestGeometry?.();
+    if (layoutNetworkChanged) {
+      this.scheduler?.requestLayout?.('filter');
+    } else if (this._ensureGraphFilterState().scope === GRAPH_FILTER_SCOPE_RENDER_LAYOUT) {
+      this.scheduler?.requestLayout?.('filter');
+    }
+    this.scheduler?.requestRender?.();
+    this._labels?.requestFullReselect?.(`graph-filter:${reason}`);
+    this.emit(EVENTS.GRAPH_FILTER_CHANGED, this.getGraphFilter());
+  }
+
+  _getRenderNetwork() {
+    return this._refreshGraphFilterNetworks().renderNetwork ?? this.network ?? null;
+  }
+
+  _getLayoutNetwork() {
+    return this._refreshGraphFilterNetworks().layoutNetwork ?? this.network ?? null;
+  }
+
+  getGraphFilter() {
+    const state = this._refreshGraphFilterNetworks();
+    const options = state.options ? { ...state.options } : null;
+    if (options) {
+      options.scope = state.scope;
+    }
+    return {
+      enabled: state.enabled === true,
+      scope: state.scope ?? GRAPH_FILTER_SCOPE_RENDER,
+      options,
+      nodeCount: safeLength(state.renderNetwork?.nodeIndices),
+      edgeCount: safeLength(state.renderNetwork?.edgeIndices),
+      baseNodeCount: safeLength(this.network?.nodeIndices),
+      baseEdgeCount: safeLength(this.network?.edgeIndices),
+      error: state.lastError ? (state.lastError.message ?? String(state.lastError)) : null,
+    };
+  }
+
+  graphFilter(options) {
+    if (arguments.length === 0) {
+      return this.getGraphFilter();
+    }
+    if (options == null || options === false || options?.enabled === false) {
+      return this.clearGraphFilter();
+    }
+    return this.setGraphFilter(options);
+  }
+
+  setGraphFilter(options = {}) {
+    if (options == null || options === false) {
+      return this.clearGraphFilter();
+    }
+    if (typeof options !== 'object') {
+      throw new TypeError('setGraphFilter(options) expects an object or null');
+    }
+    const scope = normalizeGraphFilterScope(options.scope, this._ensureGraphFilterState().scope);
+    const filterOptions = normalizeGraphFilterOptions(options);
+    if (!hasGraphFilterCriteria(filterOptions)) {
+      return this.clearGraphFilter();
+    }
+
+    const state = this._ensureGraphFilterState();
+    const previous = { ...state };
+    state.enabled = true;
+    state.scope = scope;
+    state.options = filterOptions;
+    state.signature = null;
+    state.lastError = null;
+
+    try {
+      this._refreshGraphFilterNetworks({ force: true, throwOnError: true });
+    } catch (error) {
+      Object.assign(state, previous);
+      throw error;
+    }
+    this._afterGraphFilterMutation('set');
+    return this;
+  }
+
+  clearGraphFilter() {
+    const state = this._ensureGraphFilterState();
+    const hadFilter = state.enabled === true || state.filteredNetwork != null || state.options != null;
+    state.enabled = false;
+    state.scope = GRAPH_FILTER_SCOPE_RENDER;
+    state.options = null;
+    state.signature = null;
+    state.nodeIndices = null;
+    state.edgeIndices = null;
+    state.filteredNetwork = null;
+    state.renderNetwork = this.network ?? null;
+    state.layoutNetwork = this.network ?? null;
+    state.stats = null;
+    state.lastError = null;
+    if (hadFilter) {
+      this._afterGraphFilterMutation('clear');
+    }
+    return this;
+  }
+
   async replaceNetwork(nextNetwork, options = {}) {
     if (!nextNetwork) {
       throw new Error('replaceNetwork requires a helios-network instance');
@@ -1000,6 +1407,9 @@ export class Helios extends EventTarget {
 
     const prevNetwork = this.network;
     this.network = nextNetwork;
+    this._ensureGraphFilterState().renderNetwork = nextNetwork;
+    this._ensureGraphFilterState().layoutNetwork = nextNetwork;
+    this._refreshGraphFilterNetworks({ force: true, throwOnError: false });
     this.visuals = new VisualAttributes(nextNetwork, this.debug);
     this.visuals.seedMissingPositions(resolveSeedBoundsForLayout(layoutOption, this.layers.size, this.options.mode));
     this._attachPositionDelegate(activePositionDelegate);
@@ -1027,6 +1437,7 @@ export class Helios extends EventTarget {
     this.firstGeometryUpdateComplete = false;
 
     this._layout = this.createLayout(layoutOption);
+    this._syncLayoutNetworkFromFilter();
     if (this._layout?.setUpdateListener) {
       this._layout.setUpdateListener((payload) => this._handleLayoutUpdate(payload));
     }
@@ -1124,7 +1535,7 @@ export class Helios extends EventTarget {
 
   frameNetwork(options = {}) {
     const camera = this.renderer?.camera ?? null;
-    const network = this.network;
+    const network = this._getRenderNetwork();
     const positions = this.visuals?.nodePositions ?? null;
     const nodeIndices = network?.nodeIndices ?? null;
     if (!camera || !positions || !nodeIndices?.length) return false;
@@ -1447,21 +1858,22 @@ export class Helios extends EventTarget {
         this.debug.log('mapper', 'Applying mappers to visuals');
         this._applyMappersSafely();
       }
+      const renderNetwork = this._getRenderNetwork();
       const frame = {
-        network: this.network,
+        network: renderNetwork,
         timestamp: performance.now(),
         camera: this.renderer?.camera,
       };
       if (!this.firstGeometryUpdateComplete) {
         this.firstGeometryUpdateComplete = true;
         this.debug.log('scheduler', 'First geometry frame ready', {
-          nodes: this.network?.nodeCount,
-          edges: this.network?.edgeCount,
+          nodes: renderNetwork?.nodeIndices?.length ?? this.network?.nodeCount,
+          edges: renderNetwork?.edgeIndices?.length ?? this.network?.edgeCount,
         });
       } else {
         this.debug.log('scheduler', 'Geometry frame prepared', {
-          nodes: this.network?.nodeCount,
-          edges: this.network?.edgeCount,
+          nodes: renderNetwork?.nodeIndices?.length ?? this.network?.nodeCount,
+          edges: renderNetwork?.edgeIndices?.length ?? this.network?.edgeCount,
         });
       }
       this._tryPendingFrameNetwork();
@@ -1972,9 +2384,13 @@ export class Helios extends EventTarget {
   _buildPositionDelegateContext(extra = {}) {
     const renderer = this.renderer ?? null;
     const rendererDevice = renderer?.device ?? null;
+    const scope = extra?.scope ?? null;
+    const defaultNetwork = scope === 'layout'
+      ? this._getLayoutNetwork()
+      : this._getRenderNetwork();
     return {
       helios: this,
-      network: this.network,
+      network: extra.network ?? defaultNetwork,
       visuals: this.visuals,
       renderer,
       scheduler: this.scheduler ?? null,
@@ -2357,7 +2773,11 @@ export class Helios extends EventTarget {
   }
 
   createLayout(layoutOption) {
+    const layoutNetwork = this._getLayoutNetwork();
     if (isLayoutInstance(layoutOption)) {
+      if (layoutNetwork && layoutOption.network !== layoutNetwork) {
+        layoutOption.network = layoutNetwork;
+      }
       return layoutOption;
     }
     if (layoutOption?.type === 'gpu-force' || layoutOption?.type === 'gpuforce') {
@@ -2367,22 +2787,22 @@ export class Helios extends EventTarget {
         helios: this,
       };
       this.debug.log('layout', 'Using GPU force layout', { ...gpuOptions, helios: undefined });
-      return new GpuForceLayout(this.network, this.visuals, gpuOptions);
+      return new GpuForceLayout(layoutNetwork, this.visuals, gpuOptions);
     }
     if (layoutOption?.type === 'worker') {
       const workerOptions = { ...(layoutOption.options ?? {}), mode: this.options.mode ?? '2d' };
       this.debug.log('layout', 'Using worker layout', workerOptions);
-      return new WorkerLayout(this.network, this.visuals, workerOptions);
+      return new WorkerLayout(layoutNetwork, this.visuals, workerOptions);
     }
     if (layoutOption?.type === 'd3force3d' || layoutOption?.type === 'd3-force-3d') {
       const workerOptions = { ...(layoutOption.options ?? {}), mode: this.options.mode ?? '2d' };
       this.debug.log('layout', 'Using d3-force-3d layout', workerOptions);
-      return new D3Force3DLayout(this.network, this.visuals, workerOptions);
+      return new D3Force3DLayout(layoutNetwork, this.visuals, workerOptions);
     }
     const w = this.layers.size.width;
     const h = this.layers.size.height;
     this.debug.log('layout', 'Using static layout', { width: w, height: h });
-    return new StaticLayout(this.network, this.visuals, {
+    return new StaticLayout(layoutNetwork, this.visuals, {
       bounds: [-w * 0.5, -h * 0.5, w * 0.5, h * 0.5],
     });
   }
@@ -2981,9 +3401,10 @@ export class Helios extends EventTarget {
     // }
     const timestamp = performance.now();
     this._runInterpolationRenderPump(timestamp);
+    const renderNetwork = this._getRenderNetwork();
     // Create frame and render
     const frame = {
-      network: this.network,
+      network: renderNetwork,
       timestamp,
       camera: this.renderer?.camera,
     };
@@ -3015,8 +3436,9 @@ export class Helios extends EventTarget {
 
   async renderAttributeTracking() {
     if (!this.attributeTracker) return null;
+    const renderNetwork = this._getRenderNetwork();
     const frame = {
-      network: this.network,
+      network: renderNetwork,
       timestamp: performance.now(),
       camera: this.renderer?.camera,
     };
@@ -3587,11 +4009,12 @@ export class Helios extends EventTarget {
   async _ensureIndexPickingTargets() {
     if (!this.indexPickingTracker) return;
     const base = this.scheduler?.currentFrame ?? null;
+    const renderNetwork = this._getRenderNetwork();
     // Scheduler.currentFrame may exist before the renderer/camera is ready.
     // Always force a current camera/network so the AttributeTracker can render.
     const frame = {
       ...(base ?? null),
-      network: this.network,
+      network: renderNetwork,
       timestamp: performance.now(),
       camera: this.renderer?.camera,
     };

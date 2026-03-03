@@ -65,6 +65,19 @@ helios.interpolation({ fixedDurationMs: 160 }); // forces fixed timing
 helios.interpolation({ durationMode: 'adaptive' }); // switch back
 ```
 
+Graph filtering can be applied from Helios with independent node/edge criteria.
+Edges are automatically induced by the filtered node set:
+
+```js
+helios.setGraphFilter({
+  nodeQuery: 'weight >= 0.5',
+  edgeQuery: 'intensity >= 0.2',
+  scope: 'render+layout', // or 'render'
+});
+
+helios.clearGraphFilter();
+```
+
 Position delegation now uses an abstract `PositionDelegate` contract, so delegates
 can safely synchronize against topology/index version changes before handing
 buffers to the renderer.

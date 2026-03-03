@@ -875,14 +875,19 @@ export const defaultStylesText = `
 .helios-ui-range2__values {
   display: flex;
   justify-content: space-between;
-  gap: 8px;
+  gap: 16px;
   align-items: center;
   width: 100%;
 }
 
 .helios-ui-range2__values .helios-ui-number {
-  flex: 1 1 0;
-  min-width: 0;
+  flex: 0 1 min(132px, calc(50% - 8px));
+  width: min(132px, calc(50% - 8px));
+  max-width: 132px;
+}
+
+.helios-ui-range2__values .helios-ui-number:last-child {
+  text-align: right;
 }
 
 @container (max-width: 280px) {
