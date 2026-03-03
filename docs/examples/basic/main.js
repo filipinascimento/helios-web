@@ -1,6 +1,6 @@
 import HeliosNetwork, { AttributeType } from 'helios-network';
 // When consuming the published package use `import { Helios } from 'helios-web-next';`
-import { Helios, EVENTS, HeliosUI, PositionDelegate } from '../../../src/index.js';
+import { Helios, EVENTS, HeliosUI } from '../../../src/index.js';
 
 // Set this to an object like { helios: true, mapper: true, scheduler: true } to re-enable debug logs.
 const DEFAULT_NODE_COUNT = 2_000;
@@ -50,39 +50,10 @@ function isGpuForceLayoutType(layoutType) {
   return layoutType === 'gpuforce' || layoutType === 'gpuforce-webgl2' || layoutType === 'gpuforce-webgpu';
 }
 
-function resolveLayoutIntervalMs() {
-  const params = new URLSearchParams(window.location.search);
-  const value = Number(params.get('layoutIntervalMs') ?? params.get('layoutInterval'));
-  if (Number.isFinite(value) && value >= 0) {
-    return Math.floor(value);
-  }
-  return 0;
-}
-
-function resolvePositionSource() {
-  const params = new URLSearchParams(window.location.search);
-  const source = String(params.get('positionSource') ?? params.get('positionsSource') ?? 'network')
-    .trim()
-    .toLowerCase();
-  if (source === 'delegate') return 'delegate';
-  return 'network';
-}
-
-function resolveInterpolationMode() {
-  const params = new URLSearchParams(window.location.search);
-  const mode = String(params.get('interpolationMode') ?? params.get('interpolation') ?? 'gpu')
-    .trim()
-    .toLowerCase();
-  if (mode === 'javascript' || mode === 'js' || mode === 'cpu') return 'javascript';
-  if (mode === 'network' || mode === 'wasm' || mode === 'native') return 'network';
-  if (mode === 'gpu' || mode === 'shader') return 'gpu';
-  return 'gpu';
-}
-
-function resolveInterpolationEnabled(defaultMode = 'gpu') {
+function resolveInterpolationEnabled() {
   const params = new URLSearchParams(window.location.search);
   const raw = params.get('interpolationEnabled') ?? params.get('interpolate');
-  if (raw == null) return defaultMode !== 'none';
+  if (raw == null) return true;
   const normalized = String(raw).trim().toLowerCase();
   return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
 }
@@ -321,29 +292,10 @@ async function bootstrap() {
   const target = document.getElementById('app');
   const mode = resolveMode();
   const layoutType = resolveLayoutType();
-  let layoutIntervalMs = resolveLayoutIntervalMs();
-  let positionSource = resolvePositionSource();
-  let interpolationMode = resolveInterpolationMode();
-  let interpolationEnabled = resolveInterpolationEnabled(interpolationMode);
+  let interpolationEnabled = resolveInterpolationEnabled();
   let interpolationDurationMs = resolveInterpolationDurationMs();
   let interpolationDurationMode = resolveInterpolationDurationMode();
   const edgeTransparency = resolveEdgeTransparencyMode();
-  class DemoNetworkPositionDelegate extends PositionDelegate {
-    constructor() {
-      super();
-      this.positionView = null;
-    }
-
-    synchronizeTopology({ network: activeNetwork }) {
-      this.positionView = activeNetwork?.getNodeAttributeBuffer?.('_helios_visuals_position')?.view ?? null;
-    }
-
-    getNodePositionView(context) {
-      this.ensureSynchronized(context);
-      return this.positionView ?? null;
-    }
-  }
-  const positionDelegate = new DemoNetworkPositionDelegate();
   const heliosOptions = {
     container: target,
     layout: layoutType === 'none'
@@ -356,7 +308,6 @@ async function bootstrap() {
               center: [0, 0, 0],
               radius: 220 * Math.sqrt(nodeCount / 1000),
               depth: mode === '3d' ? 140 : 0,
-              updateIntervalMs: layoutIntervalMs,
               sampleCount2D: 64,
               sampleCount3D: 96,
               maxNeighborsPerNode: 64,
@@ -378,7 +329,6 @@ async function bootstrap() {
               settings: {
                 use2D: mode !== '3d',
               },
-              updateIntervalMs: layoutIntervalMs,
             },
           }
         : {
@@ -389,7 +339,6 @@ async function bootstrap() {
               center: [0, 0, 0],
               radius: 220*Math.sqrt(nodeCount/1000),
               depth: mode === '3d' ? 140 : 0,
-              updateIntervalMs: layoutIntervalMs,
               // Slightly stronger forces for the demo; tweak via query params if needed.
               kRepulsion: 3,
               kAttraction: 0.003,
@@ -402,12 +351,9 @@ async function bootstrap() {
     mode,
     projection: 'perspective',
     transparencyModeEdges: edgeTransparency,
-    positions: positionSource === 'delegate'
-      ? { source: 'delegate', delegate: positionDelegate }
-      : { source: 'network' },
     interpolation: {
       enabled: interpolationEnabled,
-      mode: interpolationMode,
+      mode: 'gpu',
       durationMode: interpolationDurationMode,
       fixedDurationMs: interpolationDurationMs,
       durationMs: interpolationDurationMs,
@@ -439,7 +385,6 @@ async function bootstrap() {
 
   console.log("Waiting for helios to be ready...");
   await helios.ready;
-  positionSource = helios.positions()?.source === 'delegate' ? 'delegate' : 'network';
   window.__snapshotDelegatePositions = () => helios.snapshotDelegatePositions();
   window.__syncDelegatePositionsToNetwork = () => helios.syncDelegatePositionsToNetwork();
 
@@ -532,22 +477,6 @@ async function bootstrap() {
       ? layoutType
       : (isGpuForceLayoutType(layoutType) ? gpuForceOption.value : layoutType);
 
-    const layoutIntervalSelect = document.createElement('select');
-    layoutIntervalSelect.className = 'helios-ui-select';
-    const intervalOptions = [
-      { value: 0, label: 'Real-time' },
-      { value: 250, label: '250 ms' },
-      { value: 1000, label: '1 s' },
-      { value: 2000, label: '2 s' },
-    ];
-    for (const entry of intervalOptions) {
-      const opt = document.createElement('option');
-      opt.value = String(entry.value);
-      opt.textContent = entry.label;
-      layoutIntervalSelect.appendChild(opt);
-    }
-    layoutIntervalSelect.value = String(layoutIntervalMs);
-
     const applyLayout = (value) => {
       const bounds = [-500, -500, 500, 500];
       if (value === 'none') {
@@ -563,7 +492,6 @@ async function bootstrap() {
             settings: {
               use2D: mode !== '3d',
             },
-            updateIntervalMs: layoutIntervalMs,
           },
         });
         helios.layout(layoutInstance);
@@ -577,7 +505,6 @@ async function bootstrap() {
             center: [0, 0, 0],
             radius: 220 * Math.sqrt(nodeCount / 1000),
             depth: mode === '3d' ? 140 : 0,
-            updateIntervalMs: layoutIntervalMs,
             sampleCount2D: 64,
             sampleCount3D: 96,
             maxNeighborsPerNode: 64,
@@ -601,7 +528,6 @@ async function bootstrap() {
         center: [0, 0, 0],
         radius: 220 * Math.sqrt(nodeCount / 1000),
         depth: mode === '3d' ? 140 : 0,
-        updateIntervalMs: layoutIntervalMs,
         kRepulsion: 3,
         kAttraction: 0.003,
         kGravity: 0.0008,
@@ -617,37 +543,10 @@ async function bootstrap() {
       applyLayout(layoutSelect.value);
     });
 
-    layoutIntervalSelect.addEventListener('change', () => {
-      const next = Number(layoutIntervalSelect.value);
-      layoutIntervalMs = Number.isFinite(next) ? Math.max(0, next) : 0;
-      applyLayout(layoutSelect.value);
-    });
-
-    const positionSourceSelect = document.createElement('select');
-    positionSourceSelect.className = 'helios-ui-select';
-    [
-      { value: 'network', label: 'Network buffers' },
-      { value: 'delegate', label: 'Delegated buffers' },
-    ].forEach((entry) => {
-      const opt = document.createElement('option');
-      opt.value = entry.value;
-      opt.textContent = entry.label;
-      positionSourceSelect.appendChild(opt);
-    });
-    positionSourceSelect.value = positionSource;
-    positionSourceSelect.addEventListener('change', () => {
-      positionSource = positionSourceSelect.value === 'delegate' ? 'delegate' : 'network';
-      if (positionSource === 'delegate') {
-        helios.positions({ source: 'delegate', delegate: positionDelegate });
-      } else {
-        helios.positions({ source: 'network' });
-      }
-    });
-
     const applyInterpolationSettings = () => {
       helios.interpolation({
         enabled: interpolationEnabled,
-        mode: interpolationMode,
+        mode: 'gpu',
         durationMode: interpolationDurationMode,
         fixedDurationMs: interpolationDurationMs,
         durationMs: interpolationDurationMs,
@@ -657,24 +556,6 @@ async function bootstrap() {
         easing: 'linear',
       });
     };
-
-    const interpolationModeSelect = document.createElement('select');
-    interpolationModeSelect.className = 'helios-ui-select';
-    [
-      { value: 'gpu', label: 'GPU shader' },
-      { value: 'javascript', label: 'JavaScript CPU' },
-      { value: 'network', label: 'Helios network (WASM)' },
-    ].forEach((entry) => {
-      const opt = document.createElement('option');
-      opt.value = entry.value;
-      opt.textContent = entry.label;
-      interpolationModeSelect.appendChild(opt);
-    });
-    interpolationModeSelect.value = interpolationMode;
-    interpolationModeSelect.addEventListener('change', () => {
-      interpolationMode = interpolationModeSelect.value;
-      applyInterpolationSettings();
-    });
 
     const interpolationDurationSelect = document.createElement('select');
     interpolationDurationSelect.className = 'helios-ui-select';
@@ -729,9 +610,6 @@ async function bootstrap() {
     syncInterpolationTimingState();
 
     content.appendChild(createRow('Layout', layoutSelect));
-    content.appendChild(createRow('Layout interval', layoutIntervalSelect));
-    content.appendChild(createRow('Position source', positionSourceSelect));
-    content.appendChild(createRow('Interpolator', interpolationModeSelect));
     content.appendChild(createRow('Interpolation timing', interpolationTimingControl));
 
     return heliosUI.createPanel({

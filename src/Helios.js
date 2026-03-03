@@ -271,11 +271,11 @@ const POSITION_INTERPOLATION_DEFAULTS = Object.freeze({
 
 function normalizeInterpolationMode(value, fallback = POSITION_INTERPOLATION_DEFAULTS.mode) {
   const raw = String(value ?? fallback).trim().toLowerCase();
-  if (!raw) return fallback;
-  if (raw === 'javascript' || raw === 'js' || raw === 'cpu') return 'javascript';
-  if (raw === 'network' || raw === 'wasm' || raw === 'native') return 'network';
+  if (!raw) return 'gpu';
+  if (raw === 'javascript' || raw === 'js' || raw === 'cpu') return 'gpu';
+  if (raw === 'network' || raw === 'wasm' || raw === 'native') return 'gpu';
   if (raw === 'gpu' || raw === 'shader') return 'gpu';
-  return fallback;
+  return 'gpu';
 }
 
 function normalizeInterpolationDurationMode(value, fallback = POSITION_INTERPOLATION_DEFAULTS.durationMode) {
@@ -724,11 +724,13 @@ export class Helios extends EventTarget {
       attributeMaxFps: this.attributeUpdateOptions.maxFps,
       attributeFrameSkip: this.attributeUpdateOptions.frameSkip,
     });
-    const initialPositionDelegate = this._validatePositionDelegate(options.positions?.delegate ?? null);
-    const initialPositionSource = options.positions?.source === 'delegate' ? 'delegate' : 'network';
-    if (initialPositionSource === 'delegate' && !initialPositionDelegate) {
-      throw new Error('positions({ source: "delegate" }) requires a non-null delegate');
-    }
+    const requestedPositionDelegate = options.positions?.delegate ?? null;
+    const initialPositionDelegate = requestedPositionDelegate
+      ? this._validatePositionDelegate(requestedPositionDelegate)
+      : null;
+    const initialPositionSource = options.positions?.source === 'delegate' && initialPositionDelegate
+      ? 'delegate'
+      : 'network';
     this._positionsConfig = {
       source: initialPositionSource,
       delegate: initialPositionDelegate,
@@ -820,6 +822,12 @@ export class Helios extends EventTarget {
       this.prewarm();
     }
     this._layout = this.createLayout(options.layout);
+    this._enforcePositionSourcePolicy(this._layout, {
+      resetInterpolation: false,
+      requestRender: false,
+      requestGeometry: false,
+      requestLabels: false,
+    });
     this.renderer = null;
     this.attributeTracker = null;
     this.indexPickingTracker = null;
@@ -1254,6 +1262,7 @@ export class Helios extends EventTarget {
     const nextLayoutNetwork = this._ensureGraphFilterState().layoutNetwork ?? this.network ?? null;
     if (!nextLayoutNetwork || layout.network === nextLayoutNetwork) return false;
     layout.network = nextLayoutNetwork;
+    this._enforcePositionSourcePolicy(layout, { resetInterpolation: false });
     return true;
   }
 
@@ -1760,13 +1769,12 @@ export class Helios extends EventTarget {
 
   async initialize() {
     this.debug.log('helios', 'Initializing layout');
-    const activePositionDelegate =
-      this._positionsConfig?.source === 'delegate' ? this._positionsConfig.delegate : null;
-    this._attachPositionDelegate(activePositionDelegate);
+    this._enforcePositionSourcePolicy(this._layout, { resetInterpolation: false });
     if (this._layout?.setUpdateListener) {
       this._layout.setUpdateListener((payload) => this._handleLayoutUpdate(payload));
     }
     await this._layout?.initialize?.();
+    this._enforcePositionSourcePolicy(this._layout, { resetInterpolation: false });
     this.debug.log('helios', 'Layout initialized', { layout: this._layout?.constructor?.name });
     this._layout?.resize?.(this.layers.size);
     this.debug.log('layout', 'Layout resized to initial viewport', this.layers.size);
@@ -2118,7 +2126,6 @@ export class Helios extends EventTarget {
   _prepareInterpolationRuntimeForTarget(targetPositions, now, layoutElapsedMs) {
     const runtime = this._interpolationRuntime ?? {};
     const config = this._interpolationConfig ?? POSITION_INTERPOLATION_DEFAULTS;
-    const mode = normalizeInterpolationMode(config.mode);
     const sourcePositions = this._resolveInterpolationSourceSnapshot(now, targetPositions);
     const sourceCount = Math.floor((targetPositions?.length ?? 0) / 3);
     const displacementRatio = computePositionDisplacementRatio(sourcePositions, targetPositions);
@@ -2160,73 +2167,7 @@ export class Helios extends EventTarget {
       : null;
     this._interpolationRuntime = runtime;
 
-    if (shouldInterpolate && mode !== 'gpu' && sourcePositions) {
-      this._writeNodePositions(sourcePositions);
-    }
-
-    return { shouldInterpolate, mode, displacementRatio, durationMs };
-  }
-
-  _stepJavascriptInterpolation(now) {
-    const runtime = this._interpolationRuntime ?? null;
-    if (!runtime?.sourcePositions || !runtime?.targetPositions) return false;
-    if (!runtime.mixedPositions || runtime.mixedPositions.length !== runtime.targetPositions.length) {
-      runtime.mixedPositions = new Float32Array(runtime.targetPositions.length);
-    }
-    const factor = this._computeInterpolationFactor(now);
-    runtime.factor = factor;
-    runtime.lastFrameAt = now;
-    mixPositionsArray(runtime.sourcePositions, runtime.targetPositions, runtime.mixedPositions, factor);
-    if (runtime.lastRenderedPositions && runtime.lastRenderedPositions.length === runtime.mixedPositions.length) {
-      runtime.lastRenderedPositions.set(runtime.mixedPositions);
-    } else {
-      runtime.lastRenderedPositions = new Float32Array(runtime.mixedPositions);
-    }
-    const wrote = this._writeNodePositions(runtime.mixedPositions);
-    if (wrote) {
-      this.visuals?.markPositionsDirty?.();
-      this.scheduler?.requestGeometry?.();
-    }
-    return factor < 1;
-  }
-
-  _stepNetworkInterpolation(now) {
-    const runtime = this._interpolationRuntime ?? null;
-    if (!runtime?.targetPositions) return false;
-    if (typeof this.network?.interpolateNodeAttribute !== 'function') {
-      return this._stepJavascriptInterpolation(now);
-    }
-    const elapsedMs = Math.max(
-      1,
-      Number.isFinite(runtime.lastFrameAt) && runtime.lastFrameAt > 0 ? (now - runtime.lastFrameAt) : 16,
-    );
-    runtime.lastFrameAt = now;
-    let shouldContinue = false;
-    try {
-      shouldContinue = this.network.interpolateNodeAttribute(
-        NODE_POSITION_ATTRIBUTE,
-        runtime.targetPositions,
-        {
-          elapsedMs,
-          layoutElapsedMs: Number.isFinite(runtime.layoutElapsedMs) ? runtime.layoutElapsedMs : elapsedMs,
-          smoothing: Number.isFinite(this._interpolationConfig?.smoothing)
-            ? Number(this._interpolationConfig.smoothing)
-            : POSITION_INTERPOLATION_DEFAULTS.smoothing,
-          minDisplacementRatio: Number.isFinite(this._interpolationConfig?.minDisplacementRatio)
-            ? Math.max(0, Number(this._interpolationConfig.minDisplacementRatio))
-            : POSITION_INTERPOLATION_DEFAULTS.minDisplacementRatio,
-          emitEvent: false,
-        },
-      ) === true;
-    } catch (error) {
-      this.debug.log('layout', 'WASM interpolation failed; falling back to javascript interpolation', { error });
-      return this._stepJavascriptInterpolation(now);
-    }
-    this.visuals?.markPositionsDirty?.();
-    this.scheduler?.requestGeometry?.();
-    const current = this._snapshotNodePositions(runtime.lastRenderedPositions);
-    if (current) runtime.lastRenderedPositions = current;
-    return shouldContinue;
+    return { shouldInterpolate, mode: 'gpu', displacementRatio, durationMs };
   }
 
   _stepGpuInterpolation(now) {
@@ -2266,23 +2207,11 @@ export class Helios extends EventTarget {
       return false;
     }
     const mode = normalizeInterpolationMode(config.mode);
-    let keepRunning = false;
-    if (mode === 'javascript') {
-      keepRunning = this._stepJavascriptInterpolation(now);
-    } else if (mode === 'network') {
-      keepRunning = this._stepNetworkInterpolation(now);
-    } else {
-      keepRunning = this._stepGpuInterpolation(now);
-    }
+    const keepRunning = this._stepGpuInterpolation(now);
     runtime.active = keepRunning;
     if (!keepRunning) {
       runtime.factor = 1;
       if (runtime.targetPositions) {
-        if (mode !== 'gpu') {
-          this._writeNodePositions(runtime.targetPositions);
-          this.visuals?.markPositionsDirty?.();
-          this.scheduler?.requestGeometry?.();
-        }
         runtime.lastRenderedPositions = new Float32Array(runtime.targetPositions);
       }
       runtime.sourcePositions = null;
@@ -2298,6 +2227,7 @@ export class Helios extends EventTarget {
   }
 
   _handleLayoutUpdate(payload = {}) {
+    this._enforcePositionSourcePolicy(this._layout, { resetInterpolation: true });
     const now = Number.isFinite(payload?.timestamp) ? Number(payload.timestamp) : performance.now();
     const previousTargetAt = Number.isFinite(this._interpolationRuntime?.lastTargetUpdateAt)
       ? this._interpolationRuntime.lastTargetUpdateAt
@@ -2422,6 +2352,60 @@ export class Helios extends EventTarget {
       );
     }
     return delegate;
+  }
+
+  _resolveLayoutPositionPolicy(layout = this._layout) {
+    if (!layout || typeof layout !== 'object') {
+      return { source: 'network', delegate: null };
+    }
+    if (typeof layout.getPositionDelegate !== 'function') {
+      return { source: 'network', delegate: null };
+    }
+    const delegate = layout.getPositionDelegate() ?? null;
+    if (!delegate) {
+      return { source: 'network', delegate: null };
+    }
+    return {
+      source: 'delegate',
+      delegate: this._validatePositionDelegate(delegate),
+    };
+  }
+
+  _enforcePositionSourcePolicy(layout = this._layout, options = {}) {
+    const current = this._positionsConfig ?? { source: 'network', delegate: null };
+    const policy = this._resolveLayoutPositionPolicy(layout);
+    const prevActiveDelegate = current.source === 'delegate' ? (current.delegate ?? null) : null;
+    const nextActiveDelegate = policy.source === 'delegate' ? (policy.delegate ?? null) : null;
+    const changed = current.source !== policy.source || current.delegate !== policy.delegate;
+    if (!changed) {
+      this._applyPositionPipelineToRenderer();
+      return false;
+    }
+    if (prevActiveDelegate && prevActiveDelegate !== nextActiveDelegate) {
+      this._detachPositionDelegate(prevActiveDelegate);
+    }
+    this._positionsConfig = {
+      source: policy.source,
+      delegate: policy.delegate ?? null,
+    };
+    if (nextActiveDelegate && nextActiveDelegate !== prevActiveDelegate) {
+      this._attachPositionDelegate(nextActiveDelegate);
+    }
+    if (options.resetInterpolation !== false) {
+      this._resetInterpolationRuntime({ keepLastRendered: false });
+    } else {
+      this._applyPositionPipelineToRenderer();
+    }
+    if (options.requestGeometry !== false) {
+      this.scheduler?.requestGeometry?.();
+    }
+    if (options.requestRender !== false) {
+      this.scheduler?.requestRender?.();
+    }
+    if (options.requestLabels !== false) {
+      this._labels?.requestFullReselect?.('positions-policy');
+    }
+    return true;
   }
 
   _attachPositionDelegate(delegate) {
@@ -3108,7 +3092,9 @@ export class Helios extends EventTarget {
     this._layout.setUpdateListener((payload) => this._handleLayoutUpdate(payload));
     this.debug.log('layout', 'Initializing new layout instance');
     this._layout.initialize?.();
+    this._enforcePositionSourcePolicy(this._layout, { resetInterpolation: true });
     this._layout.resize?.(this.layers.size);
+    this._enforcePositionSourcePolicy(this._layout, { resetInterpolation: false });
     this.debug.log('layout', 'Layout initialized and resized', this.layers.size);
     this.scheduler.setLayout(layout);
     this.scheduler.requestLayout('user');
@@ -3129,39 +3115,7 @@ export class Helios extends EventTarget {
     if (typeof options !== 'object') {
       throw new TypeError('positions(options) expects an object or null');
     }
-    const current = this._positionsConfig ?? { source: 'network', delegate: null };
-    const hasDelegate = Object.prototype.hasOwnProperty.call(options, 'delegate');
-    const hasSource = Object.prototype.hasOwnProperty.call(options, 'source');
-    let nextDelegate = hasDelegate ? (options.delegate ?? null) : (current.delegate ?? null);
-    if (nextDelegate) {
-      nextDelegate = this._validatePositionDelegate(nextDelegate);
-    }
-    let nextSource = hasSource ? String(options.source ?? current.source).toLowerCase() : (current.source ?? 'network');
-    if (nextSource !== 'delegate') nextSource = 'network';
-    if (!hasSource && hasDelegate) {
-      nextSource = nextDelegate ? 'delegate' : 'network';
-    }
-    if (nextSource === 'delegate' && !nextDelegate) {
-      throw new Error('positions({ source: "delegate" }) requires a non-null delegate');
-    }
-    const prevActiveDelegate = current.source === 'delegate' ? (current.delegate ?? null) : null;
-    const nextActiveDelegate = nextSource === 'delegate' ? nextDelegate : null;
-    const changed = current.source !== nextSource || current.delegate !== nextDelegate;
-    if (!changed) {
-      this._applyPositionPipelineToRenderer();
-      return this;
-    }
-    if (prevActiveDelegate && prevActiveDelegate !== nextActiveDelegate) {
-      this._detachPositionDelegate(prevActiveDelegate);
-    }
-    this._positionsConfig = {
-      source: nextSource,
-      delegate: nextDelegate,
-    };
-    if (nextActiveDelegate && nextActiveDelegate !== prevActiveDelegate) {
-      this._attachPositionDelegate(nextActiveDelegate);
-    }
-    this._resetInterpolationRuntime({ keepLastRendered: false });
+    this._enforcePositionSourcePolicy(this._layout, { resetInterpolation: false });
     this._applyPositionPipelineToRenderer();
     this.scheduler.requestGeometry();
     this.scheduler.requestRender();
@@ -3245,10 +3199,7 @@ export class Helios extends EventTarget {
       Object.prototype.hasOwnProperty.call(updates, 'mode')
       || Object.prototype.hasOwnProperty.call(updates, 'type')
     ) {
-      next.mode = normalizeInterpolationMode(
-        updates.mode ?? updates.type,
-        current.mode ?? POSITION_INTERPOLATION_DEFAULTS.mode,
-      );
+      next.mode = normalizeInterpolationMode(updates.mode ?? updates.type);
     }
     if (hasDurationModeUpdate) {
       next.durationMode = normalizeInterpolationDurationMode(
@@ -3334,6 +3285,7 @@ export class Helios extends EventTarget {
       next.adaptiveDuration === true ? 'adaptive' : 'fixed',
     );
     next.adaptiveDuration = next.durationMode === 'adaptive';
+    next.mode = 'gpu';
     const modeChanged = normalizeInterpolationMode(current.mode) !== normalizeInterpolationMode(next.mode);
     const disabled = current.enabled === true && next.enabled !== true;
     this._interpolationConfig = next;

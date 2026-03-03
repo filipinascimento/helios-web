@@ -56,14 +56,19 @@ helios.labels({
 The same API powers the example under `docs/examples/basic/main.js`, making it
 easy to copy-paste a working setup into your own application.
 
-Interpolation timing can run in adaptive mode (average recent layout intervals)
-or a fixed override:
+Interpolation is GPU shader based. Timing can run in adaptive mode (average
+recent layout intervals) or a fixed override:
 
 ```js
 helios.interpolation({ durationMode: 'adaptive', adaptiveDurationSamples: 5, adaptiveDurationWindowMs: 5000 });
 helios.interpolation({ fixedDurationMs: 160 }); // forces fixed timing
 helios.interpolation({ durationMode: 'adaptive' }); // switch back
 ```
+
+For layout-driven positions:
+- GPU-force layout automatically uses a position delegate and keeps it attached.
+- Non-delegate layouts automatically use network position buffers.
+- Built-in layouts now run at scheduler cadence (no `updateIntervalMs` throttling).
 
 Graph filtering can be applied from Helios with independent node/edge criteria.
 Edges are automatically induced by the filtered node set:

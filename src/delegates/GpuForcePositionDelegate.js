@@ -613,8 +613,10 @@ class WebGLForceComputeBackend {
     return true;
   }
 
-  syncTopology(payload) {
+  syncTopology(payload, options = {}) {
     if (!payload || !this.gl) return false;
+    const preserveDynamicState = options?.preserveDynamicState === true;
+    const previousNodeCapacity = this.nodeCapacity;
     this.nodeCapacity = Math.max(0, payload.nodeCapacity | 0);
     this.activeCount = Math.max(0, payload.activeCount | 0);
     this.activeIds = payload.activeIds instanceof Uint32Array ? new Uint32Array(payload.activeIds) : createEmptyUintArray();
@@ -628,13 +630,23 @@ class WebGLForceComputeBackend {
     this.neighbors = payload.neighbors instanceof Uint32Array ? new Uint32Array(payload.neighbors) : createEmptyUintArray();
 
     const valueCount = Math.max(1, this.nodeCapacity) * 3;
-    this.positions = payload.packedPositions instanceof Float32Array
-      ? new Float32Array(payload.packedPositions)
-      : new Float32Array(valueCount);
-    this.outputPositions = payload.packedOutputPositions instanceof Float32Array
-      ? new Float32Array(payload.packedOutputPositions)
-      : new Float32Array(this.positions);
-    this.velocities = new Float32Array(valueCount);
+    const canPreserveDynamicState = preserveDynamicState
+      && previousNodeCapacity === this.nodeCapacity
+      && this.positions instanceof Float32Array
+      && this.outputPositions instanceof Float32Array
+      && this.velocities instanceof Float32Array
+      && this.positions.length >= valueCount
+      && this.outputPositions.length >= valueCount
+      && this.velocities.length >= valueCount;
+    if (!canPreserveDynamicState) {
+      this.positions = payload.packedPositions instanceof Float32Array
+        ? new Float32Array(payload.packedPositions)
+        : new Float32Array(valueCount);
+      this.outputPositions = payload.packedOutputPositions instanceof Float32Array
+        ? new Float32Array(payload.packedOutputPositions)
+        : new Float32Array(this.positions);
+      this.velocities = new Float32Array(valueCount);
+    }
     this.scratchPositions = new Float32Array(valueCount);
     this.scratchVelocities = new Float32Array(valueCount);
     return this._uploadOutputTexture();
@@ -978,7 +990,7 @@ class WebGPUForceComputeBackend {
     });
   }
 
-  syncTopology(payload) {
+  syncTopology(payload, options = {}) {
     if (!payload || !this.device) return false;
     const {
       nodeCapacity,
@@ -991,6 +1003,8 @@ class WebGPUForceComputeBackend {
       packedPositions,
       packedOutputPositions,
     } = payload;
+    const preserveDynamicState = options?.preserveDynamicState === true;
+    const previousNodeCapacity = this.nodeCapacity;
 
     this.nodeCapacity = Math.max(0, nodeCapacity | 0);
     this.activeCount = Math.max(0, activeCount | 0);
@@ -1013,13 +1027,22 @@ class WebGPUForceComputeBackend {
     this._ensureBuffer('outputScaleParamsBuffer', 64, this.uniformUsage, 'layout:gpu-force:output-scale-params');
 
     const queue = this.device.queue;
-    queue.writeBuffer(this.positionBuffer, 0, packedPositions);
-    queue.writeBuffer(this.outputPositionBuffer, 0, packedOutputPositions ?? packedPositions);
-    queue.writeBuffer(this.scratchPositionBuffer, 0, packedPositions);
+    const canPreserveDynamicState = preserveDynamicState
+      && previousNodeCapacity === this.nodeCapacity
+      && this.positionBuffer
+      && this.outputPositionBuffer
+      && this.velocityBuffer
+      && this.scratchPositionBuffer
+      && this.scratchVelocityBuffer;
+    if (!canPreserveDynamicState) {
+      queue.writeBuffer(this.positionBuffer, 0, packedPositions);
+      queue.writeBuffer(this.outputPositionBuffer, 0, packedOutputPositions ?? packedPositions);
+      queue.writeBuffer(this.scratchPositionBuffer, 0, packedPositions);
 
-    const zeroVelocities = new Float32Array(Math.max(1, this.nodeCapacity) * 3);
-    queue.writeBuffer(this.velocityBuffer, 0, zeroVelocities);
-    queue.writeBuffer(this.scratchVelocityBuffer, 0, zeroVelocities);
+      const zeroVelocities = new Float32Array(Math.max(1, this.nodeCapacity) * 3);
+      queue.writeBuffer(this.velocityBuffer, 0, zeroVelocities);
+      queue.writeBuffer(this.scratchVelocityBuffer, 0, zeroVelocities);
+    }
 
     if (activeIds.length) {
       queue.writeBuffer(this.activeIdsBuffer, 0, activeIds);
@@ -1356,10 +1379,22 @@ export class GpuForcePositionDelegate extends PositionDelegate {
 
     this._activeCount = payload.activeCount;
     this._nodeCapacity = payload.nodeCapacity;
+    const shouldPreferPreserve = synchronizeReason !== 'attach'
+      && synchronizeReason !== 'backend-change'
+      && synchronizeReason !== 'network:replaced'
+      && synchronizeReason !== 'options'
+      && synchronizeReason !== 'init';
+    const preserveDynamicState = Boolean(shouldPreferPreserve
+      && this._nodeCapacity > 0
+      && topologyInputs.nodeCapacity === this._nodeCapacity
+      && (
+        (this._webgpu && this._webgpu.getPositionBuffer?.())
+        || (this._webgl && this._webgl.getPositionTexture?.())
+      ));
     if (this._webgpu) {
-      this._webgpu.syncTopology(payload);
+      this._webgpu.syncTopology(payload, { preserveDynamicState });
     } else if (this._webgl) {
-      this._webgl.syncTopology(payload);
+      this._webgl.syncTopology(payload, { preserveDynamicState });
     }
 
     if (this.options.resetAlphaOnTopologyChange !== false) {

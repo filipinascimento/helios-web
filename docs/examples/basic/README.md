@@ -21,9 +21,11 @@ For details on how the node colors and sizes are mapped (including the colormap 
 - Pass `?layout=gpuforce` to run the GPU-force layout via a position delegate.
   - On WebGPU renderer, it uses the WebGPU backend.
   - On WebGL renderer, it uses the WebGL2 backend.
+  - Delegate positions are automatic for GPU-force (no manual position-source toggle).
 - In DevTools, use `await window.__snapshotDelegatePositions()` to inspect delegate positions, and `await window.__syncDelegatePositionsToNetwork()` to copy delegate positions into network buffers.
 - Pass `?mode=3d` to enable the depth axis; otherwise it runs in 2D.
 - Pass `?edgeTransparency=weighted` to enable weighted blended transparency for edges (falls back to alpha if unsupported; implemented as an offscreen accumulate + resolve pass).
 - Pass `?interpolationDurationMode=adaptive` (default) to average recent layout update intervals for interpolation timing.
 - Pass `?interpolationDurationMode=fixed&interpolationFixedDurationMs=160` to force a fixed interpolation interval.
-- In the Layout panel, interpolation controls are intentionally minimal: `Interpolator` plus `Interpolation timing` with an inline `Adaptive` toggle.
+- In the Layout panel, interpolation controls are intentionally minimal: `Interpolation timing` with an inline `Adaptive` toggle.
+- Layout interval and position source controls were removed from the demo; built-in layouts run real-time at scheduler cadence.

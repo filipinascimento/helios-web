@@ -81,19 +81,18 @@ test('PositionDelegate synchronizes when topology/index versions change', () => 
   assert.equal(delegate.syncCount, 4);
 });
 
-test('Helios.positions validates delegates as PositionDelegate instances', () => {
+test('Helios.positions ignores delegate overrides when active layout has no delegate', () => {
   const helios = Object.create(Helios.prototype);
   helios.debug = { log: () => {} };
   helios._positionsConfig = { source: 'network', delegate: null };
   helios._activePositionDelegate = null;
   helios._resetInterpolationRuntime = () => {};
   helios._applyPositionPipelineToRenderer = () => true;
+  helios._layout = {};
   helios.scheduler = { requestGeometry: () => {}, requestRender: () => {} };
 
-  assert.throws(
-    () => helios.positions({ source: 'delegate', delegate: { getNodePositionView: () => null } }),
-    /PositionDelegate/,
-  );
+  helios.positions({ source: 'delegate', delegate: { getNodePositionView: () => null } });
+  assert.deepEqual(helios.positions(), { source: 'network', delegate: null });
 });
 
 test('GraphLayer calls delegate synchronization guard before reading resources', () => {

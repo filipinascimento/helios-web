@@ -61,9 +61,6 @@ export class GpuForceLayout extends Layout {
   }
 
   async initialize() {
-    if (this.helios?.positions) {
-      this.helios.positions({ source: 'delegate', delegate: this.positionDelegate });
-    }
     this._updateRequested = true;
   }
 
@@ -72,14 +69,8 @@ export class GpuForceLayout extends Layout {
   }
 
   step(deltaMs = 16) {
-    const intervalMs = Math.max(0, toFinite(this.options.updateIntervalMs, 0));
-    const now = performance.now();
-    if (intervalMs > 0 && this.lastUpdate > 0 && (now - this.lastUpdate) < intervalMs) {
-      return false;
-    }
-
     const changed = this.positionDelegate.step(this._buildDelegateContext(deltaMs));
-    this.lastUpdate = now;
+    this.lastUpdate = performance.now();
     this._updateRequested = false;
     if (changed) {
       this.helios?.scheduler?.requestRender?.();
@@ -106,12 +97,6 @@ export class GpuForceLayout extends Layout {
   }
 
   dispose() {
-    if (this.helios?.positions) {
-      const current = this.helios.positions?.();
-      if (current?.source === 'delegate' && current?.delegate === this.positionDelegate) {
-        this.helios.positions({ source: 'network' });
-      }
-    }
     this.positionDelegate.dispose?.();
   }
 

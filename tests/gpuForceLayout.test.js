@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Helios } from '../src/Helios.js';
+import { WorkerLayout } from '../src/layouts/Layout.js';
+import { D3Force3DLayout } from '../src/layouts/d3force3dLayoutWorker.js';
 import { GpuForceLayout } from '../src/layouts/GpuForceLayout.js';
 import { GpuForcePositionDelegate } from '../src/delegates/GpuForcePositionDelegate.js';
 import { PositionDelegate } from '../src/delegates/PositionDelegate.js';
@@ -177,7 +179,7 @@ function approx(actual, expected, epsilon = 1e-6) {
   assert.ok(Math.abs(actual - expected) <= epsilon, `expected ${actual} ~= ${expected}`);
 }
 
-test('GpuForceLayout exposes a PositionDelegate and adopts delegate source on initialize', async () => {
+test('GpuForceLayout exposes a PositionDelegate', async () => {
   const network = createStubNetwork();
   const visuals = {};
   const helios = createStubHelios();
@@ -185,10 +187,6 @@ test('GpuForceLayout exposes a PositionDelegate and adopts delegate source on in
 
   assert.ok(layout.getPositionDelegate() instanceof PositionDelegate);
   await layout.initialize();
-
-  const state = helios.getState();
-  assert.equal(state.source, 'delegate');
-  assert.equal(state.delegate, layout.getPositionDelegate());
 });
 
 test('GpuForceLayout step requests render when GPU delegate advances', () => {
@@ -203,17 +201,76 @@ test('GpuForceLayout step requests render when GPU delegate advances', () => {
   assert.equal(helios.getRenderRequests(), 1);
 });
 
-test('GpuForceLayout dispose returns to network source when it owns the active delegate', async () => {
+test('GpuForceLayout with updateIntervalMs still steps every scheduler tick', () => {
   const network = createStubNetwork();
   const visuals = {};
   const helios = createStubHelios();
-  const layout = new GpuForceLayout(network, visuals, { helios, mode: '2d' });
+  const layout = new GpuForceLayout(network, visuals, {
+    helios,
+    mode: '2d',
+    updateIntervalMs: 10_000,
+  });
+  let stepCalls = 0;
+  layout.positionDelegate.step = () => {
+    stepCalls += 1;
+    return false;
+  };
+  layout.lastUpdate = performance.now();
 
-  await layout.initialize();
-  assert.equal(helios.getState().source, 'delegate');
+  layout.step(16);
+  assert.equal(stepCalls, 1);
+});
 
-  layout.dispose();
-  assert.equal(helios.getState().source, 'network');
+test('WorkerLayout ignores updateIntervalMs gating and posts tick when scheduler ticks', () => {
+  const network = createStubNetwork();
+  const visuals = {
+    nodePositions: new Float32Array([
+      0, 0, 0,
+      1, 0, 0,
+      2, 0, 0,
+      3, 0, 0,
+    ]),
+    withBufferAccess: (fn) => fn(),
+  };
+  const layout = new WorkerLayout(network, visuals, { updateIntervalMs: 10_000 });
+  let posted = null;
+  layout.worker = {
+    postMessage: (message) => {
+      posted = message;
+    },
+  };
+  layout.pending = false;
+  layout.lastUpdate = performance.now();
+
+  layout.step();
+  assert.equal(posted?.type, 'tick');
+});
+
+test('D3Force3DLayout ignores updateIntervalMs gating and posts tick when scheduler ticks', () => {
+  const network = createStubNetwork();
+  const visuals = {
+    nodePositions: new Float32Array([
+      0, 0, 0,
+      1, 0, 0,
+      2, 0, 0,
+      3, 0, 0,
+    ]),
+    withBufferAccess: (fn) => fn(),
+    seedMissingPositions: () => {},
+  };
+  const layout = new D3Force3DLayout(network, visuals, { updateIntervalMs: 10_000, mode: '2d' });
+  let posted = null;
+  layout.worker = {
+    postMessage: (message) => {
+      posted = message;
+    },
+  };
+  layout.pending = false;
+  layout.seededPositions = true;
+  layout.lastUpdate = performance.now();
+
+  layout.step();
+  assert.equal(posted?.type, 'tick');
 });
 
 test('Helios.createLayout resolves gpu-force into GpuForceLayout', () => {
@@ -270,6 +327,57 @@ test('GpuForcePositionDelegate exposes WebGL2 texture resource when running on W
   assert.equal(resource.version, delegate.version);
   assert.ok(getTexImageCalls() > 0);
   assert.equal(delegate.getNodePositionView({ network, backend: 'webgl2', gl }), null);
+});
+
+test('GpuForcePositionDelegate preserves dynamic positions across version-change topology syncs', async () => {
+  const positionView = new Float32Array([
+    60, 0, 0,
+    -60, 0, 0,
+  ]);
+  let topologyVersion = 1;
+  let activeNodeIndices = new Uint32Array([0, 1]);
+  const network = {
+    nodeCapacity: 2,
+    get nodeIndices() {
+      return activeNodeIndices;
+    },
+    edgeIndices: new Uint32Array([0]),
+    edgesView: new Uint32Array([0, 1]),
+    withBufferAccess: (fn) => fn(),
+    getTopologyVersions: () => ({ node: topologyVersion, edge: topologyVersion }),
+    getNodeAttributeBuffer: (name) => {
+      if (name === '_helios_visuals_position') return { view: positionView, version: topologyVersion };
+      if (name === '$index') return { version: topologyVersion };
+      return null;
+    },
+    getEdgeAttributeBuffer: (name) => (name === '$index' ? { version: topologyVersion } : null),
+  };
+
+  const { gl } = createFakeWebGL2Context();
+  const delegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    center: [0, 0, 0],
+    outputScale: 6,
+    sampleCount2D: 8,
+  });
+
+  delegate.onAttach({ network, backend: 'webgl2', gl });
+  const changed = delegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
+  assert.equal(changed, true);
+  const before = await delegate.snapshotNodePositions({ network, backend: 'webgl2', gl });
+
+  topologyVersion += 1;
+  activeNodeIndices = new Uint32Array([0]);
+  delegate.ensureSynchronized({ network, backend: 'webgl2', gl });
+  const after = await delegate.snapshotNodePositions({ network, backend: 'webgl2', gl });
+
+  assert.ok(before instanceof Float32Array);
+  assert.ok(after instanceof Float32Array);
+  assert.equal(before.length, after.length);
+  approx(after[0], before[0], 1e-5);
+  approx(after[1], before[1], 1e-5);
+  approx(after[3], before[3], 1e-5);
+  approx(after[4], before[4], 1e-5);
 });
 
 test('GpuForcePositionDelegate WebGL2 backend advances layout and updates snapshots', async () => {

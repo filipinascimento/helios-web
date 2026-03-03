@@ -116,13 +116,7 @@ export class WorkerLayout extends Layout {
     if (!this.worker || this.pending) {
       return false;
     }
-    const intervalMs = Number.isFinite(this.options.updateIntervalMs)
-      ? Math.max(0, this.options.updateIntervalMs)
-      : 0;
     const now = performance.now();
-    if (intervalMs > 0 && this.lastUpdate && (now - this.lastUpdate) < intervalMs) {
-      return false;
-    }
     this.pending = true;
     let positionsCopy = null;
     const snapshot = () => {
