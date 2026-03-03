@@ -305,6 +305,12 @@ function getGpuMapMode(name, fallback) {
   return fallback;
 }
 
+function normalizeBackendType(value) {
+  if (value === 'webgpu') return 'webgpu';
+  if (value === 'webgl' || value === 'webgl2') return 'webgl';
+  return value ?? null;
+}
+
 function snapshotTopologyInputs(network) {
   const nodeIndices = safeRead(
     () => (network?.nodeIndices instanceof Uint32Array ? network.nodeIndices : createEmptyUintArray()),
@@ -466,6 +472,386 @@ function buildTopologyPayload(topologyInputs, options = {}) {
     packedOutputPositions,
     neighborLength,
   };
+}
+
+function hash32(value) {
+  let x = value >>> 0;
+  x = (x ^ (x >>> 16)) >>> 0;
+  x = Math.imul(x, 0x7feb352d) >>> 0;
+  x = (x ^ (x >>> 15)) >>> 0;
+  x = Math.imul(x, 0x846ca68b) >>> 0;
+  x = (x ^ (x >>> 16)) >>> 0;
+  return x >>> 0;
+}
+
+function sampleActiveId(nodeId, iter, activeIds, activeCount, seed) {
+  if (!activeIds || activeCount <= 0) return nodeId >>> 0;
+  const mixed = hash32((seed + Math.imul(nodeId >>> 0, 2654435761) + Math.imul(iter >>> 0, 747796405)) >>> 0);
+  const index = mixed % Math.max(1, activeCount);
+  return activeIds[index] >>> 0;
+}
+
+class WebGLForceComputeBackend {
+  constructor(gl) {
+    this.gl = gl;
+    this.nodeCapacity = 0;
+    this.activeCount = 0;
+    this.seed = (Math.random() * 0xffffffff) >>> 0;
+
+    this.activeIds = createEmptyUintArray();
+    this.activeMask = createEmptyUintArray();
+    this.neighborStarts = createEmptyUintArray();
+    this.neighborCounts = createEmptyUintArray();
+    this.neighbors = createEmptyUintArray();
+
+    this.positions = new Float32Array(0);
+    this.outputPositions = new Float32Array(0);
+    this.velocities = new Float32Array(0);
+    this.scratchPositions = new Float32Array(0);
+    this.scratchVelocities = new Float32Array(0);
+
+    this.outputPositionTexture = null;
+    this.textureWidth = 1;
+    this.textureHeight = 1;
+    this.textureVersion = 0;
+  }
+
+  _ensureTexture() {
+    if (!this.gl || this.outputPositionTexture) return;
+    const gl = this.gl;
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    this.outputPositionTexture = texture;
+  }
+
+  _getTextureLayout(count) {
+    const gl = this.gl;
+    const max = gl?.getParameter?.(gl.MAX_TEXTURE_SIZE) ?? 16384;
+    const safeCount = Math.max(1, Math.floor(Number(count) || 0));
+    const width = Math.min(max, safeCount);
+    const height = Math.ceil(safeCount / Math.max(1, width));
+    if (height > max) {
+      throw new Error(
+        `WebGL2 GPU-force layout requires texture dimensions <= MAX_TEXTURE_SIZE (${max}), `
+        + `got ${safeCount} texels -> ${width}x${height}.`,
+      );
+    }
+    return { width, height };
+  }
+
+  _uploadOutputTexture() {
+    if (!this.gl) return false;
+    this._ensureTexture();
+    if (!this.outputPositionTexture) return false;
+
+    const gl = this.gl;
+    const count = Math.max(1, this.nodeCapacity);
+    const { width, height } = this._getTextureLayout(count);
+    this.textureWidth = width;
+    this.textureHeight = height;
+
+    gl.bindTexture(gl.TEXTURE_2D, this.outputPositionTexture);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
+
+    if (height === 1) {
+      const valueCount = width * 3;
+      const directView = this.outputPositions.length === valueCount
+        ? this.outputPositions
+        : this.outputPositions.subarray(0, valueCount);
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGB32F,
+        width,
+        1,
+        0,
+        gl.RGB,
+        gl.FLOAT,
+        directView,
+      );
+    } else {
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGB32F,
+        width,
+        height,
+        0,
+        gl.RGB,
+        gl.FLOAT,
+        null,
+      );
+      let remaining = count;
+      let srcOffset = 0;
+      for (let y = 0; y < height && remaining > 0; y += 1) {
+        const rowTexels = Math.min(width, remaining);
+        const valueCount = rowTexels * 3;
+        const rowView = this.outputPositions.subarray(srcOffset, srcOffset + valueCount);
+        gl.texSubImage2D(
+          gl.TEXTURE_2D,
+          0,
+          0,
+          y,
+          rowTexels,
+          1,
+          gl.RGB,
+          gl.FLOAT,
+          rowView,
+        );
+        srcOffset += valueCount;
+        remaining -= rowTexels;
+      }
+    }
+
+    this.textureVersion += 1;
+    return true;
+  }
+
+  syncTopology(payload) {
+    if (!payload || !this.gl) return false;
+    this.nodeCapacity = Math.max(0, payload.nodeCapacity | 0);
+    this.activeCount = Math.max(0, payload.activeCount | 0);
+    this.activeIds = payload.activeIds instanceof Uint32Array ? new Uint32Array(payload.activeIds) : createEmptyUintArray();
+    this.activeMask = payload.activeMask instanceof Uint32Array ? new Uint32Array(payload.activeMask) : createEmptyUintArray();
+    this.neighborStarts = payload.neighborStarts instanceof Uint32Array
+      ? new Uint32Array(payload.neighborStarts)
+      : createEmptyUintArray();
+    this.neighborCounts = payload.neighborCounts instanceof Uint32Array
+      ? new Uint32Array(payload.neighborCounts)
+      : createEmptyUintArray();
+    this.neighbors = payload.neighbors instanceof Uint32Array ? new Uint32Array(payload.neighbors) : createEmptyUintArray();
+
+    const valueCount = Math.max(1, this.nodeCapacity) * 3;
+    this.positions = payload.packedPositions instanceof Float32Array
+      ? new Float32Array(payload.packedPositions)
+      : new Float32Array(valueCount);
+    this.outputPositions = payload.packedOutputPositions instanceof Float32Array
+      ? new Float32Array(payload.packedOutputPositions)
+      : new Float32Array(this.positions);
+    this.velocities = new Float32Array(valueCount);
+    this.scratchPositions = new Float32Array(valueCount);
+    this.scratchVelocities = new Float32Array(valueCount);
+    return this._uploadOutputTexture();
+  }
+
+  step(stepOptions = {}) {
+    if (!this.gl || this.nodeCapacity <= 0 || this.activeCount <= 0) return false;
+
+    const is3D = stepOptions.mode === '3d';
+    const center = normalizeCenter(stepOptions.center);
+    const sampleCount = Math.max(1, Math.floor(toFinite(stepOptions.sampleCount, DEFAULT_OPTIONS.sampleCount2D)));
+    const maxNeighborsPerNode = Math.max(1, Math.floor(toFinite(
+      stepOptions.maxNeighborsPerNode,
+      DEFAULT_OPTIONS.maxNeighborsPerNode,
+    )));
+    const linkDistance = Math.max(0.0001, toFinite(stepOptions.linkDistance, DEFAULT_OPTIONS.linkDistance));
+    const minDistance = Math.max(0.0001, toFinite(stepOptions.minDistance, DEFAULT_OPTIONS.minDistance));
+    const minDistSq = minDistance * minDistance;
+    const kRepulsion = toFinite(stepOptions.kRepulsion, DEFAULT_OPTIONS.kRepulsion);
+    const kAttraction = toFinite(stepOptions.kAttraction, DEFAULT_OPTIONS.kAttraction);
+    const kGravity = toFinite(stepOptions.kGravity, DEFAULT_OPTIONS.kGravity);
+    const eta = toFinite(stepOptions.eta, DEFAULT_OPTIONS.eta);
+    const damping = clamp(stepOptions.damping, 0, 1, DEFAULT_OPTIONS.damping);
+    const maxStep = Math.max(0.001, toFinite(stepOptions.maxStep, DEFAULT_OPTIONS.maxStep));
+    const outputScale = Math.max(0.0001, toFinite(stepOptions.outputScale, DEFAULT_OPTIONS.outputScale));
+
+    const positionsIn = this.positions;
+    const velocitiesIn = this.velocities;
+    const positionsOut = this.scratchPositions;
+    const velocitiesOut = this.scratchVelocities;
+    const activeMask = this.activeMask;
+    const activeIds = this.activeIds;
+    const neighborStarts = this.neighborStarts;
+    const neighborCounts = this.neighborCounts;
+    const neighbors = this.neighbors;
+
+    const repulsionNormalization = Math.max(1, this.activeCount / Math.max(1, sampleCount));
+    this.seed = this.seed >>> 0;
+
+    for (let nodeId = 0; nodeId < this.nodeCapacity; nodeId += 1) {
+      const base = nodeId * 3;
+      let posX = positionsIn[base] ?? center[0];
+      let posY = positionsIn[base + 1] ?? center[1];
+      let posZ = positionsIn[base + 2] ?? center[2];
+      let velX = velocitiesIn[base] ?? 0;
+      let velY = velocitiesIn[base + 1] ?? 0;
+      let velZ = velocitiesIn[base + 2] ?? 0;
+
+      if (!is3D) {
+        posZ = center[2];
+        velZ = 0;
+      }
+
+      if (!activeMask[nodeId]) {
+        positionsOut[base] = posX;
+        positionsOut[base + 1] = posY;
+        positionsOut[base + 2] = posZ;
+        velocitiesOut[base] = velX;
+        velocitiesOut[base + 1] = velY;
+        velocitiesOut[base + 2] = velZ;
+        continue;
+      }
+
+      let forceX = 0;
+      let forceY = 0;
+      let forceZ = 0;
+
+      if (this.activeCount > 1 && sampleCount > 0) {
+        for (let s = 0; s < sampleCount; s += 1) {
+          const otherId = sampleActiveId(nodeId, s, activeIds, this.activeCount, this.seed);
+          if (otherId === nodeId || otherId >= this.nodeCapacity) continue;
+          const otherBase = otherId * 3;
+          let deltaX = posX - (positionsIn[otherBase] ?? posX);
+          let deltaY = posY - (positionsIn[otherBase + 1] ?? posY);
+          let deltaZ = posZ - (positionsIn[otherBase + 2] ?? posZ);
+          if (!is3D) deltaZ = 0;
+          const distSq = Math.max((deltaX * deltaX) + (deltaY * deltaY) + (deltaZ * deltaZ), minDistSq);
+          const invDist = 1 / Math.sqrt(distSq);
+          const repulsionScale = kRepulsion * repulsionNormalization * invDist * invDist * invDist;
+          forceX += deltaX * repulsionScale;
+          forceY += deltaY * repulsionScale;
+          forceZ += deltaZ * repulsionScale;
+        }
+      }
+
+      const start = neighborStarts[nodeId] ?? 0;
+      const degree = neighborCounts[nodeId] ?? 0;
+      const limit = Math.min(degree, maxNeighborsPerNode);
+      if (limit > 0) {
+        const degreeNorm = Math.max(1, limit);
+        for (let n = 0; n < limit; n += 1) {
+          const otherId = neighbors[start + n];
+          if (otherId === nodeId || otherId >= this.nodeCapacity) continue;
+          const otherBase = otherId * 3;
+          let deltaX = (positionsIn[otherBase] ?? posX) - posX;
+          let deltaY = (positionsIn[otherBase + 1] ?? posY) - posY;
+          let deltaZ = (positionsIn[otherBase + 2] ?? posZ) - posZ;
+          if (!is3D) deltaZ = 0;
+          const distSq = Math.max((deltaX * deltaX) + (deltaY * deltaY) + (deltaZ * deltaZ), minDistSq);
+          const dist = Math.sqrt(distSq);
+          const invDist = 1 / Math.max(1e-8, dist);
+          const stretch = dist - linkDistance;
+          const springScale = (kAttraction * stretch * invDist) / degreeNorm;
+          forceX += deltaX * springScale;
+          forceY += deltaY * springScale;
+          forceZ += deltaZ * springScale;
+        }
+      }
+
+      let gravityX = center[0] - posX;
+      let gravityY = center[1] - posY;
+      let gravityZ = center[2] - posZ;
+      if (!is3D) gravityZ = 0;
+      forceX += gravityX * kGravity;
+      forceY += gravityY * kGravity;
+      forceZ += gravityZ * kGravity;
+
+      let nextVelX = (velX * damping) + (forceX * eta);
+      let nextVelY = (velY * damping) + (forceY * eta);
+      let nextVelZ = (velZ * damping) + (forceZ * eta);
+
+      const speed = Math.hypot(nextVelX, nextVelY, nextVelZ);
+      if (speed > maxStep) {
+        const scale = maxStep / speed;
+        nextVelX *= scale;
+        nextVelY *= scale;
+        nextVelZ *= scale;
+      }
+      if (!is3D) nextVelZ = 0;
+
+      let nextPosX = posX + nextVelX;
+      let nextPosY = posY + nextVelY;
+      let nextPosZ = posZ + nextVelZ;
+      if (!is3D) nextPosZ = center[2];
+
+      positionsOut[base] = nextPosX;
+      positionsOut[base + 1] = nextPosY;
+      positionsOut[base + 2] = nextPosZ;
+      velocitiesOut[base] = nextVelX;
+      velocitiesOut[base + 1] = nextVelY;
+      velocitiesOut[base + 2] = nextVelZ;
+    }
+
+    const positionsSwap = this.positions;
+    this.positions = this.scratchPositions;
+    this.scratchPositions = positionsSwap;
+
+    const velocitiesSwap = this.velocities;
+    this.velocities = this.scratchVelocities;
+    this.scratchVelocities = velocitiesSwap;
+
+    const source = this.positions;
+    if (Math.abs(outputScale - 1.0) <= 1e-6) {
+      this.outputPositions.set(source);
+      if (!is3D) {
+        for (let nodeId = 0; nodeId < this.nodeCapacity; nodeId += 1) {
+          this.outputPositions[(nodeId * 3) + 2] = center[2];
+        }
+      }
+    } else {
+      for (let nodeId = 0; nodeId < this.nodeCapacity; nodeId += 1) {
+        const base = nodeId * 3;
+        const srcX = source[base];
+        const srcY = source[base + 1];
+        const srcZ = source[base + 2];
+        this.outputPositions[base] = center[0] + ((srcX - center[0]) * outputScale);
+        this.outputPositions[base + 1] = center[1] + ((srcY - center[1]) * outputScale);
+        this.outputPositions[base + 2] = is3D
+          ? (center[2] + ((srcZ - center[2]) * outputScale))
+          : center[2];
+      }
+    }
+
+    return this._uploadOutputTexture();
+  }
+
+  getPositionTexture() {
+    return this.outputPositionTexture ?? null;
+  }
+
+  getPositionTextureMeta() {
+    return {
+      version: this.textureVersion,
+      count: this.nodeCapacity,
+      buffer: this.outputPositionTexture,
+      byteOffset: 0,
+      byteLength: 0,
+    };
+  }
+
+  readPositionSnapshot() {
+    if (!this.outputPositions || this.nodeCapacity <= 0) return null;
+    const length = Math.max(1, this.nodeCapacity) * 3;
+    return new Float32Array(this.outputPositions.subarray(0, length));
+  }
+
+  dispose() {
+    if (this.outputPositionTexture && this.gl?.deleteTexture) {
+      this.gl.deleteTexture(this.outputPositionTexture);
+    }
+    this.outputPositionTexture = null;
+    this.nodeCapacity = 0;
+    this.activeCount = 0;
+    this.activeIds = createEmptyUintArray();
+    this.activeMask = createEmptyUintArray();
+    this.neighborStarts = createEmptyUintArray();
+    this.neighborCounts = createEmptyUintArray();
+    this.neighbors = createEmptyUintArray();
+    this.positions = new Float32Array(0);
+    this.outputPositions = new Float32Array(0);
+    this.velocities = new Float32Array(0);
+    this.scratchPositions = new Float32Array(0);
+    this.scratchVelocities = new Float32Array(0);
+    this.textureWidth = 1;
+    this.textureHeight = 1;
+    this.textureVersion = 0;
+  }
 }
 
 class WebGPUForceComputeBackend {
@@ -816,6 +1202,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     this._backendDeviceRef = null;
     this._backendGlRef = null;
     this._webgpu = null;
+    this._webgl = null;
     this._activeCount = 0;
     this._nodeCapacity = 0;
   }
@@ -850,7 +1237,9 @@ export class GpuForcePositionDelegate extends PositionDelegate {
 
   dispose() {
     this._webgpu?.dispose?.();
+    this._webgl?.dispose?.();
     this._webgpu = null;
+    this._webgl = null;
     this._backendType = null;
     this._backendDeviceRef = null;
     this._backendGlRef = null;
@@ -861,7 +1250,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
   _resolveBackend(context = {}) {
     const renderer = context.renderer ?? context.helios?.renderer ?? null;
     const rendererDevice = renderer?.device ?? null;
-    const backend = context.backend ?? rendererDevice?.type ?? null;
+    const backend = normalizeBackendType(context.backend ?? rendererDevice?.type ?? null);
     const possibleDevice = context.device ?? rendererDevice?.device ?? null;
     const gpuDevice = possibleDevice
       && typeof possibleDevice.createCommandEncoder === 'function'
@@ -919,21 +1308,39 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     };
 
     const resolved = this._resolveBackend(context);
-    if (resolved.backend !== 'webgpu' || !resolved.gpuDevice) {
+    const isWebGPU = resolved.backend === 'webgpu' && Boolean(resolved.gpuDevice);
+    const isWebGL = resolved.backend === 'webgl' && Boolean(resolved.gl);
+
+    if (!isWebGPU && !isWebGL) {
       this._webgpu?.dispose?.();
+      this._webgl?.dispose?.();
       this._webgpu = null;
+      this._webgl = null;
       this._activeCount = topologyInputs.nodeIndices.length;
       this._nodeCapacity = topologyInputs.nodeCapacity;
       return;
     }
 
-    if (!this._webgpu || this._webgpu.device !== resolved.gpuDevice) {
+    if (isWebGPU) {
+      this._webgl?.dispose?.();
+      this._webgl = null;
+      if (!this._webgpu || this._webgpu.device !== resolved.gpuDevice) {
+        this._webgpu?.dispose?.();
+        this._webgpu = new WebGPUForceComputeBackend(resolved.gpuDevice);
+      }
+      if (topologyUnchanged && this._webgpu.getPositionBuffer() && this._activeCount > 0) {
+        return;
+      }
+    } else {
       this._webgpu?.dispose?.();
-      this._webgpu = new WebGPUForceComputeBackend(resolved.gpuDevice);
-    }
-
-    if (topologyUnchanged && this._webgpu.getPositionBuffer() && this._activeCount > 0) {
-      return;
+      this._webgpu = null;
+      if (!this._webgl || this._webgl.gl !== resolved.gl) {
+        this._webgl?.dispose?.();
+        this._webgl = new WebGLForceComputeBackend(resolved.gl);
+      }
+      if (topologyUnchanged && this._webgl.getPositionTexture() && this._activeCount > 0) {
+        return;
+      }
     }
 
     let payload = null;
@@ -949,7 +1356,11 @@ export class GpuForcePositionDelegate extends PositionDelegate {
 
     this._activeCount = payload.activeCount;
     this._nodeCapacity = payload.nodeCapacity;
-    this._webgpu.syncTopology(payload);
+    if (this._webgpu) {
+      this._webgpu.syncTopology(payload);
+    } else if (this._webgl) {
+      this._webgl.syncTopology(payload);
+    }
 
     if (this.options.resetAlphaOnTopologyChange !== false) {
       this.alpha = clamp(this.options.alpha, 0, 1, DEFAULT_OPTIONS.alpha);
@@ -959,12 +1370,12 @@ export class GpuForcePositionDelegate extends PositionDelegate {
   step(context = {}) {
     this._markDirtyForBackend(context);
     this.ensureSynchronized(context);
-    if (this._webgpu && this._nodeCapacity > 0 && this._activeCount <= 0) {
+    if ((this._webgpu || this._webgl) && this._nodeCapacity > 0 && this._activeCount <= 0) {
       // Recover if a transient snapshot produced an empty active set.
       this.markTopologyDirty('active-set-empty');
       this.ensureSynchronized(context);
     }
-    if (!this._webgpu) {
+    if (!this._webgpu && !this._webgl) {
       return false;
     }
 
@@ -985,7 +1396,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
         ? Math.max(1, Math.floor(toFinite(this.options.sampleCount3D, DEFAULT_OPTIONS.sampleCount3D)))
         : Math.max(1, Math.floor(toFinite(this.options.sampleCount2D, DEFAULT_OPTIONS.sampleCount2D))));
 
-    const changed = this._webgpu.step({
+    const stepPayload = {
       mode: this.options.mode,
       center: this.options.center,
       recenter: this.options.recenter === true,
@@ -1002,7 +1413,10 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       minDistance: Math.max(0.0001, toFinite(this.options.minDistance, DEFAULT_OPTIONS.minDistance)),
       alpha: this.alpha,
       dt,
-    });
+    };
+    const changed = this._webgpu
+      ? this._webgpu.step(stepPayload)
+      : this._webgl.step(stepPayload);
 
     if (changed) {
       this.bumpVersion();
@@ -1013,7 +1427,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
   getNodePositionView(context = {}) {
     this._markDirtyForBackend(context);
     this.ensureSynchronized(context);
-    if (this._webgpu) return null;
+    if (this._webgpu || this._webgl) return null;
 
     const network = context.network ?? this._context?.network ?? null;
     if (!network) return null;
@@ -1035,8 +1449,30 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     };
   }
 
+  getWebGLPositionTexture(context = {}) {
+    this._markDirtyForBackend(context);
+    this.ensureSynchronized(context);
+    const texture = this._webgl?.getPositionTexture?.() ?? null;
+    if (!texture) return null;
+    return {
+      texture,
+      count: this._nodeCapacity,
+      version: this.version,
+      meta: this._webgl?.getPositionTextureMeta?.() ?? null,
+    };
+  }
+
   getGpuPositionResource(context = {}) {
-    return this.getWebGPUPositionBuffer(context);
+    this._markDirtyForBackend(context);
+    this.ensureSynchronized(context);
+    if (this._webgpu) {
+      const resource = this.getWebGPUPositionBuffer(context);
+      if (resource) return resource;
+    }
+    if (this._webgl) {
+      return this.getWebGLPositionTexture(context);
+    }
+    return null;
   }
 
   async snapshotNodePositions(context = {}) {
@@ -1044,6 +1480,9 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     this.ensureSynchronized(context);
     if (this._webgpu) {
       return this._webgpu.readPositionSnapshot();
+    }
+    if (this._webgl) {
+      return this._webgl.readPositionSnapshot();
     }
     const view = this.getNodePositionView(context);
     if (!view || !Number.isFinite(view.length) || view.length <= 0) return null;

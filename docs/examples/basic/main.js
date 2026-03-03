@@ -31,8 +31,23 @@ function resolveLayoutType() {
   if (normalized === 'none' || normalized === 'static') return 'none';
   if (normalized === 'jitter' || normalized === 'legacy') return 'jitter';
   if (normalized === 'd3force3d' || normalized === 'd3-force-3d') return 'd3force3d';
+  if (
+    normalized === 'gpuforce-webgl'
+    || normalized === 'gpuforce-webgl2'
+    || normalized === 'gpu-force-webgl'
+    || normalized === 'gpu-webgl'
+  ) return 'gpuforce-webgl2';
+  if (
+    normalized === 'gpuforce-webgpu'
+    || normalized === 'gpu-force-webgpu'
+    || normalized === 'gpu-webgpu'
+  ) return 'gpuforce-webgpu';
   if (normalized === 'gpuforce' || normalized === 'gpu-force' || normalized === 'gpu') return 'gpuforce';
   return 'force3d';
+}
+
+function isGpuForceLayoutType(layoutType) {
+  return layoutType === 'gpuforce' || layoutType === 'gpuforce-webgl2' || layoutType === 'gpuforce-webgpu';
 }
 
 function resolveLayoutIntervalMs() {
@@ -333,7 +348,7 @@ async function bootstrap() {
     container: target,
     layout: layoutType === 'none'
       ? { type: 'static', options: { bounds: [-500, -500, 500, 500] } }
-      : layoutType === 'gpuforce'
+      : isGpuForceLayoutType(layoutType)
         ? {
             type: 'gpu-force',
             options: {
@@ -494,9 +509,15 @@ async function bootstrap() {
 
     const layoutSelect = document.createElement('select');
     layoutSelect.className = 'helios-ui-select';
+    const activeRendererType = String(helios?.renderer?.device?.type ?? '').toLowerCase();
+    const gpuForceOption = activeRendererType === 'webgl2'
+      ? { value: 'gpuforce-webgl2', label: 'Force (GPU/WebGL2)' }
+      : activeRendererType === 'webgpu'
+        ? { value: 'gpuforce-webgpu', label: 'Force (GPU/WebGPU)' }
+        : { value: 'gpuforce', label: 'Force (GPU)' };
     const options = [
       { value: 'force3d', label: 'Force (worker)' },
-      { value: 'gpuforce', label: 'Force (GPU/WebGPU)' },
+      gpuForceOption,
       { value: 'd3force3d', label: 'D3 Force 3D (worker)' },
       { value: 'jitter', label: 'Jitter (worker)' },
       { value: 'none', label: 'Static (no layout)' },
@@ -507,7 +528,9 @@ async function bootstrap() {
       opt.textContent = entry.label;
       layoutSelect.appendChild(opt);
     }
-    layoutSelect.value = layoutType;
+    layoutSelect.value = options.some((entry) => entry.value === layoutType)
+      ? layoutType
+      : (isGpuForceLayoutType(layoutType) ? gpuForceOption.value : layoutType);
 
     const layoutIntervalSelect = document.createElement('select');
     layoutIntervalSelect.className = 'helios-ui-select';
@@ -546,7 +569,7 @@ async function bootstrap() {
         helios.layout(layoutInstance);
         return;
       }
-      if (value === 'gpuforce') {
+      if (isGpuForceLayoutType(value)) {
         const layoutInstance = helios.createLayout({
           type: 'gpu-force',
           options: {

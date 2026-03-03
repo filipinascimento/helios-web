@@ -134,6 +134,45 @@ function createFakeWebGPUDevice() {
   return { device, writes };
 }
 
+function createFakeWebGL2Context() {
+  let textureId = 1;
+  let texImageCalls = 0;
+  let texSubImageCalls = 0;
+  const gl = {
+    MAX_TEXTURE_SIZE: 64,
+    TEXTURE_2D: 0x0DE1,
+    TEXTURE_MIN_FILTER: 0x2801,
+    TEXTURE_MAG_FILTER: 0x2800,
+    TEXTURE_WRAP_S: 0x2802,
+    TEXTURE_WRAP_T: 0x2803,
+    CLAMP_TO_EDGE: 0x812F,
+    NEAREST: 0x2600,
+    UNPACK_ALIGNMENT: 0x0CF5,
+    UNPACK_ROW_LENGTH: 0x0CF2,
+    FLOAT: 0x1406,
+    RGB32F: 0x8815,
+    RGB: 0x1907,
+    createTexture() {
+      return { id: textureId += 1 };
+    },
+    deleteTexture() {},
+    bindTexture() {},
+    texParameteri() {},
+    pixelStorei() {},
+    texImage2D() { texImageCalls += 1; },
+    texSubImage2D() { texSubImageCalls += 1; },
+    getParameter(param) {
+      if (param === this.MAX_TEXTURE_SIZE) return 64;
+      return 0;
+    },
+  };
+  return {
+    gl,
+    getTexImageCalls: () => texImageCalls,
+    getTexSubImageCalls: () => texSubImageCalls,
+  };
+}
+
 function approx(actual, expected, epsilon = 1e-6) {
   assert.ok(Math.abs(actual - expected) <= epsilon, `expected ${actual} ~= ${expected}`);
 }
@@ -212,4 +251,50 @@ test('GpuForcePositionDelegate normalizes simulation seed positions while preser
   approx(simSeed.data[3], -10);
   approx(visibleSeed.data[0], 60);
   approx(visibleSeed.data[3], -60);
+});
+
+test('GpuForcePositionDelegate exposes WebGL2 texture resource when running on WebGL backend', () => {
+  const network = createTopologyNetwork([
+    0, 0, 0,
+    10, 0, 0,
+    20, 0, 0,
+  ]);
+  const { gl, getTexImageCalls } = createFakeWebGL2Context();
+  const delegate = new GpuForcePositionDelegate({ mode: '2d' });
+
+  delegate.onAttach({ network, backend: 'webgl2', gl });
+  const resource = delegate.getWebGLPositionTexture({ network, backend: 'webgl', gl });
+
+  assert.ok(resource?.texture);
+  assert.equal(resource.count, 3);
+  assert.equal(resource.version, delegate.version);
+  assert.ok(getTexImageCalls() > 0);
+  assert.equal(delegate.getNodePositionView({ network, backend: 'webgl2', gl }), null);
+});
+
+test('GpuForcePositionDelegate WebGL2 backend advances layout and updates snapshots', async () => {
+  const network = createTopologyNetwork([
+    60, 0, 0,
+    -60, 0, 0,
+  ]);
+  const { gl, getTexImageCalls } = createFakeWebGL2Context();
+  const delegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    center: [0, 0, 0],
+    outputScale: 6,
+    sampleCount2D: 8,
+  });
+  delegate.onAttach({ network, backend: 'webgl2', gl });
+
+  const before = await delegate.snapshotNodePositions({ network, backend: 'webgl2', gl });
+  const changed = delegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
+  const after = await delegate.snapshotNodePositions({ network, backend: 'webgl2', gl });
+
+  assert.equal(changed, true);
+  assert.ok(before instanceof Float32Array);
+  assert.ok(after instanceof Float32Array);
+  assert.equal(before.length, after.length);
+  assert.notEqual(after[0], before[0]);
+  assert.equal(after[2], 0);
+  assert.ok(getTexImageCalls() >= 2);
 });
