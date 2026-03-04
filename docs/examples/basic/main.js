@@ -140,8 +140,10 @@ async function bootstrap() {
   const nodeAttribute = 'weight';
   const edgeAttribute = 'intensity';
   const categoryAttribute = 'category';
+  const labelAttribute = 'label';
   network.defineNodeAttribute(nodeAttribute, AttributeType.Float);
   network.defineNodeAttribute(categoryAttribute, AttributeType.String);
+  network.defineNodeAttribute(labelAttribute, AttributeType.String);
   network.defineEdgeAttribute(edgeAttribute, AttributeType.Float);
 
   console.log("Adding nodes...");
@@ -166,6 +168,7 @@ async function bootstrap() {
     const bucket = Math.min(categoryCount - 1, Math.floor((i / total) * categoryCount));
     const label = `category${bucket + 1}`;
     network.setNodeStringAttribute(categoryAttribute, nodes[i], label);
+    network.setNodeStringAttribute(labelAttribute, nodes[i], `node-${i}`);
   }
   network.categorizeNodeAttribute(categoryAttribute, { sortOrder: 'frequency' });
 
@@ -393,7 +396,6 @@ async function bootstrap() {
   // Optional UI overlay demo (panels, theming, attribute bindings).
   const heliosUI = new HeliosUI({ helios, theme: 'dark', allowDrag: true });
   heliosUI.createDemoPanel();
-  heliosUI.createFilterPanel();
   heliosUI.createMetricsPanel();
   window.__heliosUI = heliosUI;
 
@@ -622,6 +624,7 @@ async function bootstrap() {
   };
 
   createLayoutPanel();
+  heliosUI.createFilterPanel({ dock: 'top-right' });
 
   helios.on(EVENTS.NETWORK_REPLACED, () => {
     configureDemoMappers();

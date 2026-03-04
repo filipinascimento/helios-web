@@ -4498,6 +4498,20 @@ export class AttributeTracker {
     const edgeMode = this.graphLayer.edgeRenderingMode ?? 'quad';
     const projection = camera?.projection ?? '';
     const mode = camera?.mode ?? '';
+    const interpolation = this.graphLayer.getPositionInterpolationState?.()
+      ?? this.graphLayer.positionInterpolation
+      ?? null;
+    const interpolationEnabled = interpolation?.enabled === true ? 1 : 0;
+    const interpolationSourceVersion = Number.isFinite(interpolation?.sourceVersion)
+      ? Number(interpolation.sourceVersion)
+      : 0;
+    const interpolationSourceCount = Number.isFinite(interpolation?.sourceCount)
+      ? Math.max(0, Math.floor(Number(interpolation.sourceCount)))
+      : 0;
+    const interpolationFactor = Number.isFinite(interpolation?.factor)
+      ? Math.round(Math.max(0, Math.min(1, Number(interpolation.factor))) * 1e6)
+      : 1000000;
+    const delegateVersion = this._safeVersion(() => this.graphLayer?.positionDelegate?.version ?? 0);
 
     return [
       this.renderer?.device?.type ?? '',
@@ -4509,6 +4523,11 @@ export class AttributeTracker {
       projection,
       camHash,
       edgeMode,
+      interpolationEnabled,
+      interpolationFactor,
+      interpolationSourceVersion,
+      interpolationSourceCount,
+      delegateVersion,
       // Visuals drive geometry; include their versions.
       topology,
       nodePos,
@@ -4566,7 +4585,7 @@ export class AttributeTracker {
   async render(frame, force = false) {
     if (!this.renderer?.device || !this.graphLayer || (!this.nodeAttribute && !this.edgeAttribute)) return null;
     const signature = this._computeSignature(frame, this.size ?? this.renderer.size, this.options);
-    if (signature && this.lastTargets && signature === this._lastSignature) {
+    if (!force && signature && this.lastTargets && signature === this._lastSignature) {
       return this.lastTargets;
     }
     if (!this.options.autoRender && !force) return this.lastTargets;

@@ -75,9 +75,9 @@ test.describe('filter panel', () => {
     expect(filterAfterEdge.enabled).toBe(true);
     expect(filterAfterEdge.edgeCount).toBeLessThan(filterAfterEdge.baseEdgeCount);
 
-    await edgeAttr.selectOption('');
+    await filterPanel.locator('[data-testid="controls-filter-edge-numeric-remove"]').first().click();
     await filterPanel.getByRole('button', { name: 'Nodes' }).first().click();
-    await nodeAttr.selectOption('');
+    await filterPanel.locator('[data-testid="controls-filter-node-numeric-remove"]').first().click();
 
     await page.waitForFunction(() => {
       const filter = window.__helios?.getGraphFilter?.();
@@ -90,5 +90,51 @@ test.describe('filter panel', () => {
     }));
     expect(filterAfterClear.filter.enabled).toBe(false);
     expect(filterAfterClear.layoutUsesBaseNetwork).toBe(true);
+  });
+
+  test('supports string, categorical, and raw query filters with add/remove controls', async ({ page }) => {
+    await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=900');
+    await waitForHelios(page);
+
+    const filterPanel = panelByTitle(page, 'Filter');
+    await expect(filterPanel).toBeVisible();
+
+    const nodeAttr = filterPanel.locator('[data-testid="controls-filter-node-attribute"]').first();
+    await expect(nodeAttr).toBeVisible();
+    await nodeAttr.selectOption('label');
+    await filterPanel.locator('[data-testid=\"controls-filter-node-string-operator\"]').first().selectOption('starts_with');
+    await filterPanel.locator('[data-testid=\"controls-filter-node-string-value\"]').first().fill('node-1');
+
+    await page.waitForFunction(() => {
+      const filter = window.__helios?.getGraphFilter?.();
+      return Boolean(filter && filter.enabled === true && filter.nodeCount < filter.baseNodeCount);
+    });
+
+    await nodeAttr.selectOption('category');
+    const categoryList = filterPanel.locator('[data-testid=\"controls-filter-node-categorical-list\"]').first();
+    await categoryList.selectOption('category1');
+
+    await page.waitForFunction(() => {
+      const filter = window.__helios?.getGraphFilter?.();
+      return Boolean(filter && filter.enabled === true && String(filter.options?.nodeQuery ?? '').includes('category'));
+    });
+
+    await nodeAttr.selectOption('__query__');
+    await filterPanel.locator('[data-testid=\"controls-filter-node-query\"]').first().fill('weight >= 0.2');
+
+    await page.waitForFunction(() => {
+      const filter = window.__helios?.getGraphFilter?.();
+      const query = String(filter?.options?.nodeQuery ?? '');
+      return Boolean(filter && filter.enabled === true && query.includes('weight >= 0.2'));
+    });
+
+    await filterPanel.locator('[data-testid=\"controls-filter-node-string-remove\"]').first().click();
+    await filterPanel.locator('[data-testid=\"controls-filter-node-categorical-remove\"]').first().click();
+    await filterPanel.locator('[data-testid=\"controls-filter-node-query\"]').first().fill('');
+
+    await page.waitForFunction(() => {
+      const filter = window.__helios?.getGraphFilter?.();
+      return Boolean(filter && filter.enabled === false);
+    });
   });
 });

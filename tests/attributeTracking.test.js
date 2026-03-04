@@ -51,6 +51,68 @@ test('AttributeTracker pick decodes r32uint targets in indirect mode', async () 
   assert.equal(result.node, 10);
 });
 
+test('AttributeTracker invalidates cached targets when interpolation state changes', async () => {
+  let renderCalls = 0;
+  const interpolationState = {
+    enabled: false,
+    factor: 1,
+    sourceVersion: 0,
+    sourceCount: 2,
+  };
+  const graphLayer = {
+    edgeRenderingMode: 'quad',
+    getPositionInterpolationState() {
+      return interpolationState;
+    },
+  };
+  const renderer = {
+    device: { type: 'webgpu' },
+    size: { width: 64, height: 64, devicePixelRatio: 1 },
+    graphLayer,
+    camera: {
+      mode: '2d',
+      projection: 'orthographic',
+      viewProjectionMatrix: new Float32Array(16),
+    },
+  };
+  const tracker = new AttributeTracker(renderer);
+  tracker.webgpu = {
+    render() {
+      renderCalls += 1;
+      return { node: { width: 1, height: 1 }, edge: null };
+    },
+  };
+  tracker.enable('$index', null, { resolutionScale: 1, autoRender: true });
+  const network = {
+    getTopologyVersions() {
+      return { node: 1, edge: 0 };
+    },
+    getNodeAttributeVersion() {
+      return 0;
+    },
+    getEdgeAttributeVersion() {
+      return 0;
+    },
+  };
+  const frame = { network, camera: renderer.camera };
+
+  await tracker.render(frame, false);
+  await tracker.render(frame, false);
+  assert.equal(renderCalls, 1);
+
+  interpolationState.sourceVersion = 1;
+  await tracker.render(frame, false);
+  assert.equal(renderCalls, 2);
+
+  interpolationState.factor = 0.5;
+  interpolationState.enabled = true;
+  await tracker.render(frame, false);
+  assert.equal(renderCalls, 3);
+
+  await tracker.render(frame, true);
+  assert.equal(renderCalls, 4);
+});
+
 test('WebGPUAttributeRenderer uses sparse encoded APIs only for indirect mode', () => {
   const calls = {
     sparseDefineNode: 0,

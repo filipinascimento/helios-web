@@ -14,6 +14,7 @@ import { createDebugLogger } from './utilities/DebugLogger.js';
 import { PositionDelegate } from './delegates/PositionDelegate.js';
 import { VISUAL_ATTRIBUTE_NAMES } from './pipeline/constants.js';
 import { SvgLabelController } from './labels/SvgLabelController.js';
+import { HeliosFilter } from './filters/HeliosFilter.js';
 
 const {
   NODE_POSITION_ATTRIBUTE,
@@ -900,6 +901,7 @@ export class Helios extends EventTarget {
       stats: null,
       lastError: null,
     };
+    this._activeHeliosFilter = null;
     this._stateStyleCache = {
       nodeSlots: new Map(),
       edgeSlots: new Map(),
@@ -1321,8 +1323,17 @@ export class Helios extends EventTarget {
     if (options == null || options === false) {
       return this.clearGraphFilter();
     }
+    let preserveActiveFilterRef = false;
+    if (options instanceof HeliosFilter) {
+      this._activeHeliosFilter = options;
+      options = options.toGraphFilterOptions();
+      preserveActiveFilterRef = true;
+    }
     if (typeof options !== 'object') {
       throw new TypeError('setGraphFilter(options) expects an object or null');
+    }
+    if (!preserveActiveFilterRef) {
+      this._activeHeliosFilter = null;
     }
     const scope = normalizeGraphFilterScope(options.scope, this._ensureGraphFilterState().scope);
     const filterOptions = normalizeGraphFilterOptions(options);
@@ -1346,6 +1357,26 @@ export class Helios extends EventTarget {
     }
     this._afterGraphFilterMutation('set');
     return this;
+  }
+
+  activateHeliosFilter(filter) {
+    if (filter == null || filter === false) {
+      this._activeHeliosFilter = null;
+      return this.clearGraphFilter();
+    }
+    if (!(filter instanceof HeliosFilter)) {
+      throw new TypeError('activateHeliosFilter(filter) expects a HeliosFilter instance or null');
+    }
+    return this.setGraphFilter(filter);
+  }
+
+  getActiveHeliosFilter() {
+    return this._activeHeliosFilter ?? null;
+  }
+
+  reapplyActiveHeliosFilter() {
+    if (!this._activeHeliosFilter) return this;
+    return this.activateHeliosFilter(this._activeHeliosFilter);
   }
 
   clearGraphFilter() {
@@ -2267,7 +2298,12 @@ export class Helios extends EventTarget {
       runtime.sourcePositions = null;
       runtime.targetPositions = null;
       runtime.mixedPositions = null;
-      runtime.sourceCount = 0;
+      if (delegateSourceActive) {
+        runtime.sourceVersion = ((runtime.sourceVersion ?? 0) + 1) % Number.MAX_SAFE_INTEGER;
+      }
+      runtime.sourceCount = targetPositions
+        ? Math.floor(targetPositions.length / 3)
+        : Math.max(0, Math.floor(Number(this._getRenderNetwork()?.nodeIndices?.length ?? 0)));
       runtime.sourceWebGPUBuffer = null;
       runtime.sourceWebGLTexture = null;
       runtime.sourceTextureMeta = null;

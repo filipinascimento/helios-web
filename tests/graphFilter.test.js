@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Helios } from '../src/index.js';
+import { Helios, HeliosFilter } from '../src/index.js';
 
 function createHarness({
   filteredNodes = [1, 2],
@@ -145,4 +145,33 @@ test('clearGraphFilter() restores base network for rendering and layout', () => 
   assert.equal(helios.getGraphFilter().enabled, false);
   assert.ok(getGeometryRequests() >= 2);
   assert.ok(getRenderRequests() >= 2);
+});
+
+test('activateHeliosFilter() applies a HeliosFilter instance and tracks it as active', () => {
+  const harness = createHarness({ filteredNodes: [1, 3], filteredEdges: [1] });
+  const { helios, getFilterInputs } = harness;
+
+  const filter = new HeliosFilter({ scope: 'render+layout' });
+  filter.addRule({
+    scope: 'node',
+    type: 'numeric',
+    attribute: 'weight',
+    min: 0.25,
+    max: 0.75,
+    extentMin: 0,
+    extentMax: 1,
+  });
+  filter.addRule({
+    scope: 'edge',
+    type: 'query',
+    query: 'intensity >= 0.3',
+  });
+
+  helios.activateHeliosFilter(filter);
+
+  assert.equal(helios.getActiveHeliosFilter(), filter);
+  assert.equal(getFilterInputs().length, 1);
+  assert.match(getFilterInputs()[0].nodeQuery, /weight >= 0\.25/);
+  assert.equal(getFilterInputs()[0].edgeQuery, 'intensity >= 0.3');
+  assert.equal(helios.getGraphFilter().scope, 'render+layout');
 });

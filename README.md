@@ -83,6 +83,23 @@ helios.setGraphFilter({
 helios.clearGraphFilter();
 ```
 
+For reusable filter presets, use `HeliosFilter` and activate whichever one you need:
+
+```js
+import { HeliosFilter } from 'helios-web-next';
+
+const exploratory = new HeliosFilter({ scope: 'render+layout' });
+exploratory.addRule({ scope: 'node', type: 'numeric', attribute: 'weight', min: 0.4, max: 1.0, extentMin: 0, extentMax: 1 });
+exploratory.addRule({ scope: 'node', type: 'string', attribute: 'label', operator: 'contains', value: 'hub' });
+
+const strict = new HeliosFilter({ scope: 'render' });
+strict.addRule({ scope: 'node', type: 'categorical', attribute: 'category', values: ['core'] });
+
+helios.activateHeliosFilter(exploratory);
+// later…
+helios.activateHeliosFilter(strict);
+```
+
 Position delegation now uses an abstract `PositionDelegate` contract, so delegates
 can safely synchronize against topology/index version changes before handing
 buffers to the renderer.
