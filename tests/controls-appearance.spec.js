@@ -11,6 +11,18 @@ function panelByTitle(page, title) {
   }).first();
 }
 
+async function enableToggle(locator) {
+  const toggle = locator.first();
+  await expect(toggle).toBeVisible();
+  const tag = await toggle.evaluate((el) => el.tagName.toLowerCase());
+  if (tag === 'input') {
+    if (!(await toggle.isChecked())) await toggle.check();
+    return;
+  }
+  if ((await toggle.getAttribute('aria-checked')) !== 'true') await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-checked', 'true');
+}
+
 test.describe('controls panel: appearance section', () => {
   test('shows Appearance before Nodes/Edges and controls affect renderer', async ({ page }) => {
     await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=500');
@@ -99,9 +111,8 @@ test.describe('controls panel: appearance section', () => {
       await labelsHeader.click();
     }
 
-    const showLabelsToggle = controlsPanel.locator('input[type="checkbox"][aria-label="Show Labels"]').first();
-    await expect(showLabelsToggle).toBeVisible();
-    await showLabelsToggle.check();
+    const showLabelsToggle = controlsPanel.locator('[aria-label="Show Labels"][role="switch"], input[type="checkbox"][aria-label="Show Labels"]');
+    await enableToggle(showLabelsToggle);
     const labelsEnabled = await page.evaluate(() => window.__helios.labels().enabled === true);
     expect(labelsEnabled).toBe(true);
 
@@ -148,15 +159,13 @@ test.describe('controls panel: appearance section', () => {
       await advancedHeader.click();
     }
 
-    const nodeBlendToggle = controlsPanel.locator('input[type="checkbox"][aria-label="Blend Nodes With Edges"]').first();
-    await expect(nodeBlendToggle).toBeVisible();
-    await nodeBlendToggle.check();
+    const nodeBlendToggle = controlsPanel.locator('[aria-label="Blend Nodes With Edges"][role="switch"], input[type="checkbox"][aria-label="Blend Nodes With Edges"]');
+    await enableToggle(nodeBlendToggle);
     const nodeBlendValue = await page.evaluate(() => window.__helios.renderer?.graphLayer?.nodeBlendWithEdges ?? null);
     expect(nodeBlendValue).toBe(true);
 
-    const edgeDepthToggle = controlsPanel.locator('input[type="checkbox"][aria-label="Edge Depth Write"]').first();
-    await expect(edgeDepthToggle).toBeVisible();
-    await edgeDepthToggle.check();
+    const edgeDepthToggle = controlsPanel.locator('[aria-label="Edge Depth Write"][role="switch"], input[type="checkbox"][aria-label="Edge Depth Write"]');
+    await enableToggle(edgeDepthToggle);
     const edgeDepthValue = await page.evaluate(() => window.__helios.renderer?.graphLayer?.edgeDepthWrite ?? null);
     expect(edgeDepthValue).toBe(true);
 

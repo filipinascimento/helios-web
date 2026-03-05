@@ -1,5 +1,16 @@
 import { test, expect } from '@playwright/test';
 
+async function ensureToggleOn(locator) {
+  await expect(locator).toBeVisible();
+  const tag = await locator.evaluate((el) => el.tagName.toLowerCase());
+  if (tag === 'input') {
+    if (!(await locator.isChecked())) await locator.check();
+    return;
+  }
+  if ((await locator.getAttribute('aria-checked')) !== 'true') await locator.click();
+  await expect(locator).toHaveAttribute('aria-checked', 'true');
+}
+
 test.describe('docs basic demo metrics panel', () => {
   test('can start and cancel worker metrics run', async ({ page }, testInfo) => {
     await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=6000');
@@ -93,9 +104,7 @@ test.describe('docs basic demo metrics panel', () => {
     await panel.locator('[data-testid="metrics-dimension-chunkBudget"]').fill('100');
     await panel.locator('[data-testid="metrics-dimension-outMaxAttr"]').fill('dim_max_test');
     const saveLevels = panel.locator('[data-testid="metrics-dimension-saveLevels"]');
-    if (!(await saveLevels.isChecked())) {
-      await saveLevels.check();
-    }
+    await ensureToggleOn(saveLevels);
     await panel.locator('[data-testid="metrics-dimension-outLevelsAttr"]').fill('dim_levels_test');
     await panel.locator('[data-testid="metrics-dimension-levelsEncoding"]').selectOption('string');
     await panel.locator('[data-testid="metrics-dimension-levelsPrecision"]').fill('4');

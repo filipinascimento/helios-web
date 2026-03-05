@@ -2,33 +2,17 @@ import { AttributeType } from 'helios-network';
 import { PanelStack } from './PanelStack.js';
 import { createAlignedRowEl } from '../controls/createAlignedRowEl.js';
 import { createTooltipManager } from '../controls/createTooltipManager.js';
+import { createToggleControl } from '../controls/createToggleControl.js';
 import { SuggestedSliderControls } from '../controls/SuggestedSliderControls.js';
 import { TwoHandleRange } from '../controls/TwoHandleRange.js';
+import { LogSliderControls } from '../controls/LogSliderControls.js';
+import { ColormapPickerControl } from '../controls/ColormapPickerControl.js';
 import { colormaps, resolveColormap, colormapToScheme } from '../../colors/colormaps.js';
 import { VISUAL_ATTRIBUTE_MAP } from '../../pipeline/constants.js';
 import { clampNumber } from '../utils/numbers.js';
 import { toHex8 } from '../utils/colors.js';
 import { isPublicAttributeName } from '../utils/attributes.js';
 import { shallowCloneChannelConfig } from '../utils/channelConfig.js';
-import { colormapToCssGradient } from '../utils/colormapPreview.js';
-
-function collectColormapSuggestionNames() {
-  const names = new Set();
-  const add = (value) => {
-    if (!value) return;
-    names.add(String(value));
-  };
-  for (const key of Object.keys(colormaps?.d3 ?? {})) add(key);
-  for (const key of Object.keys(colormaps?.CET ?? {})) add(key);
-  for (const key of Object.keys(colormaps?.helios ?? {})) add(key);
-  for (const key of Object.keys(colormaps?.cmasher ?? {})) {
-    add(key);
-    if (key.startsWith('cmasher_')) {
-      add(`cmasher:${key.slice('cmasher_'.length)}`);
-    }
-  }
-  return Array.from(names).sort((a, b) => a.localeCompare(b));
-}
 
 function buildColormapCatalog() {
   const entries = [];
@@ -270,7 +254,6 @@ export class MappersPanel {
     // Edge endpoint channels are node-derived and intentionally not exposed in the UI.
     const edgeChannels = ['color', 'width', 'opacity'];
 
-    const colormapNames = collectColormapSuggestionNames();
     const colormapCatalog = buildColormapCatalog();
     const categoricalPaletteCatalog = buildCategoricalPaletteCatalog();
     const defaultCategoricalPalette =
@@ -1628,24 +1611,12 @@ export class MappersPanel {
             ('source' in pendingValue || 'target' in pendingValue);
 
           if (isEdgeSplitCapable) {
-            const toggleWrap = document.createElement('label');
-            toggleWrap.style.display = 'inline-flex';
-            toggleWrap.style.alignItems = 'center';
-            toggleWrap.style.gap = '6px';
-            toggleWrap.style.justifyContent = 'flex-end';
-
-            const toggle = document.createElement('input');
-            toggle.type = 'checkbox';
-            toggle.checked = Boolean(isSplit);
-            toggle.style.margin = '0';
-
-            const toggleText = document.createElement('span');
-            toggleText.textContent = 'Source/Target';
-            toggleText.style.color = 'var(--helios-ui-muted)';
-
-            toggleWrap.appendChild(toggle);
-            toggleWrap.appendChild(toggleText);
-            wrap.appendChild(toggleWrap);
+            const toggle = createToggleControl({
+              checked: Boolean(isSplit),
+              onLabel: 'Source/Target',
+              offLabel: 'Single',
+            });
+            wrap.appendChild(toggle);
 
             toggle.addEventListener('change', () => {
               const raw = state.pending.value ?? live?.value;
@@ -1822,24 +1793,12 @@ export class MappersPanel {
           };
 
           if (isEdgeSplitCapable) {
-            const toggleWrap = document.createElement('label');
-            toggleWrap.style.display = 'inline-flex';
-            toggleWrap.style.alignItems = 'center';
-            toggleWrap.style.gap = '6px';
-            toggleWrap.style.justifyContent = 'flex-end';
-
-            const toggle = document.createElement('input');
-            toggle.type = 'checkbox';
-            toggle.checked = Boolean(isSplit);
-            toggle.style.margin = '0';
-
-            const toggleText = document.createElement('span');
-            toggleText.textContent = 'Source/Target';
-            toggleText.style.color = 'var(--helios-ui-muted)';
-
-            toggleWrap.appendChild(toggle);
-            toggleWrap.appendChild(toggleText);
-            wrap.appendChild(toggleWrap);
+            const toggle = createToggleControl({
+              checked: Boolean(isSplit),
+              onLabel: 'Source/Target',
+              offLabel: 'Single',
+            });
+            wrap.appendChild(toggle);
 
             toggle.addEventListener('change', () => {
               const seed = seedSingle();
@@ -3266,19 +3225,11 @@ export class MappersPanel {
                 controls: palettePicker,
               }).row);
 
-              const preferSchemeWrap = document.createElement('label');
-              preferSchemeWrap.style.display = 'inline-flex';
-              preferSchemeWrap.style.alignItems = 'center';
-              preferSchemeWrap.style.gap = '6px';
-              const preferSchemeInput = document.createElement('input');
-              preferSchemeInput.type = 'checkbox';
-              preferSchemeInput.checked = preferScheme;
-              preferSchemeInput.style.margin = '0';
-              const preferSchemeText = document.createElement('span');
-              preferSchemeText.textContent = 'Prefer scheme colors';
-              preferSchemeText.style.color = 'var(--helios-ui-muted)';
-              preferSchemeWrap.appendChild(preferSchemeInput);
-              preferSchemeWrap.appendChild(preferSchemeText);
+              const preferSchemeInput = createToggleControl({
+                checked: preferScheme,
+                onLabel: 'Prefer Scheme',
+                offLabel: 'Use Order',
+              });
               preferSchemeInput.addEventListener('change', () => {
                 const nextMeta = ensureCategoricalMeta();
                 nextMeta.categorical.preferScheme = preferSchemeInput.checked;
@@ -3289,7 +3240,7 @@ export class MappersPanel {
               editorBody.appendChild(createAlignedRow({
                 title: 'Scheme',
                 hint: 'Prefer discrete scheme colors when available for the selected palette.',
-                controls: preferSchemeWrap,
+                controls: preferSchemeInput,
               }).row);
 
               applyPaletteButton = document.createElement('button');
@@ -3746,410 +3697,23 @@ export class MappersPanel {
             controls: transformWrap,
           }).row);
 
-          const nameWrap = document.createElement('div');
-          nameWrap.className = 'helios-ui-colormap-picker';
-          const colormapDisplay = document.createElement('button');
-          colormapDisplay.type = 'button';
-          colormapDisplay.className = 'helios-ui-select helios-ui-colormap-picker__display';
-
-          const colormapDisplayLabel = document.createElement('span');
-          colormapDisplayLabel.className = 'helios-ui-ellipsis';
-          colormapDisplay.appendChild(colormapDisplayLabel);
-
-          const preview = document.createElement('div');
-          preview.className = 'helios-ui-colormap-picker__preview helios-ui-colormap-thumb';
-
-          const popover = document.createElement('div');
-          popover.className = 'helios-ui-colormap-popover';
-          popover.hidden = true;
-
-          const popoverPanel = document.createElement('div');
-          popoverPanel.className = 'helios-ui-colormap-popover__panel';
-          popover.appendChild(popoverPanel);
-
-          const popoverHeader = document.createElement('div');
-          popoverHeader.className = 'helios-ui-colormap-popover__header';
-          const searchInput = document.createElement('input');
-          searchInput.type = 'text';
-          searchInput.className = 'helios-ui-text helios-ui-colormap-popover__search';
-          searchInput.placeholder = 'Search colormaps (e.g. viridis, CET, cmasher)…';
-          popoverHeader.appendChild(searchInput);
-          popoverPanel.appendChild(popoverHeader);
-
-          const popoverList = document.createElement('div');
-          popoverList.className = 'helios-ui-colormap-popover__list';
-          popoverPanel.appendChild(popoverList);
-
-          const portalRoot = ui?.container ?? document.body;
-          portalRoot.appendChild(popover);
-          const popoverCleanups = [];
-          const registerPopoverCleanup = (fn) => {
-            if (typeof fn === 'function') popoverCleanups.push(fn);
-          };
-          registerPopoverCleanup(() => popover.remove());
-
-          const resolveDisplayEntry = (keyRaw) => {
-            const key = String(keyRaw ?? '').trim();
-            if (!key) return null;
-            return colormapCatalog.byKey.get(key) ?? null;
-          };
-
-          const formatDisplayValue = (keyRaw) => {
-            const key = String(keyRaw ?? '').trim();
-            if (!key) return '';
-            const entry = resolveDisplayEntry(key);
-            if (!entry) return key;
-            return `${entry.group}: ${entry.label}`;
-          };
-
-          const applySelectionToUi = (keyRaw) => {
-            const key = String(keyRaw ?? '').trim() || 'interpolateInferno';
-            colormapDisplayLabel.textContent = formatDisplayValue(key);
-            colormapDisplay.title = colormapDisplayLabel.textContent;
-            colormapDisplay.dataset.colormapKey = key;
-            updatePreview(key);
-          };
-
-          const updatePreview = (keyRaw) => {
-            const key = String(keyRaw ?? '').trim() || 'interpolateInferno';
-            const gradient = colormapToCssGradient(key, { samples: 32, alpha: 1 });
-            preview.style.backgroundImage = gradient ?? 'linear-gradient(90deg, rgba(120,120,120,1), rgba(40,40,40,1))';
-          };
-
-          const setSelectedColormap = (keyRaw) => {
-            const key = String(keyRaw ?? '').trim() || 'interpolateInferno';
-            state.pending = { ...state.pending, type: 'colormap', colormap: key };
-            applySelectionToUi(key);
-            setDirty(true);
-          };
-
-          // Initialize UI from current pending value (no dirty).
-          applySelectionToUi(state.pending.colormap ?? 'interpolateInferno');
-
-          let thumbObserver = null;
-          const ensureThumbObserver = () => {
-            if (thumbObserver) return thumbObserver;
-            if (typeof IntersectionObserver !== 'function') return null;
-            thumbObserver = new IntersectionObserver((entries) => {
-              for (const entry of entries) {
-                if (!entry.isIntersecting) continue;
-                const el = entry.target;
-                const key = el?.dataset?.colormapKey;
-                if (!key) continue;
-                if (el.dataset.colormapReady === '1') continue;
-                el.dataset.colormapReady = '1';
-                const gradient = colormapToCssGradient(key, { samples: 28, alpha: 1 });
-                el.style.backgroundImage = gradient ?? 'linear-gradient(90deg, rgba(120,120,120,1), rgba(40,40,40,1))';
-                thumbObserver.unobserve(el);
-              }
-            }, { root: popoverPanel, rootMargin: '64px' });
-            registerPopoverCleanup(() => {
-              thumbObserver?.disconnect?.();
-              thumbObserver = null;
-            });
-            return thumbObserver;
-          };
-
-          const renderPopover = (queryRaw) => {
-            popoverList.replaceChildren();
-
-            const query = String(queryRaw ?? '').trim().toLowerCase();
-            const tokens = query.split(/\s+/).filter(Boolean);
-
-            const matches = tokens.length
-              ? colormapCatalog.entries.filter((entry) => tokens.every((t) => entry.search.includes(t)))
-              : colormapCatalog.entries;
-
-            if (!matches.length) {
-              const note = document.createElement('div');
-              note.className = 'helios-ui-colormap-picker__note';
-              note.textContent = 'No matches.';
-              popoverList.appendChild(note);
-              return;
-            }
-
-            const groupOrder = ['d3', 'cmasher', 'CET', 'helios', 'other'];
-            const matchesByGroup = new Map();
-            for (const entry of matches) {
-              const list = matchesByGroup.get(entry.group) ?? [];
-              list.push(entry);
-              matchesByGroup.set(entry.group, list);
-            }
-            for (const list of matchesByGroup.values()) {
-              list.sort((a, b) => a.label.localeCompare(b.label));
-            }
-
-            const capPerGroup = tokens.length ? 60 : 5000;
-            const capTotal = tokens.length ? 220 : 5000;
-            let total = 0;
-
-            const observer = ensureThumbObserver();
-
-            for (const group of groupOrder) {
-              const list = matchesByGroup.get(group);
-              if (!list?.length) continue;
-
-              const section = document.createElement('div');
-              section.className = 'helios-ui-colormap-section';
-
-              const title = document.createElement('div');
-              title.className = 'helios-ui-colormap-section__title';
-              title.textContent = group;
-              section.appendChild(title);
-
-              const body = document.createElement('div');
-              body.className = 'helios-ui-colormap-section__body';
-
-              const visible = list.slice(0, capPerGroup);
-              for (const entry of visible) {
-                if (total >= capTotal) break;
-                total += 1;
-
-                const item = document.createElement('button');
-                item.type = 'button';
-                item.className = 'helios-ui-colormap-picker__item';
-                item.dataset.key = entry.key;
-
-                const itemTitle = document.createElement('div');
-                itemTitle.className = 'helios-ui-colormap-picker__item-title helios-ui-ellipsis';
-                itemTitle.textContent = entry.label;
-                itemTitle.title = `${entry.key}`;
-
-                const itemThumb = document.createElement('div');
-                itemThumb.className = 'helios-ui-colormap-thumb helios-ui-colormap-thumb--small';
-                itemThumb.dataset.colormapKey = entry.key;
-                itemThumb.dataset.colormapReady = '0';
-                itemThumb.style.backgroundImage = 'linear-gradient(90deg, rgba(60,60,60,1), rgba(30,30,30,1))';
-                observer?.observe?.(itemThumb);
-
-                item.appendChild(itemTitle);
-                item.appendChild(itemThumb);
-
-                item.addEventListener('pointerdown', (e) => {
-                  // Keep focus on the input while selecting.
-                  e.preventDefault();
-                  setSelectedColormap(entry.key);
-                  popover.hidden = true;
-                });
-
-                body.appendChild(item);
-              }
-
-              if (list.length > capPerGroup) {
-                const note = document.createElement('div');
-                note.className = 'helios-ui-colormap-picker__note';
-                note.textContent = `Showing ${capPerGroup} of ${list.length} in ${group}.`;
-                body.appendChild(note);
-              }
-
-              section.appendChild(body);
-              popoverList.appendChild(section);
-              if (total >= capTotal) break;
-            }
-
-            if (matches.length > capTotal) {
-              const note = document.createElement('div');
-              note.className = 'helios-ui-colormap-picker__note';
-              note.textContent = `Showing ${capTotal} of ${matches.length}. Refine your search.`;
-              popoverList.appendChild(note);
-            }
-          };
-
-          const OFFSET = 6;
-          const MARGIN = 10;
-          const MIN_HEIGHT = 180;
-          const MIN_WIDTH = 240;
-          const MAX_WIDTH = 420;
-          const MAX_HEIGHT = 420;
-
-	          const positionPopover = () => {
-	            if (popover.hidden) return;
-	            const anchor = colormapDisplay.getBoundingClientRect();
-	            const vw = window.innerWidth;
-	            const vh = window.innerHeight;
-
-            const spaceBelow = vh - anchor.bottom - MARGIN;
-            const spaceAbove = anchor.top - MARGIN;
-            const spaceRight = vw - anchor.right - MARGIN;
-            const spaceLeft = anchor.left - MARGIN;
-
-            popover.style.width = `${Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, anchor.width))}px`;
-            popover.style.left = '0px';
-            popover.style.top = '0px';
-            popover.hidden = false;
-
-            const measured = popoverPanel.getBoundingClientRect();
-            const desiredW = measured.width || Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, anchor.width));
-            const desiredH = popoverPanel.scrollHeight || measured.height || MIN_HEIGHT;
-
-            const canVertical = Math.max(spaceBelow, spaceAbove) >= MIN_HEIGHT;
-            const preferBelow = spaceBelow >= spaceAbove;
-            const canHorizontal = Math.max(spaceRight, spaceLeft) >= MIN_WIDTH;
-            const preferRight = spaceRight >= spaceLeft;
-
-            let placement = 'bottom';
-            if (canVertical) {
-              placement = preferBelow ? 'bottom' : 'top';
-            } else if (canHorizontal) {
-              placement = preferRight ? 'right' : 'left';
-            } else {
-              // Pick the side with the most room.
-              const best = [
-                { side: 'bottom', size: spaceBelow },
-                { side: 'top', size: spaceAbove },
-                { side: 'right', size: spaceRight },
-                { side: 'left', size: spaceLeft },
-              ].sort((a, b) => b.size - a.size)[0];
-              placement = best?.side ?? 'bottom';
-            }
-
-            let left = anchor.left;
-            let top = anchor.bottom + OFFSET;
-            let maxH = Math.max(80, spaceBelow);
-
-            if (placement === 'top') {
-              maxH = Math.max(80, spaceAbove);
-              top = Math.max(MARGIN, anchor.top - OFFSET - Math.min(desiredH, maxH));
-            } else if (placement === 'right') {
-              left = anchor.right + OFFSET;
-              top = anchor.top;
-              maxH = Math.max(80, vh - 2 * MARGIN);
-            } else if (placement === 'left') {
-              left = Math.max(MARGIN, anchor.left - OFFSET - desiredW);
-              top = anchor.top;
-              maxH = Math.max(80, vh - 2 * MARGIN);
-            }
-
-            // Clamp within viewport.
-            left = Math.max(MARGIN, Math.min(vw - MARGIN - desiredW, left));
-            top = Math.max(MARGIN, Math.min(vh - MARGIN - 80, top));
-
-            popover.style.width = `${Math.min(desiredW, vw - 2 * MARGIN)}px`;
-            popover.style.left = `${left}px`;
-            popover.style.top = `${top}px`;
-
-            const bottomLimit = placement === 'top' ? Math.max(MARGIN, anchor.top - OFFSET) : vh - MARGIN;
-            const availableH = Math.max(120, bottomLimit - top);
-            popoverPanel.style.maxHeight = `${Math.min(MAX_HEIGHT, availableH)}px`;
-            popoverList.style.maxHeight = '';
-          };
-
-	          const closePopover = () => {
-	            popover.hidden = true;
-	          };
-
-          const onDocPointerDown = (e) => {
-            const target = e.target;
-            if (popover.hidden) return;
-            if (target && (popover.contains(target) || nameWrap.contains(target))) return;
-            closePopover();
-          };
-
-          let pendingPosition = false;
-          const schedulePosition = () => {
-            if (pendingPosition) return;
-            pendingPosition = true;
-            requestAnimationFrame(() => {
-              pendingPosition = false;
-              positionPopover();
-            });
-          };
-
-          const onDocScroll = (e) => {
-            if (popover.hidden) return;
-            const target = e?.target;
-            if (target && popoverPanel.contains(target)) return; // allow internal list scroll
-            schedulePosition();
-          };
-          const onWinResize = () => schedulePosition();
-
-          document.addEventListener('pointerdown', onDocPointerDown, true);
-          document.addEventListener('scroll', onDocScroll, true);
-          window.addEventListener('resize', onWinResize);
-          registerPopoverCleanup(() => document.removeEventListener('pointerdown', onDocPointerDown, true));
-          registerPopoverCleanup(() => document.removeEventListener('scroll', onDocScroll, true));
-          registerPopoverCleanup(() => window.removeEventListener('resize', onWinResize));
-
-          const openPopover = ({ seedQuery } = {}) => {
-            popover.hidden = false;
-            const query = seedQuery != null ? String(seedQuery) : '';
-            searchInput.value = query;
-            renderPopover(searchInput.value);
-            positionPopover();
-            queueMicrotask(() => searchInput.focus());
-          };
-
-          const onDisplayClick = () => openPopover();
-          const onPreviewClick = () => openPopover();
-          const onDisplayKeyDown = (e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              openPopover();
-              return;
-            }
-            if (e.key && e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
-              e.preventDefault();
-              openPopover({ seedQuery: e.key });
-            }
-          };
-
-          colormapDisplay.addEventListener('click', onDisplayClick);
-          preview.addEventListener('click', onPreviewClick);
-          colormapDisplay.addEventListener('keydown', onDisplayKeyDown);
-          registerPopoverCleanup(() => colormapDisplay.removeEventListener('click', onDisplayClick));
-          registerPopoverCleanup(() => preview.removeEventListener('click', onPreviewClick));
-          registerPopoverCleanup(() => colormapDisplay.removeEventListener('keydown', onDisplayKeyDown));
-
-          const onSearchInput = () => {
-            renderPopover(searchInput.value);
-            positionPopover();
-          };
-          searchInput.addEventListener('input', onSearchInput);
-          registerPopoverCleanup(() => searchInput.removeEventListener('input', onSearchInput));
-
-          const onSearchKeyDown = (e) => {
-            if (e.key === 'Escape') {
-              closePopover();
-              colormapDisplay.focus();
-            }
-            if (e.key === 'Enter' && (searchInput.value ?? '').trim()) {
-              closePopover();
-              // If the user typed an exact key, accept it.
-              const typed = String(searchInput.value ?? '').trim();
-              if (colormapCatalog.byKey.has(typed)) setSelectedColormap(typed);
-            }
-          };
-          searchInput.addEventListener('keydown', onSearchKeyDown);
-          registerPopoverCleanup(() => searchInput.removeEventListener('keydown', onSearchKeyDown));
-
-          const onNameWrapFocusOut = () => {
-            // Close if focus has left the picker entirely.
-            queueMicrotask(() => {
-              if (!nameWrap.contains(document.activeElement) && !popover.contains(document.activeElement)) closePopover();
-            });
-          };
-          nameWrap.addEventListener('focusout', onNameWrapFocusOut);
-          registerPopoverCleanup(() => nameWrap.removeEventListener('focusout', onNameWrapFocusOut));
-
-          registerControl({
-            destroy() {
-              for (const cleanup of popoverCleanups.splice(0)) {
-                try {
-                  cleanup();
-                } catch (_) {
-                  // ignore
-                }
-              }
+          const colormapPicker = new ColormapPickerControl({
+            catalog: colormapCatalog,
+            portalRoot: ui?.container ?? document.body,
+            value: state.pending.colormap ?? 'interpolateInferno',
+            fallbackValue: 'interpolateInferno',
+            searchPlaceholder: 'Search colormaps (e.g. viridis, CET, cmasher)…',
+            onChange: (key) => {
+              state.pending = { ...state.pending, type: 'colormap', colormap: key };
+              setDirty(true);
             },
           });
-
-          nameWrap.appendChild(colormapDisplay);
-          nameWrap.appendChild(preview);
+          registerControl(colormapPicker);
 
           editorBody.appendChild(createAlignedRow({
             title: 'Colormap',
             hint: 'Choose the named colormap/interpolator to use.',
-            controls: nameWrap,
+            controls: colormapPicker.element,
           }).row);
 
           const domainWrap = document.createElement('div');
@@ -4285,57 +3849,31 @@ export class MappersPanel {
           }).row);
 
           const advanced = document.createElement('div');
-          const divergentWrap = document.createElement('label');
-          divergentWrap.style.display = 'inline-flex';
-          divergentWrap.style.alignItems = 'center';
-          divergentWrap.style.gap = '6px';
-          const divergentInput = document.createElement('input');
-          divergentInput.type = 'checkbox';
-          divergentInput.checked = Boolean(state.pending.divergent) && allowDivergent;
-          divergentInput.disabled = !allowDivergent;
-          divergentInput.style.margin = '0';
-          const divergentText = document.createElement('span');
-          divergentText.textContent = 'Divergent';
-          divergentText.style.color = 'var(--helios-ui-muted)';
-          divergentWrap.appendChild(divergentInput);
-          divergentWrap.appendChild(divergentText);
+          const divergentInput = createToggleControl({
+            checked: Boolean(state.pending.divergent) && allowDivergent,
+            disabled: !allowDivergent,
+            onLabel: 'Divergent',
+            offLabel: 'Sequential',
+          });
 
           const clampWrap = document.createElement('div');
           clampWrap.style.display = 'inline-flex';
           clampWrap.style.alignItems = 'center';
           clampWrap.style.gap = '10px';
           const clampState = normalizeClampSetting(state.pending.clamp);
-          const clampMinInput = document.createElement('input');
-          clampMinInput.type = 'checkbox';
-          clampMinInput.checked = clampState.min;
-          clampMinInput.style.margin = '0';
-          const clampMinLabel = document.createElement('span');
-          clampMinLabel.textContent = 'Min';
-          clampMinLabel.style.color = 'var(--helios-ui-muted)';
-          const clampMaxInput = document.createElement('input');
-          clampMaxInput.type = 'checkbox';
-          clampMaxInput.checked = clampState.max;
-          clampMaxInput.style.margin = '0';
-          const clampMaxLabel = document.createElement('span');
-          clampMaxLabel.textContent = 'Max';
-          clampMaxLabel.style.color = 'var(--helios-ui-muted)';
+          const clampMinInput = createToggleControl({
+            checked: clampState.min,
+            onLabel: 'Min Clamp',
+            offLabel: 'Min Free',
+          });
+          const clampMaxInput = createToggleControl({
+            checked: clampState.max,
+            onLabel: 'Max Clamp',
+            offLabel: 'Max Free',
+          });
 
-          const clampMinWrap = document.createElement('label');
-          clampMinWrap.style.display = 'inline-flex';
-          clampMinWrap.style.alignItems = 'center';
-          clampMinWrap.style.gap = '4px';
-          clampMinWrap.appendChild(clampMinInput);
-          clampMinWrap.appendChild(clampMinLabel);
-
-          const clampMaxWrap = document.createElement('label');
-          clampMaxWrap.style.display = 'inline-flex';
-          clampMaxWrap.style.alignItems = 'center';
-          clampMaxWrap.style.gap = '4px';
-          clampMaxWrap.appendChild(clampMaxInput);
-          clampMaxWrap.appendChild(clampMaxLabel);
-
-          clampWrap.appendChild(clampMinWrap);
-          clampWrap.appendChild(clampMaxWrap);
+          clampWrap.appendChild(clampMinInput);
+          clampWrap.appendChild(clampMaxInput);
 
           const alphaSeed = clampNumber(state.pending.alpha ?? 1, { min: 0, max: 1 }) ?? 1;
           const alphaControls = new SuggestedSliderControls({
@@ -4378,7 +3916,7 @@ export class MappersPanel {
             hint: allowDivergent
               ? 'Lock the domain to a symmetric range around zero (for divergent colormaps).'
               : 'Divergent mode is unavailable for percentile transforms.',
-            controls: divergentWrap,
+            controls: divergentInput,
           }).row);
 
           advanced.appendChild(createAlignedRow({
@@ -4836,8 +4374,275 @@ export class MappersPanel {
       return { root, state, channels, setChannel };
     };
 
+    const createDensityTab = () => {
+      const root = document.createElement('div');
+      root.className = 'helios-ui-mapper-tab';
+
+      if (!helios || typeof helios.density !== 'function') {
+        const note = document.createElement('div');
+        note.style.color = 'var(--helios-ui-muted)';
+        note.textContent = 'Density controls are unavailable for this Helios instance.';
+        root.appendChild(note);
+        return { root, refresh: () => {} };
+      }
+
+      const editorStack = new PanelStack();
+      const editorBody = document.createElement('div');
+      editorStack.add({ id: 'density-mapper-basic', title: 'Editor', content: editorBody });
+      root.appendChild(editorStack.element);
+      ui._controlCleanups.add(() => editorStack.destroy());
+
+      const localControls = new Set();
+      const registerControl = (control) => {
+        if (control) localControls.add(control);
+      };
+      const destroyControls = () => {
+        for (const control of localControls) {
+          try {
+            control.destroy?.();
+          } catch (_) {
+            // ignore
+          }
+        }
+        localControls.clear();
+      };
+      ui._controlCleanups.add(() => destroyControls());
+
+      const createCheckboxControl = ({ checked = false, onChange, onLabel = 'On', offLabel = 'Off' }) => {
+        const toggle = createToggleControl({
+          checked: Boolean(checked),
+          onLabel,
+          offLabel,
+        });
+        const onChangeHandler = () => onChange?.(toggle.checked);
+        toggle.addEventListener('change', onChangeHandler);
+        registerControl({
+          destroy() {
+            toggle.removeEventListener('change', onChangeHandler);
+          },
+        });
+        return toggle;
+      };
+
+      const listDensityAttributes = () => {
+        const network = net();
+        if (!network || typeof network.getNodeAttributeNames !== 'function') {
+          return ['Uniform', 'Degree'];
+        }
+        const names = ['Uniform', 'Degree'];
+        let raw = [];
+        try {
+          raw = network.getNodeAttributeNames() ?? [];
+        } catch (_) {
+          raw = [];
+        }
+        for (const name of raw) {
+          if (typeof name !== 'string') continue;
+          if (!isPublicAttributeName(name)) continue;
+          let info = null;
+          try {
+            info = network.getNodeAttributeInfo?.(name) ?? null;
+          } catch (_) {
+            info = null;
+          }
+          if (!info || (info.dimension ?? 1) !== 1) continue;
+          if (!isNumericAttributeType(info.type)) continue;
+          names.push(name);
+        }
+        const unique = Array.from(new Set(names));
+        const fixed = unique.filter((name) => name === 'Uniform' || name === 'Degree');
+        const attrs = unique.filter((name) => name !== 'Uniform' && name !== 'Degree');
+        attrs.sort(naturalCompare);
+        return [...fixed, ...attrs];
+      };
+
+      const cfg = () => helios.density();
+      const applyDensity = (patch) => {
+        helios.density(patch);
+        helios.scheduler?.requestRender?.();
+        helios.requestRender?.();
+      };
+
+      const enabledToggle = createCheckboxControl({
+        checked: cfg().enabled === true,
+        onChange: (checked) => applyDensity({ enabled: checked }),
+        onLabel: 'On',
+        offLabel: 'Off',
+      });
+      editorBody.appendChild(createAlignedRow({
+        title: 'Enabled',
+        hint: 'Enable or disable density rendering.',
+        controls: enabledToggle,
+      }).row);
+
+      const reliefToggle = createCheckboxControl({
+        checked: cfg().topographic === true,
+        onChange: (checked) => applyDensity({ topographic: checked }),
+        onLabel: 'Relief',
+        offLabel: 'Flat',
+      });
+      editorBody.appendChild(createAlignedRow({
+        title: 'Relief',
+        hint: 'Draw topographic contour lines over the density map.',
+        controls: reliefToggle,
+      }).row);
+
+      const propertySelect = document.createElement('select');
+      propertySelect.className = 'helios-ui-select';
+      editorBody.appendChild(createAlignedRow({
+        title: 'Density',
+        hint: 'Primary density property.',
+        controls: propertySelect,
+      }).row);
+
+      const compareSelect = document.createElement('select');
+      compareSelect.className = 'helios-ui-select';
+      editorBody.appendChild(createAlignedRow({
+        title: 'vs',
+        hint: 'Second property used for density comparison.',
+        controls: compareSelect,
+      }).row);
+
+      const normalizeToggle = createCheckboxControl({
+        checked: cfg().normalizeVs === true,
+        onChange: (checked) => applyDensity({ normalizeVs: checked }),
+        onLabel: 'Normalized',
+        offLabel: 'Raw',
+      });
+      editorBody.appendChild(createAlignedRow({
+        title: 'Norm.',
+        hint: 'Normalize positive/negative comparison sides independently.',
+        controls: normalizeToggle,
+      }).row);
+
+      const bandwidthControl = new LogSliderControls({
+        value: cfg().bandwidth ?? 28.1,
+        minExp: -0.9,
+        maxExp: 2.5,
+        stepExp: 0.05,
+        minValue: 0.05,
+        maxValue: 1000,
+        digits: 2,
+        onCommit: (value) => applyDensity({ bandwidth: value }),
+      });
+      registerControl(bandwidthControl);
+      editorBody.appendChild(createAlignedRow({
+        title: 'Bandwidth',
+        hint: 'Kernel bandwidth (log scale).',
+        controls: bandwidthControl.element,
+      }).row);
+
+      const weightControl = new LogSliderControls({
+        value: cfg().weightScale ?? 398.1071705534973,
+        minExp: 0,
+        maxExp: 10,
+        stepExp: 0.1,
+        minValue: 1,
+        maxValue: 1e8,
+        digits: 2,
+        onCommit: (value) => applyDensity({ weightScale: value }),
+      });
+      registerControl(weightControl);
+      editorBody.appendChild(createAlignedRow({
+        title: 'Weight',
+        hint: 'Density intensity multiplier (log scale).',
+        controls: weightControl.element,
+      }).row);
+      const colormapPicker = new ColormapPickerControl({
+        catalog: colormapCatalog,
+        portalRoot: ui?.container ?? document.body,
+        value: cfg().diverging ? cfg().divergingColormap : cfg().colormap,
+        fallbackValue: 'interpolateOrRd',
+        searchPlaceholder: 'Search colormaps…',
+        onChange: (key) => {
+          const state = cfg();
+          if (state.diverging) {
+            applyDensity({ divergingColormap: key });
+          } else {
+            applyDensity({ colormap: key });
+          }
+          refresh();
+        },
+      });
+      registerControl(colormapPicker);
+      editorBody.appendChild(createAlignedRow({
+        title: 'Map',
+        hint: 'Colormap for the density layer (sequential or diverging when required).',
+        controls: colormapPicker.element,
+      }).row);
+
+      propertySelect.addEventListener('change', () => {
+        applyDensity({ property: propertySelect.value });
+        refresh();
+      });
+      compareSelect.addEventListener('change', () => {
+        applyDensity({ compareProperty: compareSelect.value });
+        normalizeToggle.disabled = compareSelect.value === 'None';
+        refresh();
+      });
+
+      const refresh = () => {
+        const state = cfg();
+        const attrs = listDensityAttributes();
+
+        const ensureOptionList = (select, values) => {
+          const current = select.value;
+          select.textContent = '';
+          for (const value of values) {
+            const opt = document.createElement('option');
+            opt.value = value;
+            opt.textContent = value;
+            select.appendChild(opt);
+          }
+          if (values.includes(current)) select.value = current;
+        };
+
+        ensureOptionList(propertySelect, attrs);
+        ensureOptionList(compareSelect, ['None', ...attrs]);
+
+        if (!attrs.includes(state.property)) {
+          propertySelect.value = 'Uniform';
+          applyDensity({ property: 'Uniform' });
+        } else {
+          propertySelect.value = state.property;
+        }
+
+        if (!['None', ...attrs].includes(state.compareProperty)) {
+          compareSelect.value = 'None';
+          applyDensity({ compareProperty: 'None' });
+        } else {
+          compareSelect.value = state.compareProperty;
+        }
+
+        enabledToggle.checked = state.enabled === true;
+        reliefToggle.checked = state.topographic === true;
+        normalizeToggle.checked = state.normalizeVs === true;
+        normalizeToggle.disabled = compareSelect.value === 'None';
+
+        bandwidthControl.setValue(Math.max(0.05, Number(state.bandwidth ?? 1)));
+        weightControl.setValue(Math.max(1, Number(state.weightScale ?? 1)));
+
+        const activeColormap = state.diverging ? state.divergingColormap : state.colormap;
+        colormapPicker.setValue(activeColormap);
+      };
+
+      const onNetworkReplaced = () => refresh();
+      let unsub = null;
+      if (helios?.on) {
+        unsub = helios.on('network:replaced', onNetworkReplaced);
+      } else if (helios?.addEventListener) {
+        helios.addEventListener('network:replaced', onNetworkReplaced);
+        unsub = () => helios.removeEventListener('network:replaced', onNetworkReplaced);
+      }
+      if (unsub) ui._controlCleanups.add(unsub);
+
+      refresh();
+      return { root, refresh };
+    };
+
     const nodeTab = createModeTab('node');
     const edgeTab = createModeTab('edge');
+    const densityTab = createDensityTab();
 
     let activeMode = 'node';
 
@@ -4845,10 +4650,22 @@ export class MappersPanel {
     channelSelect.className = 'helios-ui-select helios-ui-select--compact';
     tooltips.attachTooltip(channelSelect, 'Select which visual channel to edit.');
 
-    const getActiveTab = () => (activeMode === 'edge' ? edgeTab : nodeTab);
+    const getActiveTab = () => {
+      if (activeMode === 'edge') return edgeTab;
+      if (activeMode === 'density') return null;
+      return nodeTab;
+    };
 
     const syncChannelSelect = () => {
-      const { channels, state } = getActiveTab();
+      const tab = getActiveTab();
+      if (!tab) {
+        channelSelect.disabled = true;
+        channelSelect.style.display = 'none';
+        return;
+      }
+      channelSelect.disabled = false;
+      channelSelect.style.display = '';
+      const { channels, state } = tab;
       channelSelect.textContent = '';
       for (const name of channels) {
         const opt = document.createElement('option');
@@ -4861,6 +4678,7 @@ export class MappersPanel {
 
     channelSelect.addEventListener('change', () => {
       const tab = getActiveTab();
+      if (!tab) return;
       tab.setChannel(channelSelect.value);
       syncChannelSelect();
     });
@@ -4874,12 +4692,16 @@ export class MappersPanel {
       dock: options.dock ?? 'top-left',
       barRight: channelSelect,
       onActiveChanged: (tabId) => {
-        activeMode = tabId === 'edges' ? 'edge' : 'node';
+        if (tabId === 'edges') activeMode = 'edge';
+        else if (tabId === 'density') activeMode = 'density';
+        else activeMode = 'node';
+        if (activeMode === 'density') densityTab.refresh?.();
         syncChannelSelect();
       },
       tabs: [
         { id: 'nodes', title: 'Nodes', content: nodeTab.root },
         { id: 'edges', title: 'Edges', content: edgeTab.root },
+        { id: 'density', title: 'Density', content: densityTab.root },
       ],
       variant: 'panel',
     });

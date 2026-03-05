@@ -11,6 +11,17 @@ function panelByTitle(page, title) {
   }).first();
 }
 
+async function enableToggle(locator) {
+  await expect(locator).toBeVisible();
+  const tag = await locator.evaluate((el) => el.tagName.toLowerCase());
+  if (tag === 'input') {
+    if (!(await locator.isChecked())) await locator.check();
+    return;
+  }
+  if ((await locator.getAttribute('aria-checked')) !== 'true') await locator.click();
+  await expect(locator).toHaveAttribute('aria-checked', 'true');
+}
+
 test.describe('filter panel', () => {
   test('applies node/edge numeric ranges with debounced auto-filter and layout scope toggle', async ({ page }) => {
     await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=900');
@@ -40,7 +51,7 @@ test.describe('filter panel', () => {
     expect(filterAfterNode.nodeCount).toBeLessThan(filterAfterNode.baseNodeCount);
 
     const layoutCheckbox = filterPanel.locator('[data-testid="controls-filter-layout"]').first();
-    await layoutCheckbox.check();
+    await enableToggle(layoutCheckbox);
 
     await page.waitForFunction(() => {
       const filter = window.__helios?.getGraphFilter?.();

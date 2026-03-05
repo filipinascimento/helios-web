@@ -15,6 +15,7 @@ import { PositionDelegate } from './delegates/PositionDelegate.js';
 import { VISUAL_ATTRIBUTE_NAMES } from './pipeline/constants.js';
 import { SvgLabelController } from './labels/SvgLabelController.js';
 import { HeliosFilter } from './filters/HeliosFilter.js';
+import { DensityLayer } from './rendering/engine/DensityLayer.js';
 
 const {
   NODE_POSITION_ATTRIBUTE,
@@ -254,6 +255,15 @@ function getBaseFilename(name) {
   return trimmed.replace(/\.[^/.]+$/, '') || trimmed;
 }
 
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function toFiniteNumber(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
 const POSITION_INTERPOLATION_DEFAULTS = Object.freeze({
   enabled: false,
   mode: 'gpu',
@@ -268,6 +278,19 @@ const POSITION_INTERPOLATION_DEFAULTS = Object.freeze({
   easing: 'linear',
   smoothing: 6,
   minDisplacementRatio: 0.0005,
+});
+
+const DENSITY_DEFAULTS = Object.freeze({
+  enabled: false,
+  qualityScale: 0.1,
+  topographic: false,
+  bandwidth: 28.1,
+  weightScale: 398.1071705534973,
+  property: 'Uniform',
+  compareProperty: 'None',
+  normalizeVs: false,
+  colormap: 'interpolateOrRd',
+  divergingColormap: 'interpolatePrinsenvlag',
 });
 
 function normalizeInterpolationMode(value, fallback = POSITION_INTERPOLATION_DEFAULTS.mode) {
@@ -908,6 +931,63 @@ export class Helios extends EventTarget {
       nodeNoState: null,
       edgeNoState: null,
     };
+    const densityEnabled = options.density === true || options.densityEnabled === true;
+    const densityScale = options.densityScale ?? options.densityQualityScale ?? DENSITY_DEFAULTS.qualityScale;
+    const densityTopographic = options.topographic === true || options.densityTopographic === true;
+    const densityNormalizeVs = options.shallNormalizeVsDensity === true
+      || options.vsDensityNormalize === true
+      || options.densityNormalizeVs === true;
+    this._densityConfig = {
+      ...DENSITY_DEFAULTS,
+      enabled: densityEnabled,
+      qualityScale: clamp(toFiniteNumber(densityScale, DENSITY_DEFAULTS.qualityScale), 0.03, 1.0),
+      topographic: densityTopographic,
+      property: typeof options.densityProperty === 'string' && options.densityProperty.trim()
+        ? options.densityProperty.trim()
+        : DENSITY_DEFAULTS.property,
+      compareProperty: typeof options.vsDensityProperty === 'string' && options.vsDensityProperty.trim()
+        ? options.vsDensityProperty.trim()
+        : DENSITY_DEFAULTS.compareProperty,
+      normalizeVs: densityNormalizeVs,
+      bandwidth: clamp(
+        toFiniteNumber(options.densityBandwidth, DENSITY_DEFAULTS.bandwidth),
+        0.05,
+        1000,
+      ),
+      weightScale: clamp(
+        toFiniteNumber(options.densityWeight, DENSITY_DEFAULTS.weightScale),
+        0,
+        1e8,
+      ),
+      colormap: typeof options.densityColormap === 'string' && options.densityColormap.trim()
+        ? options.densityColormap.trim()
+        : DENSITY_DEFAULTS.colormap,
+      divergingColormap: typeof options.densityDivergingColormap === 'string' && options.densityDivergingColormap.trim()
+        ? options.densityDivergingColormap.trim()
+        : DENSITY_DEFAULTS.divergingColormap,
+    };
+    this._densityRuntime = { diverging: false };
+    this._densityLayer = null;
+    this.densityMap = {
+      setBandwidth: (value) => {
+        this.densityBandwidth(value);
+        return this.densityMap;
+      },
+      setKernelWeightScale: (value) => {
+        this.densityWeight(value);
+        return this.densityMap;
+      },
+      setColormap: (value) => {
+        this.densityColormap(value);
+        return this.densityMap;
+      },
+      divergingColormap: (enabled) => {
+        if (enabled === undefined) return this.density().diverging;
+        this._densityRuntime = { ...this._densityRuntime, diverging: enabled === true };
+        this.requestRender();
+        return this.densityMap;
+      },
+    };
     this._labels = new SvgLabelController(this, options.labels ?? {});
     this.size = { ...this.layers.size };
     this.removeResizeListener = null;
@@ -981,6 +1061,7 @@ export class Helios extends EventTarget {
     this.renderer = renderer;
     this._applyPendingRendererProps();
     this._applyPositionPipelineToRenderer();
+    this._attachDensityLayer();
     this._refreshUIBindings();
     this._applyCachedStateStyles();
     this.attributeTracker?.destroy?.();
@@ -1833,6 +1914,7 @@ export class Helios extends EventTarget {
     this.debug.log('helios', 'Renderer created', { renderer: this.renderer?.constructor?.name });
     this._applyPendingRendererProps();
     this._applyPositionPipelineToRenderer();
+    this._attachDensityLayer();
     this._applyCachedStateStyles();
     this.attributeTracker = new AttributeTracker(this.renderer);
     this.attributeTracker.resize(this.layers.size);
@@ -2534,6 +2616,61 @@ export class Helios extends EventTarget {
     }
   }
 
+  _attachDensityLayer() {
+    const renderer = this.renderer ?? null;
+    if (!renderer || typeof renderer.addLayer !== 'function') return false;
+    const existing = this._densityLayer ?? null;
+    if (existing && existing.device === renderer.device) {
+      this._applyDensityConfigToLayer();
+      return true;
+    }
+    if (existing) {
+      try {
+        renderer.removeLayer(existing);
+      } catch (_) {
+        // ignore: layer may belong to a previous renderer instance
+      }
+      this._densityLayer = null;
+    }
+    const densityLayer = new DensityLayer({
+      initialConfig: this._densityConfig,
+      getGraphLayer: () => this.renderer?.graphLayer ?? null,
+      withBufferAccess: (fn) => this._withPositionBufferAccess(fn),
+      getNodePositionView: (network) => {
+        if (!network) return null;
+        try {
+          return network.getNodeAttributeBuffer?.(NODE_POSITION_ATTRIBUTE)?.view ?? null;
+        } catch (_) {
+          return null;
+        }
+      },
+      getNodePositionInfo: (network) => {
+        if (!network) return { view: null, version: null, count: 0 };
+        try {
+          const buffer = network.getNodeAttributeBuffer?.(NODE_POSITION_ATTRIBUTE) ?? null;
+          const view = buffer?.view ?? null;
+          const count = view && Number.isFinite(view.length) ? Math.floor(view.length / 3) : 0;
+          const version = Number.isFinite(buffer?.version) ? Number(buffer.version) : null;
+          return { view, version, count };
+        } catch (_) {
+          return { view: null, version: null, count: 0 };
+        }
+      },
+      onRuntimeState: (state) => {
+        if (!state || typeof state !== 'object') return;
+        this._densityRuntime = { ...this._densityRuntime, ...state };
+      },
+    });
+    renderer.addLayer(densityLayer, { before: renderer.graphLayer ?? 'graph-layer' });
+    this._densityLayer = densityLayer;
+    this._applyDensityConfigToLayer();
+    return true;
+  }
+
+  _applyDensityConfigToLayer() {
+    this._densityLayer?.setConfig?.(this._densityConfig);
+  }
+
   _getGraphLayerProp(name) {
     if (this.renderer?.graphLayer && name in this.renderer.graphLayer) {
       return this.renderer.graphLayer[name];
@@ -2672,6 +2809,152 @@ export class Helios extends EventTarget {
   clearColor(color) {
     if (arguments.length === 0) return this.background();
     return this.background(color);
+  }
+
+  density(options) {
+    if (arguments.length === 0) {
+      const config = this._densityConfig ?? DENSITY_DEFAULTS;
+      const diverging = this._densityRuntime?.diverging === true;
+      return {
+        ...config,
+        diverging,
+        activeColormap: diverging ? config.divergingColormap : config.colormap,
+      };
+    }
+
+    if (options == null || options === false) {
+      this._densityConfig = { ...this._densityConfig, enabled: false };
+      this._applyDensityConfigToLayer();
+      this.scheduler?.requestRender?.();
+      return this;
+    }
+
+    if (typeof options !== 'object') {
+      throw new TypeError('density(options) expects an object, null, or false');
+    }
+
+    const current = this._densityConfig ?? DENSITY_DEFAULTS;
+    const next = { ...current };
+
+    if (Object.prototype.hasOwnProperty.call(options, 'enabled')) next.enabled = options.enabled === true;
+    if (Object.prototype.hasOwnProperty.call(options, 'density')) next.enabled = options.density === true;
+    if (Object.prototype.hasOwnProperty.call(options, 'qualityScale')) {
+      next.qualityScale = clamp(toFiniteNumber(options.qualityScale, next.qualityScale), 0.03, 1.0);
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'densityScale')) {
+      next.qualityScale = clamp(toFiniteNumber(options.densityScale, next.qualityScale), 0.03, 1.0);
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'topographic')) next.topographic = options.topographic === true;
+    if (Object.prototype.hasOwnProperty.call(options, 'bandwidth')) {
+      next.bandwidth = clamp(toFiniteNumber(options.bandwidth, next.bandwidth), 0.05, 1000);
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'weightScale')) {
+      next.weightScale = clamp(toFiniteNumber(options.weightScale, next.weightScale), 0, 1e8);
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'densityWeight')) {
+      next.weightScale = clamp(toFiniteNumber(options.densityWeight, next.weightScale), 0, 1e8);
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'property') && typeof options.property === 'string') {
+      const trimmed = options.property.trim();
+      if (trimmed) next.property = trimmed;
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'densityProperty') && typeof options.densityProperty === 'string') {
+      const trimmed = options.densityProperty.trim();
+      if (trimmed) next.property = trimmed;
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'compareProperty') && typeof options.compareProperty === 'string') {
+      const trimmed = options.compareProperty.trim();
+      if (trimmed) next.compareProperty = trimmed;
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'vsDensityProperty') && typeof options.vsDensityProperty === 'string') {
+      const trimmed = options.vsDensityProperty.trim();
+      if (trimmed) next.compareProperty = trimmed;
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'normalizeVs')) next.normalizeVs = options.normalizeVs === true;
+    if (Object.prototype.hasOwnProperty.call(options, 'shallNormalizeVsDensity')) {
+      next.normalizeVs = options.shallNormalizeVsDensity === true;
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'colormap') && typeof options.colormap === 'string') {
+      const trimmed = options.colormap.trim();
+      if (trimmed) next.colormap = trimmed;
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'densityColormap') && typeof options.densityColormap === 'string') {
+      const trimmed = options.densityColormap.trim();
+      if (trimmed) next.colormap = trimmed;
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'divergingColormap') && typeof options.divergingColormap === 'string') {
+      const trimmed = options.divergingColormap.trim();
+      if (trimmed) next.divergingColormap = trimmed;
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'densityDivergingColormap') && typeof options.densityDivergingColormap === 'string') {
+      const trimmed = options.densityDivergingColormap.trim();
+      if (trimmed) next.divergingColormap = trimmed;
+    }
+
+    this._densityConfig = next;
+    this._applyDensityConfigToLayer();
+    this.scheduler?.requestRender?.();
+    return this;
+  }
+
+  densityEnabled(value) {
+    if (arguments.length === 0) return this.density().enabled === true;
+    return this.density({ enabled: value === true });
+  }
+
+  densityScale(value) {
+    if (arguments.length === 0) return this.density().qualityScale;
+    return this.density({ qualityScale: value });
+  }
+
+  densityTopographic(value) {
+    if (arguments.length === 0) return this.density().topographic === true;
+    return this.density({ topographic: value === true });
+  }
+
+  densityBandwidth(value) {
+    if (arguments.length === 0) return this.density().bandwidth;
+    return this.density({ bandwidth: value });
+  }
+
+  densityWeight(value) {
+    if (arguments.length === 0) return this.density().weightScale;
+    return this.density({ weightScale: value });
+  }
+
+  densityProperty(value) {
+    if (arguments.length === 0) return this.density().property;
+    return this.density({ property: value });
+  }
+
+  densityVsProperty(value) {
+    if (arguments.length === 0) return this.density().compareProperty;
+    return this.density({ compareProperty: value });
+  }
+
+  densityNormalizeVs(value) {
+    if (arguments.length === 0) return this.density().normalizeVs === true;
+    return this.density({ normalizeVs: value === true });
+  }
+
+  densityColormap(value) {
+    if (arguments.length === 0) return this.density().colormap;
+    return this.density({ colormap: value });
+  }
+
+  densityDivergingColormap(value) {
+    if (arguments.length === 0) return this.density().divergingColormap;
+    return this.density({ divergingColormap: value });
+  }
+
+  updateDensityMap() {
+    this.scheduler?.requestRender?.();
+    return this;
+  }
+
+  redrawDensityMap() {
+    this.scheduler?.requestRender?.();
+    return this;
   }
 
   edgeTransparencyMode(mode) {
@@ -3339,6 +3622,7 @@ export class Helios extends EventTarget {
   setLayout(layout) { return this.layout(layout); }
   setPositions(options) { return this.positions(options); }
   setInterpolation(options) { return this.interpolation(options); }
+  setDensity(options) { return this.density(options); }
   setLabels(options) { return this.labels(options); }
   setMappers(mappers) { return this.mappers(mappers); }
   setNodeState(indices, mask, options) { return this.nodeState(indices, mask, options); }
@@ -4136,6 +4420,7 @@ export class Helios extends EventTarget {
     this.indexPickingTracker?.destroy?.();
     this.indexPickingTracker = null;
     this.renderer?.destroy?.();
+    this._densityLayer = null;
     this._labels?.destroy?.();
     this._labels = null;
     this.layers.destroy();

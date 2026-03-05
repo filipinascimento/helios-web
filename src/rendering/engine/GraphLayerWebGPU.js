@@ -862,10 +862,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
   }
 
   getSharedSparseResources() {
-    const resourceCache = this.device?.resourceCache?.webgpu;
-    if (!resourceCache?.buffers) {
-      return { buffers: {} };
-    }
+    const cacheBuffers = this.device?.resourceCache?.webgpu?.buffers ?? null;
     const keys = [
       'indirect:node:indices',
       'indirect:node:positions',
@@ -881,27 +878,39 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     ];
     const buffers = {};
     for (const key of keys) {
-      buffers[key] = resourceCache.buffers.get(key) ?? null;
+      buffers[key] = cacheBuffers?.get(key) ?? null;
     }
-    if (!buffers['indirect:node:positions'] && this.nodeBuffersGpu.positions?.buffer) {
-      buffers['indirect:node:positions'] = {
-        buffer: this.nodeBuffersGpu.positions.buffer,
-        version: null,
-        topologyVersion: null,
-        count: this._nodeDataCache?.count ?? null,
-        byteLength: this.nodeBuffersGpu.positions.buffer?.size ?? null,
+
+    const adoptActiveBuffer = (key, activeBuffer, fallback = {}) => {
+      if (!activeBuffer) return;
+      const existing = buffers[key] ?? null;
+      if (existing?.buffer === activeBuffer) {
+        buffers[key] = {
+          ...existing,
+          count: existing.count ?? fallback.count ?? null,
+          byteLength: existing.byteLength ?? activeBuffer?.size ?? fallback.byteLength ?? null,
+        };
+        return;
+      }
+      buffers[key] = {
+        buffer: activeBuffer,
+        version: fallback.version ?? null,
+        topologyVersion: fallback.topologyVersion ?? null,
+        count: fallback.count ?? null,
+        byteLength: activeBuffer?.size ?? fallback.byteLength ?? null,
       };
-    }
-    if (!buffers['indirect:node:positionsFrom'] && this.nodeBuffersGpu.positionsFrom?.buffer) {
-      const interpolation = this.getPositionInterpolationState?.() ?? this.positionInterpolation ?? null;
-      buffers['indirect:node:positionsFrom'] = {
-        buffer: this.nodeBuffersGpu.positionsFrom.buffer,
-        version: interpolation?.sourceVersion ?? null,
-        topologyVersion: null,
-        count: interpolation?.sourceCount ?? this._nodeDataCache?.count ?? null,
-        byteLength: this.nodeBuffersGpu.positionsFrom.buffer?.size ?? null,
-      };
-    }
+    };
+
+    const interpolation = this.getPositionInterpolationState?.() ?? this.positionInterpolation ?? null;
+    const nodeCount = this._nodeDataCache?.count ?? null;
+    adoptActiveBuffer('indirect:node:positions', this.nodeBuffersGpu.positions?.buffer ?? null, {
+      count: nodeCount,
+    });
+    adoptActiveBuffer('indirect:node:positionsFrom', this.nodeBuffersGpu.positionsFrom?.buffer ?? null, {
+      version: interpolation?.sourceVersion ?? null,
+      count: interpolation?.sourceCount ?? nodeCount,
+    });
+
     return { buffers };
   }
 

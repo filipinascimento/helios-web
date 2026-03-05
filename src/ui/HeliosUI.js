@@ -6,6 +6,7 @@ import { defineHeliosWebComponents } from './web-components/defineHeliosWebCompo
 import { createSliderRow } from './controls/createSliderRow.js';
 import { createAlignedRowEl } from './controls/createAlignedRowEl.js';
 import { createTooltipManager } from './controls/createTooltipManager.js';
+import { createToggleControl } from './controls/createToggleControl.js';
 import { PanelStack } from './panels/PanelStack.js';
 import { TabbedPanel } from './panels/TabbedPanel.js';
 import { TwoHandleRange } from './controls/TwoHandleRange.js';
@@ -242,36 +243,18 @@ export class HeliosUI {
     });
 
     let themeRow = document.createElement('div');
-    const themeToggle = document.createElement('button');
-    themeToggle.type = 'button';
-    themeToggle.className = 'helios-ui-toggle';
-    themeToggle.setAttribute('role', 'switch');
-
-    const toggleThumb = document.createElement('span');
-    toggleThumb.className = 'helios-ui-toggle__thumb';
-    toggleThumb.setAttribute('aria-hidden', 'true');
-    const toggleText = document.createElement('span');
-    toggleText.className = 'helios-ui-toggle__text';
-    themeToggle.appendChild(toggleThumb);
-    themeToggle.appendChild(toggleText);
-
-    const syncThemeToggle = () => {
-      const isDark = this.theme === 'dark';
-      themeToggle.setAttribute('aria-checked', isDark ? 'true' : 'false');
-      toggleText.textContent = isDark ? 'Dark' : 'Light';
-    };
-    syncThemeToggle();
-
-    themeToggle.addEventListener('click', () => {
+    const themeToggle = createToggleControl({
+      checked: this.theme === 'dark',
+      onLabel: 'Dark',
+      offLabel: 'Light',
+      ariaLabel: 'Theme',
+    });
+    themeToggle.addEventListener('change', () => {
       this.toggleTheme();
-      syncThemeToggle();
+      themeToggle.checked = this.theme === 'dark';
     });
 
-    const themeControls = document.createElement('div');
-    themeControls.className = 'helios-ui-row__controls';
-    themeControls.appendChild(themeToggle);
-
-    const built = createAlignedRow({ title: 'Theme', hint: 'Toggle light/dark', controls: themeControls });
+    const built = createAlignedRow({ title: 'Theme', hint: 'Toggle light/dark', controls: themeToggle });
     themeRow = built.row;
 
     if (this.helios) {
@@ -539,23 +522,18 @@ export class HeliosUI {
         if (!info || info.type !== 'boolean') return null;
         if (typeof this.helios[accessorName] !== 'function') return null;
         const attribute = this.bindHeliosAccessor(accessorName);
-        const toggle = document.createElement('input');
-        toggle.type = 'checkbox';
-        toggle.className = 'helios-ui-toggle';
-        toggle.setAttribute('aria-label', info.label ?? accessorName);
-        toggle.disabled = attribute.readOnly;
-
-        const toggleText = document.createElement('span');
-        toggleText.className = 'helios-ui-toggle__text';
-        toggleText.style.fontWeight = '600';
-        toggleText.style.fontSize = '12px';
-        toggleText.style.color = 'var(--helios-ui-muted)';
+        const toggle = createToggleControl({
+          checked: false,
+          onLabel: 'On',
+          offLabel: 'Off',
+          ariaLabel: info.label ?? accessorName,
+          disabled: attribute.readOnly,
+        });
 
         const syncToggle = (value) => {
           const enabled = Boolean(value);
           toggle.checked = enabled;
-          toggle.setAttribute('aria-checked', enabled ? 'true' : 'false');
-          toggleText.textContent = enabled ? 'On' : 'Off';
+          toggle.disabled = attribute.readOnly;
         };
 
         const unsub = attribute.subscribe((value) => {
@@ -569,7 +547,6 @@ export class HeliosUI {
         const controls = document.createElement('div');
         controls.className = 'helios-ui-row__controls';
         controls.appendChild(toggle);
-        controls.appendChild(toggleText);
         const { row } = createAlignedRow({
           title: info.label ?? accessorName,
           hint: info.description ?? null,
@@ -1300,8 +1277,12 @@ export class HeliosUI {
       }
     };
 
-    const layoutCheckbox = document.createElement('input');
-    layoutCheckbox.type = 'checkbox';
+    const layoutCheckbox = createToggleControl({
+      checked: false,
+      onLabel: 'Layout+Render',
+      offLabel: 'Render Only',
+      ariaLabel: 'Apply filter scope to layout',
+    });
     layoutCheckbox.dataset.testid = 'controls-filter-layout';
 
     const refreshAttributeSelect = (state) => {
@@ -1893,16 +1874,13 @@ export class HeliosUI {
     this._controlCleanups.add(() => tabs.destroy());
     syncTabBarFilterForActiveTab(tabs.activeId?.() ?? 'nodes');
 
-    const layoutWrap = document.createElement('label');
+    const layoutWrap = document.createElement('div');
     layoutWrap.style.display = 'inline-flex';
     layoutWrap.style.alignItems = 'center';
     layoutWrap.style.gap = '6px';
     layoutWrap.style.marginTop = '6px';
     layoutWrap.style.userSelect = 'none';
     layoutWrap.appendChild(layoutCheckbox);
-    const layoutText = document.createElement('span');
-    layoutText.textContent = 'Apply to layout';
-    layoutWrap.appendChild(layoutText);
     layoutCheckbox.addEventListener('change', () => scheduleApply());
 
     const syncScopeFromFilter = () => {
@@ -2871,10 +2849,13 @@ export class HeliosUI {
     const betweenness = document.createElement('div');
 
     const betweennessWeightSelect = createEdgeWeightSelect('metrics-betweenness-weight', options?.betweenness?.edgeWeightAttribute ?? '');
-    const betweennessNormalizeCheckbox = document.createElement('input');
-    betweennessNormalizeCheckbox.type = 'checkbox';
+    const betweennessNormalizeCheckbox = createToggleControl({
+      checked: options?.betweenness?.normalize !== false,
+      onLabel: 'Normalized',
+      offLabel: 'Raw',
+      ariaLabel: 'Normalize betweenness values',
+    });
     betweennessNormalizeCheckbox.dataset.testid = 'metrics-betweenness-normalize';
-    betweennessNormalizeCheckbox.checked = options?.betweenness?.normalize !== false;
 
     const betweennessOutAttrInput = document.createElement('input');
     betweennessOutAttrInput.type = 'text';
@@ -3263,23 +3244,17 @@ export class HeliosUI {
     dimensionOutLevelsAttrInput.value = String(options?.dimension?.outNodeDimensionLevelsAttribute ?? '');
     dimensionOutLevelsAttrInput.dataset.testid = 'metrics-dimension-outLevelsAttr';
 
-    const dimensionSaveLevelsCheckbox = document.createElement('input');
-    dimensionSaveLevelsCheckbox.type = 'checkbox';
+    const dimensionSaveLevelsCheckbox = createToggleControl({
+      checked: Boolean(
+        options?.dimension?.saveLevelsDistribution
+        ?? options?.dimension?.saveNodeDimensionLevels
+        ?? options?.dimension?.outNodeDimensionLevelsAttribute
+      ),
+      onLabel: 'Write Levels',
+      offLabel: 'Skip Levels',
+      ariaLabel: 'Write levels distribution',
+    });
     dimensionSaveLevelsCheckbox.dataset.testid = 'metrics-dimension-saveLevels';
-    dimensionSaveLevelsCheckbox.checked = Boolean(
-      options?.dimension?.saveLevelsDistribution
-      ?? options?.dimension?.saveNodeDimensionLevels
-      ?? options?.dimension?.outNodeDimensionLevelsAttribute
-    );
-
-    const dimensionSaveLevelsWrap = document.createElement('label');
-    dimensionSaveLevelsWrap.style.display = 'inline-flex';
-    dimensionSaveLevelsWrap.style.alignItems = 'center';
-    dimensionSaveLevelsWrap.style.gap = '6px';
-    const dimensionSaveLevelsText = document.createElement('span');
-    dimensionSaveLevelsText.textContent = 'Write Levels Distribution';
-    dimensionSaveLevelsWrap.appendChild(dimensionSaveLevelsCheckbox);
-    dimensionSaveLevelsWrap.appendChild(dimensionSaveLevelsText);
 
     const dimensionLevelsEncodingSelect = document.createElement('select');
     dimensionLevelsEncodingSelect.className = 'helios-ui-select';
@@ -3426,7 +3401,7 @@ export class HeliosUI {
     dimensionAdvanced.appendChild(createAlignedRow({
       title: 'Save Levels',
       hint: 'Enable writing the local dimension distribution across concentric levels',
-      controls: dimensionSaveLevelsWrap,
+      controls: dimensionSaveLevelsCheckbox,
     }).row);
     dimensionAdvanced.appendChild(createAlignedRow({
       title: 'Output Levels',
@@ -5458,24 +5433,12 @@ export class HeliosUI {
             ('source' in pendingValue || 'target' in pendingValue);
 
           if (isEdgeSplitCapable) {
-            const toggleWrap = document.createElement('label');
-            toggleWrap.style.display = 'inline-flex';
-            toggleWrap.style.alignItems = 'center';
-            toggleWrap.style.gap = '6px';
-            toggleWrap.style.justifyContent = 'flex-end';
-
-            const toggle = document.createElement('input');
-            toggle.type = 'checkbox';
-            toggle.checked = Boolean(isSplit);
-            toggle.style.margin = '0';
-
-            const toggleText = document.createElement('span');
-            toggleText.textContent = 'Source/Target';
-            toggleText.style.color = 'var(--helios-ui-muted)';
-
-            toggleWrap.appendChild(toggle);
-            toggleWrap.appendChild(toggleText);
-            wrap.appendChild(toggleWrap);
+            const toggle = createToggleControl({
+              checked: Boolean(isSplit),
+              onLabel: 'Source/Target',
+              offLabel: 'Single',
+            });
+            wrap.appendChild(toggle);
 
             toggle.addEventListener('change', () => {
               const raw = state.pending.value ?? live?.value;
@@ -5640,24 +5603,12 @@ export class HeliosUI {
           };
 
           if (isEdgeSplitCapable) {
-            const toggleWrap = document.createElement('label');
-            toggleWrap.style.display = 'inline-flex';
-            toggleWrap.style.alignItems = 'center';
-            toggleWrap.style.gap = '6px';
-            toggleWrap.style.justifyContent = 'flex-end';
-
-            const toggle = document.createElement('input');
-            toggle.type = 'checkbox';
-            toggle.checked = Boolean(isSplit);
-            toggle.style.margin = '0';
-
-            const toggleText = document.createElement('span');
-            toggleText.textContent = 'Source/Target';
-            toggleText.style.color = 'var(--helios-ui-muted)';
-
-            toggleWrap.appendChild(toggle);
-            toggleWrap.appendChild(toggleText);
-            wrap.appendChild(toggleWrap);
+            const toggle = createToggleControl({
+              checked: Boolean(isSplit),
+              onLabel: 'Source/Target',
+              offLabel: 'Single',
+            });
+            wrap.appendChild(toggle);
 
             toggle.addEventListener('change', () => {
               const seed = seedSingle();
@@ -6225,57 +6176,31 @@ export class HeliosUI {
           }).row);
 
           const advanced = document.createElement('div');
-          const divergentWrap = document.createElement('label');
-          divergentWrap.style.display = 'inline-flex';
-          divergentWrap.style.alignItems = 'center';
-          divergentWrap.style.gap = '6px';
-          const divergentInput = document.createElement('input');
-          divergentInput.type = 'checkbox';
-          divergentInput.checked = Boolean(state.pending.divergent) && allowDivergent;
-          divergentInput.disabled = !allowDivergent;
-          divergentInput.style.margin = '0';
-          const divergentText = document.createElement('span');
-          divergentText.textContent = 'Divergent';
-          divergentText.style.color = 'var(--helios-ui-muted)';
-          divergentWrap.appendChild(divergentInput);
-          divergentWrap.appendChild(divergentText);
+          const divergentInput = createToggleControl({
+            checked: Boolean(state.pending.divergent) && allowDivergent,
+            disabled: !allowDivergent,
+            onLabel: 'Divergent',
+            offLabel: 'Sequential',
+          });
 
           const clampWrap = document.createElement('div');
           clampWrap.style.display = 'inline-flex';
           clampWrap.style.alignItems = 'center';
           clampWrap.style.gap = '10px';
           const clampState = normalizeClampSetting(state.pending.clamp);
-          const clampMinInput = document.createElement('input');
-          clampMinInput.type = 'checkbox';
-          clampMinInput.checked = clampState.min;
-          clampMinInput.style.margin = '0';
-          const clampMinLabel = document.createElement('span');
-          clampMinLabel.textContent = 'Min';
-          clampMinLabel.style.color = 'var(--helios-ui-muted)';
-          const clampMaxInput = document.createElement('input');
-          clampMaxInput.type = 'checkbox';
-          clampMaxInput.checked = clampState.max;
-          clampMaxInput.style.margin = '0';
-          const clampMaxLabel = document.createElement('span');
-          clampMaxLabel.textContent = 'Max';
-          clampMaxLabel.style.color = 'var(--helios-ui-muted)';
+          const clampMinInput = createToggleControl({
+            checked: clampState.min,
+            onLabel: 'Min Clamp',
+            offLabel: 'Min Free',
+          });
+          const clampMaxInput = createToggleControl({
+            checked: clampState.max,
+            onLabel: 'Max Clamp',
+            offLabel: 'Max Free',
+          });
 
-          const clampMinWrap = document.createElement('label');
-          clampMinWrap.style.display = 'inline-flex';
-          clampMinWrap.style.alignItems = 'center';
-          clampMinWrap.style.gap = '4px';
-          clampMinWrap.appendChild(clampMinInput);
-          clampMinWrap.appendChild(clampMinLabel);
-
-          const clampMaxWrap = document.createElement('label');
-          clampMaxWrap.style.display = 'inline-flex';
-          clampMaxWrap.style.alignItems = 'center';
-          clampMaxWrap.style.gap = '4px';
-          clampMaxWrap.appendChild(clampMaxInput);
-          clampMaxWrap.appendChild(clampMaxLabel);
-
-          clampWrap.appendChild(clampMinWrap);
-          clampWrap.appendChild(clampMaxWrap);
+          clampWrap.appendChild(clampMinInput);
+          clampWrap.appendChild(clampMaxInput);
 
           const alphaSeed = clampNumber(state.pending.alpha ?? 1, { min: 0, max: 1 }) ?? 1;
           const alphaControls = createSuggestedSliderControls({
@@ -6312,7 +6237,7 @@ export class HeliosUI {
 
           advanced.appendChild(createAlignedRowEl({
             title: 'Divergent',
-            controls: divergentWrap,
+            controls: divergentInput,
             hint: allowDivergent
               ? 'Lock the domain to a symmetric range around zero (for divergent colormaps).'
               : 'Divergent mode is unavailable for percentile transforms.',
