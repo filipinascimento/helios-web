@@ -219,3 +219,95 @@ test('DensityLayer resolves shared WebGPU delegate positions even when CPU versi
     globalThis.GPUBufferUsage = previous;
   }
 });
+
+test('DensityLayer.computeWeights uses guarded WASM active-node writer when available', () => {
+  let heapOffset = 4;
+  const heap = new Uint32Array(1024);
+  const module = {
+    HEAPU32: heap,
+    _malloc(bytes) {
+      const ptr = heapOffset;
+      heapOffset += bytes;
+      return ptr;
+    },
+    _free() {},
+  };
+  let inBufferAccess = false;
+  const network = {
+    module,
+    nodeCount: 3,
+    edgeCount: 0,
+    edgesView: new Uint32Array(0),
+    getTopologyVersions: () => ({ edge: 0 }),
+    withBufferAccess(fn) {
+      inBufferAccess = true;
+      try {
+        return fn();
+      } finally {
+        inBufferAccess = false;
+      }
+    },
+    writeActiveNodes(target) {
+      assert.equal(inBufferAccess, true);
+      target[0] = 2;
+      target[1] = 0;
+      return 2;
+    },
+    get nodeIndices() {
+      if (inBufferAccess) {
+        throw new Error('nodeIndices getter should not run during buffer access');
+      }
+      return new Uint32Array([0, 1, 2]);
+    },
+    getNodeAttributeBuffer(name) {
+      if (name === 'score') return { view: new Float32Array([10, 20, 30]), dimension: 1 };
+      throw new Error(`Unknown attribute: ${name}`);
+    },
+  };
+  const layer = new DensityLayer({
+    withBufferAccess: (fn) => network.withBufferAccess(fn),
+  });
+
+  const computed = layer.computeWeights(network, {
+    ...BASE_CONFIG,
+    property: 'score',
+  });
+  assert.ok(computed);
+  assert.equal(computed.count, 2);
+  approxEqual(computed.nodeIndices, [2, 0]);
+  approxEqual(computed.weights, [0.75, 0.25]);
+});
+
+test('DensityLayer.computeWeights keeps filtered proxy indices instead of base writeActiveNodes', () => {
+  const filteredNetwork = {
+    __heliosBaseNetwork: {},
+    nodeCount: 2,
+    edgeCount: 0,
+    nodeIndices: new Uint32Array([1]),
+    edgeIndices: new Uint32Array(0),
+    withBufferAccess(fn) {
+      return fn();
+    },
+    writeActiveNodes() {
+      throw new Error('writeActiveNodes should not be used for filtered proxies');
+    },
+    getNodeAttributeBuffer(name) {
+      if (name === 'score') return { view: new Float32Array([5, 10]), dimension: 1 };
+      throw new Error(`Unknown attribute: ${name}`);
+    },
+    getTopologyVersions: () => ({ edge: 0 }),
+    edgesView: new Uint32Array(0),
+  };
+  const layer = new DensityLayer({
+    withBufferAccess: (fn) => filteredNetwork.withBufferAccess(fn),
+  });
+
+  const computed = layer.computeWeights(filteredNetwork, {
+    ...BASE_CONFIG,
+    property: 'score',
+  });
+  assert.ok(computed);
+  assert.equal(computed.count, 1);
+  approxEqual(computed.nodeIndices, [1]);
+  approxEqual(computed.weights, [1]);
+});

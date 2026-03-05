@@ -5,13 +5,46 @@ import { Helios, HeliosFilter } from '../src/index.js';
 function createHarness({
   filteredNodes = [1, 2],
   filteredEdges = [1],
+  selectorBacked = false,
 } = {}) {
   let topologyNodeVersion = 1;
   let topologyEdgeVersion = 1;
   let filterCalls = 0;
   const filterInputs = [];
+  const selectorDisposals = {
+    node: 0,
+    edge: 0,
+  };
+  const module = selectorBacked
+    ? {
+      HEAPU32: new Uint32Array(512),
+      _malloc: () => 4,
+      _free: () => {},
+    }
+    : null;
+  const makeSelector = (scope, indices, wordOffset) => {
+    if (!module) return null;
+    const values = Uint32Array.from(indices);
+    module.HEAPU32.set(values, wordOffset);
+    return {
+      module,
+      get count() {
+        return values.length;
+      },
+      get dataPointer() {
+        return wordOffset * Uint32Array.BYTES_PER_ELEMENT;
+      },
+      toTypedArray() {
+        return Uint32Array.from(values);
+      },
+      dispose() {
+        selectorDisposals[scope] += 1;
+      },
+    };
+  };
 
   const network = {
+    module,
     nodeCount: 4,
     edgeCount: 3,
     nodeIndices: new Uint32Array([0, 1, 2, 3]),
@@ -22,6 +55,12 @@ function createHarness({
     filterSubgraph(options) {
       filterCalls += 1;
       filterInputs.push(options);
+      if (selectorBacked) {
+        return {
+          nodes: makeSelector('node', filteredNodes, 64),
+          edges: makeSelector('edge', filteredEdges, 128),
+        };
+      }
       return {
         nodeIndices: new Uint32Array(filteredNodes),
         edgeIndices: new Uint32Array(filteredEdges),
@@ -67,6 +106,7 @@ function createHarness({
     getLabelReselects: () => labelReselects,
     getFilterCalls: () => filterCalls,
     getFilterInputs: () => filterInputs,
+    getSelectorDisposals: () => ({ ...selectorDisposals }),
     setTopologyVersions(nodeVersion, edgeVersion) {
       topologyNodeVersion = nodeVersion;
       topologyEdgeVersion = edgeVersion;
@@ -145,6 +185,38 @@ test('clearGraphFilter() restores base network for rendering and layout', () => 
   assert.equal(helios.getGraphFilter().enabled, false);
   assert.ok(getGeometryRequests() >= 2);
   assert.ok(getRenderRequests() >= 2);
+});
+
+test('selector-backed filters expose WASM active-index writers on render proxy', () => {
+  const harness = createHarness({ filteredNodes: [1, 3], filteredEdges: [2], selectorBacked: true });
+  const { helios, network, getSelectorDisposals } = harness;
+  helios.setGraphFilter({ nodeQuery: 'weight >= 0.5', scope: 'render' });
+  const renderNetwork = helios._getRenderNetwork();
+  assert.notEqual(renderNetwork, network);
+  assert.equal(typeof renderNetwork.writeActiveNodes, 'function');
+  assert.equal(typeof renderNetwork.writeActiveEdges, 'function');
+
+  const nodeTarget = new Uint32Array(network.module.HEAPU32.buffer, 0, 4);
+  nodeTarget.fill(777);
+  const smallNodeTarget = new Uint32Array(network.module.HEAPU32.buffer, 16, 1);
+  smallNodeTarget.fill(777);
+  const requiredNodes = renderNetwork.writeActiveNodes(smallNodeTarget);
+  assert.equal(requiredNodes, 2);
+  assert.equal(smallNodeTarget[0], 777);
+  const writtenNodes = renderNetwork.writeActiveNodes(nodeTarget);
+  assert.equal(writtenNodes, 2);
+  assert.deepEqual(Array.from(nodeTarget.subarray(0, 2)), [1, 3]);
+
+  const edgeTarget = new Uint32Array(network.module.HEAPU32.buffer, 32, 2);
+  edgeTarget.fill(888);
+  const writtenEdges = renderNetwork.writeActiveEdges(edgeTarget);
+  assert.equal(writtenEdges, 1);
+  assert.deepEqual(Array.from(edgeTarget.subarray(0, 1)), [2]);
+
+  helios.clearGraphFilter();
+  const disposed = getSelectorDisposals();
+  assert.ok(disposed.node >= 1);
+  assert.ok(disposed.edge >= 1);
 });
 
 test('activateHeliosFilter() applies a HeliosFilter instance and tracks it as active', () => {

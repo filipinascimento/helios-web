@@ -917,6 +917,8 @@ export class Helios extends EventTarget {
       signature: null,
       nodeIndices: null,
       edgeIndices: null,
+      nodeSelector: null,
+      edgeSelector: null,
       filteredNetwork: null,
       renderNetwork: network,
       layoutNetwork: network,
@@ -1135,6 +1137,8 @@ export class Helios extends EventTarget {
       signature: null,
       nodeIndices: null,
       edgeIndices: null,
+      nodeSelector: null,
+      edgeSelector: null,
       filteredNetwork: null,
       renderNetwork: baseNetwork,
       layoutNetwork: baseNetwork,
@@ -1143,6 +1147,23 @@ export class Helios extends EventTarget {
       lastError: null,
     };
     return this._graphFilterState;
+  }
+
+  _disposeSelector(selector) {
+    if (!selector || typeof selector !== 'object') return;
+    try {
+      selector.dispose?.();
+    } catch (_) {
+      // ignore selector cleanup failures
+    }
+  }
+
+  _disposeGraphFilterSelectors(state) {
+    if (!state || typeof state !== 'object') return;
+    this._disposeSelector(state.nodeSelector);
+    this._disposeSelector(state.edgeSelector);
+    state.nodeSelector = null;
+    state.edgeSelector = null;
   }
 
   _captureGraphFilterSignature(state) {
@@ -1201,9 +1222,44 @@ export class Helios extends EventTarget {
     );
   }
 
-  _createFilteredNetworkProxy({ baseNetwork, nodeIndices, edgeIndices, version }) {
+  _createFilteredNetworkProxy({
+    baseNetwork,
+    nodeIndices,
+    edgeIndices,
+    nodeSelector = null,
+    edgeSelector = null,
+    version,
+  }) {
     const safeNodeIndices = nodeIndices instanceof Uint32Array ? nodeIndices : new Uint32Array(0);
     const safeEdgeIndices = edgeIndices instanceof Uint32Array ? edgeIndices : new Uint32Array(0);
+    const selectorNode = nodeSelector && typeof nodeSelector === 'object' ? nodeSelector : null;
+    const selectorEdge = edgeSelector && typeof edgeSelector === 'object' ? edgeSelector : null;
+    const copySelection = (scope, target) => {
+      if (!(target instanceof Uint32Array)) {
+        throw new Error(`${scope} buffer must be a Uint32Array`);
+      }
+      const wasmHeap = baseNetwork?.module?.HEAPU32?.buffer ?? null;
+      if (wasmHeap && target.buffer !== wasmHeap) {
+        throw new Error(`${scope} buffer must live in the WASM heap (module.HEAPU32.buffer)`);
+      }
+      const selector = scope === 'node' ? selectorNode : selectorEdge;
+      const fallback = scope === 'node' ? safeNodeIndices : safeEdgeIndices;
+      const countFromSelector = safeNumber(selector?.count, NaN);
+      const count = Number.isFinite(countFromSelector) ? Math.max(0, Math.floor(countFromSelector)) : fallback.length;
+      if (count > target.length) return count;
+      if (!count) return 0;
+
+      const dataPointer = safeNumber(selector?.dataPointer, 0);
+      const sourceHeap = selector?.module?.HEAPU32?.buffer ?? null;
+      if (dataPointer > 0 && sourceHeap) {
+        const view = new Uint32Array(sourceHeap, dataPointer, count);
+        target.set(view);
+        return count;
+      }
+
+      target.set(fallback.subarray(0, count));
+      return count;
+    };
     try {
       safeNodeIndices.version = safeNumber(version, 0);
     } catch (_) {
@@ -1220,8 +1276,16 @@ export class Helios extends EventTarget {
         if (property === 'edgeIndices') return safeEdgeIndices;
         if (property === 'nodeCount') return safeNodeIndices.length;
         if (property === 'edgeCount') return safeEdgeIndices.length;
+        if (property === '__heliosFilteredNodeSelector') return selectorNode;
+        if (property === '__heliosFilteredEdgeSelector') return selectorEdge;
         if (property === '__heliosFilterVersion') return safeNumber(version, 0);
         if (property === '__heliosBaseNetwork') return target;
+        if (property === 'writeActiveNodes') {
+          return (buffer) => copySelection('node', buffer);
+        }
+        if (property === 'writeActiveEdges') {
+          return (buffer) => copySelection('edge', buffer);
+        }
         if (property === 'getTopologyVersions') {
           return () => {
             let raw = { node: 0, edge: 0 };
@@ -1254,6 +1318,7 @@ export class Helios extends EventTarget {
     const state = this._ensureGraphFilterState();
     const baseNetwork = this.network ?? null;
     if (!baseNetwork || state.enabled !== true || !state.options) {
+      this._disposeGraphFilterSelectors(state);
       state.signature = null;
       state.nodeIndices = null;
       state.edgeIndices = null;
@@ -1283,24 +1348,44 @@ export class Helios extends EventTarget {
       return state;
     }
 
+    let pendingNodeSelector = null;
+    let pendingEdgeSelector = null;
     try {
       if (typeof baseNetwork.filterSubgraph !== 'function') {
         throw new Error('Current helios-network build does not support filterSubgraph(options)');
       }
-      const result = baseNetwork.filterSubgraph({ ...state.options });
-      const nodeIndices = result?.nodeIndices instanceof Uint32Array
-        ? result.nodeIndices
-        : new Uint32Array(0);
-      const edgeIndices = result?.edgeIndices instanceof Uint32Array
-        ? result.edgeIndices
-        : new Uint32Array(0);
+      const previousNodeSelector = state.nodeSelector ?? null;
+      const previousEdgeSelector = state.edgeSelector ?? null;
+      const result = baseNetwork.filterSubgraph({ ...state.options, asSelector: true });
+      const hasSelectorResult = Boolean(
+        result
+        && typeof result === 'object'
+        && result.nodes
+        && typeof result.nodes.toTypedArray === 'function'
+        && result.edges
+        && typeof result.edges.toTypedArray === 'function',
+      );
+      const nextNodeSelector = hasSelectorResult ? result.nodes : null;
+      const nextEdgeSelector = hasSelectorResult ? result.edges : null;
+      pendingNodeSelector = nextNodeSelector;
+      pendingEdgeSelector = nextEdgeSelector;
+      const nodeIndices = hasSelectorResult
+        ? (nextNodeSelector?.toTypedArray?.() ?? new Uint32Array(0))
+        : (result?.nodeIndices instanceof Uint32Array ? result.nodeIndices : new Uint32Array(0));
+      const edgeIndices = hasSelectorResult
+        ? (nextEdgeSelector?.toTypedArray?.() ?? new Uint32Array(0))
+        : (result?.edgeIndices instanceof Uint32Array ? result.edgeIndices : new Uint32Array(0));
       state.version = bumpVersionCounter(state.version);
       state.nodeIndices = nodeIndices;
       state.edgeIndices = edgeIndices;
+      state.nodeSelector = nextNodeSelector;
+      state.edgeSelector = nextEdgeSelector;
       state.filteredNetwork = this._createFilteredNetworkProxy({
         baseNetwork,
         nodeIndices,
         edgeIndices,
+        nodeSelector: nextNodeSelector,
+        edgeSelector: nextEdgeSelector,
         version: state.version,
       });
       state.renderNetwork = state.filteredNetwork;
@@ -1315,16 +1400,36 @@ export class Helios extends EventTarget {
         baseNodeCount: safeLength(baseNetwork?.nodeIndices),
         baseEdgeCount: safeLength(baseNetwork?.edgeIndices),
       };
+      if (previousNodeSelector && previousNodeSelector !== nextNodeSelector) {
+        this._disposeSelector(previousNodeSelector);
+      }
+      if (previousEdgeSelector && previousEdgeSelector !== nextEdgeSelector) {
+        this._disposeSelector(previousEdgeSelector);
+      }
+      pendingNodeSelector = null;
+      pendingEdgeSelector = null;
       if (this._syncLayoutNetworkFromFilter()) {
         this._layout?.requestUpdate?.();
         this.scheduler?.requestLayout?.('filter-sync');
       }
       return state;
     } catch (error) {
+      if (throwOnError) {
+        if (pendingNodeSelector && pendingNodeSelector !== state.nodeSelector) {
+          this._disposeSelector(pendingNodeSelector);
+        }
+        if (pendingEdgeSelector && pendingEdgeSelector !== state.edgeSelector) {
+          this._disposeSelector(pendingEdgeSelector);
+        }
+        throw error;
+      }
+      this._disposeGraphFilterSelectors(state);
       state.lastError = error;
       state.signature = nextSignature;
       state.nodeIndices = null;
       state.edgeIndices = null;
+      state.nodeSelector = null;
+      state.edgeSelector = null;
       state.filteredNetwork = null;
       state.renderNetwork = baseNetwork;
       state.layoutNetwork = baseNetwork;
@@ -1333,7 +1438,6 @@ export class Helios extends EventTarget {
         this._layout?.requestUpdate?.();
         this.scheduler?.requestLayout?.('filter-sync');
       }
-      if (throwOnError) throw error;
       this.debug?.log?.('helios', 'Graph filter refresh failed; falling back to base network', { error });
       return state;
     }
@@ -1463,12 +1567,15 @@ export class Helios extends EventTarget {
   clearGraphFilter() {
     const state = this._ensureGraphFilterState();
     const hadFilter = state.enabled === true || state.filteredNetwork != null || state.options != null;
+    this._disposeGraphFilterSelectors(state);
     state.enabled = false;
     state.scope = GRAPH_FILTER_SCOPE_RENDER;
     state.options = null;
     state.signature = null;
     state.nodeIndices = null;
     state.edgeIndices = null;
+    state.nodeSelector = null;
+    state.edgeSelector = null;
     state.filteredNetwork = null;
     state.renderNetwork = this.network ?? null;
     state.layoutNetwork = this.network ?? null;

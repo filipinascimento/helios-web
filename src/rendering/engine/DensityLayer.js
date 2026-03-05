@@ -414,6 +414,12 @@ export class DensityLayer extends Layer {
 
     this._weightArray = null;
     this._lastWeightCount = 0;
+    this._activeNodeIndicesArray = null;
+    this._activeEdgeIndicesArray = null;
+    this._activeIndexScratch = {
+      node: null,
+      edge: null,
+    };
 
     this._degreeCache = {
       network: null,
@@ -528,6 +534,7 @@ export class DensityLayer extends Layer {
   destroy() {
     this.destroyWebGL();
     this.destroyWebGPU();
+    this.releaseAllActiveIndexScratch();
   }
 
   render(context, frame) {
@@ -555,92 +562,262 @@ export class DensityLayer extends Layer {
     }
   }
 
-  computeWeights(network, config) {
-    const nodeIndices = network?.nodeIndices ?? null;
-    const edgeIndices = network?.edgeIndices ?? null;
-    let result = null;
-    if (!nodeIndices || !nodeIndices.length) {
-      return {
-        nodeIndices: null,
-        count: 0,
-        weights: null,
-        diverging: false,
-        positionCount: Math.max(0, Math.floor(Number(network?.nodeCount ?? 0))),
-        colormapKey: config.colormap,
-      };
-    }
+  canUseWasmNodeIndexWriter(network) {
+    if (!network) return false;
+    const module = network.module ?? null;
+    return Boolean(
+      module
+      && typeof module._malloc === 'function'
+      && typeof module._free === 'function'
+      && module.HEAPU32
+      && typeof network.writeActiveNodes === 'function',
+    );
+  }
 
-    const count = nodeIndices.length;
-    if (!this._weightArray || this._lastWeightCount !== count) {
-      this._weightArray = new Float32Array(count);
-      this._lastWeightCount = count;
-    }
-    const weights = this._weightArray;
+  canUseWasmEdgeIndexWriter(network) {
+    if (!network) return false;
+    return typeof network.writeActiveEdges === 'function' && this.canUseWasmNodeIndexWriter(network);
+  }
 
-    this.withBufferAccess(() => {
-      const primaryReader = this.makePropertyReader(network, config.property, edgeIndices);
-      const compareEnabled = config.compareProperty && config.compareProperty !== 'None';
-      const compareReader = compareEnabled
-        ? this.makePropertyReader(network, config.compareProperty, edgeIndices)
-        : null;
-
-      let totalWeight = 0;
-      let totalNegative = 0;
-      let totalPositive = 0;
-
-      for (let i = 0; i < count; i += 1) {
-        const nodeId = nodeIndices[i] >>> 0;
-        const primary = primaryReader(nodeId);
-        const compare = compareReader ? compareReader(nodeId) : 0;
-        let value = compareReader ? (compare - primary) : primary;
-        if (!Number.isFinite(value)) value = 0;
-        weights[i] = value;
-        const abs = Math.abs(value);
-        totalWeight += abs;
-        if (value < 0) totalNegative += value;
-        else totalPositive += value;
+  releaseActiveIndexScratch(scope) {
+    const current = this._activeIndexScratch?.[scope] ?? null;
+    if (!current) return;
+    try {
+      if (current.ptr && typeof current.module?._free === 'function') {
+        current.module._free(current.ptr);
       }
+    } catch (_) {
+      // ignore allocator teardown errors
+    }
+    this._activeIndexScratch[scope] = null;
+  }
 
-      let diverging = false;
-      if (totalWeight > 0 && totalNegative === 0) {
-        for (let i = 0; i < count; i += 1) {
-          weights[i] /= totalWeight;
-        }
-        diverging = false;
-      } else {
-        diverging = totalWeight > 0;
-        let totalPositiveMax = Math.max(Math.abs(totalNegative), Math.abs(totalPositive));
-        let totalNegativeMax = Math.max(Math.abs(totalNegative), Math.abs(totalPositive));
-        if (config.normalizeVs) {
-          totalPositiveMax = Math.max(Math.abs(totalPositive), 1e-9);
-          totalNegativeMax = Math.max(Math.abs(totalNegative), 1e-9);
-        }
+  releaseAllActiveIndexScratch() {
+    this.releaseActiveIndexScratch('node');
+    this.releaseActiveIndexScratch('edge');
+  }
 
-        for (let i = 0; i < count; i += 1) {
-          const value = weights[i];
-          if (value < 0 && totalNegative < 0) {
-            weights[i] = value / Math.max(totalNegativeMax, 1e-9);
-          } else if (value > 0 && totalPositive > 0) {
-            weights[i] = value / Math.max(totalPositiveMax, 1e-9);
-          } else if (totalWeight > 0) {
-            weights[i] = value / totalWeight;
+  ensureActiveIndexScratch(network, scope, requiredCount) {
+    const module = network?.module ?? null;
+    if (!module) return null;
+    const nextRequired = Math.max(1, Math.floor(Number(requiredCount) || 0));
+    const existing = this._activeIndexScratch?.[scope] ?? null;
+    if (existing && existing.module !== module) {
+      this.releaseActiveIndexScratch(scope);
+    }
+
+    const current = this._activeIndexScratch?.[scope] ?? null;
+    if (current?.ptr && current.capacity >= nextRequired) {
+      return current;
+    }
+
+    const bytes = nextRequired * Uint32Array.BYTES_PER_ELEMENT;
+    const ptr = module._malloc(bytes);
+    if (!ptr) {
+      throw new Error(`Failed to allocate WASM scratch buffer for active ${scope} indices`);
+    }
+    if (current?.ptr) {
+      try {
+        current.module?._free?.(current.ptr);
+      } catch (_) {
+        // ignore allocator teardown errors
+      }
+    }
+    const next = {
+      module,
+      ptr,
+      capacity: nextRequired,
+    };
+    this._activeIndexScratch[scope] = next;
+    return next;
+  }
+
+  ensureStableActiveIndexArray(scope, count) {
+    const key = scope === 'edge' ? '_activeEdgeIndicesArray' : '_activeNodeIndicesArray';
+    const needed = Math.max(0, Math.floor(Number(count) || 0));
+    const existing = this[key];
+    if (!(existing instanceof Uint32Array) || existing.length < needed) {
+      this[key] = new Uint32Array(needed);
+    }
+    return this[key];
+  }
+
+  computeWeights(network, config) {
+    const compareEnabled = config.compareProperty && config.compareProperty !== 'None';
+    const needsEdgeIndices = config.property === 'Degree' || (compareEnabled && config.compareProperty === 'Degree');
+    const useWasmNodeWriter = this.canUseWasmNodeIndexWriter(network);
+    const useWasmEdgeWriter = needsEdgeIndices && this.canUseWasmEdgeIndexWriter(network);
+
+    let fallbackNodeIndices = null;
+    let fallbackEdgeIndices = null;
+    if (!useWasmNodeWriter) {
+      fallbackNodeIndices = network?.nodeIndices ?? null;
+    }
+    if (needsEdgeIndices && !useWasmEdgeWriter) {
+      fallbackEdgeIndices = network?.edgeIndices ?? null;
+    }
+
+    if (useWasmNodeWriter) {
+      this.ensureActiveIndexScratch(network, 'node', network?.nodeCount ?? 0);
+    }
+    if (needsEdgeIndices && useWasmEdgeWriter) {
+      this.ensureActiveIndexScratch(network, 'edge', network?.edgeCount ?? 0);
+    }
+
+    let result = null;
+    let overflowRequest = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      overflowRequest = null;
+      this.withBufferAccess(() => {
+        let nodeIndices = fallbackNodeIndices;
+        let edgeIndices = fallbackEdgeIndices;
+
+        if (useWasmNodeWriter) {
+          const module = network?.module ?? null;
+          const nodeScratch = this._activeIndexScratch?.node ?? null;
+          if (!module || !nodeScratch?.ptr || nodeScratch.module !== module) {
+            nodeIndices = null;
           } else {
-            weights[i] = 0;
+            const target = new Uint32Array(module.HEAPU32.buffer, nodeScratch.ptr, nodeScratch.capacity);
+            const required = Math.max(0, Math.floor(Number(network.writeActiveNodes(target) || 0)));
+            if (required > nodeScratch.capacity) {
+              overflowRequest = { scope: 'node', count: required };
+              return;
+            }
+            nodeIndices = target.subarray(0, required);
           }
         }
-      }
 
-      const colormapKey = diverging ? config.divergingColormap : config.colormap;
-      result = {
-        nodeIndices,
-        count,
-        weights,
-        diverging,
-        positionCount: Math.max(0, Math.floor(Number(network?.nodeCount ?? 0))),
-        colormapKey,
-      };
-    });
-    return result;
+        if (needsEdgeIndices && useWasmEdgeWriter) {
+          const module = network?.module ?? null;
+          const edgeScratch = this._activeIndexScratch?.edge ?? null;
+          if (!module || !edgeScratch?.ptr || edgeScratch.module !== module) {
+            edgeIndices = null;
+          } else {
+            const target = new Uint32Array(module.HEAPU32.buffer, edgeScratch.ptr, edgeScratch.capacity);
+            const required = Math.max(0, Math.floor(Number(network.writeActiveEdges(target) || 0)));
+            if (required > edgeScratch.capacity) {
+              overflowRequest = { scope: 'edge', count: required };
+              return;
+            }
+            edgeIndices = target.subarray(0, required);
+          }
+        }
+
+        const count = nodeIndices?.length ?? 0;
+        if (!count) {
+          result = {
+            nodeIndices: null,
+            count: 0,
+            weights: null,
+            diverging: false,
+            positionCount: Math.max(0, Math.floor(Number(network?.nodeCount ?? 0))),
+            colormapKey: config.colormap,
+          };
+          return;
+        }
+
+        const stableNodeIndices = this.ensureStableActiveIndexArray('node', count);
+        stableNodeIndices.set(nodeIndices);
+        const activeNodeIndices = stableNodeIndices.subarray(0, count);
+
+        let activeEdgeIndices = edgeIndices;
+        if (needsEdgeIndices && edgeIndices) {
+          const edgeCount = edgeIndices.length;
+          const stableEdgeIndices = this.ensureStableActiveIndexArray('edge', edgeCount);
+          stableEdgeIndices.set(edgeIndices);
+          activeEdgeIndices = stableEdgeIndices.subarray(0, edgeCount);
+        }
+
+        if (!this._weightArray || this._lastWeightCount !== count) {
+          this._weightArray = new Float32Array(count);
+          this._lastWeightCount = count;
+        }
+        const weights = this._weightArray;
+
+        const primaryReader = this.makePropertyReader(network, config.property, activeEdgeIndices);
+        const compareReader = compareEnabled
+          ? this.makePropertyReader(network, config.compareProperty, activeEdgeIndices)
+          : null;
+
+        let totalWeight = 0;
+        let totalNegative = 0;
+        let totalPositive = 0;
+
+        for (let i = 0; i < count; i += 1) {
+          const nodeId = activeNodeIndices[i] >>> 0;
+          const primary = primaryReader(nodeId);
+          const compare = compareReader ? compareReader(nodeId) : 0;
+          let value = compareReader ? (compare - primary) : primary;
+          if (!Number.isFinite(value)) value = 0;
+          weights[i] = value;
+          const abs = Math.abs(value);
+          totalWeight += abs;
+          if (value < 0) totalNegative += value;
+          else totalPositive += value;
+        }
+
+        let diverging = false;
+        if (totalWeight > 0 && totalNegative === 0) {
+          for (let i = 0; i < count; i += 1) {
+            weights[i] /= totalWeight;
+          }
+          diverging = false;
+        } else {
+          diverging = totalWeight > 0;
+          let totalPositiveMax = Math.max(Math.abs(totalNegative), Math.abs(totalPositive));
+          let totalNegativeMax = Math.max(Math.abs(totalNegative), Math.abs(totalPositive));
+          if (config.normalizeVs) {
+            totalPositiveMax = Math.max(Math.abs(totalPositive), 1e-9);
+            totalNegativeMax = Math.max(Math.abs(totalNegative), 1e-9);
+          }
+
+          for (let i = 0; i < count; i += 1) {
+            const value = weights[i];
+            if (value < 0 && totalNegative < 0) {
+              weights[i] = value / Math.max(totalNegativeMax, 1e-9);
+            } else if (value > 0 && totalPositive > 0) {
+              weights[i] = value / Math.max(totalPositiveMax, 1e-9);
+            } else if (totalWeight > 0) {
+              weights[i] = value / totalWeight;
+            } else {
+              weights[i] = 0;
+            }
+          }
+        }
+
+        const colormapKey = diverging ? config.divergingColormap : config.colormap;
+        result = {
+          nodeIndices: activeNodeIndices,
+          count,
+          weights,
+          diverging,
+          positionCount: Math.max(0, Math.floor(Number(network?.nodeCount ?? 0))),
+          colormapKey,
+        };
+      });
+
+      if (!overflowRequest) {
+        return result ?? {
+          nodeIndices: null,
+          count: 0,
+          weights: null,
+          diverging: false,
+          positionCount: Math.max(0, Math.floor(Number(network?.nodeCount ?? 0))),
+          colormapKey: config.colormap,
+        };
+      }
+      this.ensureActiveIndexScratch(network, overflowRequest.scope, overflowRequest.count);
+    }
+
+    return result ?? {
+      nodeIndices: null,
+      count: 0,
+      weights: null,
+      diverging: false,
+      positionCount: Math.max(0, Math.floor(Number(network?.nodeCount ?? 0))),
+      colormapKey: config.colormap,
+    };
   }
 
   makePropertyReader(network, propertyName, edgeIndices = null) {
