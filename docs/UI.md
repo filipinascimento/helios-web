@@ -20,7 +20,7 @@ const helios = new Helios(network, { container: document.querySelector('#app') }
 await helios.ready;
 
 const ui = new HeliosUI({ helios, theme: 'dark' });
-ui.createDemoPanel(); // "Controls" panel (theme + a sample slider)
+ui.createDemoPanel(); // "Scene" panel (tabbed controls) + "Data" panel (network I/O + stats)
 ui.createMetricsPanel(); // "Metrics" panel (Degree, Strength, Clustering, Eigenvector, Betweenness, Leiden, Dimensionality)
 ```
 

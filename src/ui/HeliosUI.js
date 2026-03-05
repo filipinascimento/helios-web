@@ -734,169 +734,187 @@ export class HeliosUI {
         return input;
       };
 
-      const stack = new PanelStack();
-      stack.add({
-        id: 'network-io',
-        title: 'Network',
-        content: networkControls,
-      });
+      const createAppearanceContent = () => {
+        const wrapper = document.createElement('div');
+        wrapper.appendChild(themeRow);
 
-      stack.add({
-        id: 'appearance',
-        title: 'Appearance',
-        content: (() => {
-          const wrapper = document.createElement('div');
-          wrapper.appendChild(themeRow);
+        wrapper.appendChild(createAlignedRow({
+          title: 'Background',
+          hint: 'Clear/background color (including opacity).',
+          controls: createColorWithAlphaControls({
+            ariaLabel: 'Background color',
+            getValue: () => this.helios?.clearColor?.(),
+            setValue: (value) => this.helios?.clearColor?.(value),
+          }),
+        }).row);
 
-          wrapper.appendChild(createAlignedRow({
-            title: 'Background',
-            hint: 'Clear/background color (including opacity).',
-            controls: createColorWithAlphaControls({
-              ariaLabel: 'Background color',
-              getValue: () => this.helios?.clearColor?.(),
-              setValue: (value) => this.helios?.clearColor?.(value),
-            }),
-          }).row);
+        const modeSelect = document.createElement('select');
+        modeSelect.className = 'helios-ui-select';
+        modeSelect.setAttribute('aria-label', 'Edge transparency mode');
+        tooltips.attachTooltip(modeSelect, 'How edges blend/accumulate when overlapping.');
 
-          const modeSelect = document.createElement('select');
-          modeSelect.className = 'helios-ui-select';
-          modeSelect.setAttribute('aria-label', 'Edge transparency mode');
-          tooltips.attachTooltip(modeSelect, 'How edges blend/accumulate when overlapping.');
+        const modes = [
+          { value: 'alpha', label: 'Alpha' },
+          { value: 'weighted', label: 'Smooth' },
+          { value: 'additive', label: 'Additive' },
+          { value: 'screen', label: 'Screen' },
+          { value: 'max', label: 'Max' },
+          { value: 'additive-normalized', label: 'Additive (normalized)' },
+          { value: 'additive-tonemapped', label: 'Additive (tonemapped)' },
+          { value: 'additive-normalized-bright', label: 'Additive (normalized bright)' },
+        ];
+        for (const info of modes) {
+          const opt = document.createElement('option');
+          opt.value = info.value;
+          opt.textContent = info.label;
+          modeSelect.appendChild(opt);
+        }
 
-          const modes = [
-            { value: 'alpha', label: 'Alpha' },
-            { value: 'weighted', label: 'Smooth' },
-            { value: 'additive', label: 'Additive' },
-            { value: 'screen', label: 'Screen' },
-            { value: 'max', label: 'Max' },
-            { value: 'additive-normalized', label: 'Additive (normalized)' },
-            { value: 'additive-tonemapped', label: 'Additive (tonemapped)' },
-            { value: 'additive-normalized-bright', label: 'Additive (normalized bright)' },
-          ];
-          for (const info of modes) {
-            const opt = document.createElement('option');
-            opt.value = info.value;
-            opt.textContent = info.label;
-            modeSelect.appendChild(opt);
-          }
+        const syncEdgeMode = () => {
+          const current = this.helios?.edgeTransparencyMode?.();
+          const value = typeof current === 'string' ? current : 'alpha';
+          modeSelect.value = modes.some((m) => m.value === value) ? value : 'alpha';
+        };
+        syncEdgeMode();
 
-          const syncEdgeMode = () => {
-            const current = this.helios?.edgeTransparencyMode?.();
-            const value = typeof current === 'string' ? current : 'alpha';
-            modeSelect.value = modes.some((m) => m.value === value) ? value : 'alpha';
-          };
-          syncEdgeMode();
+        modeSelect.addEventListener('change', () => {
+          this.helios?.edgeTransparencyMode?.(modeSelect.value);
+        });
 
-          modeSelect.addEventListener('change', () => {
-            this.helios?.edgeTransparencyMode?.(modeSelect.value);
-          });
+        wrapper.appendChild(createAlignedRow({
+          title: 'Blend Mode',
+          hint: 'Controls how overlapping edges are composited ("Smooth" reduces overlap artifacts).',
+          controls: modeSelect,
+        }).row);
 
-          wrapper.appendChild(createAlignedRow({
-            title: 'Blend Mode',
-            hint: 'Controls how overlapping edges are composited ("Smooth" reduces overlap artifacts).',
-            controls: modeSelect,
-          }).row);
+        return wrapper;
+      };
 
-          return wrapper;
-        })(),
-      });
+      const createLabelsContent = () => {
+        const wrapper = document.createElement('div');
+        const enableRow = createToggleRow('labelsEnabled');
+        if (enableRow) wrapper.appendChild(enableRow);
 
-      stack.add({
-        id: 'labels',
-        title: 'Labels',
-        content: (() => {
-          const wrapper = document.createElement('div');
-          const enableRow = createToggleRow('labelsEnabled');
-          if (enableRow) wrapper.appendChild(enableRow);
+        wrapper.appendChild(createRows([
+          'labelsMaxVisible',
+          'labelsFontSizeScale',
+          'labelsMinScreenRadius',
+          'labelsOutlineWidth',
+        ]));
 
-          wrapper.appendChild(createRows([
-            'labelsMaxVisible',
-            'labelsFontSizeScale',
-            'labelsMinScreenRadius',
-            'labelsOutlineWidth',
-          ]));
+        const labelSourceControl = createLabelSourceSelect();
+        wrapper.appendChild(createAlignedRow({
+          title: 'Source',
+          hint: 'Node attribute used for labels. Empty = auto fallback (Label, Name, id).',
+          controls: labelSourceControl.element,
+        }).row);
+        this._controlCleanups.add(() => labelSourceControl.destroy());
 
-          const labelSourceControl = createLabelSourceSelect();
-          wrapper.appendChild(createAlignedRow({
-            title: 'Source',
-            hint: 'Node attribute used for labels. Empty = auto fallback (Label, Name, id).',
-            controls: labelSourceControl.element,
-          }).row);
-          this._controlCleanups.add(() => labelSourceControl.destroy());
+        wrapper.appendChild(createAlignedRow({
+          title: 'Font Family',
+          hint: 'CSS font-family used by SVG labels.',
+          controls: createLabelFontFamilyInput(),
+        }).row);
 
-          wrapper.appendChild(createAlignedRow({
-            title: 'Font Family',
-            hint: 'CSS font-family used by SVG labels.',
-            controls: createLabelFontFamilyInput(),
-          }).row);
+        wrapper.appendChild(createAlignedRow({
+          title: 'Fill',
+          hint: 'Label text color + alpha.',
+          controls: createColorWithAlphaControls({
+            ariaLabel: 'Label fill color',
+            getValue: () => this.helios?.labelFill?.(),
+            setValue: (value) => this.helios?.labelFill?.(value),
+          }),
+        }).row);
 
-          wrapper.appendChild(createAlignedRow({
-            title: 'Fill',
-            hint: 'Label text color + alpha.',
-            controls: createColorWithAlphaControls({
-              ariaLabel: 'Label fill color',
-              getValue: () => this.helios?.labelFill?.(),
-              setValue: (value) => this.helios?.labelFill?.(value),
-            }),
-          }).row);
+        wrapper.appendChild(createAlignedRow({
+          title: 'Outline',
+          hint: 'Label outline/halo color + alpha.',
+          controls: createColorWithAlphaControls({
+            ariaLabel: 'Label outline color',
+            getValue: () => this.helios?.labelOutlineColor?.(),
+            setValue: (value) => this.helios?.labelOutlineColor?.(value),
+          }),
+        }).row);
+        return wrapper;
+      };
 
-          wrapper.appendChild(createAlignedRow({
-            title: 'Outline',
-            hint: 'Label outline/halo color + alpha.',
-            controls: createColorWithAlphaControls({
-              ariaLabel: 'Label outline color',
-              getValue: () => this.helios?.labelOutlineColor?.(),
-              setValue: (value) => this.helios?.labelOutlineColor?.(value),
-            }),
-          }).row);
-          return wrapper;
-        })(),
-      });
+      const createAdvancedContent = () => {
+        const advanced = document.createElement('div');
+        advanced.appendChild(createRows([
+          'nodeSizeBase',
+          'semanticZoomExponent',
+          'nodeOpacityBase',
+          'nodeOutlineWidthBase',
+          'edgeWidthBase',
+          'edgeOpacityBase',
+          'edgeEndpointTrim',
+        ]));
+        const nodeBlendRow = createToggleRow('nodeBlendWithEdges');
+        if (nodeBlendRow) advanced.appendChild(nodeBlendRow);
+        const edgeDepthRow = createToggleRow('edgeDepthWrite');
+        if (edgeDepthRow) advanced.appendChild(edgeDepthRow);
+        return advanced;
+      };
 
-      stack.add({
+      const nodeEdgeStack = new PanelStack();
+      nodeEdgeStack.add({
         id: 'node-appearance',
         title: 'Nodes',
         content: createRows(['nodeSizeScale', 'nodeOpacityScale', 'nodeOutlineWidthScale']),
       });
-
-      stack.add({
+      nodeEdgeStack.add({
         id: 'edge-appearance',
         title: 'Edges',
         content: createRows(['edgeWidthScale', 'edgeOpacityScale']),
       });
+      this._controlCleanups.add(() => nodeEdgeStack.destroy());
 
-      stack.add({
-        id: 'advanced-appearance',
-        title: 'Advanced',
-        collapsed: true,
-        content: (() => {
-          const advanced = document.createElement('div');
-          advanced.appendChild(createRows([
-            'nodeSizeBase',
-            'semanticZoomExponent',
-            'nodeOpacityBase',
-            'nodeOutlineWidthBase',
-            'edgeWidthBase',
-            'edgeOpacityBase',
-            'edgeEndpointTrim',
-          ]));
-          const nodeBlendRow = createToggleRow('nodeBlendWithEdges');
-          if (nodeBlendRow) advanced.appendChild(nodeBlendRow);
-          const edgeDepthRow = createToggleRow('edgeDepthWrite');
-          if (edgeDepthRow) advanced.appendChild(edgeDepthRow);
-          return advanced;
-        })(),
+      const appearanceTab = document.createElement('div');
+      appearanceTab.appendChild(createAppearanceContent());
+      appearanceTab.appendChild(nodeEdgeStack.element);
+
+      const sceneTabs = new TabbedPanel({
+        variant: 'panel',
+        tabs: [
+          { id: 'appearance', title: 'Appearance', content: appearanceTab },
+          { id: 'labels', title: 'Labels', content: createLabelsContent() },
+          { id: 'advanced', title: 'Advanced', content: createAdvancedContent() },
+        ],
+      });
+      content.appendChild(sceneTabs.element);
+      this._controlCleanups.add(() => sceneTabs.destroy());
+
+      let dataPanel = null;
+      if (options.includeDataPanel ?? true) {
+        dataPanel = this.createPanel({
+          id: options.dataPanelId ?? 'helios-ui-data',
+          title: options.dataPanelTitle ?? 'Data',
+          position: options.dataPanelPosition ?? { x: 16, y: 16 },
+          dock: options.dataPanelDock ?? options.dock ?? 'top-left',
+          content: networkControls,
+        });
+      }
+
+      const scenePanel = this.createPanel({
+        id: options.id ?? 'helios-ui-demo',
+        title: options.title ?? 'Scene',
+        position: options.position ?? { x: 16, y: 220 },
+        dock: options.dock ?? 'top-left',
+        content,
       });
 
-      content.appendChild(stack.element);
-      this._controlCleanups.add(() => stack.destroy());
+      if (dataPanel) {
+        scenePanel.dataPanel = dataPanel;
+      }
+
+      return scenePanel;
     } else {
       content.appendChild(themeRow);
     }
 
     return this.createPanel({
       id: options.id ?? 'helios-ui-demo',
-      title: options.title ?? 'Controls',
+      title: options.title ?? 'Scene',
       position: options.position ?? { x: 16, y: 16 },
       dock: options.dock ?? 'top-left',
       content,

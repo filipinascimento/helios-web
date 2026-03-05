@@ -1,16 +1,8 @@
 import { Panel } from './Panel.js';
+import { resolveDockTarget } from './docking.js';
 
-function resolveDockTarget(dock) {
-  if (!dock || dock === 'free') return 'free';
-  if (dock === 'top' || dock === 'bottom') return dock;
-  if (dock === 'bottom-left') return 'left-bottom';
-  if (dock === 'bottom-right') return 'right-bottom';
-  if (dock === 'top-left') return 'left-top';
-  if (dock === 'top-right') return 'right-top';
-  if (dock.includes('left')) return 'left-top';
-  if (dock.includes('right')) return 'right-top';
-  return 'free';
-}
+const STACK_DRAG_EDGE_SCROLL_PX = 36;
+const STACK_DRAG_SCROLL_STEP_PX = 20;
 
 export class PanelManager {
   constructor(options) {
@@ -23,19 +15,14 @@ export class PanelManager {
     this.panels = new Map();
     this._zCounter = 1;
     this._measureCanvas = null;
+    this._dockReorder = null;
 
-    this.dockLeftTop = document.createElement('div');
-    this.dockLeftTop.className = 'helios-ui-dock helios-ui-dock--left helios-ui-dock--top';
-    this.dockLeftBottom = document.createElement('div');
-    this.dockLeftBottom.className = 'helios-ui-dock helios-ui-dock--left helios-ui-dock--bottom';
-    this.dockRightTop = document.createElement('div');
-    this.dockRightTop.className = 'helios-ui-dock helios-ui-dock--right helios-ui-dock--top';
-    this.dockRightBottom = document.createElement('div');
-    this.dockRightBottom.className = 'helios-ui-dock helios-ui-dock--right helios-ui-dock--bottom';
-    this.container.appendChild(this.dockLeftTop);
-    this.container.appendChild(this.dockLeftBottom);
-    this.container.appendChild(this.dockRightTop);
-    this.container.appendChild(this.dockRightBottom);
+    this.dockLeft = document.createElement('div');
+    this.dockLeft.className = 'helios-ui-dock helios-ui-dock--side helios-ui-dock--left';
+    this.dockRight = document.createElement('div');
+    this.dockRight.className = 'helios-ui-dock helios-ui-dock--side helios-ui-dock--right';
+    this.container.appendChild(this.dockLeft);
+    this.container.appendChild(this.dockRight);
 
     this._boundMove = (e) => this._handlePointerMove(e);
     this._boundUp = (e) => this._handlePointerUp(e);
@@ -53,6 +40,7 @@ export class PanelManager {
       dockThreshold: options.dockThreshold ?? this.dockThreshold,
       getContainerRect: () => this.container.getBoundingClientRect(),
       onDockChange: () => this._placePanel(panel),
+      onHeaderPointerDown: (event, panelRef) => this._startSideDockReorder(panelRef, event),
     });
     panel.setZIndex(this._nextZ());
     panel.element.addEventListener('pointerdown', () => panel.setZIndex(this._nextZ()), { capture: true });
@@ -69,6 +57,9 @@ export class PanelManager {
   removePanel(id) {
     const panel = this.panels.get(id);
     if (!panel) return;
+    if (this._dockReorder?.panel === panel) {
+      this._endSideDockReorder({ pointerId: this._dockReorder.pointerId }, { force: true });
+    }
     panel.destroy();
     this.panels.delete(id);
   }
@@ -79,18 +70,30 @@ export class PanelManager {
   }
 
   _handlePointerMove(event) {
+    if (this._dockReorder && event.pointerId === this._dockReorder.pointerId) {
+      if (this._moveSideDockReorder(event)) return;
+    }
+
     const rect = this.container.getBoundingClientRect();
     for (const panel of this.panels.values()) {
-      panel.handleResizeMove(event, { containerRect: rect });
+      const resizedWidth = panel.handleResizeMove(event, { containerRect: rect });
+      if (resizedWidth != null) {
+        this._syncDockedWidths(panel, resizedWidth);
+      }
       panel.handlePointerMove(event, {
         containerRect: rect,
         allowDock: this.allowDock,
         threshold: this.dockThreshold,
       });
+      if (this._trySwitchFreeDragToDockReorder(panel, event)) return;
     }
   }
 
   _handlePointerUp(event) {
+    if (this._dockReorder && event.pointerId === this._dockReorder.pointerId) {
+      this._endSideDockReorder(event);
+      return;
+    }
     for (const panel of this.panels.values()) {
       panel.handleResizeUp(event);
       panel.handlePointerUp(event);
@@ -98,24 +101,271 @@ export class PanelManager {
   }
 
   _placePanel(panel) {
+    if (!panel?.element) return;
+
+    if (this._dockReorder?.panel === panel) {
+      return;
+    }
+
     const target = resolveDockTarget(panel.dock);
-    if (target === 'left-top') {
-      if (panel.element.parentElement !== this.dockLeftTop) this.dockLeftTop.appendChild(panel.element);
+    if (target === 'left') {
+      panel.element.dataset.sideDocked = 'true';
+      if (panel.element.parentElement !== this.dockLeft) this.dockLeft.appendChild(panel.element);
+      panel.syncDockStyles();
       return;
     }
-    if (target === 'left-bottom') {
-      if (panel.element.parentElement !== this.dockLeftBottom) this.dockLeftBottom.appendChild(panel.element);
+    if (target === 'right') {
+      panel.element.dataset.sideDocked = 'true';
+      if (panel.element.parentElement !== this.dockRight) this.dockRight.appendChild(panel.element);
+      panel.syncDockStyles();
       return;
     }
-    if (target === 'right-top') {
-      if (panel.element.parentElement !== this.dockRightTop) this.dockRightTop.appendChild(panel.element);
-      return;
-    }
-    if (target === 'right-bottom') {
-      if (panel.element.parentElement !== this.dockRightBottom) this.dockRightBottom.appendChild(panel.element);
-      return;
-    }
+
+    delete panel.element.dataset.sideDocked;
     if (panel.element.parentElement !== this.container) this.container.appendChild(panel.element);
+    panel.syncDockStyles();
+  }
+
+  _syncDockedWidths(sourcePanel, width) {
+    const target = resolveDockTarget(sourcePanel?.dock);
+    let side = null;
+    if (target === 'left') side = 'left';
+    else if (target === 'right') side = 'right';
+    if (!side) return;
+
+    const numeric = Number(width);
+    if (!Number.isFinite(numeric)) return;
+    const nextWidth = Math.max(sourcePanel?.minWidth ?? 240, numeric);
+    for (const panel of this.panels.values()) {
+      const panelTarget = resolveDockTarget(panel?.dock);
+      if (panelTarget !== side) continue;
+      panel.width = nextWidth;
+      panel.element.style.width = `${nextWidth}px`;
+    }
+  }
+
+  _startSideDockReorder(panel, event) {
+    if (!this.allowDrag) return false;
+    if (!panel) return false;
+    const primaryPressed = (Number(event?.buttons ?? 0) & 1) === 1 || event?.button === 0;
+    if (!primaryPressed) return false;
+    if (event.shiftKey) return false;
+
+    const target = resolveDockTarget(panel.dock);
+    if (target !== 'left' && target !== 'right') return false;
+
+    const dockEl = target === 'left' ? this.dockLeft : this.dockRight;
+    if (panel.element.parentElement !== dockEl) return false;
+
+    const panelRect = panel.element.getBoundingClientRect();
+    const dockRect = dockEl.getBoundingClientRect();
+    if (!panelRect.height || !dockRect.height) return false;
+
+    const dropLine = document.createElement('div');
+    dropLine.className = 'helios-ui-dock-drop-line';
+    dockEl.insertBefore(dropLine, panel.element.nextSibling);
+    const preview = this._createDockDragPreview(panel, panelRect, dockRect);
+    const previewRect = preview.getBoundingClientRect();
+    const pointerOffsetX = this._clampOffset(event.clientX - panelRect.left, panelRect.width);
+    const pointerOffsetY = this._clampOffset(event.clientY - panelRect.top, panelRect.height);
+    const previewOffsetX = this._scaleOffset(pointerOffsetX, panelRect.width, previewRect.width);
+    const previewOffsetY = this._scaleOffset(pointerOffsetY, panelRect.height, previewRect.height);
+    const dragAnchorRatioX = panelRect.width > 0 ? (pointerOffsetX / panelRect.width) : 0.5;
+    const dragAnchorRatioY = panelRect.height > 0 ? (pointerOffsetY / panelRect.height) : 0.5;
+
+    panel.element.classList.add('helios-ui-panel--dock-source');
+    this.container.classList.add('helios-ui--dock-reordering');
+    panel.setZIndex(this._nextZ());
+
+    this._dockReorder = {
+      pointerId: event.pointerId,
+      panel,
+      dockEl,
+      side: target,
+      dropLine,
+      preview,
+      previewOffsetX,
+      previewOffsetY,
+      dragAnchorRatioX,
+      dragAnchorRatioY,
+      header: panel.header,
+    };
+    this._updateDockDragPreview(event, this._dockReorder);
+
+    panel.header?.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
+    return true;
+  }
+
+  _moveSideDockReorder(event) {
+    const state = this._dockReorder;
+    if (!state) return false;
+    const { panel, dockEl, dropLine } = state;
+    this._updateDockDragPreview(event, state);
+
+    const dockRect = dockEl.getBoundingClientRect();
+    if (event.shiftKey || this._isOutsideSideDock(event, dockRect, state.side)) {
+      this._startFreeDragFromSideDock(event, state);
+      return true;
+    }
+
+    const pointerY = event.clientY - dockRect.top + dockEl.scrollTop;
+
+    if (event.clientY <= dockRect.top + STACK_DRAG_EDGE_SCROLL_PX) {
+      dockEl.scrollTop = Math.max(0, dockEl.scrollTop - STACK_DRAG_SCROLL_STEP_PX);
+    } else if (event.clientY >= dockRect.bottom - STACK_DRAG_EDGE_SCROLL_PX) {
+      dockEl.scrollTop += STACK_DRAG_SCROLL_STEP_PX;
+    }
+
+    const children = Array.from(dockEl.children).filter((child) => child !== panel.element && child !== dropLine);
+    let insertBefore = null;
+    for (const child of children) {
+      const midpoint = child.offsetTop + (child.offsetHeight / 2);
+      if (pointerY < midpoint) {
+        insertBefore = child;
+        break;
+      }
+    }
+
+    if (insertBefore) {
+      dockEl.insertBefore(dropLine, insertBefore);
+    } else {
+      dockEl.appendChild(dropLine);
+    }
+    return true;
+  }
+
+  _endSideDockReorder(event, options = {}) {
+    const state = this._dockReorder;
+    if (!state) return;
+    if (!options.force && event.pointerId !== state.pointerId) return;
+
+    const { panel, dockEl, dropLine, preview, header } = state;
+    this._dockReorder = null;
+
+    header?.releasePointerCapture?.(state.pointerId);
+    preview?.remove();
+    this.container.classList.remove('helios-ui--dock-reordering');
+
+    if (dropLine?.parentElement === dockEl) {
+      dockEl.insertBefore(panel.element, dropLine);
+    }
+    dropLine?.remove();
+
+    panel.element.classList.remove('helios-ui-panel--dock-source');
+    panel.syncDockStyles();
+  }
+
+  _isOutsideSideDock(event, dockRect, side) {
+    if (!dockRect) return false;
+    const x = event.clientX;
+    if (side === 'left' || side === 'right') {
+      return x < dockRect.left || x > dockRect.right;
+    }
+    return false;
+  }
+
+  _startFreeDragFromSideDock(event, state) {
+    const { panel, dropLine, preview, header, dragAnchorRatioX, dragAnchorRatioY } = state;
+    this._dockReorder = null;
+    dropLine?.remove();
+    preview?.remove();
+    header?.releasePointerCapture?.(state.pointerId);
+    this.container.classList.remove('helios-ui--dock-reordering');
+    panel.element.classList.remove('helios-ui-panel--dock-source');
+
+    const containerRect = this.container.getBoundingClientRect();
+    const panelRect = panel.element.getBoundingClientRect();
+    const offsetX = this._offsetFromAnchorRatio(dragAnchorRatioX, panelRect.width);
+    const offsetY = this._offsetFromAnchorRatio(dragAnchorRatioY, panelRect.height);
+    panel.beginDragFromHeaderPointer(event, {
+      containerRect,
+      offsetX,
+      offsetY,
+    });
+    panel.handlePointerMove(event, {
+      containerRect,
+      allowDock: this.allowDock,
+      threshold: this.dockThreshold,
+      forceFree: true,
+    });
+  }
+
+  _trySwitchFreeDragToDockReorder(panel, event) {
+    if (this._dockReorder) return false;
+    if (!panel?._drag || panel._drag.pointerId !== event.pointerId) return false;
+    const target = resolveDockTarget(panel.dock);
+    if (target !== 'left' && target !== 'right') return false;
+    const started = this._startSideDockReorder(panel, event);
+    if (!started) return false;
+    panel.handlePointerUp(event);
+    return true;
+  }
+
+  _createDockDragPreview(panel, panelRect, dockRect) {
+    const doc = this.container?.ownerDocument ?? document;
+    const preview = doc.createElement('div');
+    preview.className = 'helios-ui-dock-drag-preview';
+    const dockWidth = Math.max(0, Math.round(Number(dockRect?.width) || 0));
+    const maxFromDock = dockWidth > 0 ? Math.max(160, dockWidth - 16) : Infinity;
+    const compactWidth = Math.round((Number(panelRect?.width) || 220) * 0.92);
+    const width = Math.max(160, Math.min(320, compactWidth, maxFromDock));
+    preview.style.width = `${width}px`;
+
+    const header = doc.createElement('div');
+    header.className = 'helios-ui-dock-drag-preview__header';
+
+    const title = doc.createElement('div');
+    title.className = 'helios-ui-dock-drag-preview__title';
+    title.textContent = (panel?.titleEl?.textContent ?? panel?.title ?? panel?.id ?? 'Panel').trim();
+
+    const body = doc.createElement('div');
+    body.className = 'helios-ui-dock-drag-preview__body';
+
+    header.appendChild(title);
+    preview.appendChild(header);
+    preview.appendChild(body);
+    this.container.appendChild(preview);
+    return preview;
+  }
+
+  _updateDockDragPreview(event, state) {
+    const preview = state?.preview;
+    if (!preview) return;
+    const containerRect = this.container.getBoundingClientRect();
+    const left = event.clientX - containerRect.left - (state?.previewOffsetX ?? 0);
+    const top = event.clientY - containerRect.top - (state?.previewOffsetY ?? 0);
+    preview.style.left = `${Math.round(left)}px`;
+    preview.style.top = `${Math.round(top)}px`;
+  }
+
+  _scaleOffset(offsetPx, fromSizePx, toSizePx) {
+    const offset = Number(offsetPx);
+    const from = Number(fromSizePx);
+    const to = Number(toSizePx);
+    if (!Number.isFinite(offset) || !Number.isFinite(from) || !Number.isFinite(to) || from <= 0 || to <= 0) {
+      return 0;
+    }
+    const ratio = offset / from;
+    const scaled = ratio * to;
+    return this._clampOffset(scaled, to);
+  }
+
+  _clampOffset(offsetPx, sizePx) {
+    const offset = Number(offsetPx);
+    const size = Number(sizePx);
+    if (!Number.isFinite(offset)) return 0;
+    if (!Number.isFinite(size) || size <= 0) return offset;
+    const margin = Math.min(12, Math.max(0, size / 2));
+    return Math.max(margin, Math.min(size - margin, offset));
+  }
+
+  _offsetFromAnchorRatio(ratioValue, sizePx) {
+    const ratio = Number(ratioValue);
+    const size = Number(sizePx);
+    if (!Number.isFinite(size) || size <= 0) return 0;
+    const normalized = Number.isFinite(ratio) ? ratio : 0.5;
+    return this._clampOffset(normalized * size, size);
   }
 
   _scheduleAutoFitLabelColumn(panel) {
@@ -168,9 +418,7 @@ export class PanelManager {
     this.container.removeEventListener('pointermove', this._boundMove);
     this.container.removeEventListener('pointerup', this._boundUp);
     this.container.removeEventListener('pointercancel', this._boundUp);
-    this.dockLeftTop.remove();
-    this.dockLeftBottom.remove();
-    this.dockRightTop.remove();
-    this.dockRightBottom.remove();
+    this.dockLeft.remove();
+    this.dockRight.remove();
   }
 }

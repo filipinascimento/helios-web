@@ -284,6 +284,7 @@ const DENSITY_DEFAULTS = Object.freeze({
   enabled: false,
   qualityScale: 0.1,
   topographic: false,
+  scaleWithZoom: false,
   bandwidth: 28.1,
   weightScale: 398.1071705534973,
   property: 'Uniform',
@@ -936,6 +937,9 @@ export class Helios extends EventTarget {
     const densityEnabled = options.density === true || options.densityEnabled === true;
     const densityScale = options.densityScale ?? options.densityQualityScale ?? DENSITY_DEFAULTS.qualityScale;
     const densityTopographic = options.topographic === true || options.densityTopographic === true;
+    const densityScaleWithZoom = options.densityScaleWithZoom === true
+      || options.densityScaleByZoom === true
+      || options.scaleDensityWithZoom === true;
     const densityNormalizeVs = options.shallNormalizeVsDensity === true
       || options.vsDensityNormalize === true
       || options.densityNormalizeVs === true;
@@ -944,6 +948,7 @@ export class Helios extends EventTarget {
       enabled: densityEnabled,
       qualityScale: clamp(toFiniteNumber(densityScale, DENSITY_DEFAULTS.qualityScale), 0.03, 1.0),
       topographic: densityTopographic,
+      scaleWithZoom: densityScaleWithZoom,
       property: typeof options.densityProperty === 'string' && options.densityProperty.trim()
         ? options.densityProperty.trim()
         : DENSITY_DEFAULTS.property,
@@ -2952,6 +2957,13 @@ export class Helios extends EventTarget {
       next.qualityScale = clamp(toFiniteNumber(options.densityScale, next.qualityScale), 0.03, 1.0);
     }
     if (Object.prototype.hasOwnProperty.call(options, 'topographic')) next.topographic = options.topographic === true;
+    if (Object.prototype.hasOwnProperty.call(options, 'scaleWithZoom')) next.scaleWithZoom = options.scaleWithZoom === true;
+    if (Object.prototype.hasOwnProperty.call(options, 'densityScaleWithZoom')) {
+      next.scaleWithZoom = options.densityScaleWithZoom === true;
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'densityScaleByZoom')) {
+      next.scaleWithZoom = options.densityScaleByZoom === true;
+    }
     if (Object.prototype.hasOwnProperty.call(options, 'bandwidth')) {
       next.bandwidth = clamp(toFiniteNumber(options.bandwidth, next.bandwidth), 0.05, 1000);
     }
@@ -3017,6 +3029,11 @@ export class Helios extends EventTarget {
   densityTopographic(value) {
     if (arguments.length === 0) return this.density().topographic === true;
     return this.density({ topographic: value === true });
+  }
+
+  densityScaleWithZoom(value) {
+    if (arguments.length === 0) return this.density().scaleWithZoom === true;
+    return this.density({ scaleWithZoom: value === true });
   }
 
   densityBandwidth(value) {

@@ -147,6 +147,44 @@ test('DensityLayer.computeWeights supports Degree property from edge buffers', (
   approxEqual(computed.weights, [0.25, 0.5, 0.25]);
 });
 
+test('DensityLayer.resolveSplatBandwidthPx scales with 2D zoom when enabled', () => {
+  const layer = new DensityLayer({
+    initialConfig: {
+      bandwidth: 12,
+      scaleWithZoom: true,
+    },
+  });
+
+  assert.equal(
+    layer.resolveSplatBandwidthPx({ zoom: 2.5, mode: '2d' }, { mode: '2d' }),
+    30,
+  );
+  assert.equal(
+    layer.resolveSplatBandwidthPx(null, { mode: '2d', view: new Float32Array([4, 0, 0, 0]) }),
+    48,
+  );
+  assert.equal(
+    layer.resolveSplatBandwidthPx({ zoom: 2.5, mode: '3d' }, { mode: '3d' }),
+    12,
+  );
+});
+
+test('DensityLayer.resolveSplatBandwidthPx scales with 3D distance when enabled', () => {
+  const layer = new DensityLayer({
+    initialConfig: {
+      bandwidth: 10,
+      scaleWithZoom: true,
+    },
+  });
+
+  // First 3D sample establishes the reference distance.
+  assert.equal(layer.resolveSplatBandwidthPx({ distance: 800, mode: '3d' }, { mode: '3d' }), 10);
+  // Zooming in (smaller distance) increases effective bandwidth.
+  assert.equal(layer.resolveSplatBandwidthPx({ distance: 400, mode: '3d' }, { mode: '3d' }), 20);
+  // Zooming out (larger distance) decreases effective bandwidth.
+  assert.equal(layer.resolveSplatBandwidthPx({ distance: 1600, mode: '3d' }, { mode: '3d' }), 5);
+});
+
 test('DensityLayer resolves shared WebGL delegate positions even when CPU versions differ', () => {
   const sharedTexture = { label: 'delegate-texture' };
   const graphLayer = {

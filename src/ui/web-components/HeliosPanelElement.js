@@ -51,12 +51,21 @@ export class HeliosPanelElement extends BaseHTMLElement {
     this.appendChild(this.headerEl);
     this.appendChild(this.bodyEl);
 
-    this._onCollapseClick = () => this.toggleCollapsed();
+    this._ensureCollapseBinding();
+  }
+
+  _ensureCollapseBinding() {
+    if (!this.collapseButtonEl) return;
+    if (!this._onCollapseClick) {
+      this._onCollapseClick = () => this.toggleCollapsed();
+    }
+    this.collapseButtonEl.removeEventListener('click', this._onCollapseClick);
     this.collapseButtonEl.addEventListener('click', this._onCollapseClick);
   }
 
   connectedCallback() {
     this.ensureBuilt();
+    this._ensureCollapseBinding();
     this._upgradeProperty('heading');
     this._upgradeProperty('collapsed');
     this._upgradeProperty('dock');
@@ -64,12 +73,7 @@ export class HeliosPanelElement extends BaseHTMLElement {
     this._syncFromAttributes();
   }
 
-  disconnectedCallback() {
-    if (this._onCollapseClick && this.collapseButtonEl) {
-      this.collapseButtonEl.removeEventListener('click', this._onCollapseClick);
-    }
-    this._onCollapseClick = null;
-  }
+  disconnectedCallback() {}
 
   _upgradeProperty(prop) {
     if (Object.prototype.hasOwnProperty.call(this, prop)) {

@@ -389,6 +389,7 @@ function defaultDensityConfig() {
     enabled: false,
     qualityScale: 0.1,
     topographic: false,
+    scaleWithZoom: false,
     bandwidth: 28.1,
     weightScale: 398.1071705534973,
     property: 'Uniform',
@@ -427,6 +428,7 @@ export class DensityLayer extends Layer {
       edgeIndicesRef: null,
       values: null,
     };
+    this._zoomScaleDistanceRef3D = null;
 
     this.webgl = {
       ready: false,
@@ -490,10 +492,12 @@ export class DensityLayer extends Layer {
 
   setConfig(next = {}) {
     if (!next || typeof next !== 'object') return this;
+    const wasZoomScaled = this.config.scaleWithZoom === true;
     const merged = { ...this.config, ...next };
     merged.enabled = merged.enabled === true;
     merged.topographic = merged.topographic === true;
     merged.normalizeVs = merged.normalizeVs === true;
+    merged.scaleWithZoom = merged.scaleWithZoom === true;
     merged.qualityScale = clamp(toFiniteNumber(merged.qualityScale, this.config.qualityScale), 0.03, 1.0);
     merged.bandwidth = clamp(toFiniteNumber(merged.bandwidth, this.config.bandwidth), 0.05, 1000);
     merged.weightScale = clamp(toFiniteNumber(merged.weightScale, this.config.weightScale), 0, 1e8);
@@ -511,8 +515,34 @@ export class DensityLayer extends Layer {
       : this.config.divergingColormap;
 
     this.config = merged;
+    if (!merged.scaleWithZoom || !wasZoomScaled) {
+      this._zoomScaleDistanceRef3D = null;
+    }
     this.version += 1;
     return this;
+  }
+
+  resolveSplatBandwidthPx(camera, cameraUniforms) {
+    const base = clamp(toFiniteNumber(this.config.bandwidth, 28.1), 0.05, 1000);
+    if (this.config.scaleWithZoom !== true) return base;
+
+    const mode = cameraUniforms?.mode ?? camera?.mode ?? null;
+    if (mode === '2d') {
+      this._zoomScaleDistanceRef3D = null;
+      const zoomRaw = camera?.zoom ?? cameraUniforms?.view?.[0];
+      const zoom = clamp(Math.abs(toFiniteNumber(zoomRaw, 1)), 1e-3, 10);
+      return base * zoom;
+    }
+    if (mode === '3d') {
+      const distance = Math.abs(toFiniteNumber(camera?.distance, NaN));
+      if (!Number.isFinite(distance) || distance <= 1e-6) return base;
+      if (!Number.isFinite(this._zoomScaleDistanceRef3D) || this._zoomScaleDistanceRef3D <= 1e-6) {
+        this._zoomScaleDistanceRef3D = distance;
+      }
+      const factor = clamp(this._zoomScaleDistanceRef3D / distance, 0.1, 20);
+      return base * factor;
+    }
+    return base;
   }
 
   initialize(device, size) {
@@ -1371,7 +1401,8 @@ export class DensityLayer extends Layer {
     gl.uniformMatrix4fv(this.webgl.uniforms.splat.u_viewProjection, false, cameraUniforms.viewProjection);
     gl.uniform2f(this.webgl.uniforms.splat.u_viewport, viewportWidth, viewportHeight);
     gl.uniform2f(this.webgl.uniforms.splat.u_densitySize, densityWidth, densityHeight);
-    gl.uniform1f(this.webgl.uniforms.splat.u_bandwidthPx, this.config.bandwidth);
+    const splatBandwidth = this.resolveSplatBandwidthPx(frame?.camera, cameraUniforms);
+    gl.uniform1f(this.webgl.uniforms.splat.u_bandwidthPx, splatBandwidth);
     gl.uniform1i(this.webgl.uniforms.splat.u_nodeCount, computed.count);
     gl.uniform1i(this.webgl.uniforms.splat.u_indexTexWidth, this.webgl.nodeIndicesLayout?.width ?? computed.count);
     gl.uniform1i(this.webgl.uniforms.splat.u_weightTexWidth, this.webgl.nodeWeightsLayout?.width ?? computed.count);
@@ -1734,7 +1765,7 @@ export class DensityLayer extends Layer {
     cameraData[17] = height;
     cameraData[18] = densityWidth;
     cameraData[19] = densityHeight;
-    cameraData[20] = this.config.bandwidth;
+    cameraData[20] = this.resolveSplatBandwidthPx(frame?.camera, cameraUniforms);
     cameraData[21] = computed.count;
     cameraData[22] = computed.positionCount;
     cameraData[23] = 0;

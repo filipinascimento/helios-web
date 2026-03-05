@@ -4462,10 +4462,143 @@ export class MappersPanel {
         helios.scheduler?.requestRender?.();
         helios.requestRender?.();
       };
+      const RESOLUTION_PRESETS = [
+        { value: 0.05, label: '1/20' },
+        { value: 0.1, label: '1/10' },
+        { value: 0.2, label: '1/5' },
+        { value: 0.25, label: '1/4' },
+        { value: 1 / 3, label: '1/3' },
+        { value: 0.5, label: '1/2' },
+        { value: 1, label: '1' },
+      ];
+      let autoBackground = false;
+      let manualBackgroundColor = null;
+      let densityBackgroundApplied = false;
+
+      const clamp01 = (value) => {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return 0;
+        return Math.max(0, Math.min(1, numeric));
+      };
+
+      const normalizeColormapSample = (sample) => {
+        if (Array.isArray(sample) || ArrayBuffer.isView(sample)) {
+          const r = clamp01(sample[0] ?? 0);
+          const g = clamp01(sample[1] ?? 0);
+          const b = clamp01(sample[2] ?? 0);
+          const a = clamp01(sample.length >= 4 ? sample[3] : 1);
+          return [r, g, b, a];
+        }
+        if (typeof sample === 'string') {
+          const raw = sample.trim();
+          const hexMatch = /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.exec(raw);
+          if (hexMatch) {
+            const hex = hexMatch[1];
+            const expand = (c) => `${c}${c}`;
+            const normalized = hex.length === 3
+              ? hex.split('').map((c) => expand(c)).join('')
+              : hex.length === 6
+                ? hex
+                : hex.slice(0, 6);
+            const alphaHex = hex.length === 8 ? hex.slice(6, 8) : 'ff';
+            return [
+              parseInt(normalized.slice(0, 2), 16) / 255,
+              parseInt(normalized.slice(2, 4), 16) / 255,
+              parseInt(normalized.slice(4, 6), 16) / 255,
+              parseInt(alphaHex, 16) / 255,
+            ];
+          }
+          const rgbMatch = /^rgba?\(([^)]+)\)$/i.exec(raw);
+          if (rgbMatch) {
+            const parts = rgbMatch[1].split(',').map((v) => Number(v.trim()));
+            if (parts.length >= 3 && parts.slice(0, 3).every(Number.isFinite)) {
+              const alpha = Number.isFinite(parts[3]) ? parts[3] : 1;
+              return [
+                clamp01(parts[0] / 255),
+                clamp01(parts[1] / 255),
+                clamp01(parts[2] / 255),
+                clamp01(alpha),
+              ];
+            }
+          }
+        }
+        return [0, 0, 0, 1];
+      };
+
+      const getDensityZeroColor = (state = cfg()) => {
+        const key = state?.diverging ? state?.divergingColormap : state?.colormap;
+        const resolved = resolveColormap(key) || resolveColormap('interpolateOrRd');
+        const sample = resolved?.interpolate?.(0) ?? [0, 0, 0, 1];
+        return normalizeColormapSample(sample);
+      };
+
+      const readCurrentBackgroundColor = () => {
+        const current = helios.clearColor?.();
+        if (!(Array.isArray(current) || ArrayBuffer.isView(current))) return null;
+        return [
+          clamp01(current[0] ?? 0),
+          clamp01(current[1] ?? 0),
+          clamp01(current[2] ?? 0),
+          clamp01(current.length >= 4 ? current[3] : 1),
+        ];
+      };
+
+      const shouldApplyDensityBackground = (state = cfg()) => autoBackground && state?.enabled === true;
+
+      const captureManualBackground = () => {
+        if (densityBackgroundApplied) return;
+        const current = readCurrentBackgroundColor();
+        if (current) manualBackgroundColor = current;
+      };
+
+      captureManualBackground();
+
+      const restoreManualBackground = () => {
+        if (!densityBackgroundApplied) return;
+        densityBackgroundApplied = false;
+        if (!manualBackgroundColor) return;
+        try {
+          helios.clearColor?.(manualBackgroundColor);
+        } catch (_) {
+          // ignore invalid background restoration
+        }
+      };
+
+      const applyDensityBackground = (state = cfg()) => {
+        if (!shouldApplyDensityBackground(state)) {
+          restoreManualBackground();
+          return;
+        }
+        if (!densityBackgroundApplied) captureManualBackground();
+        try {
+          helios.clearColor?.(getDensityZeroColor(state));
+          densityBackgroundApplied = true;
+        } catch (_) {
+          // ignore invalid background conversion
+        }
+      };
+
+      const toResolutionIndex = (value) => {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return 0;
+        let bestIndex = 0;
+        let bestDistance = Infinity;
+        for (let i = 0; i < RESOLUTION_PRESETS.length; i += 1) {
+          const dist = Math.abs(RESOLUTION_PRESETS[i].value - numeric);
+          if (dist < bestDistance) {
+            bestDistance = dist;
+            bestIndex = i;
+          }
+        }
+        return bestIndex;
+      };
 
       const enabledToggle = createCheckboxControl({
         checked: cfg().enabled === true,
-        onChange: (checked) => applyDensity({ enabled: checked }),
+        onChange: (checked) => {
+          applyDensity({ enabled: checked });
+          applyDensityBackground();
+        },
         onLabel: 'On',
         offLabel: 'Off',
       });
@@ -4485,6 +4618,21 @@ export class MappersPanel {
         title: 'Relief',
         hint: 'Draw topographic contour lines over the density map.',
         controls: reliefToggle,
+      }).row);
+
+      const autoBackgroundToggle = createCheckboxControl({
+        checked: autoBackground,
+        onChange: (checked) => {
+          autoBackground = checked === true;
+          applyDensityBackground();
+        },
+        onLabel: 'Match',
+        offLabel: 'Manual',
+      });
+      editorBody.appendChild(createAlignedRow({
+        title: 'Map BG',
+        hint: 'Match background to the zero-value color of the active density colormap.',
+        controls: autoBackgroundToggle,
       }).row);
 
       const propertySelect = document.createElement('select');
@@ -4532,6 +4680,18 @@ export class MappersPanel {
         controls: bandwidthControl.element,
       }).row);
 
+      const zoomScaleToggle = createCheckboxControl({
+        checked: cfg().scaleWithZoom === true,
+        onChange: (checked) => applyDensity({ scaleWithZoom: checked }),
+        onLabel: 'Scale',
+        offLabel: 'Fixed',
+      });
+      editorBody.appendChild(createAlignedRow({
+        title: 'Zoom',
+        hint: 'Scale bandwidth with 2D zoom so density stays mostly stable while zooming.',
+        controls: zoomScaleToggle,
+      }).row);
+
       const weightControl = new LogSliderControls({
         value: cfg().weightScale ?? 398.1071705534973,
         minExp: 0,
@@ -4548,6 +4708,47 @@ export class MappersPanel {
         hint: 'Density intensity multiplier (log scale).',
         controls: weightControl.element,
       }).row);
+
+      const resolutionWrap = document.createElement('div');
+      resolutionWrap.style.display = 'flex';
+      resolutionWrap.style.alignItems = 'center';
+      resolutionWrap.style.gap = '8px';
+      resolutionWrap.style.width = '100%';
+
+      const resolutionSlider = document.createElement('input');
+      resolutionSlider.type = 'range';
+      resolutionSlider.className = 'helios-ui-slider';
+      resolutionSlider.min = '0';
+      resolutionSlider.max = String(RESOLUTION_PRESETS.length - 1);
+      resolutionSlider.step = '1';
+      resolutionSlider.style.flex = '1 1 auto';
+
+      const resolutionLabel = document.createElement('span');
+      resolutionLabel.style.color = 'var(--helios-ui-muted)';
+      resolutionLabel.style.fontWeight = '600';
+      resolutionLabel.style.minWidth = '3ch';
+      resolutionLabel.style.textAlign = 'right';
+
+      const setResolutionIndex = (index, { commit = false } = {}) => {
+        const clampedIndex = Math.max(0, Math.min(RESOLUTION_PRESETS.length - 1, Math.floor(Number(index) || 0)));
+        const entry = RESOLUTION_PRESETS[clampedIndex];
+        resolutionSlider.value = String(clampedIndex);
+        resolutionLabel.textContent = entry.label;
+        if (commit) applyDensity({ qualityScale: entry.value });
+      };
+
+      resolutionSlider.addEventListener('input', () => {
+        setResolutionIndex(Number(resolutionSlider.value), { commit: true });
+      });
+
+      resolutionWrap.appendChild(resolutionSlider);
+      resolutionWrap.appendChild(resolutionLabel);
+      editorBody.appendChild(createAlignedRow({
+        title: 'Resolution',
+        hint: 'Density map resolution scale.',
+        controls: resolutionWrap,
+      }).row);
+
       const colormapPicker = new ColormapPickerControl({
         catalog: colormapCatalog,
         portalRoot: ui?.container ?? document.body,
@@ -4561,6 +4762,7 @@ export class MappersPanel {
           } else {
             applyDensity({ colormap: key });
           }
+          applyDensityBackground();
           refresh();
         },
       });
@@ -4584,6 +4786,7 @@ export class MappersPanel {
       const refresh = () => {
         const state = cfg();
         const attrs = listDensityAttributes();
+        captureManualBackground();
 
         const ensureOptionList = (select, values) => {
           const current = select.value;
@@ -4617,13 +4820,16 @@ export class MappersPanel {
         enabledToggle.checked = state.enabled === true;
         reliefToggle.checked = state.topographic === true;
         normalizeToggle.checked = state.normalizeVs === true;
+        zoomScaleToggle.checked = state.scaleWithZoom === true;
         normalizeToggle.disabled = compareSelect.value === 'None';
 
         bandwidthControl.setValue(Math.max(0.05, Number(state.bandwidth ?? 1)));
         weightControl.setValue(Math.max(1, Number(state.weightScale ?? 1)));
+        setResolutionIndex(toResolutionIndex(state.qualityScale), { commit: false });
 
         const activeColormap = state.diverging ? state.divergingColormap : state.colormap;
         colormapPicker.setValue(activeColormap);
+        applyDensityBackground(state);
       };
 
       const onNetworkReplaced = () => refresh();

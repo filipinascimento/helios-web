@@ -10,6 +10,19 @@ export const DOCK_MODES = Object.freeze([
   'bottom-right',
 ]);
 
+export function resolveDockTarget(dock) {
+  if (!dock || dock === 'free') return 'free';
+  if (dock === 'top' || dock === 'bottom') return dock;
+  if (dock.includes('left')) return 'left';
+  if (dock.includes('right')) return 'right';
+  return 'free';
+}
+
+export function isSideDockMode(dock) {
+  const target = resolveDockTarget(dock);
+  return target === 'left' || target === 'right';
+}
+
 export function computeDockMode({
   x,
   y,
@@ -30,8 +43,6 @@ export function computeDockMode({
   if (right && bottom) return 'bottom-right';
   if (left) return 'left';
   if (right) return 'right';
-  if (top) return 'top';
-  if (bottom) return 'bottom';
+  // Top/bottom edge docking is intentionally disabled. Panels only snap to side docks.
   return 'free';
 }
-

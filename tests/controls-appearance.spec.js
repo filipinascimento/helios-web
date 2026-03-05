@@ -23,58 +23,111 @@ async function enableToggle(locator) {
   await expect(toggle).toHaveAttribute('aria-checked', 'true');
 }
 
-test.describe('controls panel: appearance section', () => {
-  test('shows Appearance before Nodes/Edges and controls affect renderer', async ({ page }) => {
+test.describe('scene panel: tabs and appearance controls', () => {
+  test('groups controls into Scene tabs and keeps renderer bindings working', async ({ page }) => {
     await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=500');
     await waitForHelios(page);
 
-    const controlsPanel = panelByTitle(page, 'Controls');
-    await expect(controlsPanel).toBeVisible();
+    const scenePanel = panelByTitle(page, 'Scene');
+    await expect(scenePanel).toBeVisible();
 
-    const labels = await controlsPanel.locator('.helios-ui-subpanel__label').evaluateAll((els) =>
+    const dataPanel = panelByTitle(page, 'Data');
+    await expect(dataPanel).toBeVisible();
+    await expect(dataPanel.locator('.helios-ui-stat__label', { hasText: 'Nodes' })).toBeVisible();
+    await expect(dataPanel.locator('.helios-ui-button', { hasText: 'Load' })).toBeVisible();
+    await expect(dataPanel.locator('.helios-ui-button', { hasText: 'Save' })).toBeVisible();
+
+    const metricsPanel = panelByTitle(page, 'Metrics');
+    await expect(metricsPanel).toBeVisible();
+
+    const stackGaps = await page.evaluate(() => {
+      const ids = ['helios-ui-data', 'helios-ui-demo', 'helios-ui-metrics'];
+      const rects = ids
+        .map((id) => document.querySelector(`.helios-ui-panel[data-panel-id="${id}"]`))
+        .filter(Boolean)
+        .map((el) => {
+          const rect = el.getBoundingClientRect();
+          return {
+            id: el.dataset.panelId,
+            top: rect.top,
+            bottom: rect.bottom,
+          };
+        })
+        .sort((a, b) => a.top - b.top);
+      if (rects.length < 3) return null;
+      return [
+        rects[1].top - rects[0].bottom,
+        rects[2].top - rects[1].bottom,
+      ];
+    });
+    expect(stackGaps).not.toBeNull();
+    expect(Math.abs(stackGaps[0])).toBeLessThanOrEqual(1.5);
+    expect(Math.abs(stackGaps[1])).toBeLessThanOrEqual(1.5);
+
+    const resizeHandle = dataPanel.locator('.helios-ui-resize-handle[data-edge="right"]').first();
+    await expect(resizeHandle).toBeVisible();
+    const handleBox = await resizeHandle.boundingBox();
+    expect(handleBox).not.toBeNull();
+    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(handleBox.x + handleBox.width / 2 + 64, handleBox.y + handleBox.height / 2, { steps: 8 });
+    await page.mouse.up();
+
+    const dockWidths = await page.evaluate(() => {
+      const readWidth = (id) => {
+        const el = document.querySelector(`.helios-ui-panel[data-panel-id="${id}"]`);
+        return el ? el.getBoundingClientRect().width : null;
+      };
+      return {
+        data: readWidth('helios-ui-data'),
+        scene: readWidth('helios-ui-demo'),
+        metrics: readWidth('helios-ui-metrics'),
+      };
+    });
+    expect(dockWidths.data).not.toBeNull();
+    expect(dockWidths.scene).not.toBeNull();
+    expect(dockWidths.metrics).not.toBeNull();
+    expect(Math.abs(dockWidths.data - dockWidths.scene)).toBeLessThanOrEqual(1.5);
+    expect(Math.abs(dockWidths.data - dockWidths.metrics)).toBeLessThanOrEqual(1.5);
+
+    await expect(scenePanel.getByRole('button', { name: 'Appearance' }).first()).toBeVisible();
+    await expect(scenePanel.getByRole('button', { name: 'Labels' }).first()).toBeVisible();
+    await expect(scenePanel.getByRole('button', { name: 'Advanced' }).first()).toBeVisible();
+
+    const appearanceTab = scenePanel.getByRole('button', { name: 'Appearance' }).first();
+    await appearanceTab.click();
+
+    const labels = await scenePanel.locator('.helios-ui-tabpanel[data-active="true"] .helios-ui-subpanel__label').evaluateAll((els) =>
       els.map((el) => (el.textContent ?? '').trim()).filter(Boolean),
     );
 
-    // Network is first; Appearance should come before Nodes/Edges.
-    expect(labels).toContain('Appearance');
-    const iNetwork = labels.indexOf('Network');
-    const iAppearance = labels.indexOf('Appearance');
+    // Appearance tab should expose collapsible Nodes/Edges groups.
+    expect(labels).toContain('Nodes');
+    expect(labels).toContain('Edges');
     const iNodes = labels.indexOf('Nodes');
     const iEdges = labels.indexOf('Edges');
-    expect(iNetwork).toBeGreaterThanOrEqual(0);
-    expect(iAppearance).toBeGreaterThanOrEqual(0);
     expect(iNodes).toBeGreaterThanOrEqual(0);
     expect(iEdges).toBeGreaterThanOrEqual(0);
-    expect(iAppearance).toBeGreaterThan(iNetwork);
-    expect(iAppearance).toBeLessThan(iNodes);
-    expect(iAppearance).toBeLessThan(iEdges);
+    expect(iNodes).toBeLessThan(iEdges);
 
-    const appearanceHeader = controlsPanel.getByRole('button', { name: 'Appearance' }).first();
-    if ((await appearanceHeader.getAttribute('aria-expanded')) === 'false') {
-      await appearanceHeader.click();
-    }
+    // Theme row is directly visible in Appearance (not in a subpanel).
+    await expect(scenePanel.locator('.helios-ui-label__title', { hasText: 'Theme' }).first()).toBeVisible();
 
-    // Theme row moved into Appearance.
-    const appearanceSubpanel = controlsPanel
-      .locator('.helios-ui-subpanel:has(.helios-ui-subpanel__label:has-text("Appearance"))')
-      .first();
-    await expect(appearanceSubpanel.locator('.helios-ui-label__title', { hasText: 'Theme' })).toBeVisible();
-
-    const nodesHeader = controlsPanel.getByRole('button', { name: 'Nodes' }).first();
+    const nodesHeader = scenePanel.getByRole('button', { name: 'Nodes' }).first();
     if ((await nodesHeader.getAttribute('aria-expanded')) === 'false') {
       await nodesHeader.click();
     }
 
     // Ensure Theme is not inside Nodes anymore.
-    const nodesSubpanel = controlsPanel
+    const nodesSubpanel = scenePanel
       .locator('.helios-ui-subpanel:has(.helios-ui-subpanel__label:has-text("Nodes"))')
       .first();
     const nodesTheme = nodesSubpanel.locator('.helios-ui-label__title', { hasText: 'Theme' });
     await expect(nodesTheme).toHaveCount(0);
 
     // Background color + alpha should update helios renderer clearColor.
-    const bgColor = controlsPanel.locator('input[type="color"][aria-label="Background color"]').first();
-    const bgAlpha = controlsPanel.locator('input[type="number"][aria-label="Background color alpha"]').first();
+    const bgColor = scenePanel.locator('input[type="color"][aria-label="Background color"]').first();
+    const bgAlpha = scenePanel.locator('input[type="number"][aria-label="Background color alpha"]').first();
 
     await expect(bgColor).toBeVisible();
     await expect(bgAlpha).toBeVisible();
@@ -94,7 +147,7 @@ test.describe('controls panel: appearance section', () => {
     expect(clearColor[3]).toBeCloseTo(0.5, 2);
 
     // Edge transparency mode selector should update graph layer.
-    const edgeMode = controlsPanel.locator('select[aria-label="Edge transparency mode"]').first();
+    const edgeMode = scenePanel.locator('select[aria-label="Edge transparency mode"]').first();
     await expect(edgeMode).toBeVisible();
     await edgeMode.selectOption({ value: 'additive' });
 
@@ -106,17 +159,15 @@ test.describe('controls panel: appearance section', () => {
     const screenMode = await page.evaluate(() => window.__helios.renderer?.graphLayer?.edgeTransparencyMode ?? null);
     expect(screenMode).toBe('screen');
 
-    const labelsHeader = controlsPanel.getByRole('button', { name: 'Labels' }).first();
-    if ((await labelsHeader.getAttribute('aria-expanded')) === 'false') {
-      await labelsHeader.click();
-    }
+    const labelsTab = scenePanel.getByRole('button', { name: 'Labels' }).first();
+    await labelsTab.click();
 
-    const showLabelsToggle = controlsPanel.locator('[aria-label="Show Labels"][role="switch"], input[type="checkbox"][aria-label="Show Labels"]');
+    const showLabelsToggle = scenePanel.locator('[aria-label="Show Labels"][role="switch"], input[type="checkbox"][aria-label="Show Labels"]');
     await enableToggle(showLabelsToggle);
     const labelsEnabled = await page.evaluate(() => window.__helios.labels().enabled === true);
     expect(labelsEnabled).toBe(true);
 
-    const maxLabelsRow = controlsPanel
+    const maxLabelsRow = scenePanel
       .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Max Labels"))')
       .first();
     const maxLabelsInput = maxLabelsRow.locator('input[type="number"]').first();
@@ -125,7 +176,7 @@ test.describe('controls panel: appearance section', () => {
     const maxLabels = await page.evaluate(() => window.__helios.labels().maxVisible ?? null);
     expect(maxLabels).toBe(18);
 
-    const labelSource = controlsPanel.locator('select[aria-label="Label source attribute"]').first();
+    const labelSource = scenePanel.locator('select[aria-label="Label source attribute"]').first();
     await expect(labelSource).toBeVisible();
     const sourceValues = await labelSource.locator('option').evaluateAll((opts) => opts.map((opt) => opt.value));
     expect(sourceValues).toContain('');
@@ -134,15 +185,15 @@ test.describe('controls panel: appearance section', () => {
     const labelSourceValue = await page.evaluate(() => window.__helios.labelSource?.() ?? null);
     expect(labelSourceValue).toBe('$id');
 
-    const labelFontFamily = controlsPanel.locator('input[aria-label="Label font family"]').first();
+    const labelFontFamily = scenePanel.locator('input[aria-label="Label font family"]').first();
     await expect(labelFontFamily).toBeVisible();
     await labelFontFamily.fill('Menlo, monospace');
     await labelFontFamily.dispatchEvent('change');
     const fontFamily = await page.evaluate(() => window.__helios.labelFontFamily?.() ?? '');
     expect(fontFamily).toContain('Menlo');
 
-    const labelFill = controlsPanel.locator('input[type="color"][aria-label="Label fill color"]').first();
-    const labelFillAlpha = controlsPanel.locator('input[type="number"][aria-label="Label fill color alpha"]').first();
+    const labelFill = scenePanel.locator('input[type="color"][aria-label="Label fill color"]').first();
+    const labelFillAlpha = scenePanel.locator('input[type="number"][aria-label="Label fill color alpha"]').first();
     await expect(labelFill).toBeVisible();
     await expect(labelFillAlpha).toBeVisible();
     await labelFillAlpha.fill('0.75');
@@ -154,22 +205,20 @@ test.describe('controls panel: appearance section', () => {
     const labelFillValue = await page.evaluate(() => String(window.__helios.labelFill?.() ?? ''));
     expect(labelFillValue.toLowerCase()).toContain('#00ff00');
 
-    const advancedHeader = controlsPanel.getByRole('button', { name: 'Advanced' }).first();
-    if ((await advancedHeader.getAttribute('aria-expanded')) === 'false') {
-      await advancedHeader.click();
-    }
+    const advancedTab = scenePanel.getByRole('button', { name: 'Advanced' }).first();
+    await advancedTab.click();
 
-    const nodeBlendToggle = controlsPanel.locator('[aria-label="Blend Nodes With Edges"][role="switch"], input[type="checkbox"][aria-label="Blend Nodes With Edges"]');
+    const nodeBlendToggle = scenePanel.locator('[aria-label="Blend Nodes With Edges"][role="switch"], input[type="checkbox"][aria-label="Blend Nodes With Edges"]');
     await enableToggle(nodeBlendToggle);
     const nodeBlendValue = await page.evaluate(() => window.__helios.renderer?.graphLayer?.nodeBlendWithEdges ?? null);
     expect(nodeBlendValue).toBe(true);
 
-    const edgeDepthToggle = controlsPanel.locator('[aria-label="Edge Depth Write"][role="switch"], input[type="checkbox"][aria-label="Edge Depth Write"]');
+    const edgeDepthToggle = scenePanel.locator('[aria-label="Edge Depth Write"][role="switch"], input[type="checkbox"][aria-label="Edge Depth Write"]');
     await enableToggle(edgeDepthToggle);
     const edgeDepthValue = await page.evaluate(() => window.__helios.renderer?.graphLayer?.edgeDepthWrite ?? null);
     expect(edgeDepthValue).toBe(true);
 
-    const semanticZoomRow = controlsPanel
+    const semanticZoomRow = scenePanel
       .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Semantic Zoom Exponent"))')
       .first();
     await expect(semanticZoomRow).toBeVisible();

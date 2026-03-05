@@ -952,22 +952,93 @@ export const defaultStylesText = `
   bottom: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--helios-ui-gap);
-  padding: var(--helios-ui-gap);
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  max-height: 100%;
+}
+
+.helios-ui-dock--side {
   overflow-y: auto;
   overflow-x: hidden;
-  max-height: 100%;
 }
 
 .helios-ui-dock--left { left: 0; padding-left: 0; }
 .helios-ui-dock--right { right: 0; align-items: flex-end; padding-right: 0; }
-.helios-ui-dock--top { padding-top: 0; }
-.helios-ui-dock--bottom { justify-content: flex-end; }
-.helios-ui-dock--bottom { padding-bottom: 0; }
 
 .helios-ui-dock .helios-ui-panel {
   position: relative;
   max-height: none;
+  flex: 0 0 auto;
+}
+
+.helios-ui-panel[data-side-docked="true"] .helios-ui-panel__body {
+  overflow: visible;
+}
+
+.helios-ui-panel[data-side-docked="true"] .helios-ui-panel__header {
+  cursor: grab;
+}
+
+.helios-ui--dock-reordering,
+.helios-ui--dock-reordering * {
+  cursor: grabbing !important;
+}
+
+.helios-ui-panel--dock-source {
+  opacity: 0.46;
+}
+
+.helios-ui-dock-drop-line {
+  height: 4px;
+  margin: 4px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--helios-ui-fg) 82%, var(--helios-ui-accent));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--helios-ui-fg) 28%, transparent),
+    0 0 9px color-mix(in srgb, var(--helios-ui-accent) 32%, transparent);
+  flex: 0 0 auto;
+  pointer-events: none;
+}
+
+.helios-ui-dock-drag-preview {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  z-index: calc(var(--helios-ui-z) + 250);
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--helios-ui-fg) 20%, transparent);
+  background: color-mix(in srgb, var(--helios-ui-bg-solid) 92%, transparent);
+  box-shadow:
+    0 9px 24px rgba(0, 0, 0, 0.28),
+    0 0 0 1px color-mix(in srgb, var(--helios-ui-accent) 28%, transparent);
+  overflow: hidden;
+}
+
+.helios-ui-dock-drag-preview__header {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 6px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--helios-ui-border) 75%, transparent);
+  background: color-mix(in srgb, var(--helios-ui-bg-solid) 95%, transparent);
+}
+
+.helios-ui-dock-drag-preview__title {
+  font-weight: 600;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.helios-ui-dock-drag-preview__body {
+  margin: 8px;
+  height: 16px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.78);
 }
 
 .helios-ui-tabs {

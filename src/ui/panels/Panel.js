@@ -13,6 +13,7 @@ export class Panel {
     this.title = options.title ?? options.id;
     this.draggable = Boolean(options.draggable ?? true);
     this.onDockChange = typeof options.onDockChange === 'function' ? options.onDockChange : null;
+    this.onHeaderPointerDown = typeof options.onHeaderPointerDown === 'function' ? options.onHeaderPointerDown : null;
     this.position = { ...(options.position ?? DEFAULT_POSITION) };
     this.lastFreePosition = { ...this.position };
     this.dock = options.dock ?? 'free';
@@ -178,11 +179,25 @@ export class Panel {
     if (event.button !== 0) return;
     const target = event.target;
     if (target instanceof HTMLElement && target.closest('button, input, select, textarea, .helios-ui-resize-handle')) return;
+    if (this.onHeaderPointerDown?.(event, this) === true) {
+      event.preventDefault();
+      return;
+    }
 
-    const containerRect = this.getContainerRect?.();
+    this.beginDragFromHeaderPointer(event, {
+      containerRect: this.getContainerRect?.(),
+    });
+    event.preventDefault();
+  }
+
+  beginDragFromHeaderPointer(event, options = {}) {
+    if (!event) return;
+    const containerRect = options.containerRect ?? this.getContainerRect?.();
     const panelRect = this.element.getBoundingClientRect();
-    const offsetX = event.clientX - panelRect.left;
-    const offsetY = event.clientY - panelRect.top;
+    const rawOffsetX = Number.isFinite(options.offsetX) ? options.offsetX : (event.clientX - panelRect.left);
+    const rawOffsetY = Number.isFinite(options.offsetY) ? options.offsetY : (event.clientY - panelRect.top);
+    const offsetX = this._clampDragOffset(rawOffsetX, panelRect.width);
+    const offsetY = this._clampDragOffset(rawOffsetY, panelRect.height);
 
     if (this.dock !== 'free') {
       const left = containerRect?.left ?? 0;
@@ -202,8 +217,16 @@ export class Panel {
       offsetX,
       offsetY,
     };
-    this.header?.setPointerCapture(event.pointerId);
-    event.preventDefault();
+    this.header?.setPointerCapture?.(event.pointerId);
+  }
+
+  _clampDragOffset(value, size) {
+    const numericValue = Number(value);
+    const numericSize = Number(size);
+    if (!Number.isFinite(numericValue)) return 0;
+    if (!Number.isFinite(numericSize) || numericSize <= 0) return numericValue;
+    const margin = Math.min(12, Math.max(0, numericSize / 2));
+    return Math.max(margin, Math.min(numericSize - margin, numericValue));
   }
 
   handlePointerMove(event, options = {}) {
@@ -265,7 +288,7 @@ export class Panel {
   }
 
   handleResizeMove(event, options = {}) {
-    if (!this._resize || event.pointerId !== this._resize.pointerId) return;
+    if (!this._resize || event.pointerId !== this._resize.pointerId) return null;
     const containerRect = options.containerRect ?? this.getContainerRect?.();
     const maxWidth = containerRect ? Math.max(this.minWidth, containerRect.width) : Infinity;
     const next = computeResizedWidth({
@@ -276,9 +299,10 @@ export class Panel {
       minWidth: this.minWidth,
       maxWidth,
     });
-    if (next == null) return;
+    if (next == null) return null;
     this.width = next;
     this.element.style.width = `${next}px`;
+    return next;
   }
 
   handleResizeUp(event) {
@@ -289,6 +313,11 @@ export class Panel {
   handlePointerUp(event) {
     if (!this._drag || event.pointerId !== this._drag.pointerId) return;
     this._drag = null;
+  }
+
+  syncDockStyles() {
+    this._syncResizeHandleEdge();
+    this._applyDock();
   }
 
   destroy() {
