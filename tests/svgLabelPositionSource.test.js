@@ -66,3 +66,29 @@ test('SvgLabelController falls back to delegate snapshot for GPU-only delegates'
   assert.ok(resolved.view instanceof Float32Array);
   assert.deepEqual(Array.from(resolved.view), [8, 9, 0, 10, 11, 0]);
 });
+
+test('SvgLabelController truncates single-line labels with maxChars', () => {
+  const controller = new SvgLabelController({}, {});
+  controller.setConfig({ maxChars: 5, maxRows: 1 });
+  const formatted = controller._formatLabelText('abcdefg', 12);
+  assert.ok(formatted);
+  assert.deepEqual(formatted.lines, ['ab...']);
+});
+
+test('SvgLabelController wraps multi-line labels and appends ellipsis when clipped', () => {
+  const controller = new SvgLabelController({}, {});
+  controller.setConfig({ maxChars: 4, maxRows: 3 });
+  const formatted = controller._formatLabelText('abcdefghijklm', 12);
+  assert.ok(formatted);
+  assert.deepEqual(formatted.lines, ['abcd', 'efgh', 'i...']);
+});
+
+test('SvgLabelController radius factor maps -1/0/1 to below/center/above', () => {
+  const controller = new SvgLabelController({}, {});
+  controller.setConfig({ offsetPx: 0, offsetRadiusFactor: 1 });
+  assert.equal(controller._computeLabelScreenY(100, 20), 80);
+  controller.setConfig({ offsetRadiusFactor: 0 });
+  assert.equal(controller._computeLabelScreenY(100, 20), 100);
+  controller.setConfig({ offsetRadiusFactor: -1 });
+  assert.equal(controller._computeLabelScreenY(100, 20), 120);
+});

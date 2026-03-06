@@ -176,6 +176,46 @@ test.describe('scene panel: tabs and appearance controls', () => {
     const maxLabels = await page.evaluate(() => window.__helios.labels().maxVisible ?? null);
     expect(maxLabels).toBe(18);
 
+    const labelRadiusFactorRow = scenePanel
+      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Label Radius Factor"))')
+      .first();
+    await expect(labelRadiusFactorRow).toBeVisible();
+    const labelRadiusFactorInput = labelRadiusFactorRow.locator('input[type="number"]').first();
+    await labelRadiusFactorInput.fill('-0.5');
+    await labelRadiusFactorInput.dispatchEvent('change');
+    const labelRadiusFactor = await page.evaluate(() => window.__helios.labels()?.offsetRadiusFactor ?? null);
+    expect(labelRadiusFactor).toBeCloseTo(-0.5, 3);
+
+    const labelPixelOffsetRow = scenePanel
+      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Label Pixel Offset"))')
+      .first();
+    await expect(labelPixelOffsetRow).toBeVisible();
+    const labelPixelOffsetInput = labelPixelOffsetRow.locator('input[type="number"]').first();
+    await labelPixelOffsetInput.fill('9');
+    await labelPixelOffsetInput.dispatchEvent('change');
+    const labelPixelOffset = await page.evaluate(() => window.__helios.labels()?.offsetPx ?? null);
+    expect(labelPixelOffset).toBe(9);
+
+    const labelMaxCharsRow = scenePanel
+      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Label Max Chars"))')
+      .first();
+    await expect(labelMaxCharsRow).toBeVisible();
+    const labelMaxCharsInput = labelMaxCharsRow.locator('input[type="number"]').first();
+    await labelMaxCharsInput.fill('12');
+    await labelMaxCharsInput.dispatchEvent('change');
+    const labelMaxChars = await page.evaluate(() => window.__helios.labels()?.maxChars ?? null);
+    expect(labelMaxChars).toBe(12);
+
+    const labelMaxRowsRow = scenePanel
+      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Label Max Rows"))')
+      .first();
+    await expect(labelMaxRowsRow).toBeVisible();
+    const labelMaxRowsInput = labelMaxRowsRow.locator('input[type="number"]').first();
+    await labelMaxRowsInput.fill('3');
+    await labelMaxRowsInput.dispatchEvent('change');
+    const labelMaxRows = await page.evaluate(() => window.__helios.labels()?.maxRows ?? null);
+    expect(labelMaxRows).toBe(3);
+
     const labelSource = scenePanel.locator('select[aria-label="Label source attribute"]').first();
     await expect(labelSource).toBeVisible();
     const sourceValues = await labelSource.locator('option').evaluateAll((opts) => opts.map((opt) => opt.value));

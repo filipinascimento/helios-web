@@ -45,6 +45,10 @@ test('label accessors proxy configuration to the label controller', () => {
     fontSizeScale: 1,
     minScreenRadiusPx: 8,
     outlineWidth: 2,
+    offsetRadiusFactor: 1,
+    offsetPx: 4,
+    maxChars: 0,
+    maxRows: 1,
     fill: '#ffffff',
     outlineColor: '#000000cc',
     fontFamily: 'sans-serif',
@@ -78,6 +82,18 @@ test('label accessors proxy configuration to the label controller', () => {
   helios.labelsOutlineWidth(3.5);
   assert.equal(state.outlineWidth, 3.5);
 
+  helios.labelsOffsetRadiusFactor(-0.75);
+  assert.equal(state.offsetRadiusFactor, -0.75);
+
+  helios.labelsOffsetPx(10);
+  assert.equal(state.offsetPx, 10);
+
+  helios.labelsMaxChars(24);
+  assert.equal(state.maxChars, 24);
+
+  helios.labelsMaxRows(3);
+  assert.equal(state.maxRows, 3);
+
   helios.labelFill('#ff0000aa');
   assert.equal(state.fill, '#ff0000aa');
 
@@ -90,7 +106,7 @@ test('label accessors proxy configuration to the label controller', () => {
   helios.labelSource('name');
   assert.equal(state.source, 'name');
 
-  assert.ok(calls.setConfig >= 9);
-  assert.ok(calls.request >= 9);
-  assert.ok(calls.render >= 9);
+  assert.ok(calls.setConfig >= 13);
+  assert.ok(calls.request >= 13);
+  assert.ok(calls.render >= 13);
 });

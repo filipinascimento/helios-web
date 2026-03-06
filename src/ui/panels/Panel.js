@@ -229,6 +229,26 @@ export class Panel {
     return Math.max(margin, Math.min(numericSize - margin, numericValue));
   }
 
+  _clampFreePosition(x, y, containerRect) {
+    const width = Number(this.element?.offsetWidth || this.element?.getBoundingClientRect?.().width || 0);
+    const headerRect = this.header?.getBoundingClientRect?.();
+    const headerHeight = Number(headerRect?.height || 30);
+    const containerWidth = Number(containerRect?.width || 0);
+    const containerHeight = Number(containerRect?.height || 0);
+    const minHeaderVisibleWidth = Math.max(72, Math.min(width || 72, 180));
+    const minX = minHeaderVisibleWidth - (width || minHeaderVisibleWidth);
+    const maxX = containerWidth - minHeaderVisibleWidth;
+    const maxY = containerHeight - headerHeight;
+    const numericX = Number(x);
+    const numericY = Number(y);
+    const clampedX = Math.max(minX, Math.min(maxX, numericX));
+    const clampedY = Math.max(0, Math.min(maxY, numericY));
+    return {
+      x: Number.isFinite(clampedX) ? clampedX : 0,
+      y: Number.isFinite(clampedY) ? clampedY : 0,
+    };
+  }
+
   handlePointerMove(event, options = {}) {
     if (!this._drag || event.pointerId !== this._drag.pointerId) return;
     const containerRect = options.containerRect ?? this.getContainerRect?.();
@@ -248,9 +268,10 @@ export class Panel {
 
     const nextX = event.clientX - left - this._drag.offsetX;
     const nextY = event.clientY - top - this._drag.offsetY;
+    const clamped = this._clampFreePosition(nextX, nextY, containerRect);
 
     this.setDock('free');
-    this.setPosition(nextX, nextY);
+    this.setPosition(clamped.x, clamped.y);
 
     if (keepFree || !allowDock) return;
 

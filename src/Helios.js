@@ -657,6 +657,42 @@ export class Helios extends EventTarget {
       recommendedRange: { min: 0, max: 6 },
       step: 0.25,
     },
+    labelsOffsetRadiusFactor: {
+      type: 'number',
+      label: 'Label Radius Factor',
+      description: 'Scales the node-radius-based vertical anchor used for labels',
+      defaultValue: 1,
+      domain: { min: -8, max: 8 },
+      recommendedRange: { min: -1, max: 1 },
+      step: 0.05,
+    },
+    labelsOffsetPx: {
+      type: 'number',
+      label: 'Label Pixel Offset',
+      description: 'Additional vertical label offset in screen pixels',
+      defaultValue: 4,
+      domain: { min: -256, max: 256 },
+      recommendedRange: { min: -48, max: 48 },
+      step: 1,
+    },
+    labelsMaxChars: {
+      type: 'number',
+      label: 'Label Max Chars',
+      description: 'Maximum characters per row before truncation (0 = unlimited)',
+      defaultValue: 0,
+      domain: { min: 0, max: 512 },
+      recommendedRange: { min: 0, max: 64 },
+      step: 1,
+    },
+    labelsMaxRows: {
+      type: 'number',
+      label: 'Label Max Rows',
+      description: 'Maximum wrapped label rows (uses ellipsis when clipped)',
+      defaultValue: 1,
+      domain: { min: 1, max: 8 },
+      recommendedRange: { min: 1, max: 4 },
+      step: 1,
+    },
     background: {
       type: 'color',
       label: 'Background',
@@ -3139,6 +3175,34 @@ export class Helios extends EventTarget {
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) return this;
     return this.labels({ outlineWidth: Math.max(0, numeric) });
+  }
+
+  labelsOffsetRadiusFactor(value) {
+    if (arguments.length === 0) return Number(this.labels()?.offsetRadiusFactor ?? 1);
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return this;
+    return this.labels({ offsetRadiusFactor: numeric });
+  }
+
+  labelsOffsetPx(value) {
+    if (arguments.length === 0) return Number(this.labels()?.offsetPx ?? 4);
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return this;
+    return this.labels({ offsetPx: numeric });
+  }
+
+  labelsMaxChars(value) {
+    if (arguments.length === 0) return Number(this.labels()?.maxChars ?? 0);
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return this;
+    return this.labels({ maxChars: Math.max(0, Math.floor(numeric)) });
+  }
+
+  labelsMaxRows(value) {
+    if (arguments.length === 0) return Number(this.labels()?.maxRows ?? 1);
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return this;
+    return this.labels({ maxRows: Math.max(1, Math.floor(numeric)) });
   }
 
   labelFill(color) {

@@ -33,7 +33,10 @@ const DEFAULT_CONFIG = Object.freeze({
   fill: '#f4f7ff',
   outlineColor: '#001426cc',
   outlineWidth: 2,
+  offsetRadiusFactor: 1,
   offsetPx: 4,
+  maxChars: 0,
+  maxRows: 1,
   collisionPaddingPx: 2,
   collisionCellPx: 18,
   delegateSnapshotMaxFps: 4,
@@ -279,8 +282,17 @@ export class SvgLabelController {
     if (Object.prototype.hasOwnProperty.call(options, 'outlineWidth')) {
       next.outlineWidth = clamp(options.outlineWidth, 0, 16);
     }
+    if (Object.prototype.hasOwnProperty.call(options, 'offsetRadiusFactor')) {
+      next.offsetRadiusFactor = clamp(options.offsetRadiusFactor, -8, 8);
+    }
     if (Object.prototype.hasOwnProperty.call(options, 'offsetPx')) {
-      next.offsetPx = clamp(options.offsetPx, 0, 64);
+      next.offsetPx = clamp(options.offsetPx, -256, 256);
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'maxChars')) {
+      next.maxChars = clampInt(options.maxChars, 0, 512);
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'maxRows')) {
+      next.maxRows = clampInt(options.maxRows, 1, 8);
     }
     if (Object.prototype.hasOwnProperty.call(options, 'collisionPaddingPx')) {
       next.collisionPaddingPx = clamp(options.collisionPaddingPx, 0, 32);
@@ -539,10 +551,12 @@ export class SvgLabelController {
       const entry = ordered[i];
       const text = this._resolveLabelText(sourceAccessors, entry.id);
       if (!text) continue;
+      const formatted = this._formatLabelText(text, fontSizePx);
+      if (!formatted) continue;
       const x = entry.x;
-      const y = entry.y - entry.radiusPx - this._config.offsetPx;
-      const labelW = estimateTextWidthPx(text, fontSizePx);
-      const labelH = Math.max(8, fontSizePx * 1.25);
+      const y = this._computeLabelScreenY(entry.y, entry.radiusPx);
+      const labelW = formatted.widthPx;
+      const labelH = formatted.heightPx;
       if (x + labelW * 0.5 < 0 || x - labelW * 0.5 > width || y + labelH * 0.5 < 0 || y - labelH * 0.5 > height) {
         continue;
       }
@@ -552,7 +566,8 @@ export class SvgLabelController {
       this._occupy(occupied, x, y, labelW, labelH, collisionCellPx);
       nextVisible.push({
         id: entry.id,
-        text,
+        text: formatted.text,
+        lines: formatted.lines,
         x,
         y,
         worldRadius: entry.worldRadius,
@@ -621,7 +636,7 @@ export class SvgLabelController {
       next.push({
         ...entry,
         x: center.screenX,
-        y: center.screenY - radiusPx - this._config.offsetPx,
+        y: this._computeLabelScreenY(center.screenY, radiusPx),
       });
     }
     this._visibleEntries = next;
@@ -793,6 +808,126 @@ export class SvgLabelController {
     return null;
   }
 
+  _computeLabelScreenY(centerY, radiusPx) {
+    const center = Number(centerY);
+    const radius = Number(radiusPx);
+    const factor = Number(this._config.offsetRadiusFactor);
+    const offsetPx = Number(this._config.offsetPx);
+    const safeCenter = Number.isFinite(center) ? center : 0;
+    const safeRadius = Number.isFinite(radius) ? radius : 0;
+    const safeFactor = Number.isFinite(factor) ? factor : 1;
+    const safeOffsetPx = Number.isFinite(offsetPx) ? offsetPx : 0;
+    // +factor moves label above node, -factor moves below, 0 stays centered.
+    return safeCenter - (safeRadius * safeFactor) - safeOffsetPx;
+  }
+
+  _formatLabelText(value, fontSizePx) {
+    const text = String(value ?? '').trim();
+    if (!text) return null;
+    const maxChars = clampInt(this._config.maxChars, 0, 512);
+    const maxRows = clampInt(this._config.maxRows, 1, 8);
+    const lines = this._wrapLabelLines(text, { maxChars, maxRows });
+    if (!lines.length) return null;
+    const maxLineChars = lines.reduce((acc, line) => Math.max(acc, String(line ?? '').length), 0);
+    const lineHeightPx = Math.max(8, Number(fontSizePx) * 1.25);
+    return {
+      text: lines.join('\n'),
+      lines,
+      widthPx: estimateTextWidthPx('W'.repeat(maxLineChars || 1), Number(fontSizePx)),
+      heightPx: Math.max(8, lineHeightPx * lines.length),
+    };
+  }
+
+  _wrapLabelLines(text, options = {}) {
+    const raw = String(text ?? '').trim();
+    if (!raw) return [];
+    const maxChars = clampInt(options.maxChars, 0, 512);
+    const maxRows = clampInt(options.maxRows, 1, 8);
+    if (maxRows <= 1) {
+      return [this._truncateLabelLine(raw, maxChars)];
+    }
+    if (maxChars <= 0) {
+      return [raw];
+    }
+
+    const tokens = raw.split(/\s+/).filter(Boolean);
+    if (!tokens.length) return [];
+
+    const lines = [];
+    let index = 0;
+    let current = '';
+    let overflowed = false;
+
+    const pushCurrent = () => {
+      if (!current) return;
+      lines.push(current);
+      current = '';
+    };
+
+    while (index < tokens.length && lines.length < maxRows) {
+      let token = tokens[index];
+      if (!token) {
+        index += 1;
+        continue;
+      }
+
+      if (!current) {
+        if (token.length <= maxChars) {
+          current = token;
+          index += 1;
+          continue;
+        }
+        if (lines.length >= maxRows - 1) {
+          lines.push(this._appendEllipsis(token.slice(0, maxChars), maxChars));
+          overflowed = true;
+          current = '';
+          index = tokens.length;
+          break;
+        }
+        lines.push(token.slice(0, maxChars));
+        token = token.slice(maxChars);
+        tokens[index] = token;
+        continue;
+      }
+
+      const next = `${current} ${token}`;
+      if (next.length <= maxChars) {
+        current = next;
+        index += 1;
+      } else {
+        pushCurrent();
+      }
+    }
+
+    if (current && lines.length < maxRows) {
+      pushCurrent();
+    }
+
+    if (index < tokens.length) {
+      overflowed = true;
+    }
+
+    if (overflowed && lines.length) {
+      lines[lines.length - 1] = this._appendEllipsis(lines[lines.length - 1], maxChars);
+    }
+    return lines.slice(0, maxRows);
+  }
+
+  _truncateLabelLine(text, maxChars) {
+    const raw = String(text ?? '');
+    if (maxChars <= 0 || raw.length <= maxChars) return raw;
+    return this._appendEllipsis(raw.slice(0, maxChars), maxChars);
+  }
+
+  _appendEllipsis(text, maxChars) {
+    const raw = String(text ?? '');
+    if (!raw) return '...';
+    if (!Number.isFinite(maxChars) || maxChars <= 0) return `${raw}...`;
+    if (maxChars <= 3) return '.'.repeat(maxChars);
+    if (raw.length >= maxChars) return `${raw.slice(0, maxChars - 3)}...`;
+    return `${raw}...`;
+  }
+
   _collides(occupied, x, y, width, height, cellSize) {
     const pad = this._config.collisionPaddingPx;
     const minX = Math.floor((x - width * 0.5 - pad) / cellSize);
@@ -839,9 +974,7 @@ export class SvgLabelController {
       node.dataset.nodeId = String(entry.id);
       node.setAttribute('x', `${entry.x}`);
       node.setAttribute('y', `${entry.y}`);
-      if (node.textContent !== entry.text) {
-        node.textContent = entry.text;
-      }
+      this._syncTextContent(node, entry);
     }
     for (let i = entries.length; i < this._pool.length; i += 1) {
       this._pool[i].style.display = 'none';
@@ -856,6 +989,49 @@ export class SvgLabelController {
       this._pool[i].style.display = 'none';
       this._pool[i].dataset.nodeId = '';
     }
+  }
+
+  _syncTextContent(node, entry) {
+    const lines = Array.isArray(entry?.lines) && entry.lines.length
+      ? entry.lines.map((line) => String(line ?? ''))
+      : [String(entry?.text ?? '')];
+    if (lines.length <= 1) {
+      if (node.childElementCount > 0) node.replaceChildren();
+      const nextText = lines[0] ?? '';
+      if (node.textContent !== nextText) node.textContent = nextText;
+      node.dataset.multiline = '0';
+      node.dataset.multilineSig = '';
+      return;
+    }
+
+    const signature = lines.join('\n');
+    const x = node.getAttribute('x') ?? '0';
+    const lineHeightEm = 1.2;
+    const firstDy = -((lines.length - 1) * lineHeightEm) / 2;
+    if (
+      node.dataset.multiline === '1'
+      && node.dataset.multilineSig === signature
+      && node.childElementCount === lines.length
+    ) {
+      let idx = 0;
+      for (const child of node.children) {
+        child.setAttribute('x', x);
+        child.setAttribute('dy', `${idx === 0 ? firstDy : lineHeightEm}em`);
+        idx += 1;
+      }
+      return;
+    }
+
+    node.textContent = '';
+    for (let i = 0; i < lines.length; i += 1) {
+      const tspan = document.createElementNS(SVG_NS, 'tspan');
+      tspan.setAttribute('x', x);
+      tspan.setAttribute('dy', `${i === 0 ? firstDy : lineHeightEm}em`);
+      tspan.textContent = lines[i];
+      node.appendChild(tspan);
+    }
+    node.dataset.multiline = '1';
+    node.dataset.multilineSig = signature;
   }
 
   _applyGroupStyles() {

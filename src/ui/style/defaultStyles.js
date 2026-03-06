@@ -990,13 +990,17 @@ export const defaultStylesText = `
 }
 
 .helios-ui-dock-drop-line {
-  height: 4px;
-  margin: 4px 8px;
+  position: relative;
+  z-index: 4;
+  align-self: stretch;
+  height: 6px;
+  margin: 6px 8px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--helios-ui-fg) 82%, var(--helios-ui-accent));
+  border: 1px solid rgba(32, 32, 32, 0.38);
+  background: rgba(176, 176, 176, 0.96);
   box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--helios-ui-fg) 28%, transparent),
-    0 0 9px color-mix(in srgb, var(--helios-ui-accent) 32%, transparent);
+    0 0 0 1px rgba(255, 255, 255, 0.26),
+    0 0 12px rgba(0, 0, 0, 0.32);
   flex: 0 0 auto;
   pointer-events: none;
 }
@@ -1031,14 +1035,6 @@ export const defaultStylesText = `
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.helios-ui-dock-drag-preview__body {
-  margin: 8px;
-  height: 16px;
-  border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(0, 0, 0, 0.78);
 }
 
 .helios-ui-tabs {

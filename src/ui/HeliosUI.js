@@ -800,6 +800,10 @@ export class HeliosUI {
           'labelsFontSizeScale',
           'labelsMinScreenRadius',
           'labelsOutlineWidth',
+          'labelsOffsetRadiusFactor',
+          'labelsOffsetPx',
+          'labelsMaxChars',
+          'labelsMaxRows',
         ]));
 
         const labelSourceControl = createLabelSourceSelect();

@@ -16,6 +16,8 @@ export class PanelManager {
     this._zCounter = 1;
     this._measureCanvas = null;
     this._dockReorder = null;
+    this._freeDragDockGuards = new Map();
+    this._eventTarget = this.container?.ownerDocument?.defaultView ?? globalThis.window ?? this.container;
 
     this.dockLeft = document.createElement('div');
     this.dockLeft.className = 'helios-ui-dock helios-ui-dock--side helios-ui-dock--left';
@@ -26,9 +28,9 @@ export class PanelManager {
 
     this._boundMove = (e) => this._handlePointerMove(e);
     this._boundUp = (e) => this._handlePointerUp(e);
-    this.container.addEventListener('pointermove', this._boundMove);
-    this.container.addEventListener('pointerup', this._boundUp);
-    this.container.addEventListener('pointercancel', this._boundUp);
+    this._eventTarget.addEventListener('pointermove', this._boundMove);
+    this._eventTarget.addEventListener('pointerup', this._boundUp);
+    this._eventTarget.addEventListener('pointercancel', this._boundUp);
   }
 
   createPanel(options) {
@@ -57,6 +59,7 @@ export class PanelManager {
   removePanel(id) {
     const panel = this.panels.get(id);
     if (!panel) return;
+    this._freeDragDockGuards.delete(id);
     if (this._dockReorder?.panel === panel) {
       this._endSideDockReorder({ pointerId: this._dockReorder.pointerId }, { force: true });
     }
@@ -80,10 +83,12 @@ export class PanelManager {
       if (resizedWidth != null) {
         this._syncDockedWidths(panel, resizedWidth);
       }
+      const forceFree = this._shouldForceFreeWhileDragging(panel, event);
       panel.handlePointerMove(event, {
         containerRect: rect,
         allowDock: this.allowDock,
         threshold: this.dockThreshold,
+        forceFree,
       });
       if (this._trySwitchFreeDragToDockReorder(panel, event)) return;
     }
@@ -97,6 +102,7 @@ export class PanelManager {
     for (const panel of this.panels.values()) {
       panel.handleResizeUp(event);
       panel.handlePointerUp(event);
+      this._clearFreeDragDockGuard(panel, event);
     }
   }
 
@@ -165,6 +171,7 @@ export class PanelManager {
     dropLine.className = 'helios-ui-dock-drop-line';
     dockEl.insertBefore(dropLine, panel.element.nextSibling);
     const preview = this._createDockDragPreview(panel, panelRect, dockRect);
+    this.container.appendChild(preview);
     const previewRect = preview.getBoundingClientRect();
     const pointerOffsetX = this._clampOffset(event.clientX - panelRect.left, panelRect.width);
     const pointerOffsetY = this._clampOffset(event.clientY - panelRect.top, panelRect.height);
@@ -172,6 +179,8 @@ export class PanelManager {
     const previewOffsetY = this._scaleOffset(pointerOffsetY, panelRect.height, previewRect.height);
     const dragAnchorRatioX = panelRect.width > 0 ? (pointerOffsetX / panelRect.width) : 0.5;
     const dragAnchorRatioY = panelRect.height > 0 ? (pointerOffsetY / panelRect.height) : 0.5;
+    this._placeSourcePanelAtDrop(dockEl, dropLine, panel.element);
+    this._freeDragDockGuards.delete(panel.id);
 
     panel.element.classList.add('helios-ui-panel--dock-source');
     this.container.classList.add('helios-ui--dock-reordering');
@@ -191,8 +200,7 @@ export class PanelManager {
       header: panel.header,
     };
     this._updateDockDragPreview(event, this._dockReorder);
-
-    panel.header?.setPointerCapture?.(event.pointerId);
+    this._setPointerCapture(panel.header, event.pointerId);
     event.preventDefault();
     return true;
   }
@@ -200,7 +208,7 @@ export class PanelManager {
   _moveSideDockReorder(event) {
     const state = this._dockReorder;
     if (!state) return false;
-    const { panel, dockEl, dropLine } = state;
+    const { panel, dockEl, dropLine, preview } = state;
     this._updateDockDragPreview(event, state);
 
     const dockRect = dockEl.getBoundingClientRect();
@@ -232,6 +240,7 @@ export class PanelManager {
     } else {
       dockEl.appendChild(dropLine);
     }
+    this._placeSourcePanelAtDrop(dockEl, dropLine, panel.element);
     return true;
   }
 
@@ -243,13 +252,9 @@ export class PanelManager {
     const { panel, dockEl, dropLine, preview, header } = state;
     this._dockReorder = null;
 
-    header?.releasePointerCapture?.(state.pointerId);
-    preview?.remove();
+    this._releasePointerCapture(header, state.pointerId);
     this.container.classList.remove('helios-ui--dock-reordering');
-
-    if (dropLine?.parentElement === dockEl) {
-      dockEl.insertBefore(panel.element, dropLine);
-    }
+    preview?.remove();
     dropLine?.remove();
 
     panel.element.classList.remove('helios-ui-panel--dock-source');
@@ -266,13 +271,14 @@ export class PanelManager {
   }
 
   _startFreeDragFromSideDock(event, state) {
-    const { panel, dropLine, preview, header, dragAnchorRatioX, dragAnchorRatioY } = state;
+    const { panel, side, dropLine, preview, header, dragAnchorRatioX, dragAnchorRatioY } = state;
     this._dockReorder = null;
     dropLine?.remove();
     preview?.remove();
-    header?.releasePointerCapture?.(state.pointerId);
+    this._releasePointerCapture(header, state.pointerId);
     this.container.classList.remove('helios-ui--dock-reordering');
     panel.element.classList.remove('helios-ui-panel--dock-source');
+    this._freeDragDockGuards.set(panel.id, side);
 
     const containerRect = this.container.getBoundingClientRect();
     const panelRect = panel.element.getBoundingClientRect();
@@ -294,8 +300,12 @@ export class PanelManager {
   _trySwitchFreeDragToDockReorder(panel, event) {
     if (this._dockReorder) return false;
     if (!panel?._drag || panel._drag.pointerId !== event.pointerId) return false;
+    if (this._hasActiveFreeDragDockGuard(panel, event)) return false;
     const target = resolveDockTarget(panel.dock);
     if (target !== 'left' && target !== 'right') return false;
+    const dockEl = target === 'left' ? this.dockLeft : this.dockRight;
+    const dockRect = dockEl?.getBoundingClientRect?.();
+    if (!this._isPointerInsideRect(event, dockRect)) return false;
     const started = this._startSideDockReorder(panel, event);
     if (!started) return false;
     panel.handlePointerUp(event);
@@ -319,13 +329,8 @@ export class PanelManager {
     title.className = 'helios-ui-dock-drag-preview__title';
     title.textContent = (panel?.titleEl?.textContent ?? panel?.title ?? panel?.id ?? 'Panel').trim();
 
-    const body = doc.createElement('div');
-    body.className = 'helios-ui-dock-drag-preview__body';
-
     header.appendChild(title);
     preview.appendChild(header);
-    preview.appendChild(body);
-    this.container.appendChild(preview);
     return preview;
   }
 
@@ -337,6 +342,66 @@ export class PanelManager {
     const top = event.clientY - containerRect.top - (state?.previewOffsetY ?? 0);
     preview.style.left = `${Math.round(left)}px`;
     preview.style.top = `${Math.round(top)}px`;
+  }
+
+  _placeSourcePanelAtDrop(dockEl, dropLine, panelElement) {
+    if (!dockEl || !dropLine || !panelElement) return;
+    const before = dropLine.nextSibling;
+    if (before === panelElement) return;
+    dockEl.insertBefore(panelElement, before ?? null);
+  }
+
+  _shouldForceFreeWhileDragging(panel, event) {
+    if (!panel?._drag || panel._drag.pointerId !== event?.pointerId) return false;
+    if (this._hasActiveFreeDragDockGuard(panel, event)) return true;
+    const target = resolveDockTarget(panel?.dock);
+    if (target !== 'left' && target !== 'right') return false;
+    const dockEl = target === 'left' ? this.dockLeft : this.dockRight;
+    const dockRect = dockEl?.getBoundingClientRect?.();
+    return !this._isPointerInsideRect(event, dockRect);
+  }
+
+  _hasActiveFreeDragDockGuard(panel, event) {
+    const side = this._freeDragDockGuards.get(panel?.id);
+    if (!side) return false;
+    const leftRect = this.dockLeft?.getBoundingClientRect?.();
+    const rightRect = this.dockRight?.getBoundingClientRect?.();
+    const insideAnySideDock = this._isPointerInsideRect(event, leftRect) || this._isPointerInsideRect(event, rightRect);
+    if (insideAnySideDock) {
+      this._freeDragDockGuards.delete(panel.id);
+      return false;
+    }
+    return true;
+  }
+
+  _clearFreeDragDockGuard(panel, event) {
+    if (!panel?.id) return;
+    if (event?.pointerId != null && panel?._drag && panel._drag.pointerId !== event.pointerId) return;
+    this._freeDragDockGuards.delete(panel.id);
+  }
+
+  _setPointerCapture(element, pointerId) {
+    if (pointerId == null) return;
+    try {
+      element?.setPointerCapture?.(pointerId);
+    } catch {}
+  }
+
+  _releasePointerCapture(element, pointerId) {
+    if (pointerId == null) return;
+    try {
+      if (element?.hasPointerCapture?.(pointerId)) {
+        element.releasePointerCapture(pointerId);
+      }
+    } catch {}
+  }
+
+  _isPointerInsideRect(event, rect) {
+    if (!rect || !event) return false;
+    const x = Number(event.clientX);
+    const y = Number(event.clientY);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
   }
 
   _scaleOffset(offsetPx, fromSizePx, toSizePx) {
@@ -415,9 +480,9 @@ export class PanelManager {
     for (const id of Array.from(this.panels.keys())) {
       this.removePanel(id);
     }
-    this.container.removeEventListener('pointermove', this._boundMove);
-    this.container.removeEventListener('pointerup', this._boundUp);
-    this.container.removeEventListener('pointercancel', this._boundUp);
+    this._eventTarget?.removeEventListener('pointermove', this._boundMove);
+    this._eventTarget?.removeEventListener('pointerup', this._boundUp);
+    this._eventTarget?.removeEventListener('pointercancel', this._boundUp);
     this.dockLeft.remove();
     this.dockRight.remove();
   }

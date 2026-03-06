@@ -50,6 +50,10 @@ helios.labels({
   enabled: true,
   maxVisible: 120,
   source: null, // auto fallback: Label -> Name -> id
+  offsetRadiusFactor: 1, // (centerY - projectedRadius) * factor
+  offsetPx: 4, // additional pixel offset (positive moves up)
+  maxChars: 0, // 0 disables truncation
+  maxRows: 1, // >1 enables wrapping with ellipsis
 });
 ```
 
