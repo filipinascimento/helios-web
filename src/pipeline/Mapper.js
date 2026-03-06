@@ -31,6 +31,23 @@ function validateAttribute(buffer, name, expectedType, expectedDimension) {
   }
 }
 
+function resolveAttributeMetadata(network, scope, name) {
+  if (!network || !name) return null;
+  const infoGetter = scope === 'node' ? 'getNodeAttributeInfo' : 'getEdgeAttributeInfo';
+  const bufferGetter = scope === 'node' ? 'getNodeAttributeBuffer' : 'getEdgeAttributeBuffer';
+  try {
+    const info = network[infoGetter]?.(name);
+    if (info) return info;
+  } catch (_) {
+    // fall back for lightweight/fake networks
+  }
+  try {
+    return network[bufferGetter]?.(name) ?? null;
+  } catch (_) {
+    return null;
+  }
+}
+
 function clamp01(value) {
   if (!Number.isFinite(value)) return 0;
   if (value < 0) return 0;
@@ -367,10 +384,10 @@ function resolvePercentileLookup(mapper, config) {
   const isNodeProxy = mapper.mode === 'edge' && (attr.startsWith('@node.') || attr.startsWith('@nodes.'));
   const name = attr.replace(/^@nodes?\./, '');
   const resolved = normalizeAttributeName(name);
-  const indices = mapper.mode === 'edge' && !isNodeProxy ? network.edgeIndices : network.nodeIndices;
-  if (!indices || typeof indices.length !== 'number') return null;
   const compute = () => {
     try {
+      const indices = mapper.mode === 'edge' && !isNodeProxy ? network.edgeIndices : network.nodeIndices;
+      if (!indices || typeof indices.length !== 'number') return null;
       const buffer = isNodeProxy
         ? network.getNodeAttributeBuffer?.(resolved)
         : (mapper.mode === 'edge' ? network.getEdgeAttributeBuffer?.(resolved) : network.getNodeAttributeBuffer?.(resolved));
@@ -861,11 +878,11 @@ export class Mapper {
     }
 
     if (this.mode === 'node') {
-      const buffer = this.safeGetAttributeBuffer('node', attribute);
-      validateAttribute(buffer, attribute, type, dimension);
+      const info = resolveAttributeMetadata(this.network, 'node', attribute);
+      validateAttribute(info, attribute, type, dimension);
     } else {
-      const buffer = this.safeGetAttributeBuffer('edge', attribute);
-      validateAttribute(buffer, attribute, type, dimension);
+      const info = resolveAttributeMetadata(this.network, 'edge', attribute);
+      validateAttribute(info, attribute, type, dimension);
     }
   }
 
@@ -902,9 +919,9 @@ export class Mapper {
 
   resolveNodeSourceDimension(sourceAttribute, def) {
     if (!sourceAttribute) return null;
-    const buffer = this.safeGetAttributeBuffer('node', sourceAttribute);
-    if (buffer?.dimension != null) {
-      return buffer.dimension;
+    const info = resolveAttributeMetadata(this.network, 'node', sourceAttribute);
+    if (info?.dimension != null) {
+      return info.dimension;
     }
     if (def?.nodeSourceDimension) {
       return def.nodeSourceDimension;
@@ -1004,11 +1021,11 @@ export class Mapper {
         // ignore
       }
     }
-    const sourceBuffer = this.safeGetAttributeBuffer('node', sourceAttribute);
-    const edgeBuffer = this.safeGetAttributeBuffer('edge', attribute);
+    const sourceInfo = resolveAttributeMetadata(this.network, 'node', sourceAttribute);
+    const edgeInfo = resolveAttributeMetadata(this.network, 'edge', attribute);
     const expected = targetDimension ?? computePassthroughTargetDimension(sourceDimension, endpoints, doubleWidth);
-    validateAttribute(sourceBuffer, sourceAttribute, type, sourceDimension);
-    validateAttribute(edgeBuffer, attribute, type, expected);
+    validateAttribute(sourceInfo, sourceAttribute, type, sourceDimension);
+    validateAttribute(edgeInfo, attribute, type, expected);
     if (passthroughOk) {
       this.nodeToEdgeRegistrations.add(attribute);
     } else {
@@ -1018,16 +1035,6 @@ export class Mapper {
     // No explicit buffer bumps here: renderer invalidation for node-to-edge
     // passthrough config changes is handled centrally in GraphLayer (derived
     // version augmentation) to avoid surprising side-effects.
-  }
-
-  safeGetAttributeBuffer(scope, name) {
-    if (!this.network || !name) return null;
-    const getter = scope === 'node' ? 'getNodeAttributeBuffer' : 'getEdgeAttributeBuffer';
-    try {
-      return this.network[getter](name);
-    } catch (_) {
-      return null;
-    }
   }
 
   removeEdgeAttribute(name) {

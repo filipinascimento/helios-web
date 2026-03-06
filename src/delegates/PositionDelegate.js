@@ -127,8 +127,8 @@ export class PositionDelegate {
         return false;
       }
     }
-    const lostNodeIndices = previous?.nodeIndicesRef && !snapshot?.nodeIndicesRef;
-    const lostEdgeIndices = previous?.edgeIndicesRef && !snapshot?.edgeIndicesRef;
+    const lostNodeIndices = previous?.nodeIndicesReadable && !snapshot?.nodeIndicesReadable;
+    const lostEdgeIndices = previous?.edgeIndicesReadable && !snapshot?.edgeIndicesReadable;
     if (!this._topologyDirty && (lostNodeIndices || lostEdgeIndices)) {
       return false;
     }
@@ -151,21 +151,20 @@ export class PositionDelegate {
 
   captureNetworkVersionSnapshot(network) {
     const topology = this._readTopologyVersions(network);
-    const nodeIndices = this._readActiveIndices(network, 'node');
-    const edgeIndices = this._readActiveIndices(network, 'edge');
+    const active = this._readActiveIndexSnapshot(network);
     const nodeIndexAttributeVersion = this._readIndexAttributeVersion(network, 'node');
     const edgeIndexAttributeVersion = this._readIndexAttributeVersion(network, 'edge');
     return {
       topologyNode: topology.node,
       topologyEdge: topology.edge,
-      nodeIndicesVersion: safeVersion(nodeIndices?.version, 0),
-      edgeIndicesVersion: safeVersion(edgeIndices?.version, 0),
-      nodeIndicesCount: safeVersion(nodeIndices?.length, 0),
-      edgeIndicesCount: safeVersion(edgeIndices?.length, 0),
+      nodeIndicesVersion: safeVersion(active?.node?.version, 0),
+      edgeIndicesVersion: safeVersion(active?.edge?.version, 0),
+      nodeIndicesCount: safeVersion(active?.node?.length, 0),
+      edgeIndicesCount: safeVersion(active?.edge?.length, 0),
       nodeIndexAttributeVersion,
       edgeIndexAttributeVersion,
-      nodeIndicesRef: nodeIndices ?? null,
-      edgeIndicesRef: edgeIndices ?? null,
+      nodeIndicesReadable: active?.node instanceof Uint32Array,
+      edgeIndicesReadable: active?.edge instanceof Uint32Array,
     };
   }
 
@@ -188,12 +187,19 @@ export class PositionDelegate {
     }
   }
 
-  _readActiveIndices(network, kind) {
+  _readActiveIndexSnapshot(network) {
     if (!network) return null;
     try {
-      return kind === 'edge'
-        ? (network.edgeIndices ?? null)
-        : (network.nodeIndices ?? null);
+      if (typeof network.withBufferAccess === 'function') {
+        return network.withBufferAccess(() => ({
+          node: network.nodeIndices ?? null,
+          edge: network.edgeIndices ?? null,
+        }), { nodeIndices: true, edgeIndices: true });
+      }
+      return {
+        node: network.nodeIndices ?? null,
+        edge: network.edgeIndices ?? null,
+      };
     } catch (_) {
       return null;
     }

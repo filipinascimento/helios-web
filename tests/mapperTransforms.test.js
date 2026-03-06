@@ -74,8 +74,11 @@ test('percentile transform ranks values across the network', async () => {
   });
 
   visuals.applyMappers({ nodeMapper: mapper, edgeMapper: null });
-  const sizes = network.getNodeAttributeBuffer(NODE_SIZE_ATTRIBUTE).view;
-  approxEqualArray(Array.from(sizes.slice(0, 4)), [0, 1 / 3, 2 / 3, 1], 1e-4);
+  let sizes = null;
+  network.withBufferAccess(() => {
+    sizes = Array.from(network.getNodeAttributeBuffer(NODE_SIZE_ATTRIBUTE).view.slice(0, 4));
+  });
+  approxEqualArray(sizes, [0, 1 / 3, 2 / 3, 1], 1e-4);
 });
 
 test('colormap clamp supports one-sided limits with defaults', async () => {
@@ -102,11 +105,14 @@ test('colormap clamp supports one-sided limits with defaults', async () => {
   });
 
   visuals.applyMappers({ nodeMapper: mapper, edgeMapper: null });
-  const colors = network.getNodeAttributeBuffer(NODE_COLOR_ATTRIBUTE).view;
+  let colors = null;
+  network.withBufferAccess(() => {
+    colors = Array.from(network.getNodeAttributeBuffer(NODE_COLOR_ATTRIBUTE).view.slice(0, 12));
+  });
   const expectedMin = createColormapScale('interpolateInferno', { domain: [0, 1], alpha: 1, clamp: true })(0);
   const expectedDefault = visuals.toRgba('#00ff00ff');
-  const node0 = Array.from(colors.slice(0, 4));
-  const node2 = Array.from(colors.slice(8, 12));
+  const node0 = colors.slice(0, 4);
+  const node2 = colors.slice(8, 12);
 
   approxEqualArray(node0, expectedMin, 1e-6);
   approxEqualArray(node2, expectedDefault, 1e-6);

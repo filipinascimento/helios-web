@@ -27,6 +27,8 @@ ui.createMetricsPanel(); // "Metrics" panel (Degree, Strength, Clustering, Eigen
 
 HeliosUI attaches to Helios’ built-in HTML overlay layer by default (via `helios.layers.addLayer('ui', ...)`).
 
+Layout parameter bindings can describe how a control should be rendered. Numeric bindings may opt into `scale: 'log'` and `notation: 'scientific'`, which makes the Layout panel render a log slider with scientific-notation input while keeping the binding contract layout-agnostic.
+
 ## Attaching / Placement
 
 ### Attach to Helios (recommended)

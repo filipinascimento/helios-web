@@ -425,7 +425,7 @@ export class DensityLayer extends Layer {
     this._degreeCache = {
       network: null,
       edgeVersion: -1,
-      edgeIndicesRef: null,
+      usesOverride: false,
       values: null,
     };
     this._zoomScaleDistanceRef3D = null;
@@ -576,20 +576,21 @@ export class DensityLayer extends Layer {
 
     const uniforms = camera?.getUniforms?.();
     if (!uniforms || !matrixHasFiniteValues(uniforms.viewProjection)) return;
+    this.withBufferAccess(() => {
+      const computed = this.computeWeightsUnsafe(network, cfg);
+      if (!computed || computed.count <= 0) return;
 
-    const computed = this.computeWeights(network, cfg);
-    if (!computed || computed.count <= 0) return;
+      this.runtime.diverging = computed.diverging;
+      this.onRuntimeState?.({ diverging: computed.diverging });
 
-    this.runtime.diverging = computed.diverging;
-    this.onRuntimeState?.({ diverging: computed.diverging });
-
-    if (context.type === 'webgl2') {
-      this.renderWebGL(context, frame, uniforms, computed);
-      return;
-    }
-    if (context.type === 'webgpu') {
-      this.renderWebGPU(context, frame, uniforms, computed);
-    }
+      if (context.type === 'webgl2') {
+        this.renderWebGL(context, frame, uniforms, computed);
+        return;
+      }
+      if (context.type === 'webgpu') {
+        this.renderWebGPU(context, frame, uniforms, computed);
+      }
+    });
   }
 
   canUseWasmNodeIndexWriter(network) {
@@ -662,17 +663,11 @@ export class DensityLayer extends Layer {
     return next;
   }
 
-  ensureStableActiveIndexArray(scope, count) {
-    const key = scope === 'edge' ? '_activeEdgeIndicesArray' : '_activeNodeIndicesArray';
-    const needed = Math.max(0, Math.floor(Number(count) || 0));
-    const existing = this[key];
-    if (!(existing instanceof Uint32Array) || existing.length < needed) {
-      this[key] = new Uint32Array(needed);
-    }
-    return this[key];
+  computeWeights(network, config) {
+    return this.withBufferAccess(() => this.computeWeightsUnsafe(network, config));
   }
 
-  computeWeights(network, config) {
+  computeWeightsUnsafe(network, config) {
     const compareEnabled = config.compareProperty && config.compareProperty !== 'None';
     const needsEdgeIndices = config.property === 'Degree' || (compareEnabled && config.compareProperty === 'Degree');
     const useWasmNodeWriter = this.canUseWasmNodeIndexWriter(network);
@@ -698,42 +693,44 @@ export class DensityLayer extends Layer {
     let overflowRequest = null;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       overflowRequest = null;
-      this.withBufferAccess(() => {
-        let nodeIndices = fallbackNodeIndices;
-        let edgeIndices = fallbackEdgeIndices;
+      let nodeIndices = fallbackNodeIndices;
+      let edgeIndices = fallbackEdgeIndices;
 
-        if (useWasmNodeWriter) {
-          const module = network?.module ?? null;
-          const nodeScratch = this._activeIndexScratch?.node ?? null;
-          if (!module || !nodeScratch?.ptr || nodeScratch.module !== module) {
-            nodeIndices = null;
+      if (useWasmNodeWriter) {
+        const module = network?.module ?? null;
+        const nodeScratch = this._activeIndexScratch?.node ?? null;
+        if (!module || !nodeScratch?.ptr || nodeScratch.module !== module) {
+          nodeIndices = null;
+        } else {
+          const target = new Uint32Array(module.HEAPU32.buffer, nodeScratch.ptr, nodeScratch.capacity);
+          const required = Math.max(0, Math.floor(Number(network.writeActiveNodes(target) || 0)));
+          if (required > nodeScratch.capacity) {
+            overflowRequest = { scope: 'node', count: required };
           } else {
-            const target = new Uint32Array(module.HEAPU32.buffer, nodeScratch.ptr, nodeScratch.capacity);
-            const required = Math.max(0, Math.floor(Number(network.writeActiveNodes(target) || 0)));
-            if (required > nodeScratch.capacity) {
-              overflowRequest = { scope: 'node', count: required };
-              return;
-            }
             nodeIndices = target.subarray(0, required);
           }
         }
+      }
 
-        if (needsEdgeIndices && useWasmEdgeWriter) {
-          const module = network?.module ?? null;
-          const edgeScratch = this._activeIndexScratch?.edge ?? null;
-          if (!module || !edgeScratch?.ptr || edgeScratch.module !== module) {
-            edgeIndices = null;
+      if (!overflowRequest && needsEdgeIndices && useWasmEdgeWriter) {
+        const module = network?.module ?? null;
+        const edgeScratch = this._activeIndexScratch?.edge ?? null;
+        if (!module || !edgeScratch?.ptr || edgeScratch.module !== module) {
+          edgeIndices = null;
+        } else {
+          const target = new Uint32Array(module.HEAPU32.buffer, edgeScratch.ptr, edgeScratch.capacity);
+          const required = Math.max(0, Math.floor(Number(network.writeActiveEdges(target) || 0)));
+          if (required > edgeScratch.capacity) {
+            overflowRequest = { scope: 'edge', count: required };
           } else {
-            const target = new Uint32Array(module.HEAPU32.buffer, edgeScratch.ptr, edgeScratch.capacity);
-            const required = Math.max(0, Math.floor(Number(network.writeActiveEdges(target) || 0)));
-            if (required > edgeScratch.capacity) {
-              overflowRequest = { scope: 'edge', count: required };
-              return;
-            }
             edgeIndices = target.subarray(0, required);
           }
         }
+      }
 
+      if (overflowRequest) {
+        // retry after growing scratch storage
+      } else {
         const count = nodeIndices?.length ?? 0;
         if (!count) {
           result = {
@@ -744,88 +741,75 @@ export class DensityLayer extends Layer {
             positionCount: Math.max(0, Math.floor(Number(network?.nodeCount ?? 0))),
             colormapKey: config.colormap,
           };
-          return;
-        }
-
-        const stableNodeIndices = this.ensureStableActiveIndexArray('node', count);
-        stableNodeIndices.set(nodeIndices);
-        const activeNodeIndices = stableNodeIndices.subarray(0, count);
-
-        let activeEdgeIndices = edgeIndices;
-        if (needsEdgeIndices && edgeIndices) {
-          const edgeCount = edgeIndices.length;
-          const stableEdgeIndices = this.ensureStableActiveIndexArray('edge', edgeCount);
-          stableEdgeIndices.set(edgeIndices);
-          activeEdgeIndices = stableEdgeIndices.subarray(0, edgeCount);
-        }
-
-        if (!this._weightArray || this._lastWeightCount !== count) {
-          this._weightArray = new Float32Array(count);
-          this._lastWeightCount = count;
-        }
-        const weights = this._weightArray;
-
-        const primaryReader = this.makePropertyReader(network, config.property, activeEdgeIndices);
-        const compareReader = compareEnabled
-          ? this.makePropertyReader(network, config.compareProperty, activeEdgeIndices)
-          : null;
-
-        let totalWeight = 0;
-        let totalNegative = 0;
-        let totalPositive = 0;
-
-        for (let i = 0; i < count; i += 1) {
-          const nodeId = activeNodeIndices[i] >>> 0;
-          const primary = primaryReader(nodeId);
-          const compare = compareReader ? compareReader(nodeId) : 0;
-          let value = compareReader ? (compare - primary) : primary;
-          if (!Number.isFinite(value)) value = 0;
-          weights[i] = value;
-          const abs = Math.abs(value);
-          totalWeight += abs;
-          if (value < 0) totalNegative += value;
-          else totalPositive += value;
-        }
-
-        let diverging = false;
-        if (totalWeight > 0 && totalNegative === 0) {
-          for (let i = 0; i < count; i += 1) {
-            weights[i] /= totalWeight;
-          }
-          diverging = false;
         } else {
-          diverging = totalWeight > 0;
-          let totalPositiveMax = Math.max(Math.abs(totalNegative), Math.abs(totalPositive));
-          let totalNegativeMax = Math.max(Math.abs(totalNegative), Math.abs(totalPositive));
-          if (config.normalizeVs) {
-            totalPositiveMax = Math.max(Math.abs(totalPositive), 1e-9);
-            totalNegativeMax = Math.max(Math.abs(totalNegative), 1e-9);
+          if (!this._weightArray || this._lastWeightCount !== count) {
+            this._weightArray = new Float32Array(count);
+            this._lastWeightCount = count;
           }
+          const weights = this._weightArray;
+
+          const primaryReader = this.makePropertyReader(network, config.property, edgeIndices);
+          const compareReader = compareEnabled
+            ? this.makePropertyReader(network, config.compareProperty, edgeIndices)
+            : null;
+
+          let totalWeight = 0;
+          let totalNegative = 0;
+          let totalPositive = 0;
 
           for (let i = 0; i < count; i += 1) {
-            const value = weights[i];
-            if (value < 0 && totalNegative < 0) {
-              weights[i] = value / Math.max(totalNegativeMax, 1e-9);
-            } else if (value > 0 && totalPositive > 0) {
-              weights[i] = value / Math.max(totalPositiveMax, 1e-9);
-            } else if (totalWeight > 0) {
-              weights[i] = value / totalWeight;
-            } else {
-              weights[i] = 0;
+            const nodeId = nodeIndices[i] >>> 0;
+            const primary = primaryReader(nodeId);
+            const compare = compareReader ? compareReader(nodeId) : 0;
+            let value = compareReader ? (compare - primary) : primary;
+            if (!Number.isFinite(value)) value = 0;
+            weights[i] = value;
+            const abs = Math.abs(value);
+            totalWeight += abs;
+            if (value < 0) totalNegative += value;
+            else totalPositive += value;
+          }
+
+          let diverging = false;
+          if (totalWeight > 0 && totalNegative === 0) {
+            for (let i = 0; i < count; i += 1) {
+              weights[i] /= totalWeight;
+            }
+            diverging = false;
+          } else {
+            diverging = totalWeight > 0;
+            let totalPositiveMax = Math.max(Math.abs(totalNegative), Math.abs(totalPositive));
+            let totalNegativeMax = Math.max(Math.abs(totalNegative), Math.abs(totalPositive));
+            if (config.normalizeVs) {
+              totalPositiveMax = Math.max(Math.abs(totalPositive), 1e-9);
+              totalNegativeMax = Math.max(Math.abs(totalNegative), 1e-9);
+            }
+
+            for (let i = 0; i < count; i += 1) {
+              const value = weights[i];
+              if (value < 0 && totalNegative < 0) {
+                weights[i] = value / Math.max(totalNegativeMax, 1e-9);
+              } else if (value > 0 && totalPositive > 0) {
+                weights[i] = value / Math.max(totalPositiveMax, 1e-9);
+              } else if (totalWeight > 0) {
+                weights[i] = value / totalWeight;
+              } else {
+                weights[i] = 0;
+              }
             }
           }
-        }
 
-        const colormapKey = diverging ? config.divergingColormap : config.colormap;
-        result = {
-          nodeIndices: activeNodeIndices,
-          count,
-          weights,
-          diverging,
-          positionCount: Math.max(0, Math.floor(Number(network?.nodeCount ?? 0))),
-          colormapKey,
-        };
-      });
+          const colormapKey = diverging ? config.divergingColormap : config.colormap;
+          result = {
+            nodeIndices,
+            count,
+            weights,
+            diverging,
+            positionCount: Math.max(0, Math.floor(Number(network?.nodeCount ?? 0))),
+            colormapKey,
+          };
+        }
+      }
 
       if (!overflowRequest) {
         return result ?? {
@@ -883,18 +867,17 @@ export class DensityLayer extends Layer {
 
   getDegreeValues(network, edgeIndicesOverride = null) {
     let edgeVersion = 0;
+    const usesOverride = edgeIndicesOverride instanceof Uint32Array;
     try {
       edgeVersion = toFiniteNumber(network?.getTopologyVersions?.()?.edge, 0);
     } catch (_) {
-      edgeVersion = toFiniteNumber(edgeIndicesOverride?.length ?? network?.edgeIndices?.length, 0);
+      edgeVersion = toFiniteNumber(edgeIndicesOverride?.length ?? network?.edgeCount, 0);
     }
-
-    const edgeIndices = edgeIndicesOverride ?? network?.edgeIndices ?? null;
 
     const sameCache = (
       this._degreeCache.network === network
       && this._degreeCache.edgeVersion === edgeVersion
-      && this._degreeCache.edgeIndicesRef === edgeIndices
+      && this._degreeCache.usesOverride === usesOverride
       && this._degreeCache.values
     );
     if (sameCache) {
@@ -903,9 +886,10 @@ export class DensityLayer extends Layer {
 
     const nodeCount = Math.max(0, Math.floor(Number(network?.nodeCount ?? 0)));
     const degrees = new Float32Array(nodeCount);
-    const edgesView = network?.edgesView ?? null;
-
-    if (edgesView && edgeIndices && edgeIndices.length) {
+    this.withBufferAccess(() => {
+      const edgeIndices = edgeIndicesOverride ?? network?.edgeIndices ?? null;
+      const edgesView = network?.edgesView ?? null;
+      if (!edgesView || !edgeIndices || !edgeIndices.length) return;
       for (let i = 0; i < edgeIndices.length; i += 1) {
         const edgeId = edgeIndices[i] >>> 0;
         const base = edgeId * 2;
@@ -914,12 +898,12 @@ export class DensityLayer extends Layer {
         if (source < degrees.length) degrees[source] += 1;
         if (target < degrees.length) degrees[target] += 1;
       }
-    }
+    });
 
     this._degreeCache = {
       network,
       edgeVersion,
-      edgeIndicesRef: edgeIndices,
+      usesOverride,
       values: degrees,
     };
     return degrees;

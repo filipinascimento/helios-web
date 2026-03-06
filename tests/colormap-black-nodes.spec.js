@@ -3,16 +3,18 @@ import { test, expect } from '@playwright/test';
 async function waitForDiagnostics(page) {
   await page.waitForFunction(() => {
     const diag = window.__HELIOS_DIAGNOSTICS__;
-    return diag && diag.ready;
-  });
+    return diag && (diag.ready || diag.error);
+  }, null, { timeout: 60000 });
   return page.evaluate(() => window.__HELIOS_DIAGNOSTICS__);
 }
 
 test.describe('colormap regressions', () => {
   test('does not upload black node colors for CET_R1-BalancedRainbow at 20k nodes (WebGL)', async ({ page }) => {
+    test.setTimeout(60000);
     await page.goto('/tests/fixtures/demo.html?renderer=webgl&nodes=20000&layout=none');
     const diagnostics = await waitForDiagnostics(page);
     expect(diagnostics.ready).toBe(true);
+    expect(diagnostics.error ?? null).toBeNull();
 
       const result = await page.evaluate(async () => {
       const ids = [

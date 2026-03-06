@@ -92,9 +92,15 @@ test('does not overwrite zeroed nodes when positions are already initialized', a
   });
 
   const visuals = new VisualAttributes(network);
-  const before = network.getNodeAttributeBuffer(NODE_POSITION_ATTRIBUTE).view.slice(targetId * 3, targetId * 3 + 3);
+  let before = null;
+  network.withBufferAccess(() => {
+    before = Array.from(network.getNodeAttributeBuffer(NODE_POSITION_ATTRIBUTE).view.slice(targetId * 3, targetId * 3 + 3));
+  });
   visuals.seedMissingPositions({ width: 800, height: 600 });
-  const after = network.getNodeAttributeBuffer(NODE_POSITION_ATTRIBUTE).view.slice(targetId * 3, targetId * 3 + 3);
+  let after = null;
+  network.withBufferAccess(() => {
+    after = Array.from(network.getNodeAttributeBuffer(NODE_POSITION_ATTRIBUTE).view.slice(targetId * 3, targetId * 3 + 3));
+  });
 
   assert.deepEqual(after, before);
 });
@@ -108,21 +114,52 @@ test('seeds nodes when all positions are missing', async () => {
   const visuals = new VisualAttributes(network);
   visuals.seedMissingPositions({ width: 10, height: 20 });
 
-  const pos = network.getNodeAttributeBuffer(NODE_POSITION_ATTRIBUTE).view;
   let seeded = 0;
-  for (let i = 0; i < nodeCount; i += 1) {
-    const offset = i * 3;
-    const x = pos[offset];
-    const y = pos[offset + 1];
-    const z = pos[offset + 2];
-    assert.ok(Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z));
-    if (x !== 0 || y !== 0 || z !== 0) {
-      seeded += 1;
+  network.withBufferAccess(() => {
+    const pos = network.getNodeAttributeBuffer(NODE_POSITION_ATTRIBUTE).view;
+    for (let i = 0; i < nodeCount; i += 1) {
+      const offset = i * 3;
+      const x = pos[offset];
+      const y = pos[offset + 1];
+      const z = pos[offset + 2];
+      assert.ok(Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z));
+      if (x !== 0 || y !== 0 || z !== 0) {
+        seeded += 1;
+      }
+      assert.ok(x >= -5 && x <= 5);
+      assert.ok(y >= -10 && y <= 10);
     }
-    assert.ok(x >= -5 && x <= 5);
-    assert.ok(y >= -10 && y <= 10);
-  }
+  });
   assert.equal(seeded, nodeCount);
+});
+
+test('seedMissingPositions is deterministic and centered for missing positions', async () => {
+  const createSeededPositions = async () => {
+    const network = await HeliosNetwork.create({ directed: false, initialNodes: 0, initialEdges: 0 });
+    network.defineNodeAttribute(NODE_POSITION_ATTRIBUTE, AttributeType.Float, 3);
+    network.addNodes(20);
+    const visuals = new VisualAttributes(network);
+    visuals.seedMissingPositions({ width: 80, height: 40, center: [0, 0, 0] });
+    let copy = null;
+    network.withBufferAccess(() => {
+      copy = network.getNodeAttributeBuffer(NODE_POSITION_ATTRIBUTE).view.slice();
+    });
+    return copy;
+  };
+
+  const first = await createSeededPositions();
+  const second = await createSeededPositions();
+
+  assert.deepEqual(Array.from(first), Array.from(second));
+
+  let sumX = 0;
+  let sumY = 0;
+  for (let i = 0; i < 20; i += 1) {
+    sumX += first[i * 3];
+    sumY += first[i * 3 + 1];
+  }
+  assert.ok(Math.abs(sumX / 20) < 1e-6);
+  assert.ok(Math.abs(sumY / 20) < 1e-6);
 });
 
 test('parses hex colors with alpha in toRgba', async () => {

@@ -920,9 +920,9 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       console.warn('GraphLayerWebGPU: network does not support buffer access sessions');
       return false;
     }
-    const nodeIndices = indices?.node ?? null;
-    const edgeIndices = indices?.edge ?? null;
     return network.withBufferAccess(() => {
+      const nodeIndices = indices?.node ?? network.nodeIndices ?? null;
+      const edgeIndices = indices?.edge ?? network.edgeIndices ?? null;
       const safeGet = (scope, name) => {
         if (!name) return null;
         const getter = scope === 'node' ? network.getNodeAttributeBuffer : network.getEdgeAttributeBuffer;
@@ -1073,16 +1073,6 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       }
     }
 
-    let nodeIndices = null;
-    let edgeIndices = null;
-    try {
-      nodeIndices = network.nodeIndices ?? null;
-      edgeIndices = network.edgeIndices ?? null;
-    } catch (error) {
-      console.warn('GraphLayerWebGPU: failed to read active indices', error);
-      return;
-    }
-
     const edgeNodeAttributes = {
       color: edgeVariant?.colorSource === 'node'
         ? (edgeVariant.colorNodeAttribute ?? NODE_COLOR_ATTRIBUTE)
@@ -1123,7 +1113,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     const ok = this.withSparseGraph(
       network,
       topologyVersions,
-      { node: nodeIndices, edge: edgeIndices },
+      null,
       customEdgeNodeAttributes,
       (geometry) => {
       if (!geometry) return false;

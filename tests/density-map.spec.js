@@ -173,9 +173,7 @@ test.describe('density map panel', () => {
       { timeout: 5000 },
     ).toBeCloseTo(1 / 3, 3);
 
-    const zoomRow = densityTab.locator('.helios-ui-row', {
-      has: page.locator('.helios-ui-label__title', { hasText: 'Zoom' }),
-    }).first();
+    const zoomRow = densityTab.locator('.helios-ui-row').filter({ hasText: 'Zoom' }).first();
     await expect(zoomRow).toBeVisible();
     await ensureToggleEnabled(zoomRow, ':scope');
     await expect.poll(

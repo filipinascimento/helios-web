@@ -38,10 +38,13 @@ test.describe('network load/save', () => {
       await helios.loadNetwork(xnetBlob, { format: 'xnet', disposeOld: true, recreateRenderer: true });
 
       const after = { nodes: helios.network.nodeCount, edges: helios.network.edgeCount };
-      const nodeColors = helios.network.getNodeAttributeBuffer('_helios_visuals_color')?.view ?? null;
-      const colorSum = nodeColors
-        ? Array.from(nodeColors.slice(0, Math.min(nodeColors.length, 256))).reduce((s, v) => s + (Number.isFinite(v) ? v : 0), 0)
-        : 0;
+      let colorSum = 0;
+      helios.network.withBufferAccess(() => {
+        const nodeColors = helios.network.getNodeAttributeBuffer('_helios_visuals_color')?.view ?? null;
+        colorSum = nodeColors
+          ? Array.from(nodeColors.slice(0, Math.min(nodeColors.length, 256))).reduce((s, v) => s + (Number.isFinite(v) ? v : 0), 0)
+          : 0;
+      });
       const targets = await helios.renderAttributeTracking?.();
       const bxnetBlob = await helios.saveNetwork('bxnet', { output: 'blob' });
 
@@ -109,8 +112,8 @@ test.describe('network load/save', () => {
     await page.evaluate(async () => {
       const helios = window.__helios;
       const network = helios.network;
-      const active = Array.from(network.nodeIndices || []);
       network.withBufferAccess(() => {
+        const active = network.nodeIndices || [];
         const pos = network.getNodeAttributeBuffer('_helios_visuals_position').view;
         for (let i = 0; i < active.length; i += 1) {
           const id = active[i];

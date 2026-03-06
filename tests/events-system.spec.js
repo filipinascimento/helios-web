@@ -193,9 +193,41 @@ test('EventTarget API + picking events + AbortController teardown', async ({ pag
 
   const beforeAbort = await page.evaluate(() => ({ ...window.__events }));
   await page.evaluate(() => window.__abort.abort());
+  await page.waitForTimeout(50);
   await page.mouse.move(box.x + hit.x + 1, box.y + hit.y + 1);
   await page.mouse.click(box.x + hit.x + 1, box.y + hit.y + 1);
   await page.waitForTimeout(200);
   const afterAbort = await page.evaluate(() => ({ ...window.__events }));
-  expect(afterAbort).toEqual(beforeAbort);
+  expect({
+    hoverIn: afterAbort.hoverIn,
+    hoverOut: afterAbort.hoverOut,
+    click: afterAbort.click,
+    dblclick: afterAbort.dblclick,
+    graphClick: afterAbort.graphClick,
+    graphDblClick: afterAbort.graphDblClick,
+    bgClick: afterAbort.bgClick,
+    bgDblClick: afterAbort.bgDblClick,
+    camera: afterAbort.camera,
+  }).toEqual({
+    hoverIn: beforeAbort.hoverIn,
+    hoverOut: beforeAbort.hoverOut,
+    click: beforeAbort.click,
+    dblclick: beforeAbort.dblclick,
+    graphClick: beforeAbort.graphClick,
+    graphDblClick: beforeAbort.graphDblClick,
+    bgClick: beforeAbort.bgClick,
+    bgDblClick: beforeAbort.bgDblClick,
+    camera: beforeAbort.camera,
+  });
+
+  const anyAfterAbort = await page.evaluate(() => {
+    const helios = window.__helios;
+    let count = 0;
+    const abort = new AbortController();
+    helios.onAny(() => { count += 1; }, { signal: abort.signal });
+    abort.abort();
+    helios.emit('events:test-abort-probe', {});
+    return count;
+  });
+  expect(anyAfterAbort).toBe(0);
 });

@@ -529,15 +529,15 @@ export class MappersPanel {
       const resolved = resolveName(name);
       const info = getAttributeInfo(scope, rawName);
       const integerType = info?.type != null && isIntegerAttributeType(info.type);
-      const indices = scope === 'network'
-        ? [0]
-        : (isNodeProxy || scope === 'node')
-          ? network.nodeIndices
-          : network.edgeIndices;
-      if (!indices || typeof indices.length !== 'number' || indices.length === 0) return null;
 
       const compute = () => {
         try {
+          const indices = scope === 'network'
+            ? [0]
+            : (isNodeProxy || scope === 'node')
+              ? network.nodeIndices
+              : network.edgeIndices;
+          if (!indices || typeof indices.length !== 'number' || indices.length === 0) return null;
           const buffer = isNodeProxy
             ? network.getNodeAttributeBuffer?.(resolved)
             : (scope === 'edge' ? network.getEdgeAttributeBuffer?.(resolved) : network.getNodeAttributeBuffer?.(resolved));
@@ -610,27 +610,30 @@ export class MappersPanel {
         ? network.getEdgeStringAttribute?.bind(network)
         : network.getNodeStringAttribute?.bind(network);
       if (typeof read !== 'function') return { ok: false, reason: 'String attribute access is unavailable.' };
-      const indices = scope === 'edge' ? network.edgeIndices : network.nodeIndices;
-      const limit = Math.min(indices?.length ?? 0, CATEGORY_STRING_LIMITS.maxScan);
-      const uniques = new Set();
-      let maxLength = 0;
-      for (let i = 0; i < limit; i += 1) {
-        const idx = indices[i];
-        const value = read(name, idx);
-        if (typeof value !== 'string') continue;
-        const len = value.length;
-        if (len > maxLength) maxLength = len;
-        if (len > CATEGORY_STRING_LIMITS.maxLength) {
-          return { ok: false, reason: `String values exceed ${CATEGORY_STRING_LIMITS.maxLength} characters.` };
-        }
-        if (value && value !== '__NA__') {
-          uniques.add(value);
-          if (uniques.size > CATEGORY_STRING_LIMITS.maxUnique) {
-            return { ok: false, reason: `More than ${CATEGORY_STRING_LIMITS.maxUnique} unique values detected.` };
+      const compute = () => {
+        const indices = scope === 'edge' ? network.edgeIndices : network.nodeIndices;
+        const limit = Math.min(indices?.length ?? 0, CATEGORY_STRING_LIMITS.maxScan);
+        const uniques = new Set();
+        let maxLength = 0;
+        for (let i = 0; i < limit; i += 1) {
+          const idx = indices[i];
+          const value = read(name, idx);
+          if (typeof value !== 'string') continue;
+          const len = value.length;
+          if (len > maxLength) maxLength = len;
+          if (len > CATEGORY_STRING_LIMITS.maxLength) {
+            return { ok: false, reason: `String values exceed ${CATEGORY_STRING_LIMITS.maxLength} characters.` };
+          }
+          if (value && value !== '__NA__') {
+            uniques.add(value);
+            if (uniques.size > CATEGORY_STRING_LIMITS.maxUnique) {
+              return { ok: false, reason: `More than ${CATEGORY_STRING_LIMITS.maxUnique} unique values detected.` };
+            }
           }
         }
-      }
-      return { ok: true, uniqueCount: uniques.size, maxLength };
+        return { ok: true, uniqueCount: uniques.size, maxLength };
+      };
+      return typeof network.withBufferAccess === 'function' ? network.withBufferAccess(compute) : compute();
     };
 
     const resolveCategoryDictionary = (scope, rawName) => {
@@ -654,13 +657,13 @@ export class MappersPanel {
       const network = net();
       if (!network) return { counts: new Map(), unknownCount: 0 };
       const isNodeProxy = scope === 'edge' && rawName?.startsWith('@node.');
-      const indices = scope === 'network'
-        ? [0]
-        : (isNodeProxy || scope === 'node')
-          ? network.nodeIndices
-          : network.edgeIndices;
-      if (!indices || typeof indices.length !== 'number') return { counts: new Map(), unknownCount: 0 };
       const compute = () => {
+        const indices = scope === 'network'
+          ? [0]
+          : (isNodeProxy || scope === 'node')
+            ? network.nodeIndices
+            : network.edgeIndices;
+        if (!indices || typeof indices.length !== 'number') return { counts: new Map(), unknownCount: 0 };
         const name = isNodeProxy ? rawName.slice('@node.'.length) : rawName;
         let view = null;
         try {
@@ -763,13 +766,15 @@ export class MappersPanel {
       const network = net();
       if (!network) return null;
       const isNodeProxy = scope === 'edge' && rawName?.startsWith('@node.');
-      const indices = scope === 'network'
-        ? [0]
-        : (isNodeProxy || scope === 'node')
-          ? network.nodeIndices
-          : network.edgeIndices;
-      if (!indices || typeof indices.length !== 'number' || indices.length === 0) return null;
-      const compute = () => buildHistogram(view, min, max, indices);
+      const compute = () => {
+        const indices = scope === 'network'
+          ? [0]
+          : (isNodeProxy || scope === 'node')
+            ? network.nodeIndices
+            : network.edgeIndices;
+        if (!indices || typeof indices.length !== 'number' || indices.length === 0) return null;
+        return buildHistogram(view, min, max, indices);
+      };
       const data = typeof network.withBufferAccess === 'function'
         ? network.withBufferAccess(compute)
         : compute();

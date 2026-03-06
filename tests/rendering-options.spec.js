@@ -96,7 +96,12 @@ test.describe('renderer helpers', () => {
           }
         },
       });
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      renderer.render({
+        network: window.__helios.network,
+        camera: renderer.camera,
+        timestamp: performance.now(),
+      });
       const result = await renderer.readPixels(fb, { x: 0, y: 0, width: 1, height: 1 });
       renderer.setRenderTarget(null);
       return Array.from(result.slice(0, 4));
@@ -317,15 +322,17 @@ test.describe('webgpu visual (headed)', () => {
         { from: 0, to: 1 },
         { from: 0, to: 1 },
       ]);
-      const colors = network.getEdgeAttributeBuffer('_helios_visuals_edge_color').view;
-      const widths = network.getEdgeAttributeBuffer('_helios_visuals_edge_width').view;
-      const opacities = network.getEdgeAttributeBuffer('_helios_visuals_edge_opacity').view;
-      colors.set([1, 0, 0, 1, 1, 0, 0, 1], edges[0] * 8);
-      colors.set([0, 0, 1, 1, 0, 0, 1, 1], edges[1] * 8);
-      widths.set([20, 20], edges[0] * 2);
-      widths.set([20, 20], edges[1] * 2);
-      opacities.set([1.0, 1.0], edges[0] * 2);
-      opacities.set([0.05, 0.05], edges[1] * 2);
+      network.withBufferAccess(() => {
+        const colors = network.getEdgeAttributeBuffer('_helios_visuals_edge_color').view;
+        const widths = network.getEdgeAttributeBuffer('_helios_visuals_edge_width').view;
+        const opacities = network.getEdgeAttributeBuffer('_helios_visuals_edge_opacity').view;
+        colors.set([1, 0, 0, 1, 1, 0, 0, 1], edges[0] * 8);
+        colors.set([0, 0, 1, 1, 0, 0, 1, 1], edges[1] * 8);
+        widths.set([20, 20], edges[0] * 2);
+        widths.set([20, 20], edges[1] * 2);
+        opacities.set([1.0, 1.0], edges[0] * 2);
+        opacities.set([0.05, 0.05], edges[1] * 2);
+      });
 
       const sampleMean = async (mode) => {
         helios.renderer?.setEdgeTransparencyMode?.(mode);

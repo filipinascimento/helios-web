@@ -8,13 +8,17 @@ test('MapperCollection channels receive attribute values', async () => {
   const attr = 'weight';
   network.defineNodeAttribute(attr, AttributeType.Float, 1);
   const nodes = network.addNodes(3);
-  const weights = network.getNodeAttributeBuffer(attr).view;
-  weights[nodes[0]] = 0.2;
-  weights[nodes[1]] = 0.6;
-  weights[nodes[2]] = 1.0;
-  expect(weights[nodes[0]]).toBeCloseTo(0.2);
-  expect(weights[nodes[1]]).toBeCloseTo(0.6);
-  expect(weights[nodes[2]]).toBeCloseTo(1.0);
+  let weights = null;
+  network.withBufferAccess(() => {
+    const view = network.getNodeAttributeBuffer(attr).view;
+    view[nodes[0]] = 0.2;
+    view[nodes[1]] = 0.6;
+    view[nodes[2]] = 1.0;
+    weights = Array.from(nodes, (id) => view[id]);
+  });
+  expect(weights[0]).toBeCloseTo(0.2);
+  expect(weights[1]).toBeCloseTo(0.6);
+  expect(weights[2]).toBeCloseTo(1.0);
 
   const visuals = new VisualAttributes(network);
   const captured = [];
@@ -31,10 +35,10 @@ test('MapperCollection channels receive attribute values', async () => {
   expect([...collection.mappers.values()][0].channels.get('color').attributes).toBe(attr);
   const combined = collection.toCombinedMapper();
   expect([...combined.channels.values()].map((c) => c.attributes)).toContain(attr);
-  const direct = combined.mapItem({ attributes: { [attr]: weights[nodes[0]] } }, { index: nodes[0] });
+  const direct = combined.mapItem({ attributes: { [attr]: weights[0] } }, { index: nodes[0] });
   expect(direct.color).toBeTruthy();
   captured.length = 0;
-  const mapped = nodes.map((id) => combined.mapItem({ attributes: { [attr]: weights[id] } }, { index: id }));
+  const mapped = nodes.map((id, index) => combined.mapItem({ attributes: { [attr]: weights[index] } }, { index: id }));
   expect(mapped.length).toBe(3);
   expect(captured[0]).toBeCloseTo(0.2);
   expect(captured[1]).toBeCloseTo(0.6);

@@ -1,4 +1,4 @@
-import { Layout } from './Layout.js';
+import { Layout, withLogScaleBinding, withVelocityRetentionBinding } from './Layout.js';
 import { GpuForcePositionDelegate } from '../delegates/GpuForcePositionDelegate.js';
 
 const DEFAULT_OPTIONS = {
@@ -11,7 +11,7 @@ const DEFAULT_OPTIONS = {
   sampleCount2D: 64,
   sampleCount3D: 96,
   maxNeighborsPerNode: 64,
-  outputScale: 6,
+  outputScale: 6.5,
   linkDistance: 1,
   kRepulsion: 0.07,
   kAttraction: 0.62,
@@ -24,6 +24,7 @@ const DEFAULT_OPTIONS = {
   alphaDecay: 0.001,
   alphaTarget: 0,
   alphaMin: 0.001,
+  recenter: true,
 };
 
 function toFinite(value, fallback = 0) {
@@ -165,31 +166,31 @@ export class GpuForceLayout extends Layout {
         },
         {
           key: 'kRepulsion',
-          label: 'Repulsion',
-          type: 'number',
-          min: 0,
-          max: 2,
-          step: 0.001,
+          ...withLogScaleBinding({
+            label: 'Repulsion',
+            min: 0.0007,
+            max: 7,
+          }),
           get: () => Number(this.options.kRepulsion ?? DEFAULT_OPTIONS.kRepulsion),
           set: (value) => this.setSettings({ kRepulsion: value }),
         },
         {
           key: 'kAttraction',
-          label: 'Attraction',
-          type: 'number',
-          min: 0,
-          max: 2,
-          step: 0.001,
+          ...withLogScaleBinding({
+            label: 'Attraction',
+            min: 0.0062,
+            max: 62,
+          }),
           get: () => Number(this.options.kAttraction ?? DEFAULT_OPTIONS.kAttraction),
           set: (value) => this.setSettings({ kAttraction: value }),
         },
         {
           key: 'kGravity',
-          label: 'Gravity',
-          type: 'number',
-          min: 0,
-          max: 0.01,
-          step: 0.00001,
+          ...withLogScaleBinding({
+            label: 'Gravity',
+            min: 0.0000035,
+            max: 0.035,
+          }),
           get: () => Number(this.options.kGravity ?? DEFAULT_OPTIONS.kGravity),
           set: (value) => this.setSettings({ kGravity: value }),
         },
@@ -203,16 +204,15 @@ export class GpuForceLayout extends Layout {
           get: () => Number(this.options.eta ?? DEFAULT_OPTIONS.eta),
           set: (value) => this.setSettings({ eta: value }),
         },
-        {
+        withVelocityRetentionBinding({
           key: 'damping',
-          label: 'Damping',
           type: 'number',
           min: 0,
           max: 1,
           step: 0.001,
           get: () => Number(this.options.damping ?? DEFAULT_OPTIONS.damping),
           set: (value) => this.setSettings({ damping: value }),
-        },
+        }),
         {
           key: 'maxStep',
           label: 'Max step',

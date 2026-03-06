@@ -410,16 +410,17 @@ export class SvgLabelController {
       this._hideAll();
       return false;
     }
-    const nodeIndices = this._safe(() => network.nodeIndices, null);
-    if (!nodeIndices || !nodeIndices.length) {
-      this._hideAll();
-      return false;
-    }
-
-    const run = () => this._runFullUpdateUnsafe(uniforms, now, nodeIndices);
+    const run = () => {
+      const nodeIndices = this._safe(() => network.nodeIndices, null);
+      if (!nodeIndices || !nodeIndices.length) {
+        this._hideAll();
+        return false;
+      }
+      return this._runFullUpdateUnsafe(uniforms, now, nodeIndices);
+    };
     if (typeof network.withBufferAccess === 'function') {
       try {
-        return Boolean(network.withBufferAccess(run));
+        return Boolean(network.withBufferAccess(run, { nodeIndices: true }));
       } catch {
         return Boolean(run());
       }

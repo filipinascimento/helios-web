@@ -1054,19 +1054,17 @@ export class HeliosUI {
       const network = this.helios?.network ?? null;
       if (!network || typeof attributeName !== 'string' || !attributeName) return null;
       try {
-        const indices = scope === 'edge' ? network.edgeIndices : network.nodeIndices;
-        if (!indices || !indices.length) return null;
-        const getBuffer = scope === 'edge'
-          ? network.getEdgeAttributeBuffer
-          : network.getNodeAttributeBuffer;
         const getInfo = scope === 'edge'
           ? network.getEdgeAttributeInfo
           : network.getNodeAttributeInfo;
-        if (typeof getBuffer !== 'function') return null;
-        const buffer = getBuffer.call(network, attributeName);
         const info = typeof getInfo === 'function' ? getInfo.call(network, attributeName) : null;
         const isInteger = Boolean(info && isIntegerAttributeType(info.type));
         const read = () => {
+          const buffer = scope === 'edge'
+            ? network.getEdgeAttributeBuffer?.(attributeName)
+            : network.getNodeAttributeBuffer?.(attributeName);
+          const indices = scope === 'edge' ? network.edgeIndices : network.nodeIndices;
+          if (!indices || !indices.length) return null;
           const view = buffer?.view ?? null;
           if (!view || !view.length) return null;
           let min = Infinity;
@@ -1138,14 +1136,14 @@ export class HeliosUI {
       if (!network || !extent || !attributeName) return null;
       let data = null;
       try {
-        const indices = scope === 'edge' ? network.edgeIndices : network.nodeIndices;
-        if (!indices || !indices.length) return null;
         const getBuffer = scope === 'edge'
           ? network.getEdgeAttributeBuffer
           : network.getNodeAttributeBuffer;
         if (typeof getBuffer !== 'function') return null;
         const buffer = getBuffer.call(network, attributeName);
         const compute = () => {
+          const indices = scope === 'edge' ? network.edgeIndices : network.nodeIndices;
+          if (!indices || !indices.length) return null;
           const view = buffer?.view ?? null;
           if (!view || !view.length) return null;
           return buildHistogram(view, extent.min, extent.max, indices);
@@ -2336,43 +2334,47 @@ export class HeliosUI {
       const trimmed = attributeName.trim();
       if (!trimmed) return false;
 
-      let buffer = null;
+      const writeBuffer = () => network.withBufferAccess(() => {
+        const buffer = network.getNodeAttributeBuffer(trimmed);
+        const view = buffer?.view ?? null;
+        if (!view || typeof view.length !== 'number') return false;
+
+        const full = result?.valuesByNode;
+        if (full && typeof full.length === 'number') {
+          const n = Math.min(view.length, full.length);
+          for (let i = 0; i < n; i += 1) {
+            const v = Number(full[i]);
+            view[i] = Number.isFinite(v) ? v : 0;
+          }
+        } else {
+          const nodeIndices = result?.nodeIndices;
+          const values = result?.values;
+          if (!nodeIndices || !values || typeof nodeIndices.length !== 'number' || typeof values.length !== 'number') {
+            return false;
+          }
+          const n = Math.min(nodeIndices.length, values.length);
+          for (let i = 0; i < n; i += 1) {
+            const node = Number(nodeIndices[i]);
+            if (!Number.isInteger(node) || node < 0 || node >= view.length) continue;
+            const v = Number(values[i]);
+            view[node] = Number.isFinite(v) ? v : 0;
+          }
+        }
+
+        if (typeof buffer.bumpVersion === 'function') {
+          buffer.bumpVersion();
+        }
+        return true;
+      });
+
       try {
-        buffer = network.getNodeAttributeBuffer(trimmed);
+        return Boolean(writeBuffer());
       } catch (_) {
         if (typeof network.defineNodeAttribute !== 'function') return false;
-        network.defineNodeAttribute(trimmed, AttributeType.Float, 1);
-        buffer = network.getNodeAttributeBuffer(trimmed);
-      }
-      const view = buffer?.view ?? null;
-      if (!view || typeof view.length !== 'number') return false;
-
-      const full = result?.valuesByNode;
-      if (full && typeof full.length === 'number') {
-        const n = Math.min(view.length, full.length);
-        for (let i = 0; i < n; i += 1) {
-          const v = Number(full[i]);
-          view[i] = Number.isFinite(v) ? v : 0;
-        }
-      } else {
-        const nodeIndices = result?.nodeIndices;
-        const values = result?.values;
-        if (!nodeIndices || !values || typeof nodeIndices.length !== 'number' || typeof values.length !== 'number') {
-          return false;
-        }
-        const n = Math.min(nodeIndices.length, values.length);
-        for (let i = 0; i < n; i += 1) {
-          const node = Number(nodeIndices[i]);
-          if (!Number.isInteger(node) || node < 0 || node >= view.length) continue;
-          const v = Number(values[i]);
-          view[node] = Number.isFinite(v) ? v : 0;
-        }
       }
 
-      if (typeof buffer.bumpVersion === 'function') {
-        buffer.bumpVersion();
-      }
-      return true;
+      network.defineNodeAttribute(trimmed, AttributeType.Float, 1);
+      return Boolean(writeBuffer());
     };
 
     const styleStatusHint = (el) => {
@@ -3720,10 +3722,13 @@ export class HeliosUI {
 
       const started = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
       try {
-        const result = network.measureDegree({ direction });
+        const result = network.measureDegree({
+          direction,
+          outNodeAttribute: outNodeAttribute || null,
+        });
         const ended = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
         const summary = summarizeFiniteValues(result?.values ?? result?.valuesByNode);
-        const wrote = outNodeAttribute ? writeNodeMetricValues(network, outNodeAttribute, result) : false;
+        const wrote = Boolean(outNodeAttribute);
         degreeMaxValue.textContent = formatNumber(summary.max, 4);
         degreeMeanValue.textContent = formatNumber(summary.mean, 4);
         degreeElapsedValue.textContent = `${Math.round(Math.max(0, ended - started))} ms`;
@@ -3764,10 +3769,11 @@ export class HeliosUI {
           direction,
           measure,
           edgeWeightAttribute,
+          outNodeAttribute: outNodeAttribute || null,
         });
         const ended = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
         const summary = summarizeFiniteValues(result?.values ?? result?.valuesByNode);
-        const wrote = outNodeAttribute ? writeNodeMetricValues(network, outNodeAttribute, result) : false;
+        const wrote = Boolean(outNodeAttribute);
         strengthMaxValue.textContent = formatNumber(summary.max, 4);
         strengthMeanValue.textContent = formatNumber(summary.mean, 4);
         strengthElapsedValue.textContent = `${Math.round(Math.max(0, ended - started))} ms`;
@@ -3813,10 +3819,11 @@ export class HeliosUI {
           direction,
           variant,
           edgeWeightAttribute: variant === 'unweighted' ? null : edgeWeightAttribute,
+          outNodeAttribute: outNodeAttribute || null,
         });
         const ended = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
         const summary = summarizeFiniteValues(result?.values ?? result?.valuesByNode);
-        const wrote = outNodeAttribute ? writeNodeMetricValues(network, outNodeAttribute, result) : false;
+        const wrote = Boolean(outNodeAttribute);
         clusteringMaxValue.textContent = formatNumber(summary.max, 4);
         clusteringMeanValue.textContent = formatNumber(summary.mean, 4);
         clusteringElapsedValue.textContent = `${Math.round(Math.max(0, ended - started))} ms`;
@@ -3877,6 +3884,7 @@ export class HeliosUI {
             tolerance,
             initialValues: currentValues,
             executionMode: 'single-thread',
+            outNodeAttribute: outNodeAttribute || null,
           });
           currentValues = lastResult?.valuesByNode ?? currentValues;
           const stepDone = Math.max(1, Number(lastResult?.iterations ?? stepIterations));
@@ -3891,8 +3899,7 @@ export class HeliosUI {
         }
         const ended = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
         const summary = summarizeFiniteValues(currentValues);
-        const resultForWrite = lastResult?.valuesByNode ? lastResult : { valuesByNode: currentValues };
-        const wrote = outNodeAttribute ? writeNodeMetricValues(network, outNodeAttribute, resultForWrite) : false;
+        const wrote = Boolean(outNodeAttribute);
         const converged = lastResult?.converged ? 'converged' : 'max iterations reached';
         const iterations = processedIterations;
         setEigenvectorProgress(1, 1);
@@ -3938,12 +3945,9 @@ export class HeliosUI {
       }
       const edgeWeightAttribute = betweennessWeightSelect.value ? String(betweennessWeightSelect.value) : null;
       const normalize = Boolean(betweennessNormalizeCheckbox.checked);
-      const sourceChunkSize = Math.max(1, Number(betweennessSourceChunkInput.value) || 1);
-      const yieldMs = Math.max(0, Number(betweennessYieldMsInput.value) || 0);
       const outNodeAttribute = betweennessOutAttrInput.value.trim();
 
-      const sourceNodes = Uint32Array.from(network.nodeIndices ?? []);
-      const totalSources = sourceNodes.length >>> 0;
+      const totalSources = Math.max(0, Number(network.nodeCount) || 0);
       if (!totalSources) {
         setBetweennessStatus('No active nodes to process');
         setMetricSectionState('metrics-betweenness', 'error');
@@ -3966,44 +3970,26 @@ export class HeliosUI {
 
       const started = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
       let processedSources = 0;
-      let valuesByNode = null;
       try {
-        while (processedSources < totalSources) {
-          if (signal.aborted) {
-            throw new Error('Canceled');
-          }
-          const chunk = sourceNodes.subarray(processedSources, Math.min(totalSources, processedSources + sourceChunkSize));
-          const partial = network.measureBetweennessCentrality({
-            edgeWeightAttribute,
-            normalize: false,
-            sourceNodes: chunk,
-            accumulate: processedSources > 0,
-            initialValues: valuesByNode,
-            executionMode: 'single-thread',
-          });
-          valuesByNode = partial?.valuesByNode ?? valuesByNode;
-          processedSources += chunk.length;
-          setBetweennessProgress(processedSources, totalSources);
-          setBetweennessStatus(`Running… ${processedSources}/${totalSources} sources`);
-          await defer(yieldMs);
+        if (signal.aborted) {
+          throw new Error('Canceled');
         }
-        if (!valuesByNode) {
+        setBetweennessStatus(`Running… ${totalSources}/${totalSources} sources`);
+        const result = network.measureBetweennessCentrality({
+          edgeWeightAttribute,
+          normalize,
+          executionMode: 'single-thread',
+          outNodeAttribute: outNodeAttribute || null,
+        });
+        const finalValues = result?.valuesByNode ?? null;
+        processedSources = Math.max(0, Number(result?.processedSources) || totalSources);
+        setBetweennessProgress(processedSources, totalSources);
+        if (!finalValues) {
           throw new Error('Betweenness centrality returned no values');
-        }
-        let finalValues = valuesByNode;
-        if (normalize) {
-          const n = Math.max(0, Number(network.nodeCount) || 0);
-          const denom = (n - 1) * (n - 2);
-          const scale = denom > 0 ? (network.directed ? (1 / denom) : (2 / denom)) : 0;
-          const normalizedValues = new Float32Array(finalValues.length);
-          for (let i = 0; i < finalValues.length; i += 1) {
-            normalizedValues[i] = finalValues[i] * scale;
-          }
-          finalValues = normalizedValues;
         }
         const ended = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
         const summary = summarizeFiniteValues(finalValues);
-        const wrote = outNodeAttribute ? writeNodeMetricValues(network, outNodeAttribute, { valuesByNode: finalValues }) : false;
+        const wrote = Boolean(outNodeAttribute);
         setBetweennessProgress(1, 1);
         betweennessMaxValue.textContent = formatNumber(summary.max, 6);
         betweennessSourceCountValue.textContent = String(processedSources);
@@ -4704,15 +4690,15 @@ export class HeliosUI {
       const resolved = resolveName(name);
       const info = getAttributeInfo(scope, rawName);
       const integerType = info?.type != null && isIntegerAttributeType(info.type);
-      const indices = scope === 'network'
-        ? [0]
-        : (isNodeProxy || scope === 'node')
-          ? network.nodeIndices
-          : network.edgeIndices;
-      if (!indices || typeof indices.length !== 'number' || indices.length === 0) return null;
 
       const compute = () => {
         try {
+          const indices = scope === 'network'
+            ? [0]
+            : (isNodeProxy || scope === 'node')
+              ? network.nodeIndices
+              : network.edgeIndices;
+          if (!indices || typeof indices.length !== 'number' || indices.length === 0) return null;
           const buffer = isNodeProxy
             ? network.getNodeAttributeBuffer?.(resolved)
             : (scope === 'edge' ? network.getEdgeAttributeBuffer?.(resolved) : network.getNodeAttributeBuffer?.(resolved));

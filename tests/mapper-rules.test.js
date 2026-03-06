@@ -41,8 +41,11 @@ test('mapper rules can override colormap output (e.g. -1 -> gray)', async () => 
 
   visuals.applyMappers({ nodeMapper, edgeMapper: null });
 
-  const colors = network.getNodeAttributeBuffer(NODE_COLOR_ATTRIBUTE).view;
-  const c0 = [colors[0], colors[1], colors[2], colors[3]];
+  let c0 = null;
+  network.withBufferAccess(() => {
+    const colors = network.getNodeAttributeBuffer(NODE_COLOR_ATTRIBUTE).view;
+    c0 = [colors[0], colors[1], colors[2], colors[3]];
+  });
   approxEqualArray(c0, [128 / 255, 128 / 255, 128 / 255, 1]);
 });
 
@@ -75,9 +78,10 @@ test('mapper rules can override linear output (e.g. -1 -> 0)', async () => {
 
   visuals.applyMappers({ nodeMapper, edgeMapper: null });
 
-  const sizes = network.getNodeAttributeBuffer(NODE_SIZE_ATTRIBUTE).view;
-  assert.equal(sizes[0], 0);
-  assert.equal(sizes[1], 1);
-  assert.equal(sizes[2], 2);
+  network.withBufferAccess(() => {
+    const sizes = network.getNodeAttributeBuffer(NODE_SIZE_ATTRIBUTE).view;
+    assert.equal(sizes[0], 0);
+    assert.equal(sizes[1], 1);
+    assert.equal(sizes[2], 2);
+  });
 });
-

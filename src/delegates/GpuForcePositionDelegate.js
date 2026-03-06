@@ -16,8 +16,10 @@ const DEFAULT_OPTIONS = {
   sampleCount: null,
   sampleCount2D: 64,
   sampleCount3D: 96,
+  exactRepulsionThreshold2D: 256,
+  exactRepulsionThreshold3D: 128,
   maxNeighborsPerNode: 64,
-  outputScale: 6,
+  outputScale: 6.5,
   linkDistance: 1,
   kRepulsion: 0.07,
   kAttraction: 0.62,
@@ -30,6 +32,7 @@ const DEFAULT_OPTIONS = {
   alphaDecay: 0.001,
   alphaTarget: 0,
   alphaMin: 0.001,
+  recenter: true,
   resetAlphaOnTopologyChange: true,
   seed: 0,
 };
@@ -124,6 +127,7 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
   let maxNeighbors = params.counts.w;
   let use3D = params.flags.x;
   let seed = params.flags.z;
+  let exactRepulsionThreshold = params.flags.w;
 
   var pos = loadPosition(nodeId);
   var vel = loadVelocity(nodeId);
@@ -136,25 +140,33 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
   let minDist = max(1e-5, params.constantsB.z);
   let minDistSq = minDist * minDist;
 
-  if (activeCount > 1u && sampleCount > 0u) {
-    let repulsionNormalization = max(1.0, f32(activeCount) / max(1.0, f32(sampleCount)));
-    var s : u32 = 0u;
-    loop {
-      if (s >= sampleCount) {
-        break;
-      }
-      let otherId = sampleActiveId(nodeId, s, activeCount, seed);
-      if (otherId != nodeId) {
-        var delta = pos - loadPosition(otherId);
-        if (use3D == 0u) {
-          delta.z = 0.0;
+  if (activeCount > 1u) {
+    let useExactRepulsion = activeCount <= max(sampleCount, exactRepulsionThreshold);
+    let repulsionIterations = select(sampleCount, activeCount, useExactRepulsion);
+    if (repulsionIterations > 0u) {
+      let repulsionNormalization = select(
+        max(1.0, f32(activeCount) / max(1.0, f32(sampleCount))),
+        1.0,
+        useExactRepulsion,
+      );
+      var s : u32 = 0u;
+      loop {
+        if (s >= repulsionIterations) {
+          break;
         }
-        let distSq = max(dot(delta, delta), minDistSq);
-        let invDist = inverseSqrt(distSq);
-        let repulsionScale = params.constantsA.x * repulsionNormalization * invDist * invDist * invDist;
-        force = force + delta * repulsionScale;
+        let otherId = select(sampleActiveId(nodeId, s, activeCount, seed), activeIds[s], useExactRepulsion);
+        if (otherId != nodeId) {
+          var delta = pos - loadPosition(otherId);
+          if (use3D == 0u) {
+            delta.z = 0.0;
+          }
+          let distSq = max(dot(delta, delta), minDistSq);
+          let invDist = inverseSqrt(distSq);
+          let repulsionScale = params.constantsA.x * repulsionNormalization * invDist * invDist * invDist;
+          force = force + delta * repulsionScale;
+        }
+        s = s + 1u;
       }
-      s = s + 1u;
     }
   }
 
@@ -250,6 +262,93 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
 }
 `;
 
+const RECENTER_WGSL = /* wgsl */ `
+struct RecenterParams {
+  counts : vec4<u32>,
+  center : vec4<f32>,
+};
+
+@group(0) @binding(0) var<storage, read_write> positions : array<f32>;
+@group(0) @binding(1) var<storage, read> activeIds : array<u32>;
+@group(0) @binding(2) var<uniform> params : RecenterParams;
+
+var<workgroup> partialX : array<f32, ${WORKGROUP_SIZE}>;
+var<workgroup> partialY : array<f32, ${WORKGROUP_SIZE}>;
+var<workgroup> partialZ : array<f32, ${WORKGROUP_SIZE}>;
+
+@compute @workgroup_size(${WORKGROUP_SIZE}u)
+fn main(@builtin(local_invocation_id) lid : vec3<u32>) {
+  let tid = lid.x;
+  let activeCount = params.counts.x;
+  if (activeCount == 0u) {
+    return;
+  }
+
+  var sumX = 0.0;
+  var sumY = 0.0;
+  var sumZ = 0.0;
+  var index = tid;
+  loop {
+    if (index >= activeCount) {
+      break;
+    }
+    let nodeId = activeIds[index];
+    let base = nodeId * 3u;
+    sumX = sumX + positions[base + 0u];
+    sumY = sumY + positions[base + 1u];
+    sumZ = sumZ + positions[base + 2u];
+    index = index + ${WORKGROUP_SIZE}u;
+  }
+
+  partialX[tid] = sumX;
+  partialY[tid] = sumY;
+  partialZ[tid] = sumZ;
+  workgroupBarrier();
+
+  var stride = ${WORKGROUP_SIZE / 2}u;
+  loop {
+    if (stride == 0u) {
+      break;
+    }
+    if (tid < stride) {
+      partialX[tid] = partialX[tid] + partialX[tid + stride];
+      partialY[tid] = partialY[tid] + partialY[tid + stride];
+      partialZ[tid] = partialZ[tid] + partialZ[tid + stride];
+    }
+    workgroupBarrier();
+    stride = stride >> 1u;
+  }
+
+  if (tid == 0u) {
+    let invCount = 1.0 / max(1.0, f32(activeCount));
+    partialX[0] = partialX[0] * invCount - params.center.x;
+    partialY[0] = partialY[0] * invCount - params.center.y;
+    partialZ[0] = select(0.0, partialZ[0] * invCount - params.center.z, params.counts.y != 0u);
+  }
+  workgroupBarrier();
+
+  let shiftX = partialX[0];
+  let shiftY = partialY[0];
+  let shiftZ = partialZ[0];
+  index = tid;
+  loop {
+    if (index >= activeCount) {
+      break;
+    }
+    let nodeId = activeIds[index];
+    let base = nodeId * 3u;
+    positions[base + 0u] = positions[base + 0u] - shiftX;
+    positions[base + 1u] = positions[base + 1u] - shiftY;
+    if (params.counts.y != 0u) {
+      positions[base + 2u] = positions[base + 2u] - shiftZ;
+    } else {
+      positions[base + 2u] = params.center.z;
+    }
+    index = index + ${WORKGROUP_SIZE}u;
+  }
+}
+`;
+
 function toFinite(value, fallback = 0) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
@@ -273,6 +372,33 @@ function normalizeCenter(value) {
 
 function createEmptyUintArray() {
   return new Uint32Array(0);
+}
+
+function createEmptyFloatArray() {
+  return new Float32Array(0);
+}
+
+function ensureUint32Capacity(view, length) {
+  const required = Math.max(1, Math.floor(length || 0));
+  if (view instanceof Uint32Array && view.length >= required) {
+    return view;
+  }
+  return new Uint32Array(required);
+}
+
+function ensureFloat32Capacity(view, length) {
+  const required = Math.max(1, Math.floor(length || 0));
+  if (view instanceof Float32Array && view.length >= required) {
+    return view;
+  }
+  return new Float32Array(required);
+}
+
+function copyFloat32Values(target, source, length) {
+  const limit = Math.max(0, Math.min(length | 0, target?.length ?? 0, source?.length ?? 0));
+  for (let i = 0; i < limit; i += 1) {
+    target[i] = source[i];
+  }
 }
 
 function safeRead(fn, fallback) {
@@ -312,18 +438,23 @@ function normalizeBackendType(value) {
 }
 
 function snapshotTopologyInputs(network) {
-  const nodeIndices = safeRead(
-    () => (network?.nodeIndices instanceof Uint32Array ? network.nodeIndices : createEmptyUintArray()),
-    createEmptyUintArray(),
+  const snapshot = safeRead(
+    () => {
+      if (typeof network?.withBufferAccess === 'function') {
+        return network.withBufferAccess(() => ({
+          nodeIndices: network?.nodeIndices instanceof Uint32Array ? network.nodeIndices : createEmptyUintArray(),
+          edgeIndices: network?.edgeIndices instanceof Uint32Array ? network.edgeIndices : createEmptyUintArray(),
+        }), { nodeIndices: true, edgeIndices: true });
+      }
+      return {
+        nodeIndices: network?.nodeIndices instanceof Uint32Array ? network.nodeIndices : createEmptyUintArray(),
+        edgeIndices: network?.edgeIndices instanceof Uint32Array ? network.edgeIndices : createEmptyUintArray(),
+      };
+    },
+    { nodeIndices: createEmptyUintArray(), edgeIndices: createEmptyUintArray() },
   );
-  const edgeIndices = safeRead(
-    () => (network?.edgeIndices instanceof Uint32Array ? network.edgeIndices : createEmptyUintArray()),
-    createEmptyUintArray(),
-  );
-  const edgesView = safeRead(
-    () => (network?.edgesView instanceof Uint32Array ? network.edgesView : createEmptyUintArray()),
-    createEmptyUintArray(),
-  );
+  const nodeIndices = snapshot.nodeIndices;
+  const edgeIndices = snapshot.edgeIndices;
   const nodeCapacityRaw = Number(safeRead(() => network?.nodeCapacity, 0));
   const nodeCapacity = Number.isFinite(nodeCapacityRaw) && nodeCapacityRaw > 0
     ? Math.floor(nodeCapacityRaw)
@@ -333,7 +464,6 @@ function snapshotTopologyInputs(network) {
     nodeCapacity: Math.max(nodeCapacity, inferredCapacity),
     nodeIndices,
     edgeIndices,
-    edgesView,
     positionView: null,
   };
 }
@@ -352,7 +482,7 @@ function isSameTopologySnapshot(previous, next) {
   );
 }
 
-function buildTopologyPayload(topologyInputs, options = {}) {
+function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
   const {
     nodeCapacity = 0,
     nodeIndices = createEmptyUintArray(),
@@ -362,10 +492,10 @@ function buildTopologyPayload(topologyInputs, options = {}) {
   } = topologyInputs ?? {};
 
   const hasExplicitActiveIds = nodeIndices.length > 0;
-  const activeIds = hasExplicitActiveIds
-    ? new Uint32Array(nodeIndices.length)
-    : new Uint32Array(nodeCapacity);
-  const activeMask = new Uint32Array(nodeCapacity);
+  const activeCount = hasExplicitActiveIds ? nodeIndices.length : nodeCapacity;
+  const activeIds = ensureUint32Capacity(scratch.activeIds, activeCount);
+  const activeMask = ensureUint32Capacity(scratch.activeMask, nodeCapacity);
+  activeMask.fill(0, 0, nodeCapacity);
   if (hasExplicitActiveIds) {
     for (let i = 0; i < nodeIndices.length; i += 1) {
       const nodeId = nodeIndices[i] >>> 0;
@@ -381,7 +511,8 @@ function buildTopologyPayload(topologyInputs, options = {}) {
     }
   }
 
-  const neighborCounts = new Uint32Array(nodeCapacity);
+  const neighborCounts = ensureUint32Capacity(scratch.neighborCounts, nodeCapacity);
+  neighborCounts.fill(0, 0, nodeCapacity);
   for (let i = 0; i < edgeIndices.length; i += 1) {
     const edgeId = edgeIndices[i] >>> 0;
     const base = edgeId * 2;
@@ -395,15 +526,18 @@ function buildTopologyPayload(topologyInputs, options = {}) {
     neighborCounts[target] += 1;
   }
 
-  const neighborStarts = new Uint32Array(nodeCapacity);
+  const neighborStarts = ensureUint32Capacity(scratch.neighborStarts, nodeCapacity);
   let neighborLength = 0;
   for (let nodeId = 0; nodeId < nodeCapacity; nodeId += 1) {
     neighborStarts[nodeId] = neighborLength;
     neighborLength += neighborCounts[nodeId];
   }
 
-  const neighbors = new Uint32Array(Math.max(1, neighborLength));
-  const cursor = new Uint32Array(neighborStarts);
+  const neighbors = ensureUint32Capacity(scratch.neighbors, neighborLength);
+  const cursor = ensureUint32Capacity(scratch.cursor, nodeCapacity);
+  for (let nodeId = 0; nodeId < nodeCapacity; nodeId += 1) {
+    cursor[nodeId] = neighborStarts[nodeId];
+  }
   for (let i = 0; i < edgeIndices.length; i += 1) {
     const edgeId = edgeIndices[i] >>> 0;
     const base = edgeId * 2;
@@ -423,8 +557,9 @@ function buildTopologyPayload(topologyInputs, options = {}) {
   const outputScale = Math.max(0.0001, toFinite(options.outputScale, DEFAULT_OPTIONS.outputScale));
   const normalizeInputByOutputScale = Math.abs(outputScale - 1.0) > 1e-6;
   const is3D = options.mode === '3d';
-  const packedPositions = new Float32Array(Math.max(1, nodeCapacity) * 3);
-  const packedOutputPositions = new Float32Array(Math.max(1, nodeCapacity) * 3);
+  const valueCount = Math.max(1, nodeCapacity) * 3;
+  const packedPositions = ensureFloat32Capacity(scratch.packedPositions, valueCount);
+  const packedOutputPositions = ensureFloat32Capacity(scratch.packedOutputPositions, valueCount);
   for (let nodeId = 0; nodeId < nodeCapacity; nodeId += 1) {
     const sourceOffset = nodeId * 3;
     const targetOffset = nodeId * 3;
@@ -462,7 +597,7 @@ function buildTopologyPayload(topologyInputs, options = {}) {
 
   return {
     nodeCapacity,
-    activeCount: activeIds.length,
+    activeCount,
     activeIds,
     activeMask,
     neighborStarts,
@@ -471,6 +606,7 @@ function buildTopologyPayload(topologyInputs, options = {}) {
     packedPositions,
     packedOutputPositions,
     neighborLength,
+    valueCount,
   };
 }
 
@@ -489,6 +625,40 @@ function sampleActiveId(nodeId, iter, activeIds, activeCount, seed) {
   const mixed = hash32((seed + Math.imul(nodeId >>> 0, 2654435761) + Math.imul(iter >>> 0, 747796405)) >>> 0);
   const index = mixed % Math.max(1, activeCount);
   return activeIds[index] >>> 0;
+}
+
+function recenterActivePositions(positions, activeIds, activeCount, center, is3D) {
+  if (!(positions instanceof Float32Array) || !activeIds || activeCount <= 0) return;
+
+  let sumX = 0;
+  let sumY = 0;
+  let sumZ = 0;
+  let validCount = 0;
+  for (let i = 0; i < activeCount; i += 1) {
+    const nodeId = activeIds[i];
+    const base = nodeId * 3;
+    if (base + 2 >= positions.length) continue;
+    sumX += positions[base];
+    sumY += positions[base + 1];
+    sumZ += positions[base + 2];
+    validCount += 1;
+  }
+
+  if (validCount <= 0) return;
+
+  const shiftX = (sumX / validCount) - center[0];
+  const shiftY = (sumY / validCount) - center[1];
+  const shiftZ = is3D ? ((sumZ / validCount) - center[2]) : 0;
+  if (Math.abs(shiftX) <= 1e-9 && Math.abs(shiftY) <= 1e-9 && Math.abs(shiftZ) <= 1e-9) return;
+
+  for (let i = 0; i < activeCount; i += 1) {
+    const nodeId = activeIds[i];
+    const base = nodeId * 3;
+    if (base + 2 >= positions.length) continue;
+    positions[base] -= shiftX;
+    positions[base + 1] -= shiftY;
+    positions[base + 2] = is3D ? (positions[base + 2] - shiftZ) : center[2];
+  }
 }
 
 class WebGLForceComputeBackend {
@@ -619,17 +789,13 @@ class WebGLForceComputeBackend {
     const previousNodeCapacity = this.nodeCapacity;
     this.nodeCapacity = Math.max(0, payload.nodeCapacity | 0);
     this.activeCount = Math.max(0, payload.activeCount | 0);
-    this.activeIds = payload.activeIds instanceof Uint32Array ? new Uint32Array(payload.activeIds) : createEmptyUintArray();
-    this.activeMask = payload.activeMask instanceof Uint32Array ? new Uint32Array(payload.activeMask) : createEmptyUintArray();
-    this.neighborStarts = payload.neighborStarts instanceof Uint32Array
-      ? new Uint32Array(payload.neighborStarts)
-      : createEmptyUintArray();
-    this.neighborCounts = payload.neighborCounts instanceof Uint32Array
-      ? new Uint32Array(payload.neighborCounts)
-      : createEmptyUintArray();
-    this.neighbors = payload.neighbors instanceof Uint32Array ? new Uint32Array(payload.neighbors) : createEmptyUintArray();
+    this.activeIds = payload.activeIds instanceof Uint32Array ? payload.activeIds : createEmptyUintArray();
+    this.activeMask = payload.activeMask instanceof Uint32Array ? payload.activeMask : createEmptyUintArray();
+    this.neighborStarts = payload.neighborStarts instanceof Uint32Array ? payload.neighborStarts : createEmptyUintArray();
+    this.neighborCounts = payload.neighborCounts instanceof Uint32Array ? payload.neighborCounts : createEmptyUintArray();
+    this.neighbors = payload.neighbors instanceof Uint32Array ? payload.neighbors : createEmptyUintArray();
 
-    const valueCount = Math.max(1, this.nodeCapacity) * 3;
+    const valueCount = Math.max(1, payload.valueCount | 0);
     const canPreserveDynamicState = preserveDynamicState
       && previousNodeCapacity === this.nodeCapacity
       && this.positions instanceof Float32Array
@@ -639,16 +805,15 @@ class WebGLForceComputeBackend {
       && this.outputPositions.length >= valueCount
       && this.velocities.length >= valueCount;
     if (!canPreserveDynamicState) {
-      this.positions = payload.packedPositions instanceof Float32Array
-        ? new Float32Array(payload.packedPositions)
-        : new Float32Array(valueCount);
-      this.outputPositions = payload.packedOutputPositions instanceof Float32Array
-        ? new Float32Array(payload.packedOutputPositions)
-        : new Float32Array(this.positions);
-      this.velocities = new Float32Array(valueCount);
+      this.positions = ensureFloat32Capacity(this.positions, valueCount);
+      this.outputPositions = ensureFloat32Capacity(this.outputPositions, valueCount);
+      this.velocities = ensureFloat32Capacity(this.velocities, valueCount);
+      copyFloat32Values(this.positions, payload.packedPositions, valueCount);
+      copyFloat32Values(this.outputPositions, payload.packedOutputPositions ?? payload.packedPositions, valueCount);
+      this.velocities.fill(0, 0, valueCount);
     }
-    this.scratchPositions = new Float32Array(valueCount);
-    this.scratchVelocities = new Float32Array(valueCount);
+    this.scratchPositions = ensureFloat32Capacity(this.scratchPositions, valueCount);
+    this.scratchVelocities = ensureFloat32Capacity(this.scratchVelocities, valueCount);
     return this._uploadOutputTexture();
   }
 
@@ -658,6 +823,10 @@ class WebGLForceComputeBackend {
     const is3D = stepOptions.mode === '3d';
     const center = normalizeCenter(stepOptions.center);
     const sampleCount = Math.max(1, Math.floor(toFinite(stepOptions.sampleCount, DEFAULT_OPTIONS.sampleCount2D)));
+    const exactRepulsionThreshold = Math.max(1, Math.floor(toFinite(
+      stepOptions.exactRepulsionThreshold,
+      is3D ? DEFAULT_OPTIONS.exactRepulsionThreshold3D : DEFAULT_OPTIONS.exactRepulsionThreshold2D,
+    )));
     const maxNeighborsPerNode = Math.max(1, Math.floor(toFinite(
       stepOptions.maxNeighborsPerNode,
       DEFAULT_OPTIONS.maxNeighborsPerNode,
@@ -683,7 +852,11 @@ class WebGLForceComputeBackend {
     const neighborCounts = this.neighborCounts;
     const neighbors = this.neighbors;
 
-    const repulsionNormalization = Math.max(1, this.activeCount / Math.max(1, sampleCount));
+    const useExactRepulsion = this.activeCount <= Math.max(sampleCount, exactRepulsionThreshold);
+    const repulsionIterations = useExactRepulsion ? this.activeCount : sampleCount;
+    const repulsionNormalization = useExactRepulsion
+      ? 1
+      : Math.max(1, this.activeCount / Math.max(1, sampleCount));
     this.seed = this.seed >>> 0;
 
     for (let nodeId = 0; nodeId < this.nodeCapacity; nodeId += 1) {
@@ -714,9 +887,11 @@ class WebGLForceComputeBackend {
       let forceY = 0;
       let forceZ = 0;
 
-      if (this.activeCount > 1 && sampleCount > 0) {
-        for (let s = 0; s < sampleCount; s += 1) {
-          const otherId = sampleActiveId(nodeId, s, activeIds, this.activeCount, this.seed);
+      if (this.activeCount > 1 && repulsionIterations > 0) {
+        for (let s = 0; s < repulsionIterations; s += 1) {
+          const otherId = useExactRepulsion
+            ? activeIds[s]
+            : sampleActiveId(nodeId, s, activeIds, this.activeCount, this.seed);
           if (otherId === nodeId || otherId >= this.nodeCapacity) continue;
           const otherBase = otherId * 3;
           let deltaX = posX - (positionsIn[otherBase] ?? posX);
@@ -798,6 +973,10 @@ class WebGLForceComputeBackend {
     this.velocities = this.scratchVelocities;
     this.scratchVelocities = velocitiesSwap;
 
+    if (stepOptions.recenter === true) {
+      recenterActivePositions(this.positions, this.activeIds, this.activeCount, center, is3D);
+    }
+
     const source = this.positions;
     if (Math.abs(outputScale - 1.0) <= 1e-6) {
       this.outputPositions.set(source);
@@ -875,8 +1054,12 @@ class WebGPUForceComputeBackend {
     this.outputScalePipeline = null;
     this.outputScaleBindGroupLayout = null;
     this.outputScaleBindGroup = null;
+    this.recenterPipeline = null;
+    this.recenterBindGroupLayout = null;
+    this.recenterBindGroup = null;
     this.paramsBuffer = null;
     this.outputScaleParamsBuffer = null;
+    this.recenterParamsBuffer = null;
     this.positionBuffer = null;
     this.outputPositionBuffer = null;
     this.velocityBuffer = null;
@@ -890,6 +1073,7 @@ class WebGPUForceComputeBackend {
     this.nodeCapacity = 0;
     this.activeCount = 0;
     this.seed = (Math.random() * 0xffffffff) >>> 0;
+    this.zeroVelocities = createEmptyFloatArray();
 
     const shaderVisibility = getGpuShaderStage('COMPUTE', 0x4);
     this.shaderVisibility = shaderVisibility;
@@ -905,6 +1089,7 @@ class WebGPUForceComputeBackend {
 
     this._ensurePipeline();
     this._ensureOutputScalePipeline();
+    this._ensureRecenterPipeline();
   }
 
   _ensurePipeline() {
@@ -942,6 +1127,22 @@ class WebGPUForceComputeBackend {
     const module = this.device.createShaderModule({ code: OUTPUT_SCALE_WGSL });
     this.outputScalePipeline = this.device.createComputePipeline({
       layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.outputScaleBindGroupLayout] }),
+      compute: { module, entryPoint: 'main' },
+    });
+  }
+
+  _ensureRecenterPipeline() {
+    if (!this.device || this.recenterPipeline) return;
+    this.recenterBindGroupLayout = this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: this.shaderVisibility, buffer: { type: 'storage' } },
+        { binding: 1, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
+        { binding: 2, visibility: this.shaderVisibility, buffer: { type: 'uniform' } },
+      ],
+    });
+    const module = this.device.createShaderModule({ code: RECENTER_WGSL });
+    this.recenterPipeline = this.device.createComputePipeline({
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.recenterBindGroupLayout] }),
       compute: { module, entryPoint: 'main' },
     });
   }
@@ -990,6 +1191,19 @@ class WebGPUForceComputeBackend {
     });
   }
 
+  _rebuildRecenterBindGroup() {
+    if (!this.recenterBindGroupLayout) return;
+    if (!this.positionBuffer || !this.activeIdsBuffer || !this.recenterParamsBuffer) return;
+    this.recenterBindGroup = this.device.createBindGroup({
+      layout: this.recenterBindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.positionBuffer } },
+        { binding: 1, resource: { buffer: this.activeIdsBuffer } },
+        { binding: 2, resource: { buffer: this.recenterParamsBuffer } },
+      ],
+    });
+  }
+
   syncTopology(payload, options = {}) {
     if (!payload || !this.device) return false;
     const {
@@ -1025,6 +1239,7 @@ class WebGPUForceComputeBackend {
     this._ensureBuffer('neighborsBuffer', Math.max(1, neighbors.length) * 4, this.storageUsage, 'layout:gpu-force:neighbors');
     this._ensureBuffer('paramsBuffer', 256, this.uniformUsage, 'layout:gpu-force:params');
     this._ensureBuffer('outputScaleParamsBuffer', 64, this.uniformUsage, 'layout:gpu-force:output-scale-params');
+    this._ensureBuffer('recenterParamsBuffer', 64, this.uniformUsage, 'layout:gpu-force:recenter-params');
 
     const queue = this.device.queue;
     const canPreserveDynamicState = preserveDynamicState
@@ -1035,29 +1250,40 @@ class WebGPUForceComputeBackend {
       && this.scratchPositionBuffer
       && this.scratchVelocityBuffer;
     if (!canPreserveDynamicState) {
-      queue.writeBuffer(this.positionBuffer, 0, packedPositions);
-      queue.writeBuffer(this.outputPositionBuffer, 0, packedOutputPositions ?? packedPositions);
-      queue.writeBuffer(this.scratchPositionBuffer, 0, packedPositions);
+      const positionBytes = Math.max(4, Math.min(packedPositions.byteLength, Math.max(1, this.nodeCapacity) * 12));
+      queue.writeBuffer(this.positionBuffer, 0, packedPositions.buffer, packedPositions.byteOffset, positionBytes);
+      queue.writeBuffer(
+        this.outputPositionBuffer,
+        0,
+        (packedOutputPositions ?? packedPositions).buffer,
+        (packedOutputPositions ?? packedPositions).byteOffset,
+        positionBytes,
+      );
+      queue.writeBuffer(this.scratchPositionBuffer, 0, packedPositions.buffer, packedPositions.byteOffset, positionBytes);
 
-      const zeroVelocities = new Float32Array(Math.max(1, this.nodeCapacity) * 3);
-      queue.writeBuffer(this.velocityBuffer, 0, zeroVelocities);
-      queue.writeBuffer(this.scratchVelocityBuffer, 0, zeroVelocities);
+      this.zeroVelocities = ensureFloat32Capacity(this.zeroVelocities, Math.max(1, this.nodeCapacity) * 3);
+      this.zeroVelocities.fill(0, 0, Math.max(1, this.nodeCapacity) * 3);
+      const zeroBytes = Math.max(4, Math.min(this.zeroVelocities.byteLength, Math.max(1, this.nodeCapacity) * 12));
+      queue.writeBuffer(this.velocityBuffer, 0, this.zeroVelocities.buffer, this.zeroVelocities.byteOffset, zeroBytes);
+      queue.writeBuffer(this.scratchVelocityBuffer, 0, this.zeroVelocities.buffer, this.zeroVelocities.byteOffset, zeroBytes);
     }
 
-    if (activeIds.length) {
-      queue.writeBuffer(this.activeIdsBuffer, 0, activeIds);
+    if (activeCount > 0) {
+      queue.writeBuffer(this.activeIdsBuffer, 0, activeIds.buffer, activeIds.byteOffset, activeCount * 4);
     }
-    if (activeMask.length) {
-      queue.writeBuffer(this.activeMaskBuffer, 0, activeMask);
-      queue.writeBuffer(this.neighborStartsBuffer, 0, neighborStarts);
-      queue.writeBuffer(this.neighborCountsBuffer, 0, neighborCounts);
+    if (this.nodeCapacity > 0) {
+      const nodeU32BytesUsed = this.nodeCapacity * 4;
+      queue.writeBuffer(this.activeMaskBuffer, 0, activeMask.buffer, activeMask.byteOffset, nodeU32BytesUsed);
+      queue.writeBuffer(this.neighborStartsBuffer, 0, neighborStarts.buffer, neighborStarts.byteOffset, nodeU32BytesUsed);
+      queue.writeBuffer(this.neighborCountsBuffer, 0, neighborCounts.buffer, neighborCounts.byteOffset, nodeU32BytesUsed);
     }
-    if (neighbors.length) {
-      queue.writeBuffer(this.neighborsBuffer, 0, neighbors);
+    if (payload.neighborLength > 0) {
+      queue.writeBuffer(this.neighborsBuffer, 0, neighbors.buffer, neighbors.byteOffset, payload.neighborLength * 4);
     }
 
     this._rebuildBindGroup();
     this._rebuildOutputScaleBindGroup();
+    this._rebuildRecenterBindGroup();
     return true;
   }
 
@@ -1067,6 +1293,12 @@ class WebGPUForceComputeBackend {
     if (!this.outputPositionBuffer) return false;
 
     const sampleCount = Math.max(1, Math.floor(toFinite(stepOptions.sampleCount, 64)));
+    const exactRepulsionThreshold = Math.max(1, Math.floor(toFinite(
+      stepOptions.exactRepulsionThreshold,
+      stepOptions.mode === '3d'
+        ? DEFAULT_OPTIONS.exactRepulsionThreshold3D
+        : DEFAULT_OPTIONS.exactRepulsionThreshold2D,
+    )));
     const maxNeighborsPerNode = Math.max(1, Math.floor(toFinite(stepOptions.maxNeighborsPerNode, 64)));
     // Keep sampled repulsion neighborhoods stable across ticks to reduce
     // stochastic force noise and improve convergence.
@@ -1084,7 +1316,7 @@ class WebGPUForceComputeBackend {
     paramsU32[4] = stepOptions.mode === '3d' ? 1 : 0;
     paramsU32[5] = stepOptions.recenter === true ? 1 : 0;
     paramsU32[6] = this.seed >>> 0;
-    paramsU32[7] = 0;
+    paramsU32[7] = exactRepulsionThreshold >>> 0;
 
     paramsF32[8] = toFinite(stepOptions.kRepulsion, DEFAULT_OPTIONS.kRepulsion);
     paramsF32[9] = toFinite(stepOptions.kAttraction, DEFAULT_OPTIONS.kAttraction);
@@ -1116,6 +1348,29 @@ class WebGPUForceComputeBackend {
     const bytes = Math.max(1, this.nodeCapacity) * 12;
     encoder.copyBufferToBuffer(this.scratchPositionBuffer, 0, this.positionBuffer, 0, bytes);
     encoder.copyBufferToBuffer(this.scratchVelocityBuffer, 0, this.velocityBuffer, 0, bytes);
+
+    if (stepOptions.recenter === true) {
+      this._ensureRecenterPipeline();
+      this._rebuildRecenterBindGroup();
+      if (!this.recenterPipeline || !this.recenterBindGroup || !this.recenterParamsBuffer) {
+        return false;
+      }
+      const recenterParamsBuffer = new ArrayBuffer(8 * 4);
+      const recenterParamsU32 = new Uint32Array(recenterParamsBuffer);
+      const recenterParamsF32 = new Float32Array(recenterParamsBuffer);
+      recenterParamsU32[0] = this.activeCount >>> 0;
+      recenterParamsU32[1] = stepOptions.mode === '3d' ? 1 : 0;
+      recenterParamsF32[4] = center[0];
+      recenterParamsF32[5] = center[1];
+      recenterParamsF32[6] = center[2];
+      this.device.queue.writeBuffer(this.recenterParamsBuffer, 0, recenterParamsBuffer);
+
+      const recenterPass = encoder.beginComputePass({ label: 'layout:gpu-force:recenter' });
+      recenterPass.setPipeline(this.recenterPipeline);
+      recenterPass.setBindGroup(0, this.recenterBindGroup);
+      recenterPass.dispatchWorkgroups(1);
+      recenterPass.end();
+    }
 
     if (Math.abs(outputScale - 1.0) <= 1e-6) {
       encoder.copyBufferToBuffer(this.positionBuffer, 0, this.outputPositionBuffer, 0, bytes);
@@ -1187,6 +1442,7 @@ class WebGPUForceComputeBackend {
     this.neighborsBuffer?.destroy?.();
     this.paramsBuffer?.destroy?.();
     this.outputScaleParamsBuffer?.destroy?.();
+    this.recenterParamsBuffer?.destroy?.();
 
     this.positionBuffer = null;
     this.outputPositionBuffer = null;
@@ -1200,14 +1456,19 @@ class WebGPUForceComputeBackend {
     this.neighborsBuffer = null;
     this.paramsBuffer = null;
     this.outputScaleParamsBuffer = null;
+    this.recenterParamsBuffer = null;
     this.bindGroup = null;
     this.outputScaleBindGroup = null;
+    this.recenterBindGroup = null;
     this.pipeline = null;
     this.outputScalePipeline = null;
+    this.recenterPipeline = null;
     this.bindGroupLayout = null;
     this.outputScaleBindGroupLayout = null;
+    this.recenterBindGroupLayout = null;
     this.nodeCapacity = 0;
     this.activeCount = 0;
+    this.zeroVelocities = createEmptyFloatArray();
   }
 }
 
@@ -1228,6 +1489,16 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     this._webgl = null;
     this._activeCount = 0;
     this._nodeCapacity = 0;
+    this._topologyScratch = {
+      activeIds: createEmptyUintArray(),
+      activeMask: createEmptyUintArray(),
+      neighborStarts: createEmptyUintArray(),
+      neighborCounts: createEmptyUintArray(),
+      neighbors: createEmptyUintArray(),
+      cursor: createEmptyUintArray(),
+      packedPositions: createEmptyFloatArray(),
+      packedOutputPositions: createEmptyFloatArray(),
+    };
   }
 
   didDetach() {
@@ -1268,6 +1539,16 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     this._backendGlRef = null;
     this._activeCount = 0;
     this._nodeCapacity = 0;
+    this._topologyScratch = {
+      activeIds: createEmptyUintArray(),
+      activeMask: createEmptyUintArray(),
+      neighborStarts: createEmptyUintArray(),
+      neighborCounts: createEmptyUintArray(),
+      neighbors: createEmptyUintArray(),
+      cursor: createEmptyUintArray(),
+      packedPositions: createEmptyFloatArray(),
+      packedOutputPositions: createEmptyFloatArray(),
+    };
   }
 
   _resolveBackend(context = {}) {
@@ -1315,12 +1596,6 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     const fallbackInputs = snapshotTopologyInputs(network);
     const topologyInputs = {
       ...fallbackInputs,
-      nodeIndices: versionSnapshot?.nodeIndicesRef instanceof Uint32Array
-        ? versionSnapshot.nodeIndicesRef
-        : fallbackInputs.nodeIndices,
-      edgeIndices: versionSnapshot?.edgeIndicesRef instanceof Uint32Array
-        ? versionSnapshot.edgeIndicesRef
-        : fallbackInputs.edgeIndices,
       nodeCapacity: Number.isFinite(versionSnapshot?.nodeIndicesCount)
         ? Math.max(
           fallbackInputs.nodeCapacity,
@@ -1367,14 +1642,18 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     }
 
     let payload = null;
-    if (typeof network.withBufferAccess === 'function') {
-      network.withBufferAccess(() => {
-        topologyInputs.positionView = network?.getNodeAttributeBuffer?.(NODE_POSITION_ATTRIBUTE)?.view ?? null;
-      });
-    } else {
+    const materializePayload = () => {
+      // Access attribute buffers before taking WASM-backed topology views so
+      // hidden metadata allocation cannot stale a previously captured edgesView.
       topologyInputs.positionView = network?.getNodeAttributeBuffer?.(NODE_POSITION_ATTRIBUTE)?.view ?? null;
+      topologyInputs.edgesView = network?.edgesView instanceof Uint32Array ? network.edgesView : createEmptyUintArray();
+      payload = buildTopologyPayload(topologyInputs, this.options, this._topologyScratch);
+    };
+    if (typeof network.withBufferAccess === 'function') {
+      network.withBufferAccess(materializePayload);
+    } else {
+      materializePayload();
     }
-    payload = buildTopologyPayload(topologyInputs, this.options);
     if (!payload) return;
 
     this._activeCount = payload.activeCount;
@@ -1430,16 +1709,34 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       : (this.options.mode === '3d'
         ? Math.max(1, Math.floor(toFinite(this.options.sampleCount3D, DEFAULT_OPTIONS.sampleCount3D)))
         : Math.max(1, Math.floor(toFinite(this.options.sampleCount2D, DEFAULT_OPTIONS.sampleCount2D))));
+    const exactRepulsionThreshold = Math.max(
+      1,
+      Math.floor(
+        toFinite(
+          this.options.mode === '3d'
+            ? this.options.exactRepulsionThreshold3D
+            : this.options.exactRepulsionThreshold2D,
+          this.options.mode === '3d'
+            ? DEFAULT_OPTIONS.exactRepulsionThreshold3D
+            : DEFAULT_OPTIONS.exactRepulsionThreshold2D,
+        ),
+      ),
+    );
+    const exactDecisionCount = Math.max(sampleCount, exactRepulsionThreshold);
+    const exactRepulsionScale = this._activeCount > 1 && this._activeCount <= exactDecisionCount
+      ? Math.sqrt(this._activeCount / Math.max(1, exactDecisionCount))
+      : 1;
 
     const stepPayload = {
       mode: this.options.mode,
       center: this.options.center,
       recenter: this.options.recenter === true,
       sampleCount,
+      exactRepulsionThreshold,
       maxNeighborsPerNode: Math.max(1, Math.floor(toFinite(this.options.maxNeighborsPerNode, DEFAULT_OPTIONS.maxNeighborsPerNode))),
       outputScale: Math.max(0.0001, toFinite(this.options.outputScale, DEFAULT_OPTIONS.outputScale)),
       linkDistance: Math.max(0.0001, toFinite(this.options.linkDistance, DEFAULT_OPTIONS.linkDistance)),
-      kRepulsion: toFinite(this.options.kRepulsion, DEFAULT_OPTIONS.kRepulsion) * this.alpha,
+      kRepulsion: toFinite(this.options.kRepulsion, DEFAULT_OPTIONS.kRepulsion) * this.alpha * exactRepulsionScale,
       kAttraction: toFinite(this.options.kAttraction, DEFAULT_OPTIONS.kAttraction) * this.alpha,
       kGravity: toFinite(this.options.kGravity, DEFAULT_OPTIONS.kGravity) * this.alpha,
       eta: toFinite(this.options.eta, DEFAULT_OPTIONS.eta) * dtScale,

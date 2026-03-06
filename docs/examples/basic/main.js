@@ -314,7 +314,7 @@ async function bootstrap() {
               sampleCount2D: 64,
               sampleCount3D: 96,
               maxNeighborsPerNode: 64,
-              outputScale: 6,
+              outputScale: 6.5,
               linkDistance: 1,
               kRepulsion: 0.07,
               kAttraction: 0.62,

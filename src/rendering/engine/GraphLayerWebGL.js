@@ -1261,9 +1261,9 @@ export class GraphLayerWebGL extends GraphLayer {
       console.warn('GraphLayerWebGL: network does not support buffer access sessions');
       return false;
     }
-    const nodeIndices = indices?.node ?? null;
-    const edgeIndices = indices?.edge ?? null;
     return network.withBufferAccess(() => {
+      const nodeIndices = indices?.node ?? network.nodeIndices ?? null;
+      const edgeIndices = indices?.edge ?? network.edgeIndices ?? null;
       const safeGet = (scope, name) => {
         if (!name) return null;
         const getter = scope === 'node' ? network.getNodeAttributeBuffer : network.getEdgeAttributeBuffer;
@@ -1593,9 +1593,6 @@ export class GraphLayerWebGL extends GraphLayer {
         topologyVersions = { node: 0, edge: 0 };
       }
     }
-    const nodeIndices = network.nodeIndices ?? null;
-    const edgeIndices = network.edgeIndices ?? null;
-
     const schema = GraphVisualSchema.fromNetwork(network, {
       nodeOutlineUseAttributes: this.nodeOutlineUseAttributes === true,
     });
@@ -1687,7 +1684,7 @@ export class GraphLayerWebGL extends GraphLayer {
     this.withSparseGraph(
       network,
       topologyVersions,
-      { node: nodeIndices, edge: edgeIndices },
+      null,
       customEdgeNodeAttributes,
       (geometry) => {
         if (!geometry) return false;

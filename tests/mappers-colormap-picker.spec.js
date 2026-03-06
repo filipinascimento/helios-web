@@ -26,7 +26,7 @@ test.describe('mappers panel colormap picker', () => {
     await expect(display).toBeVisible();
     await display.click();
 
-    const popover = page.locator('.helios-ui-colormap-popover').first();
+    const popover = page.locator('.helios-ui-colormap-popover:visible').first();
     await expect(popover).toBeVisible();
 
     const search = popover.locator('input.helios-ui-colormap-popover__search').first();

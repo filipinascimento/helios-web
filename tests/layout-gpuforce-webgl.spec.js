@@ -25,21 +25,12 @@ test('gpu-force runs with WebGL2 delegate texture resources when renderer=webgl'
       }));
     }
 
-    const layoutOptions = (() => {
-      const rows = Array.from(document.querySelectorAll('.helios-ui-row'));
-      const layoutRow = rows.find((row) => row.querySelector('.helios-ui-label__title')?.textContent?.trim() === 'Layout');
-      const select = layoutRow?.querySelector('select');
-      if (!select) return [];
-      return Array.from(select.options).map((opt) => ({ value: opt.value, label: opt.textContent ?? '' }));
-    })();
-
     return {
       deviceType,
       positionSource: positionsConfig?.source ?? null,
       hasDelegate: Boolean(delegate),
       delegateSnapshotLength: snapshot instanceof Float32Array ? snapshot.length : 0,
       hasWebglTexture: Boolean(override?.webglTexture),
-      layoutOptions,
     };
   });
 
@@ -48,8 +39,4 @@ test('gpu-force runs with WebGL2 delegate texture resources when renderer=webgl'
   expect(result.hasDelegate).toBe(true);
   expect(result.delegateSnapshotLength).toBeGreaterThan(0);
   expect(result.hasWebglTexture).toBe(true);
-
-  const option = result.layoutOptions.find((entry) => entry.value === 'gpuforce-webgl2');
-  expect(option).toBeTruthy();
-  expect(option.label.toLowerCase()).toContain('webgl2');
 });

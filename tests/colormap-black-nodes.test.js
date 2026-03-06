@@ -46,18 +46,20 @@ test('colormap CET_R1-BalancedRainbow does not produce near-black for reported i
   nodeMapper.channel('color').from('$index').colormap('CET_R1-BalancedRainbow', { domain, alpha: 1, clamp: true }).done();
   visuals.applyMappers({ nodeMapper, edgeMapper: null });
 
-  const colors = network.getNodeAttributeBuffer(NODE_COLOR_ATTRIBUTE).view;
-  for (const nodeId of SUSPECT_NODE_IDS) {
-    const offset = nodeId * 4;
-    const actual = [colors[offset], colors[offset + 1], colors[offset + 2], colors[offset + 3]];
-    const expected = expectedScale(nodeId);
-    const diff = maxAbsDiff(actual, expected);
-    const luminance = actual[0] * 0.2126 + actual[1] * 0.7152 + actual[2] * 0.0722;
+  network.withBufferAccess(() => {
+    const colors = network.getNodeAttributeBuffer(NODE_COLOR_ATTRIBUTE).view;
+    for (const nodeId of SUSPECT_NODE_IDS) {
+      const offset = nodeId * 4;
+      const actual = [colors[offset], colors[offset + 1], colors[offset + 2], colors[offset + 3]];
+      const expected = expectedScale(nodeId);
+      const diff = maxAbsDiff(actual, expected);
+      const luminance = actual[0] * 0.2126 + actual[1] * 0.7152 + actual[2] * 0.0722;
 
-    assert.ok(actual.every((v) => Number.isFinite(v) && v >= 0 && v <= 1), `invalid rgba for node ${nodeId}: ${actual}`);
-    assert.ok(luminance > 0.03, `near-black luminance for node ${nodeId}: ${actual}`);
-    assert.ok(diff < 1e-6, `unexpected colormap mismatch for node ${nodeId}: diff=${diff}`);
-  }
+      assert.ok(actual.every((v) => Number.isFinite(v) && v >= 0 && v <= 1), `invalid rgba for node ${nodeId}: ${actual}`);
+      assert.ok(luminance > 0.03, `near-black luminance for node ${nodeId}: ${actual}`);
+      assert.ok(diff < 1e-6, `unexpected colormap mismatch for node ${nodeId}: diff=${diff}`);
+    }
+  });
 });
 
 test('colormap CET_R1-BalancedRainbow is smooth between adjacent indices near 18.5k (domain 0..19999)', async () => {

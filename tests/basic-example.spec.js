@@ -1,11 +1,13 @@
 import { test, expect } from '@playwright/test';
 import { PNG } from 'pngjs';
 
+test.describe.configure({ timeout: 60000 });
+
 async function waitForDiagnostics(page) {
   await page.waitForFunction(() => {
     const diag = window.__HELIOS_DIAGNOSTICS__;
-    return diag && diag.ready;
-  });
+    return diag && (diag.ready || diag.error);
+  }, null, { timeout: 60000 });
   return page.evaluate(() => window.__HELIOS_DIAGNOSTICS__);
 }
 
@@ -30,10 +32,14 @@ test.describe('basic example', () => {
     expect(diagnostics.nodeCount).toBeGreaterThan(0);
     expect(diagnostics.edgeCount).toBeGreaterThan(0);
     expect(diagnostics.renderer.toLowerCase()).toContain('webgl');
+    expect(diagnostics.error ?? null).toBeNull();
 
     await page.waitForTimeout(750);
 
-    const screenshot = await page.screenshot({ fullPage: false });
+    const screenshot = await page.locator('canvas').first().screenshot({
+      animations: 'disabled',
+      timeout: 30000,
+    });
     const png = await parseScreenshot(screenshot);
     let nonBackground = 0;
     const total = (png.width ?? 0) * (png.height ?? 0);

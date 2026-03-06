@@ -1,4 +1,4 @@
-import { Layout } from './Layout.js';
+import { Layout, withLogScaleBinding } from './Layout.js';
 
 const DEFAULT_SETTINGS = {
   use2D: false,
@@ -261,11 +261,11 @@ export class D3Force3DLayout extends Layout {
         },
         {
           key: 'gravity',
-          label: 'Gravity',
-          type: 'number',
-          min: 0,
-          max: 2,
-          step: 0.001,
+          ...withLogScaleBinding({
+            label: 'Gravity',
+            min: 0.0005,
+            max: 5,
+          }),
           get: () => Number(this.settings.gravity ?? DEFAULT_SETTINGS.gravity),
           set: (value) => this.setSettings({ gravity: value }),
         },
@@ -360,17 +360,19 @@ export class D3Force3DLayout extends Layout {
   }
 
   buildGraphPayload() {
-    const nodeIndices = this.network.nodeIndices;
-    const edgeIndices = this.network.edgeIndices;
-    const edgesView = this.network.edgesView;
-    const edges = new Uint32Array(edgeIndices.length * 2);
-    for (let i = 0; i < edgeIndices.length; i += 1) {
-      const id = edgeIndices[i];
-      const base = id * 2;
-      edges[i * 2] = edgesView[base];
-      edges[i * 2 + 1] = edgesView[base + 1];
-    }
-    return { nodeIndices, edges };
+    return this.network.withBufferAccess(() => {
+      const nodeIndices = this.network.nodeIndices.slice();
+      const edgeIndices = this.network.edgeIndices;
+      const edgesView = this.network.edgesView;
+      const edges = new Uint32Array(edgeIndices.length * 2);
+      for (let i = 0; i < edgeIndices.length; i += 1) {
+        const id = edgeIndices[i];
+        const base = id * 2;
+        edges[i * 2] = edgesView[base];
+        edges[i * 2 + 1] = edgesView[base + 1];
+      }
+      return { nodeIndices, edges };
+    }, { nodeIndices: true, edgeIndices: true, edgesView: true });
   }
 }
 

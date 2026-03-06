@@ -82,17 +82,43 @@ function createTopologyNetwork(positions) {
   };
 }
 
+function createIsolatedTopologyNetwork(positions) {
+  const positionView = new Float32Array(positions);
+  const nodeCount = Math.floor(positionView.length / 3);
+  const nodeIndices = new Uint32Array(nodeCount);
+  for (let i = 0; i < nodeCount; i += 1) {
+    nodeIndices[i] = i;
+  }
+
+  return {
+    nodeCapacity: nodeCount,
+    nodeIndices,
+    edgeIndices: new Uint32Array(0),
+    edgesView: new Uint32Array(0),
+    withBufferAccess: (fn) => fn(),
+    getTopologyVersions: () => ({ node: 1, edge: 1 }),
+    getNodeAttributeBuffer: (name) => {
+      if (name === '_helios_visuals_position') return { view: positionView, version: 1 };
+      if (name === '$index') return { version: 1 };
+      return null;
+    },
+    getEdgeAttributeBuffer: (name) => (name === '$index' ? { version: 1 } : null),
+  };
+}
+
 function createFakeWebGPUDevice() {
   const writes = [];
   const queue = {
-    writeBuffer(buffer, offset, data) {
+    writeBuffer(buffer, offset, data, dataOffset = 0, size = undefined) {
       let copy = null;
       if (data instanceof Float32Array) {
         copy = new Float32Array(data);
       } else if (data instanceof Uint32Array) {
         copy = new Uint32Array(data);
       } else if (data instanceof ArrayBuffer) {
-        copy = new Uint8Array(data.slice(0));
+        const byteOffset = Math.max(0, dataOffset | 0);
+        const byteLength = size == null ? Math.max(0, data.byteLength - byteOffset) : Math.max(0, size | 0);
+        copy = new Uint8Array(data.slice(byteOffset, byteOffset + byteLength));
       } else if (ArrayBuffer.isView(data)) {
         const bytes = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
         copy = new Uint8Array(bytes);
@@ -287,8 +313,14 @@ test('WorkerLayout exposes shared parameter bindings for force and jitter layout
   assert.ok(forceDescriptor.bindings.some((binding) => binding.key === 'kRepulsion'));
 
   const repulsionBinding = forceDescriptor.bindings.find((binding) => binding.key === 'kRepulsion');
+  assert.equal(repulsionBinding.scale, 'log');
+  assert.equal(repulsionBinding.notation, 'scientific');
   repulsionBinding.set(4.5);
   assert.equal(forceLayout.options.kRepulsion, 4.5);
+
+  const dampingBinding = forceDescriptor.bindings.find((binding) => binding.key === 'damping');
+  assert.equal(dampingBinding.label, 'Velocity retention');
+  assert.match(dampingBinding.hint, /momentum/i);
 
   const jitterLayout = new WorkerLayout(network, visuals, { layout: 'jitter', jitter: 2 });
   const jitterDescriptor = jitterLayout.getParameterBindings();
@@ -323,6 +355,14 @@ test('GpuForceLayout exposes shared parameter bindings and can reheat alpha', ()
   assert.equal(descriptor.key, 'gpu-force');
   assert.ok(descriptor.bindings.some((binding) => binding.key === 'alphaCurrent'));
 
+  const repulsionBinding = descriptor.bindings.find((binding) => binding.key === 'kRepulsion');
+  assert.equal(repulsionBinding.scale, 'log');
+  assert.equal(repulsionBinding.notation, 'scientific');
+
+  const dampingBinding = descriptor.bindings.find((binding) => binding.key === 'damping');
+  assert.equal(dampingBinding.label, 'Velocity retention');
+  assert.match(dampingBinding.hint, /momentum/i);
+
   layout.positionDelegate.alpha = 0.1;
   layout.reheat();
   assert.equal(layout.positionDelegate.alpha, 0.75);
@@ -356,13 +396,19 @@ test('GpuForcePositionDelegate normalizes simulation seed positions while preser
 
   const simSeed = writes.find((entry) => entry.label === 'layout:gpu-force:positions');
   const visibleSeed = writes.find((entry) => entry.label === 'layout:gpu-force:positions-output');
-  assert.ok(simSeed?.data instanceof Float32Array);
-  assert.ok(visibleSeed?.data instanceof Float32Array);
+  const simSeedData = simSeed?.data instanceof Float32Array
+    ? simSeed.data
+    : new Float32Array(simSeed?.data?.buffer ?? new ArrayBuffer(0));
+  const visibleSeedData = visibleSeed?.data instanceof Float32Array
+    ? visibleSeed.data
+    : new Float32Array(visibleSeed?.data?.buffer ?? new ArrayBuffer(0));
+  assert.ok(simSeedData instanceof Float32Array);
+  assert.ok(visibleSeedData instanceof Float32Array);
 
-  approx(simSeed.data[0], 10);
-  approx(simSeed.data[3], -10);
-  approx(visibleSeed.data[0], 60);
-  approx(visibleSeed.data[3], -60);
+  approx(simSeedData[0], 10);
+  approx(simSeedData[3], -10);
+  approx(visibleSeedData[0], 60);
+  approx(visibleSeedData[3], -60);
 });
 
 test('GpuForcePositionDelegate exposes WebGL2 texture resource when running on WebGL backend', () => {
@@ -460,4 +506,157 @@ test('GpuForcePositionDelegate WebGL2 backend advances layout and updates snapsh
   assert.notEqual(after[0], before[0]);
   assert.equal(after[2], 0);
   assert.ok(getTexImageCalls() >= 2);
+});
+
+test('GpuForcePositionDelegate uses exact repulsion for small active sets', async () => {
+  const network = createIsolatedTopologyNetwork([
+    -20, 0, 0,
+    0, 0, 0,
+    20, 0, 0,
+  ]);
+  const { gl } = createFakeWebGL2Context();
+  const exactDelegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    center: [0, 0, 0],
+    outputScale: 1,
+    sampleCount2D: 3,
+    recenter: false,
+  });
+  const sampledDelegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    center: [0, 0, 0],
+    outputScale: 1,
+    sampleCount2D: 64,
+    recenter: false,
+  });
+
+  exactDelegate.onAttach({ network, backend: 'webgl2', gl });
+  sampledDelegate.onAttach({ network, backend: 'webgl2', gl });
+  exactDelegate._webgl.seed = 123;
+  sampledDelegate._webgl.seed = 123;
+
+  exactDelegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
+  sampledDelegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
+
+  const exactSnapshot = await exactDelegate.snapshotNodePositions({ network, backend: 'webgl2', gl });
+  const sampledSnapshot = await sampledDelegate.snapshotNodePositions({ network, backend: 'webgl2', gl });
+
+  assert.ok(exactSnapshot instanceof Float32Array);
+  assert.ok(sampledSnapshot instanceof Float32Array);
+  assert.equal(exactSnapshot.length, sampledSnapshot.length);
+  for (let i = 0; i < exactSnapshot.length; i += 1) {
+    approx(exactSnapshot[i], sampledSnapshot[i], 1e-6);
+  }
+});
+
+test('GpuForcePositionDelegate exact repulsion threshold overrides a smaller sample budget', async () => {
+  const network = createIsolatedTopologyNetwork([
+    -20, 0, 0,
+    -10, 0, 0,
+    0, 0, 0,
+    10, 0, 0,
+    20, 0, 0,
+  ]);
+  const { gl } = createFakeWebGL2Context();
+  const thresholdDelegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    center: [0, 0, 0],
+    outputScale: 1,
+    sampleCount2D: 2,
+    exactRepulsionThreshold2D: 8,
+    recenter: false,
+  });
+  const exactDelegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    center: [0, 0, 0],
+    outputScale: 1,
+    sampleCount2D: 8,
+    recenter: false,
+  });
+
+  thresholdDelegate.onAttach({ network, backend: 'webgl2', gl });
+  exactDelegate.onAttach({ network, backend: 'webgl2', gl });
+  thresholdDelegate._webgl.seed = 123;
+  exactDelegate._webgl.seed = 123;
+
+  thresholdDelegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
+  exactDelegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
+
+  const thresholdSnapshot = await thresholdDelegate.snapshotNodePositions({ network, backend: 'webgl2', gl });
+  const exactSnapshot = await exactDelegate.snapshotNodePositions({ network, backend: 'webgl2', gl });
+
+  assert.ok(thresholdSnapshot instanceof Float32Array);
+  assert.ok(exactSnapshot instanceof Float32Array);
+  assert.equal(thresholdSnapshot.length, exactSnapshot.length);
+  for (let i = 0; i < thresholdSnapshot.length; i += 1) {
+    approx(thresholdSnapshot[i], exactSnapshot[i], 1e-4);
+  }
+});
+
+test('GpuForcePositionDelegate reads edgesView after position buffer lookup during topology sync', () => {
+  const positionView = new Float32Array([
+    0, 0, 0,
+    1, 0, 0,
+    2, 0, 0,
+  ]);
+  const staleEdgesView = new Uint32Array([0, 0, 0, 0]);
+  const freshEdgesView = new Uint32Array([0, 1, 1, 2]);
+  const network = {
+    nodeCapacity: 3,
+    nodeIndices: new Uint32Array([0, 1, 2]),
+    edgeIndices: new Uint32Array([0, 1]),
+    edgesView: staleEdgesView,
+    withBufferAccess(fn) {
+      return fn();
+    },
+    getTopologyVersions: () => ({ node: 1, edge: 1 }),
+    getNodeAttributeBuffer(name) {
+      if (name === '_helios_visuals_position') {
+        this.edgesView = freshEdgesView;
+        return { view: positionView, version: 1 };
+      }
+      if (name === '$index') return { version: 1 };
+      return null;
+    },
+    getEdgeAttributeBuffer(name) {
+      if (name === '$index') return { version: 1 };
+      return null;
+    },
+  };
+  const { gl } = createFakeWebGL2Context();
+  const delegate = new GpuForcePositionDelegate({ mode: '2d' });
+
+  delegate.onAttach({ network, backend: 'webgl2', gl });
+
+  assert.deepEqual(Array.from(delegate._webgl.neighborCounts), [1, 2, 1]);
+});
+
+test('GpuForcePositionDelegate recenters active nodes around the configured center', async () => {
+  const network = createIsolatedTopologyNetwork([
+    10, 5, 0,
+    20, 5, 0,
+    30, 5, 0,
+  ]);
+  const { gl } = createFakeWebGL2Context();
+  const delegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    center: [0, 0, 0],
+    outputScale: 1,
+    kRepulsion: 0,
+    kAttraction: 0,
+    kGravity: 0,
+    damping: 0,
+    recenter: true,
+  });
+
+  delegate.onAttach({ network, backend: 'webgl2', gl });
+  delegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
+
+  const snapshot = await delegate.snapshotNodePositions({ network, backend: 'webgl2', gl });
+  assert.ok(snapshot instanceof Float32Array);
+
+  const centroidX = (snapshot[0] + snapshot[3] + snapshot[6]) / 3;
+  const centroidY = (snapshot[1] + snapshot[4] + snapshot[7]) / 3;
+  approx(centroidX, 0, 1e-6);
+  approx(centroidY, 0, 1e-6);
 });

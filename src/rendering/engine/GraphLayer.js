@@ -370,7 +370,7 @@ export class GraphLayer extends Layer {
       : 0;
     const countFromActiveIndices = (() => {
       try {
-        return Math.max(0, Math.floor(Number(network?.nodeIndices?.length ?? 0)));
+        return Math.max(0, Math.floor(Number(network?.nodeCount ?? 0)));
       } catch (_) {
         return 0;
       }

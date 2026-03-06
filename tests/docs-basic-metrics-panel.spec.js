@@ -126,16 +126,15 @@ test.describe('docs basic demo metrics panel', () => {
     const snapshot = await page.evaluate(() => {
       const helios = window.__helios;
       const net = helios?.network;
-      const node = net?.nodeIndices?.[0] ?? 0;
+      let node = 0;
       let maxValue = null;
-      try {
+      net?.withBufferAccess?.(() => {
+        node = net?.nodeIndices?.[0] ?? 0;
         const buffer = net?.getNodeAttributeBuffer?.('dim_max_test');
         if (buffer?.view) {
           maxValue = Number(buffer.view[node]);
         }
-      } catch (_) {
-        maxValue = null;
-      }
+      }, { nodeIndices: true });
       return {
         node,
         hasDimMaxAttr: Boolean(net?.hasNodeAttribute?.('dim_max_test') || net?._nodeAttributes?.has?.('dim_max_test')),
@@ -188,18 +187,18 @@ test.describe('docs basic demo metrics panel', () => {
     await page.evaluate(() => {
       const net = window.__helios?.network;
       if (!net || typeof net.defineEdgeAttribute !== 'function' || typeof net.getEdgeAttributeBuffer !== 'function') return;
-      try {
-        net.getEdgeAttributeBuffer('metrics_weight_test');
-      } catch (_) {
+      if (!net.hasEdgeAttribute?.('metrics_weight_test', true)) {
         net.defineEdgeAttribute('metrics_weight_test', 2, 1);
       }
-      const edgeBuffer = net.getEdgeAttributeBuffer('metrics_weight_test');
-      const edgeIndices = net.edgeIndices ?? [];
-      for (let i = 0; i < edgeIndices.length; i += 1) {
-        const edge = edgeIndices[i];
-        edgeBuffer.view[edge] = 1 + ((i % 11) / 10);
-      }
-      if (typeof edgeBuffer.bumpVersion === 'function') edgeBuffer.bumpVersion();
+      net.withBufferAccess(() => {
+        const edgeBuffer = net.getEdgeAttributeBuffer('metrics_weight_test');
+        const edgeIndices = net.edgeIndices ?? [];
+        for (let i = 0; i < edgeIndices.length; i += 1) {
+          const edge = edgeIndices[i];
+          edgeBuffer.view[edge] = 1 + ((i % 11) / 10);
+        }
+        if (typeof edgeBuffer.bumpVersion === 'function') edgeBuffer.bumpVersion();
+      }, { edgeIndices: true });
     });
 
     const degreeItem = await openSubpanel('Degree');
@@ -266,21 +265,32 @@ test.describe('docs basic demo metrics panel', () => {
 
     const snapshot = await page.evaluate(() => {
       const net = window.__helios?.network;
-      const node = net?.nodeIndices?.[0] ?? 0;
+      let node = 0;
+      const values = {
+        degree: null,
+        strength: null,
+        clustering: null,
+        eigenvector: null,
+        betweenness: null,
+      };
+      net?.withBufferAccess?.(() => {
+        node = net?.nodeIndices?.[0] ?? 0;
+        const getValue = (name) => {
+          const view = net?.getNodeAttributeBuffer?.(name)?.view;
+          if (!view) return null;
+          return Number(view[node]);
+        };
+        values.degree = getValue('degree_test');
+        values.strength = getValue('strength_test');
+        values.clustering = getValue('clustering_test');
+        values.eigenvector = getValue('eigen_test');
+        values.betweenness = getValue('betweenness_test');
+      }, { nodeIndices: true });
       const hasAttr = (name) => {
         try {
           return Boolean(net?.hasNodeAttribute?.(name) || net?._nodeAttributes?.has?.(name));
         } catch (_) {
           return false;
-        }
-      };
-      const getValue = (name) => {
-        try {
-          const view = net?.getNodeAttributeBuffer?.(name)?.view;
-          if (!view) return null;
-          return Number(view[node]);
-        } catch (_) {
-          return null;
         }
       };
       return {
@@ -299,11 +309,11 @@ test.describe('docs basic demo metrics panel', () => {
           betweenness: hasAttr('betweenness_test'),
         },
         values: {
-          degree: getValue('degree_test'),
-          strength: getValue('strength_test'),
-          clustering: getValue('clustering_test'),
-          eigenvector: getValue('eigen_test'),
-          betweenness: getValue('betweenness_test'),
+          degree: values.degree,
+          strength: values.strength,
+          clustering: values.clustering,
+          eigenvector: values.eigenvector,
+          betweenness: values.betweenness,
         },
       };
     });

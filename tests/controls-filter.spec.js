@@ -35,6 +35,7 @@ test.describe('filter panel', () => {
     await nodeAttr.selectOption('weight');
 
     const nodeMinSlider = filterPanel.locator('[data-testid="controls-filter-node-min-slider"]').first();
+    await expect(nodeMinSlider).toBeVisible();
     await nodeMinSlider.evaluate((el) => {
       el.value = '0.6';
       el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -72,6 +73,7 @@ test.describe('filter panel', () => {
     await edgeAttr.selectOption('intensity');
 
     const edgeMinSlider = filterPanel.locator('[data-testid="controls-filter-edge-min-slider"]').first();
+    await expect(edgeMinSlider).toBeVisible();
     await edgeMinSlider.evaluate((el) => {
       el.value = '0.7';
       el.dispatchEvent(new Event('input', { bubbles: true }));

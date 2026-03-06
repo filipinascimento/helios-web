@@ -46,6 +46,8 @@ const EDGE_CHANNEL_DEFAULT_NODE_ATTRIBUTE = {
   endpointState: NODE_STATE_ATTRIBUTE,
 };
 
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+
 function normalizeEndpoints(value) {
   if (value === 'source' || value === 'from') return 'source';
   if (value === 'destination' || value === 'target' || value === 'to') return 'destination';
@@ -99,6 +101,43 @@ function expandAttributeData({ view, count, fromDimension, toDimension }) {
     }
   }
   return result;
+}
+
+function computeSeedPosition(nodeId, nodeCount, bounds = {}) {
+  const mode = bounds.mode === '3d' ? '3d' : '2d';
+  const width = Math.max(1, Number(bounds.width) || 1);
+  const height = Math.max(1, Number(bounds.height) || 1);
+  const depth = Math.max(0, Number(bounds.depth) || 0);
+  const center = Array.isArray(bounds.center) ? bounds.center : [0, 0, 0];
+  const cx = Number.isFinite(center[0]) ? center[0] : 0;
+  const cy = Number.isFinite(center[1]) ? center[1] : 0;
+  const cz = Number.isFinite(center[2]) ? center[2] : 0;
+  const order = Math.max(0, Math.floor(Number(nodeId) || 0));
+  const count = Math.max(1, Math.floor(Number(nodeCount) || 1));
+
+  if (count <= 1) {
+    return [cx, cy, cz];
+  }
+
+  const t = (order + 0.5) / count;
+  const angle = order * GOLDEN_ANGLE;
+
+  if (mode === '3d') {
+    const zNorm = 1 - (2 * t);
+    const radialNorm = Math.sqrt(Math.max(0, 1 - (zNorm * zNorm)));
+    return [
+      cx + (Math.cos(angle) * radialNorm * width * 0.35),
+      cy + (Math.sin(angle) * radialNorm * height * 0.35),
+      cz + (zNorm * depth * 0.35),
+    ];
+  }
+
+  const radialNorm = Math.sqrt(t);
+  return [
+    cx + (Math.cos(angle) * radialNorm * width * 0.35),
+    cy + (Math.sin(angle) * radialNorm * height * 0.35),
+    cz,
+  ];
 }
 
 /**
@@ -159,26 +198,20 @@ export class VisualAttributes {
 
   getNodeAttributeView(name) {
     if (!this.network) return null;
-    const read = () => {
-      try {
-        return this.network.getNodeAttributeBuffer(name)?.view ?? null;
-      } catch (_) {
-        return null;
-      }
-    };
-    return this.withBufferAccess(read);
+    try {
+      return this.network.getNodeAttributeBuffer(name)?.view ?? null;
+    } catch (_) {
+      return null;
+    }
   }
 
   getEdgeAttributeView(name) {
     if (!this.network) return null;
-    const read = () => {
-      try {
-        return this.network.getEdgeAttributeBuffer(name)?.view ?? null;
-      } catch (_) {
-        return null;
-      }
-    };
-    return this.withBufferAccess(read);
+    try {
+      return this.network.getEdgeAttributeBuffer(name)?.view ?? null;
+    } catch (_) {
+      return null;
+    }
   }
 
   /**
@@ -187,9 +220,9 @@ export class VisualAttributes {
    * active edge that still has an uninitialized (zero/invalid) opacity.
    */
   seedMissingEdgeOpacity() {
-    const edgeIndices = this.network?.edgeIndices;
-    if (!edgeIndices?.length) return;
     this.withBufferAccess(() => {
+      const edgeIndices = this.network?.edgeIndices;
+      if (!edgeIndices?.length) return;
       const opacities = this.edgeOpacities;
       if (!opacities) return;
       let touched = false;
@@ -388,20 +421,21 @@ export class VisualAttributes {
 
   applyNodeMapper(mapper, visualConfig) {
     if (!mapper?.channels?.size) return;
-    const nodeIndices = this.network?.nodeIndices;
+    const nodeCount = this.network?.nodeCount ?? 0;
     const nodeChannels = [...mapper.channels.keys()];
     this.debug?.log('mapper', 'Applying node mapper', {
-      nodes: nodeIndices?.length ?? 0,
+      nodes: nodeCount,
       channels: mapper.channels.size,
       channelNames: nodeChannels,
     });
     for (const channel of nodeChannels) {
       this.debug?.log('mapper', 'Applying node channel start', {
         channel,
-        nodes: nodeIndices?.length ?? 0,
+        nodes: nodeCount,
       });
     }
     this.withBufferAccess(() => {
+      const nodeIndices = this.network?.nodeIndices;
       const attributes = this.collectAttributeNames(mapper, 'node');
       const buffers = this.resolveNodeAttributeBuffers(attributes.node);
       const visuals = {
@@ -433,28 +467,29 @@ export class VisualAttributes {
     for (const channel of nodeChannels) {
       this.debug?.log('mapper', 'Applying node channel finish', {
         channel,
-        nodes: nodeIndices?.length ?? 0,
+        nodes: nodeCount,
       });
     }
-    this.debug?.log('mapper', 'Node mapper applied', { nodes: nodeIndices?.length ?? 0 });
+    this.debug?.log('mapper', 'Node mapper applied', { nodes: nodeCount });
   }
 
   applyEdgeMapper(mapper, visualConfig) {
     if (!mapper?.channels?.size) return;
-    const edgeIndices = this.network?.edgeIndices;
+    const edgeCount = this.network?.edgeCount ?? 0;
     const edgeChannels = [...mapper.channels.keys()];
     this.debug?.log('mapper', 'Applying edge mapper', {
-      edges: edgeIndices?.length ?? 0,
+      edges: edgeCount,
       channels: mapper.channels.size,
       channelNames: edgeChannels,
     });
     for (const channel of edgeChannels) {
       this.debug?.log('mapper', 'Applying edge channel start', {
         channel,
-        edges: edgeIndices?.length ?? 0,
+        edges: edgeCount,
       });
     }
     this.withBufferAccess(() => {
+      const edgeIndices = this.network?.edgeIndices;
       const attributes = this.collectAttributeNames(mapper, 'edge');
       const edgeBuffers = this.resolveEdgeAttributeBuffers(attributes.edge);
       const nodeBuffers = this.resolveNodeAttributeBuffers(attributes.node);
@@ -496,10 +531,10 @@ export class VisualAttributes {
     for (const channel of edgeChannels) {
       this.debug?.log('mapper', 'Applying edge channel finish', {
         channel,
-        edges: edgeIndices?.length ?? 0,
+        edges: edgeCount,
       });
     }
-    this.debug?.log('mapper', 'Edge mapper applied', { edges: edgeIndices?.length ?? 0 });
+    this.debug?.log('mapper', 'Edge mapper applied', { edges: edgeCount });
   }
 
 
@@ -579,15 +614,17 @@ export class VisualAttributes {
             NODE_OUTLINE_WIDTH_ATTRIBUTE,
             NODE_OUTLINE_COLOR_ATTRIBUTE,
           ];
-    for (const name of targets) {
-      try {
-        const buf = this.network?.getNodeAttributeBuffer?.(name);
-        buf?.bumpVersion?.();
-        this.network?.bumpNodeAttributeVersion?.(name);
-      } catch (_) {
-        // Ignore if bumping is unavailable.
+    this.withBufferAccess(() => {
+      for (const name of targets) {
+        try {
+          const buf = this.network?.getNodeAttributeBuffer?.(name);
+          buf?.bumpVersion?.();
+          this.network?.bumpNodeAttributeVersion?.(name);
+        } catch (_) {
+          // Ignore if bumping is unavailable.
+        }
       }
-    }
+    });
   }
 
   bumpEdgeAttributes(...names) {
@@ -603,15 +640,17 @@ export class VisualAttributes {
             EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
             EDGE_ENDPOINTS_STATE_ATTRIBUTE,
           ];
-    for (const name of targets) {
-      try {
-        const buf = this.network?.getEdgeAttributeBuffer?.(name);
-        buf?.bumpVersion?.();
-        this.network?.bumpEdgeAttributeVersion?.(name);
-      } catch (_) {
-        // Ignore if bumping is unavailable.
+    this.withBufferAccess(() => {
+      for (const name of targets) {
+        try {
+          const buf = this.network?.getEdgeAttributeBuffer?.(name);
+          buf?.bumpVersion?.();
+          this.network?.bumpEdgeAttributeVersion?.(name);
+        } catch (_) {
+          // Ignore if bumping is unavailable.
+        }
       }
-    }
+    });
   }
 
   markPositionsDirty() {
@@ -624,8 +663,8 @@ export class VisualAttributes {
    * @param {Iterable<number>} [indices]
    */
   applyNodeDefaults(indices) {
-    const targetIndices = indices ?? this.network?.nodeIndices;
     this.withBufferAccess(() => {
+      const targetIndices = indices ?? this.network?.nodeIndices;
       const color = DEFAULT_NODE_COLOR;
       const size = DEFAULT_NODE_SIZE;
       const outlineWidth = DEFAULT_NODE_OUTLINE_WIDTH;
@@ -679,8 +718,8 @@ export class VisualAttributes {
    * @param {Iterable<number>} [indices]
    */
   applyEdgeDefaults(indices) {
-    const targetIndices = indices ?? this.network?.edgeIndices;
     this.withBufferAccess(() => {
+      const targetIndices = indices ?? this.network?.edgeIndices;
       const color = DEFAULT_EDGE_COLOR;
       const opacity = DEFAULT_EDGE_OPACITY;
       const width = DEFAULT_EDGE_WIDTH;
@@ -713,8 +752,8 @@ export class VisualAttributes {
    * @param {{width?: number, height?: number, depth?: number, mode?: string, center?: number[]}} [bounds]
    */
   seedMissingPositions(bounds = {}) {
-    const nodeIndices = this.network?.nodeIndices;
     this.withBufferAccess(() => {
+      const nodeIndices = this.network?.nodeIndices;
       const width = Math.max(1, bounds.width ?? 1);
       const height = Math.max(1, bounds.height ?? 1);
       const depth = Math.max(0, bounds.depth ?? 0);
@@ -741,15 +780,39 @@ export class VisualAttributes {
         if (!missing && !zeroVector) {
           hasAnyNonZero = true;
         }
-        if (missing) {
-          pos[offset] = cx + (Math.random() - 0.5) * width;
-          pos[offset + 1] = cy + (Math.random() - 0.5) * height;
-          pos[offset + 2] = mode === '3d' ? cz + (Math.random() - 0.5) * depth : cz;
-          touched = true;
-          hasAnyNonZero = true;
-        }
         if (nodeId > maxNodeId) {
           maxNodeId = nodeId;
+        }
+      }
+
+      const seedCount = Math.max(1, maxNodeId + 1);
+      const seedBounds = {
+        width,
+        height,
+        depth,
+        mode,
+        center: [cx, cy, cz],
+      };
+      const seededNodeIds = [];
+      const assignSeededPosition = (nodeId, offset) => {
+        const [x, y, z] = computeSeedPosition(nodeId, seedCount, seedBounds);
+        pos[offset] = x;
+        pos[offset + 1] = y;
+        pos[offset + 2] = z;
+        seededNodeIds.push(nodeId);
+        touched = true;
+      };
+
+      for (let i = 0; i < nodeIndices.length; i += 1) {
+        const nodeId = nodeIndices[i];
+        const offset = nodeId * 3;
+        const missing =
+          !Number.isFinite(pos[offset]) ||
+          !Number.isFinite(pos[offset + 1]) ||
+          !Number.isFinite(pos[offset + 2]);
+        if (missing) {
+          assignSeededPosition(nodeId, offset);
+          hasAnyNonZero = true;
         }
       }
 
@@ -762,10 +825,28 @@ export class VisualAttributes {
         const zeroVector = pos[offset] === 0 && pos[offset + 1] === 0 && pos[offset + 2] === 0;
         const isNewNode = nodeId > zeroSeedBaseline;
         if (zeroVector && (!hasAnyNonZero || isNewNode)) {
-          pos[offset] = cx + (Math.random() - 0.5) * width;
-          pos[offset + 1] = cy + (Math.random() - 0.5) * height;
-          pos[offset + 2] = mode === '3d' ? cz + (Math.random() - 0.5) * depth : cz;
-          touched = true;
+          assignSeededPosition(nodeId, offset);
+        }
+      }
+
+      if (seededNodeIds.length > 1) {
+        let sumX = 0;
+        let sumY = 0;
+        let sumZ = 0;
+        for (const nodeId of seededNodeIds) {
+          const offset = nodeId * 3;
+          sumX += pos[offset];
+          sumY += pos[offset + 1];
+          sumZ += pos[offset + 2];
+        }
+        const shiftX = (sumX / seededNodeIds.length) - cx;
+        const shiftY = (sumY / seededNodeIds.length) - cy;
+        const shiftZ = mode === '3d' ? ((sumZ / seededNodeIds.length) - cz) : 0;
+        for (const nodeId of seededNodeIds) {
+          const offset = nodeId * 3;
+          pos[offset] -= shiftX;
+          pos[offset + 1] -= shiftY;
+          pos[offset + 2] = mode === '3d' ? (pos[offset + 2] - shiftZ) : cz;
         }
       }
       this.maxInitializedNodeId = Math.max(maxNodeId, this.maxInitializedNodeId ?? -1);

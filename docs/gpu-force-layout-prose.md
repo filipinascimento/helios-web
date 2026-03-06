@@ -34,19 +34,20 @@ $$
 L = \sum_{i=0}^{N-1} \text{neighborCounts}[i].
 $$
 
-Seed initialization uses network positions when finite; otherwise stochastic center-relative fallback is used. Let $c=(c_x,c_y,c_z)$, `radius` $r$, and `depth` $d$:
+Seed initialization uses network positions when finite; otherwise a deterministic center-relative low-discrepancy fallback is used so startup is reproducible and already centered. Let $c=(c_x,c_y,c_z)$, horizontal extents $(w, h)$, and depth $d$:
 
 $$
-x_{fallback} = c_x + (\xi_x - 0.5)r,\;
-y_{fallback} = c_y + (\xi_y - 0.5)r,\;
-z_{fallback} =
-\begin{cases}
-c_z + (\xi_z - 0.5)d & \text{3D}\\
-c_z & \text{2D}
-\end{cases}
+x_{fallback} = c_x + 0.35\,w\,\rho_i \cos(\theta_i),\;
+y_{fallback} = c_y + 0.35\,h\,\rho_i \sin(\theta_i),
 $$
 
-where $\xi_x,\xi_y,\xi_z \sim U(0,1)$.
+with $\theta_i = i \varphi$ and $\varphi = \pi(3-\sqrt{5})$. In 2D, $\rho_i = \sqrt{(i + 0.5)/A}$ and $z_{fallback}=c_z$. In 3D, the same angular progression is combined with a Fibonacci-sphere axial term:
+
+$$
+z_{fallback} = c_z + 0.35\,d\,\left(1 - 2\frac{i+0.5}{A}\right).
+$$
+
+After seeding the affected nodes, the initialized subset is translated so its centroid matches the configured center.
 
 To decouple simulation scale from visual scale, initialization uses two buffers: simulation-space `packedPositions` and render-space `packedOutputPositions`. For `outputScale = s`:
 
@@ -91,7 +92,7 @@ k'_g = \alpha k_g,\;
 \Delta_{max}' = \Delta_{max}\, dt_{scale}.
 $$
 
-Repulsion sample count is chosen from explicit `sampleCount` when finite, otherwise from mode-specific defaults (`sampleCount2D` or `sampleCount3D`).
+Repulsion sample count is chosen from explicit `sampleCount` when finite, otherwise from mode-specific defaults (`sampleCount2D` or `sampleCount3D`). When the active set is no larger than the sample budget, or no larger than the small-graph exact-repulsion threshold, the implementation switches to exact all-pairs repulsion rather than hashed sampling, removing small-graph sampling bias.
 
 ## 4. GPU Force Formulation
 
@@ -118,6 +119,8 @@ $$
 j_s = \text{activeIds}\Big(
 \text{hash32}(seed + i\cdot 2654435761 + s\cdot 747796405) \bmod A
 \Big).
+
+If $A \le S$ for sample budget $S$, the method instead enumerates all active nodes exactly once, so the repulsion term becomes deterministic all-pairs repulsion on the active set.
 $$
 
 The hash mixer corresponds exactly to the shader sequence:

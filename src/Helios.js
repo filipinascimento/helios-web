@@ -1277,16 +1277,34 @@ export class Helios extends EventTarget {
 
   _createFilteredNetworkProxy({
     baseNetwork,
-    nodeIndices,
-    edgeIndices,
+    nodeIndices = null,
+    edgeIndices = null,
     nodeSelector = null,
     edgeSelector = null,
     version,
   }) {
-    const safeNodeIndices = nodeIndices instanceof Uint32Array ? nodeIndices : new Uint32Array(0);
-    const safeEdgeIndices = edgeIndices instanceof Uint32Array ? edgeIndices : new Uint32Array(0);
+    const fallbackNodeIndices = nodeIndices instanceof Uint32Array ? nodeIndices : new Uint32Array(0);
+    const fallbackEdgeIndices = edgeIndices instanceof Uint32Array ? edgeIndices : new Uint32Array(0);
     const selectorNode = nodeSelector && typeof nodeSelector === 'object' ? nodeSelector : null;
     const selectorEdge = edgeSelector && typeof edgeSelector === 'object' ? edgeSelector : null;
+    const emptyIndices = new Uint32Array(0);
+    const buildSelectorView = (selector, fallback) => {
+      if (!selector) return fallback;
+      if ((baseNetwork?._bufferSessionDepth ?? 0) <= 0) {
+        throw new Error('Cannot access filtered active indices outside buffer access');
+      }
+      const count = Math.max(0, Math.floor(Number(selector.count) || 0));
+      const dataPointer = Math.max(0, Math.floor(Number(selector.dataPointer) || 0));
+      const heap = selector.module?.HEAPU32?.buffer ?? null;
+      if (!count || !dataPointer || !heap) return fallback;
+      const view = new Uint32Array(heap, dataPointer, count);
+      try {
+        view.version = safeNumber(version, 0);
+      } catch (_) {
+        // ignore non-extensible typed arrays
+      }
+      return view;
+    };
     const copySelection = (scope, target) => {
       if (!(target instanceof Uint32Array)) {
         throw new Error(`${scope} buffer must be a Uint32Array`);
@@ -1296,7 +1314,7 @@ export class Helios extends EventTarget {
         throw new Error(`${scope} buffer must live in the WASM heap (module.HEAPU32.buffer)`);
       }
       const selector = scope === 'node' ? selectorNode : selectorEdge;
-      const fallback = scope === 'node' ? safeNodeIndices : safeEdgeIndices;
+      const fallback = scope === 'node' ? fallbackNodeIndices : fallbackEdgeIndices;
       const countFromSelector = safeNumber(selector?.count, NaN);
       const count = Number.isFinite(countFromSelector) ? Math.max(0, Math.floor(countFromSelector)) : fallback.length;
       if (count > target.length) return count;
@@ -1309,26 +1327,23 @@ export class Helios extends EventTarget {
         target.set(view);
         return count;
       }
-
       target.set(fallback.subarray(0, count));
       return count;
     };
-    try {
-      safeNodeIndices.version = safeNumber(version, 0);
-    } catch (_) {
-      // ignore non-extensible typed arrays
-    }
-    try {
-      safeEdgeIndices.version = safeNumber(version, 0);
-    } catch (_) {
-      // ignore non-extensible typed arrays
-    }
     return new Proxy(baseNetwork, {
       get(target, property) {
-        if (property === 'nodeIndices') return safeNodeIndices;
-        if (property === 'edgeIndices') return safeEdgeIndices;
-        if (property === 'nodeCount') return safeNodeIndices.length;
-        if (property === 'edgeCount') return safeEdgeIndices.length;
+        if (property === 'nodeIndices') return buildSelectorView(selectorNode, fallbackNodeIndices);
+        if (property === 'edgeIndices') return buildSelectorView(selectorEdge, fallbackEdgeIndices);
+        if (property === 'nodeCount') {
+          return selectorNode
+            ? Math.max(0, Math.floor(Number(selectorNode?.count) || 0))
+            : fallbackNodeIndices.length;
+        }
+        if (property === 'edgeCount') {
+          return selectorEdge
+            ? Math.max(0, Math.floor(Number(selectorEdge?.count) || 0))
+            : fallbackEdgeIndices.length;
+        }
         if (property === '__heliosFilteredNodeSelector') return selectorNode;
         if (property === '__heliosFilteredEdgeSelector') return selectorEdge;
         if (property === '__heliosFilterVersion') return safeNumber(version, 0);
@@ -1414,19 +1429,19 @@ export class Helios extends EventTarget {
         result
         && typeof result === 'object'
         && result.nodes
-        && typeof result.nodes.toTypedArray === 'function'
+        && typeof result.nodes.count === 'number'
         && result.edges
-        && typeof result.edges.toTypedArray === 'function',
+        && typeof result.edges.count === 'number',
       );
       const nextNodeSelector = hasSelectorResult ? result.nodes : null;
       const nextEdgeSelector = hasSelectorResult ? result.edges : null;
       pendingNodeSelector = nextNodeSelector;
       pendingEdgeSelector = nextEdgeSelector;
       const nodeIndices = hasSelectorResult
-        ? (nextNodeSelector?.toTypedArray?.() ?? new Uint32Array(0))
+        ? null
         : (result?.nodeIndices instanceof Uint32Array ? result.nodeIndices : new Uint32Array(0));
       const edgeIndices = hasSelectorResult
-        ? (nextEdgeSelector?.toTypedArray?.() ?? new Uint32Array(0))
+        ? null
         : (result?.edgeIndices instanceof Uint32Array ? result.edgeIndices : new Uint32Array(0));
       state.version = bumpVersionCounter(state.version);
       state.nodeIndices = nodeIndices;
@@ -1448,10 +1463,14 @@ export class Helios extends EventTarget {
       state.signature = nextSignature;
       state.lastError = null;
       state.stats = {
-        nodeCount: nodeIndices.length,
-        edgeCount: edgeIndices.length,
-        baseNodeCount: safeLength(baseNetwork?.nodeIndices),
-        baseEdgeCount: safeLength(baseNetwork?.edgeIndices),
+        nodeCount: nextNodeSelector
+          ? Math.max(0, Math.floor(Number(nextNodeSelector?.count) || 0))
+          : nodeIndices.length,
+        edgeCount: nextEdgeSelector
+          ? Math.max(0, Math.floor(Number(nextEdgeSelector?.count) || 0))
+          : edgeIndices.length,
+        baseNodeCount: Math.max(0, Math.floor(Number(baseNetwork?.nodeCount) || 0)),
+        baseEdgeCount: Math.max(0, Math.floor(Number(baseNetwork?.edgeCount) || 0)),
       };
       if (previousNodeSelector && previousNodeSelector !== nextNodeSelector) {
         this._disposeSelector(previousNodeSelector);
@@ -1539,10 +1558,10 @@ export class Helios extends EventTarget {
       enabled: state.enabled === true,
       scope: state.scope ?? GRAPH_FILTER_SCOPE_RENDER,
       options,
-      nodeCount: safeLength(state.renderNetwork?.nodeIndices),
-      edgeCount: safeLength(state.renderNetwork?.edgeIndices),
-      baseNodeCount: safeLength(this.network?.nodeIndices),
-      baseEdgeCount: safeLength(this.network?.edgeIndices),
+      nodeCount: Math.max(0, Math.floor(Number(state.stats?.nodeCount ?? state.renderNetwork?.nodeCount) || 0)),
+      edgeCount: Math.max(0, Math.floor(Number(state.stats?.edgeCount ?? state.renderNetwork?.edgeCount) || 0)),
+      baseNodeCount: Math.max(0, Math.floor(Number(state.stats?.baseNodeCount ?? this.network?.nodeCount) || 0)),
+      baseEdgeCount: Math.max(0, Math.floor(Number(state.stats?.baseEdgeCount ?? this.network?.edgeCount) || 0)),
       error: state.lastError ? (state.lastError.message ?? String(state.lastError)) : null,
     };
   }
@@ -1818,35 +1837,43 @@ export class Helios extends EventTarget {
   frameNetwork(options = {}) {
     const camera = this.renderer?.camera ?? null;
     const network = this._getRenderNetwork();
-    const positions = this.visuals?.nodePositions ?? null;
-    const nodeIndices = network?.nodeIndices ?? null;
-    if (!camera || !positions || !nodeIndices?.length) return false;
+    if (!camera || !network) return false;
 
-    const paddingPx = Number.isFinite(options.paddingPx) ? Math.max(0, options.paddingPx) : 24;
-    const maxSamples = options.maxSamples ?? 50000;
-    const stride = 3;
-    const step = Math.max(1, Math.ceil(nodeIndices.length / Math.max(1, maxSamples)));
+    const sampledBounds = this._withPositionBufferAccess(() => {
+      const positions = this._readNodePositionViewUnsafe();
+      if (!positions) return null;
+      const nodeIndices = network?.nodeIndices ?? null;
+      if (!nodeIndices?.length) return null;
+      const paddingPx = Number.isFinite(options.paddingPx) ? Math.max(0, options.paddingPx) : 24;
+      const maxSamples = options.maxSamples ?? 50000;
+      const stride = 3;
+      const step = Math.max(1, Math.ceil(nodeIndices.length / Math.max(1, maxSamples)));
 
-    let minX = Infinity; let minY = Infinity; let minZ = Infinity;
-    let maxX = -Infinity; let maxY = -Infinity; let maxZ = -Infinity;
-    let sumX = 0; let sumY = 0; let sumZ = 0;
-    let count = 0;
-    let found = false;
-    for (let i = 0; i < nodeIndices.length; i += step) {
-      const id = nodeIndices[i];
-      const o = id * stride;
-      const x = positions[o];
-      const y = positions[o + 1];
-      const z = positions[o + 2];
-      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
-      found = true;
-      sumX += x; sumY += y; sumZ += z;
-      count += 1;
-      if (x < minX) minX = x; if (x > maxX) maxX = x;
-      if (y < minY) minY = y; if (y > maxY) maxY = y;
-      if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
-    }
-    if (!found) return false;
+      let minX = Infinity; let minY = Infinity; let minZ = Infinity;
+      let maxX = -Infinity; let maxY = -Infinity; let maxZ = -Infinity;
+      let sumX = 0; let sumY = 0; let sumZ = 0;
+      let count = 0;
+      let found = false;
+      for (let i = 0; i < nodeIndices.length; i += step) {
+        const id = nodeIndices[i];
+        const o = id * stride;
+        const x = positions[o];
+        const y = positions[o + 1];
+        const z = positions[o + 2];
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+        found = true;
+        sumX += x; sumY += y; sumZ += z;
+        count += 1;
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+        if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+      }
+      if (!found) return null;
+      return { paddingPx, minX, minY, minZ, maxX, maxY, maxZ, sumX, sumY, sumZ, count };
+    });
+    if (!sampledBounds) return false;
+
+    const { paddingPx, minX, minY, minZ, maxX, maxY, maxZ, sumX, sumY, sumZ, count } = sampledBounds;
 
     const bboxCx = (minX + maxX) * 0.5;
     const bboxCy = (minY + maxY) * 0.5;
@@ -2149,13 +2176,13 @@ export class Helios extends EventTarget {
       if (!this.firstGeometryUpdateComplete) {
         this.firstGeometryUpdateComplete = true;
         this.debug.log('scheduler', 'First geometry frame ready', {
-          nodes: renderNetwork?.nodeIndices?.length ?? this.network?.nodeCount,
-          edges: renderNetwork?.edgeIndices?.length ?? this.network?.edgeCount,
+          nodes: renderNetwork?.nodeCount ?? this.network?.nodeCount,
+          edges: renderNetwork?.edgeCount ?? this.network?.edgeCount,
         });
       } else {
         this.debug.log('scheduler', 'Geometry frame prepared', {
-          nodes: renderNetwork?.nodeIndices?.length ?? this.network?.nodeCount,
-          edges: renderNetwork?.edgeIndices?.length ?? this.network?.edgeCount,
+          nodes: renderNetwork?.nodeCount ?? this.network?.nodeCount,
+          edges: renderNetwork?.edgeCount ?? this.network?.edgeCount,
         });
       }
       this._tryPendingFrameNetwork();
@@ -2546,7 +2573,7 @@ export class Helios extends EventTarget {
       }
       runtime.sourceCount = targetPositions
         ? Math.floor(targetPositions.length / 3)
-        : Math.max(0, Math.floor(Number(this._getRenderNetwork()?.nodeIndices?.length ?? 0)));
+        : Math.max(0, Math.floor(Number(this._getRenderNetwork()?.nodeCount ?? 0)));
       runtime.sourceWebGPUBuffer = null;
       runtime.sourceWebGLTexture = null;
       runtime.sourceTextureMeta = null;

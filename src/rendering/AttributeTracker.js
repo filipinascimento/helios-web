@@ -1781,12 +1781,10 @@ export class WebGLAttributeRenderer {
     const nodeIsIndex = this.isIndexAttribute(config.nodeAttribute);
     const edgeIsIndex = this.isIndexAttribute(config.edgeAttribute);
 
-    const nodeIndices = network.nodeIndices ?? null;
-    const edgeIndices = network.edgeIndices ?? null;
     return this.graphLayer.withSparseGraph(
       network,
       topologyVersions,
-      { node: nodeIndices, edge: edgeIndices },
+      null,
       customEdgeNodeAttributes,
       (sparse) => {
         if (!sparse) return null;
@@ -4378,14 +4376,12 @@ export class WebGPUAttributeRenderer {
         topologyVersions.edge,
       );
     }
-    const nodeIndices = network.nodeIndices ?? null;
-    const edgeIndices = network.edgeIndices ?? null;
     const indirectEdgeVariant = this.graphLayer.resolveEdgeVariant?.(visualConfig) ?? null;
     const edgeSourceRequests = this.getIndirectEdgeSourceRequests(indirectEdgeVariant);
     return this.graphLayer.withSparseGraph(
       network,
       topologyVersions,
-      { node: nodeIndices, edge: edgeIndices },
+      null,
       edgeSourceRequests,
       (sparseGeometry) => {
         if (!sparseGeometry) return null;

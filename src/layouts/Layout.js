@@ -1,5 +1,24 @@
 /** @typedef {import('helios-network').default} HeliosNetwork */
 
+export function withLogScaleBinding(binding) {
+  return {
+    type: 'number',
+    scale: 'log',
+    notation: 'scientific',
+    inputStep: 'any',
+    sliderStep: 0.01,
+    ...binding,
+  };
+}
+
+export function withVelocityRetentionBinding(binding) {
+  return {
+    label: 'Velocity retention',
+    hint: 'Higher values keep more momentum; lower values damp faster.',
+    ...binding,
+  };
+}
+
 /**
  * Base class for layout algorithms. Concrete implementations can override the
  * lifecycle hooks to move nodes around by writing into
@@ -68,8 +87,8 @@ export class StaticLayout extends Layout {
   }
 
   initialize() {
-    const activeNodes = this.network?.nodeIndices || [];
     const apply = () => {
+      const activeNodes = this.network?.nodeIndices || [];
       const positions = this.visuals.nodePositions;
       const [minX, minY, maxX, maxY] = this.bounds;
       const width = Math.max(1, maxX - minX);
@@ -299,31 +318,31 @@ export class WorkerLayout extends Layout {
         },
         {
           key: 'kRepulsion',
-          label: 'Repulsion',
-          type: 'number',
-          min: 0,
-          max: 20,
-          step: 0.01,
+          ...withLogScaleBinding({
+            label: 'Repulsion',
+            min: 0.06,
+            max: 600,
+          }),
           get: () => Number(this.options.kRepulsion ?? 6),
           set: (value) => this.setSettings({ kRepulsion: value }),
         },
         {
           key: 'kAttraction',
-          label: 'Attraction',
-          type: 'number',
-          min: 0,
-          max: 0.05,
-          step: 0.0001,
+          ...withLogScaleBinding({
+            label: 'Attraction',
+            min: 0.000035,
+            max: 0.35,
+          }),
           get: () => Number(this.options.kAttraction ?? 0.0035),
           set: (value) => this.setSettings({ kAttraction: value }),
         },
         {
           key: 'kGravity',
-          label: 'Gravity',
-          type: 'number',
-          min: 0,
-          max: 0.01,
-          step: 0.00005,
+          ...withLogScaleBinding({
+            label: 'Gravity',
+            min: 0.000005,
+            max: 0.05,
+          }),
           get: () => Number(this.options.kGravity ?? 0.0005),
           set: (value) => this.setSettings({ kGravity: value }),
         },
@@ -377,16 +396,15 @@ export class WorkerLayout extends Layout {
           get: () => Number(this.options.eta ?? 0.04),
           set: (value) => this.setSettings({ eta: value }),
         },
-        {
+        withVelocityRetentionBinding({
           key: 'damping',
-          label: 'Damping',
           type: 'number',
           min: 0,
           max: 1,
           step: 0.001,
           get: () => Number(this.options.damping ?? 0.9),
           set: (value) => this.setSettings({ damping: value }),
-        },
+        }),
         {
           key: 'theta',
           label: 'Theta',
@@ -431,16 +449,18 @@ export class WorkerLayout extends Layout {
   }
 
   buildGraphPayload() {
-    const nodeIndices = this.network.nodeIndices;
-    const edgeIndices = this.network.edgeIndices;
-    const edgesView = this.network.edgesView;
-    const edges = new Uint32Array(edgeIndices.length * 2);
-    for (let i = 0; i < edgeIndices.length; i += 1) {
-      const id = edgeIndices[i];
-      const base = id * 2;
-      edges[i * 2] = edgesView[base];
-      edges[i * 2 + 1] = edgesView[base + 1];
-    }
-    return { nodeIndices, edges };
+    return this.network.withBufferAccess(() => {
+      const nodeIndices = this.network.nodeIndices.slice();
+      const edgeIndices = this.network.edgeIndices;
+      const edgesView = this.network.edgesView;
+      const edges = new Uint32Array(edgeIndices.length * 2);
+      for (let i = 0; i < edgeIndices.length; i += 1) {
+        const id = edgeIndices[i];
+        const base = id * 2;
+        edges[i * 2] = edgesView[base];
+        edges[i * 2 + 1] = edgesView[base + 1];
+      }
+      return { nodeIndices, edges };
+    }, { nodeIndices: true, edgeIndices: true, edgesView: true });
   }
 }

@@ -111,6 +111,7 @@ declare module 'helios-network' {
   export interface DegreeOptions {
     direction?: NeighborDirection | 'out' | 'in' | 'both' | 'outgoing' | 'incoming' | 'all' | 'union';
     nodes?: ArrayLike<number> | null;
+    outNodeAttribute?: string | null;
   }
 
   export interface StrengthOptions extends DegreeOptions {
@@ -139,6 +140,7 @@ declare module 'helios-network' {
     accumulate?: boolean;
     initialValues?: Float32Array | Array<number> | null;
     nodes?: ArrayLike<number> | null;
+    outNodeAttribute?: string | null;
   }
 
   export interface EigenvectorCentralityResult extends NodeMetricResult {
