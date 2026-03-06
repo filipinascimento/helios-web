@@ -27,5 +27,5 @@ For details on how the node colors and sizes are mapped (including the colormap 
 - Pass `?edgeTransparency=weighted` to enable weighted blended transparency for edges (falls back to alpha if unsupported; implemented as an offscreen accumulate + resolve pass).
 - Pass `?interpolationDurationMode=adaptive` (default) to average recent layout update intervals for interpolation timing.
 - Pass `?interpolationDurationMode=fixed&interpolationFixedDurationMs=160` to force a fixed interpolation interval.
-- In the Layout panel, interpolation controls are intentionally minimal: `Interpolation timing` with an inline `Adaptive` toggle.
-- Layout interval and position source controls were removed from the demo; built-in layouts run real-time at scheduler cadence.
+- The Layout panel now reads a shared parameter-binding contract from the active layout instance, so each layout only shows controls it actually supports.
+- D3-force and GPU-force expose a small recent-history alpha sparkline (sampled slowly, in log scale) in the panel, and the start/stop actions are available directly from that panel.

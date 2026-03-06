@@ -2263,6 +2263,18 @@ export class HeliosUI {
       el.disabled = Boolean(disabled);
     };
 
+    const setProgressActionButtonState = (button, running) => {
+      if (!button) return;
+      const isRunning = Boolean(running);
+      button.classList.toggle('helios-ui-button--danger', isRunning);
+      button.classList.toggle('helios-ui-button--spinning', isRunning);
+      button.textContent = isRunning ? 'Cancel' : 'Calculate';
+      button.title = isRunning
+        ? 'Cancel current run'
+        : (button.dataset.calcTitle || 'Calculate');
+      button.setAttribute('aria-busy', isRunning ? 'true' : 'false');
+    };
+
     const normalizeDimensionMethod = (value) => {
       const normalized = String(value ?? '').trim().toLowerCase();
       if (normalized === 'forward' || normalized === 'fw') return 'forward';
@@ -2412,6 +2424,14 @@ export class HeliosUI {
       return 'unweighted';
     };
 
+    const isNumericEdgeWeightType = (type) =>
+      type === AttributeType.Float ||
+      type === AttributeType.Double ||
+      type === AttributeType.Integer ||
+      type === AttributeType.UnsignedInteger ||
+      type === AttributeType.BigInteger ||
+      type === AttributeType.UnsignedBigInteger;
+
     const createDirectionSelect = (testid, initialValue = 'both') => {
       const select = document.createElement('select');
       select.className = 'helios-ui-select';
@@ -2436,6 +2456,10 @@ export class HeliosUI {
       select.className = 'helios-ui-select';
       if (testid) select.dataset.testid = testid;
       select.dataset.initialValue = initialValue ? String(initialValue) : '';
+      select.dataset.userSelected = 'false';
+      select.addEventListener('change', () => {
+        select.dataset.userSelected = 'true';
+      });
       edgeWeightSelects.push(select);
       return select;
     };
@@ -2451,28 +2475,18 @@ export class HeliosUI {
     degreeOutAttrInput.value = String(options?.degree?.outNodeAttribute ?? 'degree');
     degreeOutAttrInput.dataset.testid = 'metrics-degree-outAttr';
 
-    const degreeActionWrap = document.createElement('div');
-    degreeActionWrap.style.display = 'inline-flex';
-    degreeActionWrap.style.alignItems = 'center';
-    degreeActionWrap.style.gap = '6px';
-
     const degreeCalcButton = document.createElement('button');
     degreeCalcButton.type = 'button';
     degreeCalcButton.className = 'helios-ui-button';
     degreeCalcButton.textContent = 'Calculate';
+    degreeCalcButton.title = 'Calculate degree';
     degreeCalcButton.dataset.testid = 'metrics-degree-calc';
-    degreeActionWrap.appendChild(degreeCalcButton);
 
     const degreeStatusEl = document.createElement('div');
     degreeStatusEl.dataset.testid = 'metrics-degree-status';
     degreeStatusEl.textContent = '';
     styleStatusHint(degreeStatusEl);
 
-    degree.appendChild(createAlignedRow({
-      title: 'Degree',
-      hint: 'Node degree (unweighted)',
-      controls: degreeActionWrap,
-    }).row);
     degree.appendChild(createAlignedRow({
       title: 'Direction',
       hint: 'For directed networks: In, Out, or Both',
@@ -2506,7 +2520,7 @@ export class HeliosUI {
       controls: degreeOutAttrInput,
     }).row);
     const degreeInnerStack = new PanelStack();
-    degreeInnerStack.add({ id: 'metrics-degree-advanced', title: 'Advanced', collapsed: true, content: degreeAdvanced });
+    degreeInnerStack.add({ id: 'metrics-degree-advanced', title: 'Advanced', collapsed: true, statusDot: false, content: degreeAdvanced });
     degreeInnerStack.element.style.marginTop = '6px';
 
     // --- Strength ------------------------------------------------------------
@@ -2537,28 +2551,18 @@ export class HeliosUI {
     strengthOutAttrInput.value = String(options?.strength?.outNodeAttribute ?? 'strength');
     strengthOutAttrInput.dataset.testid = 'metrics-strength-outAttr';
 
-    const strengthActionWrap = document.createElement('div');
-    strengthActionWrap.style.display = 'inline-flex';
-    strengthActionWrap.style.alignItems = 'center';
-    strengthActionWrap.style.gap = '6px';
-
     const strengthCalcButton = document.createElement('button');
     strengthCalcButton.type = 'button';
     strengthCalcButton.className = 'helios-ui-button';
     strengthCalcButton.textContent = 'Calculate';
+    strengthCalcButton.title = 'Calculate strength';
     strengthCalcButton.dataset.testid = 'metrics-strength-calc';
-    strengthActionWrap.appendChild(strengthCalcButton);
 
     const strengthStatusEl = document.createElement('div');
     strengthStatusEl.dataset.testid = 'metrics-strength-status';
     strengthStatusEl.textContent = '';
     styleStatusHint(strengthStatusEl);
 
-    strength.appendChild(createAlignedRow({
-      title: 'Strength',
-      hint: 'Weighted node degree summary',
-      controls: strengthActionWrap,
-    }).row);
     strength.appendChild(createAlignedRow({
       title: 'Direction',
       hint: 'For directed networks: In, Out, or Both',
@@ -2602,7 +2606,7 @@ export class HeliosUI {
       controls: strengthOutAttrInput,
     }).row);
     const strengthInnerStack = new PanelStack();
-    strengthInnerStack.add({ id: 'metrics-strength-advanced', title: 'Advanced', collapsed: true, content: strengthAdvanced });
+    strengthInnerStack.add({ id: 'metrics-strength-advanced', title: 'Advanced', collapsed: true, statusDot: false, content: strengthAdvanced });
     strengthInnerStack.element.style.marginTop = '6px';
 
     // --- Local Clustering ----------------------------------------------------
@@ -2632,28 +2636,18 @@ export class HeliosUI {
     clusteringOutAttrInput.value = String(options?.clustering?.outNodeAttribute ?? 'clustering');
     clusteringOutAttrInput.dataset.testid = 'metrics-clustering-outAttr';
 
-    const clusteringActionWrap = document.createElement('div');
-    clusteringActionWrap.style.display = 'inline-flex';
-    clusteringActionWrap.style.alignItems = 'center';
-    clusteringActionWrap.style.gap = '6px';
-
     const clusteringCalcButton = document.createElement('button');
     clusteringCalcButton.type = 'button';
     clusteringCalcButton.className = 'helios-ui-button';
     clusteringCalcButton.textContent = 'Calculate';
+    clusteringCalcButton.title = 'Calculate local clustering';
     clusteringCalcButton.dataset.testid = 'metrics-clustering-calc';
-    clusteringActionWrap.appendChild(clusteringCalcButton);
 
     const clusteringStatusEl = document.createElement('div');
     clusteringStatusEl.dataset.testid = 'metrics-clustering-status';
     clusteringStatusEl.textContent = '';
     styleStatusHint(clusteringStatusEl);
 
-    clustering.appendChild(createAlignedRow({
-      title: 'Local Clustering',
-      hint: 'Local clustering coefficient',
-      controls: clusteringActionWrap,
-    }).row);
     clustering.appendChild(createAlignedRow({
       title: 'Variant',
       hint: 'Unweighted, Onnela, or Newman formulation',
@@ -2697,7 +2691,7 @@ export class HeliosUI {
       controls: clusteringOutAttrInput,
     }).row);
     const clusteringInnerStack = new PanelStack();
-    clusteringInnerStack.add({ id: 'metrics-clustering-advanced', title: 'Advanced', collapsed: true, content: clusteringAdvanced });
+    clusteringInnerStack.add({ id: 'metrics-clustering-advanced', title: 'Advanced', collapsed: true, statusDot: false, content: clusteringAdvanced });
     clusteringInnerStack.element.style.marginTop = '6px';
 
     // --- Eigenvector Centrality ---------------------------------------------
@@ -2725,36 +2719,19 @@ export class HeliosUI {
     eigenvectorOutAttrInput.value = String(options?.eigenvector?.outNodeAttribute ?? 'eigenvector_centrality');
     eigenvectorOutAttrInput.dataset.testid = 'metrics-eigen-outAttr';
 
-    const eigenvectorActionWrap = document.createElement('div');
-    eigenvectorActionWrap.style.display = 'inline-flex';
-    eigenvectorActionWrap.style.alignItems = 'center';
-    eigenvectorActionWrap.style.gap = '6px';
-
     const eigenvectorCalcButton = document.createElement('button');
     eigenvectorCalcButton.type = 'button';
     eigenvectorCalcButton.className = 'helios-ui-button';
     eigenvectorCalcButton.textContent = 'Calculate';
+    eigenvectorCalcButton.title = 'Calculate eigenvector centrality';
+    eigenvectorCalcButton.dataset.calcTitle = 'Calculate eigenvector centrality';
     eigenvectorCalcButton.dataset.testid = 'metrics-eigen-calc';
-    eigenvectorActionWrap.appendChild(eigenvectorCalcButton);
-
-    const eigenvectorCancelButton = document.createElement('button');
-    eigenvectorCancelButton.type = 'button';
-    eigenvectorCancelButton.className = 'helios-ui-button';
-    eigenvectorCancelButton.textContent = 'Cancel';
-    eigenvectorCancelButton.dataset.testid = 'metrics-eigen-cancel';
-    eigenvectorCancelButton.disabled = true;
-    eigenvectorActionWrap.appendChild(eigenvectorCancelButton);
 
     const eigenvectorStatusEl = document.createElement('div');
     eigenvectorStatusEl.dataset.testid = 'metrics-eigen-status';
     eigenvectorStatusEl.textContent = '';
     styleStatusHint(eigenvectorStatusEl);
 
-    eigenvector.appendChild(createAlignedRow({
-      title: 'Eigenvector Centrality',
-      hint: 'Power iteration centrality',
-      controls: eigenvectorActionWrap,
-    }).row);
     eigenvector.appendChild(createAlignedRow({
       title: 'Direction',
       hint: 'For directed networks: In, Out, or Both',
@@ -2864,7 +2841,7 @@ export class HeliosUI {
     });
     eigenvectorAdvanced.appendChild(eigenvectorYieldRow.row);
     const eigenvectorInnerStack = new PanelStack();
-    eigenvectorInnerStack.add({ id: 'metrics-eigen-advanced', title: 'Advanced', collapsed: true, content: eigenvectorAdvanced });
+    eigenvectorInnerStack.add({ id: 'metrics-eigen-advanced', title: 'Advanced', collapsed: true, statusDot: false, content: eigenvectorAdvanced });
     eigenvectorInnerStack.element.style.marginTop = '6px';
 
     // --- Betweenness Centrality ---------------------------------------------
@@ -2886,36 +2863,19 @@ export class HeliosUI {
     betweennessOutAttrInput.value = String(options?.betweenness?.outNodeAttribute ?? 'betweenness_centrality');
     betweennessOutAttrInput.dataset.testid = 'metrics-betweenness-outAttr';
 
-    const betweennessActionWrap = document.createElement('div');
-    betweennessActionWrap.style.display = 'inline-flex';
-    betweennessActionWrap.style.alignItems = 'center';
-    betweennessActionWrap.style.gap = '6px';
-
     const betweennessCalcButton = document.createElement('button');
     betweennessCalcButton.type = 'button';
     betweennessCalcButton.className = 'helios-ui-button';
     betweennessCalcButton.textContent = 'Calculate';
+    betweennessCalcButton.title = 'Calculate betweenness centrality';
+    betweennessCalcButton.dataset.calcTitle = 'Calculate betweenness centrality';
     betweennessCalcButton.dataset.testid = 'metrics-betweenness-calc';
-    betweennessActionWrap.appendChild(betweennessCalcButton);
-
-    const betweennessCancelButton = document.createElement('button');
-    betweennessCancelButton.type = 'button';
-    betweennessCancelButton.className = 'helios-ui-button';
-    betweennessCancelButton.textContent = 'Cancel';
-    betweennessCancelButton.dataset.testid = 'metrics-betweenness-cancel';
-    betweennessCancelButton.disabled = true;
-    betweennessActionWrap.appendChild(betweennessCancelButton);
 
     const betweennessStatusEl = document.createElement('div');
     betweennessStatusEl.dataset.testid = 'metrics-betweenness-status';
     betweennessStatusEl.textContent = '';
     styleStatusHint(betweennessStatusEl);
 
-    betweenness.appendChild(createAlignedRow({
-      title: 'Betweenness Centrality',
-      hint: 'Brandes shortest-path centrality',
-      controls: betweennessActionWrap,
-    }).row);
     betweenness.appendChild(createAlignedRow({
       title: 'Edge Weight',
       hint: 'Optional edge weight attribute',
@@ -3008,7 +2968,7 @@ export class HeliosUI {
     });
     betweennessAdvanced.appendChild(betweennessYieldRow.row);
     const betweennessInnerStack = new PanelStack();
-    betweennessInnerStack.add({ id: 'metrics-betweenness-advanced', title: 'Advanced', collapsed: true, content: betweennessAdvanced });
+    betweennessInnerStack.add({ id: 'metrics-betweenness-advanced', title: 'Advanced', collapsed: true, statusDot: false, content: betweennessAdvanced });
     betweennessInnerStack.element.style.marginTop = '6px';
 
     // --- Leiden --------------------------------------------------------------
@@ -3051,38 +3011,18 @@ export class HeliosUI {
     outAttributeInput.value = String(options?.leiden?.outNodeCommunityAttribute ?? 'community');
     outAttributeInput.dataset.testid = 'metrics-leiden-outAttr';
 
-    const actionWrap = document.createElement('div');
-    actionWrap.style.display = 'inline-flex';
-    actionWrap.style.alignItems = 'center';
-    actionWrap.style.gap = '6px';
-
     const calcButton = document.createElement('button');
     calcButton.type = 'button';
     calcButton.className = 'helios-ui-button';
     calcButton.textContent = 'Calculate';
+    calcButton.title = 'Calculate communities (Leiden)';
+    calcButton.dataset.calcTitle = 'Calculate communities (Leiden)';
     calcButton.dataset.testid = 'metrics-calc';
-
-    const cancelButton = document.createElement('button');
-    cancelButton.type = 'button';
-    cancelButton.className = 'helios-ui-button';
-    cancelButton.textContent = 'Cancel';
-    cancelButton.dataset.testid = 'metrics-cancel';
-    cancelButton.disabled = true;
-
-    actionWrap.appendChild(calcButton);
-    actionWrap.appendChild(cancelButton);
 
     const statusEl = document.createElement('div');
     statusEl.className = 'helios-ui-label__hint';
     statusEl.dataset.testid = 'metrics-status';
     statusEl.textContent = '';
-
-    const { row: actionsRow } = createAlignedRow({
-      title: 'Communities (Leiden)',
-      hint: 'Run community detection (worker)',
-      controls: actionWrap,
-    });
-    leiden.appendChild(actionsRow);
 
     const { row: weightRow } = createAlignedRow({
       title: 'Edge Weight',
@@ -3217,7 +3157,7 @@ export class HeliosUI {
     advanced.appendChild(createLinearSliderRow({ title: 'Chunk Budget', hint: 'Work per step() slice', valueInput: chunkBudgetInput, range: { min: 100, max: 100_000 }, step: 100 }).row);
 
     const leidenInnerStack = new PanelStack();
-    leidenInnerStack.add({ id: 'metrics-leiden-advanced', title: 'Advanced', collapsed: true, content: advanced });
+    leidenInnerStack.add({ id: 'metrics-leiden-advanced', title: 'Advanced', collapsed: true, statusDot: false, content: advanced });
     leidenInnerStack.element.style.marginTop = '6px';
 
     // --- Dimensionality ------------------------------------------------------
@@ -3302,38 +3242,18 @@ export class HeliosUI {
     dimensionLevelsPrecisionInput.value = String(options?.dimension?.dimensionLevelsStringPrecision ?? 6);
     dimensionLevelsPrecisionInput.dataset.testid = 'metrics-dimension-levelsPrecision';
 
-    const dimensionActionWrap = document.createElement('div');
-    dimensionActionWrap.style.display = 'inline-flex';
-    dimensionActionWrap.style.alignItems = 'center';
-    dimensionActionWrap.style.gap = '6px';
-
     const dimensionCalcButton = document.createElement('button');
     dimensionCalcButton.type = 'button';
     dimensionCalcButton.className = 'helios-ui-button';
     dimensionCalcButton.textContent = 'Calculate';
+    dimensionCalcButton.title = 'Calculate dimensionality';
+    dimensionCalcButton.dataset.calcTitle = 'Calculate dimensionality';
     dimensionCalcButton.dataset.testid = 'metrics-dimension-calc';
-
-    const dimensionCancelButton = document.createElement('button');
-    dimensionCancelButton.type = 'button';
-    dimensionCancelButton.className = 'helios-ui-button';
-    dimensionCancelButton.textContent = 'Cancel';
-    dimensionCancelButton.dataset.testid = 'metrics-dimension-cancel';
-    dimensionCancelButton.disabled = true;
-
-    dimensionActionWrap.appendChild(dimensionCalcButton);
-    dimensionActionWrap.appendChild(dimensionCancelButton);
 
     const dimensionStatusEl = document.createElement('div');
     dimensionStatusEl.className = 'helios-ui-label__hint';
     dimensionStatusEl.dataset.testid = 'metrics-dimension-status';
     dimensionStatusEl.textContent = '';
-
-    const { row: dimensionActionsRow } = createAlignedRow({
-      title: 'Dimensionality',
-      hint: 'Run multiscale dimension measurement with incremental progress',
-      controls: dimensionActionWrap,
-    });
-    dimension.appendChild(dimensionActionsRow);
 
     const { row: dimensionMethodRow } = createAlignedRow({
       title: 'Method',
@@ -3468,7 +3388,7 @@ export class HeliosUI {
     dimensionAdvanced.appendChild(createLinearSliderRow({ title: 'Chunk Budget', hint: 'Nodes processed per step() chunk', valueInput: dimensionChunkBudgetInput, range: { min: 1, max: 10_000 }, step: 1 }).row);
 
     const dimensionInnerStack = new PanelStack();
-    dimensionInnerStack.add({ id: 'metrics-dimension-advanced', title: 'Advanced', collapsed: true, content: dimensionAdvanced });
+    dimensionInnerStack.add({ id: 'metrics-dimension-advanced', title: 'Advanced', collapsed: true, statusDot: false, content: dimensionAdvanced });
     dimensionInnerStack.element.style.marginTop = '6px';
 
     // --- State + wiring ------------------------------------------------------
@@ -3483,6 +3403,24 @@ export class HeliosUI {
     let betweennessRunning = false;
     let eigenvectorAbortController = null;
     let betweennessAbortController = null;
+    let metricsStack = null;
+
+    const setMetricSectionState = (sectionId, state) => {
+      metricsStack?.setStatus?.(sectionId, state);
+    };
+    const resetMetricSectionStates = () => {
+      for (const id of [
+        'metrics-degree',
+        'metrics-strength',
+        'metrics-clustering',
+        'metrics-eigen',
+        'metrics-betweenness',
+        'metrics-leiden',
+        'metrics-dimension',
+      ]) {
+        setMetricSectionState(id, 'idle');
+      }
+    };
 
     const setDegreeStatus = (text) => {
       const value = text ?? '';
@@ -3546,8 +3484,7 @@ export class HeliosUI {
 
     const setEigenvectorRunning = (nextRunning) => {
       eigenvectorRunning = Boolean(nextRunning);
-      setDisabled(eigenvectorCalcButton, eigenvectorRunning);
-      setDisabled(eigenvectorCancelButton, !eigenvectorRunning);
+      setProgressActionButtonState(eigenvectorCalcButton, eigenvectorRunning);
       setDisabled(eigenvectorDirectionSelect, eigenvectorRunning);
       setDisabled(eigenvectorWeightSelect, eigenvectorRunning);
       setDisabled(eigenvectorMaxIterationsInput, eigenvectorRunning);
@@ -3580,8 +3517,7 @@ export class HeliosUI {
 
     const setBetweennessRunning = (nextRunning) => {
       betweennessRunning = Boolean(nextRunning);
-      setDisabled(betweennessCalcButton, betweennessRunning);
-      setDisabled(betweennessCancelButton, !betweennessRunning);
+      setProgressActionButtonState(betweennessCalcButton, betweennessRunning);
       setDisabled(betweennessWeightSelect, betweennessRunning);
       setDisabled(betweennessNormalizeCheckbox, betweennessRunning);
       setDisabled(betweennessOutAttrInput, betweennessRunning);
@@ -3608,8 +3544,7 @@ export class HeliosUI {
 
     const setLeidenRunning = (nextRunning) => {
       leidenRunning = Boolean(nextRunning);
-      setDisabled(calcButton, leidenRunning);
-      setDisabled(cancelButton, !leidenRunning);
+      setProgressActionButtonState(calcButton, leidenRunning);
       setDisabled(weightSelect, leidenRunning);
       setDisabled(resolutionInput, leidenRunning);
       setDisabled(resolutionRow.slider, leidenRunning);
@@ -3642,8 +3577,7 @@ export class HeliosUI {
 
     const setDimensionRunning = (nextRunning) => {
       dimensionRunning = Boolean(nextRunning);
-      setDisabled(dimensionCalcButton, dimensionRunning);
-      setDisabled(dimensionCancelButton, !dimensionRunning);
+      setProgressActionButtonState(dimensionCalcButton, dimensionRunning);
       setDisabled(dimensionMethodSelect, dimensionRunning);
       setDisabled(dimensionMaxLevelInput, dimensionRunning);
       setDisabled(dimensionMaxLevelRow.slider, dimensionRunning);
@@ -3698,9 +3632,22 @@ export class HeliosUI {
       const names = network && typeof network.getEdgeAttributeNames === 'function'
         ? (network.getEdgeAttributeNames() ?? []).filter((name) => isPublicAttributeName(name))
         : [];
+      const numericNames = [];
+      if (network && typeof network.getEdgeAttributeInfo === 'function') {
+        for (const name of names) {
+          try {
+            const info = network.getEdgeAttributeInfo(name);
+            if (info && isNumericEdgeWeightType(info.type)) numericNames.push(name);
+          } catch (_) {}
+        }
+      }
+      const autoStrengthWeight = numericNames.includes('weight')
+        ? 'weight'
+        : (numericNames[0] ?? '');
       for (const select of edgeWeightSelects) {
         const existing = select.value;
         const preferred = select.dataset.initialValue ?? '';
+        const userSelected = select.dataset.userSelected === 'true';
         select.textContent = '';
         const optNone = document.createElement('option');
         optNone.value = '';
@@ -3712,10 +3659,15 @@ export class HeliosUI {
           opt.textContent = name;
           select.appendChild(opt);
         }
-        if (existing && Array.from(select.options).some((o) => o.value === existing)) {
+        const availableValues = new Set(Array.from(select.options, (o) => o.value));
+        if (userSelected && availableValues.has(existing)) {
           select.value = existing;
-        } else if (preferred && Array.from(select.options).some((o) => o.value === preferred)) {
+        } else if (existing && availableValues.has(existing)) {
+          select.value = existing;
+        } else if (preferred && availableValues.has(preferred)) {
           select.value = preferred;
+        } else if (select === strengthWeightSelect && autoStrengthWeight && !userSelected && availableValues.has(autoStrengthWeight)) {
+          select.value = autoStrengthWeight;
         } else {
           select.value = '';
         }
@@ -3749,21 +3701,18 @@ export class HeliosUI {
       betweennessAbortController.abort();
     };
 
-    cancelButton.addEventListener('click', cancelLeidenRun);
-    dimensionCancelButton.addEventListener('click', cancelDimensionRun);
-    eigenvectorCancelButton.addEventListener('click', cancelEigenvectorRun);
-    betweennessCancelButton.addEventListener('click', cancelBetweennessRun);
-
     const runDegree = () => {
       const network = net();
       if (!network || typeof network.measureDegree !== 'function') {
         setDegreeStatus('Degree measurement is not available on this network');
+        setMetricSectionState('metrics-degree', 'error');
         return;
       }
       const direction = normalizeNeighborDirection(degreeDirectionSelect.value);
       const outNodeAttribute = degreeOutAttrInput.value.trim();
 
       setDegreeStatus('Running…');
+      setMetricSectionState('metrics-degree', 'running');
       degreeMaxValue.textContent = '—';
       degreeMeanValue.textContent = '—';
       degreeElapsedValue.textContent = '—';
@@ -3779,10 +3728,12 @@ export class HeliosUI {
         degreeMeanValue.textContent = formatNumber(summary.mean, 4);
         degreeElapsedValue.textContent = `${Math.round(Math.max(0, ended - started))} ms`;
         setDegreeStatus(wrote ? `Done • wrote "${outNodeAttribute}"` : 'Done');
+        setMetricSectionState('metrics-degree', 'success');
         refreshAll();
         this.helios?.requestRender?.();
       } catch (error) {
         setDegreeStatus(error?.message ?? String(error));
+        setMetricSectionState('metrics-degree', 'error');
       } finally {
         setDegreeRunning(false);
       }
@@ -3792,6 +3743,7 @@ export class HeliosUI {
       const network = net();
       if (!network || typeof network.measureStrength !== 'function') {
         setStrengthStatus('Strength measurement is not available on this network');
+        setMetricSectionState('metrics-strength', 'error');
         return;
       }
       const direction = normalizeNeighborDirection(strengthDirectionSelect.value);
@@ -3800,6 +3752,7 @@ export class HeliosUI {
       const outNodeAttribute = strengthOutAttrInput.value.trim();
 
       setStrengthStatus('Running…');
+      setMetricSectionState('metrics-strength', 'running');
       strengthMaxValue.textContent = '—';
       strengthMeanValue.textContent = '—';
       strengthElapsedValue.textContent = '—';
@@ -3819,10 +3772,12 @@ export class HeliosUI {
         strengthMeanValue.textContent = formatNumber(summary.mean, 4);
         strengthElapsedValue.textContent = `${Math.round(Math.max(0, ended - started))} ms`;
         setStrengthStatus(wrote ? `Done • wrote "${outNodeAttribute}"` : 'Done');
+        setMetricSectionState('metrics-strength', 'success');
         refreshAll();
         this.helios?.requestRender?.();
       } catch (error) {
         setStrengthStatus(error?.message ?? String(error));
+        setMetricSectionState('metrics-strength', 'error');
       } finally {
         setStrengthRunning(false);
       }
@@ -3832,6 +3787,7 @@ export class HeliosUI {
       const network = net();
       if (!network || typeof network.measureLocalClusteringCoefficient !== 'function') {
         setClusteringStatus('Local clustering measurement is not available on this network');
+        setMetricSectionState('metrics-clustering', 'error');
         return;
       }
       const direction = normalizeNeighborDirection(clusteringDirectionSelect.value);
@@ -3839,11 +3795,13 @@ export class HeliosUI {
       const edgeWeightAttribute = clusteringWeightSelect.value ? String(clusteringWeightSelect.value) : null;
       if (variant !== 'unweighted' && !edgeWeightAttribute) {
         setClusteringStatus('Choose an edge weight attribute for weighted variants');
+        setMetricSectionState('metrics-clustering', 'error');
         return;
       }
       const outNodeAttribute = clusteringOutAttrInput.value.trim();
 
       setClusteringStatus('Running…');
+      setMetricSectionState('metrics-clustering', 'running');
       clusteringMaxValue.textContent = '—';
       clusteringMeanValue.textContent = '—';
       clusteringElapsedValue.textContent = '—';
@@ -3863,10 +3821,12 @@ export class HeliosUI {
         clusteringMeanValue.textContent = formatNumber(summary.mean, 4);
         clusteringElapsedValue.textContent = `${Math.round(Math.max(0, ended - started))} ms`;
         setClusteringStatus(wrote ? `Done • wrote "${outNodeAttribute}"` : 'Done');
+        setMetricSectionState('metrics-clustering', 'success');
         refreshAll();
         this.helios?.requestRender?.();
       } catch (error) {
         setClusteringStatus(error?.message ?? String(error));
+        setMetricSectionState('metrics-clustering', 'error');
       } finally {
         setClusteringRunning(false);
       }
@@ -3876,6 +3836,7 @@ export class HeliosUI {
       const network = net();
       if (!network || typeof network.measureEigenvectorCentrality !== 'function') {
         setEigenvectorStatus('Eigenvector centrality is not available on this network');
+        setMetricSectionState('metrics-eigen', 'error');
         return;
       }
 
@@ -3889,6 +3850,7 @@ export class HeliosUI {
       const outNodeAttribute = eigenvectorOutAttrInput.value.trim();
 
       setEigenvectorStatus('Starting…');
+      setMetricSectionState('metrics-eigen', 'running');
       setEigenvectorProgress(0, maxIterations);
       eigenvectorMaxValue.textContent = '—';
       eigenvectorEigenvalueValue.textContent = '—';
@@ -3939,6 +3901,7 @@ export class HeliosUI {
         eigenvectorElapsedValue.textContent = `${Math.round(Math.max(0, ended - started))} ms`;
         const writeMsg = wrote ? ` • wrote "${outNodeAttribute}"` : '';
         setEigenvectorStatus(`Done • ${converged} in ${iterations} iterations${writeMsg}`);
+        setMetricSectionState('metrics-eigen', 'success');
         refreshAll();
         this.helios?.requestRender?.();
       } catch (error) {
@@ -3947,6 +3910,7 @@ export class HeliosUI {
         const aborted = signal.aborted || lower.includes('aborted') || lower.includes('canceled');
         if (aborted) {
           setEigenvectorStatus('Canceled');
+          setMetricSectionState('metrics-eigen', 'idle');
         } else {
           const detail = reportMeasurementError('Eigenvector centrality', error, {
             direction,
@@ -3957,6 +3921,7 @@ export class HeliosUI {
             processedIterations,
           });
           setEigenvectorStatus(detail);
+          setMetricSectionState('metrics-eigen', 'error');
         }
       } finally {
         eigenvectorAbortController = null;
@@ -3968,6 +3933,7 @@ export class HeliosUI {
       const network = net();
       if (!network || typeof network.measureBetweennessCentrality !== 'function') {
         setBetweennessStatus('Betweenness centrality is not available on this network');
+        setMetricSectionState('metrics-betweenness', 'error');
         return;
       }
       const edgeWeightAttribute = betweennessWeightSelect.value ? String(betweennessWeightSelect.value) : null;
@@ -3980,6 +3946,7 @@ export class HeliosUI {
       const totalSources = sourceNodes.length >>> 0;
       if (!totalSources) {
         setBetweennessStatus('No active nodes to process');
+        setMetricSectionState('metrics-betweenness', 'error');
         betweennessMaxValue.textContent = '—';
         betweennessSourceCountValue.textContent = '0';
         betweennessElapsedValue.textContent = '0 ms';
@@ -3988,6 +3955,7 @@ export class HeliosUI {
       }
 
       setBetweennessStatus('Starting…');
+      setMetricSectionState('metrics-betweenness', 'running');
       setBetweennessProgress(0, totalSources);
       betweennessMaxValue.textContent = '—';
       betweennessSourceCountValue.textContent = '—';
@@ -4042,6 +4010,7 @@ export class HeliosUI {
         betweennessElapsedValue.textContent = `${Math.round(Math.max(0, ended - started))} ms`;
         const writeMsg = wrote ? ` • wrote "${outNodeAttribute}"` : '';
         setBetweennessStatus(`Done${writeMsg}`);
+        setMetricSectionState('metrics-betweenness', 'success');
         refreshAll();
         this.helios?.requestRender?.();
       } catch (error) {
@@ -4050,6 +4019,7 @@ export class HeliosUI {
         const aborted = signal.aborted || lower.includes('aborted') || lower.includes('canceled');
         if (aborted) {
           setBetweennessStatus('Canceled');
+          setMetricSectionState('metrics-betweenness', 'idle');
         } else {
           const detail = reportMeasurementError('Betweenness centrality', error, {
             edgeWeightAttribute,
@@ -4059,6 +4029,7 @@ export class HeliosUI {
             totalSources,
           });
           setBetweennessStatus(detail);
+          setMetricSectionState('metrics-betweenness', 'error');
         }
       } finally {
         betweennessAbortController = null;
@@ -4070,6 +4041,7 @@ export class HeliosUI {
       const network = net();
       if (!network || typeof network.createLeidenSession !== 'function') {
         setLeidenStatus('Leiden is not available on this network');
+        setMetricSectionState('metrics-leiden', 'error');
         return;
       }
 
@@ -4085,6 +4057,7 @@ export class HeliosUI {
       const yieldMs = Math.max(0, Number(yieldMsInput.value) || 0);
 
       setLeidenStatus('Starting…');
+      setMetricSectionState('metrics-leiden', 'running');
       setLeidenProgress(0, 1);
       modularityValue.textContent = '—';
       communityValue.textContent = '—';
@@ -4124,6 +4097,7 @@ export class HeliosUI {
         const elapsedMs = Math.max(0, ended - started);
         setLeidenProgress(1, 1);
         setLeidenStatus(`Done • wrote "${outNodeCommunityAttribute}"`);
+        setMetricSectionState('metrics-leiden', 'success');
         modularityValue.textContent = formatNumber(result?.modularity ?? NaN, 6);
         communityValue.textContent = String(result?.communityCount ?? '—');
         elapsedValue.textContent = `${Math.round(elapsedMs)} ms`;
@@ -4135,8 +4109,10 @@ export class HeliosUI {
         const aborted = leidenAbortController?.signal?.aborted || lower.includes('aborted') || lower.includes('canceled');
         if (aborted) {
           setLeidenStatus('Canceled');
+          setMetricSectionState('metrics-leiden', 'idle');
         } else {
           setLeidenStatus(message);
+          setMetricSectionState('metrics-leiden', 'error');
         }
       } finally {
         leidenAbortController = null;
@@ -4148,6 +4124,7 @@ export class HeliosUI {
       const network = net();
       if (!network || typeof network.createDimensionSession !== 'function') {
         setDimensionStatus('Dimension session is not available on this network');
+        setMetricSectionState('metrics-dimension', 'error');
         return;
       }
 
@@ -4173,6 +4150,7 @@ export class HeliosUI {
       const yieldMs = Math.max(0, Number(dimensionYieldMsInput.value) || 0);
 
       setDimensionStatus('Starting…');
+      setMetricSectionState('metrics-dimension', 'running');
       setDimensionProgress(0, 1);
       dimensionGlobalMaxValue.textContent = '—';
       dimensionSelectedCountValue.textContent = '—';
@@ -4223,6 +4201,7 @@ export class HeliosUI {
         if (outNodeDimensionLevelsAttribute) writes.push(`"${outNodeDimensionLevelsAttribute}"`);
         setDimensionProgress(1, 1);
         setDimensionStatus(writes.length ? `Done • wrote ${writes.join(', ')}` : 'Done');
+        setMetricSectionState('metrics-dimension', 'success');
         dimensionGlobalMaxValue.textContent = formatNumber(dmax, 4);
         dimensionSelectedCountValue.textContent = String(result?.selectedCount ?? '—');
         dimensionElapsedValue.textContent = `${Math.round(elapsedMs)} ms`;
@@ -4234,8 +4213,10 @@ export class HeliosUI {
         const aborted = dimensionAbortController?.signal?.aborted || lower.includes('aborted') || lower.includes('canceled');
         if (aborted) {
           setDimensionStatus('Canceled');
+          setMetricSectionState('metrics-dimension', 'idle');
         } else {
           setDimensionStatus(message);
+          setMetricSectionState('metrics-dimension', 'error');
         }
       } finally {
         if (session && typeof session.dispose === 'function') {
@@ -4259,20 +4240,32 @@ export class HeliosUI {
       runClustering();
     });
     eigenvectorCalcButton.addEventListener('click', () => {
-      if (eigenvectorRunning) return;
+      if (eigenvectorRunning) {
+        cancelEigenvectorRun();
+        return;
+      }
       runEigenvector();
     });
     betweennessCalcButton.addEventListener('click', () => {
-      if (betweennessRunning) return;
+      if (betweennessRunning) {
+        cancelBetweennessRun();
+        return;
+      }
       runBetweenness();
     });
 
     calcButton.addEventListener('click', () => {
-      if (leidenRunning) return;
+      if (leidenRunning) {
+        cancelLeidenRun();
+        return;
+      }
       runLeiden();
     });
     dimensionCalcButton.addEventListener('click', () => {
-      if (dimensionRunning) return;
+      if (dimensionRunning) {
+        cancelDimensionRun();
+        return;
+      }
       runDimension();
     });
 
@@ -4280,11 +4273,14 @@ export class HeliosUI {
 
     // Status is rendered under the Progress bar.
 
-    const stack = new PanelStack();
+    metricsStack = new PanelStack();
+    const stack = metricsStack;
     stack.add({
       id: 'metrics-degree',
       title: 'Degree',
       collapsed: options?.collapsedDegree ?? true,
+      statusDot: true,
+      headerControls: degreeCalcButton,
       content: (() => {
         const wrapper = document.createElement('div');
         wrapper.appendChild(degree);
@@ -4296,6 +4292,8 @@ export class HeliosUI {
       id: 'metrics-strength',
       title: 'Strength',
       collapsed: options?.collapsedStrength ?? true,
+      statusDot: true,
+      headerControls: strengthCalcButton,
       content: (() => {
         const wrapper = document.createElement('div');
         wrapper.appendChild(strength);
@@ -4307,6 +4305,8 @@ export class HeliosUI {
       id: 'metrics-clustering',
       title: 'Local Clustering',
       collapsed: options?.collapsedClustering ?? true,
+      statusDot: true,
+      headerControls: clusteringCalcButton,
       content: (() => {
         const wrapper = document.createElement('div');
         wrapper.appendChild(clustering);
@@ -4318,6 +4318,8 @@ export class HeliosUI {
       id: 'metrics-eigen',
       title: 'Eigenvector Centrality',
       collapsed: options?.collapsedEigenvector ?? true,
+      statusDot: true,
+      headerControls: eigenvectorCalcButton,
       content: (() => {
         const wrapper = document.createElement('div');
         wrapper.appendChild(eigenvector);
@@ -4329,6 +4331,8 @@ export class HeliosUI {
       id: 'metrics-betweenness',
       title: 'Betweenness Centrality',
       collapsed: options?.collapsedBetweenness ?? true,
+      statusDot: true,
+      headerControls: betweennessCalcButton,
       content: (() => {
         const wrapper = document.createElement('div');
         wrapper.appendChild(betweenness);
@@ -4340,6 +4344,8 @@ export class HeliosUI {
       id: 'metrics-leiden',
       title: 'Communities (Leiden)',
       collapsed: options?.collapsedLeiden ?? true,
+      statusDot: true,
+      headerControls: calcButton,
       content: (() => {
         const wrapper = document.createElement('div');
         wrapper.appendChild(leiden);
@@ -4351,6 +4357,8 @@ export class HeliosUI {
       id: 'metrics-dimension',
       title: 'Dimensionality',
       collapsed: options?.collapsedDimension ?? true,
+      statusDot: true,
+      headerControls: dimensionCalcButton,
       content: (() => {
         const wrapper = document.createElement('div');
         wrapper.appendChild(dimension);
@@ -4358,6 +4366,7 @@ export class HeliosUI {
         return wrapper;
       })(),
     });
+    resetMetricSectionStates();
     content.appendChild(stack.element);
     this._controlCleanups.add(() => stack.destroy());
     this._controlCleanups.add(() => degreeInnerStack.destroy());
@@ -4379,6 +4388,7 @@ export class HeliosUI {
       cancelDimensionRun();
       cancelEigenvectorRun();
       cancelBetweennessRun();
+      resetMetricSectionStates();
       refreshAll();
     };
     let unsub = null;

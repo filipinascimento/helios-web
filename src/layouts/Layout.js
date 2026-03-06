@@ -40,6 +40,20 @@ export class Layout {
     }
   }
 
+  getParameterBindings() {
+    return {
+      key: 'static',
+      label: this.constructor?.name ?? 'Layout',
+      dynamic: false,
+      bindings: [],
+    };
+  }
+
+  reheat() {
+    this.requestUpdate();
+    return this;
+  }
+
   dispose() {}
 }
 
@@ -81,6 +95,15 @@ export class StaticLayout extends Layout {
     } else {
       apply();
     }
+  }
+
+  getParameterBindings() {
+    return {
+      key: 'static',
+      label: 'Static',
+      dynamic: false,
+      bindings: [],
+    };
   }
 }
 
@@ -179,6 +202,220 @@ export class WorkerLayout extends Layout {
       this.worker.terminate();
       this.worker = null;
     }
+  }
+
+  setSettings(next = {}) {
+    if (!next || typeof next !== 'object') return this;
+    this.options = {
+      ...this.options,
+      ...next,
+      center: Array.isArray(next.center) ? next.center.slice(0, 3) : this.options.center,
+    };
+    if (this.worker) {
+      this.worker.postMessage({
+        type: 'settings',
+        options: this.options,
+      });
+    }
+    this.requestUpdate();
+    return this;
+  }
+
+  getParameterBindings() {
+    const layoutMode = String(this.options?.layout ?? 'force3d').toLowerCase();
+    if (layoutMode === 'jitter') {
+      return {
+        key: 'worker:jitter',
+        label: 'Jitter (worker)',
+        dynamic: true,
+        bindings: [
+          {
+            key: 'jitter',
+            label: 'Jitter',
+            type: 'number',
+            min: 0,
+            max: 20,
+            step: 0.1,
+            get: () => Number(this.options.jitter ?? 3),
+            set: (value) => this.setSettings({ jitter: value }),
+          },
+        ],
+      };
+    }
+
+    return {
+      key: 'worker:force3d',
+      label: 'Force (worker)',
+      dynamic: true,
+      bindings: [
+        {
+          key: 'repulsionStrategy',
+          label: 'Repulsion',
+          type: 'select',
+          options: [
+            { value: 'barnes-hut', label: 'Barnes-Hut' },
+            { value: 'negative', label: 'Negative sampling' },
+            { value: 'full', label: 'All pairs' },
+          ],
+          get: () => String(this.options.repulsionStrategy ?? 'barnes-hut'),
+          set: (value) => this.setSettings({ repulsionStrategy: value }),
+        },
+        {
+          key: 'negativeSampling',
+          label: 'Extra negatives',
+          type: 'boolean',
+          get: () => Boolean(this.options.negativeSampling),
+          set: (value) => this.setSettings({ negativeSampling: value }),
+        },
+        {
+          key: 'negativesPerNode',
+          label: 'Negatives / node',
+          type: 'number',
+          min: 1,
+          max: 256,
+          step: 1,
+          get: () => Number(this.options.negativesPerNode ?? 48),
+          set: (value) => this.setSettings({ negativesPerNode: value }),
+        },
+        {
+          key: 'repulsionExponent',
+          label: 'Repulsion exp.',
+          type: 'number',
+          min: 0.1,
+          max: 4,
+          step: 0.05,
+          get: () => Number(this.options.repulsionExponent ?? 2),
+          set: (value) => this.setSettings({ repulsionExponent: value }),
+        },
+        {
+          key: 'attractionExponent',
+          label: 'Attraction exp.',
+          type: 'number',
+          min: 0.1,
+          max: 4,
+          step: 0.05,
+          get: () => Number(this.options.attractionExponent ?? 1),
+          set: (value) => this.setSettings({ attractionExponent: value }),
+        },
+        {
+          key: 'kRepulsion',
+          label: 'Repulsion',
+          type: 'number',
+          min: 0,
+          max: 20,
+          step: 0.01,
+          get: () => Number(this.options.kRepulsion ?? 6),
+          set: (value) => this.setSettings({ kRepulsion: value }),
+        },
+        {
+          key: 'kAttraction',
+          label: 'Attraction',
+          type: 'number',
+          min: 0,
+          max: 0.05,
+          step: 0.0001,
+          get: () => Number(this.options.kAttraction ?? 0.0035),
+          set: (value) => this.setSettings({ kAttraction: value }),
+        },
+        {
+          key: 'kGravity',
+          label: 'Gravity',
+          type: 'number',
+          min: 0,
+          max: 0.01,
+          step: 0.00005,
+          get: () => Number(this.options.kGravity ?? 0.0005),
+          set: (value) => this.setSettings({ kGravity: value }),
+        },
+        {
+          key: 'epsilon',
+          label: 'Softening',
+          type: 'number',
+          min: 0.001,
+          max: 5,
+          step: 0.01,
+          get: () => Number(this.options.epsilon ?? 0.25),
+          set: (value) => this.setSettings({ epsilon: value }),
+        },
+        {
+          key: 'minDistance',
+          label: 'Min distance',
+          type: 'number',
+          min: 0.001,
+          max: 10,
+          step: 0.01,
+          get: () => Number(this.options.minDistance ?? 0.25),
+          set: (value) => this.setSettings({ minDistance: value }),
+        },
+        {
+          key: 'maxForce',
+          label: 'Max force',
+          type: 'number',
+          min: 0.1,
+          max: 100,
+          step: 0.1,
+          get: () => Number(this.options.maxForce ?? 50),
+          set: (value) => this.setSettings({ maxForce: value }),
+        },
+        {
+          key: 'maxStep',
+          label: 'Max step',
+          type: 'number',
+          min: 0.01,
+          max: 10,
+          step: 0.01,
+          get: () => Number(this.options.maxStep ?? 3),
+          set: (value) => this.setSettings({ maxStep: value }),
+        },
+        {
+          key: 'eta',
+          label: 'Eta',
+          type: 'number',
+          min: 0.001,
+          max: 1,
+          step: 0.001,
+          get: () => Number(this.options.eta ?? 0.04),
+          set: (value) => this.setSettings({ eta: value }),
+        },
+        {
+          key: 'damping',
+          label: 'Damping',
+          type: 'number',
+          min: 0,
+          max: 1,
+          step: 0.001,
+          get: () => Number(this.options.damping ?? 0.9),
+          set: (value) => this.setSettings({ damping: value }),
+        },
+        {
+          key: 'theta',
+          label: 'Theta',
+          type: 'number',
+          min: 0.1,
+          max: 1.5,
+          step: 0.01,
+          get: () => Number(this.options.theta ?? 0.6),
+          set: (value) => this.setSettings({ theta: value }),
+        },
+        {
+          key: 'leafSize',
+          label: 'Leaf size',
+          type: 'number',
+          min: 1,
+          max: 128,
+          step: 1,
+          get: () => Number(this.options.leafSize ?? 16),
+          set: (value) => this.setSettings({ leafSize: value }),
+        },
+        {
+          key: 'recenter',
+          label: 'Recenter',
+          type: 'boolean',
+          get: () => this.options.recenter !== false,
+          set: (value) => this.setSettings({ recenter: value }),
+        },
+      ],
+    };
   }
 
   resize(size) {

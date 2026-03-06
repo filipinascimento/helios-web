@@ -5,6 +5,19 @@ function resolveContainer(element) {
   return div;
 }
 
+function appendResolved(target, value) {
+  if (value == null) return;
+  if (Array.isArray(value)) {
+    for (const entry of value) appendResolved(target, entry);
+    return;
+  }
+  if (value instanceof Node) {
+    target.appendChild(value);
+    return;
+  }
+  target.appendChild(resolveContainer(value));
+}
+
 export class PanelStack {
   constructor(options = {}) {
     this.element = document.createElement('div');
@@ -25,6 +38,8 @@ export class PanelStack {
     const header = document.createElement('button');
     header.type = 'button';
     header.className = 'helios-ui-subpanel__header';
+    const headerRow = document.createElement('div');
+    headerRow.className = 'helios-ui-subpanel__header-row';
 
     const toggle = document.createElement('span');
     toggle.className = 'helios-ui-subpanel__toggle';
@@ -34,6 +49,15 @@ export class PanelStack {
     label.className = 'helios-ui-subpanel__label';
     label.textContent = options.title ?? options.id;
 
+    let status = null;
+    if (options.statusDot !== false) {
+      status = document.createElement('span');
+      status.className = 'helios-ui-subpanel__status';
+      status.dataset.state = 'idle';
+      status.hidden = true;
+      status.setAttribute('aria-hidden', 'true');
+    }
+
     const sync = () => {
       const collapsed = item.dataset.collapsed === 'true';
       header.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
@@ -41,7 +65,20 @@ export class PanelStack {
     };
 
     header.appendChild(toggle);
+    if (status) header.appendChild(status);
     header.appendChild(label);
+    headerRow.appendChild(header);
+    let headerControls = null;
+    if (options.headerControls != null) {
+      headerControls = document.createElement('div');
+      headerControls.className = 'helios-ui-subpanel__header-controls';
+      appendResolved(headerControls, options.headerControls);
+      if (headerControls.childNodes.length > 0) {
+        headerRow.appendChild(headerControls);
+      } else {
+        headerControls = null;
+      }
+    }
     sync();
 
     const body = document.createElement('div');
@@ -53,11 +90,19 @@ export class PanelStack {
       sync();
     });
 
-    item.appendChild(header);
+    item.appendChild(headerRow);
     item.appendChild(body);
     this.element.appendChild(item);
-    this._items.set(options.id, { item, header, body });
+    this._items.set(options.id, { item, header, headerRow, headerControls, body, status });
     return options.id;
+  }
+
+  setStatus(id, status) {
+    const entry = this._items.get(id);
+    if (!entry?.status) return;
+    const normalized = typeof status === 'string' ? status : 'idle';
+    entry.status.dataset.state = normalized;
+    entry.status.hidden = normalized === 'none';
   }
 
   destroy() {
@@ -65,4 +110,3 @@ export class PanelStack {
     this._items.clear();
   }
 }
-

@@ -273,6 +273,61 @@ test('D3Force3DLayout ignores updateIntervalMs gating and posts tick when schedu
   assert.equal(posted?.type, 'tick');
 });
 
+test('WorkerLayout exposes shared parameter bindings for force and jitter layouts', () => {
+  const network = createStubNetwork();
+  const visuals = {
+    nodePositions: new Float32Array(12),
+    withBufferAccess: (fn) => fn(),
+  };
+
+  const forceLayout = new WorkerLayout(network, visuals, { layout: 'force3d' });
+  const forceDescriptor = forceLayout.getParameterBindings();
+  assert.equal(forceDescriptor.key, 'worker:force3d');
+  assert.ok(forceDescriptor.dynamic);
+  assert.ok(forceDescriptor.bindings.some((binding) => binding.key === 'kRepulsion'));
+
+  const repulsionBinding = forceDescriptor.bindings.find((binding) => binding.key === 'kRepulsion');
+  repulsionBinding.set(4.5);
+  assert.equal(forceLayout.options.kRepulsion, 4.5);
+
+  const jitterLayout = new WorkerLayout(network, visuals, { layout: 'jitter', jitter: 2 });
+  const jitterDescriptor = jitterLayout.getParameterBindings();
+  assert.equal(jitterDescriptor.key, 'worker:jitter');
+  assert.deepEqual(jitterDescriptor.bindings.map((binding) => binding.key), ['jitter']);
+});
+
+test('D3Force3DLayout exposes shared parameter bindings and can reheat alpha', () => {
+  const network = createStubNetwork();
+  const visuals = {
+    nodePositions: new Float32Array(12),
+    withBufferAccess: (fn) => fn(),
+    seedMissingPositions: () => {},
+  };
+
+  const layout = new D3Force3DLayout(network, visuals, {});
+  const descriptor = layout.getParameterBindings();
+  assert.equal(descriptor.key, 'd3force3d');
+  assert.ok(descriptor.bindings.some((binding) => binding.key === 'alphaCurrent'));
+
+  layout.settings.alpha = 0.05;
+  layout.reheat();
+  assert.equal(layout.settings.alpha, 1);
+});
+
+test('GpuForceLayout exposes shared parameter bindings and can reheat alpha', () => {
+  const network = createStubNetwork();
+  const visuals = {};
+  const helios = createStubHelios();
+  const layout = new GpuForceLayout(network, visuals, { helios, mode: '2d', alpha: 0.75 });
+  const descriptor = layout.getParameterBindings();
+  assert.equal(descriptor.key, 'gpu-force');
+  assert.ok(descriptor.bindings.some((binding) => binding.key === 'alphaCurrent'));
+
+  layout.positionDelegate.alpha = 0.1;
+  layout.reheat();
+  assert.equal(layout.positionDelegate.alpha, 0.75);
+});
+
 test('Helios.createLayout resolves gpu-force into GpuForceLayout', () => {
   const helios = Object.create(Helios.prototype);
   helios.network = createStubNetwork();

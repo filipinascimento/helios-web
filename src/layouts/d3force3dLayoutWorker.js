@@ -182,9 +182,181 @@ export class D3Force3DLayout extends Layout {
         this.settings[key] = value;
       }
     });
+    this.options = {
+      ...this.options,
+      settings: {
+        ...(this.options.settings ?? {}),
+        ...this.settings,
+      },
+    };
     this.optionsDirty = true;
     this.requestUpdate();
     return this;
+  }
+
+  reheat() {
+    this.setSettings({
+      alpha: Number(this.options?.settings?.alpha ?? DEFAULT_SETTINGS.alpha),
+    });
+    return this;
+  }
+
+  getParameterBindings() {
+    return {
+      key: 'd3force3d',
+      label: 'D3 Force 3D (worker)',
+      dynamic: true,
+      bindings: [
+        {
+          key: 'alphaCurrent',
+          label: 'Alpha',
+          type: 'display',
+          get: () => Number(this.settings.alpha ?? DEFAULT_SETTINGS.alpha),
+          format: (value) => Number(value).toFixed(4),
+          history: {
+            length: 20,
+            sampleMs: 1500,
+            scale: 'log',
+          },
+        },
+        {
+          key: 'forcesStrength',
+          label: 'Force strength',
+          type: 'number',
+          min: 0,
+          max: 5,
+          step: 0.01,
+          get: () => Number(this.settings.forcesStrength ?? DEFAULT_SETTINGS.forcesStrength),
+          set: (value) => this.setSettings({ forcesStrength: value }),
+        },
+        {
+          key: 'forcesRatio',
+          label: 'Force ratio',
+          type: 'number',
+          min: 1,
+          max: 200,
+          step: 1,
+          get: () => Number(this.settings.forcesRatio ?? DEFAULT_SETTINGS.forcesRatio),
+          set: (value) => this.setSettings({ forcesRatio: value }),
+        },
+        {
+          key: 'repulsiveExponent',
+          label: 'Repulsion exp.',
+          type: 'number',
+          min: 0.1,
+          max: 4,
+          step: 0.05,
+          get: () => Number(this.settings.repulsiveExponent ?? DEFAULT_SETTINGS.repulsiveExponent),
+          set: (value) => this.setSettings({ repulsiveExponent: value }),
+        },
+        {
+          key: 'attractiveExponent',
+          label: 'Attraction exp.',
+          type: 'number',
+          min: 0.1,
+          max: 4,
+          step: 0.05,
+          get: () => Number(this.settings.attractiveExponent ?? DEFAULT_SETTINGS.attractiveExponent),
+          set: (value) => this.setSettings({ attractiveExponent: value }),
+        },
+        {
+          key: 'gravity',
+          label: 'Gravity',
+          type: 'number',
+          min: 0,
+          max: 2,
+          step: 0.001,
+          get: () => Number(this.settings.gravity ?? DEFAULT_SETTINGS.gravity),
+          set: (value) => this.setSettings({ gravity: value }),
+        },
+        {
+          key: 'viscosity',
+          label: 'Viscosity',
+          type: 'number',
+          min: 0,
+          max: 1,
+          step: 0.001,
+          get: () => Number(this.settings.viscosity ?? DEFAULT_SETTINGS.viscosity),
+          set: (value) => this.setSettings({ viscosity: value }),
+        },
+        {
+          key: 'linkDistance',
+          label: 'Link distance',
+          type: 'number',
+          min: 1,
+          max: 300,
+          step: 1,
+          get: () => Number(this.settings.linkDistance ?? DEFAULT_SETTINGS.linkDistance),
+          set: (value) => this.setSettings({ linkDistance: value }),
+        },
+        {
+          key: 'collisionEnabled',
+          label: 'Collision',
+          type: 'boolean',
+          get: () => Boolean(this.settings.collisionEnabled),
+          set: (value) => this.setSettings({ collisionEnabled: value }),
+        },
+        {
+          key: 'collisionRadius',
+          label: 'Collision radius',
+          type: 'number',
+          min: 0,
+          max: 200,
+          step: 1,
+          get: () => Number(this.settings.collisionRadius ?? DEFAULT_SETTINGS.collisionRadius),
+          set: (value) => this.setSettings({ collisionRadius: value }),
+        },
+        {
+          key: 'forceNormalizationType',
+          label: 'Normalize by',
+          type: 'select',
+          options: [
+            { value: 'degree', label: 'Degree' },
+            { value: 'strength', label: 'Strength' },
+            { value: 'none', label: 'None' },
+          ],
+          get: () => String(this.settings.forceNormalizationType ?? DEFAULT_SETTINGS.forceNormalizationType),
+          set: (value) => this.setSettings({ forceNormalizationType: value }),
+        },
+        {
+          key: 'alphaDecay',
+          label: 'Alpha decay',
+          type: 'number',
+          min: 0,
+          max: 1,
+          step: 0.0001,
+          get: () => Number(this.settings.alphaDecay ?? DEFAULT_SETTINGS.alphaDecay),
+          set: (value) => this.setSettings({ alphaDecay: value }),
+        },
+        {
+          key: 'alphaTarget',
+          label: 'Alpha target',
+          type: 'number',
+          min: 0,
+          max: 1,
+          step: 0.0001,
+          get: () => Number(this.settings.alphaTarget ?? DEFAULT_SETTINGS.alphaTarget),
+          set: (value) => this.setSettings({ alphaTarget: value }),
+        },
+        {
+          key: 'alphaMin',
+          label: 'Alpha min',
+          type: 'number',
+          min: 0,
+          max: 1,
+          step: 0.0001,
+          get: () => Number(this.settings.alphaMin ?? DEFAULT_SETTINGS.alphaMin),
+          set: (value) => this.setSettings({ alphaMin: value }),
+        },
+        {
+          key: 'recenter',
+          label: 'Recenter',
+          type: 'boolean',
+          get: () => this.settings.recenter !== false,
+          set: (value) => this.setSettings({ recenter: value }),
+        },
+      ],
+    };
   }
 
   buildGraphPayload() {

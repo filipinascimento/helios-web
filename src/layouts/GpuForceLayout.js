@@ -96,6 +96,177 @@ export class GpuForceLayout extends Layout {
     return this;
   }
 
+  reheat() {
+    this.setSettings({
+      alpha: Number(this.options.alpha ?? DEFAULT_OPTIONS.alpha),
+    });
+    return this;
+  }
+
+  getParameterBindings() {
+    const sampleKey = this.options.mode === '3d' ? 'sampleCount3D' : 'sampleCount2D';
+    const sampleLabel = this.options.mode === '3d' ? 'Samples / node (3D)' : 'Samples / node (2D)';
+    return {
+      key: 'gpu-force',
+      label: 'Force (GPU)',
+      dynamic: true,
+      bindings: [
+        {
+          key: 'alphaCurrent',
+          label: 'Alpha',
+          type: 'display',
+          get: () => Number(this.positionDelegate?.alpha ?? this.options.alpha ?? DEFAULT_OPTIONS.alpha),
+          format: (value) => Number(value).toFixed(4),
+          history: {
+            length: 20,
+            sampleMs: 1500,
+            scale: 'log',
+          },
+        },
+        {
+          key: sampleKey,
+          label: sampleLabel,
+          type: 'number',
+          min: 1,
+          max: 256,
+          step: 1,
+          get: () => Number(this.options[sampleKey] ?? DEFAULT_OPTIONS[sampleKey]),
+          set: (value) => this.setSettings({ [sampleKey]: value }),
+        },
+        {
+          key: 'maxNeighborsPerNode',
+          label: 'Neighbors / node',
+          type: 'number',
+          min: 1,
+          max: 256,
+          step: 1,
+          get: () => Number(this.options.maxNeighborsPerNode ?? DEFAULT_OPTIONS.maxNeighborsPerNode),
+          set: (value) => this.setSettings({ maxNeighborsPerNode: value }),
+        },
+        {
+          key: 'outputScale',
+          label: 'Output scale',
+          type: 'number',
+          min: 0.1,
+          max: 20,
+          step: 0.1,
+          get: () => Number(this.options.outputScale ?? DEFAULT_OPTIONS.outputScale),
+          set: (value) => this.setSettings({ outputScale: value }),
+        },
+        {
+          key: 'linkDistance',
+          label: 'Link distance',
+          type: 'number',
+          min: 0.1,
+          max: 20,
+          step: 0.01,
+          get: () => Number(this.options.linkDistance ?? DEFAULT_OPTIONS.linkDistance),
+          set: (value) => this.setSettings({ linkDistance: value }),
+        },
+        {
+          key: 'kRepulsion',
+          label: 'Repulsion',
+          type: 'number',
+          min: 0,
+          max: 2,
+          step: 0.001,
+          get: () => Number(this.options.kRepulsion ?? DEFAULT_OPTIONS.kRepulsion),
+          set: (value) => this.setSettings({ kRepulsion: value }),
+        },
+        {
+          key: 'kAttraction',
+          label: 'Attraction',
+          type: 'number',
+          min: 0,
+          max: 2,
+          step: 0.001,
+          get: () => Number(this.options.kAttraction ?? DEFAULT_OPTIONS.kAttraction),
+          set: (value) => this.setSettings({ kAttraction: value }),
+        },
+        {
+          key: 'kGravity',
+          label: 'Gravity',
+          type: 'number',
+          min: 0,
+          max: 0.01,
+          step: 0.00001,
+          get: () => Number(this.options.kGravity ?? DEFAULT_OPTIONS.kGravity),
+          set: (value) => this.setSettings({ kGravity: value }),
+        },
+        {
+          key: 'eta',
+          label: 'Eta',
+          type: 'number',
+          min: 0.001,
+          max: 1,
+          step: 0.001,
+          get: () => Number(this.options.eta ?? DEFAULT_OPTIONS.eta),
+          set: (value) => this.setSettings({ eta: value }),
+        },
+        {
+          key: 'damping',
+          label: 'Damping',
+          type: 'number',
+          min: 0,
+          max: 1,
+          step: 0.001,
+          get: () => Number(this.options.damping ?? DEFAULT_OPTIONS.damping),
+          set: (value) => this.setSettings({ damping: value }),
+        },
+        {
+          key: 'maxStep',
+          label: 'Max step',
+          type: 'number',
+          min: 0.01,
+          max: 10,
+          step: 0.01,
+          get: () => Number(this.options.maxStep ?? DEFAULT_OPTIONS.maxStep),
+          set: (value) => this.setSettings({ maxStep: value }),
+        },
+        {
+          key: 'minDistance',
+          label: 'Min distance',
+          type: 'number',
+          min: 0.001,
+          max: 10,
+          step: 0.001,
+          get: () => Number(this.options.minDistance ?? DEFAULT_OPTIONS.minDistance),
+          set: (value) => this.setSettings({ minDistance: value }),
+        },
+        {
+          key: 'alphaDecay',
+          label: 'Alpha decay',
+          type: 'number',
+          min: 0,
+          max: 1,
+          step: 0.0001,
+          get: () => Number(this.options.alphaDecay ?? DEFAULT_OPTIONS.alphaDecay),
+          set: (value) => this.setSettings({ alphaDecay: value }),
+        },
+        {
+          key: 'alphaTarget',
+          label: 'Alpha target',
+          type: 'number',
+          min: 0,
+          max: 1,
+          step: 0.0001,
+          get: () => Number(this.options.alphaTarget ?? DEFAULT_OPTIONS.alphaTarget),
+          set: (value) => this.setSettings({ alphaTarget: value }),
+        },
+        {
+          key: 'alphaMin',
+          label: 'Alpha min',
+          type: 'number',
+          min: 0,
+          max: 1,
+          step: 0.0001,
+          get: () => Number(this.options.alphaMin ?? DEFAULT_OPTIONS.alphaMin),
+          set: (value) => this.setSettings({ alphaMin: value }),
+        },
+      ],
+    };
+  }
+
   dispose() {
     this.positionDelegate.dispose?.();
   }

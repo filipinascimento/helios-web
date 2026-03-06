@@ -11,6 +11,10 @@ async function ensureToggleOn(locator) {
   await expect(locator).toHaveAttribute('aria-checked', 'true');
 }
 
+function subpanelForHeader(header) {
+  return header.locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " helios-ui-subpanel ")][1]');
+}
+
 test.describe('docs basic demo metrics panel', () => {
   test('can start and cancel worker metrics run', async ({ page }, testInfo) => {
     await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=6000');
@@ -22,13 +26,13 @@ test.describe('docs basic demo metrics panel', () => {
     await expect(panel).toBeVisible();
 
     const leidenHeader = panel.locator('button.helios-ui-subpanel__header', { hasText: 'Communities (Leiden)' });
-    const leidenItem = leidenHeader.locator('..');
+    const leidenItem = subpanelForHeader(leidenHeader);
     if ((await leidenItem.getAttribute('data-collapsed')) === 'true') {
       await leidenHeader.click();
     }
 
     const advancedHeader = leidenItem.locator('button.helios-ui-subpanel__header', { hasText: 'Advanced' });
-    const advancedItem = advancedHeader.locator('..');
+    const advancedItem = subpanelForHeader(advancedHeader);
     if ((await advancedItem.getAttribute('data-collapsed')) === 'true') {
       await advancedHeader.click();
     }
@@ -36,7 +40,8 @@ test.describe('docs basic demo metrics panel', () => {
     await panel.locator('[data-testid="metrics-timeoutMs"]').fill('1');
     await panel.locator('[data-testid="metrics-chunkBudget"]').fill('200');
 
-    await panel.locator('[data-testid="metrics-calc"]').click();
+    const runButton = panel.locator('[data-testid="metrics-calc"]');
+    await runButton.click();
 
     const status = panel.locator('[data-testid="metrics-status"]');
     await expect(status).toBeVisible();
@@ -44,10 +49,9 @@ test.describe('docs basic demo metrics panel', () => {
     // Ensure the run starts (or finishes extremely quickly).
     await expect(status).toHaveText(/Running…|Done|Canceled|Session canceled/i, { timeout: 20_000 });
 
-    const cancel = panel.locator('[data-testid="metrics-cancel"]');
-    const canCancel = await cancel.isEnabled();
+    const canCancel = ((await runButton.textContent()) ?? '').toLowerCase().includes('cancel');
     if (canCancel) {
-      await cancel.click();
+      await runButton.click();
       await expect(status).toHaveText(/Canceled|Session canceled/i, { timeout: 20_000 });
     } else {
       // If the run finished before we could cancel, it must have produced results.
@@ -84,7 +88,7 @@ test.describe('docs basic demo metrics panel', () => {
     await expect(panel).toBeVisible();
 
     const dimHeader = panel.locator('button.helios-ui-subpanel__header', { hasText: 'Dimensionality' });
-    const dimItem = dimHeader.locator('..');
+    const dimItem = subpanelForHeader(dimHeader);
     if ((await dimItem.getAttribute('data-collapsed')) === 'true') {
       await dimHeader.click();
     }
@@ -94,7 +98,7 @@ test.describe('docs basic demo metrics panel', () => {
     await panel.locator('[data-testid="metrics-dimension-order"]').fill('2');
 
     const advancedHeader = dimItem.locator('button.helios-ui-subpanel__header', { hasText: 'Advanced' });
-    const advancedItem = advancedHeader.locator('..');
+    const advancedItem = subpanelForHeader(advancedHeader);
     if ((await advancedItem.getAttribute('data-collapsed')) === 'true') {
       await advancedHeader.click();
     }
@@ -163,7 +167,7 @@ test.describe('docs basic demo metrics panel', () => {
 
     const openSubpanel = async (title) => {
       const header = panel.locator('button.helios-ui-subpanel__header', { hasText: title });
-      const item = header.locator('..');
+      const item = subpanelForHeader(header);
       if ((await item.getAttribute('data-collapsed')) === 'true') {
         await header.click();
       }
@@ -200,7 +204,7 @@ test.describe('docs basic demo metrics panel', () => {
 
     const degreeItem = await openSubpanel('Degree');
     const degreeAdvancedHeader = degreeItem.locator('button.helios-ui-subpanel__header', { hasText: 'Advanced' });
-    const degreeAdvancedItem = degreeAdvancedHeader.locator('..');
+    const degreeAdvancedItem = subpanelForHeader(degreeAdvancedHeader);
     if ((await degreeAdvancedItem.getAttribute('data-collapsed')) === 'true') {
       await degreeAdvancedHeader.click();
     }
@@ -209,7 +213,7 @@ test.describe('docs basic demo metrics panel', () => {
 
     const strengthItem = await openSubpanel('Strength');
     const strengthAdvancedHeader = strengthItem.locator('button.helios-ui-subpanel__header', { hasText: 'Advanced' });
-    const strengthAdvancedItem = strengthAdvancedHeader.locator('..');
+    const strengthAdvancedItem = subpanelForHeader(strengthAdvancedHeader);
     if ((await strengthAdvancedItem.getAttribute('data-collapsed')) === 'true') {
       await strengthAdvancedHeader.click();
     }
@@ -219,7 +223,7 @@ test.describe('docs basic demo metrics panel', () => {
 
     const clusteringItem = await openSubpanel('Local Clustering');
     const clusteringAdvancedHeader = clusteringItem.locator('button.helios-ui-subpanel__header', { hasText: 'Advanced' });
-    const clusteringAdvancedItem = clusteringAdvancedHeader.locator('..');
+    const clusteringAdvancedItem = subpanelForHeader(clusteringAdvancedHeader);
     if ((await clusteringAdvancedItem.getAttribute('data-collapsed')) === 'true') {
       await clusteringAdvancedHeader.click();
     }
@@ -229,7 +233,7 @@ test.describe('docs basic demo metrics panel', () => {
 
     const eigenItem = await openSubpanel('Eigenvector Centrality');
     const eigenAdvancedHeader = eigenItem.locator('button.helios-ui-subpanel__header', { hasText: 'Advanced' });
-    const eigenAdvancedItem = eigenAdvancedHeader.locator('..');
+    const eigenAdvancedItem = subpanelForHeader(eigenAdvancedHeader);
     if ((await eigenAdvancedItem.getAttribute('data-collapsed')) === 'true') {
       await eigenAdvancedHeader.click();
     }
@@ -240,7 +244,7 @@ test.describe('docs basic demo metrics panel', () => {
 
     const betweennessItem = await openSubpanel('Betweenness Centrality');
     const betweennessAdvancedHeader = betweennessItem.locator('button.helios-ui-subpanel__header', { hasText: 'Advanced' });
-    const betweennessAdvancedItem = betweennessAdvancedHeader.locator('..');
+    const betweennessAdvancedItem = subpanelForHeader(betweennessAdvancedHeader);
     if ((await betweennessAdvancedItem.getAttribute('data-collapsed')) === 'true') {
       await betweennessAdvancedHeader.click();
     }

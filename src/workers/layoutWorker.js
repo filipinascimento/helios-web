@@ -56,6 +56,10 @@ self.onmessage = (event) => {
     state.options.center = [center[0] ?? 0, center[1] ?? 0, state.options.center?.[2] ?? 0];
     return;
   }
+  if (data.type === 'settings') {
+    state.options = { ...state.options, ...(data.options ?? {}) };
+    return;
+  }
   if (data.type === 'tick' && data.positions instanceof Float32Array) {
     stepLayout(data);
   }

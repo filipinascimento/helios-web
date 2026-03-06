@@ -461,6 +461,7 @@ function bumpVersionCounter(value) {
 export const EVENTS = Object.freeze({
   LAYOUT_START: 'layout:start',
   LAYOUT_STOP: 'layout:stop',
+  LAYOUT_CHANGED: 'layout:changed',
 
   NODE_HOVER: 'node:hover',
   EDGE_HOVER: 'edge:hover',
@@ -717,6 +718,17 @@ export class Helios extends EventTarget {
     } catch {
       // Avoid breaking tests that create Helios-shaped objects without EventTarget internals.
     }
+  }
+
+  _emitLayoutChanged(layout = this._layout) {
+    const descriptor = typeof layout?.getParameterBindings === 'function'
+      ? (layout.getParameterBindings() ?? null)
+      : null;
+    this.emit(EVENTS.LAYOUT_CHANGED, {
+      layout,
+      key: descriptor?.key ?? null,
+      label: descriptor?.label ?? layout?.constructor?.name ?? null,
+    });
   }
 
   constructor(network, options = {}) {
@@ -1713,6 +1725,7 @@ export class Helios extends EventTarget {
     await this._layout?.initialize?.();
     this._layout?.resize?.(this.layers.size);
     this.scheduler.setLayout(this._layout);
+    this._emitLayoutChanged(this._layout);
 
     if (recreateRenderer) {
       await this._createRendererAndTrackers();
@@ -3604,6 +3617,7 @@ export class Helios extends EventTarget {
     this._enforcePositionSourcePolicy(this._layout, { resetInterpolation: false });
     this.debug.log('layout', 'Layout initialized and resized', this.layers.size);
     this.scheduler.setLayout(layout);
+    this._emitLayoutChanged(layout);
     this.scheduler.requestLayout('user');
     this.scheduler.requestRender();
     return this;

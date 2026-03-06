@@ -21,6 +21,7 @@ await helios.ready;
 
 const ui = new HeliosUI({ helios, theme: 'dark' });
 ui.createDemoPanel(); // "Scene" panel (tabbed controls) + "Data" panel (network I/O + stats)
+ui.createLayoutPanel(); // Layout picker + per-layout live controls + start/stop actions
 ui.createMetricsPanel(); // "Metrics" panel (Degree, Strength, Clustering, Eigenvector, Betweenness, Leiden, Dimensionality)
 ```
 
