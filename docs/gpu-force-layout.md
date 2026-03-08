@@ -1,4 +1,4 @@
-# GPU Force Layout (WebGPU) - Implementation Notes
+# GPU Force Layout (WebGPU + WebGL2) - Implementation Notes
 
 This document describes the current `gpu-force` layout implementation in Helios Web Next:
 
@@ -19,14 +19,18 @@ The implementation is centered around:
 
 `GpuForceLayout` is a layout wrapper that delegates position evolution to `GpuForcePositionDelegate`.
 
-At runtime (WebGPU backend), the delegate:
+At runtime, the delegate:
 
 1. Builds a topology payload on CPU when topology changes.
-2. Uploads that payload to WebGPU buffers.
-3. Runs a compute shader step each layout tick.
-4. Exposes a WebGPU position buffer directly to the renderer.
+2. Uploads that payload to either WebGPU storage buffers or WebGL2 textures.
+3. Runs a GPU simulation step each layout tick:
+   - WebGPU: compute shader passes over storage buffers.
+   - WebGL2: fragment-shader passes over float textures with MRT ping-pong.
+4. Exposes a GPU position resource directly to the renderer:
+   - WebGPU position buffer, or
+   - WebGL2 position texture.
 
-This means rendering can consume layout positions without CPU copying in the normal path.
+If WebGL2 float render targets are unavailable, the delegate falls back to the older CPU simulation + texture upload path.
 
 ## 2. Data Flow by Stage
 
@@ -39,29 +43,32 @@ On synchronization, CPU builds:
 - seeded positions (`packedPositions`)
 - output-visible seeded positions (`packedOutputPositions`)
 
-Then it uploads these arrays to GPU storage buffers.
+Then it uploads these arrays to GPU resources:
+
+- WebGPU storage buffers, or
+- WebGL2 integer/float textures.
 
 This stage is CPU-heavy by design because topology extraction and adjacency construction currently happen from network views on CPU.
 
 ### 2.2 Simulation step (GPU compute, per tick)
 
-Each step encodes and submits:
+Each step executes GPU force integration and produces render-space positions:
 
-- one compute pass for force integration
-- one copy phase (`scratch -> main` positions/velocities)
-- optional output-scale compute pass (or copy) for render-space positions
+- WebGPU: compute pass(es) over storage buffers.
+- WebGL2: fragment-shader pass(es) over textures, with MRT outputs for
+  simulation positions, velocities, and render-space positions.
 
 No per-node force math is done on CPU.
 
 ### 2.3 Rendering (GPU -> GPU)
 
-The graph layer resolves delegate-provided GPU position resources and binds the delegate WebGPU position buffer directly for drawing.
+The graph layer resolves delegate-provided GPU position resources and binds them directly for drawing.
 
-When a delegate WebGPU buffer exists, the renderer does not upload CPU position views for node positions.
+When a delegate GPU resource exists, the renderer does not upload CPU position views for node positions.
 
-## 3. Buffers Used by the Compute Backend
+## 3. GPU Resources Used by the Compute Backend
 
-Main buffers:
+WebGPU path:
 
 - `positionBuffer` (simulation-space positions)
 - `outputPositionBuffer` (render-space positions)
@@ -75,6 +82,14 @@ Main buffers:
 - `neighborsBuffer`
 - `paramsBuffer` (uniforms for force step)
 - `outputScaleParamsBuffer` (uniforms for output-scale pass)
+
+WebGL2 path:
+
+- ping-pong simulation position textures
+- ping-pong velocity textures
+- output position texture consumed directly by the renderer
+- integer topology textures for active IDs, active mask, neighbor starts/counts, and neighbors
+- reduction textures used for optional recentering
 
 ## 4. Force Model and Equations
 
@@ -110,7 +125,10 @@ where:
 - `invDist = 1 / sqrt(dist2)`
 - `repulsionNormalization = max(1, activeCount / sampleCount)`
 
-Sampling is hash-based and deterministic for a fixed seed.
+Sampling is hash-based and deterministic for a fixed seed when `sampleChurn = 0`.
+With `sampleChurn > 0`, a fraction of repulsion sample slots is progressively
+refreshed each step; `0` keeps the sampled set fixed and `1` refreshes all
+sample slots every step.
 
 ### 4.2 Spring attraction (edge-local)
 
@@ -184,6 +202,7 @@ From `GpuForceLayout` / `GpuForcePositionDelegate`:
 - `sampleCount`: `null` (explicit override)
 - `sampleCount2D`: `64`
 - `sampleCount3D`: `96`
+- `sampleChurn`: `0`
 - `maxNeighborsPerNode`: `64`
 - `outputScale`: `6`
 - `linkDistance`: `1`
@@ -269,7 +288,5 @@ If movement stalls:
 ## 11. Current Limitations
 
 - Topology preprocessing is still CPU-based.
-- WebGPU backend is required for compute acceleration.
-- The delegate currently does not provide a WebGL compute equivalent.
+- WebGL2 GPU compute requires `EXT_color_buffer_float`; otherwise it falls back to CPU simulation plus texture upload.
 - `recenter` flag is currently reserved/not active in WGSL force step.
-

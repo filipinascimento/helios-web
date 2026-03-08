@@ -164,6 +164,11 @@ function naturalCompare(a, b) {
   return left.localeCompare(right);
 }
 
+function warnMappersUiDerivationFailure(message, detail) {
+  if (!import.meta.env?.DEV) return;
+  console.warn(`[HeliosUI][MappersPanel] ${message}`, detail);
+}
+
 const isNumericAttributeType = (type) =>
   type === AttributeType.Boolean ||
   type === AttributeType.Float ||
@@ -563,7 +568,12 @@ export class MappersPanel {
           }
           if (min === max) return { min, max: min + 1 };
           return { min, max };
-        } catch (_) {
+        } catch (error) {
+          warnMappersUiDerivationFailure('Scalar extent computation failed', {
+            scope,
+            rawName,
+            error,
+          });
           return null;
         }
       };
@@ -578,22 +588,6 @@ export class MappersPanel {
       const extent = computeScalarExtent(scope, rawName);
       if (extent && Number.isFinite(extent.min) && Number.isFinite(extent.max)) return [extent.min, extent.max];
       return [0, 1];
-    };
-
-    const resolveAttributeView = (scope, rawName) => {
-      if (!rawName) return null;
-      const network = net();
-      if (!network) return null;
-      const isNodeProxy = scope === 'edge' && rawName.startsWith('@node.');
-      const name = isNodeProxy ? rawName.slice('@node.'.length) : rawName;
-      try {
-        const buffer = isNodeProxy
-          ? network.getNodeAttributeBuffer?.(name)
-          : (scope === 'edge' ? network.getEdgeAttributeBuffer?.(name) : network.getNodeAttributeBuffer?.(name));
-        return buffer?.view ?? null;
-      } catch (_) {
-        return null;
-      }
     };
 
     const CATEGORY_STRING_LIMITS = {
@@ -671,7 +665,12 @@ export class MappersPanel {
             ? network.getNodeAttributeBuffer?.(name)
             : (scope === 'edge' ? network.getEdgeAttributeBuffer?.(name) : network.getNodeAttributeBuffer?.(name));
           view = buffer?.view ?? null;
-        } catch (_) {
+        } catch (error) {
+          warnMappersUiDerivationFailure('Range histogram buffer lookup failed', {
+            scope,
+            rawName,
+            error,
+          });
           view = null;
         }
         if (!view || typeof view.length !== 'number') return { counts: new Map(), unknownCount: 0 };
@@ -762,7 +761,7 @@ export class MappersPanel {
       return { counts, maxCount };
     };
 
-    const createRangeHistogram = ({ view, min, max, range, scope, rawName }) => {
+    const createRangeHistogram = ({ min, max, range, scope, rawName }) => {
       const network = net();
       if (!network) return null;
       const isNodeProxy = scope === 'edge' && rawName?.startsWith('@node.');
@@ -773,6 +772,17 @@ export class MappersPanel {
             ? network.nodeIndices
             : network.edgeIndices;
         if (!indices || typeof indices.length !== 'number' || indices.length === 0) return null;
+        const name = isNodeProxy ? rawName.slice('@node.'.length) : rawName;
+        let view = null;
+        try {
+          const buffer = isNodeProxy
+            ? network.getNodeAttributeBuffer?.(name)
+            : (scope === 'edge' ? network.getEdgeAttributeBuffer?.(name) : network.getNodeAttributeBuffer?.(name));
+          view = buffer?.view ?? null;
+        } catch (_) {
+          view = null;
+        }
+        if (!view || typeof view.length !== 'number' || view.length === 0) return null;
         return buildHistogram(view, min, max, indices);
       };
       const data = typeof network.withBufferAccess === 'function'
@@ -2065,7 +2075,6 @@ export class MappersPanel {
 
           const domainHistogram = (showDistributions && domainAttr)
             ? createRangeHistogram({
-              view: resolveAttributeView(mode, domainAttr),
               min,
               max,
               range: domain,
@@ -3759,7 +3768,6 @@ export class MappersPanel {
 
           const domainHistogram = (!percentile && showDistributions && domainAttr)
             ? createRangeHistogram({
-              view: resolveAttributeView(mode, domainAttr),
               min,
               max,
               range: domain,

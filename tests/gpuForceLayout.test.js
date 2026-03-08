@@ -108,6 +108,7 @@ function createIsolatedTopologyNetwork(positions) {
 
 function createFakeWebGPUDevice() {
   const writes = [];
+  const dispatchCalls = [];
   const queue = {
     writeBuffer(buffer, offset, data, dataOffset = 0, size = undefined) {
       let copy = null;
@@ -149,7 +150,9 @@ function createFakeWebGPUDevice() {
           return {
             setPipeline() {},
             setBindGroup() {},
-            dispatchWorkgroups() {},
+            dispatchWorkgroups(x, y = 1, z = 1) {
+              dispatchCalls.push({ x, y, z });
+            },
             end() {},
           };
         },
@@ -159,7 +162,7 @@ function createFakeWebGPUDevice() {
     },
   };
 
-  return { device, writes };
+  return { device, writes, dispatchCalls };
 }
 
 function createFakeWebGL2Context() {
@@ -198,6 +201,134 @@ function createFakeWebGL2Context() {
     gl,
     getTexImageCalls: () => texImageCalls,
     getTexSubImageCalls: () => texSubImageCalls,
+  };
+}
+
+function createFakeWebGL2ComputeContext() {
+  let textureId = 1;
+  let shaderId = 1;
+  let programId = 1;
+  let framebufferId = 1;
+  let vaoId = 1;
+  let texImageCalls = 0;
+  let texSubImageCalls = 0;
+  let drawArraysCalls = 0;
+  let currentFramebuffer = null;
+  let currentProgram = null;
+  let currentVao = null;
+  let currentActiveTexture = 0x84C0;
+  const viewport = new Int32Array([0, 0, 1, 1]);
+  const enabledCaps = new Set([0x0B71, 0x0BE2]);
+  const completeStatus = 0x8CD5;
+  const gl = {
+    MAX_TEXTURE_SIZE: 0x0D33,
+    FRAMEBUFFER_BINDING: 0x8CA6,
+    VERTEX_ARRAY_BINDING: 0x85B5,
+    CURRENT_PROGRAM: 0x8B8D,
+    VIEWPORT: 0x0BA2,
+    ACTIVE_TEXTURE: 0x84E0,
+    TEXTURE0: 0x84C0,
+    TEXTURE_2D: 0x0DE1,
+    TEXTURE_MIN_FILTER: 0x2801,
+    TEXTURE_MAG_FILTER: 0x2800,
+    TEXTURE_WRAP_S: 0x2802,
+    TEXTURE_WRAP_T: 0x2803,
+    CLAMP_TO_EDGE: 0x812F,
+    NEAREST: 0x2600,
+    FLOAT: 0x1406,
+    UNSIGNED_INT: 0x1405,
+    RGBA32F: 0x8814,
+    RGBA: 0x1908,
+    R32UI: 0x8236,
+    RED_INTEGER: 0x8D94,
+    COLOR_ATTACHMENT0: 0x8CE0,
+    COLOR_ATTACHMENT1: 0x8CE1,
+    COLOR_ATTACHMENT2: 0x8CE2,
+    FRAMEBUFFER: 0x8D40,
+    FRAMEBUFFER_COMPLETE: completeStatus,
+    VERTEX_SHADER: 0x8B31,
+    FRAGMENT_SHADER: 0x8B30,
+    COMPILE_STATUS: 0x8B81,
+    LINK_STATUS: 0x8B82,
+    TRIANGLES: 0x0004,
+    BLEND: 0x0BE2,
+    DEPTH_TEST: 0x0B71,
+    RGBA32UI: 0x8D70,
+    createTexture() {
+      return { id: textureId += 1 };
+    },
+    deleteTexture() {},
+    bindTexture() {},
+    texParameteri() {},
+    texImage2D() { texImageCalls += 1; },
+    texSubImage2D() { texSubImageCalls += 1; },
+    createShader(type) { return { id: shaderId += 1, type }; },
+    shaderSource() {},
+    compileShader() {},
+    getShaderParameter(_shader, param) {
+      return param === this.COMPILE_STATUS;
+    },
+    getShaderInfoLog() { return ''; },
+    deleteShader() {},
+    createProgram() { return { id: programId += 1 }; },
+    attachShader() {},
+    linkProgram() {},
+    getProgramParameter(_program, param) {
+      return param === this.LINK_STATUS;
+    },
+    getProgramInfoLog() { return ''; },
+    deleteProgram() {},
+    getUniformLocation(_program, name) { return name; },
+    createFramebuffer() { return { id: framebufferId += 1 }; },
+    deleteFramebuffer() {},
+    bindFramebuffer(_target, framebuffer) { currentFramebuffer = framebuffer ?? null; },
+    framebufferTexture2D() {},
+    drawBuffers() {},
+    checkFramebufferStatus() { return completeStatus; },
+    createVertexArray() { return { id: vaoId += 1 }; },
+    bindVertexArray(vao) { currentVao = vao ?? null; },
+    deleteVertexArray() {},
+    viewport(x, y, width, height) {
+      viewport[0] = x;
+      viewport[1] = y;
+      viewport[2] = width;
+      viewport[3] = height;
+    },
+    useProgram(program) { currentProgram = program ?? null; },
+    activeTexture(textureUnit) { currentActiveTexture = textureUnit; },
+    uniform1i() {},
+    uniform2i() {},
+    uniform1ui() {},
+    uniform3f() {},
+    uniform1f() {},
+    drawArrays() { drawArraysCalls += 1; },
+    getParameter(param) {
+      if (param === this.MAX_TEXTURE_SIZE) return 64;
+      if (param === this.FRAMEBUFFER_BINDING) return currentFramebuffer;
+      if (param === this.VERTEX_ARRAY_BINDING) return currentVao;
+      if (param === this.CURRENT_PROGRAM) return currentProgram;
+      if (param === this.VIEWPORT) return viewport;
+      if (param === this.ACTIVE_TEXTURE) return currentActiveTexture;
+      return 0;
+    },
+    isEnabled(cap) { return enabledCaps.has(cap); },
+    enable(cap) { enabledCaps.add(cap); },
+    disable(cap) { enabledCaps.delete(cap); },
+    getExtension(name) {
+      return name === 'EXT_color_buffer_float' ? {} : null;
+    },
+    readBuffer() {},
+    readPixels(_x, _y, width, height, _format, _type, target) {
+      if (target?.fill) {
+        target.fill(0, 0, Math.max(0, width * height * 4));
+      }
+    },
+  };
+  return {
+    gl,
+    getTexImageCalls: () => texImageCalls,
+    getTexSubImageCalls: () => texSubImageCalls,
+    getDrawArraysCalls: () => drawArraysCalls,
   };
 }
 
@@ -362,6 +493,21 @@ test('GpuForceLayout exposes shared parameter bindings and can reheat alpha', ()
   const dampingBinding = descriptor.bindings.find((binding) => binding.key === 'damping');
   assert.equal(dampingBinding.label, 'Velocity retention');
   assert.match(dampingBinding.hint, /momentum/i);
+
+  const sampleCountBinding = descriptor.bindings.find((binding) => binding.key === 'sampleCount2D');
+  assert.equal(sampleCountBinding.sliderMax, 256);
+  assert.equal(sampleCountBinding.inputMax, null);
+  layout.positionDelegate.alpha = 0.05;
+  sampleCountBinding.set(128);
+  assert.equal(layout.options.sampleCount2D, 128);
+  assert.equal(layout.positionDelegate.alpha, 0.75);
+
+  const sampleChurnBinding = descriptor.bindings.find((binding) => binding.key === 'sampleChurn');
+  assert.equal(sampleChurnBinding.label, 'Sample churn');
+  layout.positionDelegate.alpha = 0.05;
+  sampleChurnBinding.set(0.25);
+  assert.equal(layout.options.sampleChurn, 0.25);
+  assert.equal(layout.positionDelegate.alpha, 0.75);
 
   layout.positionDelegate.alpha = 0.1;
   layout.reheat();
@@ -593,6 +739,124 @@ test('GpuForcePositionDelegate exact repulsion threshold overrides a smaller sam
   }
 });
 
+test('GpuForcePositionDelegate sampleChurn=0 preserves legacy sampled repulsion behavior', async () => {
+  const network = createIsolatedTopologyNetwork([
+    -30, 0, 0,
+    -12, 7, 0,
+    5, -4, 0,
+    18, 9, 0,
+    31, -6, 0,
+    44, 3, 0,
+  ]);
+  const { gl } = createFakeWebGL2Context();
+  const legacyDelegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    center: [0, 0, 0],
+    outputScale: 1,
+    sampleCount2D: 2,
+    exactRepulsionThreshold2D: 1,
+    kAttraction: 0,
+    kGravity: 0,
+    damping: 0,
+    recenter: false,
+  });
+  const explicitZeroDelegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    center: [0, 0, 0],
+    outputScale: 1,
+    sampleCount2D: 2,
+    sampleChurn: 0,
+    exactRepulsionThreshold2D: 1,
+    kAttraction: 0,
+    kGravity: 0,
+    damping: 0,
+    recenter: false,
+  });
+
+  legacyDelegate.onAttach({ network, backend: 'webgl2', gl });
+  explicitZeroDelegate.onAttach({ network, backend: 'webgl2', gl });
+  legacyDelegate._webgl.seed = 123;
+  explicitZeroDelegate._webgl.seed = 123;
+
+  legacyDelegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
+  explicitZeroDelegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
+  legacyDelegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
+  explicitZeroDelegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
+
+  const legacySnapshot = await legacyDelegate.snapshotNodePositions({ network, backend: 'webgl2', gl });
+  const explicitZeroSnapshot = await explicitZeroDelegate.snapshotNodePositions({ network, backend: 'webgl2', gl });
+
+  assert.equal(legacySnapshot.length, explicitZeroSnapshot.length);
+  for (let i = 0; i < legacySnapshot.length; i += 1) {
+    approx(legacySnapshot[i], explicitZeroSnapshot[i], 1e-6);
+  }
+});
+
+test('GpuForcePositionDelegate sampleChurn progressively refreshes repulsion samples on WebGL2', async () => {
+  const network = createIsolatedTopologyNetwork([
+    -30, 0, 0,
+    -12, 7, 0,
+    5, -4, 0,
+    18, 9, 0,
+    31, -6, 0,
+    44, 3, 0,
+  ]);
+  const { gl } = createFakeWebGL2Context();
+  const fixedDelegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    center: [0, 0, 0],
+    outputScale: 1,
+    sampleCount2D: 2,
+    sampleChurn: 0,
+    exactRepulsionThreshold2D: 1,
+    kAttraction: 0,
+    kGravity: 0,
+    damping: 0,
+    recenter: false,
+  });
+  const churnedDelegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    center: [0, 0, 0],
+    outputScale: 1,
+    sampleCount2D: 2,
+    sampleChurn: 1,
+    exactRepulsionThreshold2D: 1,
+    kAttraction: 0,
+    kGravity: 0,
+    damping: 0,
+    recenter: false,
+  });
+
+  fixedDelegate.onAttach({ network, backend: 'webgl2', gl });
+  churnedDelegate.onAttach({ network, backend: 'webgl2', gl });
+  fixedDelegate._webgl.seed = 123;
+  churnedDelegate._webgl.seed = 123;
+
+  fixedDelegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
+  churnedDelegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
+
+  const fixedAfterOne = await fixedDelegate.snapshotNodePositions({ network, backend: 'webgl2', gl });
+  const churnedAfterOne = await churnedDelegate.snapshotNodePositions({ network, backend: 'webgl2', gl });
+  for (let i = 0; i < fixedAfterOne.length; i += 1) {
+    approx(fixedAfterOne[i], churnedAfterOne[i], 1e-6);
+  }
+
+  fixedDelegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
+  churnedDelegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
+
+  const fixedAfterTwo = await fixedDelegate.snapshotNodePositions({ network, backend: 'webgl2', gl });
+  const churnedAfterTwo = await churnedDelegate.snapshotNodePositions({ network, backend: 'webgl2', gl });
+
+  let diverged = false;
+  for (let i = 0; i < fixedAfterTwo.length; i += 1) {
+    if (Math.abs(fixedAfterTwo[i] - churnedAfterTwo[i]) > 1e-6) {
+      diverged = true;
+      break;
+    }
+  }
+  assert.equal(diverged, true);
+});
+
 test('GpuForcePositionDelegate reads edgesView after position buffer lookup during topology sync', () => {
   const positionView = new Float32Array([
     0, 0, 0,
@@ -659,4 +923,70 @@ test('GpuForcePositionDelegate recenters active nodes around the configured cent
   const centroidY = (snapshot[1] + snapshot[4] + snapshot[7]) / 3;
   approx(centroidX, 0, 1e-6);
   approx(centroidY, 0, 1e-6);
+});
+
+test('GpuForcePositionDelegate tiles large WebGPU dispatches across dimensions', () => {
+  const network = createTopologyNetwork([
+    0, 0, 0,
+    10, 0, 0,
+  ]);
+  const { device, dispatchCalls } = createFakeWebGPUDevice();
+  const delegate = new GpuForcePositionDelegate({
+    mode: '3d',
+    outputScale: 1,
+  });
+
+  delegate.onAttach({ network, backend: 'webgpu', device });
+  const backend = delegate._webgpu;
+  assert.ok(backend);
+  backend.nodeCapacity = 6_000_000;
+  backend.activeCount = 1;
+
+  const advanced = backend.step({
+    mode: '3d',
+    center: [0, 0, 0],
+    recenter: false,
+    sampleCount: 1,
+    exactRepulsionThreshold: 1,
+    maxNeighborsPerNode: 1,
+    outputScale: 1,
+    linkDistance: 1,
+    kRepulsion: 0.01,
+    kAttraction: 0.01,
+    kGravity: 0.001,
+    eta: 0.01,
+    damping: 0.9,
+    maxStep: 1,
+    minDistance: 0.1,
+    dt: 1 / 60,
+  });
+
+  assert.equal(advanced, true);
+  assert.ok(dispatchCalls.length >= 1);
+  assert.ok(dispatchCalls[0].x <= 65535);
+  assert.ok(dispatchCalls[0].y >= 2);
+});
+
+test('GpuForcePositionDelegate uses shader-driven WebGL2 layout when float render targets are available', () => {
+  const network = createTopologyNetwork([
+    0, 0, 0,
+    10, 0, 0,
+    20, 0, 0,
+  ]);
+  const { gl, getDrawArraysCalls, getTexImageCalls } = createFakeWebGL2ComputeContext();
+  const delegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    center: [0, 0, 0],
+    outputScale: 1,
+    recenter: false,
+  });
+
+  delegate.onAttach({ network, backend: 'webgl2', gl });
+
+  assert.equal(delegate._webgl?.getExecutionMode?.(), 'gpu');
+  assert.ok(getTexImageCalls() > 0);
+
+  const changed = delegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
+  assert.equal(changed, true);
+  assert.ok(getDrawArraysCalls() >= 1);
 });

@@ -16,6 +16,7 @@ const DEFAULT_OPTIONS = {
   sampleCount: null,
   sampleCount2D: 64,
   sampleCount3D: 96,
+  sampleChurn: 0,
   exactRepulsionThreshold2D: 256,
   exactRepulsionThreshold3D: 128,
   maxNeighborsPerNode: 64,
@@ -41,6 +42,7 @@ const COMPUTE_WGSL = /* wgsl */ `
 struct Params {
   counts : vec4<u32>,
   flags : vec4<u32>,
+  dispatch : vec4<u32>,
   constantsA : vec4<f32>,
   constantsB : vec4<f32>,
   center : vec4<f32>,
@@ -74,6 +76,31 @@ fn sampleActiveId(nodeId : u32, iter : u32, activeCount : u32, seed : u32) -> u3
   let mixed = hash32(seed + nodeId * 2654435761u + iter * 747796405u);
   let index = mixed % activeCount;
   return activeIds[index];
+}
+
+fn sampleEpoch(iter : u32, sampleCount : u32, churnCount : u32, sampleFrame : u32) -> u32 {
+  if (sampleCount == 0u || churnCount == 0u) {
+    return 0u;
+  }
+  let cappedChurn = min(churnCount, sampleCount);
+  return ((sampleFrame * cappedChurn) + (sampleCount - 1u - iter)) / sampleCount;
+}
+
+fn sampleActiveIdProgressive(
+  nodeId : u32,
+  iter : u32,
+  activeCount : u32,
+  seed : u32,
+  sampleCount : u32,
+  churnCount : u32,
+  sampleFrame : u32,
+) -> u32 {
+  if (activeCount == 0u) {
+    return nodeId;
+  }
+  let epoch = sampleEpoch(iter, sampleCount, churnCount, sampleFrame);
+  let epochSeed = seed + epoch * 1597334677u;
+  return sampleActiveId(nodeId, iter, activeCount, epochSeed);
 }
 
 fn loadPosition(nodeId : u32) -> vec3<f32> {
@@ -110,7 +137,7 @@ fn storeVelocity(nodeId : u32, value : vec3<f32>) {
 
 @compute @workgroup_size(${WORKGROUP_SIZE}u)
 fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
-  let nodeId = gid.x;
+  let nodeId = gid.x + (gid.y * params.dispatch.x) + (gid.z * params.dispatch.y);
   let nodeCapacity = params.counts.y;
   if (nodeId >= nodeCapacity) {
     return;
@@ -126,8 +153,10 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
   let sampleCount = params.counts.z;
   let maxNeighbors = params.counts.w;
   let use3D = params.flags.x;
+  let sampleChurnCount = params.flags.y;
   let seed = params.flags.z;
   let exactRepulsionThreshold = params.flags.w;
+  let sampleFrame = params.dispatch.z;
 
   var pos = loadPosition(nodeId);
   var vel = loadVelocity(nodeId);
@@ -154,7 +183,11 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
         if (s >= repulsionIterations) {
           break;
         }
-        let otherId = select(sampleActiveId(nodeId, s, activeCount, seed), activeIds[s], useExactRepulsion);
+        let otherId = select(
+          sampleActiveIdProgressive(nodeId, s, activeCount, seed, sampleCount, sampleChurnCount, sampleFrame),
+          activeIds[s],
+          useExactRepulsion,
+        );
         if (otherId != nodeId) {
           var delta = pos - loadPosition(otherId);
           if (use3D == 0u) {
@@ -229,6 +262,7 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
 const OUTPUT_SCALE_WGSL = /* wgsl */ `
 struct OutputScaleParams {
   counts : vec4<u32>,
+  dispatch : vec4<u32>,
   center : vec4<f32>,
   scale : vec4<f32>,
 };
@@ -239,7 +273,7 @@ struct OutputScaleParams {
 
 @compute @workgroup_size(${WORKGROUP_SIZE}u)
 fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
-  let nodeId = gid.x;
+  let nodeId = gid.x + (gid.y * params.dispatch.x) + (gid.z * params.dispatch.y);
   if (nodeId >= params.counts.x) {
     return;
   }
@@ -399,6 +433,33 @@ function copyFloat32Values(target, source, length) {
   for (let i = 0; i < limit; i += 1) {
     target[i] = source[i];
   }
+}
+
+function resolveComputeDispatchShape(itemCount, workgroupSize, maxWorkgroupsPerDimension = 65535) {
+  const safeCount = Math.max(0, Math.floor(itemCount || 0));
+  const safeWorkgroupSize = Math.max(1, Math.floor(workgroupSize || 1));
+  const limit = Math.max(1, Math.floor(maxWorkgroupsPerDimension || 65535));
+  const totalGroups = Math.max(1, Math.ceil(safeCount / safeWorkgroupSize));
+  const x = Math.min(limit, totalGroups);
+  const remainingAfterX = Math.max(1, Math.ceil(totalGroups / x));
+  const y = Math.min(limit, remainingAfterX);
+  const z = Math.max(1, Math.ceil(remainingAfterX / y));
+  if (z > limit) {
+    throw new Error(
+      `GPU-force dispatch requires ${totalGroups} workgroups, exceeding WebGPU grid capacity `
+      + `(${limit} per dimension).`,
+    );
+  }
+  const rowStride = x * safeWorkgroupSize;
+  const layerStride = rowStride * y;
+  return {
+    x,
+    y,
+    z,
+    rowStride,
+    layerStride,
+    totalGroups,
+  };
 }
 
 function safeRead(fn, fallback) {
@@ -627,6 +688,31 @@ function sampleActiveId(nodeId, iter, activeIds, activeCount, seed) {
   return activeIds[index] >>> 0;
 }
 
+function resolveSampleChurnCount(sampleCount, sampleChurn) {
+  const safeSampleCount = Math.max(1, Math.floor(Number(sampleCount) || 0));
+  const churn = clamp(sampleChurn, 0, 1, DEFAULT_OPTIONS.sampleChurn);
+  if (churn <= 0) return 0;
+  return Math.min(safeSampleCount, Math.max(1, Math.ceil(safeSampleCount * churn)));
+}
+
+function resolveSampleEpoch(iter, sampleCount, churnCount, sampleFrame) {
+  const safeSampleCount = Math.max(1, Math.floor(Number(sampleCount) || 0));
+  const safeChurnCount = Math.min(safeSampleCount, Math.max(0, Math.floor(Number(churnCount) || 0)));
+  if (safeChurnCount <= 0) return 0;
+  const safeIter = Math.max(0, Math.floor(Number(iter) || 0));
+  const safeFrame = Math.max(0, Math.floor(Number(sampleFrame) || 0));
+  return Math.floor(((safeFrame * safeChurnCount) + (safeSampleCount - 1 - safeIter)) / safeSampleCount);
+}
+
+function sampleActiveIdProgressive(nodeId, iter, activeIds, activeCount, seed, sampleCount, churnCount, sampleFrame) {
+  const epoch = resolveSampleEpoch(iter, sampleCount, churnCount, sampleFrame);
+  if (epoch <= 0) {
+    return sampleActiveId(nodeId, iter, activeIds, activeCount, seed);
+  }
+  const epochSeed = (seed + Math.imul(epoch >>> 0, 1597334677)) >>> 0;
+  return sampleActiveId(nodeId, iter, activeIds, activeCount, epochSeed);
+}
+
 function recenterActivePositions(positions, activeIds, activeCount, center, is3D) {
   if (!(positions instanceof Float32Array) || !activeIds || activeCount <= 0) return;
 
@@ -661,12 +747,1033 @@ function recenterActivePositions(positions, activeIds, activeCount, center, is3D
   }
 }
 
-class WebGLForceComputeBackend {
+function compileWebGLShader(gl, type, source) {
+  const shader = gl?.createShader?.(type) ?? null;
+  if (!shader) {
+    throw new Error('WebGL2 GPU-force shader creation failed.');
+  }
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    const log = gl.getShaderInfoLog(shader);
+    gl.deleteShader(shader);
+    throw new Error(log || 'WebGL2 GPU-force shader compilation failed.');
+  }
+  return shader;
+}
+
+function createWebGLProgram(gl, vertexSource, fragmentSource) {
+  const vertex = compileWebGLShader(gl, gl.VERTEX_SHADER, vertexSource);
+  const fragment = compileWebGLShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+  const program = gl.createProgram();
+  gl.attachShader(program, vertex);
+  gl.attachShader(program, fragment);
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    const log = gl.getProgramInfoLog(program);
+    gl.deleteProgram(program);
+    gl.deleteShader(vertex);
+    gl.deleteShader(fragment);
+    throw new Error(log || 'WebGL2 GPU-force program link failed.');
+  }
+  gl.deleteShader(vertex);
+  gl.deleteShader(fragment);
+  return program;
+}
+
+function canUseWebGLTextureCompute(gl) {
+  if (!gl) return false;
+  if (typeof gl.createShader !== 'function' || typeof gl.drawBuffers !== 'function') return false;
+  if (typeof gl.createFramebuffer !== 'function' || typeof gl.readPixels !== 'function') return false;
+  if (typeof gl.getExtension === 'function') {
+    const ext = gl.getExtension('EXT_color_buffer_float');
+    if (!ext) return false;
+  } else {
+    return false;
+  }
+  return true;
+}
+
+function resolveWebGLTextureLayout(gl, count) {
+  const max = gl?.getParameter?.(gl.MAX_TEXTURE_SIZE) ?? 16384;
+  const safeCount = Math.max(1, Math.floor(Number(count) || 0));
+  const width = Math.min(max, safeCount);
+  const height = Math.ceil(safeCount / Math.max(1, width));
+  if (height > max) {
+    throw new Error(
+      `WebGL2 GPU-force layout requires texture dimensions <= MAX_TEXTURE_SIZE (${max}), `
+      + `got ${safeCount} texels -> ${width}x${height}.`,
+    );
+  }
+  return { width, height };
+}
+
+const WEBGL_FORCE_FULLSCREEN_VERTEX = `#version 300 es
+void main() {
+  vec2 position = vec2(
+    gl_VertexID == 2 ? 3.0 : -1.0,
+    gl_VertexID == 1 ? 3.0 : -1.0
+  );
+  gl_Position = vec4(position, 0.0, 1.0);
+}`;
+
+const WEBGL_FORCE_COMPUTE_FRAGMENT = `#version 300 es
+precision highp float;
+precision highp int;
+precision highp usampler2D;
+
+uniform sampler2D u_positions;
+uniform sampler2D u_velocities;
+uniform usampler2D u_activeIds;
+uniform usampler2D u_activeMask;
+uniform usampler2D u_neighborStarts;
+uniform usampler2D u_neighborCounts;
+uniform usampler2D u_neighbors;
+
+uniform ivec2 u_nodeTexSize;
+uniform ivec2 u_activeIdsTexSize;
+uniform ivec2 u_neighborTexSize;
+
+uniform int u_nodeCapacity;
+uniform int u_activeCount;
+uniform int u_sampleCount;
+uniform int u_maxNeighbors;
+uniform int u_use3D;
+uniform int u_exactRepulsionThreshold;
+uniform int u_sampleChurnCount;
+
+uniform uint u_seed;
+uniform uint u_sampleFrame;
+
+uniform vec3 u_center;
+uniform float u_outputScale;
+uniform float u_linkDistance;
+uniform float u_minDistance;
+uniform float u_kRepulsion;
+uniform float u_kAttraction;
+uniform float u_kGravity;
+uniform float u_eta;
+uniform float u_damping;
+uniform float u_maxStep;
+
+layout(location = 0) out vec4 outPosition;
+layout(location = 1) out vec4 outVelocity;
+layout(location = 2) out vec4 outOutputPosition;
+
+ivec2 textureCoord(ivec2 size, int index) {
+  int width = max(size.x, 1);
+  return ivec2(index % width, index / width);
+}
+
+uint hash32(uint value) {
+  uint x = value;
+  x = x ^ (x >> 16u);
+  x = x * 0x7feb352du;
+  x = x ^ (x >> 15u);
+  x = x * 0x846ca68bu;
+  x = x ^ (x >> 16u);
+  return x;
+}
+
+uint sampleActiveId(int nodeId, int iter, int activeCount, uint seed) {
+  if (activeCount <= 0) {
+    return uint(max(nodeId, 0));
+  }
+  uint mixed = hash32(seed + uint(nodeId) * 2654435761u + uint(iter) * 747796405u);
+  int index = int(mixed % uint(max(activeCount, 1)));
+  return texelFetch(u_activeIds, textureCoord(u_activeIdsTexSize, index), 0).x;
+}
+
+int sampleEpoch(int iter, int sampleCount, int churnCount, uint sampleFrame) {
+  if (sampleCount <= 0 || churnCount <= 0) {
+    return 0;
+  }
+  int cappedChurn = min(churnCount, sampleCount);
+  return int(((sampleFrame * uint(cappedChurn)) + uint(sampleCount - 1 - iter)) / uint(sampleCount));
+}
+
+uint sampleActiveIdProgressive(int nodeId, int iter, int activeCount, uint seed, int sampleCount, int churnCount, uint sampleFrame) {
+  if (activeCount <= 0) {
+    return uint(max(nodeId, 0));
+  }
+  int epoch = sampleEpoch(iter, sampleCount, churnCount, sampleFrame);
+  uint epochSeed = seed + uint(epoch) * 1597334677u;
+  return sampleActiveId(nodeId, iter, activeCount, epochSeed);
+}
+
+vec3 fetchPosition(int nodeId) {
+  return texelFetch(u_positions, textureCoord(u_nodeTexSize, nodeId), 0).xyz;
+}
+
+vec3 fetchVelocity(int nodeId) {
+  return texelFetch(u_velocities, textureCoord(u_nodeTexSize, nodeId), 0).xyz;
+}
+
+uint fetchNodeUint(usampler2D source, int nodeId) {
+  return texelFetch(source, textureCoord(u_nodeTexSize, nodeId), 0).x;
+}
+
+uint fetchNeighborValue(int index) {
+  return texelFetch(u_neighbors, textureCoord(u_neighborTexSize, index), 0).x;
+}
+
+void main() {
+  ivec2 coord = ivec2(gl_FragCoord.xy);
+  int nodeId = coord.x + coord.y * max(u_nodeTexSize.x, 1);
+  if (nodeId < 0 || nodeId >= u_nodeCapacity) {
+    outPosition = vec4(0.0);
+    outVelocity = vec4(0.0);
+    outOutputPosition = vec4(0.0);
+    return;
+  }
+
+  vec3 pos = fetchPosition(nodeId);
+  vec3 vel = fetchVelocity(nodeId);
+  if (u_use3D == 0) {
+    pos.z = u_center.z;
+    vel.z = 0.0;
+  }
+
+  if (fetchNodeUint(u_activeMask, nodeId) == 0u) {
+    vec3 outputPos = pos;
+    outputPos.xy = u_center.xy + (outputPos.xy - u_center.xy) * u_outputScale;
+    outputPos.z = u_use3D != 0
+      ? (u_center.z + (pos.z - u_center.z) * u_outputScale)
+      : u_center.z;
+    outPosition = vec4(pos, 1.0);
+    outVelocity = vec4(vel, 1.0);
+    outOutputPosition = vec4(outputPos, 1.0);
+    return;
+  }
+
+  vec3 force = vec3(0.0);
+  float minDist = max(0.00001, u_minDistance);
+  float minDistSq = minDist * minDist;
+
+  if (u_activeCount > 1) {
+    bool useExactRepulsion = u_activeCount <= max(u_sampleCount, u_exactRepulsionThreshold);
+    int repulsionIterations = useExactRepulsion ? u_activeCount : u_sampleCount;
+    float repulsionNormalization = useExactRepulsion
+      ? 1.0
+      : max(1.0, float(u_activeCount) / max(1.0, float(u_sampleCount)));
+    int s = 0;
+    while (s < repulsionIterations) {
+      uint otherIdU = useExactRepulsion
+        ? texelFetch(u_activeIds, textureCoord(u_activeIdsTexSize, s), 0).x
+        : sampleActiveIdProgressive(
+          nodeId,
+          s,
+          u_activeCount,
+          u_seed,
+          u_sampleCount,
+          u_sampleChurnCount,
+          u_sampleFrame
+        );
+      int otherId = int(otherIdU);
+      if (otherId != nodeId && otherId >= 0 && otherId < u_nodeCapacity) {
+        vec3 delta = pos - fetchPosition(otherId);
+        if (u_use3D == 0) {
+          delta.z = 0.0;
+        }
+        float distSq = max(dot(delta, delta), minDistSq);
+        float invDist = inversesqrt(distSq);
+        float repulsionScale = u_kRepulsion * repulsionNormalization * invDist * invDist * invDist;
+        force += delta * repulsionScale;
+      }
+      s += 1;
+    }
+  }
+
+  int start = int(fetchNodeUint(u_neighborStarts, nodeId));
+  int degree = int(fetchNodeUint(u_neighborCounts, nodeId));
+  int limit = min(degree, u_maxNeighbors);
+  if (limit > 0) {
+    float degreeNorm = max(1.0, float(limit));
+    int n = 0;
+    while (n < limit) {
+      int otherId = int(fetchNeighborValue(start + n));
+      if (otherId != nodeId && otherId >= 0 && otherId < u_nodeCapacity) {
+        vec3 delta = fetchPosition(otherId) - pos;
+        if (u_use3D == 0) {
+          delta.z = 0.0;
+        }
+        float distSq = max(dot(delta, delta), minDistSq);
+        float dist = sqrt(distSq);
+        float invDist = 1.0 / max(0.00000001, dist);
+        float stretch = dist - u_linkDistance;
+        float springScale = (u_kAttraction * stretch * invDist) / degreeNorm;
+        force += delta * springScale;
+      }
+      n += 1;
+    }
+  }
+
+  vec3 gravityDelta = u_center - pos;
+  if (u_use3D == 0) {
+    gravityDelta.z = 0.0;
+  }
+  force += gravityDelta * u_kGravity;
+
+  vec3 nextVel = vel * u_damping + force * u_eta;
+  float speed = length(nextVel);
+  if (speed > u_maxStep) {
+    nextVel *= u_maxStep / max(speed, 0.00000001);
+  }
+  if (u_use3D == 0) {
+    nextVel.z = 0.0;
+  }
+
+  vec3 nextPos = pos + nextVel;
+  if (u_use3D == 0) {
+    nextPos.z = u_center.z;
+  }
+
+  vec3 outputPos = nextPos;
+  outputPos.xy = u_center.xy + (nextPos.xy - u_center.xy) * u_outputScale;
+  outputPos.z = u_use3D != 0
+    ? (u_center.z + (nextPos.z - u_center.z) * u_outputScale)
+    : u_center.z;
+
+  outPosition = vec4(nextPos, 1.0);
+  outVelocity = vec4(nextVel, 1.0);
+  outOutputPosition = vec4(outputPos, 1.0);
+}`;
+
+const WEBGL_FORCE_REDUCTION_INIT_FRAGMENT = `#version 300 es
+precision highp float;
+precision highp int;
+precision highp usampler2D;
+
+uniform sampler2D u_positions;
+uniform usampler2D u_activeMask;
+uniform ivec2 u_nodeTexSize;
+uniform ivec2 u_outputSize;
+uniform int u_nodeCapacity;
+uniform int u_use3D;
+uniform vec3 u_center;
+
+out vec4 fragColor;
+
+ivec2 textureCoord(ivec2 size, int index) {
+  int width = max(size.x, 1);
+  return ivec2(index % width, index / width);
+}
+
+void main() {
+  ivec2 outCoord = ivec2(gl_FragCoord.xy);
+  ivec2 baseCoord = outCoord * 2;
+  vec4 sumValue = vec4(0.0);
+
+  for (int dy = 0; dy < 2; dy += 1) {
+    for (int dx = 0; dx < 2; dx += 1) {
+      ivec2 srcCoord = baseCoord + ivec2(dx, dy);
+      if (srcCoord.x < u_nodeTexSize.x && srcCoord.y < u_nodeTexSize.y) {
+        int nodeId = srcCoord.x + srcCoord.y * max(u_nodeTexSize.x, 1);
+        if (nodeId >= 0 && nodeId < u_nodeCapacity) {
+          uint activeFlag = texelFetch(u_activeMask, textureCoord(u_nodeTexSize, nodeId), 0).x;
+          if (activeFlag != 0u) {
+            vec3 pos = texelFetch(u_positions, textureCoord(u_nodeTexSize, nodeId), 0).xyz;
+            if (u_use3D == 0) {
+              pos.z = u_center.z;
+            }
+            sumValue += vec4(pos, 1.0);
+          }
+        }
+      }
+    }
+  }
+
+  fragColor = sumValue;
+}`;
+
+const WEBGL_FORCE_REDUCTION_COMBINE_FRAGMENT = `#version 300 es
+precision highp float;
+precision highp int;
+
+uniform sampler2D u_source;
+uniform ivec2 u_sourceSize;
+
+out vec4 fragColor;
+
+void main() {
+  ivec2 outCoord = ivec2(gl_FragCoord.xy);
+  ivec2 baseCoord = outCoord * 2;
+  vec4 sumValue = vec4(0.0);
+
+  for (int dy = 0; dy < 2; dy += 1) {
+    for (int dx = 0; dx < 2; dx += 1) {
+      ivec2 srcCoord = baseCoord + ivec2(dx, dy);
+      if (srcCoord.x < u_sourceSize.x && srcCoord.y < u_sourceSize.y) {
+        sumValue += texelFetch(u_source, srcCoord, 0);
+      }
+    }
+  }
+
+  fragColor = sumValue;
+}`;
+
+const WEBGL_FORCE_RECENTER_FRAGMENT = `#version 300 es
+precision highp float;
+precision highp int;
+precision highp usampler2D;
+
+uniform sampler2D u_positions;
+uniform sampler2D u_velocities;
+uniform sampler2D u_centroid;
+uniform usampler2D u_activeMask;
+uniform ivec2 u_nodeTexSize;
+uniform int u_nodeCapacity;
+uniform int u_use3D;
+uniform vec3 u_center;
+uniform float u_outputScale;
+
+layout(location = 0) out vec4 outPosition;
+layout(location = 1) out vec4 outVelocity;
+layout(location = 2) out vec4 outOutputPosition;
+
+ivec2 textureCoord(ivec2 size, int index) {
+  int width = max(size.x, 1);
+  return ivec2(index % width, index / width);
+}
+
+void main() {
+  ivec2 coord = ivec2(gl_FragCoord.xy);
+  int nodeId = coord.x + coord.y * max(u_nodeTexSize.x, 1);
+  if (nodeId < 0 || nodeId >= u_nodeCapacity) {
+    outPosition = vec4(0.0);
+    outVelocity = vec4(0.0);
+    outOutputPosition = vec4(0.0);
+    return;
+  }
+
+  vec3 pos = texelFetch(u_positions, textureCoord(u_nodeTexSize, nodeId), 0).xyz;
+  vec3 vel = texelFetch(u_velocities, textureCoord(u_nodeTexSize, nodeId), 0).xyz;
+  vec4 centroidData = texelFetch(u_centroid, ivec2(0, 0), 0);
+  float count = max(centroidData.w, 1.0);
+  vec3 centroidValue = centroidData.xyz / count;
+  vec3 shift = centroidValue - u_center;
+  if (u_use3D == 0) {
+    shift.z = 0.0;
+  }
+
+  if (texelFetch(u_activeMask, textureCoord(u_nodeTexSize, nodeId), 0).x != 0u) {
+    pos -= shift;
+  }
+  if (u_use3D == 0) {
+    pos.z = u_center.z;
+    vel.z = 0.0;
+  }
+
+  vec3 outputPos = pos;
+  outputPos.xy = u_center.xy + (pos.xy - u_center.xy) * u_outputScale;
+  outputPos.z = u_use3D != 0
+    ? (u_center.z + (pos.z - u_center.z) * u_outputScale)
+    : u_center.z;
+
+  outPosition = vec4(pos, 1.0);
+  outVelocity = vec4(vel, 1.0);
+  outOutputPosition = vec4(outputPos, 1.0);
+}`;
+
+class WebGLTextureComputePath {
   constructor(gl) {
     this.gl = gl;
     this.nodeCapacity = 0;
     this.activeCount = 0;
     this.seed = (Math.random() * 0xffffffff) >>> 0;
+    this.sampleFrame = 0;
+    this.textureVersion = 0;
+
+    this.nodeLayout = { width: 1, height: 1 };
+    this.activeLayout = { width: 1, height: 1 };
+    this.neighborLayout = { width: 1, height: 1 };
+
+    this.positionTextures = [null, null];
+    this.velocityTextures = [null, null];
+    this.outputPositionTexture = null;
+    this.activeIdsTexture = null;
+    this.activeMaskTexture = null;
+    this.neighborStartsTexture = null;
+    this.neighborCountsTexture = null;
+    this.neighborsTexture = null;
+    this.framebuffer = null;
+    this.readbackFramebuffer = null;
+    this.fullscreenVao = null;
+    this._reductionTargets = [
+      { texture: null, framebuffer: null, width: 1, height: 1 },
+      { texture: null, framebuffer: null, width: 1, height: 1 },
+    ];
+    this._positionUploadScratch = new Float32Array(0);
+    this._velocityUploadScratch = new Float32Array(0);
+    this._outputUploadScratch = new Float32Array(0);
+    this._readbackScratch = new Float32Array(0);
+    this.readIndex = 0;
+
+    this.computeProgram = createWebGLProgram(gl, WEBGL_FORCE_FULLSCREEN_VERTEX, WEBGL_FORCE_COMPUTE_FRAGMENT);
+    this.reductionInitProgram = createWebGLProgram(gl, WEBGL_FORCE_FULLSCREEN_VERTEX, WEBGL_FORCE_REDUCTION_INIT_FRAGMENT);
+    this.reductionCombineProgram = createWebGLProgram(gl, WEBGL_FORCE_FULLSCREEN_VERTEX, WEBGL_FORCE_REDUCTION_COMBINE_FRAGMENT);
+    this.recenterProgram = createWebGLProgram(gl, WEBGL_FORCE_FULLSCREEN_VERTEX, WEBGL_FORCE_RECENTER_FRAGMENT);
+
+    this.computeUniforms = this._cacheUniforms(this.computeProgram, [
+      'u_positions',
+      'u_velocities',
+      'u_activeIds',
+      'u_activeMask',
+      'u_neighborStarts',
+      'u_neighborCounts',
+      'u_neighbors',
+      'u_nodeTexSize',
+      'u_activeIdsTexSize',
+      'u_neighborTexSize',
+      'u_nodeCapacity',
+      'u_activeCount',
+      'u_sampleCount',
+      'u_maxNeighbors',
+      'u_use3D',
+      'u_exactRepulsionThreshold',
+      'u_sampleChurnCount',
+      'u_seed',
+      'u_sampleFrame',
+      'u_center',
+      'u_outputScale',
+      'u_linkDistance',
+      'u_minDistance',
+      'u_kRepulsion',
+      'u_kAttraction',
+      'u_kGravity',
+      'u_eta',
+      'u_damping',
+      'u_maxStep',
+    ]);
+    this.reductionInitUniforms = this._cacheUniforms(this.reductionInitProgram, [
+      'u_positions',
+      'u_activeMask',
+      'u_nodeTexSize',
+      'u_outputSize',
+      'u_nodeCapacity',
+      'u_use3D',
+      'u_center',
+    ]);
+    this.reductionCombineUniforms = this._cacheUniforms(this.reductionCombineProgram, [
+      'u_source',
+      'u_sourceSize',
+    ]);
+    this.recenterUniforms = this._cacheUniforms(this.recenterProgram, [
+      'u_positions',
+      'u_velocities',
+      'u_centroid',
+      'u_activeMask',
+      'u_nodeTexSize',
+      'u_nodeCapacity',
+      'u_use3D',
+      'u_center',
+      'u_outputScale',
+    ]);
+
+    this.framebuffer = gl.createFramebuffer();
+    this.readbackFramebuffer = gl.createFramebuffer();
+    this.fullscreenVao = gl.createVertexArray();
+  }
+
+  _cacheUniforms(program, names) {
+    const map = Object.create(null);
+    for (const name of names) {
+      map[name] = this.gl.getUniformLocation(program, name);
+    }
+    return map;
+  }
+
+  _ensureFloatTexture(field, width, height) {
+    const gl = this.gl;
+    let texture = this[field] ?? null;
+    if (!texture) {
+      texture = gl.createTexture();
+      this[field] = texture;
+    }
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, height, 0, gl.RGBA, gl.FLOAT, null);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    return texture;
+  }
+
+  _ensureFloatTextureAt(textures, index, width, height) {
+    let texture = textures[index] ?? null;
+    const gl = this.gl;
+    if (!texture) {
+      texture = gl.createTexture();
+      textures[index] = texture;
+    }
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, height, 0, gl.RGBA, gl.FLOAT, null);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    return texture;
+  }
+
+  _ensureUintTexture(field, width, height) {
+    const gl = this.gl;
+    let texture = this[field] ?? null;
+    if (!texture) {
+      texture = gl.createTexture();
+      this[field] = texture;
+    }
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32UI, width, height, 0, gl.RED_INTEGER, gl.UNSIGNED_INT, null);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    return texture;
+  }
+
+  _ensureReductionTarget(index, width, height) {
+    const gl = this.gl;
+    const target = this._reductionTargets[index];
+    if (!target.texture) {
+      target.texture = gl.createTexture();
+    }
+    if (!target.framebuffer) {
+      target.framebuffer = gl.createFramebuffer();
+    }
+    if (target.width !== width || target.height !== height) {
+      gl.bindTexture(gl.TEXTURE_2D, target.texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, height, 0, gl.RGBA, gl.FLOAT, null);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      target.width = width;
+      target.height = height;
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target.texture, 0);
+    gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+    const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    if (status !== gl.FRAMEBUFFER_COMPLETE) {
+      throw new Error('WebGL2 GPU-force reduction framebuffer is incomplete.');
+    }
+    return target;
+  }
+
+  _ensurePackedFloatScratch(field, texelCount) {
+    const required = Math.max(1, texelCount) * 4;
+    if (!(this[field] instanceof Float32Array) || this[field].length < required) {
+      this[field] = new Float32Array(required);
+    }
+    return this[field];
+  }
+
+  _packVec3Source(source, count, field) {
+    const texelCount = this.nodeLayout.width * this.nodeLayout.height;
+    const target = this._ensurePackedFloatScratch(field, texelCount);
+    target.fill(0, 0, texelCount * 4);
+    const limit = Math.max(0, Math.min(count, Math.floor((source?.length ?? 0) / 3)));
+    for (let i = 0; i < limit; i += 1) {
+      const src = i * 3;
+      const dst = i * 4;
+      target[dst] = source[src] ?? 0;
+      target[dst + 1] = source[src + 1] ?? 0;
+      target[dst + 2] = source[src + 2] ?? 0;
+      target[dst + 3] = 1;
+    }
+    return target;
+  }
+
+  _uploadPackedFloatTexture(texture, packed, width, height) {
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RGBA, gl.FLOAT, packed);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+  }
+
+  _uploadUintTexture(texture, layout, view) {
+    const gl = this.gl;
+    const safeLength = Math.max(1, layout.width * layout.height);
+    const data = view instanceof Uint32Array ? view : createEmptyUintArray();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    if (data.length === safeLength) {
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, layout.width, layout.height, gl.RED_INTEGER, gl.UNSIGNED_INT, data);
+    } else {
+      let remaining = Math.min(data.length, safeLength);
+      let offset = 0;
+      for (let y = 0; y < layout.height; y += 1) {
+        const rowCount = Math.min(layout.width, remaining);
+        if (rowCount > 0) {
+          gl.texSubImage2D(
+            gl.TEXTURE_2D,
+            0,
+            0,
+            y,
+            rowCount,
+            1,
+            gl.RED_INTEGER,
+            gl.UNSIGNED_INT,
+            data.subarray(offset, offset + rowCount),
+          );
+          offset += rowCount;
+          remaining -= rowCount;
+        }
+      }
+    }
+    gl.bindTexture(gl.TEXTURE_2D, null);
+  }
+
+  _bindTexture(unit, texture) {
+    const gl = this.gl;
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+  }
+
+  _prepareMainFramebuffer(positionTexture, velocityTexture, outputTexture) {
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, positionTexture, 0);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, velocityTexture, 0);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT2, gl.TEXTURE_2D, outputTexture, 0);
+    gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2]);
+    const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+    if (status !== gl.FRAMEBUFFER_COMPLETE) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      throw new Error('WebGL2 GPU-force framebuffer is incomplete.');
+    }
+  }
+
+  _saveState() {
+    const gl = this.gl;
+    return {
+      framebuffer: gl.getParameter(gl.FRAMEBUFFER_BINDING),
+      vao: gl.getParameter(gl.VERTEX_ARRAY_BINDING),
+      program: gl.getParameter(gl.CURRENT_PROGRAM),
+      viewport: gl.getParameter(gl.VIEWPORT),
+      activeTexture: gl.getParameter(gl.ACTIVE_TEXTURE),
+      blendEnabled: gl.isEnabled(gl.BLEND),
+      depthEnabled: gl.isEnabled(gl.DEPTH_TEST),
+    };
+  }
+
+  _restoreState(state) {
+    const gl = this.gl;
+    if (!state) return;
+    if (state.blendEnabled) gl.enable(gl.BLEND);
+    else gl.disable(gl.BLEND);
+    if (state.depthEnabled) gl.enable(gl.DEPTH_TEST);
+    else gl.disable(gl.DEPTH_TEST);
+    gl.useProgram(state.program);
+    gl.bindVertexArray(state.vao);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, state.framebuffer);
+    gl.viewport(state.viewport[0], state.viewport[1], state.viewport[2], state.viewport[3]);
+    gl.activeTexture(state.activeTexture);
+  }
+
+  syncTopology(payload, options = {}) {
+    if (!payload || !this.gl) return false;
+    const preserveDynamicState = options?.preserveDynamicState === true;
+    const previousNodeCapacity = this.nodeCapacity;
+    this.nodeCapacity = Math.max(0, payload.nodeCapacity | 0);
+    this.activeCount = Math.max(0, payload.activeCount | 0);
+    this.nodeLayout = resolveWebGLTextureLayout(this.gl, Math.max(1, this.nodeCapacity));
+    this.activeLayout = resolveWebGLTextureLayout(this.gl, Math.max(1, this.activeCount));
+    this.neighborLayout = resolveWebGLTextureLayout(this.gl, Math.max(1, payload.neighborLength | 0));
+
+    this._ensureFloatTextureAt(this.positionTextures, 0, this.nodeLayout.width, this.nodeLayout.height);
+    this._ensureFloatTextureAt(this.positionTextures, 1, this.nodeLayout.width, this.nodeLayout.height);
+    this._ensureFloatTextureAt(this.velocityTextures, 0, this.nodeLayout.width, this.nodeLayout.height);
+    this._ensureFloatTextureAt(this.velocityTextures, 1, this.nodeLayout.width, this.nodeLayout.height);
+    this._ensureFloatTexture('outputPositionTexture', this.nodeLayout.width, this.nodeLayout.height);
+    this._ensureUintTexture('activeIdsTexture', this.activeLayout.width, this.activeLayout.height);
+    this._ensureUintTexture('activeMaskTexture', this.nodeLayout.width, this.nodeLayout.height);
+    this._ensureUintTexture('neighborStartsTexture', this.nodeLayout.width, this.nodeLayout.height);
+    this._ensureUintTexture('neighborCountsTexture', this.nodeLayout.width, this.nodeLayout.height);
+    this._ensureUintTexture('neighborsTexture', this.neighborLayout.width, this.neighborLayout.height);
+
+    this._uploadUintTexture(this.activeIdsTexture, this.activeLayout, payload.activeIds);
+    this._uploadUintTexture(this.activeMaskTexture, this.nodeLayout, payload.activeMask);
+    this._uploadUintTexture(this.neighborStartsTexture, this.nodeLayout, payload.neighborStarts);
+    this._uploadUintTexture(this.neighborCountsTexture, this.nodeLayout, payload.neighborCounts);
+    this._uploadUintTexture(this.neighborsTexture, this.neighborLayout, payload.neighbors);
+
+    const canPreserveDynamicState = preserveDynamicState
+      && previousNodeCapacity === this.nodeCapacity
+      && this.nodeCapacity > 0;
+    if (!canPreserveDynamicState) {
+      const positionPacked = this._packVec3Source(payload.packedPositions, this.nodeCapacity, '_positionUploadScratch');
+      const outputPacked = this._packVec3Source(
+        payload.packedOutputPositions ?? payload.packedPositions,
+        this.nodeCapacity,
+        '_outputUploadScratch',
+      );
+      const velocityPacked = this._ensurePackedFloatScratch('_velocityUploadScratch', this.nodeLayout.width * this.nodeLayout.height);
+      velocityPacked.fill(0, 0, this.nodeLayout.width * this.nodeLayout.height * 4);
+      this._uploadPackedFloatTexture(this.positionTextures[0], positionPacked, this.nodeLayout.width, this.nodeLayout.height);
+      this._uploadPackedFloatTexture(this.positionTextures[1], positionPacked, this.nodeLayout.width, this.nodeLayout.height);
+      this._uploadPackedFloatTexture(this.velocityTextures[0], velocityPacked, this.nodeLayout.width, this.nodeLayout.height);
+      this._uploadPackedFloatTexture(this.velocityTextures[1], velocityPacked, this.nodeLayout.width, this.nodeLayout.height);
+      this._uploadPackedFloatTexture(this.outputPositionTexture, outputPacked, this.nodeLayout.width, this.nodeLayout.height);
+      this.readIndex = 0;
+      this.sampleFrame = 0;
+      this.textureVersion += 1;
+    }
+    return true;
+  }
+
+  _runReduction(positionTexture, is3D, center) {
+    const gl = this.gl;
+    let sourceTexture = positionTexture;
+    let sourceWidth = this.nodeLayout.width;
+    let sourceHeight = this.nodeLayout.height;
+    let sourceIsInitial = true;
+    let targetIndex = 0;
+
+    while (sourceWidth > 1 || sourceHeight > 1) {
+      const targetWidth = Math.max(1, Math.ceil(sourceWidth / 2));
+      const targetHeight = Math.max(1, Math.ceil(sourceHeight / 2));
+      const target = this._ensureReductionTarget(targetIndex, targetWidth, targetHeight);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+      gl.viewport(0, 0, targetWidth, targetHeight);
+      gl.useProgram(sourceIsInitial ? this.reductionInitProgram : this.reductionCombineProgram);
+      gl.bindVertexArray(this.fullscreenVao);
+      gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+
+      if (sourceIsInitial) {
+        this._bindTexture(0, sourceTexture);
+        this._bindTexture(1, this.activeMaskTexture);
+        gl.uniform1i(this.reductionInitUniforms.u_positions, 0);
+        gl.uniform1i(this.reductionInitUniforms.u_activeMask, 1);
+        gl.uniform2i(this.reductionInitUniforms.u_nodeTexSize, this.nodeLayout.width, this.nodeLayout.height);
+        gl.uniform2i(this.reductionInitUniforms.u_outputSize, targetWidth, targetHeight);
+        gl.uniform1i(this.reductionInitUniforms.u_nodeCapacity, this.nodeCapacity);
+        gl.uniform1i(this.reductionInitUniforms.u_use3D, is3D ? 1 : 0);
+        gl.uniform3f(this.reductionInitUniforms.u_center, center[0], center[1], center[2]);
+      } else {
+        this._bindTexture(0, sourceTexture);
+        gl.uniform1i(this.reductionCombineUniforms.u_source, 0);
+        gl.uniform2i(this.reductionCombineUniforms.u_sourceSize, sourceWidth, sourceHeight);
+      }
+
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      sourceTexture = target.texture;
+      sourceWidth = targetWidth;
+      sourceHeight = targetHeight;
+      sourceIsInitial = false;
+      targetIndex = (targetIndex + 1) % 2;
+    }
+
+    return sourceTexture;
+  }
+
+  step(stepOptions = {}) {
+    if (!this.gl || this.nodeCapacity <= 0 || this.activeCount <= 0) return false;
+
+    const gl = this.gl;
+    const state = this._saveState();
+    try {
+      gl.disable(gl.BLEND);
+      gl.disable(gl.DEPTH_TEST);
+      gl.bindVertexArray(this.fullscreenVao);
+
+      const readIndex = this.readIndex;
+      const writeIndex = 1 - readIndex;
+      const positionsIn = this.positionTextures[readIndex];
+      const velocitiesIn = this.velocityTextures[readIndex];
+      const positionsOut = this.positionTextures[writeIndex];
+      const velocitiesOut = this.velocityTextures[writeIndex];
+      const center = normalizeCenter(stepOptions.center);
+      const is3D = stepOptions.mode === '3d';
+      const sampleCount = Math.max(1, Math.floor(toFinite(stepOptions.sampleCount, DEFAULT_OPTIONS.sampleCount2D)));
+      const sampleChurnCount = resolveSampleChurnCount(sampleCount, stepOptions.sampleChurn);
+      const exactRepulsionThreshold = Math.max(1, Math.floor(toFinite(
+        stepOptions.exactRepulsionThreshold,
+        is3D ? DEFAULT_OPTIONS.exactRepulsionThreshold3D : DEFAULT_OPTIONS.exactRepulsionThreshold2D,
+      )));
+      const maxNeighborsPerNode = Math.max(1, Math.floor(toFinite(
+        stepOptions.maxNeighborsPerNode,
+        DEFAULT_OPTIONS.maxNeighborsPerNode,
+      )));
+      const outputScale = Math.max(0.0001, toFinite(stepOptions.outputScale, DEFAULT_OPTIONS.outputScale));
+
+      this._prepareMainFramebuffer(positionsOut, velocitiesOut, this.outputPositionTexture);
+      gl.viewport(0, 0, this.nodeLayout.width, this.nodeLayout.height);
+      gl.useProgram(this.computeProgram);
+      this._bindTexture(0, positionsIn);
+      this._bindTexture(1, velocitiesIn);
+      this._bindTexture(2, this.activeIdsTexture);
+      this._bindTexture(3, this.activeMaskTexture);
+      this._bindTexture(4, this.neighborStartsTexture);
+      this._bindTexture(5, this.neighborCountsTexture);
+      this._bindTexture(6, this.neighborsTexture);
+      gl.uniform1i(this.computeUniforms.u_positions, 0);
+      gl.uniform1i(this.computeUniforms.u_velocities, 1);
+      gl.uniform1i(this.computeUniforms.u_activeIds, 2);
+      gl.uniform1i(this.computeUniforms.u_activeMask, 3);
+      gl.uniform1i(this.computeUniforms.u_neighborStarts, 4);
+      gl.uniform1i(this.computeUniforms.u_neighborCounts, 5);
+      gl.uniform1i(this.computeUniforms.u_neighbors, 6);
+      gl.uniform2i(this.computeUniforms.u_nodeTexSize, this.nodeLayout.width, this.nodeLayout.height);
+      gl.uniform2i(this.computeUniforms.u_activeIdsTexSize, this.activeLayout.width, this.activeLayout.height);
+      gl.uniform2i(this.computeUniforms.u_neighborTexSize, this.neighborLayout.width, this.neighborLayout.height);
+      gl.uniform1i(this.computeUniforms.u_nodeCapacity, this.nodeCapacity);
+      gl.uniform1i(this.computeUniforms.u_activeCount, this.activeCount);
+      gl.uniform1i(this.computeUniforms.u_sampleCount, sampleCount);
+      gl.uniform1i(this.computeUniforms.u_maxNeighbors, maxNeighborsPerNode);
+      gl.uniform1i(this.computeUniforms.u_use3D, is3D ? 1 : 0);
+      gl.uniform1i(this.computeUniforms.u_exactRepulsionThreshold, exactRepulsionThreshold);
+      gl.uniform1i(this.computeUniforms.u_sampleChurnCount, sampleChurnCount);
+      gl.uniform1ui(this.computeUniforms.u_seed, this.seed >>> 0);
+      gl.uniform1ui(this.computeUniforms.u_sampleFrame, this.sampleFrame >>> 0);
+      gl.uniform3f(this.computeUniforms.u_center, center[0], center[1], center[2]);
+      gl.uniform1f(this.computeUniforms.u_outputScale, outputScale);
+      gl.uniform1f(this.computeUniforms.u_linkDistance, Math.max(0.0001, toFinite(stepOptions.linkDistance, DEFAULT_OPTIONS.linkDistance)));
+      gl.uniform1f(this.computeUniforms.u_minDistance, Math.max(0.0001, toFinite(stepOptions.minDistance, DEFAULT_OPTIONS.minDistance)));
+      gl.uniform1f(this.computeUniforms.u_kRepulsion, toFinite(stepOptions.kRepulsion, DEFAULT_OPTIONS.kRepulsion));
+      gl.uniform1f(this.computeUniforms.u_kAttraction, toFinite(stepOptions.kAttraction, DEFAULT_OPTIONS.kAttraction));
+      gl.uniform1f(this.computeUniforms.u_kGravity, toFinite(stepOptions.kGravity, DEFAULT_OPTIONS.kGravity));
+      gl.uniform1f(this.computeUniforms.u_eta, toFinite(stepOptions.eta, DEFAULT_OPTIONS.eta));
+      gl.uniform1f(this.computeUniforms.u_damping, clamp(stepOptions.damping, 0, 1, DEFAULT_OPTIONS.damping));
+      gl.uniform1f(this.computeUniforms.u_maxStep, Math.max(0.001, toFinite(stepOptions.maxStep, DEFAULT_OPTIONS.maxStep)));
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+      if (stepOptions.recenter === true) {
+        const centroidTexture = this._runReduction(positionsOut, is3D, center);
+        this._prepareMainFramebuffer(this.positionTextures[readIndex], this.velocityTextures[readIndex], this.outputPositionTexture);
+        gl.viewport(0, 0, this.nodeLayout.width, this.nodeLayout.height);
+        gl.useProgram(this.recenterProgram);
+        this._bindTexture(0, positionsOut);
+        this._bindTexture(1, velocitiesOut);
+        this._bindTexture(2, centroidTexture);
+        this._bindTexture(3, this.activeMaskTexture);
+        gl.uniform1i(this.recenterUniforms.u_positions, 0);
+        gl.uniform1i(this.recenterUniforms.u_velocities, 1);
+        gl.uniform1i(this.recenterUniforms.u_centroid, 2);
+        gl.uniform1i(this.recenterUniforms.u_activeMask, 3);
+        gl.uniform2i(this.recenterUniforms.u_nodeTexSize, this.nodeLayout.width, this.nodeLayout.height);
+        gl.uniform1i(this.recenterUniforms.u_nodeCapacity, this.nodeCapacity);
+        gl.uniform1i(this.recenterUniforms.u_use3D, is3D ? 1 : 0);
+        gl.uniform3f(this.recenterUniforms.u_center, center[0], center[1], center[2]);
+        gl.uniform1f(this.recenterUniforms.u_outputScale, outputScale);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+      } else {
+        this.readIndex = writeIndex;
+      }
+
+      if (stepOptions.recenter === true) {
+        this.readIndex = readIndex;
+      }
+      this.sampleFrame = (this.sampleFrame + 1) >>> 0;
+      this.textureVersion += 1;
+      return true;
+    } finally {
+      this._restoreState(state);
+    }
+  }
+
+  getPositionTexture() {
+    return this.outputPositionTexture ?? null;
+  }
+
+  getPositionTextureMeta() {
+    return {
+      version: this.textureVersion,
+      count: this.nodeCapacity,
+      buffer: this.outputPositionTexture,
+      byteOffset: 0,
+      byteLength: 0,
+    };
+  }
+
+  getExecutionMode() {
+    return 'gpu';
+  }
+
+  readPositionSnapshot() {
+    if (!this.outputPositionTexture || this.nodeCapacity <= 0) return null;
+    const gl = this.gl;
+    const width = this.nodeLayout.width;
+    const height = this.nodeLayout.height;
+    const texelCount = Math.max(1, width * height);
+    const required = texelCount * 4;
+    if (!(this._readbackScratch instanceof Float32Array) || this._readbackScratch.length < required) {
+      this._readbackScratch = new Float32Array(required);
+    }
+    const state = this._saveState();
+    try {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.readbackFramebuffer);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.outputPositionTexture, 0);
+      gl.readBuffer(gl.COLOR_ATTACHMENT0);
+      gl.readPixels(0, 0, width, height, gl.RGBA, gl.FLOAT, this._readbackScratch);
+    } finally {
+      this._restoreState(state);
+    }
+    const output = new Float32Array(Math.max(1, this.nodeCapacity) * 3);
+    for (let i = 0; i < this.nodeCapacity; i += 1) {
+      const src = i * 4;
+      const dst = i * 3;
+      output[dst] = this._readbackScratch[src] ?? 0;
+      output[dst + 1] = this._readbackScratch[src + 1] ?? 0;
+      output[dst + 2] = this._readbackScratch[src + 2] ?? 0;
+    }
+    return output;
+  }
+
+  dispose() {
+    const gl = this.gl;
+    if (!gl) return;
+    for (const texture of this.positionTextures) {
+      if (texture) gl.deleteTexture(texture);
+    }
+    for (const texture of this.velocityTextures) {
+      if (texture) gl.deleteTexture(texture);
+    }
+    if (this.outputPositionTexture) gl.deleteTexture(this.outputPositionTexture);
+    if (this.activeIdsTexture) gl.deleteTexture(this.activeIdsTexture);
+    if (this.activeMaskTexture) gl.deleteTexture(this.activeMaskTexture);
+    if (this.neighborStartsTexture) gl.deleteTexture(this.neighborStartsTexture);
+    if (this.neighborCountsTexture) gl.deleteTexture(this.neighborCountsTexture);
+    if (this.neighborsTexture) gl.deleteTexture(this.neighborsTexture);
+    for (const target of this._reductionTargets) {
+      if (target.texture) gl.deleteTexture(target.texture);
+      if (target.framebuffer) gl.deleteFramebuffer(target.framebuffer);
+    }
+    if (this.framebuffer) gl.deleteFramebuffer(this.framebuffer);
+    if (this.readbackFramebuffer) gl.deleteFramebuffer(this.readbackFramebuffer);
+    if (this.fullscreenVao) gl.deleteVertexArray(this.fullscreenVao);
+    if (this.computeProgram) gl.deleteProgram(this.computeProgram);
+    if (this.reductionInitProgram) gl.deleteProgram(this.reductionInitProgram);
+    if (this.reductionCombineProgram) gl.deleteProgram(this.reductionCombineProgram);
+    if (this.recenterProgram) gl.deleteProgram(this.recenterProgram);
+
+    this.positionTextures = [null, null];
+    this.velocityTextures = [null, null];
+    this.outputPositionTexture = null;
+    this.activeIdsTexture = null;
+    this.activeMaskTexture = null;
+    this.neighborStartsTexture = null;
+    this.neighborCountsTexture = null;
+    this.neighborsTexture = null;
+    this.framebuffer = null;
+    this.readbackFramebuffer = null;
+    this.fullscreenVao = null;
+    this.textureVersion = 0;
+  }
+}
+
+class WebGLForceComputeBackend {
+  constructor(gl) {
+    this.gl = gl;
+    this._gpu = canUseWebGLTextureCompute(gl) ? new WebGLTextureComputePath(gl) : null;
+    this.nodeCapacity = 0;
+    this.activeCount = 0;
+    this.seed = (Math.random() * 0xffffffff) >>> 0;
+    this.sampleFrame = 0;
 
     this.activeIds = createEmptyUintArray();
     this.activeMask = createEmptyUintArray();
@@ -784,6 +1891,19 @@ class WebGLForceComputeBackend {
   }
 
   syncTopology(payload, options = {}) {
+    if (this._gpu) {
+      this._gpu.seed = this.seed >>> 0;
+      this._gpu.sampleFrame = this.sampleFrame >>> 0;
+      const synchronized = this._gpu.syncTopology(payload, options);
+      this.seed = this._gpu.seed >>> 0;
+      this.sampleFrame = this._gpu.sampleFrame >>> 0;
+      this.nodeCapacity = this._gpu.nodeCapacity | 0;
+      this.activeCount = this._gpu.activeCount | 0;
+      this.textureWidth = this._gpu.nodeLayout?.width ?? 1;
+      this.textureHeight = this._gpu.nodeLayout?.height ?? 1;
+      this.textureVersion = this._gpu.textureVersion ?? this.textureVersion;
+      return synchronized;
+    }
     if (!payload || !this.gl) return false;
     const preserveDynamicState = options?.preserveDynamicState === true;
     const previousNodeCapacity = this.nodeCapacity;
@@ -811,6 +1931,7 @@ class WebGLForceComputeBackend {
       copyFloat32Values(this.positions, payload.packedPositions, valueCount);
       copyFloat32Values(this.outputPositions, payload.packedOutputPositions ?? payload.packedPositions, valueCount);
       this.velocities.fill(0, 0, valueCount);
+      this.sampleFrame = 0;
     }
     this.scratchPositions = ensureFloat32Capacity(this.scratchPositions, valueCount);
     this.scratchVelocities = ensureFloat32Capacity(this.scratchVelocities, valueCount);
@@ -818,11 +1939,25 @@ class WebGLForceComputeBackend {
   }
 
   step(stepOptions = {}) {
+    if (this._gpu) {
+      this._gpu.seed = this.seed >>> 0;
+      this._gpu.sampleFrame = this.sampleFrame >>> 0;
+      const advanced = this._gpu.step(stepOptions);
+      this.seed = this._gpu.seed >>> 0;
+      this.sampleFrame = this._gpu.sampleFrame >>> 0;
+      this.nodeCapacity = this._gpu.nodeCapacity | 0;
+      this.activeCount = this._gpu.activeCount | 0;
+      this.textureWidth = this._gpu.nodeLayout?.width ?? 1;
+      this.textureHeight = this._gpu.nodeLayout?.height ?? 1;
+      this.textureVersion = this._gpu.textureVersion ?? this.textureVersion;
+      return advanced;
+    }
     if (!this.gl || this.nodeCapacity <= 0 || this.activeCount <= 0) return false;
 
     const is3D = stepOptions.mode === '3d';
     const center = normalizeCenter(stepOptions.center);
     const sampleCount = Math.max(1, Math.floor(toFinite(stepOptions.sampleCount, DEFAULT_OPTIONS.sampleCount2D)));
+    const sampleChurnCount = resolveSampleChurnCount(sampleCount, stepOptions.sampleChurn);
     const exactRepulsionThreshold = Math.max(1, Math.floor(toFinite(
       stepOptions.exactRepulsionThreshold,
       is3D ? DEFAULT_OPTIONS.exactRepulsionThreshold3D : DEFAULT_OPTIONS.exactRepulsionThreshold2D,
@@ -858,6 +1993,7 @@ class WebGLForceComputeBackend {
       ? 1
       : Math.max(1, this.activeCount / Math.max(1, sampleCount));
     this.seed = this.seed >>> 0;
+    const sampleFrame = this.sampleFrame >>> 0;
 
     for (let nodeId = 0; nodeId < this.nodeCapacity; nodeId += 1) {
       const base = nodeId * 3;
@@ -891,7 +2027,16 @@ class WebGLForceComputeBackend {
         for (let s = 0; s < repulsionIterations; s += 1) {
           const otherId = useExactRepulsion
             ? activeIds[s]
-            : sampleActiveId(nodeId, s, activeIds, this.activeCount, this.seed);
+            : sampleActiveIdProgressive(
+              nodeId,
+              s,
+              activeIds,
+              this.activeCount,
+              this.seed,
+              sampleCount,
+              sampleChurnCount,
+              sampleFrame,
+            );
           if (otherId === nodeId || otherId >= this.nodeCapacity) continue;
           const otherBase = otherId * 3;
           let deltaX = posX - (positionsIn[otherBase] ?? posX);
@@ -999,14 +2144,24 @@ class WebGLForceComputeBackend {
       }
     }
 
-    return this._uploadOutputTexture();
+    const uploaded = this._uploadOutputTexture();
+    if (uploaded) {
+      this.sampleFrame = (sampleFrame + 1) >>> 0;
+    }
+    return uploaded;
   }
 
   getPositionTexture() {
+    if (this._gpu) {
+      return this._gpu.getPositionTexture();
+    }
     return this.outputPositionTexture ?? null;
   }
 
   getPositionTextureMeta() {
+    if (this._gpu) {
+      return this._gpu.getPositionTextureMeta();
+    }
     return {
       version: this.textureVersion,
       count: this.nodeCapacity,
@@ -1017,12 +2172,22 @@ class WebGLForceComputeBackend {
   }
 
   readPositionSnapshot() {
+    if (this._gpu) {
+      return this._gpu.readPositionSnapshot();
+    }
     if (!this.outputPositions || this.nodeCapacity <= 0) return null;
     const length = Math.max(1, this.nodeCapacity) * 3;
     return new Float32Array(this.outputPositions.subarray(0, length));
   }
 
+  getExecutionMode() {
+    if (this._gpu) return this._gpu.getExecutionMode();
+    return 'cpu';
+  }
+
   dispose() {
+    this._gpu?.dispose?.();
+    this._gpu = null;
     if (this.outputPositionTexture && this.gl?.deleteTexture) {
       this.gl.deleteTexture(this.outputPositionTexture);
     }
@@ -1042,6 +2207,7 @@ class WebGLForceComputeBackend {
     this.textureWidth = 1;
     this.textureHeight = 1;
     this.textureVersion = 0;
+    this.sampleFrame = 0;
   }
 }
 
@@ -1073,7 +2239,12 @@ class WebGPUForceComputeBackend {
     this.nodeCapacity = 0;
     this.activeCount = 0;
     this.seed = (Math.random() * 0xffffffff) >>> 0;
+    this.sampleFrame = 0;
     this.zeroVelocities = createEmptyFloatArray();
+    this.maxComputeWorkgroupsPerDimension = Math.max(
+      1,
+      Math.floor(device?.limits?.maxComputeWorkgroupsPerDimension ?? 65535),
+    );
 
     const shaderVisibility = getGpuShaderStage('COMPUTE', 0x4);
     this.shaderVisibility = shaderVisibility;
@@ -1266,6 +2437,7 @@ class WebGPUForceComputeBackend {
       const zeroBytes = Math.max(4, Math.min(this.zeroVelocities.byteLength, Math.max(1, this.nodeCapacity) * 12));
       queue.writeBuffer(this.velocityBuffer, 0, this.zeroVelocities.buffer, this.zeroVelocities.byteOffset, zeroBytes);
       queue.writeBuffer(this.scratchVelocityBuffer, 0, this.zeroVelocities.buffer, this.zeroVelocities.byteOffset, zeroBytes);
+      this.sampleFrame = 0;
     }
 
     if (activeCount > 0) {
@@ -1293,6 +2465,7 @@ class WebGPUForceComputeBackend {
     if (!this.outputPositionBuffer) return false;
 
     const sampleCount = Math.max(1, Math.floor(toFinite(stepOptions.sampleCount, 64)));
+    const sampleChurnCount = resolveSampleChurnCount(sampleCount, stepOptions.sampleChurn);
     const exactRepulsionThreshold = Math.max(1, Math.floor(toFinite(
       stepOptions.exactRepulsionThreshold,
       stepOptions.mode === '3d'
@@ -1300,11 +2473,17 @@ class WebGPUForceComputeBackend {
         : DEFAULT_OPTIONS.exactRepulsionThreshold2D,
     )));
     const maxNeighborsPerNode = Math.max(1, Math.floor(toFinite(stepOptions.maxNeighborsPerNode, 64)));
-    // Keep sampled repulsion neighborhoods stable across ticks to reduce
-    // stochastic force noise and improve convergence.
+    // Keep sampled repulsion neighborhoods stable by default, while allowing
+    // optional progressive churn to refresh only part of the sample set.
     this.seed = this.seed >>> 0;
+    const sampleFrame = this.sampleFrame >>> 0;
 
-    const paramsBuffer = new ArrayBuffer(20 * 4);
+    const dispatchShape = resolveComputeDispatchShape(
+      this.nodeCapacity,
+      WORKGROUP_SIZE,
+      this.maxComputeWorkgroupsPerDimension,
+    );
+    const paramsBuffer = new ArrayBuffer(24 * 4);
     const paramsU32 = new Uint32Array(paramsBuffer);
     const paramsF32 = new Float32Array(paramsBuffer);
 
@@ -1314,25 +2493,29 @@ class WebGPUForceComputeBackend {
     paramsU32[3] = maxNeighborsPerNode >>> 0;
 
     paramsU32[4] = stepOptions.mode === '3d' ? 1 : 0;
-    paramsU32[5] = stepOptions.recenter === true ? 1 : 0;
+    paramsU32[5] = sampleChurnCount >>> 0;
     paramsU32[6] = this.seed >>> 0;
     paramsU32[7] = exactRepulsionThreshold >>> 0;
 
-    paramsF32[8] = toFinite(stepOptions.kRepulsion, DEFAULT_OPTIONS.kRepulsion);
-    paramsF32[9] = toFinite(stepOptions.kAttraction, DEFAULT_OPTIONS.kAttraction);
-    paramsF32[10] = toFinite(stepOptions.kGravity, DEFAULT_OPTIONS.kGravity);
-    paramsF32[11] = toFinite(stepOptions.eta, DEFAULT_OPTIONS.eta);
+    paramsU32[8] = dispatchShape.rowStride >>> 0;
+    paramsU32[9] = dispatchShape.layerStride >>> 0;
+    paramsU32[10] = sampleFrame >>> 0;
 
-    paramsF32[12] = clamp(stepOptions.damping, 0, 1, DEFAULT_OPTIONS.damping);
-    paramsF32[13] = Math.max(0.001, toFinite(stepOptions.maxStep, DEFAULT_OPTIONS.maxStep));
-    paramsF32[14] = Math.max(0.0001, toFinite(stepOptions.minDistance, DEFAULT_OPTIONS.minDistance));
-    paramsF32[15] = Math.max(0.0001, toFinite(stepOptions.linkDistance, DEFAULT_OPTIONS.linkDistance));
+    paramsF32[12] = toFinite(stepOptions.kRepulsion, DEFAULT_OPTIONS.kRepulsion);
+    paramsF32[13] = toFinite(stepOptions.kAttraction, DEFAULT_OPTIONS.kAttraction);
+    paramsF32[14] = toFinite(stepOptions.kGravity, DEFAULT_OPTIONS.kGravity);
+    paramsF32[15] = toFinite(stepOptions.eta, DEFAULT_OPTIONS.eta);
+
+    paramsF32[16] = clamp(stepOptions.damping, 0, 1, DEFAULT_OPTIONS.damping);
+    paramsF32[17] = Math.max(0.001, toFinite(stepOptions.maxStep, DEFAULT_OPTIONS.maxStep));
+    paramsF32[18] = Math.max(0.0001, toFinite(stepOptions.minDistance, DEFAULT_OPTIONS.minDistance));
+    paramsF32[19] = Math.max(0.0001, toFinite(stepOptions.linkDistance, DEFAULT_OPTIONS.linkDistance));
 
     const center = normalizeCenter(stepOptions.center);
-    paramsF32[16] = center[0];
-    paramsF32[17] = center[1];
-    paramsF32[18] = center[2];
-    paramsF32[19] = Math.max(0.001, toFinite(stepOptions.dt, 1 / 60));
+    paramsF32[20] = center[0];
+    paramsF32[21] = center[1];
+    paramsF32[22] = center[2];
+    paramsF32[23] = Math.max(0.001, toFinite(stepOptions.dt, 1 / 60));
 
     const outputScale = Math.max(0.0001, toFinite(stepOptions.outputScale, DEFAULT_OPTIONS.outputScale));
 
@@ -1342,7 +2525,7 @@ class WebGPUForceComputeBackend {
     const pass = encoder.beginComputePass({ label: 'layout:gpu-force:compute' });
     pass.setPipeline(this.pipeline);
     pass.setBindGroup(0, this.bindGroup);
-    pass.dispatchWorkgroups(Math.ceil(this.nodeCapacity / WORKGROUP_SIZE));
+    pass.dispatchWorkgroups(dispatchShape.x, dispatchShape.y, dispatchShape.z);
     pass.end();
 
     const bytes = Math.max(1, this.nodeCapacity) * 12;
@@ -1380,25 +2563,28 @@ class WebGPUForceComputeBackend {
       if (!this.outputScalePipeline || !this.outputScaleBindGroup || !this.outputScaleParamsBuffer) {
         return false;
       }
-      const scaleParamsBuffer = new ArrayBuffer(12 * 4);
+      const scaleParamsBuffer = new ArrayBuffer(16 * 4);
       const scaleParamsU32 = new Uint32Array(scaleParamsBuffer);
       const scaleParamsF32 = new Float32Array(scaleParamsBuffer);
       scaleParamsU32[0] = this.nodeCapacity >>> 0;
       scaleParamsU32[1] = stepOptions.mode === '3d' ? 1 : 0;
-      scaleParamsF32[4] = center[0];
-      scaleParamsF32[5] = center[1];
-      scaleParamsF32[6] = center[2];
-      scaleParamsF32[8] = outputScale;
+      scaleParamsU32[4] = dispatchShape.rowStride >>> 0;
+      scaleParamsU32[5] = dispatchShape.layerStride >>> 0;
+      scaleParamsF32[8] = center[0];
+      scaleParamsF32[9] = center[1];
+      scaleParamsF32[10] = center[2];
+      scaleParamsF32[12] = outputScale;
       this.device.queue.writeBuffer(this.outputScaleParamsBuffer, 0, scaleParamsBuffer);
 
       const outputScalePass = encoder.beginComputePass({ label: 'layout:gpu-force:output-scale' });
       outputScalePass.setPipeline(this.outputScalePipeline);
       outputScalePass.setBindGroup(0, this.outputScaleBindGroup);
-      outputScalePass.dispatchWorkgroups(Math.ceil(this.nodeCapacity / WORKGROUP_SIZE));
+      outputScalePass.dispatchWorkgroups(dispatchShape.x, dispatchShape.y, dispatchShape.z);
       outputScalePass.end();
     }
 
     this.device.queue.submit([encoder.finish()]);
+    this.sampleFrame = (sampleFrame + 1) >>> 0;
     return true;
   }
 
@@ -1468,6 +2654,7 @@ class WebGPUForceComputeBackend {
     this.recenterBindGroupLayout = null;
     this.nodeCapacity = 0;
     this.activeCount = 0;
+    this.sampleFrame = 0;
     this.zeroVelocities = createEmptyFloatArray();
   }
 }
@@ -1732,6 +2919,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       center: this.options.center,
       recenter: this.options.recenter === true,
       sampleCount,
+      sampleChurn: clamp(this.options.sampleChurn, 0, 1, DEFAULT_OPTIONS.sampleChurn),
       exactRepulsionThreshold,
       maxNeighborsPerNode: Math.max(1, Math.floor(toFinite(this.options.maxNeighborsPerNode, DEFAULT_OPTIONS.maxNeighborsPerNode))),
       outputScale: Math.max(0.0001, toFinite(this.options.outputScale, DEFAULT_OPTIONS.outputScale)),

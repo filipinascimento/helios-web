@@ -11,6 +11,7 @@ test('gpu-force runs with WebGL2 delegate texture resources when renderer=webgl'
     const renderer = helios?.renderer ?? null;
     const graphLayer = renderer?.graphLayer ?? null;
     const deviceType = renderer?.device?.type ?? null;
+    const hasColorBufferFloat = Boolean(renderer?.device?.gl?.getExtension?.('EXT_color_buffer_float'));
     const positionsConfig = helios?.positions?.() ?? null;
     const layout = typeof helios?.layout === 'function' ? helios.layout() : null;
     const delegate = layout?.getPositionDelegate?.() ?? positionsConfig?.delegate ?? null;
@@ -27,8 +28,10 @@ test('gpu-force runs with WebGL2 delegate texture resources when renderer=webgl'
 
     return {
       deviceType,
+      hasColorBufferFloat,
       positionSource: positionsConfig?.source ?? null,
       hasDelegate: Boolean(delegate),
+      executionMode: delegate?._webgl?.getExecutionMode?.() ?? null,
       delegateSnapshotLength: snapshot instanceof Float32Array ? snapshot.length : 0,
       hasWebglTexture: Boolean(override?.webglTexture),
     };
@@ -37,6 +40,7 @@ test('gpu-force runs with WebGL2 delegate texture resources when renderer=webgl'
   expect(result.deviceType).toBe('webgl2');
   expect(result.positionSource).toBe('delegate');
   expect(result.hasDelegate).toBe(true);
+  expect(result.executionMode).toBe(result.hasColorBufferFloat ? 'gpu' : 'cpu');
   expect(result.delegateSnapshotLength).toBeGreaterThan(0);
   expect(result.hasWebglTexture).toBe(true);
 });

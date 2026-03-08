@@ -10,6 +10,7 @@ const DEFAULT_OPTIONS = {
   sampleCount: null,
   sampleCount2D: 64,
   sampleCount3D: 96,
+  sampleChurn: 0,
   maxNeighborsPerNode: 64,
   outputScale: 6.5,
   linkDistance: 1,
@@ -106,7 +107,7 @@ export class GpuForceLayout extends Layout {
 
   getParameterBindings() {
     const sampleKey = this.options.mode === '3d' ? 'sampleCount3D' : 'sampleCount2D';
-    const sampleLabel = this.options.mode === '3d' ? 'Samples / node (3D)' : 'Samples / node (2D)';
+    const sampleLabel = 'Repulsion samples';
     return {
       key: 'gpu-force',
       label: 'Force (GPU)',
@@ -129,10 +130,29 @@ export class GpuForceLayout extends Layout {
           label: sampleLabel,
           type: 'number',
           min: 1,
-          max: 256,
+          sliderMax: 256,
+          inputMax: null,
           step: 1,
+          hint: 'Suggested range 1-256; larger typed values are allowed.',
           get: () => Number(this.options[sampleKey] ?? DEFAULT_OPTIONS[sampleKey]),
-          set: (value) => this.setSettings({ [sampleKey]: value }),
+          set: (value) => {
+            this.setSettings({ [sampleKey]: value });
+            this.reheat();
+          },
+        },
+        {
+          key: 'sampleChurn',
+          label: 'Sample churn',
+          hint: '0 keeps repulsion samples fixed; 1 refreshes all repulsion samples every step.',
+          type: 'number',
+          min: 0,
+          max: 1,
+          step: 0.01,
+          get: () => Number(this.options.sampleChurn ?? DEFAULT_OPTIONS.sampleChurn),
+          set: (value) => {
+            this.setSettings({ sampleChurn: value });
+            this.reheat();
+          },
         },
         {
           key: 'maxNeighborsPerNode',

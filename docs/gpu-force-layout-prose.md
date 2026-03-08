@@ -1,12 +1,12 @@
-# Methodology: WebGPU Force Layout in Helios Web Next
+# Methodology: GPU Force Layout in Helios Web Next
 
-This document presents the GPU force layout as a methodology section, aligned with the current implementation in `src/layouts/GpuForceLayout.js` and `src/delegates/GpuForcePositionDelegate.js`. The layout is implemented as a position-delegate system in which simulation state is advanced on WebGPU compute buffers and consumed directly by the renderer, thereby minimizing CPU-GPU transfer in the steady state.
+This document presents the GPU force layout as a methodology section, aligned with the current implementation in `src/layouts/GpuForceLayout.js` and `src/delegates/GpuForcePositionDelegate.js`. The layout is implemented as a position-delegate system in which simulation state is advanced on GPU resources and consumed directly by the renderer, thereby minimizing CPU-GPU transfer in the steady state. WebGPU uses compute buffers; WebGL2 uses float-texture fragment passes when `EXT_color_buffer_float` is available, and otherwise falls back to CPU simulation plus texture upload.
 
 ## 1. System Model and Design Objective
 
 The layout problem is posed on an active graph $G = (V, E)$, where $|V| = A$ is the active-node cardinality and $|V_{cap}| = N$ is the node-capacity domain addressed by buffers. The system objective is to iteratively estimate node positions $x_i \in \mathbb{R}^3$ that satisfy a force equilibrium under three terms: sampled repulsion, local spring attraction, and gravity toward a user-defined center. The implementation must support both 2D and 3D simulation while remaining compatible with indirect rendering and sparse active sets.
 
-Architecturally, the method separates two phases. First, topology compilation runs on CPU because adjacency extraction depends on network index views. Second, dynamics integration runs on GPU as a per-node compute kernel. This decomposition preserves flexibility in topology handling while keeping the dominant per-tick arithmetic in parallel compute.
+Architecturally, the method separates two phases. First, topology compilation runs on CPU because adjacency extraction depends on network index views. Second, dynamics integration runs on GPU as a per-node parallel kernel. Under WebGPU this is a compute pipeline over storage buffers; under WebGL2 it is a fragment-shader pipeline over ping-pong textures. This decomposition preserves flexibility in topology handling while keeping the dominant per-tick arithmetic in parallel compute.
 
 ## 2. Topology Compilation and Initialization
 
@@ -92,7 +92,7 @@ k'_g = \alpha k_g,\;
 \Delta_{max}' = \Delta_{max}\, dt_{scale}.
 $$
 
-Repulsion sample count is chosen from explicit `sampleCount` when finite, otherwise from mode-specific defaults (`sampleCount2D` or `sampleCount3D`). When the active set is no larger than the sample budget, or no larger than the small-graph exact-repulsion threshold, the implementation switches to exact all-pairs repulsion rather than hashed sampling, removing small-graph sampling bias.
+Repulsion sample count is chosen from explicit `sampleCount` when finite, otherwise from mode-specific defaults (`sampleCount2D` or `sampleCount3D`). `sampleChurn` controls how much of the sampled repulsion set is progressively refreshed each step: `0` keeps the sampled set fixed, while `1` refreshes all sample slots every step. When the active set is no larger than the sample budget, or no larger than the small-graph exact-repulsion threshold, the implementation switches to exact all-pairs repulsion rather than hashed sampling, removing small-graph sampling bias.
 
 ## 4. GPU Force Formulation
 
@@ -247,15 +247,16 @@ Input: network buffers, layout options, backend device
 Output: synchronized compute buffers
 
 1: Read topology snapshot (nodeIndices, edgeIndices, edgesView, nodeCapacity)
-2: if backend is not WebGPU then
-3:    dispose compute backend; cache counts; return
+2: if backend is neither WebGPU nor WebGL2 then
+3:    dispose GPU backend; cache counts; return
 4: end if
-5: Recreate backend if device changed
-6: if topology unchanged and position buffer already valid then return
+5: Recreate backend if device/context changed
+6: if topology unchanged and current GPU state is reusable then return
 7: Acquire node position attribute view (withBufferAccess when available)
 8: Build active mask, CSR adjacency, simulation/output seeds
-9: Upload payload arrays into storage buffers
-10: Zero velocity and scratch-velocity buffers
+9: Upload payload arrays into GPU resources
+10: WebGPU -> storage buffers; WebGL2 -> integer/float textures
+11: Zero velocity state when dynamic state cannot be preserved
 11: Rebuild force and output-scale bind groups
 12: Reset alpha if configured
 ```
@@ -294,6 +295,7 @@ Table 1 lists current defaults from the implementation.
 | `sampleCount` | `null` | Explicit repulsion sample override when finite. |
 | `sampleCount2D` | `64` | Default repulsion samples in 2D. |
 | `sampleCount3D` | `96` | Default repulsion samples in 3D. |
+| `sampleChurn` | `0` | Fraction of repulsion sample slots refreshed each step (`0` fixed, `1` full refresh). |
 | `maxNeighborsPerNode` | `64` | Spring-neighbor truncation per node. |
 | `outputScale` | `6` | Simulation-to-render scale factor around `center`. |
 | `linkDistance` | `1` | Zero-stretch spring distance. |

@@ -172,3 +172,4 @@ dist*/
 /test-results
 /utilities/downloads/
 /artifacts/
+.tmp*

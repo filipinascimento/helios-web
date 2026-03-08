@@ -44,6 +44,19 @@ function clampNumber(value, min, max) {
   return next;
 }
 
+function resolveFiniteBound(primary, fallback = null) {
+  if (primary == null || primary === '') {
+    if (fallback == null || fallback === '') return null;
+    const fallbackNumeric = Number(fallback);
+    return Number.isFinite(fallbackNumeric) ? fallbackNumeric : null;
+  }
+  const numeric = Number(primary);
+  if (Number.isFinite(numeric)) return numeric;
+  if (fallback == null || fallback === '') return null;
+  const fallbackNumeric = Number(fallback);
+  return Number.isFinite(fallbackNumeric) ? fallbackNumeric : null;
+}
+
 function usesLogScale(binding) {
   return binding?.scale === 'log';
 }
@@ -472,22 +485,26 @@ export class LayoutPanel {
         };
       } else {
         const wrap = document.createElement('div');
-        const hasRange = Number.isFinite(toFinite(binding.min)) && Number.isFinite(toFinite(binding.max));
+        const sliderMin = resolveFiniteBound(binding.sliderMin, binding.min);
+        const sliderMax = resolveFiniteBound(binding.sliderMax, binding.max);
+        const inputMin = resolveFiniteBound(binding.inputMin, binding.min);
+        const inputMax = resolveFiniteBound(binding.inputMax, binding.max);
+        const hasRange = Number.isFinite(sliderMin) && Number.isFinite(sliderMax);
         if (hasRange) {
           wrap.className = 'helios-ui-slider-controls';
           const slider = document.createElement('input');
           slider.type = 'range';
           slider.className = 'helios-ui-slider';
-          slider.min = String(usesLogScale(binding) ? Math.log10(Math.max(1e-12, Number(binding.min))) : binding.min);
-          slider.max = String(usesLogScale(binding) ? Math.log10(Math.max(1e-12, Number(binding.max))) : binding.max);
+          slider.min = String(usesLogScale(binding) ? Math.log10(Math.max(1e-12, sliderMin)) : sliderMin);
+          slider.max = String(usesLogScale(binding) ? Math.log10(Math.max(1e-12, sliderMax)) : sliderMax);
           slider.step = String(usesLogScale(binding) ? (binding.sliderStep ?? 0.01) : (binding.step ?? 0.01));
 
           const input = document.createElement('input');
           input.type = 'number';
           input.inputMode = 'decimal';
           input.className = 'helios-ui-number';
-          input.min = String(binding.min);
-          input.max = String(binding.max);
+          if (Number.isFinite(inputMin)) input.min = String(inputMin);
+          if (Number.isFinite(inputMax)) input.max = String(inputMax);
           input.step = String(binding.inputStep ?? (usesLogScale(binding) ? 'any' : (binding.step ?? 0.01)));
 
           slider.addEventListener('input', () => {
@@ -499,10 +516,10 @@ export class LayoutPanel {
           });
 
           const commitInput = () => {
-            const next = clampNumber(input.value, binding.min, binding.max);
+            const next = clampNumber(input.value, inputMin, inputMax);
             if (next == null) return;
             if (document.activeElement !== slider) {
-              slider.value = String(bindingToSliderValue(binding, next));
+              slider.value = String(clampNumber(bindingToSliderValue(binding, next), slider.min, slider.max));
               updateSliderVisual(slider);
             }
             input.value = formatInputNumber(next, binding);
@@ -523,7 +540,7 @@ export class LayoutPanel {
             const next = toFinite(binding.get?.());
             if (next == null) return;
             if (document.activeElement !== slider) {
-              slider.value = String(bindingToSliderValue(binding, next));
+              slider.value = String(clampNumber(bindingToSliderValue(binding, next), slider.min, slider.max));
               updateSliderVisual(slider);
             }
             if (document.activeElement !== input) {

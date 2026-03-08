@@ -106,6 +106,11 @@ function collectColormapSuggestionNames() {
   return Array.from(names).sort((a, b) => a.localeCompare(b));
 }
 
+function warnUiDerivationFailure(message, detail) {
+  if (!import.meta.env?.DEV) return;
+  console.warn(`[HeliosUI] ${message}`, detail);
+}
+
 export class HeliosUI {
   constructor(options = {}) {
     this.helios = options.helios ?? null;
@@ -1091,12 +1096,22 @@ export class HeliosUI {
         if (typeof network.withBufferAccess === 'function') {
           try {
             return network.withBufferAccess(read);
-          } catch (_) {
+          } catch (error) {
+            warnUiDerivationFailure('Numeric filter extent fallback outside buffer access', {
+              scope,
+              attributeName,
+              error,
+            });
             return read();
           }
         }
         return read();
-      } catch (_) {
+      } catch (error) {
+        warnUiDerivationFailure('Numeric filter extent computation failed', {
+          scope,
+          attributeName,
+          error,
+        });
         return null;
       }
     };
@@ -1136,12 +1151,12 @@ export class HeliosUI {
       if (!network || !extent || !attributeName) return null;
       let data = null;
       try {
-        const getBuffer = scope === 'edge'
-          ? network.getEdgeAttributeBuffer
-          : network.getNodeAttributeBuffer;
-        if (typeof getBuffer !== 'function') return null;
-        const buffer = getBuffer.call(network, attributeName);
         const compute = () => {
+          const getBuffer = scope === 'edge'
+            ? network.getEdgeAttributeBuffer
+            : network.getNodeAttributeBuffer;
+          if (typeof getBuffer !== 'function') return null;
+          const buffer = getBuffer.call(network, attributeName);
           const indices = scope === 'edge' ? network.edgeIndices : network.nodeIndices;
           if (!indices || !indices.length) return null;
           const view = buffer?.view ?? null;
@@ -1151,13 +1166,23 @@ export class HeliosUI {
         if (typeof network.withBufferAccess === 'function') {
           try {
             data = network.withBufferAccess(compute);
-          } catch (_) {
+          } catch (error) {
+            warnUiDerivationFailure('Numeric filter histogram fallback outside buffer access', {
+              scope,
+              attributeName,
+              error,
+            });
             data = compute();
           }
         } else {
           data = compute();
         }
-      } catch (_) {
+      } catch (error) {
+        warnUiDerivationFailure('Numeric filter histogram computation failed', {
+          scope,
+          attributeName,
+          error,
+        });
         data = null;
       }
       if (!data) return null;

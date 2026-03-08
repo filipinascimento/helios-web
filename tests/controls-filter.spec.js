@@ -36,6 +36,7 @@ test.describe('filter panel', () => {
 
     const nodeMinSlider = filterPanel.locator('[data-testid="controls-filter-node-min-slider"]').first();
     await expect(nodeMinSlider).toBeVisible();
+    await expect(filterPanel.locator('.helios-ui-range2__histogram:visible').first()).toBeVisible();
     await nodeMinSlider.evaluate((el) => {
       el.value = '0.6';
       el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -74,6 +75,7 @@ test.describe('filter panel', () => {
 
     const edgeMinSlider = filterPanel.locator('[data-testid="controls-filter-edge-min-slider"]').first();
     await expect(edgeMinSlider).toBeVisible();
+    await expect(filterPanel.locator('.helios-ui-range2__histogram:visible').first()).toBeVisible();
     await edgeMinSlider.evaluate((el) => {
       el.value = '0.7';
       el.dispatchEvent(new Event('input', { bubbles: true }));
