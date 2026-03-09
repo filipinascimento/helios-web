@@ -81,6 +81,123 @@ test('PositionDelegate synchronizes when topology/index versions change', () => 
   assert.equal(delegate.syncCount, 4);
 });
 
+test('PositionDelegate reads $index versions without direct buffer access', () => {
+  class TrackingDelegate extends PositionDelegate {
+    synchronizeTopology() {}
+  }
+
+  let bufferReads = 0;
+  const network = {
+    withBufferAccess: (fn) => fn(),
+    getTopologyVersions: () => ({ node: 1, edge: 1 }),
+    getNodeAttributeVersion: (name) => (name === '$index' ? 7 : 0),
+    getEdgeAttributeVersion: (name) => (name === '$index' ? 11 : 0),
+    getNodeAttributeBuffer: () => {
+      bufferReads += 1;
+      throw new Error('buffer access should not be used for $index version reads');
+    },
+    getEdgeAttributeBuffer: () => {
+      bufferReads += 1;
+      throw new Error('buffer access should not be used for $index version reads');
+    },
+    get nodeIndices() { return new Uint32Array([0, 1]); },
+    get edgeIndices() { return new Uint32Array([0]); },
+  };
+
+  const delegate = new TrackingDelegate();
+  const snapshot = delegate.captureNetworkVersionSnapshot(network);
+
+  assert.equal(snapshot.nodeIndexAttributeVersion, 7);
+  assert.equal(snapshot.edgeIndexAttributeVersion, 11);
+  assert.equal(bufferReads, 0);
+});
+
+test('PositionDelegate uses topology versions for synthetic $index snapshots', () => {
+  class TrackingDelegate extends PositionDelegate {
+    synchronizeTopology() {}
+  }
+
+  let attributeVersionReads = 0;
+  const network = {
+    withBufferAccess: (fn) => fn(),
+    getTopologyVersions: () => ({ node: 13, edge: 17 }),
+    hasNodeAttribute: () => false,
+    hasEdgeAttribute: () => false,
+    getNodeAttributeVersion: () => {
+      attributeVersionReads += 1;
+      throw new Error('synthetic $index should not require direct attribute version reads');
+    },
+    getEdgeAttributeVersion: () => {
+      attributeVersionReads += 1;
+      throw new Error('synthetic $index should not require direct attribute version reads');
+    },
+    get nodeIndices() { return new Uint32Array([0, 1]); },
+    get edgeIndices() { return new Uint32Array([0]); },
+  };
+
+  const delegate = new TrackingDelegate();
+  const snapshot = delegate.captureNetworkVersionSnapshot(network);
+
+  assert.equal(snapshot.nodeIndexAttributeVersion, 13);
+  assert.equal(snapshot.edgeIndexAttributeVersion, 17);
+  assert.equal(attributeVersionReads, 0);
+});
+
+test('PositionDelegate treats missing internal $index metadata as synthetic even if public getters disagree', () => {
+  class TrackingDelegate extends PositionDelegate {
+    synchronizeTopology() {}
+  }
+
+  const network = {
+    _nodeAttributes: new Map(),
+    _edgeAttributes: new Map(),
+    withBufferAccess: (fn) => fn(),
+    getTopologyVersions: () => ({ node: 5, edge: 9 }),
+    hasNodeAttribute: () => true,
+    hasEdgeAttribute: () => true,
+    getNodeAttributeVersion: () => 101,
+    getEdgeAttributeVersion: () => 103,
+    get nodeIndices() { return new Uint32Array([0, 1]); },
+    get edgeIndices() { return new Uint32Array([0]); },
+  };
+
+  const delegate = new TrackingDelegate();
+  const snapshot = delegate.captureNetworkVersionSnapshot(network);
+
+  assert.equal(snapshot.nodeIndexAttributeVersion, 5);
+  assert.equal(snapshot.edgeIndexAttributeVersion, 9);
+});
+
+test('PositionDelegate warns when active index snapshot capture fails', () => {
+  class TrackingDelegate extends PositionDelegate {
+    synchronizeTopology() {}
+  }
+
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args);
+  try {
+    const network = {
+      withBufferAccess() {
+        throw new Error('boom');
+      },
+      getTopologyVersions() {
+        return { node: 1, edge: 1 };
+      },
+      getNodeAttributeVersion: () => 0,
+      getEdgeAttributeVersion: () => 0,
+    };
+    const delegate = new TrackingDelegate();
+    const changed = delegate.ensureSynchronized({ network });
+    assert.equal(changed, true);
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(warnings.length, 1);
+  assert.match(String(warnings[0][0]), /failed to read active index snapshot/i);
+});
+
 test('Helios.positions ignores delegate overrides when active layout has no delegate', () => {
   const helios = Object.create(Helios.prototype);
   helios.debug = { log: () => {} };

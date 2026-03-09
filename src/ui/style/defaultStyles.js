@@ -236,7 +236,7 @@ export const defaultStylesText = `
 .helios-ui-layout__bindings {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
 }
 
 .helios-ui-layout__sparkline {
@@ -460,9 +460,9 @@ export const defaultStylesText = `
 }
 
 .helios-ui-number {
-  width: 58px;
-  flex: 0 1 58px;
-  min-width: 44px;
+  width: 66px;
+  flex: 0 1 66px;
+  min-width: 52px;
   max-width: 100%;
   padding: 4px 6px;
   border-radius: 10px;
@@ -538,9 +538,9 @@ export const defaultStylesText = `
 }
 
 .helios-ui-row--slider .helios-ui-number {
-  width: 54px;
-  flex-basis: 54px;
-  min-width: 40px;
+  width: 72px;
+  flex-basis: 72px;
+  min-width: 58px;
   padding: 3px 6px;
   border-radius: 9px;
   max-width: 100%;
@@ -1223,7 +1223,7 @@ export const defaultStylesText = `
 
 .helios-ui-stack {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .helios-ui-subpanel {
@@ -1305,7 +1305,7 @@ export const defaultStylesText = `
 }
 
 .helios-ui-subpanel__body {
-  padding: 8px;
+  padding: 6px;
   border-top: 1px solid color-mix(in srgb, var(--helios-ui-border) 65%, transparent);
 }
 

@@ -761,30 +761,35 @@ export class MappersPanel {
       return { counts, maxCount };
     };
 
-    const createRangeHistogram = ({ min, max, range, scope, rawName }) => {
-      const network = net();
-      if (!network) return null;
-      const isNodeProxy = scope === 'edge' && rawName?.startsWith('@node.');
-      const compute = () => {
-        const indices = scope === 'network'
-          ? [0]
-          : (isNodeProxy || scope === 'node')
-            ? network.nodeIndices
-            : network.edgeIndices;
-        if (!indices || typeof indices.length !== 'number' || indices.length === 0) return null;
-        const name = isNodeProxy ? rawName.slice('@node.'.length) : rawName;
-        let view = null;
-        try {
-          const buffer = isNodeProxy
-            ? network.getNodeAttributeBuffer?.(name)
-            : (scope === 'edge' ? network.getEdgeAttributeBuffer?.(name) : network.getNodeAttributeBuffer?.(name));
-          view = buffer?.view ?? null;
-        } catch (_) {
-          view = null;
-        }
-        if (!view || typeof view.length !== 'number' || view.length === 0) return null;
-        return buildHistogram(view, min, max, indices);
-      };
+	    const createRangeHistogram = ({ min, max, range, scope, rawName }) => {
+	      const network = net();
+	      if (!network) return null;
+	      const isNodeProxy = scope === 'edge' && rawName?.startsWith('@node.');
+	      const isIndex = rawName === '$index' || rawName === '@node.$index';
+	      const compute = () => {
+	        const indices = scope === 'network'
+	          ? [0]
+	          : (isNodeProxy || scope === 'node')
+	            ? network.nodeIndices
+	            : network.edgeIndices;
+	        if (!indices || typeof indices.length !== 'number' || indices.length === 0) return null;
+	        if (isIndex) {
+	          return buildHistogram(indices, min, max, indices);
+	        }
+	        const name = isNodeProxy ? rawName.slice('@node.'.length) : rawName;
+	        const hasAttribute = isNodeProxy
+	          ? (network._nodeAttributes?.has?.(name) ?? Boolean(network.getNodeAttributeInfo?.(name)))
+	          : (scope === 'edge'
+	            ? (network._edgeAttributes?.has?.(name) ?? Boolean(network.getEdgeAttributeInfo?.(name)))
+	            : (network._nodeAttributes?.has?.(name) ?? Boolean(network.getNodeAttributeInfo?.(name))));
+	        if (!hasAttribute) return null;
+	        const buffer = isNodeProxy
+	          ? network.getNodeAttributeBuffer?.(name)
+	          : (scope === 'edge' ? network.getEdgeAttributeBuffer?.(name) : network.getNodeAttributeBuffer?.(name));
+	        const view = buffer?.view ?? null;
+	        if (!view || typeof view.length !== 'number' || view.length === 0) return null;
+	        return buildHistogram(view, min, max, indices);
+	      };
       const data = typeof network.withBufferAccess === 'function'
         ? network.withBufferAccess(compute)
         : compute();
@@ -966,11 +971,8 @@ export class MappersPanel {
       const channels = mode === 'edge' ? edgeChannels : nodeChannels;
       if (!channels.includes(state.channel)) state.channel = channels[0];
 
-      const editorStack = new PanelStack();
       const editorBody = document.createElement('div');
-      editorStack.add({ id: `${mode}-mapper-basic`, title: 'Editor', content: editorBody });
-      root.appendChild(editorStack.element);
-      ui._controlCleanups.add(() => editorStack.destroy());
+      root.appendChild(editorBody);
 
       const applyRow = document.createElement('div');
       applyRow.style.display = 'flex';
@@ -4399,11 +4401,8 @@ export class MappersPanel {
         return { root, refresh: () => {} };
       }
 
-      const editorStack = new PanelStack();
       const editorBody = document.createElement('div');
-      editorStack.add({ id: 'density-mapper-basic', title: 'Editor', content: editorBody });
-      root.appendChild(editorStack.element);
-      ui._controlCleanups.add(() => editorStack.destroy());
+      root.appendChild(editorBody);
 
       const localControls = new Set();
       const registerControl = (control) => {

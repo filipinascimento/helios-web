@@ -278,6 +278,38 @@ const DEFAULT_STATE_SCALE = new Float32Array([1, 1, 1, 0]);
 const DEFAULT_STATE_COLOR_MUL = new Float32Array([1, 1, 1, 1]);
 const DEFAULT_STATE_COLOR_ADD = new Float32Array([0, 0, 0, 0]);
 
+function warnOnce(owner, key, message, detail) {
+  if (!owner) return;
+  owner._warnedIssues ??= new Set();
+  if (owner._warnedIssues.has(key)) return;
+  owner._warnedIssues.add(key);
+  console.warn(message, detail);
+}
+
+function isMissingAttributeError(error) {
+  const message = typeof error?.message === 'string' ? error.message : '';
+  return (
+    message.includes('Unknown node attribute')
+    || message.includes('Unknown edge attribute')
+    || message.includes('Cannot perform attribute metadata lookup')
+  );
+}
+
+function isDebugWebGLRenderEnabled() {
+  if (globalThis.__HELIOS_DEBUG_WEBGL_RENDER === true) return true;
+  try {
+    const search = globalThis.location?.search ?? '';
+    return search.includes('debugWebGLRender=1');
+  } catch (_) {
+    return false;
+  }
+}
+
+function debugWebGLRender(message, detail) {
+  if (!isDebugWebGLRenderEnabled()) return;
+  console.warn(`[Helios][WebGLRender] ${message}`, detail);
+}
+
 const NODE_VERTEX_SOURCE = `#version 300 es
 precision highp float;
 precision highp int;
@@ -733,6 +765,7 @@ export class GraphLayerWebGL extends GraphLayer {
       nodeIds: null,
       edgeIds: null,
     };
+    this._uploadScratch = new Map();
 
     this.nodeCount = 0;
     this.edgeCount = 0;
@@ -1261,18 +1294,22 @@ export class GraphLayerWebGL extends GraphLayer {
       console.warn('GraphLayerWebGL: network does not support buffer access sessions');
       return false;
     }
+    const hasNodeAttribute = (name) => (
+      Boolean(name) && (network._nodeAttributes?.has?.(name) ?? false)
+    );
+    const hasEdgeAttribute = (name) => (
+      Boolean(name) && (network._edgeAttributes?.has?.(name) ?? false)
+    );
     return network.withBufferAccess(() => {
       const nodeIndices = indices?.node ?? network.nodeIndices ?? null;
       const edgeIndices = indices?.edge ?? network.edgeIndices ?? null;
       const safeGet = (scope, name) => {
         if (!name) return null;
+        if (scope === 'node' && !hasNodeAttribute(name)) return null;
+        if (scope === 'edge' && !hasEdgeAttribute(name)) return null;
         const getter = scope === 'node' ? network.getNodeAttributeBuffer : network.getEdgeAttributeBuffer;
         if (typeof getter !== 'function') return null;
-        try {
-          return getter.call(network, name);
-        } catch (_) {
-          return null;
-        }
+        return getter.call(network, name);
       };
 
       const nodePositions = safeGet('node', NODE_POSITION_ATTRIBUTE);
@@ -1412,25 +1449,11 @@ export class GraphLayerWebGL extends GraphLayer {
   uploadTexture2D(texture, view, components, count, formatInfo, type) {
     const { gl } = this;
     const { width, height } = this.getTextureLayout(count);
+    const valueCount = width * height * components;
     gl.bindTexture(gl.TEXTURE_2D, texture);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
-    if (height === 1) {
-      const valueCount = width * components;
-      const directView = (view.length === valueCount) ? view : view.subarray(0, valueCount);
-      gl.texImage2D(
-        gl.TEXTURE_2D,
-        0,
-        formatInfo.internalFormat,
-        width,
-        1,
-        0,
-        formatInfo.format,
-        type,
-        directView,
-      );
-      return;
-    }
+    const directView = (view.length === valueCount) ? view : this._packTextureUpload(view, valueCount);
     gl.texImage2D(
       gl.TEXTURE_2D,
       0,
@@ -1440,28 +1463,23 @@ export class GraphLayerWebGL extends GraphLayer {
       0,
       formatInfo.format,
       type,
-      null,
+      directView,
     );
-    let remaining = count;
-    let srcOffset = 0;
-    for (let y = 0; y < height && remaining > 0; y += 1) {
-      const rowTexels = Math.min(width, remaining);
-      const valueCount = rowTexels * components;
-      const rowView = view.subarray(srcOffset, srcOffset + valueCount);
-      gl.texSubImage2D(
-        gl.TEXTURE_2D,
-        0,
-        0,
-        y,
-        rowTexels,
-        1,
-        formatInfo.format,
-        type,
-        rowView,
-      );
-      srcOffset += valueCount;
-      remaining -= rowTexels;
+  }
+
+  _packTextureUpload(view, valueCount) {
+    const ctor = typeof view?.constructor === 'function' ? view.constructor : Float32Array;
+    const key = ctor.name || 'TypedArray';
+    let scratch = this._uploadScratch.get(key) ?? null;
+    if (!(scratch instanceof ctor) || scratch.length < valueCount) {
+      scratch = new ctor(valueCount);
+      this._uploadScratch.set(key, scratch);
     }
+    scratch.fill(0, 0, valueCount);
+    if (view && typeof view.subarray === 'function' && view.length > 0) {
+      scratch.set(view.subarray(0, Math.min(view.length, valueCount)), 0);
+    }
+    return scratch.length === valueCount ? scratch : scratch.subarray(0, valueCount);
   }
 
   isSameView(meta, view, version, count) {
@@ -1590,9 +1608,32 @@ export class GraphLayerWebGL extends GraphLayer {
       try {
         topologyVersions = network.getTopologyVersions() ?? topologyVersions;
       } catch (_) {
+        warnOnce(
+          this,
+          'render-topology-versions',
+          'GraphLayerWebGL: failed to read topology versions during render; using zero versions.',
+          { network },
+        );
         topologyVersions = { node: 0, edge: 0 };
       }
     }
+    debugWebGLRender('graph:render:start', {
+      target: context.target
+        ? {
+          width: context.target.width ?? null,
+          height: context.target.height ?? null,
+          hasHandle: Boolean(context.target.handle),
+        }
+        : null,
+      viewport: context.viewport ?? null,
+      topologyVersions,
+      drawingBuffer: this.gl
+        ? {
+          width: this.gl.drawingBufferWidth,
+          height: this.gl.drawingBufferHeight,
+        }
+        : null,
+    });
     const schema = GraphVisualSchema.fromNetwork(network, {
       nodeOutlineUseAttributes: this.nodeOutlineUseAttributes === true,
     });
@@ -1691,6 +1732,32 @@ export class GraphLayerWebGL extends GraphLayer {
         const { gl } = this;
         const nodes = geometry.nodes;
         const edges = geometry.edges;
+        debugWebGLRender('graph:render:geometry', {
+          nodes: {
+            count: nodes.count,
+            indices: nodes.indices?.length ?? 0,
+            positions: nodes.positions?.length ?? 0,
+            colors: nodes.colors?.length ?? 0,
+            sizes: nodes.sizes?.length ?? 0,
+            states: nodes.states?.length ?? 0,
+            positionTexture: Boolean(nodes.positionTexture),
+          },
+          edges: {
+            count: edges.count,
+            indices: edges.indices?.length ?? 0,
+            colors: edges.colors?.length ?? 0,
+            widths: edges.widths?.length ?? 0,
+            opacities: edges.opacities?.length ?? 0,
+            endpointSizes: edges.endpointSizes?.length ?? 0,
+            states: edges.states?.length ?? 0,
+          },
+          nodeEdgeSources: {
+            color: Boolean(geometry.nodeEdgeSources?.color?.view),
+            width: Boolean(geometry.nodeEdgeSources?.width?.view),
+            opacity: Boolean(geometry.nodeEdgeSources?.opacity?.view),
+            endpointSize: Boolean(geometry.nodeEdgeSources?.endpointSize?.view),
+          },
+        });
         const hasNodeColorsForNodes = Boolean(nodeColorBufferEnabled && nodes.colors);
         const hasNodeSizesForNodes = Boolean(nodeSizeBufferEnabled && nodes.sizes);
         const hasNodeStatesForNodes = Boolean(nodes.states);
@@ -1954,6 +2021,23 @@ export class GraphLayerWebGL extends GraphLayer {
         const transparencyMode = this.edgeTransparencyMode;
         const nodeBlendWithEdges = this.nodeBlendWithEdges === true;
         const edgeDepthWrite = this.edgeDepthWrite === true;
+        debugWebGLRender('graph:render:uploads', {
+          nodeCount: this.nodeCount,
+          edgeCount: this.edgeCount,
+          viewportWidth,
+          viewportHeight,
+          transparencyMode,
+          nodeBlendWithEdges,
+          edgeDepthWrite,
+          textures: {
+            nodePositions: Boolean(this.nodeTextures.positions),
+            nodeColors: Boolean(this.nodeTextures.colors),
+            nodeSizes: Boolean(this.nodeTextures.sizes),
+            edgeColors: Boolean(this.edgeTextures.colors),
+            edgeWidths: Boolean(this.edgeTextures.widths),
+            edgeOpacities: Boolean(this.edgeTextures.opacities),
+          },
+        });
 
         gl.enable(gl.DEPTH_TEST);
         gl.depthMask(true);
@@ -2358,6 +2442,13 @@ export class GraphLayerWebGL extends GraphLayer {
         const weightedReady = weightedRequested && this.edgeCount > 0
           ? this.prepareWeightedWebGL(viewportWidth, viewportHeight)
           : false;
+        debugWebGLRender('graph:render:mode', {
+          weightedRequested,
+          weightedReady,
+          is2D,
+          nodeCount: this.nodeCount,
+          edgeCount: this.edgeCount,
+        });
 
         if (weightedReady) {
           if (!this.loggedWeightedActive) {
@@ -2514,6 +2605,14 @@ export class GraphLayerWebGL extends GraphLayer {
         }
 
         gl.bindVertexArray(null);
+        const finalError = gl.getError();
+        debugWebGLRender('graph:render:end', {
+          finalError,
+          nodeCount: this.nodeCount,
+          edgeCount: this.edgeCount,
+          weightedRequested,
+          weightedReady,
+        });
         gl.depthMask(true);
         gl.enable(gl.DEPTH_TEST);
         gl.depthFunc(gl.LEQUAL);

@@ -42,6 +42,16 @@ function normalizeCenter(center) {
   ];
 }
 
+function createZeroableUnitLogBinding(binding) {
+  return withLogScaleBinding({
+    min: 0.000001,
+    max: 1,
+    inputMin: 0,
+    inputMax: 1,
+    ...binding,
+  });
+}
+
 export class GpuForceLayout extends Layout {
   constructor(network, visuals, options = {}) {
     super(network, visuals);
@@ -123,6 +133,11 @@ export class GpuForceLayout extends Layout {
             length: 20,
             sampleMs: 1500,
             scale: 'log',
+            min: () => {
+              const alphaMin = Number(this.options.alphaMin ?? DEFAULT_OPTIONS.alphaMin);
+              return alphaMin > 0 ? alphaMin : null;
+            },
+            max: 1,
           },
         },
         {
@@ -143,11 +158,15 @@ export class GpuForceLayout extends Layout {
         {
           key: 'sampleChurn',
           label: 'Sample churn',
-          hint: '0 keeps repulsion samples fixed; 1 refreshes all repulsion samples every step.',
+          hint: '0 keeps repulsion samples fixed; positive values progressively refresh samples. This only affects sampled repulsion, not exact repulsion on smaller active sets.',
           type: 'number',
           min: 0,
           max: 1,
           step: 0.01,
+          inputMin: 0,
+          inputMax: 1,
+          sliderMin: 0,
+          sliderMax: 1,
           get: () => Number(this.options.sampleChurn ?? DEFAULT_OPTIONS.sampleChurn),
           set: (value) => {
             this.setSettings({ sampleChurn: value });
@@ -166,11 +185,11 @@ export class GpuForceLayout extends Layout {
         },
         {
           key: 'outputScale',
-          label: 'Output scale',
-          type: 'number',
-          min: 0.1,
-          max: 20,
-          step: 0.1,
+          ...withLogScaleBinding({
+            label: 'Output scale',
+            min: 0.1,
+            max: 20,
+          }),
           get: () => Number(this.options.outputScale ?? DEFAULT_OPTIONS.outputScale),
           set: (value) => this.setSettings({ outputScale: value }),
         },
@@ -255,31 +274,25 @@ export class GpuForceLayout extends Layout {
         },
         {
           key: 'alphaDecay',
-          label: 'Alpha decay',
-          type: 'number',
-          min: 0,
-          max: 1,
-          step: 0.0001,
+          ...createZeroableUnitLogBinding({
+            label: 'Alpha decay',
+          }),
           get: () => Number(this.options.alphaDecay ?? DEFAULT_OPTIONS.alphaDecay),
           set: (value) => this.setSettings({ alphaDecay: value }),
         },
         {
           key: 'alphaTarget',
-          label: 'Alpha target',
-          type: 'number',
-          min: 0,
-          max: 1,
-          step: 0.0001,
+          ...createZeroableUnitLogBinding({
+            label: 'Alpha target',
+          }),
           get: () => Number(this.options.alphaTarget ?? DEFAULT_OPTIONS.alphaTarget),
           set: (value) => this.setSettings({ alphaTarget: value }),
         },
         {
           key: 'alphaMin',
-          label: 'Alpha min',
-          type: 'number',
-          min: 0,
-          max: 1,
-          step: 0.0001,
+          ...createZeroableUnitLogBinding({
+            label: 'Alpha min',
+          }),
           get: () => Number(this.options.alphaMin ?? DEFAULT_OPTIONS.alphaMin),
           set: (value) => this.setSettings({ alphaMin: value }),
         },

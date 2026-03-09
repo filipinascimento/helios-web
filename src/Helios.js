@@ -1163,6 +1163,7 @@ export class Helios extends EventTarget {
         nodeCount: this.network?.nodeCount ?? 0,
         edgeCount: this.network?.edgeCount ?? 0,
       });
+      console.warn('Helios: failed to apply active mappers; falling back to default mappers.', error);
       try {
         this._resetMappersToDefault(this.network);
         const nodeMapper = this.nodeMapper.toCombinedMapper();
@@ -1173,6 +1174,7 @@ export class Helios extends EventTarget {
       } catch (fallbackError) {
         // Last resort: avoid crashing the scheduler loop.
         this.mappersDirty = false;
+        console.warn('Helios: failed to apply default mappers after fallback.', fallbackError);
         // eslint-disable-next-line no-console
         console.error('Failed to apply default mappers after fallback', fallbackError);
         return false;

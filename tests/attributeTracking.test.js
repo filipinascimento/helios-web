@@ -51,6 +51,19 @@ test('AttributeTracker pick decodes r32uint targets in indirect mode', async () 
   assert.equal(result.node, 10);
 });
 
+test('AttributeTracker pick ignores empty pixel reads', async () => {
+  const device = {
+    type: 'webgl2',
+    format: 'rgba8unorm',
+    readPixels: async () => new Uint8Array(0),
+  };
+  const tracker = new AttributeTracker({ device, size: { width: 2, height: 2, devicePixelRatio: 1 } });
+  tracker.enable('index', null, { resolutionScale: 1 });
+  tracker.lastTargets = { node: { width: 2, height: 2 }, edge: null };
+  const result = await tracker.pick(1, 0);
+  assert.equal(result.node, -1);
+});
+
 test('AttributeTracker invalidates cached targets when interpolation state changes', async () => {
   let renderCalls = 0;
   const interpolationState = {
@@ -1155,4 +1168,222 @@ test('WebGLAttributeRenderer reuses shared sparse graph textures when metadata m
   assert.equal(boundByUnit.get(6)?.includes(shared.edgeEndpointSizes), true);
   assert.equal(boundByUnit.get(7)?.includes(shared.nodeWidthSource), true);
   assert.equal(boundByUnit.get(8)?.includes(shared.nodeEndpointSizeSource), true);
+});
+
+test('WebGLAttributeRenderer uses delegate position textures for picking when CPU positions are unavailable', () => {
+  const gl = {
+    TEXTURE0: 0,
+    TEXTURE_2D: 3553,
+    POINTS: 0,
+    LINES: 1,
+    TRIANGLE_STRIP: 5,
+    FRAMEBUFFER: 36160,
+    COLOR_BUFFER_BIT: 16384,
+    DEPTH_BUFFER_BIT: 256,
+    BLEND: 3042,
+    DEPTH_TEST: 2929,
+    LEQUAL: 515,
+    SRC_ALPHA: 770,
+    ONE_MINUS_SRC_ALPHA: 771,
+    ARRAY_BUFFER: 34962,
+    DYNAMIC_DRAW: 35048,
+    useProgram() {},
+    uniformMatrix4fv() {},
+    uniform1i() {},
+    uniform1f() {},
+    uniform2f() {},
+    uniform3f() {},
+    bindVertexArray() {},
+    drawArraysInstanced() {},
+    disable() {},
+    enable() {},
+    depthMask() {},
+    depthFunc() {},
+    blendFunc() {},
+    bindFramebuffer() {},
+    viewport() {},
+    clearColor() {},
+    clear() {},
+    bindBuffer() {},
+    bufferData() {},
+  };
+
+  const delegateTexture = { id: 'delegate-nodePositions' };
+  const nodeSizes = new Float32Array([2, 3]);
+  const nodeOutlineWidths = new Float32Array([0.1, 0.2]);
+
+  const graphLayer = {
+    edgeRenderingMode: 'line',
+    nodeOutlineUseAttributes: false,
+    nodeSizeBase: 0,
+    nodeSizeScale: 1,
+    edgeWidthBase: 0,
+    edgeWidthScale: 1,
+    edgeEndpointTrim: 0.8,
+    getCameraUniforms() {
+      return {
+        mode: '2d',
+        viewProjection: new Float32Array(16),
+      };
+    },
+    resolveEdgeVariant() {
+      return {
+        widthBuffer: false,
+        endpointSizeBuffer: false,
+        widthSource: 'edge',
+        endpointSizeSource: 'edge',
+      };
+    },
+    getSharedSparseResources() {
+      return {
+        textures: { nodePositions: delegateTexture },
+        textureMeta: {
+          nodePositions: {
+            version: 17,
+            count: 2,
+            buffer: delegateTexture,
+            byteOffset: 0,
+            byteLength: 0,
+          },
+        },
+      };
+    },
+    withSparseGraph(_network, _versions, _indices, _edgeSources, fn) {
+      return fn({
+        nodes: {
+          positions: null,
+          positionTexture: delegateTexture,
+          positionTextureVersion: 17,
+          positionTextureCount: 2,
+          positionTextureMeta: {
+            version: 17,
+            count: 2,
+            buffer: delegateTexture,
+            byteOffset: 0,
+            byteLength: 0,
+          },
+          sizes: nodeSizes,
+          outlineWidths: nodeOutlineWidths,
+          indices: null,
+          versions: { positions: 17, sizes: 12, outlineWidths: 13 },
+        },
+        edges: {
+          endpoints: null,
+          indices: null,
+          versions: { endpoints: 0, widths: 0, endpointSizes: 0 },
+        },
+        nodeEdgeSources: {},
+      });
+    },
+  };
+
+  const renderer = new WebGLAttributeRenderer(graphLayer, null, {
+    run(passes) {
+      for (const pass of passes) pass();
+    },
+  });
+  renderer.gl = gl;
+  renderer.device = { type: 'webgl2' };
+  renderer.resize = function resizeMock() {
+    this.size = { width: 1, height: 1 };
+    this.targets = { node: { handle: null }, edge: { handle: null } };
+    this.depthTargets = { node: null, edge: null };
+  };
+  renderer.programs = {
+    node: {},
+    nodeOcclusion: {},
+    nodeDepth: {},
+    edge: {},
+    edgeDepth: {},
+    edgeQuad: {},
+    edgeQuadDepth: {},
+  };
+  const nodeUniforms = {
+    u_viewProjection: 0,
+    u_nodePositions: 0,
+    u_nodeSizes: 0,
+    u_nodeOutlineWidths: 0,
+    u_nodeEncoded: 0,
+    u_cameraPosition: 0,
+    u_cameraUp: 0,
+    u_cameraRight: 0,
+    u_is2D: 0,
+    u_viewport: 0,
+    u_useNodeIdBuffer: 0,
+    u_useNodeSize: 0,
+    u_useNodeOutline: 0,
+    u_useEncodedTexture: 0,
+    u_nodeSizeBase: 0,
+    u_nodeSizeScale: 0,
+    u_nodeOutline: 0,
+    u_outlineWidthBase: 0,
+    u_outlineWidthScale: 0,
+  };
+  const edgeUniforms = {
+    u_viewProjection: 0,
+    u_viewport: 0,
+    u_nodePositions: 0,
+    u_edgeEndpoints: 0,
+    u_edgeEncoded: 0,
+    u_cameraPosition: 0,
+    u_cameraUp: 0,
+    u_cameraRight: 0,
+    u_is2D: 0,
+    u_useEdgeIdBuffer: 0,
+    u_useEncodedTexture: 0,
+  };
+  renderer.uniforms = {
+    node: nodeUniforms,
+    nodeOcclusion: nodeUniforms,
+    nodeDepth: nodeUniforms,
+    edge: edgeUniforms,
+    edgeDepth: edgeUniforms,
+    edgeQuad: edgeUniforms,
+    edgeQuadDepth: edgeUniforms,
+  };
+  renderer.nodeVao = {};
+  renderer.edgeVao = {};
+  renderer.edgeQuadVao = {};
+  renderer.nodeIdBuffer = {};
+  renderer.edgeIdBuffer = {};
+  renderer.textures = {
+    nodePositions: { id: 'local-nodePositions' },
+    nodeSizes: { id: 'local-nodeSizes' },
+    nodeOutlineWidths: { id: 'local-nodeOutlineWidths' },
+    nodeEncoded: { id: 'local-nodeEncoded' },
+    edgeEndpoints: { id: 'local-edgeEndpoints' },
+    edgeWidths: { id: 'local-edgeWidths' },
+    edgeEndpointSizes: { id: 'local-edgeEndpointSizes' },
+    nodeWidthSource: { id: 'local-nodeWidthSource' },
+    nodeEndpointSizeSource: { id: 'local-nodeEndpointSizeSource' },
+    edgeEncoded: { id: 'local-edgeEncoded' },
+  };
+
+  const uploads = [];
+  renderer.uploadFloatTexture = (slot) => {
+    uploads.push(slot);
+    return true;
+  };
+  const boundTextures = [];
+  renderer.bindTexture = (unit, texture) => {
+    boundTextures.push({ unit, texture });
+  };
+
+  const network = {
+    nodeIndices: new Uint32Array([0, 1]),
+    edgeIndices: new Uint32Array(0),
+    getTopologyVersions() {
+      return { node: 1, edge: 1 };
+    },
+  };
+
+  const result = renderer.render(
+    { network, camera: {} },
+    { width: 1, height: 1, devicePixelRatio: 1 },
+    { nodeAttribute: '$index', edgeAttribute: null, resolutionScale: 1, trackDepth: false },
+  );
+
+  assert.ok(result);
+  assert.equal(uploads.includes('nodePositions'), false);
+  assert.equal(boundTextures.some((entry) => entry.unit === 0 && entry.texture === delegateTexture), true);
 });

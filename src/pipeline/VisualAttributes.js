@@ -17,6 +17,7 @@ const {
   EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
   EDGE_ENDPOINTS_STATE_ATTRIBUTE,
 } = VISUAL_ATTRIBUTE_NAMES;
+const INDEX_ATTRIBUTE = '$index';
 
 const {
   DEFAULT_EDGE_COLOR,
@@ -152,6 +153,9 @@ export class VisualAttributes {
     this.network = network;
     this.debug = debug;
     this.maxInitializedNodeId = -1;
+    this._bufferAccessDepth = 0;
+    this._pendingNodeAttributeBumps = new Set();
+    this._pendingEdgeAttributeBumps = new Set();
     this.ensureAttributes();
     this.seedMissingEdgeOpacity();
   }
@@ -198,20 +202,76 @@ export class VisualAttributes {
 
   getNodeAttributeView(name) {
     if (!this.network) return null;
-    try {
-      return this.network.getNodeAttributeBuffer(name)?.view ?? null;
-    } catch (_) {
-      return null;
-    }
+    return this.network.getNodeAttributeBuffer(name)?.view ?? null;
   }
 
   getEdgeAttributeView(name) {
     if (!this.network) return null;
-    try {
-      return this.network.getEdgeAttributeBuffer(name)?.view ?? null;
-    } catch (_) {
+    return this.network.getEdgeAttributeBuffer(name)?.view ?? null;
+  }
+
+  normalizeLookupName(name) {
+    return VISUAL_ATTRIBUTE_MAP[name] ?? name;
+  }
+
+  prepareNodeAttributeLookups(names, { allowMissing = false } = {}) {
+    const prepared = [];
+    if (!names) return prepared;
+    for (const entry of names) {
+      const name = typeof entry === 'string' ? entry : entry?.name;
+      if (!name) continue;
+      const lookup = this.normalizeLookupName(name);
+      if (lookup === INDEX_ATTRIBUTE) {
+        prepared.push({ name, lookup, synthetic: 'index', dimension: 1 });
+        continue;
+      }
+      const info = this.network?.getNodeAttributeInfo?.(lookup) ?? null;
+      if (!info) {
+        if (allowMissing) continue;
+        throw new Error(`Unknown node attribute "${lookup}"`);
+      }
+      prepared.push({ name, lookup, info });
+    }
+    return prepared;
+  }
+
+  prepareEdgeAttributeLookups(names, { allowMissing = false } = {}) {
+    const prepared = [];
+    if (!names) return prepared;
+    for (const entry of names) {
+      const name = typeof entry === 'string' ? entry : entry?.name;
+      if (!name) continue;
+      const lookup = this.normalizeLookupName(name);
+      if (lookup === INDEX_ATTRIBUTE) {
+        prepared.push({ name, lookup, synthetic: 'index', dimension: 1 });
+        continue;
+      }
+      const info = this.network?.getEdgeAttributeInfo?.(lookup) ?? null;
+      if (!info) {
+        if (allowMissing) continue;
+        throw new Error(`Unknown edge attribute "${lookup}"`);
+      }
+      prepared.push({ name, lookup, info });
+    }
+    return prepared;
+  }
+
+  getPreparedNodeAttributeView(prepared, name) {
+    const lookup = this.normalizeLookupName(name);
+    if (lookup === INDEX_ATTRIBUTE) return null;
+    if (!prepared?.some?.((entry) => entry?.lookup === lookup && entry?.synthetic !== 'index')) {
       return null;
     }
+    return this.network.getNodeAttributeBuffer(lookup)?.view ?? null;
+  }
+
+  getPreparedEdgeAttributeView(prepared, name) {
+    const lookup = this.normalizeLookupName(name);
+    if (lookup === INDEX_ATTRIBUTE) return null;
+    if (!prepared?.some?.((entry) => entry?.lookup === lookup && entry?.synthetic !== 'index')) {
+      return null;
+    }
+    return this.network.getEdgeAttributeBuffer(lookup)?.view ?? null;
   }
 
   /**
@@ -220,10 +280,11 @@ export class VisualAttributes {
    * active edge that still has an uninitialized (zero/invalid) opacity.
    */
   seedMissingEdgeOpacity() {
+    const preparedOpacity = this.prepareEdgeAttributeLookups([EDGE_OPACITY_ATTRIBUTE], { allowMissing: true });
     this.withBufferAccess(() => {
       const edgeIndices = this.network?.edgeIndices;
       if (!edgeIndices?.length) return;
-      const opacities = this.edgeOpacities;
+      const opacities = this.getPreparedEdgeAttributeView(preparedOpacity, EDGE_OPACITY_ATTRIBUTE);
       if (!opacities) return;
       let touched = false;
       for (let i = 0; i < edgeIndices.length; i += 1) {
@@ -423,6 +484,15 @@ export class VisualAttributes {
     if (!mapper?.channels?.size) return;
     const nodeCount = this.network?.nodeCount ?? 0;
     const nodeChannels = [...mapper.channels.keys()];
+    const attributes = this.collectAttributeNames(mapper, 'node');
+    const preparedInputNodeBuffers = this.prepareNodeAttributeLookups(attributes.node, { allowMissing: true });
+    const preparedNodeVisualBuffers = this.prepareNodeAttributeLookups([
+      NODE_POSITION_ATTRIBUTE,
+      ...(visualConfig?.node?.color?.mode === 'uniform' ? [] : [NODE_COLOR_ATTRIBUTE]),
+      ...(visualConfig?.node?.size?.mode === 'uniform' ? [] : [NODE_SIZE_ATTRIBUTE]),
+      ...(visualConfig?.node?.outline?.mode === 'uniform' ? [] : [NODE_OUTLINE_WIDTH_ATTRIBUTE]),
+      ...(visualConfig?.node?.outlineColor?.mode === 'uniform' ? [] : [NODE_OUTLINE_COLOR_ATTRIBUTE]),
+    ]);
     this.debug?.log('mapper', 'Applying node mapper', {
       nodes: nodeCount,
       channels: mapper.channels.size,
@@ -436,14 +506,13 @@ export class VisualAttributes {
     }
     this.withBufferAccess(() => {
       const nodeIndices = this.network?.nodeIndices;
-      const attributes = this.collectAttributeNames(mapper, 'node');
-      const buffers = this.resolveNodeAttributeBuffers(attributes.node);
+      const buffers = this.resolveNodeAttributeBuffers(preparedInputNodeBuffers);
       const visuals = {
-        color: visualConfig?.node?.color?.mode === 'uniform' ? null : this.nodeColors,
-        size: visualConfig?.node?.size?.mode === 'uniform' ? null : this.nodeSizes,
-        outline: visualConfig?.node?.outline?.mode === 'uniform' ? null : this.nodeOutlineWidths,
-        outlineColor: visualConfig?.node?.outlineColor?.mode === 'uniform' ? null : this.nodeOutlineColors,
-        position: this.nodePositions,
+        color: this.getPreparedNodeAttributeView(preparedNodeVisualBuffers, NODE_COLOR_ATTRIBUTE),
+        size: this.getPreparedNodeAttributeView(preparedNodeVisualBuffers, NODE_SIZE_ATTRIBUTE),
+        outline: this.getPreparedNodeAttributeView(preparedNodeVisualBuffers, NODE_OUTLINE_WIDTH_ATTRIBUTE),
+        outlineColor: this.getPreparedNodeAttributeView(preparedNodeVisualBuffers, NODE_OUTLINE_COLOR_ATTRIBUTE),
+        position: this.getPreparedNodeAttributeView(preparedNodeVisualBuffers, NODE_POSITION_ATTRIBUTE),
       };
       if (!nodeIndices?.length) return;
       for (let i = 0; i < nodeIndices.length; i += 1) {
@@ -477,6 +546,19 @@ export class VisualAttributes {
     if (!mapper?.channels?.size) return;
     const edgeCount = this.network?.edgeCount ?? 0;
     const edgeChannels = [...mapper.channels.keys()];
+    const attributes = this.collectAttributeNames(mapper, 'edge');
+    const nodeToEdgeRegistrations = mapper?.nodeToEdgeRegistrations ?? new Set();
+    const skipColor = nodeToEdgeRegistrations.has(EDGE_COLOR_ATTRIBUTE);
+    const skipOpacity = nodeToEdgeRegistrations.has(EDGE_OPACITY_ATTRIBUTE);
+    const skipEndpointSize = nodeToEdgeRegistrations.has(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+    const preparedEdgeBuffers = this.prepareEdgeAttributeLookups(attributes.edge, { allowMissing: true });
+    const preparedNodeBuffers = this.prepareNodeAttributeLookups(attributes.node, { allowMissing: true });
+    const preparedEdgeVisualBuffers = this.prepareEdgeAttributeLookups([
+      ...(skipColor || visualConfig?.edge?.color?.mode === 'uniform' ? [] : [EDGE_COLOR_ATTRIBUTE]),
+      ...(skipOpacity || visualConfig?.edge?.opacity?.mode === 'uniform' ? [] : [EDGE_OPACITY_ATTRIBUTE]),
+      ...(visualConfig?.edge?.width?.mode === 'uniform' ? [] : [EDGE_WIDTH_ATTRIBUTE]),
+      ...(skipEndpointSize || visualConfig?.edge?.endpointSize?.mode === 'uniform' ? [] : [EDGE_ENDPOINTS_SIZE_ATTRIBUTE]),
+    ]);
     this.debug?.log('mapper', 'Applying edge mapper', {
       edges: edgeCount,
       channels: mapper.channels.size,
@@ -490,20 +572,13 @@ export class VisualAttributes {
     }
     this.withBufferAccess(() => {
       const edgeIndices = this.network?.edgeIndices;
-      const attributes = this.collectAttributeNames(mapper, 'edge');
-      const edgeBuffers = this.resolveEdgeAttributeBuffers(attributes.edge);
-      const nodeBuffers = this.resolveNodeAttributeBuffers(attributes.node);
-      const nodeToEdgeRegistrations = mapper?.nodeToEdgeRegistrations ?? new Set();
-      const skipColor = nodeToEdgeRegistrations.has(EDGE_COLOR_ATTRIBUTE);
-      const skipOpacity = nodeToEdgeRegistrations.has(EDGE_OPACITY_ATTRIBUTE);
-      const skipEndpointSize = nodeToEdgeRegistrations.has(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+      const edgeBuffers = this.resolveEdgeAttributeBuffers(preparedEdgeBuffers);
+      const nodeBuffers = this.resolveNodeAttributeBuffers(preparedNodeBuffers);
       const visuals = {
-        color: (skipColor || visualConfig?.edge?.color?.mode === 'uniform') ? null : this.edgeColors,
-        opacity: (skipOpacity || visualConfig?.edge?.opacity?.mode === 'uniform') ? null : this.edgeOpacities,
-        width: visualConfig?.edge?.width?.mode === 'uniform' ? null : this.edgeWidths,
-        endpointSize: (skipEndpointSize || visualConfig?.edge?.endpointSize?.mode === 'uniform')
-          ? null
-          : this.getEdgeAttributeView(EDGE_ENDPOINTS_SIZE_ATTRIBUTE),
+        color: this.getPreparedEdgeAttributeView(preparedEdgeVisualBuffers, EDGE_COLOR_ATTRIBUTE),
+        opacity: this.getPreparedEdgeAttributeView(preparedEdgeVisualBuffers, EDGE_OPACITY_ATTRIBUTE),
+        width: this.getPreparedEdgeAttributeView(preparedEdgeVisualBuffers, EDGE_WIDTH_ATTRIBUTE),
+        endpointSize: this.getPreparedEdgeAttributeView(preparedEdgeVisualBuffers, EDGE_ENDPOINTS_SIZE_ATTRIBUTE),
       };
       const edgesView = this.network?.edgesView;
       if (!edgeIndices?.length) return;
@@ -614,17 +689,18 @@ export class VisualAttributes {
             NODE_OUTLINE_WIDTH_ATTRIBUTE,
             NODE_OUTLINE_COLOR_ATTRIBUTE,
           ];
-    this.withBufferAccess(() => {
-      for (const name of targets) {
-        try {
-          const buf = this.network?.getNodeAttributeBuffer?.(name);
-          buf?.bumpVersion?.();
-          this.network?.bumpNodeAttributeVersion?.(name);
-        } catch (_) {
-          // Ignore if bumping is unavailable.
-        }
+    for (const name of targets) {
+      const hasAttribute = this.network?._nodeAttributes?.has?.(name)
+        ?? Boolean(this.network?.getNodeAttributeInfo?.(name));
+      if (!hasAttribute) {
+        continue;
       }
-    });
+      if (this._bufferAccessDepth > 0) {
+        this._pendingNodeAttributeBumps.add(name);
+        continue;
+      }
+      this.network?.bumpNodeAttributeVersion?.(name);
+    }
   }
 
   bumpEdgeAttributes(...names) {
@@ -638,19 +714,20 @@ export class VisualAttributes {
             EDGE_STATE_ATTRIBUTE,
             EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
             EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
-            EDGE_ENDPOINTS_STATE_ATTRIBUTE,
-          ];
-    this.withBufferAccess(() => {
-      for (const name of targets) {
-        try {
-          const buf = this.network?.getEdgeAttributeBuffer?.(name);
-          buf?.bumpVersion?.();
-          this.network?.bumpEdgeAttributeVersion?.(name);
-        } catch (_) {
-          // Ignore if bumping is unavailable.
-        }
+          EDGE_ENDPOINTS_STATE_ATTRIBUTE,
+        ];
+    for (const name of targets) {
+      const hasAttribute = this.network?._edgeAttributes?.has?.(name)
+        ?? Boolean(this.network?.getEdgeAttributeInfo?.(name));
+      if (!hasAttribute) {
+        continue;
       }
-    });
+      if (this._bufferAccessDepth > 0) {
+        this._pendingEdgeAttributeBumps.add(name);
+        continue;
+      }
+      this.network?.bumpEdgeAttributeVersion?.(name);
+    }
   }
 
   markPositionsDirty() {
@@ -663,18 +740,26 @@ export class VisualAttributes {
    * @param {Iterable<number>} [indices]
    */
   applyNodeDefaults(indices) {
+    const preparedNodeVisualBuffers = this.prepareNodeAttributeLookups([
+      NODE_POSITION_ATTRIBUTE,
+      NODE_COLOR_ATTRIBUTE,
+      NODE_SIZE_ATTRIBUTE,
+      NODE_STATE_ATTRIBUTE,
+      NODE_OUTLINE_WIDTH_ATTRIBUTE,
+      NODE_OUTLINE_COLOR_ATTRIBUTE,
+    ], { allowMissing: true });
     this.withBufferAccess(() => {
       const targetIndices = indices ?? this.network?.nodeIndices;
       const color = DEFAULT_NODE_COLOR;
       const size = DEFAULT_NODE_SIZE;
       const outlineWidth = DEFAULT_NODE_OUTLINE_WIDTH;
       const outlineColor = DEFAULT_NODE_OUTLINE_COLOR;
-      const positionView = this.nodePositions;
-      const colorView = this.nodeColors;
-      const sizeView = this.nodeSizes;
-      const stateView = this.nodeStates;
-      const outlineWidthView = this.nodeOutlineWidths;
-      const outlineColorView = this.nodeOutlineColors;
+      const positionView = this.getPreparedNodeAttributeView(preparedNodeVisualBuffers, NODE_POSITION_ATTRIBUTE);
+      const colorView = this.getPreparedNodeAttributeView(preparedNodeVisualBuffers, NODE_COLOR_ATTRIBUTE);
+      const sizeView = this.getPreparedNodeAttributeView(preparedNodeVisualBuffers, NODE_SIZE_ATTRIBUTE);
+      const stateView = this.getPreparedNodeAttributeView(preparedNodeVisualBuffers, NODE_STATE_ATTRIBUTE);
+      const outlineWidthView = this.getPreparedNodeAttributeView(preparedNodeVisualBuffers, NODE_OUTLINE_WIDTH_ATTRIBUTE);
+      const outlineColorView = this.getPreparedNodeAttributeView(preparedNodeVisualBuffers, NODE_OUTLINE_COLOR_ATTRIBUTE);
 
       if (targetIndices) {
         for (const index of targetIndices) {
@@ -718,15 +803,21 @@ export class VisualAttributes {
    * @param {Iterable<number>} [indices]
    */
   applyEdgeDefaults(indices) {
+    const preparedEdgeVisualBuffers = this.prepareEdgeAttributeLookups([
+      EDGE_COLOR_ATTRIBUTE,
+      EDGE_OPACITY_ATTRIBUTE,
+      EDGE_WIDTH_ATTRIBUTE,
+      EDGE_STATE_ATTRIBUTE,
+    ], { allowMissing: true });
     this.withBufferAccess(() => {
       const targetIndices = indices ?? this.network?.edgeIndices;
       const color = DEFAULT_EDGE_COLOR;
       const opacity = DEFAULT_EDGE_OPACITY;
       const width = DEFAULT_EDGE_WIDTH;
-      const colorView = this.edgeColors;
-      const opacityView = this.edgeOpacities;
-      const widthView = this.edgeWidths;
-      const stateView = this.edgeStates;
+      const colorView = this.getPreparedEdgeAttributeView(preparedEdgeVisualBuffers, EDGE_COLOR_ATTRIBUTE);
+      const opacityView = this.getPreparedEdgeAttributeView(preparedEdgeVisualBuffers, EDGE_OPACITY_ATTRIBUTE);
+      const widthView = this.getPreparedEdgeAttributeView(preparedEdgeVisualBuffers, EDGE_WIDTH_ATTRIBUTE);
+      const stateView = this.getPreparedEdgeAttributeView(preparedEdgeVisualBuffers, EDGE_STATE_ATTRIBUTE);
 
       if (targetIndices) {
         for (const index of targetIndices) {
@@ -752,6 +843,7 @@ export class VisualAttributes {
    * @param {{width?: number, height?: number, depth?: number, mode?: string, center?: number[]}} [bounds]
    */
   seedMissingPositions(bounds = {}) {
+    const preparedNodePositions = this.prepareNodeAttributeLookups([NODE_POSITION_ATTRIBUTE], { allowMissing: true });
     this.withBufferAccess(() => {
       const nodeIndices = this.network?.nodeIndices;
       const width = Math.max(1, bounds.width ?? 1);
@@ -762,7 +854,7 @@ export class VisualAttributes {
       const cx = Number.isFinite(center?.[0]) ? center[0] : 0;
       const cy = Number.isFinite(center?.[1]) ? center[1] : 0;
       const cz = Number.isFinite(center?.[2]) ? center[2] : 0;
-      const pos = this.nodePositions;
+      const pos = this.getPreparedNodeAttributeView(preparedNodePositions, NODE_POSITION_ATTRIBUTE);
       if (!pos || !nodeIndices?.length) return;
       let touched = false;
       const previousMaxNodeId = this.maxInitializedNodeId ?? -1;
@@ -1084,17 +1176,19 @@ export class VisualAttributes {
 
   resolveNodeAttributeBuffers(names) {
     const buffers = new Map();
-    if (!names?.size) return buffers;
-    for (const name of names) {
-      const lookup = VISUAL_ATTRIBUTE_MAP[name] ?? name;
-      try {
-        const buffer = this.network.getNodeAttributeBuffer(lookup);
-        if (buffer?.view) {
-          const dimension = buffer.dimension ?? 1;
-          buffers.set(name, { view: buffer.view, dimension: dimension > 0 ? dimension : 1 });
-        }
-      } catch (_) {
-        // ignore missing attributes
+    if (!names?.length && !names?.size) return buffers;
+    for (const entry of names) {
+      const name = typeof entry === 'string' ? entry : entry?.name;
+      const lookup = typeof entry === 'string' ? this.normalizeLookupName(entry) : entry?.lookup;
+      const synthetic = typeof entry === 'string' ? (lookup === INDEX_ATTRIBUTE ? 'index' : null) : entry?.synthetic;
+      if (synthetic === 'index') {
+        buffers.set(name, { synthetic: 'index', dimension: 1 });
+        continue;
+      }
+      const buffer = this.network.getNodeAttributeBuffer(lookup);
+      if (buffer?.view) {
+        const dimension = buffer.dimension ?? 1;
+        buffers.set(name, { view: buffer.view, dimension: dimension > 0 ? dimension : 1 });
       }
     }
     return buffers;
@@ -1102,16 +1196,18 @@ export class VisualAttributes {
 
   resolveEdgeAttributeBuffers(names) {
     const buffers = new Map();
-    if (!names?.size) return buffers;
-    for (const name of names) {
-      const lookup = VISUAL_ATTRIBUTE_MAP[name] ?? name;
-      try {
-        const buffer = this.network.getEdgeAttributeBuffer(lookup);
-        if (buffer?.view) {
-          buffers.set(name, { view: buffer.view, dimension: buffer.dimension ?? 1 });
-        }
-      } catch (_) {
-        // ignore missing attributes
+    if (!names?.length && !names?.size) return buffers;
+    for (const entry of names) {
+      const name = typeof entry === 'string' ? entry : entry?.name;
+      const lookup = typeof entry === 'string' ? this.normalizeLookupName(entry) : entry?.lookup;
+      const synthetic = typeof entry === 'string' ? (lookup === INDEX_ATTRIBUTE ? 'index' : null) : entry?.synthetic;
+      if (synthetic === 'index') {
+        buffers.set(name, { synthetic: 'index', dimension: 1 });
+        continue;
+      }
+      const buffer = this.network.getEdgeAttributeBuffer(lookup);
+      if (buffer?.view) {
+        buffers.set(name, { view: buffer.view, dimension: buffer.dimension ?? 1 });
       }
     }
     return buffers;
@@ -1120,7 +1216,11 @@ export class VisualAttributes {
   buildAttributeObject(buffers, index) {
     const result = {};
     for (const [name, info] of buffers.entries()) {
-      const { view, dimension } = info;
+      const { view, dimension, synthetic } = info;
+      if (synthetic === 'index') {
+        result[name] = index;
+        continue;
+      }
       if (!view) continue;
       if (dimension === 1) {
         result[name] = view[index];
@@ -1397,10 +1497,32 @@ export class VisualAttributes {
   }
 
   withBufferAccess(fn) {
-    if (typeof this.network?.withBufferAccess === 'function') {
-      return this.network.withBufferAccess(fn);
+    this._bufferAccessDepth += 1;
+    try {
+      if (typeof this.network?.withBufferAccess === 'function') {
+        return this.network.withBufferAccess(fn);
+      }
+      return fn();
+    } finally {
+      this._bufferAccessDepth = Math.max(0, this._bufferAccessDepth - 1);
+      if (this._bufferAccessDepth === 0) {
+        this.flushPendingAttributeBumps();
+      }
     }
-    return fn();
+  }
+
+  flushPendingAttributeBumps() {
+    if (!this.network) return;
+    const nodeNames = Array.from(this._pendingNodeAttributeBumps);
+    const edgeNames = Array.from(this._pendingEdgeAttributeBumps);
+    this._pendingNodeAttributeBumps.clear();
+    this._pendingEdgeAttributeBumps.clear();
+    for (const name of nodeNames) {
+      this.network.bumpNodeAttributeVersion?.(name);
+    }
+    for (const name of edgeNames) {
+      this.network.bumpEdgeAttributeVersion?.(name);
+    }
   }
 }
 

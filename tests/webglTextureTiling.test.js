@@ -44,7 +44,7 @@ test('GraphLayerWebGL computes tiled texture layout for >MAX_TEXTURE_SIZE texels
   assert.deepEqual(layout, { width: 16384, height: 4 });
 });
 
-test('GraphLayerWebGL uploads multi-row textures with texSubImage2D slices', () => {
+test('GraphLayerWebGL uploads multi-row textures as padded texImage2D payloads', () => {
   const layer = new GraphLayerWebGL();
   const { gl, calls } = createMockGL(4);
   layer.gl = gl;
@@ -52,13 +52,12 @@ test('GraphLayerWebGL uploads multi-row textures with texSubImage2D slices', () 
   const ok = layer.uploadFloatTexture('nodeSizes', {}, new Float32Array([1, 2, 3, 4, 5]), 1, 5, 1);
   assert.equal(ok, true);
   assert.equal(calls.texImage2D.length, 1);
-  assert.equal(calls.texSubImage2D.length, 2);
+  assert.equal(calls.texSubImage2D.length, 0);
   assert.equal(calls.texImage2D[0][3], 4); // width
   assert.equal(calls.texImage2D[0][4], 2); // height
-  assert.equal(calls.texSubImage2D[0][4], 4); // first row width
-  assert.equal(calls.texSubImage2D[1][4], 1); // second row width
-  assert.equal(calls.texSubImage2D[0][8].length, 4);
-  assert.equal(calls.texSubImage2D[1][8].length, 1);
+  assert.equal(calls.texImage2D[0][8].length, 8);
+  assert.equal(calls.texImage2D[0][8][4], 5);
+  assert.equal(calls.texImage2D[0][8][5], 0);
 });
 
 test('WebGLAttributeRenderer tiles integer textures across rows', () => {
@@ -69,13 +68,14 @@ test('WebGLAttributeRenderer tiles integer textures across rows', () => {
   const ok = renderer.uploadUintTexture('edgeEndpoints', {}, new Uint32Array([10, 11, 12, 13, 14, 15]), 2, 3, 1);
   assert.equal(ok, true);
   assert.equal(calls.texImage2D.length, 1);
-  assert.equal(calls.texSubImage2D.length, 2);
+  assert.equal(calls.texSubImage2D.length, 0);
   assert.equal(calls.texImage2D[0][3], 2); // width
   assert.equal(calls.texImage2D[0][4], 2); // height
-  assert.equal(calls.texSubImage2D[0][4], 2); // first row width
-  assert.equal(calls.texSubImage2D[1][4], 1); // second row width
-  assert.equal(calls.texSubImage2D[0][8].length, 4);
-  assert.equal(calls.texSubImage2D[1][8].length, 2);
+  assert.equal(calls.texImage2D[0][8].length, 8);
+  assert.equal(calls.texImage2D[0][8][4], 14);
+  assert.equal(calls.texImage2D[0][8][5], 15);
+  assert.equal(calls.texImage2D[0][8][6], 0);
+  assert.equal(calls.texImage2D[0][8][7], 0);
 });
 
 test('graphWebGL shaders use textureCoord indexing instead of fixed y=0 fetches', () => {

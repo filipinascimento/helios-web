@@ -212,6 +212,8 @@ function createFakeWebGL2ComputeContext() {
   let vaoId = 1;
   let texImageCalls = 0;
   let texSubImageCalls = 0;
+  const texImagePayloads = [];
+  const texSubImagePayloads = [];
   let drawArraysCalls = 0;
   let currentFramebuffer = null;
   let currentProgram = null;
@@ -260,8 +262,14 @@ function createFakeWebGL2ComputeContext() {
     deleteTexture() {},
     bindTexture() {},
     texParameteri() {},
-    texImage2D() { texImageCalls += 1; },
-    texSubImage2D() { texSubImageCalls += 1; },
+    texImage2D(...args) {
+      texImageCalls += 1;
+      texImagePayloads.push(args);
+    },
+    texSubImage2D(...args) {
+      texSubImageCalls += 1;
+      texSubImagePayloads.push(args);
+    },
     createShader(type) { return { id: shaderId += 1, type }; },
     shaderSource() {},
     compileShader() {},
@@ -327,7 +335,9 @@ function createFakeWebGL2ComputeContext() {
   return {
     gl,
     getTexImageCalls: () => texImageCalls,
+    getTexImagePayloads: () => texImagePayloads.slice(),
     getTexSubImageCalls: () => texSubImageCalls,
+    getTexSubImagePayloads: () => texSubImagePayloads.slice(),
     getDrawArraysCalls: () => drawArraysCalls,
   };
 }
@@ -471,6 +481,18 @@ test('D3Force3DLayout exposes shared parameter bindings and can reheat alpha', (
   const descriptor = layout.getParameterBindings();
   assert.equal(descriptor.key, 'd3force3d');
   assert.ok(descriptor.bindings.some((binding) => binding.key === 'alphaCurrent'));
+  const alphaCurrentBinding = descriptor.bindings.find((binding) => binding.key === 'alphaCurrent');
+  assert.equal(alphaCurrentBinding.history.scale, 'log');
+  assert.equal(alphaCurrentBinding.history.max, 1);
+  assert.equal(alphaCurrentBinding.history.min(), layout.settings.alphaMin);
+
+  for (const key of ['alphaDecay', 'alphaTarget', 'alphaMin']) {
+    const binding = descriptor.bindings.find((entry) => entry.key === key);
+    assert.equal(binding.scale, 'log');
+    assert.equal(binding.notation, 'scientific');
+    assert.equal(binding.inputMin, 0);
+    assert.equal(binding.inputMax, 1);
+  }
 
   layout.settings.alpha = 0.05;
   layout.reheat();
@@ -504,10 +526,33 @@ test('GpuForceLayout exposes shared parameter bindings and can reheat alpha', ()
 
   const sampleChurnBinding = descriptor.bindings.find((binding) => binding.key === 'sampleChurn');
   assert.equal(sampleChurnBinding.label, 'Sample churn');
+  assert.equal(sampleChurnBinding.scale, undefined);
+  assert.equal(sampleChurnBinding.min, 0);
+  assert.equal(sampleChurnBinding.max, 1);
+  assert.equal(sampleChurnBinding.inputMin, 0);
+  assert.equal(sampleChurnBinding.inputMax, 1);
+  assert.match(sampleChurnBinding.hint, /exact repulsion/i);
   layout.positionDelegate.alpha = 0.05;
   sampleChurnBinding.set(0.25);
   assert.equal(layout.options.sampleChurn, 0.25);
   assert.equal(layout.positionDelegate.alpha, 0.75);
+
+  const outputScaleBinding = descriptor.bindings.find((binding) => binding.key === 'outputScale');
+  assert.equal(outputScaleBinding.scale, 'log');
+  assert.equal(outputScaleBinding.notation, 'scientific');
+
+  const alphaCurrentBinding = descriptor.bindings.find((binding) => binding.key === 'alphaCurrent');
+  assert.equal(alphaCurrentBinding.history.scale, 'log');
+  assert.equal(alphaCurrentBinding.history.max, 1);
+  assert.equal(alphaCurrentBinding.history.min(), layout.options.alphaMin);
+
+  for (const key of ['alphaDecay', 'alphaTarget', 'alphaMin']) {
+    const binding = descriptor.bindings.find((entry) => entry.key === key);
+    assert.equal(binding.scale, 'log');
+    assert.equal(binding.notation, 'scientific');
+    assert.equal(binding.inputMin, 0);
+    assert.equal(binding.inputMax, 1);
+  }
 
   layout.positionDelegate.alpha = 0.1;
   layout.reheat();
@@ -555,6 +600,32 @@ test('GpuForcePositionDelegate normalizes simulation seed positions while preser
   approx(simSeedData[3], -10);
   approx(visibleSeedData[0], 60);
   approx(visibleSeedData[3], -60);
+});
+
+test('GpuForcePositionDelegate adds deterministic depth jitter for planar 3D seeds', () => {
+  const network = createTopologyNetwork([
+    60, 0, 0,
+    -60, 0, 0,
+    0, 40, 0,
+  ]);
+  const { device, writes } = createFakeWebGPUDevice();
+  const delegate = new GpuForcePositionDelegate({
+    mode: '3d',
+    center: [0, 0, 0],
+    depth: 120,
+    outputScale: 6,
+  });
+
+  delegate.onAttach({ network, backend: 'webgpu', device });
+
+  const visibleSeed = writes.find((entry) => entry.label === 'layout:gpu-force:positions-output');
+  const visibleSeedData = visibleSeed?.data instanceof Float32Array
+    ? visibleSeed.data
+    : new Float32Array(visibleSeed?.data?.buffer ?? new ArrayBuffer(0));
+  assert.ok(visibleSeedData instanceof Float32Array);
+  const zValues = [visibleSeedData[2], visibleSeedData[5], visibleSeedData[8]];
+  assert.ok(zValues.some((value) => Math.abs(value) > 1e-6));
+  assert.ok(Math.abs(zValues[0] + zValues[1] + zValues[2]) < 1e-5);
 });
 
 test('GpuForcePositionDelegate exposes WebGL2 texture resource when running on WebGL backend', () => {
@@ -625,6 +696,52 @@ test('GpuForcePositionDelegate preserves dynamic positions across version-change
   approx(after[1], before[1], 1e-5);
   approx(after[3], before[3], 1e-5);
   approx(after[4], before[4], 1e-5);
+});
+
+test('GpuForcePositionDelegate WebGL2 compute sync does not clear same-size textures when preserving dynamic state', () => {
+  const positionView = new Float32Array([
+    60, 0, 0,
+    -60, 0, 0,
+  ]);
+  let topologyVersion = 1;
+  const network = {
+    nodeCapacity: 2,
+    nodeIndices: new Uint32Array([0, 1]),
+    edgeIndices: new Uint32Array([0]),
+    edgesView: new Uint32Array([0, 1]),
+    withBufferAccess: (fn) => fn(),
+    getTopologyVersions: () => ({ node: topologyVersion, edge: topologyVersion }),
+    getNodeAttributeBuffer: (name) => {
+      if (name === '_helios_visuals_position') return { view: positionView, version: topologyVersion };
+      if (name === '$index') return { version: topologyVersion };
+      return null;
+    },
+    getEdgeAttributeBuffer: (name) => (name === '$index' ? { version: topologyVersion } : null),
+  };
+
+  const { gl, getTexImageCalls, getTexImagePayloads } = createFakeWebGL2ComputeContext();
+  const delegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    center: [0, 0, 0],
+    outputScale: 6,
+    sampleCount2D: 8,
+  });
+
+  delegate.onAttach({ network, backend: 'webgl2', gl });
+  const initialTexImageCalls = getTexImageCalls();
+  const initialPayloadCount = getTexImagePayloads().length;
+  assert.ok(initialTexImageCalls > 0);
+
+  topologyVersion += 1;
+  delegate.ensureSynchronized({ network, backend: 'webgl2', gl });
+
+  const additionalPayloads = getTexImagePayloads().slice(initialPayloadCount);
+  assert.equal(getTexImageCalls(), initialTexImageCalls + 5);
+  assert.equal(additionalPayloads.length, 5);
+  for (const args of additionalPayloads) {
+    assert.equal(args[2], gl.R32UI);
+    assert.ok(args[8] instanceof Uint32Array);
+  }
 });
 
 test('GpuForcePositionDelegate WebGL2 backend advances layout and updates snapshots', async () => {
@@ -857,6 +974,33 @@ test('GpuForcePositionDelegate sampleChurn progressively refreshes repulsion sam
   assert.equal(diverged, true);
 });
 
+test('GpuForcePositionDelegate uses mode-specific sampleCount when explicit sampleCount is unset', () => {
+  const network = createTopologyNetwork([
+    0, 0, 0,
+    10, 0, 0,
+    20, 0, 0,
+    30, 0, 0,
+  ]);
+  const { gl } = createFakeWebGL2ComputeContext();
+  const delegate = new GpuForcePositionDelegate({
+    mode: '3d',
+    center: [0, 0, 0],
+    outputScale: 1,
+    sampleCount3D: 32,
+    recenter: false,
+  });
+  let captured = null;
+  delegate._logSamplingTrace = (payload) => {
+    captured = payload;
+  };
+
+  delegate.onAttach({ network, backend: 'webgl2', gl });
+  delegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
+
+  assert.ok(captured);
+  assert.equal(captured.sampleCount, 32);
+});
+
 test('GpuForcePositionDelegate reads edgesView after position buffer lookup during topology sync', () => {
   const positionView = new Float32Array([
     0, 0, 0,
@@ -989,4 +1133,35 @@ test('GpuForcePositionDelegate uses shader-driven WebGL2 layout when float rende
   const changed = delegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
   assert.equal(changed, true);
   assert.ok(getDrawArraysCalls() >= 1);
+});
+
+test('GpuForcePositionDelegate uploads padded uint textures on WebGL2 topology sync', () => {
+  const network = createIsolatedTopologyNetwork([
+    0, 0, 0,
+    10, 0, 0,
+    20, 0, 0,
+  ]);
+  const { gl, getTexImagePayloads, getTexSubImageCalls } = createFakeWebGL2ComputeContext();
+  const delegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    center: [0, 0, 0],
+    outputScale: 1,
+    recenter: false,
+  });
+
+  delegate.onAttach({ network, backend: 'webgl2', gl });
+
+  const uintUploads = getTexImagePayloads().filter((args) => (
+    args[2] === gl.R32UI
+    && args[7] === gl.UNSIGNED_INT
+    && args[8] instanceof Uint32Array
+  ));
+  assert.ok(uintUploads.length >= 4);
+  for (const args of uintUploads) {
+    const width = args[3];
+    const height = args[4];
+    const pixels = args[8];
+    assert.equal(pixels.length, width * height);
+  }
+  assert.equal(getTexSubImageCalls(), 0);
 });

@@ -555,7 +555,9 @@ function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
   const hasExplicitActiveIds = nodeIndices.length > 0;
   const activeCount = hasExplicitActiveIds ? nodeIndices.length : nodeCapacity;
   const activeIds = ensureUint32Capacity(scratch.activeIds, activeCount);
+  scratch.activeIds = activeIds;
   const activeMask = ensureUint32Capacity(scratch.activeMask, nodeCapacity);
+  scratch.activeMask = activeMask;
   activeMask.fill(0, 0, nodeCapacity);
   if (hasExplicitActiveIds) {
     for (let i = 0; i < nodeIndices.length; i += 1) {
@@ -573,6 +575,7 @@ function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
   }
 
   const neighborCounts = ensureUint32Capacity(scratch.neighborCounts, nodeCapacity);
+  scratch.neighborCounts = neighborCounts;
   neighborCounts.fill(0, 0, nodeCapacity);
   for (let i = 0; i < edgeIndices.length; i += 1) {
     const edgeId = edgeIndices[i] >>> 0;
@@ -588,6 +591,7 @@ function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
   }
 
   const neighborStarts = ensureUint32Capacity(scratch.neighborStarts, nodeCapacity);
+  scratch.neighborStarts = neighborStarts;
   let neighborLength = 0;
   for (let nodeId = 0; nodeId < nodeCapacity; nodeId += 1) {
     neighborStarts[nodeId] = neighborLength;
@@ -595,7 +599,9 @@ function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
   }
 
   const neighbors = ensureUint32Capacity(scratch.neighbors, neighborLength);
+  scratch.neighbors = neighbors;
   const cursor = ensureUint32Capacity(scratch.cursor, nodeCapacity);
+  scratch.cursor = cursor;
   for (let nodeId = 0; nodeId < nodeCapacity; nodeId += 1) {
     cursor[nodeId] = neighborStarts[nodeId];
   }
@@ -620,7 +626,9 @@ function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
   const is3D = options.mode === '3d';
   const valueCount = Math.max(1, nodeCapacity) * 3;
   const packedPositions = ensureFloat32Capacity(scratch.packedPositions, valueCount);
+  scratch.packedPositions = packedPositions;
   const packedOutputPositions = ensureFloat32Capacity(scratch.packedOutputPositions, valueCount);
+  scratch.packedOutputPositions = packedOutputPositions;
   for (let nodeId = 0; nodeId < nodeCapacity; nodeId += 1) {
     const sourceOffset = nodeId * 3;
     const targetOffset = nodeId * 3;
@@ -653,6 +661,41 @@ function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
       packedPositions[targetOffset] = seedX;
       packedPositions[targetOffset + 1] = seedY;
       packedPositions[targetOffset + 2] = seedZ;
+    }
+  }
+
+  if (is3D && activeCount > 1) {
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (let i = 0; i < activeCount; i += 1) {
+      const nodeId = activeIds[i] >>> 0;
+      const z = packedOutputPositions[(nodeId * 3) + 2];
+      if (!Number.isFinite(z)) continue;
+      if (z < minZ) minZ = z;
+      if (z > maxZ) maxZ = z;
+    }
+    const zRange = Number.isFinite(minZ) && Number.isFinite(maxZ) ? (maxZ - minZ) : 0;
+    const planarTolerance = Math.max(1e-6, depth * 1e-5, radius * 1e-6);
+    if (zRange <= planarTolerance) {
+      const jitterBase = depth > 1e-6 ? depth : Math.max(1, radius * 0.25);
+      const jitterAmplitude = Math.max(1e-3, jitterBase * 0.04);
+      let jitterMean = 0;
+      for (let i = 0; i < activeCount; i += 1) {
+        const nodeId = activeIds[i] >>> 0;
+        jitterMean += (((hash32((nodeId + 1) >>> 0) + 0.5) / 4294967296) - 0.5) * jitterAmplitude;
+      }
+      jitterMean /= activeCount;
+
+      for (let i = 0; i < activeCount; i += 1) {
+        const nodeId = activeIds[i] >>> 0;
+        const offset = nodeId * 3;
+        const jitter = ((((hash32((nodeId + 1) >>> 0) + 0.5) / 4294967296) - 0.5) * jitterAmplitude) - jitterMean;
+        const nextOutputZ = packedOutputPositions[offset + 2] + jitter;
+        packedOutputPositions[offset + 2] = nextOutputZ;
+        packedPositions[offset + 2] = normalizeInputByOutputScale
+          ? (center[2] + ((nextOutputZ - center[2]) / outputScale))
+          : nextOutputZ;
+      }
     }
   }
 
@@ -702,6 +745,23 @@ function resolveSampleEpoch(iter, sampleCount, churnCount, sampleFrame) {
   const safeIter = Math.max(0, Math.floor(Number(iter) || 0));
   const safeFrame = Math.max(0, Math.floor(Number(sampleFrame) || 0));
   return Math.floor(((safeFrame * safeChurnCount) + (safeSampleCount - 1 - safeIter)) / safeSampleCount);
+}
+
+function countChangedSampleSlots(sampleCount, churnCount, sampleFrame) {
+  const safeSampleCount = Math.max(1, Math.floor(Number(sampleCount) || 0));
+  const safeChurnCount = Math.min(safeSampleCount, Math.max(0, Math.floor(Number(churnCount) || 0)));
+  const safeFrame = Math.max(0, Math.floor(Number(sampleFrame) || 0));
+  if (safeChurnCount <= 0 || safeFrame <= 0) return 0;
+  let changed = 0;
+  const previousFrame = safeFrame - 1;
+  for (let iter = 0; iter < safeSampleCount; iter += 1) {
+    const previousEpoch = resolveSampleEpoch(iter, safeSampleCount, safeChurnCount, previousFrame);
+    const currentEpoch = resolveSampleEpoch(iter, safeSampleCount, safeChurnCount, safeFrame);
+    if (previousEpoch !== currentEpoch) {
+      changed += 1;
+    }
+  }
+  return changed;
 }
 
 function sampleActiveIdProgressive(nodeId, iter, activeIds, activeCount, seed, sampleCount, churnCount, sampleFrame) {
@@ -1206,7 +1266,9 @@ class WebGLTextureComputePath {
     this._positionUploadScratch = new Float32Array(0);
     this._velocityUploadScratch = new Float32Array(0);
     this._outputUploadScratch = new Float32Array(0);
+    this._uintUploadScratch = new Uint32Array(0);
     this._readbackScratch = new Float32Array(0);
+    this._textureSizes = new Map();
     this.readIndex = 0;
 
     this.computeProgram = createWebGLProgram(gl, WEBGL_FORCE_FULLSCREEN_VERTEX, WEBGL_FORCE_COMPUTE_FRAGMENT);
@@ -1286,6 +1348,9 @@ class WebGLTextureComputePath {
   _ensureFloatTexture(field, width, height) {
     const gl = this.gl;
     let texture = this[field] ?? null;
+    const sizeKey = `${field}`;
+    const previousSize = this._textureSizes.get(sizeKey) ?? null;
+    const needsAllocation = !texture || !previousSize || previousSize.width !== width || previousSize.height !== height;
     if (!texture) {
       texture = gl.createTexture();
       this[field] = texture;
@@ -1295,7 +1360,10 @@ class WebGLTextureComputePath {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, height, 0, gl.RGBA, gl.FLOAT, null);
+    if (needsAllocation) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, height, 0, gl.RGBA, gl.FLOAT, null);
+      this._textureSizes.set(sizeKey, { width, height });
+    }
     gl.bindTexture(gl.TEXTURE_2D, null);
     return texture;
   }
@@ -1303,6 +1371,9 @@ class WebGLTextureComputePath {
   _ensureFloatTextureAt(textures, index, width, height) {
     let texture = textures[index] ?? null;
     const gl = this.gl;
+    const sizeKey = `float:${index}`;
+    const previousSize = this._textureSizes.get(sizeKey) ?? null;
+    const needsAllocation = !texture || !previousSize || previousSize.width !== width || previousSize.height !== height;
     if (!texture) {
       texture = gl.createTexture();
       textures[index] = texture;
@@ -1312,7 +1383,10 @@ class WebGLTextureComputePath {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, height, 0, gl.RGBA, gl.FLOAT, null);
+    if (needsAllocation) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, height, 0, gl.RGBA, gl.FLOAT, null);
+      this._textureSizes.set(sizeKey, { width, height });
+    }
     gl.bindTexture(gl.TEXTURE_2D, null);
     return texture;
   }
@@ -1320,6 +1394,9 @@ class WebGLTextureComputePath {
   _ensureUintTexture(field, width, height) {
     const gl = this.gl;
     let texture = this[field] ?? null;
+    const sizeKey = `${field}`;
+    const previousSize = this._textureSizes.get(sizeKey) ?? null;
+    const needsAllocation = !texture || !previousSize || previousSize.width !== width || previousSize.height !== height;
     if (!texture) {
       texture = gl.createTexture();
       this[field] = texture;
@@ -1329,7 +1406,10 @@ class WebGLTextureComputePath {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32UI, width, height, 0, gl.RED_INTEGER, gl.UNSIGNED_INT, null);
+    if (needsAllocation) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32UI, width, height, 0, gl.RED_INTEGER, gl.UNSIGNED_INT, null);
+      this._textureSizes.set(sizeKey, { width, height });
+    }
     gl.bindTexture(gl.TEXTURE_2D, null);
     return texture;
   }
@@ -1373,6 +1453,14 @@ class WebGLTextureComputePath {
     return this[field];
   }
 
+  _ensurePackedUintScratch(field, texelCount) {
+    const required = Math.max(1, texelCount);
+    if (!(this[field] instanceof Uint32Array) || this[field].length < required) {
+      this[field] = new Uint32Array(required);
+    }
+    return this[field];
+  }
+
   _packVec3Source(source, count, field) {
     const texelCount = this.nodeLayout.width * this.nodeLayout.height;
     const target = this._ensurePackedFloatScratch(field, texelCount);
@@ -1392,39 +1480,23 @@ class WebGLTextureComputePath {
   _uploadPackedFloatTexture(texture, packed, width, height) {
     const gl = this.gl;
     gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RGBA, gl.FLOAT, packed);
+    // Topology sync happens infrequently, so redefining the texture here is an
+    // acceptable tradeoff for broader WebGL driver compatibility.
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, height, 0, gl.RGBA, gl.FLOAT, packed);
     gl.bindTexture(gl.TEXTURE_2D, null);
   }
 
   _uploadUintTexture(texture, layout, view) {
     const gl = this.gl;
     const safeLength = Math.max(1, layout.width * layout.height);
-    const data = view instanceof Uint32Array ? view : createEmptyUintArray();
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    if (data.length === safeLength) {
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, layout.width, layout.height, gl.RED_INTEGER, gl.UNSIGNED_INT, data);
-    } else {
-      let remaining = Math.min(data.length, safeLength);
-      let offset = 0;
-      for (let y = 0; y < layout.height; y += 1) {
-        const rowCount = Math.min(layout.width, remaining);
-        if (rowCount > 0) {
-          gl.texSubImage2D(
-            gl.TEXTURE_2D,
-            0,
-            0,
-            y,
-            rowCount,
-            1,
-            gl.RED_INTEGER,
-            gl.UNSIGNED_INT,
-            data.subarray(offset, offset + rowCount),
-          );
-          offset += rowCount;
-          remaining -= rowCount;
-        }
-      }
+    const data = this._ensurePackedUintScratch('_uintUploadScratch', safeLength);
+    data.fill(0, 0, safeLength);
+    if (view instanceof Uint32Array && view.length > 0) {
+      data.set(view.subarray(0, Math.min(view.length, safeLength)), 0);
     }
+    const pixels = data.length === safeLength ? data : data.subarray(0, safeLength);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32UI, layout.width, layout.height, 0, gl.RED_INTEGER, gl.UNSIGNED_INT, pixels);
     gl.bindTexture(gl.TEXTURE_2D, null);
   }
 
@@ -1763,6 +1835,7 @@ class WebGLTextureComputePath {
     this.readbackFramebuffer = null;
     this.fullscreenVao = null;
     this.textureVersion = 0;
+    this._textureSizes.clear();
   }
 }
 
@@ -2669,6 +2742,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       mode: options.mode === '3d' ? '3d' : '2d',
     };
     this.alpha = clamp(this.options.alpha, 0, 1, DEFAULT_OPTIONS.alpha);
+    this.debug = options.debug ?? options.helios?.debug ?? null;
     this._backendType = null;
     this._backendDeviceRef = null;
     this._backendGlRef = null;
@@ -2686,6 +2760,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       packedPositions: createEmptyFloatArray(),
       packedOutputPositions: createEmptyFloatArray(),
     };
+    this._sampleDebugFrameInterval = 30;
   }
 
   didDetach() {
@@ -2890,7 +2965,10 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     this.alpha += (alphaTarget - this.alpha) * alphaDecay;
     if (this.alpha < alphaMin) this.alpha = alphaMin;
 
-    const explicitSampleCount = Number(this.options.sampleCount);
+    const explicitSampleCountValue = this.options.sampleCount;
+    const explicitSampleCount = explicitSampleCountValue == null || explicitSampleCountValue === ''
+      ? NaN
+      : Number(explicitSampleCountValue);
     const sampleCount = Number.isFinite(explicitSampleCount)
       ? Math.max(1, Math.floor(explicitSampleCount))
       : (this.options.mode === '3d'
@@ -2934,6 +3012,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       alpha: this.alpha,
       dt,
     };
+    this._logSamplingTrace(stepPayload);
     const changed = this._webgpu
       ? this._webgpu.step(stepPayload)
       : this._webgl.step(stepPayload);
@@ -2942,6 +3021,83 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       this.bumpVersion();
     }
     return changed;
+  }
+
+  _resolveSampleDebugConfig() {
+    const source = globalThis?.__HELIOS_LAYOUT_SAMPLE_DEBUG__;
+    const debugEnabled = typeof this.debug?.enabledFor === 'function' && this.debug.enabledFor('layout-sampling');
+    if (!source && !debugEnabled) return null;
+    if (source === true) {
+      return { every: this._sampleDebugFrameInterval, previewCount: 6 };
+    }
+    if (source && typeof source === 'object') {
+      const enabled = source.enabled !== false;
+      if (!enabled && !debugEnabled) return null;
+      return {
+        every: Math.max(1, Math.floor(Number(source.every) || this._sampleDebugFrameInterval)),
+        previewCount: Math.max(1, Math.floor(Number(source.previewCount) || 6)),
+      };
+    }
+    return { every: this._sampleDebugFrameInterval, previewCount: 6 };
+  }
+
+  _emitSampleDebug(message, payload) {
+    const canUseDebugLogger = typeof this.debug?.log === 'function'
+      && (typeof this.debug?.enabledFor !== 'function' || this.debug.enabledFor('layout-sampling'));
+    if (canUseDebugLogger) {
+      this.debug.log('layout-sampling', message, payload);
+      return;
+    }
+    console.debug('[helios:layout-sampling]', message, payload);
+  }
+
+  _logSamplingTrace(stepPayload) {
+    const config = this._resolveSampleDebugConfig();
+    if (!config) return;
+    const backend = this._webgpu ? this._webgpu : this._webgl;
+    if (!backend) return;
+    const sampleFrame = backend.sampleFrame >>> 0;
+    if ((sampleFrame % config.every) !== 0) return;
+    const sampleCount = Math.max(1, Math.floor(Number(stepPayload.sampleCount) || 0));
+    const sampleChurnCount = resolveSampleChurnCount(sampleCount, stepPayload.sampleChurn);
+    const exactThreshold = Math.max(1, Math.floor(Number(stepPayload.exactRepulsionThreshold) || 0));
+    const useExactRepulsion = this._activeCount <= Math.max(sampleCount, exactThreshold);
+    const activeIds = this._topologyScratch.activeIds instanceof Uint32Array
+      ? this._topologyScratch.activeIds
+      : createEmptyUintArray();
+    const previewCount = Math.min(config.previewCount, sampleCount);
+    const samplePreview = [];
+    for (let iter = 0; iter < previewCount; iter += 1) {
+      samplePreview.push({
+        slot: iter,
+        epoch: resolveSampleEpoch(iter, sampleCount, sampleChurnCount, sampleFrame),
+        activeId: activeIds.length > 0
+          ? sampleActiveIdProgressive(
+            0,
+            iter,
+            activeIds,
+            this._activeCount,
+            backend.seed >>> 0,
+            sampleCount,
+            sampleChurnCount,
+            sampleFrame,
+          )
+          : null,
+      });
+    }
+    this._emitSampleDebug('GPU force sampling', {
+      backend: this._webgpu ? 'webgpu' : 'webgl',
+      mode: stepPayload.mode,
+      activeCount: this._activeCount,
+      sampleCount,
+      sampleChurn: stepPayload.sampleChurn,
+      sampleChurnCount,
+      sampleFrame,
+      changedSlotCount: countChangedSampleSlots(sampleCount, sampleChurnCount, sampleFrame),
+      useExactRepulsion,
+      exactRepulsionThreshold: exactThreshold,
+      samplePreview,
+    });
   }
 
   getNodePositionView(context = {}) {

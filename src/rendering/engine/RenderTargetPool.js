@@ -50,6 +50,8 @@ export class RenderTargetPool {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+    gl.drawBuffers?.([gl.COLOR_ATTACHMENT0]);
+    gl.readBuffer?.(gl.COLOR_ATTACHMENT0);
     let depth = null;
     if (options.depth) {
       depth = gl.createRenderbuffer();

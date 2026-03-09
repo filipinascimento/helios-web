@@ -57,6 +57,16 @@ function resolveSeedBounds(options = {}) {
   };
 }
 
+function createZeroableUnitLogBinding(binding) {
+  return withLogScaleBinding({
+    min: 0.000001,
+    max: 1,
+    inputMin: 0,
+    inputMax: 1,
+    ...binding,
+  });
+}
+
 export class D3Force3DLayout extends Layout {
   constructor(network, visuals, options = {}) {
     super(network, visuals);
@@ -217,6 +227,11 @@ export class D3Force3DLayout extends Layout {
             length: 20,
             sampleMs: 1500,
             scale: 'log',
+            min: () => {
+              const alphaMin = Number(this.settings.alphaMin ?? DEFAULT_SETTINGS.alphaMin);
+              return alphaMin > 0 ? alphaMin : null;
+            },
+            max: 1,
           },
         },
         {
@@ -320,31 +335,25 @@ export class D3Force3DLayout extends Layout {
         },
         {
           key: 'alphaDecay',
-          label: 'Alpha decay',
-          type: 'number',
-          min: 0,
-          max: 1,
-          step: 0.0001,
+          ...createZeroableUnitLogBinding({
+            label: 'Alpha decay',
+          }),
           get: () => Number(this.settings.alphaDecay ?? DEFAULT_SETTINGS.alphaDecay),
           set: (value) => this.setSettings({ alphaDecay: value }),
         },
         {
           key: 'alphaTarget',
-          label: 'Alpha target',
-          type: 'number',
-          min: 0,
-          max: 1,
-          step: 0.0001,
+          ...createZeroableUnitLogBinding({
+            label: 'Alpha target',
+          }),
           get: () => Number(this.settings.alphaTarget ?? DEFAULT_SETTINGS.alphaTarget),
           set: (value) => this.setSettings({ alphaTarget: value }),
         },
         {
           key: 'alphaMin',
-          label: 'Alpha min',
-          type: 'number',
-          min: 0,
-          max: 1,
-          step: 0.0001,
+          ...createZeroableUnitLogBinding({
+            label: 'Alpha min',
+          }),
           get: () => Number(this.settings.alphaMin ?? DEFAULT_SETTINGS.alphaMin),
           set: (value) => this.setSettings({ alphaMin: value }),
         },

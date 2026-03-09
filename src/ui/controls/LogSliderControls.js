@@ -30,6 +30,8 @@ export class LogSliderControls {
     stepExp = 0.05,
     minValue = null,
     maxValue = null,
+    inputMin = null,
+    inputMax = null,
     digits = 2,
     format = null,
     onCommit = null,
@@ -38,6 +40,8 @@ export class LogSliderControls {
     this.maxExp = Number(maxExp);
     this.minValue = Number.isFinite(minValue) ? Number(minValue) : Math.pow(10, this.minExp);
     this.maxValue = Number.isFinite(maxValue) ? Number(maxValue) : Math.pow(10, this.maxExp);
+    this.inputMin = Number.isFinite(inputMin) ? Number(inputMin) : this.minValue;
+    this.inputMax = Number.isFinite(inputMax) ? Number(inputMax) : this.maxValue;
     this.format = typeof format === 'function' ? format : (next) => defaultFormat(next, digits);
     this.onCommit = onCommit;
 
@@ -55,8 +59,8 @@ export class LogSliderControls {
     this.input.type = 'number';
     this.input.className = 'helios-ui-number';
     this.input.step = 'any';
-    this.input.min = String(this.minValue);
-    this.input.max = String(this.maxValue);
+    this.input.min = String(this.inputMin);
+    this.input.max = String(this.inputMax);
 
     this.element.appendChild(this.slider);
     this.element.appendChild(this.input);
@@ -71,7 +75,7 @@ export class LogSliderControls {
     this._onInputCommit = () => {
       const numeric = Number(this.input.value);
       if (!Number.isFinite(numeric)) return;
-      const clamped = clamp(numeric, this.minValue, this.maxValue);
+      const clamped = clamp(numeric, this.inputMin, this.inputMax);
       this.setValue(clamped);
       this.onCommit?.(clamped);
     };
@@ -101,10 +105,15 @@ export class LogSliderControls {
   }
 
   setValue(nextValue) {
-    const exp = this.expFromValue(nextValue);
+    const numeric = Number(nextValue);
+    const typed = Number.isFinite(numeric)
+      ? clamp(numeric, this.inputMin, this.inputMax)
+      : this.minValue;
+    const sliderSource = typed > 0 ? typed : this.minValue;
+    const exp = this.expFromValue(sliderSource);
     const actual = this.valueFromExp(exp);
     this.slider.value = String(exp);
-    this.input.value = this.format(actual);
+    this.input.value = this.format(Number.isFinite(numeric) ? typed : actual);
     updateSliderVisual(this.slider);
   }
 

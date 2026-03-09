@@ -13,6 +13,14 @@ function nextCounter(value) {
   return current + 1;
 }
 
+function warnOnce(owner, key, message, detail) {
+  if (!owner) return;
+  owner._warnedIssues ??= new Set();
+  if (owner._warnedIssues.has(key)) return;
+  owner._warnedIssues.add(key);
+  console.warn(message, detail);
+}
+
 export class PositionDelegate {
   constructor() {
     if (new.target === PositionDelegate) {
@@ -26,6 +34,7 @@ export class PositionDelegate {
     this._topologyDirty = true;
     this._topologyDirtyReason = 'init';
     this._unsubscribeNetworkReplaced = null;
+    this._warnedIssues = new Set();
     this._onNetworkReplacedBound = (event) => {
       const helios = this._context?.helios ?? null;
       const nextNetwork = event?.detail?.network ?? helios?.network ?? this._context?.network ?? null;
@@ -124,6 +133,12 @@ export class PositionDelegate {
       try {
         snapshot = this.captureNetworkVersionSnapshot(network);
       } catch (_) {
+        warnOnce(
+          this,
+          'capture-network-version-snapshot',
+          'PositionDelegate: failed to capture network version snapshot during synchronization.',
+          { context: merged },
+        );
         return false;
       }
     }
@@ -183,6 +198,12 @@ export class PositionDelegate {
         edge: safeVersion(versions.edge, 0),
       };
     } catch (_) {
+      warnOnce(
+        this,
+        'read-topology-versions',
+        'PositionDelegate: failed to read topology versions; using zero versions.',
+        { network },
+      );
       return { node: 0, edge: 0 };
     }
   }
@@ -201,19 +222,76 @@ export class PositionDelegate {
         edge: network.edgeIndices ?? null,
       };
     } catch (_) {
+      warnOnce(
+        this,
+        'read-active-index-snapshot',
+        'PositionDelegate: failed to read active index snapshot; topology sync may be skipped.',
+        { network },
+      );
       return null;
     }
   }
 
   _readIndexAttributeVersion(network, kind) {
     if (!network) return 0;
+    const topologyVersions = this._readTopologyVersions(network);
+    const internalMap = kind === 'edge' ? network._edgeAttributes : network._nodeAttributes;
+    if (internalMap?.has?.(INDEX_ATTRIBUTE) === false) {
+      return safeVersion(kind === 'edge' ? topologyVersions.edge : topologyVersions.node, 0);
+    }
+    const hasGetter = kind === 'edge' ? network.hasEdgeAttribute : network.hasNodeAttribute;
+    const infoGetter = kind === 'edge' ? network.getEdgeAttributeInfo : network.getNodeAttributeInfo;
+    let attributeExists = null;
+    if (typeof hasGetter === 'function') {
+      try {
+        attributeExists = Boolean(hasGetter.call(network, INDEX_ATTRIBUTE));
+      } catch (_) {
+        attributeExists = null;
+      }
+    } else if (typeof infoGetter === 'function') {
+      try {
+        attributeExists = Boolean(infoGetter.call(network, INDEX_ATTRIBUTE));
+      } catch (_) {
+        attributeExists = null;
+      }
+    }
     try {
       if (kind === 'edge') {
+        if (attributeExists === false && Number.isFinite(topologyVersions.edge)) {
+          return safeVersion(topologyVersions.edge, 0);
+        }
+        if (typeof network.getEdgeAttributeVersion === 'function') {
+          return safeVersion(network.getEdgeAttributeVersion(INDEX_ATTRIBUTE), 0);
+        }
+        if (typeof network.withBufferAccess === 'function') {
+          return safeVersion(
+            network.withBufferAccess(() => network.getEdgeAttributeBuffer?.(INDEX_ATTRIBUTE)?.version, { edgeIndices: true }),
+            0,
+          );
+        }
         return safeVersion(network.getEdgeAttributeBuffer?.(INDEX_ATTRIBUTE)?.version, 0);
+      }
+      if (attributeExists === false && Number.isFinite(topologyVersions.node)) {
+        return safeVersion(topologyVersions.node, 0);
+      }
+      if (typeof network.getNodeAttributeVersion === 'function') {
+        return safeVersion(network.getNodeAttributeVersion(INDEX_ATTRIBUTE), 0);
+      }
+      if (typeof network.withBufferAccess === 'function') {
+        return safeVersion(
+          network.withBufferAccess(() => network.getNodeAttributeBuffer?.(INDEX_ATTRIBUTE)?.version, { nodeIndices: true }),
+          0,
+        );
       }
       return safeVersion(network.getNodeAttributeBuffer?.(INDEX_ATTRIBUTE)?.version, 0);
     } catch (_) {
-      return 0;
+      warnOnce(
+        this,
+        `read-index-attribute-version:${kind}`,
+        `PositionDelegate: failed to read ${kind} $index attribute version; using zero.`,
+        { network },
+      );
+      return safeVersion(kind === 'edge' ? topologyVersions.edge : topologyVersions.node, 0);
     }
   }
 
@@ -237,6 +315,12 @@ export class PositionDelegate {
     try {
       this._unsubscribeNetworkReplaced = helios.on(NETWORK_REPLACED_EVENT, this._onNetworkReplacedBound);
     } catch (_) {
+      warnOnce(
+        this,
+        'bind-network-replaced',
+        'PositionDelegate: failed to subscribe to network:replaced events.',
+        { helios },
+      );
       this._unsubscribeNetworkReplaced = null;
     }
   }

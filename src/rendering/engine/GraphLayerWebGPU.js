@@ -24,6 +24,23 @@ function normalizeEndpoints(value) {
   return 'both';
 }
 
+function warnOnce(owner, key, message, detail) {
+  if (!owner) return;
+  owner._warnedIssues ??= new Set();
+  if (owner._warnedIssues.has(key)) return;
+  owner._warnedIssues.add(key);
+  console.warn(message, detail);
+}
+
+function isMissingAttributeError(error) {
+  const message = typeof error?.message === 'string' ? error.message : '';
+  return (
+    message.includes('Unknown node attribute')
+    || message.includes('Unknown edge attribute')
+    || message.includes('Cannot perform attribute metadata lookup')
+  );
+}
+
 export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
   constructor(options = {}) {
     super(options);
@@ -920,18 +937,22 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       console.warn('GraphLayerWebGPU: network does not support buffer access sessions');
       return false;
     }
+    const hasNodeAttribute = (name) => (
+      Boolean(name) && (network._nodeAttributes?.has?.(name) ?? false)
+    );
+    const hasEdgeAttribute = (name) => (
+      Boolean(name) && (network._edgeAttributes?.has?.(name) ?? false)
+    );
     return network.withBufferAccess(() => {
       const nodeIndices = indices?.node ?? network.nodeIndices ?? null;
       const edgeIndices = indices?.edge ?? network.edgeIndices ?? null;
       const safeGet = (scope, name) => {
         if (!name) return null;
+        if (scope === 'node' && !hasNodeAttribute(name)) return null;
+        if (scope === 'edge' && !hasEdgeAttribute(name)) return null;
         const getter = scope === 'node' ? network.getNodeAttributeBuffer : network.getEdgeAttributeBuffer;
         if (typeof getter !== 'function') return null;
-        try {
-          return getter.call(network, name);
-        } catch (_) {
-          return null;
-        }
+        return getter.call(network, name);
       };
       const resolveNodeSource = (name, dimension, label) => {
         if (!name) return null;

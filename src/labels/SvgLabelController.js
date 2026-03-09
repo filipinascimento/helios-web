@@ -365,8 +365,12 @@ export class SvgLabelController {
     return -1;
   }
 
+  _getRenderNetwork() {
+    return this.helios?._getRenderNetwork?.() ?? this.helios?.network ?? null;
+  }
+
   _composeDataSignature() {
-    const network = this.helios?.network ?? null;
+    const network = this._getRenderNetwork();
     const source = this.helios?.positions?.() ?? { source: 'network', delegate: null };
     const topology = this._safe(() => network?.getTopologyVersions?.()) ?? {};
     const topoNode = toFinite(topology.node, 0);
@@ -391,7 +395,7 @@ export class SvgLabelController {
   }
 
   _resolveLabelSourceVersion() {
-    const network = this.helios?.network ?? null;
+    const network = this._getRenderNetwork();
     if (!network) return 0;
     const resolved = this._resolveCandidateSourceNames(network);
     let sum = 0;
@@ -404,7 +408,7 @@ export class SvgLabelController {
   }
 
   _runFullUpdate(uniforms, now) {
-    const network = this.helios?.network ?? null;
+    const network = this._getRenderNetwork();
     const viewport = uniforms?.viewport ?? null;
     if (!network || !viewport) {
       this._hideAll();
@@ -429,7 +433,7 @@ export class SvgLabelController {
   }
 
   _runFullUpdateUnsafe(uniforms, now, nodeIndices) {
-    const network = this.helios?.network ?? null;
+    const network = this._getRenderNetwork();
     if (!network) return false;
 
     const context = this.helios?._buildPositionDelegateContext?.() ?? {};
@@ -584,7 +588,7 @@ export class SvgLabelController {
 
   _reprojectVisible(uniforms, now) {
     if (!this._visibleEntries.length) return false;
-    const network = this.helios?.network ?? null;
+    const network = this._getRenderNetwork();
     if (!network) return false;
     const run = () => this._reprojectVisibleUnsafe(uniforms, now);
     if (typeof network.withBufferAccess === 'function') {
@@ -648,7 +652,7 @@ export class SvgLabelController {
 
   _resolvePositionView(context, now) {
     const source = this.helios?.positions?.() ?? { source: 'network', delegate: null };
-    const network = this.helios?.network ?? null;
+    const network = this._getRenderNetwork();
     if (source.source !== 'delegate') {
       const view = this._safe(() => network?.getNodeAttributeBuffer?.(NODE_POSITION_ATTRIBUTE)?.view, null);
       return { source: 'network', view };
@@ -793,11 +797,12 @@ export class SvgLabelController {
   }
 
   _resolveLabelText(accessors, id) {
+    const network = this._getRenderNetwork();
     for (let i = 0; i < accessors.length; i += 1) {
       const accessor = accessors[i];
       let value = null;
       try {
-        value = accessor.get(id, this.helios?.network ?? null);
+        value = accessor.get(id, network);
       } catch {
         value = null;
       }

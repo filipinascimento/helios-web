@@ -4,6 +4,21 @@ import { WebGL2Device } from './WebGL2Device.js';
 import { WebGPUDevice } from './WebGPUDevice.js';
 import { Camera } from '../Camera.js';
 
+function isDebugWebGLRenderEnabled() {
+  if (globalThis.__HELIOS_DEBUG_WEBGL_RENDER === true) return true;
+  try {
+    const search = globalThis.location?.search ?? '';
+    return search.includes('debugWebGLRender=1');
+  } catch (_) {
+    return false;
+  }
+}
+
+function debugWebGLRender(message, detail) {
+  if (!isDebugWebGLRenderEnabled()) return;
+  console.warn(`[Helios][WebGLRender] ${message}`, detail);
+}
+
 /**
  * High-level orchestrator that owns the underlying graphics device (WebGL2 or
  * WebGPU) and a set of render layers. Layers can be provided by the developer
@@ -187,11 +202,30 @@ export class LayeredRenderer {
   render(frame) {
     if (!this.device) return;
     const renderPayload = frame ? { ...frame, camera: frame.camera ?? this.camera } : { camera: this.camera };
+    debugWebGLRender('renderer:frame:start', {
+      device: this.device?.type ?? null,
+      renderTarget: this.renderTarget ?? null,
+      presentRect: this.presentRect ?? null,
+      size: this.size,
+      layerCount: this.layers.length,
+      networkNodeCount: renderPayload?.network?.nodeCount ?? null,
+      networkEdgeCount: renderPayload?.network?.edgeCount ?? null,
+    });
     const context = this.device.beginFrame(this.renderTarget, this.clearColor, this.presentRect);
     for (const layer of this.layers) {
+      debugWebGLRender('renderer:layer:before', {
+        layer: layer?.name ?? layer?.id ?? layer?.constructor?.name ?? 'unknown',
+        contextType: context?.type ?? null,
+      });
       layer.render?.(context, renderPayload, this.size);
+      debugWebGLRender('renderer:layer:after', {
+        layer: layer?.name ?? layer?.id ?? layer?.constructor?.name ?? 'unknown',
+      });
     }
     this.device.endFrame(context);
+    debugWebGLRender('renderer:frame:end', {
+      device: this.device?.type ?? null,
+    });
     this.presentRect = null;
   }
 

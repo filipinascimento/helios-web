@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import HeliosNetwork, { AttributeType } from 'helios-network';
 import { VisualAttributes } from '../src/pipeline/VisualAttributes.js';
-import { Mapper, MapperCollection } from '../src/pipeline/Mapper.js';
+import { Mapper, MapperCollection, createDefaultMappers } from '../src/pipeline/Mapper.js';
 import {
   NODE_POSITION_ATTRIBUTE,
   NODE_COLOR_ATTRIBUTE,
@@ -133,6 +133,21 @@ test('seeds nodes when all positions are missing', async () => {
   assert.equal(seeded, nodeCount);
 });
 
+test('visual updates do not trigger metadata lookup during buffer access after pointer invalidation', async () => {
+  const network = await HeliosNetwork.create({ directed: false, initialNodes: 0, initialEdges: 0 });
+  const nodes = network.addNodes(2);
+  network.addEdges([{ from: nodes[0], to: nodes[1] }]);
+
+  const visuals = new VisualAttributes(network);
+
+  network._invalidateAttributePointerCache?.();
+
+  assert.doesNotThrow(() => visuals.applyNodeDefaults());
+  assert.doesNotThrow(() => visuals.applyEdgeDefaults());
+  assert.doesNotThrow(() => visuals.seedMissingPositions({ width: 100, height: 100 }));
+  assert.doesNotThrow(() => visuals.markPositionsDirty());
+});
+
 test('seedMissingPositions is deterministic and centered for missing positions', async () => {
   const createSeededPositions = async () => {
     const network = await HeliosNetwork.create({ directed: false, initialNodes: 0, initialEdges: 0 });
@@ -212,6 +227,31 @@ test('constant mappers update uniform config without bumping buffer versions', a
   assert.equal(network.hasEdgeAttribute(EDGE_WIDTH_ATTRIBUTE, true), false);
 });
 
+test('colormap mappers bump visual color attribute versions after buffer writes', async () => {
+  const network = await HeliosNetwork.create({ directed: false, initialNodes: 0, initialEdges: 0 });
+  network.addNodes(4);
+
+  const visuals = new VisualAttributes(network);
+  const nodeMapper = new Mapper({ mode: 'node', network });
+  nodeMapper.channel('color').from('$index').colormap('interpolateViridis', { domain: [0, 3], clamp: true }).done();
+
+  const beforeVersion = network.hasNodeAttribute(NODE_COLOR_ATTRIBUTE)
+    ? network.getNodeAttributeVersion(NODE_COLOR_ATTRIBUTE)
+    : 0;
+
+  visuals.applyMappers({ nodeMapper, edgeMapper: null });
+
+  const afterVersion = network.getNodeAttributeVersion(NODE_COLOR_ATTRIBUTE);
+  assert.ok(afterVersion > beforeVersion);
+
+  let colorView = null;
+  network.withBufferAccess(() => {
+    colorView = network.getNodeAttributeBuffer(NODE_COLOR_ATTRIBUTE)?.view?.slice(0, 8) ?? null;
+  });
+  assert.ok(colorView);
+  assert.notDeepEqual(Array.from(colorView), [0, 0, 0, 0, 0, 0, 0, 0]);
+});
+
 test('node-to-edge passthrough downgrades when node channel is constant', async () => {
   const network = await HeliosNetwork.create({ directed: false, initialNodes: 0, initialEdges: 0 });
   const nodes = network.addNodes(2);
@@ -253,4 +293,25 @@ test('visual config records node-sourced edge channels with custom node attribut
   assert.equal(widthCfg?.nodeAttribute, 'weight');
   assert.equal(widthCfg?.endpoints, 'source');
   assert.equal(widthCfg?.doubleWidth, true);
+});
+
+test('default mappers do not require a real $index attribute buffer', async () => {
+  const network = await HeliosNetwork.create({ directed: false, initialNodes: 0, initialEdges: 0 });
+  const nodes = network.addNodes(2);
+  network.addEdges([{ from: nodes[0], to: nodes[1] }]);
+
+  const visuals = new VisualAttributes(network);
+  const originalGetNodeAttributeBuffer = network.getNodeAttributeBuffer.bind(network);
+  network.getNodeAttributeBuffer = (name) => {
+    if (name === '$index') {
+      throw new Error('default mappers should treat $index as synthetic');
+    }
+    return originalGetNodeAttributeBuffer(name);
+  };
+
+  const { nodeMapper, edgeMapper } = createDefaultMappers(network);
+  visuals.applyMappers({ nodeMapper, edgeMapper });
+
+  assert.equal(network.__heliosVisualConfig?.node?.color?.mode, 'buffer');
+  assert.equal(network.hasNodeAttribute(NODE_COLOR_ATTRIBUTE), true);
 });

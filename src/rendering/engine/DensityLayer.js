@@ -10,6 +10,18 @@ function toFiniteNumber(value, fallback = 0) {
   return Number.isFinite(numeric) ? numeric : fallback;
 }
 
+function resolvePackedVec3Count(entry, fallback = 0) {
+  const explicit = Math.max(0, Math.floor(Number(entry?.count ?? 0)));
+  const byteLength = Math.max(
+    0,
+    Math.floor(Number(entry?.byteLength ?? entry?.buffer?.size ?? 0)),
+  );
+  const inferred = byteLength > 0
+    ? Math.floor(byteLength / (Float32Array.BYTES_PER_ELEMENT * 3))
+    : 0;
+  return Math.max(explicit, inferred, Math.max(0, Math.floor(Number(fallback) || 0)));
+}
+
 function compileShader(gl, type, source) {
   const shader = gl.createShader(type);
   gl.shaderSource(shader, source);
@@ -1640,9 +1652,9 @@ export class DensityLayer extends Layer {
 
     const sharedIndices = sharedBuffers?.['indirect:node:indices'] ?? null;
     const sharedPositions = sharedBuffers?.['indirect:node:positions'] ?? null;
-    const sharedPositionCount = Math.max(
-      0,
-      Math.floor(Number(sharedPositions?.count ?? requiredPositionCount ?? computed.positionCount ?? 0)),
+    const sharedPositionCount = resolvePackedVec3Count(
+      sharedPositions,
+      requiredPositionCount || computed.positionCount || 0,
     );
     const sharedPositionVersion = Number.isFinite(sharedPositions?.version) ? Number(sharedPositions.version) : null;
     const hasCurrentVersion = Number.isFinite(currentPositionVersion);

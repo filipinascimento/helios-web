@@ -16,6 +16,7 @@ const {
 } = VISUAL_ATTRIBUTE_NAMES;
 
 const { DEFAULT_NODE_OUTLINE_COLOR, DEFAULT_NODE_OUTLINE_WIDTH, DEFAULT_NODE_SIZE } = DEFAULT_VISUALS;
+const INDEX_ATTRIBUTE = '$index';
 
 function validateAttribute(buffer, name, expectedType, expectedDimension) {
   if (!buffer) {
@@ -33,19 +34,11 @@ function validateAttribute(buffer, name, expectedType, expectedDimension) {
 
 function resolveAttributeMetadata(network, scope, name) {
   if (!network || !name) return null;
+  const internalMap = scope === 'node' ? network._nodeAttributes : network._edgeAttributes;
+  const cached = internalMap?.get?.(name) ?? null;
+  if (cached) return cached;
   const infoGetter = scope === 'node' ? 'getNodeAttributeInfo' : 'getEdgeAttributeInfo';
-  const bufferGetter = scope === 'node' ? 'getNodeAttributeBuffer' : 'getEdgeAttributeBuffer';
-  try {
-    const info = network[infoGetter]?.(name);
-    if (info) return info;
-  } catch (_) {
-    // fall back for lightweight/fake networks
-  }
-  try {
-    return network[bufferGetter]?.(name) ?? null;
-  } catch (_) {
-    return null;
-  }
+  return network[infoGetter]?.(name) ?? null;
 }
 
 function clamp01(value) {
@@ -865,15 +858,12 @@ export class Mapper {
       return;
     }
 
-    try {
+    const info = resolveAttributeMetadata(this.network, this.mode, attribute);
+    if (!info) {
       if (this.mode === 'node') {
         this.network.defineNodeAttribute(attribute, type, dimension);
       } else {
         this.network.defineEdgeAttribute(attribute, type, dimension);
-      }
-    } catch (error) {
-      if (!(error instanceof Error) || !error.message.includes('already')) {
-        console.warn(`Mapper ensureBuffersForChannel failed for ${config.name}:`, error);
       }
     }
 
@@ -983,16 +973,18 @@ export class Mapper {
   }) {
     if (!attribute || !sourceAttribute) return;
     this.unregisterNodeToEdge(attribute);
-    try {
+    if (resolveAttributeMetadata(this.network, 'edge', attribute)) {
       this.removeEdgeAttribute(attribute);
-    } catch (error) {
-      console.warn(`Mapper failed to remove edge attribute ${attribute} for ${channelName}:`, error);
     }
-    try {
+    const sourceInfo = resolveAttributeMetadata(this.network, 'node', sourceAttribute);
+    if (!sourceInfo) {
       this.network.defineNodeAttribute(sourceAttribute, type, sourceDimension);
-    } catch (error) {
-      if (!(error instanceof Error) || !error.message.includes('already')) {
-        console.warn(`Mapper failed to define node attribute ${sourceAttribute} for ${channelName}:`, error);
+    } else {
+      try {
+        validateAttribute(sourceInfo, sourceAttribute, type, sourceDimension);
+      } catch (error) {
+        console.warn(`Mapper found incompatible node attribute ${sourceAttribute} for ${channelName}:`, error);
+        return;
       }
     }
     let passthroughOk = false;
@@ -1021,10 +1013,10 @@ export class Mapper {
         // ignore
       }
     }
-    const sourceInfo = resolveAttributeMetadata(this.network, 'node', sourceAttribute);
+    const resolvedSourceInfo = resolveAttributeMetadata(this.network, 'node', sourceAttribute);
     const edgeInfo = resolveAttributeMetadata(this.network, 'edge', attribute);
     const expected = targetDimension ?? computePassthroughTargetDimension(sourceDimension, endpoints, doubleWidth);
-    validateAttribute(sourceInfo, sourceAttribute, type, sourceDimension);
+    validateAttribute(resolvedSourceInfo, sourceAttribute, type, sourceDimension);
     validateAttribute(edgeInfo, attribute, type, expected);
     if (passthroughOk) {
       this.nodeToEdgeRegistrations.add(attribute);

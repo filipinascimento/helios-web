@@ -67,6 +67,55 @@ test('SvgLabelController falls back to delegate snapshot for GPU-only delegates'
   assert.deepEqual(Array.from(resolved.view), [8, 9, 0, 10, 11, 0]);
 });
 
+test('SvgLabelController full selection uses the filtered render network node set', () => {
+  const positions = new Float32Array([
+    -0.5, -0.5, 0,
+    0.25, 0.25, 0,
+    0.75, 0.75, 0,
+  ]);
+  const baseNetwork = {
+    nodeIndices: new Uint32Array([0, 1, 2]),
+    withBufferAccess: (fn) => fn(),
+    getNodeAttributeBuffer: () => ({ view: positions }),
+  };
+  const filteredNetwork = {
+    nodeIndices: new Uint32Array([1]),
+    withBufferAccess: (fn) => fn(),
+    getNodeAttributeBuffer: () => ({ view: positions }),
+    getTopologyVersions: () => ({ node: 10, edge: 4 }),
+  };
+  const helios = {
+    network: baseNetwork,
+    _getRenderNetwork: () => filteredNetwork,
+    positions: () => ({ source: 'network', delegate: null }),
+    size: { width: 100, height: 100 },
+    renderer: { camera: { zoom: 1 } },
+    nodeSizeBase: () => 1,
+    nodeSizeScale: () => 1,
+    nodeOutlineWidthBase: () => 0,
+    nodeOutlineWidthScale: () => 0,
+    semanticZoomExponent: () => 0,
+    _buildPositionDelegateContext: () => ({ network: filteredNetwork }),
+  };
+  const controller = new SvgLabelController(helios, {});
+
+  const changed = controller._runFullUpdate({
+    viewProjection: new Float32Array([
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, 1, 0,
+      0, 0, 0, 1,
+    ]),
+    viewport: { width: 100, height: 100 },
+    mode: '2d',
+    projectionType: 'orthographic',
+    right: [1, 0, 0],
+  }, performance.now());
+
+  assert.equal(changed, true);
+  assert.deepEqual(controller._visibleEntries.map((entry) => entry.id), [1]);
+});
+
 test('SvgLabelController truncates single-line labels with maxChars', () => {
   const controller = new SvgLabelController({}, {});
   controller.setConfig({ maxChars: 5, maxRows: 1 });

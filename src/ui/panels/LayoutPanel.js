@@ -1,6 +1,8 @@
 import { EVENTS } from '../../Helios.js';
 import { createToggleControl } from '../controls/createToggleControl.js';
 import { createAlignedRowEl } from '../controls/createAlignedRowEl.js';
+import { SuggestedSliderControls } from '../controls/SuggestedSliderControls.js';
+import { LogSliderControls } from '../controls/LogSliderControls.js';
 
 function toFinite(value, fallback = null) {
   const numeric = Number(value);
@@ -37,8 +39,8 @@ function clampNumber(value, min, max) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return null;
   let next = numeric;
-  const minValue = Number(min);
-  const maxValue = Number(max);
+  const minValue = resolveFiniteBound(min, null);
+  const maxValue = resolveFiniteBound(max, null);
   if (Number.isFinite(minValue)) next = Math.max(minValue, next);
   if (Number.isFinite(maxValue)) next = Math.min(maxValue, next);
   return next;
@@ -59,23 +61,6 @@ function resolveFiniteBound(primary, fallback = null) {
 
 function usesLogScale(binding) {
   return binding?.scale === 'log';
-}
-
-function bindingToSliderValue(binding, value) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return null;
-  if (!usesLogScale(binding)) return numeric;
-  const min = Math.max(1e-12, Number(binding?.min) || 1e-12);
-  const max = Math.max(min, Number(binding?.max) || min);
-  const clamped = Math.min(max, Math.max(min, numeric));
-  return Math.log10(clamped);
-}
-
-function sliderToBindingValue(binding, value) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return null;
-  if (!usesLogScale(binding)) return numeric;
-  return clampNumber(10 ** numeric, binding?.min, binding?.max);
 }
 
 function formatInputNumber(value, binding) {
@@ -100,34 +85,42 @@ function formatHistoryValue(value, scale = 'linear') {
   return numeric;
 }
 
-function buildSparklinePath(samples, width, height, scale = 'linear') {
+function resolveHistoryBound(bound) {
+  const raw = typeof bound === 'function' ? bound() : bound;
+  const numeric = Number(raw);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function buildSparklinePath(samples, width, height, scale = 'linear', bounds = null) {
   const values = samples
-    .map((sample) => formatHistoryValue(sample, scale))
+    .map((sample) => Number(sample))
     .filter((sample) => Number.isFinite(sample));
   if (!values.length) return '';
   if (values.length === 1) {
     const y = height * 0.5;
     return `M 0 ${y.toFixed(2)} L ${width.toFixed(2)} ${y.toFixed(2)}`;
   }
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+
+  const transformed = values
+    .map((sample) => formatHistoryValue(sample, scale))
+    .filter((sample) => Number.isFinite(sample));
+  if (!transformed.length) return '';
+
+  const boundMin = resolveHistoryBound(bounds?.min);
+  const boundMax = resolveHistoryBound(bounds?.max);
+  const min = Number.isFinite(boundMin)
+    ? formatHistoryValue(boundMin, scale)
+    : Math.min(...transformed);
+  const max = Number.isFinite(boundMax)
+    ? formatHistoryValue(boundMax, scale)
+    : Math.max(...transformed);
   const span = Math.max(1e-9, max - min);
-  return values.map((value, index) => {
-    const x = (index / Math.max(1, values.length - 1)) * width;
-    const normalized = span <= 1e-9 ? 0.5 : (value - min) / span;
+  return transformed.map((value, index) => {
+    const x = (index / Math.max(1, transformed.length - 1)) * width;
+    const normalized = span <= 1e-9 ? 0.5 : Math.max(0, Math.min(1, (value - min) / span));
     const y = height - (normalized * height);
     return `${index === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`;
   }).join(' ');
-}
-
-function updateSliderVisual(slider) {
-  if (!(slider instanceof HTMLInputElement)) return;
-  const min = Number(slider.min);
-  const max = Number(slider.max);
-  const value = Number(slider.value);
-  if (!Number.isFinite(min) || !Number.isFinite(max) || !Number.isFinite(value) || min === max) return;
-  const pct = ((value - min) / (max - min)) * 100;
-  slider.style.setProperty('--pct', String(Math.max(0, Math.min(100, pct))));
 }
 
 function getLayoutDescriptor(layout) {
@@ -402,6 +395,7 @@ export class LayoutPanel {
       let controls = null;
       let refresh = () => {};
       let sample = null;
+      let destroy = () => {};
 
       if (binding.type === 'display') {
         const wrap = document.createElement('div');
@@ -420,9 +414,10 @@ export class LayoutPanel {
           const history = [];
           const limit = Math.max(2, Math.floor(binding.history.length ?? 20));
           const scale = binding.history.scale === 'log' ? 'log' : 'linear';
+          const bounds = binding.history ?? null;
 
           const renderHistory = () => {
-            const d = buildSparklinePath(history, 120, 28, scale);
+            const d = buildSparklinePath(history, 120, 28, scale, bounds);
             path.setAttribute('d', d || '');
           };
 
@@ -491,62 +486,57 @@ export class LayoutPanel {
         const inputMax = resolveFiniteBound(binding.inputMax, binding.max);
         const hasRange = Number.isFinite(sliderMin) && Number.isFinite(sliderMax);
         if (hasRange) {
-          wrap.className = 'helios-ui-slider-controls';
-          const slider = document.createElement('input');
-          slider.type = 'range';
-          slider.className = 'helios-ui-slider';
-          slider.min = String(usesLogScale(binding) ? Math.log10(Math.max(1e-12, sliderMin)) : sliderMin);
-          slider.max = String(usesLogScale(binding) ? Math.log10(Math.max(1e-12, sliderMax)) : sliderMax);
-          slider.step = String(usesLogScale(binding) ? (binding.sliderStep ?? 0.01) : (binding.step ?? 0.01));
-
-          const input = document.createElement('input');
-          input.type = 'number';
-          input.inputMode = 'decimal';
-          input.className = 'helios-ui-number';
-          if (Number.isFinite(inputMin)) input.min = String(inputMin);
-          if (Number.isFinite(inputMax)) input.max = String(inputMax);
-          input.step = String(binding.inputStep ?? (usesLogScale(binding) ? 'any' : (binding.step ?? 0.01)));
-
-          slider.addEventListener('input', () => {
-            const next = sliderToBindingValue(binding, slider.value);
-            if (next == null) return;
-            input.value = formatInputNumber(next, binding);
-            updateSliderVisual(slider);
-            binding.set?.(next);
-          });
-
-          const commitInput = () => {
-            const next = clampNumber(input.value, inputMin, inputMax);
-            if (next == null) return;
-            if (document.activeElement !== slider) {
-              slider.value = String(clampNumber(bindingToSliderValue(binding, next), slider.min, slider.max));
-              updateSliderVisual(slider);
-            }
-            input.value = formatInputNumber(next, binding);
-            binding.set?.(next);
-          };
-          input.addEventListener('change', commitInput);
-          input.addEventListener('keydown', (event) => {
-            if (event.key === 'Enter') {
-              commitInput();
-              input.blur();
-            }
-          });
-
-          wrap.appendChild(slider);
-          wrap.appendChild(input);
-          controls = wrap;
-          refresh = () => {
-            const next = toFinite(binding.get?.());
-            if (next == null) return;
-            if (document.activeElement !== slider) {
-              slider.value = String(clampNumber(bindingToSliderValue(binding, next), slider.min, slider.max));
-              updateSliderVisual(slider);
-            }
-            if (document.activeElement !== input) {
-              input.value = formatInputNumber(next, binding);
-            }
-          };
+          if (usesLogScale(binding)) {
+            const logControls = new LogSliderControls({
+              value: binding.get?.(),
+              minExp: Math.log10(Math.max(1e-12, sliderMin)),
+              maxExp: Math.log10(Math.max(1e-12, sliderMax)),
+              stepExp: binding.sliderStep ?? 0.01,
+              minValue: sliderMin,
+              maxValue: sliderMax,
+              inputMin,
+              inputMax,
+              format: (next) => formatInputNumber(next, binding),
+              onCommit: (next) => {
+                const clamped = clampNumber(next, inputMin, inputMax);
+                if (clamped == null) return;
+                binding.set?.(clamped);
+              },
+            });
+            controls = logControls.element;
+            destroy = () => logControls.destroy();
+            refresh = () => {
+              const next = toFinite(binding.get?.());
+              if (next == null) return;
+              if (document.activeElement !== logControls.slider && document.activeElement !== logControls.input) {
+                logControls.setValue(next);
+              }
+            };
+          } else {
+            const linearControls = new SuggestedSliderControls({
+              value: binding.get?.(),
+              suggested: [sliderMin, sliderMax],
+              step: binding.step ?? 0.01,
+              inputMin,
+              inputMax,
+              onCommit: (next) => {
+                const clamped = clampNumber(next, inputMin, inputMax);
+                if (clamped == null) return;
+                binding.set?.(clamped);
+              },
+            });
+            linearControls.input.inputMode = 'decimal';
+            linearControls.input.step = String(binding.inputStep ?? (binding.step ?? 0.01));
+            controls = linearControls.element;
+            destroy = () => linearControls.destroy();
+            refresh = () => {
+              const next = toFinite(binding.get?.());
+              if (next == null) return;
+              if (document.activeElement !== linearControls.slider && document.activeElement !== linearControls.input) {
+                linearControls.set(next);
+              }
+            };
+          }
         } else {
           const input = document.createElement('input');
           input.type = 'number';
@@ -554,10 +544,10 @@ export class LayoutPanel {
           input.className = 'helios-ui-number';
           input.step = String(binding.inputStep ?? (binding.notation === 'scientific' ? 'any' : (binding.step ?? 0.01)));
           input.addEventListener('change', () => {
-            const next = clampNumber(input.value, binding.min, binding.max);
-            if (next == null) return;
-            input.value = formatInputNumber(next, binding);
-            binding.set?.(next);
+            const committed = clampNumber(input.value, binding.min, binding.max);
+            if (committed == null) return;
+            input.value = formatInputNumber(committed, binding);
+            binding.set?.(committed);
           });
           wrap.appendChild(input);
           controls = wrap;
@@ -574,7 +564,7 @@ export class LayoutPanel {
         controls,
       });
       bindingsRoot.appendChild(row.row);
-      controlsByKey.set(binding.key, { refresh, sample });
+      controlsByKey.set(binding.key, { refresh, sample, destroy });
       refresh();
       sample?.(performance.now());
     };
@@ -582,6 +572,9 @@ export class LayoutPanel {
     const rebuildBindings = () => {
       const descriptor = getCurrentDescriptor();
       currentDescriptorKey = descriptor.key;
+      for (const control of controlsByKey.values()) {
+        control.destroy?.();
+      }
       controlsByKey.clear();
       bindingsRoot.textContent = '';
 
@@ -673,6 +666,10 @@ export class LayoutPanel {
         window.clearInterval(refreshTimer);
         window.clearInterval(sampleTimer);
         for (const unsubscribe of unsubscribers) unsubscribe?.();
+        for (const control of controlsByKey.values()) {
+          control.destroy?.();
+        }
+        controlsByKey.clear();
         originalDestroy();
       };
     }

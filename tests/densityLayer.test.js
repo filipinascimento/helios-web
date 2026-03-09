@@ -258,6 +258,48 @@ test('DensityLayer resolves shared WebGPU delegate positions even when CPU versi
   }
 });
 
+test('DensityLayer uses shared WebGPU delegate positions when buffer capacity exceeds filtered active count', () => {
+  const previous = globalThis.GPUBufferUsage;
+  globalThis.GPUBufferUsage = globalThis.GPUBufferUsage ?? {
+    STORAGE: 1,
+    COPY_DST: 2,
+    VERTEX: 4,
+  };
+  try {
+    const sharedIndexBuffer = { label: 'indices' };
+    const sharedPositionBuffer = { label: 'positions', size: 6 * 3 * Float32Array.BYTES_PER_ELEMENT };
+    const graphLayer = {
+      positionDelegate: { id: 'delegate' },
+      getSharedSparseResources: () => ({
+        buffers: {
+          'indirect:node:indices': { buffer: sharedIndexBuffer, count: 2 },
+          'indirect:node:positions': { buffer: sharedPositionBuffer, count: 2, version: 999 },
+        },
+      }),
+    };
+    const layer = new DensityLayer({
+      getGraphLayer: () => graphLayer,
+      getNodePositionInfo: () => ({
+        view: new Float32Array(18),
+        version: 7,
+        count: 6,
+      }),
+    });
+    const computed = {
+      count: 2,
+      nodeIndices: new Uint32Array([1, 4]),
+      positionCount: 6,
+    };
+
+    const resolved = layer.resolveWebGPUPositionAndIndexBuffers({ network: {} }, computed);
+    assert.equal(resolved?.indexBuffer, sharedIndexBuffer);
+    assert.equal(resolved?.positionBuffer, sharedPositionBuffer);
+    assert.equal(computed.positionCount, 6);
+  } finally {
+    globalThis.GPUBufferUsage = previous;
+  }
+});
+
 test('DensityLayer.computeWeights uses guarded WASM active-node writer when available', () => {
   let heapOffset = 4;
   const heap = new Uint32Array(1024);
