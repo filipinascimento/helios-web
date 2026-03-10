@@ -87,6 +87,30 @@ helios.setGraphFilter({
 helios.clearGraphFilter();
 ```
 
+Scene dimension can also be toggled directly from the API. This switches the
+camera mode/projection and asks any active dimension-aware layout to move into
+the matching 2D/3D mode:
+
+```js
+await helios.setMode('3d');
+await helios.setMode('2d');
+const currentMode = helios.mode(); // '2d' | '3d'
+```
+
+For reusable camera animation work, Helios also exposes direct pose capture and
+transition helpers:
+
+```js
+const pose = helios.cameraPose();
+
+await helios.transitionCamera({
+  mode: '3d',
+  projection: 'perspective',
+  target: [0, 0, 0],
+  distance: 900,
+}, { durationMs: 600 });
+```
+
 For reusable filter presets, use `HeliosFilter` and activate whichever one you need:
 
 ```js

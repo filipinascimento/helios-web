@@ -743,6 +743,49 @@ export class HeliosUI {
         const wrapper = document.createElement('div');
         wrapper.appendChild(themeRow);
 
+        const dimensionToggle = createToggleControl({
+          checked: false,
+          onLabel: '3D',
+          offLabel: '2D',
+          ariaLabel: 'Scene dimension',
+        });
+        dimensionToggle.dataset.testid = 'controls-appearance-dimension';
+
+        const syncDimensionToggle = (mode = null) => {
+          const nextMode = mode === '3d'
+            ? '3d'
+            : (this.helios?.mode?.() ?? this.helios?.options?.mode ?? '2d') === '3d' ? '3d' : '2d';
+          dimensionToggle.checked = nextMode === '3d';
+          dimensionToggle.disabled = typeof this.helios?.setMode !== 'function';
+        };
+
+        dimensionToggle.addEventListener('change', () => {
+          const targetMode = dimensionToggle.checked ? '3d' : '2d';
+          Promise.resolve(this.helios?.setMode?.(targetMode))
+            .catch((error) => {
+              // eslint-disable-next-line no-console
+              console.error(error);
+              syncDimensionToggle();
+            });
+        });
+
+        let unsubscribeMode = null;
+        const onModeChanged = (event) => syncDimensionToggle(event?.detail?.mode ?? event?.mode ?? null);
+        if (this.helios?.on) {
+          unsubscribeMode = this.helios.on('mode:changed', onModeChanged);
+        } else if (this.helios?.addEventListener) {
+          this.helios.addEventListener('mode:changed', onModeChanged);
+          unsubscribeMode = () => this.helios.removeEventListener('mode:changed', onModeChanged);
+        }
+        if (unsubscribeMode) this._controlCleanups.add(unsubscribeMode);
+        syncDimensionToggle();
+
+        wrapper.appendChild(createAlignedRow({
+          title: 'Dimension',
+          hint: 'Switch camera and active layout between 2D and 3D.',
+          controls: dimensionToggle,
+        }).row);
+
         wrapper.appendChild(createAlignedRow({
           title: 'Background',
           hint: 'Clear/background color (including opacity).',

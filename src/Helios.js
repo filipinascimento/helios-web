@@ -5,6 +5,13 @@ import { StaticLayout, WorkerLayout } from './layouts/Layout.js';
 import { D3Force3DLayout } from './layouts/d3force3dLayoutWorker.js';
 import { GpuForceLayout } from './layouts/GpuForceLayout.js';
 import { createRenderer } from './rendering/createRenderer.js';
+import {
+  CameraTransitionController,
+  applyCameraPose,
+  captureCameraPose,
+  createYawPitchQuaternion,
+  mergeCameraPose,
+} from './rendering/CameraTransitionController.js';
 import { AttributeTracker } from './rendering/AttributeTracker.js';
 import { PerformanceMonitor } from './utilities/PerformanceMonitor.js';
 import { bumpCounter } from './utilities/counters.js';
@@ -259,6 +266,53 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+function copyVec3(value, fallback = 0) {
+  return [
+    Number.isFinite(value?.[0]) ? value[0] : fallback,
+    Number.isFinite(value?.[1]) ? value[1] : fallback,
+    Number.isFinite(value?.[2]) ? value[2] : fallback,
+  ];
+}
+
+function resolve2DCenterFromPose(pose, fallbackZ = 0) {
+  const zoom = Math.max(1e-6, Number.isFinite(pose?.zoom) ? pose.zoom : 1);
+  const pan = pose?.pan2D ?? [0, 0, 0];
+  return [
+    -(Number(pan[0]) || 0) / zoom,
+    -(Number(pan[1]) || 0) / zoom,
+    Number.isFinite(fallbackZ) ? fallbackZ : 0,
+  ];
+}
+
+function resolve3DCenterFromPose(pose) {
+  const target = pose?.target ?? [0, 0, 0];
+  const pan = pose?.pan3D ?? [0, 0, 0];
+  return [
+    (Number(target[0]) || 0) + (Number(pan[0]) || 0),
+    (Number(target[1]) || 0) + (Number(pan[1]) || 0),
+    (Number(target[2]) || 0) + (Number(pan[2]) || 0),
+  ];
+}
+
+function estimate3DDistanceFrom2DZoom(pose) {
+  const viewportHeight = Math.max(1, Number(pose?.viewport?.height) || 1);
+  const zoom = Math.max(1e-6, Number.isFinite(pose?.zoom) ? pose.zoom : 1);
+  const fovRad = ((Number.isFinite(pose?.fov) ? pose.fov : 60) * Math.PI) / 180;
+  const tanHalfFov = Math.max(1e-6, Math.tan(fovRad * 0.5));
+  return viewportHeight / (2 * zoom * tanHalfFov);
+}
+
+function estimate2DZoomFrom3DDistance(pose) {
+  const viewportHeight = Math.max(1, Number(pose?.viewport?.height) || 1);
+  const distance = Math.max(1e-6, Number.isFinite(pose?.distance) ? pose.distance : 800);
+  const fovRad = ((Number.isFinite(pose?.fov) ? pose.fov : 60) * Math.PI) / 180;
+  const worldHeight = Math.max(1e-6, 2 * distance * Math.tan(fovRad * 0.5));
+  return viewportHeight / worldHeight;
+}
+
+const DEFAULT_MODE_SWITCH_DURATION_MS = 360;
+const DEFAULT_MODE_SWITCH_3D_ROTATION = createYawPitchQuaternion(-0.55, 0.42);
+
 function toFiniteNumber(value, fallback = 0) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
@@ -462,6 +516,7 @@ export const EVENTS = Object.freeze({
   LAYOUT_START: 'layout:start',
   LAYOUT_STOP: 'layout:stop',
   LAYOUT_CHANGED: 'layout:changed',
+  MODE_CHANGED: 'mode:changed',
 
   NODE_HOVER: 'node:hover',
   EDGE_HOVER: 'edge:hover',
@@ -916,6 +971,7 @@ export class Helios extends EventTarget {
       attributeUpdateTicks: 0,
     };
     this._cameraMoveRaf = null;
+    this._cameraTransitionController = null;
     this._picking = {
       node: { enabled: false },
       edge: { enabled: false },
@@ -1052,46 +1108,279 @@ export class Helios extends EventTarget {
 
   _snapshotCameraState() {
     const camera = this.renderer?.camera ?? null;
-    if (!camera) return null;
-    const state = {
-      mode: camera.mode ?? null,
-      projection: camera.projection ?? null,
-      zoom: Number.isFinite(camera.zoom) ? camera.zoom : null,
-      distance: Number.isFinite(camera.distance) ? camera.distance : null,
-      pan2D: ArrayBuffer.isView(camera.pan2D) ? Array.from(camera.pan2D) : null,
-      orbit3D: ArrayBuffer.isView(camera.orbit3D) ? Array.from(camera.orbit3D) : null,
-      viewport: camera.viewport ? { ...camera.viewport } : null,
-    };
-    return state;
+    return captureCameraPose(camera);
   }
 
   _restoreCameraState(state) {
-    if (!state) return;
     const camera = this.renderer?.camera ?? null;
-    if (!camera) return;
-    if ('_needsUpdate' in camera) camera._needsUpdate = true;
-    if (state.mode && typeof camera.setMode === 'function') {
-      camera.setMode(state.mode);
-    } else if (state.mode) {
-      camera.mode = state.mode;
+    applyCameraPose(camera, state);
+  }
+
+  _ensureCameraTransitionController() {
+    if (!this._cameraTransitionController) {
+      this._cameraTransitionController = new CameraTransitionController({
+        requestRender: () => this.scheduler?.requestRender?.(),
+      });
     }
-    if (state.projection && typeof camera.setProjection === 'function') {
-      camera.setProjection(state.projection);
-    } else if (state.projection) {
-      camera.projection = state.projection;
+    return this._cameraTransitionController;
+  }
+
+  _sampleRenderBounds(options = {}) {
+    const network = this._getRenderNetwork();
+    if (!network) return null;
+    return this._withPositionBufferAccess(() => {
+      const positions = this._readNodePositionViewUnsafe();
+      if (!positions) return null;
+      const nodeIndices = network?.nodeIndices ?? null;
+      if (!nodeIndices?.length) return null;
+      const paddingPx = Number.isFinite(options.paddingPx) ? Math.max(0, options.paddingPx) : 24;
+      const maxSamples = options.maxSamples ?? 50000;
+      const stride = 3;
+      const step = Math.max(1, Math.ceil(nodeIndices.length / Math.max(1, maxSamples)));
+
+      let minX = Infinity; let minY = Infinity; let minZ = Infinity;
+      let maxX = -Infinity; let maxY = -Infinity; let maxZ = -Infinity;
+      let sumX = 0; let sumY = 0; let sumZ = 0;
+      let count = 0;
+      let found = false;
+      for (let i = 0; i < nodeIndices.length; i += step) {
+        const id = nodeIndices[i];
+        const o = id * stride;
+        const x = positions[o];
+        const y = positions[o + 1];
+        const z = positions[o + 2];
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+        found = true;
+        sumX += x; sumY += y; sumZ += z;
+        count += 1;
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+        if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+      }
+      if (!found) return null;
+      return { paddingPx, minX, minY, minZ, maxX, maxY, maxZ, sumX, sumY, sumZ, count };
+    });
+  }
+
+  _collapseNodeDepthTo2DPlane(zValue = 0) {
+    const targetZ = Number.isFinite(zValue) ? zValue : 0;
+    let changed = false;
+    this._withPositionBufferAccess(() => {
+      const positions = this._readNodePositionViewUnsafe();
+      if (!positions?.length) return;
+      for (let offset = 0; offset < positions.length; offset += 3) {
+        if (!Number.isFinite(positions[offset + 2])) continue;
+        if (Math.abs(positions[offset + 2] - targetZ) <= 1e-9) continue;
+        positions[offset + 2] = targetZ;
+        changed = true;
+      }
+    });
+
+    if (changed) {
+      this.visuals?.markPositionsDirty?.();
     }
-    if (state.zoom != null) camera.zoom = state.zoom;
-    if (state.distance != null) camera.distance = state.distance;
-    if (state.pan2D && ArrayBuffer.isView(camera.pan2D)) {
-      camera.pan2D[0] = state.pan2D[0] ?? camera.pan2D[0];
-      camera.pan2D[1] = state.pan2D[1] ?? camera.pan2D[1];
+    return changed;
+  }
+
+  _build3DModeTransitionPoses(bounds, projection = 'perspective') {
+    const camera = this.renderer?.camera ?? null;
+    const current = captureCameraPose(camera);
+    if (!camera || !current) return null;
+
+    const centerZ = Number.isFinite(bounds?.sumZ) && Number.isFinite(bounds?.count) && bounds.count > 0
+      ? (bounds.sumZ / bounds.count)
+      : 0;
+    const startCenter = current.mode === '3d'
+      ? resolve3DCenterFromPose(current)
+      : resolve2DCenterFromPose(current, centerZ);
+    const startDistance = current.mode === '3d'
+      ? Math.max(camera.minDistance ?? 10, current.distance)
+      : clamp(
+        estimate3DDistanceFrom2DZoom(current),
+        camera.minDistance ?? 10,
+        camera.maxDistance ?? 25000,
+      );
+
+    const startPose = {
+      ...current,
+      mode: '3d',
+      projection,
+      target: new Float32Array(startCenter),
+      pan3D: new Float32Array([0, 0, 0]),
+      pan2D: copyVec3(current.pan2D),
+      distance: startDistance,
+      rotation: current.mode === '3d'
+        ? current.rotation
+        : new Float32Array([0, 0, 0, 1]),
+    };
+
+    const targetDistance = bounds
+      ? (() => {
+        const w = Math.max(1e-6, bounds.maxX - bounds.minX);
+        const h = Math.max(1e-6, bounds.maxY - bounds.minY);
+        const dz = Math.max(1e-6, bounds.maxZ - bounds.minZ);
+        const radius = 0.5 * Math.hypot(w, h, dz);
+        const fovRad = (Number.isFinite(current.fov) ? current.fov : 60) * (Math.PI / 180);
+        const distPerspective = radius / Math.max(1e-3, Math.tan(fovRad * 0.5));
+        const desired = projection === 'orthographic' ? radius * 1.2 : distPerspective * 1.25;
+        return clamp(
+          desired,
+          camera.minDistance ?? desired,
+          camera.maxDistance ?? desired,
+        );
+      })()
+      : startDistance;
+    const targetCenter = bounds
+      ? [
+        Number.isFinite(bounds.sumX) && bounds.count > 0 ? (bounds.sumX / bounds.count) : startCenter[0],
+        Number.isFinite(bounds.sumY) && bounds.count > 0 ? (bounds.sumY / bounds.count) : startCenter[1],
+        centerZ,
+      ]
+      : startCenter;
+
+    return {
+      startPose,
+      endPose: {
+        ...startPose,
+        target: new Float32Array(targetCenter),
+        pan3D: new Float32Array([0, 0, 0]),
+        distance: targetDistance,
+        rotation: new Float32Array(DEFAULT_MODE_SWITCH_3D_ROTATION),
+        pan2D: new Float32Array([0, 0, 0]),
+      },
+    };
+  }
+
+  _build2DModeTransitionPoses(bounds) {
+    const camera = this.renderer?.camera ?? null;
+    const current = captureCameraPose(camera);
+    if (!camera || !current) return null;
+
+    const source3D = current.mode === '3d'
+      ? current
+      : this._build3DModeTransitionPoses(bounds, 'perspective')?.endPose ?? null;
+    if (!source3D) return null;
+
+    const center = bounds
+      ? [
+        Number.isFinite(bounds.sumX) && bounds.count > 0 ? (bounds.sumX / bounds.count) : resolve3DCenterFromPose(source3D)[0],
+        Number.isFinite(bounds.sumY) && bounds.count > 0 ? (bounds.sumY / bounds.count) : resolve3DCenterFromPose(source3D)[1],
+        Number.isFinite(bounds.sumZ) && bounds.count > 0 ? (bounds.sumZ / bounds.count) : resolve3DCenterFromPose(source3D)[2],
+      ]
+      : resolve3DCenterFromPose(source3D);
+
+    const zoom = bounds
+      ? (() => {
+        const w = Math.max(1e-6, bounds.maxX - bounds.minX);
+        const h = Math.max(1e-6, bounds.maxY - bounds.minY);
+        const viewportW = Math.max(1, current.viewport?.width ?? this.size?.width ?? 1);
+        const viewportH = Math.max(1, current.viewport?.height ?? this.size?.height ?? 1);
+        const availW = Math.max(1, viewportW - 48);
+        const availH = Math.max(1, viewportH - 48);
+        return clamp(
+          Math.min(availW / w, availH / h),
+          camera.minZoom ?? 0.001,
+          camera.maxZoom ?? 10,
+        );
+      })()
+      : clamp(
+        estimate2DZoomFrom3DDistance(source3D),
+        camera.minZoom ?? 0.001,
+        camera.maxZoom ?? 10,
+      );
+
+    const matchedPerspectiveDistance = clamp(
+      estimate3DDistanceFrom2DZoom({
+        ...current,
+        zoom,
+      }),
+      camera.minDistance ?? 10,
+      camera.maxDistance ?? 25000,
+    );
+
+    const pre2D3D = {
+      ...source3D,
+      mode: '3d',
+      projection: 'perspective',
+      target: new Float32Array(center),
+      pan3D: new Float32Array([0, 0, 0]),
+      distance: matchedPerspectiveDistance,
+      rotation: new Float32Array([0, 0, 0, 1]),
+    };
+
+    return {
+      startPose: source3D,
+      pre2D3D,
+      start2DPose: {
+        ...pre2D3D,
+        mode: '2d',
+        projection: 'orthographic',
+        target: new Float32Array(center),
+        pan3D: new Float32Array([0, 0, 0]),
+        pan2D: new Float32Array([
+          -center[0] * zoom,
+          -center[1] * zoom,
+          0,
+        ]),
+        zoom,
+        rotation: new Float32Array([0, 0, 0, 1]),
+      },
+      endPose: {
+        ...current,
+        mode: '2d',
+        projection: 'orthographic',
+        target: new Float32Array(center),
+        pan3D: new Float32Array([0, 0, 0]),
+        pan2D: new Float32Array([
+          -center[0] * zoom,
+          -center[1] * zoom,
+          0,
+        ]),
+        zoom,
+        rotation: new Float32Array([0, 0, 0, 1]),
+      },
+    };
+  }
+
+  _applyModeToLayoutOptions(mode) {
+    const layoutOption = this.options?.layout ?? null;
+    if (!layoutOption || isLayoutInstance(layoutOption) || typeof layoutOption !== 'object') return;
+    const nextMode = mode === '3d' ? '3d' : '2d';
+    layoutOption.options = { ...(layoutOption.options ?? {}) };
+    if (
+      layoutOption.type === 'gpu-force'
+      || layoutOption.type === 'gpuforce'
+      || layoutOption.type === 'worker'
+      || layoutOption.type === 'd3force3d'
+      || layoutOption.type === 'd3-force-3d'
+    ) {
+      layoutOption.options.mode = nextMode;
     }
-    if (state.orbit3D && ArrayBuffer.isView(camera.orbit3D)) {
-      camera.orbit3D[0] = state.orbit3D[0] ?? camera.orbit3D[0];
-      camera.orbit3D[1] = state.orbit3D[1] ?? camera.orbit3D[1];
-      camera.orbit3D[2] = state.orbit3D[2] ?? camera.orbit3D[2];
+    if (layoutOption.type === 'd3force3d' || layoutOption.type === 'd3-force-3d') {
+      layoutOption.options.settings = {
+        ...(layoutOption.options.settings ?? {}),
+        use2D: nextMode !== '3d',
+      };
     }
-    camera.updateMatrices?.();
+  }
+
+  _applyModeToActiveLayout(mode) {
+    const layout = this._layout ?? null;
+    const nextMode = mode === '3d' ? '3d' : '2d';
+    if (!layout || typeof layout !== 'object') return false;
+    if (layout instanceof D3Force3DLayout) {
+      layout.setSettings?.({ mode: nextMode, use2D: nextMode !== '3d' });
+      return true;
+    }
+    if (layout instanceof GpuForceLayout || layout instanceof WorkerLayout) {
+      layout.setSettings?.({ mode: nextMode });
+      return true;
+    }
+    if (typeof layout.setSettings === 'function') {
+      layout.setSettings({ mode: nextMode });
+      return true;
+    }
+    return false;
   }
 
   async _createRendererAndTrackers(options = {}) {
@@ -1838,41 +2127,8 @@ export class Helios extends EventTarget {
 
   frameNetwork(options = {}) {
     const camera = this.renderer?.camera ?? null;
-    const network = this._getRenderNetwork();
-    if (!camera || !network) return false;
-
-    const sampledBounds = this._withPositionBufferAccess(() => {
-      const positions = this._readNodePositionViewUnsafe();
-      if (!positions) return null;
-      const nodeIndices = network?.nodeIndices ?? null;
-      if (!nodeIndices?.length) return null;
-      const paddingPx = Number.isFinite(options.paddingPx) ? Math.max(0, options.paddingPx) : 24;
-      const maxSamples = options.maxSamples ?? 50000;
-      const stride = 3;
-      const step = Math.max(1, Math.ceil(nodeIndices.length / Math.max(1, maxSamples)));
-
-      let minX = Infinity; let minY = Infinity; let minZ = Infinity;
-      let maxX = -Infinity; let maxY = -Infinity; let maxZ = -Infinity;
-      let sumX = 0; let sumY = 0; let sumZ = 0;
-      let count = 0;
-      let found = false;
-      for (let i = 0; i < nodeIndices.length; i += step) {
-        const id = nodeIndices[i];
-        const o = id * stride;
-        const x = positions[o];
-        const y = positions[o + 1];
-        const z = positions[o + 2];
-        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
-        found = true;
-        sumX += x; sumY += y; sumZ += z;
-        count += 1;
-        if (x < minX) minX = x; if (x > maxX) maxX = x;
-        if (y < minY) minY = y; if (y > maxY) maxY = y;
-        if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
-      }
-      if (!found) return null;
-      return { paddingPx, minX, minY, minZ, maxX, maxY, maxZ, sumX, sumY, sumZ, count };
-    });
+    if (!camera) return false;
+    const sampledBounds = this._sampleRenderBounds(options);
     if (!sampledBounds) return false;
 
     const { paddingPx, minX, minY, minZ, maxX, maxY, maxZ, sumX, sumY, sumZ, count } = sampledBounds;
@@ -2999,6 +3255,151 @@ export class Helios extends EventTarget {
   clearColor(color) {
     if (arguments.length === 0) return this.background();
     return this.background(color);
+  }
+
+  cameraPose() {
+    return captureCameraPose(this.renderer?.camera ?? null);
+  }
+
+  setCameraPose(pose, options = {}) {
+    const camera = this.renderer?.camera ?? null;
+    if (!camera || !pose || typeof pose !== 'object') return this;
+    const nextPose = mergeCameraPose(captureCameraPose(camera), pose);
+    applyCameraPose(camera, nextPose, { update: options.update !== false });
+    if (options.requestRender !== false) {
+      this.scheduler?.requestRender?.();
+    }
+    return this;
+  }
+
+  async transitionCamera(pose, options = {}) {
+    const camera = this.renderer?.camera ?? null;
+    if (!camera || !pose || typeof pose !== 'object') return this;
+    const fromPose = mergeCameraPose(captureCameraPose(camera), options.fromPose ?? {});
+    const toPose = mergeCameraPose(fromPose, pose);
+    await this._ensureCameraTransitionController().transition(camera, {
+      fromPose,
+      toPose,
+      durationMs: options.durationMs ?? DEFAULT_MODE_SWITCH_DURATION_MS,
+    });
+    if (options.requestRender !== false) {
+      this.scheduler?.requestRender?.();
+    }
+    return this;
+  }
+
+  stopCameraTransition() {
+    this._cameraTransitionController?.stop?.();
+    return this;
+  }
+
+  mode() {
+    return this.options?.mode === '3d' ? '3d' : '2d';
+  }
+
+  async setMode(mode, options = {}) {
+    const nextMode = mode === '3d' ? '3d' : '2d';
+    const previousMode = this.mode();
+    if (nextMode === previousMode) return this;
+
+    const positionSource = this.positions?.() ?? { source: 'network', delegate: null };
+    if (positionSource.source === 'delegate' && options.syncDelegate !== false) {
+      try {
+        await this.syncDelegatePositionsToNetwork();
+      } catch (_) {
+        // Ignore delegate readback failures and continue with the mode switch.
+      }
+    }
+
+    this.options.mode = nextMode;
+    const nextProjection = options.projection ?? (nextMode === '3d' ? 'perspective' : 'orthographic');
+    this.options.projection = nextProjection;
+    this._applyModeToLayoutOptions(nextMode);
+    this.visuals?.seedMissingPositions?.(
+      resolveSeedBoundsForLayout(this.options.layout, this.layers?.size, nextMode),
+    );
+
+    const layoutChanged = this._applyModeToActiveLayout(nextMode);
+    if (layoutChanged && options.reheat !== false) {
+      this._layout?.reheat?.();
+    }
+    this._layout?.requestUpdate?.();
+    this._enforcePositionSourcePolicy(this._layout, { resetInterpolation: false });
+    this.scheduler?.requestGeometry?.();
+    this.scheduler?.requestLayout?.('mode');
+    this.scheduler?.requestRender?.();
+    this._labels?.requestFullReselect?.('mode');
+    this._refreshUIBindings?.();
+
+    const camera = this.renderer?.camera ?? null;
+    const animateCamera = options.animate !== false;
+    if (camera) {
+      const bounds = this._sampleRenderBounds(options.frame ?? {}) ?? null;
+      if (nextMode === '3d') {
+        const plan = this._build3DModeTransitionPoses(bounds, nextProjection);
+        if (plan) {
+          if (animateCamera) {
+            await this._ensureCameraTransitionController().transition(camera, {
+              fromPose: plan.startPose,
+              toPose: plan.endPose,
+              durationMs: options.cameraDurationMs ?? DEFAULT_MODE_SWITCH_DURATION_MS,
+            });
+          } else {
+            applyCameraPose(camera, plan.endPose);
+          }
+        } else {
+          applyCameraPose(camera, {
+            ...captureCameraPose(camera),
+            mode: '3d',
+            projection: nextProjection,
+          });
+        }
+      } else {
+        const plan = this._build2DModeTransitionPoses(bounds);
+        if (plan) {
+          if (animateCamera) {
+            const durationMs = options.cameraDurationMs ?? DEFAULT_MODE_SWITCH_DURATION_MS;
+            const controller = this._ensureCameraTransitionController();
+            await controller.transition(camera, {
+              fromPose: plan.startPose,
+              toPose: plan.pre2D3D,
+              durationMs: durationMs * 0.7,
+            });
+          }
+          if (options.flattenDepth !== false) {
+            this._collapseNodeDepthTo2DPlane(0);
+          }
+          if (animateCamera) {
+            await this._ensureCameraTransitionController().transition(camera, {
+              fromPose: plan.start2DPose,
+              toPose: plan.endPose,
+              durationMs: (options.cameraDurationMs ?? DEFAULT_MODE_SWITCH_DURATION_MS) * 0.3,
+            });
+          } else {
+            applyCameraPose(camera, plan.endPose);
+          }
+        } else {
+          if (options.flattenDepth !== false) {
+            this._collapseNodeDepthTo2DPlane(0);
+          }
+          applyCameraPose(camera, {
+            ...captureCameraPose(camera),
+            mode: '2d',
+            projection: nextProjection,
+          });
+        }
+      }
+    }
+
+    if (layoutChanged) {
+      this._emitLayoutChanged(this._layout);
+    }
+    this.emit(EVENTS.MODE_CHANGED, {
+      mode: nextMode,
+      previousMode,
+      projection: nextProjection,
+    });
+    return this;
   }
 
   density(options) {

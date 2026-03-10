@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { PNG } from 'pngjs';
 
 async function waitForHelios(page) {
   await page.waitForFunction(() => Boolean(window.__helios && window.__helios.ready));
@@ -21,6 +22,29 @@ async function enableToggle(locator) {
   }
   if ((await toggle.getAttribute('aria-checked')) !== 'true') await toggle.click();
   await expect(toggle).toHaveAttribute('aria-checked', 'true');
+}
+
+function parseScreenshot(buffer) {
+  return new Promise((resolve, reject) => {
+    const png = new PNG();
+    png.parse(buffer, (error, data) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(data);
+    });
+  });
+}
+
+async function countNonBackgroundPixels(page) {
+  const screenshot = await page.screenshot({ fullPage: false });
+  const png = await parseScreenshot(screenshot);
+  let nonBackground = 0;
+  for (let i = 0; i < png.data.length; i += 4) {
+    if (png.data[i] > 10 || png.data[i + 1] > 10 || png.data[i + 2] > 10) nonBackground += 1;
+  }
+  return nonBackground;
 }
 
 test.describe('scene panel: tabs and appearance controls', () => {
@@ -112,6 +136,17 @@ test.describe('scene panel: tabs and appearance controls', () => {
 
     // Theme row is directly visible in Appearance (not in a subpanel).
     await expect(scenePanel.locator('.helios-ui-label__title', { hasText: 'Theme' }).first()).toBeVisible();
+
+    const dimensionToggle = scenePanel.locator('[role="switch"][aria-label="Scene dimension"]').first();
+    await expect(dimensionToggle).toBeVisible();
+    await expect(dimensionToggle).toHaveAttribute('aria-checked', 'false');
+    await dimensionToggle.click();
+    await expect(dimensionToggle).toHaveAttribute('aria-checked', 'true');
+    const sceneMode3D = await page.evaluate(() => window.__helios.mode());
+    expect(sceneMode3D).toBe('3d');
+
+    await page.evaluate(() => window.__helios.setMode('2d'));
+    await expect(dimensionToggle).toHaveAttribute('aria-checked', 'false');
 
     const nodesHeader = scenePanel.getByRole('button', { name: 'Nodes' }).first();
     if ((await nodesHeader.getAttribute('aria-expanded')) === 'false') {
@@ -267,5 +302,66 @@ test.describe('scene panel: tabs and appearance controls', () => {
     await semanticZoomInput.dispatchEvent('change');
     const semanticZoomExponent = await page.evaluate(() => window.__helios.renderer?.graphLayer?.semanticZoomExponent ?? null);
     expect(semanticZoomExponent).toBeCloseTo(0.65, 3);
+  });
+
+  test('dimension toggle animates into 3D and keeps layout=none scenes visible', async ({ page }) => {
+    await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=400');
+    await waitForHelios(page);
+
+    const scenePanel = panelByTitle(page, 'Scene');
+    await expect(scenePanel).toBeVisible();
+    await scenePanel.getByRole('button', { name: 'Appearance' }).first().click();
+
+    const dimensionToggle = scenePanel.locator('[role="switch"][aria-label="Scene dimension"]').first();
+    await expect(dimensionToggle).toHaveAttribute('aria-checked', 'false');
+
+    const beforePixels = await countNonBackgroundPixels(page);
+    expect(beforePixels).toBeGreaterThan(500);
+
+    await dimensionToggle.click();
+    await expect(dimensionToggle).toHaveAttribute('aria-checked', 'true');
+    await page.waitForTimeout(80);
+
+    const midTransition = await page.evaluate(() => {
+      const camera = window.__helios?.renderer?.camera;
+      return camera ? {
+        mode: camera.mode,
+        projection: camera.projection,
+        rotation: Array.from(camera.rotation ?? []),
+      } : null;
+    });
+    expect(midTransition?.mode).toBe('3d');
+    expect(midTransition?.projection).toBe('perspective');
+    expect(midTransition?.rotation?.some((value) => Math.abs(value) > 1e-3)).toBe(true);
+
+    await page.waitForTimeout(450);
+    const afterPixels = await countNonBackgroundPixels(page);
+    expect(afterPixels).toBeGreaterThan(500);
+  });
+
+  test('dimension toggle keeps layout=none scenes visible when going from 3D to 2D', async ({ page }) => {
+    await page.goto('/?renderer=webgl&layout=none&mode=3d&nodes=400');
+    await waitForHelios(page);
+
+    const scenePanel = panelByTitle(page, 'Scene');
+    await expect(scenePanel).toBeVisible();
+    await scenePanel.getByRole('button', { name: 'Appearance' }).first().click();
+
+    const dimensionToggle = scenePanel.locator('[role="switch"][aria-label="Scene dimension"]').first();
+    await expect(dimensionToggle).toHaveAttribute('aria-checked', 'true');
+
+    await dimensionToggle.click();
+    await expect(dimensionToggle).toHaveAttribute('aria-checked', 'false');
+    await page.waitForTimeout(450);
+
+    const cameraState = await page.evaluate(() => {
+      const camera = window.__helios?.renderer?.camera;
+      return camera ? { mode: camera.mode, projection: camera.projection } : null;
+    });
+    expect(cameraState?.mode).toBe('2d');
+    expect(cameraState?.projection).toBe('orthographic');
+
+    const pixels = await countNonBackgroundPixels(page);
+    expect(pixels).toBeGreaterThan(500);
   });
 });

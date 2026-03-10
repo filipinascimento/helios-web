@@ -67,6 +67,16 @@ function createZeroableUnitLogBinding(binding) {
   });
 }
 
+function hash32(value) {
+  let x = value >>> 0;
+  x = (x ^ (x >>> 16)) >>> 0;
+  x = Math.imul(x, 0x7feb352d) >>> 0;
+  x = (x ^ (x >>> 15)) >>> 0;
+  x = Math.imul(x, 0x846ca68b) >>> 0;
+  x = (x ^ (x >>> 16)) >>> 0;
+  return x >>> 0;
+}
+
 export class D3Force3DLayout extends Layout {
   constructor(network, visuals, options = {}) {
     super(network, visuals);
@@ -86,6 +96,47 @@ export class D3Force3DLayout extends Layout {
     this.lastUpdate = 0;
     this.optionsDirty = true;
     this.seededPositions = false;
+  }
+
+  _seedPlanarDepthIfNeeded() {
+    const nodeIndices = this.network?.nodeIndices ?? null;
+    const positions = this.visuals?.nodePositions ?? null;
+    if (!nodeIndices?.length || !positions?.length || nodeIndices.length <= 1) return false;
+
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (let i = 0; i < nodeIndices.length; i += 1) {
+      const offset = (nodeIndices[i] >>> 0) * 3;
+      const z = positions[offset + 2];
+      if (!Number.isFinite(z)) continue;
+      if (z < minZ) minZ = z;
+      if (z > maxZ) maxZ = z;
+    }
+
+    const zRange = Number.isFinite(minZ) && Number.isFinite(maxZ) ? (maxZ - minZ) : 0;
+    const depth = Number.isFinite(this.options?.depth) ? Math.max(0, this.options.depth) : 0;
+    const radius = Number.isFinite(this.options?.radius) ? Math.max(1, this.options.radius) : 150;
+    const planarTolerance = Math.max(1e-6, depth * 1e-5, radius * 1e-6);
+    if (zRange > planarTolerance) return false;
+
+    const centerZ = Number.isFinite(this.settings?.center?.[2]) ? this.settings.center[2] : 0;
+    const jitterBase = depth > 1e-6 ? depth : Math.max(1, radius * 0.25);
+    const jitterAmplitude = Math.max(1e-3, jitterBase * 0.04);
+    let jitterMean = 0;
+    for (let i = 0; i < nodeIndices.length; i += 1) {
+      const nodeId = nodeIndices[i] >>> 0;
+      jitterMean += (((hash32((nodeId + 1) >>> 0) + 0.5) / 4294967296) - 0.5) * jitterAmplitude;
+    }
+    jitterMean /= nodeIndices.length;
+
+    for (let i = 0; i < nodeIndices.length; i += 1) {
+      const nodeId = nodeIndices[i] >>> 0;
+      const offset = nodeId * 3;
+      const jitter = ((((hash32((nodeId + 1) >>> 0) + 0.5) / 4294967296) - 0.5) * jitterAmplitude) - jitterMean;
+      positions[offset + 2] = centerZ + jitter;
+    }
+    this.visuals?.markPositionsDirty?.();
+    return true;
   }
 
   async initialize() {
@@ -187,13 +238,38 @@ export class D3Force3DLayout extends Layout {
 
   setSettings(next = {}) {
     if (!next || typeof next !== 'object') return this;
+    const hadUse2D = this.settings.use2D === true;
+    let nextMode = this.options?.mode === '3d' ? '3d' : '2d';
+
+    if (Object.prototype.hasOwnProperty.call(next, 'mode')) {
+      nextMode = next.mode === '3d' ? '3d' : '2d';
+      this.options.mode = nextMode;
+    }
     Object.entries(next).forEach(([key, value]) => {
       if (key in DEFAULT_SETTINGS) {
         this.settings[key] = value;
       }
     });
+    if (Object.prototype.hasOwnProperty.call(next, 'use2D')) {
+      this.settings.use2D = next.use2D === true;
+      this.options.mode = this.settings.use2D ? '2d' : '3d';
+    } else if (Object.prototype.hasOwnProperty.call(next, 'mode')) {
+      this.settings.use2D = nextMode !== '3d';
+    }
+
+    const switchedInto3D = hadUse2D && this.settings.use2D === false;
+    if (switchedInto3D) {
+      const apply = () => this._seedPlanarDepthIfNeeded();
+      if (typeof this.visuals?.withBufferAccess === 'function') {
+        this.visuals.withBufferAccess(apply);
+      } else {
+        apply();
+      }
+    }
+
     this.options = {
       ...this.options,
+      mode: this.settings.use2D ? '2d' : '3d',
       settings: {
         ...(this.options.settings ?? {}),
         ...this.settings,

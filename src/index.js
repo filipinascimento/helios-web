@@ -19,6 +19,13 @@ export {
 } from './colors/colormaps.js';
 export { LayeredRenderer } from './rendering/engine/LayeredRenderer.js';
 export { Camera } from './rendering/Camera.js';
+export {
+  CameraTransitionController,
+  captureCameraPose,
+  applyCameraPose,
+  mergeCameraPose,
+  createYawPitchQuaternion,
+} from './rendering/CameraTransitionController.js';
 export { WebGL2Renderer } from './rendering/WebGL2Renderer.js';
 export { WebGPURenderer } from './rendering/WebGPURenderer.js';
 export { PositionDelegate } from './delegates/PositionDelegate.js';

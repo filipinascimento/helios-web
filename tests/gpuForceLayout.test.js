@@ -499,6 +499,35 @@ test('D3Force3DLayout exposes shared parameter bindings and can reheat alpha', (
   assert.equal(layout.settings.alpha, 1);
 });
 
+test('D3Force3DLayout switches between 2D and 3D modes and seeds planar depth on 3D activation', () => {
+  const network = createStubNetwork();
+  const visuals = {
+    nodePositions: new Float32Array([
+      0, 0, 0,
+      1, 0, 0,
+      2, 0, 0,
+      3, 0, 0,
+    ]),
+    withBufferAccess: (fn) => fn(),
+    seedMissingPositions: () => {},
+    markPositionsDirty: () => {},
+  };
+
+  const layout = new D3Force3DLayout(network, visuals, { mode: '2d', settings: { use2D: true } });
+  layout.setSettings({ mode: '3d' });
+
+  assert.equal(layout.options.mode, '3d');
+  assert.equal(layout.settings.use2D, false);
+
+  const zValues = [];
+  for (let i = 2; i < visuals.nodePositions.length; i += 3) {
+    zValues.push(visuals.nodePositions[i]);
+  }
+  assert.ok(zValues.some((value) => Math.abs(value) > 1e-9));
+  const meanZ = zValues.reduce((sum, value) => sum + value, 0) / zValues.length;
+  assert.ok(Math.abs(meanZ) < 1e-6);
+});
+
 test('GpuForceLayout exposes shared parameter bindings and can reheat alpha', () => {
   const network = createStubNetwork();
   const visuals = {};

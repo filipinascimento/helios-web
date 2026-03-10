@@ -508,11 +508,11 @@ export class Camera {
       const centerX = vpWidth * 0.5;
       const centerY = vpHeight * 0.5;
       const worldX = (screenX - centerX - this.pan2D[0]) / this.zoom;
-      const worldY = (screenY - centerY - this.pan2D[1]) / this.zoom;
+      const worldY = (centerY - screenY - this.pan2D[1]) / this.zoom;
       this.zoom = newZoom;
       // Keep the cursor's world position stationary by compensating pan around centered origin.
       this.pan2D[0] = screenX - centerX - worldX * this.zoom;
-      this.pan2D[1] = screenY - centerY - worldY * this.zoom;
+      this.pan2D[1] = centerY - screenY - worldY * this.zoom;
     } else {
       const scale = Math.exp(event.deltaY * 0.001);
       const next = this.distance * scale;
@@ -548,7 +548,7 @@ export class Camera {
 
     if (this.mode === '2d') {
       this.pan2D[0] += dx;
-      this.pan2D[1] += dy;
+      this.pan2D[1] -= dy;
     } else if (event.shiftKey) {
       this.pan3DBy(dx, dy);
     } else {
@@ -668,7 +668,7 @@ export class Camera {
       this.right[1] = 0;
       this.right[2] = 0;
       this.up[0] = 0;
-      this.up[1] = -1;
+      this.up[1] = 1;
       this.up[2] = 0;
       this.forward[0] = 0;
       this.forward[1] = 0;
@@ -756,8 +756,8 @@ export class Camera {
       this.projectionMatrix,
       -width * 0.5,
       width * 0.5,
-      height * 0.5,
       -height * 0.5,
+      height * 0.5,
       this.near2D,
       this.far2D,
     );
