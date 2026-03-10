@@ -1,5 +1,6 @@
 import { bumpCounter } from '../../utilities/counters.js';
 import { ResourceCache } from '../resources/ResourceCache.js';
+import { resolveWebGPUCanvasSampleCount } from '../qualityOptions.js';
 
 const PRESENT_WGSL = /* wgsl */ `
 struct VertexOut {
@@ -38,13 +39,16 @@ export class WebGPUDevice {
     this.type = 'webgpu';
     this.size = { width: 1, height: 1, devicePixelRatio: 1 };
     this.depthTexture = null;
-    this.depthSize = { width: 0, height: 0 };
+    this.depthSize = { width: 0, height: 0, sampleCount: 1 };
+    this.colorTexture = null;
+    this.colorSize = { width: 0, height: 0, sampleCount: 1 };
     this.depthFormat = 'depth24plus';
     this.limits = null;
     this.maxStorageBufferBindingSize = null;
     this.requestedLimits = null;
     this.counters = { beginFrame: 0, presentFramebuffer: 0 };
     this.resourceCache = new ResourceCache(this.type);
+    this.sampleCount = 1;
   }
 
   static async isSupported() {
@@ -92,6 +96,7 @@ export class WebGPUDevice {
       throw new Error('Unable to create WebGPU context');
     }
     this.format = navigator.gpu.getPreferredCanvasFormat();
+    this.sampleCount = resolveWebGPUCanvasSampleCount(this.options);
     this.context.configure({
       device: this.device,
       format: this.format,
@@ -161,16 +166,22 @@ export class WebGPUDevice {
     const targetTexture = renderTarget ? renderTarget.texture : this.context.getCurrentTexture();
     const width = renderTarget?.width ?? this.canvas.width;
     const height = renderTarget?.height ?? this.canvas.height;
-    const colorView = targetTexture.createView();
+    const sampleCount = renderTarget ? 1 : this.sampleCount;
+    const colorTexture = sampleCount > 1
+      ? this.ensureColorTexture(width, height, sampleCount)
+      : targetTexture;
+    const colorView = colorTexture.createView();
+    const resolveTargetView = sampleCount > 1 ? targetTexture.createView() : null;
     const depthView = renderTarget?.depthTexture
       ? renderTarget.depthTexture.createView()
-      : this.ensureDepthTexture(width, height)?.createView();
+      : this.ensureDepthTexture(width, height, sampleCount)?.createView();
 
     const encoder = this.device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
       colorAttachments: [
         {
           view: colorView,
+          ...(resolveTargetView ? { resolveTarget: resolveTargetView } : {}),
           clearValue: clearColor
             ? { r: clearColor[0], g: clearColor[1], b: clearColor[2], a: clearColor[3] }
             : { r: 0, g: 0, b: 0, a: 1 },
@@ -203,10 +214,12 @@ export class WebGPUDevice {
       quad: this.quadVertexBuffer,
       target: renderTarget,
       colorView,
+      resolveTargetView,
       depthView,
       width,
       height,
       viewport: rect ?? null,
+      sampleCount,
     };
   }
 
@@ -219,8 +232,11 @@ export class WebGPUDevice {
 
   destroy() {
     this.resourceCache?.destroy(this);
-    this.depthTexture?.destroy?.();
     this.quadVertexBuffer?.destroy?.();
+    this.colorTexture?.destroy?.();
+    this.colorTexture = null;
+    this.depthTexture?.destroy?.();
+    this.depthTexture = null;
   }
 
   createFramebuffer(width, height) {
@@ -307,23 +323,43 @@ export class WebGPUDevice {
     return result;
   }
 
-  destroy() {
-    this.quadVertexBuffer?.destroy?.();
-    this.depthTexture?.destroy?.();
-    this.depthTexture = null;
-  }
-
-  ensureDepthTexture(width, height) {
+  ensureDepthTexture(width, height, sampleCount = 1) {
     if (!width || !height) return null;
-    if (!this.depthTexture || this.depthSize.width !== width || this.depthSize.height !== height) {
+    if (
+      !this.depthTexture
+      || this.depthSize.width !== width
+      || this.depthSize.height !== height
+      || this.depthSize.sampleCount !== sampleCount
+    ) {
       this.depthTexture?.destroy?.();
       this.depthTexture = this.device.createTexture({
         size: { width, height, depthOrArrayLayers: 1 },
         format: this.depthFormat,
         usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        sampleCount,
       });
-      this.depthSize = { width, height };
+      this.depthSize = { width, height, sampleCount };
     }
     return this.depthTexture;
+  }
+
+  ensureColorTexture(width, height, sampleCount = 1) {
+    if (!width || !height || sampleCount <= 1) return null;
+    if (
+      !this.colorTexture
+      || this.colorSize.width !== width
+      || this.colorSize.height !== height
+      || this.colorSize.sampleCount !== sampleCount
+    ) {
+      this.colorTexture?.destroy?.();
+      this.colorTexture = this.device.createTexture({
+        size: { width, height, depthOrArrayLayers: 1 },
+        format: this.format,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        sampleCount,
+      });
+      this.colorSize = { width, height, sampleCount };
+    }
+    return this.colorTexture;
   }
 }

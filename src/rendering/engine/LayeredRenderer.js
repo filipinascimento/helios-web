@@ -3,6 +3,7 @@ import { GraphLayerWebGPU } from './GraphLayerWebGPU.js';
 import { WebGL2Device } from './WebGL2Device.js';
 import { WebGPUDevice } from './WebGPUDevice.js';
 import { Camera } from '../Camera.js';
+import { getWindowDevicePixelRatio, resolveEffectiveDevicePixelRatio } from '../qualityOptions.js';
 
 function isDebugWebGLRenderEnabled() {
   if (globalThis.__HELIOS_DEBUG_WEBGL_RENDER === true) return true;
@@ -26,7 +27,7 @@ function debugWebGLRender(message, detail) {
  */
 export class LayeredRenderer {
   constructor(canvas, options = {}) {
-    const pixelRatio = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+    const pixelRatio = resolveEffectiveDevicePixelRatio(getWindowDevicePixelRatio(), options);
     this.canvas = canvas;
     this.options = options;
     this.clearColor = options.clearColor ?? [0.01, 0.01, 0.02, 1];

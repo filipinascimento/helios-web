@@ -347,7 +347,8 @@ export class GraphLayerWebGPUBase extends GraphLayer {
     const useOutlineAttributes = Boolean(variant?.outlineWidthBuffer || variant?.outlineColorBuffer);
     const blendKey = options.blendKey ?? 'alpha';
     const depthMode = options.depthMode ?? 'depth';
-    const key = `${this.getNodeVariantKey(useIndices, variant)}|b:${blendKey}|d:${depthMode}`;
+    const sampleCount = Number.isFinite(options.sampleCount) && options.sampleCount > 1 ? 4 : 1;
+    const key = `${this.getNodeVariantKey(useIndices, variant)}|b:${blendKey}|d:${depthMode}|s:${sampleCount}`;
     if (this.nodePipelineCache.has(key)) return this.nodePipelineCache.get(key);
     const device = this.device?.device;
     const nodeModule = this.getNodeModule(useIndices, variant);
@@ -384,6 +385,7 @@ export class GraphLayerWebGPUBase extends GraphLayer {
         targets: [{ format: this.device.format, blend }],
       },
       depthStencil,
+      multisample: { count: sampleCount },
       primitive: { topology: 'triangle-strip' },
     });
 
@@ -404,7 +406,7 @@ export class GraphLayerWebGPUBase extends GraphLayer {
     }
   }
 
-  createEdgePipelines(key, blend, edgeModule, depthStencil, fragmentEntryPoint, useIndices, edgeVariant, depthWriteEnabled) {
+  createEdgePipelines(key, blend, edgeModule, depthStencil, fragmentEntryPoint, useIndices, edgeVariant, depthWriteEnabled, sampleCount = 1) {
     const device = this.device?.device;
     if (!device || !edgeModule || !depthStencil) return;
     const edgeLayout = this.edgeBindGroupLayout;
@@ -417,6 +419,7 @@ export class GraphLayerWebGPUBase extends GraphLayer {
         targets: [{ format: this.device.format, blend }],
       },
       depthStencil: { ...depthStencil, depthWriteEnabled: Boolean(depthWriteEnabled) },
+      multisample: { count: sampleCount },
       primitive: { topology: 'line-list' },
     });
 
@@ -439,21 +442,23 @@ export class GraphLayerWebGPUBase extends GraphLayer {
         targets: [{ format: this.device.format, blend }],
       },
       depthStencil: { ...depthStencil, depthWriteEnabled: Boolean(depthWriteEnabled) },
+      multisample: { count: sampleCount },
       primitive: { topology: 'triangle-strip' },
     });
 
     const variantKey = this.getEdgeVariantKey(useIndices, edgeVariant);
-    const cacheKey = `${key}|${variantKey}|d${depthWriteEnabled ? 1 : 0}`;
+    const cacheKey = `${key}|${variantKey}|d${depthWriteEnabled ? 1 : 0}|s${sampleCount}`;
     this.edgePipelineCache.set(cacheKey, linePipeline);
     this.edgeQuadPipelineCache.set(cacheKey, quadPipeline);
   }
 
-  getEdgePipelinesForMode(mode, gpuDevice, useIndices, edgeVariant) {
+  getEdgePipelinesForMode(mode, gpuDevice, useIndices, edgeVariant, sampleCount = 1) {
     if (!gpuDevice) return null;
     const { key, blend, fragment } = this.getBlendForMode(mode);
     const variantKey = this.getEdgeVariantKey(useIndices, edgeVariant);
     const depthWriteEnabled = this.edgeDepthWrite === true;
-    const cacheKey = `${key}|${variantKey}|d${depthWriteEnabled ? 1 : 0}`;
+    const resolvedSampleCount = Number.isFinite(sampleCount) && sampleCount > 1 ? 4 : 1;
+    const cacheKey = `${key}|${variantKey}|d${depthWriteEnabled ? 1 : 0}|s${resolvedSampleCount}`;
     if (key === 'alpha' && this.edgePipelineCache.has(cacheKey)) {
       return { line: this.edgePipelineCache.get(cacheKey), quad: this.edgeQuadPipelineCache.get(cacheKey) };
     }
@@ -470,6 +475,7 @@ export class GraphLayerWebGPUBase extends GraphLayer {
       useIndices,
       edgeVariant,
       depthWriteEnabled,
+      resolvedSampleCount,
     );
     return { line: this.edgePipelineCache.get(cacheKey), quad: this.edgeQuadPipelineCache.get(cacheKey) };
   }
@@ -842,8 +848,9 @@ export class GraphLayerWebGPUBase extends GraphLayer {
     });
   }
 
-  getResolvePipeline(mode, swapchainFormat) {
-    const key = `${mode ?? 'default'}|${swapchainFormat}`;
+  getResolvePipeline(mode, swapchainFormat, sampleCount = 1) {
+    const resolvedSampleCount = Number.isFinite(sampleCount) && sampleCount > 1 ? 4 : 1;
+    const key = `${mode ?? 'default'}|${swapchainFormat}|s:${resolvedSampleCount}`;
     if (this.edgeResolvePipelineCache.has(key)) {
       return this.edgeResolvePipelineCache.get(key);
     }
@@ -902,6 +909,7 @@ export class GraphLayerWebGPUBase extends GraphLayer {
         depthWriteEnabled: false,
         depthCompare: 'always',
       },
+      multisample: { count: resolvedSampleCount },
       primitive: { topology: 'triangle-strip' },
     });
 
@@ -975,6 +983,7 @@ export class GraphLayerWebGPUBase extends GraphLayer {
       colorAttachments: [
         {
           view: targetView,
+          ...(context.resolveTargetView ? { resolveTarget: context.resolveTargetView } : {}),
           loadOp: 'load',
           storeOp: 'store',
         },
@@ -990,7 +999,7 @@ export class GraphLayerWebGPUBase extends GraphLayer {
         : {}),
     });
     applyViewport(resolvePass);
-    resolvePass.setPipeline(this.getResolvePipeline(mode, context.format));
+    resolvePass.setPipeline(this.getResolvePipeline(mode, context.format, context.sampleCount ?? 1));
     resolvePass.setBindGroup(0, this.edgeResolveBindGroup);
     resolvePass.setVertexBuffer(0, context.quad);
     resolvePass.draw(4, 1, 0, 0);

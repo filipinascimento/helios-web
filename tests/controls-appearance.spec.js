@@ -302,6 +302,48 @@ test.describe('scene panel: tabs and appearance controls', () => {
     await semanticZoomInput.dispatchEvent('change');
     const semanticZoomExponent = await page.evaluate(() => window.__helios.renderer?.graphLayer?.semanticZoomExponent ?? null);
     expect(semanticZoomExponent).toBeCloseTo(0.65, 3);
+
+    const supersamplingSelect = scenePanel.locator('select[aria-label="Supersampling"]').first();
+    await expect(supersamplingSelect).toBeVisible();
+
+    const initialSampling = await page.evaluate(() => {
+      const canvas = document.querySelector('canvas.helios-layer-canvas3d');
+      const rect = canvas?.getBoundingClientRect?.();
+      return {
+        windowDpr: window.devicePixelRatio || 1,
+        sizeDpr: window.__helios?.size?.devicePixelRatio ?? null,
+        canvasWidth: canvas?.width ?? null,
+        cssWidth: rect?.width ?? null,
+      };
+    });
+    expect(initialSampling.sizeDpr).toBeCloseTo(
+      initialSampling.windowDpr < 2 ? initialSampling.windowDpr * 2 : initialSampling.windowDpr,
+      3,
+    );
+
+    await supersamplingSelect.selectOption('off');
+    await page.waitForFunction(() => {
+      const base = window.devicePixelRatio || 1;
+      return Math.abs((window.__helios?.size?.devicePixelRatio ?? 0) - base) < 1e-6;
+    });
+    const supersamplingOff = await page.evaluate(() => ({
+      sizeDpr: window.__helios?.size?.devicePixelRatio ?? null,
+      value: window.__helios?.supersampling?.() ?? null,
+    }));
+    expect(supersamplingOff.value).toBe('off');
+    expect(supersamplingOff.sizeDpr).toBeCloseTo(initialSampling.windowDpr, 3);
+
+    await supersamplingSelect.selectOption('2x');
+    await page.waitForFunction(() => {
+      const base = window.devicePixelRatio || 1;
+      return Math.abs((window.__helios?.size?.devicePixelRatio ?? 0) - (base * 2)) < 1e-6;
+    });
+    const supersampling2x = await page.evaluate(() => ({
+      sizeDpr: window.__helios?.size?.devicePixelRatio ?? null,
+      value: window.__helios?.supersampling?.() ?? null,
+    }));
+    expect(supersampling2x.value).toBe('2x');
+    expect(supersampling2x.sizeDpr).toBeCloseTo(initialSampling.windowDpr * 2, 3);
   });
 
   test('dimension toggle animates into 3D and keeps layout=none scenes visible', async ({ page }) => {

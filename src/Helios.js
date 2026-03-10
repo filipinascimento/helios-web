@@ -5,6 +5,7 @@ import { StaticLayout, WorkerLayout } from './layouts/Layout.js';
 import { D3Force3DLayout } from './layouts/d3force3dLayoutWorker.js';
 import { GpuForceLayout } from './layouts/GpuForceLayout.js';
 import { createRenderer } from './rendering/createRenderer.js';
+import { resolveSupersamplingPreset, supersamplingPresetToOption } from './rendering/qualityOptions.js';
 import {
   CameraTransitionController,
   applyCameraPose,
@@ -760,6 +761,11 @@ export class Helios extends EventTarget {
       label: 'Background',
       description: 'Renderer clear/background color',
     },
+    supersampling: {
+      type: 'string',
+      label: 'Supersampling',
+      description: 'Canvas resolution scaling: Off, Auto, or 2x.',
+    },
   });
 
   uiBindingInfo(name) {
@@ -814,7 +820,13 @@ export class Helios extends EventTarget {
       this.scheduler?.requestGeometry?.();
     };
     const container = options.container ?? document.getElementById('app') ?? document.body;
-    this.layers = new LayerManager(container, { suppressBrowserGestures: options.suppressBrowserGestures !== false });
+    this.layers = new LayerManager(container, {
+      suppressBrowserGestures: options.suppressBrowserGestures !== false,
+      supersampling: options.supersampling,
+      forceSupersample: options.forceSupersample,
+      supersamplingAutoFactor: options.supersamplingAutoFactor,
+      supersamplingAutoThreshold: options.supersamplingAutoThreshold,
+    });
     this.visuals = new VisualAttributes(network, this.debug);
     this.nodeMapper = new MapperCollection('node', network, this.markMappersDirty, this.debug);
     this.edgeMapper = new MapperCollection('edge', network, this.markMappersDirty, this.debug);
@@ -1394,6 +1406,11 @@ export class Helios extends EventTarget {
       mode: this.options.mode ?? '2d',
       projection: this.options.projection ?? 'perspective',
       suppressBrowserGestures: this.options.suppressBrowserGestures !== false,
+      antialias: this.options.antialias,
+      supersampling: this.options.supersampling,
+      forceSupersample: this.options.forceSupersample,
+      supersamplingAutoFactor: this.options.supersamplingAutoFactor,
+      supersamplingAutoThreshold: this.options.supersamplingAutoThreshold,
       edgeRendering: this.options.edgeRendering,
       transparencyModeEdges: this.options.transparencyModeEdges,
       edgeEndpointTrim: this.options.edgeEndpointTrim,
@@ -2352,6 +2369,11 @@ export class Helios extends EventTarget {
       mode: this.options.mode ?? '2d',
       projection: this.options.projection ?? 'perspective',
       suppressBrowserGestures: this.options.suppressBrowserGestures !== false,
+      antialias: this.options.antialias,
+      supersampling: this.options.supersampling,
+      forceSupersample: this.options.forceSupersample,
+      supersamplingAutoFactor: this.options.supersamplingAutoFactor,
+      supersamplingAutoThreshold: this.options.supersamplingAutoThreshold,
       edgeRendering: this.options.edgeRendering,
       transparencyModeEdges: this.options.transparencyModeEdges,
       edgeEndpointTrim: this.options.edgeEndpointTrim,
@@ -3255,6 +3277,24 @@ export class Helios extends EventTarget {
   clearColor(color) {
     if (arguments.length === 0) return this.background();
     return this.background(color);
+  }
+
+  supersampling(value) {
+    if (arguments.length === 0) {
+      return resolveSupersamplingPreset(this.options?.supersampling, {
+        forceSupersample: this.options?.forceSupersample === true,
+      });
+    }
+    const preset = resolveSupersamplingPreset(value, {
+      forceSupersample: this.options?.forceSupersample === true,
+    });
+    this.options.supersampling = supersamplingPresetToOption(preset, {
+      forceSupersample: this.options?.forceSupersample === true,
+    });
+    this.options.forceSupersample = false;
+    this.layers?.setSupersampling?.(this.options.supersampling);
+    this._emitUIBindingChange('supersampling', preset);
+    return this;
   }
 
   cameraPose() {

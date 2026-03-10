@@ -57,3 +57,31 @@ test('WebGL2Device.readPixels skips invalid framebuffers before issuing a GPU re
   assert.equal(warnings.length, 1);
   assert.match(String(warnings[0][0]), /invalid framebuffer target/i);
 });
+
+test('WebGL2Device.initialize forwards the antialias option to the WebGL context', async () => {
+  const fakeGl = {
+    BLEND: 0x0BE2,
+    SRC_ALPHA: 0x0302,
+    ONE_MINUS_SRC_ALPHA: 0x0303,
+    DEPTH_TEST: 0x0B71,
+    LEQUAL: 0x0203,
+    enable() {},
+    blendFunc() {},
+    depthFunc() {},
+    clearDepth() {},
+  };
+  const calls = [];
+  const canvas = {
+    getContext(type, options) {
+      calls.push({ type, options });
+      return fakeGl;
+    },
+  };
+  const device = new WebGL2Device(canvas, { antialias: false });
+  device.setupPresentPipeline = () => {};
+  await device.initialize();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].type, 'webgl2');
+  assert.equal(calls[0].options.antialias, false);
+  assert.equal(calls[0].options.premultipliedAlpha, true);
+});

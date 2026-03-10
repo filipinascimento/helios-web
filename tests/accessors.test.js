@@ -37,6 +37,42 @@ test('renderer accessors store pending values before renderer exists', () => {
   assert.deepEqual(helios._pendingRendererProps.get('clearColor'), [1, 1, 1, 1]);
 });
 
+test('supersampling accessor updates layer sizing mode live', () => {
+  const layerCalls = [];
+  const bindingEvents = [];
+  const helios = Object.create(Helios.prototype);
+  helios.options = {};
+  helios.layers = {
+    setSupersampling(value) {
+      layerCalls.push(value);
+    },
+  };
+  helios._emitUIBindingChange = (name, value) => {
+    bindingEvents.push({ name, value });
+  };
+
+  assert.equal(helios.supersampling(), 'auto');
+
+  assert.equal(helios.supersampling('off'), helios);
+  assert.equal(helios.supersampling(), 'off');
+  assert.equal(helios.options.supersampling, false);
+
+  assert.equal(helios.supersampling('2x'), helios);
+  assert.equal(helios.supersampling(), '2x');
+  assert.equal(helios.options.supersampling, 2);
+
+  assert.equal(helios.supersampling('auto'), helios);
+  assert.equal(helios.supersampling(), 'auto');
+  assert.equal(helios.options.supersampling, 'auto');
+
+  assert.deepEqual(layerCalls, [false, 2, 'auto']);
+  assert.deepEqual(bindingEvents, [
+    { name: 'supersampling', value: 'off' },
+    { name: 'supersampling', value: '2x' },
+    { name: 'supersampling', value: 'auto' },
+  ]);
+});
+
 test('label accessors proxy configuration to the label controller', () => {
   const calls = { render: 0, setConfig: 0, request: 0 };
   const state = {

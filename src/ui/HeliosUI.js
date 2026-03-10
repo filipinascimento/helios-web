@@ -901,6 +901,41 @@ export class HeliosUI {
           'edgeOpacityBase',
           'edgeEndpointTrim',
         ]));
+
+        if (typeof this.helios?.supersampling === 'function') {
+          const supersampling = this.bindHeliosAccessor('supersampling');
+          const supersamplingSelect = document.createElement('select');
+          supersamplingSelect.className = 'helios-ui-select';
+          supersamplingSelect.setAttribute('aria-label', 'Supersampling');
+          tooltips.attachTooltip(supersamplingSelect, 'Canvas resolution scale. Auto keeps retina screens native and boosts lower-DPR screens.');
+          for (const option of [
+            { value: 'off', label: 'Off' },
+            { value: 'auto', label: 'Auto' },
+            { value: '2x', label: '2x' },
+          ]) {
+            const element = document.createElement('option');
+            element.value = option.value;
+            element.textContent = option.label;
+            supersamplingSelect.appendChild(element);
+          }
+          const syncSupersampling = (value) => {
+            const next = value === 'off' || value === '2x' ? value : 'auto';
+            supersamplingSelect.value = next;
+          };
+          const unsubscribeSupersampling = supersampling.subscribe((value) => {
+            syncSupersampling(value);
+          });
+          supersamplingSelect.addEventListener('change', () => {
+            supersampling.write(supersamplingSelect.value, { source: 'ui', event: 'change' });
+          });
+          this._controlCleanups.add(() => unsubscribeSupersampling());
+          advanced.appendChild(createAlignedRow({
+            title: 'Supersampling',
+            hint: 'Adjust canvas backing resolution live. Auto matches the legacy default.',
+            controls: supersamplingSelect,
+          }).row);
+        }
+
         const nodeBlendRow = createToggleRow('nodeBlendWithEdges');
         if (nodeBlendRow) advanced.appendChild(nodeBlendRow);
         const edgeDepthRow = createToggleRow('edgeDepthWrite');

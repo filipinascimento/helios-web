@@ -1,6 +1,17 @@
-export function createAlignedRowEl({ title, hint, controls, attachTooltip }) {
+export function createAlignedRowEl({
+  title,
+  hint,
+  controls,
+  attachTooltip,
+  rowClass = null,
+}) {
   const row = document.createElement('div');
   row.className = 'helios-ui-row helios-ui-row--aligned';
+  if (rowClass) {
+    for (const className of String(rowClass).split(/\s+/).filter(Boolean)) {
+      row.classList.add(className);
+    }
+  }
   const label = document.createElement('div');
   label.className = 'helios-ui-label';
 
@@ -17,7 +28,10 @@ export function createAlignedRowEl({ title, hint, controls, attachTooltip }) {
   const controlWrap = document.createElement('div');
   controlWrap.className = 'helios-ui-row__controls';
   if (controls) controlWrap.appendChild(controls);
+  const hasSliderControls =
+    Boolean(controls?.classList?.contains('helios-ui-slider-controls'))
+    || Boolean(controls?.querySelector?.('.helios-ui-slider-controls'));
+  if (hasSliderControls) row.classList.add('helios-ui-row--slider');
   row.appendChild(controlWrap);
   return { row, titleEl, controlWrap };
 }
-

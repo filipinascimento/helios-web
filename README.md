@@ -55,6 +55,17 @@ helios.labels({
   maxChars: 0, // 0 disables truncation
   maxRows: 1, // >1 enables wrapping with ellipsis
 });
+
+// Render quality controls:
+// - supersampling defaults to "auto": DPR < 2 gets a 2x backing-store boost,
+//   retina-class screens stay at native DPR unless you force it on.
+// - antialias defaults to WebGL on / WebGPU off unless you opt in.
+const crispHelios = new Helios(network, {
+  container: '#app',
+  antialias: true,     // WebGL context AA, or 4x MSAA on the WebGPU canvas pass
+  supersampling: 'auto', // false | true | number | 'auto'
+  // forceSupersample: true, // legacy alias for always applying the auto factor
+});
 ```
 
 The same API powers the example under `docs/examples/basic/main.js`, making it

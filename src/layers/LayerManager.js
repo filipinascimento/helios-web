@@ -1,3 +1,5 @@
+import { getWindowDevicePixelRatio, resolveEffectiveDevicePixelRatio } from '../rendering/qualityOptions.js';
+
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 function resolveContainer(target) {
@@ -24,6 +26,7 @@ export class LayerManager {
     if (!this.container) {
       throw new Error('A valid container element is required');
     }
+    this.options = options;
 
     const suppressBrowserGestures = options.suppressBrowserGestures !== false;
 
@@ -88,7 +91,7 @@ export class LayerManager {
 
     this.layers = new Map();
     this.resizeListeners = new Set();
-    const pixelRatio = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+    const pixelRatio = resolveEffectiveDevicePixelRatio(getWindowDevicePixelRatio(), this.options);
     this.size = { width: 0, height: 0, devicePixelRatio: pixelRatio };
 
     this.boundResize = () => this.handleResize();
@@ -135,9 +138,14 @@ export class LayerManager {
     return () => this.resizeListeners.delete(callback);
   }
 
+  setSupersampling(supersampling) {
+    this.options.supersampling = supersampling;
+    this.handleResize();
+  }
+
   handleResize() {
     const rect = this.root.getBoundingClientRect();
-    const pixelRatio = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+    const pixelRatio = resolveEffectiveDevicePixelRatio(getWindowDevicePixelRatio(), this.options);
     const width = Math.max(1, Math.floor(rect.width));
     const height = Math.max(1, Math.floor(rect.height));
 

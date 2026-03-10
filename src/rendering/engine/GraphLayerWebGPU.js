@@ -1183,9 +1183,16 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       blendKey: nodeBlend.key,
       blend: nodeBlend.blend,
       depthMode: nodeBlendWithEdges ? 'none' : 'depth',
+      sampleCount: context.sampleCount ?? 1,
     });
     if (!nodePipeline) return;
-    const edgePipelines = this.getEdgePipelinesForMode(transparencyMode, gpuDevice, useEdgeIndices, edgeVariant);
+    const edgePipelines = this.getEdgePipelinesForMode(
+      transparencyMode,
+      gpuDevice,
+      useEdgeIndices,
+      edgeVariant,
+      context.sampleCount ?? 1,
+    );
 
     const drawNodes = (passEncoder) => {
       const nodeBindGroup = useNodeOutlineAttributes ? this.nodeBindGroupOutline : this.nodeBindGroup;

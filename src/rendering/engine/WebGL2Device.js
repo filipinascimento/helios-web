@@ -1,5 +1,6 @@
 import { bumpCounter } from '../../utilities/counters.js';
 import { ResourceCache } from '../resources/ResourceCache.js';
+import { resolveWebGLAntialiasEnabled } from '../qualityOptions.js';
 
 function warnOnce(owner, key, message, detail) {
   if (!owner) return;
@@ -91,7 +92,8 @@ export class WebGL2Device {
   }
 
   async initialize() {
-    const gl = this.canvas.getContext('webgl2', { antialias: true, premultipliedAlpha: true });
+    this.antialias = resolveWebGLAntialiasEnabled(this.options);
+    const gl = this.canvas.getContext('webgl2', { antialias: this.antialias, premultipliedAlpha: true });
     if (!gl) {
       throw new Error('WebGL2 is not available in this environment');
     }

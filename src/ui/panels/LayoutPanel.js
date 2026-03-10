@@ -393,6 +393,7 @@ export class LayoutPanel {
 
     const addBindingRow = (binding) => {
       let controls = null;
+      let rowClass = null;
       let refresh = () => {};
       let sample = null;
       let destroy = () => {};
@@ -486,6 +487,7 @@ export class LayoutPanel {
         const inputMax = resolveFiniteBound(binding.inputMax, binding.max);
         const hasRange = Number.isFinite(sliderMin) && Number.isFinite(sliderMax);
         if (hasRange) {
+          rowClass = 'helios-ui-row--slider';
           if (usesLogScale(binding)) {
             const logControls = new LogSliderControls({
               value: binding.get?.(),
@@ -562,6 +564,7 @@ export class LayoutPanel {
         title: binding.label ?? binding.key,
         hint: binding.hint ?? null,
         controls,
+        rowClass,
       });
       bindingsRoot.appendChild(row.row);
       controlsByKey.set(binding.key, { refresh, sample, destroy });
