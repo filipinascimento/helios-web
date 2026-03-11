@@ -33,3 +33,34 @@ test('webgpu renderer uses indirect graph layer @webgpu', async ({ page }) => {
     mode: 'gpu',
   });
 });
+
+test('webgpu renderer creates edge pipelines for the active edge variant @webgpu', async ({ page }) => {
+  await page.goto('/tests/fixtures/blank.html');
+
+  const info = await page.evaluate(async () => {
+    document.body.innerHTML = '<div id="app" style="width:400px;height:300px;"></div>';
+    const { createDeterministicHelios } = await import('/src/tests/deterministicNetwork.js');
+    const { helios } = await createDeterministicHelios(document.getElementById('app'), 'webgpu');
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const graphLayer = helios?.renderer?.graphLayer;
+    const device = helios?.renderer?.device?.device ?? null;
+    const visualConfig = graphLayer?.getVisualConfig?.(helios.network) ?? null;
+    const edgeVariant = graphLayer?.resolveEdgeVariant?.(visualConfig) ?? null;
+    const pipelines = graphLayer?.getEdgePipelinesForMode?.(
+      graphLayer?.edgeTransparencyMode ?? 'alpha',
+      device,
+      true,
+      edgeVariant,
+      helios?.renderer?.device?.sampleCount ?? 1,
+    ) ?? null;
+    return {
+      graphLayer: graphLayer?.constructor?.name ?? null,
+      hasLine: Boolean(pipelines?.line),
+      hasQuad: Boolean(pipelines?.quad),
+    };
+  });
+
+  expect(info.graphLayer).toBe('GraphLayerWebGPU');
+  expect(info.hasLine).toBe(true);
+  expect(info.hasQuad).toBe(true);
+});

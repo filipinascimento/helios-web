@@ -546,6 +546,10 @@ layout (location = 0) in vec2 a_corner;
 layout (location = 1) in uint a_edgeId;
 
 uniform mat4 u_viewProjection;
+uniform vec3 u_cameraPosition;
+uniform vec3 u_cameraUp;
+uniform vec3 u_cameraRight;
+uniform int u_is2D;
 uniform vec2 u_viewport;
 uniform sampler2D u_nodePositions;
 uniform sampler2D u_nodePositionsFrom;
@@ -738,20 +742,31 @@ void main() {
     : 'fetchEdgeWidthPair(a_edgeId)'};
   float rawWidth = mix(widthPair.x, widthPair.y, segmentMix);
   float width = max((u_edgeWidthBase + u_edgeWidthScale * rawWidth) * widthMul, 0.0) * semanticScale;
-
-  vec4 clipStart = u_viewProjection * vec4(startPos, 1.0);
-  vec4 clipEnd = u_viewProjection * vec4(endPos, 1.0);
-  vec2 ndcStart = clipStart.xy / clipStart.w;
-  vec2 ndcEnd = clipEnd.xy / clipEnd.w;
-  vec2 ndcDir = ndcEnd - ndcStart;
-  float dirLen = max(length(ndcDir), 1e-5);
-  vec2 perp = vec2(-ndcDir.y, ndcDir.x) / dirLen;
   float halfWidth = max(width, 1.0) * 0.5;
-  vec2 pixelToNdc = vec2(2.0 / max(u_viewport.x, 1.0), 2.0 / max(u_viewport.y, 1.0));
-  vec2 offsetNdc = perp * halfWidth * pixelToNdc;
-  vec4 clipPos = mix(clipStart, clipEnd, segmentMix);
-  clipPos.xy += offsetNdc * a_corner.y * 1.5;
-  gl_Position = clipPos;
+  vec3 centerPos = mix(startPos, endPos, segmentMix);
+  vec3 widthDir;
+  if (u_is2D == 1) {
+    widthDir = normalize(vec3(-dirN.y, dirN.x, 0.0));
+  } else {
+    vec3 viewDir = u_cameraPosition - centerPos;
+    float viewDirLen = length(viewDir);
+    viewDir = viewDirLen > 1e-5 ? (viewDir / viewDirLen) : vec3(0.0, 0.0, 1.0);
+    widthDir = cross(viewDir, dirN);
+    float widthDirLen = length(widthDir);
+    if (widthDirLen <= 1e-5) {
+      vec3 cameraUp = normalize(u_cameraUp);
+      widthDir = cross(cameraUp, dirN);
+      widthDirLen = length(widthDir);
+    }
+    if (widthDirLen <= 1e-5) {
+      vec3 cameraRight = normalize(u_cameraRight);
+      widthDir = cross(dirN, cameraRight);
+      widthDirLen = length(widthDir);
+    }
+    widthDir = widthDirLen > 1e-5 ? (widthDir / widthDirLen) : vec3(0.0, 1.0, 0.0);
+  }
+  vec3 worldPos = centerPos + widthDir * halfWidth * a_corner.y;
+  gl_Position = u_viewProjection * vec4(worldPos, 1.0);
 
   vec4 sourceColor = fetchEdgeColor(a_edgeId, false);
   vec4 targetColor = fetchEdgeColor(a_edgeId, true);

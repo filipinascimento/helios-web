@@ -8,7 +8,6 @@ import {
   DEFAULT_NODE_SIZE,
   DEFAULT_EDGE_WIDTH,
 } from '../../pipeline/constants.js';
-import { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './GraphLayerCommon.js';
 import { createGraphWebGLSources } from './shaders/graphWebGL.js';
 
 const {
@@ -210,6 +209,10 @@ const EDGE_UNIFORM_NAMES = [
 
 const EDGE_QUAD_UNIFORM_NAMES = [
   'u_viewProjection',
+  'u_cameraPosition',
+  'u_cameraUp',
+  'u_cameraRight',
+  'u_is2D',
   'u_viewport',
   'u_nodePositions',
   'u_nodePositionsFrom',
@@ -1598,9 +1601,6 @@ export class GraphLayerWebGL extends GraphLayer {
     if (!cameraUniforms) return;
     const is2D = cameraUniforms.mode === '2d';
     const zoom2D = is2D ? Math.max(1e-3, cameraUniforms.view?.[0] ?? 1) : 1;
-    const edgeWidthFactor = is2D ? (zoom2D / EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL) : 1.0;
-    const globalEdgeWidthBase = this.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
-    const globalEdgeWidthScale = this.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
     const semanticZoomExponent = Number.isFinite(this.semanticZoomExponent) ? this.semanticZoomExponent : 0;
 
     let topologyVersions = { node: 0, edge: 0 };
@@ -2112,6 +2112,28 @@ export class GraphLayerWebGL extends GraphLayer {
             const uniforms = edgeEntry.uniforms;
             gl.useProgram(edgeEntry.program);
             setMat4(uniforms, 'u_viewProjection', cameraUniforms.viewProjection);
+            set3f(
+              uniforms,
+              'u_cameraPosition',
+              cameraUniforms.position?.[0] ?? 0,
+              cameraUniforms.position?.[1] ?? 0,
+              cameraUniforms.position?.[2] ?? 1,
+            );
+            set3f(
+              uniforms,
+              'u_cameraUp',
+              cameraUniforms.up?.[0] ?? 0,
+              cameraUniforms.up?.[1] ?? 1,
+              cameraUniforms.up?.[2] ?? 0,
+            );
+            set3f(
+              uniforms,
+              'u_cameraRight',
+              cameraUniforms.right?.[0] ?? 1,
+              cameraUniforms.right?.[1] ?? 0,
+              cameraUniforms.right?.[2] ?? 0,
+            );
+            set1i(uniforms, 'u_is2D', cameraUniforms?.mode === '2d' ? 1 : 0);
             set2f(uniforms, 'u_viewport', passViewportWidth, passViewportHeight);
             set1i(uniforms, 'u_nodePositions', 0);
             set1i(uniforms, 'u_nodePositionsFrom', 12);
@@ -2216,8 +2238,8 @@ export class GraphLayerWebGL extends GraphLayer {
               defaultNodeEndpointSize[0],
               defaultNodeEndpointSize[1],
             );
-            set1f(uniforms, 'u_edgeWidthBase', globalEdgeWidthBase);
-            set1f(uniforms, 'u_edgeWidthScale', globalEdgeWidthScale);
+            set1f(uniforms, 'u_edgeWidthBase', this.edgeWidthBase);
+            set1f(uniforms, 'u_edgeWidthScale', this.edgeWidthScale);
             set1f(uniforms, 'u_edgeOpacityBase', this.edgeOpacityBase);
             set1f(uniforms, 'u_edgeOpacityScale', this.edgeOpacityScale);
             set1f(uniforms, 'u_nodeSizeBase', this.nodeSizeBase);

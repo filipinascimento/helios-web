@@ -642,20 +642,33 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   startPos = startPos + dir * trimStart;
   endPos = endPos - dir * trimEnd;
 
-  let clipStart = camera.viewProjection * vec4<f32>(startPos, 1.0);
-  let clipEnd = camera.viewProjection * vec4<f32>(endPos, 1.0);
-  let ndcStart = clipStart.xy / clipStart.w;
-  let ndcEnd = clipEnd.xy / clipEnd.w;
-  var ndcDir = ndcEnd - ndcStart;
-  let lenDir = max(length(ndcDir), 1e-5);
-  ndcDir = ndcDir / vec2<f32>(lenDir);
-  let perp = vec2<f32>(-ndcDir.y, ndcDir.x);
   let halfWidth = max(width, 1.0) * 0.5;
-  let pixelToNdc = vec2<f32>(2.0 / max(camera.viewport.x, 1.0), 2.0 / max(camera.viewport.y, 1.0));
-  let offsetNdc = perp * halfWidth * pixelToNdc;
-  var clipPos = clipStart + (clipEnd - clipStart) * cornerT;
-  let adjusted = clipPos.xy + offsetNdc * input.corner.y * 1.5;
-  clipPos = vec4<f32>(adjusted.x, adjusted.y, clipPos.z, clipPos.w);
+  let centerPos = mix(startPos, endPos, cornerT);
+  var widthDir = vec3<f32>(-dir.y, dir.x, 0.0);
+  if (camera.position.w <= 0.5) {
+    let viewDirRaw = camera.position.xyz - centerPos;
+    let viewDirLen = max(length(viewDirRaw), 1e-5);
+    let viewDir = viewDirRaw / vec3<f32>(viewDirLen);
+    widthDir = cross(viewDir, dir);
+    var widthDirLen = length(widthDir);
+    if (widthDirLen <= 1e-5) {
+      widthDir = cross(normalize(camera.up.xyz), dir);
+      widthDirLen = length(widthDir);
+    }
+    if (widthDirLen <= 1e-5) {
+      widthDir = cross(dir, normalize(camera.right.xyz));
+      widthDirLen = length(widthDir);
+    }
+    widthDir = select(
+      vec3<f32>(0.0, 1.0, 0.0),
+      widthDir / vec3<f32>(max(widthDirLen, 1e-5)),
+      widthDirLen > 1e-5
+    );
+  } else {
+    widthDir = normalize(widthDir);
+  }
+  let worldPos = centerPos + widthDir * halfWidth * input.corner.y;
+  let clipPos = camera.viewProjection * vec4<f32>(worldPos, 1.0);
   var output : EdgeVertexOutput;
   output.position = clipPos;
   let colorStart = select(globals.edgeColorStart, edgeColors.data[edgeId * 2u], USE_EDGE_COLOR_BUFFER);

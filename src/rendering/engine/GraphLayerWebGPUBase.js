@@ -3,7 +3,6 @@ import {
   EDGE_WEIGHTED_RESOLVE_WGSL,
   createEdgeWeightedResolveTonemapWGSL,
 } from './shaders/graphWebGPUBase.js';
-import { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './GraphLayerCommon.js';
 import { GraphLayer } from './GraphLayer.js';
 import { FrameGraphRunner } from './framegraph/FrameGraphRunner.js';
 import { bumpCounter } from '../../utilities/counters.js';
@@ -540,12 +539,7 @@ export class GraphLayerWebGPUBase extends GraphLayer {
     const edgeWidthPair = (edgeCfg?.width?.mode === 'uniform' && Array.isArray(edgeCfg?.width?.value)) ? edgeCfg.width.value : [1, 1];
     const edgeOpacityPair = (edgeCfg?.opacity?.mode === 'uniform' && Array.isArray(edgeCfg?.opacity?.value)) ? edgeCfg.opacity.value : [1, 1];
     const edgeEndpointSizePair = (edgeCfg?.endpointSize?.mode === 'uniform' && Array.isArray(edgeCfg?.endpointSize?.value)) ? edgeCfg.endpointSize.value : [1, 1];
-    const is2D = cameraUniforms?.mode === '2d';
-    const zoom2D = is2D ? Math.max(1e-3, cameraUniforms?.view?.[0] ?? 1) : 1;
     const semanticZoomExponent = Number.isFinite(this.semanticZoomExponent) ? this.semanticZoomExponent : 0;
-    const edgeWidthFactor = is2D ? (zoom2D / EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL) : 1.0;
-    const edgeWidthBase = this.edgeWidthBase * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
-    const edgeWidthScale = this.edgeWidthScale * EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL * edgeWidthFactor;
 
     let offset = 0;
     this.globalsArray[offset++] = this.nodeOpacityBase;
@@ -556,8 +550,8 @@ export class GraphLayerWebGPUBase extends GraphLayer {
     this.globalsArray[offset++] = this.nodeOutlineWidthScale;
     this.globalsArray[offset++] = this.edgeOpacityBase;
     this.globalsArray[offset++] = this.edgeOpacityScale;
-    this.globalsArray[offset++] = edgeWidthBase;
-    this.globalsArray[offset++] = edgeWidthScale;
+    this.globalsArray[offset++] = this.edgeWidthBase;
+    this.globalsArray[offset++] = this.edgeWidthScale;
     // _pad0.x = semantic zoom exponent, _pad0.y reserved
     this.globalsArray[offset++] = semanticZoomExponent;
     this.globalsArray[offset++] = 0;

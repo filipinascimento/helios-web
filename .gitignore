@@ -173,3 +173,6 @@ dist*/
 /utilities/downloads/
 /artifacts/
 .tmp*
+/output/
+/paper_downloads
+/.playwright
