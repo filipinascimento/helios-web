@@ -16,13 +16,13 @@ function resolveMode(params) {
 
 function resolveLayoutType(params) {
   const layout = params.get('layout');
-  if (!layout) return 'force3d';
+  if (!layout) return 'gpuforce';
   const normalized = layout.toLowerCase();
   if (normalized === 'none' || normalized === 'static') return 'none';
   if (normalized === 'jitter' || normalized === 'legacy') return 'jitter';
   if (normalized === 'd3force3d' || normalized === 'd3-force-3d') return 'd3force3d';
   if (normalized === 'gpuforce' || normalized === 'gpu-force' || normalized === 'gpu') return 'gpuforce';
-  return 'force3d';
+  return 'gpuforce';
 }
 
 function resolveNodeCount(params) {
@@ -174,11 +174,11 @@ export async function bootstrapDemoFixture() {
                 outputScale: 6.5,
                 kRepulsion: 0.07,
                 kAttraction: 0.62,
-                kGravity: 0.00035,
-                eta: 0.04,
+                kGravity: 0.005,
+                eta: 0.4,
                 damping: 0.92,
                 maxStep: 2.5,
-                alphaDecay: 0.001,
+                alphaDecay: 0.005,
                 updateIntervalMs: 0,
               },
           }
@@ -188,6 +188,7 @@ export async function bootstrapDemoFixture() {
               options: {
                 settings: {
                   use2D: mode !== '3d',
+                  alphaDecay: 0.003,
                 },
               },
             }

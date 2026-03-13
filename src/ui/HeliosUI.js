@@ -14,6 +14,7 @@ import { colormaps } from '../colors/colormaps.js';
 import { VISUAL_ATTRIBUTE_MAP } from '../pipeline/constants.js';
 import { MappersPanel } from './panels/MappersPanel.js';
 import { LayoutPanel } from './panels/LayoutPanel.js';
+import { LegendsPanel } from './panels/LegendsPanel.js';
 import { clampNumber } from './utils/numbers.js';
 import { toHex8 } from './utils/colors.js';
 import { isPublicAttributeName } from './utils/attributes.js';
@@ -140,6 +141,10 @@ export class HeliosUI {
     this._controlCleanups = new Set();
     this._boundAttributesById = new Map();
     this._heliosBindingUnsubscribe = null;
+    const dockMetricsUnsubscribe = this.panelManager.onDockMetricsChange?.((insets) => {
+      this.helios?.overlayInsets?.(insets);
+    });
+    if (dockMetricsUnsubscribe) this._controlCleanups.add(dockMetricsUnsubscribe);
   }
 
   _ensureHeliosBindingListener() {
@@ -4503,6 +4508,7 @@ export class HeliosUI {
     this._controlCleanups.clear();
     this._boundAttributesById.clear();
     this._heliosBindingUnsubscribe = null;
+    this.helios?.overlayInsets?.({ top: 0, right: 0, bottom: 0, left: 0 });
     this.panelManager?.destroy();
     if (this.helios?.layers && typeof this.helios.layers.removeLayer === 'function') {
       this.helios.layers.removeLayer(this.layerName);
@@ -6511,5 +6517,9 @@ export class HeliosUI {
 
   createLayoutPanel(options = {}) {
     return new LayoutPanel(this, options).create();
+  }
+
+  createLegendsPanel(options = {}) {
+    return new LegendsPanel(this, options).create();
   }
 }

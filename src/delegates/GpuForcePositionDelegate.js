@@ -24,13 +24,13 @@ const DEFAULT_OPTIONS = {
   linkDistance: 1,
   kRepulsion: 0.07,
   kAttraction: 0.62,
-  kGravity: 0.00035,
-  eta: 0.04,
+  kGravity: 0.005,
+  eta: 0.4,
   damping: 0.92,
   maxStep: 2.5,
   minDistance: 0.15,
   alpha: 1,
-  alphaDecay: 0.001,
+  alphaDecay: 0.005,
   alphaTarget: 0,
   alphaMin: 0.001,
   recenter: true,
@@ -2813,6 +2813,12 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     };
   }
 
+  resetDynamicStateFromNetwork(context = {}) {
+    this.markTopologyDirty('position-seed');
+    this.ensureSynchronized(context);
+    return this;
+  }
+
   _resolveBackend(context = {}) {
     const renderer = context.renderer ?? context.helios?.renderer ?? null;
     const rendererDevice = renderer?.device ?? null;
@@ -2924,6 +2930,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       && synchronizeReason !== 'backend-change'
       && synchronizeReason !== 'network:replaced'
       && synchronizeReason !== 'options'
+      && synchronizeReason !== 'position-seed'
       && synchronizeReason !== 'init';
     const preserveDynamicState = Boolean(shouldPreferPreserve
       && this._nodeCapacity > 0

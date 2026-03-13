@@ -4,6 +4,8 @@ import { createAlignedRowEl } from '../controls/createAlignedRowEl.js';
 import { SuggestedSliderControls } from '../controls/SuggestedSliderControls.js';
 import { LogSliderControls } from '../controls/LogSliderControls.js';
 
+const CURRENT_POSITION_ATTRIBUTE = '_helios_visuals_position';
+
 function toFinite(value, fallback = null) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
@@ -91,15 +93,11 @@ function resolveHistoryBound(bound) {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
-function buildSparklinePath(samples, width, height, scale = 'linear', bounds = null) {
+export function buildSparklinePath(samples, width, height, scale = 'linear', bounds = null) {
   const values = samples
     .map((sample) => Number(sample))
     .filter((sample) => Number.isFinite(sample));
   if (!values.length) return '';
-  if (values.length === 1) {
-    const y = height * 0.5;
-    return `M 0 ${y.toFixed(2)} L ${width.toFixed(2)} ${y.toFixed(2)}`;
-  }
 
   const transformed = values
     .map((sample) => formatHistoryValue(sample, scale))
@@ -115,6 +113,11 @@ function buildSparklinePath(samples, width, height, scale = 'linear', bounds = n
     ? formatHistoryValue(boundMax, scale)
     : Math.max(...transformed);
   const span = Math.max(1e-9, max - min);
+  if (transformed.length === 1) {
+    const normalized = span <= 1e-9 ? 0.5 : Math.max(0, Math.min(1, (transformed[0] - min) / span));
+    const y = height - (normalized * height);
+    return `M 0 ${y.toFixed(2)}`;
+  }
   return transformed.map((value, index) => {
     const x = (index / Math.max(1, transformed.length - 1)) * width;
     const normalized = span <= 1e-9 ? 0.5 : Math.max(0, Math.min(1, (value - min) / span));
@@ -172,6 +175,7 @@ function buildLayoutInstance(helios, value) {
       options: {
         settings: {
           use2D: mode !== '3d',
+          alphaDecay: 0.003,
         },
       },
     });
@@ -192,12 +196,12 @@ function buildLayoutInstance(helios, value) {
         linkDistance: 1,
         kRepulsion: 0.07,
         kAttraction: 0.62,
-        kGravity: 0.00035,
-        eta: 0.04,
+        kGravity: 0.005,
+        eta: 0.4,
         damping: 0.92,
         maxStep: 2.5,
         minDistance: 0.15,
-        alphaDecay: 0.001,
+        alphaDecay: 0.005,
       },
     });
   }
@@ -232,6 +236,56 @@ function buildLayoutInstance(helios, value) {
       negativeSampling: true,
     },
   });
+}
+
+function createPlayIcon() {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.classList.add('helios-ui-button__icon');
+
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', 'M8 5.5v13l10-6.5z');
+  path.setAttribute('fill', 'currentColor');
+  path.setAttribute('stroke', 'none');
+
+  svg.appendChild(path);
+  return svg;
+}
+
+function createPauseIcon() {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.classList.add('helios-ui-button__icon');
+
+  for (const x of [7, 13]) {
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', String(x));
+    rect.setAttribute('y', '5.5');
+    rect.setAttribute('width', '4');
+    rect.setAttribute('height', '13');
+    rect.setAttribute('rx', '0.75');
+    rect.setAttribute('fill', 'currentColor');
+    svg.appendChild(rect);
+  }
+
+  return svg;
+}
+
+function createStatusSpinnerIcon() {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.classList.add('helios-ui-layout__status-spinner');
+
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', 'M21 12a9 9 0 1 1-3.1-6.8');
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', 'currentColor');
+  path.setAttribute('stroke-width', '2');
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+
+  svg.appendChild(path);
+  return svg;
 }
 
 function subscribe(helios, eventName, handler) {
@@ -276,33 +330,65 @@ export class LayoutPanel {
 
     const controlsByKey = new Map();
     let currentDescriptorKey = null;
-    let layoutRunning = Boolean(helios?.scheduler?.layoutEnabled !== false);
     let lastChoiceSignature = null;
+    let lastPositionChoiceSignature = null;
+    let selectedPositionAttribute = CURRENT_POSITION_ATTRIBUTE;
 
     const layoutSelect = document.createElement('select');
     layoutSelect.className = 'helios-ui-select';
 
-    const statusValue = document.createElement('div');
-    statusValue.className = 'helios-ui-layout__display helios-ui-layout__status';
+    const positionAttributeSelect = document.createElement('select');
+    positionAttributeSelect.className = 'helios-ui-select';
 
-    const actions = document.createElement('div');
-    actions.className = 'helios-ui-layout__actions';
+    const statusControls = document.createElement('div');
+    statusControls.className = 'helios-ui-layout__status-shell';
 
-    const startButton = document.createElement('button');
-    startButton.type = 'button';
-    startButton.className = 'helios-ui-button';
-    startButton.textContent = 'Start';
+    const statusVisual = document.createElement('div');
+    statusVisual.className = 'helios-ui-layout__status-visual';
 
-    const stopButton = document.createElement('button');
-    stopButton.type = 'button';
-    stopButton.className = 'helios-ui-button helios-ui-button--danger';
-    stopButton.textContent = 'Stop';
+    const statusSparkline = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    statusSparkline.setAttribute('viewBox', '0 0 120 24');
+    statusSparkline.setAttribute('preserveAspectRatio', 'none');
+    statusSparkline.classList.add('helios-ui-layout__sparkline', 'helios-ui-layout__sparkline--status');
 
-    actions.appendChild(startButton);
-    actions.appendChild(stopButton);
+    const statusSparklinePath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    statusSparklinePath.setAttribute('fill', 'none');
+    statusSparklinePath.setAttribute('vector-effect', 'non-scaling-stroke');
+    statusSparkline.appendChild(statusSparklinePath);
+
+    const statusTempLabel = document.createElement('div');
+    statusTempLabel.className = 'helios-ui-layout__status-temp';
+    statusTempLabel.textContent = 'Temp.';
+
+    const statusBadge = document.createElement('div');
+    statusBadge.className = 'helios-ui-layout__status-badge';
+
+    const statusSpinner = createStatusSpinnerIcon();
+    const statusText = document.createElement('span');
+    statusText.className = 'helios-ui-layout__status-text';
+
+    statusBadge.appendChild(statusSpinner);
+    statusBadge.appendChild(statusText);
+    statusVisual.appendChild(statusSparkline);
+    statusVisual.appendChild(statusTempLabel);
+    statusVisual.appendChild(statusBadge);
+
+    const runButton = document.createElement('button');
+    runButton.type = 'button';
+    runButton.className = 'helios-ui-layout__status-button';
+
+    const runButtonIconWrap = document.createElement('span');
+    runButtonIconWrap.className = 'helios-ui-layout__status-button-icon';
+
+    statusControls.appendChild(statusVisual);
+    statusControls.appendChild(runButton);
 
     const bindingsRoot = document.createElement('div');
     bindingsRoot.className = 'helios-ui-layout__bindings';
+
+    let statusBinding = null;
+    let statusHistory = [];
+    let lastStatusSampleAt = Number.NEGATIVE_INFINITY;
 
     const layoutRow = createAlignedRowEl({
       title: 'Layout',
@@ -310,17 +396,18 @@ export class LayoutPanel {
     });
     content.appendChild(layoutRow.row);
 
-    const statusRow = createAlignedRowEl({
-      title: 'Status',
-      controls: statusValue,
+    const sourceRow = createAlignedRowEl({
+      title: 'Set from',
+      hint: 'Copies a numeric 2D/3D node attribute into the current layout positions.',
+      controls: positionAttributeSelect,
     });
-    content.appendChild(statusRow.row);
+    content.appendChild(sourceRow.row);
 
-    const actionsRow = createAlignedRowEl({
-      title: 'Actions',
-      controls: actions,
+    const runRow = createAlignedRowEl({
+      title: 'Status',
+      controls: statusControls,
     });
-    content.appendChild(actionsRow.row);
+    content.appendChild(runRow.row);
     content.appendChild(bindingsRoot);
 
     const panel = this.ui.createPanel({
@@ -363,32 +450,92 @@ export class LayoutPanel {
       layoutSelect.value = descriptor.key;
     };
 
-    const refreshStatus = () => {
+    const syncPositionChoices = () => {
       const descriptor = getCurrentDescriptor();
-      const scheduler = helios?.scheduler ?? null;
-      const enabled = scheduler?.layoutEnabled !== false;
-      const layout = helios.layout?.();
-      const dynamic = descriptor.dynamic === true;
+      const enabled = helios?.scheduler?.layoutEnabled !== false;
+      const choices = typeof helios.getLayoutPositionAttributeChoices === 'function'
+        ? helios.getLayoutPositionAttributeChoices()
+        : [{ value: CURRENT_POSITION_ATTRIBUTE, label: 'Current positions', dimension: 3 }];
+      const signature = JSON.stringify(choices.map((choice) => [choice.value, choice.label, choice.dimension]));
+      const fallbackValue = choices[0]?.value ?? CURRENT_POSITION_ATTRIBUTE;
+      const shouldUseCurrentPositions = descriptor.dynamic === true && enabled;
+      const desiredValue = shouldUseCurrentPositions ? CURRENT_POSITION_ATTRIBUTE : selectedPositionAttribute;
+      const nextSelected = choices.some((choice) => choice.value === desiredValue)
+        ? desiredValue
+        : fallbackValue;
 
-      let stateLabel = 'Static';
-      let stateToken = 'idle';
-      if (dynamic) {
-        if (!enabled) {
-          stateLabel = 'Stopped';
-          stateToken = 'error';
-        } else if (layoutRunning || layout?.pending) {
-          stateLabel = 'Running';
-          stateToken = 'running';
-        } else {
-          stateLabel = 'Idle';
-          stateToken = 'idle';
+      if (signature !== lastPositionChoiceSignature) {
+        lastPositionChoiceSignature = signature;
+        positionAttributeSelect.textContent = '';
+        for (const choice of choices) {
+          const option = document.createElement('option');
+          option.value = choice.value;
+          option.textContent = choice.label;
+          positionAttributeSelect.appendChild(option);
         }
       }
 
-      statusValue.textContent = `${descriptor.label} · ${stateLabel}`;
-      statusValue.dataset.state = stateToken;
-      startButton.disabled = !dynamic;
-      stopButton.disabled = !dynamic || !enabled;
+      selectedPositionAttribute = nextSelected;
+      positionAttributeSelect.value = nextSelected;
+    };
+
+    const refreshRunState = () => {
+      const descriptor = getCurrentDescriptor();
+      const scheduler = helios?.scheduler ?? null;
+      const enabled = scheduler?.layoutEnabled !== false;
+      const dynamic = descriptor.dynamic === true;
+
+      runRow.row.style.display = dynamic ? '' : 'none';
+      const state = enabled ? 'running' : 'stopped';
+      statusControls.dataset.state = state;
+      statusVisual.dataset.state = state;
+      statusBadge.dataset.state = state;
+      statusText.textContent = enabled ? 'running' : 'stopped';
+      statusText.dataset.state = state;
+      statusSpinner.style.display = enabled ? '' : 'none';
+      runButton.replaceChildren();
+      runButton.dataset.state = state;
+      runButton.title = enabled ? 'Stop layout' : 'Start layout';
+      runButton.setAttribute('aria-label', enabled ? 'Stop layout' : 'Start layout');
+      runButtonIconWrap.replaceChildren(enabled ? createPauseIcon() : createPlayIcon());
+      runButton.appendChild(runButtonIconWrap);
+      runButton.setAttribute('aria-busy', enabled ? 'true' : 'false');
+    };
+
+    const resetStatusHistory = () => {
+      statusHistory = [];
+      lastStatusSampleAt = Number.NEGATIVE_INFINITY;
+      const initialValue = Number(statusBinding?.get?.());
+      if (Number.isFinite(initialValue)) {
+        statusHistory.push(initialValue);
+        lastStatusSampleAt = performance.now();
+      }
+      const scale = statusBinding?.history?.scale === 'log' ? 'log' : 'linear';
+      const bounds = statusBinding?.history ?? null;
+      const d = buildSparklinePath(statusHistory, 120, 24, scale, bounds);
+      statusSparklinePath.setAttribute('d', d || '');
+    };
+
+    const refreshStatusBinding = () => {
+      statusTempLabel.textContent = statusBinding?.label ?? 'Temp.';
+      statusVisual.style.display = statusBinding ? '' : 'none';
+      resetStatusHistory();
+    };
+
+    const sampleStatusBinding = (now) => {
+      if (!statusBinding?.history) return;
+      const sampleMs = Math.max(250, Number(statusBinding.history.sampleMs ?? 1000) || 1000);
+      if (now - lastStatusSampleAt < sampleMs) return;
+      const nextValue = Number(statusBinding.get?.());
+      if (!Number.isFinite(nextValue)) return;
+      lastStatusSampleAt = now;
+      statusHistory.push(nextValue);
+      const limit = Math.max(2, Math.floor(statusBinding.history.length ?? 20));
+      while (statusHistory.length > limit) statusHistory.shift();
+      const scale = statusBinding.history.scale === 'log' ? 'log' : 'linear';
+      const bounds = statusBinding.history ?? null;
+      const d = buildSparklinePath(statusHistory, 120, 24, scale, bounds);
+      statusSparklinePath.setAttribute('d', d || '');
     };
 
     const addBindingRow = (binding) => {
@@ -433,6 +580,13 @@ export class LayoutPanel {
             while (history.length > limit) history.shift();
             renderHistory();
           };
+
+          const initialValue = Number(binding.get?.());
+          if (Number.isFinite(initialValue)) {
+            history.push(initialValue);
+            sample._lastAt = performance.now();
+            renderHistory();
+          }
 
           wrap.appendChild(sparkline);
           controls = wrap;
@@ -580,16 +734,20 @@ export class LayoutPanel {
       }
       controlsByKey.clear();
       bindingsRoot.textContent = '';
+      statusBinding = null;
+      refreshStatusBinding();
 
       if (!descriptor.bindings?.length) {
-        const empty = document.createElement('div');
-        empty.className = 'helios-ui-layout__empty';
-        empty.textContent = descriptor.dynamic ? 'No adjustable parameters for this layout.' : 'This layout has no live parameters.';
-        bindingsRoot.appendChild(empty);
         return;
       }
 
       for (const binding of descriptor.bindings) {
+        if (binding?.key === 'alphaCurrent' && binding?.type === 'display' && binding?.history) {
+          statusBinding = binding;
+          refreshStatusBinding();
+          sampleStatusBinding(performance.now());
+          continue;
+        }
         addBindingRow(binding);
       }
     };
@@ -601,6 +759,7 @@ export class LayoutPanel {
     };
 
     const sampleBindingValues = (now) => {
+      sampleStatusBinding(now);
       for (const control of controlsByKey.values()) {
         control.sample?.(now);
       }
@@ -608,38 +767,63 @@ export class LayoutPanel {
 
     const sync = (force = false) => {
       syncLayoutChoices();
+      syncPositionChoices();
       const descriptor = getCurrentDescriptor();
       if (force || descriptor.key !== currentDescriptorKey) {
         rebuildBindings();
       }
       refreshBindingValues();
-      refreshStatus();
+      refreshRunState();
     };
 
-    startButton.addEventListener('click', () => {
+    const applySelectedPositionAttribute = () => {
+      const didSet = helios.setLayoutPositionsFromNodeAttribute?.(selectedPositionAttribute);
+      if (!didSet) {
+        sync(false);
+        return;
+      }
+      const descriptor = getCurrentDescriptor();
+      const enabled = helios?.scheduler?.layoutEnabled !== false;
       const layout = helios.layout?.();
-      layout?.reheat?.();
-      helios.startLayout();
-      layoutRunning = true;
+      layout?.seedFromNetworkPositions?.();
+      if (descriptor.dynamic === true && enabled) {
+        layout?.reheat?.();
+        helios.startLayout();
+        selectedPositionAttribute = CURRENT_POSITION_ATTRIBUTE;
+      }
       sync(false);
+    };
+
+    positionAttributeSelect.addEventListener('change', () => {
+      selectedPositionAttribute = positionAttributeSelect.value || CURRENT_POSITION_ATTRIBUTE;
+      applySelectedPositionAttribute();
     });
 
-    stopButton.addEventListener('click', () => {
-      helios.stopLayout('ui:layout-panel');
-      layoutRunning = false;
+    runButton.addEventListener('click', () => {
+      const descriptor = getCurrentDescriptor();
+      if (descriptor.dynamic !== true) return;
+      const enabled = helios?.scheduler?.layoutEnabled !== false;
+      if (enabled) {
+        helios.stopLayout('ui:layout-panel');
+      } else {
+        const layout = helios.layout?.();
+        layout?.reheat?.();
+        helios.startLayout();
+        selectedPositionAttribute = CURRENT_POSITION_ATTRIBUTE;
+      }
       sync(false);
     });
 
     layoutSelect.addEventListener('change', () => {
+      const wasEnabled = helios?.scheduler?.layoutEnabled !== false;
       const layout = buildLayoutInstance(helios, layoutSelect.value);
       helios.layout(layout);
       if (layoutSelect.value === 'static') {
         helios.stopLayout('ui:layout-panel');
-        layoutRunning = false;
-      } else {
+      } else if (wasEnabled) {
         layout?.reheat?.();
         helios.startLayout();
-        layoutRunning = true;
+        selectedPositionAttribute = CURRENT_POSITION_ATTRIBUTE;
       }
       sync(true);
     });
@@ -647,13 +831,10 @@ export class LayoutPanel {
     const unsubscribers = [
       subscribe(helios, EVENTS.LAYOUT_CHANGED, () => sync(true)),
       subscribe(helios, EVENTS.LAYOUT_START, () => {
-        layoutRunning = true;
-        refreshStatus();
+        selectedPositionAttribute = CURRENT_POSITION_ATTRIBUTE;
+        sync(false);
       }),
-      subscribe(helios, EVENTS.LAYOUT_STOP, () => {
-        layoutRunning = false;
-        refreshStatus();
-      }),
+      subscribe(helios, EVENTS.LAYOUT_STOP, () => refreshRunState()),
       subscribe(helios, EVENTS.NETWORK_REPLACED, () => sync(true)),
     ];
 

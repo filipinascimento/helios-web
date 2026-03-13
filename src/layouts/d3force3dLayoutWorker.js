@@ -13,9 +13,10 @@ const DEFAULT_SETTINGS = {
   linkDistance: 30,
   forceNormalizationType: 'degree',
   alpha: 1,
-  alphaDecay: 1 - Math.pow(0.001, 1 / 300),
+  alphaDecay: 0.003,
   alphaTarget: 0,
   alphaMin: 0.001,
+  autoStopAtAlphaMin: true,
   recenter: true,
   center: [0, 0, 0],
 };
@@ -67,6 +68,13 @@ function createZeroableUnitLogBinding(binding) {
   });
 }
 
+function shouldAutoStopAtAlphaMin(alpha, alphaMin) {
+  const current = Number(alpha);
+  const min = Number(alphaMin);
+  if (!Number.isFinite(current) || !Number.isFinite(min)) return false;
+  return current <= (min + 1e-9);
+}
+
 function hash32(value) {
   let x = value >>> 0;
   x = (x ^ (x >>> 16)) >>> 0;
@@ -91,6 +99,8 @@ export class D3Force3DLayout extends Layout {
 
     this.options = defaults;
     this.settings = settings;
+    this.reheatAlpha = Number.isFinite(settings.alpha) ? Number(settings.alpha) : DEFAULT_SETTINGS.alpha;
+    this.helios = options.helios ?? null;
     this.worker = null;
     this.pending = false;
     this.lastUpdate = 0;
@@ -215,6 +225,12 @@ export class D3Force3DLayout extends Layout {
       }
       this.pending = false;
       this._updateRequested = false;
+      if (
+        this.settings.autoStopAtAlphaMin !== false
+        && shouldAutoStopAtAlphaMin(this.settings.alpha, this.settings.alphaMin ?? DEFAULT_SETTINGS.alphaMin)
+      ) {
+        this.helios?.stopLayout?.('alpha-min');
+      }
       this.visuals?.markPositionsDirty?.();
       if (view) {
         this.emitUpdate({ positions: view, timestamp: performance.now() });
@@ -236,7 +252,7 @@ export class D3Force3DLayout extends Layout {
     }
   }
 
-  setSettings(next = {}) {
+  setSettings(next = {}, { reheat = false } = {}) {
     if (!next || typeof next !== 'object') return this;
     const hadUse2D = this.settings.use2D === true;
     let nextMode = this.options?.mode === '3d' ? '3d' : '2d';
@@ -250,6 +266,9 @@ export class D3Force3DLayout extends Layout {
         this.settings[key] = value;
       }
     });
+    if (Object.prototype.hasOwnProperty.call(next, 'alpha')) {
+      this.reheatAlpha = Number.isFinite(next.alpha) ? Number(next.alpha) : this.reheatAlpha;
+    }
     if (Object.prototype.hasOwnProperty.call(next, 'use2D')) {
       this.settings.use2D = next.use2D === true;
       this.options.mode = this.settings.use2D ? '2d' : '3d';
@@ -277,13 +296,16 @@ export class D3Force3DLayout extends Layout {
     };
     this.optionsDirty = true;
     this.requestUpdate();
+    if (reheat) {
+      this.reheat();
+    }
     return this;
   }
 
   reheat() {
     this.setSettings({
-      alpha: Number(this.options?.settings?.alpha ?? DEFAULT_SETTINGS.alpha),
-    });
+      alpha: this.reheatAlpha,
+    }, { reheat: false });
     return this;
   }
 
@@ -295,7 +317,7 @@ export class D3Force3DLayout extends Layout {
       bindings: [
         {
           key: 'alphaCurrent',
-          label: 'Alpha',
+          label: 'Temp.',
           type: 'display',
           get: () => Number(this.settings.alpha ?? DEFAULT_SETTINGS.alpha),
           format: (value) => Number(value).toFixed(4),
@@ -318,7 +340,7 @@ export class D3Force3DLayout extends Layout {
           max: 5,
           step: 0.01,
           get: () => Number(this.settings.forcesStrength ?? DEFAULT_SETTINGS.forcesStrength),
-          set: (value) => this.setSettings({ forcesStrength: value }),
+          set: (value) => this.setSettings({ forcesStrength: value }, { reheat: true }),
         },
         {
           key: 'forcesRatio',
@@ -328,7 +350,7 @@ export class D3Force3DLayout extends Layout {
           max: 200,
           step: 1,
           get: () => Number(this.settings.forcesRatio ?? DEFAULT_SETTINGS.forcesRatio),
-          set: (value) => this.setSettings({ forcesRatio: value }),
+          set: (value) => this.setSettings({ forcesRatio: value }, { reheat: true }),
         },
         {
           key: 'repulsiveExponent',
@@ -338,7 +360,7 @@ export class D3Force3DLayout extends Layout {
           max: 4,
           step: 0.05,
           get: () => Number(this.settings.repulsiveExponent ?? DEFAULT_SETTINGS.repulsiveExponent),
-          set: (value) => this.setSettings({ repulsiveExponent: value }),
+          set: (value) => this.setSettings({ repulsiveExponent: value }, { reheat: true }),
         },
         {
           key: 'attractiveExponent',
@@ -348,7 +370,7 @@ export class D3Force3DLayout extends Layout {
           max: 4,
           step: 0.05,
           get: () => Number(this.settings.attractiveExponent ?? DEFAULT_SETTINGS.attractiveExponent),
-          set: (value) => this.setSettings({ attractiveExponent: value }),
+          set: (value) => this.setSettings({ attractiveExponent: value }, { reheat: true }),
         },
         {
           key: 'gravity',
@@ -358,7 +380,7 @@ export class D3Force3DLayout extends Layout {
             max: 5,
           }),
           get: () => Number(this.settings.gravity ?? DEFAULT_SETTINGS.gravity),
-          set: (value) => this.setSettings({ gravity: value }),
+          set: (value) => this.setSettings({ gravity: value }, { reheat: true }),
         },
         {
           key: 'viscosity',
@@ -368,7 +390,7 @@ export class D3Force3DLayout extends Layout {
           max: 1,
           step: 0.001,
           get: () => Number(this.settings.viscosity ?? DEFAULT_SETTINGS.viscosity),
-          set: (value) => this.setSettings({ viscosity: value }),
+          set: (value) => this.setSettings({ viscosity: value }, { reheat: true }),
         },
         {
           key: 'linkDistance',
@@ -378,14 +400,14 @@ export class D3Force3DLayout extends Layout {
           max: 300,
           step: 1,
           get: () => Number(this.settings.linkDistance ?? DEFAULT_SETTINGS.linkDistance),
-          set: (value) => this.setSettings({ linkDistance: value }),
+          set: (value) => this.setSettings({ linkDistance: value }, { reheat: true }),
         },
         {
           key: 'collisionEnabled',
           label: 'Collision',
           type: 'boolean',
           get: () => Boolean(this.settings.collisionEnabled),
-          set: (value) => this.setSettings({ collisionEnabled: value }),
+          set: (value) => this.setSettings({ collisionEnabled: value }, { reheat: true }),
         },
         {
           key: 'collisionRadius',
@@ -395,7 +417,7 @@ export class D3Force3DLayout extends Layout {
           max: 200,
           step: 1,
           get: () => Number(this.settings.collisionRadius ?? DEFAULT_SETTINGS.collisionRadius),
-          set: (value) => this.setSettings({ collisionRadius: value }),
+          set: (value) => this.setSettings({ collisionRadius: value }, { reheat: true }),
         },
         {
           key: 'forceNormalizationType',
@@ -407,31 +429,38 @@ export class D3Force3DLayout extends Layout {
             { value: 'none', label: 'None' },
           ],
           get: () => String(this.settings.forceNormalizationType ?? DEFAULT_SETTINGS.forceNormalizationType),
-          set: (value) => this.setSettings({ forceNormalizationType: value }),
+          set: (value) => this.setSettings({ forceNormalizationType: value }, { reheat: true }),
+        },
+        {
+          key: 'autoStopAtAlphaMin',
+          label: 'Stop at min temp',
+          type: 'boolean',
+          get: () => this.settings.autoStopAtAlphaMin !== false,
+          set: (value) => this.setSettings({ autoStopAtAlphaMin: value !== false }),
         },
         {
           key: 'alphaDecay',
           ...createZeroableUnitLogBinding({
-            label: 'Alpha decay',
+            label: 'Temp. decay',
           }),
           get: () => Number(this.settings.alphaDecay ?? DEFAULT_SETTINGS.alphaDecay),
-          set: (value) => this.setSettings({ alphaDecay: value }),
+          set: (value) => this.setSettings({ alphaDecay: value }, { reheat: true }),
         },
         {
           key: 'alphaTarget',
           ...createZeroableUnitLogBinding({
-            label: 'Alpha target',
+            label: 'Temp. target',
           }),
           get: () => Number(this.settings.alphaTarget ?? DEFAULT_SETTINGS.alphaTarget),
-          set: (value) => this.setSettings({ alphaTarget: value }),
+          set: (value) => this.setSettings({ alphaTarget: value }, { reheat: true }),
         },
         {
           key: 'alphaMin',
           ...createZeroableUnitLogBinding({
-            label: 'Alpha min',
+            label: 'Temp. min',
           }),
           get: () => Number(this.settings.alphaMin ?? DEFAULT_SETTINGS.alphaMin),
-          set: (value) => this.setSettings({ alphaMin: value }),
+          set: (value) => this.setSettings({ alphaMin: value }, { reheat: true }),
         },
         {
           key: 'recenter',

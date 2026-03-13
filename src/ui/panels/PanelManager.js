@@ -17,6 +17,7 @@ export class PanelManager {
     this._measureCanvas = null;
     this._dockReorder = null;
     this._freeDragDockGuards = new Map();
+    this._dockMetricsListeners = new Set();
     this._eventTarget = this.container?.ownerDocument?.defaultView ?? globalThis.window ?? this.container;
 
     this.dockLeft = document.createElement('div');
@@ -26,11 +27,22 @@ export class PanelManager {
     this.container.appendChild(this.dockLeft);
     this.container.appendChild(this.dockRight);
 
+    this._boundDockMetricsResize = () => this._emitDockMetricsChange();
+    if (typeof ResizeObserver === 'function') {
+      this._dockResizeObserver = new ResizeObserver(this._boundDockMetricsResize);
+      this._dockResizeObserver.observe(this.container);
+      this._dockResizeObserver.observe(this.dockLeft);
+      this._dockResizeObserver.observe(this.dockRight);
+    } else {
+      this._dockResizeObserver = null;
+    }
+
     this._boundMove = (e) => this._handlePointerMove(e);
     this._boundUp = (e) => this._handlePointerUp(e);
     this._eventTarget.addEventListener('pointermove', this._boundMove);
     this._eventTarget.addEventListener('pointerup', this._boundUp);
     this._eventTarget.addEventListener('pointercancel', this._boundUp);
+    this._emitDockMetricsChange();
   }
 
   createPanel(options) {
@@ -49,6 +61,7 @@ export class PanelManager {
     this.panels.set(panel.id, panel);
     this._placePanel(panel);
     this._scheduleAutoFitLabelColumn(panel);
+    this._emitDockMetricsChange();
     return panel;
   }
 
@@ -65,6 +78,7 @@ export class PanelManager {
     }
     panel.destroy();
     this.panels.delete(id);
+    this._emitDockMetricsChange();
   }
 
   _nextZ() {
@@ -118,18 +132,21 @@ export class PanelManager {
       panel.element.dataset.sideDocked = 'true';
       if (panel.element.parentElement !== this.dockLeft) this.dockLeft.appendChild(panel.element);
       panel.syncDockStyles();
+      this._emitDockMetricsChange();
       return;
     }
     if (target === 'right') {
       panel.element.dataset.sideDocked = 'true';
       if (panel.element.parentElement !== this.dockRight) this.dockRight.appendChild(panel.element);
       panel.syncDockStyles();
+      this._emitDockMetricsChange();
       return;
     }
 
     delete panel.element.dataset.sideDocked;
     if (panel.element.parentElement !== this.container) this.container.appendChild(panel.element);
     panel.syncDockStyles();
+    this._emitDockMetricsChange();
   }
 
   _syncDockedWidths(sourcePanel, width) {
@@ -147,6 +164,38 @@ export class PanelManager {
       if (panelTarget !== side) continue;
       panel.width = nextWidth;
       panel.element.style.width = `${nextWidth}px`;
+    }
+    this._emitDockMetricsChange();
+  }
+
+  getDockInsets() {
+    const leftWidth = this.dockLeft?.childElementCount
+      ? Math.max(0, Math.round(this.dockLeft.getBoundingClientRect().width))
+      : 0;
+    const rightWidth = this.dockRight?.childElementCount
+      ? Math.max(0, Math.round(this.dockRight.getBoundingClientRect().width))
+      : 0;
+    return {
+      top: 0,
+      right: rightWidth,
+      bottom: 0,
+      left: leftWidth,
+    };
+  }
+
+  onDockMetricsChange(callback) {
+    if (typeof callback !== 'function') return () => {};
+    this._dockMetricsListeners.add(callback);
+    callback(this.getDockInsets());
+    return () => this._dockMetricsListeners.delete(callback);
+  }
+
+  _emitDockMetricsChange() {
+    const insets = this.getDockInsets();
+    for (const listener of this._dockMetricsListeners) {
+      try {
+        listener({ ...insets });
+      } catch {}
     }
   }
 
@@ -483,6 +532,8 @@ export class PanelManager {
     this._eventTarget?.removeEventListener('pointermove', this._boundMove);
     this._eventTarget?.removeEventListener('pointerup', this._boundUp);
     this._eventTarget?.removeEventListener('pointercancel', this._boundUp);
+    this._dockResizeObserver?.disconnect?.();
+    this._dockMetricsListeners.clear();
     this.dockLeft.remove();
     this.dockRight.remove();
   }

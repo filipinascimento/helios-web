@@ -56,6 +56,23 @@ helios.labels({
   maxRows: 1, // >1 enables wrapping with ellipsis
 });
 
+// SVG legends are enabled by default for legendable color mappings.
+helios.legends({
+  showNodeSize: true, // optional size cue when the mapper is legendable
+  showEdgeWidth: true, // optional width cue when the mapper is legendable
+  // Legends default to outlined text with no surrounding frame.
+  showPanel: true, // optional subtle backdrop if you want one
+  panelOpacity: 0.14, // keep it light; default is ignored unless showPanel is true
+  scale: 1.1, // scales legend geometry
+  continuousHeight: 160, // taller continuous colorbars
+  zoomAwareSizeIn2D: true, // node size legends track 2D orthographic zoom by default
+  placements: {
+    density: 'bottom-right',
+    nodeColor: 'top-left',
+    // edgeColor: { x: 24, y: 180 }, // manual coordinates inside the usable viewport
+  },
+});
+
 // Render quality controls:
 // - supersampling defaults to "auto": DPR < 2 gets a 2x backing-store boost,
 //   retina-class screens stay at native DPR unless you force it on.

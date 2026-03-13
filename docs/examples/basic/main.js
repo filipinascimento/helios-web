@@ -26,7 +26,7 @@ function resolveMode() {
 function resolveLayoutType() {
   const params = new URLSearchParams(window.location.search);
   const layout = params.get('layout');
-  if (!layout) return 'd3force3d';
+  if (!layout) return 'gpuforce';
   const normalized = layout.toLowerCase();
   if (normalized === 'none' || normalized === 'static') return 'none';
   if (normalized === 'jitter' || normalized === 'legacy') return 'jitter';
@@ -43,7 +43,7 @@ function resolveLayoutType() {
     || normalized === 'gpu-webgpu'
   ) return 'gpuforce-webgpu';
   if (normalized === 'gpuforce' || normalized === 'gpu-force' || normalized === 'gpu') return 'gpuforce';
-  return 'force3d';
+  return 'gpuforce';
 }
 
 function isGpuForceLayoutType(layoutType) {
@@ -318,11 +318,11 @@ async function bootstrap() {
               linkDistance: 1,
               kRepulsion: 0.07,
               kAttraction: 0.62,
-              kGravity: 0.00035,
-              eta: 0.04,
+              kGravity: 0.005,
+              eta: 0.4,
               damping: 0.92,
               maxStep: 2.5,
-              alphaDecay: 0.001,
+              alphaDecay: 0.005,
             },
           }
       : layoutType === 'd3force3d'
@@ -431,6 +431,7 @@ async function bootstrap() {
   // initialize from the non-serializable default mapper.
   heliosUI.createMappersPanel({ dock: 'top-right', position: { x: 16, y: 16 } });
   heliosUI.createLayoutPanel({ dock: 'top-right', position: { x: 16, y: 360 } });
+  heliosUI.createLegendsPanel({ dock: 'top-right', position: { x: 16, y: 560 } });
   heliosUI.createFilterPanel({ dock: 'top-right' });
 
   helios.on(EVENTS.NETWORK_REPLACED, () => {

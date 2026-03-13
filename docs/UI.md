@@ -22,10 +22,12 @@ await helios.ready;
 const ui = new HeliosUI({ helios, theme: 'dark' });
 ui.createDemoPanel(); // "Scene" panel (tabbed controls) + "Data" panel (network I/O + stats)
 ui.createLayoutPanel(); // Layout picker + per-layout live controls + start/stop actions
+ui.createLegendsPanel(); // Legend toggles + text/layout controls for the SVG legend overlay
 ui.createMetricsPanel(); // "Metrics" panel (Degree, Strength, Clustering, Eigenvector, Betweenness, Leiden, Dimensionality)
 ```
 
 HeliosUI attaches to Helios’ built-in HTML overlay layer by default (via `helios.layers.addLayer('ui', ...)`).
+When panels are docked to the left or right edge, HeliosUI also feeds those insets back into Helios so SVG legends can stay inside the usable viewport automatically.
 
 Layout parameter bindings can describe how a control should be rendered. Numeric bindings may opt into `scale: 'log'` and `notation: 'scientific'`, which makes the Layout panel render a log slider with scientific-notation input while keeping the binding contract layout-agnostic.
 

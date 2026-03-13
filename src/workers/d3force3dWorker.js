@@ -21,7 +21,7 @@ const defaultSettings = {
   linkDistance: 30,
   forceNormalizationType: 'degree',
   alpha: 1,
-  alphaDecay: 1 - Math.pow(0.001, 1 / 300),
+  alphaDecay: 0.003,
   alphaTarget: 0,
   alphaMin: 0.001,
   recenter: true,

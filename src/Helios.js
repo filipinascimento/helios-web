@@ -1,4 +1,5 @@
 /** @typedef {import('helios-network').default} HeliosNetwork */
+import { AttributeType } from 'helios-network';
 import { LayerManager } from './layers/LayerManager.js';
 import { Scheduler } from './scheduler/Scheduler.js';
 import { StaticLayout, WorkerLayout } from './layouts/Layout.js';
@@ -22,6 +23,7 @@ import { createDebugLogger } from './utilities/DebugLogger.js';
 import { PositionDelegate } from './delegates/PositionDelegate.js';
 import { VISUAL_ATTRIBUTE_NAMES } from './pipeline/constants.js';
 import { SvgLabelController } from './labels/SvgLabelController.js';
+import { SvgLegendController } from './legends/SvgLegendController.js';
 import { HeliosFilter } from './filters/HeliosFilter.js';
 import { DensityLayer } from './rendering/engine/DensityLayer.js';
 
@@ -29,6 +31,7 @@ const {
   NODE_POSITION_ATTRIBUTE,
   NODE_STATE_ATTRIBUTE,
   EDGE_STATE_ATTRIBUTE,
+  EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
   EDGE_ENDPOINTS_STATE_ATTRIBUTE,
 } = VISUAL_ATTRIBUTE_NAMES;
 
@@ -136,6 +139,22 @@ function normalizeColorInput(color) {
     return [r / 255, g / 255, b / 255, a / 255];
   }
   return null;
+}
+
+function normalizeInsets(insets) {
+  if (!insets || typeof insets !== 'object') {
+    return { top: 0, right: 0, bottom: 0, left: 0 };
+  }
+  const coerce = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? Math.max(0, numeric) : 0;
+  };
+  return {
+    top: coerce(insets.top),
+    right: coerce(insets.right),
+    bottom: coerce(insets.bottom),
+    left: coerce(insets.left),
+  };
 }
 
 function createDetailEvent(type, detail) {
@@ -252,6 +271,15 @@ function resolveSeedBoundsForLayout(layoutOption, size, mode) {
   }
 
   return base;
+}
+
+function isNumericLayoutPositionAttributeType(type) {
+  return type === AttributeType.Float
+    || type === AttributeType.Double
+    || type === AttributeType.Integer
+    || type === AttributeType.UnsignedInteger
+    || type === AttributeType.BigInteger
+    || type === AttributeType.UnsignedBigInteger;
 }
 
 function getBaseFilename(name) {
@@ -750,6 +778,12 @@ export class Helios extends EventTarget {
       recommendedRange: { min: 1, max: 4 },
       step: 1,
     },
+    legendsEnabled: {
+      type: 'boolean',
+      label: 'Show Legends',
+      description: 'Enable SVG overlay legends',
+      defaultValue: true,
+    },
     background: {
       type: 'color',
       label: 'Background',
@@ -800,11 +834,9 @@ export class Helios extends EventTarget {
     if (!Object.prototype.hasOwnProperty.call(options, 'layout')) {
       const mode = options.mode ?? '2d';
       options.layout = {
-        type: 'd3force3d',
+        type: 'gpu-force',
         options: {
-          settings: {
-            use2D: mode !== '3d',
-          },
+          mode,
         },
       };
     }
@@ -1091,6 +1123,7 @@ export class Helios extends EventTarget {
     };
     this._densityRuntime = { diverging: false };
     this._densityLayer = null;
+    this._overlayInsets = { top: 0, right: 0, bottom: 0, left: 0 };
     this.densityMap = {
       setBandwidth: (value) => {
         this.densityBandwidth(value);
@@ -1112,6 +1145,7 @@ export class Helios extends EventTarget {
       },
     };
     this._labels = new SvgLabelController(this, options.labels ?? {});
+    this._legends = new SvgLegendController(this, options.legends ?? {});
     this.size = { ...this.layers.size };
     this.removeResizeListener = null;
     this.firstGeometryUpdateComplete = false;
@@ -2482,6 +2516,7 @@ export class Helios extends EventTarget {
         this.emit(EVENTS.BEFORE_RENDER, { frameId: this._frameId, dt, frame, size: { ...this.size } });
         this.renderer.render(frame, this.size);
         this._labels?.update?.({ timestamp: now });
+        this._legends?.update?.({ timestamp: now });
         this.emit(EVENTS.AFTER_RENDER, { frameId: this._frameId, dt, frame, size: { ...this.size } });
       }
     });
@@ -3627,6 +3662,44 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  legends(options) {
+    if (arguments.length === 0) {
+      return this._legends?.getConfig?.() ?? { enabled: true };
+    }
+    if (options === false || options == null) {
+      this._legends?.setConfig?.({ enabled: false });
+    } else if (typeof options === 'object') {
+      this._legends?.setConfig?.(options);
+    } else {
+      throw new TypeError('legends(options) expects an object, false, or null');
+    }
+    this.scheduler?.requestRender?.();
+    this._refreshUIBindings();
+    return this;
+  }
+
+  legendsEnabled(value) {
+    if (arguments.length === 0) return this.legends()?.enabled === true;
+    return this.legends({ enabled: value === true });
+  }
+
+  overlayInsets(insets) {
+    if (arguments.length === 0) return { ...this._overlayInsets };
+    const next = normalizeInsets(insets);
+    const prev = this._overlayInsets ?? { top: 0, right: 0, bottom: 0, left: 0 };
+    if (
+      prev.top === next.top
+      && prev.right === next.right
+      && prev.bottom === next.bottom
+      && prev.left === next.left
+    ) {
+      return this;
+    }
+    this._overlayInsets = next;
+    this.scheduler?.requestRender?.();
+    return this;
+  }
+
   labelsEnabled(value) {
     if (arguments.length === 0) return this.labels()?.enabled === true;
     return this.labels({ enabled: value === true });
@@ -3769,7 +3842,7 @@ export class Helios extends EventTarget {
       return new WorkerLayout(layoutNetwork, this.visuals, workerOptions);
     }
     if (layoutOption?.type === 'd3force3d' || layoutOption?.type === 'd3-force-3d') {
-      const workerOptions = { ...(layoutOption.options ?? {}), mode: this.options.mode ?? '2d' };
+      const workerOptions = { ...(layoutOption.options ?? {}), mode: this.options.mode ?? '2d', helios: this };
       this.debug.log('layout', 'Using d3-force-3d layout', workerOptions);
       return new D3Force3DLayout(layoutNetwork, this.visuals, workerOptions);
     }
@@ -4093,6 +4166,104 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  getLayoutPositionAttributeChoices(options = {}) {
+    const network = options.network ?? this.network ?? null;
+    const currentChoice = {
+      value: NODE_POSITION_ATTRIBUTE,
+      label: 'Current positions',
+      dimension: 3,
+    };
+    if (!network || typeof network.getNodeAttributeNames !== 'function') {
+      return [currentChoice];
+    }
+
+    const names = new Set(network.getNodeAttributeNames?.() ?? []);
+    names.add(NODE_POSITION_ATTRIBUTE);
+
+    const choices = [];
+    for (const name of names) {
+      const info = network.getNodeAttributeInfo?.(name) ?? null;
+      const dimension = Number(info?.dimension ?? 0);
+      if (!Number.isFinite(dimension) || (dimension !== 2 && dimension !== 3)) continue;
+      if (info?.complex === true) continue;
+      if (!isNumericLayoutPositionAttributeType(info?.type)) continue;
+      choices.push({
+        value: name,
+        label: name === NODE_POSITION_ATTRIBUTE ? 'Current positions' : `${name} (${dimension}D)`,
+        dimension,
+      });
+    }
+
+    choices.sort((a, b) => {
+      if (a.value === NODE_POSITION_ATTRIBUTE) return -1;
+      if (b.value === NODE_POSITION_ATTRIBUTE) return 1;
+      return String(a.label).localeCompare(String(b.label));
+    });
+
+    return choices.length ? choices : [currentChoice];
+  }
+
+  setLayoutPositionsFromNodeAttribute(name, options = {}) {
+    const network = options.network ?? this.network ?? null;
+    const visuals = this.visuals ?? null;
+    const trimmed = typeof name === 'string' ? name.trim() : '';
+    if (!network || !trimmed) return false;
+
+    const info = network.getNodeAttributeInfo?.(trimmed) ?? null;
+    const dimension = Number(info?.dimension ?? 0);
+    if (!info) {
+      throw new Error(`Unknown node attribute "${trimmed}"`);
+    }
+    if (!isNumericLayoutPositionAttributeType(info.type) || info.complex === true || (dimension !== 2 && dimension !== 3)) {
+      throw new Error(`Node attribute "${trimmed}" must be a numeric 2D or 3D vector attribute`);
+    }
+
+    visuals?.ensureNodeAttribute?.(NODE_POSITION_ATTRIBUTE, AttributeType.Float, 3);
+
+    let wrote = false;
+    const apply = () => {
+      const sourceBuffer = network.getNodeAttributeBuffer?.(trimmed) ?? null;
+      const targetBuffer = network.getNodeAttributeBuffer?.(NODE_POSITION_ATTRIBUTE) ?? null;
+      const sourceView = sourceBuffer?.view ?? null;
+      const targetView = targetBuffer?.view ?? null;
+      if (!sourceView || !targetView) return;
+
+      const sourceCount = Math.floor(sourceView.length / dimension);
+      const targetCount = Math.floor(targetView.length / 3);
+      const count = Math.min(sourceCount, targetCount);
+      if (count <= 0) return;
+
+      for (let index = 0; index < count; index += 1) {
+        const sourceOffset = index * dimension;
+        const targetOffset = index * 3;
+        const x = Number(sourceView[sourceOffset]);
+        const y = Number(sourceView[sourceOffset + 1]);
+        const z = dimension === 3 ? Number(sourceView[sourceOffset + 2]) : 0;
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+        targetView[targetOffset] = x;
+        targetView[targetOffset + 1] = y;
+        targetView[targetOffset + 2] = z;
+        wrote = true;
+      }
+    };
+
+    if (typeof network.withBufferAccess === 'function') {
+      network.withBufferAccess(apply);
+    } else {
+      apply();
+    }
+
+    if (!wrote) return false;
+
+    visuals?.markPositionsDirty?.();
+    visuals?.bumpNodeAttributes?.(NODE_POSITION_ATTRIBUTE);
+    visuals?.bumpEdgeAttributes?.(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
+    this.scheduler?.requestGeometry?.();
+    this.scheduler?.requestRender?.();
+    this._labels?.requestFullReselect?.('layout-position-attribute');
+    return true;
+  }
+
   positions(options) {
     if (arguments.length === 0) {
       return {
@@ -4296,6 +4467,7 @@ export class Helios extends EventTarget {
   setInterpolation(options) { return this.interpolation(options); }
   setDensity(options) { return this.density(options); }
   setLabels(options) { return this.labels(options); }
+  setLegends(options) { return this.legends(options); }
   setMappers(mappers) { return this.mappers(mappers); }
   setNodeState(indices, mask, options) { return this.nodeState(indices, mask, options); }
   setEdgeState(indices, mask, options) { return this.edgeState(indices, mask, options); }
@@ -4308,7 +4480,7 @@ export class Helios extends EventTarget {
     const requestedAlgo = typeof algo === 'string' ? algo : null;
     const requestedParams = params ?? (requestedAlgo ? null : algo);
     this.scheduler.setLayoutEnabled(true, 'user');
-    this._layout?.requestUpdate?.();
+    this._layout?.reheat?.();
     this.scheduler.requestLayout('user');
     if (requestedAlgo || requestedParams) {
       this.debug.log('layout', 'startLayout called', { algo: requestedAlgo, params: requestedParams });
@@ -5095,6 +5267,8 @@ export class Helios extends EventTarget {
     this._densityLayer = null;
     this._labels?.destroy?.();
     this._labels = null;
+    this._legends?.destroy?.();
+    this._legends = null;
     this.layers.destroy();
   }
 }

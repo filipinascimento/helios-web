@@ -6,7 +6,7 @@ visuals flow that feeds indirect rendering directly from `helios-network` sparse
 1. Creates a `helios-network` instance.
 2. Defines float attributes on nodes and edges.
 3. Mutates buffers directly to assign random values.
-4. Boots a `Helios` renderer with the worker layout.
+4. Boots a `Helios` renderer with the GPU force layout.
 5. Maps the attributes to node and edge colors via `Mapper` descriptors.
 
 The source lives in [`docs/examples/basic/main.js`](./main.js). Start the Vite dev server and visit `http://localhost:5173` to see it in action.
@@ -15,7 +15,7 @@ For details on how the node colors and sizes are mapped (including the colormap 
 
 ### Layout controls
 
-- The example now defaults to a 3D-ready force-directed layout with Barnes–Hut repulsion and damping safeguards.
+- The example now defaults to the GPU force layout.
 - Pass `?layout=jitter` to switch back to the legacy jitter layout.
 - Pass `?layout=d3force3d` to use the d3-force-3d worker layout.
 - Pass `?layout=gpuforce` to run the GPU-force layout via a position delegate.

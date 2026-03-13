@@ -21,7 +21,7 @@ network.addNodes(5);
 
 const helios = new Helios(network, {
   container: document.querySelector('#app'),
-  layout: { type: 'worker', options: { radius: 180 } },
+  layout: { type: 'gpu-force', options: { mode: '2d' } },
 });
 await helios.ready;
 

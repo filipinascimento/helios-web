@@ -16,15 +16,16 @@ const DEFAULT_OPTIONS = {
   linkDistance: 1,
   kRepulsion: 0.07,
   kAttraction: 0.62,
-  kGravity: 0.00035,
-  eta: 0.04,
+  kGravity: 0.005,
+  eta: 0.4,
   damping: 0.92,
   maxStep: 2.5,
   minDistance: 0.15,
   alpha: 1,
-  alphaDecay: 0.001,
+  alphaDecay: 0.005,
   alphaTarget: 0,
   alphaMin: 0.001,
+  autoStopAtAlphaMin: true,
   recenter: true,
 };
 
@@ -50,6 +51,13 @@ function createZeroableUnitLogBinding(binding) {
     inputMax: 1,
     ...binding,
   });
+}
+
+function shouldAutoStopAtAlphaMin(alpha, alphaMin) {
+  const current = Number(alpha);
+  const min = Number(alphaMin);
+  if (!Number.isFinite(current) || !Number.isFinite(min)) return false;
+  return current <= (min + 1e-9);
 }
 
 export class GpuForceLayout extends Layout {
@@ -84,6 +92,12 @@ export class GpuForceLayout extends Layout {
     const changed = this.positionDelegate.step(this._buildDelegateContext(deltaMs));
     this.lastUpdate = performance.now();
     this._updateRequested = false;
+    if (
+      this.options.autoStopAtAlphaMin !== false
+      && shouldAutoStopAtAlphaMin(this.positionDelegate.alpha, this.options.alphaMin ?? DEFAULT_OPTIONS.alphaMin)
+    ) {
+      this.helios?.stopLayout?.('alpha-min');
+    }
     if (changed) {
       this.helios?.scheduler?.requestRender?.();
     }
@@ -115,6 +129,14 @@ export class GpuForceLayout extends Layout {
     return this;
   }
 
+  seedFromNetworkPositions() {
+    this.positionDelegate.resetDynamicStateFromNetwork(this._buildDelegateContext(0));
+    this.requestUpdate();
+    this.emitUpdate({ timestamp: performance.now(), layoutElapsedMs: 0 });
+    this.helios?.scheduler?.requestRender?.();
+    return this;
+  }
+
   getParameterBindings() {
     const sampleKey = this.options.mode === '3d' ? 'sampleCount3D' : 'sampleCount2D';
     const sampleLabel = 'Repulsion samples';
@@ -125,7 +147,7 @@ export class GpuForceLayout extends Layout {
       bindings: [
         {
           key: 'alphaCurrent',
-          label: 'Alpha',
+          label: 'Temp.',
           type: 'display',
           get: () => Number(this.positionDelegate?.alpha ?? this.options.alpha ?? DEFAULT_OPTIONS.alpha),
           format: (value) => Number(value).toFixed(4),
@@ -273,9 +295,16 @@ export class GpuForceLayout extends Layout {
           set: (value) => this.setSettings({ minDistance: value }),
         },
         {
+          key: 'autoStopAtAlphaMin',
+          label: 'Stop at min temp',
+          type: 'boolean',
+          get: () => this.options.autoStopAtAlphaMin !== false,
+          set: (value) => this.setSettings({ autoStopAtAlphaMin: value !== false }),
+        },
+        {
           key: 'alphaDecay',
           ...createZeroableUnitLogBinding({
-            label: 'Alpha decay',
+            label: 'Temp. decay',
           }),
           get: () => Number(this.options.alphaDecay ?? DEFAULT_OPTIONS.alphaDecay),
           set: (value) => this.setSettings({ alphaDecay: value }),
@@ -283,7 +312,7 @@ export class GpuForceLayout extends Layout {
         {
           key: 'alphaTarget',
           ...createZeroableUnitLogBinding({
-            label: 'Alpha target',
+            label: 'Temp. target',
           }),
           get: () => Number(this.options.alphaTarget ?? DEFAULT_OPTIONS.alphaTarget),
           set: (value) => this.setSettings({ alphaTarget: value }),
@@ -291,7 +320,7 @@ export class GpuForceLayout extends Layout {
         {
           key: 'alphaMin',
           ...createZeroableUnitLogBinding({
-            label: 'Alpha min',
+            label: 'Temp. min',
           }),
           get: () => Number(this.options.alphaMin ?? DEFAULT_OPTIONS.alphaMin),
           set: (value) => this.setSettings({ alphaMin: value }),

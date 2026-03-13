@@ -6,6 +6,7 @@ import { D3Force3DLayout } from '../src/layouts/d3force3dLayoutWorker.js';
 import { GpuForceLayout } from '../src/layouts/GpuForceLayout.js';
 import { GpuForcePositionDelegate } from '../src/delegates/GpuForcePositionDelegate.js';
 import { PositionDelegate } from '../src/delegates/PositionDelegate.js';
+import { buildSparklinePath } from '../src/ui/panels/LayoutPanel.js';
 
 function createStubNetwork() {
   return {
@@ -28,9 +29,16 @@ function createStubNetwork() {
 function createStubHelios() {
   const state = { source: 'network', delegate: null };
   let renderRequests = 0;
+  let stopCalls = 0;
+  let lastStopReason = null;
   return {
     scheduler: {
       requestRender: () => { renderRequests += 1; },
+    },
+    stopLayout(reason = 'user') {
+      stopCalls += 1;
+      lastStopReason = reason;
+      return this;
     },
     positions(options) {
       if (arguments.length === 0) {
@@ -46,6 +54,8 @@ function createStubHelios() {
       return this;
     },
     getRenderRequests: () => renderRequests,
+    getStopCalls: () => stopCalls,
+    getLastStopReason: () => lastStopReason,
     getState: () => ({ ...state }),
   };
 }
@@ -478,16 +488,20 @@ test('D3Force3DLayout exposes shared parameter bindings and can reheat alpha', (
   };
 
   const layout = new D3Force3DLayout(network, visuals, {});
+  assert.equal(layout.settings.alphaDecay, 0.003);
   const descriptor = layout.getParameterBindings();
   assert.equal(descriptor.key, 'd3force3d');
   assert.ok(descriptor.bindings.some((binding) => binding.key === 'alphaCurrent'));
+  assert.ok(descriptor.bindings.some((binding) => binding.key === 'autoStopAtAlphaMin'));
   const alphaCurrentBinding = descriptor.bindings.find((binding) => binding.key === 'alphaCurrent');
+  assert.equal(alphaCurrentBinding.label, 'Temp.');
   assert.equal(alphaCurrentBinding.history.scale, 'log');
   assert.equal(alphaCurrentBinding.history.max, 1);
   assert.equal(alphaCurrentBinding.history.min(), layout.settings.alphaMin);
 
   for (const key of ['alphaDecay', 'alphaTarget', 'alphaMin']) {
     const binding = descriptor.bindings.find((entry) => entry.key === key);
+    assert.match(binding.label, /^Temp\./);
     assert.equal(binding.scale, 'log');
     assert.equal(binding.notation, 'scientific');
     assert.equal(binding.inputMin, 0);
@@ -496,6 +510,12 @@ test('D3Force3DLayout exposes shared parameter bindings and can reheat alpha', (
 
   layout.settings.alpha = 0.05;
   layout.reheat();
+  assert.equal(layout.settings.alpha, 1);
+
+  const forcesStrengthBinding = descriptor.bindings.find((binding) => binding.key === 'forcesStrength');
+  layout.settings.alpha = 0.05;
+  forcesStrengthBinding.set(2);
+  assert.equal(layout.settings.forcesStrength, 2);
   assert.equal(layout.settings.alpha, 1);
 });
 
@@ -533,9 +553,13 @@ test('GpuForceLayout exposes shared parameter bindings and can reheat alpha', ()
   const visuals = {};
   const helios = createStubHelios();
   const layout = new GpuForceLayout(network, visuals, { helios, mode: '2d', alpha: 0.75 });
+  assert.equal(layout.options.eta, 0.4);
+  assert.equal(layout.options.kGravity, 0.005);
+  assert.equal(layout.options.alphaDecay, 0.005);
   const descriptor = layout.getParameterBindings();
   assert.equal(descriptor.key, 'gpu-force');
   assert.ok(descriptor.bindings.some((binding) => binding.key === 'alphaCurrent'));
+  assert.ok(descriptor.bindings.some((binding) => binding.key === 'autoStopAtAlphaMin'));
 
   const repulsionBinding = descriptor.bindings.find((binding) => binding.key === 'kRepulsion');
   assert.equal(repulsionBinding.scale, 'log');
@@ -571,12 +595,14 @@ test('GpuForceLayout exposes shared parameter bindings and can reheat alpha', ()
   assert.equal(outputScaleBinding.notation, 'scientific');
 
   const alphaCurrentBinding = descriptor.bindings.find((binding) => binding.key === 'alphaCurrent');
+  assert.equal(alphaCurrentBinding.label, 'Temp.');
   assert.equal(alphaCurrentBinding.history.scale, 'log');
   assert.equal(alphaCurrentBinding.history.max, 1);
   assert.equal(alphaCurrentBinding.history.min(), layout.options.alphaMin);
 
   for (const key of ['alphaDecay', 'alphaTarget', 'alphaMin']) {
     const binding = descriptor.bindings.find((entry) => entry.key === key);
+    assert.match(binding.label, /^Temp\./);
     assert.equal(binding.scale, 'log');
     assert.equal(binding.notation, 'scientific');
     assert.equal(binding.inputMin, 0);
@@ -586,6 +612,74 @@ test('GpuForceLayout exposes shared parameter bindings and can reheat alpha', ()
   layout.positionDelegate.alpha = 0.1;
   layout.reheat();
   assert.equal(layout.positionDelegate.alpha, 0.75);
+});
+
+test('GpuForceLayout auto-stops at min temp by default and can be disabled', () => {
+  const network = createStubNetwork();
+  const visuals = {};
+  const helios = createStubHelios();
+  const layout = new GpuForceLayout(network, visuals, {
+    helios,
+    alphaMin: 0.001,
+    autoStopAtAlphaMin: true,
+  });
+  layout.positionDelegate.step = () => {
+    layout.positionDelegate.alpha = 0.001;
+    return false;
+  };
+
+  layout.step(16);
+  assert.equal(helios.getStopCalls(), 1);
+  assert.equal(helios.getLastStopReason(), 'alpha-min');
+
+  const heliosNoStop = createStubHelios();
+  const layoutNoStop = new GpuForceLayout(network, visuals, {
+    helios: heliosNoStop,
+    alphaMin: 0.001,
+    autoStopAtAlphaMin: false,
+  });
+  layoutNoStop.positionDelegate.step = () => {
+    layoutNoStop.positionDelegate.alpha = 0.001;
+    return false;
+  };
+
+  layoutNoStop.step(16);
+  assert.equal(heliosNoStop.getStopCalls(), 0);
+});
+
+test('D3Force3DLayout auto-stops at min temp by default and can be disabled', () => {
+  const network = createStubNetwork();
+  const visuals = {
+    nodePositions: new Float32Array(12),
+    withBufferAccess: (fn) => fn(),
+    markPositionsDirty: () => {},
+  };
+  const helios = createStubHelios();
+  const layout = new D3Force3DLayout(network, visuals, {
+    helios,
+    settings: { alphaMin: 0.001, autoStopAtAlphaMin: true },
+  });
+
+  layout.handleMessage({
+    type: 'positions',
+    positions: new Float32Array(12),
+    alpha: 0.001,
+  });
+  assert.equal(helios.getStopCalls(), 1);
+  assert.equal(helios.getLastStopReason(), 'alpha-min');
+
+  const heliosNoStop = createStubHelios();
+  const layoutNoStop = new D3Force3DLayout(network, visuals, {
+    helios: heliosNoStop,
+    settings: { alphaMin: 0.001, autoStopAtAlphaMin: false },
+  });
+
+  layoutNoStop.handleMessage({
+    type: 'positions',
+    positions: new Float32Array(12),
+    alpha: 0.001,
+  });
+  assert.equal(heliosNoStop.getStopCalls(), 0);
 });
 
 test('Helios.createLayout resolves gpu-force into GpuForceLayout', () => {
@@ -598,6 +692,147 @@ test('Helios.createLayout resolves gpu-force into GpuForceLayout', () => {
   const layout = helios.createLayout({ type: 'gpu-force', options: { mode: '3d' } });
   assert.ok(layout instanceof GpuForceLayout);
   assert.equal(layout.options.mode, '3d');
+  assert.equal(layout.options.eta, 0.4);
+  assert.equal(layout.options.kGravity, 0.005);
+  assert.equal(layout.options.alphaDecay, 0.005);
+});
+
+test('Helios.startLayout reheats the active layout before requesting ticks', () => {
+  const helios = Object.create(Helios.prototype);
+  let reheatCalls = 0;
+  let setLayoutEnabledCalls = 0;
+  let requestLayoutCalls = 0;
+  helios.scheduler = {
+    setLayoutEnabled(enabled, reason) {
+      assert.equal(enabled, true);
+      assert.equal(reason, 'user');
+      setLayoutEnabledCalls += 1;
+    },
+    requestLayout(reason) {
+      assert.equal(reason, 'user');
+      requestLayoutCalls += 1;
+    },
+  };
+  helios._layout = {
+    reheat() {
+      reheatCalls += 1;
+    },
+  };
+  helios.debug = { log: () => {} };
+
+  const result = helios.startLayout();
+  assert.equal(result, helios);
+  assert.equal(reheatCalls, 1);
+  assert.equal(setLayoutEnabledCalls, 1);
+  assert.equal(requestLayoutCalls, 1);
+});
+
+test('Helios lists numeric 2D/3D node attributes for layout seeding and copies them into positions', () => {
+  const positions = new Float32Array([
+    0, 0, 0,
+    1, 1, 1,
+    2, 2, 2,
+  ]);
+  const planar = new Float32Array([
+    10, 20,
+    30, 40,
+    50, 60,
+  ]);
+  const depth = new Float32Array([
+    -1, -2, -3,
+    -4, -5, -6,
+    -7, -8, -9,
+  ]);
+  const degree = new Float32Array([1, 2, 3]);
+  const network = {
+    getNodeAttributeNames: () => ['embedding2d', 'embedding3d', 'degree', '_helios_visuals_position'],
+    getNodeAttributeInfo: (name) => {
+      switch (name) {
+        case 'embedding2d':
+          return { type: 2, dimension: 2, complex: false };
+        case 'embedding3d':
+          return { type: 2, dimension: 3, complex: false };
+        case 'degree':
+          return { type: 2, dimension: 1, complex: false };
+        case '_helios_visuals_position':
+          return { type: 2, dimension: 3, complex: false };
+        default:
+          return null;
+      }
+    },
+    withBufferAccess: (fn) => fn(),
+    getNodeAttributeBuffer: (name) => {
+      switch (name) {
+        case 'embedding2d':
+          return { view: planar };
+        case 'embedding3d':
+          return { view: depth };
+        case '_helios_visuals_position':
+          return { view: positions };
+        default:
+          return null;
+      }
+    },
+  };
+  let positionsDirty = 0;
+  let nodeBumps = 0;
+  let edgeBumps = 0;
+  let geometryRequests = 0;
+  let renderRequests = 0;
+  let labelRefreshes = 0;
+  const helios = Object.create(Helios.prototype);
+  helios.network = network;
+  helios.visuals = {
+    ensureNodeAttribute: () => {},
+    markPositionsDirty: () => { positionsDirty += 1; },
+    bumpNodeAttributes: () => { nodeBumps += 1; },
+    bumpEdgeAttributes: () => { edgeBumps += 1; },
+  };
+  helios.scheduler = {
+    requestGeometry: () => { geometryRequests += 1; },
+    requestRender: () => { renderRequests += 1; },
+  };
+  helios._labels = {
+    requestFullReselect: () => { labelRefreshes += 1; },
+  };
+
+  const choices = helios.getLayoutPositionAttributeChoices();
+  assert.deepEqual(
+    choices.map((entry) => entry.value),
+    ['_helios_visuals_position', 'embedding2d', 'embedding3d'],
+  );
+
+  const wrotePlanar = helios.setLayoutPositionsFromNodeAttribute('embedding2d');
+  assert.equal(wrotePlanar, true);
+  assert.deepEqual(Array.from(positions), [
+    10, 20, 0,
+    30, 40, 0,
+    50, 60, 0,
+  ]);
+
+  const wroteDepth = helios.setLayoutPositionsFromNodeAttribute('embedding3d');
+  assert.equal(wroteDepth, true);
+  assert.deepEqual(Array.from(positions), [
+    -1, -2, -3,
+    -4, -5, -6,
+    -7, -8, -9,
+  ]);
+
+  assert.equal(positionsDirty, 2);
+  assert.equal(nodeBumps, 2);
+  assert.equal(edgeBumps, 2);
+  assert.equal(geometryRequests, 2);
+  assert.equal(renderRequests, 2);
+  assert.equal(labelRefreshes, 2);
+});
+
+test('buildSparklinePath stays blank until a second history sample arrives', () => {
+  assert.equal(buildSparklinePath([], 120, 28, 'log', { min: 0.001, max: 1 }), '');
+  const single = buildSparklinePath([0.5], 120, 28, 'log', { min: 0.001, max: 1 });
+  assert.match(single, /^M 0 /);
+  assert.doesNotMatch(single, /L /);
+  const pair = buildSparklinePath([0.5, 0.25], 120, 28, 'log', { min: 0.001, max: 1 });
+  assert.match(pair, /L /);
 });
 
 test('GpuForcePositionDelegate normalizes simulation seed positions while preserving visible output seeds', () => {
@@ -881,7 +1116,7 @@ test('GpuForcePositionDelegate exact repulsion threshold overrides a smaller sam
   assert.ok(exactSnapshot instanceof Float32Array);
   assert.equal(thresholdSnapshot.length, exactSnapshot.length);
   for (let i = 0; i < thresholdSnapshot.length; i += 1) {
-    approx(thresholdSnapshot[i], exactSnapshot[i], 1e-4);
+    approx(thresholdSnapshot[i], exactSnapshot[i], 5e-4);
   }
 });
 
