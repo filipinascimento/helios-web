@@ -2,6 +2,7 @@ import { createColormapScale } from '../colors/colormaps.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const DEFAULT_FONT_FAMILY = 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+const ILLUSTRATOR_FONT_FAMILY = '"Helvetica Neue", Helvetica, Arial, sans-serif';
 const DEFAULT_CONFIG = Object.freeze({
   enabled: true,
   respectDockInsets: true,
@@ -12,6 +13,8 @@ const DEFAULT_CONFIG = Object.freeze({
   fontFamily: DEFAULT_FONT_FAMILY,
   fontSize: 12,
   scale: 1,
+  scalePreviewLegends: false,
+  illustratorCompatible: false,
   continuousHeight: 132,
   zoomAwareSizeIn2D: true,
   showPanel: false,
@@ -84,6 +87,42 @@ function rgbaArrayToCss(color, fallback = 'rgba(120, 120, 120, 1)') {
   const b = Math.round(clamp((color[2] ?? 0) * 255, 0, 255));
   const a = clamp(color[3] ?? 1, 0, 1);
   return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
+
+function colorStringToSvgPaint(value, fallback = '#000000') {
+  const raw = String(value ?? '').trim();
+  if (!raw) return { color: fallback, opacity: null };
+  if (raw.startsWith('#')) {
+    const hex = raw.slice(1);
+    if (hex.length === 8) {
+      return {
+        color: `#${hex.slice(0, 6)}`,
+        opacity: Number.parseInt(hex.slice(6, 8), 16) / 255,
+      };
+    }
+    if (hex.length === 4) {
+      return {
+        color: `#${hex.slice(0, 3)}`,
+        opacity: Number.parseInt(`${hex[3]}${hex[3]}`, 16) / 255,
+      };
+    }
+    return { color: raw, opacity: null };
+  }
+  const rgba = /^rgba?\(([^)]+)\)$/iu.exec(raw);
+  if (rgba) {
+    const parts = rgba[1].split(',').map((part) => part.trim());
+    if (parts.length >= 3) {
+      const r = clampInt(parts[0], 0, 255);
+      const g = clampInt(parts[1], 0, 255);
+      const b = clampInt(parts[2], 0, 255);
+      const a = parts.length >= 4 ? clamp(parts[3], 0, 1) : 1;
+      return {
+        color: `rgb(${r}, ${g}, ${b})`,
+        opacity: a < 1 ? a : null,
+      };
+    }
+  }
+  return { color: raw, opacity: null };
 }
 
 function estimateTextWidthPx(text, fontSize) {
@@ -391,10 +430,12 @@ function withAlpha(color, alpha) {
 }
 
 function legendMetrics(config, options = {}) {
-  const baseScale = clamp(toFinite(config?.scale, DEFAULT_CONFIG.scale), 0.6, 3);
+  const maxScale = Math.max(0.6, toFinite(config?.maxScale, 3));
+  const baseScale = clamp(toFinite(config?.scale, DEFAULT_CONFIG.scale), 0.6, maxScale);
   const scale = options.ignoreScale === true ? 1 : baseScale;
   const fontSize = Math.max(10, toFinite(config?.fontSize, DEFAULT_CONFIG.fontSize) * scale);
   const lineHeight = fontSize * 1.18;
+  const continuousHeight = Math.max(24, toFinite(config?.continuousHeight, DEFAULT_CONFIG.continuousHeight)) * scale;
   return {
     baseScale,
     scale,
@@ -407,7 +448,7 @@ function legendMetrics(config, options = {}) {
     swatchSize: Math.max(12, Math.round(fontSize * 0.95)),
     swatchGap: 8 * scale,
     barWidth: 10 * scale,
-    barHeight: clamp(toFinite(config?.continuousHeight, DEFAULT_CONFIG.continuousHeight * scale), 72, 320),
+    barHeight: continuousHeight,
     tickLength: 10 * scale,
     tickGap: 3 * scale,
     labelGap: 4 * scale,
@@ -416,6 +457,32 @@ function legendMetrics(config, options = {}) {
     scalarGap: 8 * scale,
     scalarBaselineOffset: 8 * scale,
   };
+}
+
+function createContinuousLegendRampHref(item, n = 256) {
+  if (typeof document === 'undefined') return '';
+  const samples = Math.max(2, clampInt(n, 2, 2048));
+  const canvas = document.createElement('canvas');
+  canvas.width = 1;
+  canvas.height = samples;
+  const context = canvas.getContext('2d');
+  if (!context) return '';
+  const scale = createColormapScale(item.colormap, { domain: item.domain, clamp: true });
+  for (let i = 0; i < samples; i += 1) {
+    const t = i / Math.max(1, samples - 1);
+    const value = (item.domain?.[0] ?? 0) + (((item.domain?.[1] ?? 1) - (item.domain?.[0] ?? 0)) * t);
+    context.fillStyle = rgbaArrayToCss(scale(value));
+    context.fillRect(0, samples - 1 - i, 1, 1);
+  }
+  return canvas.toDataURL('image/png');
+}
+
+function setSvgPaintAttributes(element, attrName, value, fallback) {
+  const paint = colorStringToSvgPaint(value, fallback);
+  element.setAttribute(attrName, paint.color);
+  const opacityAttr = attrName === 'stroke' ? 'stroke-opacity' : 'fill-opacity';
+  if (paint.opacity != null && paint.opacity < 1) element.setAttribute(opacityAttr, `${paint.opacity}`);
+  else element.removeAttribute(opacityAttr);
 }
 
 function safeRectFromSize(size, insets, config) {
@@ -556,7 +623,9 @@ export function deriveLegendItems({ nodeChannels, edgeChannels, densityConfig, d
 
 export function layoutLegendItems(items, safeRect, config) {
   const measured = items.map((item) => {
-    const metrics = legendMetrics(config, { ignoreScale: item.legendType === 'scalar' && Boolean(item.preview) });
+    const metrics = legendMetrics(config, {
+      ignoreScale: item.legendType === 'scalar' && Boolean(item.preview) && config?.scalePreviewLegends !== true,
+    });
     const { fontSize, lineHeight } = metrics;
     if (item.legendType === 'categorical') {
       const titleLines = wrapTextLines(item.title, config?.maxChars, config?.maxRows);
@@ -691,6 +760,7 @@ export class SvgLegendController {
     }
     if (Object.prototype.hasOwnProperty.call(options, 'fontSize')) next.fontSize = clamp(options.fontSize, 10, 32);
     if (Object.prototype.hasOwnProperty.call(options, 'scale')) next.scale = clamp(options.scale, 0.6, 3);
+    if (Object.prototype.hasOwnProperty.call(options, 'illustratorCompatible')) next.illustratorCompatible = options.illustratorCompatible === true;
     if (Object.prototype.hasOwnProperty.call(options, 'continuousHeight')) next.continuousHeight = clamp(options.continuousHeight, 72, 320);
     if (Object.prototype.hasOwnProperty.call(options, 'zoomAwareSizeIn2D')) next.zoomAwareSizeIn2D = options.zoomAwareSizeIn2D !== false;
     if (Object.prototype.hasOwnProperty.call(options, 'showPanel')) next.showPanel = options.showPanel === true;
@@ -758,6 +828,47 @@ export class SvgLegendController {
     return true;
   }
 
+  createSnapshot(options = {}) {
+    if (!this.helios || typeof document === 'undefined') return null;
+    const config = {
+      ...this._config,
+      ...(options.config ?? {}),
+      placements: normalizePlacements({
+        ...this._config.placements,
+        ...(options.config?.placements ?? {}),
+      }),
+    };
+    const size = options.size ?? this.helios.size ?? this.helios.layers?.size ?? { width: 1, height: 1 };
+    const safeRect = safeRectFromSize(
+      size,
+      options.insets ?? null,
+      config,
+    );
+    const items = deriveLegendItems({
+      nodeChannels: combineMapperChannels(this.helios.nodeMapper),
+      edgeChannels: combineMapperChannels(this.helios.edgeMapper),
+      densityConfig: typeof this.helios.density === 'function' ? this.helios.density() : null,
+      densityRuntime: this.helios._densityRuntime ?? null,
+      visualConfig: this.helios.network?.__heliosVisualConfig ?? null,
+      network: this.helios.network ?? null,
+      config,
+      legendRuntime: {
+        enabled: config.zoomAwareSizeIn2D !== false,
+        mode: typeof this.helios.mode === 'function' ? this.helios.mode() : this.helios.options?.mode,
+        projection: options.projection ?? this.helios.renderer?.camera?.projection ?? null,
+        zoom: options.zoom ?? this.helios.renderer?.camera?.zoom ?? 1,
+        distance: options.distance ?? this.helios.renderer?.camera?.distance ?? 1,
+        viewportHeight: options.viewportHeight ?? size?.height ?? 1,
+        nodeSizeBase: typeof this.helios.nodeSizeBase === 'function' ? this.helios.nodeSizeBase() : 0,
+        nodeSizeScale: typeof this.helios.nodeSizeScale === 'function' ? this.helios.nodeSizeScale() : 1,
+        semanticZoomExponent: typeof this.helios.semanticZoomExponent === 'function' ? this.helios.semanticZoomExponent() : 0,
+      },
+    });
+    if (!items.length) return null;
+    const positioned = layoutLegendItems(items, safeRect, config);
+    return this._buildSnapshotGroup(positioned, config, options.background ?? this.helios.background?.());
+  }
+
   _clear() {
     this._lastSignature = '';
     if (!this.group) return;
@@ -768,13 +879,50 @@ export class SvgLegendController {
   }
 
   _theme() {
-    const background = this.helios?.background?.();
+    return this._resolveTheme(this.helios?.background?.(), this._config);
+  }
+
+  _resolveTheme(background = null, config = this._config) {
     const color = Array.isArray(background) || ArrayBuffer.isView(background) ? background : [0, 0, 0, 1];
     const luminance = (0.2126 * toFinite(color[0], 0)) + (0.7152 * toFinite(color[1], 0)) + (0.0722 * toFinite(color[2], 0));
+    if (config?.illustratorCompatible === true) {
+      if (luminance > 0.55) {
+        return {
+          panelFill: '#fcfdff',
+          panelStroke: '#141820',
+          text: '#10141c',
+          textOutline: '#ffffff',
+          barOuterStroke: '#ffffff',
+          barOuterWidth: 2.6,
+          barInnerStroke: '#10141c',
+          barInnerWidth: 1.25,
+          tickOutline: '#ffffff',
+          accentOuter: '#ffffff',
+          accentInner: '#10141c',
+          muted: '#10141c',
+          guide: '#10141c',
+        };
+      }
+      return {
+        panelFill: '#0e1218',
+        panelStroke: '#ffffff',
+        text: '#f6f8fc',
+        textOutline: '#05080c',
+        barOuterStroke: '#05080c',
+        barOuterWidth: 2.6,
+        barInnerStroke: '#ffffff',
+        barInnerWidth: 1.25,
+        tickOutline: '#05080c',
+        accentOuter: '#ffffff',
+        accentInner: '#05080c',
+        muted: '#f6f8fc',
+        guide: '#ffffff',
+      };
+    }
     if (luminance > 0.55) {
       return {
-        panelFill: withAlpha('rgba(252, 253, 255, 1)', this._config.panelOpacity),
-        panelStroke: withAlpha('rgba(20, 24, 32, 1)', Math.min(0.26, this._config.panelOpacity + 0.08)),
+        panelFill: withAlpha('rgba(252, 253, 255, 1)', config.panelOpacity),
+        panelStroke: withAlpha('rgba(20, 24, 32, 1)', Math.min(0.26, config.panelOpacity + 0.08)),
         text: 'rgba(16, 20, 28, 0.96)',
         textOutline: 'rgba(255, 255, 255, 0.96)',
         barOuterStroke: 'rgba(255, 255, 255, 0.98)',
@@ -789,8 +937,8 @@ export class SvgLegendController {
       };
     }
     return {
-      panelFill: withAlpha('rgba(14, 18, 24, 1)', this._config.panelOpacity),
-      panelStroke: withAlpha('rgba(255, 255, 255, 1)', Math.min(0.22, this._config.panelOpacity + 0.08)),
+      panelFill: withAlpha('rgba(14, 18, 24, 1)', config.panelOpacity),
+      panelStroke: withAlpha('rgba(255, 255, 255, 1)', Math.min(0.22, config.panelOpacity + 0.08)),
       text: 'rgba(246, 248, 252, 0.96)',
       textOutline: 'rgba(5, 8, 12, 0.96)',
       barOuterStroke: 'rgba(5, 8, 12, 0.96)',
@@ -810,8 +958,9 @@ export class SvgLegendController {
     y,
     lines,
     fill,
+    config = this._config,
     fontWeight = '400',
-    fontSize = this._config.fontSize,
+    fontSize = config.fontSize,
     anchor = 'start',
     baseline = 'hanging',
     rotation = null,
@@ -819,8 +968,8 @@ export class SvgLegendController {
     const text = document.createElementNS(SVG_NS, 'text');
     text.setAttribute('x', `${x}`);
     text.setAttribute('y', `${y}`);
-    text.setAttribute('fill', fill);
-    text.setAttribute('font-family', this._config.fontFamily);
+    setSvgPaintAttributes(text, 'fill', fill, '#000000');
+    text.setAttribute('font-family', config.fontFamily);
     text.setAttribute('font-size', `${fontSize}`);
     text.setAttribute('font-weight', fontWeight);
     text.setAttribute('text-anchor', anchor);
@@ -843,26 +992,27 @@ export class SvgLegendController {
     lines,
     fill,
     outline = null,
+    config = this._config,
     fontWeight = '400',
-    fontSize = this._config.fontSize,
+    fontSize = config.fontSize,
     anchor = 'start',
     baseline = 'hanging',
     rotation = null,
   }) {
     const appended = [];
-    if (this._config.textOutline !== false && outline) {
+    if (config.textOutline !== false && outline) {
       const outlineText = this._createTextElement({
-        x, y, lines, fill: outline, fontWeight, fontSize, anchor, baseline, rotation,
+        x, y, lines, fill: outline, config, fontWeight, fontSize, anchor, baseline, rotation,
       });
-      outlineText.setAttribute('stroke', outline);
-      outlineText.setAttribute('stroke-width', `${Math.max(0, this._config.textOutlineWidth) * 2}`);
+      setSvgPaintAttributes(outlineText, 'stroke', outline, '#000000');
+      outlineText.setAttribute('stroke-width', `${Math.max(0, config.textOutlineWidth) * 2}`);
       outlineText.setAttribute('stroke-linejoin', 'round');
-      outlineText.setAttribute('paint-order', 'stroke');
+      if (config.illustratorCompatible !== true) outlineText.setAttribute('paint-order', 'stroke');
       group.appendChild(outlineText);
       appended.push(outlineText);
     }
     const text = this._createTextElement({
-      x, y, lines, fill, fontWeight, fontSize, anchor, baseline, rotation,
+      x, y, lines, fill, config, fontWeight, fontSize, anchor, baseline, rotation,
     });
     group.appendChild(text);
     appended.push(text);
@@ -872,39 +1022,53 @@ export class SvgLegendController {
   _render(positioned) {
     this._clear();
     if (!this.group) return;
-    const theme = this._theme();
+    this._renderInto(this.group, this.defs, positioned, this._config, this._theme());
+  }
+
+  _buildSnapshotGroup(positioned, config, background) {
+    const defs = document.createElementNS(SVG_NS, 'defs');
+    const group = document.createElementNS(SVG_NS, 'g');
+    group.setAttribute('class', 'helios-legends-layer');
+    group.setAttribute('pointer-events', 'none');
+    group.appendChild(defs);
+    this._renderInto(group, defs, positioned, config, this._resolveTheme(background, config));
+    return group;
+  }
+
+  _renderInto(rootGroup, defs, positioned, config, theme) {
     for (const item of positioned) {
       const legendGroup = document.createElementNS(SVG_NS, 'g');
       legendGroup.setAttribute('class', 'helios-legend');
       legendGroup.dataset.legendKind = item.kind;
       legendGroup.setAttribute('transform', `translate(${item.x}, ${item.y})`);
 
-      if (this._config.showPanel === true) {
+      if (config.showPanel === true) {
         const panel = document.createElementNS(SVG_NS, 'rect');
         panel.dataset.legendFrame = 'true';
         panel.setAttribute('width', `${item.box.width}`);
         panel.setAttribute('height', `${item.box.height}`);
         panel.setAttribute('rx', '6');
         panel.setAttribute('ry', '6');
-        panel.setAttribute('fill', theme.panelFill);
-        panel.setAttribute('stroke', theme.panelStroke);
+        setSvgPaintAttributes(panel, 'fill', theme.panelFill, '#ffffff');
+        setSvgPaintAttributes(panel, 'stroke', theme.panelStroke, '#000000');
         legendGroup.appendChild(panel);
       }
 
-      if (item.legendType === 'categorical') this._renderCategoricalLegend(legendGroup, item, theme);
-      else if (item.legendType === 'scalar') this._renderScalarLegend(legendGroup, item, theme);
-      else this._renderContinuousLegend(legendGroup, item, theme);
+      if (item.legendType === 'categorical') this._renderCategoricalLegend(legendGroup, item, theme, config);
+      else if (item.legendType === 'scalar') this._renderScalarLegend(legendGroup, item, theme, config);
+      else this._renderContinuousLegend(legendGroup, item, theme, config, defs);
 
-      this.group.appendChild(legendGroup);
+      rootGroup.appendChild(legendGroup);
     }
   }
 
-  _renderCategoricalLegend(group, item, theme) {
-    const metrics = legendMetrics(this._config);
+  _renderCategoricalLegend(group, item, theme, config = this._config) {
+    const metrics = legendMetrics(config);
     this._appendText(group, {
       x: metrics.paddingX,
       y: metrics.paddingY,
       lines: item.titleLines,
+      config,
       fill: theme.text,
       outline: theme.textOutline,
       fontWeight: '600',
@@ -926,13 +1090,14 @@ export class SvgLegendController {
       swatch.setAttribute('height', `${metrics.swatchSize}`);
       swatch.setAttribute('rx', '3');
       swatch.setAttribute('ry', '3');
-      swatch.setAttribute('fill', entry.color);
-      swatch.setAttribute('stroke', withAlpha(theme.textOutline, 0.35));
+      setSvgPaintAttributes(swatch, 'fill', entry.color, '#808080');
+      setSvgPaintAttributes(swatch, 'stroke', withAlpha(theme.textOutline, 0.35), '#000000');
       group.appendChild(swatch);
       this._appendText(group, {
         x: metrics.paddingX + metrics.swatchSize + metrics.swatchGap,
         y: (singleLine ? rowCenterY : firstLineCenterY) + (metrics.fontSize * 0.34),
         lines: entry.lines,
+        config,
         fill: theme.text,
         outline: theme.textOutline,
         fontSize: metrics.fontSize,
@@ -942,8 +1107,8 @@ export class SvgLegendController {
     }
   }
 
-  _renderContinuousLegend(group, item, theme) {
-    const metrics = legendMetrics(this._config);
+  _renderContinuousLegend(group, item, theme, config = this._config, defs = this.defs) {
+    const metrics = legendMetrics(config);
     const titleText = item.titleLines.join(' ').trim();
     const barX = metrics.paddingX + metrics.fontSize + metrics.continuousTitleGap;
     const barY = metrics.paddingY + Math.max(0, (item.box.height - (metrics.paddingY * 2) - metrics.barHeight) * 0.5);
@@ -952,6 +1117,7 @@ export class SvgLegendController {
       x: metrics.paddingX + (metrics.fontSize * 0.5),
       y: barY + barHeight,
       lines: [titleText],
+      config,
       fill: theme.text,
       outline: theme.textOutline,
       fontWeight: '600',
@@ -960,33 +1126,46 @@ export class SvgLegendController {
       baseline: 'middle',
       rotation: -90,
     });
-    const gradientId = `helios-legend-gradient-${item.kind}-${Math.random().toString(36).slice(2, 8)}`;
-    const gradient = document.createElementNS(SVG_NS, 'linearGradient');
-    gradient.setAttribute('id', gradientId);
-    gradient.setAttribute('x1', '0%');
-    gradient.setAttribute('y1', '100%');
-    gradient.setAttribute('x2', '0%');
-    gradient.setAttribute('y2', '0%');
-    const scale = createColormapScale(item.colormap, { domain: item.domain, clamp: true });
-    const steps = item.divergent ? [0, 0.5, 1] : [0, 0.2, 0.4, 0.6, 0.8, 1];
-    steps.forEach((step) => {
-      const stop = document.createElementNS(SVG_NS, 'stop');
-      const value = (item.domain[0] ?? 0) + ((item.domain[1] ?? 1) - (item.domain[0] ?? 0)) * step;
-      stop.setAttribute('offset', `${step * 100}%`);
-      stop.setAttribute('stop-color', rgbaArrayToCss(scale(value)));
-      gradient.appendChild(stop);
-    });
-    this.defs.appendChild(gradient);
+    if (config.illustratorCompatible === true) {
+      const href = createContinuousLegendRampHref(item, Math.max(32, Math.round(barHeight)));
+      const image = document.createElementNS(SVG_NS, 'image');
+      image.setAttribute('x', `${barX}`);
+      image.setAttribute('y', `${barY}`);
+      image.setAttribute('width', `${metrics.barWidth}`);
+      image.setAttribute('height', `${barHeight}`);
+      image.setAttribute('preserveAspectRatio', 'none');
+      image.setAttribute('href', href);
+      image.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', href);
+      group.appendChild(image);
+    } else {
+      const gradientId = `helios-legend-gradient-${item.kind}-${Math.random().toString(36).slice(2, 8)}`;
+      const gradient = document.createElementNS(SVG_NS, 'linearGradient');
+      gradient.setAttribute('id', gradientId);
+      gradient.setAttribute('x1', '0%');
+      gradient.setAttribute('y1', '100%');
+      gradient.setAttribute('x2', '0%');
+      gradient.setAttribute('y2', '0%');
+      const scale = createColormapScale(item.colormap, { domain: item.domain, clamp: true });
+      const steps = item.divergent ? [0, 0.5, 1] : [0, 0.2, 0.4, 0.6, 0.8, 1];
+      steps.forEach((step) => {
+        const stop = document.createElementNS(SVG_NS, 'stop');
+        const value = (item.domain[0] ?? 0) + ((item.domain[1] ?? 1) - (item.domain[0] ?? 0)) * step;
+        stop.setAttribute('offset', `${step * 100}%`);
+        stop.setAttribute('stop-color', rgbaArrayToCss(scale(value)));
+        gradient.appendChild(stop);
+      });
+      defs?.appendChild?.(gradient);
 
-    const bar = document.createElementNS(SVG_NS, 'rect');
-    bar.setAttribute('x', `${barX}`);
-    bar.setAttribute('y', `${barY}`);
-    bar.setAttribute('width', `${metrics.barWidth}`);
-    bar.setAttribute('height', `${barHeight}`);
-    bar.setAttribute('rx', '2');
-    bar.setAttribute('ry', '2');
-    bar.setAttribute('fill', `url(#${gradientId})`);
-    group.appendChild(bar);
+      const bar = document.createElementNS(SVG_NS, 'rect');
+      bar.setAttribute('x', `${barX}`);
+      bar.setAttribute('y', `${barY}`);
+      bar.setAttribute('width', `${metrics.barWidth}`);
+      bar.setAttribute('height', `${barHeight}`);
+      bar.setAttribute('rx', '2');
+      bar.setAttribute('ry', '2');
+      bar.setAttribute('fill', `url(#${gradientId})`);
+      group.appendChild(bar);
+    }
 
     const barOuter = document.createElementNS(SVG_NS, 'rect');
     barOuter.setAttribute('x', `${barX}`);
@@ -996,7 +1175,7 @@ export class SvgLegendController {
     barOuter.setAttribute('rx', '2');
     barOuter.setAttribute('ry', '2');
     barOuter.setAttribute('fill', 'none');
-    barOuter.setAttribute('stroke', theme.barOuterStroke);
+    setSvgPaintAttributes(barOuter, 'stroke', theme.barOuterStroke, '#000000');
     barOuter.setAttribute('stroke-width', `${theme.barOuterWidth ?? 2.25}`);
     group.appendChild(barOuter);
 
@@ -1008,7 +1187,7 @@ export class SvgLegendController {
     barInner.setAttribute('rx', '2');
     barInner.setAttribute('ry', '2');
     barInner.setAttribute('fill', 'none');
-    barInner.setAttribute('stroke', theme.barInnerStroke);
+    setSvgPaintAttributes(barInner, 'stroke', theme.barInnerStroke, '#000000');
     barInner.setAttribute('stroke-width', `${theme.barInnerWidth ?? 1.5}`);
     group.appendChild(barInner);
 
@@ -1025,7 +1204,7 @@ export class SvgLegendController {
       tickOutline.setAttribute('x2', `${tickEnd}`);
       tickOutline.setAttribute('y1', `${y}`);
       tickOutline.setAttribute('y2', `${y}`);
-      tickOutline.setAttribute('stroke', theme.tickOutline);
+      setSvgPaintAttributes(tickOutline, 'stroke', theme.tickOutline, '#000000');
       tickOutline.setAttribute('stroke-width', '3');
       tickOutline.setAttribute('stroke-linecap', 'round');
       group.appendChild(tickOutline);
@@ -1034,7 +1213,7 @@ export class SvgLegendController {
       tickLine.setAttribute('x2', `${tickEnd}`);
       tickLine.setAttribute('y1', `${y}`);
       tickLine.setAttribute('y2', `${y}`);
-      tickLine.setAttribute('stroke', theme.text);
+      setSvgPaintAttributes(tickLine, 'stroke', theme.text, '#000000');
       tickLine.setAttribute('stroke-width', '1.5');
       tickLine.setAttribute('stroke-linecap', 'round');
       group.appendChild(tickLine);
@@ -1042,6 +1221,7 @@ export class SvgLegendController {
         x: tickEnd + metrics.labelGap,
         y,
         lines: [item.tickLabels?.[index] ?? formatNumber(tick)],
+        config,
         fill: theme.text,
         fontSize: Math.max(10, metrics.fontSize - 1),
         outline: theme.textOutline,
@@ -1050,8 +1230,10 @@ export class SvgLegendController {
     });
   }
 
-  _renderScalarLegend(group, item, theme) {
-    const metrics = legendMetrics(this._config, { ignoreScale: Boolean(item.preview) });
+  _renderScalarLegend(group, item, theme, config = this._config) {
+    const metrics = legendMetrics(config, {
+      ignoreScale: Boolean(item.preview) && config?.scalePreviewLegends !== true,
+    });
     const labelFontSize = Math.max(10, metrics.fontSize - 1);
     const titleText = item.titleLines.join(' ').trim();
     const minRange = Math.min(Number(item.range?.[0] ?? 0), Number(item.range?.[1] ?? 1));
@@ -1092,8 +1274,8 @@ export class SvgLegendController {
           circle.setAttribute('cx', `${cx}`);
           circle.setAttribute('cy', `${baselineY - radius}`);
           circle.setAttribute('r', `${radius}`);
-          circle.setAttribute('fill', 'rgba(24, 28, 36, 0.26)');
-          circle.setAttribute('stroke', withAlpha(theme.accentOuter, 0.85));
+          setSvgPaintAttributes(circle, 'fill', 'rgba(24, 28, 36, 0.26)', '#181c24');
+          setSvgPaintAttributes(circle, 'stroke', withAlpha(theme.accentOuter, 0.85), '#ffffff');
           circle.setAttribute('stroke-width', '2');
           group.appendChild(circle);
         });
@@ -1101,14 +1283,15 @@ export class SvgLegendController {
         .map((sample, index) => ({ sample, radius: radii[index] }))
         .sort((a, b) => b.radius - a.radius)
         .forEach(({ sample, radius }) => {
-          this._appendText(group, {
-            x: cx,
-            y: baselineY - (radius * 2) - 8,
-            lines: [formatNumber(sample)],
-            fill: theme.text,
-            outline: theme.textOutline,
-            fontSize: labelFontSize,
-            anchor: 'middle',
+        this._appendText(group, {
+          x: cx,
+          y: baselineY - (radius * 2) - 8,
+          lines: [formatNumber(sample)],
+          config,
+          fill: theme.text,
+          outline: theme.textOutline,
+          fontSize: labelFontSize,
+          anchor: 'middle',
             baseline: 'middle',
           });
         });
@@ -1117,6 +1300,7 @@ export class SvgLegendController {
         x: cx,
         y: baselineY + 18,
         lines: [titleText],
+        config,
         fill: theme.text,
         outline: theme.textOutline,
         fontWeight: '600',
@@ -1148,6 +1332,7 @@ export class SvgLegendController {
         x: cx,
         y: labelY,
         lines: [formatNumber(entry.sample)],
+        config,
         fill: theme.text,
         outline: theme.textOutline,
         fontSize: labelFontSize,
@@ -1159,7 +1344,7 @@ export class SvgLegendController {
       line.setAttribute('x2', `${cx + lineLength * 0.5}`);
       line.setAttribute('y1', `${lineY}`);
       line.setAttribute('y2', `${lineY}`);
-      line.setAttribute('stroke', theme.text);
+      setSvgPaintAttributes(line, 'stroke', theme.text, '#000000');
       line.setAttribute('stroke-width', `${entry.strokeWidth}`);
       line.setAttribute('stroke-linecap', 'square');
       group.appendChild(line);
@@ -1173,6 +1358,7 @@ export class SvgLegendController {
       x: cx,
       y: titleY,
       lines: [titleText],
+      config,
       fill: theme.text,
       outline: theme.textOutline,
       fontWeight: '600',

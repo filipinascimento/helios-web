@@ -7,6 +7,7 @@ import { createSliderRow } from './controls/createSliderRow.js';
 import { createAlignedRowEl } from './controls/createAlignedRowEl.js';
 import { createTooltipManager } from './controls/createTooltipManager.js';
 import { createToggleControl } from './controls/createToggleControl.js';
+import { createSelectControl } from './controls/createSelectControl.js';
 import { PanelStack } from './panels/PanelStack.js';
 import { TabbedPanel } from './panels/TabbedPanel.js';
 import { TwoHandleRange } from './controls/TwoHandleRange.js';
@@ -20,6 +21,11 @@ import { toHex8 } from './utils/colors.js';
 import { isPublicAttributeName } from './utils/attributes.js';
 import { shallowCloneChannelConfig } from './utils/channelConfig.js';
 import { HeliosFilter } from '../filters/HeliosFilter.js';
+import {
+  buildFigureExportPresetList,
+  normalizeFigureExportFilename,
+  resolveFigureExportOptions,
+} from '../export/figureExport.js';
 
 function resolveUiContainer({ helios, container, layerName }) {
   if (container) return container;
@@ -338,7 +344,6 @@ export class HeliosUI {
         controls.appendChild(fileInput);
 
         let baseName = this.helios._lastLoadedNetworkBase ?? 'network';
-        let loadedName = this.helios._lastLoadedNetworkName ?? null;
         let loadedFormat = this.helios._lastLoadedNetworkFormat ?? null;
         if (loadedFormat && ['bxnet', 'zxnet', 'xnet'].includes(loadedFormat)) {
           formatSelect.value = loadedFormat;
@@ -386,26 +391,57 @@ export class HeliosUI {
         };
         syncExtension();
 
-        const commitBaseName = () => {
-          const candidate = sanitizeBaseName(nameInput.value);
+        const exportNameInput = document.createElement('input');
+        exportNameInput.type = 'text';
+        exportNameInput.className = 'helios-ui-text';
+        exportNameInput.value = lastValidBaseName;
+        exportNameInput.placeholder = 'figure';
+        exportNameInput.spellcheck = false;
+        exportNameInput.autocapitalize = 'off';
+        exportNameInput.autocomplete = 'off';
+        exportNameInput.inputMode = 'text';
+
+        const exportFormatSelect = document.createElement('select');
+        exportFormatSelect.className = 'helios-ui-select';
+        for (const fmt of ['png', 'svg']) {
+          const opt = document.createElement('option');
+          opt.value = fmt;
+          opt.textContent = fmt.toUpperCase();
+          exportFormatSelect.appendChild(opt);
+        }
+
+        const exportExtEl = document.createElement('span');
+        exportExtEl.className = 'helios-ui-network__ext';
+
+        const commitBaseName = (input) => {
+          const candidate = sanitizeBaseName(input.value);
           if (candidate) {
             lastValidBaseName = candidate;
             baseName = candidate;
             if (nameInput.value !== candidate) nameInput.value = candidate;
+            if (exportNameInput.value !== candidate) exportNameInput.value = candidate;
           } else {
-            nameInput.value = lastValidBaseName;
+            input.value = lastValidBaseName;
           }
         };
 
-        nameInput.addEventListener('blur', commitBaseName);
+        nameInput.addEventListener('blur', () => commitBaseName(nameInput));
         nameInput.addEventListener('keydown', (e) => {
           if (e.key === 'Enter') {
             e.preventDefault();
             nameInput.blur();
           }
         });
+        exportNameInput.addEventListener('blur', () => commitBaseName(exportNameInput));
+        exportNameInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            exportNameInput.blur();
+          }
+        });
 
         tooltips.attachTooltip(nameInput, 'Base filename (without extension). Used when saving.');
+        tooltips.attachTooltip(exportNameInput, 'Base filename (without extension). Used when exporting images.');
 
         nameBar.appendChild(nameInput);
         nameBar.appendChild(extEl);
@@ -442,6 +478,275 @@ export class HeliosUI {
 
         refreshNetworkInfo();
 
+        const networkTab = document.createElement('div');
+        networkTab.appendChild(stats);
+        networkTab.appendChild(controls);
+        networkTab.appendChild(nameBar);
+
+        const exportTab = document.createElement('div');
+        const exportNameBar = document.createElement('div');
+        exportNameBar.className = 'helios-ui-network__name';
+        exportNameBar.appendChild(exportNameInput);
+        exportNameBar.appendChild(exportExtEl);
+
+        const presetSelect = document.createElement('select');
+        presetSelect.className = 'helios-ui-select';
+
+        const customWidthInput = document.createElement('input');
+        customWidthInput.type = 'number';
+        customWidthInput.className = 'helios-ui-number';
+        customWidthInput.min = '1';
+        customWidthInput.step = '1';
+        customWidthInput.value = String(this.helios?.layers?.size?.width ?? this.helios?.size?.width ?? 1920);
+        customWidthInput.style.maxWidth = '96px';
+
+        const customHeightInput = document.createElement('input');
+        customHeightInput.type = 'number';
+        customHeightInput.className = 'helios-ui-number';
+        customHeightInput.min = '1';
+        customHeightInput.step = '1';
+        customHeightInput.value = String(this.helios?.layers?.size?.height ?? this.helios?.size?.height ?? 1080);
+        customHeightInput.style.maxWidth = '96px';
+
+        const customSizeWrap = document.createElement('div');
+        customSizeWrap.style.display = 'inline-flex';
+        customSizeWrap.style.alignItems = 'center';
+        customSizeWrap.style.gap = '8px';
+        customSizeWrap.appendChild(customWidthInput);
+        customSizeWrap.appendChild(document.createTextNode('×'));
+        customSizeWrap.appendChild(customHeightInput);
+
+        const supersamplingSelect = document.createElement('select');
+        supersamplingSelect.className = 'helios-ui-select';
+        for (const value of [1, 2, 4]) {
+          const opt = document.createElement('option');
+          opt.value = String(value);
+          opt.textContent = `${value}x`;
+          supersamplingSelect.appendChild(opt);
+        }
+
+        const labelsToggle = createToggleControl({
+          checked: false,
+          onLabel: 'On',
+          offLabel: 'Off',
+          ariaLabel: 'Export labels',
+        });
+        const legendsToggle = createToggleControl({
+          checked: true,
+          onLabel: 'On',
+          offLabel: 'Off',
+          ariaLabel: 'Export legends',
+        });
+        const frameToggle = createToggleControl({
+          checked: false,
+          onLabel: 'On',
+          offLabel: 'Off',
+          ariaLabel: 'Show export frame',
+        });
+        const backgroundToggle = createToggleControl({
+          checked: true,
+          onLabel: 'On',
+          offLabel: 'Off',
+          ariaLabel: 'Export background',
+        });
+        const alphaModeControl = createSelectControl({
+          ariaLabel: 'Alpha mode',
+          value: 'straight',
+          options: [
+            { value: 'straight', label: 'Standard' },
+            { value: 'premultiplied', label: 'Premultiplied' },
+          ],
+          onChange: () => syncExportUi(),
+        });
+        let exportLegendScale = 1;
+        const legendScaleAttribute = UIAttribute.number({
+          id: 'figure.legendScale',
+          label: 'Legend Scale',
+          min: 0.25,
+          max: 4,
+          step: 0.05,
+          domain: { min: 0.25, max: 4 },
+          recommendedRange: { min: 0.5, max: 2.5 },
+          get: () => exportLegendScale,
+          set: (value) => {
+            const numeric = Number(value);
+            if (!Number.isFinite(numeric)) return;
+            exportLegendScale = clampNumber(numeric, 0.25, 4);
+          },
+        });
+        const legendScaleRow = createSliderRow(legendScaleAttribute, {
+          hint: 'Multiplier for exported legend size. At 1x, legend size follows the current view rather than the chosen output resolution.',
+          precision: 2,
+          step: 0.05,
+        });
+        this._controlCleanups.add(legendScaleRow.destroy);
+
+        const exportButton = document.createElement('button');
+        exportButton.type = 'button';
+        exportButton.className = 'helios-ui-button';
+        exportButton.textContent = 'Export';
+
+        const exportStatus = document.createElement('div');
+        exportStatus.style.color = 'var(--helios-ui-muted)';
+        exportStatus.style.fontSize = '12px';
+        exportStatus.style.lineHeight = '1.4';
+
+        const syncExportExtension = () => {
+          exportExtEl.textContent = `.${exportFormatSelect.value}`;
+        };
+
+        const getExportCapability = () => this.helios?.getFigureExportCapabilities?.({
+          supersampling: Number(supersamplingSelect.value || 1),
+        }) ?? {
+          maxBitmapDimension: 8192,
+          presets: buildFigureExportPresetList(this.helios?.layers?.size ?? this.helios?.size ?? {}, { maxBitmapDimension: 8192 }, Number(supersamplingSelect.value || 1)),
+        };
+
+        const exportFrame = document.createElement('div');
+        exportFrame.className = 'helios-ui-export-frame';
+        exportFrame.setAttribute('aria-hidden', 'true');
+        Object.assign(exportFrame.style, {
+          position: 'absolute',
+          display: 'none',
+          boxSizing: 'border-box',
+          border: '2px solid #ff3b30',
+          pointerEvents: 'none',
+        });
+        (this.helios?.layers?.overlay ?? this.container).appendChild(exportFrame);
+        this._controlCleanups.add(() => exportFrame.remove());
+
+        let figureTabActive = false;
+
+        const syncPresetOptions = () => {
+          const capability = getExportCapability();
+          const presets = capability?.presets ?? [];
+          const previous = presetSelect.value || capability?.defaultPreset || 'window';
+          presetSelect.replaceChildren();
+          let firstAvailable = 'custom';
+          for (const entry of presets) {
+            const opt = document.createElement('option');
+            opt.value = entry.id;
+            opt.textContent = entry.available === false ? `${entry.label} (unavailable)` : entry.label;
+            opt.disabled = entry.available === false;
+            if (entry.available !== false && firstAvailable === 'custom') firstAvailable = entry.id;
+            presetSelect.appendChild(opt);
+          }
+          presetSelect.value = Array.from(presetSelect.options).some((opt) => opt.value === previous && !opt.disabled)
+            ? previous
+            : firstAvailable;
+        };
+
+        const resolveFigureState = () => {
+          const capability = getExportCapability();
+          return resolveFigureExportOptions({
+            filename: exportNameInput.value,
+            format: exportFormatSelect.value,
+            preset: presetSelect.value,
+            width: customWidthInput.value,
+            height: customHeightInput.value,
+            supersampling: Number(supersamplingSelect.value || 1),
+            includeLabels: labelsToggle.checked,
+            includeLegends: legendsToggle.checked,
+            legendScale: exportLegendScale,
+            transparentBackground: backgroundToggle.checked !== true,
+            alphaMode: alphaModeControl.value,
+          }, {
+            renderer: this.helios?.renderer,
+            capability,
+            windowSize: this.helios?.layers?.size ?? this.helios?.size ?? { width: 1, height: 1 },
+          });
+        };
+
+        const syncExportFrame = (resolved) => {
+          const rect = resolved?.previewRect ?? null;
+          const visible = Boolean(figureTabActive && frameToggle.checked && rect);
+          exportFrame.style.display = visible ? 'block' : 'none';
+          if (!visible) return;
+          exportFrame.style.left = `${rect.x}px`;
+          exportFrame.style.top = `${rect.y}px`;
+          exportFrame.style.width = `${rect.width}px`;
+          exportFrame.style.height = `${rect.height}px`;
+        };
+
+        const syncExportUi = () => {
+          syncExportExtension();
+          syncPresetOptions();
+          const resolved = resolveFigureState();
+          const isCustom = resolved.preset === 'custom';
+          customWidthInput.disabled = !isCustom;
+          customHeightInput.disabled = !isCustom;
+          alphaModeControl.disabled = backgroundToggle.checked === true;
+          exportButton.disabled = resolved.fitsCapability !== true;
+          syncExportFrame(resolved);
+          exportStatus.textContent = resolved.fitsCapability === true
+            ? `Figure ${resolved.width}×${resolved.height}; frame ${Math.round(resolved.previewRect.width)}×${Math.round(resolved.previewRect.height)} in view; raster pass ${resolved.bitmapWidth}×${resolved.bitmapHeight}.`
+            : `Requested raster pass ${resolved.bitmapWidth}×${resolved.bitmapHeight} exceeds the current renderer limit of ${resolved.capability.maxBitmapDimension}px.`;
+        };
+
+        exportFormatSelect.addEventListener('change', syncExportUi);
+        presetSelect.addEventListener('change', syncExportUi);
+        supersamplingSelect.addEventListener('change', syncExportUi);
+        customWidthInput.addEventListener('change', syncExportUi);
+        customHeightInput.addEventListener('change', syncExportUi);
+        labelsToggle.addEventListener('change', syncExportUi);
+        legendsToggle.addEventListener('change', syncExportUi);
+        frameToggle.addEventListener('change', syncExportUi);
+        backgroundToggle.addEventListener('change', syncExportUi);
+        const unsubscribeLegendScale = legendScaleAttribute.subscribe(() => syncExportUi(), { immediate: false });
+        this._controlCleanups.add(() => unsubscribeLegendScale());
+
+        const exportTabContent = document.createElement('div');
+        exportTabContent.appendChild(createAlignedRow({
+          title: 'Format',
+          hint: 'PNG exports a bitmap. SVG embeds the bitmap and keeps labels/legends as vectors.',
+          controls: exportFormatSelect,
+        }).row);
+        exportTabContent.appendChild(createAlignedRow({
+          title: 'Size',
+          hint: 'Pick a preset based on the figure size. Window presets use the current view size.',
+          controls: presetSelect,
+        }).row);
+        exportTabContent.appendChild(createAlignedRow({
+          title: 'Custom',
+          hint: 'Used only when the size preset is Custom.',
+          controls: customSizeWrap,
+        }).row);
+        exportTabContent.appendChild(createAlignedRow({
+          title: 'Supersampling',
+          hint: 'Renders the bitmap portion at a larger size and downsamples it for sharper PNGs and embedded SVG images.',
+          controls: supersamplingSelect,
+        }).row);
+        exportTabContent.appendChild(createAlignedRow({
+          title: 'Legends',
+          hint: 'Adds the SVG legends using figure-relative placement, ignoring docked UI insets.',
+          controls: legendsToggle,
+        }).row);
+        exportTabContent.appendChild(legendScaleRow.element);
+        exportTabContent.appendChild(createAlignedRow({
+          title: 'Labels',
+          hint: 'Adds the current SVG label overlay to the export.',
+          controls: labelsToggle,
+        }).row);
+        exportTabContent.appendChild(createAlignedRow({
+          title: 'Background',
+          hint: 'On exports an opaque figure with the current background color. Off makes the full figure background transparent.',
+          controls: backgroundToggle,
+        }).row);
+        exportTabContent.appendChild(createAlignedRow({
+          title: 'Alpha',
+          hint: 'Only used when Background is off. Standard is regular PNG/SVG alpha; premultiplied keeps raw framebuffer RGB.',
+          controls: alphaModeControl,
+        }).row);
+        exportTabContent.appendChild(createAlignedRow({
+          title: 'Frame',
+          hint: 'Shows the crop that will be exported. Disabled by default.',
+          controls: frameToggle,
+        }).row);
+        exportTabContent.appendChild(exportNameBar);
+        exportTabContent.appendChild(exportStatus);
+        exportTabContent.appendChild(exportButton);
+        exportTab.appendChild(exportTabContent);
+
         loadButton.addEventListener('click', () => fileInput.click());
         fileInput.addEventListener('change', async () => {
           const file = fileInput.files?.[0] ?? null;
@@ -451,13 +756,13 @@ export class HeliosUI {
           saveButton.disabled = true;
           try {
             await this.helios.loadNetwork(file, { disposeOld: true, recreateRenderer: true, keepCamera: false });
-            loadedName = file.name;
             const nextBase = this.helios._lastLoadedNetworkBase ?? file.name.replace(/\.[^.]+$/, '');
             const sanitized = sanitizeBaseName(nextBase);
             if (sanitized) {
               baseName = sanitized;
               lastValidBaseName = sanitized;
               nameInput.value = sanitized;
+              exportNameInput.value = sanitized;
             }
             loadedFormat = this.helios._lastLoadedNetworkFormat ?? loadedFormat;
             if (loadedFormat && ['bxnet', 'zxnet', 'xnet'].includes(loadedFormat)) {
@@ -477,7 +782,7 @@ export class HeliosUI {
           saveButton.disabled = true;
           loadButton.disabled = true;
           try {
-            commitBaseName();
+            commitBaseName(nameInput);
             const fmt = formatSelect.value;
             const blob = await this.helios.saveNetwork(fmt, { output: 'blob' });
             if (blob) {
@@ -494,22 +799,54 @@ export class HeliosUI {
           }
         });
 
-          formatSelect.addEventListener('change', () => refreshNetworkInfo());
-
-          // Update stats if the network is replaced externally.
-          const onNetworkReplaced = () => refreshNetworkInfo();
-          let unsub = null;
-          if (this.helios?.on) {
-            unsub = this.helios.on('network:replaced', onNetworkReplaced);
-          } else if (this.helios?.addEventListener) {
-            this.helios.addEventListener('network:replaced', onNetworkReplaced);
-            unsub = () => this.helios.removeEventListener('network:replaced', onNetworkReplaced);
+        exportButton.addEventListener('click', async () => {
+          exportButton.disabled = true;
+          try {
+            commitBaseName(exportNameInput);
+            const resolved = resolveFigureState();
+            const blob = await this.helios.exportFigureBlob(resolved);
+            downloadBlob(blob, normalizeFigureExportFilename(exportNameInput.value, resolved.format, lastValidBaseName));
+          } catch (error) {
+            // eslint-disable-next-line no-console
+            console.error('Failed to export figure', error);
+          } finally {
+            syncExportUi();
           }
-          if (unsub) this._controlCleanups.add(unsub);
+        });
 
-          container.appendChild(stats);
-          container.appendChild(controls);
-          container.appendChild(nameBar);
+        formatSelect.addEventListener('change', () => refreshNetworkInfo());
+
+        // Update stats if the network is replaced externally.
+        const onNetworkReplaced = () => {
+          refreshNetworkInfo();
+          syncExportUi();
+        };
+        let unsub = null;
+        if (this.helios?.on) {
+          unsub = this.helios.on('network:replaced', onNetworkReplaced);
+        } else if (this.helios?.addEventListener) {
+          this.helios.addEventListener('network:replaced', onNetworkReplaced);
+          unsub = () => this.helios.removeEventListener('network:replaced', onNetworkReplaced);
+        }
+        if (unsub) this._controlCleanups.add(unsub);
+
+        const unsubResize = this.helios?.layers?.onResize?.(() => syncExportUi());
+        if (unsubResize) this._controlCleanups.add(unsubResize);
+
+        const tabs = new TabbedPanel({
+          variant: 'panel',
+          onActiveChanged: (id) => {
+            figureTabActive = id === 'figure';
+            syncExportUi();
+          },
+          tabs: [
+            { id: 'network', title: 'Network', content: networkTab },
+            { id: 'figure', title: 'Figure', content: exportTab },
+          ],
+        });
+        this._controlCleanups.add(() => tabs.destroy());
+        container.appendChild(tabs.element);
+        syncExportUi();
         return container;
       })();
 

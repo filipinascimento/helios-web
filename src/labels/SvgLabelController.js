@@ -29,6 +29,7 @@ const DEFAULT_CONFIG = Object.freeze({
   selectedBoost: 2.0,
   hoveredBoost: 3.0,
   fontFamily: 'ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif',
+  illustratorCompatible: false,
   fontSizeScale: 1,
   fill: '#f4f7ff',
   outlineColor: '#001426cc',
@@ -79,6 +80,40 @@ function normalizeColorString(value, fallback) {
   }
   if (typeof value === 'string' && value.trim()) return value.trim();
   return fallback;
+}
+
+function colorStringToSvgPaint(value, fallback = '#000000') {
+  const raw = String(value ?? '').trim();
+  if (!raw) return { color: fallback, opacity: null };
+  if (raw.startsWith('#')) {
+    const hex = raw.slice(1);
+    if (hex.length === 8) {
+      const color = `#${hex.slice(0, 6)}`;
+      const alpha = Number.parseInt(hex.slice(6, 8), 16) / 255;
+      return { color, opacity: Number.isFinite(alpha) && alpha < 1 ? alpha : null };
+    }
+    if (hex.length === 4) {
+      const color = `#${hex.slice(0, 3)}`;
+      const alpha = Number.parseInt(`${hex[3]}${hex[3]}`, 16) / 255;
+      return { color, opacity: Number.isFinite(alpha) && alpha < 1 ? alpha : null };
+    }
+    return { color: raw, opacity: null };
+  }
+  const rgba = /^rgba?\(([^)]+)\)$/iu.exec(raw);
+  if (rgba) {
+    const parts = rgba[1].split(',').map((part) => part.trim());
+    if (parts.length >= 3) {
+      const r = clampInt(parts[0], 0, 255);
+      const g = clampInt(parts[1], 0, 255);
+      const b = clampInt(parts[2], 0, 255);
+      const a = parts.length >= 4 ? clamp01(parts[3]) : 1;
+      return {
+        color: `rgb(${r}, ${g}, ${b})`,
+        opacity: a < 1 ? a : null,
+      };
+    }
+  }
+  return { color: raw, opacity: null };
 }
 
 function composeViewSignature(uniforms) {
@@ -270,6 +305,9 @@ export class SvgLabelController {
       const family = String(options.fontFamily ?? '').trim();
       next.fontFamily = family || DEFAULT_CONFIG.fontFamily;
     }
+    if (Object.prototype.hasOwnProperty.call(options, 'illustratorCompatible')) {
+      next.illustratorCompatible = options.illustratorCompatible === true;
+    }
     if (Object.prototype.hasOwnProperty.call(options, 'fontSizeScale')) {
       next.fontSizeScale = clamp(options.fontSizeScale, 0.25, 8);
     }
@@ -357,6 +395,48 @@ export class SvgLabelController {
     return changed;
   }
 
+  createSnapshot(options = {}) {
+    if (!this.helios || typeof document === 'undefined') return null;
+    const renderer = this.helios.renderer ?? null;
+    const camera = renderer?.camera ?? null;
+    const uniforms = options.uniforms ?? camera?.getUniforms?.() ?? null;
+    if (!renderer || !camera || !uniforms?.viewProjection || !uniforms?.viewport) return null;
+
+    const previousConfig = this._config;
+    if (options.config && typeof options.config === 'object') {
+      this._config = { ...this._config, ...options.config };
+    }
+
+    try {
+      if (this._config.maxVisible <= 0) return null;
+      const now = Number.isFinite(options.timestamp) ? Number(options.timestamp) : performance.now();
+      const network = this._getRenderNetwork();
+      if (!network) return null;
+      const run = () => {
+        const nodeIndices = this._safe(() => network.nodeIndices, null);
+        if (!nodeIndices || !nodeIndices.length) {
+          this._visibleEntries.length = 0;
+          this._lastVisibleSet.clear();
+          return false;
+        }
+        return this._runFullUpdateUnsafe(uniforms, now, nodeIndices, { render: false });
+      };
+      if (typeof network.withBufferAccess === 'function') {
+        try {
+          network.withBufferAccess(run, { nodeIndices: true });
+        } catch {
+          run();
+        }
+      } else {
+        run();
+      }
+      if (!this._visibleEntries.length) return null;
+      return this._buildSnapshotGroup(this._visibleEntries);
+    } finally {
+      this._config = previousConfig;
+    }
+  }
+
   _currentHoveredNode() {
     const hover = this.helios?._picking?.hover ?? null;
     if (hover?.kind === 'node' && Number.isInteger(hover.index) && hover.index >= 0) {
@@ -432,7 +512,7 @@ export class SvgLabelController {
     return Boolean(run());
   }
 
-  _runFullUpdateUnsafe(uniforms, now, nodeIndices) {
+  _runFullUpdateUnsafe(uniforms, now, nodeIndices, options = {}) {
     const network = this._getRenderNetwork();
     if (!network) return false;
 
@@ -582,7 +662,7 @@ export class SvgLabelController {
 
     this._visibleEntries = nextVisible;
     this._lastVisibleSet = new Set(nextVisible.map((entry) => entry.id));
-    this._renderVisible();
+    if (options.render !== false) this._renderVisible();
     return true;
   }
 
@@ -963,7 +1043,7 @@ export class SvgLabelController {
 
   _renderVisible() {
     if (!this.group) return;
-    this._applyGroupStyles();
+    this._applyGroupStyles(this.group);
     const entries = this._visibleEntries;
     while (this._pool.length < entries.length) {
       const text = document.createElementNS(SVG_NS, 'text');
@@ -986,6 +1066,73 @@ export class SvgLabelController {
       this._pool[i].style.display = 'none';
       this._pool[i].dataset.nodeId = '';
     }
+  }
+
+  _buildSnapshotGroup(entries) {
+    const group = document.createElementNS(SVG_NS, 'g');
+    group.setAttribute('class', 'helios-label-layer');
+    group.setAttribute('pointer-events', 'none');
+    if (this._config.illustratorCompatible === true) {
+      const outlineLayer = document.createElementNS(SVG_NS, 'g');
+      const fillLayer = document.createElementNS(SVG_NS, 'g');
+      outlineLayer.setAttribute('class', 'helios-label-layer__outline');
+      fillLayer.setAttribute('class', 'helios-label-layer__fill');
+      const fillPaint = colorStringToSvgPaint(this._config.fill, '#ffffff');
+      const outlinePaint = colorStringToSvgPaint(this._config.outlineColor, '#000000');
+      outlineLayer.setAttribute('font-family', this._config.fontFamily);
+      outlineLayer.setAttribute('font-size', `${12 * this._config.fontSizeScale}`);
+      outlineLayer.setAttribute('fill', outlinePaint.color);
+      outlineLayer.setAttribute('stroke', outlinePaint.color);
+      outlineLayer.setAttribute('stroke-width', `${this._config.outlineWidth}`);
+      outlineLayer.setAttribute('stroke-linejoin', 'round');
+      outlineLayer.setAttribute('stroke-linecap', 'round');
+      if (outlinePaint.opacity != null) {
+        outlineLayer.setAttribute('fill-opacity', `${outlinePaint.opacity}`);
+        outlineLayer.setAttribute('stroke-opacity', `${outlinePaint.opacity}`);
+      }
+      fillLayer.setAttribute('font-family', this._config.fontFamily);
+      fillLayer.setAttribute('font-size', `${12 * this._config.fontSizeScale}`);
+      fillLayer.setAttribute('fill', fillPaint.color);
+      fillLayer.setAttribute('stroke', 'none');
+      if (fillPaint.opacity != null) fillLayer.setAttribute('fill-opacity', `${fillPaint.opacity}`);
+      group.appendChild(outlineLayer);
+      group.appendChild(fillLayer);
+      for (const entry of entries) {
+        const outlineNode = document.createElementNS(SVG_NS, 'text');
+        outlineNode.setAttribute('class', 'helios-label helios-label--outline');
+        outlineNode.setAttribute('text-anchor', 'middle');
+        outlineNode.setAttribute('dominant-baseline', 'middle');
+        outlineNode.dataset.nodeId = String(entry.id);
+        outlineNode.setAttribute('x', `${entry.x}`);
+        outlineNode.setAttribute('y', `${entry.y}`);
+        this._syncTextContent(outlineNode, entry);
+        outlineLayer.appendChild(outlineNode);
+
+        const fillNode = document.createElementNS(SVG_NS, 'text');
+        fillNode.setAttribute('class', 'helios-label helios-label--fill');
+        fillNode.setAttribute('text-anchor', 'middle');
+        fillNode.setAttribute('dominant-baseline', 'middle');
+        fillNode.dataset.nodeId = String(entry.id);
+        fillNode.setAttribute('x', `${entry.x}`);
+        fillNode.setAttribute('y', `${entry.y}`);
+        this._syncTextContent(fillNode, entry);
+        fillLayer.appendChild(fillNode);
+      }
+      return group;
+    }
+    this._applyGroupStyles(group);
+    for (const entry of entries) {
+      const node = document.createElementNS(SVG_NS, 'text');
+      node.setAttribute('class', 'helios-label');
+      node.setAttribute('text-anchor', 'middle');
+      node.setAttribute('dominant-baseline', 'middle');
+      node.dataset.nodeId = String(entry.id);
+      node.setAttribute('x', `${entry.x}`);
+      node.setAttribute('y', `${entry.y}`);
+      this._syncTextContent(node, entry);
+      group.appendChild(node);
+    }
+    return group;
   }
 
   _hideAll() {
@@ -1040,16 +1187,23 @@ export class SvgLabelController {
     node.dataset.multilineSig = signature;
   }
 
-  _applyGroupStyles() {
-    if (!this.group) return;
-    this.group.setAttribute('font-family', this._config.fontFamily);
-    this.group.setAttribute('font-size', `${12 * this._config.fontSizeScale}`);
-    this.group.setAttribute('fill', this._config.fill);
-    this.group.setAttribute('stroke', this._config.outlineColor);
-    this.group.setAttribute('stroke-width', `${this._config.outlineWidth}`);
-    this.group.setAttribute('stroke-linejoin', 'round');
-    this.group.setAttribute('stroke-linecap', 'round');
-    this.group.setAttribute('paint-order', this._config.outlineWidth > 0 ? 'stroke fill' : 'fill');
+  _applyGroupStyles(group = this.group) {
+    if (!group) return;
+    const fillPaint = colorStringToSvgPaint(this._config.fill, '#ffffff');
+    const outlinePaint = colorStringToSvgPaint(this._config.outlineColor, '#000000');
+    group.setAttribute('font-family', this._config.fontFamily);
+    group.setAttribute('font-size', `${12 * this._config.fontSizeScale}`);
+    group.setAttribute('fill', fillPaint.color);
+    group.setAttribute('stroke', outlinePaint.color);
+    group.setAttribute('stroke-width', `${this._config.outlineWidth}`);
+    group.setAttribute('stroke-linejoin', 'round');
+    group.setAttribute('stroke-linecap', 'round');
+    if (fillPaint.opacity != null) group.setAttribute('fill-opacity', `${fillPaint.opacity}`);
+    else group.removeAttribute('fill-opacity');
+    if (outlinePaint.opacity != null) group.setAttribute('stroke-opacity', `${outlinePaint.opacity}`);
+    else group.removeAttribute('stroke-opacity');
+    if (this._config.illustratorCompatible === true) group.removeAttribute('paint-order');
+    else group.setAttribute('paint-order', this._config.outlineWidth > 0 ? 'stroke fill' : 'fill');
   }
 
   _safe(fn, fallback = null) {

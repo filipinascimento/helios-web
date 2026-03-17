@@ -475,6 +475,25 @@ export const defaultStylesText = `
   border-color: color-mix(in srgb, var(--helios-ui-fg) 18%, transparent);
 }
 
+.helios-ui-select:disabled {
+  cursor: not-allowed;
+  color: color-mix(in srgb, var(--helios-ui-muted) 98%, transparent);
+  border-color: color-mix(in srgb, var(--helios-ui-border) 72%, black 28%);
+  background:
+    linear-gradient(45deg, transparent 50%, color-mix(in srgb, var(--helios-ui-muted) 35%, transparent) 50%) right 12px center/6px 6px no-repeat,
+    linear-gradient(135deg, color-mix(in srgb, var(--helios-ui-muted) 35%, transparent) 50%, transparent 50%) right 8px center/6px 6px no-repeat,
+    repeating-linear-gradient(
+      -45deg,
+      color-mix(in srgb, var(--helios-ui-bg-solid) 90%, black 10%) 0 6px,
+      color-mix(in srgb, var(--helios-ui-bg-solid) 80%, black 20%) 6px 12px
+    );
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, black 24%, transparent);
+}
+
+.helios-ui-select:disabled:hover {
+  border-color: color-mix(in srgb, var(--helios-ui-border) 72%, black 28%);
+}
+
 .helios-ui-button:hover {
   border-color: color-mix(in srgb, var(--helios-ui-accent) 55%, var(--helios-ui-border));
   background: color-mix(in srgb, var(--helios-ui-accent) 22%, var(--helios-ui-bg-solid));

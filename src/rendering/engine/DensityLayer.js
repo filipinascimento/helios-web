@@ -67,6 +67,26 @@ function matrixHasFiniteValues(matrix) {
   return true;
 }
 
+export function resolveDensityBandwidthViewport(context, cameraUniforms, fallbackWidth = 1, fallbackHeight = 1) {
+  const cameraViewport = cameraUniforms?.viewport ?? null;
+  const exportViewport = context?.target?.exportFigureLogicalViewport ?? null;
+  const width = Math.max(
+    1,
+    toFiniteNumber(
+      exportViewport?.width ?? cameraViewport?.width,
+      fallbackWidth,
+    ),
+  );
+  const height = Math.max(
+    1,
+    toFiniteNumber(
+      exportViewport?.height ?? cameraViewport?.height,
+      fallbackHeight,
+    ),
+  );
+  return { width, height };
+}
+
 const SPLAT_VERT_WEBGL = `#version 300 es
 precision highp float;
 precision highp int;
@@ -1341,6 +1361,7 @@ export class DensityLayer extends Layer {
     const viewport = context.viewport ?? [0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight];
     const viewportWidth = Math.max(1, viewport[2]);
     const viewportHeight = Math.max(1, viewport[3]);
+    const bandwidthViewport = resolveDensityBandwidthViewport(context, cameraUniforms, viewportWidth, viewportHeight);
 
     const densityWidth = Math.max(1, Math.floor(viewportWidth * this.config.qualityScale));
     const densityHeight = Math.max(1, Math.floor(viewportHeight * this.config.qualityScale));
@@ -1395,7 +1416,7 @@ export class DensityLayer extends Layer {
     gl.bindVertexArray(this.webgl.vaoSplat);
 
     gl.uniformMatrix4fv(this.webgl.uniforms.splat.u_viewProjection, false, cameraUniforms.viewProjection);
-    gl.uniform2f(this.webgl.uniforms.splat.u_viewport, viewportWidth, viewportHeight);
+    gl.uniform2f(this.webgl.uniforms.splat.u_viewport, bandwidthViewport.width, bandwidthViewport.height);
     gl.uniform2f(this.webgl.uniforms.splat.u_densitySize, densityWidth, densityHeight);
     const splatBandwidth = this.resolveSplatBandwidthPx(frame?.camera, cameraUniforms);
     gl.uniform1f(this.webgl.uniforms.splat.u_bandwidthPx, splatBandwidth);
@@ -1728,6 +1749,7 @@ export class DensityLayer extends Layer {
     const viewport = context.viewport ?? null;
     const width = viewport ? Math.max(1, Math.floor(viewport.width)) : Math.max(1, Math.floor(context.width));
     const height = viewport ? Math.max(1, Math.floor(viewport.height)) : Math.max(1, Math.floor(context.height));
+    const bandwidthViewport = resolveDensityBandwidthViewport(context, cameraUniforms, width, height);
     const densityWidth = Math.max(1, Math.floor(width * this.config.qualityScale));
     const densityHeight = Math.max(1, Math.floor(height * this.config.qualityScale));
 
@@ -1757,8 +1779,8 @@ export class DensityLayer extends Layer {
 
     const cameraData = new Float32Array(24);
     cameraData.set(cameraUniforms.viewProjection, 0);
-    cameraData[16] = width;
-    cameraData[17] = height;
+    cameraData[16] = bandwidthViewport.width;
+    cameraData[17] = bandwidthViewport.height;
     cameraData[18] = densityWidth;
     cameraData[19] = densityHeight;
     cameraData[20] = this.resolveSplatBandwidthPx(frame?.camera, cameraUniforms);

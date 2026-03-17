@@ -73,6 +73,30 @@ helios.legends({
   },
 });
 
+// Figure export:
+// - preset: 'window' | 'window@x2' | 'window@x4' | '1080p' | '4k' | '8k' | 'custom'
+// - supersampling only affects the raster pass; SVG stays self-contained and embeds that bitmap.
+// - transparentBackground: false keeps the figure opaque with the current background color.
+// - transparentBackground: true preserves alpha in both PNG and SVG exports.
+// - alphaMode only matters when transparentBackground is true:
+//   'straight' is the standard/unpremultiplied PNG/SVG alpha mode, 'premultiplied' keeps raw framebuffer RGB.
+const svgBlob = await helios.exportFigureBlob({
+  format: 'svg',
+  preset: '4k',
+  supersampling: 2,
+  includeLegends: true,
+  includeLabels: true,
+  transparentBackground: true,
+  alphaMode: 'straight',
+});
+
+await helios.exportFigure('figure.png', {
+  preset: 'window@x2',
+  supersampling: 2,
+  includeLegends: true,
+  includeLabels: false,
+});
+
 // Render quality controls:
 // - supersampling defaults to "auto": DPR < 2 gets a 2x backing-store boost,
 //   retina-class screens stay at native DPR unless you force it on.

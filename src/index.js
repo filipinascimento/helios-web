@@ -20,6 +20,12 @@ export {
 export { LayeredRenderer } from './rendering/engine/LayeredRenderer.js';
 export { Camera } from './rendering/Camera.js';
 export {
+  FIGURE_EXPORT_PRESETS,
+  buildFigureExportPresetList,
+  getFigureExportCapability,
+  resolveFigureExportOptions,
+} from './export/figureExport.js';
+export {
   CameraTransitionController,
   captureCameraPose,
   applyCameraPose,

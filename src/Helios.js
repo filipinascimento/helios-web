@@ -26,6 +26,11 @@ import { SvgLabelController } from './labels/SvgLabelController.js';
 import { SvgLegendController } from './legends/SvgLegendController.js';
 import { HeliosFilter } from './filters/HeliosFilter.js';
 import { DensityLayer } from './rendering/engine/DensityLayer.js';
+import {
+  buildFigureExportPresetList,
+  getFigureExportCapability,
+  resolveFigureExportOptions,
+} from './export/figureExport.js';
 
 const {
   NODE_POSITION_ATTRIBUTE,
@@ -197,6 +202,121 @@ function inferNetworkFormatFromName(name) {
   if (lower.endsWith('.zxnet')) return 'zxnet';
   if (lower.endsWith('.xnet')) return 'xnet';
   return null;
+}
+
+function elementToMarkup(element) {
+  if (!element) return '';
+  return new XMLSerializer().serializeToString(element);
+}
+
+function normalizeExportPixels(pixels, width, height, options = {}) {
+  const source = pixels instanceof Uint8Array ? pixels : new Uint8Array(pixels);
+  const normalized = new Uint8ClampedArray(width * height * 4);
+  const flipY = options.flipY === true;
+  const swizzleBGRA = options.swizzleBGRA === true;
+  const alphaMode = String(options.alphaMode ?? 'straight').trim().toLowerCase();
+  for (let row = 0; row < height; row += 1) {
+    const srcRow = flipY ? (height - 1 - row) : row;
+    for (let col = 0; col < width; col += 1) {
+      const srcOffset = (srcRow * width + col) * 4;
+      const dstOffset = (row * width + col) * 4;
+      let red;
+      let green;
+      let blue;
+      const alpha = source[srcOffset + 3];
+      if (swizzleBGRA) {
+        red = source[srcOffset + 2];
+        green = source[srcOffset + 1];
+        blue = source[srcOffset];
+      } else {
+        red = source[srcOffset];
+        green = source[srcOffset + 1];
+        blue = source[srcOffset + 2];
+      }
+      if (alphaMode === 'straight') {
+        if (alpha <= 0) {
+          red = 0;
+          green = 0;
+          blue = 0;
+        } else if (alpha < 255) {
+          const scale = 255 / alpha;
+          red = Math.min(255, Math.round(red * scale));
+          green = Math.min(255, Math.round(green * scale));
+          blue = Math.min(255, Math.round(blue * scale));
+        }
+      }
+      normalized[dstOffset] = red;
+      normalized[dstOffset + 1] = green;
+      normalized[dstOffset + 2] = blue;
+      normalized[dstOffset + 3] = alpha;
+    }
+  }
+  return normalized;
+}
+
+function pixelsToCanvas(pixels, width, height, outputWidth, outputHeight, options = {}) {
+  const normalizedPixels = normalizeExportPixels(pixels, width, height, options);
+  const fullCanvas = document.createElement('canvas');
+  fullCanvas.width = Math.max(1, width);
+  fullCanvas.height = Math.max(1, height);
+  const fullCtx = fullCanvas.getContext('2d', { willReadFrequently: true });
+  if (!fullCtx) throw new Error('Unable to create a 2D canvas context for figure export');
+  fullCtx.putImageData(new ImageData(normalizedPixels, width, height), 0, 0);
+
+  if (width === outputWidth && height === outputHeight) {
+    return fullCanvas;
+  }
+
+  const outputCanvas = document.createElement('canvas');
+  outputCanvas.width = Math.max(1, outputWidth);
+  outputCanvas.height = Math.max(1, outputHeight);
+  const outputCtx = outputCanvas.getContext('2d');
+  if (!outputCtx) throw new Error('Unable to create an output canvas for figure export');
+  outputCtx.imageSmoothingEnabled = true;
+  if (typeof outputCtx.imageSmoothingQuality !== 'undefined') outputCtx.imageSmoothingQuality = 'high';
+  outputCtx.drawImage(fullCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
+  return outputCanvas;
+}
+
+function canvasToBlob(canvas, type) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error(`Failed to encode figure as ${type}`));
+    }, type);
+  });
+}
+
+function loadSvgImage(svgText) {
+  return new Promise((resolve, reject) => {
+    const blob = new Blob([svgText], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = (error) => {
+      URL.revokeObjectURL(url);
+      reject(error instanceof Error ? error : new Error('Failed to rasterize SVG overlay'));
+    };
+    image.src = url;
+  });
+}
+
+const ILLUSTRATOR_EXPORT_FONT_FAMILY = '"Helvetica Neue", Helvetica, Arial, sans-serif';
+
+function resolveExportBackgroundColor(backgroundColor) {
+  const source = Array.isArray(backgroundColor) ? backgroundColor : [1, 1, 1, 1];
+  const red = Math.max(0, Math.min(255, Math.round(Number(source[0] ?? 0) * 255)));
+  const green = Math.max(0, Math.min(255, Math.round(Number(source[1] ?? 0) * 255)));
+  const blue = Math.max(0, Math.min(255, Math.round(Number(source[2] ?? 0) * 255)));
+  return {
+    red,
+    green,
+    blue,
+    css: `rgb(${red} ${green} ${blue})`,
+  };
 }
 
 function resolveSeedBoundsForLayout(layoutOption, size, mode) {
@@ -2277,6 +2397,283 @@ export class Helios extends EventTarget {
       return this.network.saveXNet(saveOptions);
     }
     throw new Error(`Unsupported network format: ${format}`);
+  }
+
+  getFigureExportCapabilities(options = {}) {
+    const supersampling = Number(options.supersampling ?? 1);
+    const capability = getFigureExportCapability(this.renderer, supersampling);
+    return {
+      ...capability,
+      windowDevicePixelRatio: globalThis.window?.devicePixelRatio ?? 1,
+      defaultPreset: resolveFigureExportOptions({}, {
+        renderer: this.renderer,
+        capability: {
+          ...capability,
+          windowDevicePixelRatio: globalThis.window?.devicePixelRatio ?? 1,
+        },
+        windowSize: this.layers?.size ?? this.size ?? {},
+        windowDevicePixelRatio: globalThis.window?.devicePixelRatio ?? 1,
+      }).preset,
+      presets: buildFigureExportPresetList(
+        this.layers?.size ?? this.size ?? {},
+        {
+          ...capability,
+          windowDevicePixelRatio: globalThis.window?.devicePixelRatio ?? 1,
+        },
+        supersampling,
+      ),
+    };
+  }
+
+  _resolveFigureExportOptions(options = {}) {
+    const supersampling = Number(options.supersampling ?? 1);
+    const capability = getFigureExportCapability(this.renderer, supersampling);
+    return resolveFigureExportOptions(options, {
+      renderer: this.renderer,
+      capability,
+      windowSize: this.layers?.size ?? this.size ?? { width: 1, height: 1 },
+      windowDevicePixelRatio: globalThis.window?.devicePixelRatio ?? 1,
+    });
+  }
+
+  async _prepareFigureExportFrame() {
+    if (typeof document === 'undefined') {
+      throw new Error('Figure export requires a browser environment');
+    }
+    if (!this.renderer || !this.scheduler) {
+      throw new Error('Figure export requires an initialized renderer');
+    }
+    if (!this.network) {
+      throw new Error('Figure export requires an active network');
+    }
+    this.visuals?.seedMissingPositions?.(this.layers?.size ?? this.size);
+    this._applyMappersSafely();
+    const frame = this.scheduler.geometryCallback?.() ?? this.scheduler.currentFrame ?? null;
+    if (!frame) {
+      throw new Error('Figure export requires an available render frame');
+    }
+    return frame;
+  }
+
+  async _captureFigureBitmap(options, frame) {
+    const renderer = this.renderer ?? null;
+    if (!renderer?.camera) throw new Error('Figure export requires an initialized camera');
+
+    const framebuffer = renderer.createFramebuffer(options.framebufferWidth, options.framebufferHeight);
+    const previousClearColor = Array.isArray(renderer.clearColor) ? [...renderer.clearColor] : null;
+    try {
+      if (options.transparentBackground === true) {
+        renderer.clearColor = [0, 0, 0, 0];
+      }
+      if (framebuffer && typeof framebuffer === 'object') {
+        framebuffer.exportFigureLogicalViewport = {
+          width: Math.max(1, Number(renderer.camera?.viewport?.width ?? this.layers?.size?.width ?? this.size?.width ?? 1)),
+          height: Math.max(1, Number(renderer.camera?.viewport?.height ?? this.layers?.size?.height ?? this.size?.height ?? 1)),
+        };
+      }
+      renderer.setRenderTarget(framebuffer);
+      renderer.render(frame);
+      const pixels = await renderer.readPixels(framebuffer, {
+        x: options.cropRect.x,
+        y: options.cropRect.y,
+        width: options.cropRect.width,
+        height: options.cropRect.height,
+      });
+      return pixelsToCanvas(
+        pixels,
+        options.cropRect.width,
+        options.cropRect.height,
+        options.width,
+        options.height,
+        {
+          flipY: renderer.device?.type === 'webgl2',
+          swizzleBGRA: renderer.device?.type === 'webgpu' && String(renderer.device?.format ?? '').startsWith('bgra'),
+          alphaMode: options.transparentBackground === true ? options.alphaMode : 'straight',
+        },
+      );
+    } finally {
+      if (previousClearColor) {
+        renderer.clearColor = previousClearColor;
+      }
+      renderer.setRenderTarget(null);
+      const device = renderer.device ?? null;
+      if (framebuffer?.type === 'webgl2') {
+        const gl = device?.gl ?? null;
+        if (gl) {
+          if (framebuffer.handle) gl.deleteFramebuffer?.(framebuffer.handle);
+          if (framebuffer.texture) gl.deleteTexture?.(framebuffer.texture);
+          if (framebuffer.depth) gl.deleteRenderbuffer?.(framebuffer.depth);
+        }
+      } else if (framebuffer?.type === 'webgpu') {
+        framebuffer.texture?.destroy?.();
+        framebuffer.depthTexture?.destroy?.();
+      }
+    }
+  }
+
+  _captureFigureOverlay(options) {
+    if (typeof document === 'undefined') return null;
+    const renderer = this.renderer ?? null;
+    if (!renderer?.camera) return null;
+    const legendBaseConfig = this._legends?.getConfig?.() ?? { scale: 1 };
+    const legendExportScale = options.width / Math.max(1e-6, options.previewRect?.width ?? options.width);
+    const legendScale = Math.max(0.25, Number(legendBaseConfig.scale ?? 1) * legendExportScale * Number(options.legendScale ?? 1));
+    const targetSize = {
+      width: options.width,
+      height: options.height,
+      devicePixelRatio: 1,
+    };
+    const labelScale = options.width / Math.max(1e-6, options.previewRect?.width ?? options.width);
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    svg.setAttribute('width', `${options.width}`);
+    svg.setAttribute('height', `${options.height}`);
+    svg.setAttribute('viewBox', `0 0 ${options.width} ${options.height}`);
+
+    if (options.includeLabels) {
+      const labelGroup = this._labels?.createSnapshot?.({
+        timestamp: performance.now(),
+        config: options.format === 'svg'
+          ? {
+            fontFamily: ILLUSTRATOR_EXPORT_FONT_FAMILY,
+            illustratorCompatible: true,
+          }
+          : null,
+      });
+      if (labelGroup) {
+        const transformed = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        transformed.setAttribute(
+          'transform',
+          `translate(${-options.previewRect.x * labelScale}, ${-options.previewRect.y * labelScale}) scale(${labelScale})`,
+        );
+        transformed.appendChild(labelGroup);
+        svg.appendChild(transformed);
+      }
+    }
+    if (options.includeLegends) {
+      const legendGroup = this._legends?.createSnapshot?.({
+        size: targetSize,
+        insets: { top: 0, right: 0, bottom: 0, left: 0 },
+        viewportHeight: options.height * Number(options.legendScale ?? 1),
+        config: {
+          enabled: true,
+          respectDockInsets: false,
+          scale: legendScale,
+          maxScale: 64,
+          scalePreviewLegends: true,
+          illustratorCompatible: options.format === 'svg',
+          fontFamily: options.format === 'svg' ? ILLUSTRATOR_EXPORT_FONT_FAMILY : undefined,
+        },
+      });
+      if (legendGroup) {
+        legendGroup.dataset.exportLegendScale = `${legendScale}`;
+      }
+      if (legendGroup) svg.appendChild(legendGroup);
+    }
+    if (!svg.childNodes.length) return null;
+    return svg;
+  }
+
+  async _composeFigurePng(canvas, overlaySvg, options = {}) {
+    if (!overlaySvg) {
+      if (options.transparentBackground === true) {
+        return canvasToBlob(canvas, 'image/png');
+      }
+      const outputCanvas = document.createElement('canvas');
+      outputCanvas.width = canvas.width;
+      outputCanvas.height = canvas.height;
+      const ctx = outputCanvas.getContext('2d');
+      if (!ctx) throw new Error('Unable to create a 2D canvas context for PNG export');
+      ctx.fillStyle = resolveExportBackgroundColor(options.backgroundColor).css;
+      ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
+      ctx.drawImage(canvas, 0, 0);
+      return canvasToBlob(outputCanvas, 'image/png');
+    }
+    const outputCanvas = document.createElement('canvas');
+    outputCanvas.width = canvas.width;
+    outputCanvas.height = canvas.height;
+    const ctx = outputCanvas.getContext('2d');
+    if (!ctx) throw new Error('Unable to create a 2D canvas context for PNG export');
+    if (options.transparentBackground !== true) {
+      ctx.fillStyle = resolveExportBackgroundColor(options.backgroundColor).css;
+      ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
+    }
+    ctx.drawImage(canvas, 0, 0);
+    const overlayImage = await loadSvgImage(elementToMarkup(overlaySvg));
+    ctx.drawImage(overlayImage, 0, 0, outputCanvas.width, outputCanvas.height);
+    return canvasToBlob(outputCanvas, 'image/png');
+  }
+
+  _composeFigureSvg(canvas, overlaySvg, options) {
+    const bitmapHref = canvas.toDataURL('image/png');
+    const overlays = overlaySvg
+      ? Array.from(overlaySvg.childNodes).map((node) => elementToMarkup(node)).join('')
+      : '';
+    const backgroundRect = options.transparentBackground === true
+      ? ''
+      : `<rect width="${options.width}" height="${options.height}" fill="${resolveExportBackgroundColor(options.backgroundColor).css}" />`;
+    const svgText = [
+      `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${options.width}" height="${options.height}" viewBox="0 0 ${options.width} ${options.height}">`,
+      backgroundRect,
+      `<image width="${options.width}" height="${options.height}" href="${bitmapHref}" xlink:href="${bitmapHref}" />`,
+      overlays,
+      '</svg>',
+    ].join('');
+    return new Blob([svgText], { type: 'image/svg+xml' });
+  }
+
+  async exportFigureBlob(options = {}) {
+    const resolved = this._resolveFigureExportOptions(options);
+    const exportOptions = {
+      ...resolved,
+      backgroundColor: Array.isArray(this.renderer?.clearColor) ? [...this.renderer.clearColor] : [1, 1, 1, 1],
+    };
+    if (!exportOptions.fitsCapability) {
+      throw new Error(
+        `Requested export requires ${exportOptions.bitmapWidth}x${exportOptions.bitmapHeight} raster pixels, `
+        + `but the current renderer is capped at ${exportOptions.capability.maxBitmapDimension}px per dimension.`,
+      );
+    }
+    try {
+      const frame = await this._prepareFigureExportFrame();
+      const bitmapCanvas = await this._captureFigureBitmap(exportOptions, frame);
+      const overlaySvg = this._captureFigureOverlay(exportOptions);
+      return exportOptions.format === 'svg'
+        ? this._composeFigureSvg(bitmapCanvas, overlaySvg, exportOptions)
+        : await this._composeFigurePng(bitmapCanvas, overlaySvg, exportOptions);
+    } finally {
+      this.scheduler?.requestRender?.();
+    }
+  }
+
+  async exportFigure(filenameOrOptions, maybeOptions = {}) {
+    const options = typeof filenameOrOptions === 'string'
+      ? { ...maybeOptions, filename: filenameOrOptions }
+      : { ...(filenameOrOptions ?? {}) };
+    const resolved = this._resolveFigureExportOptions(options);
+    const blob = await this.exportFigureBlob(options);
+    if (typeof document !== 'undefined') {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = resolved.filename;
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 250);
+    }
+    return {
+      blob,
+      filename: resolved.filename,
+      format: resolved.format,
+      width: resolved.width,
+      height: resolved.height,
+      bitmapWidth: resolved.bitmapWidth,
+      bitmapHeight: resolved.bitmapHeight,
+      supersampling: resolved.supersampling,
+    };
   }
 
   on(type, handler, options) {
