@@ -2089,7 +2089,7 @@ export class GraphLayerWebGL extends GraphLayer {
           passViewportWidth = screenViewportWidth,
           passViewportHeight = screenViewportHeight,
         } = {}) => {
-          if (!this.edgeCount || !edges.endpoints || !activeNodePositionTexture) return;
+          if (!this.edgeCount || !this.shouldRenderEdges() || !edges.endpoints || !activeNodePositionTexture) return;
           const hasEdgeColors = Boolean(edgeVariant?.colorBuffer && edgeVariant?.colorSource !== 'node' && edges.colors);
           const hasNodeColorsForEdgeChannel = Boolean(nodeColorSource);
           const hasEdgeWidths = Boolean(edgeVariant?.widthBuffer && edgeVariant?.widthSource !== 'node' && edges.widths);
@@ -2462,11 +2462,12 @@ export class GraphLayerWebGL extends GraphLayer {
           }
         };
 
+        const effectiveEdgeCount = this.shouldRenderEdges() ? this.edgeCount : 0;
         const weightedRequested = transparencyMode === 'weighted'
           || transparencyMode === 'additive-normalized'
           || transparencyMode === 'additive-tonemapped'
           || transparencyMode === 'additive-normalized-bright';
-        const weightedReady = weightedRequested && this.edgeCount > 0
+        const weightedReady = weightedRequested && effectiveEdgeCount > 0
           ? this.prepareWeightedWebGL(rasterViewportWidth, rasterViewportHeight)
           : false;
         debugWebGLRender('graph:render:mode', {
@@ -2474,7 +2475,7 @@ export class GraphLayerWebGL extends GraphLayer {
           weightedReady,
           is2D,
           nodeCount: this.nodeCount,
-          edgeCount: this.edgeCount,
+          edgeCount: effectiveEdgeCount,
         });
 
         if (weightedReady) {

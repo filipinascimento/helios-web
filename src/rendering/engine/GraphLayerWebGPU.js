@@ -1186,7 +1186,8 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     });
     if (!ok || !this.cameraBuffer) return;
 
-    weightedReady = weightedRequested && edgeCount > 0
+    const effectiveEdgeCount = this.shouldRenderEdges() ? edgeCount : 0;
+    weightedReady = weightedRequested && effectiveEdgeCount > 0
       ? this.prepareWeightedResources(context, cameraUniforms, useEdgeIndices, edgeVariant)
       : false;
 
@@ -1217,21 +1218,21 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     };
 
     const drawEdgesAlpha = (passEncoder) => {
-      if (!edgeCount || !this.edgeBindGroup || !passEncoder) return;
+      if (!effectiveEdgeCount || !this.edgeBindGroup || !passEncoder) return;
       if (this.edgeRenderingMode === 'quad' && edgePipelines?.quad) {
         passEncoder.setPipeline(edgePipelines.quad);
         passEncoder.setBindGroup(0, this.edgeBindGroup);
         passEncoder.setVertexBuffer(0, this.edgeQuadBufferGpu);
-        passEncoder.draw(4, edgeCount, 0, 0);
+        passEncoder.draw(4, effectiveEdgeCount, 0, 0);
       } else if (edgePipelines?.line) {
         passEncoder.setPipeline(edgePipelines.line);
         passEncoder.setBindGroup(0, this.edgeBindGroup);
-        passEncoder.draw(edgeCount * 2, 1, 0, 0);
+        passEncoder.draw(effectiveEdgeCount * 2, 1, 0, 0);
       }
     };
 
     if (!weightedReady) {
-      if (weightedRequested && !this.warnedWeightedFallback && edgeCount > 0) {
+      if (weightedRequested && !this.warnedWeightedFallback && effectiveEdgeCount > 0) {
         console.warn('Weighted edge transparency is not available; using alpha blending instead.');
         this.warnedWeightedFallback = true;
       }
@@ -1252,7 +1253,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
         this.loggedWeightedActive = true;
       }
       passes.push(() => this.renderWeighted(context, {
-        geometry: { nodes: { count: nodeCount }, edges: { count: edgeCount } },
+        geometry: { nodes: { count: nodeCount }, edges: { count: effectiveEdgeCount } },
         is2D,
         drawNodes,
         nodeBlendWithEdges,

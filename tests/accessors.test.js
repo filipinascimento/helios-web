@@ -37,6 +37,11 @@ test('renderer accessors store pending values before renderer exists', () => {
   assert.deepEqual(helios._pendingRendererProps.get('clearColor'), [1, 1, 1, 1]);
 });
 
+test('edge width scale UI binding exposes zero in the recommended slider range', () => {
+  assert.equal(Helios.UI_BINDINGS.edgeWidthScale.domain.min, 0);
+  assert.equal(Helios.UI_BINDINGS.edgeWidthScale.recommendedRange.min, 0);
+});
+
 test('supersampling accessor updates layer sizing mode live', () => {
   const layerCalls = [];
   const bindingEvents = [];

@@ -109,6 +109,18 @@ export class GraphLayer extends Layer {
     return true;
   }
 
+  shouldRenderEdges() {
+    const edgeWidthBase = Number(this.edgeWidthBase);
+    const edgeWidthScale = Number(this.edgeWidthScale);
+    if (edgeWidthBase === 0 && edgeWidthScale === 0) return false;
+
+    const edgeOpacityBase = Number(this.edgeOpacityBase);
+    const edgeOpacityScale = Number(this.edgeOpacityScale);
+    if (edgeOpacityBase === 0 && edgeOpacityScale === 0) return false;
+
+    return true;
+  }
+
 
   setHoveredNodeState(index, mask) {
     const nextIndex =
