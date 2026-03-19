@@ -17,6 +17,7 @@ export class Scheduler {
     this._layoutBusy = false;
     this._layoutActive = false;
     this.layoutEnabled = options.layoutEnabled !== false;
+    this.layoutState = this.layoutEnabled ? 'running' : 'stopped';
     this._layoutStartReason = null;
     this._layoutStopReason = null;
     this._layoutStartTimestamp = 0;
@@ -59,6 +60,16 @@ export class Scheduler {
       attributeFrameSkip: this.attributeUpdateConfig.frameSkip,
       layoutEnabled: this.layoutEnabled,
     });
+  }
+
+  _resolveDisabledLayoutState(reason = null) {
+    return reason === 'alpha-min' || reason === 'idle' || reason === 'temperature'
+      ? 'idle'
+      : 'stopped';
+  }
+
+  getLayoutState() {
+    return this.layoutState;
   }
 
   setLayout(layout) {
@@ -110,14 +121,24 @@ export class Scheduler {
 
   setLayoutEnabled(enabled, reason = null) {
     const next = enabled !== false;
-    if (next === this.layoutEnabled) return;
+    if (next === this.layoutEnabled) {
+      if (!next && reason != null) {
+        this._layoutStopReason = reason;
+        this.layoutState = this._resolveDisabledLayoutState(reason);
+      } else if (next) {
+        this.layoutState = 'running';
+      }
+      return;
+    }
     this.layoutEnabled = next;
     if (!next) {
       this._layoutStopReason = reason ?? 'user';
       this._needsLayout = false;
+      this.layoutState = this._resolveDisabledLayoutState(this._layoutStopReason);
     } else {
       this._layoutStartReason = reason ?? 'user';
       this._needsLayout = true;
+      this.layoutState = 'running';
     }
   }
 

@@ -25,6 +25,7 @@ import {
   buildFigureExportPresetList,
   normalizeFigureExportFilename,
   resolveFigureExportOptions,
+  resolveFigurePreviewThumbnailOptions,
 } from '../export/figureExport.js';
 
 function resolveUiContainer({ helios, container, layerName }) {
@@ -585,11 +586,128 @@ export class HeliosUI {
         exportButton.type = 'button';
         exportButton.className = 'helios-ui-button';
         exportButton.textContent = 'Export';
+        exportButton.style.marginLeft = 'auto';
 
-        const exportStatus = document.createElement('div');
-        exportStatus.style.color = 'var(--helios-ui-muted)';
-        exportStatus.style.fontSize = '12px';
-        exportStatus.style.lineHeight = '1.4';
+        const previewContent = document.createElement('div');
+        previewContent.className = 'helios-ui-figure-preview';
+
+        const previewViewport = document.createElement('div');
+        previewViewport.className = 'helios-ui-figure-preview__viewport';
+        const previewImage = document.createElement('img');
+        previewImage.className = 'helios-ui-figure-preview__image';
+        previewImage.alt = 'Figure export preview';
+        previewImage.decoding = 'async';
+        previewImage.loading = 'eager';
+        previewViewport.appendChild(previewImage);
+
+        const previewStatus = document.createElement('div');
+        previewStatus.className = 'helios-ui-figure-preview__status';
+        previewStatus.textContent = '—';
+
+        previewContent.appendChild(previewViewport);
+        previewContent.appendChild(previewStatus);
+
+        const previewStack = new PanelStack();
+        previewStack.add({
+          id: 'figure-preview',
+          title: 'Preview',
+          collapsed: false,
+          statusDot: false,
+          content: previewContent,
+        });
+        const previewEntry = previewStack._items.get('figure-preview') ?? null;
+        const previewPanel = previewEntry?.item ?? null;
+        const previewExpanded = () => previewPanel?.dataset.collapsed !== 'true';
+
+        let previewUrl = null;
+        let previewDirty = true;
+        let previewBusy = false;
+        let previewIgnoreRenderEvents = 0;
+        let previewTimer = null;
+        let previewCaptureGeneration = 0;
+        let previewSceneVersion = 0;
+        let previewCapturedSceneVersion = -1;
+        let previewCapturedSignature = '';
+
+        const clearPreviewUrl = () => {
+          if (!previewUrl) return;
+          URL.revokeObjectURL(previewUrl);
+          previewUrl = null;
+        };
+        this._controlCleanups.add(() => clearPreviewUrl());
+
+        const setPreviewStatus = (message) => {
+          if (previewStatus.textContent === message) return;
+          previewStatus.textContent = message;
+        };
+
+        const markPreviewDirty = () => {
+          previewDirty = true;
+        };
+
+        const renderPreviewSummary = (resolved, thumbnail) => {
+          void thumbnail;
+          setPreviewStatus(`${resolved.width}×${resolved.height}`);
+        };
+
+        const refreshFigurePreview = async ({ force = false } = {}) => {
+          if (!this.helios || !figureTabActive || !previewExpanded() || previewBusy || (!force && !previewDirty)) return;
+          const resolved = resolveFigureState();
+          const thumbnailOptions = resolveFigurePreviewThumbnailOptions(resolved, {
+            maxWidth: 320,
+            maxHeight: 180,
+          });
+          const signature = JSON.stringify(thumbnailOptions);
+          if (!force && previewCapturedSignature === signature && previewCapturedSceneVersion === previewSceneVersion) {
+            previewDirty = false;
+            renderPreviewSummary(resolved, thumbnailOptions);
+            return;
+          }
+          previewBusy = true;
+          previewDirty = false;
+          renderPreviewSummary(resolved, thumbnailOptions);
+          const generation = ++previewCaptureGeneration;
+          try {
+            previewIgnoreRenderEvents += 1;
+            const blob = await this.helios.exportFigurePreviewBlob(resolved, {
+              maxWidth: 320,
+              maxHeight: 180,
+            });
+            const nextUrl = URL.createObjectURL(blob);
+            await new Promise((resolve, reject) => {
+              const image = new Image();
+              image.onload = () => resolve();
+              image.onerror = () => reject(new Error('Failed to decode preview image'));
+              image.src = nextUrl;
+            });
+            if (generation !== previewCaptureGeneration) return;
+            const prevUrl = previewUrl;
+            previewUrl = nextUrl;
+            previewImage.src = nextUrl;
+            previewCapturedSignature = signature;
+            previewCapturedSceneVersion = previewSceneVersion;
+            if (prevUrl) URL.revokeObjectURL(prevUrl);
+            renderPreviewSummary(resolved, thumbnailOptions);
+          } catch (error) {
+            if (generation !== previewCaptureGeneration) return;
+            setPreviewStatus(error instanceof Error ? error.message : 'Failed to render preview.');
+          } finally {
+            previewBusy = false;
+          }
+        };
+
+        const startPreviewTimer = () => {
+          if (previewTimer != null) return;
+          previewTimer = globalThis.setInterval(() => {
+            void refreshFigurePreview();
+          }, 1000);
+        };
+        const stopPreviewTimer = () => {
+          if (previewTimer == null) return;
+          globalThis.clearInterval(previewTimer);
+          previewTimer = null;
+        };
+        this._controlCleanups.add(() => stopPreviewTimer());
 
         const syncExportExtension = () => {
           exportExtEl.textContent = `.${exportFormatSelect.value}`;
@@ -677,10 +795,18 @@ export class HeliosUI {
           customHeightInput.disabled = !isCustom;
           alphaModeControl.disabled = backgroundToggle.checked === true;
           exportButton.disabled = resolved.fitsCapability !== true;
-          syncExportFrame(resolved);
-          exportStatus.textContent = resolved.fitsCapability === true
-            ? `Figure ${resolved.width}×${resolved.height}; frame ${Math.round(resolved.previewRect.width)}×${Math.round(resolved.previewRect.height)} in view; raster pass ${resolved.bitmapWidth}×${resolved.bitmapHeight}.`
+          exportButton.title = resolved.fitsCapability === true
+            ? 'Export figure'
             : `Requested raster pass ${resolved.bitmapWidth}×${resolved.bitmapHeight} exceeds the current renderer limit of ${resolved.capability.maxBitmapDimension}px.`;
+          syncExportFrame(resolved);
+          setPreviewStatus(`${resolved.width}×${resolved.height}`);
+          markPreviewDirty();
+          if (figureTabActive && previewExpanded()) {
+            startPreviewTimer();
+            if (!previewImage.src) void refreshFigurePreview({ force: true });
+          } else {
+            stopPreviewTimer();
+          }
         };
 
         exportFormatSelect.addEventListener('change', syncExportUi);
@@ -742,9 +868,9 @@ export class HeliosUI {
           hint: 'Shows the crop that will be exported. Disabled by default.',
           controls: frameToggle,
         }).row);
+        exportNameBar.appendChild(exportButton);
         exportTabContent.appendChild(exportNameBar);
-        exportTabContent.appendChild(exportStatus);
-        exportTabContent.appendChild(exportButton);
+        exportTabContent.appendChild(previewStack.element);
         exportTab.appendChild(exportTabContent);
 
         loadButton.addEventListener('click', () => fileInput.click());
@@ -830,8 +956,35 @@ export class HeliosUI {
         }
         if (unsub) this._controlCleanups.add(unsub);
 
+        const onAfterRender = () => {
+          if (previewIgnoreRenderEvents > 0) {
+            previewIgnoreRenderEvents -= 1;
+            return;
+          }
+          previewSceneVersion += 1;
+          markPreviewDirty();
+        };
+        let unsubAfterRender = null;
+        if (this.helios?.on) {
+          unsubAfterRender = this.helios.on('render:after', onAfterRender);
+        } else if (this.helios?.addEventListener) {
+          this.helios.addEventListener('render:after', onAfterRender);
+          unsubAfterRender = () => this.helios.removeEventListener('render:after', onAfterRender);
+        }
+        if (unsubAfterRender) this._controlCleanups.add(unsubAfterRender);
+
         const unsubResize = this.helios?.layers?.onResize?.(() => syncExportUi());
         if (unsubResize) this._controlCleanups.add(unsubResize);
+
+        previewEntry?.header.addEventListener('click', () => {
+          if (figureTabActive && previewExpanded()) {
+            markPreviewDirty();
+            startPreviewTimer();
+            if (!previewImage.src) void refreshFigurePreview({ force: true });
+          } else {
+            stopPreviewTimer();
+          }
+        });
 
         const tabs = new TabbedPanel({
           variant: 'panel',
@@ -2401,6 +2554,8 @@ export class HeliosUI {
       title: options.title ?? 'Filter',
       position: options.position ?? { x: 16, y: 250 },
       dock: options.dock ?? 'top-left',
+      width: options.width,
+      minWidth: options.minWidth,
       content,
     });
   }
@@ -5644,7 +5799,10 @@ export class HeliosUI {
           if (mode === 'node' && state.channel === 'position') {
             const scheduler = helios?.scheduler ?? null;
             const hasLayout = Boolean(scheduler?.layout);
-            const layoutEnabled = hasLayout && scheduler?.layoutEnabled !== false;
+            const layoutState = typeof scheduler?.getLayoutState === 'function'
+              ? scheduler.getLayoutState()
+              : (scheduler?.layoutEnabled !== false ? 'running' : 'stopped');
+            const layoutEnabled = hasLayout && layoutState !== 'stopped';
             state.pending = layoutEnabled ? { name: state.channel, type: 'layout' } : (shallowCloneChannelConfig(live) ?? { name: state.channel });
           } else {
             state.pending = shallowCloneChannelConfig(live) ?? { name: state.channel };
@@ -6735,7 +6893,10 @@ export class HeliosUI {
         if (mode === 'node' && state.channel === 'position') {
           const scheduler = helios?.scheduler ?? null;
           const hasLayout = Boolean(scheduler?.layout);
-          const layoutEnabled = hasLayout && scheduler?.layoutEnabled !== false;
+          const layoutState = typeof scheduler?.getLayoutState === 'function'
+            ? scheduler.getLayoutState()
+            : (scheduler?.layoutEnabled !== false ? 'running' : 'stopped');
+          const layoutEnabled = hasLayout && layoutState !== 'stopped';
           state.pending = layoutEnabled ? { name: state.channel, type: 'layout' } : (resolveLiveConfig(mode, state.channel) ?? { name: state.channel });
         } else {
           state.pending = resolveLiveConfig(mode, state.channel) ?? { name: state.channel };
@@ -6758,18 +6919,12 @@ export class HeliosUI {
         if (!state.pending) return;
 
         if (mode === 'node' && state.channel === 'position') {
-          const scheduler = helios?.scheduler ?? null;
           if (state.pending.type === 'layout') {
-            if (scheduler && typeof scheduler.setLayoutEnabled === 'function') {
-              scheduler.setLayoutEnabled(true, 'ui:mappers');
-              scheduler.requestLayout?.('ui:mappers');
-            }
+            helios?.startLayout?.();
             setDirty(false);
             return;
           }
-          if (scheduler && typeof scheduler.setLayoutEnabled === 'function') {
-            scheduler.setLayoutEnabled(false, 'ui:mappers');
-          }
+          helios?.stopLayout?.('ui:mappers');
         }
 
         const ok = applyConfig(mode, state.channel, state.pending);

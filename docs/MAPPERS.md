@@ -42,6 +42,9 @@ Note: mapper configs that rely on arbitrary JavaScript functions (e.g. `.transfo
 
 Categorical channels map discrete attribute values to a fixed palette.
 
+`helios-web-next` also includes a built-in `category18` categorical palette for
+community- or cluster-style labeling.
+
 ```js
 mapper.channel('color').categorical(['A', 'B', 'C'], ['#ff6b6bff', '#4dabf7ff', '#51cf66ff']).done();
 ```

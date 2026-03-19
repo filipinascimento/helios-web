@@ -125,3 +125,20 @@ test('attribute auto-update respects max fps when timer-driven', async () => {
 
   scheduler.stop();
 });
+
+test('layout state distinguishes idle auto-stop from manual pause', () => {
+  const scheduler = createScheduler();
+
+  assert.equal(scheduler.getLayoutState(), 'running');
+
+  scheduler.setLayoutEnabled(false, 'alpha-min');
+  assert.equal(scheduler.layoutEnabled, false);
+  assert.equal(scheduler.getLayoutState(), 'idle');
+
+  scheduler.setLayoutEnabled(false, 'user');
+  assert.equal(scheduler.getLayoutState(), 'stopped');
+
+  scheduler.setLayoutEnabled(true, 'filter');
+  assert.equal(scheduler.layoutEnabled, true);
+  assert.equal(scheduler.getLayoutState(), 'running');
+});

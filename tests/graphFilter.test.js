@@ -154,6 +154,31 @@ test('setGraphFilter() with render+layout scope updates layout network', () => {
   assert.ok(getLayoutUpdates() >= 1);
 });
 
+test('layout-owned position delegates stay bound to the layout network under render-only filters', () => {
+  const harness = createHarness({ filteredNodes: [1], filteredEdges: [0] });
+  const { helios, network } = harness;
+  const delegate = { id: 'layout-delegate' };
+  const layout = {
+    network,
+    getPositionDelegate: () => delegate,
+    requestUpdate: () => {},
+  };
+
+  helios._layout = layout;
+  helios._positionsConfig = {
+    source: 'delegate',
+    delegate,
+  };
+  helios.renderer = { device: { type: 'webgl' } };
+
+  helios.setGraphFilter({ nodeQuery: 'weight >= 0.5', scope: 'render' });
+
+  const context = helios._buildPositionDelegateContext();
+  assert.equal(context.network, network);
+  assert.equal(context.network, helios._getLayoutNetwork());
+  assert.notEqual(context.network, helios._getRenderNetwork());
+});
+
 test('active graph filters recompute when topology versions change', () => {
   const harness = createHarness({ filteredNodes: [1], filteredEdges: [1] });
   const { helios, getFilterCalls, setTopologyVersions } = harness;

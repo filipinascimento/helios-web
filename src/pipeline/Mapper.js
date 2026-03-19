@@ -17,6 +17,7 @@ const {
 
 const { DEFAULT_NODE_OUTLINE_COLOR, DEFAULT_NODE_OUTLINE_WIDTH, DEFAULT_NODE_SIZE } = DEFAULT_VISUALS;
 const INDEX_ATTRIBUTE = '$index';
+const DEFAULT_CATEGORICAL_COLOR = '#888888ff';
 
 function validateAttribute(buffer, name, expectedType, expectedDimension) {
   if (!buffer) {
@@ -506,8 +507,16 @@ function normalizeChannelConfig(name, config) {
     const clampMin = clamp && typeof clamp === 'object' ? clamp.min !== false : clamp !== false;
     const clampMax = clamp && typeof clamp === 'object' ? clamp.max !== false : clamp !== false;
     if (!clampMin && !clampMax) {
-      normalized.defaultValue = '#888888ff';
+      normalized.defaultValue = DEFAULT_CATEGORICAL_COLOR;
     }
+  }
+
+  if (
+    normalized.type === 'categorical'
+    && normalized.defaultValue === undefined
+    && (name === 'color' || name === 'outlineColor')
+  ) {
+    normalized.defaultValue = DEFAULT_CATEGORICAL_COLOR;
   }
 
   if (typeof normalized.transform !== 'function') {

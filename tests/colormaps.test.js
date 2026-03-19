@@ -39,6 +39,14 @@ test('continuous colormap can be sampled as categorical scheme', () => {
   scheme.forEach(rgbaInRange);
 });
 
+test('category18 categorical scheme repeats to requested size', () => {
+  const scheme = colormapToScheme('category18', 20);
+  assert.equal(scheme.length, 20);
+  scheme.forEach(rgbaInRange);
+  assert.deepEqual(scheme[0], scheme[18]);
+  assert.deepEqual(scheme[1], scheme[19]);
+});
+
 test('mapper colormap channel maps values to rgba', () => {
   const mapper = new Mapper();
   mapper.channel('color').from('weight').colormap('interpolateMagma', { domain: [0, 1] }).done();

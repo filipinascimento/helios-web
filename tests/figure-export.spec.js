@@ -63,6 +63,207 @@ test.describe('figure export', () => {
     expect(metrics.height).toBeGreaterThan(700);
   });
 
+  test('figure tab renders a throttled thumbnail preview for the selected export size', async ({ page }) => {
+    await page.setViewportSize({ width: 1200, height: 800 });
+    await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=128');
+    await page.waitForFunction(() =>
+      Boolean(window.__helios && window.__helios.ready && window.__HELIOS_DIAGNOSTICS__?.ready === true),
+    );
+
+    const dataPanel = page.locator('helios-panel[heading="Data"]').first();
+    await dataPanel.locator('button.helios-ui-tab', { hasText: 'Figure' }).click();
+
+    await expect(dataPanel.locator('.helios-ui-subpanel__header', { hasText: 'Preview' })).toBeVisible();
+    await dataPanel.locator('.helios-ui-row', { hasText: 'Size' }).locator('select').selectOption('4k');
+
+    const previewImage = dataPanel.locator('img.helios-ui-figure-preview__image');
+    await expect(previewImage).toHaveAttribute('src', /blob:/);
+    await expect(dataPanel.locator('.helios-ui-figure-preview__status')).toContainText('3840×2160', { timeout: 3000 });
+    await expect.poll(async () => previewImage.evaluate((element) => {
+      if (!element.naturalWidth || !element.naturalHeight) return 0;
+      return element.naturalWidth / element.naturalHeight;
+    }), { timeout: 3000 }).toBeGreaterThan(1.7);
+
+    const metrics = await previewImage.evaluate((element) => ({
+      naturalWidth: element.naturalWidth,
+      naturalHeight: element.naturalHeight,
+    }));
+
+    expect(metrics.naturalWidth).toBeLessThanOrEqual(320);
+    expect(metrics.naturalHeight).toBeLessThanOrEqual(180);
+    expect(metrics.naturalWidth / metrics.naturalHeight).toBeGreaterThan(1.7);
+    expect(metrics.naturalWidth / metrics.naturalHeight).toBeLessThan(1.8);
+    await expect(dataPanel.locator('.helios-ui-figure-preview__status')).toHaveText('3840×2160');
+  });
+
+  test('preview export matches a scaled-down final export layout', async ({ page }) => {
+    await page.goto('/tests/fixtures/demo.html?renderer=webgl&layout=none&mode=2d&nodes=400');
+    await waitForDiagnostics(page);
+
+    const result = await page.evaluate(async () => {
+      const loadImage = async (blob) => {
+        const url = URL.createObjectURL(blob);
+        try {
+          return await new Promise((resolve, reject) => {
+            const image = new Image();
+            image.onload = () => resolve(image);
+            image.onerror = () => reject(new Error('Failed to decode export image'));
+            image.src = url;
+          });
+        } finally {
+          setTimeout(() => URL.revokeObjectURL(url), 0);
+        }
+      };
+
+      const renderImage = (image, width, height) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(image, 0, 0, width, height);
+        return ctx.getImageData(0, 0, width, height).data;
+      };
+
+      const meanAbsoluteError = (left, right, width, xStart = 0, xEnd = width) => {
+        let sum = 0;
+        let count = 0;
+        for (let i = 0; i < left.length; i += 4) {
+          const px = (i / 4) % width;
+          if (px < xStart || px >= xEnd) continue;
+          sum += Math.abs(left[i] - right[i]);
+          sum += Math.abs(left[i + 1] - right[i + 1]);
+          sum += Math.abs(left[i + 2] - right[i + 2]);
+          sum += Math.abs(left[i + 3] - right[i + 3]);
+          count += 4;
+        }
+        return count > 0 ? sum / count : Infinity;
+      };
+
+      window.__helios.labels({ enabled: true, maxVisible: 12 });
+      window.__helios.legends({ showNodeSize: true, showEdgeWidth: true });
+      window.__helios.requestRender?.();
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      const exportOptions = {
+        format: 'svg',
+        preset: 'custom',
+        width: 1600,
+        height: 900,
+        includeLabels: true,
+        includeLegends: true,
+      };
+      const previewBlob = await window.__helios.exportFigurePreviewBlob(exportOptions, {
+        maxWidth: 320,
+        maxHeight: 180,
+      });
+      const fullBlob = await window.__helios.exportFigureBlob(exportOptions);
+
+      const previewImage = await loadImage(previewBlob);
+      const fullImage = await loadImage(fullBlob);
+      const width = previewImage.naturalWidth;
+      const height = previewImage.naturalHeight;
+      const previewData = renderImage(previewImage, width, height);
+      const fullData = renderImage(fullImage, width, height);
+
+      return {
+        width,
+        height,
+        overallMae: meanAbsoluteError(previewData, fullData, width),
+        leftMae: meanAbsoluteError(previewData, fullData, width, 0, Math.floor(width * 0.35)),
+      };
+    });
+
+    expect(result.width).toBeLessThanOrEqual(320);
+    expect(result.height).toBeLessThanOrEqual(180);
+    expect(result.overallMae).toBeLessThan(12);
+    expect(result.leftMae).toBeLessThan(10);
+  });
+
+  test('preview export preserves the square inner-frame layout when the window is wider than the export', async ({ page }) => {
+    await page.setViewportSize({ width: 1400, height: 800 });
+    await page.goto('/tests/fixtures/demo.html?renderer=webgl&layout=none&mode=2d&nodes=400');
+    await waitForDiagnostics(page);
+
+    const result = await page.evaluate(async () => {
+      const loadImage = async (blob) => {
+        const url = URL.createObjectURL(blob);
+        try {
+          return await new Promise((resolve, reject) => {
+            const image = new Image();
+            image.onload = () => resolve(image);
+            image.onerror = () => reject(new Error('Failed to decode export image'));
+            image.src = url;
+          });
+        } finally {
+          setTimeout(() => URL.revokeObjectURL(url), 0);
+        }
+      };
+
+      const renderImage = (image, width, height) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(image, 0, 0, width, height);
+        return ctx.getImageData(0, 0, width, height).data;
+      };
+
+      const meanAbsoluteError = (left, right, width, xStart = 0, xEnd = width) => {
+        let sum = 0;
+        let count = 0;
+        for (let i = 0; i < left.length; i += 4) {
+          const px = (i / 4) % width;
+          if (px < xStart || px >= xEnd) continue;
+          sum += Math.abs(left[i] - right[i]);
+          sum += Math.abs(left[i + 1] - right[i + 1]);
+          sum += Math.abs(left[i + 2] - right[i + 2]);
+          sum += Math.abs(left[i + 3] - right[i + 3]);
+          count += 4;
+        }
+        return count > 0 ? sum / count : Infinity;
+      };
+
+      window.__helios.labels({ enabled: true, maxVisible: 12 });
+      window.__helios.legends({ showNodeSize: true, showEdgeWidth: true });
+      window.__helios.requestRender?.();
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      const exportOptions = {
+        format: 'svg',
+        preset: 'custom',
+        width: 1200,
+        height: 1200,
+        includeLabels: true,
+        includeLegends: true,
+      };
+      const previewBlob = await window.__helios.exportFigurePreviewBlob(exportOptions, {
+        maxWidth: 180,
+        maxHeight: 180,
+      });
+      const fullBlob = await window.__helios.exportFigureBlob(exportOptions);
+
+      const previewImage = await loadImage(previewBlob);
+      const fullImage = await loadImage(fullBlob);
+      const width = previewImage.naturalWidth;
+      const height = previewImage.naturalHeight;
+      const previewData = renderImage(previewImage, width, height);
+      const fullData = renderImage(fullImage, width, height);
+
+      return {
+        width,
+        height,
+        overallMae: meanAbsoluteError(previewData, fullData, width),
+        leftMae: meanAbsoluteError(previewData, fullData, width, 0, Math.floor(width * 0.35)),
+      };
+    });
+
+    expect(result.width).toBeLessThanOrEqual(180);
+    expect(result.height).toBeLessThanOrEqual(180);
+    expect(result.width).toBe(result.height);
+    expect(result.overallMae).toBeLessThan(12);
+    expect(result.leftMae).toBeLessThan(10);
+  });
+
   test('exports self-contained SVG with vector overlays and figure-relative legends', async ({ page }) => {
     await page.goto('/tests/fixtures/demo.html?renderer=webgl&layout=none&mode=2d&nodes=400');
     await waitForDiagnostics(page);

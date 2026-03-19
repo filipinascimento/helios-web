@@ -742,7 +742,7 @@ void main() {
     : 'fetchEdgeWidthPair(a_edgeId)'};
   float rawWidth = mix(widthPair.x, widthPair.y, segmentMix);
   float width = max((u_edgeWidthBase + u_edgeWidthScale * rawWidth) * widthMul, 0.0) * semanticScale;
-  float halfWidth = max(width, 1.0) * 0.5;
+  float halfWidth = max(width, 1e-3) * 0.5;
   vec3 centerPos = mix(startPos, endPos, segmentMix);
   vec3 widthDir;
   if (u_is2D == 1) {

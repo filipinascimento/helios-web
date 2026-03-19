@@ -3,6 +3,7 @@ import { createColormapScale } from '../colors/colormaps.js';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const DEFAULT_FONT_FAMILY = 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 const ILLUSTRATOR_FONT_FAMILY = '"Helvetica Neue", Helvetica, Arial, sans-serif';
+const DEFAULT_CATEGORICAL_OTHERS_LABEL = 'Other';
 const DEFAULT_CONFIG = Object.freeze({
   enabled: true,
   respectDockInsets: true,
@@ -26,6 +27,7 @@ const DEFAULT_CONFIG = Object.freeze({
   showEdgeColor: true,
   showNodeSize: false,
   showEdgeWidth: false,
+  titles: Object.freeze({}),
   placements: Object.freeze({
     nodeColor: 'auto',
     density: 'auto',
@@ -348,6 +350,32 @@ function inferLabelFromAttributes(attributes, fallback) {
     .replace(/_/g, ' ');
 }
 
+function hasOwn(object, key) {
+  return Object.prototype.hasOwnProperty.call(object ?? {}, key);
+}
+
+function normalizeLegendTitles(titles, current = {}) {
+  const next = { ...(current ?? {}) };
+  if (!titles || typeof titles !== 'object') return next;
+  for (const kind of LEGEND_ORDER) {
+    if (!hasOwn(titles, kind)) continue;
+    const raw = titles[kind];
+    if (raw === false || raw === null) {
+      next[kind] = null;
+      continue;
+    }
+    next[kind] = String(raw ?? '').trim();
+  }
+  return next;
+}
+
+function resolveLegendTitle(config, kind, fallbackTitle) {
+  if (!hasOwn(config?.titles, kind)) return fallbackTitle;
+  const override = config?.titles?.[kind];
+  if (override === null) return '';
+  return String(override ?? '').trim();
+}
+
 function primaryAttributeName(attributes) {
   const list = Array.isArray(attributes) ? attributes : (attributes != null ? [attributes] : []);
   const first = list.find((entry) => typeof entry === 'string' && entry.trim());
@@ -369,16 +397,20 @@ function categoricalLegendEntries(channel, network, scope) {
     ? network?.getEdgeAttributeCategoryDictionary
     : network?.getNodeAttributeCategoryDictionary;
   let labelsById = null;
+  let hasOthers = false;
   if (attributeName && typeof getter === 'function') {
     try {
       const dictionary = getter.call(network, attributeName, { sortById: false }) ?? {};
       const entries = Array.isArray(dictionary.entries) ? dictionary.entries : [];
       labelsById = new Map(entries.map((entry) => [Number(entry?.id), String(entry?.label ?? '')]));
+      const visible = new Set(domain.map((value) => Number(value)));
+      hasOthers = entries.some((entry) => !visible.has(Number(entry?.id)));
     } catch {
       labelsById = null;
+      hasOthers = false;
     }
   }
-  return domain.map((value, index) => {
+  const entries = domain.map((value, index) => {
     const numericValue = Number(value);
     const label = labelsById?.get(numericValue) || String(value);
     return {
@@ -386,6 +418,13 @@ function categoricalLegendEntries(channel, network, scope) {
       color: rgbaArrayToCss(range[index % range.length]),
     };
   });
+  if (channel?.defaultValue != null && hasOthers) {
+    entries.push({
+      label: String(channel?.meta?.legendOthersLabel ?? DEFAULT_CATEGORICAL_OTHERS_LABEL),
+      color: rgbaArrayToCss(channel.defaultValue),
+    });
+  }
+  return entries;
 }
 
 function combineMapperChannels(collection) {
@@ -557,7 +596,7 @@ export function deriveLegendItems({ nodeChannels, edgeChannels, densityConfig, d
       items.push({
         kind,
         legendType: 'categorical',
-        title: inferLabelFromAttributes(channel.attributes, fallbackTitle),
+        title: resolveLegendTitle(config, kind, inferLabelFromAttributes(channel.attributes, fallbackTitle)),
         entries,
       });
       return;
@@ -568,7 +607,7 @@ export function deriveLegendItems({ nodeChannels, edgeChannels, densityConfig, d
       items.push({
         kind,
         legendType: 'continuous',
-        title: inferLabelFromAttributes(channel.attributes, fallbackTitle),
+        title: resolveLegendTitle(config, kind, inferLabelFromAttributes(channel.attributes, fallbackTitle)),
         colormap: channel.colormap ?? channel.scale ?? channel.range,
         domain,
         divergent: channel.divergent === true,
@@ -586,7 +625,7 @@ export function deriveLegendItems({ nodeChannels, edgeChannels, densityConfig, d
       kind,
       legendType: 'scalar',
       shape,
-      title: inferLabelFromAttributes(channel.attributes, fallbackTitle),
+      title: resolveLegendTitle(config, kind, inferLabelFromAttributes(channel.attributes, fallbackTitle)),
       domain,
       range,
       preview: kind === 'nodeSize' && shape === 'circle'
@@ -607,9 +646,13 @@ export function deriveLegendItems({ nodeChannels, edgeChannels, densityConfig, d
     items.push({
       kind: 'density',
       legendType: 'continuous',
-      title: diverging
-        ? `${densityConfig.property ?? 'Density'} vs ${densityConfig.compareProperty ?? ''}`.trim()
-        : String(densityConfig.property ?? 'Density'),
+      title: resolveLegendTitle(
+        config,
+        'density',
+        diverging
+          ? `${densityConfig.property ?? 'Density'} vs ${densityConfig.compareProperty ?? ''}`.trim()
+          : String(densityConfig.property ?? 'Density'),
+      ),
       colormap: diverging ? (densityConfig.divergingColormap ?? densityConfig.colormap) : densityConfig.colormap,
       domain: diverging ? [-1, 1] : [0, 1],
       divergent: diverging,
@@ -688,7 +731,7 @@ export function layoutLegendItems(items, safeRect, config) {
     const titleSpan = estimateTextWidthPx(titleText, fontSize);
     const tickLabels = Array.isArray(item.tickLabels) ? item.tickLabels : [];
     const tickWidth = Math.max(0, ...tickLabels.map((line) => estimateTextWidthPx(line, fontSize - 1)));
-    const titleColumn = fontSize + metrics.continuousTitleGap;
+    const titleColumn = titleLines.length ? fontSize + metrics.continuousTitleGap : 0;
     const width = Math.ceil(metrics.paddingX * 2 + titleColumn + metrics.barWidth + metrics.tickGap + metrics.tickLength + metrics.labelGap + tickWidth);
     const height = Math.ceil((metrics.paddingY * 2) + Math.max(metrics.barHeight, titleSpan));
     return {
@@ -739,6 +782,7 @@ export class SvgLegendController {
   getConfig() {
     return {
       ...this._config,
+      titles: { ...(this._config.titles ?? {}) },
       placements: { ...this._config.placements },
     };
   }
@@ -746,6 +790,7 @@ export class SvgLegendController {
   setConfig(options = {}) {
     const next = {
       ...this._config,
+      titles: { ...(this._config.titles ?? {}) },
       placements: { ...this._config.placements },
     };
     if (Object.prototype.hasOwnProperty.call(options, 'enabled')) next.enabled = options.enabled === true;
@@ -772,6 +817,9 @@ export class SvgLegendController {
     if (Object.prototype.hasOwnProperty.call(options, 'showEdgeColor')) next.showEdgeColor = options.showEdgeColor !== false;
     if (Object.prototype.hasOwnProperty.call(options, 'showNodeSize')) next.showNodeSize = options.showNodeSize === true;
     if (Object.prototype.hasOwnProperty.call(options, 'showEdgeWidth')) next.showEdgeWidth = options.showEdgeWidth === true;
+    if (Object.prototype.hasOwnProperty.call(options, 'titles')) {
+      next.titles = normalizeLegendTitles(options.titles, next.titles);
+    }
     if (Object.prototype.hasOwnProperty.call(options, 'placements')) {
       next.placements = normalizePlacements({ ...next.placements, ...options.placements });
     }
@@ -1064,16 +1112,18 @@ export class SvgLegendController {
 
   _renderCategoricalLegend(group, item, theme, config = this._config) {
     const metrics = legendMetrics(config);
-    this._appendText(group, {
-      x: metrics.paddingX,
-      y: metrics.paddingY,
-      lines: item.titleLines,
-      config,
-      fill: theme.text,
-      outline: theme.textOutline,
-      fontWeight: '600',
-      fontSize: metrics.fontSize,
-    });
+    if (item.titleLines.length) {
+      this._appendText(group, {
+        x: metrics.paddingX,
+        y: metrics.paddingY,
+        lines: item.titleLines,
+        config,
+        fill: theme.text,
+        outline: theme.textOutline,
+        fontWeight: '600',
+        fontSize: metrics.fontSize,
+      });
+    }
     let y = metrics.paddingY + (item.titleLines.length * metrics.lineHeight) + (item.entries.length ? metrics.titleGap : 0);
     for (const entry of item.entries) {
       const rowHeight = Math.max(metrics.swatchSize, entry.lines.length * metrics.lineHeight);
@@ -1110,22 +1160,25 @@ export class SvgLegendController {
   _renderContinuousLegend(group, item, theme, config = this._config, defs = this.defs) {
     const metrics = legendMetrics(config);
     const titleText = item.titleLines.join(' ').trim();
-    const barX = metrics.paddingX + metrics.fontSize + metrics.continuousTitleGap;
+    const hasTitle = item.titleLines.length > 0;
+    const barX = metrics.paddingX + (hasTitle ? metrics.fontSize + metrics.continuousTitleGap : 0);
     const barY = metrics.paddingY + Math.max(0, (item.box.height - (metrics.paddingY * 2) - metrics.barHeight) * 0.5);
     const barHeight = metrics.barHeight;
-    this._appendText(group, {
-      x: metrics.paddingX + (metrics.fontSize * 0.5),
-      y: barY + barHeight,
-      lines: [titleText],
-      config,
-      fill: theme.text,
-      outline: theme.textOutline,
-      fontWeight: '600',
-      fontSize: metrics.fontSize,
-      anchor: 'start',
-      baseline: 'middle',
-      rotation: -90,
-    });
+    if (hasTitle) {
+      this._appendText(group, {
+        x: metrics.paddingX + (metrics.fontSize * 0.5),
+        y: barY + barHeight,
+        lines: [titleText],
+        config,
+        fill: theme.text,
+        outline: theme.textOutline,
+        fontWeight: '600',
+        fontSize: metrics.fontSize,
+        anchor: 'start',
+        baseline: 'middle',
+        rotation: -90,
+      });
+    }
     if (config.illustratorCompatible === true) {
       const href = createContinuousLegendRampHref(item, Math.max(32, Math.round(barHeight)));
       const image = document.createElementNS(SVG_NS, 'image');
@@ -1283,31 +1336,33 @@ export class SvgLegendController {
         .map((sample, index) => ({ sample, radius: radii[index] }))
         .sort((a, b) => b.radius - a.radius)
         .forEach(({ sample, radius }) => {
-        this._appendText(group, {
-          x: cx,
-          y: baselineY - (radius * 2) - 8,
-          lines: [formatNumber(sample)],
-          config,
-          fill: theme.text,
-          outline: theme.textOutline,
-          fontSize: labelFontSize,
-          anchor: 'middle',
+          this._appendText(group, {
+            x: cx,
+            y: baselineY - (radius * 2) - 8,
+            lines: [formatNumber(sample)],
+            config,
+            fill: theme.text,
+            outline: theme.textOutline,
+            fontSize: labelFontSize,
+            anchor: 'middle',
             baseline: 'middle',
           });
         });
 
-      this._appendText(group, {
-        x: cx,
-        y: baselineY + 18,
-        lines: [titleText],
-        config,
-        fill: theme.text,
-        outline: theme.textOutline,
-        fontWeight: '600',
-        fontSize: metrics.fontSize,
-        anchor: 'middle',
-        baseline: 'middle',
-      });
+      if (titleText) {
+        this._appendText(group, {
+          x: cx,
+          y: baselineY + 18,
+          lines: [titleText],
+          config,
+          fill: theme.text,
+          outline: theme.textOutline,
+          fontWeight: '600',
+          fontSize: metrics.fontSize,
+          anchor: 'middle',
+          baseline: 'middle',
+        });
+      }
       return;
     }
 
@@ -1354,18 +1409,20 @@ export class SvgLegendController {
     });
 
     const titleY = cursorY - 2;
-    this._appendText(group, {
-      x: cx,
-      y: titleY,
-      lines: [titleText],
-      config,
-      fill: theme.text,
-      outline: theme.textOutline,
-      fontWeight: '600',
-      fontSize: metrics.fontSize,
-      anchor: 'middle',
-      baseline: 'middle',
-    });
+    if (titleText) {
+      this._appendText(group, {
+        x: cx,
+        y: titleY,
+        lines: [titleText],
+        config,
+        fill: theme.text,
+        outline: theme.textOutline,
+        fontWeight: '600',
+        fontSize: metrics.fontSize,
+        anchor: 'middle',
+        baseline: 'middle',
+      });
+    }
   }
 }
 

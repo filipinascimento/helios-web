@@ -252,6 +252,18 @@ export class D3Force3DLayout extends Layout {
     }
   }
 
+  _applyReheatAlpha() {
+    this.settings.alpha = this.reheatAlpha;
+    this.options = {
+      ...this.options,
+      settings: {
+        ...(this.options.settings ?? {}),
+        ...this.settings,
+      },
+    };
+    this.optionsDirty = true;
+  }
+
   setSettings(next = {}, { reheat = false } = {}) {
     if (!next || typeof next !== 'object') return this;
     const hadUse2D = this.settings.use2D === true;
@@ -295,17 +307,18 @@ export class D3Force3DLayout extends Layout {
       },
     };
     this.optionsDirty = true;
-    this.requestUpdate();
     if (reheat) {
-      this.reheat();
+      this._applyReheatAlpha();
+      super.reheat('layout-settings');
+    } else {
+      this.requestUpdate();
     }
     return this;
   }
 
-  reheat() {
-    this.setSettings({
-      alpha: this.reheatAlpha,
-    }, { reheat: false });
+  reheat(reason = 'layout') {
+    this._applyReheatAlpha();
+    super.reheat(reason);
     return this;
   }
 

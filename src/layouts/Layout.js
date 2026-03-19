@@ -28,6 +28,7 @@ export class Layout {
   constructor(network, visuals) {
     this.network = network;
     this.visuals = visuals;
+    this.helios = null;
     this._updateRequested = true;
     this._updateListener = null;
   }
@@ -68,8 +69,9 @@ export class Layout {
     };
   }
 
-  reheat() {
+  reheat(reason = 'layout') {
     this.requestUpdate();
+    this.helios?._wakeLayoutIfIdle?.(reason);
     return this;
   }
 
@@ -223,7 +225,7 @@ export class WorkerLayout extends Layout {
     }
   }
 
-  setSettings(next = {}) {
+  setSettings(next = {}, { reheat = false, reason = 'layout-settings' } = {}) {
     if (!next || typeof next !== 'object') return this;
     this.options = {
       ...this.options,
@@ -236,7 +238,11 @@ export class WorkerLayout extends Layout {
         options: this.options,
       });
     }
-    this.requestUpdate();
+    if (reheat) {
+      this.reheat(reason);
+    } else {
+      this.requestUpdate();
+    }
     return this;
   }
 
@@ -256,7 +262,7 @@ export class WorkerLayout extends Layout {
             max: 20,
             step: 0.1,
             get: () => Number(this.options.jitter ?? 3),
-            set: (value) => this.setSettings({ jitter: value }),
+            set: (value) => this.setSettings({ jitter: value }, { reheat: true }),
           },
         ],
       };
@@ -277,14 +283,14 @@ export class WorkerLayout extends Layout {
             { value: 'full', label: 'All pairs' },
           ],
           get: () => String(this.options.repulsionStrategy ?? 'barnes-hut'),
-          set: (value) => this.setSettings({ repulsionStrategy: value }),
+          set: (value) => this.setSettings({ repulsionStrategy: value }, { reheat: true }),
         },
         {
           key: 'negativeSampling',
           label: 'Extra negatives',
           type: 'boolean',
           get: () => Boolean(this.options.negativeSampling),
-          set: (value) => this.setSettings({ negativeSampling: value }),
+          set: (value) => this.setSettings({ negativeSampling: value }, { reheat: true }),
         },
         {
           key: 'negativesPerNode',
@@ -294,7 +300,7 @@ export class WorkerLayout extends Layout {
           max: 256,
           step: 1,
           get: () => Number(this.options.negativesPerNode ?? 48),
-          set: (value) => this.setSettings({ negativesPerNode: value }),
+          set: (value) => this.setSettings({ negativesPerNode: value }, { reheat: true }),
         },
         {
           key: 'repulsionExponent',
@@ -304,7 +310,7 @@ export class WorkerLayout extends Layout {
           max: 4,
           step: 0.05,
           get: () => Number(this.options.repulsionExponent ?? 2),
-          set: (value) => this.setSettings({ repulsionExponent: value }),
+          set: (value) => this.setSettings({ repulsionExponent: value }, { reheat: true }),
         },
         {
           key: 'attractionExponent',
@@ -314,7 +320,7 @@ export class WorkerLayout extends Layout {
           max: 4,
           step: 0.05,
           get: () => Number(this.options.attractionExponent ?? 1),
-          set: (value) => this.setSettings({ attractionExponent: value }),
+          set: (value) => this.setSettings({ attractionExponent: value }, { reheat: true }),
         },
         {
           key: 'kRepulsion',
@@ -324,7 +330,7 @@ export class WorkerLayout extends Layout {
             max: 600,
           }),
           get: () => Number(this.options.kRepulsion ?? 6),
-          set: (value) => this.setSettings({ kRepulsion: value }),
+          set: (value) => this.setSettings({ kRepulsion: value }, { reheat: true }),
         },
         {
           key: 'kAttraction',
@@ -334,7 +340,7 @@ export class WorkerLayout extends Layout {
             max: 0.35,
           }),
           get: () => Number(this.options.kAttraction ?? 0.0035),
-          set: (value) => this.setSettings({ kAttraction: value }),
+          set: (value) => this.setSettings({ kAttraction: value }, { reheat: true }),
         },
         {
           key: 'kGravity',
@@ -344,7 +350,7 @@ export class WorkerLayout extends Layout {
             max: 0.05,
           }),
           get: () => Number(this.options.kGravity ?? 0.0005),
-          set: (value) => this.setSettings({ kGravity: value }),
+          set: (value) => this.setSettings({ kGravity: value }, { reheat: true }),
         },
         {
           key: 'epsilon',
@@ -354,7 +360,7 @@ export class WorkerLayout extends Layout {
           max: 5,
           step: 0.01,
           get: () => Number(this.options.epsilon ?? 0.25),
-          set: (value) => this.setSettings({ epsilon: value }),
+          set: (value) => this.setSettings({ epsilon: value }, { reheat: true }),
         },
         {
           key: 'minDistance',
@@ -364,7 +370,7 @@ export class WorkerLayout extends Layout {
           max: 10,
           step: 0.01,
           get: () => Number(this.options.minDistance ?? 0.25),
-          set: (value) => this.setSettings({ minDistance: value }),
+          set: (value) => this.setSettings({ minDistance: value }, { reheat: true }),
         },
         {
           key: 'maxForce',
@@ -374,7 +380,7 @@ export class WorkerLayout extends Layout {
           max: 100,
           step: 0.1,
           get: () => Number(this.options.maxForce ?? 50),
-          set: (value) => this.setSettings({ maxForce: value }),
+          set: (value) => this.setSettings({ maxForce: value }, { reheat: true }),
         },
         {
           key: 'maxStep',
@@ -384,7 +390,7 @@ export class WorkerLayout extends Layout {
           max: 10,
           step: 0.01,
           get: () => Number(this.options.maxStep ?? 3),
-          set: (value) => this.setSettings({ maxStep: value }),
+          set: (value) => this.setSettings({ maxStep: value }, { reheat: true }),
         },
         {
           key: 'eta',
@@ -394,7 +400,7 @@ export class WorkerLayout extends Layout {
           max: 1,
           step: 0.001,
           get: () => Number(this.options.eta ?? 0.04),
-          set: (value) => this.setSettings({ eta: value }),
+          set: (value) => this.setSettings({ eta: value }, { reheat: true }),
         },
         withVelocityRetentionBinding({
           key: 'damping',
@@ -403,7 +409,7 @@ export class WorkerLayout extends Layout {
           max: 1,
           step: 0.001,
           get: () => Number(this.options.damping ?? 0.9),
-          set: (value) => this.setSettings({ damping: value }),
+          set: (value) => this.setSettings({ damping: value }, { reheat: true }),
         }),
         {
           key: 'theta',
@@ -413,7 +419,7 @@ export class WorkerLayout extends Layout {
           max: 1.5,
           step: 0.01,
           get: () => Number(this.options.theta ?? 0.6),
-          set: (value) => this.setSettings({ theta: value }),
+          set: (value) => this.setSettings({ theta: value }, { reheat: true }),
         },
         {
           key: 'leafSize',
@@ -423,7 +429,7 @@ export class WorkerLayout extends Layout {
           max: 128,
           step: 1,
           get: () => Number(this.options.leafSize ?? 16),
-          set: (value) => this.setSettings({ leafSize: value }),
+          set: (value) => this.setSettings({ leafSize: value }, { reheat: true }),
         },
         {
           key: 'recenter',

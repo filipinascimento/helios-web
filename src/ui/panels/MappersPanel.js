@@ -1247,7 +1247,10 @@ export class MappersPanel {
           if (mode === 'node' && state.channel === 'position') {
             const scheduler = helios?.scheduler ?? null;
             const hasLayout = Boolean(scheduler?.layout);
-            const layoutEnabled = hasLayout && scheduler?.layoutEnabled !== false;
+            const layoutState = typeof scheduler?.getLayoutState === 'function'
+              ? scheduler.getLayoutState()
+              : (scheduler?.layoutEnabled !== false ? 'running' : 'stopped');
+            const layoutEnabled = hasLayout && layoutState !== 'stopped';
             state.pending = layoutEnabled ? { name: state.channel, type: 'layout' } : (shallowCloneChannelConfig(live) ?? { name: state.channel });
           } else {
             state.pending = shallowCloneChannelConfig(live) ?? { name: state.channel };
@@ -4185,7 +4188,10 @@ export class MappersPanel {
         if (mode === 'node' && state.channel === 'position') {
           const scheduler = helios?.scheduler ?? null;
           const hasLayout = Boolean(scheduler?.layout);
-          const layoutEnabled = hasLayout && scheduler?.layoutEnabled !== false;
+          const layoutState = typeof scheduler?.getLayoutState === 'function'
+            ? scheduler.getLayoutState()
+            : (scheduler?.layoutEnabled !== false ? 'running' : 'stopped');
+          const layoutEnabled = hasLayout && layoutState !== 'stopped';
           state.pending = layoutEnabled ? { name: state.channel, type: 'layout' } : (resolveLiveConfig(mode, state.channel) ?? { name: state.channel });
         } else {
           state.pending = resolveLiveConfig(mode, state.channel) ?? { name: state.channel };
@@ -4238,18 +4244,12 @@ export class MappersPanel {
         }
 
         if (mode === 'node' && state.channel === 'position') {
-          const scheduler = helios?.scheduler ?? null;
           if (state.pending.type === 'layout') {
-            if (scheduler && typeof scheduler.setLayoutEnabled === 'function') {
-              scheduler.setLayoutEnabled(true, 'ui:mappers');
-              scheduler.requestLayout?.('ui:mappers');
-            }
+            helios?.startLayout?.();
             setDirty(false);
             return;
           }
-          if (scheduler && typeof scheduler.setLayoutEnabled === 'function') {
-            scheduler.setLayoutEnabled(false, 'ui:mappers');
-          }
+          helios?.stopLayout?.('ui:mappers');
         }
 
         const ok = applyConfig(mode, state.channel, state.pending);

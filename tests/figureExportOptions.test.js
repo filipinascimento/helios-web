@@ -4,6 +4,7 @@ import {
   buildFigureExportPresetList,
   normalizeFigureExportFilename,
   resolveFigureExportOptions,
+  resolveFigurePreviewThumbnailOptions,
   resolveFigurePreviewRect,
 } from '../src/export/figureExport.js';
 
@@ -97,4 +98,43 @@ test('resolveFigurePreviewRect pillarboxes taller exports inside the current vie
   assert.equal(rect.height, 900);
   assert.equal(rect.width, 900);
   assert.equal(rect.x, 350);
+});
+
+test('resolveFigurePreviewThumbnailOptions preserves export aspect ratio without upscaling', () => {
+  const wide = resolveFigurePreviewThumbnailOptions({
+    width: 3840,
+    height: 2160,
+    includeLabels: true,
+    includeLegends: false,
+    legendScale: 1.5,
+    transparentBackground: true,
+    alphaMode: 'premultiplied',
+    baseName: 'plot',
+  }, {
+    maxWidth: 320,
+    maxHeight: 180,
+  });
+
+  assert.equal(wide.width, 320);
+  assert.equal(wide.height, 180);
+  assert.equal(wide.format, 'png');
+  assert.equal(wide.preset, 'custom');
+  assert.equal(wide.includeLabels, true);
+  assert.equal(wide.includeLegends, false);
+  assert.equal(wide.legendScale, 1.5);
+  assert.equal(wide.transparentBackground, true);
+  assert.equal(wide.alphaMode, 'premultiplied');
+  assert.equal(wide.filename, 'plot-preview');
+
+  const small = resolveFigurePreviewThumbnailOptions({
+    width: 120,
+    height: 80,
+    baseName: 'tiny',
+  }, {
+    maxWidth: 320,
+    maxHeight: 180,
+  });
+
+  assert.equal(small.width, 120);
+  assert.equal(small.height, 80);
 });

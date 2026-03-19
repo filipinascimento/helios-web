@@ -229,6 +229,32 @@ export function resolveFigureExportOptions(options = {}, context = {}) {
   };
 }
 
+export function resolveFigurePreviewThumbnailOptions(exportOptions = {}, previewOptions = {}) {
+  const sourceWidth = clampInt(exportOptions.width, 1, 1);
+  const sourceHeight = clampInt(exportOptions.height, 1, 1);
+  const maxWidth = clampInt(previewOptions.maxWidth, 1, 320);
+  const maxHeight = clampInt(previewOptions.maxHeight, 1, 180);
+  const scale = Math.min(maxWidth / sourceWidth, maxHeight / sourceHeight, 1);
+  const width = Math.max(1, Math.round(sourceWidth * scale));
+  const height = Math.max(1, Math.round(sourceHeight * scale));
+  const baseName = sanitizeFigureExportBaseName(exportOptions.baseName ?? exportOptions.filename ?? 'figure');
+
+  return {
+    baseName: `${baseName}-preview`,
+    filename: `${baseName}-preview`,
+    format: 'png',
+    preset: 'custom',
+    width,
+    height,
+    supersampling: resolveFigureExportSupersampling(previewOptions.supersampling, 1),
+    includeLabels: exportOptions.includeLabels === true,
+    includeLegends: exportOptions.includeLegends !== false,
+    legendScale: resolveFigureLegendScale(exportOptions.legendScale, 1),
+    transparentBackground: resolveFigureTransparentBackground(exportOptions.transparentBackground, false),
+    alphaMode: resolveFigureExportAlphaMode(exportOptions.alphaMode, 'straight'),
+  };
+}
+
 export function buildFigureExportPresetList(windowSize = {}, capability = { maxBitmapDimension: Infinity }, supersampling = 1) {
   const safeSupersampling = resolveFigureExportSupersampling(supersampling, 1);
   const maxBitmapDimension = Math.max(1, Math.floor(Number(capability?.maxBitmapDimension) || Infinity));

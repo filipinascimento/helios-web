@@ -52,6 +52,19 @@ test('categorical mapping works via config object', () => {
   expect(fallback.color).toBe('gray');
 });
 
+test('categorical color mapping defaults unmatched values to gray', () => {
+  const mapper = new Mapper({ mode: 'node' });
+  mapper.setChannel('color', {
+    attributes: 'community',
+    type: 'categorical',
+    domain: ['A', 'B'],
+    range: ['red', 'blue'],
+  });
+
+  const fallback = mapper.mapItem({ attributes: { community: 'C' } });
+  expect(fallback.color).toBe('#888888ff');
+});
+
 test('nodeToEdge passthrough returns endpoint values', () => {
   const edgeMapper = new Mapper({ mode: 'edge' });
   edgeMapper.channel('color').from('@node.community').nodeToEdge().done();

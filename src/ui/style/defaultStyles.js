@@ -253,6 +253,12 @@ export const defaultStylesText = `
     color-mix(in srgb, var(--helios-ui-bg-solid) 78%, transparent);
 }
 
+.helios-ui-layout__status-visual[data-state="idle"] {
+  background:
+    linear-gradient(to top, color-mix(in srgb, var(--helios-ui-status-running) 10%, transparent), transparent 55%),
+    color-mix(in srgb, var(--helios-ui-bg-solid) 78%, transparent);
+}
+
 .helios-ui-layout__status-badge {
   position: absolute;
   top: 4px;
@@ -305,6 +311,10 @@ export const defaultStylesText = `
 
 .helios-ui-layout__status-button[data-state="stopped"] {
   background: color-mix(in srgb, var(--helios-ui-status-running) 22%, var(--helios-ui-bg-solid));
+}
+
+.helios-ui-layout__status-button[data-state="idle"] {
+  background: color-mix(in srgb, var(--helios-ui-danger) 24%, var(--helios-ui-bg-solid));
 }
 
 .helios-ui-layout__status-button:hover {
@@ -382,6 +392,10 @@ export const defaultStylesText = `
   color: color-mix(in srgb, var(--helios-ui-fg) 82%, #f2b7bf 18%);
 }
 
+.helios-ui-layout__status-text[data-state="idle"] {
+  color: color-mix(in srgb, var(--helios-ui-fg) 84%, var(--helios-ui-status-running) 16%);
+}
+
 .helios-ui-layout__status[data-state="running"] {
   border-color: color-mix(in srgb, var(--helios-ui-status-running) 56%, var(--helios-ui-border));
   background: color-mix(in srgb, var(--helios-ui-status-running) 18%, var(--helios-ui-bg-solid));
@@ -390,6 +404,11 @@ export const defaultStylesText = `
 .helios-ui-layout__status[data-state="error"] {
   border-color: color-mix(in srgb, var(--helios-ui-status-error) 56%, var(--helios-ui-border));
   background: color-mix(in srgb, var(--helios-ui-status-error) 18%, var(--helios-ui-bg-solid));
+}
+
+.helios-ui-layout__status[data-state="idle"] {
+  border-color: color-mix(in srgb, var(--helios-ui-status-running) 44%, var(--helios-ui-border));
+  background: color-mix(in srgb, var(--helios-ui-status-running) 12%, var(--helios-ui-bg-solid));
 }
 
 .helios-ui-layout__bindings {
@@ -1498,6 +1517,42 @@ export const defaultStylesText = `
 .helios-ui-subpanel__body {
   padding: 6px;
   border-top: 1px solid color-mix(in srgb, var(--helios-ui-border) 65%, transparent);
+}
+
+.helios-ui-figure-preview {
+  display: grid;
+  gap: 8px;
+}
+
+.helios-ui-figure-preview__viewport {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 132px;
+  border: 1px solid color-mix(in srgb, var(--helios-ui-border) 85%, transparent);
+  border-radius: 10px;
+  overflow: hidden;
+  background:
+    linear-gradient(45deg, color-mix(in srgb, var(--helios-ui-fg) 5%, transparent) 25%, transparent 25%, transparent 75%, color-mix(in srgb, var(--helios-ui-fg) 5%, transparent) 75%),
+    linear-gradient(45deg, color-mix(in srgb, var(--helios-ui-fg) 5%, transparent) 25%, transparent 25%, transparent 75%, color-mix(in srgb, var(--helios-ui-fg) 5%, transparent) 75%),
+    color-mix(in srgb, var(--helios-ui-bg-solid) 84%, transparent);
+  background-position: 0 0, 10px 10px, 0 0;
+  background-size: 20px 20px, 20px 20px, auto;
+}
+
+.helios-ui-figure-preview__image {
+  display: block;
+  max-width: 100%;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+}
+
+.helios-ui-figure-preview__status {
+  color: var(--helios-ui-muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+  text-align: right;
 }
 
 .helios-ui-subpanel[data-collapsed="true"] .helios-ui-subpanel__body { display: none; }

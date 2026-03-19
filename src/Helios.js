@@ -30,6 +30,7 @@ import {
   buildFigureExportPresetList,
   getFigureExportCapability,
   resolveFigureExportOptions,
+  resolveFigurePreviewThumbnailOptions,
 } from './export/figureExport.js';
 
 const {
@@ -946,6 +947,36 @@ export class Helios extends EventTarget {
     });
   }
 
+  _bindLayoutToHelios(layout) {
+    if (layout && typeof layout === 'object') {
+      layout.helios = this;
+    }
+    return layout;
+  }
+
+  _wakeLayoutIfIdle(reason = 'layout') {
+    const scheduler = this.scheduler ?? null;
+    if (!scheduler || typeof scheduler.setLayoutEnabled !== 'function') return false;
+    const state = typeof scheduler.getLayoutState === 'function'
+      ? scheduler.getLayoutState()
+      : (scheduler.layoutEnabled !== false ? 'running' : 'stopped');
+    if (state !== 'idle') return false;
+    scheduler.setLayoutEnabled(true, reason);
+    scheduler.requestLayout?.(reason);
+    return true;
+  }
+
+  _requestLayoutReheat(reason = 'layout') {
+    const layout = this._layout ?? null;
+    if (!layout || typeof layout !== 'object') return false;
+    if (typeof layout.reheat === 'function') {
+      layout.reheat(reason);
+      return true;
+    }
+    layout.requestUpdate?.();
+    return false;
+  }
+
   constructor(network, options = {}) {
     if (!network) {
       throw new Error('Helios requires a helios-network instance');
@@ -1113,7 +1144,7 @@ export class Helios extends EventTarget {
     if (options.prewarm === true) {
       this.prewarm();
     }
-    this._layout = this.createLayout(options.layout);
+    this._layout = this._bindLayoutToHelios(this.createLayout(options.layout));
     this._enforcePositionSourcePolicy(this._layout, {
       resetInterpolation: false,
       requestRender: false,
@@ -1858,7 +1889,7 @@ export class Helios extends EventTarget {
       state.stats = null;
       state.lastError = null;
       if (this._syncLayoutNetworkFromFilter()) {
-        this._layout?.requestUpdate?.();
+        this._requestLayoutReheat('filter-sync');
         this.scheduler?.requestLayout?.('filter-sync');
       }
       return state;
@@ -1872,7 +1903,7 @@ export class Helios extends EventTarget {
         ? (state.renderNetwork ?? baseNetwork)
         : baseNetwork;
       if (this._syncLayoutNetworkFromFilter()) {
-        this._layout?.requestUpdate?.();
+        this._requestLayoutReheat('filter-sync');
         this.scheduler?.requestLayout?.('filter-sync');
       }
       return state;
@@ -1943,7 +1974,7 @@ export class Helios extends EventTarget {
       pendingNodeSelector = null;
       pendingEdgeSelector = null;
       if (this._syncLayoutNetworkFromFilter()) {
-        this._layout?.requestUpdate?.();
+        this._requestLayoutReheat('filter-sync');
         this.scheduler?.requestLayout?.('filter-sync');
       }
       return state;
@@ -1969,7 +2000,7 @@ export class Helios extends EventTarget {
       state.layoutNetwork = baseNetwork;
       state.stats = null;
       if (this._syncLayoutNetworkFromFilter()) {
-        this._layout?.requestUpdate?.();
+        this._requestLayoutReheat('filter-sync');
         this.scheduler?.requestLayout?.('filter-sync');
       }
       this.debug?.log?.('helios', 'Graph filter refresh failed; falling back to base network', { error });
@@ -1990,11 +2021,14 @@ export class Helios extends EventTarget {
   _afterGraphFilterMutation(reason = 'filter') {
     this._refreshGraphFilterNetworks({ force: false, throwOnError: false });
     const layoutNetworkChanged = this._syncLayoutNetworkFromFilter();
-    this._layout?.requestUpdate?.();
+    const filterScope = this._ensureGraphFilterState().scope;
+    if (layoutNetworkChanged || filterScope === GRAPH_FILTER_SCOPE_RENDER_LAYOUT) {
+      this._requestLayoutReheat('filter');
+    }
     this.scheduler?.requestGeometry?.();
     if (layoutNetworkChanged) {
       this.scheduler?.requestLayout?.('filter');
-    } else if (this._ensureGraphFilterState().scope === GRAPH_FILTER_SCOPE_RENDER_LAYOUT) {
+    } else if (filterScope === GRAPH_FILTER_SCOPE_RENDER_LAYOUT) {
       this.scheduler?.requestLayout?.('filter');
     }
     this.scheduler?.requestRender?.();
@@ -2198,7 +2232,7 @@ export class Helios extends EventTarget {
 
     this.firstGeometryUpdateComplete = false;
 
-    this._layout = this.createLayout(layoutOption);
+    this._layout = this._bindLayoutToHelios(this.createLayout(layoutOption));
     this._syncLayoutNetworkFromFilter();
     if (this._layout?.setUpdateListener) {
       this._layout.setUpdateListener((payload) => this._handleLayoutUpdate(payload));
@@ -2461,15 +2495,19 @@ export class Helios extends EventTarget {
 
     const framebuffer = renderer.createFramebuffer(options.framebufferWidth, options.framebufferHeight);
     const previousClearColor = Array.isArray(renderer.clearColor) ? [...renderer.clearColor] : null;
+    const exportFigureLogicalViewport = options.exportFigureLogicalViewport ?? null;
     try {
       if (options.transparentBackground === true) {
         renderer.clearColor = [0, 0, 0, 0];
       }
       if (framebuffer && typeof framebuffer === 'object') {
-        framebuffer.exportFigureLogicalViewport = {
-          width: Math.max(1, Number(renderer.camera?.viewport?.width ?? this.layers?.size?.width ?? this.size?.width ?? 1)),
-          height: Math.max(1, Number(renderer.camera?.viewport?.height ?? this.layers?.size?.height ?? this.size?.height ?? 1)),
-        };
+        framebuffer.exportFigureLogicalViewport = exportFigureLogicalViewport
+          ? {
+              width: Math.max(1, Number(exportFigureLogicalViewport.width ?? 1)),
+              height: Math.max(1, Number(exportFigureLogicalViewport.height ?? 1)),
+              devicePixelRatio: Math.max(1, Number(exportFigureLogicalViewport.devicePixelRatio ?? 1)),
+            }
+          : null;
       }
       renderer.setRenderTarget(framebuffer);
       renderer.render(frame);
@@ -2515,6 +2553,7 @@ export class Helios extends EventTarget {
     if (typeof document === 'undefined') return null;
     const renderer = this.renderer ?? null;
     if (!renderer?.camera) return null;
+    const labelBaseConfig = this._labels?.getConfig?.() ?? {};
     const legendBaseConfig = this._legends?.getConfig?.() ?? { scale: 1 };
     const legendExportScale = options.width / Math.max(1e-6, options.previewRect?.width ?? options.width);
     const legendScale = Math.max(0.25, Number(legendBaseConfig.scale ?? 1) * legendExportScale * Number(options.legendScale ?? 1));
@@ -2534,12 +2573,12 @@ export class Helios extends EventTarget {
     if (options.includeLabels) {
       const labelGroup = this._labels?.createSnapshot?.({
         timestamp: performance.now(),
-        config: options.format === 'svg'
-          ? {
-            fontFamily: ILLUSTRATOR_EXPORT_FONT_FAMILY,
-            illustratorCompatible: true,
-          }
-          : null,
+        config: {
+          fontFamily: options.format === 'svg'
+            ? ILLUSTRATOR_EXPORT_FONT_FAMILY
+            : labelBaseConfig.fontFamily,
+          illustratorCompatible: options.format === 'svg',
+        },
       });
       if (labelGroup) {
         const transformed = document.createElementNS('http://www.w3.org/2000/svg', 'g');
@@ -2563,7 +2602,7 @@ export class Helios extends EventTarget {
           maxScale: 64,
           scalePreviewLegends: true,
           illustratorCompatible: options.format === 'svg',
-          fontFamily: options.format === 'svg' ? ILLUSTRATOR_EXPORT_FONT_FAMILY : undefined,
+          fontFamily: options.format === 'svg' ? ILLUSTRATOR_EXPORT_FONT_FAMILY : legendBaseConfig.fontFamily,
         },
       });
       if (legendGroup) {
@@ -2628,6 +2667,11 @@ export class Helios extends EventTarget {
     const exportOptions = {
       ...resolved,
       backgroundColor: Array.isArray(this.renderer?.clearColor) ? [...this.renderer.clearColor] : [1, 1, 1, 1],
+      exportFigureLogicalViewport: {
+        width: Math.max(1, Number(resolved.framebufferWidth ?? resolved.bitmapWidth ?? resolved.width ?? 1)),
+        height: Math.max(1, Number(resolved.framebufferHeight ?? resolved.bitmapHeight ?? resolved.height ?? 1)),
+        devicePixelRatio: 1,
+      },
     };
     if (!exportOptions.fitsCapability) {
       throw new Error(
@@ -2645,6 +2689,49 @@ export class Helios extends EventTarget {
     } finally {
       this.scheduler?.requestRender?.();
     }
+  }
+
+  async exportFigurePreviewBlob(options = {}, previewOptions = {}) {
+    const resolved = this._resolveFigureExportOptions(options);
+    const fullExportOptions = {
+      ...resolved,
+      format: 'png',
+      backgroundColor: Array.isArray(this.renderer?.clearColor) ? [...this.renderer.clearColor] : [1, 1, 1, 1],
+    };
+    const previewRequest = resolveFigurePreviewThumbnailOptions(fullExportOptions, previewOptions);
+    const previewResolved = this._resolveFigureExportOptions(previewRequest);
+    const previewExportOptions = {
+      ...previewResolved,
+      format: 'png',
+      includeLabels: fullExportOptions.includeLabels,
+      includeLegends: fullExportOptions.includeLegends,
+      legendScale: fullExportOptions.legendScale,
+      transparentBackground: fullExportOptions.transparentBackground,
+      alphaMode: fullExportOptions.alphaMode,
+      backgroundColor: fullExportOptions.backgroundColor,
+      exportFigureLogicalViewport: {
+        width: Math.max(1, Number(
+          fullExportOptions.framebufferWidth
+            ?? fullExportOptions.bitmapWidth
+            ?? fullExportOptions.width
+            ?? previewResolved.width
+            ?? 1,
+        )),
+        height: Math.max(1, Number(
+          fullExportOptions.framebufferHeight
+            ?? fullExportOptions.bitmapHeight
+            ?? fullExportOptions.height
+            ?? previewResolved.height
+            ?? 1,
+        )),
+        devicePixelRatio: 1,
+      },
+    };
+
+    const frame = await this._prepareFigureExportFrame();
+    const bitmapCanvas = await this._captureFigureBitmap(previewExportOptions, frame);
+    const overlaySvg = this._captureFigureOverlay(fullExportOptions);
+    return await this._composeFigurePng(bitmapCanvas, overlaySvg, previewExportOptions);
   }
 
   async exportFigure(filenameOrOptions, maybeOptions = {}) {
@@ -3333,7 +3420,12 @@ export class Helios extends EventTarget {
     const renderer = this.renderer ?? null;
     const rendererDevice = renderer?.device ?? null;
     const scope = extra?.scope ?? null;
-    const defaultNetwork = scope === 'layout'
+    const activeLayoutDelegate = this._layout && typeof this._layout.getPositionDelegate === 'function'
+      ? (this._layout.getPositionDelegate() ?? null)
+      : null;
+    const usesLayoutDelegate = activeLayoutDelegate
+      && activeLayoutDelegate === (this._positionsConfig?.delegate ?? null);
+    const defaultNetwork = scope === 'layout' || usesLayoutDelegate
       ? this._getLayoutNetwork()
       : this._getRenderNetwork();
     return {
@@ -3793,7 +3885,7 @@ export class Helios extends EventTarget {
 
     const layoutChanged = this._applyModeToActiveLayout(nextMode);
     if (layoutChanged && options.reheat !== false) {
-      this._layout?.reheat?.();
+      this._requestLayoutReheat('mode');
     }
     this._layout?.requestUpdate?.();
     this._enforcePositionSourcePolicy(this._layout, { resetInterpolation: false });
@@ -4261,7 +4353,7 @@ export class Helios extends EventTarget {
     }
     this.visuals.markPositionsDirty();
     this.mappersDirty = true;
-    this._layout?.requestUpdate?.();
+    this._requestLayoutReheat('data');
     this.scheduler.requestLayout('data');
     this.scheduler.requestGeometry();
     this._labels?.requestFullReselect?.('add-nodes');
@@ -4277,7 +4369,7 @@ export class Helios extends EventTarget {
     }
     this.visuals.markPositionsDirty();
     this.mappersDirty = true;
-    this._layout?.requestUpdate?.();
+    this._requestLayoutReheat('data');
     this.scheduler.requestLayout('data');
     this.scheduler.requestGeometry();
     this._labels?.requestFullReselect?.('add-edges');
@@ -4296,7 +4388,7 @@ export class Helios extends EventTarget {
     }
     this.visuals.markPositionsDirty();
     this.mappersDirty = true;
-    this._layout?.requestUpdate?.();
+    this._requestLayoutReheat('data');
     this.scheduler.requestLayout('data');
     this.scheduler.requestGeometry();
     this._labels?.requestFullReselect?.('network-changed');
@@ -4547,7 +4639,7 @@ export class Helios extends EventTarget {
       throw new Error('Layout must extend the Layout base class');
     }
     this._layout?.dispose?.();
-    this._layout = layout;
+    this._layout = this._bindLayoutToHelios(layout);
     this.debug.log('layout', 'Layout replaced', { layout: layout?.constructor?.name });
     this._layout.setUpdateListener((payload) => this._handleLayoutUpdate(payload));
     this.debug.log('layout', 'Initializing new layout instance');
@@ -4556,8 +4648,8 @@ export class Helios extends EventTarget {
     this._layout.resize?.(this.layers.size);
     this._enforcePositionSourcePolicy(this._layout, { resetInterpolation: false });
     this.debug.log('layout', 'Layout initialized and resized', this.layers.size);
-    this.scheduler.setLayout(layout);
-    this._emitLayoutChanged(layout);
+    this.scheduler.setLayout(this._layout);
+    this._emitLayoutChanged(this._layout);
     this.scheduler.requestLayout('user');
     this.scheduler.requestRender();
     return this;
@@ -4877,7 +4969,7 @@ export class Helios extends EventTarget {
     const requestedAlgo = typeof algo === 'string' ? algo : null;
     const requestedParams = params ?? (requestedAlgo ? null : algo);
     this.scheduler.setLayoutEnabled(true, 'user');
-    this._layout?.reheat?.();
+    this._requestLayoutReheat('user');
     this.scheduler.requestLayout('user');
     if (requestedAlgo || requestedParams) {
       this.debug.log('layout', 'startLayout called', { algo: requestedAlgo, params: requestedParams });

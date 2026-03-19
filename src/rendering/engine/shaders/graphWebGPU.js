@@ -562,7 +562,7 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
 
   let cornerT = clamp(input.corner.x, 0.0, 1.0);
   let width = max((globals.edgeWidth.x + globals.edgeWidth.y * mix(endpointWidth.x, endpointWidth.y, cornerT)) * widthMul, 1e-3) * semanticScale;
-  let halfWidth = max(width, 1.0) * 0.5;
+  let halfWidth = max(width, 1e-3) * 0.5;
   let centerPos = mix(startPos, endPos, cornerT);
   var widthDir = vec3<f32>(-dir.y, dir.x, 0.0);
   if (camera.position.w <= 0.5) {

@@ -467,7 +467,7 @@ void main() {
   vec2 ndcDir = ndcEnd - ndcStart;
   float dirLen = max(length(ndcDir), 1e-5);
   vec2 perp = vec2(-ndcDir.y, ndcDir.x) / dirLen;
-  float halfWidth = max(width, 1.0) * 0.5;
+  float halfWidth = max(width, 1e-3) * 0.5;
   vec2 pixelToNdc = vec2(2.0 / max(u_viewport.x, 1.0), 2.0 / max(u_viewport.y, 1.0));
   vec2 offsetNdc = perp * halfWidth * pixelToNdc;
   vec4 clipPos = mix(clipStart, clipEnd, segmentMix);

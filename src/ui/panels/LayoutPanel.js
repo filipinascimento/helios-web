@@ -156,6 +156,15 @@ function getLayoutChoices(helios) {
   ];
 }
 
+function getLayoutRunState(helios) {
+  const scheduler = helios?.scheduler ?? null;
+  if (!scheduler) return 'stopped';
+  if (typeof scheduler.getLayoutState === 'function') {
+    return scheduler.getLayoutState();
+  }
+  return scheduler.layoutEnabled !== false ? 'running' : 'stopped';
+}
+
 function buildLayoutInstance(helios, value) {
   const mode = helios?.options?.mode === '3d' ? '3d' : '2d';
   const nodeCount = Math.max(1, Number(helios?.network?.nodeCount ?? helios?.network?.nodeCapacity ?? 1000));
@@ -481,25 +490,27 @@ export class LayoutPanel {
 
     const refreshRunState = () => {
       const descriptor = getCurrentDescriptor();
-      const scheduler = helios?.scheduler ?? null;
-      const enabled = scheduler?.layoutEnabled !== false;
       const dynamic = descriptor.dynamic === true;
+      const state = dynamic ? getLayoutRunState(helios) : 'stopped';
+      const running = state === 'running';
+      const stoppable = state === 'running' || state === 'idle';
+      const label = state === 'idle' ? 'idle' : (running ? 'running' : 'stopped');
 
       runRow.row.style.display = dynamic ? '' : 'none';
-      const state = enabled ? 'running' : 'stopped';
       statusControls.dataset.state = state;
       statusVisual.dataset.state = state;
       statusBadge.dataset.state = state;
-      statusText.textContent = enabled ? 'running' : 'stopped';
+      statusText.textContent = label;
       statusText.dataset.state = state;
-      statusSpinner.style.display = enabled ? '' : 'none';
+      statusSpinner.style.display = running ? '' : 'none';
       runButton.replaceChildren();
       runButton.dataset.state = state;
-      runButton.title = enabled ? 'Stop layout' : 'Start layout';
-      runButton.setAttribute('aria-label', enabled ? 'Stop layout' : 'Start layout');
-      runButtonIconWrap.replaceChildren(enabled ? createPauseIcon() : createPlayIcon());
+      const nextActionLabel = stoppable ? 'Stop layout' : 'Start layout';
+      runButton.title = nextActionLabel;
+      runButton.setAttribute('aria-label', nextActionLabel);
+      runButtonIconWrap.replaceChildren(stoppable ? createPauseIcon() : createPlayIcon());
       runButton.appendChild(runButtonIconWrap);
-      runButton.setAttribute('aria-busy', enabled ? 'true' : 'false');
+      runButton.setAttribute('aria-busy', running ? 'true' : 'false');
     };
 
     const resetStatusHistory = () => {
@@ -783,11 +794,11 @@ export class LayoutPanel {
         return;
       }
       const descriptor = getCurrentDescriptor();
-      const enabled = helios?.scheduler?.layoutEnabled !== false;
+      const layoutState = getLayoutRunState(helios);
       const layout = helios.layout?.();
       layout?.seedFromNetworkPositions?.();
-      if (descriptor.dynamic === true && enabled) {
-        layout?.reheat?.();
+      if (descriptor.dynamic === true && layoutState !== 'stopped') {
+        layout?.reheat?.('layout-position-attribute');
         helios.startLayout();
         selectedPositionAttribute = CURRENT_POSITION_ATTRIBUTE;
       }
@@ -802,12 +813,12 @@ export class LayoutPanel {
     runButton.addEventListener('click', () => {
       const descriptor = getCurrentDescriptor();
       if (descriptor.dynamic !== true) return;
-      const enabled = helios?.scheduler?.layoutEnabled !== false;
-      if (enabled) {
+      const state = getLayoutRunState(helios);
+      if (state === 'running' || state === 'idle') {
         helios.stopLayout('ui:layout-panel');
       } else {
         const layout = helios.layout?.();
-        layout?.reheat?.();
+        layout?.reheat?.('ui:layout-panel');
         helios.startLayout();
         selectedPositionAttribute = CURRENT_POSITION_ATTRIBUTE;
       }
@@ -815,13 +826,13 @@ export class LayoutPanel {
     });
 
     layoutSelect.addEventListener('change', () => {
-      const wasEnabled = helios?.scheduler?.layoutEnabled !== false;
+      const previousRunState = getLayoutRunState(helios);
       const layout = buildLayoutInstance(helios, layoutSelect.value);
       helios.layout(layout);
       if (layoutSelect.value === 'static') {
         helios.stopLayout('ui:layout-panel');
-      } else if (wasEnabled) {
-        layout?.reheat?.();
+      } else if (previousRunState !== 'stopped') {
+        layout?.reheat?.('ui:layout-panel');
         helios.startLayout();
         selectedPositionAttribute = CURRENT_POSITION_ATTRIBUTE;
       }

@@ -642,7 +642,7 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   startPos = startPos + dir * trimStart;
   endPos = endPos - dir * trimEnd;
 
-  let halfWidth = max(width, 1.0) * 0.5;
+  let halfWidth = max(width, 1e-3) * 0.5;
   let centerPos = mix(startPos, endPos, cornerT);
   var widthDir = vec3<f32>(-dir.y, dir.x, 0.0);
   if (camera.position.w <= 0.5) {

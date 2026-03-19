@@ -66,6 +66,10 @@ helios.legends({
   scale: 1.1, // scales legend geometry
   continuousHeight: 160, // taller continuous colorbars
   zoomAwareSizeIn2D: true, // node size legends track 2D orthographic zoom by default
+  titles: {
+    nodeColor: null, // remove a title
+    density: 'Density difference', // or override one
+  },
   placements: {
     density: 'bottom-right',
     nodeColor: 'top-left',

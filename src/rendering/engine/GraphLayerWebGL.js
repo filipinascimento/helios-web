@@ -663,7 +663,7 @@ void main() {
   vec2 ndcDir = ndcEnd - ndcStart;
   float dirLen = max(length(ndcDir), 1e-5);
   vec2 perp = vec2(-ndcDir.y, ndcDir.x) / dirLen;
-  float halfWidth = max(width, 1.0) * 0.5;
+  float halfWidth = max(width, 1e-3) * 0.5;
   vec2 pixelToNdc = vec2(2.0 / max(u_viewport.x, 1.0), 2.0 / max(u_viewport.y, 1.0));
   vec2 offsetNdc = perp * halfWidth * pixelToNdc;
   vec4 clipPos = mix(clipStart, clipEnd, segmentMix);
@@ -1597,7 +1597,7 @@ export class GraphLayerWebGL extends GraphLayer {
     if (!context || context.type !== 'webgl2') return;
     const network = frame?.network;
     if (!network) return;
-    const cameraUniforms = this.getCameraUniforms(frame?.camera);
+    const cameraUniforms = this.getCameraUniforms(frame?.camera, context);
     if (!cameraUniforms) return;
     const is2D = cameraUniforms.mode === '2d';
     const zoom2D = is2D ? Math.max(1e-3, cameraUniforms.view?.[0] ?? 1) : 1;
@@ -2016,16 +2016,21 @@ export class GraphLayerWebGL extends GraphLayer {
         }
 
         const viewport = context.viewport;
-        const viewportWidth = viewport ? viewport[2] : (gl.drawingBufferWidth || this.size.width || 1);
-        const viewportHeight = viewport ? viewport[3] : (gl.drawingBufferHeight || this.size.height || 1);
+        const rasterViewportWidth = viewport ? viewport[2] : (gl.drawingBufferWidth || this.size.width || 1);
+        const rasterViewportHeight = viewport ? viewport[3] : (gl.drawingBufferHeight || this.size.height || 1);
+        const logicalViewport = context.target?.exportFigureLogicalViewport ?? null;
+        const screenViewportWidth = Math.max(1, Math.floor(logicalViewport?.width ?? rasterViewportWidth));
+        const screenViewportHeight = Math.max(1, Math.floor(logicalViewport?.height ?? rasterViewportHeight));
         const transparencyMode = this.edgeTransparencyMode;
         const nodeBlendWithEdges = this.nodeBlendWithEdges === true;
         const edgeDepthWrite = this.edgeDepthWrite === true;
         debugWebGLRender('graph:render:uploads', {
           nodeCount: this.nodeCount,
           edgeCount: this.edgeCount,
-          viewportWidth,
-          viewportHeight,
+          viewportWidth: rasterViewportWidth,
+          viewportHeight: rasterViewportHeight,
+          screenViewportWidth,
+          screenViewportHeight,
           transparencyMode,
           nodeBlendWithEdges,
           edgeDepthWrite,
@@ -2081,8 +2086,8 @@ export class GraphLayerWebGL extends GraphLayer {
 
         const drawEdges = ({
           weighted = false,
-          passViewportWidth = viewportWidth,
-          passViewportHeight = viewportHeight,
+          passViewportWidth = screenViewportWidth,
+          passViewportHeight = screenViewportHeight,
         } = {}) => {
           if (!this.edgeCount || !edges.endpoints || !activeNodePositionTexture) return;
           const hasEdgeColors = Boolean(edgeVariant?.colorBuffer && edgeVariant?.colorSource !== 'node' && edges.colors);
@@ -2453,7 +2458,7 @@ export class GraphLayerWebGL extends GraphLayer {
           if (viewport) {
             gl.viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
           } else {
-            gl.viewport(0, 0, viewportWidth, viewportHeight);
+            gl.viewport(0, 0, rasterViewportWidth, rasterViewportHeight);
           }
         };
 
@@ -2462,7 +2467,7 @@ export class GraphLayerWebGL extends GraphLayer {
           || transparencyMode === 'additive-tonemapped'
           || transparencyMode === 'additive-normalized-bright';
         const weightedReady = weightedRequested && this.edgeCount > 0
-          ? this.prepareWeightedWebGL(viewportWidth, viewportHeight)
+          ? this.prepareWeightedWebGL(rasterViewportWidth, rasterViewportHeight)
           : false;
         debugWebGLRender('graph:render:mode', {
           weightedRequested,
@@ -2522,12 +2527,10 @@ export class GraphLayerWebGL extends GraphLayer {
               gl.depthMask(edgeDepthWrite);
               gl.depthFunc(gl.LEQUAL);
             }
-            const weightedViewportWidth = viewport ? viewport[2] : (this.weightedSize?.width ?? viewportWidth);
-            const weightedViewportHeight = viewport ? viewport[3] : (this.weightedSize?.height ?? viewportHeight);
             drawEdges({
               weighted: true,
-              passViewportWidth: weightedViewportWidth,
-              passViewportHeight: weightedViewportHeight,
+              passViewportWidth: screenViewportWidth,
+              passViewportHeight: screenViewportHeight,
             });
           }
 

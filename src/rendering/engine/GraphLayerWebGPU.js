@@ -1077,7 +1077,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     const gpuDevice = this.device?.device;
     if (!gpuDevice) return;
     const maxBindingSize = gpuDevice.limits?.maxStorageBufferBindingSize;
-    const cameraUniforms = this.getCameraUniforms(camera);
+    const cameraUniforms = this.getCameraUniforms(camera, context);
     const transparencyMode = this.edgeTransparencyMode;
     const nodeBlendWithEdges = this.nodeBlendWithEdges === true;
     const weightedRequested = transparencyMode === 'weighted'

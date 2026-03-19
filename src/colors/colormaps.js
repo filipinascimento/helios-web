@@ -174,6 +174,42 @@ function sampleColorsFromList(colors, count, alreadyNormalized = false) {
   return result;
 }
 
+const CATEGORY18_COLORS = [
+  '#1f77b4',
+  '#ff7f0e',
+  '#2ca02c',
+  '#d62728',
+  '#9467bd',
+  '#8c564b',
+  '#e377c2',
+  '#bcbd22',
+  '#17becf',
+  '#aec7e8',
+  '#ffbb78',
+  '#98df8a',
+  '#ff9896',
+  '#c5b0d5',
+  '#c49c94',
+  '#f7b6d2',
+  '#dbdb8d',
+  '#9edae5',
+];
+
+function createRepeatingSchemeDescriptor(name, colors, source = 'helios') {
+  const normalized = normalizeColors(colors);
+  const interpolator = createInterpolatorFromList(normalized, true, false);
+  return {
+    name,
+    source,
+    isScheme: true,
+    interpolate: (t) => interpolator(t),
+    scheme: (count) => {
+      const target = Math.max(1, Math.floor(Number(count) || normalized.length));
+      return Array.from({ length: target }, (_, index) => [...normalized[index % normalized.length]]);
+    },
+  };
+}
+
 function buildJsonColormapDescriptor(name, entry, source) {
   let cached = null;
   const load = () => {
@@ -292,6 +328,7 @@ function buildJsonDescriptors() {
 }
 
 const { CET: CETDescriptors, cmasher: cmasherDescriptors, helios: heliosDescriptors } = buildJsonDescriptors();
+heliosDescriptors.category18 = createRepeatingSchemeDescriptor('category18', CATEGORY18_COLORS, 'helios');
 
 const registry = new Map();
 function registerDescriptor(descriptor) {

@@ -372,7 +372,7 @@ fn edgeQuadVertex(input : EdgeQuadVertexInput) -> EdgeVertexOutput {
   let ndcDir = ndcEnd - ndcStart;
   let dirLen = max(length(ndcDir), 1e-5);
   let perp = vec2<f32>(-ndcDir.y, ndcDir.x) / dirLen;
-  let halfWidth = max(width, 1.0) * 0.5;
+  let halfWidth = max(width, 1e-3) * 0.5;
   let pixelToNdc = vec2<f32>(2.0 / max(camera.viewport.x, 1.0), 2.0 / max(camera.viewport.y, 1.0));
   let offsetNdc = perp * halfWidth * pixelToNdc;
   var clipPos = mix(clipStart, clipEnd, segmentMix);
@@ -782,7 +782,7 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeLineVertexOutput {
   let ndcDir = ndcEnd - ndcStart;
   let dirLen = max(length(ndcDir), 1e-5);
   let perp = vec2<f32>(-ndcDir.y, ndcDir.x) / dirLen;
-  let halfWidth = max(width, 1.0) * 0.5;
+  let halfWidth = max(width, 1e-3) * 0.5;
   let pixelToNdc = vec2<f32>(2.0 / max(camera.viewport.x, 1.0), 2.0 / max(camera.viewport.y, 1.0));
   let offsetNdc = perp * halfWidth * pixelToNdc;
   var clipPos = mix(clipStart, clipEnd, segmentMix);

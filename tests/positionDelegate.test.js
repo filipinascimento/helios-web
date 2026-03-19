@@ -242,6 +242,59 @@ test('GraphLayer calls delegate synchronization guard before reading resources',
   assert.ok(delegate.syncCount >= 1);
 });
 
+test('GraphLayer keeps delegate synchronization on the delegate-attached network', () => {
+  class TrackingDelegate extends PositionDelegate {
+    constructor() {
+      super();
+      this.lastNetwork = null;
+    }
+
+    synchronizeTopology({ network }) {
+      this.lastNetwork = network;
+    }
+
+    getNodePositionView(context) {
+      this.ensureSynchronized(context);
+      return new Float32Array([0, 0, 0, 1, 1, 1]);
+    }
+  }
+
+  const layoutNetwork = {
+    withBufferAccess: (fn) => fn(),
+    getTopologyVersions: () => ({ node: 1, edge: 1 }),
+    getNodeAttributeBuffer: (name) => {
+      if (name === '_helios_visuals_position') return { view: new Float32Array([0, 0, 0, 1, 1, 1]), version: 1 };
+      if (name === '$index') return { version: 1 };
+      return null;
+    },
+    getEdgeAttributeBuffer: (name) => (name === '$index' ? { version: 1 } : null),
+    nodeIndices: new Uint32Array([0, 1]),
+    edgeIndices: new Uint32Array([0]),
+  };
+  const renderNetwork = {
+    withBufferAccess: (fn) => fn(),
+    getTopologyVersions: () => ({ node: 2, edge: 2 }),
+    getNodeAttributeBuffer: (name) => {
+      if (name === '_helios_visuals_position') return { view: new Float32Array([0, 0, 0]), version: 2 };
+      if (name === '$index') return { version: 2 };
+      return null;
+    },
+    getEdgeAttributeBuffer: (name) => (name === '$index' ? { version: 2 } : null),
+    nodeIndices: new Uint32Array([1]),
+    edgeIndices: new Uint32Array([]),
+  };
+
+  const delegate = new TrackingDelegate();
+  const graphLayer = new GraphLayer();
+  graphLayer.setPositionDelegate(delegate);
+  delegate.onAttach({ network: layoutNetwork });
+
+  graphLayer.resolvePositionSourceOverride(renderNetwork, { backend: 'webgl2' });
+
+  assert.equal(delegate.lastNetwork, layoutNetwork);
+  assert.equal(delegate._context?.network, layoutNetwork);
+});
+
 test('GraphLayer prefers GPU delegate resources without requesting CPU position views', () => {
   class GpuBackedDelegate extends PositionDelegate {
     constructor() {

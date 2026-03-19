@@ -727,6 +727,82 @@ test('Helios.startLayout reheats the active layout before requesting ticks', () 
   assert.equal(requestLayoutCalls, 1);
 });
 
+test('Helios wakes idle layouts without unpausing manually stopped layouts', () => {
+  const helios = Object.create(Helios.prototype);
+  const calls = [];
+  let state = 'idle';
+  helios.scheduler = {
+    getLayoutState() {
+      return state;
+    },
+    setLayoutEnabled(enabled, reason) {
+      calls.push(['setLayoutEnabled', enabled, reason]);
+      state = enabled ? 'running' : 'stopped';
+    },
+    requestLayout(reason) {
+      calls.push(['requestLayout', reason]);
+    },
+  };
+
+  assert.equal(helios._wakeLayoutIfIdle('filter'), true);
+  assert.deepEqual(calls, [
+    ['setLayoutEnabled', true, 'filter'],
+    ['requestLayout', 'filter'],
+  ]);
+
+  calls.length = 0;
+  state = 'stopped';
+  assert.equal(helios._wakeLayoutIfIdle('filter'), false);
+  assert.deepEqual(calls, []);
+});
+
+test('graph filter mutation reheats and wakes an idle layout', () => {
+  const helios = Object.create(Helios.prototype);
+  const calls = [];
+  let state = 'idle';
+  helios.scheduler = {
+    getLayoutState() {
+      return state;
+    },
+    setLayoutEnabled(enabled, reason) {
+      calls.push(['setLayoutEnabled', enabled, reason]);
+      state = enabled ? 'running' : 'stopped';
+    },
+    requestLayout(reason) {
+      calls.push(['requestLayout', reason]);
+    },
+    requestGeometry() {
+      calls.push(['requestGeometry']);
+    },
+    requestRender() {
+      calls.push(['requestRender']);
+    },
+  };
+  helios._layout = {
+    reheat(reason) {
+      calls.push(['reheat', reason]);
+      helios._wakeLayoutIfIdle(reason);
+    },
+  };
+  helios._refreshGraphFilterNetworks = () => {};
+  helios._syncLayoutNetworkFromFilter = () => false;
+  helios._ensureGraphFilterState = () => ({ scope: 'render+layout' });
+  helios._labels = { requestFullReselect() {} };
+  helios.emit = () => {};
+  helios.getGraphFilter = () => ({});
+
+  helios._afterGraphFilterMutation('filter');
+
+  assert.deepEqual(calls, [
+    ['reheat', 'filter'],
+    ['setLayoutEnabled', true, 'filter'],
+    ['requestLayout', 'filter'],
+    ['requestGeometry'],
+    ['requestLayout', 'filter'],
+    ['requestRender'],
+  ]);
+});
+
 test('Helios lists numeric 2D/3D node attributes for layout seeding and copies them into positions', () => {
   const positions = new Float32Array([
     0, 0, 0,

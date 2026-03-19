@@ -80,13 +80,23 @@ export class GraphLayer extends Layer {
     this.resetStateStyles();
   }
 
-  getCameraUniforms(camera) {
+  getCameraUniforms(camera, context = null) {
     if (camera?.getUniforms) {
       const uniforms = camera.getUniforms();
       if (!this.ensureFinite(uniforms?.viewProjection) || !this.ensureFinite(uniforms?.view)) {
         return null;
       }
-      return uniforms;
+      const exportViewport = context?.target?.exportFigureLogicalViewport ?? null;
+      if (!exportViewport) {
+        return uniforms;
+      }
+      return {
+        ...uniforms,
+        viewport: {
+          ...(uniforms.viewport ?? {}),
+          ...exportViewport,
+        },
+      };
     }
     return null;
   }
@@ -307,9 +317,10 @@ export class GraphLayer extends Layer {
   resolvePositionSourceOverride(network, backendContext = {}) {
     const delegate = this.positionDelegate;
     if (!delegate || !network) return null;
+    const delegateNetwork = delegate?._context?.network ?? network;
 
     const context = {
-      network,
+      network: delegateNetwork,
       graphLayer: this,
       backend: backendContext.backend ?? null,
       device: backendContext.device ?? null,

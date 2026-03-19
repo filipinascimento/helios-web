@@ -109,7 +109,13 @@ export class GpuForceLayout extends Layout {
     this.positionDelegate.updateOptions({ center: normalizeCenter(this.options.center) });
   }
 
-  setSettings(next = {}) {
+  _applyReheatAlpha() {
+    this.positionDelegate.updateOptions({
+      alpha: Number(this.options.alpha ?? DEFAULT_OPTIONS.alpha),
+    });
+  }
+
+  setSettings(next = {}, { reheat = false, reason = 'layout-settings' } = {}) {
     if (!next || typeof next !== 'object') return this;
     this.options = {
       ...this.options,
@@ -118,14 +124,18 @@ export class GpuForceLayout extends Layout {
       mode: (next.mode ?? this.options.mode) === '3d' ? '3d' : '2d',
     };
     this.positionDelegate.updateOptions(this.options);
-    this.requestUpdate();
+    if (reheat) {
+      this._applyReheatAlpha();
+      super.reheat(reason);
+    } else {
+      this.requestUpdate();
+    }
     return this;
   }
 
-  reheat() {
-    this.setSettings({
-      alpha: Number(this.options.alpha ?? DEFAULT_OPTIONS.alpha),
-    });
+  reheat(reason = 'layout') {
+    this._applyReheatAlpha();
+    super.reheat(reason);
     return this;
   }
 
@@ -203,7 +213,7 @@ export class GpuForceLayout extends Layout {
           max: 256,
           step: 1,
           get: () => Number(this.options.maxNeighborsPerNode ?? DEFAULT_OPTIONS.maxNeighborsPerNode),
-          set: (value) => this.setSettings({ maxNeighborsPerNode: value }),
+          set: (value) => this.setSettings({ maxNeighborsPerNode: value }, { reheat: true }),
         },
         {
           key: 'outputScale',
@@ -213,7 +223,7 @@ export class GpuForceLayout extends Layout {
             max: 20,
           }),
           get: () => Number(this.options.outputScale ?? DEFAULT_OPTIONS.outputScale),
-          set: (value) => this.setSettings({ outputScale: value }),
+          set: (value) => this.setSettings({ outputScale: value }, { reheat: true }),
         },
         {
           key: 'linkDistance',
@@ -223,7 +233,7 @@ export class GpuForceLayout extends Layout {
           max: 20,
           step: 0.01,
           get: () => Number(this.options.linkDistance ?? DEFAULT_OPTIONS.linkDistance),
-          set: (value) => this.setSettings({ linkDistance: value }),
+          set: (value) => this.setSettings({ linkDistance: value }, { reheat: true }),
         },
         {
           key: 'kRepulsion',
@@ -233,7 +243,7 @@ export class GpuForceLayout extends Layout {
             max: 7,
           }),
           get: () => Number(this.options.kRepulsion ?? DEFAULT_OPTIONS.kRepulsion),
-          set: (value) => this.setSettings({ kRepulsion: value }),
+          set: (value) => this.setSettings({ kRepulsion: value }, { reheat: true }),
         },
         {
           key: 'kAttraction',
@@ -243,7 +253,7 @@ export class GpuForceLayout extends Layout {
             max: 62,
           }),
           get: () => Number(this.options.kAttraction ?? DEFAULT_OPTIONS.kAttraction),
-          set: (value) => this.setSettings({ kAttraction: value }),
+          set: (value) => this.setSettings({ kAttraction: value }, { reheat: true }),
         },
         {
           key: 'kGravity',
@@ -253,7 +263,7 @@ export class GpuForceLayout extends Layout {
             max: 0.035,
           }),
           get: () => Number(this.options.kGravity ?? DEFAULT_OPTIONS.kGravity),
-          set: (value) => this.setSettings({ kGravity: value }),
+          set: (value) => this.setSettings({ kGravity: value }, { reheat: true }),
         },
         {
           key: 'eta',
@@ -263,7 +273,7 @@ export class GpuForceLayout extends Layout {
           max: 1,
           step: 0.001,
           get: () => Number(this.options.eta ?? DEFAULT_OPTIONS.eta),
-          set: (value) => this.setSettings({ eta: value }),
+          set: (value) => this.setSettings({ eta: value }, { reheat: true }),
         },
         withVelocityRetentionBinding({
           key: 'damping',
@@ -272,7 +282,7 @@ export class GpuForceLayout extends Layout {
           max: 1,
           step: 0.001,
           get: () => Number(this.options.damping ?? DEFAULT_OPTIONS.damping),
-          set: (value) => this.setSettings({ damping: value }),
+          set: (value) => this.setSettings({ damping: value }, { reheat: true }),
         }),
         {
           key: 'maxStep',
@@ -282,7 +292,7 @@ export class GpuForceLayout extends Layout {
           max: 10,
           step: 0.01,
           get: () => Number(this.options.maxStep ?? DEFAULT_OPTIONS.maxStep),
-          set: (value) => this.setSettings({ maxStep: value }),
+          set: (value) => this.setSettings({ maxStep: value }, { reheat: true }),
         },
         {
           key: 'minDistance',
@@ -292,7 +302,7 @@ export class GpuForceLayout extends Layout {
           max: 10,
           step: 0.001,
           get: () => Number(this.options.minDistance ?? DEFAULT_OPTIONS.minDistance),
-          set: (value) => this.setSettings({ minDistance: value }),
+          set: (value) => this.setSettings({ minDistance: value }, { reheat: true }),
         },
         {
           key: 'autoStopAtAlphaMin',
@@ -307,7 +317,7 @@ export class GpuForceLayout extends Layout {
             label: 'Temp. decay',
           }),
           get: () => Number(this.options.alphaDecay ?? DEFAULT_OPTIONS.alphaDecay),
-          set: (value) => this.setSettings({ alphaDecay: value }),
+          set: (value) => this.setSettings({ alphaDecay: value }, { reheat: true }),
         },
         {
           key: 'alphaTarget',
@@ -315,7 +325,7 @@ export class GpuForceLayout extends Layout {
             label: 'Temp. target',
           }),
           get: () => Number(this.options.alphaTarget ?? DEFAULT_OPTIONS.alphaTarget),
-          set: (value) => this.setSettings({ alphaTarget: value }),
+          set: (value) => this.setSettings({ alphaTarget: value }, { reheat: true }),
         },
         {
           key: 'alphaMin',
@@ -323,7 +333,7 @@ export class GpuForceLayout extends Layout {
             label: 'Temp. min',
           }),
           get: () => Number(this.options.alphaMin ?? DEFAULT_OPTIONS.alphaMin),
-          set: (value) => this.setSettings({ alphaMin: value }),
+          set: (value) => this.setSettings({ alphaMin: value }, { reheat: true }),
         },
       ],
     };

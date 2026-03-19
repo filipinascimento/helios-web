@@ -120,6 +120,80 @@ test('deriveLegendItems resolves categorical legend labels from the network dict
   assert.deepEqual(nodeLegend.entries.map((entry) => entry.label), ['alpha', 'beta', 'gamma']);
 });
 
+test('deriveLegendItems appends gray Others entry for categorical fallbacks', () => {
+  const items = deriveLegendItems({
+    nodeChannels: new Map([
+      ['color', {
+        type: 'categorical',
+        attributes: 'category',
+        domain: [0, 1],
+        range: ['#ff0000', '#00ff00'],
+        defaultValue: '#888888ff',
+      }],
+    ]),
+    edgeChannels: new Map(),
+    densityConfig: null,
+    densityRuntime: null,
+    visualConfig: null,
+    config: { showNodeColor: true },
+    network: {
+      getNodeAttributeCategoryDictionary(name) {
+        assert.equal(name, 'category');
+        return {
+          entries: [
+            { id: 0, label: 'alpha' },
+            { id: 1, label: 'beta' },
+            { id: 2, label: 'gamma' },
+          ],
+        };
+      },
+    },
+  });
+
+  const nodeLegend = items.find((item) => item.kind === 'nodeColor');
+  assert.ok(nodeLegend);
+  assert.deepEqual(
+    nodeLegend.entries.map((entry) => ({ label: entry.label, color: entry.color })),
+    [
+      { label: 'alpha', color: '#ff0000' },
+      { label: 'beta', color: '#00ff00' },
+      { label: 'Other', color: '#888888ff' },
+    ],
+  );
+});
+
+test('deriveLegendItems allows legend titles to be overridden or removed', () => {
+  const items = deriveLegendItems({
+    nodeChannels: new Map([
+      ['color', {
+        type: 'categorical',
+        attributes: 'category',
+        domain: [0],
+        range: ['#ff0000'],
+      }],
+    ]),
+    edgeChannels: new Map(),
+    densityConfig: null,
+    densityRuntime: null,
+    visualConfig: null,
+    config: {
+      showNodeColor: true,
+      titles: {
+        nodeColor: null,
+      },
+    },
+    network: {
+      getNodeAttributeCategoryDictionary() {
+        return { entries: [{ id: 0, label: 'alpha' }] };
+      },
+    },
+  });
+
+  const nodeLegend = items.find((item) => item.kind === 'nodeColor');
+  assert.ok(nodeLegend);
+  assert.equal(nodeLegend.title, '');
+});
+
 test('deriveLegendItems makes node size legends zoom-aware in 2D orthographic mode', () => {
   const items = deriveLegendItems({
     nodeChannels: new Map([
