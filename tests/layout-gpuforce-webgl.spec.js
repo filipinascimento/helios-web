@@ -40,7 +40,13 @@ test('gpu-force runs with WebGL2 delegate texture resources when renderer=webgl'
   expect(result.deviceType).toBe('webgl2');
   expect(result.positionSource).toBe('delegate');
   expect(result.hasDelegate).toBe(true);
-  expect(result.executionMode).toBe(result.hasColorBufferFloat ? 'gpu' : 'cpu');
-  expect(result.delegateSnapshotLength).toBeGreaterThan(0);
-  expect(result.hasWebglTexture).toBe(true);
+  if (result.hasColorBufferFloat) {
+    expect(result.executionMode).toBe('gpu');
+    expect(result.delegateSnapshotLength).toBeGreaterThan(0);
+    expect(result.hasWebglTexture).toBe(true);
+  } else {
+    expect(result.executionMode).toBe('unavailable');
+    expect(result.delegateSnapshotLength).toBe(0);
+    expect(result.hasWebglTexture).toBe(false);
+  }
 });

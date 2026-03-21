@@ -41,6 +41,18 @@ const {
   EDGE_ENDPOINTS_STATE_ATTRIBUTE,
 } = VISUAL_ATTRIBUTE_NAMES;
 
+const UMAP_FORCE_FLAG_ATTRIBUTE = 'umap';
+const DEFAULT_UMAP_EDGE_WEIGHT_ATTRIBUTE = 'umap_weight';
+const DEFAULT_UMAP_NODE_MASS_ATTRIBUTE = 'umap_mass';
+const DEFAULT_UMAP_FORCE_OPTIONS = Object.freeze({
+  umapA: 1.5769434601962196,
+  umapB: 0.8950608779914887,
+  umapGamma: 1,
+  umapNegativeSampleRate: 5,
+  umapNeighborCount: 15,
+  umapEpochs: null,
+});
+
 function isLayoutInstance(candidate) {
   return candidate && typeof candidate.step === 'function' && typeof candidate.initialize === 'function';
 }
@@ -317,6 +329,134 @@ function resolveExportBackgroundColor(backgroundColor) {
     green,
     blue,
     css: `rgb(${red} ${green} ${blue})`,
+  };
+}
+
+function normalizeTruthyNetworkFlag(value) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number' || typeof value === 'bigint') {
+    return Number(value) !== 0;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) return false;
+    if (['1', 'true', 'yes', 'y', 'on', 'enabled', 'umap'].includes(normalized)) return true;
+    if (['0', 'false', 'no', 'n', 'off', 'disabled'].includes(normalized)) return false;
+  }
+  return false;
+}
+
+function normalizeForceModel(value) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'umap') return 'umap';
+  if (normalized === 'linear' || normalized === 'force' || normalized === 'gpu-force') return 'linear';
+  return null;
+}
+
+function readNetworkAttributeValue(network, name) {
+  if (!network || typeof name !== 'string' || !name.trim()) return undefined;
+  const info = network.getNetworkAttributeInfo?.(name) ?? null;
+  if (!info || Number(info.dimension ?? 1) !== 1) return undefined;
+  if (Number(info.type) === AttributeType.String || Number(info.type) === AttributeType.Category) {
+    return network.getNetworkStringAttribute?.(name);
+  }
+  let value;
+  const read = () => {
+    const buffer = network.getNetworkAttributeBuffer?.(name) ?? null;
+    value = buffer?.view?.[0];
+  };
+  try {
+    if (typeof network.withBufferAccess === 'function') network.withBufferAccess(read);
+    else read();
+  } catch (error) {
+    console.warn(`Helios: failed to read network attribute "${name}".`, error);
+    return undefined;
+  }
+  return value;
+}
+
+function readNetworkStringAttributeValue(network, name) {
+  const value = readNetworkAttributeValue(network, name);
+  if (value == null) return null;
+  return String(value).trim() || null;
+}
+
+function readNetworkNumberAttribute(network, name, fallback) {
+  const value = Number(readNetworkAttributeValue(network, name));
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function resolveGpuForceLayoutOptionsFromNetwork(network, requestedOptions = {}) {
+  const explicitModel = normalizeForceModel(requestedOptions.forceModel);
+  const enabledByGraph = normalizeTruthyNetworkFlag(readNetworkAttributeValue(network, UMAP_FORCE_FLAG_ATTRIBUTE));
+  if (explicitModel === 'linear') {
+    return { ...requestedOptions, forceModel: 'linear' };
+  }
+  if (!enabledByGraph && explicitModel !== 'umap') {
+    return { ...requestedOptions, forceModel: 'linear' };
+  }
+  if (!enabledByGraph) {
+    console.warn('Helios: ignoring gpu-force UMAP mode because the graph-level "umap" attribute is not enabled.');
+    return { ...requestedOptions, forceModel: 'linear' };
+  }
+
+  const edgeWeightAttribute = String(
+    requestedOptions.edgeWeightAttribute
+      ?? readNetworkStringAttributeValue(network, 'umap_edge_weight_attr')
+      ?? DEFAULT_UMAP_EDGE_WEIGHT_ATTRIBUTE,
+  ).trim();
+  if (!edgeWeightAttribute || !network?.hasEdgeAttribute?.(edgeWeightAttribute)) {
+    console.warn(
+      `Helios: ignoring gpu-force UMAP mode because edge attribute "${edgeWeightAttribute || DEFAULT_UMAP_EDGE_WEIGHT_ATTRIBUTE}" is unavailable.`,
+    );
+    return { ...requestedOptions, forceModel: 'linear' };
+  }
+
+  const requestedMassAttribute = requestedOptions.nodeMassAttribute ?? readNetworkStringAttributeValue(network, 'umap_node_mass_attr');
+  const normalizedMassAttribute = typeof requestedMassAttribute === 'string' && requestedMassAttribute.trim()
+    ? requestedMassAttribute.trim()
+    : DEFAULT_UMAP_NODE_MASS_ATTRIBUTE;
+  const nodeMassAttribute = network?.hasNodeAttribute?.(normalizedMassAttribute)
+    ? normalizedMassAttribute
+    : null;
+  const requestedPositionAttribute = requestedOptions.umapPositionAttribute
+    ?? readNetworkStringAttributeValue(network, 'umap_position_attr');
+  const normalizedPositionAttribute = typeof requestedPositionAttribute === 'string' && requestedPositionAttribute.trim()
+    ? requestedPositionAttribute.trim()
+    : null;
+  const umapHasInitialPositions = Boolean(
+    normalizedPositionAttribute
+    && network?.hasNodeAttribute?.(normalizedPositionAttribute),
+  );
+
+  return {
+    ...requestedOptions,
+    forceModel: 'umap',
+    edgeWeightAttribute,
+    nodeMassAttribute,
+    umapPositionAttribute: umapHasInitialPositions ? normalizedPositionAttribute : null,
+    umapHasInitialPositions,
+    umapA: readNetworkNumberAttribute(network, 'umap_a', requestedOptions.umapA ?? DEFAULT_UMAP_FORCE_OPTIONS.umapA),
+    umapB: readNetworkNumberAttribute(network, 'umap_b', requestedOptions.umapB ?? DEFAULT_UMAP_FORCE_OPTIONS.umapB),
+    umapGamma: readNetworkNumberAttribute(network, 'umap_gamma', requestedOptions.umapGamma ?? DEFAULT_UMAP_FORCE_OPTIONS.umapGamma),
+    umapNeighborCount: readNetworkNumberAttribute(
+      network,
+      'umap_n_neighbors',
+      requestedOptions.umapNeighborCount ?? DEFAULT_UMAP_FORCE_OPTIONS.umapNeighborCount,
+    ),
+    umapNegativeSampleRate: readNetworkNumberAttribute(
+      network,
+      'umap_negative_sample_rate',
+      requestedOptions.umapNegativeSampleRate ?? DEFAULT_UMAP_FORCE_OPTIONS.umapNegativeSampleRate,
+    ),
+    umapEpochs: readNetworkNumberAttribute(
+      network,
+      'umap_n_epochs',
+      requestedOptions.umapEpochs ?? DEFAULT_UMAP_FORCE_OPTIONS.umapEpochs,
+    ),
+    kAttraction: Number.isFinite(Number(requestedOptions.kAttraction)) ? requestedOptions.kAttraction : 1,
+    kRepulsion: Number.isFinite(Number(requestedOptions.kRepulsion)) ? requestedOptions.kRepulsion : 1,
+    kGravity: Number.isFinite(Number(requestedOptions.kGravity)) ? requestedOptions.kGravity : 0,
   };
 }
 
@@ -3870,8 +4010,8 @@ export class Helios extends EventTarget {
     if (positionSource.source === 'delegate' && options.syncDelegate !== false) {
       try {
         await this.syncDelegatePositionsToNetwork();
-      } catch (_) {
-        // Ignore delegate readback failures and continue with the mode switch.
+      } catch (error) {
+        console.warn('Helios.setMode(): failed to sync delegate positions back to the network before switching modes.', error);
       }
     }
 
@@ -4317,11 +4457,12 @@ export class Helios extends EventTarget {
       return layoutOption;
     }
     if (layoutOption?.type === 'gpu-force' || layoutOption?.type === 'gpuforce') {
-      const gpuOptions = {
+      const requestedOptions = {
         ...(layoutOption.options ?? {}),
         mode: this.options.mode ?? '2d',
         helios: this,
       };
+      const gpuOptions = resolveGpuForceLayoutOptionsFromNetwork(layoutNetwork, requestedOptions);
       this.debug.log('layout', 'Using GPU force layout', { ...gpuOptions, helios: undefined });
       return new GpuForceLayout(layoutNetwork, this.visuals, gpuOptions);
     }
@@ -4747,6 +4888,7 @@ export class Helios extends EventTarget {
     visuals?.markPositionsDirty?.();
     visuals?.bumpNodeAttributes?.(NODE_POSITION_ATTRIBUTE);
     visuals?.bumpEdgeAttributes?.(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
+    this._layout?.seedFromNetworkPositions?.();
     this.scheduler?.requestGeometry?.();
     this.scheduler?.requestRender?.();
     this._labels?.requestFullReselect?.('layout-position-attribute');

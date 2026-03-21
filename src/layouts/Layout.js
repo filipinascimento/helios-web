@@ -348,6 +348,7 @@ export class WorkerLayout extends Layout {
             label: 'Gravity',
             min: 0.000005,
             max: 0.05,
+            inputMin: 0,
           }),
           get: () => Number(this.options.kGravity ?? 0.0005),
           set: (value) => this.setSettings({ kGravity: value }, { reheat: true }),

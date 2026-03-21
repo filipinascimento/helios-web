@@ -4,9 +4,19 @@ import { Helios } from '../src/Helios.js';
 import { WorkerLayout } from '../src/layouts/Layout.js';
 import { D3Force3DLayout } from '../src/layouts/d3force3dLayoutWorker.js';
 import { GpuForceLayout } from '../src/layouts/GpuForceLayout.js';
-import { GpuForcePositionDelegate } from '../src/delegates/GpuForcePositionDelegate.js';
+import {
+  GpuForcePositionDelegate,
+  resolveUmapEpochCount,
+  warmStartUmapPositionsFromTopology,
+} from '../src/delegates/GpuForcePositionDelegate.js';
 import { PositionDelegate } from '../src/delegates/PositionDelegate.js';
 import { buildSparklinePath } from '../src/ui/panels/LayoutPanel.js';
+
+const ATTRIBUTE_TYPE = {
+  String: 0,
+  Boolean: 1,
+  Float: 2,
+};
 
 function createStubNetwork() {
   return {
@@ -23,6 +33,53 @@ function createStubNetwork() {
         3, 0, 0,
       ]),
     }),
+  };
+}
+
+function createUmapFlaggedNetwork({
+  umap = true,
+  edgeWeightAttribute = 'umap_weight',
+  nodeMassAttribute = 'umap_mass',
+  umapA = 1.7,
+  umapB = 0.83,
+  umapGamma = 1.25,
+  umapNegativeSampleRate = 7,
+  umapEpochs = 500,
+} = {}) {
+  const base = createStubNetwork();
+  const numericAttributes = new Map([
+    ['umap', { type: ATTRIBUTE_TYPE.Boolean, view: new Uint8Array([umap ? 1 : 0]) }],
+    ['umap_a', { type: ATTRIBUTE_TYPE.Float, view: new Float32Array([umapA]) }],
+    ['umap_b', { type: ATTRIBUTE_TYPE.Float, view: new Float32Array([umapB]) }],
+    ['umap_gamma', { type: ATTRIBUTE_TYPE.Float, view: new Float32Array([umapGamma]) }],
+    ['umap_negative_sample_rate', { type: ATTRIBUTE_TYPE.Float, view: new Float32Array([umapNegativeSampleRate]) }],
+    ['umap_n_epochs', { type: ATTRIBUTE_TYPE.Float, view: new Float32Array([umapEpochs]) }],
+  ]);
+  const stringAttributes = new Map([
+    ['umap_edge_weight_attr', edgeWeightAttribute],
+    ['umap_node_mass_attr', nodeMassAttribute],
+  ]);
+  return {
+    ...base,
+    hasEdgeAttribute(name) {
+      return name === edgeWeightAttribute;
+    },
+    hasNodeAttribute(name) {
+      return name === nodeMassAttribute;
+    },
+    getNetworkAttributeInfo(name) {
+      if (stringAttributes.has(name)) return { type: ATTRIBUTE_TYPE.String, dimension: 1 };
+      if (numericAttributes.has(name)) return { type: numericAttributes.get(name).type, dimension: 1 };
+      return null;
+    },
+    getNetworkAttributeBuffer(name) {
+      const attribute = numericAttributes.get(name) ?? null;
+      if (!attribute) return null;
+      return { view: attribute.view };
+    },
+    getNetworkStringAttribute(name) {
+      return stringAttributes.get(name) ?? null;
+    },
   };
 }
 
@@ -472,6 +529,8 @@ test('WorkerLayout exposes shared parameter bindings for force and jitter layout
   const dampingBinding = forceDescriptor.bindings.find((binding) => binding.key === 'damping');
   assert.equal(dampingBinding.label, 'Velocity retention');
   assert.match(dampingBinding.hint, /momentum/i);
+  const gravityBinding = forceDescriptor.bindings.find((binding) => binding.key === 'kGravity');
+  assert.equal(gravityBinding.inputMin, 0);
 
   const jitterLayout = new WorkerLayout(network, visuals, { layout: 'jitter', jitter: 2 });
   const jitterDescriptor = jitterLayout.getParameterBindings();
@@ -568,6 +627,8 @@ test('GpuForceLayout exposes shared parameter bindings and can reheat alpha', ()
   const dampingBinding = descriptor.bindings.find((binding) => binding.key === 'damping');
   assert.equal(dampingBinding.label, 'Velocity retention');
   assert.match(dampingBinding.hint, /momentum/i);
+  const gravityBinding = descriptor.bindings.find((binding) => binding.key === 'kGravity');
+  assert.equal(gravityBinding.inputMin, 0);
 
   const sampleCountBinding = descriptor.bindings.find((binding) => binding.key === 'sampleCount2D');
   assert.equal(sampleCountBinding.sliderMax, 256);
@@ -695,6 +756,48 @@ test('Helios.createLayout resolves gpu-force into GpuForceLayout', () => {
   assert.equal(layout.options.eta, 0.4);
   assert.equal(layout.options.kGravity, 0.005);
   assert.equal(layout.options.alphaDecay, 0.005);
+});
+
+test('Helios.createLayout auto-enables UMAP gpu-force mode from graph metadata', () => {
+  const helios = Object.create(Helios.prototype);
+  helios.network = createUmapFlaggedNetwork();
+  helios.visuals = {};
+  helios.options = { mode: '2d' };
+  helios.debug = { log: () => {} };
+
+  const layout = helios.createLayout({ type: 'gpu-force', options: { mode: '2d' } });
+
+  assert.ok(layout instanceof GpuForceLayout);
+  assert.equal(layout.options.forceModel, 'umap');
+  assert.equal(layout.options.edgeWeightAttribute, 'umap_weight');
+  assert.equal(layout.options.nodeMassAttribute, 'umap_mass');
+  assert.equal(layout.options.kRepulsion, 1);
+  assert.equal(layout.options.kAttraction, 1);
+  assert.equal(layout.options.kGravity, 0);
+  approx(layout.options.umapA, 1.7);
+  approx(layout.options.umapB, 0.83);
+  approx(layout.options.umapGamma, 1.25);
+  approx(layout.options.umapNegativeSampleRate, 7);
+  approx(layout.options.umapEpochs, 500);
+  assert.equal(layout.options.eta, 1);
+  approx(layout.options.sampleChurn, 0.01);
+});
+
+test('Helios.createLayout keeps legacy linear gpu-force behavior unless UMAP is enabled', () => {
+  const helios = Object.create(Helios.prototype);
+  helios.network = createUmapFlaggedNetwork();
+  helios.visuals = {};
+  helios.options = { mode: '2d' };
+  helios.debug = { log: () => {} };
+
+  const layout = helios.createLayout({
+    type: 'gpu-force',
+    options: { mode: '2d', forceModel: 'linear', kRepulsion: 0.33, kAttraction: 0.44 },
+  });
+
+  assert.equal(layout.options.forceModel, 'linear');
+  assert.equal(layout.options.kRepulsion, 0.33);
+  assert.equal(layout.options.kAttraction, 0.44);
 });
 
 test('Helios.startLayout reheats the active layout before requesting ticks', () => {
@@ -871,6 +974,10 @@ test('Helios lists numeric 2D/3D node attributes for layout seeding and copies t
   helios._labels = {
     requestFullReselect: () => { labelRefreshes += 1; },
   };
+  let seedFromNetworkPositionsCalls = 0;
+  helios._layout = {
+    seedFromNetworkPositions: () => { seedFromNetworkPositionsCalls += 1; },
+  };
 
   const choices = helios.getLayoutPositionAttributeChoices();
   assert.deepEqual(
@@ -900,6 +1007,7 @@ test('Helios lists numeric 2D/3D node attributes for layout seeding and copies t
   assert.equal(geometryRequests, 2);
   assert.equal(renderRequests, 2);
   assert.equal(labelRefreshes, 2);
+  assert.equal(seedFromNetworkPositionsCalls, 2);
 });
 
 test('buildSparklinePath stays blank until a second history sample arrives', () => {
@@ -909,6 +1017,37 @@ test('buildSparklinePath stays blank until a second history sample arrives', () 
   assert.doesNotMatch(single, /L /);
   const pair = buildSparklinePath([0.5, 0.25], 120, 28, 'log', { min: 0.001, max: 1 });
   assert.match(pair, /L /);
+});
+
+test('GpuForceLayout exposes UMAP-specific controls without altering linear defaults', () => {
+  const network = createStubNetwork();
+  const visuals = {};
+  const helios = createStubHelios();
+  const layout = new GpuForceLayout(network, visuals, {
+    helios,
+    forceModel: 'umap',
+    mode: '2d',
+  });
+
+  const descriptor = layout.getParameterBindings();
+  const bindingKeys = descriptor.bindings.map((binding) => binding.key);
+
+  assert.equal(descriptor.label, 'UMAP Force (GPU)');
+  assert.ok(bindingKeys.includes('umapA'));
+  assert.ok(bindingKeys.includes('umapB'));
+  assert.ok(bindingKeys.includes('umapGamma'));
+  assert.ok(bindingKeys.includes('umapNegativeSampleRate'));
+  assert.ok(!bindingKeys.includes('sampleCount2D'));
+  assert.ok(!bindingKeys.includes('linkDistance'));
+  assert.ok(!bindingKeys.includes('minDistance'));
+  assert.equal(descriptor.bindings.find((binding) => binding.key === 'umapNegativeSampleRate')?.label, 'Negative sample rate');
+  assert.equal(descriptor.bindings.find((binding) => binding.key === 'sampleChurn')?.label, 'Negative sample churn');
+  assert.notEqual(descriptor.bindings.find((binding) => binding.key === 'umapA')?.type, 'display');
+  assert.notEqual(descriptor.bindings.find((binding) => binding.key === 'umapB')?.type, 'display');
+  assert.equal(descriptor.bindings.find((binding) => binding.key === 'umapNegativeSampleRate')?.type, 'number');
+  assert.notEqual(descriptor.bindings.find((binding) => binding.key === 'umapGamma')?.type, 'display');
+  assert.equal(descriptor.bindings.find((binding) => binding.key === 'kRepulsion')?.label, 'Repulsion importance');
+  assert.equal(descriptor.bindings.find((binding) => binding.key === 'kAttraction')?.label, 'Attraction importance');
 });
 
 test('GpuForcePositionDelegate normalizes simulation seed positions while preserving visible output seeds', () => {
@@ -974,7 +1113,7 @@ test('GpuForcePositionDelegate exposes WebGL2 texture resource when running on W
     10, 0, 0,
     20, 0, 0,
   ]);
-  const { gl, getTexImageCalls } = createFakeWebGL2Context();
+  const { gl, getTexImageCalls } = createFakeWebGL2ComputeContext();
   const delegate = new GpuForcePositionDelegate({ mode: '2d' });
 
   delegate.onAttach({ network, backend: 'webgl2', gl });
@@ -1011,7 +1150,7 @@ test('GpuForcePositionDelegate preserves dynamic positions across version-change
     getEdgeAttributeBuffer: (name) => (name === '$index' ? { version: topologyVersion } : null),
   };
 
-  const { gl } = createFakeWebGL2Context();
+  const { gl } = createFakeWebGL2ComputeContext();
   const delegate = new GpuForcePositionDelegate({
     mode: '2d',
     center: [0, 0, 0],
@@ -1089,7 +1228,7 @@ test('GpuForcePositionDelegate WebGL2 backend advances layout and updates snapsh
     60, 0, 0,
     -60, 0, 0,
   ]);
-  const { gl, getTexImageCalls } = createFakeWebGL2Context();
+  const { gl, getTexImageCalls } = createFakeWebGL2ComputeContext();
   const delegate = new GpuForcePositionDelegate({
     mode: '2d',
     center: [0, 0, 0],
@@ -1098,16 +1237,20 @@ test('GpuForcePositionDelegate WebGL2 backend advances layout and updates snapsh
   });
   delegate.onAttach({ network, backend: 'webgl2', gl });
 
+  const resourceBefore = delegate.getWebGLPositionTexture({ network, backend: 'webgl2', gl });
   const before = await delegate.snapshotNodePositions({ network, backend: 'webgl2', gl });
   const changed = delegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
+  const resourceAfter = delegate.getWebGLPositionTexture({ network, backend: 'webgl2', gl });
   const after = await delegate.snapshotNodePositions({ network, backend: 'webgl2', gl });
 
   assert.equal(changed, true);
   assert.ok(before instanceof Float32Array);
   assert.ok(after instanceof Float32Array);
   assert.equal(before.length, after.length);
-  assert.notEqual(after[0], before[0]);
-  assert.equal(after[2], 0);
+  assert.ok(resourceBefore?.texture);
+  assert.ok(resourceAfter?.texture);
+  assert.ok((resourceAfter?.meta?.version ?? 0) > (resourceBefore?.meta?.version ?? -1));
+  assert.equal(delegate._webgl?._gpu?.sampleFrame, 1);
   assert.ok(getTexImageCalls() >= 2);
 });
 
@@ -1117,7 +1260,7 @@ test('GpuForcePositionDelegate uses exact repulsion for small active sets', asyn
     0, 0, 0,
     20, 0, 0,
   ]);
-  const { gl } = createFakeWebGL2Context();
+  const { gl } = createFakeWebGL2ComputeContext();
   const exactDelegate = new GpuForcePositionDelegate({
     mode: '2d',
     center: [0, 0, 0],
@@ -1160,7 +1303,7 @@ test('GpuForcePositionDelegate exact repulsion threshold overrides a smaller sam
     10, 0, 0,
     20, 0, 0,
   ]);
-  const { gl } = createFakeWebGL2Context();
+  const { gl } = createFakeWebGL2ComputeContext();
   const thresholdDelegate = new GpuForcePositionDelegate({
     mode: '2d',
     center: [0, 0, 0],
@@ -1205,7 +1348,7 @@ test('GpuForcePositionDelegate sampleChurn=0 preserves legacy sampled repulsion 
     31, -6, 0,
     44, 3, 0,
   ]);
-  const { gl } = createFakeWebGL2Context();
+  const { gl } = createFakeWebGL2ComputeContext();
   const legacyDelegate = new GpuForcePositionDelegate({
     mode: '2d',
     center: [0, 0, 0],
@@ -1258,7 +1401,7 @@ test('GpuForcePositionDelegate sampleChurn progressively refreshes repulsion sam
     31, -6, 0,
     44, 3, 0,
   ]);
-  const { gl } = createFakeWebGL2Context();
+  const { gl } = createFakeWebGL2ComputeContext();
   const fixedDelegate = new GpuForcePositionDelegate({
     mode: '2d',
     center: [0, 0, 0],
@@ -1288,30 +1431,25 @@ test('GpuForcePositionDelegate sampleChurn progressively refreshes repulsion sam
   churnedDelegate.onAttach({ network, backend: 'webgl2', gl });
   fixedDelegate._webgl.seed = 123;
   churnedDelegate._webgl.seed = 123;
+  fixedDelegate._resolveSampleDebugConfig = () => ({ every: 1, previewCount: 2 });
+  churnedDelegate._resolveSampleDebugConfig = () => ({ every: 1, previewCount: 2 });
+  const fixedDebug = [];
+  const churnedDebug = [];
+  fixedDelegate._emitSampleDebug = (_message, payload) => { fixedDebug.push(payload); };
+  churnedDelegate._emitSampleDebug = (_message, payload) => { churnedDebug.push(payload); };
 
   fixedDelegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
   churnedDelegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
 
-  const fixedAfterOne = await fixedDelegate.snapshotNodePositions({ network, backend: 'webgl2', gl });
-  const churnedAfterOne = await churnedDelegate.snapshotNodePositions({ network, backend: 'webgl2', gl });
-  for (let i = 0; i < fixedAfterOne.length; i += 1) {
-    approx(fixedAfterOne[i], churnedAfterOne[i], 1e-6);
-  }
-
   fixedDelegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
   churnedDelegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
 
-  const fixedAfterTwo = await fixedDelegate.snapshotNodePositions({ network, backend: 'webgl2', gl });
-  const churnedAfterTwo = await churnedDelegate.snapshotNodePositions({ network, backend: 'webgl2', gl });
-
-  let diverged = false;
-  for (let i = 0; i < fixedAfterTwo.length; i += 1) {
-    if (Math.abs(fixedAfterTwo[i] - churnedAfterTwo[i]) > 1e-6) {
-      diverged = true;
-      break;
-    }
-  }
-  assert.equal(diverged, true);
+  assert.equal(fixedDebug.length, 2);
+  assert.equal(churnedDebug.length, 2);
+  assert.equal(fixedDebug[0].changedSlotCount, 0);
+  assert.equal(churnedDebug[0].changedSlotCount, 0);
+  assert.equal(fixedDebug[1].changedSlotCount, 0);
+  assert.ok(churnedDebug[1].changedSlotCount > 0);
 });
 
 test('GpuForcePositionDelegate uses mode-specific sampleCount when explicit sampleCount is unset', () => {
@@ -1335,10 +1473,159 @@ test('GpuForcePositionDelegate uses mode-specific sampleCount when explicit samp
   };
 
   delegate.onAttach({ network, backend: 'webgl2', gl });
+  delegate.ensureSynchronized({ network, backend: 'webgl2', gl });
   delegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
 
   assert.ok(captured);
   assert.equal(captured.sampleCount, 32);
+});
+
+test('GpuForcePositionDelegate derives UMAP repulsion sampling from negative sample rate', () => {
+  const network = createTopologyNetwork([
+    0, 0, 0,
+    10, 0, 0,
+    20, 0, 0,
+    30, 0, 0,
+  ]);
+  const { gl } = createFakeWebGL2ComputeContext();
+  const delegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    center: [0, 0, 0],
+    outputScale: 1,
+    forceModel: 'umap',
+    sampleCount2D: 99,
+    maxNeighborsPerNode: 64,
+    umapNeighborCount: 12,
+    umapNegativeSampleRate: 5,
+    recenter: false,
+  });
+  let captured = null;
+  delegate._logSamplingTrace = (payload) => {
+    captured = payload;
+  };
+
+  delegate.onAttach({ network, backend: 'webgl2', gl });
+  delegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
+
+  assert.ok(captured);
+  assert.equal(captured.forceModel, 'umap');
+  assert.equal(captured.sampleCount, 60);
+});
+
+test('resolveUmapEpochCount matches umap-learn defaults by graph size', () => {
+  assert.equal(resolveUmapEpochCount(null, 2000), 500);
+  assert.equal(resolveUmapEpochCount(undefined, 20000), 200);
+  assert.equal(resolveUmapEpochCount(123, 2000), 123);
+});
+
+test('GpuForcePositionDelegate does not fall back to CPU when WebGL texture compute is unavailable', () => {
+  const network = createTopologyNetwork([
+    0, 0, 0,
+    10, 0, 0,
+    20, 0, 0,
+    30, 0, 0,
+  ]);
+  const { gl } = createFakeWebGL2Context();
+  const delegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    center: [0, 0, 0],
+    outputScale: 1,
+    recenter: false,
+  });
+
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => {
+    warnings.push(args.join(' '));
+  };
+
+  try {
+    delegate.onAttach({ network, backend: 'webgl', gl });
+    delegate.ensureSynchronized({ network, backend: 'webgl', gl });
+    const advanced = delegate.step({ network, backend: 'webgl', gl, deltaMs: 16 });
+    assert.equal(advanced, false);
+    assert.equal(delegate.getGpuPositionResource({ network, backend: 'webgl', gl }), null);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /WebGL gpu-force requires float texture compute support/);
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+test('warmStartUmapPositionsFromTopology separates disconnected components', () => {
+  const nodeCapacity = 6;
+  const activeIds = new Uint32Array([0, 1, 2, 3, 4, 5]);
+  const neighborStarts = new Uint32Array([0, 2, 4, 6, 8, 10]);
+  const neighborCounts = new Uint32Array([2, 2, 2, 2, 2, 2]);
+  const neighbors = new Uint32Array([
+    1, 2,
+    0, 2,
+    0, 1,
+    4, 5,
+    3, 5,
+    3, 4,
+  ]);
+  const neighborWeights = new Float32Array(neighbors.length);
+  neighborWeights.fill(1);
+  const positions = new Float32Array([
+    -24, -4, 0,
+    -8, 12, 0,
+    9, -15, 0,
+    18, 6, 0,
+    -14, 18, 0,
+    5, -20, 0,
+  ]);
+
+  const applied = warmStartUmapPositionsFromTopology({
+    nodeCapacity,
+    activeIds,
+    activeCount: activeIds.length,
+    neighborStarts,
+    neighborCounts,
+    neighbors,
+    neighborWeights,
+    positions,
+    center: [0, 0, 0],
+    radius: 120,
+    mode: '2d',
+    scratch: {},
+  });
+
+  assert.equal(applied, true);
+
+  const clusters = [
+    [0, 1, 2],
+    [3, 4, 5],
+  ];
+  const centroids = clusters.map((cluster) => {
+    let sumX = 0;
+    let sumY = 0;
+    for (const nodeId of cluster) {
+      sumX += positions[nodeId * 3];
+      sumY += positions[(nodeId * 3) + 1];
+    }
+    return {
+      x: sumX / cluster.length,
+      y: sumY / cluster.length,
+    };
+  });
+  const centroidDistance = Math.hypot(
+    centroids[0].x - centroids[1].x,
+    centroids[0].y - centroids[1].y,
+  );
+  const meanRadius = clusters.reduce((total, cluster, index) => {
+    let clusterRadius = 0;
+    for (const nodeId of cluster) {
+      clusterRadius += Math.hypot(
+        positions[nodeId * 3] - centroids[index].x,
+        positions[(nodeId * 3) + 1] - centroids[index].y,
+      );
+    }
+    return total + (clusterRadius / cluster.length);
+  }, 0) / clusters.length;
+
+  assert.ok(centroidDistance > 40);
+  assert.ok(centroidDistance > (meanRadius * 2));
 });
 
 test('GpuForcePositionDelegate reads edgesView after position buffer lookup during topology sync', () => {
@@ -1371,12 +1658,12 @@ test('GpuForcePositionDelegate reads edgesView after position buffer lookup duri
       return null;
     },
   };
-  const { gl } = createFakeWebGL2Context();
+  const { gl } = createFakeWebGL2ComputeContext();
   const delegate = new GpuForcePositionDelegate({ mode: '2d' });
 
   delegate.onAttach({ network, backend: 'webgl2', gl });
 
-  assert.deepEqual(Array.from(delegate._webgl.neighborCounts), [1, 2, 1]);
+  assert.deepEqual(Array.from(delegate._topologyScratch.neighborCounts.subarray(0, 3)), [1, 2, 1]);
 });
 
 test('GpuForcePositionDelegate recenters active nodes around the configured center', async () => {
@@ -1385,7 +1672,7 @@ test('GpuForcePositionDelegate recenters active nodes around the configured cent
     20, 5, 0,
     30, 5, 0,
   ]);
-  const { gl } = createFakeWebGL2Context();
+  const { gl } = createFakeWebGL2ComputeContext();
   const delegate = new GpuForcePositionDelegate({
     mode: '2d',
     center: [0, 0, 0],

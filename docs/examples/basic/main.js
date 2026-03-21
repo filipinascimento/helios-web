@@ -7,6 +7,11 @@ const DEFAULT_NODE_COUNT = 2_000;
 const DEBUG_CONFIG = null;
 const DEFAULT_ADAPTIVE_DURATION_SAMPLES = 5;
 const DEFAULT_ADAPTIVE_DURATION_WINDOW_MS = 5000;
+const UMAP_EXPORTED_CASES = Object.freeze([
+  { nodeCount: 200, path: '/assets/umap/gaussian-200.zxnet', label: 'gaussian-200' },
+  { nodeCount: 2000, path: '/assets/umap/gaussian-2000.zxnet', label: 'gaussian-2000' },
+  { nodeCount: 20000, path: '/assets/umap/gaussian-20000.zxnet', label: 'gaussian-20000' },
+]);
 
 function resolveRendererPreference() {
   const params = new URLSearchParams(window.location.search);
@@ -125,6 +130,38 @@ function resolveNodeCount() {
   return DEFAULT_NODE_COUNT;
 }
 
+function resolveDataset() {
+  const params = new URLSearchParams(window.location.search);
+  const dataset = params.get('dataset')?.trim().toLowerCase();
+  if (dataset === 'umap') return 'umap-export';
+  if (dataset === 'umap-export' || dataset === 'umap-real' || dataset === 'umap-exported') return 'umap-export';
+  return 'grid';
+}
+
+function resolveExportedUmapCase(requestedNodeCount) {
+  let bestCase = UMAP_EXPORTED_CASES[0];
+  let bestDistance = Math.abs(requestedNodeCount - bestCase.nodeCount);
+  for (let index = 1; index < UMAP_EXPORTED_CASES.length; index += 1) {
+    const candidate = UMAP_EXPORTED_CASES[index];
+    const distance = Math.abs(requestedNodeCount - candidate.nodeCount);
+    if (distance < bestDistance) {
+      bestCase = candidate;
+      bestDistance = distance;
+    }
+  }
+  return bestCase;
+}
+
+async function fetchExportedUmapNetwork(requestedNodeCount) {
+  const selectedCase = resolveExportedUmapCase(requestedNodeCount);
+  const response = await fetch(selectedCase.path, { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error(`Failed to load exported UMAP dataset ${selectedCase.label}: HTTP ${response.status}`);
+  }
+  const network = await HeliosNetwork.fromZXNet(response);
+  return { network, selectedCase };
+}
+
 async function bootstrap() {
   const diagnostics = {
     ready: false,
@@ -133,44 +170,54 @@ async function bootstrap() {
     edgeCount: 0,
   };
   window.__HELIOS_DIAGNOSTICS__ = diagnostics;
+  window.__HELIOS_SYNTHETIC_DATASET__ = null;
+  window.__HELIOS_DATASET_INFO__ = null;
+  const nodeCount = resolveNodeCount();
+  const dataset = resolveDataset();
+  const usingExportedUmapDataset = dataset === 'umap-export';
+  let exportedUmapCase = null;
   console.log("Creating Helios network...");
-  const network = await HeliosNetwork.create({ directed: false, initialNodes: 0 });
+  const network = usingExportedUmapDataset
+    ? (({ network: loadedNetwork, selectedCase }) => {
+        exportedUmapCase = selectedCase;
+        return loadedNetwork;
+      })(await fetchExportedUmapNetwork(nodeCount))
+    : await HeliosNetwork.create({ directed: false, initialNodes: 0 });
 
-  console.log("Defining attributes...");
   const nodeAttribute = 'weight';
   const edgeAttribute = 'intensity';
   const categoryAttribute = 'category';
   const labelAttribute = 'label';
-  network.defineNodeAttribute(nodeAttribute, AttributeType.Float);
-  network.defineNodeAttribute(categoryAttribute, AttributeType.String);
-  network.defineNodeAttribute(labelAttribute, AttributeType.String);
-  network.defineEdgeAttribute(edgeAttribute, AttributeType.Float);
+  const nodes = usingExportedUmapDataset ? [] : network.addNodes(nodeCount);
 
-  console.log("Adding nodes...");
-  const nodeCount = resolveNodeCount();
-  const nodes = network.addNodes(nodeCount);
+  if (!usingExportedUmapDataset) {
+    console.log("Defining attributes...");
+    network.defineNodeAttribute(nodeAttribute, AttributeType.Float);
+    network.defineNodeAttribute(categoryAttribute, AttributeType.String);
+    network.defineNodeAttribute(labelAttribute, AttributeType.String);
+    network.defineEdgeAttribute(edgeAttribute, AttributeType.Float);
+    console.log("Filling node attributes...");
+    const weightValues = new Float32Array(nodes.length);
+    network.withBufferAccess(() => {
+      const view = network.getNodeAttributeBuffer(nodeAttribute).view;
+      for (let i = 0; i < nodes.length; i += 1) {
+        const value = Math.random();
+        view[nodes[i]] = value;
+        weightValues[i] = value;
+      }
+    });
 
-  console.log("Filling node attributes...");
-  const weightValues = new Float32Array(nodes.length);
-  network.withBufferAccess(() => {
-    const view = network.getNodeAttributeBuffer(nodeAttribute).view;
+    console.log("Assigning categorical buckets...");
+    const categoryCount = 8;
+    const total = Math.max(1, nodes.length);
     for (let i = 0; i < nodes.length; i += 1) {
-      const value = Math.random();
-      view[nodes[i]] = value;
-      weightValues[i] = value;
+      const bucket = Math.min(categoryCount - 1, Math.floor((i / total) * categoryCount));
+      const label = `category${bucket + 1}`;
+      network.setNodeStringAttribute(categoryAttribute, nodes[i], label);
+      network.setNodeStringAttribute(labelAttribute, nodes[i], `node-${i}`);
     }
-  });
-
-  console.log("Assigning categorical buckets...");
-  const categoryCount = 8;
-  const total = Math.max(1, nodes.length);
-  for (let i = 0; i < nodes.length; i += 1) {
-    const bucket = Math.min(categoryCount - 1, Math.floor((i / total) * categoryCount));
-    const label = `category${bucket + 1}`;
-    network.setNodeStringAttribute(categoryAttribute, nodes[i], label);
-    network.setNodeStringAttribute(labelAttribute, nodes[i], `node-${i}`);
+    network.categorizeNodeAttribute(categoryAttribute, { sortOrder: 'frequency' });
   }
-  network.categorizeNodeAttribute(categoryAttribute, { sortOrder: 'frequency' });
 
   function seedGridPositions() {
     // Predefine node positions so we can disable layout and still render nicely.
@@ -242,63 +289,108 @@ async function bootstrap() {
 
   // connect with the next 2 or 3 nodes to ensure connectivity
   // if 2d or 3d (try to follow the grid
-  console.log("Adding edges...");
-  const edges = [];
   const is3D = resolveMode() === '3d';
+  let edgeIds = [];
+  let datasetInfo = {
+    name: dataset,
+    requestedNodeCount: nodeCount,
+    resolvedNodeCount: usingExportedUmapDataset ? (exportedUmapCase?.nodeCount ?? 0) : nodeCount,
+    source: usingExportedUmapDataset ? 'exported' : 'synthetic',
+    path: usingExportedUmapDataset ? (exportedUmapCase?.path ?? null) : null,
+    label: usingExportedUmapDataset ? (exportedUmapCase?.label ?? null) : null,
+  };
+  let syntheticDataset = null;
 
-  if (nodeCount > 1) {
-    if (is3D) {
-      const side = Math.ceil(Math.cbrt(nodeCount));
-      for (let i = 0; i < nodeCount; i += 1) {
-        const z = Math.floor(i / (side * side));
-        const rem = i - z * side * side;
-        const y = Math.floor(rem / side);
-        const x = rem - y * side;
+  if (!usingExportedUmapDataset) {
+    console.log("Adding edges...");
+    syntheticDataset = { name: dataset };
+    if (dataset !== 'umap-export') {
+      const edges = [];
+      if (nodeCount > 1) {
+        if (is3D) {
+          const side = Math.ceil(Math.cbrt(nodeCount));
+          for (let i = 0; i < nodeCount; i += 1) {
+            const z = Math.floor(i / (side * side));
+            const rem = i - z * side * side;
+            const y = Math.floor(rem / side);
+            const x = rem - y * side;
 
-        const neighborX = x + 1 < side ? i + 1 : -1;
-        const neighborY = y + 1 < side ? i + side : -1;
-        const neighborZ = z + 1 < side ? i + side * side : -1;
+            const neighborX = x + 1 < side ? i + 1 : -1;
+            const neighborY = y + 1 < side ? i + side : -1;
+            const neighborZ = z + 1 < side ? i + side * side : -1;
 
-        if (neighborX >= 0 && neighborX < nodeCount) edges.push([nodes[i], nodes[neighborX]]);
-        if (neighborY >= 0 && neighborY < nodeCount) edges.push([nodes[i], nodes[neighborY]]);
-        if (neighborZ >= 0 && neighborZ < nodeCount) edges.push([nodes[i], nodes[neighborZ]]);
+            if (neighborX >= 0 && neighborX < nodeCount) edges.push([nodes[i], nodes[neighborX]]);
+            if (neighborY >= 0 && neighborY < nodeCount) edges.push([nodes[i], nodes[neighborY]]);
+            if (neighborZ >= 0 && neighborZ < nodeCount) edges.push([nodes[i], nodes[neighborZ]]);
+          }
+        } else {
+          const side = Math.ceil(Math.sqrt(nodeCount));
+          for (let i = 0; i < nodeCount; i += 1) {
+            const row = Math.floor(i / side);
+            const col = i - row * side;
+            const neighborRight = col + 1 < side ? i + 1 : -1;
+            const neighborDown = row + 1 < side ? i + side : -1;
+
+            if (neighborRight >= 0 && neighborRight < nodeCount) edges.push([nodes[i], nodes[neighborRight]]);
+            if (neighborDown >= 0 && neighborDown < nodeCount) edges.push([nodes[i], nodes[neighborDown]]);
+          }
+        }
       }
-    } else {
-      const side = Math.ceil(Math.sqrt(nodeCount));
-      for (let i = 0; i < nodeCount; i += 1) {
-        const row = Math.floor(i / side);
-        const col = i - row * side;
-        const neighborRight = col + 1 < side ? i + 1 : -1;
-        const neighborDown = row + 1 < side ? i + side : -1;
-
-        if (neighborRight >= 0 && neighborRight < nodeCount) edges.push([nodes[i], nodes[neighborRight]]);
-        if (neighborDown >= 0 && neighborDown < nodeCount) edges.push([nodes[i], nodes[neighborDown]]);
-      }
+      edgeIds = network.addEdges(edges);
     }
-  }
+    window.__HELIOS_SYNTHETIC_DATASET__ = syntheticDataset;
+    console.log("Created a network with nodes:", network.nodeCount, "edges:", network.edgeCount);
 
-  const edgeIds = network.addEdges(edges);
-  // network node and edge count
-  console.log("Created a network with nodes:", network.nodeCount, "edges:", network.edgeCount);
-  
-  console.log("Filling edge attribute...");
-  if (edgeIds.length) {
-    network.withBufferAccess(() => {
-      const edgeBuffer = network.getEdgeAttributeBuffer(edgeAttribute).view;
-      for (const id of edgeIds) {
-        edgeBuffer[id] = Math.random();
-      }
-    });
+    console.log("Filling edge attribute...");
+    if (edgeIds.length) {
+      network.withBufferAccess(() => {
+        const edgeBuffer = network.getEdgeAttributeBuffer(edgeAttribute).view;
+        for (const id of edgeIds) {
+          edgeBuffer[id] = Math.random();
+        }
+      });
+    }
   }
 
   console.log("Defining helios options...");
   const target = document.getElementById('app');
   const mode = resolveMode();
   const layoutType = resolveLayoutType();
+  const usingUmapDataset = usingExportedUmapDataset;
   let interpolationEnabled = resolveInterpolationEnabled();
   let interpolationDurationMs = resolveInterpolationDurationMs();
   let interpolationDurationMode = resolveInterpolationDurationMode();
   const edgeTransparency = resolveEdgeTransparencyMode();
+  const gpuForceLayoutOptions = {
+    mode,
+    center: [0, 0, 0],
+    radius: 220 * Math.sqrt(nodeCount / 1000),
+    depth: mode === '3d' ? 140 : 0,
+    sampleCount2D: 64,
+    sampleCount3D: 96,
+    maxNeighborsPerNode: 64,
+    outputScale: 6.5,
+    ...(usingUmapDataset
+      ? {
+          eta: 0.4,
+          damping: 0.92,
+          maxStep: 2.5,
+          alphaDecay: 0.005,
+          kRepulsion: 1,
+          kAttraction: 1,
+          kGravity: 0,
+        }
+      : {
+          eta: 0.4,
+          damping: 0.92,
+          maxStep: 2.5,
+          alphaDecay: 0.005,
+          linkDistance: 1,
+          kRepulsion: 0.07,
+          kAttraction: 0.62,
+          kGravity: 0.005,
+        }),
+  };
   const heliosOptions = {
     container: target,
     layout: layoutType === 'none'
@@ -306,24 +398,7 @@ async function bootstrap() {
       : isGpuForceLayoutType(layoutType)
         ? {
             type: 'gpu-force',
-            options: {
-              mode,
-              center: [0, 0, 0],
-              radius: 220 * Math.sqrt(nodeCount / 1000),
-              depth: mode === '3d' ? 140 : 0,
-              sampleCount2D: 64,
-              sampleCount3D: 96,
-              maxNeighborsPerNode: 64,
-              outputScale: 6.5,
-              linkDistance: 1,
-              kRepulsion: 0.07,
-              kAttraction: 0.62,
-              kGravity: 0.005,
-              eta: 0.4,
-              damping: 0.92,
-              maxStep: 2.5,
-              alphaDecay: 0.005,
-            },
+            options: gpuForceLayoutOptions,
           }
       : layoutType === 'd3force3d'
         ? {
@@ -376,8 +451,7 @@ async function bootstrap() {
     heliosOptions.renderer = rendererPreference;
   }
 
-
-  if (layoutType === 'none') {
+  if (layoutType === 'none' && !usingExportedUmapDataset) {
     console.log("No layout selected, seeding grid positions...");
     seedGridPositions();
   }
@@ -530,12 +604,16 @@ async function bootstrap() {
 
 
   console.log("Misc diagnostics...");
+  const activeNetwork = helios.network;
   const rendererType = helios.renderer?.device?.type ?? helios.renderer?.constructor?.name ?? 'unknown';
   diagnostics.ready = true;
   diagnostics.renderer = rendererType;
-  diagnostics.nodeCount = nodes.length;
-  diagnostics.edgeCount = edgeIds.length;
+  diagnostics.dataset = dataset;
+  diagnostics.nodeCount = activeNetwork?.nodeCount ?? nodes.length;
+  diagnostics.edgeCount = activeNetwork?.edgeCount ?? edgeIds.length;
+  diagnostics.datasetInfo = datasetInfo;
   window.__HELIOS_DIAGNOSTICS__ = diagnostics;
+  window.__HELIOS_DATASET_INFO__ = datasetInfo;
   window.__helios = helios;
   console.log("Done! Helios instance is available as window.__helios", helios);
 }

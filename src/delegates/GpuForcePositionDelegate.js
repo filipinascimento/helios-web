@@ -10,6 +10,7 @@ const MAP_READ_FLAG = 0x01;
 
 const DEFAULT_OPTIONS = {
   mode: '2d',
+  forceModel: 'linear',
   center: [0, 0, 0],
   radius: 220,
   depth: 140,
@@ -25,6 +26,14 @@ const DEFAULT_OPTIONS = {
   kRepulsion: 0.07,
   kAttraction: 0.62,
   kGravity: 0.005,
+  edgeWeightAttribute: null,
+  nodeMassAttribute: null,
+  umapA: 1.5769434601962196,
+  umapB: 0.8950608779914887,
+  umapGamma: 1,
+  umapNeighborCount: 15,
+  umapNegativeSampleRate: 5,
+  umapEpochs: null,
   eta: 0.4,
   damping: 0.92,
   maxStep: 2.5,
@@ -36,9 +45,15 @@ const DEFAULT_OPTIONS = {
   recenter: true,
   resetAlphaOnTopologyChange: true,
   seed: 0,
+  umapHasInitialPositions: false,
 };
 
-const COMPUTE_WGSL = /* wgsl */ `
+const DEFAULT_UMAP_EPOCHS_SMALL = 500;
+const DEFAULT_UMAP_EPOCHS_LARGE = 200;
+const DEFAULT_UMAP_SAMPLE_CHURN = 0.01;
+
+function buildComputeWgsl({ umap = false } = {}) {
+  return /* wgsl */ `
 struct Params {
   counts : vec4<u32>,
   flags : vec4<u32>,
@@ -46,6 +61,7 @@ struct Params {
   constantsA : vec4<f32>,
   constantsB : vec4<f32>,
   center : vec4<f32>,
+  constantsC : vec4<f32>,
 };
 
 @group(0) @binding(0) var<storage, read> positionsIn : array<f32>;
@@ -57,7 +73,9 @@ struct Params {
 @group(0) @binding(6) var<storage, read> neighborStarts : array<u32>;
 @group(0) @binding(7) var<storage, read> neighborCounts : array<u32>;
 @group(0) @binding(8) var<storage, read> neighbors : array<u32>;
-@group(0) @binding(9) var<uniform> params : Params;
+${umap
+  ? '@group(0) @binding(9) var<storage, read> scalarWeights : array<f32>;\n@group(0) @binding(10) var<uniform> params : Params;'
+  : '@group(0) @binding(9) var<uniform> params : Params;'}
 
 fn hash32(value : u32) -> u32 {
   var x = value;
@@ -67,6 +85,10 @@ fn hash32(value : u32) -> u32 {
   x = x * 0x846ca68bu;
   x = x ^ (x >> 16u);
   return x;
+}
+
+fn clipGradient(value : f32) -> f32 {
+  return clamp(value, -4.0, 4.0);
 }
 
 fn sampleActiveId(nodeId : u32, iter : u32, activeCount : u32, seed : u32) -> u32 {
@@ -101,6 +123,24 @@ fn sampleActiveIdProgressive(
   let epoch = sampleEpoch(iter, sampleCount, churnCount, sampleFrame);
   let epochSeed = seed + epoch * 1597334677u;
   return sampleActiveId(nodeId, iter, activeCount, epochSeed);
+}
+
+fn sampleNeighborIndex(start : u32, limit : u32, nodeId : u32, iter : u32, seed : u32, sampleFrame : u32) -> u32 {
+  if (limit == 0u) {
+    return start;
+  }
+  let mixed = hash32(seed + nodeId * 2246822519u + iter * 3266489917u + sampleFrame * 668265263u);
+  return start + (mixed % limit);
+}
+
+fn samplesDue(epoch : f32, interval : f32) -> u32 {
+  if (!(interval > 0.0)) {
+    return 0u;
+  }
+  let previousEpoch = max(0.0, epoch - 1.0);
+  let previousBucket = floor(previousEpoch / interval);
+  let currentBucket = floor(epoch / interval);
+  return u32(max(0.0, currentBucket - previousBucket));
 }
 
 fn loadPosition(nodeId : u32) -> vec3<f32> {
@@ -168,8 +208,19 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
   var force = vec3<f32>(0.0, 0.0, 0.0);
   let minDist = max(1e-5, params.constantsB.z);
   let minDistSq = minDist * minDist;
+${umap
+  ? `  let umapA = max(1e-6, params.constantsC.x);
+  let umapB = max(1e-6, params.constantsC.y);
+  let umapGamma = max(0.0, params.constantsC.z);
+  let umapNegativeSampleRate = max(0.0, params.constantsC.w);
+  let umapEpochs = max(1.0, params.constantsB.w);
+  let minEdgeWeight = 1.0 / umapEpochs;
+  let currentEpoch = f32(sampleFrame + 1u);`
+  : ''}
 
-  if (activeCount > 1u) {
+${umap
+  ? ''
+  : `  if (activeCount > 1u) {
     let useExactRepulsion = activeCount <= max(sampleCount, exactRepulsionThreshold);
     let repulsionIterations = select(sampleCount, activeCount, useExactRepulsion);
     if (repulsionIterations > 0u) {
@@ -201,13 +252,66 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
         s = s + 1u;
       }
     }
-  }
-
+  }`}
   let start = neighborStarts[nodeId];
   let degree = neighborCounts[nodeId];
   let limit = min(degree, maxNeighbors);
   if (limit > 0u) {
-    var n : u32 = 0u;
+${umap
+  ? `  var n : u32 = 0u;
+    loop {
+      if (n >= limit) {
+        break;
+      }
+      let edgeIndex = start + n;
+      let otherId = neighbors[edgeIndex];
+      if (otherId != nodeId) {
+        let edgeWeight = max(0.0, scalarWeights[nodeCapacity + edgeIndex]);
+        if (edgeWeight >= minEdgeWeight) {
+          let positiveInterval = 1.0 / max(edgeWeight, 1e-6);
+          let positiveDue = samplesDue(currentEpoch, positiveInterval);
+          if (positiveDue > 0u) {
+            var delta = loadPosition(otherId) - pos;
+            if (use3D == 0u) {
+              delta.z = 0.0;
+            }
+            let distSq = max(dot(delta, delta), minDistSq);
+            let springScale = params.constantsA.y
+              * f32(positiveDue)
+              * (2.0 * umapA * umapB * pow(distSq, umapB - 1.0))
+              / (1.0 + (umapA * pow(distSq, umapB)));
+            force = force + delta * springScale;
+          }
+
+          if (umapNegativeSampleRate > 0.0 && activeCount > 1u) {
+            let negativeInterval = positiveInterval / umapNegativeSampleRate;
+            let negativeDue = samplesDue(currentEpoch, negativeInterval);
+            var p : u32 = 0u;
+            loop {
+              if (p >= negativeDue) {
+                break;
+              }
+              let negativeIter = edgeIndex + p * maxNeighbors;
+              let negativeId = sampleActiveId(nodeId, negativeIter, activeCount, seed + sampleFrame * 668265263u);
+              if (negativeId != nodeId) {
+                var negativeDelta = pos - loadPosition(negativeId);
+                if (use3D == 0u) {
+                  negativeDelta.z = 0.0;
+                }
+                let negativeDistSq = max(dot(negativeDelta, negativeDelta), minDistSq);
+                let repulsionScale = params.constantsA.x
+                  * (2.0 * umapGamma * umapB)
+                  / ((0.001 + negativeDistSq) * (1.0 + (umapA * pow(negativeDistSq, umapB))));
+                force = force + negativeDelta * repulsionScale;
+              }
+              p = p + 1u;
+            }
+          }
+        }
+      }
+      n = n + 1u;
+    }`
+  : `    var n : u32 = 0u;
     loop {
       if (n >= limit) {
         break;
@@ -227,7 +331,7 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
         force = force + delta * springScale;
       }
       n = n + 1u;
-    }
+    }`}
   }
 
   var gravityDelta = params.center.xyz - pos;
@@ -236,7 +340,28 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
   }
   force = force + gravityDelta * params.constantsA.z;
 
-  let eta = params.constantsA.w;
+${umap
+  ? `  let eta = params.constantsA.w;
+  var nextDelta = vec3<f32>(
+    clipGradient(force.x) * eta,
+    clipGradient(force.y) * eta,
+    clipGradient(force.z) * eta,
+  );
+  let speed = length(nextDelta);
+  let maxStep = max(1e-5, params.constantsB.y);
+  if (speed > maxStep) {
+    nextDelta = nextDelta * (maxStep / speed);
+  }
+  if (use3D == 0u) {
+    nextDelta.z = 0.0;
+  }
+
+  var nextVel = vec3<f32>(0.0, 0.0, 0.0);
+  var nextPos = pos + nextDelta;
+  if (use3D == 0u) {
+    nextPos.z = params.center.z;
+  }`
+  : `  let eta = params.constantsA.w;
   let damping = params.constantsB.x;
   var nextVel = vel * damping + force * eta;
 
@@ -252,12 +377,16 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
   var nextPos = pos + nextVel;
   if (use3D == 0u) {
     nextPos.z = params.center.z;
-  }
+  }`}
 
   storePosition(nodeId, nextPos);
   storeVelocity(nodeId, nextVel);
 }
 `;
+}
+
+const COMPUTE_WGSL_LINEAR = buildComputeWgsl();
+const COMPUTE_WGSL_UMAP = buildComputeWgsl({ umap: true });
 
 const OUTPUT_SCALE_WGSL = /* wgsl */ `
 struct OutputScaleParams {
@@ -412,6 +541,16 @@ function createEmptyFloatArray() {
   return new Float32Array(0);
 }
 
+function isUmapForceModel(value) {
+  return String(value ?? '').trim().toLowerCase() === 'umap';
+}
+
+function normalizeAttributeName(value, fallback = null) {
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim();
+  return trimmed || fallback;
+}
+
 function ensureUint32Capacity(view, length) {
   const required = Math.max(1, Math.floor(length || 0));
   if (view instanceof Uint32Array && view.length >= required) {
@@ -426,6 +565,12 @@ function ensureFloat32Capacity(view, length) {
     return view;
   }
   return new Float32Array(required);
+}
+
+function readScalarViewValue(view, index, fallback = 0) {
+  if (!view || index == null || index < 0) return fallback;
+  const value = Number(view[index]);
+  return Number.isFinite(value) ? value : fallback;
 }
 
 function copyFloat32Values(target, source, length) {
@@ -466,7 +611,22 @@ function safeRead(fn, fallback) {
   try {
     const value = fn();
     return value ?? fallback;
-  } catch (_) {
+  } catch (error) {
+    return fallback;
+  }
+}
+
+const SAFE_READ_WARNED_KEYS = new Set();
+
+function safeReadWithWarning(fn, fallback, warningKey, warningMessage) {
+  try {
+    const value = fn();
+    return value ?? fallback;
+  } catch (error) {
+    if (warningKey && !SAFE_READ_WARNED_KEYS.has(warningKey)) {
+      SAFE_READ_WARNED_KEYS.add(warningKey);
+      console.warn(warningMessage, error);
+    }
     return fallback;
   }
 }
@@ -499,7 +659,7 @@ function normalizeBackendType(value) {
 }
 
 function snapshotTopologyInputs(network) {
-  const snapshot = safeRead(
+  const snapshot = safeReadWithWarning(
     () => {
       if (typeof network?.withBufferAccess === 'function') {
         return network.withBufferAccess(() => ({
@@ -513,10 +673,17 @@ function snapshotTopologyInputs(network) {
       };
     },
     { nodeIndices: createEmptyUintArray(), edgeIndices: createEmptyUintArray() },
+    'gpu-force:snapshot-topology-inputs',
+    'GpuForcePositionDelegate: failed to snapshot active node/edge indices. Falling back to empty topology inputs.',
   );
   const nodeIndices = snapshot.nodeIndices;
   const edgeIndices = snapshot.edgeIndices;
-  const nodeCapacityRaw = Number(safeRead(() => network?.nodeCapacity, 0));
+  const nodeCapacityRaw = Number(safeReadWithWarning(
+    () => network?.nodeCapacity,
+    0,
+    'gpu-force:node-capacity',
+    'GpuForcePositionDelegate: failed to read network.nodeCapacity. Falling back to 0.',
+  ));
   const nodeCapacity = Number.isFinite(nodeCapacityRaw) && nodeCapacityRaw > 0
     ? Math.floor(nodeCapacityRaw)
     : 0;
@@ -550,7 +717,13 @@ function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
     edgeIndices = createEmptyUintArray(),
     edgesView = createEmptyUintArray(),
     positionView = null,
+    edgeWeightView = null,
+    nodeMassView = null,
   } = topologyInputs ?? {};
+  const umapModel = isUmapForceModel(options.forceModel);
+  const useExplicitInitialPositions = !umapModel || options.umapHasInitialPositions === true;
+  const edgeWeightAttribute = normalizeAttributeName(options.edgeWeightAttribute);
+  const nodeMassAttribute = normalizeAttributeName(options.nodeMassAttribute);
 
   const hasExplicitActiveIds = nodeIndices.length > 0;
   const activeCount = hasExplicitActiveIds ? nodeIndices.length : nodeCapacity;
@@ -577,6 +750,15 @@ function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
   const neighborCounts = ensureUint32Capacity(scratch.neighborCounts, nodeCapacity);
   scratch.neighborCounts = neighborCounts;
   neighborCounts.fill(0, 0, nodeCapacity);
+  let nodeMass = createEmptyFloatArray();
+  let maxUmapEdgeWeight = 0;
+  if (umapModel) {
+    nodeMass = ensureFloat32Capacity(scratch.nodeMass, nodeCapacity);
+    scratch.nodeMass = nodeMass;
+    nodeMass.fill(0, 0, nodeCapacity);
+  } else {
+    scratch.nodeMass = createEmptyFloatArray();
+  }
   for (let i = 0; i < edgeIndices.length; i += 1) {
     const edgeId = edgeIndices[i] >>> 0;
     const base = edgeId * 2;
@@ -586,8 +768,42 @@ function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
     if (source >= nodeCapacity || target >= nodeCapacity) continue;
     if (!activeMask[source] || !activeMask[target]) continue;
     if (source === target) continue;
+    const weight = umapModel
+      ? readScalarViewValue(edgeWeightView, edgeId, 0)
+      : 1;
+    if (!(weight > 0)) continue;
+    if (umapModel && weight > maxUmapEdgeWeight) {
+      maxUmapEdgeWeight = weight;
+    }
+  }
+
+  const umapEpochs = umapModel
+    ? resolveUmapEpochCount(options.umapEpochs, activeCount)
+    : 0;
+  const minUmapEdgeWeight = umapModel && maxUmapEdgeWeight > 0
+    ? (maxUmapEdgeWeight / Math.max(1, umapEpochs))
+    : 0;
+
+  for (let i = 0; i < edgeIndices.length; i += 1) {
+    const edgeId = edgeIndices[i] >>> 0;
+    const base = edgeId * 2;
+    if (base + 1 >= edgesView.length) continue;
+    const source = edgesView[base] >>> 0;
+    const target = edgesView[base + 1] >>> 0;
+    if (source >= nodeCapacity || target >= nodeCapacity) continue;
+    if (!activeMask[source] || !activeMask[target]) continue;
+    if (source === target) continue;
+    const weight = umapModel
+      ? readScalarViewValue(edgeWeightView, edgeId, 0)
+      : 1;
+    if (!(weight > 0)) continue;
+    if (umapModel && weight < minUmapEdgeWeight) continue;
     neighborCounts[source] += 1;
     neighborCounts[target] += 1;
+    if (umapModel && !nodeMassAttribute) {
+      nodeMass[source] += weight;
+      nodeMass[target] += weight;
+    }
   }
 
   const neighborStarts = ensureUint32Capacity(scratch.neighborStarts, nodeCapacity);
@@ -600,6 +816,13 @@ function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
 
   const neighbors = ensureUint32Capacity(scratch.neighbors, neighborLength);
   scratch.neighbors = neighbors;
+  let neighborWeights = createEmptyFloatArray();
+  if (umapModel) {
+    neighborWeights = ensureFloat32Capacity(scratch.neighborWeights, neighborLength);
+    scratch.neighborWeights = neighborWeights;
+  } else {
+    scratch.neighborWeights = createEmptyFloatArray();
+  }
   const cursor = ensureUint32Capacity(scratch.cursor, nodeCapacity);
   scratch.cursor = cursor;
   for (let nodeId = 0; nodeId < nodeCapacity; nodeId += 1) {
@@ -614,8 +837,28 @@ function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
     if (source >= nodeCapacity || target >= nodeCapacity) continue;
     if (!activeMask[source] || !activeMask[target]) continue;
     if (source === target) continue;
-    neighbors[cursor[source]++] = target;
-    neighbors[cursor[target]++] = source;
+    const weight = umapModel
+      ? readScalarViewValue(edgeWeightView, edgeId, 0)
+      : 1;
+    if (!(weight > 0)) continue;
+    if (umapModel && weight < minUmapEdgeWeight) continue;
+    const sourceCursor = cursor[source]++;
+    const targetCursor = cursor[target]++;
+    neighbors[sourceCursor] = target;
+    neighbors[targetCursor] = source;
+    if (umapModel) {
+      const normalizedWeight = maxUmapEdgeWeight > 0 ? (weight / maxUmapEdgeWeight) : 0;
+      neighborWeights[sourceCursor] = normalizedWeight;
+      neighborWeights[targetCursor] = normalizedWeight;
+    }
+  }
+
+  if (umapModel && nodeMassAttribute) {
+    for (let nodeId = 0; nodeId < nodeCapacity; nodeId += 1) {
+      nodeMass[nodeId] = Math.max(0, readScalarViewValue(nodeMassView, nodeId, 0));
+    }
+  } else if (!umapModel) {
+    nodeMass.fill(1, 0, nodeCapacity);
   }
 
   const center = normalizeCenter(options.center);
@@ -632,9 +875,9 @@ function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
   for (let nodeId = 0; nodeId < nodeCapacity; nodeId += 1) {
     const sourceOffset = nodeId * 3;
     const targetOffset = nodeId * 3;
-    const x = positionView?.[sourceOffset];
-    const y = positionView?.[sourceOffset + 1];
-    const z = positionView?.[sourceOffset + 2];
+    const x = useExplicitInitialPositions ? positionView?.[sourceOffset] : undefined;
+    const y = useExplicitInitialPositions ? positionView?.[sourceOffset + 1] : undefined;
+    const z = useExplicitInitialPositions ? positionView?.[sourceOffset + 2] : undefined;
     const fallbackX = center[0] + (Math.random() - 0.5) * radius;
     const fallbackY = center[1] + (Math.random() - 0.5) * radius;
     const fallbackZ = is3D
@@ -699,7 +942,46 @@ function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
     }
   }
 
+  if (umapModel && options.umapHasInitialPositions !== true) {
+    const warmScratch = scratch.umapWarmStart ?? {};
+    scratch.umapWarmStart = warmScratch;
+    if (warmStartUmapPositionsFromTopology({
+      nodeCapacity,
+      activeIds,
+      activeCount,
+      neighborStarts,
+      neighborCounts,
+      neighbors,
+      neighborWeights,
+      positions: packedOutputPositions,
+      center,
+      radius,
+      depth,
+      mode: options.mode,
+      scratch: warmScratch,
+    })) {
+      for (let nodeId = 0; nodeId < nodeCapacity; nodeId += 1) {
+        const offset = nodeId * 3;
+        const seedX = packedOutputPositions[offset];
+        const seedY = packedOutputPositions[offset + 1];
+        const seedZ = packedOutputPositions[offset + 2];
+        if (normalizeInputByOutputScale) {
+          packedPositions[offset] = center[0] + ((seedX - center[0]) / outputScale);
+          packedPositions[offset + 1] = center[1] + ((seedY - center[1]) / outputScale);
+          packedPositions[offset + 2] = is3D
+            ? (center[2] + ((seedZ - center[2]) / outputScale))
+            : center[2];
+        } else {
+          packedPositions[offset] = seedX;
+          packedPositions[offset + 1] = seedY;
+          packedPositions[offset + 2] = is3D ? seedZ : center[2];
+        }
+      }
+    }
+  }
+
   return {
+    umapModel,
     nodeCapacity,
     activeCount,
     activeIds,
@@ -707,9 +989,12 @@ function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
     neighborStarts,
     neighborCounts,
     neighbors,
+    neighborWeights,
+    nodeMass,
     packedPositions,
     packedOutputPositions,
     neighborLength,
+    umapEpochs,
     valueCount,
   };
 }
@@ -724,6 +1009,10 @@ function hash32(value) {
   return x >>> 0;
 }
 
+function hashToSignedUnit(value) {
+  return ((((hash32(value >>> 0) + 0.5) / 4294967296) * 2) - 1);
+}
+
 function sampleActiveId(nodeId, iter, activeIds, activeCount, seed) {
   if (!activeIds || activeCount <= 0) return nodeId >>> 0;
   const mixed = hash32((seed + Math.imul(nodeId >>> 0, 2654435761) + Math.imul(iter >>> 0, 747796405)) >>> 0);
@@ -736,6 +1025,31 @@ function resolveSampleChurnCount(sampleCount, sampleChurn) {
   const churn = clamp(sampleChurn, 0, 1, DEFAULT_OPTIONS.sampleChurn);
   if (churn <= 0) return 0;
   return Math.min(safeSampleCount, Math.max(1, Math.ceil(safeSampleCount * churn)));
+}
+
+function resolveUmapSampleCount(negativeSampleRate, neighborCount, maxNeighborsPerNode) {
+  const safeNegativeRate = Math.max(0, Number(negativeSampleRate) || 0);
+  const positiveSampleCount = Math.max(
+    1,
+    Math.min(
+      Math.max(1, Math.floor(Number(maxNeighborsPerNode) || 0)),
+      Math.max(1, Math.floor(Number(neighborCount) || 0)),
+    ),
+  );
+  return Math.max(1, Math.round(safeNegativeRate * positiveSampleCount));
+}
+
+export function resolveUmapEpochCount(value, nodeCount = 0) {
+  const explicit = Number(value);
+  if (Number.isFinite(explicit) && explicit > 0) {
+    return Math.max(1, Math.floor(explicit));
+  }
+  const safeNodeCount = Math.max(0, Math.floor(Number(nodeCount) || 0));
+  return safeNodeCount > 10000 ? DEFAULT_UMAP_EPOCHS_LARGE : DEFAULT_UMAP_EPOCHS_SMALL;
+}
+
+export function resolveUmapAnnealStepCount(value, nodeCount = 0) {
+  return Math.max(DEFAULT_UMAP_EPOCHS_SMALL, resolveUmapEpochCount(value, nodeCount));
 }
 
 function resolveSampleEpoch(iter, sampleCount, churnCount, sampleFrame) {
@@ -805,6 +1119,164 @@ function recenterActivePositions(positions, activeIds, activeCount, center, is3D
     positions[base + 1] -= shiftY;
     positions[base + 2] = is3D ? (positions[base + 2] - shiftZ) : center[2];
   }
+}
+
+export function warmStartUmapPositionsFromTopology({
+  nodeCapacity = 0,
+  activeIds = createEmptyUintArray(),
+  activeCount = 0,
+  neighborStarts = createEmptyUintArray(),
+  neighborCounts = createEmptyUintArray(),
+  neighbors = createEmptyUintArray(),
+  neighborWeights = null,
+  positions = null,
+  center = [0, 0, 0],
+  radius = DEFAULT_OPTIONS.radius,
+  depth = DEFAULT_OPTIONS.depth,
+  mode = '2d',
+  scratch = {},
+} = {}) {
+  if (!(positions instanceof Float32Array) || activeCount <= 1 || nodeCapacity <= 1) {
+    return false;
+  }
+
+  const is3D = mode === '3d';
+  const signalX = ensureFloat32Capacity(scratch.signalX, nodeCapacity);
+  const signalY = ensureFloat32Capacity(scratch.signalY, nodeCapacity);
+  const nextX = ensureFloat32Capacity(scratch.nextX, nodeCapacity);
+  const nextY = ensureFloat32Capacity(scratch.nextY, nodeCapacity);
+  scratch.signalX = signalX;
+  scratch.signalY = signalY;
+  scratch.nextX = nextX;
+  scratch.nextY = nextY;
+
+  let signalZ = null;
+  let nextZ = null;
+  if (is3D) {
+    signalZ = ensureFloat32Capacity(scratch.signalZ, nodeCapacity);
+    nextZ = ensureFloat32Capacity(scratch.nextZ, nodeCapacity);
+    scratch.signalZ = signalZ;
+    scratch.nextZ = nextZ;
+  }
+
+  for (let i = 0; i < activeCount; i += 1) {
+    const nodeId = activeIds[i] >>> 0;
+    signalX[nodeId] = hashToSignedUnit(Math.imul((nodeId + 1) >>> 0, 2654435761));
+    signalY[nodeId] = hashToSignedUnit(Math.imul((nodeId + 1) >>> 0, 1597334677));
+    if (is3D && signalZ) {
+      signalZ[nodeId] = hashToSignedUnit(Math.imul((nodeId + 1) >>> 0, 2246822519));
+    }
+  }
+
+  const passes = Math.max(4, Math.min(8, Math.ceil(Math.log2(Math.max(2, activeCount)))));
+  for (let pass = 0; pass < passes; pass += 1) {
+    for (let i = 0; i < activeCount; i += 1) {
+      const nodeId = activeIds[i] >>> 0;
+      const start = neighborStarts[nodeId] ?? 0;
+      const degree = neighborCounts[nodeId] ?? 0;
+      if (degree <= 0) {
+        nextX[nodeId] = signalX[nodeId];
+        nextY[nodeId] = signalY[nodeId];
+        if (is3D && nextZ && signalZ) nextZ[nodeId] = signalZ[nodeId];
+        continue;
+      }
+
+      let sumWeight = 0;
+      let sumX = 0;
+      let sumY = 0;
+      let sumZ = 0;
+      for (let n = 0; n < degree; n += 1) {
+        const offset = start + n;
+        const otherId = neighbors[offset] >>> 0;
+        if (otherId >= nodeCapacity) continue;
+        const weight = neighborWeights instanceof Float32Array
+          ? Math.max(0, neighborWeights[offset] ?? 0)
+          : 1;
+        if (!(weight > 0)) continue;
+        sumWeight += weight;
+        sumX += signalX[otherId] * weight;
+        sumY += signalY[otherId] * weight;
+        if (is3D && signalZ) sumZ += signalZ[otherId] * weight;
+      }
+
+      if (!(sumWeight > 0)) {
+        nextX[nodeId] = signalX[nodeId];
+        nextY[nodeId] = signalY[nodeId];
+        if (is3D && nextZ && signalZ) nextZ[nodeId] = signalZ[nodeId];
+        continue;
+      }
+
+      nextX[nodeId] = (signalX[nodeId] * 0.3) + ((sumX / sumWeight) * 0.7);
+      nextY[nodeId] = (signalY[nodeId] * 0.3) + ((sumY / sumWeight) * 0.7);
+      if (is3D && nextZ && signalZ) {
+        nextZ[nodeId] = (signalZ[nodeId] * 0.3) + ((sumZ / sumWeight) * 0.7);
+      }
+    }
+
+    for (let i = 0; i < activeCount; i += 1) {
+      const nodeId = activeIds[i] >>> 0;
+      signalX[nodeId] = nextX[nodeId];
+      signalY[nodeId] = nextY[nodeId];
+      if (is3D && signalZ && nextZ) signalZ[nodeId] = nextZ[nodeId];
+    }
+  }
+
+  let meanX = 0;
+  let meanY = 0;
+  let meanZ = 0;
+  for (let i = 0; i < activeCount; i += 1) {
+    const nodeId = activeIds[i] >>> 0;
+    meanX += signalX[nodeId];
+    meanY += signalY[nodeId];
+    if (is3D && signalZ) meanZ += signalZ[nodeId];
+  }
+  meanX /= activeCount;
+  meanY /= activeCount;
+  if (is3D) meanZ /= activeCount;
+
+  let maxPlanarNorm = 0;
+  let maxDepthNorm = 0;
+  for (let i = 0; i < activeCount; i += 1) {
+    const nodeId = activeIds[i] >>> 0;
+    const centeredX = (signalX[nodeId] - meanX) + (hashToSignedUnit(Math.imul((nodeId + 1) >>> 0, 3266489917)) * 0.08);
+    const centeredY = (signalY[nodeId] - meanY) + (hashToSignedUnit(Math.imul((nodeId + 1) >>> 0, 668265263)) * 0.08);
+    maxPlanarNorm = Math.max(maxPlanarNorm, Math.hypot(centeredX, centeredY));
+    if (is3D && signalZ) {
+      const centeredZ = (signalZ[nodeId] - meanZ) + (hashToSignedUnit(Math.imul((nodeId + 1) >>> 0, 374761393)) * 0.08);
+      maxDepthNorm = Math.max(maxDepthNorm, Math.abs(centeredZ));
+    }
+  }
+
+  if (!(maxPlanarNorm > 1e-6)) {
+    return false;
+  }
+
+  const planarScale = (Math.max(1, radius) * 0.42) / maxPlanarNorm;
+  const depthScale = is3D
+    ? ((Math.max(1, depth || (radius * 0.35)) * 0.42) / Math.max(1e-6, maxDepthNorm || 1))
+    : 0;
+
+  for (let i = 0; i < activeCount; i += 1) {
+    const nodeId = activeIds[i] >>> 0;
+    const base = nodeId * 3;
+    const currentX = positions[base] - center[0];
+    const currentY = positions[base + 1] - center[1];
+    const currentZ = positions[base + 2] - center[2];
+    const warmX = ((signalX[nodeId] - meanX) + (hashToSignedUnit(Math.imul((nodeId + 1) >>> 0, 3266489917)) * 0.08)) * planarScale;
+    const warmY = ((signalY[nodeId] - meanY) + (hashToSignedUnit(Math.imul((nodeId + 1) >>> 0, 668265263)) * 0.08)) * planarScale;
+    const warmZ = is3D && signalZ
+      ? (((signalZ[nodeId] - meanZ) + (hashToSignedUnit(Math.imul((nodeId + 1) >>> 0, 374761393)) * 0.08)) * depthScale)
+      : 0;
+
+    positions[base] = center[0] + (warmX * 0.85) + (currentX * 0.15);
+    positions[base + 1] = center[1] + (warmY * 0.85) + (currentY * 0.15);
+    positions[base + 2] = is3D
+      ? (center[2] + (warmZ * 0.85) + (currentZ * 0.15))
+      : center[2];
+  }
+
+  recenterActivePositions(positions, activeIds, activeCount, center, is3D);
+  return true;
 }
 
 function compileWebGLShader(gl, type, source) {
@@ -877,7 +1349,8 @@ void main() {
   gl_Position = vec4(position, 0.0, 1.0);
 }`;
 
-const WEBGL_FORCE_COMPUTE_FRAGMENT = `#version 300 es
+function buildWebglComputeFragment({ umap = false } = {}) {
+  return `#version 300 es
 precision highp float;
 precision highp int;
 precision highp usampler2D;
@@ -889,6 +1362,7 @@ uniform usampler2D u_activeMask;
 uniform usampler2D u_neighborStarts;
 uniform usampler2D u_neighborCounts;
 uniform usampler2D u_neighbors;
+${umap ? 'uniform sampler2D u_nodeMass;\nuniform sampler2D u_neighborWeights;\n' : ''}
 
 uniform ivec2 u_nodeTexSize;
 uniform ivec2 u_activeIdsTexSize;
@@ -915,6 +1389,7 @@ uniform float u_kGravity;
 uniform float u_eta;
 uniform float u_damping;
 uniform float u_maxStep;
+${umap ? 'uniform float u_umapA;\nuniform float u_umapB;\nuniform float u_umapGamma;\nuniform float u_umapNegativeSampleRate;\nuniform float u_umapEpochs;\n' : ''}
 
 layout(location = 0) out vec4 outPosition;
 layout(location = 1) out vec4 outVelocity;
@@ -933,6 +1408,10 @@ uint hash32(uint value) {
   x = x * 0x846ca68bu;
   x = x ^ (x >> 16u);
   return x;
+}
+
+float clipGradient(float value) {
+  return clamp(value, -4.0, 4.0);
 }
 
 uint sampleActiveId(int nodeId, int iter, int activeCount, uint seed) {
@@ -961,6 +1440,24 @@ uint sampleActiveIdProgressive(int nodeId, int iter, int activeCount, uint seed,
   return sampleActiveId(nodeId, iter, activeCount, epochSeed);
 }
 
+int sampleNeighborIndex(int start, int limit, int nodeId, int iter, uint seed, uint sampleFrame) {
+  if (limit <= 0) {
+    return start;
+  }
+  uint mixed = hash32(seed + uint(nodeId) * 2246822519u + uint(iter) * 3266489917u + sampleFrame * 668265263u);
+  return start + int(mixed % uint(limit));
+}
+
+int samplesDue(float epoch, float interval) {
+  if (!(interval > 0.0)) {
+    return 0;
+  }
+  float previousEpoch = max(0.0, epoch - 1.0);
+  float previousBucket = floor(previousEpoch / interval);
+  float currentBucket = floor(epoch / interval);
+  return int(max(0.0, currentBucket - previousBucket));
+}
+
 vec3 fetchPosition(int nodeId) {
   return texelFetch(u_positions, textureCoord(u_nodeTexSize, nodeId), 0).xyz;
 }
@@ -977,7 +1474,15 @@ uint fetchNeighborValue(int index) {
   return texelFetch(u_neighbors, textureCoord(u_neighborTexSize, index), 0).x;
 }
 
-void main() {
+${umap ? `float fetchNodeMass(int nodeId) {
+  return texelFetch(u_nodeMass, textureCoord(u_nodeTexSize, nodeId), 0).x;
+}
+
+float fetchNeighborWeight(int index) {
+  return texelFetch(u_neighborWeights, textureCoord(u_neighborTexSize, index), 0).x;
+}
+
+` : ''}void main() {
   ivec2 coord = ivec2(gl_FragCoord.xy);
   int nodeId = coord.x + coord.y * max(u_nodeTexSize.x, 1);
   if (nodeId < 0 || nodeId >= u_nodeCapacity) {
@@ -1009,8 +1514,18 @@ void main() {
   vec3 force = vec3(0.0);
   float minDist = max(0.00001, u_minDistance);
   float minDistSq = minDist * minDist;
+${umap ? `  float umapA = max(0.000001, u_umapA);
+  float umapB = max(0.000001, u_umapB);
+  float umapGamma = max(0.0, u_umapGamma);
+  float umapNegativeSampleRate = max(0.0, u_umapNegativeSampleRate);
+  float umapEpochs = max(1.0, u_umapEpochs);
+  float minEdgeWeight = 1.0 / umapEpochs;
+  float currentEpoch = float(u_sampleFrame + 1u);
+` : ''}
 
-  if (u_activeCount > 1) {
+${umap
+  ? ''
+  : `  if (u_activeCount > 1) {
     bool useExactRepulsion = u_activeCount <= max(u_sampleCount, u_exactRepulsionThreshold);
     int repulsionIterations = useExactRepulsion ? u_activeCount : u_sampleCount;
     float repulsionNormalization = useExactRepulsion
@@ -1037,18 +1552,69 @@ void main() {
         }
         float distSq = max(dot(delta, delta), minDistSq);
         float invDist = inversesqrt(distSq);
-        float repulsionScale = u_kRepulsion * repulsionNormalization * invDist * invDist * invDist;
+        float repulsionScale = (u_kRepulsion * repulsionNormalization * invDist * invDist * invDist);
         force += delta * repulsionScale;
       }
       s += 1;
     }
-  }
-
+  }`}
   int start = int(fetchNodeUint(u_neighborStarts, nodeId));
   int degree = int(fetchNodeUint(u_neighborCounts, nodeId));
   int limit = min(degree, u_maxNeighbors);
   if (limit > 0) {
-    float degreeNorm = max(1.0, float(limit));
+${umap
+  ? `  int n = 0;
+    while (n < limit) {
+      int edgeIndex = start + n;
+      int otherId = int(fetchNeighborValue(edgeIndex));
+      if (otherId != nodeId && otherId >= 0 && otherId < u_nodeCapacity) {
+        float edgeWeight = max(0.0, fetchNeighborWeight(edgeIndex));
+        if (edgeWeight >= minEdgeWeight) {
+          float positiveInterval = 1.0 / max(edgeWeight, 0.000001);
+          int positiveDue = samplesDue(currentEpoch, positiveInterval);
+          if (positiveDue > 0) {
+            vec3 delta = fetchPosition(otherId) - pos;
+            if (u_use3D == 0) {
+              delta.z = 0.0;
+            }
+            float distSq = max(dot(delta, delta), minDistSq);
+            float springScale = (
+              u_kAttraction
+              * float(positiveDue)
+              * (2.0 * umapA * umapB * pow(distSq, umapB - 1.0))
+              / (1.0 + (umapA * pow(distSq, umapB)))
+            );
+            force += delta * springScale;
+          }
+
+          if (umapNegativeSampleRate > 0.0 && u_activeCount > 1) {
+            float negativeInterval = positiveInterval / umapNegativeSampleRate;
+            int negativeDue = samplesDue(currentEpoch, negativeInterval);
+            int p = 0;
+            while (p < negativeDue) {
+              int negativeIter = edgeIndex + (p * max(u_maxNeighbors, 1));
+              int negativeId = int(sampleActiveId(nodeId, negativeIter, u_activeCount, u_seed + (u_sampleFrame * 668265263u)));
+              if (negativeId != nodeId && negativeId >= 0 && negativeId < u_nodeCapacity) {
+                vec3 negativeDelta = pos - fetchPosition(negativeId);
+                if (u_use3D == 0) {
+                  negativeDelta.z = 0.0;
+                }
+                float negativeDistSq = max(dot(negativeDelta, negativeDelta), minDistSq);
+                float repulsionScale = (
+                  u_kRepulsion
+                  * (2.0 * umapGamma * umapB)
+                  / ((0.001 + negativeDistSq) * (1.0 + (umapA * pow(negativeDistSq, umapB))))
+                );
+                force += negativeDelta * repulsionScale;
+              }
+              p += 1;
+            }
+          }
+        }
+      }
+      n += 1;
+    }`
+  : `    float degreeNorm = max(1.0, float(limit));
     int n = 0;
     while (n < limit) {
       int otherId = int(fetchNeighborValue(start + n));
@@ -1061,11 +1627,11 @@ void main() {
         float dist = sqrt(distSq);
         float invDist = 1.0 / max(0.00000001, dist);
         float stretch = dist - u_linkDistance;
-        float springScale = (u_kAttraction * stretch * invDist) / degreeNorm;
+        float springScale = ((u_kAttraction * stretch * invDist) / degreeNorm);
         force += delta * springScale;
       }
       n += 1;
-    }
+    }`}
   }
 
   vec3 gravityDelta = u_center - pos;
@@ -1074,7 +1640,26 @@ void main() {
   }
   force += gravityDelta * u_kGravity;
 
-  vec3 nextVel = vel * u_damping + force * u_eta;
+${umap
+  ? `  vec3 nextDelta = vec3(
+    clipGradient(force.x) * u_eta,
+    clipGradient(force.y) * u_eta,
+    clipGradient(force.z) * u_eta
+  );
+  float speed = length(nextDelta);
+  if (speed > u_maxStep) {
+    nextDelta *= u_maxStep / max(speed, 0.00000001);
+  }
+  if (u_use3D == 0) {
+    nextDelta.z = 0.0;
+  }
+
+  vec3 nextVel = vec3(0.0);
+  vec3 nextPos = pos + nextDelta;
+  if (u_use3D == 0) {
+    nextPos.z = u_center.z;
+  }`
+  : `  vec3 nextVel = vel * u_damping + force * u_eta;
   float speed = length(nextVel);
   if (speed > u_maxStep) {
     nextVel *= u_maxStep / max(speed, 0.00000001);
@@ -1086,7 +1671,7 @@ void main() {
   vec3 nextPos = pos + nextVel;
   if (u_use3D == 0) {
     nextPos.z = u_center.z;
-  }
+  }`}
 
   vec3 outputPos = nextPos;
   outputPos.xy = u_center.xy + (nextPos.xy - u_center.xy) * u_outputScale;
@@ -1098,6 +1683,10 @@ void main() {
   outVelocity = vec4(nextVel, 1.0);
   outOutputPosition = vec4(outputPos, 1.0);
 }`;
+}
+
+const WEBGL_FORCE_COMPUTE_FRAGMENT_LINEAR = buildWebglComputeFragment();
+const WEBGL_FORCE_COMPUTE_FRAGMENT_UMAP = buildWebglComputeFragment({ umap: true });
 
 const WEBGL_FORCE_REDUCTION_INIT_FRAGMENT = `#version 300 es
 precision highp float;
@@ -1256,6 +1845,8 @@ class WebGLTextureComputePath {
     this.neighborStartsTexture = null;
     this.neighborCountsTexture = null;
     this.neighborsTexture = null;
+    this.nodeMassTexture = null;
+    this.neighborWeightsTexture = null;
     this.framebuffer = null;
     this.readbackFramebuffer = null;
     this.fullscreenVao = null;
@@ -1266,17 +1857,72 @@ class WebGLTextureComputePath {
     this._positionUploadScratch = new Float32Array(0);
     this._velocityUploadScratch = new Float32Array(0);
     this._outputUploadScratch = new Float32Array(0);
+    this._nodeMassUploadScratch = new Float32Array(0);
+    this._neighborWeightUploadScratch = new Float32Array(0);
     this._uintUploadScratch = new Uint32Array(0);
     this._readbackScratch = new Float32Array(0);
     this._textureSizes = new Map();
     this.readIndex = 0;
-
-    this.computeProgram = createWebGLProgram(gl, WEBGL_FORCE_FULLSCREEN_VERTEX, WEBGL_FORCE_COMPUTE_FRAGMENT);
+    this.umapEnabled = false;
+    this.computePrograms = {
+      linear: null,
+      umap: null,
+    };
+    this.computeUniforms = {
+      linear: null,
+      umap: null,
+    };
     this.reductionInitProgram = createWebGLProgram(gl, WEBGL_FORCE_FULLSCREEN_VERTEX, WEBGL_FORCE_REDUCTION_INIT_FRAGMENT);
     this.reductionCombineProgram = createWebGLProgram(gl, WEBGL_FORCE_FULLSCREEN_VERTEX, WEBGL_FORCE_REDUCTION_COMBINE_FRAGMENT);
     this.recenterProgram = createWebGLProgram(gl, WEBGL_FORCE_FULLSCREEN_VERTEX, WEBGL_FORCE_RECENTER_FRAGMENT);
+    this.reductionInitUniforms = this._cacheUniforms(this.reductionInitProgram, [
+      'u_positions',
+      'u_activeMask',
+      'u_nodeTexSize',
+      'u_outputSize',
+      'u_nodeCapacity',
+      'u_use3D',
+      'u_center',
+    ]);
+    this.reductionCombineUniforms = this._cacheUniforms(this.reductionCombineProgram, [
+      'u_source',
+      'u_sourceSize',
+    ]);
+    this.recenterUniforms = this._cacheUniforms(this.recenterProgram, [
+      'u_positions',
+      'u_velocities',
+      'u_centroid',
+      'u_activeMask',
+      'u_nodeTexSize',
+      'u_nodeCapacity',
+      'u_use3D',
+      'u_center',
+      'u_outputScale',
+    ]);
 
-    this.computeUniforms = this._cacheUniforms(this.computeProgram, [
+    this.framebuffer = gl.createFramebuffer();
+    this.readbackFramebuffer = gl.createFramebuffer();
+    this.fullscreenVao = gl.createVertexArray();
+    this._ensureComputeProgram(false);
+  }
+
+  _cacheUniforms(program, names) {
+    const map = Object.create(null);
+    for (const name of names) {
+      map[name] = this.gl.getUniformLocation(program, name);
+    }
+    return map;
+  }
+
+  _ensureComputeProgram(useUmap = false) {
+    const key = useUmap ? 'umap' : 'linear';
+    if (this.computePrograms[key]) return;
+    const program = createWebGLProgram(
+      this.gl,
+      WEBGL_FORCE_FULLSCREEN_VERTEX,
+      useUmap ? WEBGL_FORCE_COMPUTE_FRAGMENT_UMAP : WEBGL_FORCE_COMPUTE_FRAGMENT_LINEAR,
+    );
+    const uniformNames = [
       'u_positions',
       'u_velocities',
       'u_activeIds',
@@ -1306,43 +1952,10 @@ class WebGLTextureComputePath {
       'u_eta',
       'u_damping',
       'u_maxStep',
-    ]);
-    this.reductionInitUniforms = this._cacheUniforms(this.reductionInitProgram, [
-      'u_positions',
-      'u_activeMask',
-      'u_nodeTexSize',
-      'u_outputSize',
-      'u_nodeCapacity',
-      'u_use3D',
-      'u_center',
-    ]);
-    this.reductionCombineUniforms = this._cacheUniforms(this.reductionCombineProgram, [
-      'u_source',
-      'u_sourceSize',
-    ]);
-    this.recenterUniforms = this._cacheUniforms(this.recenterProgram, [
-      'u_positions',
-      'u_velocities',
-      'u_centroid',
-      'u_activeMask',
-      'u_nodeTexSize',
-      'u_nodeCapacity',
-      'u_use3D',
-      'u_center',
-      'u_outputScale',
-    ]);
-
-    this.framebuffer = gl.createFramebuffer();
-    this.readbackFramebuffer = gl.createFramebuffer();
-    this.fullscreenVao = gl.createVertexArray();
-  }
-
-  _cacheUniforms(program, names) {
-    const map = Object.create(null);
-    for (const name of names) {
-      map[name] = this.gl.getUniformLocation(program, name);
-    }
-    return map;
+      ...(useUmap ? ['u_nodeMass', 'u_neighborWeights', 'u_umapA', 'u_umapB', 'u_umapGamma', 'u_umapNegativeSampleRate', 'u_umapEpochs'] : []),
+    ];
+    this.computePrograms[key] = program;
+    this.computeUniforms[key] = this._cacheUniforms(program, uniformNames);
   }
 
   _ensureFloatTexture(field, width, height) {
@@ -1477,6 +2090,18 @@ class WebGLTextureComputePath {
     return target;
   }
 
+  _packScalarSource(source, count, texelCount, field) {
+    const target = this._ensurePackedFloatScratch(field, texelCount);
+    target.fill(0, 0, texelCount * 4);
+    const limit = Math.max(0, Math.min(count, Math.floor(source?.length ?? 0)));
+    for (let i = 0; i < limit; i += 1) {
+      const dst = i * 4;
+      target[dst] = Number(source[i] ?? 0);
+      target[dst + 3] = 1;
+    }
+    return target;
+  }
+
   _uploadPackedFloatTexture(texture, packed, width, height) {
     const gl = this.gl;
     gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -1504,6 +2129,19 @@ class WebGLTextureComputePath {
     const gl = this.gl;
     gl.activeTexture(gl.TEXTURE0 + unit);
     gl.bindTexture(gl.TEXTURE_2D, texture);
+  }
+
+  _releaseUmapTextures() {
+    const gl = this.gl;
+    if (!gl) return;
+    if (this.nodeMassTexture) gl.deleteTexture(this.nodeMassTexture);
+    if (this.neighborWeightsTexture) gl.deleteTexture(this.neighborWeightsTexture);
+    this.nodeMassTexture = null;
+    this.neighborWeightsTexture = null;
+    this._textureSizes.delete('nodeMassTexture');
+    this._textureSizes.delete('neighborWeightsTexture');
+    this._nodeMassUploadScratch = new Float32Array(0);
+    this._neighborWeightUploadScratch = new Float32Array(0);
   }
 
   _prepareMainFramebuffer(positionTexture, velocityTexture, outputTexture) {
@@ -1551,6 +2189,9 @@ class WebGLTextureComputePath {
     if (!payload || !this.gl) return false;
     const preserveDynamicState = options?.preserveDynamicState === true;
     const previousNodeCapacity = this.nodeCapacity;
+    const useUmap = payload.umapModel === true;
+    this.umapEnabled = useUmap;
+    this._ensureComputeProgram(useUmap);
     this.nodeCapacity = Math.max(0, payload.nodeCapacity | 0);
     this.activeCount = Math.max(0, payload.activeCount | 0);
     this.nodeLayout = resolveWebGLTextureLayout(this.gl, Math.max(1, this.nodeCapacity));
@@ -1573,6 +2214,31 @@ class WebGLTextureComputePath {
     this._uploadUintTexture(this.neighborStartsTexture, this.nodeLayout, payload.neighborStarts);
     this._uploadUintTexture(this.neighborCountsTexture, this.nodeLayout, payload.neighborCounts);
     this._uploadUintTexture(this.neighborsTexture, this.neighborLayout, payload.neighbors);
+    if (useUmap) {
+      this._ensureFloatTexture('nodeMassTexture', this.nodeLayout.width, this.nodeLayout.height);
+      this._ensureFloatTexture('neighborWeightsTexture', this.neighborLayout.width, this.neighborLayout.height);
+      const nodeMassPacked = this._packScalarSource(
+        payload.nodeMass,
+        this.nodeCapacity,
+        this.nodeLayout.width * this.nodeLayout.height,
+        '_nodeMassUploadScratch',
+      );
+      const neighborWeightPacked = this._packScalarSource(
+        payload.neighborWeights,
+        payload.neighborLength | 0,
+        this.neighborLayout.width * this.neighborLayout.height,
+        '_neighborWeightUploadScratch',
+      );
+      this._uploadPackedFloatTexture(this.nodeMassTexture, nodeMassPacked, this.nodeLayout.width, this.nodeLayout.height);
+      this._uploadPackedFloatTexture(
+        this.neighborWeightsTexture,
+        neighborWeightPacked,
+        this.neighborLayout.width,
+        this.neighborLayout.height,
+      );
+    } else {
+      this._releaseUmapTextures();
+    }
 
     const canPreserveDynamicState = preserveDynamicState
       && previousNodeCapacity === this.nodeCapacity
@@ -1671,11 +2337,15 @@ class WebGLTextureComputePath {
         stepOptions.maxNeighborsPerNode,
         DEFAULT_OPTIONS.maxNeighborsPerNode,
       )));
+      const useUmap = isUmapForceModel(stepOptions.forceModel);
+      this._ensureComputeProgram(useUmap);
+      const computeProgram = this.computePrograms[useUmap ? 'umap' : 'linear'];
+      const computeUniforms = this.computeUniforms[useUmap ? 'umap' : 'linear'];
       const outputScale = Math.max(0.0001, toFinite(stepOptions.outputScale, DEFAULT_OPTIONS.outputScale));
 
       this._prepareMainFramebuffer(positionsOut, velocitiesOut, this.outputPositionTexture);
       gl.viewport(0, 0, this.nodeLayout.width, this.nodeLayout.height);
-      gl.useProgram(this.computeProgram);
+      gl.useProgram(computeProgram);
       this._bindTexture(0, positionsIn);
       this._bindTexture(1, velocitiesIn);
       this._bindTexture(2, this.activeIdsTexture);
@@ -1683,35 +2353,51 @@ class WebGLTextureComputePath {
       this._bindTexture(4, this.neighborStartsTexture);
       this._bindTexture(5, this.neighborCountsTexture);
       this._bindTexture(6, this.neighborsTexture);
-      gl.uniform1i(this.computeUniforms.u_positions, 0);
-      gl.uniform1i(this.computeUniforms.u_velocities, 1);
-      gl.uniform1i(this.computeUniforms.u_activeIds, 2);
-      gl.uniform1i(this.computeUniforms.u_activeMask, 3);
-      gl.uniform1i(this.computeUniforms.u_neighborStarts, 4);
-      gl.uniform1i(this.computeUniforms.u_neighborCounts, 5);
-      gl.uniform1i(this.computeUniforms.u_neighbors, 6);
-      gl.uniform2i(this.computeUniforms.u_nodeTexSize, this.nodeLayout.width, this.nodeLayout.height);
-      gl.uniform2i(this.computeUniforms.u_activeIdsTexSize, this.activeLayout.width, this.activeLayout.height);
-      gl.uniform2i(this.computeUniforms.u_neighborTexSize, this.neighborLayout.width, this.neighborLayout.height);
-      gl.uniform1i(this.computeUniforms.u_nodeCapacity, this.nodeCapacity);
-      gl.uniform1i(this.computeUniforms.u_activeCount, this.activeCount);
-      gl.uniform1i(this.computeUniforms.u_sampleCount, sampleCount);
-      gl.uniform1i(this.computeUniforms.u_maxNeighbors, maxNeighborsPerNode);
-      gl.uniform1i(this.computeUniforms.u_use3D, is3D ? 1 : 0);
-      gl.uniform1i(this.computeUniforms.u_exactRepulsionThreshold, exactRepulsionThreshold);
-      gl.uniform1i(this.computeUniforms.u_sampleChurnCount, sampleChurnCount);
-      gl.uniform1ui(this.computeUniforms.u_seed, this.seed >>> 0);
-      gl.uniform1ui(this.computeUniforms.u_sampleFrame, this.sampleFrame >>> 0);
-      gl.uniform3f(this.computeUniforms.u_center, center[0], center[1], center[2]);
-      gl.uniform1f(this.computeUniforms.u_outputScale, outputScale);
-      gl.uniform1f(this.computeUniforms.u_linkDistance, Math.max(0.0001, toFinite(stepOptions.linkDistance, DEFAULT_OPTIONS.linkDistance)));
-      gl.uniform1f(this.computeUniforms.u_minDistance, Math.max(0.0001, toFinite(stepOptions.minDistance, DEFAULT_OPTIONS.minDistance)));
-      gl.uniform1f(this.computeUniforms.u_kRepulsion, toFinite(stepOptions.kRepulsion, DEFAULT_OPTIONS.kRepulsion));
-      gl.uniform1f(this.computeUniforms.u_kAttraction, toFinite(stepOptions.kAttraction, DEFAULT_OPTIONS.kAttraction));
-      gl.uniform1f(this.computeUniforms.u_kGravity, toFinite(stepOptions.kGravity, DEFAULT_OPTIONS.kGravity));
-      gl.uniform1f(this.computeUniforms.u_eta, toFinite(stepOptions.eta, DEFAULT_OPTIONS.eta));
-      gl.uniform1f(this.computeUniforms.u_damping, clamp(stepOptions.damping, 0, 1, DEFAULT_OPTIONS.damping));
-      gl.uniform1f(this.computeUniforms.u_maxStep, Math.max(0.001, toFinite(stepOptions.maxStep, DEFAULT_OPTIONS.maxStep)));
+      gl.uniform1i(computeUniforms.u_positions, 0);
+      gl.uniform1i(computeUniforms.u_velocities, 1);
+      gl.uniform1i(computeUniforms.u_activeIds, 2);
+      gl.uniform1i(computeUniforms.u_activeMask, 3);
+      gl.uniform1i(computeUniforms.u_neighborStarts, 4);
+      gl.uniform1i(computeUniforms.u_neighborCounts, 5);
+      gl.uniform1i(computeUniforms.u_neighbors, 6);
+      if (useUmap) {
+        this._bindTexture(7, this.nodeMassTexture);
+        this._bindTexture(8, this.neighborWeightsTexture);
+        gl.uniform1i(computeUniforms.u_nodeMass, 7);
+        gl.uniform1i(computeUniforms.u_neighborWeights, 8);
+      }
+      gl.uniform2i(computeUniforms.u_nodeTexSize, this.nodeLayout.width, this.nodeLayout.height);
+      gl.uniform2i(computeUniforms.u_activeIdsTexSize, this.activeLayout.width, this.activeLayout.height);
+      gl.uniform2i(computeUniforms.u_neighborTexSize, this.neighborLayout.width, this.neighborLayout.height);
+      gl.uniform1i(computeUniforms.u_nodeCapacity, this.nodeCapacity);
+      gl.uniform1i(computeUniforms.u_activeCount, this.activeCount);
+      gl.uniform1i(computeUniforms.u_sampleCount, sampleCount);
+      gl.uniform1i(computeUniforms.u_maxNeighbors, maxNeighborsPerNode);
+      gl.uniform1i(computeUniforms.u_use3D, is3D ? 1 : 0);
+      gl.uniform1i(computeUniforms.u_exactRepulsionThreshold, exactRepulsionThreshold);
+      gl.uniform1i(computeUniforms.u_sampleChurnCount, sampleChurnCount);
+      gl.uniform1ui(computeUniforms.u_seed, this.seed >>> 0);
+      gl.uniform1ui(computeUniforms.u_sampleFrame, this.sampleFrame >>> 0);
+      gl.uniform3f(computeUniforms.u_center, center[0], center[1], center[2]);
+      gl.uniform1f(computeUniforms.u_outputScale, outputScale);
+      gl.uniform1f(computeUniforms.u_linkDistance, Math.max(0.0001, toFinite(stepOptions.linkDistance, DEFAULT_OPTIONS.linkDistance)));
+      gl.uniform1f(computeUniforms.u_minDistance, Math.max(0.0001, toFinite(stepOptions.minDistance, DEFAULT_OPTIONS.minDistance)));
+      gl.uniform1f(computeUniforms.u_kRepulsion, toFinite(stepOptions.kRepulsion, DEFAULT_OPTIONS.kRepulsion));
+      gl.uniform1f(computeUniforms.u_kAttraction, toFinite(stepOptions.kAttraction, DEFAULT_OPTIONS.kAttraction));
+      gl.uniform1f(computeUniforms.u_kGravity, toFinite(stepOptions.kGravity, DEFAULT_OPTIONS.kGravity));
+      gl.uniform1f(computeUniforms.u_eta, toFinite(stepOptions.eta, DEFAULT_OPTIONS.eta));
+      gl.uniform1f(computeUniforms.u_damping, clamp(stepOptions.damping, 0, 1, DEFAULT_OPTIONS.damping));
+      gl.uniform1f(computeUniforms.u_maxStep, Math.max(0.001, toFinite(stepOptions.maxStep, DEFAULT_OPTIONS.maxStep)));
+      if (useUmap) {
+        gl.uniform1f(computeUniforms.u_umapA, Math.max(0.000001, toFinite(stepOptions.umapA, DEFAULT_OPTIONS.umapA)));
+        gl.uniform1f(computeUniforms.u_umapB, Math.max(0.000001, toFinite(stepOptions.umapB, DEFAULT_OPTIONS.umapB)));
+        gl.uniform1f(computeUniforms.u_umapGamma, Math.max(0, toFinite(stepOptions.umapGamma, DEFAULT_OPTIONS.umapGamma)));
+        gl.uniform1f(
+          computeUniforms.u_umapNegativeSampleRate,
+          Math.max(0, toFinite(stepOptions.umapNegativeSampleRate, DEFAULT_OPTIONS.umapNegativeSampleRate)),
+        );
+        gl.uniform1f(computeUniforms.u_umapEpochs, Math.max(1, toFinite(stepOptions.umapEpochs, DEFAULT_UMAP_EPOCHS_SMALL)));
+      }
       gl.drawArrays(gl.TRIANGLES, 0, 3);
 
       if (stepOptions.recenter === true) {
@@ -1811,6 +2497,8 @@ class WebGLTextureComputePath {
     if (this.neighborStartsTexture) gl.deleteTexture(this.neighborStartsTexture);
     if (this.neighborCountsTexture) gl.deleteTexture(this.neighborCountsTexture);
     if (this.neighborsTexture) gl.deleteTexture(this.neighborsTexture);
+    if (this.nodeMassTexture) gl.deleteTexture(this.nodeMassTexture);
+    if (this.neighborWeightsTexture) gl.deleteTexture(this.neighborWeightsTexture);
     for (const target of this._reductionTargets) {
       if (target.texture) gl.deleteTexture(target.texture);
       if (target.framebuffer) gl.deleteFramebuffer(target.framebuffer);
@@ -1818,7 +2506,8 @@ class WebGLTextureComputePath {
     if (this.framebuffer) gl.deleteFramebuffer(this.framebuffer);
     if (this.readbackFramebuffer) gl.deleteFramebuffer(this.readbackFramebuffer);
     if (this.fullscreenVao) gl.deleteVertexArray(this.fullscreenVao);
-    if (this.computeProgram) gl.deleteProgram(this.computeProgram);
+    if (this.computePrograms.linear) gl.deleteProgram(this.computePrograms.linear);
+    if (this.computePrograms.umap) gl.deleteProgram(this.computePrograms.umap);
     if (this.reductionInitProgram) gl.deleteProgram(this.reductionInitProgram);
     if (this.reductionCombineProgram) gl.deleteProgram(this.reductionCombineProgram);
     if (this.recenterProgram) gl.deleteProgram(this.recenterProgram);
@@ -1831,6 +2520,10 @@ class WebGLTextureComputePath {
     this.neighborStartsTexture = null;
     this.neighborCountsTexture = null;
     this.neighborsTexture = null;
+    this.nodeMassTexture = null;
+    this.neighborWeightsTexture = null;
+    this.computePrograms = { linear: null, umap: null };
+    this.computeUniforms = { linear: null, umap: null };
     this.framebuffer = null;
     this.readbackFramebuffer = null;
     this.fullscreenVao = null;
@@ -1843,453 +2536,87 @@ class WebGLForceComputeBackend {
   constructor(gl) {
     this.gl = gl;
     this._gpu = canUseWebGLTextureCompute(gl) ? new WebGLTextureComputePath(gl) : null;
-    this.nodeCapacity = 0;
-    this.activeCount = 0;
-    this.seed = (Math.random() * 0xffffffff) >>> 0;
-    this.sampleFrame = 0;
-
-    this.activeIds = createEmptyUintArray();
-    this.activeMask = createEmptyUintArray();
-    this.neighborStarts = createEmptyUintArray();
-    this.neighborCounts = createEmptyUintArray();
-    this.neighbors = createEmptyUintArray();
-
-    this.positions = new Float32Array(0);
-    this.outputPositions = new Float32Array(0);
-    this.velocities = new Float32Array(0);
-    this.scratchPositions = new Float32Array(0);
-    this.scratchVelocities = new Float32Array(0);
-
-    this.outputPositionTexture = null;
-    this.textureWidth = 1;
-    this.textureHeight = 1;
-    this.textureVersion = 0;
+    this._warnedUnavailable = false;
   }
 
-  _ensureTexture() {
-    if (!this.gl || this.outputPositionTexture) return;
-    const gl = this.gl;
-    const texture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.bindTexture(gl.TEXTURE_2D, null);
-    this.outputPositionTexture = texture;
+  get seed() {
+    return this._gpu?.seed ?? 0;
   }
 
-  _getTextureLayout(count) {
-    const gl = this.gl;
-    const max = gl?.getParameter?.(gl.MAX_TEXTURE_SIZE) ?? 16384;
-    const safeCount = Math.max(1, Math.floor(Number(count) || 0));
-    const width = Math.min(max, safeCount);
-    const height = Math.ceil(safeCount / Math.max(1, width));
-    if (height > max) {
-      throw new Error(
-        `WebGL2 GPU-force layout requires texture dimensions <= MAX_TEXTURE_SIZE (${max}), `
-        + `got ${safeCount} texels -> ${width}x${height}.`,
-      );
-    }
-    return { width, height };
+  set seed(value) {
+    if (this._gpu) this._gpu.seed = value >>> 0;
   }
 
-  _uploadOutputTexture() {
-    if (!this.gl) return false;
-    this._ensureTexture();
-    if (!this.outputPositionTexture) return false;
+  get sampleFrame() {
+    return this._gpu?.sampleFrame ?? 0;
+  }
 
-    const gl = this.gl;
-    const count = Math.max(1, this.nodeCapacity);
-    const { width, height } = this._getTextureLayout(count);
-    this.textureWidth = width;
-    this.textureHeight = height;
+  set sampleFrame(value) {
+    if (this._gpu) this._gpu.sampleFrame = value >>> 0;
+  }
 
-    gl.bindTexture(gl.TEXTURE_2D, this.outputPositionTexture);
-    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
+  get nodeCapacity() {
+    return this._gpu?.nodeCapacity ?? 0;
+  }
 
-    if (height === 1) {
-      const valueCount = width * 3;
-      const directView = this.outputPositions.length === valueCount
-        ? this.outputPositions
-        : this.outputPositions.subarray(0, valueCount);
-      gl.texImage2D(
-        gl.TEXTURE_2D,
-        0,
-        gl.RGB32F,
-        width,
-        1,
-        0,
-        gl.RGB,
-        gl.FLOAT,
-        directView,
-      );
-    } else {
-      gl.texImage2D(
-        gl.TEXTURE_2D,
-        0,
-        gl.RGB32F,
-        width,
-        height,
-        0,
-        gl.RGB,
-        gl.FLOAT,
-        null,
-      );
-      let remaining = count;
-      let srcOffset = 0;
-      for (let y = 0; y < height && remaining > 0; y += 1) {
-        const rowTexels = Math.min(width, remaining);
-        const valueCount = rowTexels * 3;
-        const rowView = this.outputPositions.subarray(srcOffset, srcOffset + valueCount);
-        gl.texSubImage2D(
-          gl.TEXTURE_2D,
-          0,
-          0,
-          y,
-          rowTexels,
-          1,
-          gl.RGB,
-          gl.FLOAT,
-          rowView,
-        );
-        srcOffset += valueCount;
-        remaining -= rowTexels;
-      }
-    }
+  get activeCount() {
+    return this._gpu?.activeCount ?? 0;
+  }
 
-    this.textureVersion += 1;
-    return true;
+  _warnUnavailable() {
+    if (this._warnedUnavailable === true) return;
+    this._warnedUnavailable = true;
+    console.warn('GpuForcePositionDelegate: WebGL gpu-force requires float texture compute support; no CPU fallback is available.');
   }
 
   syncTopology(payload, options = {}) {
-    if (this._gpu) {
-      this._gpu.seed = this.seed >>> 0;
-      this._gpu.sampleFrame = this.sampleFrame >>> 0;
-      const synchronized = this._gpu.syncTopology(payload, options);
-      this.seed = this._gpu.seed >>> 0;
-      this.sampleFrame = this._gpu.sampleFrame >>> 0;
-      this.nodeCapacity = this._gpu.nodeCapacity | 0;
-      this.activeCount = this._gpu.activeCount | 0;
-      this.textureWidth = this._gpu.nodeLayout?.width ?? 1;
-      this.textureHeight = this._gpu.nodeLayout?.height ?? 1;
-      this.textureVersion = this._gpu.textureVersion ?? this.textureVersion;
-      return synchronized;
+    if (!this._gpu) {
+      this._warnUnavailable();
+      return false;
     }
-    if (!payload || !this.gl) return false;
-    const preserveDynamicState = options?.preserveDynamicState === true;
-    const previousNodeCapacity = this.nodeCapacity;
-    this.nodeCapacity = Math.max(0, payload.nodeCapacity | 0);
-    this.activeCount = Math.max(0, payload.activeCount | 0);
-    this.activeIds = payload.activeIds instanceof Uint32Array ? payload.activeIds : createEmptyUintArray();
-    this.activeMask = payload.activeMask instanceof Uint32Array ? payload.activeMask : createEmptyUintArray();
-    this.neighborStarts = payload.neighborStarts instanceof Uint32Array ? payload.neighborStarts : createEmptyUintArray();
-    this.neighborCounts = payload.neighborCounts instanceof Uint32Array ? payload.neighborCounts : createEmptyUintArray();
-    this.neighbors = payload.neighbors instanceof Uint32Array ? payload.neighbors : createEmptyUintArray();
-
-    const valueCount = Math.max(1, payload.valueCount | 0);
-    const canPreserveDynamicState = preserveDynamicState
-      && previousNodeCapacity === this.nodeCapacity
-      && this.positions instanceof Float32Array
-      && this.outputPositions instanceof Float32Array
-      && this.velocities instanceof Float32Array
-      && this.positions.length >= valueCount
-      && this.outputPositions.length >= valueCount
-      && this.velocities.length >= valueCount;
-    if (!canPreserveDynamicState) {
-      this.positions = ensureFloat32Capacity(this.positions, valueCount);
-      this.outputPositions = ensureFloat32Capacity(this.outputPositions, valueCount);
-      this.velocities = ensureFloat32Capacity(this.velocities, valueCount);
-      copyFloat32Values(this.positions, payload.packedPositions, valueCount);
-      copyFloat32Values(this.outputPositions, payload.packedOutputPositions ?? payload.packedPositions, valueCount);
-      this.velocities.fill(0, 0, valueCount);
-      this.sampleFrame = 0;
-    }
-    this.scratchPositions = ensureFloat32Capacity(this.scratchPositions, valueCount);
-    this.scratchVelocities = ensureFloat32Capacity(this.scratchVelocities, valueCount);
-    return this._uploadOutputTexture();
+    return this._gpu.syncTopology(payload, options);
   }
 
   step(stepOptions = {}) {
-    if (this._gpu) {
-      this._gpu.seed = this.seed >>> 0;
-      this._gpu.sampleFrame = this.sampleFrame >>> 0;
-      const advanced = this._gpu.step(stepOptions);
-      this.seed = this._gpu.seed >>> 0;
-      this.sampleFrame = this._gpu.sampleFrame >>> 0;
-      this.nodeCapacity = this._gpu.nodeCapacity | 0;
-      this.activeCount = this._gpu.activeCount | 0;
-      this.textureWidth = this._gpu.nodeLayout?.width ?? 1;
-      this.textureHeight = this._gpu.nodeLayout?.height ?? 1;
-      this.textureVersion = this._gpu.textureVersion ?? this.textureVersion;
-      return advanced;
+    if (!this._gpu) {
+      this._warnUnavailable();
+      return false;
     }
-    if (!this.gl || this.nodeCapacity <= 0 || this.activeCount <= 0) return false;
-
-    const is3D = stepOptions.mode === '3d';
-    const center = normalizeCenter(stepOptions.center);
-    const sampleCount = Math.max(1, Math.floor(toFinite(stepOptions.sampleCount, DEFAULT_OPTIONS.sampleCount2D)));
-    const sampleChurnCount = resolveSampleChurnCount(sampleCount, stepOptions.sampleChurn);
-    const exactRepulsionThreshold = Math.max(1, Math.floor(toFinite(
-      stepOptions.exactRepulsionThreshold,
-      is3D ? DEFAULT_OPTIONS.exactRepulsionThreshold3D : DEFAULT_OPTIONS.exactRepulsionThreshold2D,
-    )));
-    const maxNeighborsPerNode = Math.max(1, Math.floor(toFinite(
-      stepOptions.maxNeighborsPerNode,
-      DEFAULT_OPTIONS.maxNeighborsPerNode,
-    )));
-    const linkDistance = Math.max(0.0001, toFinite(stepOptions.linkDistance, DEFAULT_OPTIONS.linkDistance));
-    const minDistance = Math.max(0.0001, toFinite(stepOptions.minDistance, DEFAULT_OPTIONS.minDistance));
-    const minDistSq = minDistance * minDistance;
-    const kRepulsion = toFinite(stepOptions.kRepulsion, DEFAULT_OPTIONS.kRepulsion);
-    const kAttraction = toFinite(stepOptions.kAttraction, DEFAULT_OPTIONS.kAttraction);
-    const kGravity = toFinite(stepOptions.kGravity, DEFAULT_OPTIONS.kGravity);
-    const eta = toFinite(stepOptions.eta, DEFAULT_OPTIONS.eta);
-    const damping = clamp(stepOptions.damping, 0, 1, DEFAULT_OPTIONS.damping);
-    const maxStep = Math.max(0.001, toFinite(stepOptions.maxStep, DEFAULT_OPTIONS.maxStep));
-    const outputScale = Math.max(0.0001, toFinite(stepOptions.outputScale, DEFAULT_OPTIONS.outputScale));
-
-    const positionsIn = this.positions;
-    const velocitiesIn = this.velocities;
-    const positionsOut = this.scratchPositions;
-    const velocitiesOut = this.scratchVelocities;
-    const activeMask = this.activeMask;
-    const activeIds = this.activeIds;
-    const neighborStarts = this.neighborStarts;
-    const neighborCounts = this.neighborCounts;
-    const neighbors = this.neighbors;
-
-    const useExactRepulsion = this.activeCount <= Math.max(sampleCount, exactRepulsionThreshold);
-    const repulsionIterations = useExactRepulsion ? this.activeCount : sampleCount;
-    const repulsionNormalization = useExactRepulsion
-      ? 1
-      : Math.max(1, this.activeCount / Math.max(1, sampleCount));
-    this.seed = this.seed >>> 0;
-    const sampleFrame = this.sampleFrame >>> 0;
-
-    for (let nodeId = 0; nodeId < this.nodeCapacity; nodeId += 1) {
-      const base = nodeId * 3;
-      let posX = positionsIn[base] ?? center[0];
-      let posY = positionsIn[base + 1] ?? center[1];
-      let posZ = positionsIn[base + 2] ?? center[2];
-      let velX = velocitiesIn[base] ?? 0;
-      let velY = velocitiesIn[base + 1] ?? 0;
-      let velZ = velocitiesIn[base + 2] ?? 0;
-
-      if (!is3D) {
-        posZ = center[2];
-        velZ = 0;
-      }
-
-      if (!activeMask[nodeId]) {
-        positionsOut[base] = posX;
-        positionsOut[base + 1] = posY;
-        positionsOut[base + 2] = posZ;
-        velocitiesOut[base] = velX;
-        velocitiesOut[base + 1] = velY;
-        velocitiesOut[base + 2] = velZ;
-        continue;
-      }
-
-      let forceX = 0;
-      let forceY = 0;
-      let forceZ = 0;
-
-      if (this.activeCount > 1 && repulsionIterations > 0) {
-        for (let s = 0; s < repulsionIterations; s += 1) {
-          const otherId = useExactRepulsion
-            ? activeIds[s]
-            : sampleActiveIdProgressive(
-              nodeId,
-              s,
-              activeIds,
-              this.activeCount,
-              this.seed,
-              sampleCount,
-              sampleChurnCount,
-              sampleFrame,
-            );
-          if (otherId === nodeId || otherId >= this.nodeCapacity) continue;
-          const otherBase = otherId * 3;
-          let deltaX = posX - (positionsIn[otherBase] ?? posX);
-          let deltaY = posY - (positionsIn[otherBase + 1] ?? posY);
-          let deltaZ = posZ - (positionsIn[otherBase + 2] ?? posZ);
-          if (!is3D) deltaZ = 0;
-          const distSq = Math.max((deltaX * deltaX) + (deltaY * deltaY) + (deltaZ * deltaZ), minDistSq);
-          const invDist = 1 / Math.sqrt(distSq);
-          const repulsionScale = kRepulsion * repulsionNormalization * invDist * invDist * invDist;
-          forceX += deltaX * repulsionScale;
-          forceY += deltaY * repulsionScale;
-          forceZ += deltaZ * repulsionScale;
-        }
-      }
-
-      const start = neighborStarts[nodeId] ?? 0;
-      const degree = neighborCounts[nodeId] ?? 0;
-      const limit = Math.min(degree, maxNeighborsPerNode);
-      if (limit > 0) {
-        const degreeNorm = Math.max(1, limit);
-        for (let n = 0; n < limit; n += 1) {
-          const otherId = neighbors[start + n];
-          if (otherId === nodeId || otherId >= this.nodeCapacity) continue;
-          const otherBase = otherId * 3;
-          let deltaX = (positionsIn[otherBase] ?? posX) - posX;
-          let deltaY = (positionsIn[otherBase + 1] ?? posY) - posY;
-          let deltaZ = (positionsIn[otherBase + 2] ?? posZ) - posZ;
-          if (!is3D) deltaZ = 0;
-          const distSq = Math.max((deltaX * deltaX) + (deltaY * deltaY) + (deltaZ * deltaZ), minDistSq);
-          const dist = Math.sqrt(distSq);
-          const invDist = 1 / Math.max(1e-8, dist);
-          const stretch = dist - linkDistance;
-          const springScale = (kAttraction * stretch * invDist) / degreeNorm;
-          forceX += deltaX * springScale;
-          forceY += deltaY * springScale;
-          forceZ += deltaZ * springScale;
-        }
-      }
-
-      let gravityX = center[0] - posX;
-      let gravityY = center[1] - posY;
-      let gravityZ = center[2] - posZ;
-      if (!is3D) gravityZ = 0;
-      forceX += gravityX * kGravity;
-      forceY += gravityY * kGravity;
-      forceZ += gravityZ * kGravity;
-
-      let nextVelX = (velX * damping) + (forceX * eta);
-      let nextVelY = (velY * damping) + (forceY * eta);
-      let nextVelZ = (velZ * damping) + (forceZ * eta);
-
-      const speed = Math.hypot(nextVelX, nextVelY, nextVelZ);
-      if (speed > maxStep) {
-        const scale = maxStep / speed;
-        nextVelX *= scale;
-        nextVelY *= scale;
-        nextVelZ *= scale;
-      }
-      if (!is3D) nextVelZ = 0;
-
-      let nextPosX = posX + nextVelX;
-      let nextPosY = posY + nextVelY;
-      let nextPosZ = posZ + nextVelZ;
-      if (!is3D) nextPosZ = center[2];
-
-      positionsOut[base] = nextPosX;
-      positionsOut[base + 1] = nextPosY;
-      positionsOut[base + 2] = nextPosZ;
-      velocitiesOut[base] = nextVelX;
-      velocitiesOut[base + 1] = nextVelY;
-      velocitiesOut[base + 2] = nextVelZ;
-    }
-
-    const positionsSwap = this.positions;
-    this.positions = this.scratchPositions;
-    this.scratchPositions = positionsSwap;
-
-    const velocitiesSwap = this.velocities;
-    this.velocities = this.scratchVelocities;
-    this.scratchVelocities = velocitiesSwap;
-
-    if (stepOptions.recenter === true) {
-      recenterActivePositions(this.positions, this.activeIds, this.activeCount, center, is3D);
-    }
-
-    const source = this.positions;
-    if (Math.abs(outputScale - 1.0) <= 1e-6) {
-      this.outputPositions.set(source);
-      if (!is3D) {
-        for (let nodeId = 0; nodeId < this.nodeCapacity; nodeId += 1) {
-          this.outputPositions[(nodeId * 3) + 2] = center[2];
-        }
-      }
-    } else {
-      for (let nodeId = 0; nodeId < this.nodeCapacity; nodeId += 1) {
-        const base = nodeId * 3;
-        const srcX = source[base];
-        const srcY = source[base + 1];
-        const srcZ = source[base + 2];
-        this.outputPositions[base] = center[0] + ((srcX - center[0]) * outputScale);
-        this.outputPositions[base + 1] = center[1] + ((srcY - center[1]) * outputScale);
-        this.outputPositions[base + 2] = is3D
-          ? (center[2] + ((srcZ - center[2]) * outputScale))
-          : center[2];
-      }
-    }
-
-    const uploaded = this._uploadOutputTexture();
-    if (uploaded) {
-      this.sampleFrame = (sampleFrame + 1) >>> 0;
-    }
-    return uploaded;
+    return this._gpu.step(stepOptions);
   }
 
   getPositionTexture() {
-    if (this._gpu) {
-      return this._gpu.getPositionTexture();
-    }
-    return this.outputPositionTexture ?? null;
+    return this._gpu?.getPositionTexture?.() ?? null;
   }
 
   getPositionTextureMeta() {
-    if (this._gpu) {
-      return this._gpu.getPositionTextureMeta();
-    }
-    return {
-      version: this.textureVersion,
-      count: this.nodeCapacity,
-      buffer: this.outputPositionTexture,
-      byteOffset: 0,
-      byteLength: 0,
-    };
+    return this._gpu?.getPositionTextureMeta?.() ?? null;
   }
 
   readPositionSnapshot() {
-    if (this._gpu) {
-      return this._gpu.readPositionSnapshot();
-    }
-    if (!this.outputPositions || this.nodeCapacity <= 0) return null;
-    const length = Math.max(1, this.nodeCapacity) * 3;
-    return new Float32Array(this.outputPositions.subarray(0, length));
+    return this._gpu?.readPositionSnapshot?.() ?? null;
   }
 
   getExecutionMode() {
-    if (this._gpu) return this._gpu.getExecutionMode();
-    return 'cpu';
+    return this._gpu?.getExecutionMode?.() ?? 'unavailable';
   }
 
   dispose() {
     this._gpu?.dispose?.();
     this._gpu = null;
-    if (this.outputPositionTexture && this.gl?.deleteTexture) {
-      this.gl.deleteTexture(this.outputPositionTexture);
-    }
-    this.outputPositionTexture = null;
-    this.nodeCapacity = 0;
-    this.activeCount = 0;
-    this.activeIds = createEmptyUintArray();
-    this.activeMask = createEmptyUintArray();
-    this.neighborStarts = createEmptyUintArray();
-    this.neighborCounts = createEmptyUintArray();
-    this.neighbors = createEmptyUintArray();
-    this.positions = new Float32Array(0);
-    this.outputPositions = new Float32Array(0);
-    this.velocities = new Float32Array(0);
-    this.scratchPositions = new Float32Array(0);
-    this.scratchVelocities = new Float32Array(0);
-    this.textureWidth = 1;
-    this.textureHeight = 1;
-    this.textureVersion = 0;
-    this.sampleFrame = 0;
+    this._warnedUnavailable = false;
   }
 }
 
 class WebGPUForceComputeBackend {
   constructor(device) {
     this.device = device;
-    this.pipeline = null;
-    this.bindGroupLayout = null;
-    this.bindGroup = null;
+    this.linearPipeline = null;
+    this.linearBindGroupLayout = null;
+    this.linearBindGroup = null;
+    this.umapPipeline = null;
+    this.umapBindGroupLayout = null;
+    this.umapBindGroup = null;
     this.outputScalePipeline = null;
     this.outputScaleBindGroupLayout = null;
     this.outputScaleBindGroup = null;
@@ -2309,11 +2636,14 @@ class WebGPUForceComputeBackend {
     this.neighborStartsBuffer = null;
     this.neighborCountsBuffer = null;
     this.neighborsBuffer = null;
+    this.scalarWeightsBuffer = null;
     this.nodeCapacity = 0;
     this.activeCount = 0;
+    this.umapEnabled = false;
     this.seed = (Math.random() * 0xffffffff) >>> 0;
     this.sampleFrame = 0;
     this.zeroVelocities = createEmptyFloatArray();
+    this.scalarWeightsUpload = createEmptyFloatArray();
     this.maxComputeWorkgroupsPerDimension = Math.max(
       1,
       Math.floor(device?.limits?.maxComputeWorkgroupsPerDimension ?? 65535),
@@ -2331,30 +2661,35 @@ class WebGPUForceComputeBackend {
       | getGpuUsage('COPY_DST', COPY_DST_FLAG)
     );
 
-    this._ensurePipeline();
+    this._ensurePipeline(false);
     this._ensureOutputScalePipeline();
     this._ensureRecenterPipeline();
   }
 
-  _ensurePipeline() {
-    if (!this.device || this.pipeline) return;
-    this.bindGroupLayout = this.device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
-        { binding: 1, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
-        { binding: 2, visibility: this.shaderVisibility, buffer: { type: 'storage' } },
-        { binding: 3, visibility: this.shaderVisibility, buffer: { type: 'storage' } },
-        { binding: 4, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
-        { binding: 5, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
-        { binding: 6, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
-        { binding: 7, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
-        { binding: 8, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
-        { binding: 9, visibility: this.shaderVisibility, buffer: { type: 'uniform' } },
-      ],
-    });
-    const module = this.device.createShaderModule({ code: COMPUTE_WGSL });
-    this.pipeline = this.device.createComputePipeline({
-      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.bindGroupLayout] }),
+  _ensurePipeline(useUmap = false) {
+    if (!this.device) return;
+    const pipelineField = useUmap ? 'umapPipeline' : 'linearPipeline';
+    const layoutField = useUmap ? 'umapBindGroupLayout' : 'linearBindGroupLayout';
+    if (this[pipelineField]) return;
+    const entries = [
+      { binding: 0, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
+      { binding: 1, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
+      { binding: 2, visibility: this.shaderVisibility, buffer: { type: 'storage' } },
+      { binding: 3, visibility: this.shaderVisibility, buffer: { type: 'storage' } },
+      { binding: 4, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
+      { binding: 5, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
+      { binding: 6, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
+      { binding: 7, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
+      { binding: 8, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
+      ...(useUmap
+        ? [{ binding: 9, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } }]
+        : []),
+      { binding: useUmap ? 10 : 9, visibility: this.shaderVisibility, buffer: { type: 'uniform' } },
+    ];
+    this[layoutField] = this.device.createBindGroupLayout({ entries });
+    const module = this.device.createShaderModule({ code: useUmap ? COMPUTE_WGSL_UMAP : COMPUTE_WGSL_LINEAR });
+    this[pipelineField] = this.device.createComputePipeline({
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this[layoutField]] }),
       compute: { module, entryPoint: 'main' },
     });
   }
@@ -2403,23 +2738,32 @@ class WebGPUForceComputeBackend {
     return created;
   }
 
-  _rebuildBindGroup() {
-    if (!this.bindGroupLayout) return;
-    this.bindGroup = this.device.createBindGroup({
-      layout: this.bindGroupLayout,
-      entries: [
-        { binding: 0, resource: { buffer: this.positionBuffer } },
-        { binding: 1, resource: { buffer: this.velocityBuffer } },
-        { binding: 2, resource: { buffer: this.scratchPositionBuffer } },
-        { binding: 3, resource: { buffer: this.scratchVelocityBuffer } },
-        { binding: 4, resource: { buffer: this.activeIdsBuffer } },
-        { binding: 5, resource: { buffer: this.activeMaskBuffer } },
-        { binding: 6, resource: { buffer: this.neighborStartsBuffer } },
-        { binding: 7, resource: { buffer: this.neighborCountsBuffer } },
-        { binding: 8, resource: { buffer: this.neighborsBuffer } },
-        { binding: 9, resource: { buffer: this.paramsBuffer } },
-      ],
-    });
+  _releaseUmapBuffer() {
+    this.scalarWeightsBuffer?.destroy?.();
+    this.scalarWeightsBuffer = null;
+    this.scalarWeightsUpload = createEmptyFloatArray();
+    this.umapBindGroup = null;
+  }
+
+  _rebuildBindGroup(useUmap = false) {
+    const layout = useUmap ? this.umapBindGroupLayout : this.linearBindGroupLayout;
+    if (!layout) return;
+    const entries = [
+      { binding: 0, resource: { buffer: this.positionBuffer } },
+      { binding: 1, resource: { buffer: this.velocityBuffer } },
+      { binding: 2, resource: { buffer: this.scratchPositionBuffer } },
+      { binding: 3, resource: { buffer: this.scratchVelocityBuffer } },
+      { binding: 4, resource: { buffer: this.activeIdsBuffer } },
+      { binding: 5, resource: { buffer: this.activeMaskBuffer } },
+      { binding: 6, resource: { buffer: this.neighborStartsBuffer } },
+      { binding: 7, resource: { buffer: this.neighborCountsBuffer } },
+      { binding: 8, resource: { buffer: this.neighborsBuffer } },
+      ...(useUmap ? [{ binding: 9, resource: { buffer: this.scalarWeightsBuffer } }] : []),
+      { binding: useUmap ? 10 : 9, resource: { buffer: this.paramsBuffer } },
+    ];
+    const bindGroup = this.device.createBindGroup({ layout, entries });
+    if (useUmap) this.umapBindGroup = bindGroup;
+    else this.linearBindGroup = bindGroup;
   }
 
   _rebuildOutputScaleBindGroup() {
@@ -2458,11 +2802,16 @@ class WebGPUForceComputeBackend {
       neighborStarts,
       neighborCounts,
       neighbors,
+      nodeMass,
+      neighborWeights,
       packedPositions,
       packedOutputPositions,
     } = payload;
     const preserveDynamicState = options?.preserveDynamicState === true;
     const previousNodeCapacity = this.nodeCapacity;
+    const useUmap = payload.umapModel === true;
+    this.umapEnabled = useUmap;
+    this._ensurePipeline(useUmap);
 
     this.nodeCapacity = Math.max(0, nodeCapacity | 0);
     this.activeCount = Math.max(0, activeCount | 0);
@@ -2481,6 +2830,18 @@ class WebGPUForceComputeBackend {
     this._ensureBuffer('neighborStartsBuffer', nodeU32Bytes, this.storageUsage, 'layout:gpu-force:neighbor-starts');
     this._ensureBuffer('neighborCountsBuffer', nodeU32Bytes, this.storageUsage, 'layout:gpu-force:neighbor-counts');
     this._ensureBuffer('neighborsBuffer', Math.max(1, neighbors.length) * 4, this.storageUsage, 'layout:gpu-force:neighbors');
+    const scalarWeightCount = useUmap ? (this.nodeCapacity + Math.max(0, payload.neighborLength | 0)) : 0;
+    if (useUmap) {
+      this.scalarWeightsUpload = ensureFloat32Capacity(this.scalarWeightsUpload, scalarWeightCount);
+      this._ensureBuffer(
+        'scalarWeightsBuffer',
+        Math.max(1, scalarWeightCount) * 4,
+        this.storageUsage,
+        'layout:gpu-force:scalar-weights',
+      );
+    } else {
+      this._releaseUmapBuffer();
+    }
     this._ensureBuffer('paramsBuffer', 256, this.uniformUsage, 'layout:gpu-force:params');
     this._ensureBuffer('outputScaleParamsBuffer', 64, this.uniformUsage, 'layout:gpu-force:output-scale-params');
     this._ensureBuffer('recenterParamsBuffer', 64, this.uniformUsage, 'layout:gpu-force:recenter-params');
@@ -2525,15 +2886,32 @@ class WebGPUForceComputeBackend {
     if (payload.neighborLength > 0) {
       queue.writeBuffer(this.neighborsBuffer, 0, neighbors.buffer, neighbors.byteOffset, payload.neighborLength * 4);
     }
+    if (useUmap && scalarWeightCount > 0) {
+      const scalarWeights = this.scalarWeightsUpload;
+      scalarWeights.fill(0, 0, scalarWeightCount);
+      if (this.nodeCapacity > 0) {
+        scalarWeights.set(nodeMass.subarray(0, this.nodeCapacity), 0);
+      }
+      if (payload.neighborLength > 0) {
+        scalarWeights.set(neighborWeights.subarray(0, payload.neighborLength), this.nodeCapacity);
+      }
+      queue.writeBuffer(
+        this.scalarWeightsBuffer,
+        0,
+        scalarWeights.buffer,
+        scalarWeights.byteOffset,
+        scalarWeightCount * 4,
+      );
+    }
 
-    this._rebuildBindGroup();
+    this._rebuildBindGroup(useUmap);
     this._rebuildOutputScaleBindGroup();
     this._rebuildRecenterBindGroup();
     return true;
   }
 
   step(stepOptions = {}) {
-    if (!this.device || !this.pipeline || !this.bindGroup) return false;
+    if (!this.device) return false;
     if (this.nodeCapacity <= 0 || this.activeCount <= 0) return false;
     if (!this.outputPositionBuffer) return false;
 
@@ -2550,13 +2928,18 @@ class WebGPUForceComputeBackend {
     // optional progressive churn to refresh only part of the sample set.
     this.seed = this.seed >>> 0;
     const sampleFrame = this.sampleFrame >>> 0;
+    const forceModel = isUmapForceModel(stepOptions.forceModel) ? 1 : 0;
+    const useUmap = forceModel === 1;
+    const pipeline = useUmap ? this.umapPipeline : this.linearPipeline;
+    const bindGroup = useUmap ? this.umapBindGroup : this.linearBindGroup;
+    if (!pipeline || !bindGroup) return false;
 
     const dispatchShape = resolveComputeDispatchShape(
       this.nodeCapacity,
       WORKGROUP_SIZE,
       this.maxComputeWorkgroupsPerDimension,
     );
-    const paramsBuffer = new ArrayBuffer(24 * 4);
+    const paramsBuffer = new ArrayBuffer(28 * 4);
     const paramsU32 = new Uint32Array(paramsBuffer);
     const paramsF32 = new Float32Array(paramsBuffer);
 
@@ -2573,6 +2956,7 @@ class WebGPUForceComputeBackend {
     paramsU32[8] = dispatchShape.rowStride >>> 0;
     paramsU32[9] = dispatchShape.layerStride >>> 0;
     paramsU32[10] = sampleFrame >>> 0;
+    paramsU32[11] = forceModel >>> 0;
 
     paramsF32[12] = toFinite(stepOptions.kRepulsion, DEFAULT_OPTIONS.kRepulsion);
     paramsF32[13] = toFinite(stepOptions.kAttraction, DEFAULT_OPTIONS.kAttraction);
@@ -2582,7 +2966,9 @@ class WebGPUForceComputeBackend {
     paramsF32[16] = clamp(stepOptions.damping, 0, 1, DEFAULT_OPTIONS.damping);
     paramsF32[17] = Math.max(0.001, toFinite(stepOptions.maxStep, DEFAULT_OPTIONS.maxStep));
     paramsF32[18] = Math.max(0.0001, toFinite(stepOptions.minDistance, DEFAULT_OPTIONS.minDistance));
-    paramsF32[19] = Math.max(0.0001, toFinite(stepOptions.linkDistance, DEFAULT_OPTIONS.linkDistance));
+    paramsF32[19] = useUmap
+      ? Math.max(1, toFinite(stepOptions.umapEpochs, DEFAULT_UMAP_EPOCHS_SMALL))
+      : Math.max(0.0001, toFinite(stepOptions.linkDistance, DEFAULT_OPTIONS.linkDistance));
 
     const center = normalizeCenter(stepOptions.center);
     paramsF32[20] = center[0];
@@ -2590,14 +2976,22 @@ class WebGPUForceComputeBackend {
     paramsF32[22] = center[2];
     paramsF32[23] = Math.max(0.001, toFinite(stepOptions.dt, 1 / 60));
 
+    paramsF32[24] = Math.max(0.000001, toFinite(stepOptions.umapA, DEFAULT_OPTIONS.umapA));
+    paramsF32[25] = Math.max(0.000001, toFinite(stepOptions.umapB, DEFAULT_OPTIONS.umapB));
+    paramsF32[26] = Math.max(0, toFinite(stepOptions.umapGamma, DEFAULT_OPTIONS.umapGamma));
+    paramsF32[27] = Math.max(
+      0,
+      toFinite(stepOptions.umapNegativeSampleRate, DEFAULT_OPTIONS.umapNegativeSampleRate),
+    );
+
     const outputScale = Math.max(0.0001, toFinite(stepOptions.outputScale, DEFAULT_OPTIONS.outputScale));
 
     this.device.queue.writeBuffer(this.paramsBuffer, 0, paramsBuffer);
 
     const encoder = this.device.createCommandEncoder({ label: 'layout:gpu-force:step' });
     const pass = encoder.beginComputePass({ label: 'layout:gpu-force:compute' });
-    pass.setPipeline(this.pipeline);
-    pass.setBindGroup(0, this.bindGroup);
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bindGroup);
     pass.dispatchWorkgroups(dispatchShape.x, dispatchShape.y, dispatchShape.z);
     pass.end();
 
@@ -2699,6 +3093,7 @@ class WebGPUForceComputeBackend {
     this.neighborStartsBuffer?.destroy?.();
     this.neighborCountsBuffer?.destroy?.();
     this.neighborsBuffer?.destroy?.();
+    this._releaseUmapBuffer();
     this.paramsBuffer?.destroy?.();
     this.outputScaleParamsBuffer?.destroy?.();
     this.recenterParamsBuffer?.destroy?.();
@@ -2713,34 +3108,47 @@ class WebGPUForceComputeBackend {
     this.neighborStartsBuffer = null;
     this.neighborCountsBuffer = null;
     this.neighborsBuffer = null;
+    this.scalarWeightsBuffer = null;
     this.paramsBuffer = null;
     this.outputScaleParamsBuffer = null;
     this.recenterParamsBuffer = null;
-    this.bindGroup = null;
+    this.linearBindGroup = null;
+    this.umapBindGroup = null;
     this.outputScaleBindGroup = null;
     this.recenterBindGroup = null;
-    this.pipeline = null;
+    this.linearPipeline = null;
+    this.umapPipeline = null;
     this.outputScalePipeline = null;
     this.recenterPipeline = null;
-    this.bindGroupLayout = null;
+    this.linearBindGroupLayout = null;
+    this.umapBindGroupLayout = null;
     this.outputScaleBindGroupLayout = null;
     this.recenterBindGroupLayout = null;
     this.nodeCapacity = 0;
     this.activeCount = 0;
     this.sampleFrame = 0;
     this.zeroVelocities = createEmptyFloatArray();
+    this.scalarWeightsUpload = createEmptyFloatArray();
   }
 }
 
 export class GpuForcePositionDelegate extends PositionDelegate {
   constructor(options = {}) {
     super();
-    this.options = {
+    const normalizedOptions = {
       ...DEFAULT_OPTIONS,
       ...options,
       center: normalizeCenter(options.center ?? DEFAULT_OPTIONS.center),
       mode: options.mode === '3d' ? '3d' : '2d',
     };
+    if (isUmapForceModel(normalizedOptions.forceModel)) {
+      if (options.kRepulsion == null) normalizedOptions.kRepulsion = 1;
+      if (options.kAttraction == null) normalizedOptions.kAttraction = 1;
+      if (options.kGravity == null) normalizedOptions.kGravity = 0;
+      if (options.eta == null) normalizedOptions.eta = 1;
+      if (options.sampleChurn == null) normalizedOptions.sampleChurn = DEFAULT_UMAP_SAMPLE_CHURN;
+    }
+    this.options = normalizedOptions;
     this.alpha = clamp(this.options.alpha, 0, 1, DEFAULT_OPTIONS.alpha);
     this.debug = options.debug ?? options.helios?.debug ?? null;
     this._backendType = null;
@@ -2756,6 +3164,8 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       neighborStarts: createEmptyUintArray(),
       neighborCounts: createEmptyUintArray(),
       neighbors: createEmptyUintArray(),
+      neighborWeights: createEmptyFloatArray(),
+      nodeMass: createEmptyFloatArray(),
       cursor: createEmptyUintArray(),
       packedPositions: createEmptyFloatArray(),
       packedOutputPositions: createEmptyFloatArray(),
@@ -2771,12 +3181,22 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     if (!next || typeof next !== 'object') return this;
     const prevMode = this.options.mode;
     const prevCenter = this.options.center;
+    const prevForceModel = this.options.forceModel;
+    const prevEdgeWeightAttribute = this.options.edgeWeightAttribute;
+    const prevNodeMassAttribute = this.options.nodeMassAttribute;
     this.options = {
       ...this.options,
       ...next,
       center: normalizeCenter(next.center ?? this.options.center),
       mode: (next.mode ?? this.options.mode) === '3d' ? '3d' : '2d',
     };
+    if (isUmapForceModel(this.options.forceModel) && !isUmapForceModel(prevForceModel)) {
+      if (next.kRepulsion == null) this.options.kRepulsion = 1;
+      if (next.kAttraction == null) this.options.kAttraction = 1;
+      if (next.kGravity == null) this.options.kGravity = 0;
+      if (next.eta == null) this.options.eta = 1;
+      if (next.sampleChurn == null) this.options.sampleChurn = DEFAULT_UMAP_SAMPLE_CHURN;
+    }
     if (next.alpha != null) {
       this.alpha = clamp(next.alpha, 0, 1, this.alpha);
     }
@@ -2785,7 +3205,10 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       || prevCenter[1] !== this.options.center[1]
       || prevCenter[2] !== this.options.center[2]
     );
-    if (prevMode !== this.options.mode || centerChanged) {
+    const modelChanged = prevForceModel !== this.options.forceModel;
+    const edgeWeightChanged = prevEdgeWeightAttribute !== this.options.edgeWeightAttribute;
+    const nodeMassChanged = prevNodeMassAttribute !== this.options.nodeMassAttribute;
+    if (prevMode !== this.options.mode || centerChanged || modelChanged || edgeWeightChanged || nodeMassChanged) {
       this.markTopologyDirty('options');
     }
     return this;
@@ -2807,6 +3230,8 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       neighborStarts: createEmptyUintArray(),
       neighborCounts: createEmptyUintArray(),
       neighbors: createEmptyUintArray(),
+      neighborWeights: createEmptyFloatArray(),
+      nodeMass: createEmptyFloatArray(),
       cursor: createEmptyUintArray(),
       packedPositions: createEmptyFloatArray(),
       packedOutputPositions: createEmptyFloatArray(),
@@ -2816,6 +3241,16 @@ export class GpuForcePositionDelegate extends PositionDelegate {
   resetDynamicStateFromNetwork(context = {}) {
     this.markTopologyDirty('position-seed');
     this.ensureSynchronized(context);
+    return this;
+  }
+
+  resetAnnealing() {
+    if (this._webgpu) {
+      this._webgpu.sampleFrame = 0;
+    }
+    if (this._webgl) {
+      this._webgl.sampleFrame = 0;
+    }
     return this;
   }
 
@@ -2851,6 +3286,36 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       this.markTopologyDirty('backend-change');
     }
     return resolved;
+  }
+
+  captureNetworkVersionSnapshot(network) {
+    const snapshot = super.captureNetworkVersionSnapshot(network);
+    if (!isUmapForceModel(this.options.forceModel)) {
+      return {
+        ...snapshot,
+        edgeWeightAttributeVersion: 0,
+        nodeMassAttributeVersion: 0,
+      };
+    }
+    const edgeWeightAttribute = normalizeAttributeName(this.options.edgeWeightAttribute);
+    const nodeMassAttribute = normalizeAttributeName(this.options.nodeMassAttribute);
+    return {
+      ...snapshot,
+      edgeWeightAttributeVersion: edgeWeightAttribute && typeof network?.getEdgeAttributeVersion === 'function'
+        ? toFinite(network.getEdgeAttributeVersion(edgeWeightAttribute), 0)
+        : 0,
+      nodeMassAttributeVersion: nodeMassAttribute && typeof network?.getNodeAttributeVersion === 'function'
+        ? toFinite(network.getNodeAttributeVersion(nodeMassAttribute), 0)
+        : 0,
+    };
+  }
+
+  _snapshotKey(snapshot) {
+    return [
+      super._snapshotKey(snapshot),
+      toFinite(snapshot?.edgeWeightAttributeVersion, 0),
+      toFinite(snapshot?.nodeMassAttributeVersion, 0),
+    ].join('|');
   }
 
   synchronizeTopology(context = {}) {
@@ -2914,6 +3379,19 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       // Access attribute buffers before taking WASM-backed topology views so
       // hidden metadata allocation cannot stale a previously captured edgesView.
       topologyInputs.positionView = network?.getNodeAttributeBuffer?.(NODE_POSITION_ATTRIBUTE)?.view ?? null;
+      if (isUmapForceModel(this.options.forceModel)) {
+        const edgeWeightAttribute = normalizeAttributeName(this.options.edgeWeightAttribute);
+        const nodeMassAttribute = normalizeAttributeName(this.options.nodeMassAttribute);
+        topologyInputs.edgeWeightView = edgeWeightAttribute
+          ? (network?.getEdgeAttributeBuffer?.(edgeWeightAttribute)?.view ?? null)
+          : null;
+        topologyInputs.nodeMassView = nodeMassAttribute
+          ? (network?.getNodeAttributeBuffer?.(nodeMassAttribute)?.view ?? null)
+          : null;
+      } else {
+        topologyInputs.edgeWeightView = null;
+        topologyInputs.nodeMassView = null;
+      }
       topologyInputs.edgesView = network?.edgesView instanceof Uint32Array ? network.edgesView : createEmptyUintArray();
       payload = buildTopologyPayload(topologyInputs, this.options, this._topologyScratch);
     };
@@ -2966,21 +3444,42 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     const dt = Math.min(0.08, Math.max(0.008, dtMs * 0.001));
     const dtScale = dt * 60;
 
+    const umapForceModel = isUmapForceModel(this.options.forceModel);
     const alphaTarget = clamp(this.options.alphaTarget, 0, 1, DEFAULT_OPTIONS.alphaTarget);
     const alphaDecay = clamp(this.options.alphaDecay, 0, 1, DEFAULT_OPTIONS.alphaDecay);
     const alphaMin = clamp(this.options.alphaMin, 0, 1, DEFAULT_OPTIONS.alphaMin);
-    this.alpha += (alphaTarget - this.alpha) * alphaDecay;
-    if (this.alpha < alphaMin) this.alpha = alphaMin;
+    const backend = this._webgpu ?? this._webgl;
+    const completedEpochs = backend?.sampleFrame ?? 0;
+    const umapEpochs = umapForceModel
+      ? resolveUmapEpochCount(this.options.umapEpochs, this._activeCount)
+      : 0;
+    const umapAnnealSteps = umapForceModel
+      ? resolveUmapAnnealStepCount(this.options.umapEpochs, this._activeCount)
+      : 0;
+    if (umapForceModel) {
+      const progress = Math.min(1, Math.max(0, completedEpochs / Math.max(1, umapAnnealSteps)));
+      this.alpha = Math.max(alphaMin, 1 - progress);
+    } else {
+      this.alpha += (alphaTarget - this.alpha) * alphaDecay;
+      if (this.alpha < alphaMin) this.alpha = alphaMin;
+    }
 
+    const maxNeighborsPerNode = Math.max(1, Math.floor(toFinite(this.options.maxNeighborsPerNode, DEFAULT_OPTIONS.maxNeighborsPerNode)));
     const explicitSampleCountValue = this.options.sampleCount;
     const explicitSampleCount = explicitSampleCountValue == null || explicitSampleCountValue === ''
       ? NaN
       : Number(explicitSampleCountValue);
-    const sampleCount = Number.isFinite(explicitSampleCount)
-      ? Math.max(1, Math.floor(explicitSampleCount))
-      : (this.options.mode === '3d'
-        ? Math.max(1, Math.floor(toFinite(this.options.sampleCount3D, DEFAULT_OPTIONS.sampleCount3D)))
-        : Math.max(1, Math.floor(toFinite(this.options.sampleCount2D, DEFAULT_OPTIONS.sampleCount2D))));
+    const sampleCount = umapForceModel
+      ? resolveUmapSampleCount(
+        toFinite(this.options.umapNegativeSampleRate, DEFAULT_OPTIONS.umapNegativeSampleRate),
+        toFinite(this.options.umapNeighborCount, DEFAULT_OPTIONS.umapNeighborCount),
+        maxNeighborsPerNode,
+      )
+      : (Number.isFinite(explicitSampleCount)
+        ? Math.max(1, Math.floor(explicitSampleCount))
+        : (this.options.mode === '3d'
+          ? Math.max(1, Math.floor(toFinite(this.options.sampleCount3D, DEFAULT_OPTIONS.sampleCount3D)))
+          : Math.max(1, Math.floor(toFinite(this.options.sampleCount2D, DEFAULT_OPTIONS.sampleCount2D)))));
     const exactRepulsionThreshold = Math.max(
       1,
       Math.floor(
@@ -2995,27 +3494,41 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       ),
     );
     const exactDecisionCount = Math.max(sampleCount, exactRepulsionThreshold);
-    const exactRepulsionScale = this._activeCount > 1 && this._activeCount <= exactDecisionCount
+    const exactRepulsionScale = !umapForceModel && this._activeCount > 1 && this._activeCount <= exactDecisionCount
       ? Math.sqrt(this._activeCount / Math.max(1, exactDecisionCount))
       : 1;
+    const minDistance = umapForceModel
+      ? 0.001
+      : Math.max(0.0001, toFinite(this.options.minDistance, DEFAULT_OPTIONS.minDistance));
 
     const stepPayload = {
       mode: this.options.mode,
+      forceModel: umapForceModel ? 'umap' : 'linear',
       center: this.options.center,
       recenter: this.options.recenter === true,
       sampleCount,
       sampleChurn: clamp(this.options.sampleChurn, 0, 1, DEFAULT_OPTIONS.sampleChurn),
       exactRepulsionThreshold,
-      maxNeighborsPerNode: Math.max(1, Math.floor(toFinite(this.options.maxNeighborsPerNode, DEFAULT_OPTIONS.maxNeighborsPerNode))),
+      maxNeighborsPerNode,
       outputScale: Math.max(0.0001, toFinite(this.options.outputScale, DEFAULT_OPTIONS.outputScale)),
       linkDistance: Math.max(0.0001, toFinite(this.options.linkDistance, DEFAULT_OPTIONS.linkDistance)),
       kRepulsion: toFinite(this.options.kRepulsion, DEFAULT_OPTIONS.kRepulsion) * this.alpha * exactRepulsionScale,
       kAttraction: toFinite(this.options.kAttraction, DEFAULT_OPTIONS.kAttraction) * this.alpha,
       kGravity: toFinite(this.options.kGravity, DEFAULT_OPTIONS.kGravity) * this.alpha,
-      eta: toFinite(this.options.eta, DEFAULT_OPTIONS.eta) * dtScale,
+      umapA: Math.max(0.000001, toFinite(this.options.umapA, DEFAULT_OPTIONS.umapA)),
+      umapB: Math.max(0.000001, toFinite(this.options.umapB, DEFAULT_OPTIONS.umapB)),
+      umapGamma: Math.max(0, toFinite(this.options.umapGamma, DEFAULT_OPTIONS.umapGamma)),
+      umapEpochs,
+      umapNegativeSampleRate: Math.max(
+        0,
+        toFinite(this.options.umapNegativeSampleRate, DEFAULT_OPTIONS.umapNegativeSampleRate),
+      ),
+      eta: umapForceModel ? 1 : (toFinite(this.options.eta, DEFAULT_OPTIONS.eta) * dtScale),
       damping: clamp(this.options.damping, 0, 1, DEFAULT_OPTIONS.damping),
-      maxStep: Math.max(0.001, toFinite(this.options.maxStep, DEFAULT_OPTIONS.maxStep) * dtScale),
-      minDistance: Math.max(0.0001, toFinite(this.options.minDistance, DEFAULT_OPTIONS.minDistance)),
+      maxStep: umapForceModel
+        ? Math.max(4, toFinite(this.options.maxStep, DEFAULT_OPTIONS.maxStep))
+        : Math.max(0.001, toFinite(this.options.maxStep, DEFAULT_OPTIONS.maxStep) * dtScale),
+      minDistance,
       alpha: this.alpha,
       dt,
     };
@@ -3095,6 +3608,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     this._emitSampleDebug('GPU force sampling', {
       backend: this._webgpu ? 'webgpu' : 'webgl',
       mode: stepPayload.mode,
+      forceModel: stepPayload.forceModel,
       activeCount: this._activeCount,
       sampleCount,
       sampleChurn: stepPayload.sampleChurn,

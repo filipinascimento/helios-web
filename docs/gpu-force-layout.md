@@ -108,6 +108,47 @@ In 2D mode:
 - `z` velocity is forced to `0`
 - position `z` is clamped to `center.z`
 
+### 4.0 UMAP-gated mode selection
+
+The default `gpu-force` behavior is unchanged. Helios only switches into the
+UMAP-specific force law when all of the following are true:
+
+- the graph-level network attribute `umap` is truthy (`1`, `true`, `yes`, `on`)
+- the graph exposes the required edge-weight attribute
+- the layout was not explicitly forced back to the legacy linear model
+
+Expected network metadata:
+
+- `umap=true`
+- `umap_edge_weight_attr="umap_weight"` unless overridden
+- `umap_node_mass_attr="umap_mass"` when explicit node masses are available
+- `umap_a`, `umap_b`, `umap_gamma`, `umap_negative_sample_rate`
+
+Expected per-element attributes:
+
+- edge attribute `umap_weight`
+- optional node attribute `umap_mass`
+
+When UMAP mode is active:
+
+- `kAttraction` becomes attraction importance
+- `kRepulsion` becomes repulsion importance
+- `kGravity` is still available, but the UMAP default is `0`
+- `umapNegativeSampleRate` becomes the repulsion sampling control
+- `sampleChurn` remains available as negative-sample churn for the interactive solver
+- `linkDistance` and exposed `minDistance` tuning are hidden because the force
+  law is driven by the exported UMAP parameters instead
+
+For the real exported demo fixtures in `docs/examples/basic`, use:
+
+- `/?nodes=200&mode=2d&renderer=webgpu&layout=gpuforce&dataset=umap-export`
+- `/?nodes=2000&mode=2d&renderer=webgpu&layout=gpuforce&dataset=umap-export`
+- `/?nodes=20000&mode=2d&renderer=webgpu&layout=gpuforce&dataset=umap-export`
+
+These assets are graph-only UMAP exports. They intentionally omit
+`umap_embedding` and `_helios_visuals_position`, so the interactive GPU layout
+starts from Helios seeding rather than from a finished offline embedding.
+
 ### 4.1 Repulsion (sampled all-pairs approximation)
 
 For each sampled other node `j`:
@@ -150,6 +191,25 @@ with `degreeNorm = max(1, localNeighborLimit)`.
 `F_gravity = kGravity * (center - x_i)`
 
 In 2D, the `z` component is suppressed.
+
+### 4.4 UMAP repulsion and attraction
+
+When `forceModel === 'umap'`, the delegate keeps the same GPU execution path
+but swaps in UMAP-style edge attraction and negative-sampling repulsion using
+the exported graph attributes:
+
+- repulsion uses `umap_mass`, `umap_gamma`, and `umap_negative_sample_rate`
+- attraction uses edge-local `umap_weight`
+- `umap_a` and `umap_b` control the distance curve
+- `kRepulsion` and `kAttraction` are extra importance multipliers, not aliases for `umap_a` / `umap_b`
+- interactive negative sampling uses `umapNegativeSampleRate` as the sampled-repulsion count
+- `sampleChurn` is still valid here, but it is an interactive Helios control rather than a canonical `umap-learn` parameter
+
+This applies consistently across:
+
+- WebGPU compute
+- WebGL2 shader compute
+- the CPU fallback used when WebGL2 float render targets are unavailable
 
 ## 5. Integrator Controls Applied in JS Before GPU Step
 
@@ -204,23 +264,30 @@ From `GpuForceLayout` / `GpuForcePositionDelegate`:
 - `sampleCount3D`: `96`
 - `sampleChurn`: `0`
 - `maxNeighborsPerNode`: `64`
-- `outputScale`: `6`
+- `outputScale`: `6.5`
 - `linkDistance`: `1`
 - `kRepulsion`: `0.07`
 - `kAttraction`: `0.62`
-- `kGravity`: `0.00035`
-- `eta`: `0.04`
+- `kGravity`: `0.005`
+- `eta`: `0.4`
 - `damping`: `0.92`
 - `maxStep`: `2.5`
 - `minDistance`: `0.15`
 - `alpha`: `1`
-- `alphaDecay`: `0.001`
+- `alphaDecay`: `0.005`
 - `alphaTarget`: `0`
 - `alphaMin`: `0.001`
+- `umapA`: `1.5769434601962196`
+- `umapB`: `0.8950608779914887`
+- `umapGamma`: `1`
+- `umapNegativeSampleRate`: `5`
 
 Notes:
 
 - `sampleCount` (if finite) overrides mode-specific sample counts.
+- In UMAP mode, `sampleCount2D/3D` is ignored and repulsion sampling is derived from `umapNegativeSampleRate` instead.
+- In UMAP mode, `sampleChurn` means negative-sample churn for the interactive approximation.
+- In UMAP mode, `kGravity` defaults to `0` unless explicitly overridden.
 - `recenter` is currently plumbed in uniforms but not used by the WGSL step logic.
 
 ## 8. GPU vs CPU Responsibility Matrix
@@ -278,6 +345,13 @@ If convergence is too noisy:
 - increase `sampleCount2D/3D`
 - reduce `eta`
 - slightly increase `damping`
+
+If UMAP mode is too noisy:
+
+- increase `umapNegativeSampleRate`
+- reduce `eta`
+- slightly increase `damping`
+- lower `sampleChurn` if the negative samples are refreshing too aggressively
 
 If movement stalls:
 
