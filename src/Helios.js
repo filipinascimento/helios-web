@@ -460,6 +460,13 @@ function resolveGpuForceLayoutOptionsFromNetwork(network, requestedOptions = {})
   };
 }
 
+function computeUmapModeSwitchDepthJitter(layout) {
+  const depth = Math.max(0, Number(layout?.options?.depth ?? 0) || 0);
+  const radius = Math.max(0, Number(layout?.options?.radius ?? 0) || 0);
+  const jitterBase = depth > 1e-6 ? depth : Math.max(1, radius * 0.25);
+  return Math.max(1e-4, jitterBase * 0.005);
+}
+
 function resolveSeedBoundsForLayout(layoutOption, size, mode) {
   const safeMode = mode === '3d' ? '3d' : '2d';
   const width = Math.max(1, size?.width ?? 1)*0.01;
@@ -4024,6 +4031,16 @@ export class Helios extends EventTarget {
     );
 
     const layoutChanged = this._applyModeToActiveLayout(nextMode);
+    if (
+      previousMode === '2d'
+      && nextMode === '3d'
+      && this._layout instanceof GpuForceLayout
+      && normalizeForceModel(this._layout?.options?.forceModel) === 'umap'
+    ) {
+      const jitterAmplitude = computeUmapModeSwitchDepthJitter(this._layout);
+      const delegate = this._layout?.getPositionDelegate?.() ?? this._layout?.positionDelegate ?? null;
+      await delegate?.injectPlanarDepthJitter?.(this._buildPositionDelegateContext({ scope: 'layout' }), jitterAmplitude);
+    }
     if (layoutChanged && options.reheat !== false) {
       this._requestLayoutReheat('mode');
     }

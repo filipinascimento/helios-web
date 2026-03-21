@@ -50,6 +50,7 @@ const DEFAULT_OPTIONS = {
 
 const DEFAULT_UMAP_EPOCHS_SMALL = 500;
 const DEFAULT_UMAP_EPOCHS_LARGE = 200;
+const DEFAULT_UMAP_ANNEAL_STEPS_MIN = 2000;
 const DEFAULT_UMAP_SAMPLE_CHURN = 0.01;
 
 function buildComputeWgsl({ umap = false } = {}) {
@@ -721,7 +722,9 @@ function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
     nodeMassView = null,
   } = topologyInputs ?? {};
   const umapModel = isUmapForceModel(options.forceModel);
-  const useExplicitInitialPositions = !umapModel || options.umapHasInitialPositions === true;
+  const useExplicitInitialPositions = !umapModel
+    || options.umapHasInitialPositions === true
+    || options.forceInitialPositions === true;
   const edgeWeightAttribute = normalizeAttributeName(options.edgeWeightAttribute);
   const nodeMassAttribute = normalizeAttributeName(options.nodeMassAttribute);
 
@@ -942,7 +945,7 @@ function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
     }
   }
 
-  if (umapModel && options.umapHasInitialPositions !== true) {
+  if (umapModel && options.umapHasInitialPositions !== true && options.forceInitialPositions !== true) {
     const warmScratch = scratch.umapWarmStart ?? {};
     scratch.umapWarmStart = warmScratch;
     if (warmStartUmapPositionsFromTopology({
@@ -1049,7 +1052,7 @@ export function resolveUmapEpochCount(value, nodeCount = 0) {
 }
 
 export function resolveUmapAnnealStepCount(value, nodeCount = 0) {
-  return Math.max(DEFAULT_UMAP_EPOCHS_SMALL, resolveUmapEpochCount(value, nodeCount));
+  return Math.max(DEFAULT_UMAP_ANNEAL_STEPS_MIN, resolveUmapEpochCount(value, nodeCount) * 4);
 }
 
 function resolveSampleEpoch(iter, sampleCount, churnCount, sampleFrame) {
@@ -2482,6 +2485,48 @@ class WebGLTextureComputePath {
     return output;
   }
 
+  writePositionSnapshot(snapshot, options = {}) {
+    if (!(snapshot instanceof Float32Array) || this.nodeCapacity <= 0) return false;
+    const center = normalizeCenter(options.center);
+    const outputScale = Math.max(0.0001, toFinite(options.outputScale, DEFAULT_OPTIONS.outputScale));
+    const normalizeInputByOutputScale = Math.abs(outputScale - 1.0) > 1e-6;
+    const vec3Count = Math.max(1, this.nodeCapacity) * 3;
+    const positions = ensureFloat32Capacity(this._positionWriteScratch, vec3Count);
+    const outputPositions = ensureFloat32Capacity(this._outputPositionWriteScratch, vec3Count);
+    positions.fill(0, 0, vec3Count);
+    outputPositions.fill(0, 0, vec3Count);
+    const limit = Math.max(0, Math.min(this.nodeCapacity, Math.floor(snapshot.length / 3)));
+    for (let i = 0; i < limit; i += 1) {
+      const src = i * 3;
+      const x = Number(snapshot[src] ?? center[0]);
+      const y = Number(snapshot[src + 1] ?? center[1]);
+      const z = Number(snapshot[src + 2] ?? center[2]);
+      const safeX = Number.isFinite(x) ? x : center[0];
+      const safeY = Number.isFinite(y) ? y : center[1];
+      const safeZ = Number.isFinite(z) ? z : center[2];
+      outputPositions[src] = safeX;
+      outputPositions[src + 1] = safeY;
+      outputPositions[src + 2] = safeZ;
+      if (normalizeInputByOutputScale) {
+        positions[src] = center[0] + ((safeX - center[0]) / outputScale);
+        positions[src + 1] = center[1] + ((safeY - center[1]) / outputScale);
+        positions[src + 2] = center[2] + ((safeZ - center[2]) / outputScale);
+      } else {
+        positions[src] = safeX;
+        positions[src + 1] = safeY;
+        positions[src + 2] = safeZ;
+      }
+    }
+
+    const positionPacked = this._packVec3Source(positions, this.nodeCapacity, '_positionUploadScratch');
+    const outputPacked = this._packVec3Source(outputPositions, this.nodeCapacity, '_outputUploadScratch');
+    this._uploadPackedFloatTexture(this.positionTextures[0], positionPacked, this.nodeLayout.width, this.nodeLayout.height);
+    this._uploadPackedFloatTexture(this.positionTextures[1], positionPacked, this.nodeLayout.width, this.nodeLayout.height);
+    this._uploadPackedFloatTexture(this.outputPositionTexture, outputPacked, this.nodeLayout.width, this.nodeLayout.height);
+    this.textureVersion += 1;
+    return true;
+  }
+
   dispose() {
     const gl = this.gl;
     if (!gl) return;
@@ -2595,6 +2640,14 @@ class WebGLForceComputeBackend {
 
   readPositionSnapshot() {
     return this._gpu?.readPositionSnapshot?.() ?? null;
+  }
+
+  writePositionSnapshot(snapshot, options = {}) {
+    if (!this._gpu) {
+      this._warnUnavailable();
+      return false;
+    }
+    return this._gpu.writePositionSnapshot?.(snapshot, options) ?? false;
   }
 
   getExecutionMode() {
@@ -3082,6 +3135,46 @@ class WebGPUForceComputeBackend {
     }
   }
 
+  writePositionSnapshot(snapshot, options = {}) {
+    if (!(snapshot instanceof Float32Array) || !this.device || this.nodeCapacity <= 0) return false;
+    const center = normalizeCenter(options.center);
+    const outputScale = Math.max(0.0001, toFinite(options.outputScale, DEFAULT_OPTIONS.outputScale));
+    const normalizeInputByOutputScale = Math.abs(outputScale - 1.0) > 1e-6;
+    const vec3Count = Math.max(1, this.nodeCapacity) * 3;
+    const positions = ensureFloat32Capacity(this._positionWriteScratch, vec3Count);
+    const outputPositions = ensureFloat32Capacity(this._outputPositionWriteScratch, vec3Count);
+    positions.fill(0, 0, vec3Count);
+    outputPositions.fill(0, 0, vec3Count);
+    const limit = Math.max(0, Math.min(this.nodeCapacity, Math.floor(snapshot.length / 3)));
+    for (let i = 0; i < limit; i += 1) {
+      const src = i * 3;
+      const x = Number(snapshot[src] ?? center[0]);
+      const y = Number(snapshot[src + 1] ?? center[1]);
+      const z = Number(snapshot[src + 2] ?? center[2]);
+      const safeX = Number.isFinite(x) ? x : center[0];
+      const safeY = Number.isFinite(y) ? y : center[1];
+      const safeZ = Number.isFinite(z) ? z : center[2];
+      outputPositions[src] = safeX;
+      outputPositions[src + 1] = safeY;
+      outputPositions[src + 2] = safeZ;
+      if (normalizeInputByOutputScale) {
+        positions[src] = center[0] + ((safeX - center[0]) / outputScale);
+        positions[src + 1] = center[1] + ((safeY - center[1]) / outputScale);
+        positions[src + 2] = center[2] + ((safeZ - center[2]) / outputScale);
+      } else {
+        positions[src] = safeX;
+        positions[src + 1] = safeY;
+        positions[src + 2] = safeZ;
+      }
+    }
+
+    const byteLength = Math.max(4, this.nodeCapacity * 12);
+    this.device.queue.writeBuffer(this.positionBuffer, 0, positions.buffer, positions.byteOffset, byteLength);
+    this.device.queue.writeBuffer(this.outputPositionBuffer, 0, outputPositions.buffer, outputPositions.byteOffset, byteLength);
+    this.device.queue.writeBuffer(this.scratchPositionBuffer, 0, positions.buffer, positions.byteOffset, byteLength);
+    return true;
+  }
+
   dispose() {
     this.positionBuffer?.destroy?.();
     this.outputPositionBuffer?.destroy?.();
@@ -3240,7 +3333,10 @@ export class GpuForcePositionDelegate extends PositionDelegate {
 
   resetDynamicStateFromNetwork(context = {}) {
     this.markTopologyDirty('position-seed');
-    this.ensureSynchronized(context);
+    this.ensureSynchronized({
+      ...context,
+      forceInitialPositions: context.forceInitialPositions !== false,
+    });
     return this;
   }
 
@@ -3393,7 +3489,12 @@ export class GpuForcePositionDelegate extends PositionDelegate {
         topologyInputs.nodeMassView = null;
       }
       topologyInputs.edgesView = network?.edgesView instanceof Uint32Array ? network.edgesView : createEmptyUintArray();
-      payload = buildTopologyPayload(topologyInputs, this.options, this._topologyScratch);
+      payload = buildTopologyPayload({
+        ...topologyInputs,
+      }, {
+        ...this.options,
+        forceInitialPositions: context.forceInitialPositions === true,
+      }, this._topologyScratch);
     };
     if (typeof network.withBufferAccess === 'function') {
       network.withBufferAccess(materializePayload);
@@ -3407,7 +3508,6 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     const shouldPreferPreserve = synchronizeReason !== 'attach'
       && synchronizeReason !== 'backend-change'
       && synchronizeReason !== 'network:replaced'
-      && synchronizeReason !== 'options'
       && synchronizeReason !== 'position-seed'
       && synchronizeReason !== 'init';
     const preserveDynamicState = Boolean(shouldPreferPreserve
@@ -3709,6 +3809,64 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       apply();
     }
     return wrote;
+  }
+
+  async injectPlanarDepthJitter(context = {}, amplitude = 0) {
+    const safeAmplitude = Number(amplitude);
+    if (!(safeAmplitude > 0)) return false;
+    this._markDirtyForBackend(context);
+    this.ensureSynchronized(context);
+    const backend = this._webgpu ?? this._webgl;
+    if (!backend || typeof backend.writePositionSnapshot !== 'function') return false;
+    const snapshot = await this.snapshotNodePositions(context);
+    if (!(snapshot instanceof Float32Array) || snapshot.length <= 0) return false;
+
+    const network = context.network ?? this._context?.network ?? null;
+    let activeIds = null;
+    const readActiveIds = () => {
+      activeIds = network?.nodeIndices instanceof Uint32Array ? network.nodeIndices : null;
+    };
+    if (typeof network?.withBufferAccess === 'function') network.withBufferAccess(readActiveIds);
+    else readActiveIds();
+    const activeCount = activeIds?.length ?? 0;
+    if (activeCount <= 0) return false;
+
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (let i = 0; i < activeCount; i += 1) {
+      const nodeId = activeIds[i] >>> 0;
+      const z = Number(snapshot[(nodeId * 3) + 2]);
+      const safeZ = Number.isFinite(z) ? z : this.options.center[2];
+      if (safeZ < minZ) minZ = safeZ;
+      if (safeZ > maxZ) maxZ = safeZ;
+    }
+    const zRange = Number.isFinite(minZ) && Number.isFinite(maxZ) ? (maxZ - minZ) : 0;
+    const tolerance = Math.max(1e-6, safeAmplitude * 0.05);
+    if (zRange > tolerance) return false;
+
+    let mean = 0;
+    for (let i = 0; i < activeCount; i += 1) {
+      const nodeId = activeIds[i] >>> 0;
+      mean += ((((hash32(nodeId + 1) + 0.5) / 4294967296) - 0.5) * safeAmplitude);
+    }
+    mean /= Math.max(1, activeCount);
+
+    for (let i = 0; i < activeCount; i += 1) {
+      const nodeId = activeIds[i] >>> 0;
+      const offset = (nodeId * 3) + 2;
+      const currentZ = Number(snapshot[offset]);
+      const baseZ = Number.isFinite(currentZ) ? currentZ : this.options.center[2];
+      const noise = ((((hash32(nodeId + 1) + 0.5) / 4294967296) - 0.5) * safeAmplitude) - mean;
+      snapshot[offset] = baseZ + noise;
+    }
+
+    const wroteBackend = backend.writePositionSnapshot(snapshot, {
+      center: this.options.center,
+      outputScale: this.options.outputScale,
+    });
+    if (!wroteBackend) return false;
+    this.bumpVersion();
+    return true;
   }
 }
 

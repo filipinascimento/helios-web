@@ -6,6 +6,7 @@ import { D3Force3DLayout } from '../src/layouts/d3force3dLayoutWorker.js';
 import { GpuForceLayout } from '../src/layouts/GpuForceLayout.js';
 import {
   GpuForcePositionDelegate,
+  resolveUmapAnnealStepCount,
   resolveUmapEpochCount,
   warmStartUmapPositionsFromTopology,
 } from '../src/delegates/GpuForcePositionDelegate.js';
@@ -675,6 +676,25 @@ test('GpuForceLayout exposes shared parameter bindings and can reheat alpha', ()
   assert.equal(layout.positionDelegate.alpha, 0.75);
 });
 
+test('GpuForceLayout seedFromNetworkPositions forwards explicit initial-position intent', () => {
+  const network = createStubNetwork();
+  const visuals = {};
+  const helios = createStubHelios();
+  const layout = new GpuForceLayout(network, visuals, {
+    helios,
+    mode: '2d',
+    forceModel: 'umap',
+  });
+  let captured = null;
+  layout.positionDelegate.resetDynamicStateFromNetwork = (context) => {
+    captured = context;
+    return layout.positionDelegate;
+  };
+
+  layout.seedFromNetworkPositions({ forceInitialPositions: true });
+  assert.equal(captured.forceInitialPositions, true);
+});
+
 test('GpuForceLayout auto-stops at min temp by default and can be disabled', () => {
   const network = createStubNetwork();
   const visuals = {};
@@ -1177,6 +1197,39 @@ test('GpuForcePositionDelegate preserves dynamic positions across version-change
   approx(after[4], before[4], 1e-5);
 });
 
+test('GpuForcePositionDelegate preserves dynamic XY positions when switching from 2D to 3D', async () => {
+  const network = createTopologyNetwork([
+    -60, -10, 0,
+    -20, 15, 0,
+    25, -5, 0,
+    55, 10, 0,
+  ]);
+  const { gl } = createFakeWebGL2ComputeContext();
+  const delegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    center: [0, 0, 0],
+    outputScale: 1,
+    sampleCount2D: 8,
+    recenter: false,
+  });
+
+  delegate.onAttach({ network, backend: 'webgl2', gl });
+  delegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
+  const before = await delegate.snapshotNodePositions({ network, backend: 'webgl2', gl });
+
+  delegate.updateOptions({ mode: '3d' });
+  delegate.ensureSynchronized({ network, backend: 'webgl2', gl });
+  const after = await delegate.snapshotNodePositions({ network, backend: 'webgl2', gl });
+
+  assert.ok(before instanceof Float32Array);
+  assert.ok(after instanceof Float32Array);
+  assert.equal(before.length, after.length);
+  for (let i = 0; i < before.length; i += 3) {
+    approx(after[i], before[i], 1e-5);
+    approx(after[i + 1], before[i + 1], 1e-5);
+  }
+});
+
 test('GpuForcePositionDelegate WebGL2 compute sync does not clear same-size textures when preserving dynamic state', () => {
   const positionView = new Float32Array([
     60, 0, 0,
@@ -1516,6 +1569,12 @@ test('resolveUmapEpochCount matches umap-learn defaults by graph size', () => {
   assert.equal(resolveUmapEpochCount(null, 2000), 500);
   assert.equal(resolveUmapEpochCount(undefined, 20000), 200);
   assert.equal(resolveUmapEpochCount(123, 2000), 123);
+});
+
+test('resolveUmapAnnealStepCount keeps UMAP cooling slower than raw epoch count', () => {
+  assert.equal(resolveUmapAnnealStepCount(null, 2000), 2000);
+  assert.equal(resolveUmapAnnealStepCount(undefined, 20000), 2000);
+  assert.equal(resolveUmapAnnealStepCount(750, 50000), 3000);
 });
 
 test('GpuForcePositionDelegate does not fall back to CPU when WebGL texture compute is unavailable', () => {

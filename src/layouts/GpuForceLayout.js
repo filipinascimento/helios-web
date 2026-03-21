@@ -170,8 +170,11 @@ export class GpuForceLayout extends Layout {
     return this;
   }
 
-  seedFromNetworkPositions() {
-    this.positionDelegate.resetDynamicStateFromNetwork(this._buildDelegateContext(0));
+  seedFromNetworkPositions(options = {}) {
+    this.positionDelegate.resetDynamicStateFromNetwork({
+      ...this._buildDelegateContext(0),
+      ...options,
+    });
     this.requestUpdate();
     this.emitUpdate({ timestamp: performance.now(), layoutElapsedMs: 0 });
     this.helios?.scheduler?.requestRender?.();

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Helios } from '../src/index.js';
+import { GpuForceLayout } from '../src/layouts/GpuForceLayout.js';
 
 test('graph-layer accessors are chainable setters and return values as getters', () => {
   const calls = { render: 0 };
@@ -359,6 +360,134 @@ test('setMode() collapses node depth when landing in 2D', async () => {
     0, 0, 0,
     1, 2, 0,
   ]);
+});
+
+test('setMode() injects tiny delegate depth jitter without reseeding when UMAP gpu-force switches from 2D to 3D', async () => {
+  const positions = new Float32Array([
+    -10, -5, 0,
+    0, 5, 0,
+    12, -4, 0,
+    20, 8, 0,
+  ]);
+  const calls = {
+    syncDelegate: 0,
+    seedMissingPositions: 0,
+    requestGeometry: 0,
+    requestLayout: [],
+    requestRender: 0,
+    requestLabels: [],
+    requestUpdate: 0,
+    layoutSetSettings: [],
+    layoutReheat: 0,
+    layoutSeedFromNetworkPositions: 0,
+    delegateJitter: [],
+    enforcePositionSourcePolicy: 0,
+    refreshUI: 0,
+    emitLayoutChanged: 0,
+    emitted: [],
+  };
+
+  const helios = Object.create(Helios.prototype);
+  helios.options = {
+    mode: '2d',
+    projection: 'orthographic',
+    layout: {
+      type: 'gpu-force',
+      options: {
+        mode: '2d',
+        forceModel: 'umap',
+        center: [0, 0, 0],
+        radius: 220,
+        depth: 140,
+      },
+    },
+  };
+  helios.layers = { size: { width: 800, height: 600 } };
+  helios.network = {
+    nodeIndices: new Uint32Array([0, 1, 2, 3]),
+    withBufferAccess: (fn) => fn(),
+    getNodeAttributeBuffer: (name) => (name === '_helios_visuals_position' ? { view: positions } : null),
+  };
+  const delegate = {
+    id: 'stub',
+    injectPlanarDepthJitter: async (context, amplitude) => {
+      calls.delegateJitter.push({
+        amplitude,
+        scope: context?.scope ?? null,
+        hasNetwork: context?.network === helios.network,
+      });
+      return true;
+    },
+  };
+  helios.positions = () => ({ source: 'delegate', delegate });
+  helios.syncDelegatePositionsToNetwork = async () => {
+    calls.syncDelegate += 1;
+    return true;
+  };
+  helios.visuals = {
+    seedMissingPositions: () => { calls.seedMissingPositions += 1; },
+  };
+  helios.renderer = {
+    camera: {
+      mode: '2d',
+      projection: 'orthographic',
+      zoom: 1,
+      distance: 800,
+      fov: 60,
+      near: 0.1,
+      far: 100000,
+      near2D: -1,
+      far2D: 1,
+      viewport: { width: 800, height: 600, devicePixelRatio: 1 },
+      target: new Float32Array([0, 0, 0]),
+      pan2D: new Float32Array([0, 0, 0]),
+      pan3D: new Float32Array([0, 0, 0]),
+      rotation: new Float32Array([0, 0, 0, 1]),
+      updateMatrices: () => {},
+    },
+  };
+  helios.scheduler = {
+    requestGeometry: () => { calls.requestGeometry += 1; },
+    requestLayout: (reason) => { calls.requestLayout.push(reason); },
+    requestRender: () => { calls.requestRender += 1; },
+  };
+  helios._labels = {
+    requestFullReselect: (reason) => { calls.requestLabels.push(reason); },
+  };
+  helios._refreshUIBindings = () => { calls.refreshUI += 1; };
+  helios._emitLayoutChanged = () => { calls.emitLayoutChanged += 1; };
+  helios._enforcePositionSourcePolicy = () => { calls.enforcePositionSourcePolicy += 1; };
+  helios.emit = (type, detail) => { calls.emitted.push({ type, detail }); };
+  helios._layout = Object.create(GpuForceLayout.prototype);
+  helios._layout.options = {
+    forceModel: 'umap',
+    center: [0, 0, 0],
+    radius: 220,
+    depth: 140,
+  };
+  helios._layout.positionDelegate = delegate;
+  helios._layout.setSettings = (next) => { calls.layoutSetSettings.push(next); };
+  helios._layout.reheat = () => { calls.layoutReheat += 1; };
+  helios._layout.requestUpdate = () => { calls.requestUpdate += 1; };
+  helios._layout.seedFromNetworkPositions = () => { calls.layoutSeedFromNetworkPositions += 1; };
+
+  await helios.setMode('3d', { animate: false });
+
+  const zValues = [positions[2], positions[5], positions[8], positions[11]];
+  const minZ = Math.min(...zValues);
+  const maxZ = Math.max(...zValues);
+  assert.equal(calls.syncDelegate, 1);
+  assert.equal(calls.seedMissingPositions, 1);
+  assert.deepEqual(calls.layoutSetSettings, [{ mode: '3d' }]);
+  assert.equal(calls.layoutSeedFromNetworkPositions, 0);
+  assert.equal(calls.delegateJitter.length, 1);
+  assert.equal(calls.delegateJitter[0].scope, 'layout');
+  assert.equal(calls.delegateJitter[0].hasNetwork, true);
+  assert.ok(calls.delegateJitter[0].amplitude > 0);
+  assert.ok(calls.layoutReheat >= 1);
+  assert.equal(calls.requestUpdate, 1);
+  assert.equal(maxZ - minZ, 0);
+  assert.equal(zValues.reduce((sum, value) => sum + value, 0), 0);
 });
 
 test('3D to 2D transition plan matches the orthographic landing scale before projection switch', () => {
