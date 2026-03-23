@@ -176,3 +176,4 @@ dist*/
 /output/
 /paper_downloads
 /.playwright
+/.get-paper-pdf

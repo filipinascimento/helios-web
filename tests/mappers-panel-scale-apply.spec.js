@@ -1,0 +1,70 @@
+import { test, expect } from '@playwright/test';
+
+function panelById(page, id) {
+  return page.locator(`.helios-ui-panel[data-panel-id="${id}"]`).first();
+}
+
+async function waitForHelios(page) {
+  await page.waitForFunction(() => Boolean(window.__helios && window.__helios.ready));
+}
+
+test.describe('mappers panel', () => {
+  test('repairs stale categorical ranges when switching node size back to scale', async ({ page }) => {
+    await page.goto('/tests/fixtures/demo.html?renderer=webgl&layout=none&nodes=120&mappers=1');
+    await waitForHelios(page);
+
+    await page.evaluate(() => {
+      const mapper = window.__helios?.nodeMapper?.defaultMapper;
+      if (!mapper) throw new Error('Node mapper unavailable');
+      mapper.setChannel('size', {
+        name: 'size',
+        type: 'categorical',
+        attributes: 'bogus_category',
+        domain: [0, 1, 2],
+        range: [4, 8, 12],
+      });
+    });
+
+    const panel = panelById(page, 'helios-ui-mappers');
+    await expect(panel).toBeVisible();
+
+    const channelSelect = panel.locator('select').first();
+    await channelSelect.selectOption({ label: 'Size' });
+
+    const typeSelect = panel.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'Type' }),
+    }).locator('select').first();
+    await typeSelect.selectOption({ label: 'Scale' });
+
+    const attributeSelect = panel.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'Attribute' }),
+    }).locator('select').first();
+    await attributeSelect.selectOption('$index');
+
+    const rangeInputs = panel.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'Range' }),
+    }).locator('input[type="number"]');
+    await expect(rangeInputs).toHaveCount(2);
+    await expect(rangeInputs.nth(0)).toHaveValue('1');
+    await expect(rangeInputs.nth(1)).toHaveValue('20');
+
+    const applyButton = panel.getByRole('button', { name: 'Apply' }).first();
+    await expect(applyButton).toBeEnabled();
+    await applyButton.click();
+
+    await expect.poll(async () => page.evaluate(() => {
+      const cfg = window.__helios?.nodeMapper?.defaultMapper?.getChannel?.('size');
+      return cfg
+        ? {
+            type: cfg.type ?? cfg.mode ?? null,
+            attributes: cfg.attributes ?? null,
+            range: Array.isArray(cfg.range) ? [...cfg.range] : null,
+          }
+        : null;
+    })).toEqual({
+      type: 'linear',
+      attributes: '$index',
+      range: [1, 20],
+    });
+  });
+});

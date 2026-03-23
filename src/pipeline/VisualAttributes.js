@@ -47,7 +47,14 @@ const EDGE_CHANNEL_DEFAULT_NODE_ATTRIBUTE = {
   endpointState: NODE_STATE_ATTRIBUTE,
 };
 
-const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+const LOW_DISCREPANCY_X = 0.7548776662466927;
+const LOW_DISCREPANCY_Y = 0.5698402909980532;
+const LOW_DISCREPANCY_Z = 0.4389596329181167;
+const DEFAULT_SEED_SPREAD = 0.7;
+
+function fract(value) {
+  return value - Math.floor(value);
+}
 
 function normalizeEndpoints(value) {
   if (value === 'source' || value === 'from') return 'source';
@@ -120,23 +127,25 @@ function computeSeedPosition(nodeId, nodeCount, bounds = {}) {
     return [cx, cy, cz];
   }
 
-  const t = (order + 0.5) / count;
-  const angle = order * GOLDEN_ANGLE;
+  const index = order + 0.5;
+  const countOffset = fract(count * 0.1031);
+  const xNorm = fract((index * LOW_DISCREPANCY_X) + countOffset);
+  const yNorm = fract((index * LOW_DISCREPANCY_Y) + (countOffset * 0.5) + 0.33);
+  const spreadX = width * DEFAULT_SEED_SPREAD;
+  const spreadY = height * DEFAULT_SEED_SPREAD;
 
   if (mode === '3d') {
-    const zNorm = 1 - (2 * t);
-    const radialNorm = Math.sqrt(Math.max(0, 1 - (zNorm * zNorm)));
+    const zNorm = fract((index * LOW_DISCREPANCY_Z) + (countOffset * 0.25) + 0.67);
     return [
-      cx + (Math.cos(angle) * radialNorm * width * 0.35),
-      cy + (Math.sin(angle) * radialNorm * height * 0.35),
-      cz + (zNorm * depth * 0.35),
+      cx + ((xNorm - 0.5) * spreadX),
+      cy + ((yNorm - 0.5) * spreadY),
+      cz + ((zNorm - 0.5) * depth * DEFAULT_SEED_SPREAD),
     ];
   }
 
-  const radialNorm = Math.sqrt(t);
   return [
-    cx + (Math.cos(angle) * radialNorm * width * 0.35),
-    cy + (Math.sin(angle) * radialNorm * height * 0.35),
+    cx + ((xNorm - 0.5) * spreadX),
+    cy + ((yNorm - 0.5) * spreadY),
     cz,
   ];
 }

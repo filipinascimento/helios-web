@@ -80,6 +80,21 @@ function buildColormapCatalog() {
   return { entries, byGroup, byKey };
 }
 
+export function resolveCategoricalPaletteCatalogGroup(key, isScheme) {
+  if (key === 'category18') return 'Helios category';
+  return isScheme ? 'helios schemes' : 'helios ramps';
+}
+
+export function shouldShowCategoricalPaletteEntry(entry, preferScheme) {
+  return !preferScheme || entry?.isScheme === true;
+}
+
+export function resolveCategoricalDefaultPalette(entries = []) {
+  return entries.find((entry) => entry?.key === 'category18')?.key
+    || entries.find((entry) => entry?.isScheme)?.key
+    || 'category18';
+}
+
 function buildCategoricalPaletteCatalog() {
   const entries = [];
   const pushEntry = ({ key, label, group, isScheme }) => {
@@ -108,7 +123,12 @@ function buildCategoricalPaletteCatalog() {
 
   for (const [key, desc] of Object.entries(colormaps?.helios ?? {})) {
     const isScheme = Boolean(desc?.isScheme);
-    pushEntry({ key, label: key, group: isScheme ? 'helios schemes' : 'helios ramps', isScheme });
+    pushEntry({
+      key,
+      label: key,
+      group: resolveCategoricalPaletteCatalogGroup(key, isScheme),
+      isScheme,
+    });
   }
 
   entries.sort((a, b) => a.label.localeCompare(b.label));
@@ -261,8 +281,7 @@ export class MappersPanel {
 
     const colormapCatalog = buildColormapCatalog();
     const categoricalPaletteCatalog = buildCategoricalPaletteCatalog();
-    const defaultCategoricalPalette =
-      categoricalPaletteCatalog.find((entry) => entry.isScheme)?.key || 'schemeTableau10';
+    const defaultCategoricalPalette = resolveCategoricalDefaultPalette(categoricalPaletteCatalog);
 
     let customPresetCounter = 1;
     const customPresetsByMode = {
@@ -857,6 +876,11 @@ export class MappersPanel {
       return [0, 1];
     };
 
+    const isFiniteNumberPair = (value) =>
+      Array.isArray(value) &&
+      value.length === 2 &&
+      value.every((entry) => Number.isFinite(Number(entry)));
+
     const suggestStepForRange = (min, max, isInteger = false) => {
       if (isInteger) return 1;
       const span = Math.abs(Number(max) - Number(min));
@@ -1338,25 +1362,27 @@ export class MappersPanel {
           }
           if (nextType === 'linear') {
             const attr = typeof base.attributes === 'string' ? base.attributes : null;
+            const prevDomain = isFiniteNumberPair(prev.domain) ? prev.domain : null;
+            const liveDomain = isFiniteNumberPair(live?.domain) ? live.domain : null;
+            const prevRange = isFiniteNumberPair(prev.range) ? prev.range : null;
+            const liveRange = isFiniteNumberPair(live?.range) ? live.range : null;
             base.transformType = prev.transformType ?? live?.transformType ?? 'linear';
             base.transformPower = prev.transformPower ?? live?.transformPower ?? 1;
-            const hasDomain = Array.isArray(prev.domain) || Array.isArray(live?.domain);
-            base.domain = Array.isArray(prev.domain)
-              ? prev.domain
-              : (Array.isArray(live?.domain) ? live.domain : suggestDomainForAttribute(mode, attr));
+            const hasDomain = Boolean(prevDomain || liveDomain);
+            base.domain = prevDomain ?? liveDomain ?? suggestDomainForAttribute(mode, attr);
             const suggested = suggestRangeForChannel(mode, state.channel);
-            base.range = Array.isArray(prev.range) ? prev.range : (Array.isArray(live?.range) ? live.range : suggested);
+            base.range = prevRange ?? liveRange ?? suggested;
             markDomainAuto(base, !hasDomain);
           }
           if (nextType === 'colormap') {
             base.colormap = prev.colormap ?? live?.colormap ?? 'interpolateInferno';
             const attr = typeof base.attributes === 'string' ? base.attributes : null;
+            const prevDomain = isFiniteNumberPair(prev.domain) ? prev.domain : null;
+            const liveDomain = isFiniteNumberPair(live?.domain) ? live.domain : null;
             base.transformType = prev.transformType ?? live?.transformType ?? 'linear';
             base.transformPower = prev.transformPower ?? live?.transformPower ?? 1;
-            const hasDomain = Array.isArray(prev.domain) || Array.isArray(live?.domain);
-            base.domain = Array.isArray(prev.domain)
-              ? prev.domain
-              : (Array.isArray(live?.domain) ? live.domain : suggestDomainForAttribute(mode, attr));
+            const hasDomain = Boolean(prevDomain || liveDomain);
+            base.domain = prevDomain ?? liveDomain ?? suggestDomainForAttribute(mode, attr);
             base.alpha = prev.alpha ?? live?.alpha ?? 1;
             base.clamp = prev.clamp ?? live?.clamp ?? true;
             markDomainAuto(base, !hasDomain);
@@ -1972,7 +1998,10 @@ export class MappersPanel {
           attrSelect.addEventListener('change', () => {
             const attr = attrSelect.value || undefined;
             const domain = attr ? suggestDomainForAttribute(mode, attr) : [0, 1];
-            const nextPending = { ...state.pending, type: 'linear', attributes: attr, domain };
+            const range = isFiniteNumberPair(state.pending.range)
+              ? state.pending.range
+              : suggestRangeForChannel(mode, state.channel);
+            const nextPending = { ...state.pending, type: 'linear', attributes: attr, domain, range };
             markDomainAuto(nextPending, true);
             state.pending = nextPending;
             setDirty(true);
@@ -2067,16 +2096,16 @@ export class MappersPanel {
           const isIntegerDomain = Boolean(extent?.isInteger);
           const step = percentile ? 0.01 : suggestStepForRange(min, max, isIntegerDomain);
 
-          if (percentile && (!Array.isArray(state.pending.domain) || state.pending.domain[0] !== 0 || state.pending.domain[1] !== 1)) {
+          if (percentile && (!isFiniteNumberPair(state.pending.domain) || state.pending.domain[0] !== 0 || state.pending.domain[1] !== 1)) {
             const nextPending = { ...state.pending, type: 'linear', domain: [0, 1] };
             markDomainAuto(nextPending, true);
             state.pending = nextPending;
-          } else if (!Array.isArray(state.pending.domain) && domainAttr) {
+          } else if (!isFiniteNumberPair(state.pending.domain) && domainAttr) {
             const nextPending = { ...state.pending, type: 'linear', domain: [min, max] };
             markDomainAuto(nextPending, true);
             state.pending = nextPending;
           }
-          const domain = Array.isArray(state.pending.domain) ? state.pending.domain : [min, max];
+          const domain = isFiniteNumberPair(state.pending.domain) ? state.pending.domain : [min, max];
 
           const domainHistogram = (showDistributions && domainAttr)
             ? createRangeHistogram({
@@ -2167,8 +2196,8 @@ export class MappersPanel {
           const sliderMax = suggestedRange[1];
           const stepOut = suggestStepForRange(sliderMin, sliderMax);
 
-          const range = Array.isArray(state.pending.range) ? state.pending.range : suggestedRange;
-          if (!Array.isArray(state.pending.range)) {
+          const range = isFiniteNumberPair(state.pending.range) ? state.pending.range : suggestedRange;
+          if (!isFiniteNumberPair(state.pending.range)) {
             state.pending = { ...state.pending, type: 'linear', range };
           }
 
@@ -2952,7 +2981,7 @@ export class MappersPanel {
                 const query = String(queryRaw ?? '').trim().toLowerCase();
                 const tokens = query.split(/\s+/).filter(Boolean);
                 const matches = paletteCatalog.entries.filter((entry) => {
-                  if (preferScheme && !String(entry.key).startsWith('scheme')) return false;
+                  if (!shouldShowCategoricalPaletteEntry(entry, preferScheme)) return false;
                   if (!tokens.length) return true;
                   return tokens.every((t) => entry.search.includes(t));
                 });
@@ -2965,7 +2994,7 @@ export class MappersPanel {
                   return;
                 }
 
-                const groupOrder = ['d3 schemes', 'd3 ramps', 'cmasher schemes', 'cmasher ramps', 'CET schemes', 'CET ramps', 'helios schemes', 'helios ramps', 'other'];
+                const groupOrder = ['d3 schemes', 'd3 ramps', 'cmasher schemes', 'cmasher ramps', 'CET schemes', 'CET ramps', 'Helios category', 'helios schemes', 'helios ramps', 'other'];
                 const matchesByGroup = new Map();
                 for (const entry of matches) {
                   const list = matchesByGroup.get(entry.group) ?? [];
@@ -3754,22 +3783,24 @@ export class MappersPanel {
           const isIntegerDomain = Boolean(extent?.isInteger);
           const step = percentile ? 0.01 : suggestStepForRange(sliderMin, sliderMax, isIntegerDomain);
 
-          if (percentile && (!Array.isArray(state.pending.domain) || state.pending.domain[0] !== 0 || state.pending.domain[1] !== 1)) {
+          if (percentile && (!isFiniteNumberPair(state.pending.domain) || state.pending.domain[0] !== 0 || state.pending.domain[1] !== 1)) {
             const nextPending = { ...state.pending, type: 'colormap', domain: [0, 1] };
             markDomainAuto(nextPending, true);
             state.pending = nextPending;
-          } else if (!Array.isArray(state.pending.domain) && domainAttr) {
+          } else if (!isFiniteNumberPair(state.pending.domain) && domainAttr) {
             const nextDomain = divergent ? resolveDivergentDomain([min, max], extent) : [min, max];
             const nextPending = { ...state.pending, type: 'colormap', domain: nextDomain };
             markDomainAuto(nextPending, true);
             state.pending = nextPending;
-          } else if (divergent && Array.isArray(state.pending.domain)) {
+          } else if (divergent && isFiniteNumberPair(state.pending.domain)) {
             const nextPending = { ...state.pending, type: 'colormap', domain: resolveDivergentDomain(state.pending.domain, extent) };
             markDomainAuto(nextPending, false);
             state.pending = nextPending;
           }
 
-          const domain = Array.isArray(state.pending.domain) ? state.pending.domain : (divergent ? resolveDivergentDomain([min, max], extent) : [min, max]);
+          const domain = isFiniteNumberPair(state.pending.domain)
+            ? state.pending.domain
+            : (divergent ? resolveDivergentDomain([min, max], extent) : [min, max]);
 
           const domainHistogram = (!percentile && showDistributions && domainAttr)
             ? createRangeHistogram({

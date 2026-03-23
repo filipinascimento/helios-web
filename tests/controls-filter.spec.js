@@ -152,4 +152,26 @@ test.describe('filter panel', () => {
       return Boolean(filter && filter.enabled === false);
     });
   });
+
+  test('refreshes filter attribute options when network attributes are defined after panel creation', async ({ page }) => {
+    await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=900');
+    await waitForHelios(page);
+
+    const filterPanel = panelByTitle(page, 'Filter');
+    await expect(filterPanel).toBeVisible();
+
+    const nodeAttr = filterPanel.locator('[data-testid="controls-filter-node-attribute"]').first();
+    await expect(nodeAttr).toBeVisible();
+    await expect(nodeAttr.locator('option[value="metric_after_boot"]')).toHaveCount(0);
+
+    await page.evaluate(() => {
+      const net = window.__helios?.network;
+      if (!net) throw new Error('Network unavailable');
+      if (!net.hasNodeAttribute?.('metric_after_boot', true)) {
+        net.defineNodeAttribute('metric_after_boot', 2, 1);
+      }
+    });
+
+    await expect(nodeAttr.locator('option[value="metric_after_boot"]')).toHaveCount(1);
+  });
 });

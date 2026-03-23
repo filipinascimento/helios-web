@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Helios } from '../src/Helios.js';
-import { WorkerLayout } from '../src/layouts/Layout.js';
+import { StaticLayout, WorkerLayout } from '../src/layouts/Layout.js';
 import { D3Force3DLayout } from '../src/layouts/d3force3dLayoutWorker.js';
 import { GpuForceLayout } from '../src/layouts/GpuForceLayout.js';
 import {
@@ -877,6 +877,60 @@ test('Helios wakes idle layouts without unpausing manually stopped layouts', () 
   state = 'stopped';
   assert.equal(helios._wakeLayoutIfIdle('filter'), false);
   assert.deepEqual(calls, []);
+});
+
+test('Helios resumes dynamic layouts after network replacement only when the previous layout auto-idled', () => {
+  const helios = Object.create(Helios.prototype);
+  const calls = [];
+  helios._layout = {
+    reheat(reason) {
+      calls.push(reason);
+    },
+  };
+
+  assert.equal(helios._resumeDynamicLayoutAfterNetworkReplace('idle', 'network-replaced'), true);
+  assert.deepEqual(calls, ['network-replaced']);
+
+  calls.length = 0;
+  assert.equal(helios._resumeDynamicLayoutAfterNetworkReplace('stopped', 'network-replaced'), false);
+  assert.deepEqual(calls, []);
+});
+
+test('Helios does not resume static layouts after network replacement', () => {
+  const helios = Object.create(Helios.prototype);
+  helios._layout = new StaticLayout(null, null);
+
+  assert.equal(helios._resumeDynamicLayoutAfterNetworkReplace('idle', 'network-replaced'), false);
+});
+
+test('Helios activates delegate-backed layouts after network replacement before resuming them', () => {
+  const helios = Object.create(Helios.prototype);
+  const calls = [];
+  helios._layout = {
+    reheat(reason) {
+      calls.push(['reheat', reason]);
+    },
+  };
+  helios._enforcePositionSourcePolicy = (layout, options) => {
+    calls.push(['enforcePositionSourcePolicy', layout, options]);
+  };
+  helios.scheduler = {
+    setLayout(layout) {
+      calls.push(['setLayout', layout]);
+    },
+  };
+  helios._emitLayoutChanged = (layout) => {
+    calls.push(['emitLayoutChanged', layout]);
+  };
+
+  helios._activateLayoutAfterNetworkReplace('idle', 'network-replaced');
+
+  assert.deepEqual(calls, [
+    ['enforcePositionSourcePolicy', helios._layout, { resetInterpolation: false }],
+    ['setLayout', helios._layout],
+    ['reheat', 'network-replaced'],
+    ['emitLayoutChanged', helios._layout],
+  ]);
 });
 
 test('graph filter mutation reheats and wakes an idle layout', () => {

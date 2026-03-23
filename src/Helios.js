@@ -460,7 +460,7 @@ function resolveGpuForceLayoutOptionsFromNetwork(network, requestedOptions = {})
   };
 }
 
-function computeUmapModeSwitchDepthJitter(layout) {
+function computeGpuForceModeSwitchDepthJitter(layout) {
   const depth = Math.max(0, Number(layout?.options?.depth ?? 0) || 0);
   const radius = Math.max(0, Number(layout?.options?.radius ?? 0) || 0);
   const jitterBase = depth > 1e-6 ? depth : Math.max(1, radius * 0.25);
@@ -1122,6 +1122,19 @@ export class Helios extends EventTarget {
     }
     layout.requestUpdate?.();
     return false;
+  }
+
+  _resumeDynamicLayoutAfterNetworkReplace(previousState, reason = 'network-replaced') {
+    if (previousState !== 'idle') return false;
+    if (this._layout instanceof StaticLayout) return false;
+    return this._requestLayoutReheat(reason);
+  }
+
+  _activateLayoutAfterNetworkReplace(previousLayoutState, reason = 'network-replaced') {
+    this._enforcePositionSourcePolicy(this._layout, { resetInterpolation: false });
+    this.scheduler.setLayout(this._layout);
+    this._resumeDynamicLayoutAfterNetworkReplace(previousLayoutState, reason);
+    this._emitLayoutChanged(this._layout);
   }
 
   constructor(network, options = {}) {
@@ -2321,6 +2334,9 @@ export class Helios extends EventTarget {
       this._positionsConfig?.source === 'delegate' ? this._positionsConfig.delegate : null;
 
     const wasRunning = !this.manualRendering && this.scheduler?.running === true;
+    const previousLayoutState = typeof this.scheduler?.getLayoutState === 'function'
+      ? this.scheduler.getLayoutState()
+      : (this.scheduler?.layoutEnabled !== false ? 'running' : 'stopped');
     const cameraState = keepCamera ? this._snapshotCameraState() : null;
     const attributeConfig = this.attributeTracker
       ? { node: this.attributeTracker.nodeAttribute, edge: this.attributeTracker.edgeAttribute, options: { ...this.attributeTracker.options } }
@@ -2355,7 +2371,6 @@ export class Helios extends EventTarget {
     this._refreshGraphFilterNetworks({ force: true, throwOnError: false });
     this.visuals = new VisualAttributes(nextNetwork, this.debug);
     this.visuals.seedMissingPositions(resolveSeedBoundsForLayout(layoutOption, this.layers.size, this.options.mode));
-    this._attachPositionDelegate(activePositionDelegate);
     this._resetInterpolationRuntime({ keepIntervalHistory: false });
     this._labels?.requestFullReselect?.('network-replaced');
 
@@ -2386,8 +2401,7 @@ export class Helios extends EventTarget {
     }
     await this._layout?.initialize?.();
     this._layout?.resize?.(this.layers.size);
-    this.scheduler.setLayout(this._layout);
-    this._emitLayoutChanged(this._layout);
+    this._activateLayoutAfterNetworkReplace(previousLayoutState, 'network-replaced');
 
     if (recreateRenderer) {
       await this._createRendererAndTrackers();
@@ -4035,9 +4049,8 @@ export class Helios extends EventTarget {
       previousMode === '2d'
       && nextMode === '3d'
       && this._layout instanceof GpuForceLayout
-      && normalizeForceModel(this._layout?.options?.forceModel) === 'umap'
     ) {
-      const jitterAmplitude = computeUmapModeSwitchDepthJitter(this._layout);
+      const jitterAmplitude = computeGpuForceModeSwitchDepthJitter(this._layout);
       const delegate = this._layout?.getPositionDelegate?.() ?? this._layout?.positionDelegate ?? null;
       await delegate?.injectPlanarDepthJitter?.(this._buildPositionDelegateContext({ scope: 'layout' }), jitterAmplitude);
     }

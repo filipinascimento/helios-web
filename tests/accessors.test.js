@@ -362,7 +362,7 @@ test('setMode() collapses node depth when landing in 2D', async () => {
   ]);
 });
 
-test('setMode() injects tiny delegate depth jitter without reseeding when UMAP gpu-force switches from 2D to 3D', async () => {
+test('setMode() injects tiny delegate depth jitter without reseeding when gpu-force switches from 2D to 3D', async () => {
   const positions = new Float32Array([
     -10, -5, 0,
     0, 5, 0,
@@ -395,7 +395,7 @@ test('setMode() injects tiny delegate depth jitter without reseeding when UMAP g
       type: 'gpu-force',
       options: {
         mode: '2d',
-        forceModel: 'umap',
+        forceModel: 'linear',
         center: [0, 0, 0],
         radius: 220,
         depth: 140,
@@ -460,7 +460,7 @@ test('setMode() injects tiny delegate depth jitter without reseeding when UMAP g
   helios.emit = (type, detail) => { calls.emitted.push({ type, detail }); };
   helios._layout = Object.create(GpuForceLayout.prototype);
   helios._layout.options = {
-    forceModel: 'umap',
+    forceModel: 'linear',
     center: [0, 0, 0],
     radius: 220,
     depth: 140,

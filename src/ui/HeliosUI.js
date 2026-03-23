@@ -2512,7 +2512,47 @@ export class HeliosUI {
       refreshScope(scopeState.edge);
     };
 
+    let networkAttributeUnsub = null;
+    const attachNetworkAttributeListeners = () => {
+      if (networkAttributeUnsub) {
+        networkAttributeUnsub();
+        networkAttributeUnsub = null;
+      }
+      const network = this.helios?.network ?? null;
+      if (!network) return;
+      const handler = (event) => {
+        const scope = event?.detail?.scope;
+        if (scope && scope !== 'node' && scope !== 'edge') return;
+        const type = event?.type ?? '';
+        if (type === 'attribute:changed') {
+          const op = event?.detail?.op ?? '';
+          if (op !== 'categorize' && op !== 'decategorize') return;
+        }
+        refreshFromNetwork();
+      };
+      if (typeof network.on === 'function') {
+        const unsubs = [
+          network.on('attribute:defined', handler),
+          network.on('attribute:removed', handler),
+          network.on('attribute:changed', handler),
+        ];
+        networkAttributeUnsub = () => {
+          for (const unsub of unsubs) unsub?.();
+        };
+      } else if (typeof network.addEventListener === 'function') {
+        network.addEventListener('attribute:defined', handler);
+        network.addEventListener('attribute:removed', handler);
+        network.addEventListener('attribute:changed', handler);
+        networkAttributeUnsub = () => {
+          network.removeEventListener('attribute:defined', handler);
+          network.removeEventListener('attribute:removed', handler);
+          network.removeEventListener('attribute:changed', handler);
+        };
+      }
+    };
+
     const onNetworkReplaced = () => {
+      attachNetworkAttributeListeners();
       refreshFromNetwork();
       scheduleApply();
     };
@@ -2534,6 +2574,8 @@ export class HeliosUI {
     }
     if (unsubNetwork) this._controlCleanups.add(unsubNetwork);
     if (unsubFilter) this._controlCleanups.add(unsubFilter);
+    attachNetworkAttributeListeners();
+    if (networkAttributeUnsub) this._controlCleanups.add(() => networkAttributeUnsub?.());
     this._controlCleanups.add(() => {
       clearApplyTimer();
       for (const state of [scopeState.node, scopeState.edge]) {
