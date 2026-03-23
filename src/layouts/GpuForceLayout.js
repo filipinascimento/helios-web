@@ -39,6 +39,7 @@ const DEFAULT_OPTIONS = {
 };
 
 const DEFAULT_UMAP_SAMPLE_CHURN = 0.01;
+const DEFAULT_UMAP_ALPHA_DECAY = 0.0025;
 
 function toFinite(value, fallback = 0) {
   const numeric = Number(value);
@@ -90,6 +91,7 @@ export class GpuForceLayout extends Layout {
       if (options.kAttraction == null) normalized.kAttraction = 1;
       if (options.kGravity == null) normalized.kGravity = 0;
       if (options.eta == null) normalized.eta = 1;
+      if (options.alphaDecay == null) normalized.alphaDecay = DEFAULT_UMAP_ALPHA_DECAY;
       if (options.sampleChurn == null) normalized.sampleChurn = DEFAULT_UMAP_SAMPLE_CHURN;
     }
     this.options = normalized;
@@ -152,6 +154,7 @@ export class GpuForceLayout extends Layout {
       if (next.kAttraction == null) this.options.kAttraction = 1;
       if (next.kGravity == null) this.options.kGravity = 0;
       if (next.eta == null) this.options.eta = 1;
+      if (next.alphaDecay == null) this.options.alphaDecay = DEFAULT_UMAP_ALPHA_DECAY;
       if (next.sampleChurn == null) this.options.sampleChurn = DEFAULT_UMAP_SAMPLE_CHURN;
     }
     this.positionDelegate.updateOptions(this.options);
@@ -227,6 +230,13 @@ export class GpuForceLayout extends Layout {
 
     if (umapModel) {
       bindings.push(
+        {
+          key: 'umapEpochCurrent',
+          label: 'Epochs',
+          type: 'display',
+          get: () => Number(this.positionDelegate?.getCompletedEpochs?.() ?? 0),
+          format: (value) => String(Math.max(0, Math.floor(Number(value) || 0))),
+        },
         {
           key: 'umapNegativeSampleRate',
           label: 'Negative sample rate',

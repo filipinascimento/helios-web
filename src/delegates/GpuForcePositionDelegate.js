@@ -50,8 +50,8 @@ const DEFAULT_OPTIONS = {
 
 const DEFAULT_UMAP_EPOCHS_SMALL = 500;
 const DEFAULT_UMAP_EPOCHS_LARGE = 200;
-const DEFAULT_UMAP_ANNEAL_STEPS_MIN = 2000;
 const DEFAULT_UMAP_SAMPLE_CHURN = 0.01;
+const DEFAULT_UMAP_ALPHA_DECAY = 0.0025;
 
 function buildComputeWgsl({ umap = false } = {}) {
   return /* wgsl */ `
@@ -1049,10 +1049,6 @@ export function resolveUmapEpochCount(value, nodeCount = 0) {
   }
   const safeNodeCount = Math.max(0, Math.floor(Number(nodeCount) || 0));
   return safeNodeCount > 10000 ? DEFAULT_UMAP_EPOCHS_LARGE : DEFAULT_UMAP_EPOCHS_SMALL;
-}
-
-export function resolveUmapAnnealStepCount(value, nodeCount = 0) {
-  return Math.max(DEFAULT_UMAP_ANNEAL_STEPS_MIN, resolveUmapEpochCount(value, nodeCount) * 4);
 }
 
 function resolveSampleEpoch(iter, sampleCount, churnCount, sampleFrame) {
@@ -3239,6 +3235,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       if (options.kAttraction == null) normalizedOptions.kAttraction = 1;
       if (options.kGravity == null) normalizedOptions.kGravity = 0;
       if (options.eta == null) normalizedOptions.eta = 1;
+      if (options.alphaDecay == null) normalizedOptions.alphaDecay = DEFAULT_UMAP_ALPHA_DECAY;
       if (options.sampleChurn == null) normalizedOptions.sampleChurn = DEFAULT_UMAP_SAMPLE_CHURN;
     }
     this.options = normalizedOptions;
@@ -3288,6 +3285,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       if (next.kAttraction == null) this.options.kAttraction = 1;
       if (next.kGravity == null) this.options.kGravity = 0;
       if (next.eta == null) this.options.eta = 1;
+      if (next.alphaDecay == null) this.options.alphaDecay = DEFAULT_UMAP_ALPHA_DECAY;
       if (next.sampleChurn == null) this.options.sampleChurn = DEFAULT_UMAP_SAMPLE_CHURN;
     }
     if (next.alpha != null) {
@@ -3348,6 +3346,11 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       this._webgl.sampleFrame = 0;
     }
     return this;
+  }
+
+  getCompletedEpochs() {
+    const backend = this._webgpu ?? this._webgl;
+    return Math.max(0, Math.floor(Number(backend?.sampleFrame) || 0));
   }
 
   _resolveBackend(context = {}) {
@@ -3548,21 +3551,11 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     const alphaTarget = clamp(this.options.alphaTarget, 0, 1, DEFAULT_OPTIONS.alphaTarget);
     const alphaDecay = clamp(this.options.alphaDecay, 0, 1, DEFAULT_OPTIONS.alphaDecay);
     const alphaMin = clamp(this.options.alphaMin, 0, 1, DEFAULT_OPTIONS.alphaMin);
-    const backend = this._webgpu ?? this._webgl;
-    const completedEpochs = backend?.sampleFrame ?? 0;
     const umapEpochs = umapForceModel
       ? resolveUmapEpochCount(this.options.umapEpochs, this._activeCount)
       : 0;
-    const umapAnnealSteps = umapForceModel
-      ? resolveUmapAnnealStepCount(this.options.umapEpochs, this._activeCount)
-      : 0;
-    if (umapForceModel) {
-      const progress = Math.min(1, Math.max(0, completedEpochs / Math.max(1, umapAnnealSteps)));
-      this.alpha = Math.max(alphaMin, 1 - progress);
-    } else {
-      this.alpha += (alphaTarget - this.alpha) * alphaDecay;
-      if (this.alpha < alphaMin) this.alpha = alphaMin;
-    }
+    this.alpha += (alphaTarget - this.alpha) * alphaDecay;
+    if (this.alpha < alphaMin) this.alpha = alphaMin;
 
     const maxNeighborsPerNode = Math.max(1, Math.floor(toFinite(this.options.maxNeighborsPerNode, DEFAULT_OPTIONS.maxNeighborsPerNode)));
     const explicitSampleCountValue = this.options.sampleCount;

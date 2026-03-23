@@ -6,7 +6,6 @@ import { D3Force3DLayout } from '../src/layouts/d3force3dLayoutWorker.js';
 import { GpuForceLayout } from '../src/layouts/GpuForceLayout.js';
 import {
   GpuForcePositionDelegate,
-  resolveUmapAnnealStepCount,
   resolveUmapEpochCount,
   warmStartUmapPositionsFromTopology,
 } from '../src/delegates/GpuForcePositionDelegate.js';
@@ -800,6 +799,7 @@ test('Helios.createLayout auto-enables UMAP gpu-force mode from graph metadata',
   approx(layout.options.umapNegativeSampleRate, 7);
   approx(layout.options.umapEpochs, 500);
   assert.equal(layout.options.eta, 1);
+  assert.equal(layout.options.alphaDecay, 0.0025);
   approx(layout.options.sampleChurn, 0.01);
 });
 
@@ -1061,6 +1061,9 @@ test('GpuForceLayout exposes UMAP-specific controls without altering linear defa
   assert.ok(!bindingKeys.includes('linkDistance'));
   assert.ok(!bindingKeys.includes('minDistance'));
   assert.equal(descriptor.bindings.find((binding) => binding.key === 'umapNegativeSampleRate')?.label, 'Negative sample rate');
+  assert.equal(descriptor.bindings.find((binding) => binding.key === 'umapEpochCurrent')?.label, 'Epochs');
+  assert.equal(descriptor.bindings.find((binding) => binding.key === 'umapEpochCurrent')?.type, 'display');
+  assert.equal(descriptor.bindings.find((binding) => binding.key === 'umapEpochCurrent')?.history, undefined);
   assert.equal(descriptor.bindings.find((binding) => binding.key === 'sampleChurn')?.label, 'Negative sample churn');
   assert.notEqual(descriptor.bindings.find((binding) => binding.key === 'umapA')?.type, 'display');
   assert.notEqual(descriptor.bindings.find((binding) => binding.key === 'umapB')?.type, 'display');
@@ -1068,6 +1071,10 @@ test('GpuForceLayout exposes UMAP-specific controls without altering linear defa
   assert.notEqual(descriptor.bindings.find((binding) => binding.key === 'umapGamma')?.type, 'display');
   assert.equal(descriptor.bindings.find((binding) => binding.key === 'kRepulsion')?.label, 'Repulsion importance');
   assert.equal(descriptor.bindings.find((binding) => binding.key === 'kAttraction')?.label, 'Attraction importance');
+  assert.equal(layout.options.alphaDecay, 0.0025);
+  layout.positionDelegate._webgl = { sampleFrame: 17 };
+  assert.equal(descriptor.bindings.find((binding) => binding.key === 'umapEpochCurrent')?.get?.(), 17);
+  assert.equal(descriptor.bindings.find((binding) => binding.key === 'umapEpochCurrent')?.format?.(17.9), '17');
 });
 
 test('GpuForcePositionDelegate normalizes simulation seed positions while preserving visible output seeds', () => {
@@ -1571,10 +1578,40 @@ test('resolveUmapEpochCount matches umap-learn defaults by graph size', () => {
   assert.equal(resolveUmapEpochCount(123, 2000), 123);
 });
 
-test('resolveUmapAnnealStepCount keeps UMAP cooling slower than raw epoch count', () => {
-  assert.equal(resolveUmapAnnealStepCount(null, 2000), 2000);
-  assert.equal(resolveUmapAnnealStepCount(undefined, 20000), 2000);
-  assert.equal(resolveUmapAnnealStepCount(750, 50000), 3000);
+test('GpuForcePositionDelegate uses the regular alpha decay path for UMAP cooling', () => {
+  const delegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    forceModel: 'umap',
+    alpha: 1,
+    alphaDecay: 0.1,
+    alphaTarget: 0.2,
+    alphaMin: 0.001,
+    recenter: false,
+  });
+  let captured = null;
+  delegate._markDirtyForBackend = () => {};
+  delegate.ensureSynchronized = () => {};
+  delegate._activeCount = 8;
+  delegate._nodeCapacity = 8;
+  delegate._webgl = {
+    sampleFrame: 12,
+    step(payload) {
+      captured = payload;
+      this.sampleFrame += 1;
+      return true;
+    },
+  };
+
+  const changed = delegate.step({ deltaMs: 16 });
+
+  assert.equal(changed, true);
+  assert.ok(captured);
+  assert.equal(captured.forceModel, 'umap');
+  assert.equal(captured.umapEpochs, 500);
+  assert.ok(Math.abs(delegate.alpha - 0.92) < 1e-9);
+  assert.ok(Math.abs(captured.kRepulsion - 0.92) < 1e-9);
+  assert.ok(Math.abs(captured.kAttraction - 0.92) < 1e-9);
+  assert.equal(delegate.getCompletedEpochs(), 13);
 });
 
 test('GpuForcePositionDelegate does not fall back to CPU when WebGL texture compute is unavailable', () => {

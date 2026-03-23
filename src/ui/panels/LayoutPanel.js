@@ -210,7 +210,6 @@ function buildLayoutInstance(helios, value) {
         damping: 0.92,
         maxStep: 2.5,
         minDistance: 0.15,
-        alphaDecay: 0.005,
       },
     });
   }
