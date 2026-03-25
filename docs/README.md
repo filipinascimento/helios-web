@@ -79,6 +79,7 @@ Some common renderer/graph-layer “global” knobs are available directly on `H
 - Background/clear color: `helios.background('#0b1020')` (alias: `helios.clearColor(...)`)
 - Scene dimension: `helios.mode()` / `await helios.setMode('3d')`
 - Camera poses/transitions: `helios.cameraPose()` / `helios.setCameraPose(...)` / `await helios.transitionCamera(...)`
+- Camera automation: `helios.cameraControls({...})` / `helios.cameraTargetNodes([...])` / `helios.frameNetwork({ animate: true, resetOrientation: false })` including delegate-aware auto-fit and 3D orbit angle control
 - Blend nodes with edge transparency modes: `helios.nodeBlendWithEdges(true)`
 - Allow edges to write depth: `helios.edgeDepthWrite(true)` (best for solid edges)
 

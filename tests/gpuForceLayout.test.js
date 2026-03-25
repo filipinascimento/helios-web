@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Helios } from '../src/Helios.js';
 import { StaticLayout, WorkerLayout } from '../src/layouts/Layout.js';
 import { D3Force3DLayout } from '../src/layouts/d3force3dLayoutWorker.js';
-import { GpuForceLayout } from '../src/layouts/GpuForceLayout.js';
+import { GpuForceLayout, resolveGpuForceAutoTuning } from '../src/layouts/GpuForceLayout.js';
 import {
   GpuForcePositionDelegate,
   resolveUmapEpochCount,
@@ -33,6 +33,19 @@ function createStubNetwork() {
         3, 0, 0,
       ]),
     }),
+  };
+}
+
+function createSizedStubNetwork(nodeCount) {
+  const safeNodeCount = Math.max(0, Math.floor(Number(nodeCount) || 0));
+  const nodeIndices = new Uint32Array(safeNodeCount);
+  for (let i = 0; i < safeNodeCount; i += 1) {
+    nodeIndices[i] = i;
+  }
+  return {
+    ...createStubNetwork(),
+    nodeCapacity: safeNodeCount,
+    nodeIndices,
   };
 }
 
@@ -777,6 +790,48 @@ test('Helios.createLayout resolves gpu-force into GpuForceLayout', () => {
   assert.equal(layout.options.alphaDecay, 0.005);
 });
 
+test('resolveGpuForceAutoTuning scales GPU force defaults by log-sized node count', () => {
+  const base = {
+    maxNeighborsPerNode: 64,
+    sampleCount2D: 64,
+    sampleCount3D: 96,
+    sampleChurn: 0,
+  };
+
+  assert.deepEqual(resolveGpuForceAutoTuning(10_000, base), base);
+  const large = resolveGpuForceAutoTuning(1_000_000, base);
+  assert.equal(large.maxNeighborsPerNode, 20);
+  assert.equal(large.sampleCount2D, 10);
+  assert.equal(large.sampleCount3D, 10);
+  approx(large.sampleChurn, 0.05);
+  const mid = resolveGpuForceAutoTuning(100_000, base);
+  assert.equal(mid.maxNeighborsPerNode, 42);
+  assert.equal(mid.sampleCount2D, 37);
+  assert.equal(mid.sampleCount3D, 53);
+  approx(mid.sampleChurn, 0.025);
+});
+
+test('Helios.createLayout auto-tunes gpu-force defaults for large graphs while preserving explicit overrides', () => {
+  const helios = Object.create(Helios.prototype);
+  helios.network = createSizedStubNetwork(1_000_000);
+  helios.visuals = {};
+  helios.options = { mode: '2d' };
+  helios.debug = { log: () => {} };
+
+  const autoLayout = helios.createLayout({ type: 'gpu-force', options: { mode: '2d' } });
+  assert.equal(autoLayout.options.maxNeighborsPerNode, 20);
+  assert.equal(autoLayout.options.sampleCount2D, 10);
+  approx(autoLayout.options.sampleChurn, 0.05);
+
+  const overriddenLayout = helios.createLayout({
+    type: 'gpu-force',
+    options: { mode: '2d', maxNeighborsPerNode: 31, sampleCount2D: 27 },
+  });
+  assert.equal(overriddenLayout.options.maxNeighborsPerNode, 31);
+  assert.equal(overriddenLayout.options.sampleCount2D, 27);
+  approx(overriddenLayout.options.sampleChurn, 0.05);
+});
+
 test('Helios.createLayout auto-enables UMAP gpu-force mode from graph metadata', () => {
   const helios = Object.create(Helios.prototype);
   helios.network = createUmapFlaggedNetwork();
@@ -818,6 +873,23 @@ test('Helios.createLayout keeps legacy linear gpu-force behavior unless UMAP is 
   assert.equal(layout.options.forceModel, 'linear');
   assert.equal(layout.options.kRepulsion, 0.33);
   assert.equal(layout.options.kAttraction, 0.44);
+});
+
+test('GpuForceLayout can resync auto-tuned defaults when the layout network size changes', () => {
+  const layout = new GpuForceLayout(createSizedStubNetwork(10_000), {}, { mode: '2d' });
+  assert.equal(layout.options.maxNeighborsPerNode, 64);
+  assert.equal(layout.options.sampleCount2D, 64);
+  approx(layout.options.sampleChurn, 0);
+
+  assert.equal(layout.syncAutoSettingsForNetwork(createSizedStubNetwork(1_000_000)), true);
+  assert.equal(layout.options.maxNeighborsPerNode, 20);
+  assert.equal(layout.options.sampleCount2D, 10);
+  approx(layout.options.sampleChurn, 0.05);
+
+  layout.setSettings({ sampleCount2D: 23 });
+  assert.equal(layout.syncAutoSettingsForNetwork(createSizedStubNetwork(500_000)), true);
+  assert.equal(layout.options.sampleCount2D, 23);
+  assert.equal(layout.options.maxNeighborsPerNode, 27);
 });
 
 test('Helios.startLayout reheats the active layout before requesting ticks', () => {

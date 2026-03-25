@@ -366,9 +366,6 @@ async function bootstrap() {
     center: [0, 0, 0],
     radius: 220 * Math.sqrt(nodeCount / 1000),
     depth: mode === '3d' ? 140 : 0,
-    sampleCount2D: 64,
-    sampleCount3D: 96,
-    maxNeighborsPerNode: 64,
     outputScale: 6.5,
     ...(usingUmapDataset
       ? {
@@ -505,6 +502,7 @@ async function bootstrap() {
   heliosUI.createLayoutPanel({ dock: 'top-right', position: { x: 16, y: 360 } });
   heliosUI.createLegendsPanel({ dock: 'top-right', position: { x: 16, y: 560 } });
   heliosUI.createFilterPanel({ dock: 'top-right' });
+  heliosUI.createCameraPanel({ dock: 'top-right' });
 
   helios.on(EVENTS.NETWORK_REPLACED, () => {
     configureDemoMappers();

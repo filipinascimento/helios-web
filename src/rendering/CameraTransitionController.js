@@ -250,7 +250,7 @@ export function applyCameraPose(camera, pose, { update = true } = {}) {
   return camera;
 }
 
-function interpolatePose(fromPose, toPose, t) {
+export function interpolateCameraPose(fromPose, toPose, t) {
   const factor = smoothstep(t);
   const pose = {
     ...toPose,
@@ -315,7 +315,7 @@ export class CameraTransitionController {
       const step = (timestamp) => {
         const elapsed = timestamp - startedAt;
         const t = duration <= 0 ? 1 : clamp01(elapsed / duration);
-        const pose = interpolatePose(fromPose, toPose, t);
+        const pose = interpolateCameraPose(fromPose, toPose, t);
         applyCameraPose(camera, pose);
         this.requestRender?.();
         if (t >= 1) {

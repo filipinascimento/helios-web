@@ -16,6 +16,7 @@ import { VISUAL_ATTRIBUTE_MAP } from '../pipeline/constants.js';
 import { MappersPanel } from './panels/MappersPanel.js';
 import { LayoutPanel } from './panels/LayoutPanel.js';
 import { LegendsPanel } from './panels/LegendsPanel.js';
+import { CameraPanel } from './panels/CameraPanel.js';
 import { clampNumber } from './utils/numbers.js';
 import { toHex8 } from './utils/colors.js';
 import { isPublicAttributeName } from './utils/attributes.js';
@@ -7055,5 +7056,9 @@ export class HeliosUI {
 
   createLegendsPanel(options = {}) {
     return new LegendsPanel(this, options).create();
+  }
+
+  createCameraPanel(options = {}) {
+    return new CameraPanel(this, options).create();
   }
 }

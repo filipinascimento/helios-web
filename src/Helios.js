@@ -12,6 +12,7 @@ import {
   applyCameraPose,
   captureCameraPose,
   createYawPitchQuaternion,
+  interpolateCameraPose,
   mergeCameraPose,
 } from './rendering/CameraTransitionController.js';
 import { AttributeTracker } from './rendering/AttributeTracker.js';
@@ -609,6 +610,25 @@ function estimate2DZoomFrom3DDistance(pose) {
 
 const DEFAULT_MODE_SWITCH_DURATION_MS = 360;
 const DEFAULT_MODE_SWITCH_3D_ROTATION = createYawPitchQuaternion(-0.55, 0.42);
+const CAMERA_FIT_DEFAULT_MAX_SAMPLES = 50000;
+const CAMERA_CONTROL_DEFAULTS = Object.freeze({
+  autoFit: true,
+  autoFitCoverage: 0.95,
+  autoFitPaddingRatio: 0.05,
+  autoFitIntervalMs: 900,
+  autoFitMinIntervalMs: 250,
+  autoFitMaxIntervalMs: 6000,
+  autoFitLargeNetworkScale: 1,
+  autoFitIntervalNodeCountRef: 5000,
+  autoFitMaxSamples: CAMERA_FIT_DEFAULT_MAX_SAMPLES,
+  animation: true,
+  animationDurationMs: 280,
+  orbit: false,
+  orbitAngle: 0,
+  orbitSpeed: 0.08,
+  orbitDirection: 1,
+  targetNodeIndices: null,
+});
 
 function toFiniteNumber(value, fallback = 0) {
   const numeric = Number(value);
@@ -644,6 +664,173 @@ const DENSITY_DEFAULTS = Object.freeze({
   colormap: 'interpolateOrRd',
   divergingColormap: 'interpolatePrinsenvlag',
 });
+
+function normalizeNodeIndexList(value) {
+  if (value == null) return null;
+  if (typeof value === 'number') {
+    const numeric = Math.floor(value);
+    return Number.isFinite(numeric) && numeric >= 0 ? [numeric] : [];
+  }
+  const next = [];
+  const seen = new Set();
+  forEachIndex(value, (entry) => {
+    const numeric = Math.floor(Number(entry));
+    if (!Number.isFinite(numeric) || numeric < 0 || seen.has(numeric)) return;
+    seen.add(numeric);
+    next.push(numeric);
+  });
+  return next;
+}
+
+function normalizeOrbitAngleDegrees(value, fallback = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return clamp(numeric, -89, 89);
+}
+
+function normalizeCameraControlConfig(base = {}, patch = {}) {
+  const next = { ...base };
+  if (Object.prototype.hasOwnProperty.call(patch, 'autoFit')) {
+    next.autoFit = patch.autoFit === true;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'autoFitCoverage')) {
+    next.autoFitCoverage = clamp(
+      normalizeNonNegativeNumber(patch.autoFitCoverage, next.autoFitCoverage ?? CAMERA_CONTROL_DEFAULTS.autoFitCoverage, 0.5, 1),
+      0.5,
+      1,
+    );
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'autoFitPaddingRatio')) {
+    next.autoFitPaddingRatio = normalizeNonNegativeNumber(patch.autoFitPaddingRatio, next.autoFitPaddingRatio ?? 0, 0, 1);
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'autoFitIntervalMs')) {
+    next.autoFitIntervalMs = normalizeNonNegativeNumber(patch.autoFitIntervalMs, next.autoFitIntervalMs ?? 0, 0, 60000);
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'autoFitMinIntervalMs')) {
+    next.autoFitMinIntervalMs = normalizeNonNegativeNumber(patch.autoFitMinIntervalMs, next.autoFitMinIntervalMs ?? 0, 0, 60000);
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'autoFitMaxIntervalMs')) {
+    next.autoFitMaxIntervalMs = normalizeNonNegativeNumber(patch.autoFitMaxIntervalMs, next.autoFitMaxIntervalMs ?? 0, 0, 60000);
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'autoFitLargeNetworkScale')) {
+    next.autoFitLargeNetworkScale = normalizeNonNegativeNumber(patch.autoFitLargeNetworkScale, next.autoFitLargeNetworkScale ?? 1, 0, 32);
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'autoFitIntervalNodeCountRef')) {
+    next.autoFitIntervalNodeCountRef = normalizePositiveInteger(
+      patch.autoFitIntervalNodeCountRef,
+      next.autoFitIntervalNodeCountRef ?? 1,
+      1,
+      Number.MAX_SAFE_INTEGER,
+    );
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'autoFitMaxSamples')) {
+    next.autoFitMaxSamples = normalizePositiveInteger(
+      patch.autoFitMaxSamples,
+      next.autoFitMaxSamples ?? CAMERA_FIT_DEFAULT_MAX_SAMPLES,
+      32,
+      1000000,
+    );
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'animation')) {
+    next.animation = patch.animation === true;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'animationDurationMs')) {
+    next.animationDurationMs = normalizeNonNegativeNumber(patch.animationDurationMs, next.animationDurationMs ?? 0, 0, 60000);
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'orbit')) {
+    next.orbit = patch.orbit === true;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'orbitAngle')) {
+    next.orbitAngle = normalizeOrbitAngleDegrees(
+      patch.orbitAngle,
+      next.orbitAngle ?? CAMERA_CONTROL_DEFAULTS.orbitAngle,
+    );
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'orbitSpeed')) {
+    next.orbitSpeed = normalizeNonNegativeNumber(patch.orbitSpeed, next.orbitSpeed ?? 0, 0, 10);
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'orbitDirection')) {
+    next.orbitDirection = Number(patch.orbitDirection) < 0 ? -1 : 1;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'targetNodeIndices')) {
+    next.targetNodeIndices = normalizeNodeIndexList(patch.targetNodeIndices);
+  }
+
+  next.autoFitMinIntervalMs = Math.min(next.autoFitMinIntervalMs ?? 0, next.autoFitMaxIntervalMs ?? 0);
+  next.autoFitMaxIntervalMs = Math.max(next.autoFitMaxIntervalMs ?? 0, next.autoFitMinIntervalMs ?? 0);
+  return next;
+}
+
+function copyCameraControlConfig(config = {}) {
+  return {
+    ...config,
+    targetNodeIndices: Array.isArray(config.targetNodeIndices) ? [...config.targetNodeIndices] : null,
+  };
+}
+
+function quantileFromSorted(sorted, t) {
+  if (!Array.isArray(sorted) || sorted.length === 0) return NaN;
+  if (sorted.length === 1) return sorted[0];
+  const clamped = clamp(Number(t), 0, 1);
+  const index = clamped * (sorted.length - 1);
+  const lo = Math.floor(index);
+  const hi = Math.ceil(index);
+  if (lo === hi) return sorted[lo];
+  const factor = index - lo;
+  return sorted[lo] + ((sorted[hi] - sorted[lo]) * factor);
+}
+
+function quatNormalizeInto(out, q) {
+  const len = Math.hypot(q[0], q[1], q[2], q[3]);
+  if (len > 0) {
+    const inv = 1 / len;
+    out[0] = q[0] * inv;
+    out[1] = q[1] * inv;
+    out[2] = q[2] * inv;
+    out[3] = q[3] * inv;
+  } else {
+    out[0] = 0;
+    out[1] = 0;
+    out[2] = 0;
+    out[3] = 1;
+  }
+  return out;
+}
+
+function quatMultiplyInto(out, a, b) {
+  const ax = a[0];
+  const ay = a[1];
+  const az = a[2];
+  const aw = a[3];
+  const bx = b[0];
+  const by = b[1];
+  const bz = b[2];
+  const bw = b[3];
+  out[0] = aw * bx + ax * bw + ay * bz - az * by;
+  out[1] = aw * by - ax * bz + ay * bw + az * bx;
+  out[2] = aw * bz + ax * by - ay * bx + az * bw;
+  out[3] = aw * bw - ax * bx - ay * by - az * bz;
+  return out;
+}
+
+function quatFromAxisAngle(axis, radians) {
+  const out = new Float32Array(4);
+  const ax = Number(axis?.[0]) || 0;
+  const ay = Number(axis?.[1]) || 0;
+  const az = Number(axis?.[2]) || 0;
+  const len = Math.hypot(ax, ay, az);
+  if (len <= 1e-12) {
+    out[3] = 1;
+    return out;
+  }
+  const half = radians * 0.5;
+  const scale = Math.sin(half) / len;
+  out[0] = ax * scale;
+  out[1] = ay * scale;
+  out[2] = az * scale;
+  out[3] = Math.cos(half);
+  return out;
+}
 
 function normalizeInterpolationMode(value, fallback = POSITION_INTERPOLATION_DEFAULTS.mode) {
   const raw = String(value ?? fallback).trim().toLowerCase();
@@ -832,6 +1019,7 @@ export const EVENTS = Object.freeze({
 
   RESIZE: 'resize',
   CAMERA_MOVE: 'camera:move',
+  CAMERA_CONTROL_CHANGE: 'camera:control-change',
   NETWORK_REPLACED: 'network:replaced',
   GRAPH_FILTER_CHANGED: 'graph:filter-changed',
 });
@@ -1327,6 +1515,33 @@ export class Helios extends EventTarget {
     };
     this._cameraMoveRaf = null;
     this._cameraTransitionController = null;
+    const cameraControlOptions = options.camera ?? options.cameraControls ?? null;
+    this._cameraControlConfig = normalizeCameraControlConfig(
+      CAMERA_CONTROL_DEFAULTS,
+      cameraControlOptions && typeof cameraControlOptions === 'object'
+        ? cameraControlOptions
+        : {},
+    );
+    this._cameraControlRuntime = {
+      lastAutoFitAt: Number.NEGATIVE_INFINITY,
+      lastOrbitAt: 0,
+      lastFitSignature: '',
+      lastEffectiveIntervalMs: this._cameraControlConfig.autoFitIntervalMs,
+      delegateSnapshot: null,
+      delegateSnapshotAt: Number.NEGATIVE_INFINITY,
+      delegateSnapshotPending: false,
+      delegateSnapshotDelegate: null,
+      delegateSnapshotRequestId: 0,
+      orbitBaseRotation: null,
+      appliedOrbitAngle: this._cameraControlConfig.orbitAngle ?? 0,
+      suspended: false,
+      controlPoseActive: false,
+      controlPoseFrom: null,
+      controlPoseTo: null,
+      controlPoseStartedAt: 0,
+      controlPoseDurationMs: 0,
+      controlPoseSignature: '',
+    };
     this._picking = {
       node: { enabled: false },
       edge: { enabled: false },
@@ -1482,41 +1697,643 @@ export class Helios extends EventTarget {
     return this._cameraTransitionController;
   }
 
+  _cameraControlsSnapshot() {
+    const config = copyCameraControlConfig(this._cameraControlConfig ?? CAMERA_CONTROL_DEFAULTS);
+    const activeTargetNodeIndices = this._resolveActiveCameraTargetNodeIndices();
+    return {
+      ...config,
+      activeTargetNodeIndices,
+      effectiveAutoFitIntervalMs: this._resolveCameraAutoFitIntervalMs(activeTargetNodeIndices?.length ?? null),
+    };
+  }
+
+  _emitCameraControlChange() {
+    this.emit(EVENTS.CAMERA_CONTROL_CHANGE, this._cameraControlsSnapshot());
+  }
+
+  _resolveActiveCameraTargetNodeIndices() {
+    const targetNodeIndices = normalizeNodeIndexList(this._cameraControlConfig?.targetNodeIndices);
+    return targetNodeIndices?.length ? targetNodeIndices : null;
+  }
+
+  _markAutoFitDirty(requestRender = false) {
+    if (!this._cameraControlRuntime) return;
+    this._cameraControlRuntime.lastAutoFitAt = Number.NEGATIVE_INFINITY;
+    this._cameraControlRuntime.lastFitSignature = '';
+    if (requestRender !== false) {
+      this.scheduler?.requestRender?.();
+    }
+  }
+
+  _resetCameraDelegateSnapshot() {
+    const runtime = this._cameraControlRuntime ?? null;
+    if (!runtime) return;
+    runtime.delegateSnapshot = null;
+    runtime.delegateSnapshotAt = Number.NEGATIVE_INFINITY;
+    runtime.delegateSnapshotPending = false;
+    runtime.delegateSnapshotDelegate = null;
+    runtime.delegateSnapshotRequestId = (runtime.delegateSnapshotRequestId ?? 0) + 1;
+  }
+
+  _invalidateCameraOrbitReference() {
+    const runtime = this._cameraControlRuntime ?? null;
+    if (!runtime) return;
+    runtime.orbitBaseRotation = null;
+  }
+
+  _composeOrbitRotation(baseRotation, options = {}) {
+    const source = ArrayBuffer.isView(baseRotation) && baseRotation.length >= 4
+      ? baseRotation
+      : DEFAULT_MODE_SWITCH_3D_ROTATION;
+    let nextRotation = new Float32Array(source);
+    const yawRadians = Number.isFinite(options.yawRadians) ? Number(options.yawRadians) : 0;
+    const pitchRadians = Number.isFinite(options.pitchRadians) ? Number(options.pitchRadians) : 0;
+
+    if (Math.abs(yawRadians) > 1e-12) {
+      const yaw = quatFromAxisAngle([0, 1, 0], yawRadians);
+      const rotated = new Float32Array(4);
+      quatMultiplyInto(rotated, yaw, nextRotation);
+      nextRotation = rotated;
+    }
+    if (Math.abs(pitchRadians) > 1e-12) {
+      const pitch = quatFromAxisAngle([1, 0, 0], pitchRadians);
+      const rotated = new Float32Array(4);
+      quatMultiplyInto(rotated, nextRotation, pitch);
+      nextRotation = rotated;
+    }
+    quatNormalizeInto(nextRotation, nextRotation);
+    return nextRotation;
+  }
+
+  _resolveCameraPositionView(options = {}) {
+    const runtime = this._cameraControlRuntime ?? null;
+    const positionSource = this._positionsConfig ?? { source: 'network', delegate: null };
+    if (positionSource.source !== 'delegate') {
+      return { source: 'network', view: null };
+    }
+
+    const delegate = positionSource.delegate ?? this._activePositionDelegate ?? null;
+    if (!delegate) return { source: 'delegate', view: null };
+
+    const context = this._buildPositionDelegateContext(options);
+    let view = null;
+    try {
+      if (typeof delegate.getNodePositionView === 'function') {
+        view = delegate.getNodePositionView(context);
+      } else if (typeof delegate.getPositionView === 'function') {
+        view = delegate.getPositionView(context);
+      }
+    } catch (_) {
+      view = null;
+    }
+    if (view && Number.isFinite(view.length) && view.length > 0) {
+      return { source: 'delegate-view', view };
+    }
+
+    this._scheduleCameraDelegateSnapshot(delegate, options);
+    if (runtime?.delegateSnapshotDelegate === delegate && runtime.delegateSnapshot && runtime.delegateSnapshot.length > 0) {
+      return { source: 'delegate-snapshot', view: runtime.delegateSnapshot };
+    }
+    return { source: 'delegate', view: null };
+  }
+
+  _scheduleCameraDelegateSnapshot(delegate, options = {}) {
+    const runtime = this._cameraControlRuntime ?? null;
+    if (!runtime || !delegate || typeof this.snapshotDelegatePositions !== 'function') return;
+    if (runtime.delegateSnapshotPending && runtime.delegateSnapshotDelegate === delegate) return;
+
+    const now = performance.now();
+    const nodeCount = this._resolveActiveCameraTargetNodeIndices()?.length ?? this._getRenderNetwork()?.nodeCount ?? 0;
+    const minIntervalMs = clamp(this._resolveCameraAutoFitIntervalMs(nodeCount) * 0.5, 120, 2000);
+    if (
+      runtime.delegateSnapshotDelegate === delegate
+      && Number.isFinite(runtime.delegateSnapshotAt)
+      && (now - runtime.delegateSnapshotAt) < minIntervalMs
+    ) {
+      return;
+    }
+
+    runtime.delegateSnapshotPending = true;
+    runtime.delegateSnapshotDelegate = delegate;
+    const requestId = (runtime.delegateSnapshotRequestId ?? 0) + 1;
+    runtime.delegateSnapshotRequestId = requestId;
+
+    Promise.resolve()
+      .then(() => this.snapshotDelegatePositions({ ...options, delegate }))
+      .then((snapshot) => {
+        if (runtime.delegateSnapshotRequestId !== requestId || runtime.delegateSnapshotDelegate !== delegate) return;
+        if (snapshot && Number.isFinite(snapshot.length) && snapshot.length > 0) {
+          runtime.delegateSnapshot = snapshot;
+          runtime.delegateSnapshotAt = performance.now();
+          this._markAutoFitDirty(false);
+          this.scheduler?.requestRender?.();
+          this._tryPendingFrameNetwork?.();
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (runtime.delegateSnapshotRequestId === requestId && runtime.delegateSnapshotDelegate === delegate) {
+          runtime.delegateSnapshotPending = false;
+        }
+      });
+  }
+
+  _sampleRenderBoundsFromPositions(positions, nodeIndices, options = {}) {
+    if (!positions || !Number.isFinite(positions.length) || positions.length <= 0) return null;
+    const coverage = clamp(Number.isFinite(options.coverage) ? Number(options.coverage) : 1, 0.5, 1);
+    const paddingRatio = normalizeNonNegativeNumber(options.paddingRatio, 0, 0, 1);
+    const viewportWidth = Math.max(1, Number(this.renderer?.camera?.viewport?.width ?? this.size?.width ?? 1));
+    const viewportHeight = Math.max(1, Number(this.renderer?.camera?.viewport?.height ?? this.size?.height ?? 1));
+    const ratioPaddingPx = Math.min(viewportWidth, viewportHeight) * paddingRatio;
+    const paddingPx = Number.isFinite(options.paddingPx)
+      ? Math.max(0, Number(options.paddingPx))
+      : Math.max(24, ratioPaddingPx);
+    const maxSamples = normalizePositiveInteger(options.maxSamples, CAMERA_FIT_DEFAULT_MAX_SAMPLES, 32, 1000000);
+    const stride = 3;
+    const step = Math.max(1, Math.ceil(nodeIndices.length / Math.max(1, maxSamples)));
+
+    let minX = Infinity; let minY = Infinity; let minZ = Infinity;
+    let maxX = -Infinity; let maxY = -Infinity; let maxZ = -Infinity;
+    let sumX = 0; let sumY = 0; let sumZ = 0;
+    let count = 0;
+    let found = false;
+    const sampleX = coverage < 0.999999 ? [] : null;
+    const sampleY = coverage < 0.999999 ? [] : null;
+    const sampleZ = coverage < 0.999999 ? [] : null;
+
+    for (let i = 0; i < nodeIndices.length; i += step) {
+      const id = nodeIndices[i];
+      const o = id * stride;
+      if ((o + 2) >= positions.length) continue;
+      const x = positions[o];
+      const y = positions[o + 1];
+      const z = positions[o + 2];
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+      found = true;
+      sumX += x; sumY += y; sumZ += z;
+      count += 1;
+      if (x < minX) minX = x; if (x > maxX) maxX = x;
+      if (y < minY) minY = y; if (y > maxY) maxY = y;
+      if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+      if (sampleX) {
+        sampleX.push(x);
+        sampleY.push(y);
+        sampleZ.push(z);
+      }
+    }
+    if (!found) return null;
+
+    let fitMinX = minX; let fitMinY = minY; let fitMinZ = minZ;
+    let fitMaxX = maxX; let fitMaxY = maxY; let fitMaxZ = maxZ;
+    if (sampleX?.length >= 4) {
+      const trim = (1 - coverage) * 0.5;
+      sampleX.sort((a, b) => a - b);
+      sampleY.sort((a, b) => a - b);
+      sampleZ.sort((a, b) => a - b);
+      fitMinX = quantileFromSorted(sampleX, trim);
+      fitMaxX = quantileFromSorted(sampleX, 1 - trim);
+      fitMinY = quantileFromSorted(sampleY, trim);
+      fitMaxY = quantileFromSorted(sampleY, 1 - trim);
+      fitMinZ = quantileFromSorted(sampleZ, trim);
+      fitMaxZ = quantileFromSorted(sampleZ, 1 - trim);
+    }
+
+    const bboxCx = (fitMinX + fitMaxX) * 0.5;
+    const bboxCy = (fitMinY + fitMaxY) * 0.5;
+    const bboxCz = (fitMinZ + fitMaxZ) * 0.5;
+    const centroid = [
+      count > 0 ? (sumX / count) : bboxCx,
+      count > 0 ? (sumY / count) : bboxCy,
+      count > 0 ? (sumZ / count) : bboxCz,
+    ];
+    return {
+      paddingPx,
+      coverage,
+      sourceCount: nodeIndices.length,
+      sampledCount: count,
+      minX,
+      minY,
+      minZ,
+      maxX,
+      maxY,
+      maxZ,
+      fitMinX,
+      fitMinY,
+      fitMinZ,
+      fitMaxX,
+      fitMaxY,
+      fitMaxZ,
+      sumX,
+      sumY,
+      sumZ,
+      count,
+      bboxCenter: [bboxCx, bboxCy, bboxCz],
+      centroid,
+    };
+  }
+
+  _resolveCameraAutoFitIntervalMs(nodeCount = null) {
+    const config = this._cameraControlConfig ?? CAMERA_CONTROL_DEFAULTS;
+    const baseInterval = normalizeNonNegativeNumber(
+      config.autoFitIntervalMs,
+      CAMERA_CONTROL_DEFAULTS.autoFitIntervalMs,
+      0,
+      60000,
+    );
+    const minInterval = normalizeNonNegativeNumber(
+      config.autoFitMinIntervalMs,
+      CAMERA_CONTROL_DEFAULTS.autoFitMinIntervalMs,
+      0,
+      60000,
+    );
+    const maxInterval = normalizeNonNegativeNumber(
+      config.autoFitMaxIntervalMs,
+      CAMERA_CONTROL_DEFAULTS.autoFitMaxIntervalMs,
+      minInterval,
+      60000,
+    );
+    const scaleStrength = normalizeNonNegativeNumber(
+      config.autoFitLargeNetworkScale,
+      CAMERA_CONTROL_DEFAULTS.autoFitLargeNetworkScale,
+      0,
+      32,
+    );
+    const countRef = normalizePositiveInteger(
+      config.autoFitIntervalNodeCountRef,
+      CAMERA_CONTROL_DEFAULTS.autoFitIntervalNodeCountRef,
+      1,
+      Number.MAX_SAFE_INTEGER,
+    );
+    const resolvedNodeCount = Math.max(1, Number.isFinite(nodeCount) ? Math.floor(nodeCount) : Math.floor(this._getRenderNetwork()?.nodeCount ?? 1));
+    const intervalScale = scaleStrength <= 0
+      ? 1
+      : Math.max(1, Math.pow(resolvedNodeCount / countRef, 0.5) * scaleStrength);
+    const interval = clamp(baseInterval * intervalScale, minInterval, maxInterval);
+    if (this._cameraControlRuntime) {
+      this._cameraControlRuntime.lastEffectiveIntervalMs = interval;
+    }
+    return interval;
+  }
+
+  _disableAutomaticCameraControlFromInteraction(detail = null) {
+    const config = this._cameraControlConfig ?? null;
+    if (!config) return false;
+    this._invalidateCameraOrbitReference();
+    let changed = false;
+    const action = detail?.action ?? null;
+    if (config.autoFit === true && (action === 'pan' || action === 'zoom' || action === 'dolly')) {
+      config.autoFit = false;
+      changed = true;
+    }
+    if (config.orbit === true && action !== 'zoom' && action !== 'dolly') {
+      config.orbit = false;
+      changed = true;
+    }
+    if (changed) {
+      this._markAutoFitDirty(false);
+      this._emitCameraControlChange();
+      this.scheduler?.requestRender?.();
+    }
+    return changed;
+  }
+
   _sampleRenderBounds(options = {}) {
     const network = this._getRenderNetwork();
-    if (!network) return null;
-    return this._withPositionBufferAccess(() => {
-      const positions = this._readNodePositionViewUnsafe();
-      if (!positions) return null;
-      const nodeIndices = network?.nodeIndices ?? null;
-      if (!nodeIndices?.length) return null;
-      const paddingPx = Number.isFinite(options.paddingPx) ? Math.max(0, options.paddingPx) : 24;
-      const maxSamples = options.maxSamples ?? 50000;
-      const stride = 3;
-      const step = Math.max(1, Math.ceil(nodeIndices.length / Math.max(1, maxSamples)));
-
-      let minX = Infinity; let minY = Infinity; let minZ = Infinity;
-      let maxX = -Infinity; let maxY = -Infinity; let maxZ = -Infinity;
-      let sumX = 0; let sumY = 0; let sumZ = 0;
-      let count = 0;
-      let found = false;
-      for (let i = 0; i < nodeIndices.length; i += step) {
-        const id = nodeIndices[i];
-        const o = id * stride;
-        const x = positions[o];
-        const y = positions[o + 1];
-        const z = positions[o + 2];
-        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
-        found = true;
-        sumX += x; sumY += y; sumZ += z;
-        count += 1;
-        if (x < minX) minX = x; if (x > maxX) maxX = x;
-        if (y < minY) minY = y; if (y > maxY) maxY = y;
-        if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+    const requestedNodeIndices = normalizeNodeIndexList(options.nodeIndices);
+    if (requestedNodeIndices?.length) {
+      const resolved = this._resolveCameraPositionView(options);
+      if (resolved?.source === 'network') {
+        return this._withPositionBufferAccess(() => {
+          const positions = this._readNodePositionViewUnsafe();
+          return this._sampleRenderBoundsFromPositions(positions, requestedNodeIndices, options);
+        });
       }
-      if (!found) return null;
-      return { paddingPx, minX, minY, minZ, maxX, maxY, maxZ, sumX, sumY, sumZ, count };
+      if (!resolved?.view) return null;
+      return this._sampleRenderBoundsFromPositions(resolved.view, requestedNodeIndices, options);
+    }
+
+    const resolved = this._resolveCameraPositionView(options);
+    if (resolved?.source === 'network') {
+      return this._withPositionBufferAccess(() => {
+        const positions = this._readNodePositionViewUnsafe();
+        const nodeIndices = network?.nodeIndices ?? null;
+        return this._sampleRenderBoundsFromPositions(positions, nodeIndices, options);
+      });
+    }
+    let nodeIndices = null;
+    this._withPositionBufferAccess(() => {
+      const active = network?.nodeIndices ?? null;
+      if (!active?.length) return;
+      nodeIndices = ArrayBuffer.isView(active)
+        ? new Uint32Array(active)
+        : Array.from(active);
     });
+    if (!nodeIndices?.length || !resolved?.view) return null;
+    return this._sampleRenderBoundsFromPositions(resolved.view, nodeIndices, options);
+  }
+
+  _resolveCameraFocusPose(bounds, options = {}) {
+    const camera = this.renderer?.camera ?? null;
+    const current = captureCameraPose(camera);
+    if (!camera || !current || !bounds) return null;
+    const focusMode = options.focusMode === 'centroid' ? 'centroid' : 'bbox';
+    const center = focusMode === 'centroid'
+      ? copyVec3(bounds.centroid ?? bounds.bboxCenter ?? [0, 0, 0], 0)
+      : copyVec3(bounds.bboxCenter ?? bounds.centroid ?? [0, 0, 0], 0);
+    if (camera.mode === '2d') {
+      return mergeCameraPose(current, {
+        mode: '2d',
+        projection: 'orthographic',
+        target: new Float32Array(center),
+        pan3D: new Float32Array([0, 0, 0]),
+        pan2D: new Float32Array([
+          -center[0] * current.zoom,
+          -center[1] * current.zoom,
+          0,
+        ]),
+      });
+    }
+    return mergeCameraPose(current, {
+      mode: '3d',
+      target: new Float32Array(center),
+      pan3D: new Float32Array([0, 0, 0]),
+    });
+  }
+
+  _resolveCameraFitPose(bounds, options = {}) {
+    const camera = this.renderer?.camera ?? null;
+    const current = captureCameraPose(camera);
+    if (!camera || !current || !bounds) return null;
+
+    const focusMode = options.focusMode === 'centroid' ? 'centroid' : 'bbox';
+    const center = focusMode === 'centroid'
+      ? copyVec3(bounds.centroid ?? bounds.bboxCenter ?? [0, 0, 0], 0)
+      : copyVec3(bounds.bboxCenter ?? bounds.centroid ?? [0, 0, 0], 0);
+    const fitWidth = Math.max(1e-6, bounds.fitMaxX - bounds.fitMinX);
+    const fitHeight = Math.max(1e-6, bounds.fitMaxY - bounds.fitMinY);
+    const fitDepth = Math.max(1e-6, bounds.fitMaxZ - bounds.fitMinZ);
+
+    if (camera.mode === '2d') {
+      const viewportW = Math.max(1, camera.viewport?.width ?? this.size?.width ?? 1);
+      const viewportH = Math.max(1, camera.viewport?.height ?? this.size?.height ?? 1);
+      const availW = Math.max(1, viewportW - bounds.paddingPx * 2);
+      const availH = Math.max(1, viewportH - bounds.paddingPx * 2);
+      const zoomX = availW / fitWidth;
+      const zoomY = availH / fitHeight;
+      const nextZoom = Math.min(zoomX, zoomY);
+      const clampedZoom = Math.min(camera.maxZoom ?? nextZoom, Math.max(camera.minZoom ?? nextZoom, nextZoom));
+      return mergeCameraPose(current, {
+        mode: '2d',
+        projection: 'orthographic',
+        target: new Float32Array(center),
+        pan3D: new Float32Array([0, 0, 0]),
+        pan2D: new Float32Array([
+          -center[0] * clampedZoom,
+          -center[1] * clampedZoom,
+          0,
+        ]),
+        zoom: clampedZoom,
+      });
+    }
+
+    const radius = 0.5 * Math.hypot(fitWidth, fitHeight, fitDepth);
+    const fovRad = (Number.isFinite(camera.fov) ? camera.fov : 60) * (Math.PI / 180);
+    const distPerspective = radius / Math.max(1e-3, Math.tan(fovRad * 0.5));
+    const desired = camera.projection === 'orthographic' ? radius * 1.2 : distPerspective * 1.25;
+    const distance = Math.min(camera.maxDistance ?? desired, Math.max(camera.minDistance ?? desired, desired));
+    const resetOrientation = options.resetOrientation === true;
+    return mergeCameraPose(current, {
+      mode: '3d',
+      target: new Float32Array(center),
+      pan3D: new Float32Array([0, 0, 0]),
+      pan2D: resetOrientation ? new Float32Array([0, 0, 0]) : current.pan2D,
+      distance,
+      rotation: resetOrientation
+        ? new Float32Array(DEFAULT_MODE_SWITCH_3D_ROTATION)
+        : current.rotation,
+    });
+  }
+
+  _applyCameraPoseWithOptionalAnimation(nextPose, options = {}) {
+    const camera = this.renderer?.camera ?? null;
+    const current = captureCameraPose(camera);
+    if (!camera || !current || !nextPose) return false;
+    const animate = options.animate === true;
+    const durationMs = normalizeNonNegativeNumber(
+      options.durationMs,
+      this._cameraControlConfig?.animationDurationMs ?? CAMERA_CONTROL_DEFAULTS.animationDurationMs,
+      0,
+      60000,
+    );
+    if (animate && durationMs > 0) {
+      this._ensureCameraTransitionController().transition(camera, {
+        fromPose: current,
+        toPose: nextPose,
+        durationMs,
+      });
+    } else {
+      applyCameraPose(camera, nextPose);
+      this.scheduler?.requestRender?.();
+    }
+    return true;
+  }
+
+  _cameraPoseSignature(pose) {
+    if (!pose) return '';
+    return JSON.stringify([
+      pose.mode,
+      pose.projection,
+      Number(pose.zoom ?? 0).toFixed(6),
+      Number(pose.distance ?? 0).toFixed(6),
+      ...(Array.from(pose.target ?? []).map((value) => Number(value).toFixed(6))),
+      ...(Array.from(pose.pan2D ?? []).map((value) => Number(value).toFixed(6))),
+      ...(Array.from(pose.pan3D ?? []).map((value) => Number(value).toFixed(6))),
+      ...(Array.from(pose.rotation ?? []).map((value) => Number(value).toFixed(6))),
+    ]);
+  }
+
+  _cameraFitSignature(pose) {
+    if (!pose) return '';
+    return JSON.stringify([
+      pose.mode,
+      pose.projection,
+      Number(pose.zoom ?? 0).toFixed(6),
+      Number(pose.distance ?? 0).toFixed(6),
+      ...(Array.from(pose.target ?? []).map((value) => Number(value).toFixed(6))),
+      ...(Array.from(pose.pan2D ?? []).map((value) => Number(value).toFixed(6))),
+      ...(Array.from(pose.pan3D ?? []).map((value) => Number(value).toFixed(6))),
+    ]);
+  }
+
+  _stopCameraControlPoseInterpolation() {
+    const runtime = this._cameraControlRuntime ?? null;
+    if (!runtime) return;
+    runtime.controlPoseActive = false;
+    runtime.controlPoseFrom = null;
+    runtime.controlPoseTo = null;
+    runtime.controlPoseStartedAt = 0;
+    runtime.controlPoseDurationMs = 0;
+    runtime.controlPoseSignature = '';
+  }
+
+  _resolveCameraControlPoseInterpolation(timestamp = performance.now()) {
+    const runtime = this._cameraControlRuntime ?? null;
+    if (!runtime || runtime.controlPoseActive !== true || !runtime.controlPoseFrom || !runtime.controlPoseTo) {
+      return { pose: null, active: false, changed: false };
+    }
+    const durationMs = Math.max(0, Number(runtime.controlPoseDurationMs) || 0);
+    if (durationMs <= 0) {
+      const pose = runtime.controlPoseTo;
+      runtime.controlPoseActive = false;
+      runtime.controlPoseFrom = null;
+      runtime.controlPoseTo = null;
+      return { pose, active: false, changed: true };
+    }
+    const now = Number.isFinite(timestamp) ? timestamp : performance.now();
+    const t = clamp((now - runtime.controlPoseStartedAt) / durationMs, 0, 1);
+    const pose = interpolateCameraPose(runtime.controlPoseFrom, runtime.controlPoseTo, t);
+    if (t >= 1) {
+      const completedPose = runtime.controlPoseTo;
+      runtime.controlPoseActive = false;
+      runtime.controlPoseFrom = null;
+      runtime.controlPoseTo = null;
+      return { pose: completedPose ?? pose, active: false, changed: true };
+    }
+    return { pose, active: true, changed: true };
+  }
+
+  _queueCameraControlPose(nextPose, options = {}) {
+    const camera = this.renderer?.camera ?? null;
+    const runtime = this._cameraControlRuntime ?? null;
+    if (!camera || !runtime || !nextPose) return false;
+    const signature = this._cameraPoseSignature(nextPose);
+    const animate = options.animate === true;
+    const durationMs = normalizeNonNegativeNumber(
+      options.durationMs,
+      this._cameraControlConfig?.animationDurationMs ?? CAMERA_CONTROL_DEFAULTS.animationDurationMs,
+      0,
+      60000,
+    );
+    if (signature === runtime.controlPoseSignature && runtime.controlPoseActive === (animate && durationMs > 0)) {
+      return false;
+    }
+    if (!(animate && durationMs > 0)) {
+      this._stopCameraControlPoseInterpolation();
+      runtime.controlPoseSignature = signature;
+      applyCameraPose(camera, nextPose);
+      this.scheduler?.requestRender?.();
+      return true;
+    }
+    runtime.controlPoseActive = true;
+    runtime.controlPoseFrom = captureCameraPose(camera);
+    runtime.controlPoseTo = nextPose;
+    runtime.controlPoseStartedAt = performance.now();
+    runtime.controlPoseDurationMs = durationMs;
+    runtime.controlPoseSignature = signature;
+    this.scheduler?.requestRender?.();
+    return true;
+  }
+
+  _stepCameraControlPoseInterpolation(timestamp = performance.now()) {
+    const camera = this.renderer?.camera ?? null;
+    if (!camera) return false;
+    const resolved = this._resolveCameraControlPoseInterpolation(timestamp);
+    if (!resolved.pose) return false;
+    applyCameraPose(camera, resolved.pose);
+    return resolved.active === true;
+  }
+
+  _stepCameraControlRenderPump(timestamp = performance.now()) {
+    const now = Number.isFinite(timestamp) ? timestamp : performance.now();
+    const camera = this.renderer?.camera ?? null;
+    const config = this._cameraControlConfig ?? CAMERA_CONTROL_DEFAULTS;
+    const runtime = this._cameraControlRuntime ?? null;
+    if (!camera || !runtime) return false;
+    if (runtime.suspended === true) return false;
+
+    if (config.autoFit === true) {
+      const activeTargetNodeIndices = this._resolveActiveCameraTargetNodeIndices();
+      const nodeCount = activeTargetNodeIndices?.length ?? this._getRenderNetwork()?.nodeCount ?? 0;
+      const effectiveIntervalMs = this._resolveCameraAutoFitIntervalMs(nodeCount);
+      if (!Number.isFinite(runtime.lastAutoFitAt) || (now - runtime.lastAutoFitAt) >= effectiveIntervalMs) {
+        runtime.lastAutoFitAt = now;
+        const sampledBounds = this._sampleRenderBounds({
+          nodeIndices: activeTargetNodeIndices,
+          coverage: config.autoFitCoverage,
+          paddingRatio: config.autoFitPaddingRatio,
+          maxSamples: config.autoFitMaxSamples,
+        });
+        const fitPose = this._resolveCameraFitPose(sampledBounds, {
+          resetOrientation: false,
+          focusMode: activeTargetNodeIndices?.length ? 'centroid' : 'bbox',
+        });
+        const fitSignature = this._cameraFitSignature(fitPose);
+        if (fitSignature && fitSignature !== runtime.lastFitSignature && fitPose) {
+          runtime.lastFitSignature = fitSignature;
+          this._queueCameraControlPose(fitPose, {
+            animate: config.animation,
+            durationMs: config.animationDurationMs,
+          });
+        }
+      }
+    }
+
+    const interpolated = this._resolveCameraControlPoseInterpolation(now);
+    let finalPose = interpolated.pose ?? captureCameraPose(camera);
+    let wantsRender = interpolated.active === true;
+    if (!finalPose) return wantsRender;
+
+    if (camera.mode === '3d') {
+      const lastOrbitAt = Number.isFinite(runtime.lastOrbitAt) && runtime.lastOrbitAt > 0 ? runtime.lastOrbitAt : now;
+      const deltaMs = Math.max(0, now - lastOrbitAt);
+      const deltaSeconds = Math.max(0, Math.min(0.1, deltaMs / 1000));
+      runtime.lastOrbitAt = now;
+
+      const previousOrbitAngle = clamp(
+        toFiniteNumber(runtime.appliedOrbitAngle, config.orbitAngle ?? 0),
+        -89,
+        89,
+      );
+      const targetOrbitAngle = clamp(toFiniteNumber(config.orbitAngle, previousOrbitAngle), -89, 89);
+      let nextOrbitAngle = targetOrbitAngle;
+      if (config.animation === true) {
+        const durationMs = normalizeNonNegativeNumber(
+          config.animationDurationMs,
+          CAMERA_CONTROL_DEFAULTS.animationDurationMs,
+          0,
+          60000,
+        );
+        if (durationMs > 0 && deltaMs > 0) {
+          const tauMs = Math.max(1, durationMs / 4);
+          const alpha = 1 - Math.exp(-deltaMs / tauMs);
+          nextOrbitAngle = previousOrbitAngle + ((targetOrbitAngle - previousOrbitAngle) * clamp(alpha, 0, 1));
+        }
+      }
+      runtime.appliedOrbitAngle = nextOrbitAngle;
+
+      const pitchRadians = (nextOrbitAngle - previousOrbitAngle) * (Math.PI / 180);
+      const yawRadians = config.orbit === true && deltaSeconds > 0 && config.orbitSpeed > 0
+        ? (Math.PI * 2) * config.orbitSpeed * config.orbitDirection * deltaSeconds
+        : 0;
+      if (Math.abs(yawRadians) > 1e-12 || Math.abs(pitchRadians) > 1e-12) {
+        finalPose = mergeCameraPose(finalPose, {
+          rotation: this._composeOrbitRotation(finalPose.rotation, {
+            yawRadians,
+            pitchRadians,
+          }),
+        });
+        wantsRender = true;
+      }
+    } else {
+      runtime.lastOrbitAt = now;
+      runtime.appliedOrbitAngle = clamp(toFiniteNumber(config.orbitAngle, 0), -89, 89);
+    }
+
+    if (interpolated.changed === true || wantsRender) {
+      applyCameraPose(camera, finalPose);
+    }
+
+    return wantsRender;
   }
 
   _collapseNodeDepthTo2DPlane(zValue = 0) {
@@ -1780,8 +2597,11 @@ export class Helios extends EventTarget {
       this._applyMappersSafely();
     }
     if (this.renderer?.camera?.setChangeListener) {
-      this.renderer.camera.setChangeListener(() => {
+      this.renderer.camera.setChangeListener((detail) => {
         this.scheduler.requestRender();
+        if (detail?.origin === 'interaction') {
+          this._disableAutomaticCameraControlFromInteraction(detail);
+        }
         this._scheduleCameraMove();
         this.debug.log('helios', 'Camera change requested render');
       });
@@ -2174,6 +2994,7 @@ export class Helios extends EventTarget {
     const nextLayoutNetwork = this._ensureGraphFilterState().layoutNetwork ?? this.network ?? null;
     if (!nextLayoutNetwork || layout.network === nextLayoutNetwork) return false;
     layout.network = nextLayoutNetwork;
+    layout.syncAutoSettingsForNetwork?.(nextLayoutNetwork);
     this._enforcePositionSourcePolicy(layout, { resetInterpolation: false });
     return true;
   }
@@ -2182,6 +3003,7 @@ export class Helios extends EventTarget {
     this._refreshGraphFilterNetworks({ force: false, throwOnError: false });
     const layoutNetworkChanged = this._syncLayoutNetworkFromFilter();
     const filterScope = this._ensureGraphFilterState().scope;
+    this._markAutoFitDirty(false);
     if (layoutNetworkChanged || filterScope === GRAPH_FILTER_SCOPE_RENDER_LAYOUT) {
       this._requestLayoutReheat('filter');
     }
@@ -2440,6 +3262,9 @@ export class Helios extends EventTarget {
     }
     this.scheduler.requestGeometry();
     this.scheduler.requestRender();
+    this._resetCameraDelegateSnapshot();
+    this._invalidateCameraOrbitReference();
+    this._markAutoFitDirty(false);
 
     this.emit(EVENTS.NETWORK_REPLACED, {
       oldNetwork: prevNetwork ?? null,
@@ -2491,59 +3316,40 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  _requestInitialCameraFit() {
+    this.requestFrameNetwork({
+      animate: false,
+      resetOrientation: this.mode() === '3d',
+      maxAttempts: 60,
+    });
+  }
+
   frameNetwork(options = {}) {
     const camera = this.renderer?.camera ?? null;
     if (!camera) return false;
-    const sampledBounds = this._sampleRenderBounds(options);
+    const targetNodeIndices = options.nodeIndices != null
+      ? normalizeNodeIndexList(options.nodeIndices)
+      : this._resolveActiveCameraTargetNodeIndices();
+    const sampledBounds = this._sampleRenderBounds({
+      ...options,
+      nodeIndices: targetNodeIndices ?? undefined,
+      coverage: Number.isFinite(options.coverage)
+        ? Number(options.coverage)
+        : (this._cameraControlConfig?.autoFitCoverage ?? CAMERA_CONTROL_DEFAULTS.autoFitCoverage),
+      paddingRatio: Number.isFinite(options.paddingRatio)
+        ? Number(options.paddingRatio)
+        : (this._cameraControlConfig?.autoFitPaddingRatio ?? CAMERA_CONTROL_DEFAULTS.autoFitPaddingRatio),
+      maxSamples: options.maxSamples ?? this._cameraControlConfig?.autoFitMaxSamples ?? CAMERA_FIT_DEFAULT_MAX_SAMPLES,
+    });
     if (!sampledBounds) return false;
-
-    const { paddingPx, minX, minY, minZ, maxX, maxY, maxZ, sumX, sumY, sumZ, count } = sampledBounds;
-
-    const bboxCx = (minX + maxX) * 0.5;
-    const bboxCy = (minY + maxY) * 0.5;
-    const bboxCz = (minZ + maxZ) * 0.5;
-    const meanCx = count ? (sumX / count) : bboxCx;
-    const meanCy = count ? (sumY / count) : bboxCy;
-    const meanCz = count ? (sumZ / count) : bboxCz;
-    const cx = Number.isFinite(meanCx) ? meanCx : bboxCx;
-    const cy = Number.isFinite(meanCy) ? meanCy : bboxCy;
-    const cz = Number.isFinite(meanCz) ? meanCz : bboxCz;
-    const w = Math.max(1e-6, maxX - minX);
-    const h = Math.max(1e-6, maxY - minY);
-    const dz = Math.max(1e-6, maxZ - minZ);
-
-    if (camera.mode === '2d') {
-      const viewportW = Math.max(1, camera.viewport?.width ?? this.size?.width ?? 1);
-      const viewportH = Math.max(1, camera.viewport?.height ?? this.size?.height ?? 1);
-      const availW = Math.max(1, viewportW - paddingPx * 2);
-      const availH = Math.max(1, viewportH - paddingPx * 2);
-      const zoomX = availW / w;
-      const zoomY = availH / h;
-      const nextZoom = Math.min(zoomX, zoomY);
-      const clamped = Math.min(camera.maxZoom ?? nextZoom, Math.max(camera.minZoom ?? nextZoom, nextZoom));
-      camera.zoom = clamped;
-      camera.pan2D[0] = -cx * camera.zoom;
-      camera.pan2D[1] = -cy * camera.zoom;
-      if ('_needsUpdate' in camera) camera._needsUpdate = true;
-      camera.updateMatrices?.();
-      this.scheduler?.requestRender?.();
-      return true;
-    }
-
-    // 3D: reset rotation/pan, re-center target, choose a distance that frames the bounding box.
-    camera.resetCameraState?.();
-    camera.target[0] = cx;
-    camera.target[1] = cy;
-    camera.target[2] = cz;
-    const radius = 0.5 * Math.hypot(w, h, dz);
-    const fovRad = (Number.isFinite(camera.fov) ? camera.fov : 60) * (Math.PI / 180);
-    const distPerspective = radius / Math.max(1e-3, Math.tan(fovRad * 0.5));
-    const desired = camera.projection === 'orthographic' ? radius * 1.2 : distPerspective * 1.25;
-    camera.distance = Math.min(camera.maxDistance ?? desired, Math.max(camera.minDistance ?? desired, desired));
-    if ('_needsUpdate' in camera) camera._needsUpdate = true;
-    camera.updateMatrices?.();
-    this.scheduler?.requestRender?.();
-    return true;
+    const nextPose = this._resolveCameraFitPose(sampledBounds, {
+      resetOrientation: options.resetOrientation ?? (camera.mode === '3d'),
+      focusMode: options.focusMode ?? (targetNodeIndices?.length ? 'centroid' : 'bbox'),
+    });
+    return this._applyCameraPoseWithOptionalAnimation(nextPose, {
+      animate: options.animate === true,
+      durationMs: options.durationMs,
+    });
   }
 
   async loadNetwork(source, options = {}) {
@@ -3093,8 +3899,11 @@ export class Helios extends EventTarget {
       },
     });
     if (this.renderer?.camera?.setChangeListener) {
-      this.renderer.camera.setChangeListener(() => {
+      this.renderer.camera.setChangeListener((detail) => {
         this.scheduler.requestRender();
+        if (detail?.origin === 'interaction') {
+          this._disableAutomaticCameraControlFromInteraction(detail);
+        }
         this._scheduleCameraMove();
         this.debug.log('helios', 'Camera change requested render');
       });
@@ -3165,6 +3974,7 @@ export class Helios extends EventTarget {
         this.emit(EVENTS.AFTER_RENDER, { frameId: this._frameId, dt, frame, size: { ...this.size } });
       }
     });
+    this._requestInitialCameraFit();
     if (!this.manualRendering) {
       this.scheduler.start();
       this.scheduler.requestGeometry();
@@ -3463,9 +4273,10 @@ export class Helios extends EventTarget {
     const now = Number.isFinite(timestamp) ? timestamp : performance.now();
     const runtime = this._interpolationRuntime ?? null;
     const config = this._interpolationConfig ?? POSITION_INTERPOLATION_DEFAULTS;
+    const cameraKeepRunning = this._stepCameraControlRenderPump(now);
     if (!runtime || config.enabled !== true || runtime.active !== true) {
       this._applyPositionPipelineToRenderer();
-      return false;
+      return cameraKeepRunning;
     }
     const mode = normalizeInterpolationMode(config.mode);
     const keepRunning = this._stepGpuInterpolation(now);
@@ -3484,7 +4295,7 @@ export class Helios extends EventTarget {
       runtime.sourceTextureMeta = null;
     }
     this._applyPositionPipelineToRenderer();
-    return keepRunning;
+    return keepRunning || cameraKeepRunning;
   }
 
   _handleLayoutUpdate(payload = {}) {
@@ -3659,6 +4470,7 @@ export class Helios extends EventTarget {
       source: policy.source,
       delegate: policy.delegate ?? null,
     };
+    this._resetCameraDelegateSnapshot();
     if (nextActiveDelegate && nextActiveDelegate !== prevActiveDelegate) {
       this._attachPositionDelegate(nextActiveDelegate);
     }
@@ -3986,11 +4798,76 @@ export class Helios extends EventTarget {
     return captureCameraPose(this.renderer?.camera ?? null);
   }
 
+  cameraControls(options) {
+    if (arguments.length === 0) {
+      return this._cameraControlsSnapshot();
+    }
+    if (!options || typeof options !== 'object') return this;
+    const previousSnapshot = this._cameraControlsSnapshot();
+    const previous = JSON.stringify(previousSnapshot);
+    this._cameraControlConfig = normalizeCameraControlConfig(this._cameraControlConfig ?? CAMERA_CONTROL_DEFAULTS, options);
+    const orbitAngleChanged = (this._cameraControlConfig.orbitAngle ?? 0) !== (previousSnapshot.orbitAngle ?? 0);
+    if (this._cameraControlConfig.orbit !== true) {
+      this._cameraControlRuntime.lastOrbitAt = 0;
+    }
+    if (orbitAngleChanged && this.renderer?.camera?.mode === '3d') {
+      this.scheduler?.requestRender?.();
+    }
+    this._markAutoFitDirty(false);
+    const next = this._cameraControlsSnapshot();
+    if (JSON.stringify(next) !== previous) {
+      this._emitCameraControlChange();
+    }
+    if (this._cameraControlConfig.autoFit === true) {
+      this.scheduler?.requestRender?.();
+    }
+    if (this._cameraControlConfig.orbit === true && this.renderer?.camera?.mode === '3d') {
+      this.scheduler?.requestRender?.();
+    }
+    return this;
+  }
+
+  cameraTargetNodes(nodeIndices, options = {}) {
+    if (arguments.length === 0) {
+      return [...(this._cameraControlConfig?.targetNodeIndices ?? [])];
+    }
+    const normalized = normalizeNodeIndexList(nodeIndices);
+    this.cameraControls({ targetNodeIndices: normalized });
+    const bounds = this._sampleRenderBounds({
+      nodeIndices: normalized?.length ? normalized : undefined,
+      coverage: 1,
+      maxSamples: this._cameraControlConfig?.autoFitMaxSamples ?? CAMERA_FIT_DEFAULT_MAX_SAMPLES,
+    });
+    const nextPose = this._resolveCameraFocusPose(bounds, {
+      focusMode: normalized?.length ? 'centroid' : 'bbox',
+    });
+    this._applyCameraPoseWithOptionalAnimation(nextPose, {
+      animate: options.animate ?? this._cameraControlConfig?.animation === true,
+      durationMs: options.durationMs ?? this._cameraControlConfig?.animationDurationMs,
+    });
+    return this;
+  }
+
   setCameraPose(pose, options = {}) {
     const camera = this.renderer?.camera ?? null;
     if (!camera || !pose || typeof pose !== 'object') return this;
+    if (
+      options.source === 'ui'
+      || options.source === 'interaction'
+      || options.manual === true
+      || Object.prototype.hasOwnProperty.call(pose, 'rotation')
+    ) {
+      this._invalidateCameraOrbitReference();
+      this._stopCameraControlPoseInterpolation();
+    }
     const nextPose = mergeCameraPose(captureCameraPose(camera), pose);
     applyCameraPose(camera, nextPose, { update: options.update !== false });
+    if (options.source === 'ui' || options.source === 'interaction' || options.manual === true) {
+      this._disableAutomaticCameraControlFromInteraction({
+        origin: options.source ?? 'interaction',
+        action: Object.prototype.hasOwnProperty.call(pose, 'zoom') ? 'zoom' : Object.prototype.hasOwnProperty.call(pose, 'distance') ? 'dolly' : 'pan',
+      });
+    }
     if (options.requestRender !== false) {
       this.scheduler?.requestRender?.();
     }
@@ -4000,6 +4877,7 @@ export class Helios extends EventTarget {
   async transitionCamera(pose, options = {}) {
     const camera = this.renderer?.camera ?? null;
     if (!camera || !pose || typeof pose !== 'object') return this;
+    this._stopCameraControlPoseInterpolation();
     const fromPose = mergeCameraPose(captureCameraPose(camera), options.fromPose ?? {});
     const toPose = mergeCameraPose(fromPose, pose);
     await this._ensureCameraTransitionController().transition(camera, {
@@ -4007,6 +4885,12 @@ export class Helios extends EventTarget {
       toPose,
       durationMs: options.durationMs ?? DEFAULT_MODE_SWITCH_DURATION_MS,
     });
+    if (options.source === 'ui' || options.source === 'interaction' || options.manual === true) {
+      this._disableAutomaticCameraControlFromInteraction({
+        origin: options.source ?? 'interaction',
+        action: Object.prototype.hasOwnProperty.call(pose, 'zoom') ? 'zoom' : Object.prototype.hasOwnProperty.call(pose, 'distance') ? 'dolly' : 'pan',
+      });
+    }
     if (options.requestRender !== false) {
       this.scheduler?.requestRender?.();
     }
@@ -4026,114 +4910,138 @@ export class Helios extends EventTarget {
     const nextMode = mode === '3d' ? '3d' : '2d';
     const previousMode = this.mode();
     if (nextMode === previousMode) return this;
-
-    const positionSource = this.positions?.() ?? { source: 'network', delegate: null };
-    if (positionSource.source === 'delegate' && options.syncDelegate !== false) {
-      try {
-        await this.syncDelegatePositionsToNetwork();
-      } catch (error) {
-        console.warn('Helios.setMode(): failed to sync delegate positions back to the network before switching modes.', error);
-      }
+    if (this._cameraControlRuntime) {
+      this._cameraControlRuntime.suspended = true;
+      this._stopCameraControlPoseInterpolation();
     }
 
-    this.options.mode = nextMode;
-    const nextProjection = options.projection ?? (nextMode === '3d' ? 'perspective' : 'orthographic');
-    this.options.projection = nextProjection;
-    this._applyModeToLayoutOptions(nextMode);
-    this.visuals?.seedMissingPositions?.(
-      resolveSeedBoundsForLayout(this.options.layout, this.layers?.size, nextMode),
-    );
-
-    const layoutChanged = this._applyModeToActiveLayout(nextMode);
-    if (
-      previousMode === '2d'
-      && nextMode === '3d'
-      && this._layout instanceof GpuForceLayout
-    ) {
-      const jitterAmplitude = computeGpuForceModeSwitchDepthJitter(this._layout);
-      const delegate = this._layout?.getPositionDelegate?.() ?? this._layout?.positionDelegate ?? null;
-      await delegate?.injectPlanarDepthJitter?.(this._buildPositionDelegateContext({ scope: 'layout' }), jitterAmplitude);
-    }
-    if (layoutChanged && options.reheat !== false) {
-      this._requestLayoutReheat('mode');
-    }
-    this._layout?.requestUpdate?.();
-    this._enforcePositionSourcePolicy(this._layout, { resetInterpolation: false });
-    this.scheduler?.requestGeometry?.();
-    this.scheduler?.requestLayout?.('mode');
-    this.scheduler?.requestRender?.();
-    this._labels?.requestFullReselect?.('mode');
-    this._refreshUIBindings?.();
-
-    const camera = this.renderer?.camera ?? null;
-    const animateCamera = options.animate !== false;
-    if (camera) {
-      const bounds = this._sampleRenderBounds(options.frame ?? {}) ?? null;
-      if (nextMode === '3d') {
-        const plan = this._build3DModeTransitionPoses(bounds, nextProjection);
-        if (plan) {
-          if (animateCamera) {
-            await this._ensureCameraTransitionController().transition(camera, {
-              fromPose: plan.startPose,
-              toPose: plan.endPose,
-              durationMs: options.cameraDurationMs ?? DEFAULT_MODE_SWITCH_DURATION_MS,
-            });
-          } else {
-            applyCameraPose(camera, plan.endPose);
-          }
-        } else {
-          applyCameraPose(camera, {
-            ...captureCameraPose(camera),
-            mode: '3d',
-            projection: nextProjection,
-          });
-        }
-      } else {
-        const plan = this._build2DModeTransitionPoses(bounds);
-        if (plan) {
-          if (animateCamera) {
-            const durationMs = options.cameraDurationMs ?? DEFAULT_MODE_SWITCH_DURATION_MS;
-            const controller = this._ensureCameraTransitionController();
-            await controller.transition(camera, {
-              fromPose: plan.startPose,
-              toPose: plan.pre2D3D,
-              durationMs: durationMs * 0.7,
-            });
-          }
-          if (options.flattenDepth !== false) {
-            this._collapseNodeDepthTo2DPlane(0);
-          }
-          if (animateCamera) {
-            await this._ensureCameraTransitionController().transition(camera, {
-              fromPose: plan.start2DPose,
-              toPose: plan.endPose,
-              durationMs: (options.cameraDurationMs ?? DEFAULT_MODE_SWITCH_DURATION_MS) * 0.3,
-            });
-          } else {
-            applyCameraPose(camera, plan.endPose);
-          }
-        } else {
-          if (options.flattenDepth !== false) {
-            this._collapseNodeDepthTo2DPlane(0);
-          }
-          applyCameraPose(camera, {
-            ...captureCameraPose(camera),
-            mode: '2d',
-            projection: nextProjection,
-          });
+    try {
+      const positionSource = this.positions?.() ?? { source: 'network', delegate: null };
+      if (positionSource.source === 'delegate' && options.syncDelegate !== false) {
+        try {
+          await this.syncDelegatePositionsToNetwork();
+        } catch (error) {
+          console.warn('Helios.setMode(): failed to sync delegate positions back to the network before switching modes.', error);
         }
       }
-    }
 
-    if (layoutChanged) {
-      this._emitLayoutChanged(this._layout);
+      this.options.mode = nextMode;
+      const nextProjection = options.projection ?? (nextMode === '3d' ? 'perspective' : 'orthographic');
+      this.options.projection = nextProjection;
+      let cameraControlChanged = false;
+      if (nextMode !== '3d' && this._cameraControlConfig?.orbit === true) {
+        this._cameraControlConfig.orbit = false;
+        cameraControlChanged = true;
+      }
+      if (nextMode !== '3d') {
+        this._invalidateCameraOrbitReference();
+      }
+      this._markAutoFitDirty(false);
+      this._applyModeToLayoutOptions(nextMode);
+      this.visuals?.seedMissingPositions?.(
+        resolveSeedBoundsForLayout(this.options.layout, this.layers?.size, nextMode),
+      );
+
+      const layoutChanged = this._applyModeToActiveLayout(nextMode);
+      if (
+        previousMode === '2d'
+        && nextMode === '3d'
+        && this._layout instanceof GpuForceLayout
+      ) {
+        const jitterAmplitude = computeGpuForceModeSwitchDepthJitter(this._layout);
+        const delegate = this._layout?.getPositionDelegate?.() ?? this._layout?.positionDelegate ?? null;
+        await delegate?.injectPlanarDepthJitter?.(this._buildPositionDelegateContext({ scope: 'layout' }), jitterAmplitude);
+      }
+      if (layoutChanged && options.reheat !== false) {
+        this._requestLayoutReheat('mode');
+      }
+      this._layout?.requestUpdate?.();
+      this._enforcePositionSourcePolicy(this._layout, { resetInterpolation: false });
+      this.scheduler?.requestGeometry?.();
+      this.scheduler?.requestLayout?.('mode');
+      this.scheduler?.requestRender?.();
+      this._labels?.requestFullReselect?.('mode');
+      this._refreshUIBindings?.();
+
+      const camera = this.renderer?.camera ?? null;
+      const animateCamera = options.animate !== false;
+      if (camera) {
+        const bounds = this._sampleRenderBounds(options.frame ?? {}) ?? null;
+        if (nextMode === '3d') {
+          const plan = this._build3DModeTransitionPoses(bounds, nextProjection);
+          if (plan) {
+            if (animateCamera) {
+              await this._ensureCameraTransitionController().transition(camera, {
+                fromPose: plan.startPose,
+                toPose: plan.endPose,
+                durationMs: options.cameraDurationMs ?? DEFAULT_MODE_SWITCH_DURATION_MS,
+              });
+            } else {
+              applyCameraPose(camera, plan.endPose);
+            }
+          } else {
+            applyCameraPose(camera, {
+              ...captureCameraPose(camera),
+              mode: '3d',
+              projection: nextProjection,
+            });
+          }
+        } else {
+          const plan = this._build2DModeTransitionPoses(bounds);
+          if (plan) {
+            if (animateCamera) {
+              const durationMs = options.cameraDurationMs ?? DEFAULT_MODE_SWITCH_DURATION_MS;
+              const controller = this._ensureCameraTransitionController();
+              await controller.transition(camera, {
+                fromPose: plan.startPose,
+                toPose: plan.pre2D3D,
+                durationMs: durationMs * 0.7,
+              });
+            }
+            if (options.flattenDepth !== false) {
+              this._collapseNodeDepthTo2DPlane(0);
+            }
+            if (animateCamera) {
+              await this._ensureCameraTransitionController().transition(camera, {
+                fromPose: plan.start2DPose,
+                toPose: plan.endPose,
+                durationMs: (options.cameraDurationMs ?? DEFAULT_MODE_SWITCH_DURATION_MS) * 0.3,
+              });
+            } else {
+              applyCameraPose(camera, plan.endPose);
+            }
+          } else {
+            if (options.flattenDepth !== false) {
+              this._collapseNodeDepthTo2DPlane(0);
+            }
+            applyCameraPose(camera, {
+              ...captureCameraPose(camera),
+              mode: '2d',
+              projection: nextProjection,
+            });
+          }
+        }
+      }
+
+      if (layoutChanged) {
+        this._emitLayoutChanged(this._layout);
+      }
+      if (cameraControlChanged) {
+        this._emitCameraControlChange();
+      }
+      this.emit(EVENTS.MODE_CHANGED, {
+        mode: nextMode,
+        previousMode,
+        projection: nextProjection,
+      });
+      return this;
+    } finally {
+      if (this._cameraControlRuntime) {
+        this._cameraControlRuntime.suspended = false;
+      }
+      this._markAutoFitDirty(false);
+      this.scheduler?.requestRender?.();
     }
-    this.emit(EVENTS.MODE_CHANGED, {
-      mode: nextMode,
-      previousMode,
-      projection: nextProjection,
-    });
-    return this;
   }
 
   density(options) {
@@ -4523,6 +5431,7 @@ export class Helios extends EventTarget {
       initializer(nodes, this.visuals);
     }
     this.visuals.markPositionsDirty();
+    this._layout?.syncAutoSettingsForNetwork?.();
     this.mappersDirty = true;
     this._requestLayoutReheat('data');
     this.scheduler.requestLayout('data');
@@ -4558,6 +5467,9 @@ export class Helios extends EventTarget {
       this.visuals.applyEdgeDefaults(edges);
     }
     this.visuals.markPositionsDirty();
+    if (nodes) {
+      this._layout?.syncAutoSettingsForNetwork?.();
+    }
     this.mappersDirty = true;
     this._requestLayoutReheat('data');
     this.scheduler.requestLayout('data');

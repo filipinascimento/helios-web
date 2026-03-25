@@ -23,6 +23,7 @@ const ui = new HeliosUI({ helios, theme: 'dark' });
 ui.createDemoPanel(); // "Scene" panel (tabbed controls) + "Data" panel (network I/O, stats, figure export, and a throttled preview thumbnail)
 ui.createLayoutPanel(); // Layout picker + per-layout live controls + start/stop actions
 ui.createLegendsPanel(); // Legend toggles + text/layout controls for the SVG legend overlay
+ui.createCameraPanel(); // Camera distance + collapsible auto-fit/animation/orbit controls
 ui.createMetricsPanel(); // "Metrics" panel (Degree, Strength, Clustering, Eigenvector, Betweenness, Leiden, Dimensionality)
 ```
 

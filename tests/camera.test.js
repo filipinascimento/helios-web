@@ -36,3 +36,35 @@ test('2D camera uses the same positive-up Y convention as 3D', () => {
   assert.ok(above[1] > 0);
   assert.ok(below[1] < 0);
 });
+
+test('camera emits interaction detail for wheel zoom changes', () => {
+  const events = [];
+  const canvas = {
+    addEventListener() {},
+    removeEventListener() {},
+    getBoundingClientRect() {
+      return { left: 0, top: 0, width: 200, height: 100 };
+    },
+  };
+  const camera = new Camera(canvas, {
+    mode: '2d',
+    projection: 'orthographic',
+    disableControls: true,
+    viewport: { width: 200, height: 100, devicePixelRatio: 1 },
+    onChange: (detail) => events.push(detail),
+  });
+  events.length = 0;
+
+  camera.handleWheel({
+    deltaY: -120,
+    clientX: 100,
+    clientY: 50,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.origin, 'interaction');
+  assert.equal(events[0]?.type, 'wheel');
+  assert.equal(events[0]?.action, 'zoom');
+});

@@ -111,6 +111,16 @@ const crispHelios = new Helios(network, {
   supersampling: 'auto', // false | true | number | 'auto'
   // forceSupersample: true, // legacy alias for always applying the auto factor
 });
+
+// Camera helpers:
+helios.cameraControls({
+  autoFit: true,
+  animation: true,
+  orbit: false,
+  orbitAngle: 0,
+});
+helios.cameraTargetNodes([0, 1, 2]);
+helios.frameNetwork({ animate: true, resetOrientation: false });
 ```
 
 The same API powers the example under `docs/examples/basic/main.js`, making it

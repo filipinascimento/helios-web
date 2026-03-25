@@ -40,10 +40,28 @@ const DEFAULT_OPTIONS = {
 
 const DEFAULT_UMAP_SAMPLE_CHURN = 0.01;
 const DEFAULT_UMAP_ALPHA_DECAY = 0.0025;
+const AUTO_TUNED_OPTION_KEYS = Object.freeze([
+  'maxNeighborsPerNode',
+  'sampleCount2D',
+  'sampleCount3D',
+  'sampleChurn',
+]);
+const AUTO_TUNE_MIN_NODE_COUNT = 10_000;
+const AUTO_TUNE_MAX_NODE_COUNT = 1_000_000;
+const AUTO_TUNE_TARGET_OPTIONS = Object.freeze({
+  maxNeighborsPerNode: 20,
+  sampleCount2D: 10,
+  sampleCount3D: 10,
+  sampleChurn: 0.05,
+});
 
 function toFinite(value, fallback = 0) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function hasOwn(object, key) {
+  return Boolean(object) && Object.prototype.hasOwnProperty.call(object, key);
 }
 
 function normalizeCenter(center) {
@@ -76,6 +94,93 @@ function isUmapForceModel(value) {
   return String(value ?? '').trim().toLowerCase() === 'umap';
 }
 
+function clamp01(value) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
+}
+
+function resolveLayoutNodeCount(network) {
+  if (!network || typeof network !== 'object') return 0;
+  const directCount = Number(network.nodeCount ?? network.nodeCapacity);
+  if (Number.isFinite(directCount) && directCount >= 0) {
+    return Math.max(0, Math.floor(directCount));
+  }
+  const indexedCount = Number(network.nodeIndices?.length);
+  if (Number.isFinite(indexedCount) && indexedCount >= 0) {
+    return Math.max(0, Math.floor(indexedCount));
+  }
+  return 0;
+}
+
+function resolveAutoTuneProgress(nodeCount) {
+  const safeNodeCount = Math.max(0, Math.floor(Number(nodeCount) || 0));
+  if (safeNodeCount <= AUTO_TUNE_MIN_NODE_COUNT) return 0;
+  if (safeNodeCount >= AUTO_TUNE_MAX_NODE_COUNT) return 1;
+  const minLog = Math.log10(AUTO_TUNE_MIN_NODE_COUNT);
+  const maxLog = Math.log10(AUTO_TUNE_MAX_NODE_COUNT);
+  const nodeLog = Math.log10(safeNodeCount);
+  return clamp01((nodeLog - minLog) / (maxLog - minLog));
+}
+
+function interpolateAutoTunedValue(base, target, progress, { round = false } = {}) {
+  const safeBase = Number(base);
+  const safeTarget = Number(target);
+  if (!Number.isFinite(safeBase)) return safeTarget;
+  if (!Number.isFinite(safeTarget)) return safeBase;
+  const value = safeBase + ((safeTarget - safeBase) * clamp01(progress));
+  return round ? Math.round(value) : value;
+}
+
+export function resolveGpuForceAutoTuning(nodeCount, baseOptions = {}) {
+  const progress = resolveAutoTuneProgress(nodeCount);
+  return {
+    maxNeighborsPerNode: interpolateAutoTunedValue(
+      baseOptions.maxNeighborsPerNode ?? DEFAULT_OPTIONS.maxNeighborsPerNode,
+      AUTO_TUNE_TARGET_OPTIONS.maxNeighborsPerNode,
+      progress,
+      { round: true },
+    ),
+    sampleCount2D: interpolateAutoTunedValue(
+      baseOptions.sampleCount2D ?? DEFAULT_OPTIONS.sampleCount2D,
+      AUTO_TUNE_TARGET_OPTIONS.sampleCount2D,
+      progress,
+      { round: true },
+    ),
+    sampleCount3D: interpolateAutoTunedValue(
+      baseOptions.sampleCount3D ?? DEFAULT_OPTIONS.sampleCount3D,
+      AUTO_TUNE_TARGET_OPTIONS.sampleCount3D,
+      progress,
+      { round: true },
+    ),
+    sampleChurn: interpolateAutoTunedValue(
+      baseOptions.sampleChurn ?? DEFAULT_OPTIONS.sampleChurn,
+      AUTO_TUNE_TARGET_OPTIONS.sampleChurn,
+      progress,
+    ),
+  };
+}
+
+function applyGpuForceAutoTuning(options, explicitOptions, network, baseAutoTuneOptions) {
+  const nodeCount = resolveLayoutNodeCount(network);
+  const tuned = resolveGpuForceAutoTuning(nodeCount, baseAutoTuneOptions);
+  const next = { ...options };
+  for (const key of AUTO_TUNED_OPTION_KEYS) {
+    if (!hasOwn(explicitOptions, key)) {
+      next[key] = tuned[key];
+    }
+  }
+  return next;
+}
+
+function createAutoTuneBaseOptions(options = {}) {
+  return {
+    maxNeighborsPerNode: options.maxNeighborsPerNode ?? DEFAULT_OPTIONS.maxNeighborsPerNode,
+    sampleCount2D: options.sampleCount2D ?? DEFAULT_OPTIONS.sampleCount2D,
+    sampleCount3D: options.sampleCount3D ?? DEFAULT_OPTIONS.sampleCount3D,
+    sampleChurn: options.sampleChurn ?? DEFAULT_OPTIONS.sampleChurn,
+  };
+}
+
 export class GpuForceLayout extends Layout {
   constructor(network, visuals, options = {}) {
     super(network, visuals);
@@ -94,9 +199,13 @@ export class GpuForceLayout extends Layout {
       if (options.alphaDecay == null) normalized.alphaDecay = DEFAULT_UMAP_ALPHA_DECAY;
       if (options.sampleChurn == null) normalized.sampleChurn = DEFAULT_UMAP_SAMPLE_CHURN;
     }
-    this.options = normalized;
+    this._autoTuneExplicitKeys = new Set(
+      AUTO_TUNED_OPTION_KEYS.filter((key) => hasOwn(options, key)),
+    );
+    this._autoTuneBaseOptions = createAutoTuneBaseOptions(normalized);
+    this.options = applyGpuForceAutoTuning(normalized, options, network, this._autoTuneBaseOptions);
     this.helios = options.helios ?? null;
-    this.positionDelegate = new GpuForcePositionDelegate(normalized);
+    this.positionDelegate = new GpuForcePositionDelegate(this.options);
     this.lastUpdate = 0;
   }
 
@@ -133,6 +242,52 @@ export class GpuForceLayout extends Layout {
     this.positionDelegate.updateOptions({ center: normalizeCenter(this.options.center) });
   }
 
+  _getAutoTuneExplicitKeys() {
+    if (!(this._autoTuneExplicitKeys instanceof Set)) {
+      this._autoTuneExplicitKeys = new Set();
+    }
+    return this._autoTuneExplicitKeys;
+  }
+
+  _getAutoTuneBaseOptions() {
+    if (!this._autoTuneBaseOptions || typeof this._autoTuneBaseOptions !== 'object') {
+      this._autoTuneBaseOptions = createAutoTuneBaseOptions(this.options);
+    }
+    return this._autoTuneBaseOptions;
+  }
+
+  syncAutoSettingsForNetwork(network = this.network, { reheat = false, reason = 'layout-auto-tune' } = {}) {
+    if (network) {
+      this.network = network;
+    }
+    const explicitKeys = this._getAutoTuneExplicitKeys();
+    const baseAutoTuneOptions = this._getAutoTuneBaseOptions();
+    const explicitOptions = Object.fromEntries(
+      Array.from(explicitKeys, (key) => [key, this.options?.[key]]),
+    );
+    const nextOptions = applyGpuForceAutoTuning(
+      this.options,
+      explicitOptions,
+      this.network,
+      baseAutoTuneOptions,
+    );
+    let changed = false;
+    for (const key of AUTO_TUNED_OPTION_KEYS) {
+      if (!explicitKeys.has(key) && nextOptions[key] !== this.options[key]) {
+        changed = true;
+        break;
+      }
+    }
+    if (!changed) return false;
+    this.options = nextOptions;
+    this.positionDelegate?.updateOptions?.(this.options);
+    if (reheat) {
+      this._applyReheatAlpha();
+      super.reheat(reason);
+    }
+    return true;
+  }
+
   _applyReheatAlpha() {
     this.positionDelegate.updateOptions({
       alpha: Number(this.options.alpha ?? DEFAULT_OPTIONS.alpha),
@@ -143,6 +298,13 @@ export class GpuForceLayout extends Layout {
   setSettings(next = {}, { reheat = false, reason = 'layout-settings' } = {}) {
     if (!next || typeof next !== 'object') return this;
     const prevForceModel = this.options.forceModel;
+    const explicitKeys = this._getAutoTuneExplicitKeys();
+    const baseAutoTuneOptions = this._getAutoTuneBaseOptions();
+    for (const key of AUTO_TUNED_OPTION_KEYS) {
+      if (hasOwn(next, key)) {
+        explicitKeys.add(key);
+      }
+    }
     this.options = {
       ...this.options,
       ...next,
@@ -157,6 +319,15 @@ export class GpuForceLayout extends Layout {
       if (next.alphaDecay == null) this.options.alphaDecay = DEFAULT_UMAP_ALPHA_DECAY;
       if (next.sampleChurn == null) this.options.sampleChurn = DEFAULT_UMAP_SAMPLE_CHURN;
     }
+    if (!explicitKeys.has('sampleChurn')) {
+      baseAutoTuneOptions.sampleChurn = this.options.sampleChurn;
+    }
+    this.options = applyGpuForceAutoTuning(
+      this.options,
+      Object.fromEntries(Array.from(explicitKeys, (key) => [key, this.options[key]])),
+      this.network,
+      baseAutoTuneOptions,
+    );
     this.positionDelegate.updateOptions(this.options);
     if (reheat) {
       this._applyReheatAlpha();

@@ -406,6 +406,7 @@ export class Camera {
 
     this._needsUpdate = true;
     this._changeListener = typeof options.onChange === 'function' ? options.onChange : null;
+    this._pendingChangeDetail = null;
     this._pointerId = null;
     this._lastPointer = null;
     this._boundPointerDown = (event) => this.handlePointerDown(event);
@@ -513,10 +514,22 @@ export class Camera {
       // Keep the cursor's world position stationary by compensating pan around centered origin.
       this.pan2D[0] = screenX - centerX - worldX * this.zoom;
       this.pan2D[1] = centerY - screenY - worldY * this.zoom;
+      this._pendingChangeDetail = {
+        origin: 'interaction',
+        type: 'wheel',
+        action: 'zoom',
+        mode: this.mode,
+      };
     } else {
       const scale = Math.exp(event.deltaY * 0.001);
       const next = this.distance * scale;
       this.distance = clamp(Number.isFinite(next) ? next : this.minDistance, this.minDistance, this.maxDistance);
+      this._pendingChangeDetail = {
+        origin: 'interaction',
+        type: 'wheel',
+        action: 'dolly',
+        mode: this.mode,
+      };
     }
     this.logDebug('wheel', {
       mode: this.mode,
@@ -549,10 +562,28 @@ export class Camera {
     if (this.mode === '2d') {
       this.pan2D[0] += dx;
       this.pan2D[1] -= dy;
+      this._pendingChangeDetail = {
+        origin: 'interaction',
+        type: 'pointer',
+        action: 'pan',
+        mode: this.mode,
+      };
     } else if (event.shiftKey) {
       this.pan3DBy(dx, dy);
+      this._pendingChangeDetail = {
+        origin: 'interaction',
+        type: 'pointer',
+        action: 'pan',
+        mode: this.mode,
+      };
     } else {
       this.arcballRotate(event.clientX, event.clientY);
+      this._pendingChangeDetail = {
+        origin: 'interaction',
+        type: 'pointer',
+        action: 'rotate',
+        mode: this.mode,
+      };
     }
     this.logDebug('pointermove', {
       mode: this.mode,
@@ -693,6 +724,8 @@ export class Camera {
 
   updateMatrices() {
     if (!this._needsUpdate) return;
+    const changeDetail = this._pendingChangeDetail;
+    this._pendingChangeDetail = null;
     this._needsUpdate = false;
     if (this.mode === '2d') {
       this.update2D();
@@ -738,7 +771,7 @@ export class Camera {
         });
       }
     }
-    this._changeListener?.();
+    this._changeListener?.(changeDetail ?? null);
   }
 
   update2D() {
