@@ -54,6 +54,7 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
   const width = normalizeEdgeOption(edgeOptions.width, 'edge');
   const opacity = normalizeEdgeOption(edgeOptions.opacity, 'edge');
   const endpointSize = normalizeEdgeOption(edgeOptions.endpointSize, 'edge');
+  const fastEdgePath = edgeOptions.fastPath === true;
 
   const useEdgeColorBuffer = color.mode !== 'uniform' && color.source !== 'node';
   const useEdgeColorNode = color.mode !== 'uniform' && color.source === 'node';
@@ -115,6 +116,85 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
   const edgeIdQuadSnippet = useEdgeIndices
     ? 'var edgeId = edgeIndices.data[input.instance];'
     : 'var edgeId = input.instance;';
+
+  const edgeLineGeometrySnippet = fastEdgePath
+    ? `
+  var position = startPos;
+  if ((vertexIndex & 1u) == 1u) {
+    position = endPos;
+  }
+`
+    : `
+  var endpointSize = globals.edgeEndpointSizeRaw;
+  ${edgeEndpointSizeBufferSnippet}
+  ${edgeEndpointSizeNodeSnippet}
+
+  let endpointState = vec2<u32>(nodeStates.data[sourceId], nodeStates.data[targetId]);
+  var startSizeMul = 1.0;
+  var endSizeMul = 1.0;
+  if (endpointState.x == 0u) {
+    startSizeMul = startSizeMul * globals.nodeNoStateScale.x;
+  } else {
+    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
+      let slotMul = globals.nodeStateScale[i].x;
+      if (((endpointState.x >> i) & 1u) == 1u) {
+        startSizeMul = startSizeMul * slotMul;
+      }
+    }
+  }
+  if (endpointState.y == 0u) {
+    endSizeMul = endSizeMul * globals.nodeNoStateScale.x;
+  } else {
+    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
+      let slotMul = globals.nodeStateScale[i].x;
+      if (((endpointState.y >> i) & 1u) == 1u) {
+        endSizeMul = endSizeMul * slotMul;
+      }
+    }
+  }
+  let dirRaw = endPos - startPos;
+  let dirLen = max(length(dirRaw), 1e-5);
+  let dir = dirRaw / vec3<f32>(dirLen);
+  let semanticScale = semanticZoomScale();
+  let startRadius = max((globals.nodeSize.x + globals.nodeSize.y * endpointSize.x) * startSizeMul, 0.0) * 0.5 * semanticScale;
+  let endRadius = max((globals.nodeSize.x + globals.nodeSize.y * endpointSize.y) * endSizeMul, 0.0) * 0.5 * semanticScale;
+  let trimStart = startRadius * globals.edgeTrim.x;
+  let trimEnd = endRadius * globals.edgeTrim.x;
+  startPos = startPos + dir * trimStart;
+  endPos = endPos - dir * trimEnd;
+  var position = startPos;
+  if ((vertexIndex & 1u) == 1u) {
+    position = endPos;
+  }
+`;
+
+  const edgeLineVisualSnippet = fastEdgePath
+    ? `
+  var colorStart = globals.edgeColorStart;
+  var colorEnd = globals.edgeColorEnd;
+  ${edgeColorBufferSnippet}
+  ${edgeColorNodeSnippet}
+  let color = select(colorStart, colorEnd, (vertexIndex & 1u) == 1u);
+  let attrOpacity = select(globals.edgeOpacityRaw.x, globals.edgeOpacityRaw.y, (vertexIndex & 1u) == 1u);
+`
+    : `
+  var colorStart = globals.edgeColorStart;
+  var colorEnd = globals.edgeColorEnd;
+  ${edgeColorBufferSnippet}
+  ${edgeColorNodeSnippet}
+
+  var endpointWidth = globals.edgeWidthRaw;
+  ${edgeWidthBufferSnippet}
+  ${edgeWidthNodeSnippet}
+
+  var opacityPair = globals.edgeOpacityRaw;
+  ${edgeOpacityBufferSnippet}
+  ${edgeOpacityNodeSnippet}
+
+  let color = select(colorStart, colorEnd, (vertexIndex & 1u) == 1u);
+  let width = (globals.edgeWidth.x + globals.edgeWidth.y * select(endpointWidth.x, endpointWidth.y, (vertexIndex & 1u) == 1u)) * widthMul * semanticScale;
+  let attrOpacity = select(opacityPair.x, opacityPair.y, (vertexIndex & 1u) == 1u);
+`;
 
   const bindingLines = [];
   const addBinding = (name, storage, type) => {
@@ -372,64 +452,8 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
     }
   }
 
-  var endpointSize = globals.edgeEndpointSizeRaw;
-  ${edgeEndpointSizeBufferSnippet}
-  ${edgeEndpointSizeNodeSnippet}
-
-  let endpointState = vec2<u32>(nodeStates.data[sourceId], nodeStates.data[targetId]);
-  var startSizeMul = 1.0;
-  var endSizeMul = 1.0;
-  if (endpointState.x == 0u) {
-    startSizeMul = startSizeMul * globals.nodeNoStateScale.x;
-  } else {
-    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
-      let slotMul = globals.nodeStateScale[i].x;
-      if (((endpointState.x >> i) & 1u) == 1u) {
-        startSizeMul = startSizeMul * slotMul;
-      }
-    }
-  }
-  if (endpointState.y == 0u) {
-    endSizeMul = endSizeMul * globals.nodeNoStateScale.x;
-  } else {
-    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
-      let slotMul = globals.nodeStateScale[i].x;
-      if (((endpointState.y >> i) & 1u) == 1u) {
-        endSizeMul = endSizeMul * slotMul;
-      }
-    }
-  }
-  let dirRaw = endPos - startPos;
-  let dirLen = max(length(dirRaw), 1e-5);
-  let dir = dirRaw / vec3<f32>(dirLen);
-  let semanticScale = semanticZoomScale();
-  let startRadius = max((globals.nodeSize.x + globals.nodeSize.y * endpointSize.x) * startSizeMul, 0.0) * 0.5 * semanticScale;
-  let endRadius = max((globals.nodeSize.x + globals.nodeSize.y * endpointSize.y) * endSizeMul, 0.0) * 0.5 * semanticScale;
-  let trimStart = startRadius * globals.edgeTrim.x;
-  let trimEnd = endRadius * globals.edgeTrim.x;
-  startPos = startPos + dir * trimStart;
-  endPos = endPos - dir * trimEnd;
-  var position = startPos;
-  if ((vertexIndex & 1u) == 1u) {
-    position = endPos;
-  }
-
-  var colorStart = globals.edgeColorStart;
-  var colorEnd = globals.edgeColorEnd;
-  ${edgeColorBufferSnippet}
-  ${edgeColorNodeSnippet}
-
-  var endpointWidth = globals.edgeWidthRaw;
-  ${edgeWidthBufferSnippet}
-  ${edgeWidthNodeSnippet}
-
-  var opacityPair = globals.edgeOpacityRaw;
-  ${edgeOpacityBufferSnippet}
-  ${edgeOpacityNodeSnippet}
-
-  let color = select(colorStart, colorEnd, (vertexIndex & 1u) == 1u);
-  let width = (globals.edgeWidth.x + globals.edgeWidth.y * select(endpointWidth.x, endpointWidth.y, (vertexIndex & 1u) == 1u)) * widthMul * semanticScale;
-  let attrOpacity = select(opacityPair.x, opacityPair.y, (vertexIndex & 1u) == 1u);
+  ${edgeLineGeometrySnippet}
+  ${edgeLineVisualSnippet}
   let opacity = clamp(globals.edgeOpacity.x + globals.edgeOpacity.y * attrOpacity, 0.0, 1.0) * opacityMul;
   let rgb = clamp(color.rgb * rgbMul + rgbAdd, vec3<f32>(0.0), vec3<f32>(1.0));
   let alpha = clamp(opacity * color.a, 0.0, 1.0);

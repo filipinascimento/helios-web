@@ -47,6 +47,7 @@ export class GraphLayer extends Layer {
     this.edgeEndpointTrim = Number.isFinite(options.edgeEndpointTrim) ? options.edgeEndpointTrim : 0.8;
     this.nodeBlendWithEdges = options.nodeBlendWithEdges === true;
     this.edgeDepthWrite = options.edgeDepthWrite === true;
+    this.edgeFastRendering = options.edgeFastRendering === true;
     this.loggedWeightedActive = false;
     const slots = this.stateSlotCount;
     this.nodeStateScale = new Float32Array(slots * 4);
@@ -293,6 +294,14 @@ export class GraphLayer extends Layer {
     if (mode === 'line' || mode === 'quad') {
       this.edgeRenderingMode = mode;
     }
+  }
+
+  getEffectiveEdgeRenderingMode() {
+    return this.edgeFastRendering === true ? 'line' : this.edgeRenderingMode;
+  }
+
+  setEdgeFastRendering(enabled) {
+    this.edgeFastRendering = enabled === true;
   }
 
   setEdgeTransparencyMode(mode) {

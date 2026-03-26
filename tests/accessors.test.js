@@ -6,7 +6,14 @@ import { GpuForceLayout } from '../src/layouts/GpuForceLayout.js';
 test('graph-layer accessors are chainable setters and return values as getters', () => {
   const calls = { render: 0 };
   const helios = Object.create(Helios.prototype);
-  helios.renderer = { graphLayer: { edgeWidthScale: 1, edgeWidthBase: 0, semanticZoomExponent: 0.25 } };
+  helios.renderer = {
+    graphLayer: {
+      edgeWidthScale: 1,
+      edgeWidthBase: 0,
+      semanticZoomExponent: 0.25,
+      edgeFastRendering: false,
+    },
+  };
   helios.scheduler = { requestRender: () => { calls.render += 1; } };
   helios._pendingGraphLayerProps = new Map();
   helios._pendingRendererProps = new Map();
@@ -22,6 +29,12 @@ test('graph-layer accessors are chainable setters and return values as getters',
   assert.equal(semanticResult, helios);
   assert.equal(helios.semanticZoomExponent(), 0.65);
   assert.equal(calls.render, 2);
+
+  assert.equal(helios.edgeFastRendering(), false);
+  const fastResult = helios.edgeFastRendering(true);
+  assert.equal(fastResult, helios);
+  assert.equal(helios.edgeFastRendering(), true);
+  assert.equal(calls.render, 3);
 });
 
 test('renderer accessors store pending values before renderer exists', () => {
@@ -41,6 +54,11 @@ test('renderer accessors store pending values before renderer exists', () => {
 test('edge width scale UI binding exposes zero in the recommended slider range', () => {
   assert.equal(Helios.UI_BINDINGS.edgeWidthScale.domain.min, 0);
   assert.equal(Helios.UI_BINDINGS.edgeWidthScale.recommendedRange.min, 0);
+});
+
+test('fast edge rendering UI binding is exposed as a boolean toggle', () => {
+  assert.equal(Helios.UI_BINDINGS.edgeFastRendering.type, 'boolean');
+  assert.equal(Helios.UI_BINDINGS.edgeFastRendering.label, 'Fast Edge Lines');
 });
 
 test('supersampling accessor updates layer sizing mode live', () => {

@@ -1440,6 +1440,14 @@ export class HeliosUI {
       };
 
       const nodeEdgeStack = new PanelStack();
+      const createEdgeAppearanceContent = () => {
+        const container = document.createElement('div');
+        container.appendChild(createRows(['edgeWidthScale', 'edgeOpacityScale']));
+        const edgeFastRow = createToggleRow('edgeFastRendering');
+        if (edgeFastRow) container.appendChild(edgeFastRow);
+
+        return container;
+      };
       nodeEdgeStack.add({
         id: 'node-appearance',
         title: 'Nodes',
@@ -1448,7 +1456,7 @@ export class HeliosUI {
       nodeEdgeStack.add({
         id: 'edge-appearance',
         title: 'Edges',
-        content: createRows(['edgeWidthScale', 'edgeOpacityScale']),
+        content: createEdgeAppearanceContent(),
       });
       this._controlCleanups.add(() => nodeEdgeStack.destroy());
 

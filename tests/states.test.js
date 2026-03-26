@@ -41,6 +41,7 @@ test('global accessors exist on Helios prototype', () => {
     'nodeOutlineWidthScale',
     'nodeOutlineWidthBase',
     'edgeEndpointTrim',
+    'edgeFastRendering',
     'background',
     'clearColor',
   ];

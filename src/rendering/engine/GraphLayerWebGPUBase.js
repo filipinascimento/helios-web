@@ -916,7 +916,7 @@ export class GraphLayerWebGPUBase extends GraphLayer {
     const commandEncoder = context.commandEncoder;
     const targetView = context.colorView;
     const depthView = context.depthView;
-    const useQuads = this.edgeRenderingMode === 'quad' && this.edgeWeightedQuadPipeline;
+    const useQuads = (this.getEffectiveEdgeRenderingMode?.() ?? this.edgeRenderingMode) === 'quad' && this.edgeWeightedQuadPipeline;
     const edgePipeline = useQuads ? this.edgeWeightedQuadPipeline : this.edgeWeightedPipeline;
     const edgeVertexBuffer = useQuads ? this.edgeQuadBufferGpu : null;
     const applyViewport = (pass) => {

@@ -1731,7 +1731,7 @@ export class WebGLAttributeRenderer {
     const nodeVariant = schema?.getNodeVariant?.() ?? null;
     const edgeConfig = visualConfig?.edge ?? null;
     const edgeVariant = this.resolveEdgeVariant(visualConfig);
-    const useQuads = this.graphLayer?.edgeRenderingMode === 'quad';
+    const useQuads = (this.graphLayer?.getEffectiveEdgeRenderingMode?.() ?? this.graphLayer?.edgeRenderingMode) === 'quad';
     const nodeOutlineUniform = nodeVariant ? (nodeVariant.outlineWidthBuffer === false) : true;
     const nodeOutlineValue = nodeConfig?.outline?.mode === 'uniform'
       ? Number(nodeConfig?.outline?.value ?? 0)
@@ -2464,7 +2464,7 @@ export class WebGPUAttributeRenderer {
       edgeEndpointSizeUniform ? 'eEndU' : 'eEndB',
       nodeIndexEncodedRaw ? 'nIdxRaw' : 'nIdxEnc',
       edgeIndexEncodedRaw ? 'eIdxRaw' : 'eIdxEnc',
-      this.graphLayer?.edgeRenderingMode === 'quad' ? 'quad' : 'line',
+      (this.graphLayer?.getEffectiveEdgeRenderingMode?.() ?? this.graphLayer?.edgeRenderingMode) === 'quad' ? 'quad' : 'line',
       this.targetFormat,
       this.depthColorFormat,
       this.device?.depthFormat ?? 'depth24plus',
@@ -3657,7 +3657,7 @@ export class WebGPUAttributeRenderer {
           pass.draw(4, geometry.nodes.count, 0, 0);
         }
 
-        const useQuad = this.graphLayer.edgeRenderingMode === 'quad';
+        const useQuad = (this.graphLayer.getEffectiveEdgeRenderingMode?.() ?? this.graphLayer.edgeRenderingMode) === 'quad';
         pass.setPipeline(useQuad ? pipelines.edgeQuadPipeline : pipelines.edgePipeline);
         pass.setBindGroup(0, this.edgeBindGroup);
         if (useQuad) {
@@ -3721,7 +3721,7 @@ export class WebGPUAttributeRenderer {
 
       if (canBindEdgeDepth) {
         passes.push(() => {
-          const useQuad = this.graphLayer.edgeRenderingMode === 'quad';
+          const useQuad = (this.graphLayer.getEffectiveEdgeRenderingMode?.() ?? this.graphLayer.edgeRenderingMode) === 'quad';
           const occlusionNodeBuffers = {
             corner: this.cornerBuffer,
             position: nodePositionBuffer,
@@ -4323,7 +4323,7 @@ export class WebGPUAttributeRenderer {
     this.resize(size, scale, config.trackDepth);
     const cameraUniforms = this.graphLayer.getCameraUniforms(camera);
     if (!cameraUniforms) return null;
-    const useQuads = this.graphLayer.edgeRenderingMode === 'quad';
+    const useQuads = (this.graphLayer.getEffectiveEdgeRenderingMode?.() ?? this.graphLayer.edgeRenderingMode) === 'quad';
     const sparseMode = isSparseGraphLayer(this.graphLayer);
 
     const schema = GraphVisualSchema.fromNetwork(network, {
@@ -4515,7 +4515,7 @@ export class AttributeTracker {
     const edgeAttrVer = edgeAttr ? this._attributeVersionIfPresent(network, 'edge', edgeAttr) : 0;
 
     const camHash = this._hashMat4(camera?.viewProjectionMatrix);
-    const edgeMode = this.graphLayer.edgeRenderingMode ?? 'quad';
+    const edgeMode = this.graphLayer.getEffectiveEdgeRenderingMode?.() ?? this.graphLayer.edgeRenderingMode ?? 'quad';
     const projection = camera?.projection ?? '';
     const mode = camera?.mode ?? '';
     const interpolation = this.graphLayer.getPositionInterpolationState?.()

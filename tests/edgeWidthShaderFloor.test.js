@@ -35,3 +35,23 @@ test('runtime shader sources do not clamp edge quads to a 1px minimum', () => {
     assert.equal(/halfWidth = max\(width, 1\.0\) \* 0\.5/.test(source), false, relativePath);
   }
 });
+
+test('fast WebGPU edge lines skip trim and endpoint-size work in the line vertex path', () => {
+  const fast = createGraphWebGPUSources(4, {
+    edge: {
+      fastPath: true,
+      color: { mode: 'buffer', source: 'edge' },
+      opacity: { mode: 'uniform' },
+      width: { mode: 'uniform' },
+      endpointSize: { mode: 'uniform' },
+    },
+  });
+  const match = fast.EDGE_WGSL.match(/@vertex\s+fn edgeVertex[\s\S]*?return output;\n}/);
+  assert.ok(match, 'expected edgeVertex in fast edge WGSL');
+  const edgeVertexSource = match[0];
+  assert.match(edgeVertexSource, /var position = startPos;/);
+  assert.match(edgeVertexSource, /colorStart = edgeColors\.data\[edgeId \* 2u\]/);
+  assert.equal(/nodeStates\.data\[sourceId\]/.test(edgeVertexSource), false);
+  assert.equal(/globals\.edgeTrim/.test(edgeVertexSource), false);
+  assert.equal(/edgeEndpointSizeRaw/.test(edgeVertexSource), false);
+});

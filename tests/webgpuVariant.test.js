@@ -32,6 +32,26 @@ test('indirect edge variant key changes when node attribute changes', () => {
   assert.notEqual(keyA, keyB);
 });
 
+test('fast edge rendering resolves a distinct lightweight WebGPU edge variant', () => {
+  const layer = new GraphLayerWebGPU({ edgeRendering: 'quad', edgeFastRendering: true });
+  const variant = layer.resolveEdgeVariant({
+    edge: {
+      color: { mode: 'buffer', source: 'edge' },
+      width: { mode: 'buffer' },
+      opacity: { mode: 'buffer' },
+      endpointSize: { mode: 'buffer' },
+    },
+  });
+
+  assert.equal(variant.fastPath, true);
+  assert.equal(variant.colorBuffer, true);
+  assert.equal(variant.colorSource, 'edge');
+  assert.equal(variant.widthBuffer, false);
+  assert.equal(variant.opacityBuffer, false);
+  assert.equal(variant.endpointSizeBuffer, false);
+  assert.match(layer.getEdgeVariantKey(true, variant), /\bf:1\b/);
+});
+
 test('getSharedSparseResources prefers active position buffers over stale cache entries', () => {
   const stalePositionBuffer = { label: 'stale-position' };
   const stalePositionFromBuffer = { label: 'stale-position-from' };

@@ -1156,6 +1156,12 @@ export class Helios extends EventTarget {
       description: 'Enable depth testing and depth writes for edges (best for solid edges)',
       defaultValue: false,
     },
+    edgeFastRendering: {
+      type: 'boolean',
+      label: 'Fast Edge Lines',
+      description: 'Use a reduced-cost edge path for large interactive graphs. Forces thin line rendering and disables expensive edge effects.',
+      defaultValue: false,
+    },
     labelsEnabled: {
       type: 'boolean',
       label: 'Show Labels',
@@ -2578,6 +2584,7 @@ export class Helios extends EventTarget {
       edgeEndpointTrim: this.options.edgeEndpointTrim,
       nodeBlendWithEdges: this.options.nodeBlendWithEdges,
       edgeDepthWrite: this.options.edgeDepthWrite,
+      edgeFastRendering: this.options.edgeFastRendering,
       stateSlots,
       ...options,
     });
@@ -3862,6 +3869,7 @@ export class Helios extends EventTarget {
       edgeRendering: this.options.edgeRendering,
       transparencyModeEdges: this.options.transparencyModeEdges,
       edgeEndpointTrim: this.options.edgeEndpointTrim,
+      edgeFastRendering: this.options.edgeFastRendering,
       stateSlots,
     });
     this.debug.log('helios', 'Renderer created', { renderer: this.renderer?.constructor?.name });
@@ -4760,6 +4768,11 @@ export class Helios extends EventTarget {
   edgeDepthWrite(value) {
     if (arguments.length === 0) return this._getGraphLayerProp('edgeDepthWrite');
     return this._setGraphLayerProp('edgeDepthWrite', Boolean(value));
+  }
+
+  edgeFastRendering(value) {
+    if (arguments.length === 0) return this._getGraphLayerProp('edgeFastRendering');
+    return this._setGraphLayerProp('edgeFastRendering', Boolean(value));
   }
 
   background(color) {

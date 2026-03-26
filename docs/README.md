@@ -82,6 +82,7 @@ Some common renderer/graph-layer “global” knobs are available directly on `H
 - Camera automation: `helios.cameraControls({...})` / `helios.cameraTargetNodes([...])` / `helios.frameNetwork({ animate: true, resetOrientation: false })` including delegate-aware auto-fit and 3D orbit angle control
 - Blend nodes with edge transparency modes: `helios.nodeBlendWithEdges(true)`
 - Allow edges to write depth: `helios.edgeDepthWrite(true)` (best for solid edges)
+- Enable reduced-cost interaction edges: `helios.edgeFastRendering(true)` (forces a lightweight thin-line edge path)
 
 ## Mapper docs
 

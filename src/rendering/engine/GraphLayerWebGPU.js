@@ -137,8 +137,9 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     return result;
   }
 
-  resolveEdgeVariant(visualConfig) {
+  resolveEdgeVariant(visualConfig, options = {}) {
     const edgeCfg = visualConfig?.edge ?? null;
+    const fastPath = options.fastPath === true || this.edgeFastRendering === true;
     const normalize = (entry, fallbackSource = 'edge') => {
       if (!entry || typeof entry !== 'object') {
         return {
@@ -163,6 +164,32 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     const opacity = normalize(edgeCfg?.opacity, 'edge');
     const endpointSize = normalize(edgeCfg?.endpointSize, 'edge');
 
+    if (fastPath) {
+      return {
+        colorBuffer: color.mode !== 'uniform',
+        colorSource: color.source,
+        colorEndpoints: color.endpoints,
+        colorDoubleWidth: color.doubleWidth,
+        colorNodeAttribute: color.nodeAttribute,
+        widthBuffer: false,
+        widthSource: 'edge',
+        widthEndpoints: 'both',
+        widthDoubleWidth: false,
+        widthNodeAttribute: null,
+        opacityBuffer: false,
+        opacitySource: 'edge',
+        opacityEndpoints: 'both',
+        opacityDoubleWidth: false,
+        opacityNodeAttribute: null,
+        endpointSizeBuffer: false,
+        endpointSizeSource: 'edge',
+        endpointSizeEndpoints: 'both',
+        endpointSizeDoubleWidth: false,
+        endpointSizeNodeAttribute: null,
+        fastPath: true,
+      };
+    }
+
     return {
       colorBuffer: color.mode !== 'uniform',
       colorSource: color.source,
@@ -184,12 +211,14 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       endpointSizeEndpoints: endpointSize.endpoints,
       endpointSizeDoubleWidth: endpointSize.doubleWidth,
       endpointSizeNodeAttribute: endpointSize.nodeAttribute,
+      fastPath: false,
     };
   }
 
   getEdgeVariantKey(useIndices, variant) {
     return [
       useIndices ? 'idx' : 'id',
+      `f:${variant?.fastPath ? 1 : 0}`,
       `c:${variant?.colorBuffer ? 'B' : 'U'}:${variant?.colorSource}:${variant?.colorEndpoints}:${variant?.colorDoubleWidth ? 1 : 0}:${variant?.colorNodeAttribute ?? ''}`,
       `w:${variant?.widthBuffer ? 'B' : 'U'}:${variant?.widthSource}:${variant?.widthEndpoints}:${variant?.widthDoubleWidth ? 1 : 0}:${variant?.widthNodeAttribute ?? ''}`,
       `o:${variant?.opacityBuffer ? 'B' : 'U'}:${variant?.opacitySource}:${variant?.opacityEndpoints}:${variant?.opacityDoubleWidth ? 1 : 0}:${variant?.opacityNodeAttribute ?? ''}`,
@@ -207,6 +236,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       useEdgeIndices: useIndices,
       bindings: bindingInfo?.bindings ?? null,
       edge: {
+        fastPath: variant?.fastPath === true,
         color: {
           mode: variant?.colorBuffer ? 'buffer' : 'uniform',
           source: variant?.colorSource,
@@ -248,6 +278,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       useEdgeIndices: useIndices,
       bindings: bindingInfo?.bindings ?? null,
       edge: {
+        fastPath: variant?.fastPath === true,
         color: {
           mode: variant?.colorBuffer ? 'buffer' : 'uniform',
           source: variant?.colorSource,
@@ -1078,12 +1109,14 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     if (!gpuDevice) return;
     const maxBindingSize = gpuDevice.limits?.maxStorageBufferBindingSize;
     const cameraUniforms = this.getCameraUniforms(camera, context);
-    const transparencyMode = this.edgeTransparencyMode;
+    const fastEdges = this.edgeFastRendering === true;
+    const edgeRenderingMode = this.getEffectiveEdgeRenderingMode?.() ?? this.edgeRenderingMode;
+    const transparencyMode = fastEdges ? 'alpha' : this.edgeTransparencyMode;
     const nodeBlendWithEdges = this.nodeBlendWithEdges === true;
-    const weightedRequested = transparencyMode === 'weighted'
+    const weightedRequested = !fastEdges && (transparencyMode === 'weighted'
       || transparencyMode === 'additive-normalized'
       || transparencyMode === 'additive-tonemapped'
-      || transparencyMode === 'additive-normalized-bright';
+      || transparencyMode === 'additive-normalized-bright');
     let weightedReady = false;
     let nodeCount = 0;
     let edgeCount = 0;
@@ -1096,7 +1129,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     });
     const visualConfig = schema.visualConfig;
     const nodeVariant = this.resolveNodeVariant(visualConfig);
-    const edgeVariant = this.resolveEdgeVariant(visualConfig);
+    const edgeVariant = this.resolveEdgeVariant(visualConfig, { fastPath: fastEdges });
 
     let topologyVersions = { node: 0, edge: 0 };
     if (typeof network.getTopologyVersions === 'function') {
@@ -1219,7 +1252,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
 
     const drawEdgesAlpha = (passEncoder) => {
       if (!effectiveEdgeCount || !this.edgeBindGroup || !passEncoder) return;
-      if (this.edgeRenderingMode === 'quad' && edgePipelines?.quad) {
+      if (edgeRenderingMode === 'quad' && edgePipelines?.quad) {
         passEncoder.setPipeline(edgePipelines.quad);
         passEncoder.setBindGroup(0, this.edgeBindGroup);
         passEncoder.setVertexBuffer(0, this.edgeQuadBufferGpu);

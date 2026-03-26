@@ -24,3 +24,12 @@ test('GraphLayer keeps edges enabled when width and opacity are both still activ
   layer.edgeOpacityScale = 0.5;
   assert.equal(layer.shouldRenderEdges(), true);
 });
+
+test('GraphLayer fast edge rendering forces the effective edge mode to line', () => {
+  const layer = new GraphLayer({ edgeRendering: 'quad' });
+  assert.equal(layer.getEffectiveEdgeRenderingMode(), 'quad');
+  layer.setEdgeFastRendering(true);
+  assert.equal(layer.getEffectiveEdgeRenderingMode(), 'line');
+  layer.setEdgeFastRendering(false);
+  assert.equal(layer.getEffectiveEdgeRenderingMode(), 'quad');
+});

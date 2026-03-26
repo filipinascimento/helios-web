@@ -247,6 +247,7 @@ export class LayeredRenderer {
       edgeEndpointTrim: this.options.edgeEndpointTrim,
       nodeBlendWithEdges: this.options.nodeBlendWithEdges,
       edgeDepthWrite: this.options.edgeDepthWrite,
+      edgeFastRendering: this.options.edgeFastRendering,
       stateSlots: this.options.stateSlots,
     };
     if (this.device?.type === 'webgpu') {

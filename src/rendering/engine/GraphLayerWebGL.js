@@ -1243,8 +1243,9 @@ export class GraphLayerWebGL extends GraphLayer {
     this.edgeTextures.endpointStates = this.createTexture();
   }
 
-  resolveEdgeVariant(visualConfig) {
+  resolveEdgeVariant(visualConfig, options = {}) {
     const edgeCfg = visualConfig?.edge ?? null;
+    const fastPath = options.fastPath === true || this.edgeFastRendering === true;
     const normalize = (entry, fallbackSource = 'edge') => {
       if (!entry || typeof entry !== 'object') {
         return {
@@ -1267,6 +1268,31 @@ export class GraphLayerWebGL extends GraphLayer {
     const width = normalize(edgeCfg?.width, 'edge');
     const opacity = normalize(edgeCfg?.opacity, 'edge');
     const endpointSize = normalize(edgeCfg?.endpointSize, 'edge');
+    if (fastPath) {
+      return {
+        colorBuffer: color.mode !== 'uniform',
+        colorSource: color.source,
+        colorEndpoints: color.endpoints,
+        colorNodeAttribute: color.nodeAttribute,
+        colorDoubleWidth: color.doubleWidth,
+        widthBuffer: false,
+        widthSource: 'edge',
+        widthEndpoints: 'both',
+        widthNodeAttribute: null,
+        widthDoubleWidth: false,
+        opacityBuffer: false,
+        opacitySource: 'edge',
+        opacityEndpoints: 'both',
+        opacityNodeAttribute: null,
+        opacityDoubleWidth: false,
+        endpointSizeBuffer: false,
+        endpointSizeSource: 'edge',
+        endpointSizeEndpoints: 'both',
+        endpointSizeNodeAttribute: null,
+        endpointSizeDoubleWidth: false,
+        fastPath: true,
+      };
+    }
     return {
       colorBuffer: color.mode !== 'uniform',
       colorSource: color.source,
@@ -1288,6 +1314,7 @@ export class GraphLayerWebGL extends GraphLayer {
       endpointSizeEndpoints: endpointSize.endpoints,
       endpointSizeNodeAttribute: endpointSize.nodeAttribute,
       endpointSizeDoubleWidth: endpointSize.doubleWidth,
+      fastPath: false,
     };
   }
 
@@ -1641,7 +1668,9 @@ export class GraphLayerWebGL extends GraphLayer {
     const nodeVariant = this.resolveNodeVariant(visualConfig);
     const nodeConfig = visualConfig?.node ?? null;
     const edgeConfig = visualConfig?.edge ?? null;
-    const edgeVariant = this.resolveEdgeVariant(visualConfig);
+    const fastEdges = this.edgeFastRendering === true;
+    const edgeRenderingMode = this.getEffectiveEdgeRenderingMode?.() ?? this.edgeRenderingMode;
+    const edgeVariant = this.resolveEdgeVariant(visualConfig, { fastPath: fastEdges });
     const nodeProgramEntry = this.getNodeProgram(nodeVariant);
     const edgeLineProgramEntry = this.getEdgeProgram('line', nodeVariant, edgeVariant);
     const edgeQuadProgramEntry = this.getEdgeProgram('quad', nodeVariant, edgeVariant);
@@ -2021,9 +2050,9 @@ export class GraphLayerWebGL extends GraphLayer {
         const logicalViewport = context.target?.exportFigureLogicalViewport ?? null;
         const screenViewportWidth = Math.max(1, Math.floor(logicalViewport?.width ?? rasterViewportWidth));
         const screenViewportHeight = Math.max(1, Math.floor(logicalViewport?.height ?? rasterViewportHeight));
-        const transparencyMode = this.edgeTransparencyMode;
+        const transparencyMode = fastEdges ? 'alpha' : this.edgeTransparencyMode;
         const nodeBlendWithEdges = this.nodeBlendWithEdges === true;
-        const edgeDepthWrite = this.edgeDepthWrite === true;
+        const edgeDepthWrite = !fastEdges && this.edgeDepthWrite === true;
         debugWebGLRender('graph:render:uploads', {
           nodeCount: this.nodeCount,
           edgeCount: this.edgeCount,
@@ -2031,6 +2060,8 @@ export class GraphLayerWebGL extends GraphLayer {
           viewportHeight: rasterViewportHeight,
           screenViewportWidth,
           screenViewportHeight,
+          edgeRenderingMode,
+          fastEdges,
           transparencyMode,
           nodeBlendWithEdges,
           edgeDepthWrite,
@@ -2111,7 +2142,7 @@ export class GraphLayerWebGL extends GraphLayer {
           const colorEndpointMode = mapEndpointMode(edgeVariant?.colorEndpoints);
           const opacityEndpointMode = mapEndpointMode(edgeVariant?.opacityEndpoints);
 
-          if (this.edgeRenderingMode === 'quad') {
+          if (edgeRenderingMode === 'quad') {
             const edgeEntry = weighted ? edgeQuadWeightedProgramEntry : edgeQuadProgramEntry;
             if (!edgeEntry?.program) return;
             const uniforms = edgeEntry.uniforms;
@@ -2463,10 +2494,10 @@ export class GraphLayerWebGL extends GraphLayer {
         };
 
         const effectiveEdgeCount = this.shouldRenderEdges() ? this.edgeCount : 0;
-        const weightedRequested = transparencyMode === 'weighted'
+        const weightedRequested = !fastEdges && (transparencyMode === 'weighted'
           || transparencyMode === 'additive-normalized'
           || transparencyMode === 'additive-tonemapped'
-          || transparencyMode === 'additive-normalized-bright';
+          || transparencyMode === 'additive-normalized-bright');
         const weightedReady = weightedRequested && effectiveEdgeCount > 0
           ? this.prepareWeightedWebGL(rasterViewportWidth, rasterViewportHeight)
           : false;
