@@ -1445,6 +1445,32 @@ export class HeliosUI {
         container.appendChild(createRows(['edgeWidthScale', 'edgeOpacityScale']));
         const edgeFastRow = createToggleRow('edgeFastRendering');
         if (edgeFastRow) container.appendChild(edgeFastRow);
+        if (typeof this.helios?.edgeAdaptiveQuality === 'function') {
+          const adaptiveContent = document.createElement('div');
+          const enabledRow = createToggleRow('edgeAdaptiveQualityEnabled');
+          if (enabledRow) adaptiveContent.appendChild(enabledRow);
+          adaptiveContent.appendChild(createRows([
+            'edgeAdaptiveQualitySlowFrameThresholdMs',
+            'edgeAdaptiveQualitySlowFrameConsecutiveFrames',
+            'edgeAdaptiveQualityProbeIntervalMs',
+            'edgeAdaptiveQualityInteractionHoldMs',
+          ]));
+          const fastDuringCameraRow = createToggleRow('edgeAdaptiveQualityFastDuringCamera');
+          if (fastDuringCameraRow) adaptiveContent.appendChild(fastDuringCameraRow);
+          const fastDuringLayoutRow = createToggleRow('edgeAdaptiveQualityFastDuringLayout');
+          if (fastDuringLayoutRow) adaptiveContent.appendChild(fastDuringLayoutRow);
+
+          const adaptiveStack = new PanelStack();
+          adaptiveStack.add({
+            id: 'edge-adaptive-quality',
+            title: 'Adaptive',
+            collapsed: true,
+            statusDot: false,
+            content: adaptiveContent,
+          });
+          container.appendChild(adaptiveStack.element);
+          this._controlCleanups.add(() => adaptiveStack.destroy());
+        }
 
         return container;
       };

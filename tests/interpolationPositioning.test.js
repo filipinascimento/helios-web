@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Helios, PositionDelegate } from '../src/index.js';
+import { StaticLayout } from '../src/layouts/Layout.js';
 
 function almostEqualArray(actual, expected, epsilon = 1e-4) {
   assert.equal(actual.length, expected.length);
@@ -174,6 +175,170 @@ test('syncDelegatePositionsToNetwork() copies delegate positions into network bu
   assert.equal(getDirtyCalls(), dirtyBefore + 1);
   assert.equal(getGeometryCalls(), geometryBefore + 1);
   assert.equal(getRenderCalls(), renderBefore + 1);
+});
+
+test('layout() seeds incoming network-backed layouts from the outgoing delegate snapshot before switching sources', async () => {
+  const {
+    helios,
+    positions,
+    graphLayerState,
+    getGeometryCalls,
+    getRenderCalls,
+  } = createPositionHarness([
+    0, 0, 0,
+    0, 0, 0,
+  ]);
+  const calls = {
+    setLayouts: [],
+    requestLayout: [],
+    layoutChanged: [],
+    labelReasons: [],
+    previousDisposed: 0,
+  };
+
+  const delegateSnapshot = new Float32Array([
+    1, 2, 3,
+    4, 5, 6,
+  ]);
+  class HandoffDelegate extends PositionDelegate {
+    synchronizeTopology() {}
+    getWebGPUPositionBuffer() { return null; }
+    async snapshotNodePositions() { return delegateSnapshot; }
+  }
+  const previousDelegate = new HandoffDelegate();
+  const previousLayout = {
+    getPositionDelegate: () => previousDelegate,
+    dispose: () => { calls.previousDisposed += 1; },
+  };
+
+  helios._layout = previousLayout;
+  helios._enforcePositionSourcePolicy(previousLayout, { resetInterpolation: false });
+  helios._interpolationConfig.enabled = true;
+  helios._interpolationRuntime.lastRenderedPositions = new Float32Array([
+    99, 99, 99,
+    77, 77, 77,
+  ]);
+  helios.layers = { size: { width: 120, height: 80 } };
+  helios.scheduler.setLayout = (layout) => { calls.setLayouts.push(layout); };
+  helios.scheduler.requestLayout = (reason) => { calls.requestLayout.push(reason); };
+  helios._labels = {
+    requestFullReselect: (reason) => { calls.labelReasons.push(reason); },
+  };
+  helios.snapshotDelegatePositions = (options = {}) => options.delegate.snapshotNodePositions();
+  helios._emitLayoutChanged = (layout) => { calls.layoutChanged.push(layout); };
+
+  const nextLayout = new StaticLayout(helios.network, helios.visuals);
+  helios.layout(nextLayout);
+
+  assert.equal(helios.layout(), nextLayout);
+  assert.equal(calls.previousDisposed, 0);
+  assert.deepEqual(Array.from(positions), [0, 0, 0, 0, 0, 0]);
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  almostEqualArray(Array.from(positions), Array.from(delegateSnapshot));
+  assert.equal(calls.previousDisposed, 1);
+  assert.equal(helios.positions().source, 'network');
+  assert.equal(helios.positions().delegate, null);
+  assert.equal(graphLayerState.delegate, null);
+  assert.equal(graphLayerState.interpolation?.enabled, false);
+  almostEqualArray(
+    Array.from(helios._interpolationRuntime.lastRenderedPositions ?? []),
+    Array.from(delegateSnapshot),
+  );
+  assert.deepEqual(calls.setLayouts, [nextLayout]);
+  assert.deepEqual(calls.layoutChanged, [nextLayout]);
+  assert.deepEqual(calls.requestLayout, ['user', 'layout-handoff']);
+  assert.ok(calls.labelReasons.includes('layout-handoff'));
+  assert.ok(getGeometryCalls() >= 1);
+  assert.ok(getRenderCalls() >= 2);
+});
+
+test('_computePositionSnapshotCenter() uses active layout-network node indices when available', () => {
+  const { helios } = createPositionHarness([
+    0, 0, 0,
+    0, 0, 0,
+    0, 0, 0,
+    0, 0, 0,
+  ]);
+  const snapshot = new Float32Array([
+    1, 2, 3,
+    10, 20, 30,
+    4, 5, 6,
+    40, 50, 60,
+  ]);
+  const network = {
+    nodeIndices: new Uint32Array([1, 3]),
+    withBufferAccess: (fn) => fn(),
+  };
+
+  const center = helios._computePositionSnapshotCenter(snapshot, network);
+
+  almostEqualArray(center, [25, 35, 45]);
+});
+
+test('_startLayoutPositionHandoff() snapshots the outgoing delegate against the previous layout network', async () => {
+  const { helios } = createPositionHarness([0, 0, 0]);
+  const previousNetwork = {
+    nodeIndices: new Uint32Array([0]),
+    withBufferAccess: (fn) => fn(),
+  };
+  const previousDelegate = new (class extends PositionDelegate {
+    synchronizeTopology() {}
+    getNodePositionView() { return null; }
+  })();
+  const previousLayout = {
+    network: previousNetwork,
+    getPositionDelegate: () => previousDelegate,
+    dispose: () => {},
+  };
+  const nextLayout = {
+    beginPositionHandoff: () => {},
+    adoptHandoffState: () => {},
+  };
+  let snapshotOptions = null;
+  helios._finishLayoutPositionHandoff = () => true;
+  helios.snapshotDelegatePositions = async (options = {}) => {
+    snapshotOptions = options;
+    return new Float32Array([1, 2, 3]);
+  };
+
+  helios._startLayoutPositionHandoff({
+    previousLayout,
+    previousDelegate,
+    nextLayout,
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(snapshotOptions?.delegate, previousDelegate);
+  assert.equal(snapshotOptions?.network, previousNetwork);
+  assert.equal(snapshotOptions?.scope, 'layout');
+});
+
+test('handoff-adopted layout updates bypass interpolation even when interpolation is enabled', () => {
+  const {
+    helios,
+    positions,
+    graphLayerState,
+  } = createPositionHarness([
+    10, 20, 30,
+    40, 50, 60,
+  ]);
+  helios._interpolationConfig.enabled = true;
+  helios._interpolationRuntime.lastRenderedPositions = new Float32Array([
+    1, 2, 3,
+    4, 5, 6,
+  ]);
+
+  helios._handleLayoutUpdate({ timestamp: 100, handoffAdopted: true });
+
+  almostEqualArray(
+    Array.from(helios._interpolationRuntime.lastRenderedPositions ?? []),
+    Array.from(positions),
+  );
+  assert.equal(helios._interpolationRuntime.active, false);
+  assert.equal(graphLayerState.interpolation?.enabled, false);
 });
 
 test('interpolation() exposes and updates interpolation settings', () => {

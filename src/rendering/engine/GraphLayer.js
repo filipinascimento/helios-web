@@ -48,6 +48,8 @@ export class GraphLayer extends Layer {
     this.nodeBlendWithEdges = options.nodeBlendWithEdges === true;
     this.edgeDepthWrite = options.edgeDepthWrite === true;
     this.edgeFastRendering = options.edgeFastRendering === true;
+    this.edgeAdaptiveFastRendering = options.edgeAdaptiveFastRendering === true;
+    this.lastRenderDurationMs = null;
     this.loggedWeightedActive = false;
     const slots = this.stateSlotCount;
     this.nodeStateScale = new Float32Array(slots * 4);
@@ -120,6 +122,70 @@ export class GraphLayer extends Layer {
     if (edgeOpacityBase === 0 && edgeOpacityScale === 0) return false;
 
     return true;
+  }
+
+  hasSemanticZoom() {
+    return Number.isFinite(this.semanticZoomExponent) && this.semanticZoomExponent > 0;
+  }
+
+  hasEdgeTrim() {
+    return Number.isFinite(this.edgeEndpointTrim) && this.edgeEndpointTrim !== 0;
+  }
+
+  hasActiveEdgeStateStyling() {
+    if ((this.hoveredEdgeState >>> 0) !== 0) return true;
+    if (
+      this.edgeNoStateScale[0] !== 1
+      || this.edgeNoStateScale[1] !== 1
+      || this.edgeNoStateScale[3] !== 0
+      || this.edgeNoStateColorMul[0] !== 1
+      || this.edgeNoStateColorMul[1] !== 1
+      || this.edgeNoStateColorMul[2] !== 1
+      || this.edgeNoStateColorAdd[0] !== 0
+      || this.edgeNoStateColorAdd[1] !== 0
+      || this.edgeNoStateColorAdd[2] !== 0
+    ) {
+      return true;
+    }
+    for (let i = 0; i < this.stateSlotCount; i += 1) {
+      const o = i * 4;
+      if (
+        this.edgeStateScale[o + 0] !== 1
+        || this.edgeStateScale[o + 1] !== 1
+        || this.edgeStateScale[o + 3] !== 0
+        || this.edgeStateColorMul[o + 0] !== 1
+        || this.edgeStateColorMul[o + 1] !== 1
+        || this.edgeStateColorMul[o + 2] !== 1
+        || this.edgeStateColorAdd[o + 0] !== 0
+        || this.edgeStateColorAdd[o + 1] !== 0
+        || this.edgeStateColorAdd[o + 2] !== 0
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  hasActiveEndpointStateStyling() {
+    if (this.nodeNoStateScale[0] !== 1) return true;
+    for (let i = 0; i < this.stateSlotCount; i += 1) {
+      if (this.nodeStateScale[i * 4] !== 1) return true;
+    }
+    return false;
+  }
+
+  resolveEdgeSpecialization(options = {}) {
+    const is2D = options.is2D === true;
+    const trim = options.fastPath === true ? false : this.hasEdgeTrim();
+    const edgeState = options.fastPath === true ? false : this.hasActiveEdgeStateStyling();
+    const endpointState = trim && options.fastPath !== true && this.hasActiveEndpointStateStyling();
+    return {
+      cameraMode: is2D ? '2d' : '3d',
+      semanticZoom: options.fastPath === true ? false : (is2D && this.hasSemanticZoom()),
+      trim,
+      edgeState,
+      endpointState,
+    };
   }
 
 
@@ -297,11 +363,19 @@ export class GraphLayer extends Layer {
   }
 
   getEffectiveEdgeRenderingMode() {
-    return this.edgeFastRendering === true ? 'line' : this.edgeRenderingMode;
+    return this.isFastEdgeRenderingActive() ? 'line' : this.edgeRenderingMode;
   }
 
   setEdgeFastRendering(enabled) {
     this.edgeFastRendering = enabled === true;
+  }
+
+  setAdaptiveEdgeFastRendering(enabled) {
+    this.edgeAdaptiveFastRendering = enabled === true;
+  }
+
+  isFastEdgeRenderingActive() {
+    return this.edgeFastRendering === true || this.edgeAdaptiveFastRendering === true;
   }
 
   setEdgeTransparencyMode(mode) {

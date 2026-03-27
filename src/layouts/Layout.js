@@ -1,3 +1,5 @@
+import { NODE_POSITION_ATTRIBUTE } from '../pipeline/constants.js';
+
 /** @typedef {import('helios-network').default} HeliosNetwork */
 
 export function withLogScaleBinding(binding) {
@@ -31,12 +33,13 @@ export class Layout {
     this.helios = null;
     this._updateRequested = true;
     this._updateListener = null;
+    this._positionHandoffPending = false;
   }
 
   async initialize() {}
 
   shouldRun() {
-    return this._updateRequested;
+    return !this._positionHandoffPending && this._updateRequested;
   }
 
   requestUpdate() {
@@ -73,6 +76,68 @@ export class Layout {
     this.requestUpdate();
     this.helios?._wakeLayoutIfIdle?.(reason);
     return this;
+  }
+
+  isPositionHandoffPending() {
+    return this._positionHandoffPending === true;
+  }
+
+  beginPositionHandoff() {
+    this._positionHandoffPending = true;
+    this._updateRequested = false;
+    return this;
+  }
+
+  completePositionHandoff(snapshot = null, options = {}) {
+    const wrote = this.seedFromPositionSnapshot(snapshot, options);
+    this._positionHandoffPending = false;
+    if (options.requestUpdate !== false) {
+      this.requestUpdate();
+    }
+    return wrote;
+  }
+
+  seedFromPositionSnapshot(snapshot, options = {}) {
+    if (!(snapshot instanceof Float32Array) || snapshot.length <= 0) return false;
+
+    let wrote = false;
+    let writtenView = null;
+    const writeSnapshot = (view) => {
+      if (!view || !Number.isFinite(view.length) || view.length <= 0) return false;
+      const count = Math.min(view.length, snapshot.length);
+      if (count <= 0) return false;
+      view.set(snapshot.subarray(0, count), 0);
+      writtenView ??= view;
+      return true;
+    };
+    const apply = () => {
+      const visualView = this.visuals?.nodePositions ?? null;
+      const networkView = this.network?.getNodeAttributeBuffer?.(NODE_POSITION_ATTRIBUTE)?.view ?? null;
+      const wroteVisual = writeSnapshot(visualView);
+      const wroteNetwork = networkView && networkView !== visualView
+        ? writeSnapshot(networkView)
+        : false;
+      wrote = wroteVisual || wroteNetwork;
+    };
+
+    const withVisualAccess = typeof this.visuals?.withBufferAccess === 'function'
+      ? (fn) => this.visuals.withBufferAccess(fn)
+      : (fn) => fn();
+    const withNetworkAccess = typeof this.network?.withBufferAccess === 'function'
+      ? (fn) => this.network.withBufferAccess(fn)
+      : (fn) => fn();
+    withNetworkAccess(() => withVisualAccess(apply));
+
+    if (!wrote) return false;
+    this.visuals?.markPositionsDirty?.();
+    if (options.emitUpdate !== false) {
+      this.emitUpdate({
+        positions: writtenView ?? snapshot,
+        timestamp: performance.now(),
+        layoutElapsedMs: 0,
+      });
+    }
+    return true;
   }
 
   dispose() {}
@@ -153,7 +218,7 @@ export class WorkerLayout extends Layout {
   }
 
   shouldRun() {
-    return !this.pending;
+    return !this.isPositionHandoffPending() && !this.pending;
   }
 
   step() {

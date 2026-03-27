@@ -52,6 +52,45 @@ test('fast edge rendering resolves a distinct lightweight WebGPU edge variant', 
   assert.match(layer.getEdgeVariantKey(true, variant), /\bf:1\b/);
 });
 
+test('advanced WebGPU edge variants specialize trim, state, semantic zoom, and camera mode', () => {
+  const layer = new GraphLayerWebGPU();
+  layer.edgeEndpointTrim = 0;
+  layer.semanticZoomExponent = 0;
+  const variant2D = layer.resolveEdgeVariant({
+    edge: {
+      endpointSize: { mode: 'buffer', source: 'edge' },
+    },
+  }, { is2D: true });
+  assert.equal(variant2D.cameraMode, '2d');
+  assert.equal(variant2D.trim, false);
+  assert.equal(variant2D.endpointSizeBuffer, false);
+  assert.equal(variant2D.edgeState, false);
+  assert.equal(variant2D.endpointState, false);
+  assert.equal(variant2D.semanticZoom, false);
+
+  layer.edgeEndpointTrim = 0.8;
+  layer.semanticZoomExponent = 0.5;
+  layer.setEdgeStateStyle(0, { opacityMul: 0.5 });
+  layer.setNodeStateStyle(0, { sizeMul: 1.5 });
+  const variant3D = layer.resolveEdgeVariant({
+    edge: {
+      endpointSize: { mode: 'buffer', source: 'edge' },
+    },
+  }, { is2D: false });
+  assert.equal(variant3D.cameraMode, '3d');
+  assert.equal(variant3D.trim, true);
+  assert.equal(variant3D.endpointSizeBuffer, true);
+  assert.equal(variant3D.edgeState, true);
+  assert.equal(variant3D.endpointState, true);
+  assert.equal(variant3D.semanticZoom, false);
+
+  const key2D = layer.getEdgeVariantKey(true, variant2D);
+  const key3D = layer.getEdgeVariantKey(true, variant3D);
+  assert.notEqual(key2D, key3D);
+  assert.match(key2D, /\bcm:2d\b/);
+  assert.match(key3D, /\bcm:3d\b/);
+});
+
 test('getSharedSparseResources prefers active position buffers over stale cache entries', () => {
   const stalePositionBuffer = { label: 'stale-position' };
   const stalePositionFromBuffer = { label: 'stale-position-from' };

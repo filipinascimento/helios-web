@@ -194,6 +194,49 @@ test.describe('scene panel: tabs and appearance controls', () => {
     const screenMode = await page.evaluate(() => window.__helios.renderer?.graphLayer?.edgeTransparencyMode ?? null);
     expect(screenMode).toBe('screen');
 
+    const adaptiveHeader = scenePanel.getByRole('button', { name: 'Adaptive' }).first();
+    await expect(adaptiveHeader).toBeVisible();
+    if ((await adaptiveHeader.getAttribute('aria-expanded')) === 'false') {
+      await adaptiveHeader.click();
+    }
+
+    const adaptiveEnabled = scenePanel.locator('[role="switch"][aria-label="Adaptive Edges"]').first();
+    await expect(adaptiveEnabled).toBeVisible();
+    await expect(adaptiveEnabled).toHaveAttribute('aria-checked', 'true');
+    await adaptiveEnabled.click();
+    await expect(adaptiveEnabled).toHaveAttribute('aria-checked', 'false');
+
+    const adaptiveThresholdRow = scenePanel
+      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Slow Frame"))')
+      .first();
+    await adaptiveThresholdRow.locator('input[type="number"]').fill('28');
+    await adaptiveThresholdRow.locator('input[type="number"]').dispatchEvent('change');
+
+    const adaptiveFramesRow = scenePanel
+      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Avg Frames"))')
+      .first();
+    await adaptiveFramesRow.locator('input[type="number"]').fill('4');
+    await adaptiveFramesRow.locator('input[type="number"]').dispatchEvent('change');
+
+    const adaptiveRetryRow = scenePanel
+      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Hold Time"))')
+      .first();
+    await adaptiveRetryRow.locator('input[type="number"]').fill('1400');
+    await adaptiveRetryRow.locator('input[type="number"]').dispatchEvent('change');
+
+    const adaptiveIdleRow = scenePanel
+      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Interaction Hold"))')
+      .first();
+    await adaptiveIdleRow.locator('input[type="number"]').fill('180');
+    await adaptiveIdleRow.locator('input[type="number"]').dispatchEvent('change');
+
+    const adaptiveConfig = await page.evaluate(() => window.__helios.edgeAdaptiveQuality());
+    expect(adaptiveConfig.enabled).toBe(false);
+    expect(adaptiveConfig.slowFrameThresholdMs).toBe(28);
+    expect(adaptiveConfig.slowFrameConsecutiveFrames).toBe(4);
+    expect(adaptiveConfig.probeIntervalMs).toBe(1400);
+    expect(adaptiveConfig.interactionHoldMs).toBe(180);
+
     const labelsTab = scenePanel.getByRole('button', { name: 'Labels' }).first();
     await labelsTab.click();
 

@@ -520,6 +520,61 @@ test('D3Force3DLayout ignores updateIntervalMs gating and posts tick when schedu
   assert.equal(posted?.type, 'tick');
 });
 
+test('D3Force3DLayout posts an adopt-only tick immediately after position handoff', () => {
+  const network = createStubNetwork();
+  let seedCalls = 0;
+  const visuals = {
+    nodePositions: new Float32Array([
+      0, 0, 0,
+      1, 0, 0,
+      2, 0, 0,
+      3, 0, 0,
+    ]),
+    withBufferAccess: (fn) => fn(),
+    seedMissingPositions: () => { seedCalls += 1; },
+    markPositionsDirty: () => {},
+  };
+  const layout = new D3Force3DLayout(network, visuals, { mode: '3d' });
+  let posted = null;
+  layout.worker = {
+    postMessage: (message) => {
+      posted = message;
+    },
+  };
+  layout.pending = false;
+  layout.seededPositions = true;
+  layout.completePositionHandoff(new Float32Array(visuals.nodePositions), { emitUpdate: false });
+
+  layout.step();
+  assert.equal(posted?.type, 'tick');
+  assert.equal(posted?.adoptOnly, true);
+  assert.equal(seedCalls, 0);
+
+  posted = null;
+  layout.pending = false;
+  layout.step();
+  assert.equal(posted?.adoptOnly, undefined);
+});
+
+test('D3Force3DLayout can adopt handoff alpha from the previous layout', () => {
+  const layout = new D3Force3DLayout(createStubNetwork(), { nodePositions: new Float32Array(12) }, { mode: '3d' });
+
+  layout.adoptHandoffState({ alpha: 0.125 });
+
+  assert.equal(layout.settings.alpha, 0.125);
+  assert.equal(layout.reheatAlpha, 0.125);
+  assert.equal(layout.optionsDirty, true);
+});
+
+test('D3Force3DLayout can adopt handoff center from the previous layout snapshot', () => {
+  const layout = new D3Force3DLayout(createStubNetwork(), { nodePositions: new Float32Array(12) }, { mode: '3d' });
+
+  layout.adoptHandoffState({ center: [12, -8, 4] });
+
+  assert.deepEqual(layout.settings.center, [12, -8, 4]);
+  assert.equal(layout.optionsDirty, true);
+});
+
 test('WorkerLayout exposes shared parameter bindings for force and jitter layouts', () => {
   const network = createStubNetwork();
   const visuals = {
@@ -618,6 +673,38 @@ test('D3Force3DLayout switches between 2D and 3D modes and seeds planar depth on
   assert.ok(zValues.some((value) => Math.abs(value) > 1e-9));
   const meanZ = zValues.reduce((sum, value) => sum + value, 0) / zValues.length;
   assert.ok(Math.abs(meanZ) < 1e-6);
+});
+
+test('Layout snapshot handoff writes both visuals and layout-network position buffers when they differ', () => {
+  const networkPositions = new Float32Array([
+    0, 0, 0,
+    0, 0, 0,
+  ]);
+  const visualPositions = new Float32Array([
+    9, 9, 9,
+    9, 9, 9,
+  ]);
+  const network = {
+    nodeIndices: new Uint32Array([0, 1]),
+    withBufferAccess: (fn) => fn(),
+    getNodeAttributeBuffer: () => ({ view: networkPositions }),
+  };
+  const visuals = {
+    nodePositions: visualPositions,
+    withBufferAccess: (fn) => fn(),
+    markPositionsDirty: () => {},
+  };
+  const layout = new StaticLayout(network, visuals);
+  const snapshot = new Float32Array([
+    1, 2, 3,
+    4, 5, 6,
+  ]);
+
+  const wrote = layout.seedFromPositionSnapshot(snapshot);
+
+  assert.equal(wrote, true);
+  assert.deepEqual(Array.from(visualPositions), Array.from(snapshot));
+  assert.deepEqual(Array.from(networkPositions), Array.from(snapshot));
 });
 
 test('GpuForceLayout exposes shared parameter bindings and can reheat alpha', () => {
@@ -954,16 +1041,34 @@ test('Helios wakes idle layouts without unpausing manually stopped layouts', () 
 test('Helios resumes dynamic layouts after network replacement only when the previous layout auto-idled', () => {
   const helios = Object.create(Helios.prototype);
   const calls = [];
+  let state = 'idle';
   helios._layout = {
     reheat(reason) {
-      calls.push(reason);
+      calls.push(['reheat', reason]);
+    },
+  };
+  helios.scheduler = {
+    getLayoutState() {
+      return state;
+    },
+    setLayoutEnabled(enabled, reason) {
+      calls.push(['setLayoutEnabled', enabled, reason]);
+      state = enabled ? 'running' : 'stopped';
+    },
+    requestLayout(reason) {
+      calls.push(['requestLayout', reason]);
     },
   };
 
   assert.equal(helios._resumeDynamicLayoutAfterNetworkReplace('idle', 'network-replaced'), true);
-  assert.deepEqual(calls, ['network-replaced']);
+  assert.deepEqual(calls, [
+    ['setLayoutEnabled', true, 'network-replaced'],
+    ['requestLayout', 'network-replaced'],
+    ['reheat', 'network-replaced'],
+  ]);
 
   calls.length = 0;
+  state = 'stopped';
   assert.equal(helios._resumeDynamicLayoutAfterNetworkReplace('stopped', 'network-replaced'), false);
   assert.deepEqual(calls, []);
 });
@@ -978,6 +1083,7 @@ test('Helios does not resume static layouts after network replacement', () => {
 test('Helios activates delegate-backed layouts after network replacement before resuming them', () => {
   const helios = Object.create(Helios.prototype);
   const calls = [];
+  let state = 'idle';
   helios._layout = {
     reheat(reason) {
       calls.push(['reheat', reason]);
@@ -990,6 +1096,16 @@ test('Helios activates delegate-backed layouts after network replacement before 
     setLayout(layout) {
       calls.push(['setLayout', layout]);
     },
+    getLayoutState() {
+      return state;
+    },
+    setLayoutEnabled(enabled, reason) {
+      calls.push(['setLayoutEnabled', enabled, reason]);
+      state = enabled ? 'running' : 'stopped';
+    },
+    requestLayout(reason) {
+      calls.push(['requestLayout', reason]);
+    },
   };
   helios._emitLayoutChanged = (layout) => {
     calls.push(['emitLayoutChanged', layout]);
@@ -1000,6 +1116,8 @@ test('Helios activates delegate-backed layouts after network replacement before 
   assert.deepEqual(calls, [
     ['enforcePositionSourcePolicy', helios._layout, { resetInterpolation: false }],
     ['setLayout', helios._layout],
+    ['setLayoutEnabled', true, 'network-replaced'],
+    ['requestLayout', 'network-replaced'],
     ['reheat', 'network-replaced'],
     ['emitLayoutChanged', helios._layout],
   ]);

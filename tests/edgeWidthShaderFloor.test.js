@@ -55,3 +55,48 @@ test('fast WebGPU edge lines skip trim and endpoint-size work in the line vertex
   assert.equal(/globals\.edgeTrim/.test(edgeVertexSource), false);
   assert.equal(/edgeEndpointSizeRaw/.test(edgeVertexSource), false);
 });
+
+test('specialized quad edge shaders drop trim and state work when disabled', () => {
+  const webgl = createGraphWebGLSources({
+    edge: {
+      cameraMode: '2d',
+      trim: false,
+      edgeState: false,
+      endpointState: false,
+      semanticZoom: false,
+      color: { mode: 'buffer', source: 'edge' },
+      width: { mode: 'buffer', source: 'edge' },
+      opacity: { mode: 'buffer', source: 'edge' },
+      endpointSize: { mode: 'buffer', source: 'edge' },
+    },
+  });
+  assert.equal(/u_edgeEndpointStates/.test(webgl.EDGE_QUAD_VERTEX_SOURCE), false);
+  assert.equal(/fetchEdgeState/.test(webgl.EDGE_QUAD_VERTEX_SOURCE), false);
+  assert.match(webgl.EDGE_QUAD_VERTEX_SOURCE, /float semanticScale = 1\.0;/);
+  assert.match(webgl.EDGE_QUAD_VERTEX_SOURCE, /vec3 startPos = sourcePos;/);
+  assert.match(webgl.EDGE_QUAD_VERTEX_SOURCE, /vec3 widthDir = normalize\(vec3\(-dirN\.y, dirN\.x, 0\.0\)\);/);
+  assert.equal(/if \(u_is2D == 1\)/.test(webgl.EDGE_QUAD_VERTEX_SOURCE), false);
+
+  const webgpu = createGraphWebGPUSources(4, {
+    edge: {
+      cameraMode: '3d',
+      trim: false,
+      edgeState: false,
+      endpointState: false,
+      semanticZoom: false,
+      color: { mode: 'buffer', source: 'edge' },
+      width: { mode: 'buffer', source: 'edge' },
+      opacity: { mode: 'buffer', source: 'edge' },
+      endpointSize: { mode: 'buffer', source: 'edge' },
+    },
+  });
+  const quadMatch = webgpu.EDGE_WGSL.match(/@vertex\s+fn edgeQuadVertex[\s\S]*?return output;\n}/);
+  assert.ok(quadMatch, 'expected edgeQuadVertex in specialized edge WGSL');
+  const edgeQuadSource = quadMatch[0];
+  assert.equal(/nodeStates\.data\[sourceId\]/.test(edgeQuadSource), false);
+  assert.equal(/edgeStates\.data\[edgeId\]/.test(edgeQuadSource), false);
+  assert.equal(/globals\.edgeTrim/.test(edgeQuadSource), false);
+  assert.equal(/semanticZoomScale\(\)/.test(edgeQuadSource), false);
+  assert.match(edgeQuadSource, /let viewDirRaw = camera\.position\.xyz - centerPos;/);
+  assert.equal(/camera\.position\.w <= 0\.5/.test(edgeQuadSource), false);
+});

@@ -896,6 +896,12 @@ export class GraphLayerWebGL extends GraphLayer {
 
   getEdgeVariantKey(variant) {
     return [
+      `f:${variant?.fastPath ? 1 : 0}`,
+      `cm:${variant?.cameraMode ?? '3d'}`,
+      `sz:${variant?.semanticZoom ? 1 : 0}`,
+      `tr:${variant?.trim ? 1 : 0}`,
+      `st:${variant?.edgeState ? 1 : 0}`,
+      `et:${variant?.endpointState ? 1 : 0}`,
       `c:${variant?.colorBuffer ? 'B' : 'U'}:${variant?.colorSource}:${variant?.colorEndpoints}`,
       `w:${variant?.widthBuffer ? 'B' : 'U'}:${variant?.widthSource}:${variant?.widthEndpoints}`,
       `o:${variant?.opacityBuffer ? 'B' : 'U'}:${variant?.opacitySource}:${variant?.opacityEndpoints}`,
@@ -956,6 +962,12 @@ export class GraphLayerWebGL extends GraphLayer {
           source: edgeVariant?.endpointSizeSource === 'node' ? 'node' : 'edge',
           endpoints: edgeVariant?.endpointSizeEndpoints ?? 'both',
         },
+        fastPath: edgeVariant?.fastPath === true,
+        cameraMode: edgeVariant?.cameraMode ?? '3d',
+        semanticZoom: edgeVariant?.semanticZoom === true,
+        trim: edgeVariant?.trim === true,
+        edgeState: edgeVariant?.edgeState === true,
+        endpointState: edgeVariant?.endpointState === true,
       },
     };
   }
@@ -1245,7 +1257,11 @@ export class GraphLayerWebGL extends GraphLayer {
 
   resolveEdgeVariant(visualConfig, options = {}) {
     const edgeCfg = visualConfig?.edge ?? null;
-    const fastPath = options.fastPath === true || this.edgeFastRendering === true;
+    const fastPath = options.fastPath === true || this.isFastEdgeRenderingActive?.() === true;
+    const specialization = this.resolveEdgeSpecialization({
+      fastPath,
+      is2D: options.is2D === true,
+    });
     const normalize = (entry, fallbackSource = 'edge') => {
       if (!entry || typeof entry !== 'object') {
         return {
@@ -1290,6 +1306,11 @@ export class GraphLayerWebGL extends GraphLayer {
         endpointSizeEndpoints: 'both',
         endpointSizeNodeAttribute: null,
         endpointSizeDoubleWidth: false,
+        cameraMode: specialization.cameraMode,
+        semanticZoom: specialization.semanticZoom,
+        trim: specialization.trim,
+        edgeState: specialization.edgeState,
+        endpointState: specialization.endpointState,
         fastPath: true,
       };
     }
@@ -1309,11 +1330,16 @@ export class GraphLayerWebGL extends GraphLayer {
       opacityEndpoints: opacity.endpoints,
       opacityNodeAttribute: opacity.nodeAttribute,
       opacityDoubleWidth: opacity.doubleWidth,
-      endpointSizeBuffer: endpointSize.mode !== 'uniform',
+      endpointSizeBuffer: specialization.trim && endpointSize.mode !== 'uniform',
       endpointSizeSource: endpointSize.source,
       endpointSizeEndpoints: endpointSize.endpoints,
       endpointSizeNodeAttribute: endpointSize.nodeAttribute,
       endpointSizeDoubleWidth: endpointSize.doubleWidth,
+      cameraMode: specialization.cameraMode,
+      semanticZoom: specialization.semanticZoom,
+      trim: specialization.trim,
+      edgeState: specialization.edgeState,
+      endpointState: specialization.endpointState,
       fastPath: false,
     };
   }
@@ -1668,9 +1694,9 @@ export class GraphLayerWebGL extends GraphLayer {
     const nodeVariant = this.resolveNodeVariant(visualConfig);
     const nodeConfig = visualConfig?.node ?? null;
     const edgeConfig = visualConfig?.edge ?? null;
-    const fastEdges = this.edgeFastRendering === true;
+    const fastEdges = this.isFastEdgeRenderingActive?.() === true;
     const edgeRenderingMode = this.getEffectiveEdgeRenderingMode?.() ?? this.edgeRenderingMode;
-    const edgeVariant = this.resolveEdgeVariant(visualConfig, { fastPath: fastEdges });
+    const edgeVariant = this.resolveEdgeVariant(visualConfig, { fastPath: fastEdges, is2D });
     const nodeProgramEntry = this.getNodeProgram(nodeVariant);
     const edgeLineProgramEntry = this.getEdgeProgram('line', nodeVariant, edgeVariant);
     const edgeQuadProgramEntry = this.getEdgeProgram('quad', nodeVariant, edgeVariant);

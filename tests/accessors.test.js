@@ -61,6 +61,417 @@ test('fast edge rendering UI binding is exposed as a boolean toggle', () => {
   assert.equal(Helios.UI_BINDINGS.edgeFastRendering.label, 'Fast Edge Lines');
 });
 
+test('adaptive edge quality is enabled by default and exposes configurable thresholds', () => {
+  const bindingEvents = [];
+  const helios = Object.create(Helios.prototype);
+  helios.options = {};
+  helios.scheduler = { requestRender: () => {} };
+  helios._pendingGraphLayerProps = new Map();
+  helios._pendingRendererProps = new Map();
+  helios._edgeAdaptiveQualityConfig = undefined;
+  helios._edgeAdaptiveRuntime = {
+    nextProbeAt: Number.NEGATIVE_INFINITY,
+    lastRenderMs: null,
+    qualityFrameSamples: [],
+    qualityFrameAverageMs: null,
+    reason: 'quality',
+    cameraMovingUntil: Number.NEGATIVE_INFINITY,
+    cameraIdleTimer: null,
+    probeTimer: null,
+    forceHighQuality: false,
+  };
+  helios._emitUIBindingChange = (name, value) => {
+    bindingEvents.push({ name, value });
+  };
+
+  const defaults = helios.edgeAdaptiveQuality();
+  assert.equal(defaults.enabled, true);
+  assert.equal(defaults.slowFrameThresholdMs, 66);
+  assert.equal(defaults.averageWindowFrames, 12);
+  assert.equal(defaults.slowFrameConsecutiveFrames, 12);
+  assert.equal(defaults.probeIntervalMs, 900);
+  assert.equal(defaults.interactionHoldMs, 180);
+  assert.equal(defaults.cameraIdleMs, 180);
+  assert.equal(defaults.fastDuringCamera, true);
+  assert.equal(defaults.fastDuringLayout, true);
+
+  assert.equal(
+    helios.edgeAdaptiveQuality({
+      enabled: false,
+      slowFrameThresholdMs: 33,
+      slowFrameConsecutiveFrames: 4,
+      probeIntervalMs: 1500,
+      interactionHoldMs: 240,
+      fastDuringCamera: false,
+      fastDuringLayout: false,
+    }),
+    helios,
+  );
+
+  const next = helios.edgeAdaptiveQuality();
+  assert.equal(next.enabled, false);
+  assert.equal(next.slowFrameThresholdMs, 33);
+  assert.equal(next.averageWindowFrames, 4);
+  assert.equal(next.slowFrameConsecutiveFrames, 4);
+  assert.equal(next.probeIntervalMs, 1500);
+  assert.equal(next.interactionHoldMs, 240);
+  assert.equal(next.cameraIdleMs, 240);
+  assert.equal(next.fastDuringCamera, false);
+  assert.equal(next.fastDuringLayout, false);
+  assert.equal(bindingEvents.some((event) => event.name === 'edgeAdaptiveQuality'), true);
+
+  helios.edgeAdaptiveQualityEnabled(true);
+  helios.edgeAdaptiveQualitySlowFrameConsecutiveFrames(5);
+  helios.edgeAdaptiveQualityInteractionHoldMs(120);
+  assert.equal(helios.edgeAdaptiveQualityEnabled(), true);
+  assert.equal(helios.edgeAdaptiveQualitySlowFrameConsecutiveFrames(), 5);
+  assert.equal(helios.edgeAdaptiveQualityInteractionHoldMs(), 120);
+});
+
+test('adaptive edge quality enters fast mode when the recent HQ average exceeds the threshold during activity', () => {
+  const helios = Object.create(Helios.prototype);
+  helios.options = {};
+  helios.scheduler = {
+    requestRender() {},
+    getLayoutState() { return 'running'; },
+  };
+  helios._pendingGraphLayerProps = new Map();
+  helios._pendingRendererProps = new Map();
+  helios._edgeAdaptiveQualityConfig = {
+    enabled: true,
+    slowFrameThresholdMs: 20,
+    averageWindowFrames: 3,
+    probeIntervalMs: 900,
+    interactionHoldMs: 180,
+    fastDuringCamera: true,
+    fastDuringLayout: true,
+  };
+  helios._edgeAdaptiveRuntime = {
+    nextProbeAt: Number.NEGATIVE_INFINITY,
+    lastRenderMs: null,
+    qualityFrameSamples: [],
+    qualityFrameAverageMs: null,
+    reason: 'quality',
+    cameraMovingUntil: Number.NEGATIVE_INFINITY,
+    cameraIdleTimer: null,
+    probeTimer: null,
+    forceHighQuality: false,
+  };
+  helios.renderer = {
+    graphLayer: {
+      edgeFastRendering: false,
+      edgeAdaptiveFastRendering: false,
+      shouldRenderEdges() { return true; },
+      setAdaptiveEdgeFastRendering(value) {
+        this.edgeAdaptiveFastRendering = value === true;
+      },
+    },
+  };
+  helios._emitUIBindingChange = () => {};
+  helios._queueRenderRequest = () => {};
+
+  helios._updateEdgeAdaptiveQualityAfterRender(24, 1100);
+  helios._updateEdgeAdaptiveQualityAfterRender(23, 1110);
+  helios._updateEdgeAdaptiveQualityAfterRender(22, 1120);
+
+  assert.equal(helios.renderer.graphLayer.edgeAdaptiveFastRendering, true);
+  assert.equal(helios._edgeAdaptiveRuntime.nextProbeAt, 2020);
+  assert.equal(helios._edgeAdaptiveRuntime.reason, 'performance');
+});
+
+test('adaptive edge quality stays in high quality when the recent HQ average stays below the threshold', () => {
+  const helios = Object.create(Helios.prototype);
+  helios.options = {};
+  helios.scheduler = {
+    requestRender() {},
+    getLayoutState() { return 'running'; },
+  };
+  helios._pendingGraphLayerProps = new Map();
+  helios._pendingRendererProps = new Map();
+  helios._edgeAdaptiveQualityConfig = {
+    enabled: true,
+    slowFrameThresholdMs: 20,
+    averageWindowFrames: 3,
+    probeIntervalMs: 900,
+    interactionHoldMs: 180,
+    fastDuringCamera: true,
+    fastDuringLayout: true,
+  };
+  helios._edgeAdaptiveRuntime = {
+    nextProbeAt: Number.NEGATIVE_INFINITY,
+    lastRenderMs: null,
+    qualityFrameSamples: [],
+    qualityFrameAverageMs: null,
+    reason: 'quality',
+    cameraMovingUntil: Number.NEGATIVE_INFINITY,
+    cameraIdleTimer: null,
+    probeTimer: null,
+    forceHighQuality: false,
+  };
+  helios.renderer = {
+    graphLayer: {
+      edgeFastRendering: false,
+      edgeAdaptiveFastRendering: false,
+      shouldRenderEdges() { return true; },
+      setAdaptiveEdgeFastRendering(value) {
+        this.edgeAdaptiveFastRendering = value === true;
+      },
+    },
+  };
+  helios._emitUIBindingChange = () => {};
+
+  helios._updateEdgeAdaptiveQualityAfterRender(12, 1100);
+  helios._updateEdgeAdaptiveQualityAfterRender(13, 1110);
+  helios._updateEdgeAdaptiveQualityAfterRender(14, 1120);
+
+  assert.equal(helios.renderer.graphLayer.edgeAdaptiveFastRendering, false);
+  assert.equal(helios._edgeAdaptiveRuntime.nextProbeAt, Number.NEGATIVE_INFINITY);
+  assert.equal(helios._edgeAdaptiveRuntime.reason, 'quality');
+  assert.equal(helios._edgeAdaptiveRuntime.qualityFrameAverageMs, 13);
+});
+
+test('camera and layout adaptive toggles do not force fast edges before a performance fallback exists', () => {
+  const helios = Object.create(Helios.prototype);
+  helios._edgeAdaptiveQualityConfig = {
+    enabled: true,
+    slowFrameThresholdMs: 20,
+    averageWindowFrames: 12,
+    probeIntervalMs: 900,
+    interactionHoldMs: 180,
+    fastDuringCamera: true,
+    fastDuringLayout: true,
+  };
+  helios._edgeAdaptiveRuntime = {
+    nextProbeAt: Number.NEGATIVE_INFINITY,
+    lastRenderMs: null,
+    qualityFrameSamples: [],
+    qualityFrameAverageMs: null,
+    reason: 'quality',
+    cameraMovingUntil: 2000,
+    cameraIdleTimer: null,
+    probeTimer: null,
+    forceHighQuality: false,
+  };
+  helios.renderer = {
+    graphLayer: {
+      edgeFastRendering: false,
+      edgeAdaptiveFastRendering: false,
+      shouldRenderEdges() { return true; },
+    },
+  };
+  helios.scheduler = {
+    getLayoutState() { return 'running'; },
+  };
+
+  const decision = helios._resolveEdgeAdaptiveFastState(1000);
+
+  assert.deepEqual(decision, { fast: false, reason: 'quality' });
+});
+
+test('camera and layout adaptive toggles keep an earned performance fallback stable', () => {
+  const helios = Object.create(Helios.prototype);
+  helios._edgeAdaptiveQualityConfig = {
+    enabled: true,
+    slowFrameThresholdMs: 20,
+    averageWindowFrames: 12,
+    probeIntervalMs: 900,
+    interactionHoldMs: 180,
+    fastDuringCamera: true,
+    fastDuringLayout: true,
+  };
+  helios._edgeAdaptiveRuntime = {
+    nextProbeAt: 1400,
+    lastRenderMs: null,
+    qualityFrameSamples: [],
+    qualityFrameAverageMs: null,
+    reason: 'performance',
+    cameraMovingUntil: 2000,
+    cameraIdleTimer: null,
+    probeTimer: null,
+    forceHighQuality: false,
+  };
+  helios.renderer = {
+    graphLayer: {
+      edgeFastRendering: false,
+      edgeAdaptiveFastRendering: true,
+      shouldRenderEdges() { return true; },
+    },
+  };
+  helios.scheduler = {
+    getLayoutState() { return 'running'; },
+  };
+
+  const decision = helios._resolveEdgeAdaptiveFastState(1000);
+
+  assert.deepEqual(decision, { fast: true, reason: 'performance' });
+});
+
+test('layout adaptive quality probes HQ after cooldown and stays there when the probe is comfortably faster', () => {
+  const helios = Object.create(Helios.prototype);
+  helios._edgeAdaptiveQualityConfig = {
+    enabled: true,
+    slowFrameThresholdMs: 40,
+    averageWindowFrames: 3,
+    probeIntervalMs: 100,
+    interactionHoldMs: 180,
+    fastDuringCamera: true,
+    fastDuringLayout: true,
+  };
+  helios._edgeAdaptiveRuntime = {
+    nextProbeAt: 200,
+    lastRenderMs: null,
+    qualityFrameSamples: [],
+    qualityFrameAverageMs: null,
+    fastFrameSamples: [20, 19, 21],
+    fastFrameAverageMs: 20,
+    reason: 'performance',
+    cameraMovingUntil: Number.NEGATIVE_INFINITY,
+    cameraIdleTimer: null,
+    probeTimer: null,
+    failedProbeCount: 0,
+    performanceFallbackAt: 100,
+    performanceFallbackAlpha: 1,
+    forceHighQuality: false,
+  };
+  helios._layout = { alpha: 0.2, options: { alphaMin: 0.001 } };
+  helios.renderer = {
+    graphLayer: {
+      edgeFastRendering: false,
+      edgeAdaptiveFastRendering: true,
+      shouldRenderEdges() { return true; },
+      setAdaptiveEdgeFastRendering(value) {
+        this.edgeAdaptiveFastRendering = value === true;
+      },
+    },
+  };
+  helios.scheduler = {
+    requestRender() {},
+    getLayoutState() { return 'running'; },
+  };
+  helios._pendingGraphLayerProps = new Map();
+  helios._pendingRendererProps = new Map();
+  helios._emitUIBindingChange = () => {};
+  helios._queueRenderRequest = () => {};
+
+  const decision = helios._updateEdgeAdaptiveQualityBeforeRender(220);
+  assert.deepEqual(decision, { fast: false, reason: 'probe' });
+  assert.equal(helios.renderer.graphLayer.edgeAdaptiveFastRendering, false);
+  assert.equal(helios._edgeAdaptiveRuntime.reason, 'probe');
+
+  helios._updateEdgeAdaptiveQualityAfterRender(26, 220);
+  helios._updateEdgeAdaptiveQualityAfterRender(24, 230);
+  helios._updateEdgeAdaptiveQualityAfterRender(25, 240);
+  helios._updateEdgeAdaptiveQualityAfterRender(23, 250);
+
+  assert.equal(helios.renderer.graphLayer.edgeAdaptiveFastRendering, false);
+  assert.equal(helios._edgeAdaptiveRuntime.reason, 'quality');
+  assert.equal(helios._edgeAdaptiveRuntime.failedProbeCount, 0);
+  assert.equal(helios._edgeAdaptiveRuntime.nextProbeAt, Number.NEGATIVE_INFINITY);
+});
+
+test('layout adaptive quality backs off failed HQ probes instead of oscillating every retry interval', () => {
+  const helios = Object.create(Helios.prototype);
+  helios._edgeAdaptiveQualityConfig = {
+    enabled: true,
+    slowFrameThresholdMs: 40,
+    averageWindowFrames: 2,
+    probeIntervalMs: 100,
+    interactionHoldMs: 180,
+    fastDuringCamera: true,
+    fastDuringLayout: true,
+  };
+  helios._edgeAdaptiveRuntime = {
+    nextProbeAt: 200,
+    lastRenderMs: null,
+    qualityFrameSamples: [],
+    qualityFrameAverageMs: null,
+    fastFrameSamples: [18, 20],
+    fastFrameAverageMs: 19,
+    reason: 'performance',
+    cameraMovingUntil: Number.NEGATIVE_INFINITY,
+    cameraIdleTimer: null,
+    probeTimer: null,
+    failedProbeCount: 0,
+    performanceFallbackAt: 100,
+    performanceFallbackAlpha: 1,
+    forceHighQuality: false,
+  };
+  helios._layout = { alpha: 0.3, options: { alphaMin: 0.001 } };
+  helios.renderer = {
+    graphLayer: {
+      edgeFastRendering: false,
+      edgeAdaptiveFastRendering: true,
+      shouldRenderEdges() { return true; },
+      setAdaptiveEdgeFastRendering(value) {
+        this.edgeAdaptiveFastRendering = value === true;
+      },
+    },
+  };
+  helios.scheduler = {
+    requestRender() {},
+    getLayoutState() { return 'running'; },
+  };
+  helios._pendingGraphLayerProps = new Map();
+  helios._pendingRendererProps = new Map();
+  helios._emitUIBindingChange = () => {};
+  helios._queueRenderRequest = () => {};
+
+  const decision = helios._updateEdgeAdaptiveQualityBeforeRender(220);
+  assert.deepEqual(decision, { fast: false, reason: 'probe' });
+
+  helios._updateEdgeAdaptiveQualityAfterRender(52, 220);
+  helios._updateEdgeAdaptiveQualityAfterRender(54, 230);
+  helios._updateEdgeAdaptiveQualityAfterRender(56, 240);
+
+  assert.equal(helios.renderer.graphLayer.edgeAdaptiveFastRendering, true);
+  assert.equal(helios._edgeAdaptiveRuntime.reason, 'performance');
+  assert.equal(helios._edgeAdaptiveRuntime.failedProbeCount, 1);
+  assert.equal(helios._edgeAdaptiveRuntime.nextProbeAt, 440);
+  assert.deepEqual(helios._resolveEdgeAdaptiveFastState(300), { fast: true, reason: 'performance' });
+});
+
+test('camera adaptive quality stays fast until the interaction debounce window fully expires', () => {
+  const helios = Object.create(Helios.prototype);
+  helios._edgeAdaptiveQualityConfig = {
+    enabled: true,
+    slowFrameThresholdMs: 40,
+    averageWindowFrames: 3,
+    probeIntervalMs: 100,
+    interactionHoldMs: 180,
+    fastDuringCamera: true,
+    fastDuringLayout: true,
+  };
+  helios._edgeAdaptiveRuntime = {
+    nextProbeAt: 100,
+    lastRenderMs: null,
+    qualityFrameSamples: [],
+    qualityFrameAverageMs: null,
+    fastFrameSamples: [18, 20, 19],
+    fastFrameAverageMs: 19,
+    reason: 'performance',
+    cameraMovingUntil: 500,
+    cameraIdleTimer: null,
+    probeTimer: null,
+    failedProbeCount: 0,
+    performanceFallbackAt: 100,
+    performanceFallbackAlpha: 1,
+    forceHighQuality: false,
+  };
+  helios.renderer = {
+    graphLayer: {
+      edgeFastRendering: false,
+      edgeAdaptiveFastRendering: true,
+      shouldRenderEdges() { return true; },
+    },
+  };
+  helios.scheduler = {
+    getLayoutState() { return 'idle'; },
+  };
+
+  assert.deepEqual(helios._resolveEdgeAdaptiveFastState(499), { fast: true, reason: 'performance' });
+  assert.deepEqual(helios._resolveEdgeAdaptiveFastState(501), { fast: false, reason: 'quality' });
+});
+
 test('supersampling accessor updates layer sizing mode live', () => {
   const layerCalls = [];
   const bindingEvents = [];

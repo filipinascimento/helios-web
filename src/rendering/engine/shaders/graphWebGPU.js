@@ -55,6 +55,13 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
   const opacity = normalizeEdgeOption(edgeOptions.opacity, 'edge');
   const endpointSize = normalizeEdgeOption(edgeOptions.endpointSize, 'edge');
   const fastEdgePath = edgeOptions.fastPath === true;
+  const cameraMode = edgeOptions.cameraMode === '2d'
+    ? '2d'
+    : (edgeOptions.cameraMode === '3d' ? '3d' : 'dynamic');
+  const semanticZoomEnabled = !fastEdgePath && edgeOptions.semanticZoom !== false;
+  const trimEnabled = !fastEdgePath && edgeOptions.trim !== false;
+  const edgeStateEnabled = !fastEdgePath && edgeOptions.edgeState !== false;
+  const endpointStateEnabled = trimEnabled && !fastEdgePath && edgeOptions.endpointState !== false;
 
   const useEdgeColorBuffer = color.mode !== 'uniform' && color.source !== 'node';
   const useEdgeColorNode = color.mode !== 'uniform' && color.source === 'node';
@@ -109,6 +116,7 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
   endpointSize = nodeSizesPair;
 `
     : '';
+  const semanticScaleExpr = (!semanticZoomEnabled || cameraMode === '3d') ? '1.0' : 'semanticZoomScale()';
 
   const edgeIdVertexSnippet = useEdgeIndices
     ? 'var edgeId = edgeIndices.data[edgeSlot];'
@@ -117,21 +125,59 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
     ? 'var edgeId = edgeIndices.data[input.instance];'
     : 'var edgeId = input.instance;';
 
-  const edgeLineGeometrySnippet = fastEdgePath
+  const edgeStateSnippet = edgeStateEnabled
     ? `
-  var position = startPos;
-  if ((vertexIndex & 1u) == 1u) {
-    position = endPos;
+  var state = edgeStates.data[edgeId];
+  if (hover.edgeIndex != 0xffffffffu && edgeId == hover.edgeIndex) {
+    state = state | hover.edgeState;
+  }
+  var widthMul = 1.0;
+  var opacityMul = 1.0;
+  var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
+  var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
+  var discardFlag = 0u;
+  if (state == 0u) {
+    let scale = globals.edgeNoStateScale;
+    widthMul = widthMul * scale.x;
+    opacityMul = opacityMul * scale.y;
+    rgbMul = rgbMul * globals.edgeNoStateColorMul.rgb;
+    rgbAdd = rgbAdd + globals.edgeNoStateColorAdd.rgb;
+    discardFlag = select(0u, 1u, scale.w > 0.5);
+  } else {
+    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
+      let enabled = (state >> i) & 1u;
+      if (enabled == 1u) {
+        let scale = globals.edgeStateScale[i];
+        widthMul = widthMul * scale.x;
+        opacityMul = opacityMul * scale.y;
+        rgbMul = rgbMul * globals.edgeStateColorMul[i].rgb;
+        rgbAdd = rgbAdd + globals.edgeStateColorAdd[i].rgb;
+        if (scale.w > 0.5) {
+          discardFlag = 1u;
+        }
+      }
+    }
   }
 `
     : `
+  var widthMul = 1.0;
+  var opacityMul = 1.0;
+  var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
+  var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
+  var discardFlag = 0u;
+`;
+
+  const edgeTrimSnippet = trimEnabled
+    ? `
   var endpointSize = globals.edgeEndpointSizeRaw;
   ${edgeEndpointSizeBufferSnippet}
   ${edgeEndpointSizeNodeSnippet}
 
-  let endpointState = vec2<u32>(nodeStates.data[sourceId], nodeStates.data[targetId]);
   var startSizeMul = 1.0;
   var endSizeMul = 1.0;
+  ${endpointStateEnabled
+    ? `
+  let endpointState = vec2<u32>(nodeStates.data[sourceId], nodeStates.data[targetId]);
   if (endpointState.x == 0u) {
     startSizeMul = startSizeMul * globals.nodeNoStateScale.x;
   } else {
@@ -152,16 +198,40 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
       }
     }
   }
+`
+    : ''}
   let dirRaw = endPos - startPos;
   let dirLen = max(length(dirRaw), 1e-5);
   let dir = dirRaw / vec3<f32>(dirLen);
-  let semanticScale = semanticZoomScale();
+  let semanticScale = ${semanticScaleExpr};
   let startRadius = max((globals.nodeSize.x + globals.nodeSize.y * endpointSize.x) * startSizeMul, 0.0) * 0.5 * semanticScale;
   let endRadius = max((globals.nodeSize.x + globals.nodeSize.y * endpointSize.y) * endSizeMul, 0.0) * 0.5 * semanticScale;
   let trimStart = startRadius * globals.edgeTrim.x;
   let trimEnd = endRadius * globals.edgeTrim.x;
   startPos = startPos + dir * trimStart;
   endPos = endPos - dir * trimEnd;
+`
+    : '';
+
+  const edgeGeometrySetupSnippet = trimEnabled
+    ? ''
+    : `
+  let dirRaw = endPos - startPos;
+  let dirLen = max(length(dirRaw), 1e-5);
+  let dir = dirRaw / vec3<f32>(dirLen);
+  let semanticScale = ${semanticScaleExpr};
+`;
+
+  const edgeLineGeometrySnippet = fastEdgePath
+    ? `
+  var position = startPos;
+  if ((vertexIndex & 1u) == 1u) {
+    position = endPos;
+  }
+`
+    : `
+  ${edgeGeometrySetupSnippet}
+  ${edgeTrimSnippet}
   var position = startPos;
   if ((vertexIndex & 1u) == 1u) {
     position = endPos;
@@ -196,6 +266,95 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
   let attrOpacity = select(opacityPair.x, opacityPair.y, (vertexIndex & 1u) == 1u);
 `;
 
+  const semanticZoomSnippet = (!semanticZoomEnabled || cameraMode === '3d')
+    ? `
+fn semanticZoomScale() -> f32 {
+  return 1.0;
+}
+`
+    : (cameraMode === '2d'
+      ? `
+fn semanticZoomScale() -> f32 {
+  let exponent = globals._pad0.x;
+  if (exponent <= 0.0 || exponent != exponent) {
+    return 1.0;
+  }
+  let zoom2D = max(abs(camera.view[0][0]), 1e-3);
+  if (exponent == 1.0) {
+    return 1.0 / zoom2D;
+  }
+  return 1.0 / pow(zoom2D, exponent);
+}
+`
+      : `
+fn semanticZoomScale() -> f32 {
+  let is2D = camera.position.w > 0.5;
+  if (!is2D) {
+    return 1.0;
+  }
+  let exponent = globals._pad0.x;
+  if (exponent <= 0.0 || exponent != exponent) {
+    return 1.0;
+  }
+  let zoom2D = max(abs(camera.view[0][0]), 1e-3);
+  if (exponent == 1.0) {
+    return 1.0 / zoom2D;
+  }
+  return 1.0 / pow(zoom2D, exponent);
+}
+`);
+
+  const edgeQuadWidthDirSnippet = cameraMode === '2d'
+    ? `
+  let widthDir = normalize(vec3<f32>(-dir.y, dir.x, 0.0));
+`
+    : (cameraMode === '3d'
+      ? `
+  let viewDirRaw = camera.position.xyz - centerPos;
+  let viewDirLen = max(length(viewDirRaw), 1e-5);
+  let viewDir = viewDirRaw / vec3<f32>(viewDirLen);
+  var widthDir = cross(viewDir, dir);
+  var widthDirLen = length(widthDir);
+  if (widthDirLen <= 1e-5) {
+    widthDir = cross(normalize(camera.up.xyz), dir);
+    widthDirLen = length(widthDir);
+  }
+  if (widthDirLen <= 1e-5) {
+    widthDir = cross(dir, normalize(camera.right.xyz));
+    widthDirLen = length(widthDir);
+  }
+  widthDir = select(
+    vec3<f32>(0.0, 1.0, 0.0),
+    widthDir / vec3<f32>(max(widthDirLen, 1e-5)),
+    widthDirLen > 1e-5
+  );
+`
+      : `
+  var widthDir = vec3<f32>(-dir.y, dir.x, 0.0);
+  if (camera.position.w <= 0.5) {
+    let viewDirRaw = camera.position.xyz - centerPos;
+    let viewDirLen = max(length(viewDirRaw), 1e-5);
+    let viewDir = viewDirRaw / vec3<f32>(viewDirLen);
+    widthDir = cross(viewDir, dir);
+    var widthDirLen = length(widthDir);
+    if (widthDirLen <= 1e-5) {
+      widthDir = cross(normalize(camera.up.xyz), dir);
+      widthDirLen = length(widthDir);
+    }
+    if (widthDirLen <= 1e-5) {
+      widthDir = cross(dir, normalize(camera.right.xyz));
+      widthDirLen = length(widthDir);
+    }
+    widthDir = select(
+      vec3<f32>(0.0, 1.0, 0.0),
+      widthDir / vec3<f32>(max(widthDirLen, 1e-5)),
+      widthDirLen > 1e-5
+    );
+  } else {
+    widthDir = normalize(widthDir);
+  }
+`);
+
   const bindingLines = [];
   const addBinding = (name, storage, type) => {
     if (!hasBinding(name)) return;
@@ -213,18 +372,18 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
   addBinding('nodePositionsFrom', true, 'NodePositionsFrom');
   addBinding('nodeSizes', true, 'NodeSizes');
   addBinding('nodeColors', true, 'NodeColors');
-  addBinding('nodeStates', true, 'NodeStates');
+  if (endpointStateEnabled) addBinding('nodeStates', true, 'NodeStates');
   addBinding('edgeColors', true, 'EdgeColors');
   addBinding('edgeWidths', true, 'EdgeWidths');
-  addBinding('edgeEndpointSizes', true, 'EdgeEndpointSizes');
+  if (trimEnabled) addBinding('edgeEndpointSizes', true, 'EdgeEndpointSizes');
   addBinding('edgeOpacities', true, 'EdgeOpacities');
-  addBinding('edgeStates', true, 'EdgeStates');
+  if (edgeStateEnabled) addBinding('edgeStates', true, 'EdgeStates');
   addBinding('globals', false, 'Globals');
   addBinding('hover', false, 'Hover');
   addBinding('edgeNodeColorSource', true, 'EdgeNodeColorSource');
   addBinding('edgeNodeWidthSource', true, 'EdgeNodeScalarSource');
   addBinding('edgeNodeOpacitySource', true, 'EdgeNodeScalarSource');
-  addBinding('edgeNodeEndpointSizeSource', true, 'EdgeNodeScalarSource');
+  if (trimEnabled) addBinding('edgeNodeEndpointSizeSource', true, 'EdgeNodeScalarSource');
 
   const EDGE_WGSL = /* wgsl */ `
 const EDGE_COLOR_ENDPOINTS : u32 = ${color.endpoints}u;
@@ -420,37 +579,7 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
   let interpolationEnabled = globals.positionInterpolation.y > 0.5;
   var startPos = select(startPosTo, mix(startPosFrom, startPosTo, interpolationT), interpolationEnabled);
   var endPos = select(endPosTo, mix(endPosFrom, endPosTo, interpolationT), interpolationEnabled);
-  var state = edgeStates.data[edgeId];
-  if (hover.edgeIndex != 0xffffffffu && edgeId == hover.edgeIndex) {
-    state = state | hover.edgeState;
-  }
-  var widthMul = 1.0;
-  var opacityMul = 1.0;
-  var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
-  var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
-  var discardFlag = 0u;
-  if (state == 0u) {
-    let scale = globals.edgeNoStateScale;
-    widthMul = widthMul * scale.x;
-    opacityMul = opacityMul * scale.y;
-    rgbMul = rgbMul * globals.edgeNoStateColorMul.rgb;
-    rgbAdd = rgbAdd + globals.edgeNoStateColorAdd.rgb;
-    discardFlag = select(0u, 1u, scale.w > 0.5);
-  } else {
-    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
-      let enabled = (state >> i) & 1u;
-      if (enabled == 1u) {
-        let scale = globals.edgeStateScale[i];
-        widthMul = widthMul * scale.x;
-        opacityMul = opacityMul * scale.y;
-        rgbMul = rgbMul * globals.edgeStateColorMul[i].rgb;
-        rgbAdd = rgbAdd + globals.edgeStateColorAdd[i].rgb;
-        if (scale.w > 0.5) {
-          discardFlag = 1u;
-        }
-      }
-    }
-  }
+  ${edgeStateSnippet}
 
   ${edgeLineGeometrySnippet}
   ${edgeLineVisualSnippet}
@@ -501,75 +630,10 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   let interpolationEnabled = globals.positionInterpolation.y > 0.5;
   var startPos = select(startPosTo, mix(startPosFrom, startPosTo, interpolationT), interpolationEnabled);
   var endPos = select(endPosTo, mix(endPosFrom, endPosTo, interpolationT), interpolationEnabled);
-  var state = edgeStates.data[edgeId];
-  if (hover.edgeIndex != 0xffffffffu && edgeId == hover.edgeIndex) {
-    state = state | hover.edgeState;
-  }
-  var widthMul = 1.0;
-  var opacityMul = 1.0;
-  var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
-  var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
-  var discardFlag = 0u;
-  if (state == 0u) {
-    let scale = globals.edgeNoStateScale;
-    widthMul = widthMul * scale.x;
-    opacityMul = opacityMul * scale.y;
-    rgbMul = rgbMul * globals.edgeNoStateColorMul.rgb;
-    rgbAdd = rgbAdd + globals.edgeNoStateColorAdd.rgb;
-    discardFlag = select(0u, 1u, scale.w > 0.5);
-  } else {
-    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
-      let enabled = (state >> i) & 1u;
-      if (enabled == 1u) {
-        let scale = globals.edgeStateScale[i];
-        widthMul = widthMul * scale.x;
-        opacityMul = opacityMul * scale.y;
-        rgbMul = rgbMul * globals.edgeStateColorMul[i].rgb;
-        rgbAdd = rgbAdd + globals.edgeStateColorAdd[i].rgb;
-        if (scale.w > 0.5) {
-          discardFlag = 1u;
-        }
-      }
-    }
-  }
+  ${edgeStateSnippet}
 
-  var endpointSize = globals.edgeEndpointSizeRaw;
-  ${edgeEndpointSizeBufferSnippet}
-  ${edgeEndpointSizeNodeSnippet}
-
-  let endpointState = vec2<u32>(nodeStates.data[sourceId], nodeStates.data[targetId]);
-  var startSizeMul = 1.0;
-  var endSizeMul = 1.0;
-  if (endpointState.x == 0u) {
-    startSizeMul = startSizeMul * globals.nodeNoStateScale.x;
-  } else {
-    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
-      let slotMul = globals.nodeStateScale[i].x;
-      if (((endpointState.x >> i) & 1u) == 1u) {
-        startSizeMul = startSizeMul * slotMul;
-      }
-    }
-  }
-  if (endpointState.y == 0u) {
-    endSizeMul = endSizeMul * globals.nodeNoStateScale.x;
-  } else {
-    for (var i = 0u; i < ${STATE_SLOTS}u; i = i + 1u) {
-      let slotMul = globals.nodeStateScale[i].x;
-      if (((endpointState.y >> i) & 1u) == 1u) {
-        endSizeMul = endSizeMul * slotMul;
-      }
-    }
-  }
-  let dirRaw = endPos - startPos;
-  let dirLen = max(length(dirRaw), 1e-5);
-  let dir = dirRaw / vec3<f32>(dirLen);
-  let semanticScale = semanticZoomScale();
-  let startRadius = max((globals.nodeSize.x + globals.nodeSize.y * endpointSize.x) * startSizeMul, 0.0) * 0.5 * semanticScale;
-  let endRadius = max((globals.nodeSize.x + globals.nodeSize.y * endpointSize.y) * endSizeMul, 0.0) * 0.5 * semanticScale;
-  let trimStart = startRadius * globals.edgeTrim.x;
-  let trimEnd = endRadius * globals.edgeTrim.x;
-  startPos = startPos + dir * trimStart;
-  endPos = endPos - dir * trimEnd;
+  ${edgeGeometrySetupSnippet}
+  ${edgeTrimSnippet}
 
   var colorStart = globals.edgeColorStart;
   var colorEnd = globals.edgeColorEnd;
@@ -588,29 +652,7 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   let width = max((globals.edgeWidth.x + globals.edgeWidth.y * mix(endpointWidth.x, endpointWidth.y, cornerT)) * widthMul, 1e-3) * semanticScale;
   let halfWidth = max(width, 1e-3) * 0.5;
   let centerPos = mix(startPos, endPos, cornerT);
-  var widthDir = vec3<f32>(-dir.y, dir.x, 0.0);
-  if (camera.position.w <= 0.5) {
-    let viewDirRaw = camera.position.xyz - centerPos;
-    let viewDirLen = max(length(viewDirRaw), 1e-5);
-    let viewDir = viewDirRaw / vec3<f32>(viewDirLen);
-    widthDir = cross(viewDir, dir);
-    var widthDirLen = length(widthDir);
-    if (widthDirLen <= 1e-5) {
-      widthDir = cross(normalize(camera.up.xyz), dir);
-      widthDirLen = length(widthDir);
-    }
-    if (widthDirLen <= 1e-5) {
-      widthDir = cross(dir, normalize(camera.right.xyz));
-      widthDirLen = length(widthDir);
-    }
-    widthDir = select(
-      vec3<f32>(0.0, 1.0, 0.0),
-      widthDir / vec3<f32>(max(widthDirLen, 1e-5)),
-      widthDirLen > 1e-5
-    );
-  } else {
-    widthDir = normalize(widthDir);
-  }
+  ${edgeQuadWidthDirSnippet}
   let worldPos = centerPos + widthDir * halfWidth * input.corner.y;
   let clipPos = camera.viewProjection * vec4<f32>(worldPos, 1.0);
 

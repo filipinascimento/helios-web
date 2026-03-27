@@ -50,6 +50,7 @@ test('frameNetwork trims outliers when using 95% auto-fit coverage', () => {
     lastOrbitAt: 0,
     lastFitSignature: '',
     lastEffectiveIntervalMs: 0,
+    autoFitDirty: false,
   };
   helios._getRenderNetwork = () => ({
     nodeCount: 100,
@@ -269,6 +270,7 @@ test('camera rotation interaction does not disable auto fit, but pan does', () =
     lastOrbitAt: 0,
     lastFitSignature: '',
     lastEffectiveIntervalMs: 0,
+    autoFitDirty: false,
     suspended: false,
   };
 
@@ -396,6 +398,7 @@ test('camera control render pump queues auto fit while orbit is composed analyti
     lastOrbitAt: 1000,
     lastFitSignature: '',
     lastEffectiveIntervalMs: 0,
+    autoFitDirty: true,
     appliedOrbitAngle: 0,
     suspended: false,
     controlPoseActive: false,
@@ -430,6 +433,87 @@ test('camera control render pump queues auto fit while orbit is composed analyti
   assert.equal(queued[0].options.animate, true);
   assert.notEqual(queued[0].pose.distance, initialDistance);
   assert.notDeepEqual(Array.from(camera.rotation), initialRotation);
+  assert.equal(helios._cameraControlRuntime.autoFitDirty, false);
+});
+
+test('auto fit render pump stays idle until a graph change marks it dirty', () => {
+  const helios = Object.create(Helios.prototype);
+  const camera = createCamera('2d');
+  const positions = new Float32Array([
+    -10, -10, 0,
+    10, -10, 0,
+    10, 10, 0,
+    -10, 10, 0,
+  ]);
+  let sampled = 0;
+  let queued = 0;
+
+  helios.renderer = { camera };
+  helios.size = { width: 400, height: 400 };
+  helios.scheduler = { requestRender() {} };
+  helios._cameraControlConfig = {
+    autoFit: true,
+    autoFitCoverage: 1,
+    autoFitPaddingRatio: 0,
+    autoFitIntervalMs: 100,
+    autoFitMinIntervalMs: 100,
+    autoFitMaxIntervalMs: 100,
+    autoFitLargeNetworkScale: 1,
+    autoFitIntervalNodeCountRef: 5000,
+    autoFitMaxSamples: 1000,
+    animation: false,
+    animationDurationMs: 0,
+    orbit: false,
+    orbitAngle: 0,
+    orbitSpeed: 0,
+    orbitDirection: 1,
+    targetNodeIndices: null,
+  };
+  helios._cameraControlRuntime = {
+    lastAutoFitAt: Number.NEGATIVE_INFINITY,
+    lastOrbitAt: 0,
+    lastFitSignature: '',
+    lastEffectiveIntervalMs: 0,
+    autoFitDirty: false,
+    appliedOrbitAngle: 0,
+    suspended: false,
+    controlPoseActive: false,
+    controlPoseFrom: null,
+    controlPoseTo: null,
+    controlPoseStartedAt: 0,
+    controlPoseDurationMs: 0,
+    controlPoseSignature: '',
+  };
+  helios._getRenderNetwork = () => ({
+    nodeCount: 4,
+    nodeIndices: [0, 1, 2, 3],
+  });
+  helios._resolveActiveCameraTargetNodeIndices = () => null;
+  helios._resolveCameraAutoFitIntervalMs = () => 100;
+  helios._withPositionBufferAccess = (fn) => fn();
+  helios._readNodePositionViewUnsafe = () => positions;
+  helios._sampleRenderBounds = (...args) => {
+    sampled += 1;
+    return Helios.prototype._sampleRenderBounds.apply(helios, args);
+  };
+  helios._queueCameraControlPose = () => {
+    queued += 1;
+    return true;
+  };
+
+  helios._stepCameraControlRenderPump(100);
+  helios._stepCameraControlRenderPump(300);
+
+  assert.equal(sampled, 0);
+  assert.equal(queued, 0);
+
+  helios._markAutoFitDirty(false);
+  helios._stepCameraControlRenderPump(400);
+  helios._stepCameraControlRenderPump(700);
+
+  assert.equal(sampled, 1);
+  assert.equal(queued, 1);
+  assert.equal(helios._cameraControlRuntime.autoFitDirty, false);
 });
 
 test('orbit animation advances analytically without queueing camera pose transitions every frame', () => {

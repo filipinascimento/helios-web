@@ -218,7 +218,11 @@ export class LayeredRenderer {
         layer: layer?.name ?? layer?.id ?? layer?.constructor?.name ?? 'unknown',
         contextType: context?.type ?? null,
       });
+      const layerStart = performance.now();
       layer.render?.(context, renderPayload, this.size);
+      if (layer && Object.prototype.hasOwnProperty.call(layer, 'lastRenderDurationMs')) {
+        layer.lastRenderDurationMs = performance.now() - layerStart;
+      }
       debugWebGLRender('renderer:layer:after', {
         layer: layer?.name ?? layer?.id ?? layer?.constructor?.name ?? 'unknown',
       });

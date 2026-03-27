@@ -665,6 +665,24 @@ const DENSITY_DEFAULTS = Object.freeze({
   divergingColormap: 'interpolatePrinsenvlag',
 });
 
+const EDGE_ADAPTIVE_QUALITY_DEFAULTS = Object.freeze({
+  enabled: true,
+  slowFrameThresholdMs: 66,
+  averageWindowFrames: 12,
+  probeIntervalMs: 900,
+  interactionHoldMs: 180,
+  fastDuringCamera: true,
+  fastDuringLayout: true,
+});
+
+const EDGE_ADAPTIVE_LAYOUT_HYSTERESIS = Object.freeze({
+  exitThresholdFactor: 0.75,
+  alphaProbeFactor: 0.5,
+  alphaMinMultiplier: 4,
+  backoffFactor: 2,
+  maxBackoffMs: 12000,
+});
+
 function normalizeNodeIndexList(value) {
   if (value == null) return null;
   if (typeof value === 'number') {
@@ -881,6 +899,73 @@ function normalizePositiveInteger(value, fallback, min = 1, max = Number.POSITIV
   if (rounded < min) return min;
   if (rounded > max) return max;
   return rounded;
+}
+
+function normalizeEdgeAdaptiveQualityConfig(base = {}, patch = {}) {
+  if (patch === true || patch === false) {
+    return {
+      ...base,
+      enabled: patch === true,
+    };
+  }
+  if (!patch || typeof patch !== 'object') {
+    return { ...base };
+  }
+  const next = { ...base };
+  if (Object.prototype.hasOwnProperty.call(patch, 'enabled')) {
+    next.enabled = patch.enabled !== false;
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'slowFrameThresholdMs')
+    || Object.prototype.hasOwnProperty.call(patch, 'thresholdMs')
+  ) {
+    next.slowFrameThresholdMs = normalizeNonNegativeNumber(
+      patch.slowFrameThresholdMs ?? patch.thresholdMs,
+      next.slowFrameThresholdMs ?? EDGE_ADAPTIVE_QUALITY_DEFAULTS.slowFrameThresholdMs,
+      0,
+      10000,
+    );
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'probeIntervalMs')
+    || Object.prototype.hasOwnProperty.call(patch, 'retryDelayMs')
+  ) {
+    next.probeIntervalMs = normalizeNonNegativeNumber(
+      patch.probeIntervalMs ?? patch.retryDelayMs,
+      next.probeIntervalMs ?? EDGE_ADAPTIVE_QUALITY_DEFAULTS.probeIntervalMs,
+      0,
+      60000,
+    );
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'averageWindowFrames')
+    || Object.prototype.hasOwnProperty.call(patch, 'slowFrameConsecutiveFrames')
+  ) {
+    next.averageWindowFrames = normalizePositiveInteger(
+      patch.averageWindowFrames ?? patch.slowFrameConsecutiveFrames,
+      next.averageWindowFrames ?? EDGE_ADAPTIVE_QUALITY_DEFAULTS.averageWindowFrames,
+      1,
+      240,
+    );
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'interactionHoldMs')
+    || Object.prototype.hasOwnProperty.call(patch, 'cameraIdleMs')
+  ) {
+    next.interactionHoldMs = normalizeNonNegativeNumber(
+      patch.interactionHoldMs ?? patch.cameraIdleMs,
+      next.interactionHoldMs ?? EDGE_ADAPTIVE_QUALITY_DEFAULTS.interactionHoldMs,
+      0,
+      5000,
+    );
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'fastDuringCamera')) {
+    next.fastDuringCamera = patch.fastDuringCamera !== false;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'fastDuringLayout')) {
+    next.fastDuringLayout = patch.fastDuringLayout !== false;
+  }
+  return next;
 }
 
 function resolveInterpolationDurationMode(config) {
@@ -1162,6 +1247,60 @@ export class Helios extends EventTarget {
       description: 'Use a reduced-cost edge path for large interactive graphs. Forces thin line rendering and disables expensive edge effects.',
       defaultValue: false,
     },
+    edgeAdaptiveQualityEnabled: {
+      type: 'boolean',
+      label: 'Adaptive Edges',
+      description: 'Automatically switch to fast edge lines only after repeated slow high-quality frames.',
+      defaultValue: true,
+    },
+    edgeAdaptiveQualitySlowFrameThresholdMs: {
+      type: 'number',
+      label: 'Slow Frame',
+      description: 'A high-quality edge frame slower than this counts toward adaptive fallback.',
+      defaultValue: EDGE_ADAPTIVE_QUALITY_DEFAULTS.slowFrameThresholdMs,
+      domain: { min: 0, max: 200 },
+      recommendedRange: { min: 8, max: 60 },
+      step: 1,
+    },
+    edgeAdaptiveQualitySlowFrameConsecutiveFrames: {
+      type: 'number',
+      label: 'Avg Frames',
+      description: 'How many recent high-quality edge frames are averaged before deciding to switch to fast edges.',
+      defaultValue: EDGE_ADAPTIVE_QUALITY_DEFAULTS.averageWindowFrames,
+      domain: { min: 1, max: 60 },
+      recommendedRange: { min: 4, max: 24 },
+      step: 1,
+    },
+    edgeAdaptiveQualityProbeIntervalMs: {
+      type: 'number',
+      label: 'Hold Time',
+      description: 'How long to stay in fast-edge mode before probing high-quality edges again.',
+      defaultValue: EDGE_ADAPTIVE_QUALITY_DEFAULTS.probeIntervalMs,
+      domain: { min: 0, max: 5000 },
+      recommendedRange: { min: 100, max: 2000 },
+      step: 10,
+    },
+    edgeAdaptiveQualityInteractionHoldMs: {
+      type: 'number',
+      label: 'Interaction Hold',
+      description: 'Debounce after camera movement before trying high-quality edges again.',
+      defaultValue: EDGE_ADAPTIVE_QUALITY_DEFAULTS.interactionHoldMs,
+      domain: { min: 0, max: 2000 },
+      recommendedRange: { min: 0, max: 500 },
+      step: 10,
+    },
+    edgeAdaptiveQualityFastDuringCamera: {
+      type: 'boolean',
+      label: 'Camera',
+      description: 'Keep fast edges active during panning, zooming, rotating, and nearby interaction bursts.',
+      defaultValue: true,
+    },
+    edgeAdaptiveQualityFastDuringLayout: {
+      type: 'boolean',
+      label: 'Layout',
+      description: 'Keep fast edges active while the active layout is still updating positions.',
+      defaultValue: true,
+    },
     labelsEnabled: {
       type: 'boolean',
       label: 'Show Labels',
@@ -1321,7 +1460,9 @@ export class Helios extends EventTarget {
   _resumeDynamicLayoutAfterNetworkReplace(previousState, reason = 'network-replaced') {
     if (previousState !== 'idle') return false;
     if (this._layout instanceof StaticLayout) return false;
-    return this._requestLayoutReheat(reason);
+    const woke = this._wakeLayoutIfIdle(reason);
+    const reheated = this._requestLayoutReheat(reason);
+    return woke || reheated;
   }
 
   _activateLayoutAfterNetworkReplace(previousLayoutState, reason = 'network-replaced') {
@@ -1533,6 +1674,7 @@ export class Helios extends EventTarget {
       lastOrbitAt: 0,
       lastFitSignature: '',
       lastEffectiveIntervalMs: this._cameraControlConfig.autoFitIntervalMs,
+      autoFitDirty: false,
       delegateSnapshot: null,
       delegateSnapshotAt: Number.NEGATIVE_INFINITY,
       delegateSnapshotPending: false,
@@ -1655,6 +1797,28 @@ export class Helios extends EventTarget {
     };
     this._densityRuntime = { diverging: false };
     this._densityLayer = null;
+    this._edgeAdaptiveQualityConfig = normalizeEdgeAdaptiveQualityConfig(
+      EDGE_ADAPTIVE_QUALITY_DEFAULTS,
+      options.edgeAdaptiveQuality ?? { enabled: options.edgeAdaptiveQualityEnabled },
+    );
+    this._edgeAdaptiveRuntime = {
+      nextProbeAt: Number.NEGATIVE_INFINITY,
+      lastRenderMs: null,
+      qualityFrameSamples: [],
+      qualityFrameAverageMs: null,
+      fastFrameSamples: [],
+      fastFrameAverageMs: null,
+      activityActive: false,
+      skipNextQualitySample: false,
+      reason: this._edgeAdaptiveQualityConfig.enabled ? 'quality' : 'disabled',
+      cameraMovingUntil: Number.NEGATIVE_INFINITY,
+      cameraIdleTimer: null,
+      probeTimer: null,
+      failedProbeCount: 0,
+      performanceFallbackAt: Number.NEGATIVE_INFINITY,
+      performanceFallbackAlpha: NaN,
+      forceHighQuality: false,
+    };
     this._overlayInsets = { top: 0, right: 0, bottom: 0, left: 0 };
     this.densityMap = {
       setBandwidth: (value) => {
@@ -1724,8 +1888,8 @@ export class Helios extends EventTarget {
 
   _markAutoFitDirty(requestRender = false) {
     if (!this._cameraControlRuntime) return;
+    this._cameraControlRuntime.autoFitDirty = true;
     this._cameraControlRuntime.lastAutoFitAt = Number.NEGATIVE_INFINITY;
-    this._cameraControlRuntime.lastFitSignature = '';
     if (requestRender !== false) {
       this.scheduler?.requestRender?.();
     }
@@ -2257,7 +2421,7 @@ export class Helios extends EventTarget {
     if (!camera || !runtime) return false;
     if (runtime.suspended === true) return false;
 
-    if (config.autoFit === true) {
+    if (config.autoFit === true && runtime.autoFitDirty === true) {
       const activeTargetNodeIndices = this._resolveActiveCameraTargetNodeIndices();
       const nodeCount = activeTargetNodeIndices?.length ?? this._getRenderNetwork()?.nodeCount ?? 0;
       const effectiveIntervalMs = this._resolveCameraAutoFitIntervalMs(nodeCount);
@@ -2269,17 +2433,25 @@ export class Helios extends EventTarget {
           paddingRatio: config.autoFitPaddingRatio,
           maxSamples: config.autoFitMaxSamples,
         });
-        const fitPose = this._resolveCameraFitPose(sampledBounds, {
-          resetOrientation: false,
-          focusMode: activeTargetNodeIndices?.length ? 'centroid' : 'bbox',
-        });
-        const fitSignature = this._cameraFitSignature(fitPose);
-        if (fitSignature && fitSignature !== runtime.lastFitSignature && fitPose) {
-          runtime.lastFitSignature = fitSignature;
-          this._queueCameraControlPose(fitPose, {
-            animate: config.animation,
-            durationMs: config.animationDurationMs,
+        if (!sampledBounds) {
+          runtime.autoFitDirty = nodeCount > 0;
+        } else {
+          const fitPose = this._resolveCameraFitPose(sampledBounds, {
+            resetOrientation: false,
+            focusMode: activeTargetNodeIndices?.length ? 'centroid' : 'bbox',
           });
+          const fitSignature = this._cameraFitSignature(fitPose);
+          const currentFitSignature = this._cameraFitSignature(captureCameraPose(camera));
+          if (fitSignature) {
+            runtime.lastFitSignature = fitSignature;
+          }
+          runtime.autoFitDirty = false;
+          if (fitSignature && fitPose && fitSignature !== currentFitSignature) {
+            this._queueCameraControlPose(fitPose, {
+              animate: config.animation,
+              durationMs: config.animationDurationMs,
+            });
+          }
         }
       }
     }
@@ -3470,7 +3642,18 @@ export class Helios extends EventTarget {
     const framebuffer = renderer.createFramebuffer(options.framebufferWidth, options.framebufferHeight);
     const previousClearColor = Array.isArray(renderer.clearColor) ? [...renderer.clearColor] : null;
     const exportFigureLogicalViewport = options.exportFigureLogicalViewport ?? null;
+    const graphLayer = renderer.graphLayer ?? null;
+    const previousManualFastEdges = graphLayer?.edgeFastRendering === true;
+    const previousAdaptiveFastEdges = graphLayer?.edgeAdaptiveFastRendering === true;
+    const previousForceHighQuality = this._edgeAdaptiveRuntime?.forceHighQuality === true;
     try {
+      if (this._edgeAdaptiveRuntime) {
+        this._edgeAdaptiveRuntime.forceHighQuality = true;
+      }
+      if (graphLayer) {
+        graphLayer.setEdgeFastRendering?.(false);
+        graphLayer.setAdaptiveEdgeFastRendering?.(false);
+      }
       if (options.transparentBackground === true) {
         renderer.clearColor = [0, 0, 0, 0];
       }
@@ -3504,6 +3687,13 @@ export class Helios extends EventTarget {
         },
       );
     } finally {
+      if (graphLayer) {
+        graphLayer.setEdgeFastRendering?.(previousManualFastEdges);
+        graphLayer.setAdaptiveEdgeFastRendering?.(previousAdaptiveFastEdges);
+      }
+      if (this._edgeAdaptiveRuntime) {
+        this._edgeAdaptiveRuntime.forceHighQuality = previousForceHighQuality;
+      }
       if (previousClearColor) {
         renderer.clearColor = previousClearColor;
       }
@@ -3904,11 +4094,21 @@ export class Helios extends EventTarget {
       },
       stop: (payload) => {
         this.emit(EVENTS.LAYOUT_STOP, { ...payload, algo: this._layout?.constructor?.name ?? null });
+        this.scheduler?.requestRender?.();
       },
     });
     if (this.renderer?.camera?.setChangeListener) {
       this.renderer.camera.setChangeListener((detail) => {
         this.scheduler.requestRender();
+        if (this._edgeAdaptiveRuntime) {
+          const now = performance.now();
+          const holdMs = Number(
+            this._edgeAdaptiveQualityConfig?.interactionHoldMs
+              ?? EDGE_ADAPTIVE_QUALITY_DEFAULTS.interactionHoldMs,
+          );
+          this._edgeAdaptiveRuntime.cameraMovingUntil = now + holdMs;
+          this._scheduleEdgeAdaptiveCameraIdleRender();
+        }
         if (detail?.origin === 'interaction') {
           this._disableAutomaticCameraControlFromInteraction(detail);
         }
@@ -3927,6 +4127,7 @@ export class Helios extends EventTarget {
       this._layout?.resize?.(size);
       this._labels?.requestFullReselect?.('resize');
       this._tryPendingFrameNetwork();
+      this._markAutoFitDirty(false);
       if (!this.manualRendering) {
         this.scheduler.requestGeometry();
         this.scheduler.requestRender();
@@ -3975,8 +4176,13 @@ export class Helios extends EventTarget {
         const dt = now - this._lastRenderTime;
         this._lastRenderTime = now;
         this._frameId += 1;
+        this._updateEdgeAdaptiveQualityBeforeRender(now);
         this.emit(EVENTS.BEFORE_RENDER, { frameId: this._frameId, dt, frame, size: { ...this.size } });
         this.renderer.render(frame, this.size);
+        this._updateEdgeAdaptiveQualityAfterRender(
+          Number.isFinite(dt) ? dt : null,
+          performance.now(),
+        );
         this._labels?.update?.({ timestamp: now });
         this._legends?.update?.({ timestamp: now });
         this.emit(EVENTS.AFTER_RENDER, { frameId: this._frameId, dt, frame, size: { ...this.size } });
@@ -4307,6 +4513,10 @@ export class Helios extends EventTarget {
   }
 
   _handleLayoutUpdate(payload = {}) {
+    const pendingHandoff = this._pendingLayoutHandoff ?? null;
+    if (pendingHandoff && pendingHandoff.nextLayout === this._layout) {
+      return;
+    }
     this._enforcePositionSourcePolicy(this._layout, { resetInterpolation: true });
     const now = Number.isFinite(payload?.timestamp) ? Number(payload.timestamp) : performance.now();
     const previousTargetAt = Number.isFinite(this._interpolationRuntime?.lastTargetUpdateAt)
@@ -4316,9 +4526,35 @@ export class Helios extends EventTarget {
       ? Math.max(1, Number(payload.layoutElapsedMs))
       : Math.max(1, now - previousTargetAt);
     this._recordLayoutIntervalSample(layoutElapsedMs, now);
+    this._markAutoFitDirty(false);
     const delegateSourceActive = this._positionsConfig?.source === 'delegate'
       && Boolean(this._positionsConfig?.delegate);
     const targetPositions = delegateSourceActive ? null : this._snapshotNodePositions();
+    const handoffAdopted = payload?.handoffAdopted === true;
+    if (targetPositions && handoffAdopted) {
+      const runtime = this._interpolationRuntime ?? {};
+      runtime.active = false;
+      runtime.factor = 1;
+      runtime.lastTargetUpdateAt = now;
+      runtime.layoutElapsedMs = layoutElapsedMs;
+      runtime.effectiveDurationMs = this._resolveInterpolationDurationMs(now);
+      runtime.lastRenderedPositions = new Float32Array(targetPositions);
+      runtime.sourcePositions = null;
+      runtime.targetPositions = null;
+      runtime.mixedPositions = null;
+      runtime.sourceCount = Math.floor(targetPositions.length / 3);
+      runtime.sourceVersion = ((runtime.sourceVersion ?? 0) + 1) % Number.MAX_SAFE_INTEGER;
+      runtime.sourceWebGPUBuffer = null;
+      runtime.sourceWebGLTexture = null;
+      runtime.sourceTextureMeta = null;
+      this._interpolationRuntime = runtime;
+      this._applyPositionPipelineToRenderer();
+      this.visuals.markPositionsDirty();
+      this.scheduler.requestGeometry();
+      this._labels?.requestFullReselect?.('layout-update');
+      this.debug.log('layout', 'Layout update adopted handoff baseline without interpolation');
+      return;
+    }
     if (targetPositions && this._interpolationConfig?.enabled === true) {
       const { shouldInterpolate, mode, displacementRatio, durationMs } = this._prepareInterpolationRuntimeForTarget(
         targetPositions,
@@ -4515,6 +4751,164 @@ export class Helios extends EventTarget {
     }
   }
 
+  _resolveLayoutHandoffContext() {
+    const pending = this._pendingLayoutHandoff ?? null;
+    const currentPositions = this._positionsConfig ?? { source: 'network', delegate: null };
+    const outgoingDelegate = currentPositions.source === 'delegate'
+      ? (currentPositions.delegate ?? null)
+      : null;
+    const retainedLayout = pending?.retainedDelegate && pending.retainedDelegate === outgoingDelegate
+      ? (pending.retainedLayout ?? null)
+      : null;
+    return {
+      pending,
+      outgoingDelegate,
+      outgoingLayout: retainedLayout ?? this._layout ?? null,
+      staleLayout: retainedLayout && retainedLayout !== this._layout
+        ? this._layout ?? null
+        : null,
+    };
+  }
+
+  _disposePendingLayoutHandoff(options = {}) {
+    const pending = this._pendingLayoutHandoff ?? null;
+    this._pendingLayoutHandoff = null;
+    if (pending?.retainedLayout && options.disposeRetained !== false) {
+      pending.retainedLayout.dispose?.();
+    }
+    if (pending?.staleLayout && pending.staleLayout !== pending.retainedLayout) {
+      pending.staleLayout.dispose?.();
+    }
+    return pending;
+  }
+
+  _startLayoutPositionHandoff({ previousLayout = null, previousDelegate = null, nextLayout = null } = {}) {
+    if (!previousDelegate || !nextLayout || typeof this.snapshotDelegatePositions !== 'function') {
+      return false;
+    }
+
+    this._disposePendingLayoutHandoff();
+    const token = ((this._layoutHandoffToken ?? 0) + 1) >>> 0;
+    this._layoutHandoffToken = token;
+    nextLayout.beginPositionHandoff?.();
+    nextLayout.adoptHandoffState?.({
+      alpha: this._readLayoutAlpha(previousLayout),
+    });
+    this._pendingLayoutHandoff = {
+      token,
+      retainedLayout: previousLayout,
+      retainedDelegate: previousDelegate,
+      staleLayout: null,
+      nextLayout,
+    };
+
+    Promise.resolve()
+      .then(() => this.snapshotDelegatePositions({
+        delegate: previousDelegate,
+        network: previousLayout?.network ?? previousDelegate?._context?.network ?? this._getLayoutNetwork(),
+        scope: 'layout',
+      }))
+      .catch((error) => {
+        console.warn('Helios.layout(): failed to snapshot delegate positions during layout handoff.', error);
+        return null;
+      })
+      .then((snapshot) => {
+        this._finishLayoutPositionHandoff(token, snapshot);
+      })
+      .catch(() => {});
+
+    return true;
+  }
+
+  _readLayoutAlpha(layout = null) {
+    const direct = Number(layout?.alpha);
+    if (Number.isFinite(direct)) return direct;
+    const settings = Number(layout?.settings?.alpha);
+    if (Number.isFinite(settings)) return settings;
+    const delegate = layout?.getPositionDelegate?.() ?? layout?.positionDelegate ?? null;
+    const delegateAlpha = Number(delegate?.alpha);
+    if (Number.isFinite(delegateAlpha)) return delegateAlpha;
+    const options = Number(layout?.options?.alpha);
+    if (Number.isFinite(options)) return options;
+    return NaN;
+  }
+
+  _computePositionSnapshotCenter(snapshot = null, network = null) {
+    if (!(snapshot instanceof Float32Array) || snapshot.length < 3) return null;
+    const readNodeIndices = () => network?.nodeIndices instanceof Uint32Array ? network.nodeIndices : null;
+    let nodeIndices = null;
+    if (typeof network?.withBufferAccess === 'function') {
+      network.withBufferAccess(() => {
+        nodeIndices = readNodeIndices();
+      });
+    } else {
+      nodeIndices = readNodeIndices();
+    }
+
+    let sumX = 0;
+    let sumY = 0;
+    let sumZ = 0;
+    let count = 0;
+    const visitNode = (nodeId) => {
+      const base = (nodeId >>> 0) * 3;
+      if ((base + 2) >= snapshot.length) return;
+      const x = Number(snapshot[base]);
+      const y = Number(snapshot[base + 1]);
+      const z = Number(snapshot[base + 2]);
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return;
+      sumX += x;
+      sumY += y;
+      sumZ += z;
+      count += 1;
+    };
+
+    if (nodeIndices?.length) {
+      for (let i = 0; i < nodeIndices.length; i += 1) {
+        visitNode(nodeIndices[i]);
+      }
+    } else {
+      const nodeCount = Math.floor(snapshot.length / 3);
+      for (let nodeId = 0; nodeId < nodeCount; nodeId += 1) {
+        visitNode(nodeId);
+      }
+    }
+
+    if (count <= 0) return null;
+    return [sumX / count, sumY / count, sumZ / count];
+  }
+
+  _finishLayoutPositionHandoff(token, snapshot = null) {
+    const pending = this._pendingLayoutHandoff ?? null;
+    if (!pending || pending.token !== token) return false;
+    this._pendingLayoutHandoff = null;
+
+    const nextLayout = pending.nextLayout ?? null;
+    if (nextLayout && this._layout === nextLayout) {
+      const snapshotCenter = this._computePositionSnapshotCenter(snapshot, nextLayout?.network ?? null);
+      if (snapshotCenter) {
+        nextLayout.adoptHandoffState?.({ center: snapshotCenter });
+      }
+      nextLayout.completePositionHandoff?.(snapshot, { emitUpdate: false });
+      this._enforcePositionSourcePolicy(this._layout, { resetInterpolation: false });
+      const runtime = this._resetInterpolationRuntime({ keepLastRendered: false, keepIntervalHistory: true });
+      if (snapshot instanceof Float32Array && snapshot.length > 0) {
+        runtime.lastRenderedPositions = new Float32Array(snapshot);
+      }
+      this._interpolationRuntime = runtime;
+      this._applyPositionPipelineToRenderer();
+      this.scheduler?.requestLayout?.('layout-handoff');
+      this.scheduler?.requestGeometry?.();
+      this.scheduler?.requestRender?.();
+      this._labels?.requestFullReselect?.('layout-handoff');
+    }
+
+    pending.retainedLayout?.dispose?.();
+    if (pending.staleLayout && pending.staleLayout !== pending.retainedLayout) {
+      pending.staleLayout.dispose?.();
+    }
+    return true;
+  }
+
   _resetInterpolationRuntime({ keepLastRendered = false, keepIntervalHistory = true } = {}) {
     const runtime = this._interpolationRuntime ?? {};
     const previousIntervals = Array.isArray(runtime.layoutIntervalsMs) ? runtime.layoutIntervalsMs : [];
@@ -4642,6 +5036,381 @@ export class Helios extends EventTarget {
 
   _applyDensityConfigToLayer() {
     this._densityLayer?.setConfig?.(this._densityConfig);
+  }
+
+  _queueRenderRequest() {
+    if (!this.scheduler?.requestRender) return;
+    if (typeof queueMicrotask === 'function') {
+      queueMicrotask(() => this.scheduler?.requestRender?.());
+      return;
+    }
+    Promise.resolve().then(() => this.scheduler?.requestRender?.());
+  }
+
+  _clearEdgeAdaptiveTimer(name) {
+    const runtime = this._edgeAdaptiveRuntime ?? null;
+    const timer = runtime?.[name] ?? null;
+    if (timer != null) {
+      clearTimeout(timer);
+      runtime[name] = null;
+    }
+  }
+
+  _scheduleEdgeAdaptiveCameraIdleRender() {
+    const runtime = this._edgeAdaptiveRuntime ?? null;
+    const config = this._edgeAdaptiveQualityConfig ?? EDGE_ADAPTIVE_QUALITY_DEFAULTS;
+    if (!runtime || !config.enabled || config.fastDuringCamera !== true) return;
+    this._clearEdgeAdaptiveTimer('cameraIdleTimer');
+    const delay = Math.max(0, Number(config.interactionHoldMs ?? 0));
+    runtime.cameraIdleTimer = setTimeout(() => {
+      runtime.cameraIdleTimer = null;
+      this.scheduler?.requestRender?.();
+    }, delay);
+  }
+
+  _scheduleEdgeAdaptiveProbe() {
+    const runtime = this._edgeAdaptiveRuntime ?? null;
+    if (!runtime) return;
+    this._clearEdgeAdaptiveTimer('probeTimer');
+    if (!Number.isFinite(runtime.nextProbeAt)) return;
+    const delay = Math.max(0, runtime.nextProbeAt - performance.now());
+    runtime.probeTimer = setTimeout(() => {
+      runtime.probeTimer = null;
+      this.scheduler?.requestRender?.();
+    }, delay);
+  }
+
+  _edgeAdaptiveEdgesVisible() {
+    const graphLayer = this.renderer?.graphLayer ?? null;
+    if (!graphLayer || typeof graphLayer.shouldRenderEdges !== 'function') return false;
+    try {
+      return graphLayer.shouldRenderEdges() === true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  _clearEdgeAdaptiveQualitySamples() {
+    const runtime = this._edgeAdaptiveRuntime ?? null;
+    if (!runtime) return;
+    runtime.qualityFrameSamples = [];
+    runtime.qualityFrameAverageMs = null;
+    runtime.fastFrameSamples = [];
+    runtime.fastFrameAverageMs = null;
+  }
+
+  _resolveEdgeAdaptiveActivity(now = performance.now()) {
+    const config = this._edgeAdaptiveQualityConfig ?? EDGE_ADAPTIVE_QUALITY_DEFAULTS;
+    const runtime = this._edgeAdaptiveRuntime ?? null;
+    const layoutState = typeof this.scheduler?.getLayoutState === 'function'
+      ? this.scheduler.getLayoutState()
+      : (this.scheduler?.layoutEnabled !== false ? 'running' : 'stopped');
+    const layoutActive = config.fastDuringLayout === true && layoutState === 'running';
+    const cameraActive = config.fastDuringCamera === true
+      && Number.isFinite(runtime?.cameraMovingUntil)
+      && now < runtime.cameraMovingUntil;
+    return {
+      layoutActive,
+      cameraActive,
+      active: layoutActive || cameraActive,
+    };
+  }
+
+  _pushEdgeAdaptiveQualitySample(renderMs) {
+    const runtime = this._edgeAdaptiveRuntime ?? null;
+    const config = this._edgeAdaptiveQualityConfig ?? EDGE_ADAPTIVE_QUALITY_DEFAULTS;
+    if (!runtime || !Number.isFinite(renderMs)) {
+      return { averageMs: null, sampleCount: 0, targetCount: 0 };
+    }
+    const targetCount = normalizePositiveInteger(
+      config.averageWindowFrames ?? config.slowFrameConsecutiveFrames,
+      EDGE_ADAPTIVE_QUALITY_DEFAULTS.averageWindowFrames,
+      1,
+      240,
+    );
+    const samples = Array.isArray(runtime.qualityFrameSamples) ? runtime.qualityFrameSamples : [];
+    samples.push(Number(renderMs));
+    if (samples.length > targetCount) {
+      samples.splice(0, samples.length - targetCount);
+    }
+    runtime.qualityFrameSamples = samples;
+    runtime.qualityFrameAverageMs = samples.length > 0
+      ? (samples.reduce((sum, value) => sum + value, 0) / samples.length)
+      : null;
+    return {
+      averageMs: runtime.qualityFrameAverageMs,
+      sampleCount: samples.length,
+      targetCount,
+    };
+  }
+
+  _pushEdgeAdaptiveFastSample(renderMs) {
+    const runtime = this._edgeAdaptiveRuntime ?? null;
+    const config = this._edgeAdaptiveQualityConfig ?? EDGE_ADAPTIVE_QUALITY_DEFAULTS;
+    if (!runtime || !Number.isFinite(renderMs)) {
+      return { averageMs: null, sampleCount: 0, targetCount: 0 };
+    }
+    const targetCount = normalizePositiveInteger(
+      config.averageWindowFrames ?? config.slowFrameConsecutiveFrames,
+      EDGE_ADAPTIVE_QUALITY_DEFAULTS.averageWindowFrames,
+      1,
+      240,
+    );
+    const samples = Array.isArray(runtime.fastFrameSamples) ? runtime.fastFrameSamples : [];
+    samples.push(Number(renderMs));
+    if (samples.length > targetCount) {
+      samples.splice(0, samples.length - targetCount);
+    }
+    runtime.fastFrameSamples = samples;
+    runtime.fastFrameAverageMs = samples.length > 0
+      ? (samples.reduce((sum, value) => sum + value, 0) / samples.length)
+      : null;
+    return {
+      averageMs: runtime.fastFrameAverageMs,
+      sampleCount: samples.length,
+      targetCount,
+    };
+  }
+
+  _readLayoutAlphaMin(layout = null) {
+    const settings = Number(layout?.settings?.alphaMin);
+    if (Number.isFinite(settings)) return settings;
+    const options = Number(layout?.options?.alphaMin);
+    if (Number.isFinite(options)) return options;
+    const delegate = layout?.getPositionDelegate?.() ?? layout?.positionDelegate ?? null;
+    const delegateAlphaMin = Number(delegate?.alphaMin);
+    if (Number.isFinite(delegateAlphaMin)) return delegateAlphaMin;
+    return NaN;
+  }
+
+  _computeEdgeAdaptiveProbeDelay(failedProbeCount = 0) {
+    const config = this._edgeAdaptiveQualityConfig ?? EDGE_ADAPTIVE_QUALITY_DEFAULTS;
+    const base = Math.max(0, Number(config.probeIntervalMs ?? EDGE_ADAPTIVE_QUALITY_DEFAULTS.probeIntervalMs));
+    if (!(base > 0)) return 0;
+    const failures = Math.max(0, Math.floor(Number(failedProbeCount) || 0));
+    const scaled = base * (EDGE_ADAPTIVE_LAYOUT_HYSTERESIS.backoffFactor ** failures);
+    return Math.min(
+      Math.max(base, scaled),
+      EDGE_ADAPTIVE_LAYOUT_HYSTERESIS.maxBackoffMs,
+    );
+  }
+
+  _shouldAttemptEdgeAdaptiveLayoutProbe(now = performance.now()) {
+    const runtime = this._edgeAdaptiveRuntime ?? null;
+    if (!runtime) return false;
+    if (!(Number.isFinite(runtime.nextProbeAt) && now >= runtime.nextProbeAt)) return false;
+    const config = this._edgeAdaptiveQualityConfig ?? EDGE_ADAPTIVE_QUALITY_DEFAULTS;
+    const targetFastAverage = Number(config.slowFrameThresholdMs ?? EDGE_ADAPTIVE_QUALITY_DEFAULTS.slowFrameThresholdMs)
+      * EDGE_ADAPTIVE_LAYOUT_HYSTERESIS.exitThresholdFactor;
+    const fastAverage = Number(runtime.fastFrameAverageMs);
+    if (Number.isFinite(fastAverage) && fastAverage > targetFastAverage) return false;
+    const currentAlpha = this._readLayoutAlpha(this._layout ?? null);
+    if (Number.isFinite(currentAlpha)) {
+      const fallbackAlpha = Number.isFinite(runtime.performanceFallbackAlpha)
+        ? runtime.performanceFallbackAlpha
+        : currentAlpha;
+      const alphaMin = this._readLayoutAlphaMin(this._layout ?? null);
+      const alphaThreshold = Math.max(
+        fallbackAlpha * EDGE_ADAPTIVE_LAYOUT_HYSTERESIS.alphaProbeFactor,
+        Number.isFinite(alphaMin)
+          ? alphaMin * EDGE_ADAPTIVE_LAYOUT_HYSTERESIS.alphaMinMultiplier
+          : Number.NEGATIVE_INFINITY,
+      );
+      if (currentAlpha > alphaThreshold) return false;
+    }
+    return true;
+  }
+
+  _emitEdgeAdaptiveQualityChange() {
+    this._emitUIBindingChange('edgeAdaptiveQuality', this.edgeAdaptiveQuality());
+  }
+
+  _emitEdgeAdaptiveQualityConfigBindings() {
+    const value = this.edgeAdaptiveQuality();
+    this._emitUIBindingChange('edgeAdaptiveQuality', value);
+    this._emitUIBindingChange('edgeAdaptiveQualityEnabled', value.enabled);
+    this._emitUIBindingChange('edgeAdaptiveQualitySlowFrameThresholdMs', value.slowFrameThresholdMs);
+    this._emitUIBindingChange('edgeAdaptiveQualitySlowFrameConsecutiveFrames', value.slowFrameConsecutiveFrames);
+    this._emitUIBindingChange('edgeAdaptiveQualityProbeIntervalMs', value.probeIntervalMs);
+    this._emitUIBindingChange('edgeAdaptiveQualityInteractionHoldMs', value.interactionHoldMs);
+    this._emitUIBindingChange('edgeAdaptiveQualityFastDuringCamera', value.fastDuringCamera);
+    this._emitUIBindingChange('edgeAdaptiveQualityFastDuringLayout', value.fastDuringLayout);
+  }
+
+  _setAdaptiveEdgeFastRendering(enabled, reason = null, options = {}) {
+    const runtime = this._edgeAdaptiveRuntime ?? null;
+    const graphLayer = this.renderer?.graphLayer ?? null;
+    const next = enabled === true;
+    const previous = graphLayer?.edgeAdaptiveFastRendering === true;
+    const previousReason = runtime?.reason ?? null;
+    if (graphLayer) {
+      graphLayer.setAdaptiveEdgeFastRendering?.(next);
+    } else {
+      this._pendingGraphLayerProps.set('edgeAdaptiveFastRendering', next);
+    }
+    if (runtime) {
+      runtime.reason = reason ?? (next ? 'performance' : 'quality');
+    }
+    const changed = previous !== next || previousReason !== (runtime?.reason ?? null);
+    if (changed) {
+      this._emitEdgeAdaptiveQualityChange();
+      if (options.requestRender === true) {
+        this._queueRenderRequest();
+      }
+    }
+    return changed;
+  }
+
+  _resolveEdgeAdaptiveFastState(now = performance.now()) {
+    const graphLayer = this.renderer?.graphLayer ?? null;
+    const runtime = this._edgeAdaptiveRuntime ?? null;
+    const manualFast = graphLayer?.edgeFastRendering === true;
+    const adaptiveFast = graphLayer?.edgeAdaptiveFastRendering === true;
+    if (runtime?.forceHighQuality === true) {
+      return { fast: false, reason: 'export' };
+    }
+    if (!this._edgeAdaptiveEdgesVisible()) {
+      return { fast: false, reason: 'hidden' };
+    }
+    if (manualFast) {
+      return { fast: false, reason: 'manual' };
+    }
+    if (!(this._edgeAdaptiveQualityConfig ?? EDGE_ADAPTIVE_QUALITY_DEFAULTS).enabled) {
+      return { fast: false, reason: 'disabled' };
+    }
+    const activity = this._resolveEdgeAdaptiveActivity(now);
+    if (!activity.active) {
+      return { fast: false, reason: 'quality' };
+    }
+    if (adaptiveFast && runtime?.reason === 'performance') {
+      if (
+        activity.layoutActive
+        && !activity.cameraActive
+        && this._shouldAttemptEdgeAdaptiveLayoutProbe(now)
+      ) {
+        return { fast: false, reason: 'probe' };
+      }
+      return { fast: true, reason: 'performance' };
+    }
+    return { fast: false, reason: 'quality' };
+  }
+
+  _updateEdgeAdaptiveQualityBeforeRender(now = performance.now()) {
+    const graphLayer = this.renderer?.graphLayer ?? null;
+    const wasAdaptiveFast = graphLayer?.edgeAdaptiveFastRendering === true;
+    const previousReason = this._edgeAdaptiveRuntime?.reason ?? null;
+    const activity = this._resolveEdgeAdaptiveActivity(now);
+    if (this._edgeAdaptiveRuntime) {
+      if (activity.active !== (this._edgeAdaptiveRuntime.activityActive === true)) {
+        this._edgeAdaptiveRuntime.activityActive = activity.active;
+        this._edgeAdaptiveRuntime.skipNextQualitySample = activity.active === true;
+        this._clearEdgeAdaptiveQualitySamples();
+      }
+    }
+    const decision = this._resolveEdgeAdaptiveFastState(now);
+    if (
+      this._edgeAdaptiveRuntime
+      && wasAdaptiveFast
+      && decision.fast !== true
+      && this._edgeAdaptiveRuntime.reason === 'performance'
+    ) {
+      this._edgeAdaptiveRuntime.nextProbeAt = Number.NEGATIVE_INFINITY;
+      this._clearEdgeAdaptiveTimer('probeTimer');
+      this._clearEdgeAdaptiveQualitySamples();
+    }
+    if (
+      this._edgeAdaptiveRuntime
+      && wasAdaptiveFast
+      && decision.fast !== true
+      && decision.reason === 'probe'
+      && previousReason === 'performance'
+    ) {
+      this._edgeAdaptiveRuntime.skipNextQualitySample = true;
+      this._clearEdgeAdaptiveQualitySamples();
+    }
+    this._setAdaptiveEdgeFastRendering(decision.fast, decision.reason, { requestRender: false });
+    return decision;
+  }
+
+  _updateEdgeAdaptiveQualityAfterRender(renderMs, now = performance.now()) {
+    const runtime = this._edgeAdaptiveRuntime ?? null;
+    const config = this._edgeAdaptiveQualityConfig ?? EDGE_ADAPTIVE_QUALITY_DEFAULTS;
+    const graphLayer = this.renderer?.graphLayer ?? null;
+    if (!runtime || !graphLayer) return;
+    runtime.lastRenderMs = Number.isFinite(renderMs) ? renderMs : null;
+    const edgesVisible = this._edgeAdaptiveEdgesVisible();
+    const manualFast = graphLayer.edgeFastRendering === true;
+    const adaptiveFast = graphLayer.edgeAdaptiveFastRendering === true;
+    const activity = this._resolveEdgeAdaptiveActivity(now);
+    if (runtime.forceHighQuality === true || !config.enabled || manualFast || !edgesVisible) {
+      runtime.nextProbeAt = Number.NEGATIVE_INFINITY;
+      this._clearEdgeAdaptiveTimer('probeTimer');
+      this._clearEdgeAdaptiveQualitySamples();
+      runtime.failedProbeCount = 0;
+      runtime.performanceFallbackAt = Number.NEGATIVE_INFINITY;
+      runtime.performanceFallbackAlpha = NaN;
+      return;
+    }
+    if (!activity.active) {
+      runtime.nextProbeAt = Number.NEGATIVE_INFINITY;
+      this._clearEdgeAdaptiveTimer('probeTimer');
+      this._clearEdgeAdaptiveQualitySamples();
+      runtime.failedProbeCount = 0;
+      runtime.performanceFallbackAt = Number.NEGATIVE_INFINITY;
+      runtime.performanceFallbackAlpha = NaN;
+      return;
+    }
+    if (adaptiveFast) {
+      if (runtime.reason === 'performance') {
+        this._pushEdgeAdaptiveFastSample(renderMs);
+      }
+      return;
+    }
+    if (runtime.skipNextQualitySample === true) {
+      runtime.skipNextQualitySample = false;
+      runtime.lastRenderMs = Number.isFinite(renderMs) ? renderMs : null;
+      return;
+    }
+    const { averageMs, sampleCount, targetCount } = this._pushEdgeAdaptiveQualitySample(renderMs);
+    if (sampleCount < targetCount || !Number.isFinite(averageMs)) {
+      return;
+    }
+    const slowThreshold = Number(config.slowFrameThresholdMs ?? EDGE_ADAPTIVE_QUALITY_DEFAULTS.slowFrameThresholdMs);
+    const exitThreshold = slowThreshold * EDGE_ADAPTIVE_LAYOUT_HYSTERESIS.exitThresholdFactor;
+    if (runtime.reason === 'probe') {
+      if (averageMs <= exitThreshold) {
+        runtime.reason = 'quality';
+        runtime.failedProbeCount = 0;
+        runtime.nextProbeAt = Number.NEGATIVE_INFINITY;
+        runtime.performanceFallbackAt = Number.NEGATIVE_INFINITY;
+        runtime.performanceFallbackAlpha = NaN;
+        runtime.fastFrameSamples = [];
+        runtime.fastFrameAverageMs = null;
+        this._clearEdgeAdaptiveTimer('probeTimer');
+        return;
+      }
+      runtime.reason = 'performance';
+      runtime.failedProbeCount = Math.max(0, Math.floor(Number(runtime.failedProbeCount) || 0)) + 1;
+      runtime.nextProbeAt = now + this._computeEdgeAdaptiveProbeDelay(runtime.failedProbeCount);
+      runtime.performanceFallbackAt = now;
+      runtime.performanceFallbackAlpha = this._readLayoutAlpha(this._layout ?? null);
+      runtime.fastFrameSamples = [];
+      runtime.fastFrameAverageMs = null;
+      this._clearEdgeAdaptiveQualitySamples();
+      this._setAdaptiveEdgeFastRendering(true, 'performance', { requestRender: true });
+      return;
+    }
+    if (averageMs > slowThreshold) {
+      runtime.failedProbeCount = 0;
+      runtime.performanceFallbackAt = now;
+      runtime.performanceFallbackAlpha = this._readLayoutAlpha(this._layout ?? null);
+      runtime.nextProbeAt = now + this._computeEdgeAdaptiveProbeDelay(0);
+      runtime.fastFrameSamples = [];
+      runtime.fastFrameAverageMs = null;
+      this._clearEdgeAdaptiveQualitySamples();
+      this._setAdaptiveEdgeFastRendering(true, 'performance', { requestRender: true });
+      return;
+    }
   }
 
   _getGraphLayerProp(name) {
@@ -4773,6 +5542,83 @@ export class Helios extends EventTarget {
   edgeFastRendering(value) {
     if (arguments.length === 0) return this._getGraphLayerProp('edgeFastRendering');
     return this._setGraphLayerProp('edgeFastRendering', Boolean(value));
+  }
+
+  edgeAdaptiveQuality(options) {
+    if (arguments.length === 0) {
+      const config = { ...(this._edgeAdaptiveQualityConfig ?? EDGE_ADAPTIVE_QUALITY_DEFAULTS) };
+      const runtime = this._edgeAdaptiveRuntime ?? null;
+      return {
+        ...config,
+        slowFrameConsecutiveFrames: config.averageWindowFrames,
+        cameraIdleMs: config.interactionHoldMs,
+        active: this.renderer?.graphLayer?.edgeAdaptiveFastRendering === true,
+        manualFastRendering: this.renderer?.graphLayer?.edgeFastRendering === true,
+        reason: runtime?.reason ?? null,
+        lastRenderMs: Number.isFinite(runtime?.lastRenderMs) ? runtime.lastRenderMs : null,
+        qualityFrameAverageMs: Number.isFinite(runtime?.qualityFrameAverageMs) ? runtime.qualityFrameAverageMs : null,
+        qualityFrameSampleCount: Array.isArray(runtime?.qualityFrameSamples) ? runtime.qualityFrameSamples.length : 0,
+      };
+    }
+    const current = this._edgeAdaptiveQualityConfig ?? EDGE_ADAPTIVE_QUALITY_DEFAULTS;
+    const next = normalizeEdgeAdaptiveQualityConfig(current, options);
+    this._edgeAdaptiveQualityConfig = next;
+    this.options ??= {};
+    this.options.edgeAdaptiveQuality = { ...next };
+    if (this._edgeAdaptiveRuntime) {
+      if (next.enabled !== true) {
+        this._edgeAdaptiveRuntime.nextProbeAt = Number.NEGATIVE_INFINITY;
+        this._clearEdgeAdaptiveTimer('probeTimer');
+        this._clearEdgeAdaptiveQualitySamples();
+        this._setAdaptiveEdgeFastRendering(false, 'disabled', { requestRender: false });
+      }
+      this._edgeAdaptiveRuntime.reason = next.enabled ? this._edgeAdaptiveRuntime.reason ?? 'quality' : 'disabled';
+    }
+    this._emitEdgeAdaptiveQualityConfigBindings();
+    this.scheduler?.requestRender?.();
+    return this;
+  }
+
+  edgeAdaptiveQualityEnabled(value) {
+    if (arguments.length === 0) return this.edgeAdaptiveQuality().enabled;
+    this.edgeAdaptiveQuality({ enabled: Boolean(value) });
+    return this;
+  }
+
+  edgeAdaptiveQualitySlowFrameThresholdMs(value) {
+    if (arguments.length === 0) return this.edgeAdaptiveQuality().slowFrameThresholdMs;
+    this.edgeAdaptiveQuality({ slowFrameThresholdMs: Number(value) });
+    return this;
+  }
+
+  edgeAdaptiveQualitySlowFrameConsecutiveFrames(value) {
+    if (arguments.length === 0) return this.edgeAdaptiveQuality().averageWindowFrames;
+    this.edgeAdaptiveQuality({ averageWindowFrames: Number(value) });
+    return this;
+  }
+
+  edgeAdaptiveQualityProbeIntervalMs(value) {
+    if (arguments.length === 0) return this.edgeAdaptiveQuality().probeIntervalMs;
+    this.edgeAdaptiveQuality({ probeIntervalMs: Number(value) });
+    return this;
+  }
+
+  edgeAdaptiveQualityInteractionHoldMs(value) {
+    if (arguments.length === 0) return this.edgeAdaptiveQuality().interactionHoldMs;
+    this.edgeAdaptiveQuality({ interactionHoldMs: Number(value) });
+    return this;
+  }
+
+  edgeAdaptiveQualityFastDuringCamera(value) {
+    if (arguments.length === 0) return this.edgeAdaptiveQuality().fastDuringCamera;
+    this.edgeAdaptiveQuality({ fastDuringCamera: Boolean(value) });
+    return this;
+  }
+
+  edgeAdaptiveQualityFastDuringLayout(value) {
+    if (arguments.length === 0) return this.edgeAdaptiveQuality().fastDuringLayout;
+    this.edgeAdaptiveQuality({ fastDuringLayout: Boolean(value) });
+    return this;
   }
 
   background(color) {
@@ -5444,6 +6290,7 @@ export class Helios extends EventTarget {
       initializer(nodes, this.visuals);
     }
     this.visuals.markPositionsDirty();
+    this._markAutoFitDirty(false);
     this._layout?.syncAutoSettingsForNetwork?.();
     this.mappersDirty = true;
     this._requestLayoutReheat('data');
@@ -5461,6 +6308,7 @@ export class Helios extends EventTarget {
       initializer(edgeIndices, this.visuals);
     }
     this.visuals.markPositionsDirty();
+    this._markAutoFitDirty(false);
     this.mappersDirty = true;
     this._requestLayoutReheat('data');
     this.scheduler.requestLayout('data');
@@ -5480,6 +6328,7 @@ export class Helios extends EventTarget {
       this.visuals.applyEdgeDefaults(edges);
     }
     this.visuals.markPositionsDirty();
+    this._markAutoFitDirty(false);
     if (nodes) {
       this._layout?.syncAutoSettingsForNetwork?.();
     }
@@ -5734,15 +6583,39 @@ export class Helios extends EventTarget {
     if (!isLayoutInstance(layout)) {
       throw new Error('Layout must extend the Layout base class');
     }
-    this._layout?.dispose?.();
+    const handoff = this._resolveLayoutHandoffContext();
+    const nextPolicy = this._resolveLayoutPositionPolicy(layout);
+    const shouldHandoffDelegatePositions = handoff.outgoingDelegate
+      && nextPolicy.source !== 'delegate';
+
+    if (handoff.pending && !shouldHandoffDelegatePositions) {
+      this._disposePendingLayoutHandoff();
+    } else if (handoff.pending) {
+      this._pendingLayoutHandoff = null;
+    }
+    if (handoff.staleLayout && handoff.staleLayout !== handoff.outgoingLayout) {
+      handoff.staleLayout.dispose?.();
+    }
+    if (!shouldHandoffDelegatePositions) {
+      handoff.outgoingLayout?.dispose?.();
+    }
+
     this._layout = this._bindLayoutToHelios(layout);
     this.debug.log('layout', 'Layout replaced', { layout: layout?.constructor?.name });
     this._layout.setUpdateListener((payload) => this._handleLayoutUpdate(payload));
     this.debug.log('layout', 'Initializing new layout instance');
     this._layout.initialize?.();
-    this._enforcePositionSourcePolicy(this._layout, { resetInterpolation: true });
     this._layout.resize?.(this.layers.size);
-    this._enforcePositionSourcePolicy(this._layout, { resetInterpolation: false });
+    if (!shouldHandoffDelegatePositions) {
+      this._enforcePositionSourcePolicy(this._layout, { resetInterpolation: true });
+      this._enforcePositionSourcePolicy(this._layout, { resetInterpolation: false });
+    } else {
+      this._startLayoutPositionHandoff({
+        previousLayout: handoff.outgoingLayout,
+        previousDelegate: handoff.outgoingDelegate,
+        nextLayout: this._layout,
+      });
+    }
     this.debug.log('layout', 'Layout initialized and resized', this.layers.size);
     this.scheduler.setLayout(this._layout);
     this._emitLayoutChanged(this._layout);
@@ -5843,6 +6716,7 @@ export class Helios extends EventTarget {
     visuals?.markPositionsDirty?.();
     visuals?.bumpNodeAttributes?.(NODE_POSITION_ATTRIBUTE);
     visuals?.bumpEdgeAttributes?.(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
+    this._markAutoFitDirty(false);
     this._layout?.seedFromNetworkPositions?.();
     this.scheduler?.requestGeometry?.();
     this.scheduler?.requestRender?.();
@@ -5865,6 +6739,7 @@ export class Helios extends EventTarget {
     }
     this._enforcePositionSourcePolicy(this._layout, { resetInterpolation: false });
     this._applyPositionPipelineToRenderer();
+    this._markAutoFitDirty(false);
     this.scheduler.requestGeometry();
     this.scheduler.requestRender();
     this._labels?.requestFullReselect?.('positions-config');
@@ -5901,6 +6776,7 @@ export class Helios extends EventTarget {
     }
     if (!wrote) return false;
     this.visuals?.markPositionsDirty?.();
+    this._markAutoFitDirty(false);
     this.scheduler?.requestGeometry?.();
     this.scheduler?.requestRender?.();
     return true;
@@ -6831,6 +7707,8 @@ export class Helios extends EventTarget {
 
   destroy() {
     this.scheduler.stop();
+    this._clearEdgeAdaptiveTimer('cameraIdleTimer');
+    this._clearEdgeAdaptiveTimer('probeTimer');
     this._detachPositionDelegate(this._activePositionDelegate ?? this._positionsConfig?.delegate ?? null);
     this._activePositionDelegate = null;
     this._layout?.dispose?.();

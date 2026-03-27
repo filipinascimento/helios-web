@@ -81,6 +81,8 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     const useEdgeOpacityNode = variant?.opacityBuffer && variant?.opacitySource === 'node';
     const useEdgeEndpointSizeBuffer = variant?.endpointSizeBuffer && variant?.endpointSizeSource !== 'node';
     const useEdgeEndpointSizeNode = variant?.endpointSizeBuffer && variant?.endpointSizeSource === 'node';
+    const useEndpointState = variant?.endpointState === true;
+    const useEdgeState = variant?.edgeState === true;
 
     const specs = [];
     let binding = 0;
@@ -96,8 +98,12 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     push('edgeEndpoints', GPUShaderStage.VERTEX);
     push('nodePositions', GPUShaderStage.VERTEX);
     push('nodePositionsFrom', GPUShaderStage.VERTEX);
-    push('nodeStates', GPUShaderStage.VERTEX);
-    push('edgeStates', GPUShaderStage.VERTEX);
+    if (useEndpointState) {
+      push('nodeStates', GPUShaderStage.VERTEX);
+    }
+    if (useEdgeState) {
+      push('edgeStates', GPUShaderStage.VERTEX);
+    }
     if (useEdgeColorNode) {
       push('edgeNodeColorSource', GPUShaderStage.VERTEX);
     } else if (useEdgeColorBuffer) {
@@ -139,7 +145,11 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
 
   resolveEdgeVariant(visualConfig, options = {}) {
     const edgeCfg = visualConfig?.edge ?? null;
-    const fastPath = options.fastPath === true || this.edgeFastRendering === true;
+    const fastPath = options.fastPath === true || this.isFastEdgeRenderingActive?.() === true;
+    const specialization = this.resolveEdgeSpecialization({
+      fastPath,
+      is2D: options.is2D === true,
+    });
     const normalize = (entry, fallbackSource = 'edge') => {
       if (!entry || typeof entry !== 'object') {
         return {
@@ -186,6 +196,11 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
         endpointSizeEndpoints: 'both',
         endpointSizeDoubleWidth: false,
         endpointSizeNodeAttribute: null,
+        cameraMode: specialization.cameraMode,
+        semanticZoom: specialization.semanticZoom,
+        trim: specialization.trim,
+        edgeState: specialization.edgeState,
+        endpointState: specialization.endpointState,
         fastPath: true,
       };
     }
@@ -206,11 +221,16 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       opacityEndpoints: opacity.endpoints,
       opacityDoubleWidth: opacity.doubleWidth,
       opacityNodeAttribute: opacity.nodeAttribute,
-      endpointSizeBuffer: endpointSize.mode !== 'uniform',
+      endpointSizeBuffer: specialization.trim && endpointSize.mode !== 'uniform',
       endpointSizeSource: endpointSize.source,
       endpointSizeEndpoints: endpointSize.endpoints,
       endpointSizeDoubleWidth: endpointSize.doubleWidth,
       endpointSizeNodeAttribute: endpointSize.nodeAttribute,
+      cameraMode: specialization.cameraMode,
+      semanticZoom: specialization.semanticZoom,
+      trim: specialization.trim,
+      edgeState: specialization.edgeState,
+      endpointState: specialization.endpointState,
       fastPath: false,
     };
   }
@@ -219,6 +239,11 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     return [
       useIndices ? 'idx' : 'id',
       `f:${variant?.fastPath ? 1 : 0}`,
+      `cm:${variant?.cameraMode ?? '3d'}`,
+      `sz:${variant?.semanticZoom ? 1 : 0}`,
+      `tr:${variant?.trim ? 1 : 0}`,
+      `st:${variant?.edgeState ? 1 : 0}`,
+      `et:${variant?.endpointState ? 1 : 0}`,
       `c:${variant?.colorBuffer ? 'B' : 'U'}:${variant?.colorSource}:${variant?.colorEndpoints}:${variant?.colorDoubleWidth ? 1 : 0}:${variant?.colorNodeAttribute ?? ''}`,
       `w:${variant?.widthBuffer ? 'B' : 'U'}:${variant?.widthSource}:${variant?.widthEndpoints}:${variant?.widthDoubleWidth ? 1 : 0}:${variant?.widthNodeAttribute ?? ''}`,
       `o:${variant?.opacityBuffer ? 'B' : 'U'}:${variant?.opacitySource}:${variant?.opacityEndpoints}:${variant?.opacityDoubleWidth ? 1 : 0}:${variant?.opacityNodeAttribute ?? ''}`,
@@ -237,6 +262,11 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       bindings: bindingInfo?.bindings ?? null,
       edge: {
         fastPath: variant?.fastPath === true,
+        cameraMode: variant?.cameraMode ?? '3d',
+        semanticZoom: variant?.semanticZoom === true,
+        trim: variant?.trim === true,
+        edgeState: variant?.edgeState === true,
+        endpointState: variant?.endpointState === true,
         color: {
           mode: variant?.colorBuffer ? 'buffer' : 'uniform',
           source: variant?.colorSource,
@@ -279,6 +309,11 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       bindings: bindingInfo?.bindings ?? null,
       edge: {
         fastPath: variant?.fastPath === true,
+        cameraMode: variant?.cameraMode ?? '3d',
+        semanticZoom: variant?.semanticZoom === true,
+        trim: variant?.trim === true,
+        edgeState: variant?.edgeState === true,
+        endpointState: variant?.endpointState === true,
         color: {
           mode: variant?.colorBuffer ? 'buffer' : 'uniform',
           source: variant?.colorSource,
@@ -726,6 +761,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     const useEdgeWidthBuffer = edgeVariant?.widthBuffer && edgeVariant?.widthSource !== 'node';
     const useEdgeOpacityBuffer = edgeVariant?.opacityBuffer && edgeVariant?.opacitySource !== 'node';
     const useEdgeEndpointSizeBuffer = edgeVariant?.endpointSizeBuffer && edgeVariant?.endpointSizeSource !== 'node';
+    const useEdgeStateBuffer = edgeVariant?.edgeState === true;
 
     if (useEdgeIndices && !indices && edgeCount) {
       throw new Error('Edge index buffer is missing for indirect rendering.');
@@ -745,7 +781,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     if (useEdgeEndpointSizeBuffer && !endpointSizes && edgeCount) {
       throw new Error('Edge endpoint sizes buffer is missing for indirect rendering.');
     }
-    if (!states && edgeCount) {
+    if (useEdgeStateBuffer && !states && edgeCount) {
       throw new Error('Edge states buffer is missing for indirect rendering.');
     }
 
@@ -780,7 +816,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       'Edge endpoint size buffer',
     );
     this.edgeBuffersGpu.opacities = ensure('indirect:edge:opacities', useEdgeOpacityBuffer ? (opacities?.byteLength ?? 4) : 4, 'Edge opacity buffer');
-    this.edgeBuffersGpu.states = ensure('indirect:edge:states', states?.byteLength ?? 4, 'Edge state buffer');
+    this.edgeBuffersGpu.states = ensure('indirect:edge:states', useEdgeStateBuffer ? (states?.byteLength ?? 4) : 4, 'Edge state buffer');
 
     const edgeSourceBindings = this.edgeNodeSourceBindings ?? {
       color: this.nodeBuffersGpu.colors?.buffer ?? null,
@@ -873,13 +909,15 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
           trackViewIdentity: true,
         }, storageUsage);
       }
-      resourceCache.uploadBuffer(device, device.queue, 'indirect:edge:states', states, {
-        label: 'Edge state buffer',
-        version: versions.states ?? 0,
-        topologyVersion: versions.topology ?? 0,
-        count: edgeCount,
-        trackViewIdentity: true,
-      }, storageUsage);
+      if (useEdgeStateBuffer) {
+        resourceCache.uploadBuffer(device, device.queue, 'indirect:edge:states', states, {
+          label: 'Edge state buffer',
+          version: versions.states ?? 0,
+          topologyVersion: versions.topology ?? 0,
+          count: edgeCount,
+          trackViewIdentity: true,
+        }, storageUsage);
+      }
       cache.count = edgeCount;
     }
 
@@ -1109,7 +1147,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     if (!gpuDevice) return;
     const maxBindingSize = gpuDevice.limits?.maxStorageBufferBindingSize;
     const cameraUniforms = this.getCameraUniforms(camera, context);
-    const fastEdges = this.edgeFastRendering === true;
+    const fastEdges = this.isFastEdgeRenderingActive?.() === true;
     const edgeRenderingMode = this.getEffectiveEdgeRenderingMode?.() ?? this.edgeRenderingMode;
     const transparencyMode = fastEdges ? 'alpha' : this.edgeTransparencyMode;
     const nodeBlendWithEdges = this.nodeBlendWithEdges === true;
@@ -1129,7 +1167,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     });
     const visualConfig = schema.visualConfig;
     const nodeVariant = this.resolveNodeVariant(visualConfig);
-    const edgeVariant = this.resolveEdgeVariant(visualConfig, { fastPath: fastEdges });
+    const edgeVariant = this.resolveEdgeVariant(visualConfig, { fastPath: fastEdges, is2D });
 
     let topologyVersions = { node: 0, edge: 0 };
     if (typeof network.getTopologyVersions === 'function') {

@@ -218,7 +218,7 @@ export class GpuForceLayout extends Layout {
   }
 
   shouldRun() {
-    return true;
+    return !this.isPositionHandoffPending();
   }
 
   step(deltaMs = 16) {

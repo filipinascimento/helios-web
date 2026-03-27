@@ -47,3 +47,38 @@ test('renderer accessors emit ui:binding-change events', () => {
   assert.equal(events[0].type, 'ui:binding-change');
   assert.equal(events[0].detail.id, 'helios.clearColor');
 });
+
+test('adaptive edge quality emits ui:binding-change events', () => {
+  const helios = Object.create(Helios.prototype);
+  helios.options = {};
+  helios.renderer = { graphLayer: { edgeAdaptiveFastRendering: false, edgeFastRendering: false } };
+  helios.scheduler = { requestRender: () => {} };
+  helios._pendingGraphLayerProps = new Map();
+  helios._pendingRendererProps = new Map();
+  helios._edgeAdaptiveQualityConfig = undefined;
+  helios._edgeAdaptiveRuntime = {
+    nextProbeAt: Number.NEGATIVE_INFINITY,
+    lastRenderMs: null,
+    qualityFrameSamples: [],
+    qualityFrameAverageMs: null,
+    reason: 'quality',
+    cameraMovingUntil: Number.NEGATIVE_INFINITY,
+    cameraIdleTimer: null,
+    probeTimer: null,
+    forceHighQuality: false,
+  };
+
+  const events = [];
+  helios.dispatchEvent = (event) => {
+    events.push(event);
+    return true;
+  };
+
+  helios.edgeAdaptiveQuality({ slowFrameThresholdMs: 28, probeIntervalMs: 1400 });
+
+  const adaptiveEvent = events.find((event) => event.detail?.id === 'helios.edgeAdaptiveQuality');
+  assert.ok(adaptiveEvent);
+  assert.equal(adaptiveEvent.type, 'ui:binding-change');
+  assert.equal(adaptiveEvent.detail.value.slowFrameThresholdMs, 28);
+  assert.equal(adaptiveEvent.detail.value.probeIntervalMs, 1400);
+});

@@ -106,6 +106,8 @@ export class D3Force3DLayout extends Layout {
     this.lastUpdate = 0;
     this.optionsDirty = true;
     this.seededPositions = false;
+    this._adoptOnlyNextTick = false;
+    this._awaitingAdoptOnlyResponse = false;
   }
 
   _seedPlanarDepthIfNeeded() {
@@ -163,7 +165,7 @@ export class D3Force3DLayout extends Layout {
   }
 
   shouldRun() {
-    return !this.pending;
+    return !this.isPositionHandoffPending() && !this.pending;
   }
 
   step() {
@@ -194,6 +196,11 @@ export class D3Force3DLayout extends Layout {
       nodeIndices,
       edges,
     };
+    if (this._adoptOnlyNextTick) {
+      message.adoptOnly = true;
+      this._adoptOnlyNextTick = false;
+      this._awaitingAdoptOnlyResponse = true;
+    }
     if (this.optionsDirty) {
       message.options = { settings: { ...this.settings } };
       this.optionsDirty = false;
@@ -233,8 +240,13 @@ export class D3Force3DLayout extends Layout {
       }
       this.visuals?.markPositionsDirty?.();
       if (view) {
-        this.emitUpdate({ positions: view, timestamp: performance.now() });
+        this.emitUpdate({
+          positions: view,
+          timestamp: performance.now(),
+          handoffAdopted: this._awaitingAdoptOnlyResponse === true,
+        });
       }
+      this._awaitingAdoptOnlyResponse = false;
       return true;
     }
     if (message?.type === 'ready') {
@@ -319,6 +331,41 @@ export class D3Force3DLayout extends Layout {
   reheat(reason = 'layout') {
     this._applyReheatAlpha();
     super.reheat(reason);
+    return this;
+  }
+
+  completePositionHandoff(snapshot = null, options = {}) {
+    const wrote = super.completePositionHandoff(snapshot, options);
+    if (wrote) {
+      this.seededPositions = true;
+      this._adoptOnlyNextTick = true;
+    }
+    return wrote;
+  }
+
+  adoptHandoffState(state = {}) {
+    const nextAlpha = Number(state?.alpha);
+    if (Number.isFinite(nextAlpha)) {
+      const alphaMin = Number.isFinite(this.settings.alphaMin) ? this.settings.alphaMin : DEFAULT_SETTINGS.alphaMin;
+      const clamped = Math.max(alphaMin, Math.min(1, nextAlpha));
+      this.settings.alpha = clamped;
+      this.reheatAlpha = clamped;
+    }
+    if (Array.isArray(state?.center) && state.center.length >= 3) {
+      this.settings.center = [
+        Number.isFinite(state.center[0]) ? Number(state.center[0]) : 0,
+        Number.isFinite(state.center[1]) ? Number(state.center[1]) : 0,
+        Number.isFinite(state.center[2]) ? Number(state.center[2]) : 0,
+      ];
+    }
+    this.options = {
+      ...this.options,
+      settings: {
+        ...(this.options.settings ?? {}),
+        ...this.settings,
+      },
+    };
+    this.optionsDirty = true;
     return this;
   }
 

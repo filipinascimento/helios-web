@@ -43,6 +43,26 @@ const state = {
   tickCount: 0,
 };
 
+function resolveCenter() {
+  const center = Array.isArray(state.settings.center) ? state.settings.center : [0, 0, 0];
+  return [
+    Number.isFinite(center[0]) ? center[0] : 0,
+    Number.isFinite(center[1]) ? center[1] : 0,
+    Number.isFinite(center[2]) ? center[2] : 0,
+  ];
+}
+
+function copyNodePositionsToBuffer(buffer) {
+  const use2D = state.settings.use2D;
+  for (let i = 0; i < state.nodes.length; i += 1) {
+    const node = state.nodes[i];
+    const base = i * 3;
+    buffer[base] = node.x / POSITION_SCALE;
+    buffer[base + 1] = node.y / POSITION_SCALE;
+    buffer[base + 2] = use2D ? 0 : node.z / POSITION_SCALE;
+  }
+}
+
 function computeStdDev(buffer, use2D) {
   if (!buffer || !buffer.length) return 0;
   const stride = 3;
@@ -126,8 +146,20 @@ function applySettings() {
   state.simulation.alphaTarget(state.settings.alphaTarget);
   state.simulation.alphaMin(state.settings.alphaMin);
 
+  const [centerX, centerY, centerZ] = resolveCenter();
+  state.centralForce?.x?.(centerX);
+  state.centralForce?.y?.(centerY);
+  state.centralForce?.z?.(centerZ);
   state.gravityForce?.strength(state.settings.gravity);
   state.collisionForce?.radius(state.settings.collisionRadius);
+
+  if (state.settings.recenter !== false) {
+    if (!state.simulation.force('central')) {
+      state.simulation.force('central', state.centralForce);
+    }
+  } else if (state.simulation.force('central')) {
+    state.simulation.force('central', null);
+  }
 
   if (state.settings.collisionEnabled) {
     if (!state.simulation.force('collision')) {
@@ -249,52 +281,9 @@ function updateStrengths() {
 
 function stepSimulation(buffer) {
   if (!state.simulation) return;
-  const use2D = state.settings.use2D;
-  if (state.tickCount === 0) {
-    const stdDev = computeStdDev(buffer, use2D);
-    console.log('[d3force3d] positions stddev before tick 1:', stdDev);
-  }
   state.simulation.tick();
-  if (state.settings.recenter !== false && state.nodes.length) {
-    let sumX = 0;
-    let sumY = 0;
-    let sumZ = 0;
-    for (let i = 0; i < state.nodes.length; i += 1) {
-      const node = state.nodes[i];
-      sumX += node.x;
-      sumY += node.y;
-      sumZ += node.z;
-    }
-    const count = state.nodes.length;
-    const center = Array.isArray(state.settings.center) ? state.settings.center : [0, 0, 0];
-    const cx = Number.isFinite(center[0]) ? center[0] : 0;
-    const cy = Number.isFinite(center[1]) ? center[1] : 0;
-    const cz = Number.isFinite(center[2]) ? center[2] : 0;
-    const dx = cx - (sumX / count);
-    const dy = cy - (sumY / count);
-    const dz = cz - (sumZ / count);
-    if (dx || dy || dz) {
-      for (let i = 0; i < state.nodes.length; i += 1) {
-        const node = state.nodes[i];
-        node.x += dx;
-        node.y += dy;
-        node.z += dz;
-      }
-    }
-  }
-  for (let i = 0; i < state.nodes.length; i += 1) {
-    const node = state.nodes[i];
-    const base = i * 3;
-    buffer[base] = node.x / POSITION_SCALE;
-    buffer[base + 1] = node.y / POSITION_SCALE;
-    buffer[base + 2] = use2D ? 0 : node.z / POSITION_SCALE;
-  }
+  copyNodePositionsToBuffer(buffer);
   state.settings.alpha = state.simulation.alpha();
-  if (state.tickCount < 2) {
-    const stdDev = computeStdDev(buffer, use2D);
-    const label = state.tickCount === 0 ? 'after tick 1' : 'after tick 2';
-    console.log(`[d3force3d] positions stddev ${label}:`, stdDev);
-  }
   state.tickCount += 1;
 }
 
@@ -335,6 +324,14 @@ self.onmessage = (event) => {
       if (!state.links.length || edgesChanged) {
         rebuildLinks(data.edges, data.weights);
       }
+    }
+
+    if (data.adoptOnly === true) {
+      ensureSimulation();
+      applySettings();
+      copyNodePositionsToBuffer(data.positions);
+      self.postMessage({ type: 'positions', positions: data.positions, alpha: state.settings.alpha }, [data.positions.buffer]);
+      return;
     }
 
     stepSimulation(data.positions);
