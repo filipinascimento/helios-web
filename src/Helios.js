@@ -45,6 +45,7 @@ const {
 const UMAP_FORCE_FLAG_ATTRIBUTE = 'umap';
 const DEFAULT_UMAP_EDGE_WEIGHT_ATTRIBUTE = 'umap_weight';
 const DEFAULT_UMAP_NODE_MASS_ATTRIBUTE = 'umap_mass';
+const RANDOM_LAYOUT_POSITION_CHOICE = '$random';
 const DEFAULT_UMAP_FORCE_OPTIONS = Object.freeze({
   umapA: 1.5769434601962196,
   umapB: 0.8950608779914887,
@@ -6626,19 +6627,25 @@ export class Helios extends EventTarget {
 
   getLayoutPositionAttributeChoices(options = {}) {
     const network = options.network ?? this.network ?? null;
+    const mode = (options.mode ?? this.options?.mode) === '3d' ? '3d' : '2d';
     const currentChoice = {
       value: NODE_POSITION_ATTRIBUTE,
       label: 'Current positions',
       dimension: 3,
     };
+    const randomChoice = {
+      value: RANDOM_LAYOUT_POSITION_CHOICE,
+      label: mode === '3d' ? 'Random positions (3D cube)' : 'Random positions (2D square)',
+      dimension: mode === '3d' ? 3 : 2,
+    };
     if (!network || typeof network.getNodeAttributeNames !== 'function') {
-      return [currentChoice];
+      return [currentChoice, randomChoice];
     }
 
     const names = new Set(network.getNodeAttributeNames?.() ?? []);
     names.add(NODE_POSITION_ATTRIBUTE);
 
-    const choices = [];
+    const choices = [randomChoice];
     for (const name of names) {
       const info = network.getNodeAttributeInfo?.(name) ?? null;
       const dimension = Number(info?.dimension ?? 0);
@@ -6655,10 +6662,12 @@ export class Helios extends EventTarget {
     choices.sort((a, b) => {
       if (a.value === NODE_POSITION_ATTRIBUTE) return -1;
       if (b.value === NODE_POSITION_ATTRIBUTE) return 1;
+      if (a.value === RANDOM_LAYOUT_POSITION_CHOICE) return -1;
+      if (b.value === RANDOM_LAYOUT_POSITION_CHOICE) return 1;
       return String(a.label).localeCompare(String(b.label));
     });
 
-    return choices.length ? choices : [currentChoice];
+    return choices.length ? choices : [currentChoice, randomChoice];
   }
 
   setLayoutPositionsFromNodeAttribute(name, options = {}) {
@@ -6666,6 +6675,68 @@ export class Helios extends EventTarget {
     const visuals = this.visuals ?? null;
     const trimmed = typeof name === 'string' ? name.trim() : '';
     if (!network || !trimmed) return false;
+
+    const seedBounds = resolveSeedBoundsForLayout(
+      this.options?.layout,
+      this.layers?.size,
+      this.options?.mode,
+    );
+    if (trimmed === RANDOM_LAYOUT_POSITION_CHOICE) {
+      visuals?.ensureNodeAttribute?.(NODE_POSITION_ATTRIBUTE, AttributeType.Float, 3);
+
+      let wrote = false;
+      const applyRandomSeed = () => {
+        const targetBuffer = network.getNodeAttributeBuffer?.(NODE_POSITION_ATTRIBUTE) ?? null;
+        const targetView = targetBuffer?.view ?? null;
+        const nodeIndices = network.nodeIndices ?? null;
+        if (!targetView || !nodeIndices?.length) return;
+
+        const center = Array.isArray(seedBounds.center) ? seedBounds.center : [0, 0, 0];
+        const cx = Number.isFinite(center[0]) ? center[0] : 0;
+        const cy = Number.isFinite(center[1]) ? center[1] : 0;
+        const cz = Number.isFinite(center[2]) ? center[2] : 0;
+        const safeMode = seedBounds.mode === '3d' ? '3d' : '2d';
+        const squareSide = Math.max(1, Math.min(
+          Number(seedBounds.width) || 1,
+          Number(seedBounds.height) || 1,
+        ));
+        const cubeSide = Math.max(
+          squareSide,
+          Number(seedBounds.depth) || 0,
+        );
+        const halfSquare = squareSide * 0.5;
+        const halfCube = cubeSide * 0.5;
+
+        for (let i = 0; i < nodeIndices.length; i += 1) {
+          const nodeId = nodeIndices[i];
+          const offset = nodeId * 3;
+          targetView[offset] = cx + ((Math.random() * 2 - 1) * halfSquare);
+          targetView[offset + 1] = cy + ((Math.random() * 2 - 1) * halfSquare);
+          targetView[offset + 2] = safeMode === '3d'
+            ? cz + ((Math.random() * 2 - 1) * halfCube)
+            : 0;
+          wrote = true;
+        }
+      };
+
+      if (typeof network.withBufferAccess === 'function') {
+        network.withBufferAccess(applyRandomSeed);
+      } else {
+        applyRandomSeed();
+      }
+
+      if (!wrote) return false;
+
+      visuals?.markPositionsDirty?.();
+      visuals?.bumpNodeAttributes?.(NODE_POSITION_ATTRIBUTE);
+      visuals?.bumpEdgeAttributes?.(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
+      this._markAutoFitDirty(false);
+      this._layout?.seedFromNetworkPositions?.();
+      this.scheduler?.requestGeometry?.();
+      this.scheduler?.requestRender?.();
+      this._labels?.requestFullReselect?.('layout-position-random');
+      return true;
+    }
 
     const info = network.getNodeAttributeInfo?.(trimmed) ?? null;
     const dimension = Number(info?.dimension ?? 0);

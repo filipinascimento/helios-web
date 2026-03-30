@@ -1246,7 +1246,7 @@ test('Helios lists numeric 2D/3D node attributes for layout seeding and copies t
   const choices = helios.getLayoutPositionAttributeChoices();
   assert.deepEqual(
     choices.map((entry) => entry.value),
-    ['_helios_visuals_position', 'embedding2d', 'embedding3d'],
+    ['_helios_visuals_position', '$random', 'embedding2d', 'embedding3d'],
   );
 
   const wrotePlanar = helios.setLayoutPositionsFromNodeAttribute('embedding2d');

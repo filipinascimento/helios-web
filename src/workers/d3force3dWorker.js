@@ -195,6 +195,22 @@ function rebuildNodes(positions) {
   }
 }
 
+function syncNodePositionsFromBuffer(positions, { resetVelocity = false } = {}) {
+  const count = Math.min(state.nodes.length, Math.floor(positions.length / 3));
+  for (let i = 0; i < count; i += 1) {
+    const base = i * 3;
+    const node = state.nodes[i];
+    node.x = positions[base] * POSITION_SCALE;
+    node.y = positions[base + 1] * POSITION_SCALE;
+    node.z = positions[base + 2] * POSITION_SCALE;
+    if (resetVelocity) {
+      node.vx = 0;
+      node.vy = 0;
+      node.vz = 0;
+    }
+  }
+}
+
 function rebuildLinks(edges, weights) {
   const linkCount = Math.floor(edges.length / 2);
   state.links = new Array(linkCount);
@@ -235,11 +251,11 @@ function recalculateNodeStrengths() {
 
 function updateStrengths() {
   const baseStrength = state.settings.forcesStrength;
-  const ratio = state.settings.forcesRatio;
+  const ratio = Math.max(1e-6, Number(state.settings.forcesRatio) || defaultSettings.forcesRatio);
   const repulsiveExponent = state.settings.repulsiveExponent;
   const attractiveExponent = state.settings.attractiveExponent;
-  const repulsiveStrength = baseStrength * Math.pow(1 / (ratio / 100), repulsiveExponent / 2);
-  const attractiveStrength = baseStrength * Math.pow(ratio / 100, attractiveExponent / 2);
+  const repulsiveStrength = baseStrength * Math.pow(1 / ratio, repulsiveExponent / 2);
+  const attractiveStrength = baseStrength * Math.pow(ratio, attractiveExponent / 2);
 
   if (!state.repulsiveForce || !state.attractiveForce) return;
 
@@ -308,8 +324,10 @@ self.onmessage = (event) => {
     return;
   }
   if (data.type === 'tick' && data.positions instanceof Float32Array) {
+    let settingsChanged = false;
     if (data.options?.settings) {
       state.settings = { ...state.settings, ...data.options.settings };
+      settingsChanged = true;
     }
 
     const nodeCount = Math.floor(data.positions.length / 3);
@@ -317,6 +335,7 @@ self.onmessage = (event) => {
       rebuildNodes(data.positions);
       ensureSimulation();
       applySettings();
+      settingsChanged = false;
     }
 
     if (data.edges instanceof Uint32Array) {
@@ -326,8 +345,15 @@ self.onmessage = (event) => {
       }
     }
 
+    if (settingsChanged) {
+      ensureSimulation();
+      applySettings();
+    }
+
     if (data.adoptOnly === true) {
       ensureSimulation();
+      syncNodePositionsFromBuffer(data.positions, { resetVelocity: true });
+      state.simulation.nodes(state.nodes);
       applySettings();
       copyNodePositionsToBuffer(data.positions);
       self.postMessage({ type: 'positions', positions: data.positions, alpha: state.settings.alpha }, [data.positions.buffer]);

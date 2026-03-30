@@ -276,6 +276,20 @@ export class D3Force3DLayout extends Layout {
     this.optionsDirty = true;
   }
 
+  _resumeStoppedLayout(reason = 'layout') {
+    const helios = this.helios ?? null;
+    const activeLayout = typeof helios?.layout === 'function'
+      ? helios.layout()
+      : helios?._layout;
+    const scheduler = helios?.scheduler ?? null;
+    const state = typeof scheduler?.getLayoutState === 'function'
+      ? scheduler.getLayoutState()
+      : (scheduler?.layoutEnabled !== false ? 'running' : 'stopped');
+    if (activeLayout !== this || state !== 'stopped') return;
+    scheduler?.setLayoutEnabled?.(true, reason);
+    scheduler?.requestLayout?.(reason);
+  }
+
   setSettings(next = {}, { reheat = false } = {}) {
     if (!next || typeof next !== 'object') return this;
     const hadUse2D = this.settings.use2D === true;
@@ -322,6 +336,7 @@ export class D3Force3DLayout extends Layout {
     if (reheat) {
       this._applyReheatAlpha();
       super.reheat('layout-settings');
+      this._resumeStoppedLayout('layout-settings');
     } else {
       this.requestUpdate();
     }
@@ -331,6 +346,16 @@ export class D3Force3DLayout extends Layout {
   reheat(reason = 'layout') {
     this._applyReheatAlpha();
     super.reheat(reason);
+    this._resumeStoppedLayout(reason);
+    return this;
+  }
+
+  seedFromNetworkPositions() {
+    this.seededPositions = true;
+    this._adoptOnlyNextTick = true;
+    this.requestUpdate();
+    this.emitUpdate({ timestamp: performance.now(), layoutElapsedMs: 0 });
+    this.helios?.scheduler?.requestRender?.();
     return this;
   }
 
@@ -404,11 +429,11 @@ export class D3Force3DLayout extends Layout {
         },
         {
           key: 'forcesRatio',
-          label: 'Force ratio',
-          type: 'number',
-          min: 1,
-          max: 200,
-          step: 1,
+          ...withLogScaleBinding({
+            label: 'Force ratio',
+            min: 0.01,
+            max: 100,
+          }),
           get: () => Number(this.settings.forcesRatio ?? DEFAULT_SETTINGS.forcesRatio),
           set: (value) => this.setSettings({ forcesRatio: value }, { reheat: true }),
         },
