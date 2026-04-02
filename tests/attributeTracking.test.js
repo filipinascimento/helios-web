@@ -5,6 +5,7 @@ import {
   WebGLAttributeRenderer,
   WebGPUAttributeRenderer,
 } from '../src/rendering/AttributeTracker.js';
+import { createAttributeWebGPUTrackSources } from '../src/rendering/engine/shaders/attributeWebGPU.js';
 
 test('AttributeTracker defaults to 0.5 resolution scale', () => {
   const tracker = new AttributeTracker();
@@ -290,6 +291,122 @@ test('WebGPUAttributeRenderer bypasses sparse encoded APIs for indirect r32uint 
   assert.equal(calls.sparseUpdateEdge, 0);
 });
 
+test('WebGPUAttributeRenderer specializes indirect WebGPU layouts to omit unused storage buffers', () => {
+  globalThis.GPUShaderStage ??= { VERTEX: 1, FRAGMENT: 2 };
+  globalThis.GPUBufferUsage ??= { VERTEX: 1, COPY_DST: 2, UNIFORM: 4, STORAGE: 8 };
+  globalThis.GPUTextureUsage ??= { RENDER_ATTACHMENT: 1, COPY_SRC: 2 };
+
+  const createBuffer = ({ size }) => {
+    const storage = new ArrayBuffer(size);
+    return {
+      size,
+      getMappedRange() {
+        return storage;
+      },
+      unmap() {},
+      destroy() {},
+    };
+  };
+
+  const gpu = {
+    createTexture() {
+      return { destroy() {} };
+    },
+    createBuffer,
+    createBindGroupLayout({ entries }) {
+      return { entries };
+    },
+  };
+
+  const renderer = new WebGPUAttributeRenderer({}, null, null);
+  renderer.initialize({
+    type: 'webgpu',
+    device: gpu,
+    format: 'rgba8unorm',
+    depthFormat: 'depth24plus',
+  });
+
+  const nodeBindingsFor = (options) => renderer.resolveNodeIndirectBindGroupLayout(options).entries.map((entry) => entry.binding);
+  const edgeBindingsFor = (options) => renderer.resolveEdgeIndirectBindGroupLayout(options).entries.map((entry) => entry.binding);
+
+  assert.deepEqual(nodeBindingsFor({
+    nodeSizeUniform: true,
+    nodeOutlineUniform: true,
+    nodeTrackedMode: 'index',
+    nodeStateBuffer: false,
+  }).includes(4), false);
+  assert.deepEqual(nodeBindingsFor({
+    nodeSizeUniform: true,
+    nodeOutlineUniform: true,
+    nodeTrackedMode: 'index',
+    nodeStateBuffer: false,
+  }).includes(6), false);
+  assert.deepEqual(nodeBindingsFor({
+    nodeSizeUniform: false,
+    nodeOutlineUniform: false,
+    nodeTrackedMode: 'int',
+    nodeStateBuffer: true,
+  }).includes(4), true);
+  assert.deepEqual(nodeBindingsFor({
+    nodeSizeUniform: false,
+    nodeOutlineUniform: false,
+    nodeTrackedMode: 'int',
+    nodeStateBuffer: true,
+  }).includes(6), true);
+  assert.deepEqual(nodeBindingsFor({
+    nodeSizeUniform: false,
+    nodeOutlineUniform: false,
+    nodeTrackedMode: 'int',
+    nodeStateBuffer: true,
+  }).includes(7), false);
+
+  assert.deepEqual(edgeBindingsFor({
+    edgeWidthUniform: true,
+    edgeEndpointSizeUniform: true,
+    edgeWidthSource: 'edge',
+    edgeEndpointSizeSource: 'edge',
+    edgeTrackedMode: 'index',
+    nodeStateBuffer: false,
+    edgeStateBuffer: false,
+  }).includes(5), false);
+  assert.deepEqual(edgeBindingsFor({
+    edgeWidthUniform: true,
+    edgeEndpointSizeUniform: true,
+    edgeWidthSource: 'edge',
+    edgeEndpointSizeSource: 'edge',
+    edgeTrackedMode: 'index',
+    nodeStateBuffer: false,
+    edgeStateBuffer: false,
+  }).includes(9), false);
+  assert.deepEqual(edgeBindingsFor({
+    edgeWidthUniform: false,
+    edgeEndpointSizeUniform: false,
+    edgeWidthSource: 'node',
+    edgeEndpointSizeSource: 'edge',
+    edgeTrackedMode: 'uint',
+    nodeStateBuffer: true,
+    edgeStateBuffer: true,
+  }).includes(7), true);
+  assert.deepEqual(edgeBindingsFor({
+    edgeWidthUniform: false,
+    edgeEndpointSizeUniform: false,
+    edgeWidthSource: 'node',
+    edgeEndpointSizeSource: 'edge',
+    edgeTrackedMode: 'uint',
+    nodeStateBuffer: true,
+    edgeStateBuffer: true,
+  }).includes(10), true);
+  assert.deepEqual(edgeBindingsFor({
+    edgeWidthUniform: false,
+    edgeEndpointSizeUniform: false,
+    edgeWidthSource: 'node',
+    edgeEndpointSizeSource: 'edge',
+    edgeTrackedMode: 'uint',
+    nodeStateBuffer: true,
+    edgeStateBuffer: true,
+  }).includes(9), false);
+});
+
 test('WebGPUAttributeRenderer bypasses sparse encoded APIs for indirect rgba8 direct path', () => {
   const calls = {
     sparseDefineNode: 0,
@@ -359,6 +476,7 @@ test('WebGPUAttributeRenderer bypasses sparse encoded APIs for indirect rgba8 di
   renderer.targetFormat = 'rgba8unorm';
   renderer.nodeIndirectBindGroupLayout = {};
   renderer.edgeIndirectBindGroupLayout = {};
+  renderer.edgeIndirectBindGroupLayouts = new Map([['index', {}]]);
   renderer.resize = () => {};
   renderer.renderIndirectSparseGeometry = () => ({ node: null, edge: null });
 
@@ -373,6 +491,51 @@ test('WebGPUAttributeRenderer bypasses sparse encoded APIs for indirect rgba8 di
   assert.equal(calls.sparseUpdateNode, 0);
   assert.equal(calls.sparseDefineEdge, 0);
   assert.equal(calls.sparseUpdateEdge, 0);
+});
+
+test('attributeWebGPU track sources include node and edge state geometry adjustments', () => {
+  const sources = createAttributeWebGPUTrackSources({
+    node: { size: 'buffer', outline: 'buffer', trackedMode: 'index', stateBuffer: true },
+    edge: {
+      width: 'buffer',
+      endpointSize: 'buffer',
+      widthSource: 'edge',
+      endpointSizeSource: 'edge',
+      trackedMode: 'index',
+      nodeStateBuffer: true,
+      stateBuffer: true,
+    },
+  });
+  assert.match(sources.nodeWGSL, /@group\(0\) @binding\(8\) var<storage, read> nodeStates : U32Data;/);
+  assert.match(sources.nodeWGSL, /if \(track\.hoverNode\.x != 0xffffffffu && nodeId == track\.hoverNode\.x\)/);
+  assert.match(sources.edgeWGSL, /@group\(0\) @binding\(11\) var<storage, read> nodeStates : U32Data;/);
+  assert.match(sources.edgeWGSL, /@group\(0\) @binding\(12\) var<storage, read> edgeStates : U32Data;/);
+  assert.match(sources.edgeWGSL, /if \(track\.hoverEdge\.w == 1u && \(\(sourceState \| targetState\) & 2u\) != 0u\)/);
+});
+
+test('attributeWebGPU track sources omit optional node and edge storage declarations when uniforms are used', () => {
+  const sources = createAttributeWebGPUTrackSources({
+    node: { size: 'uniform', outline: 'uniform', trackedMode: 'index', stateBuffer: false },
+    edge: {
+      width: 'uniform',
+      endpointSize: 'uniform',
+      widthSource: 'edge',
+      endpointSizeSource: 'edge',
+      trackedMode: 'index',
+      nodeStateBuffer: false,
+      stateBuffer: false,
+    },
+  });
+
+  assert.equal(/@group\(0\) @binding\(4\) var<storage, read> nodeSizes/.test(sources.nodeWGSL), false);
+  assert.equal(/@group\(0\) @binding\(5\) var<storage, read> nodeOutlineWidths/.test(sources.nodeWGSL), false);
+  assert.equal(/@group\(0\) @binding\(6\) var<storage, read> nodeTrackedInt/.test(sources.nodeWGSL), false);
+  assert.equal(/@group\(0\) @binding\(7\) var<storage, read> nodeTrackedUint/.test(sources.nodeWGSL), false);
+  assert.equal(/@group\(0\) @binding\(8\) var<storage, read> nodeStates/.test(sources.nodeWGSL), false);
+  assert.equal(/@group\(0\) @binding\(5\) var<storage, read> edgeWidths/.test(sources.edgeWGSL), false);
+  assert.equal(/@group\(0\) @binding\(6\) var<storage, read> edgeEndpointSizes/.test(sources.edgeWGSL), false);
+  assert.equal(/@group\(0\) @binding\(11\) var<storage, read> nodeStates/.test(sources.edgeWGSL), false);
+  assert.equal(/@group\(0\) @binding\(12\) var<storage, read> edgeStates/.test(sources.edgeWGSL), false);
 });
 
 test('WebGPUAttributeRenderer accepts delegate node position buffers without CPU position views', () => {
@@ -456,6 +619,7 @@ test('WebGPUAttributeRenderer accepts delegate node position buffers without CPU
   };
   renderer.nodeIndirectBindGroupLayout = {};
   renderer.edgeIndirectBindGroupLayout = {};
+  renderer.edgeIndirectBindGroupLayouts = new Map([['index', {}]]);
   renderer.cornerBuffer = createFakeBuffer(64);
   renderer.edgeCornerBuffer = createFakeBuffer(64);
   renderer.getIndirectPipelinesForVariant = () => ({

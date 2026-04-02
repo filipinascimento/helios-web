@@ -398,6 +398,7 @@ fn edgeDepthFragment(input : EdgeVertexOutput) -> @location(0) vec4<f32> {
 }
 
 export function createAttributeWebGPUTrackSources(options = {}) {
+  const TRACK_STATE_SLOTS = 32;
   const node = options?.node && typeof options.node === 'object' ? options.node : {};
   const edge = options?.edge && typeof options.edge === 'object' ? options.edge : {};
   const encodedOutputMode = options?.encodedOutputMode === 'uint32' ? 'uint32' : 'rgba8';
@@ -405,12 +406,15 @@ export function createAttributeWebGPUTrackSources(options = {}) {
 
   const nodeUseSizeBuffer = node.size !== 'uniform';
   const nodeUseOutlineBuffer = node.outline !== 'uniform';
+  const nodeUseStateBuffer = node.stateBuffer === true;
   const nodeTrackedMode = node.trackedMode === 'int'
     ? 'int'
     : (node.trackedMode === 'uint' ? 'uint' : 'index');
 
   const edgeUseWidthBuffer = edge.width !== 'uniform';
   const edgeUseEndpointSizeBuffer = edge.endpointSize !== 'uniform';
+  const edgeUseNodeStateBuffer = edge.nodeStateBuffer === true;
+  const edgeUseStateBuffer = edge.stateBuffer === true;
   const edgeWidthSource = edge.widthSource === 'node' ? 'node' : 'edge';
   const edgeEndpointSizeSource = edge.endpointSizeSource === 'node' ? 'node' : 'edge';
   const edgeWidthEndpoints = Number.isFinite(edge.widthEndpointsMode) ? Number(edge.widthEndpointsMode) : 0;
@@ -472,6 +476,16 @@ struct Globals {
   edgeWidthRaw: vec2<f32>,
   edgeEndpointSizeRaw: vec2<f32>,
   _pad1: vec2<f32>,
+};
+
+struct TrackConfig {
+  hoverNode: vec4<u32>, // x=index y=state
+  hoverEdge: vec4<u32>, // x=index y=state z=propHovered w=propSelected
+  stateMeta: vec4<u32>, // x=hasNodeStates y=hasEdgeStates z=stateSlotCount
+  nodeNoStateScale: vec4<f32>,
+  edgeNoStateScale: vec4<f32>,
+  nodeStateScale: array<vec4<f32>, ${TRACK_STATE_SLOTS}>,
+  edgeStateScale: array<vec4<f32>, ${TRACK_STATE_SLOTS}>,
 };
 
 struct U32Data { data: array<u32>, };
@@ -538,10 +552,12 @@ struct NodeVertexOutput {
 @group(0) @binding(1) var<uniform> globals : Globals;
 @group(0) @binding(2) var<storage, read> nodeIndices : U32Data;
 @group(0) @binding(3) var<storage, read> nodePositions : F32Data;
-@group(0) @binding(4) var<storage, read> nodeSizes : F32Data;
-@group(0) @binding(5) var<storage, read> nodeOutlineWidths : F32Data;
-@group(0) @binding(6) var<storage, read> nodeTrackedInt : I32Data;
-@group(0) @binding(7) var<storage, read> nodeTrackedUint : U32Data;
+${nodeUseSizeBuffer ? '@group(0) @binding(4) var<storage, read> nodeSizes : F32Data;' : ''}
+${nodeUseOutlineBuffer ? '@group(0) @binding(5) var<storage, read> nodeOutlineWidths : F32Data;' : ''}
+${nodeTrackedMode === 'int' ? '@group(0) @binding(6) var<storage, read> nodeTrackedInt : I32Data;' : ''}
+${nodeTrackedMode === 'uint' ? '@group(0) @binding(7) var<storage, read> nodeTrackedUint : U32Data;' : ''}
+${nodeUseStateBuffer ? '@group(0) @binding(8) var<storage, read> nodeStates : U32Data;' : ''}
+@group(0) @binding(9) var<uniform> track : TrackConfig;
 
 @vertex
 fn nodeVertex(input : NodeVertexInput) -> NodeVertexOutput {
@@ -552,11 +568,36 @@ fn nodeVertex(input : NodeVertexInput) -> NodeVertexOutput {
     nodePositions.data[base + 1u],
     nodePositions.data[base + 2u],
   );
+  var state = 0u;
+  ${nodeUseStateBuffer ? `
+  if (track.stateMeta.x == 1u) {
+    state = nodeStates.data[nodeId];
+  }` : ''}
+  if (track.hoverNode.x != 0xffffffffu && nodeId == track.hoverNode.x) {
+    state = state | track.hoverNode.y;
+  }
+  var sizeMul = 1.0;
+  var outlineMul = 1.0;
+  if (state == 0u) {
+    sizeMul = sizeMul * track.nodeNoStateScale.x;
+    outlineMul = outlineMul * track.nodeNoStateScale.z;
+  } else {
+    for (var i = 0u; i < ${TRACK_STATE_SLOTS}u; i = i + 1u) {
+      if (i >= track.stateMeta.z) {
+        break;
+      }
+      if (((state >> i) & 1u) == 1u) {
+        let scale = track.nodeStateScale[i];
+        sizeMul = sizeMul * scale.x;
+        outlineMul = outlineMul * scale.z;
+      }
+    }
+  }
   let rawSize = ${NODE_SIZE_EXPR};
   let rawOutline = ${NODE_OUTLINE_EXPR};
   let semanticScale = semanticZoomScale(camera, globals);
-  let outlineWidth = max(0.0, globals.nodeOutline.x + globals.nodeOutline.y * rawOutline);
-  let fullSize = max(1.0, globals.nodeSize.x + globals.nodeSize.y * rawSize + outlineWidth) * semanticScale;
+  let outlineWidth = max(0.0, (globals.nodeOutline.x + globals.nodeOutline.y * rawOutline) * outlineMul);
+  let fullSize = max(1.0, (globals.nodeSize.x + globals.nodeSize.y * rawSize) * sizeMul + outlineWidth) * semanticScale;
   let radius = fullSize * 0.5;
 
   var right = camera.right.xyz;
@@ -699,12 +740,15 @@ struct EdgeQuadInput {
 @group(0) @binding(2) var<storage, read> edgeIndices : U32Data;
 @group(0) @binding(3) var<storage, read> edgeEndpoints : U32PairData;
 @group(0) @binding(4) var<storage, read> nodePositions : F32Data;
-@group(0) @binding(5) var<storage, read> edgeWidths : F32PairData;
-@group(0) @binding(6) var<storage, read> edgeEndpointSizes : F32PairData;
-@group(0) @binding(7) var<storage, read> nodeWidthSource : F32Data;
-@group(0) @binding(8) var<storage, read> nodeEndpointSizeSource : F32Data;
-@group(0) @binding(9) var<storage, read> edgeTrackedInt : I32Data;
-@group(0) @binding(10) var<storage, read> edgeTrackedUint : U32Data;
+${edgeUseWidthBuffer && edgeWidthSource === 'edge' ? '@group(0) @binding(5) var<storage, read> edgeWidths : F32PairData;' : ''}
+${edgeUseEndpointSizeBuffer && edgeEndpointSizeSource === 'edge' ? '@group(0) @binding(6) var<storage, read> edgeEndpointSizes : F32PairData;' : ''}
+${edgeUseWidthBuffer && edgeWidthSource === 'node' ? '@group(0) @binding(7) var<storage, read> nodeWidthSource : F32Data;' : ''}
+${edgeUseEndpointSizeBuffer && edgeEndpointSizeSource === 'node' ? '@group(0) @binding(8) var<storage, read> nodeEndpointSizeSource : F32Data;' : ''}
+${edgeTrackedMode === 'int' ? '@group(0) @binding(9) var<storage, read> edgeTrackedInt : I32Data;' : ''}
+${edgeTrackedMode === 'uint' ? '@group(0) @binding(10) var<storage, read> edgeTrackedUint : U32Data;' : ''}
+${edgeUseNodeStateBuffer ? '@group(0) @binding(11) var<storage, read> nodeStates : U32Data;' : ''}
+${edgeUseStateBuffer ? '@group(0) @binding(12) var<storage, read> edgeStates : U32Data;' : ''}
+@group(0) @binding(13) var<uniform> track : TrackConfig;
 
 fn edgeEncoded(edgeId: u32) -> u32 {
   return ${EDGE_TRACKED_EXPR};
@@ -764,17 +808,85 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeLineVertexOutput {
   let dirRaw = targetPos - sourcePos;
   let dirLenWorld = max(length(dirRaw), 1e-5);
   let dir = dirRaw / vec3<f32>(dirLenWorld);
+  var sourceState = 0u;
+  var targetState = 0u;
+  ${edgeUseNodeStateBuffer ? `
+  if (track.stateMeta.x == 1u) {
+    sourceState = nodeStates.data[sourceId];
+    targetState = nodeStates.data[targetId];
+  }` : ''}
+  if (track.hoverNode.x != 0xffffffffu) {
+    if (sourceId == track.hoverNode.x) {
+      sourceState = sourceState | track.hoverNode.y;
+    }
+    if (targetId == track.hoverNode.x) {
+      targetState = targetState | track.hoverNode.y;
+    }
+  }
   let endpointPair = edgeEndpointSizePair(edgeId, sourceId, targetId);
   let semanticScale = semanticZoomScale(camera, globals);
-  let startRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointPair.x, 0.0) * 0.5 * semanticScale;
-  let endRadius = max(globals.nodeSize.x + globals.nodeSize.y * endpointPair.y, 0.0) * 0.5 * semanticScale;
+  var startSizeMul = 1.0;
+  var endSizeMul = 1.0;
+  if (sourceState == 0u) {
+    startSizeMul = startSizeMul * track.nodeNoStateScale.x;
+  } else {
+    for (var i = 0u; i < ${TRACK_STATE_SLOTS}u; i = i + 1u) {
+      if (i >= track.stateMeta.z) {
+        break;
+      }
+      if (((sourceState >> i) & 1u) == 1u) {
+        startSizeMul = startSizeMul * track.nodeStateScale[i].x;
+      }
+    }
+  }
+  if (targetState == 0u) {
+    endSizeMul = endSizeMul * track.nodeNoStateScale.x;
+  } else {
+    for (var i = 0u; i < ${TRACK_STATE_SLOTS}u; i = i + 1u) {
+      if (i >= track.stateMeta.z) {
+        break;
+      }
+      if (((targetState >> i) & 1u) == 1u) {
+        endSizeMul = endSizeMul * track.nodeStateScale[i].x;
+      }
+    }
+  }
+  let startRadius = max((globals.nodeSize.x + globals.nodeSize.y * endpointPair.x) * startSizeMul, 0.0) * 0.5 * semanticScale;
+  let endRadius = max((globals.nodeSize.x + globals.nodeSize.y * endpointPair.y) * endSizeMul, 0.0) * 0.5 * semanticScale;
   let trimStart = startRadius * globals.edgeTrim;
   let trimEnd = endRadius * globals.edgeTrim;
   let startPos = sourcePos + dir * trimStart;
   let endPos = targetPos - dir * trimEnd;
   let segmentMix = clamp(input.corner.x, 0.0, 1.0);
   let widthPair = edgeWidthPair(edgeId, sourceId, targetId);
-  let width = max(globals.edgeWidth.x + globals.edgeWidth.y * mix(widthPair.x, widthPair.y, segmentMix), 0.0) * semanticScale;
+  var state = 0u;
+  ${edgeUseStateBuffer ? `
+  if (track.stateMeta.y == 1u) {
+    state = edgeStates.data[edgeId];
+  }` : ''}
+  if (track.hoverEdge.x != 0xffffffffu && edgeId == track.hoverEdge.x) {
+    state = state | track.hoverEdge.y;
+  }
+  if (track.hoverEdge.z == 1u && track.hoverNode.x != 0xffffffffu && (sourceId == track.hoverNode.x || targetId == track.hoverNode.x)) {
+    state = state | 4u;
+  }
+  if (track.hoverEdge.w == 1u && ((sourceState | targetState) & 2u) != 0u) {
+    state = state | 2u;
+  }
+  var widthMul = 1.0;
+  if (state == 0u) {
+    widthMul = widthMul * track.edgeNoStateScale.x;
+  } else {
+    for (var i = 0u; i < ${TRACK_STATE_SLOTS}u; i = i + 1u) {
+      if (i >= track.stateMeta.z) {
+        break;
+      }
+      if (((state >> i) & 1u) == 1u) {
+        widthMul = widthMul * track.edgeStateScale[i].x;
+      }
+    }
+  }
+  let width = max((globals.edgeWidth.x + globals.edgeWidth.y * mix(widthPair.x, widthPair.y, segmentMix)) * widthMul, 0.0) * semanticScale;
   let clipStart = camera.viewProjection * vec4<f32>(startPos, 1.0);
   let clipEnd = camera.viewProjection * vec4<f32>(endPos, 1.0);
   let ndcStart = clipStart.xy / clipStart.w;

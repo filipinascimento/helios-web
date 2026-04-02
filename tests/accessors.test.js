@@ -791,6 +791,86 @@ test('setMode() collapses node depth when landing in 2D', async () => {
   ]);
 });
 
+test('setMode() also collapses active delegate depth when landing in 2D', async () => {
+  const positions = new Float32Array([
+    0, 0, -5,
+    1, 2, 7,
+  ]);
+  const calls = {
+    delegateFlatten: [],
+    markPositionsDirty: 0,
+    requestGeometry: 0,
+    requestRender: 0,
+  };
+  const helios = Object.create(Helios.prototype);
+  helios.options = {
+    mode: '3d',
+    projection: 'perspective',
+    layout: { type: 'static', options: {} },
+  };
+  helios.network = {
+    nodeIndices: new Uint32Array([0, 1]),
+    getNodeAttributeBuffer: () => ({ view: positions }),
+  };
+  helios.visuals = {
+    seedMissingPositions: () => {},
+    markPositionsDirty: () => { calls.markPositionsDirty += 1; },
+  };
+  helios.scheduler = {
+    requestGeometry: () => { calls.requestGeometry += 1; },
+    requestLayout: () => {},
+    requestRender: () => { calls.requestRender += 1; },
+  };
+  helios.renderer = {
+    camera: {
+      mode: '3d',
+      projection: 'perspective',
+      zoom: 1,
+      distance: 800,
+      fov: 60,
+      near: 0.1,
+      far: 100000,
+      near2D: -1,
+      far2D: 1,
+      viewport: { width: 800, height: 600, devicePixelRatio: 1 },
+      target: new Float32Array([0, 0, 0]),
+      pan2D: new Float32Array([0, 0, 0]),
+      pan3D: new Float32Array([0, 0, 0]),
+      rotation: new Float32Array([0, 0, 0, 1]),
+      updateMatrices: () => {},
+    },
+  };
+  helios._layout = { requestUpdate: () => {} };
+  helios._labels = { requestFullReselect: () => {} };
+  helios._refreshUIBindings = () => {};
+  helios._emitLayoutChanged = () => {};
+  helios._enforcePositionSourcePolicy = () => {};
+  helios.emit = () => {};
+  const delegate = {
+    flattenNodeDepthToPlane: async (context, zValue) => {
+      calls.delegateFlatten.push({
+        zValue,
+        networkMatches: context.network === helios.network,
+      });
+      return true;
+    },
+  };
+  helios.positions = () => ({ source: 'delegate', delegate });
+
+  await helios.setMode('2d', { animate: false });
+  assert.deepEqual(Array.from(positions), [
+    0, 0, 0,
+    1, 2, 0,
+  ]);
+  assert.deepEqual(calls.delegateFlatten, [{
+    zValue: 0,
+    networkMatches: true,
+  }]);
+  assert.equal(calls.markPositionsDirty, 2);
+  assert.equal(calls.requestGeometry, 2);
+  assert.ok(calls.requestRender >= 2);
+});
+
 test('setMode() injects tiny delegate depth jitter without reseeding when gpu-force switches from 2D to 3D', async () => {
   const positions = new Float32Array([
     -10, -5, 0,

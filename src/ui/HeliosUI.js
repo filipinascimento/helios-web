@@ -17,6 +17,7 @@ import { MappersPanel } from './panels/MappersPanel.js';
 import { LayoutPanel } from './panels/LayoutPanel.js';
 import { LegendsPanel } from './panels/LegendsPanel.js';
 import { CameraPanel } from './panels/CameraPanel.js';
+import { SelectionPanel } from './panels/SelectionPanel.js';
 import { clampNumber } from './utils/numbers.js';
 import { toHex8 } from './utils/colors.js';
 import { isPublicAttributeName } from './utils/attributes.js';
@@ -7094,5 +7095,9 @@ export class HeliosUI {
 
   createCameraPanel(options = {}) {
     return new CameraPanel(this, options).create();
+  }
+
+  createSelectionPanel(options = {}) {
+    return new SelectionPanel(this, options).create();
   }
 }

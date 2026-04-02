@@ -122,6 +122,12 @@ export class PositionDelegate {
     return this.getGpuPositionResource(context);
   }
 
+  async flattenNodeDepthToPlane(context = {}, zValue = 0) {
+    this.ensureSynchronized(context);
+    void zValue;
+    return false;
+  }
+
   ensureSynchronized(context = {}) {
     const merged = this._mergeContext(context);
     this._context = merged;

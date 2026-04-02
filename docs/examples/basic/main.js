@@ -503,6 +503,10 @@ async function bootstrap() {
   heliosUI.createLegendsPanel({ dock: 'top-right', position: { x: 16, y: 560 } });
   heliosUI.createFilterPanel({ dock: 'top-right' });
   heliosUI.createCameraPanel({ dock: 'top-right' });
+  const selectionPanel = heliosUI.createSelectionPanel({
+    dock: 'top-right',
+  });
+  window.__heliosSelectionPanel = selectionPanel;
 
   helios.on(EVENTS.NETWORK_REPLACED, () => {
     configureDemoMappers();
@@ -514,90 +518,6 @@ async function bootstrap() {
   helios.edgeWidthScale(1.0).edgeWidthBase(0);
   helios.edgeOpacityScale(0.5);
   
-
-  console.log("Picking");
-
-  // --- State interactions demo -------------------------------------------------
-  // Click selects a node; clicking empty space deselects.
-  // Hover highlights a node.
-  // Double-click filters (hides) a node; double-click empty space resets filters.
-  //
-  // Requires node picking to be enabled (uses the internal $index pick targets).
-  console.log('Enabling state interactions (hover/click/dblclick)...');
-  const STATES = Helios.STATES;
-  helios
-    .resetStateStyles()
-    // FILTERED: hide.
-    .nodeStateStyle('FILTERED', { discard: true })
-    // SELECTED: bigger and brighter.
-    .nodeStateStyle('SELECTED', { sizeMul: 1.4, opacityMul: 1.0, outlineMul: 2.0, colorAdd: [0.25, 0.25, 0.25, 0] })
-    // HIGHLIGHTED: slightly bigger and tint.
-    .nodeStateStyle('HIGHLIGHTED', { sizeMul: 1.15, opacityMul: 1.0, outlineMul: 1.2, colorAdd: [0.0, 0.25, 0.25, 0] });
-
-  helios.enableNodePicking({ resolutionScale: 0.25, trackDepth: false, maxFps: 15 });
-
-  let highlightedNode = null;
-  let selectedNode = null;
-  const filteredNodes = new Set();
-
-  const clearSelected = () => {
-    if (selectedNode != null) {
-      helios.nodeState([selectedNode], 'SELECTED', { mode: 'remove' });
-      selectedNode = null;
-    }
-  };
-
-  const clearFiltered = () => {
-    if (!filteredNodes.size) return;
-    helios.nodeState(Array.from(filteredNodes), 'FILTERED', { mode: 'remove' });
-    filteredNodes.clear();
-  };
-
-  helios.on('node:hover', (e) => {
-    const detail = e?.detail;
-    if (!detail) return;
-    const index = detail.index;
-    if (detail.state === 'in') {
-      highlightedNode = index;
-      helios.hoverNodeState(index, 'HIGHLIGHTED');
-    } else if (detail.state === 'out') {
-      if (highlightedNode === index) {
-        helios.hoverNodeState(null, 0);
-        highlightedNode = null;
-      }
-    }
-  });
-
-  // Click and double-click are emitted even when the background is clicked (kind === null).
-  helios.on('graph:click', (e) => {
-    const detail = e?.detail;
-    if (!detail) return;
-    if (detail.kind === 'node' && detail.index >= 0) {
-      const index = detail.index;
-      if (selectedNode != null && selectedNode !== index) {
-        helios.nodeState([selectedNode], 'SELECTED', { mode: 'remove' });
-      }
-      selectedNode = index;
-      helios.nodeState([index], 'SELECTED', { mode: 'add' });
-      return;
-    }
-    // Background click or edge click: clear selection.
-    clearSelected();
-  });
-
-  helios.on('graph:dblclick', (e) => {
-    const detail = e?.detail;
-    if (!detail) return;
-    if (detail.kind === 'node' && detail.index >= 0) {
-      clearFiltered();
-      filteredNodes.add(detail.index);
-      helios.nodeState([detail.index], 'FILTERED', { mode: 'add' });
-      return;
-    }
-    // Background double-click or edge double-click: reset filters.
-    clearFiltered();
-  });
-
 
   console.log("Misc diagnostics...");
   const activeNetwork = helios.network;

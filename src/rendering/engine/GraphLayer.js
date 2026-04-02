@@ -55,15 +55,21 @@ export class GraphLayer extends Layer {
     this.nodeStateScale = new Float32Array(slots * 4);
     this.nodeStateColorMul = new Float32Array(slots * 4);
     this.nodeStateColorAdd = new Float32Array(slots * 4);
+    this.nodeStateForceMaxAlphaMask = 0;
     this.nodeNoStateScale = new Float32Array(4);
     this.nodeNoStateColorMul = new Float32Array(4);
     this.nodeNoStateColorAdd = new Float32Array(4);
+    this.nodeNoStateStyleEnabled = true;
     this.edgeStateScale = new Float32Array(slots * 4);
     this.edgeStateColorMul = new Float32Array(slots * 4);
     this.edgeStateColorAdd = new Float32Array(slots * 4);
+    this.edgeStateForceMaxAlphaMask = 0;
     this.edgeNoStateScale = new Float32Array(4);
     this.edgeNoStateColorMul = new Float32Array(4);
     this.edgeNoStateColorAdd = new Float32Array(4);
+    this.edgeNoStateStyleEnabled = true;
+    this.propagateHoveredNodeToEdges = options.propagateHoveredNodeToEdges === true;
+    this.propagateSelectedNodesToEdges = options.propagateSelectedNodesToEdges === true;
 
     this.hoveredNodeIndex = GraphLayer.NO_HOVER_INDEX;
     this.hoveredNodeState = 0;
@@ -166,6 +172,42 @@ export class GraphLayer extends Layer {
     return false;
   }
 
+  hasActiveNodeStateStyling() {
+    if ((this.hoveredNodeState >>> 0) !== 0) return true;
+    if (
+      this.nodeNoStateScale[0] !== 1
+      || this.nodeNoStateScale[1] !== 1
+      || this.nodeNoStateScale[2] !== 1
+      || this.nodeNoStateScale[3] !== 0
+      || this.nodeNoStateColorMul[0] !== 1
+      || this.nodeNoStateColorMul[1] !== 1
+      || this.nodeNoStateColorMul[2] !== 1
+      || this.nodeNoStateColorAdd[0] !== 0
+      || this.nodeNoStateColorAdd[1] !== 0
+      || this.nodeNoStateColorAdd[2] !== 0
+    ) {
+      return true;
+    }
+    for (let i = 0; i < this.stateSlotCount; i += 1) {
+      const o = i * 4;
+      if (
+        this.nodeStateScale[o + 0] !== 1
+        || this.nodeStateScale[o + 1] !== 1
+        || this.nodeStateScale[o + 2] !== 1
+        || this.nodeStateScale[o + 3] !== 0
+        || this.nodeStateColorMul[o + 0] !== 1
+        || this.nodeStateColorMul[o + 1] !== 1
+        || this.nodeStateColorMul[o + 2] !== 1
+        || this.nodeStateColorAdd[o + 0] !== 0
+        || this.nodeStateColorAdd[o + 1] !== 0
+        || this.nodeStateColorAdd[o + 2] !== 0
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   hasActiveEndpointStateStyling() {
     if (this.nodeNoStateScale[0] !== 1) return true;
     for (let i = 0; i < this.stateSlotCount; i += 1) {
@@ -177,14 +219,26 @@ export class GraphLayer extends Layer {
   resolveEdgeSpecialization(options = {}) {
     const is2D = options.is2D === true;
     const trim = options.fastPath === true ? false : this.hasEdgeTrim();
-    const edgeState = options.fastPath === true ? false : this.hasActiveEdgeStateStyling();
-    const endpointState = trim && options.fastPath !== true && this.hasActiveEndpointStateStyling();
+    const propagateHoveredNodeToEdges = options.fastPath === true
+      ? false
+      : this.propagateHoveredNodeToEdges === true;
+    const propagateSelectedNodesToEdges = options.fastPath === true
+      ? false
+      : this.propagateSelectedNodesToEdges === true;
+    const edgeState = options.fastPath === true
+      ? false
+      : (this.hasActiveEdgeStateStyling() || propagateHoveredNodeToEdges || propagateSelectedNodesToEdges);
+    const endpointState = options.fastPath === true
+      ? false
+      : ((trim && this.hasActiveEndpointStateStyling()) || propagateSelectedNodesToEdges);
     return {
       cameraMode: is2D ? '2d' : '3d',
       semanticZoom: options.fastPath === true ? false : (is2D && this.hasSemanticZoom()),
       trim,
       edgeState,
       endpointState,
+      propagateHoveredNodeToEdges,
+      propagateSelectedNodesToEdges,
     };
   }
 
@@ -211,6 +265,8 @@ export class GraphLayer extends Layer {
 
   resetStateStyles() {
     const slots = this.stateSlotCount;
+    this.nodeStateForceMaxAlphaMask = 0;
+    this.edgeStateForceMaxAlphaMask = 0;
     for (let i = 0; i < slots; i += 1) {
       const o = i * 4;
       this.nodeStateScale[o + 0] = 1;
@@ -290,6 +346,14 @@ export class GraphLayer extends Layer {
       this.nodeStateColorAdd[o + 2] = v[2] ?? this.nodeStateColorAdd[o + 2];
       this.nodeStateColorAdd[o + 3] = v[3] ?? this.nodeStateColorAdd[o + 3];
     }
+    if (style.forceMaxAlpha != null) {
+      const bit = (1 << index) >>> 0;
+      if (style.forceMaxAlpha) {
+        this.nodeStateForceMaxAlphaMask = (this.nodeStateForceMaxAlphaMask | bit) >>> 0;
+      } else {
+        this.nodeStateForceMaxAlphaMask = (this.nodeStateForceMaxAlphaMask & (~bit)) >>> 0;
+      }
+    }
   }
 
   setNodeNoStateStyle(style = {}) {
@@ -333,6 +397,14 @@ export class GraphLayer extends Layer {
       this.edgeStateColorAdd[o + 1] = v[1] ?? this.edgeStateColorAdd[o + 1];
       this.edgeStateColorAdd[o + 2] = v[2] ?? this.edgeStateColorAdd[o + 2];
       this.edgeStateColorAdd[o + 3] = v[3] ?? this.edgeStateColorAdd[o + 3];
+    }
+    if (style.forceMaxAlpha != null) {
+      const bit = (1 << index) >>> 0;
+      if (style.forceMaxAlpha) {
+        this.edgeStateForceMaxAlphaMask = (this.edgeStateForceMaxAlphaMask | bit) >>> 0;
+      } else {
+        this.edgeStateForceMaxAlphaMask = (this.edgeStateForceMaxAlphaMask & (~bit)) >>> 0;
+      }
     }
   }
 

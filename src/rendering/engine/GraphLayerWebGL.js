@@ -153,6 +153,7 @@ const NODE_UNIFORM_NAMES = [
   'u_defaultNodeSize',
   'u_hoverNodeIndex',
   'u_hoverNodeState',
+  'u_nodeStateForceMaxAlphaMask',
   'u_nodeNoStateScale',
   'u_nodeNoStateColorMul',
   'u_nodeNoStateColorAdd',
@@ -182,8 +183,10 @@ const EDGE_UNIFORM_NAMES = [
   'u_nodeOpacitySource',
   'u_edgeEndpoints',
   'u_hasEdgeStates',
+  'u_hoverNodeIndex',
   'u_hoverEdgeIndex',
   'u_hoverEdgeState',
+  'u_edgeStateForceMaxAlphaMask',
   'u_edgeNoStateScale',
   'u_edgeNoStateColorMul',
   'u_edgeNoStateColorAdd',
@@ -265,8 +268,10 @@ const EDGE_QUAD_UNIFORM_NAMES = [
   'u_edgeEndpointTrim',
   'u_zoom2D',
   'u_semanticZoomExponent',
+  'u_hoverNodeIndex',
   'u_hoverEdgeIndex',
   'u_hoverEdgeState',
+  'u_edgeStateForceMaxAlphaMask',
   'u_nodeNoStateScale',
   'u_nodeStateScale[0]',
   'u_edgeNoStateScale',
@@ -902,6 +907,8 @@ export class GraphLayerWebGL extends GraphLayer {
       `tr:${variant?.trim ? 1 : 0}`,
       `st:${variant?.edgeState ? 1 : 0}`,
       `et:${variant?.endpointState ? 1 : 0}`,
+      `ph:${variant?.propagateHoveredNodeToEdges ? 1 : 0}`,
+      `ps:${variant?.propagateSelectedNodesToEdges ? 1 : 0}`,
       `c:${variant?.colorBuffer ? 'B' : 'U'}:${variant?.colorSource}:${variant?.colorEndpoints}`,
       `w:${variant?.widthBuffer ? 'B' : 'U'}:${variant?.widthSource}:${variant?.widthEndpoints}`,
       `o:${variant?.opacityBuffer ? 'B' : 'U'}:${variant?.opacitySource}:${variant?.opacityEndpoints}`,
@@ -968,6 +975,8 @@ export class GraphLayerWebGL extends GraphLayer {
         trim: edgeVariant?.trim === true,
         edgeState: edgeVariant?.edgeState === true,
         endpointState: edgeVariant?.endpointState === true,
+        propagateHoveredNodeToEdges: edgeVariant?.propagateHoveredNodeToEdges === true,
+        propagateSelectedNodesToEdges: edgeVariant?.propagateSelectedNodesToEdges === true,
       },
     };
   }
@@ -1311,6 +1320,8 @@ export class GraphLayerWebGL extends GraphLayer {
         trim: specialization.trim,
         edgeState: specialization.edgeState,
         endpointState: specialization.endpointState,
+        propagateHoveredNodeToEdges: specialization.propagateHoveredNodeToEdges,
+        propagateSelectedNodesToEdges: specialization.propagateSelectedNodesToEdges,
         fastPath: true,
       };
     }
@@ -1340,6 +1351,8 @@ export class GraphLayerWebGL extends GraphLayer {
       trim: specialization.trim,
       edgeState: specialization.edgeState,
       endpointState: specialization.endpointState,
+      propagateHoveredNodeToEdges: specialization.propagateHoveredNodeToEdges,
+      propagateSelectedNodesToEdges: specialization.propagateSelectedNodesToEdges,
       fastPath: false,
     };
   }
@@ -2230,17 +2243,35 @@ export class GraphLayerWebGL extends GraphLayer {
             set1i(uniforms, 'u_hasNodeWidthSource', hasNodeWidthSource ? 1 : 0);
             set1i(uniforms, 'u_hasNodeOpacitySource', hasNodeOpacitySource ? 1 : 0);
             set1i(uniforms, 'u_hasNodeEndpointSizeSource', hasNodeEndpointSizeSource ? 1 : 0);
+            set1ui(uniforms, 'u_hoverNodeIndex', this.hoveredNodeIndex);
             set1ui(uniforms, 'u_hoverEdgeIndex', this.hoveredEdgeIndex);
             set1ui(uniforms, 'u_hoverEdgeState', this.hoveredEdgeState);
-            set4fv(uniforms, 'u_nodeNoStateScale', this.nodeNoStateScale);
+            set1ui(uniforms, 'u_edgeStateForceMaxAlphaMask', this.edgeStateForceMaxAlphaMask >>> 0);
+            set4fv(
+              uniforms,
+              'u_nodeNoStateScale',
+              this.nodeNoStateStyleEnabled === true ? this.nodeNoStateScale : DEFAULT_STATE_SCALE,
+            );
             set4fv(
               uniforms,
               'u_nodeStateScale[0]',
               (this.nodeStateScale && this.nodeStateScale.length > 0) ? this.nodeStateScale : DEFAULT_STATE_SCALE,
             );
-            set4fv(uniforms, 'u_edgeNoStateScale', this.edgeNoStateScale);
-            set4fv(uniforms, 'u_edgeNoStateColorMul', this.edgeNoStateColorMul);
-            set4fv(uniforms, 'u_edgeNoStateColorAdd', this.edgeNoStateColorAdd);
+            set4fv(
+              uniforms,
+              'u_edgeNoStateScale',
+              this.edgeNoStateStyleEnabled === true ? this.edgeNoStateScale : DEFAULT_STATE_SCALE,
+            );
+            set4fv(
+              uniforms,
+              'u_edgeNoStateColorMul',
+              this.edgeNoStateStyleEnabled === true ? this.edgeNoStateColorMul : DEFAULT_STATE_COLOR_MUL,
+            );
+            set4fv(
+              uniforms,
+              'u_edgeNoStateColorAdd',
+              this.edgeNoStateStyleEnabled === true ? this.edgeNoStateColorAdd : DEFAULT_STATE_COLOR_ADD,
+            );
             set4fv(
               uniforms,
               'u_edgeStateScale[0]',
@@ -2351,11 +2382,25 @@ export class GraphLayerWebGL extends GraphLayer {
           set1i(uniforms, 'u_hasEdgeStates', hasEdgeStates ? 1 : 0);
           set1i(uniforms, 'u_hasEdgeOpacities', hasEdgeOpacities ? 1 : 0);
           set1i(uniforms, 'u_hasNodeOpacitySource', hasNodeOpacitySource ? 1 : 0);
+          set1ui(uniforms, 'u_hoverNodeIndex', this.hoveredNodeIndex);
           set1ui(uniforms, 'u_hoverEdgeIndex', this.hoveredEdgeIndex);
           set1ui(uniforms, 'u_hoverEdgeState', this.hoveredEdgeState);
-          set4fv(uniforms, 'u_edgeNoStateScale', this.edgeNoStateScale);
-          set4fv(uniforms, 'u_edgeNoStateColorMul', this.edgeNoStateColorMul);
-          set4fv(uniforms, 'u_edgeNoStateColorAdd', this.edgeNoStateColorAdd);
+          set1ui(uniforms, 'u_edgeStateForceMaxAlphaMask', this.edgeStateForceMaxAlphaMask >>> 0);
+          set4fv(
+            uniforms,
+            'u_edgeNoStateScale',
+            this.edgeNoStateStyleEnabled === true ? this.edgeNoStateScale : DEFAULT_STATE_SCALE,
+          );
+          set4fv(
+            uniforms,
+            'u_edgeNoStateColorMul',
+            this.edgeNoStateStyleEnabled === true ? this.edgeNoStateColorMul : DEFAULT_STATE_COLOR_MUL,
+          );
+          set4fv(
+            uniforms,
+            'u_edgeNoStateColorAdd',
+            this.edgeNoStateStyleEnabled === true ? this.edgeNoStateColorAdd : DEFAULT_STATE_COLOR_ADD,
+          );
           set4fv(
             uniforms,
             'u_edgeStateScale[0]',
@@ -2458,9 +2503,22 @@ export class GraphLayerWebGL extends GraphLayer {
           set1i(uniforms, 'u_hasNodeStates', hasNodeStatesForNodes ? 1 : 0);
           set1ui(uniforms, 'u_hoverNodeIndex', this.hoveredNodeIndex);
           set1ui(uniforms, 'u_hoverNodeState', this.hoveredNodeState);
-          set4fv(uniforms, 'u_nodeNoStateScale', this.nodeNoStateScale);
-          set4fv(uniforms, 'u_nodeNoStateColorMul', this.nodeNoStateColorMul);
-          set4fv(uniforms, 'u_nodeNoStateColorAdd', this.nodeNoStateColorAdd);
+          set1ui(uniforms, 'u_nodeStateForceMaxAlphaMask', this.nodeStateForceMaxAlphaMask >>> 0);
+          set4fv(
+            uniforms,
+            'u_nodeNoStateScale',
+            this.nodeNoStateStyleEnabled === true ? this.nodeNoStateScale : DEFAULT_STATE_SCALE,
+          );
+          set4fv(
+            uniforms,
+            'u_nodeNoStateColorMul',
+            this.nodeNoStateStyleEnabled === true ? this.nodeNoStateColorMul : DEFAULT_STATE_COLOR_MUL,
+          );
+          set4fv(
+            uniforms,
+            'u_nodeNoStateColorAdd',
+            this.nodeNoStateStyleEnabled === true ? this.nodeNoStateColorAdd : DEFAULT_STATE_COLOR_ADD,
+          );
           set4fv(
             uniforms,
             'u_nodeStateScale[0]',

@@ -24,6 +24,7 @@ ui.createDemoPanel(); // "Scene" panel (tabbed controls) + "Data" panel (network
 ui.createLayoutPanel(); // Layout picker + per-layout live controls + start/stop actions
 ui.createLegendsPanel(); // Legend toggles + text/layout controls for the SVG legend overlay
 ui.createCameraPanel(); // Camera distance + collapsible auto-fit/animation/orbit controls
+ui.createSelectionPanel(); // Node/edge click + hover interactions, shift-multiselect, hover labels, connected-edge hover propagation, and selected/highlighted/normal state styles
 ui.createMetricsPanel(); // "Metrics" panel (Degree, Strength, Clustering, Eigenvector, Betweenness, Leiden, Dimensionality)
 ```
 
@@ -224,6 +225,7 @@ As the system grows, it’s typical to group panels by responsibility:
 - `Layout` (layout selection + parameters)
 - `Mappers` (node/edge mapping controls)
 - `Picking` / `Interaction` (hover/selection, thresholds)
+- `Selection` (node/edge selection, hover labels, connected-edge hover propagation, selected/highlighted/normal state styles)
 - `Performance` (fps, quality knobs, debug toggles)
 
 The initial shipped demo panel is just a starting point and is meant to be replaced/extended.

@@ -31,6 +31,8 @@ function resolveEdgeOptions(options = {}) {
     trim: edge.trim !== false,
     edgeState: edge.edgeState !== false,
     endpointState: edge.endpointState !== false,
+    propagateHoveredNodeToEdges: edge.propagateHoveredNodeToEdges === true,
+    propagateSelectedNodesToEdges: edge.propagateSelectedNodesToEdges === true,
   };
 }
 
@@ -64,7 +66,9 @@ export function createGraphWebGLSources(options = {}) {
   const edgeSemanticZoomEnabled = !fastEdgePath && edge.semanticZoom === true;
   const edgeTrimEnabled = !fastEdgePath && edge.trim === true;
   const edgeStateEnabled = !fastEdgePath && edge.edgeState === true;
-  const edgeEndpointStateEnabled = edgeTrimEnabled && !fastEdgePath && edge.endpointState === true;
+  const edgeEndpointStateEnabled = !fastEdgePath
+    && (edge.endpointState === true || edge.propagateSelectedNodesToEdges === true)
+    && (edgeTrimEnabled || edge.propagateSelectedNodesToEdges === true);
 
   const nodeColorDecl = nodeColorBuffer
     ? `
@@ -240,6 +244,7 @@ uniform usampler2D u_edgeStates;
 uniform int u_hasEdgeStates;
 uniform uint u_hoverEdgeIndex;
 uniform uint u_hoverEdgeState;
+${edge.propagateHoveredNodeToEdges ? 'uniform uint u_hoverNodeIndex;\n' : ''}uniform uint u_edgeStateForceMaxAlphaMask;
 uniform vec4 u_edgeNoStateScale;
 uniform vec4 u_edgeNoStateColorMul;
 uniform vec4 u_edgeNoStateColorAdd;
@@ -259,9 +264,23 @@ uint fetchEdgeState(uint id) {
   const edgeLineStateBlock = edgeStateEnabled
     ? `
   uint state = fetchEdgeState(a_edgeId);
+  uvec2 endpointStatePair = ${edgeEndpointStateEnabled ? 'fetchEdgeEndpointStatePair(a_edgeId)' : 'uvec2(0u, 0u)'};
   if (u_hoverEdgeIndex != 4294967295u && a_edgeId == u_hoverEdgeIndex) {
     state |= u_hoverEdgeState;
   }
+  ${edge.propagateHoveredNodeToEdges
+    ? `
+  if (u_hoverNodeIndex != 4294967295u && (sourceId == u_hoverNodeIndex || targetId == u_hoverNodeIndex)) {
+    state |= 4u;
+  }`
+    : ''}
+  ${edge.propagateSelectedNodesToEdges
+    ? `
+  if (((endpointStatePair.x | endpointStatePair.y) & 2u) != 0u) {
+    state |= 2u;
+  }`
+    : ''}
+  bool forceMaxAlpha = (state & u_edgeStateForceMaxAlphaMask) != 0u;
   float opacityMul = 1.0;
   vec3 rgbMul = vec3(1.0);
   vec3 rgbAdd = vec3(0.0);
@@ -283,6 +302,7 @@ uint fetchEdgeState(uint id) {
     }
   }`
     : `
+  bool forceMaxAlpha = false;
   float opacityMul = 1.0;
   vec3 rgbMul = vec3(1.0);
   vec3 rgbAdd = vec3(0.0);
@@ -291,9 +311,23 @@ uint fetchEdgeState(uint id) {
   const edgeQuadStateBlock = edgeStateEnabled
     ? `
   uint state = fetchEdgeState(a_edgeId);
+  uvec2 endpointStatePair = ${edgeEndpointStateEnabled ? 'fetchEdgeEndpointStatePair(a_edgeId)' : 'uvec2(0u, 0u)'};
   if (u_hoverEdgeIndex != 4294967295u && a_edgeId == u_hoverEdgeIndex) {
     state |= u_hoverEdgeState;
   }
+  ${edge.propagateHoveredNodeToEdges
+    ? `
+  if (u_hoverNodeIndex != 4294967295u && (sourceId == u_hoverNodeIndex || targetId == u_hoverNodeIndex)) {
+    state |= 4u;
+  }`
+    : ''}
+  ${edge.propagateSelectedNodesToEdges
+    ? `
+  if (((endpointStatePair.x | endpointStatePair.y) & 2u) != 0u) {
+    state |= 2u;
+  }`
+    : ''}
+  bool forceMaxAlpha = (state & u_edgeStateForceMaxAlphaMask) != 0u;
   float widthMul = 1.0;
   float opacityMul = 1.0;
   vec3 rgbMul = vec3(1.0);
@@ -318,6 +352,7 @@ uint fetchEdgeState(uint id) {
     }
   }`
     : `
+  bool forceMaxAlpha = false;
   float widthMul = 1.0;
   float opacityMul = 1.0;
   vec3 rgbMul = vec3(1.0);
@@ -476,6 +511,7 @@ uniform usampler2D u_nodeStates;
 uniform int u_hasNodeStates;
 uniform uint u_hoverNodeIndex;
 uniform uint u_hoverNodeState;
+uniform uint u_nodeStateForceMaxAlphaMask;
 uniform vec4 u_nodeNoStateScale;
 uniform vec4 u_nodeNoStateColorMul;
 uniform vec4 u_nodeNoStateColorAdd;
@@ -513,6 +549,7 @@ void main() {
   if (u_hoverNodeIndex != 4294967295u && a_nodeId == u_hoverNodeIndex) {
     state |= u_hoverNodeState;
   }
+  bool forceMaxAlpha = (state & u_nodeStateForceMaxAlphaMask) != 0u;
   float sizeMul = 1.0;
   float opacityMul = 1.0;
   float outlineMul = 1.0;
@@ -574,11 +611,11 @@ void main() {
   vec4 baseColor = fetchNodeColor(a_nodeId);
   vec3 rgb = clamp(baseColor.rgb * rgbMul + rgbAdd, 0.0, 1.0);
   float alpha = clamp(u_nodeOpacityBase + u_nodeOpacityScale * baseColor.a, 0.0, 1.0) * opacityMul;
-  v_color = vec4(rgb, clamp(alpha, 0.0, 1.0));
+  v_color = vec4(rgb, forceMaxAlpha ? 1.0 : clamp(alpha, 0.0, 1.0));
 
   vec4 outlineColorIn = fetchNodeOutlineColor(a_nodeId);
   float outlineAlpha = clamp(u_nodeOpacityBase + u_nodeOpacityScale * outlineColorIn.a, 0.0, 1.0) * opacityMul;
-  v_outlineColor = vec4(outlineColorIn.rgb, clamp(outlineAlpha, 0.0, 1.0));
+  v_outlineColor = vec4(outlineColorIn.rgb, forceMaxAlpha ? 1.0 : clamp(outlineAlpha, 0.0, 1.0));
   v_outlineThreshold = outlineWidth / max(fullSize, 1e-5);
   v_local = a_corner;
   v_centerWorld = position;
@@ -660,6 +697,7 @@ uniform float u_edgeOpacityBase;
 uniform float u_edgeOpacityScale;
 
 out vec4 v_color;
+out float v_weight;
 flat out uint v_discardFlag;
 ${TEXTURE_INDEX_HELPERS}
 
@@ -698,11 +736,10 @@ vec2 resolveNodeOpacityPair(uint sourceId, uint targetId, int endpointsMode, vec
 ${edgeFetchOpacity}
 
 void main() {
-${edgeLineStateBlock}
-
   uvec2 endpoints = texelFetch(u_edgeEndpoints, textureCoord(u_edgeEndpoints, a_edgeId), 0).xy;
   uint sourceId = endpoints.x;
   uint targetId = endpoints.y;
+${edgeLineStateBlock}
   uint nodeId = (gl_VertexID & 1) == 0 ? sourceId : targetId;
   vec3 pos = fetchNodePos(nodeId);
   gl_Position = u_viewProjection * vec4(pos, 1.0);
@@ -718,7 +755,10 @@ ${edgeColorNodeBlock}
   float rawOpacity = isTarget ? opacityPair.y : opacityPair.x;
   float opacity = clamp(u_edgeOpacityBase + u_edgeOpacityScale * rawOpacity, 0.0, 1.0);
   vec3 rgb = clamp(baseColor.rgb * rgbMul + rgbAdd, 0.0, 1.0);
-  v_color = vec4(rgb, clamp(baseColor.a * opacity * opacityMul, 0.0, 1.0));
+  float weight = max(baseColor.a * opacity * opacityMul, 0.0);
+  float alpha = clamp(weight, 0.0, 1.0);
+  v_color = vec4(rgb, forceMaxAlpha ? 1.0 : alpha);
+  v_weight = forceMaxAlpha ? max(weight, 1.0) : weight;
   v_discardFlag = discardFlag;
 }
 `;
@@ -768,6 +808,7 @@ uniform float u_zoom2D;
 uniform float u_semanticZoomExponent;
 
 out vec4 v_color;
+out float v_weight;
 flat out uint v_discardFlag;
 ${TEXTURE_INDEX_HELPERS}
 
@@ -816,11 +857,10 @@ ${edgeFetchOpacity}
 ${edgeFetchEndpointSize}
 
 void main() {
-${edgeQuadStateBlock}
-
   uvec2 endpoints = texelFetch(u_edgeEndpoints, textureCoord(u_edgeEndpoints, a_edgeId), 0).xy;
   uint sourceId = endpoints.x;
   uint targetId = endpoints.y;
+${edgeQuadStateBlock}
 
   vec3 sourcePos = fetchNodePos(sourceId);
   vec3 targetPos = fetchNodePos(targetId);
@@ -865,7 +905,10 @@ ${edgeColorNodeBlock}
   float rawOpacity = mix(opacityPair.x, opacityPair.y, segmentMix);
   float opacity = clamp(u_edgeOpacityBase + u_edgeOpacityScale * rawOpacity, 0.0, 1.0);
   vec3 rgb = clamp(blendedColor.rgb * rgbMul + rgbAdd, 0.0, 1.0);
-  v_color = vec4(rgb, clamp(blendedColor.a * opacity * opacityMul, 0.0, 1.0));
+  float weight = max(blendedColor.a * opacity * opacityMul, 0.0);
+  float alpha = clamp(weight, 0.0, 1.0);
+  v_color = vec4(rgb, forceMaxAlpha ? 1.0 : alpha);
+  v_weight = forceMaxAlpha ? max(weight, 1.0) : weight;
   v_discardFlag = discardFlag;
 }
 `;
@@ -889,6 +932,7 @@ void main() {
 precision highp float;
 
 in vec4 v_color;
+in float v_weight;
 flat in uint v_discardFlag;
 layout (location = 0) out vec4 fragAccum;
 layout (location = 1) out vec4 fragWeight;
@@ -897,7 +941,7 @@ void main() {
   if (v_discardFlag != 0u) {
     discard;
   }
-  float weight = v_color.a;
+  float weight = v_weight;
   fragAccum = vec4(v_color.rgb * weight, weight);
   fragWeight = vec4(weight, 0.0, 0.0, 0.0);
 }

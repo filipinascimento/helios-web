@@ -73,18 +73,23 @@ Configure slots via:
 helios.nodeStateStyle('HIGHLIGHTED', {
   sizeMul: 1.3,
   opacityMul: 1.0,
+  forceMaxAlpha: false,
   colorMul: [0, 0, 0, 1],
   colorAdd: [0, 1, 0, 0],
 });
 
 // Slot 1 (SELECTED): widen edges.
-helios.edgeStateStyle('SELECTED', { widthMul: 2.0 });
+helios.edgeStateStyle('SELECTED', { widthMul: 2.0, forceMaxAlpha: true });
 ```
 
 Supported fields:
 
-- Nodes: `sizeMul`, `opacityMul`, `outlineMul`, `colorMul`, `colorAdd`, `discard`
-- Edges: `widthMul`, `opacityMul`, `colorMul`, `colorAdd`, `discard`
+- Nodes: `sizeMul`, `opacityMul`, `outlineMul`, `colorMul`, `colorAdd`, `discard`, `forceMaxAlpha`
+- Edges: `widthMul`, `opacityMul`, `colorMul`, `colorAdd`, `discard`, `forceMaxAlpha`
+
+### `forceMaxAlpha`
+
+If `forceMaxAlpha: true` is enabled for any active node/edge state slot, the final rendered alpha for that item is forced to `1.0` after normal style evaluation. This is useful for making selected items stay fully opaque even when the base mapper or state multipliers would otherwise reduce alpha.
 
 ### Styling `NO_STATE`
 

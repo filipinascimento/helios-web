@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Helios } from '../src/index.js';
+import { GraphLayer } from '../src/rendering/engine/GraphLayer.js';
 
 test('exports Helios.STATES and keeps Helios.STATE_BITS as alias', () => {
   assert.ok(Helios);
@@ -25,6 +26,36 @@ test('state APIs accept built-in state names', () => {
   assert.equal(typeof Helios.prototype.edgeState, 'function');
   assert.equal(typeof Helios.prototype.hoverNodeState, 'function');
   assert.equal(typeof Helios.prototype.hoverEdgeState, 'function');
+});
+
+test('state style accessors accept and return forceMaxAlpha', () => {
+  const layer = new GraphLayer({ stateSlots: 4 });
+  const heliosLike = {
+    constructor: Helios,
+    renderer: { graphLayer: layer },
+    scheduler: { requestRender() {} },
+    _stateStyleCache: {
+      nodeSlots: new Map(),
+      edgeSlots: new Map(),
+      nodeNoState: null,
+      edgeNoState: null,
+    },
+  };
+
+  Helios.prototype.nodeStateStyle.call(heliosLike, 'SELECTED', {
+    sizeMul: 1.5,
+    forceMaxAlpha: true,
+  });
+  Helios.prototype.edgeStateStyle.call(heliosLike, 'SELECTED', {
+    widthMul: 2.0,
+    forceMaxAlpha: true,
+  });
+
+  const nodeStyle = Helios.prototype.nodeStateStyle.call(heliosLike, 'SELECTED');
+  const edgeStyle = Helios.prototype.edgeStateStyle.call(heliosLike, 'SELECTED');
+
+  assert.equal(nodeStyle.forceMaxAlpha, true);
+  assert.equal(edgeStyle.forceMaxAlpha, true);
 });
 
 test('global accessors exist on Helios prototype', () => {

@@ -2,6 +2,7 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
   const STATE_SLOTS = Math.max(0, Math.min(32, Math.floor(Number(stateSlots) || 0)));
   const useNodeIndices = options.useNodeIndices !== false;
   const useEdgeIndices = options.useEdgeIndices !== false;
+  const bindings = options?.bindings ?? null;
 
   const nodeOptions = options?.node && typeof options.node === 'object' ? options.node : {};
   const edgeOptions = options?.edge && typeof options.edge === 'object' ? options.edge : {};
@@ -14,6 +15,8 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
 
   const useNodeColorBuffer = nodeOptions.color !== 'uniform';
   const useNodeSizeBuffer = nodeOptions.size !== 'uniform';
+  const useNodeStateBuffer = nodeOptions.state !== 'none';
+  const useNodePositionInterpolation = nodeOptions.positionInterpolation !== false;
   // Default outline to uniform unless explicitly marked as buffer.
   const useNodeOutlineWidthBuffer = nodeOptions.outline === 'buffer';
   const useNodeOutlineColorBuffer = nodeOptions.outlineColor === 'buffer';
@@ -26,8 +29,43 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
   // Existing optional extra bindings for outline buffers.
   const useNodeOutlineAttributes = useNodeOutlineWidthBuffer || useNodeOutlineColorBuffer;
 
+  const defaultBindings = {
+    camera: 0,
+    nodeIndices: 1,
+    nodePositions: 2,
+    nodeSizes: 3,
+    nodeColors: 4,
+    nodeStates: 5,
+    globals: 6,
+    hover: 7,
+    nodeOutlineWidths: 8,
+    nodeOutlineColors: 9,
+    nodePositionsFrom: 10,
+    edgeIndices: 1,
+    edgeSegments: 2,
+    edgeColors: 3,
+    edgeWidths: 4,
+    edgeEndpointSizes: 5,
+    edgeOpacities: 6,
+    edgeStates: 7,
+    edgeEndpointStates: 8,
+  };
+  const bindingMap = bindings ?? defaultBindings;
+  const hasBinding = (name) => {
+    if (bindings) return bindingMap[name] != null;
+    return Object.prototype.hasOwnProperty.call(defaultBindings, name);
+  };
+  const bindingIndex = (name) => bindingMap[name];
+
   const NODE_OUTLINE_STORAGE_BINDINGS = useNodeOutlineAttributes
-    ? '@group(0) @binding(8) var<storage, read> nodeOutlineWidths : NodeOutlineWidths;\n\t@group(0) @binding(9) var<storage, read> nodeOutlineColors : NodeOutlineColors;'
+    ? [
+      useNodeOutlineWidthBuffer && hasBinding('nodeOutlineWidths')
+        ? `@group(0) @binding(${bindingIndex('nodeOutlineWidths')}) var<storage, read> nodeOutlineWidths : NodeOutlineWidths;`
+        : null,
+      useNodeOutlineColorBuffer && hasBinding('nodeOutlineColors')
+        ? `\t@group(0) @binding(${bindingIndex('nodeOutlineColors')}) var<storage, read> nodeOutlineColors : NodeOutlineColors;`
+        : null,
+    ].filter(Boolean).join('\n')
     : '';
 
   const NODE_OUTLINE_RAW_EXPR = useNodeOutlineWidthBuffer
@@ -38,13 +76,17 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
     ? 'let outlineBaseColor = nodeOutlineColors.data[index];'
     : 'let outlineBaseColor = globals.nodeOutlineColor;';
 
-  const NODE_TARGET_BINDING = '@group(0) @binding(10) var<storage, read> nodePositionsFrom : NodePositionsFrom;';
+  const NODE_TARGET_BINDING = (useNodePositionInterpolation && hasBinding('nodePositionsFrom'))
+    ? `@group(0) @binding(${bindingIndex('nodePositionsFrom')}) var<storage, read> nodePositionsFrom : NodePositionsFrom;`
+    : '';
   const EDGE_TARGET_BINDING = '';
 
   const NODE_WGSL = /* wgsl */ `
 const USE_NODE_INDICES : bool = ${useNodeIndices ? 'true' : 'false'};
 const USE_NODE_COLOR_BUFFER : bool = ${useNodeColorBuffer ? 'true' : 'false'};
 const USE_NODE_SIZE_BUFFER : bool = ${useNodeSizeBuffer ? 'true' : 'false'};
+const USE_NODE_STATE_BUFFER : bool = ${useNodeStateBuffer ? 'true' : 'false'};
+const USE_NODE_POSITION_INTERPOLATION : bool = ${useNodePositionInterpolation ? 'true' : 'false'};
 const USE_NODE_OUTLINE_WIDTH_BUFFER : bool = ${useNodeOutlineWidthBuffer ? 'true' : 'false'};
 const USE_NODE_OUTLINE_COLOR_BUFFER : bool = ${useNodeOutlineColorBuffer ? 'true' : 'false'};
 
@@ -123,22 +165,26 @@ struct NodeColors {
     data: array<vec4<f32>>,
   };
 
-	@group(0) @binding(0) var<uniform> camera : Camera;
-	@group(0) @binding(1) var<storage, read> nodeIndices : NodeIndices;
-	@group(0) @binding(2) var<storage, read> nodePositions : NodePositions;
-	@group(0) @binding(3) var<storage, read> nodeSizes : NodeSizes;
-	@group(0) @binding(4) var<storage, read> nodeColors : NodeColors;
-	@group(0) @binding(5) var<storage, read> nodeStates : NodeStates;
+	@group(0) @binding(${bindingIndex('camera')}) var<uniform> camera : Camera;
+	${useNodeIndices && hasBinding('nodeIndices') ? `@group(0) @binding(${bindingIndex('nodeIndices')}) var<storage, read> nodeIndices : NodeIndices;` : ''}
+	${hasBinding('nodePositions') ? `@group(0) @binding(${bindingIndex('nodePositions')}) var<storage, read> nodePositions : NodePositions;` : ''}
+	${useNodeSizeBuffer && hasBinding('nodeSizes') ? `@group(0) @binding(${bindingIndex('nodeSizes')}) var<storage, read> nodeSizes : NodeSizes;` : ''}
+	${useNodeColorBuffer && hasBinding('nodeColors') ? `@group(0) @binding(${bindingIndex('nodeColors')}) var<storage, read> nodeColors : NodeColors;` : ''}
+	${useNodeStateBuffer && hasBinding('nodeStates') ? `@group(0) @binding(${bindingIndex('nodeStates')}) var<storage, read> nodeStates : NodeStates;` : ''}
   ${NODE_OUTLINE_STORAGE_BINDINGS}
   ${NODE_TARGET_BINDING}
-	@group(0) @binding(6) var<uniform> globals : Globals;
+	@group(0) @binding(${bindingIndex('globals')}) var<uniform> globals : Globals;
 	struct Hover {
 	  nodeIndex: u32,
 	  nodeState: u32,
 	  edgeIndex: u32,
 	  edgeState: u32,
+    nodeStateForceMaxAlphaMask: u32,
+    edgeStateForceMaxAlphaMask: u32,
+    _pad0: u32,
+    _pad1: u32,
 	};
-		@group(0) @binding(7) var<uniform> hover : Hover;
+		@group(0) @binding(${bindingIndex('hover')}) var<uniform> hover : Hover;
 
 fn semanticZoomScale() -> f32 {
   let is2D = camera.position.w > 0.5;
@@ -187,22 +233,25 @@ fn nodeVertex(input : VertexInput) -> VertexOutput {
     nodePositions.data[baseOffset + 1u],
     nodePositions.data[baseOffset + 2u]
   );
+  var basePosition = basePositionTo;
+  ${useNodePositionInterpolation ? `
   let basePositionFrom = vec3<f32>(
     nodePositionsFrom.data[baseOffset + 0u],
     nodePositionsFrom.data[baseOffset + 1u],
     nodePositionsFrom.data[baseOffset + 2u]
   );
   let interpolationT = clamp(globals.positionInterpolation.x, 0.0, 1.0);
-  var basePosition = select(
+  basePosition = select(
     basePositionTo,
     mix(basePositionFrom, basePositionTo, interpolationT),
     globals.positionInterpolation.y > 0.5
-  );
-  let rawSize = select(globals.nodeRaw.x, nodeSizes.data[index], USE_NODE_SIZE_BUFFER);
-	  var state = nodeStates.data[index];
+  );` : ''}
+  let rawSize = ${useNodeSizeBuffer ? 'nodeSizes.data[index]' : 'globals.nodeRaw.x'};
+	  var state = ${useNodeStateBuffer ? 'nodeStates.data[index]' : '0u'};
 	  if (hover.nodeIndex != 0xffffffffu && index == hover.nodeIndex) {
 	    state = state | hover.nodeState;
 	  }
+    let forceMaxAlpha = (state & hover.nodeStateForceMaxAlphaMask) != 0u;
 	  var sizeMul = 1.0;
 	  var opacityMul = 1.0;
 	  var outlineMul = 1.0;
@@ -267,14 +316,14 @@ fn nodeVertex(input : VertexInput) -> VertexOutput {
   let offset = right * input.corner.x + up * input.corner.y;
   var output : VertexOutput;
   output.position = camera.viewProjection * vec4<f32>(basePosition + offset * radius, 1.0);
-  let baseColor = select(globals.nodeColor, nodeColors.data[index], USE_NODE_COLOR_BUFFER);
+  let baseColor = ${useNodeColorBuffer ? 'nodeColors.data[index]' : 'globals.nodeColor'};
   let alpha = clamp(globals.nodeOpacity.x + globals.nodeOpacity.y * baseColor.a, 0.0, 1.0) * opacityMul;
   let rgb = clamp(baseColor.rgb * rgbMul + rgbAdd, vec3<f32>(0.0), vec3<f32>(1.0));
-  output.color = vec4<f32>(rgb, clamp(alpha, 0.0, 1.0));
+  output.color = vec4<f32>(rgb, select(clamp(alpha, 0.0, 1.0), 1.0, forceMaxAlpha));
   output.local = input.corner;
   ${NODE_OUTLINE_BASE_COLOR_EXPR}
   let outlineAlpha = clamp(globals.nodeOpacity.x + globals.nodeOpacity.y * outlineBaseColor.a, 0.0, 1.0) * opacityMul;
-  output.outlineColor = vec4<f32>(outlineBaseColor.rgb, clamp(outlineAlpha, 0.0, 1.0));
+  output.outlineColor = vec4<f32>(outlineBaseColor.rgb, select(clamp(outlineAlpha, 0.0, 1.0), 1.0, forceMaxAlpha));
   output.outlineThreshold = select(0.0, outlineWidth / max(fullDiameter, 1e-5), outlineWidth > 0.0);
   output.centerWorld = basePosition;
   output.rightWorld = right;
@@ -407,6 +456,10 @@ struct EdgeStates {
 	  nodeState: u32,
 	  edgeIndex: u32,
 	  edgeState: u32,
+    nodeStateForceMaxAlphaMask: u32,
+    edgeStateForceMaxAlphaMask: u32,
+    _pad0: u32,
+    _pad1: u32,
 	};
 
 	@group(0) @binding(0) var<uniform> camera : Camera;
@@ -441,7 +494,8 @@ fn semanticZoomScale() -> f32 {
 struct EdgeVertexOutput {
   @builtin(position) position : vec4<f32>,
   @location(0) color : vec4<f32>,
-  @location(1) @interpolate(flat) discardFlag : u32,
+  @location(1) weight : f32,
+  @location(2) @interpolate(flat) discardFlag : u32,
 };
 
 @vertex
@@ -466,6 +520,7 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
 	  if (hover.edgeIndex != 0xffffffffu && edgeId == hover.edgeIndex) {
 	    state = state | hover.edgeState;
 	  }
+    let forceMaxAlpha = (state & hover.edgeStateForceMaxAlphaMask) != 0u;
 	  var widthMul = 1.0;
 	  var opacityMul = 1.0;
 	  var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
@@ -541,10 +596,12 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
   let attrOpacity = select(opacityPair.x, opacityPair.y, (vertexIndex & 1u) == 1u);
   let opacity = clamp(globals.edgeOpacity.x + globals.edgeOpacity.y * attrOpacity, 0.0, 1.0) * opacityMul;
   let rgb = clamp(color.rgb * rgbMul + rgbAdd, vec3<f32>(0.0), vec3<f32>(1.0));
-  let alpha = clamp(opacity * color.a, 0.0, 1.0);
+  let weight = max(opacity * color.a, 0.0);
+  let alpha = clamp(weight, 0.0, 1.0);
   var output : EdgeVertexOutput;
   output.position = camera.viewProjection * vec4<f32>(position, 1.0);
-  output.color = vec4<f32>(rgb, alpha);
+  output.color = vec4<f32>(rgb, select(alpha, 1.0, forceMaxAlpha));
+  output.weight = select(weight, max(weight, 1.0), forceMaxAlpha);
   output.discardFlag = discardFlag;
   return output;
 }
@@ -575,6 +632,7 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
 	  if (hover.edgeIndex != 0xffffffffu && edgeId == hover.edgeIndex) {
 	    state = state | hover.edgeState;
 	  }
+    let forceMaxAlpha = (state & hover.edgeStateForceMaxAlphaMask) != 0u;
 	  var widthMul = 1.0;
 	  var opacityMul = 1.0;
 	  var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
@@ -676,9 +734,11 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   let blended = mix(colorStart, colorEnd, cornerT);
   let blendedOpacity = mix(opacityPair.x, opacityPair.y, cornerT);
   let opacity = clamp(globals.edgeOpacity.x + globals.edgeOpacity.y * blendedOpacity, 0.0, 1.0) * opacityMul;
-  let alpha = clamp(opacity * blended.a, 0.0, 1.0);
+  let weight = max(opacity * blended.a, 0.0);
+  let alpha = clamp(weight, 0.0, 1.0);
   let rgb = clamp(blended.rgb * rgbMul + rgbAdd, vec3<f32>(0.0), vec3<f32>(1.0));
-  output.color = vec4<f32>(rgb, alpha);
+  output.color = vec4<f32>(rgb, select(alpha, 1.0, forceMaxAlpha));
+  output.weight = select(weight, max(weight, 1.0), forceMaxAlpha);
   output.discardFlag = discardFlag;
   return output;
 }
@@ -713,7 +773,7 @@ fn edgeWeightedFragment(input : EdgeVertexOutput) -> EdgeWeightedOutput {
   if (input.discardFlag == 1u) {
     discard;
   }
-  let weight = input.color.a;
+  let weight = input.weight;
   var output : EdgeWeightedOutput;
   output.colorAccum = vec4<f32>(input.color.rgb * weight, weight);
   output.weightAccum = vec4<f32>(weight, 0.0, 0.0, 0.0);

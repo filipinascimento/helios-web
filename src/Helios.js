@@ -2535,6 +2535,32 @@ export class Helios extends EventTarget {
     return changed;
   }
 
+  async _collapseDelegateDepthTo2DPlane(delegate, zValue = 0) {
+    if (!delegate || typeof delegate.flattenNodeDepthToPlane !== 'function') return false;
+    try {
+      return (await delegate.flattenNodeDepthToPlane(
+        this._buildPositionDelegateContext({ reason: 'mode-switch' }),
+        zValue,
+      )) === true;
+    } catch (error) {
+      console.warn('Helios.setMode(): failed to collapse delegate depth while switching to 2D.', error);
+      return false;
+    }
+  }
+
+  async _collapseActivePositionDepthTo2DPlane(zValue = 0, delegate = null) {
+    const collapsedNetwork = this._collapseNodeDepthTo2DPlane(zValue);
+    const collapsedDelegate = await this._collapseDelegateDepthTo2DPlane(delegate, zValue);
+    if (collapsedDelegate) {
+      this.visuals?.markPositionsDirty?.();
+    }
+    if (collapsedNetwork || collapsedDelegate) {
+      this.scheduler?.requestGeometry?.();
+      this.scheduler?.requestRender?.();
+    }
+    return collapsedNetwork || collapsedDelegate;
+  }
+
   _build3DModeTransitionPoses(bounds, projection = 'perspective') {
     const camera = this.renderer?.camera ?? null;
     const current = captureCameraPose(camera);
@@ -5777,6 +5803,7 @@ export class Helios extends EventTarget {
 
     try {
       const positionSource = this.positions?.() ?? { source: 'network', delegate: null };
+      const activeDelegate = positionSource.source === 'delegate' ? (positionSource.delegate ?? null) : null;
       if (positionSource.source === 'delegate' && options.syncDelegate !== false) {
         try {
           await this.syncDelegatePositionsToNetwork();
@@ -5859,7 +5886,7 @@ export class Helios extends EventTarget {
               });
             }
             if (options.flattenDepth !== false) {
-              this._collapseNodeDepthTo2DPlane(0);
+              await this._collapseActivePositionDepthTo2DPlane(0, activeDelegate);
             }
             if (animateCamera) {
               await this._ensureCameraTransitionController().transition(camera, {
@@ -5872,7 +5899,7 @@ export class Helios extends EventTarget {
             }
           } else {
             if (options.flattenDepth !== false) {
-              this._collapseNodeDepthTo2DPlane(0);
+              await this._collapseActivePositionDepthTo2DPlane(0, activeDelegate);
             }
             applyCameraPose(camera, {
               ...captureCameraPose(camera),
@@ -6449,11 +6476,13 @@ export class Helios extends EventTarget {
       }
       if (index >= layer.stateSlotCount) return null;
       const o = index * 4;
+      const forceMask = layer.nodeStateForceMaxAlphaMask >>> 0;
       return {
         sizeMul: layer.nodeStateScale[o + 0],
         opacityMul: layer.nodeStateScale[o + 1],
         outlineMul: layer.nodeStateScale[o + 2],
         discard: layer.nodeStateScale[o + 3] === 1,
+        forceMaxAlpha: ((forceMask >> index) & 1) === 1,
         colorMul: Array.from(layer.nodeStateColorMul.slice(o, o + 4)),
         colorAdd: Array.from(layer.nodeStateColorAdd.slice(o, o + 4)),
       };
@@ -6498,10 +6527,12 @@ export class Helios extends EventTarget {
       }
       if (index >= layer.stateSlotCount) return null;
       const o = index * 4;
+      const forceMask = layer.edgeStateForceMaxAlphaMask >>> 0;
       return {
         widthMul: layer.edgeStateScale[o + 0],
         opacityMul: layer.edgeStateScale[o + 1],
         discard: layer.edgeStateScale[o + 3] === 1,
+        forceMaxAlpha: ((forceMask >> index) & 1) === 1,
         colorMul: Array.from(layer.edgeStateColorMul.slice(o, o + 4)),
         colorAdd: Array.from(layer.edgeStateColorAdd.slice(o, o + 4)),
       };

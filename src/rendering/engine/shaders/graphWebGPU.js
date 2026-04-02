@@ -55,13 +55,18 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
   const opacity = normalizeEdgeOption(edgeOptions.opacity, 'edge');
   const endpointSize = normalizeEdgeOption(edgeOptions.endpointSize, 'edge');
   const fastEdgePath = edgeOptions.fastPath === true;
+  const positionInterpolationEnabled = edgeOptions.positionInterpolation === true;
   const cameraMode = edgeOptions.cameraMode === '2d'
     ? '2d'
     : (edgeOptions.cameraMode === '3d' ? '3d' : 'dynamic');
   const semanticZoomEnabled = !fastEdgePath && edgeOptions.semanticZoom !== false;
   const trimEnabled = !fastEdgePath && edgeOptions.trim !== false;
   const edgeStateEnabled = !fastEdgePath && edgeOptions.edgeState !== false;
-  const endpointStateEnabled = trimEnabled && !fastEdgePath && edgeOptions.endpointState !== false;
+  const propagateSelectedNodesToEdges = !fastEdgePath && edgeOptions.propagateSelectedNodesToEdges === true;
+  const endpointStateEnabled = !fastEdgePath
+    && (edgeOptions.endpointState !== false || propagateSelectedNodesToEdges)
+    && (trimEnabled || propagateSelectedNodesToEdges);
+  const propagateHoveredNodeToEdges = !fastEdgePath && edgeOptions.propagateHoveredNodeToEdges === true;
 
   const useEdgeColorBuffer = color.mode !== 'uniform' && color.source !== 'node';
   const useEdgeColorNode = color.mode !== 'uniform' && color.source === 'node';
@@ -128,9 +133,23 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
   const edgeStateSnippet = edgeStateEnabled
     ? `
   var state = edgeStates.data[edgeId];
+  let endpointStatePair = ${endpointStateEnabled ? 'vec2<u32>(nodeStates.data[sourceId], nodeStates.data[targetId])' : 'vec2<u32>(0u, 0u)'};
   if (hover.edgeIndex != 0xffffffffu && edgeId == hover.edgeIndex) {
     state = state | hover.edgeState;
   }
+  ${propagateHoveredNodeToEdges
+    ? `
+  if (hover.nodeIndex != 0xffffffffu && (sourceId == hover.nodeIndex || targetId == hover.nodeIndex)) {
+    state = state | 4u;
+  }`
+    : ''}
+  ${propagateSelectedNodesToEdges
+    ? `
+  if (((endpointStatePair.x | endpointStatePair.y) & 2u) != 0u) {
+    state = state | 2u;
+  }`
+    : ''}
+  let forceMaxAlpha = (state & hover.edgeStateForceMaxAlphaMask) != 0u;
   var widthMul = 1.0;
   var opacityMul = 1.0;
   var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
@@ -160,6 +179,7 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
   }
 `
     : `
+  let forceMaxAlpha = false;
   var widthMul = 1.0;
   var opacityMul = 1.0;
   var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
@@ -369,7 +389,7 @@ fn semanticZoomScale() -> f32 {
   addBinding('edgeIndices', true, 'EdgeIndices');
   addBinding('edgeEndpoints', true, 'EdgeEndpoints');
   addBinding('nodePositions', true, 'NodePositions');
-  addBinding('nodePositionsFrom', true, 'NodePositionsFrom');
+  if (positionInterpolationEnabled) addBinding('nodePositionsFrom', true, 'NodePositionsFrom');
   addBinding('nodeSizes', true, 'NodeSizes');
   addBinding('nodeColors', true, 'NodeColors');
   if (endpointStateEnabled) addBinding('nodeStates', true, 'NodeStates');
@@ -495,6 +515,10 @@ struct Hover {
   nodeState: u32,
   edgeIndex: u32,
   edgeState: u32,
+  nodeStateForceMaxAlphaMask: u32,
+  edgeStateForceMaxAlphaMask: u32,
+  _pad0: u32,
+  _pad1: u32,
 };
 
 ${bindingLines.join('\n')}
@@ -543,7 +567,8 @@ fn semanticZoomScale() -> f32 {
 struct EdgeVertexOutput {
   @builtin(position) position : vec4<f32>,
   @location(0) color : vec4<f32>,
-  @location(1) @interpolate(flat) discardFlag : u32,
+  @location(1) weight : f32,
+  @location(2) @interpolate(flat) discardFlag : u32,
 };
 
 @vertex
@@ -565,6 +590,9 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
     nodePositions.data[targetBase + 1u],
     nodePositions.data[targetBase + 2u]
   );
+  var startPos = startPosTo;
+  var endPos = endPosTo;
+  ${positionInterpolationEnabled ? `
   let startPosFrom = vec3<f32>(
     nodePositionsFrom.data[sourceBase + 0u],
     nodePositionsFrom.data[sourceBase + 1u],
@@ -577,18 +605,21 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
   );
   let interpolationT = clamp(globals.positionInterpolation.x, 0.0, 1.0);
   let interpolationEnabled = globals.positionInterpolation.y > 0.5;
-  var startPos = select(startPosTo, mix(startPosFrom, startPosTo, interpolationT), interpolationEnabled);
-  var endPos = select(endPosTo, mix(endPosFrom, endPosTo, interpolationT), interpolationEnabled);
+  startPos = select(startPosTo, mix(startPosFrom, startPosTo, interpolationT), interpolationEnabled);
+  endPos = select(endPosTo, mix(endPosFrom, endPosTo, interpolationT), interpolationEnabled);
+  ` : ''}
   ${edgeStateSnippet}
 
   ${edgeLineGeometrySnippet}
   ${edgeLineVisualSnippet}
   let opacity = clamp(globals.edgeOpacity.x + globals.edgeOpacity.y * attrOpacity, 0.0, 1.0) * opacityMul;
   let rgb = clamp(color.rgb * rgbMul + rgbAdd, vec3<f32>(0.0), vec3<f32>(1.0));
-  let alpha = clamp(opacity * color.a, 0.0, 1.0);
+  let weight = max(opacity * color.a, 0.0);
+  let alpha = clamp(weight, 0.0, 1.0);
   var output : EdgeVertexOutput;
   output.position = camera.viewProjection * vec4<f32>(position, 1.0);
-  output.color = vec4<f32>(rgb, alpha);
+  output.color = vec4<f32>(rgb, select(alpha, 1.0, forceMaxAlpha));
+  output.weight = select(weight, max(weight, 1.0), forceMaxAlpha);
   output.discardFlag = discardFlag;
   return output;
 }
@@ -616,6 +647,9 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
     nodePositions.data[targetBase + 1u],
     nodePositions.data[targetBase + 2u]
   );
+  var startPos = startPosTo;
+  var endPos = endPosTo;
+  ${positionInterpolationEnabled ? `
   let startPosFrom = vec3<f32>(
     nodePositionsFrom.data[sourceBase + 0u],
     nodePositionsFrom.data[sourceBase + 1u],
@@ -628,8 +662,9 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   );
   let interpolationT = clamp(globals.positionInterpolation.x, 0.0, 1.0);
   let interpolationEnabled = globals.positionInterpolation.y > 0.5;
-  var startPos = select(startPosTo, mix(startPosFrom, startPosTo, interpolationT), interpolationEnabled);
-  var endPos = select(endPosTo, mix(endPosFrom, endPosTo, interpolationT), interpolationEnabled);
+  startPos = select(startPosTo, mix(startPosFrom, startPosTo, interpolationT), interpolationEnabled);
+  endPos = select(endPosTo, mix(endPosFrom, endPosTo, interpolationT), interpolationEnabled);
+  ` : ''}
   ${edgeStateSnippet}
 
   ${edgeGeometrySetupSnippet}
@@ -661,9 +696,11 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   let blended = mix(colorStart, colorEnd, cornerT);
   let blendedOpacity = mix(opacityPair.x, opacityPair.y, cornerT);
   let opacity = clamp(globals.edgeOpacity.x + globals.edgeOpacity.y * blendedOpacity, 0.0, 1.0) * opacityMul;
-  let alpha = clamp(opacity * blended.a, 0.0, 1.0);
+  let weight = max(opacity * blended.a, 0.0);
+  let alpha = clamp(weight, 0.0, 1.0);
   let rgb = clamp(blended.rgb * rgbMul + rgbAdd, vec3<f32>(0.0), vec3<f32>(1.0));
-  output.color = vec4<f32>(rgb, alpha);
+  output.color = vec4<f32>(rgb, select(alpha, 1.0, forceMaxAlpha));
+  output.weight = select(weight, max(weight, 1.0), forceMaxAlpha);
   output.discardFlag = discardFlag;
   return output;
 }
@@ -698,7 +735,7 @@ fn edgeWeightedFragment(input : EdgeVertexOutput) -> EdgeWeightedOutput {
   if (input.discardFlag == 1u) {
     discard;
   }
-  let weight = input.color.a;
+  let weight = input.weight;
   var output : EdgeWeightedOutput;
   output.colorAccum = vec4<f32>(input.color.rgb * weight, weight);
   output.weightAccum = vec4<f32>(weight, 0.0, 0.0, 0.0);

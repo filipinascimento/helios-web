@@ -3804,6 +3804,47 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     return wrote;
   }
 
+  async flattenNodeDepthToPlane(context = {}, zValue = 0) {
+    const targetZ = Number.isFinite(zValue) ? zValue : 0;
+    this._markDirtyForBackend(context);
+    this.ensureSynchronized(context);
+    const backend = this._webgpu ?? this._webgl;
+    if (!backend || typeof backend.writePositionSnapshot !== 'function') return false;
+
+    const snapshot = await this.snapshotNodePositions(context);
+    if (!(snapshot instanceof Float32Array) || snapshot.length <= 0) return false;
+
+    const network = context.network ?? this._context?.network ?? null;
+    let activeIds = null;
+    const readActiveIds = () => {
+      activeIds = network?.nodeIndices instanceof Uint32Array ? network.nodeIndices : null;
+    };
+    if (typeof network?.withBufferAccess === 'function') network.withBufferAccess(readActiveIds);
+    else readActiveIds();
+    const activeCount = activeIds?.length ?? 0;
+    if (activeCount <= 0) return false;
+
+    let changed = false;
+    for (let i = 0; i < activeCount; i += 1) {
+      const nodeId = activeIds[i] >>> 0;
+      const offset = (nodeId * 3) + 2;
+      const currentZ = Number(snapshot[offset]);
+      if (!Number.isFinite(currentZ)) continue;
+      if (Math.abs(currentZ - targetZ) <= 1e-9) continue;
+      snapshot[offset] = targetZ;
+      changed = true;
+    }
+    if (!changed) return false;
+
+    const wroteBackend = backend.writePositionSnapshot(snapshot, {
+      center: this.options.center,
+      outputScale: this.options.outputScale,
+    });
+    if (!wroteBackend) return false;
+    this.bumpVersion();
+    return true;
+  }
+
   async injectPlanarDepthJitter(context = {}, amplitude = 0) {
     const safeAmplitude = Number(amplitude);
     if (!(safeAmplitude > 0)) return false;

@@ -18,6 +18,7 @@ import { GraphVisualSchema } from './schema/GraphVisualSchema.js';
 const {
   NODE_SIZE_ATTRIBUTE,
 } = VISUAL_ATTRIBUTE_NAMES;
+const TRACK_STATE_SLOTS = 32;
 
 const PACK_DEPTH_GLSL = /* glsl */ `
 vec4 packDepthToRGBA(const in float v) {
@@ -152,6 +153,7 @@ uniform mat4 u_viewProjection;
 uniform sampler2D u_nodePositions;
 uniform sampler2D u_nodeSizes;
 uniform sampler2D u_nodeOutlineWidths;
+uniform usampler2D u_nodeStates;
 uniform usampler2D u_nodeEncoded;
 uniform sampler2D u_nodeTrackedFloat;
 uniform isampler2D u_nodeTrackedInt;
@@ -166,11 +168,17 @@ uniform int u_useNodeSize;
 uniform int u_useNodeOutline;
 uniform int u_useEncodedTexture;
 uniform int u_trackedNodeValueMode;
+uniform int u_hasNodeStates;
+uniform uint u_hoverNodeIndex;
+uniform uint u_hoverNodeState;
+uniform int u_stateSlotCount;
 uniform float u_nodeSizeBase;
 uniform float u_nodeSizeScale;
 uniform float u_nodeOutline;
 uniform float u_outlineWidthBase;
 uniform float u_outlineWidthScale;
+uniform vec4 u_nodeNoStateScale;
+uniform vec4 u_nodeStateScale[${TRACK_STATE_SLOTS}];
 
 out vec4 v_encoded;
 
@@ -197,14 +205,32 @@ uvec4 encodeTrackedNode(uint nodeId) {
 void main() {
   uint nodeId = (u_useNodeIdBuffer == 1) ? a_nodeId : uint(gl_InstanceID);
   vec3 position = texelFetch(u_nodePositions, textureCoord(u_nodePositions, nodeId), 0).xyz;
+  uint state = (u_hasNodeStates == 1) ? texelFetch(u_nodeStates, textureCoord(u_nodeStates, nodeId), 0).x : 0u;
+  if (u_hoverNodeIndex != 4294967295u && nodeId == u_hoverNodeIndex) {
+    state |= u_hoverNodeState;
+  }
+  float sizeMul = 1.0;
+  float outlineMul = 1.0;
+  if (state == 0u) {
+    sizeMul *= u_nodeNoStateScale.x;
+    outlineMul *= u_nodeNoStateScale.z;
+  } else {
+    for (int i = 0; i < ${TRACK_STATE_SLOTS}; i += 1) {
+      if (i >= u_stateSlotCount) break;
+      float enabled = float((state >> uint(i)) & 1u);
+      vec4 scale = u_nodeStateScale[i];
+      sizeMul *= mix(1.0, scale.x, enabled);
+      outlineMul *= mix(1.0, scale.z, enabled);
+    }
+  }
   float rawSize = (u_useNodeSize == 1)
     ? texelFetch(u_nodeSizes, textureCoord(u_nodeSizes, nodeId), 0).x
     : 1.0;
   float rawOutline = (u_useNodeOutline == 1)
     ? texelFetch(u_nodeOutlineWidths, textureCoord(u_nodeOutlineWidths, nodeId), 0).x
     : u_nodeOutline;
-  float outlineWidth = max(0.0, u_outlineWidthBase + u_outlineWidthScale * rawOutline);
-  float fullSize = max(1.0, u_nodeSizeBase + u_nodeSizeScale * rawSize + outlineWidth);
+  float outlineWidth = max(0.0, (u_outlineWidthBase + u_outlineWidthScale * rawOutline) * outlineMul);
+  float fullSize = max(1.0, (u_nodeSizeBase + u_nodeSizeScale * rawSize) * sizeMul + outlineWidth);
   float radius = fullSize * 0.5;
   vec3 right = u_cameraRight;
   if (u_is2D == 0) {
@@ -338,6 +364,8 @@ uniform isampler2D u_edgeTrackedInt;
 uniform usampler2D u_edgeTrackedUint;
 uniform sampler2D u_edgeWidths;
 uniform sampler2D u_edgeEndpointSizes;
+uniform usampler2D u_edgeStates;
+uniform usampler2D u_edgeEndpointStates;
 uniform sampler2D u_nodeWidthSource;
 uniform sampler2D u_nodeEndpointSizeSource;
 uniform int u_useEdgeIdBuffer;
@@ -349,15 +377,28 @@ uniform int u_edgeEndpointSizeSource;
 uniform int u_edgeEndpointSizeEndpoints;
 uniform int u_hasEdgeWidths;
 uniform int u_hasEdgeEndpointSizes;
+uniform int u_hasEdgeStates;
+uniform int u_hasEdgeEndpointStates;
 uniform int u_hasNodeWidthSource;
 uniform int u_hasNodeEndpointSizeSource;
+uniform int u_propagateHoveredNodeToEdges;
+uniform int u_propagateSelectedNodesToEdges;
+uniform int u_stateSlotCount;
 uniform vec2 u_defaultEdgeWidth;
 uniform vec2 u_defaultEdgeEndpointSize;
+uniform vec4 u_nodeNoStateScale;
+uniform vec4 u_nodeStateScale[${TRACK_STATE_SLOTS}];
+uniform vec4 u_edgeNoStateScale;
+uniform vec4 u_edgeStateScale[${TRACK_STATE_SLOTS}];
 uniform float u_edgeWidthBase;
 uniform float u_edgeWidthScale;
 uniform float u_nodeSizeBase;
 uniform float u_nodeSizeScale;
 uniform float u_edgeEndpointTrim;
+uniform uint u_hoverNodeIndex;
+uniform uint u_hoverNodeState;
+uniform uint u_hoverEdgeIndex;
+uniform uint u_hoverEdgeState;
 
 out vec4 v_encoded;
 
@@ -415,6 +456,16 @@ vec2 fetchEdgeEndpointSizePair(uint edgeId, uint sourceId, uint targetId) {
   return texelFetch(u_edgeEndpointSizes, textureCoord(u_edgeEndpointSizes, edgeId), 0).xy;
 }
 
+uvec2 fetchEdgeEndpointStatePair(uint edgeId) {
+  if (u_hasEdgeEndpointStates == 0) return uvec2(0u, 0u);
+  return texelFetch(u_edgeEndpointStates, textureCoord(u_edgeEndpointStates, edgeId), 0).xy;
+}
+
+uint fetchEdgeState(uint edgeId) {
+  if (u_hasEdgeStates == 0) return 0u;
+  return texelFetch(u_edgeStates, textureCoord(u_edgeStates, edgeId), 0).x;
+}
+
 uvec4 encodeTrackedEdge(uint edgeId) {
   if (u_trackedEdgeValueMode == 1) {
     return texelFetch(u_edgeEncoded, textureCoord(u_edgeEncoded, edgeId), 0);
@@ -447,18 +498,63 @@ void main() {
   float dirLenWorld = max(length(dir), 1e-5);
   vec3 dirN = dir / dirLenWorld;
 
+  uvec2 endpointStatePair = fetchEdgeEndpointStatePair(edgeId);
+  if (u_hoverNodeIndex != 4294967295u) {
+    if (sourceId == u_hoverNodeIndex) endpointStatePair.x |= u_hoverNodeState;
+    if (targetId == u_hoverNodeIndex) endpointStatePair.y |= u_hoverNodeState;
+  }
+  float startSizeMul = 1.0;
+  float endSizeMul = 1.0;
+  if (endpointStatePair.x == 0u) {
+    startSizeMul *= u_nodeNoStateScale.x;
+  } else {
+    for (int i = 0; i < ${TRACK_STATE_SLOTS}; i += 1) {
+      if (i >= u_stateSlotCount) break;
+      float enabled = float((endpointStatePair.x >> uint(i)) & 1u);
+      startSizeMul *= mix(1.0, u_nodeStateScale[i].x, enabled);
+    }
+  }
+  if (endpointStatePair.y == 0u) {
+    endSizeMul *= u_nodeNoStateScale.x;
+  } else {
+    for (int i = 0; i < ${TRACK_STATE_SLOTS}; i += 1) {
+      if (i >= u_stateSlotCount) break;
+      float enabled = float((endpointStatePair.y >> uint(i)) & 1u);
+      endSizeMul *= mix(1.0, u_nodeStateScale[i].x, enabled);
+    }
+  }
   vec2 endpointSizePair = fetchEdgeEndpointSizePair(edgeId, sourceId, targetId);
-  float startRadius = max(u_nodeSizeBase + u_nodeSizeScale * endpointSizePair.x, 0.0) * 0.5;
-  float endRadius = max(u_nodeSizeBase + u_nodeSizeScale * endpointSizePair.y, 0.0) * 0.5;
+  float startRadius = max((u_nodeSizeBase + u_nodeSizeScale * endpointSizePair.x) * startSizeMul, 0.0) * 0.5;
+  float endRadius = max((u_nodeSizeBase + u_nodeSizeScale * endpointSizePair.y) * endSizeMul, 0.0) * 0.5;
   float trimStart = startRadius * u_edgeEndpointTrim;
   float trimEnd = endRadius * u_edgeEndpointTrim;
   vec3 startPos = sourcePos + dirN * trimStart;
   vec3 endPos = targetPos - dirN * trimEnd;
 
+  uint state = fetchEdgeState(edgeId);
+  if (u_hoverEdgeIndex != 4294967295u && edgeId == u_hoverEdgeIndex) {
+    state |= u_hoverEdgeState;
+  }
+  if (u_propagateHoveredNodeToEdges == 1 && u_hoverNodeIndex != 4294967295u && (sourceId == u_hoverNodeIndex || targetId == u_hoverNodeIndex)) {
+    state |= 4u;
+  }
+  if (u_propagateSelectedNodesToEdges == 1 && ((endpointStatePair.x | endpointStatePair.y) & 2u) != 0u) {
+    state |= 2u;
+  }
+  float widthMul = 1.0;
+  if (state == 0u) {
+    widthMul *= u_edgeNoStateScale.x;
+  } else {
+    for (int i = 0; i < ${TRACK_STATE_SLOTS}; i += 1) {
+      if (i >= u_stateSlotCount) break;
+      float enabled = float((state >> uint(i)) & 1u);
+      widthMul *= mix(1.0, u_edgeStateScale[i].x, enabled);
+    }
+  }
   float segmentMix = clamp(a_corner.x, 0.0, 1.0);
   vec2 widthPair = fetchEdgeWidthPair(edgeId, sourceId, targetId);
   float rawWidth = mix(widthPair.x, widthPair.y, segmentMix);
-  float width = max(u_edgeWidthBase + u_edgeWidthScale * rawWidth, 0.0);
+  float width = max((u_edgeWidthBase + u_edgeWidthScale * rawWidth) * widthMul, 0.0);
 
   vec4 clipStart = u_viewProjection * vec4(startPos, 1.0);
   vec4 clipEnd = u_viewProjection * vec4(endPos, 1.0);
@@ -925,11 +1021,14 @@ export class WebGLAttributeRenderer {
       nodePositions: null,
       nodeSizes: null,
       nodeOutlineWidths: null,
+      nodeStates: null,
       nodeEncoded: null,
       nodeTrackedFloat: null,
       nodeTrackedInt: null,
       nodeTrackedUint: null,
       edgeEndpoints: null,
+      edgeStates: null,
+      edgeEndpointStates: null,
       edgeWidths: null,
       edgeEndpointSizes: null,
       nodeWidthSource: null,
@@ -943,11 +1042,14 @@ export class WebGLAttributeRenderer {
       nodePositions: null,
       nodeSizes: null,
       nodeOutlineWidths: null,
+      nodeStates: null,
       nodeEncoded: null,
       nodeTrackedFloat: null,
       nodeTrackedInt: null,
       nodeTrackedUint: null,
       edgeEndpoints: null,
+      edgeStates: null,
+      edgeEndpointStates: null,
       edgeWidths: null,
       edgeEndpointSizes: null,
       nodeWidthSource: null,
@@ -1013,6 +1115,7 @@ export class WebGLAttributeRenderer {
       'u_nodePositions',
       'u_nodeSizes',
       'u_nodeOutlineWidths',
+      'u_nodeStates',
       'u_nodeEncoded',
       'u_nodeTrackedFloat',
       'u_nodeTrackedInt',
@@ -1029,11 +1132,17 @@ export class WebGLAttributeRenderer {
       'u_useNodeOutline',
       'u_useEncodedTexture',
       'u_trackedNodeValueMode',
+      'u_hasNodeStates',
+      'u_hoverNodeIndex',
+      'u_hoverNodeState',
+      'u_stateSlotCount',
       'u_nodeSizeBase',
       'u_nodeSizeScale',
       'u_nodeOutline',
       'u_outlineWidthBase',
       'u_outlineWidthScale',
+      'u_nodeNoStateScale',
+      'u_nodeStateScale[0]',
     ];
     this.uniforms.node = resolveUniforms(this.programs.node, nodeUniformNames);
     this.uniforms.nodeOcclusion = resolveUniforms(this.programs.nodeOcclusion, nodeUniformNames);
@@ -1073,6 +1182,8 @@ export class WebGLAttributeRenderer {
       'u_edgeTrackedUint',
       'u_edgeWidths',
       'u_edgeEndpointSizes',
+      'u_edgeStates',
+      'u_edgeEndpointStates',
       'u_nodeWidthSource',
       'u_nodeEndpointSizeSource',
       'u_useEdgeIdBuffer',
@@ -1084,15 +1195,28 @@ export class WebGLAttributeRenderer {
       'u_edgeEndpointSizeEndpoints',
       'u_hasEdgeWidths',
       'u_hasEdgeEndpointSizes',
+      'u_hasEdgeStates',
+      'u_hasEdgeEndpointStates',
       'u_hasNodeWidthSource',
       'u_hasNodeEndpointSizeSource',
+      'u_propagateHoveredNodeToEdges',
+      'u_propagateSelectedNodesToEdges',
+      'u_stateSlotCount',
       'u_defaultEdgeWidth',
       'u_defaultEdgeEndpointSize',
+      'u_nodeNoStateScale',
+      'u_nodeStateScale[0]',
+      'u_edgeNoStateScale',
+      'u_edgeStateScale[0]',
       'u_edgeWidthBase',
       'u_edgeWidthScale',
       'u_nodeSizeBase',
       'u_nodeSizeScale',
       'u_edgeEndpointTrim',
+      'u_hoverNodeIndex',
+      'u_hoverNodeState',
+      'u_hoverEdgeIndex',
+      'u_hoverEdgeState',
       'u_zoom2D',
       'u_semanticZoomExponent',
     ];
@@ -1161,11 +1285,14 @@ export class WebGLAttributeRenderer {
     this.textures.nodePositions = this.createTexture();
     this.textures.nodeSizes = this.createTexture();
     this.textures.nodeOutlineWidths = this.createTexture();
+    this.textures.nodeStates = this.createTexture();
     this.textures.nodeEncoded = this.createTexture();
     this.textures.nodeTrackedFloat = this.createTexture();
     this.textures.nodeTrackedInt = this.createTexture();
     this.textures.nodeTrackedUint = this.createTexture();
     this.textures.edgeEndpoints = this.createTexture();
+    this.textures.edgeStates = this.createTexture();
+    this.textures.edgeEndpointStates = this.createTexture();
     this.textures.edgeWidths = this.createTexture();
     this.textures.edgeEndpointSizes = this.createTexture();
     this.textures.nodeWidthSource = this.createTexture();
@@ -1186,6 +1313,9 @@ export class WebGLAttributeRenderer {
     gl.bindTexture(gl.TEXTURE_2D, this.textures.nodeOutlineWidths);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, 1, 1, 0, gl.RED, gl.FLOAT, new Float32Array([0]));
 
+    gl.bindTexture(gl.TEXTURE_2D, this.textures.nodeStates);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32UI, 1, 1, 0, gl.RED_INTEGER, gl.UNSIGNED_INT, null);
+
     gl.bindTexture(gl.TEXTURE_2D, this.textures.nodeEncoded);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8UI, 1, 1, 0, gl.RGBA_INTEGER, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 0]));
 
@@ -1200,6 +1330,12 @@ export class WebGLAttributeRenderer {
 
     gl.bindTexture(gl.TEXTURE_2D, this.textures.edgeEndpoints);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG32UI, 1, 1, 0, gl.RG_INTEGER, gl.UNSIGNED_INT, new Uint32Array([0, 0]));
+
+    gl.bindTexture(gl.TEXTURE_2D, this.textures.edgeStates);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32UI, 1, 1, 0, gl.RED_INTEGER, gl.UNSIGNED_INT, null);
+
+    gl.bindTexture(gl.TEXTURE_2D, this.textures.edgeEndpointStates);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG32UI, 1, 1, 0, gl.RG_INTEGER, gl.UNSIGNED_INT, null);
 
     gl.bindTexture(gl.TEXTURE_2D, this.textures.edgeWidths);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG32F, 1, 1, 0, gl.RG, gl.FLOAT, new Float32Array([1, 1]));
@@ -1596,6 +1732,20 @@ export class WebGLAttributeRenderer {
 
   setNodeUniforms(uniforms, cameraUniforms, options) {
     const { gl } = this;
+    const set1ui = (location, value) => {
+      if (!location) return;
+      if (typeof gl.uniform1ui === 'function') gl.uniform1ui(location, value);
+      else gl.uniform1i(location, value);
+    };
+    const set4f = (location, x, y, z, w) => {
+      if (!location) return;
+      if (typeof gl.uniform4f === 'function') gl.uniform4f(location, x, y, z, w);
+      else if (typeof gl.uniform4fv === 'function') gl.uniform4fv(location, [x, y, z, w]);
+    };
+    const set4fv = (location, value) => {
+      if (!location || typeof gl.uniform4fv !== 'function') return;
+      gl.uniform4fv(location, value);
+    };
     const is2D = cameraUniforms?.mode === '2d';
     const zoom2D = is2D ? Math.max(1e-3, cameraUniforms?.view?.[0] ?? 1) : 1;
     const semanticZoomExponent = Number.isFinite(this.graphLayer?.semanticZoomExponent)
@@ -1605,6 +1755,7 @@ export class WebGLAttributeRenderer {
     gl.uniform1i(uniforms.u_nodePositions, 0);
     gl.uniform1i(uniforms.u_nodeSizes, 1);
     gl.uniform1i(uniforms.u_nodeOutlineWidths, 9);
+    gl.uniform1i(uniforms.u_nodeStates, 13);
     gl.uniform1i(uniforms.u_nodeEncoded, 2);
     gl.uniform1i(uniforms.u_nodeTrackedFloat, 10);
     gl.uniform1i(uniforms.u_nodeTrackedInt, 11);
@@ -1636,11 +1787,24 @@ export class WebGLAttributeRenderer {
     gl.uniform1i(uniforms.u_useNodeOutline, options.useNodeOutline ? 1 : 0);
     gl.uniform1i(uniforms.u_useEncodedTexture, options.useEncodedTexture ? 1 : 0);
     gl.uniform1i(uniforms.u_trackedNodeValueMode, options.trackedNodeValueMode ?? TRACKED_VALUE_MODE.INDEX);
+    gl.uniform1i(uniforms.u_hasNodeStates, options.hasNodeStates ? 1 : 0);
+    set1ui(uniforms.u_hoverNodeIndex, this.graphLayer.hoveredNodeIndex >>> 0);
+    set1ui(uniforms.u_hoverNodeState, this.graphLayer.hoveredNodeState >>> 0);
+    gl.uniform1i(uniforms.u_stateSlotCount, this.graphLayer.stateSlotCount ?? 0);
     gl.uniform1f(uniforms.u_nodeSizeBase, this.graphLayer.nodeSizeBase ?? 0);
     gl.uniform1f(uniforms.u_nodeSizeScale, this.graphLayer.nodeSizeScale ?? 1);
     gl.uniform1f(uniforms.u_nodeOutline, options.nodeOutlineValue ?? 0);
     gl.uniform1f(uniforms.u_outlineWidthBase, this.graphLayer.nodeOutlineWidthBase ?? 0);
     gl.uniform1f(uniforms.u_outlineWidthScale, this.graphLayer.nodeOutlineWidthScale ?? 0);
+    const nodeNoStateEnabled = this.graphLayer.nodeNoStateStyleEnabled === true;
+    set4f(
+      uniforms.u_nodeNoStateScale,
+      nodeNoStateEnabled ? this.graphLayer.nodeNoStateScale[0] : 1,
+      nodeNoStateEnabled ? this.graphLayer.nodeNoStateScale[1] : 1,
+      nodeNoStateEnabled ? this.graphLayer.nodeNoStateScale[2] : 1,
+      nodeNoStateEnabled ? this.graphLayer.nodeNoStateScale[3] : 0,
+    );
+    set4fv(uniforms['u_nodeStateScale[0]'], this.graphLayer.nodeStateScale);
   }
 
   setEdgeUniforms(uniforms, cameraUniforms, options) {
@@ -1659,6 +1823,20 @@ export class WebGLAttributeRenderer {
 
   setEdgeQuadUniforms(uniforms, cameraUniforms, options) {
     const { gl } = this;
+    const set1ui = (location, value) => {
+      if (!location) return;
+      if (typeof gl.uniform1ui === 'function') gl.uniform1ui(location, value);
+      else gl.uniform1i(location, value);
+    };
+    const set4f = (location, x, y, z, w) => {
+      if (!location) return;
+      if (typeof gl.uniform4f === 'function') gl.uniform4f(location, x, y, z, w);
+      else if (typeof gl.uniform4fv === 'function') gl.uniform4fv(location, [x, y, z, w]);
+    };
+    const set4fv = (location, value) => {
+      if (!location || typeof gl.uniform4fv !== 'function') return;
+      gl.uniform4fv(location, value);
+    };
     const is2D = cameraUniforms?.mode === '2d';
     const zoom2D = is2D ? Math.max(1e-3, cameraUniforms?.view?.[0] ?? 1) : 1;
     const semanticZoomExponent = Number.isFinite(this.graphLayer?.semanticZoomExponent)
@@ -1681,6 +1859,8 @@ export class WebGLAttributeRenderer {
     gl.uniform1i(uniforms.u_edgeTrackedUint, 12);
     gl.uniform1i(uniforms.u_edgeWidths, 5);
     gl.uniform1i(uniforms.u_edgeEndpointSizes, 6);
+    gl.uniform1i(uniforms.u_edgeStates, 13);
+    gl.uniform1i(uniforms.u_edgeEndpointStates, 14);
     gl.uniform1i(uniforms.u_nodeWidthSource, 7);
     gl.uniform1i(uniforms.u_nodeEndpointSizeSource, 8);
     gl.uniform1i(uniforms.u_useEdgeIdBuffer, options.useEdgeIdBuffer ? 1 : 0);
@@ -1695,22 +1875,49 @@ export class WebGLAttributeRenderer {
     );
     gl.uniform1i(uniforms.u_hasEdgeWidths, options.hasEdgeWidths ? 1 : 0);
     gl.uniform1i(uniforms.u_hasEdgeEndpointSizes, options.hasEdgeEndpointSizes ? 1 : 0);
+    gl.uniform1i(uniforms.u_hasEdgeStates, options.hasEdgeStates ? 1 : 0);
+    gl.uniform1i(uniforms.u_hasEdgeEndpointStates, options.hasEdgeEndpointStates ? 1 : 0);
     gl.uniform1i(uniforms.u_hasNodeWidthSource, options.hasNodeWidthSource ? 1 : 0);
     gl.uniform1i(
       uniforms.u_hasNodeEndpointSizeSource,
       options.hasNodeEndpointSizeSource ? 1 : 0,
     );
+    gl.uniform1i(uniforms.u_propagateHoveredNodeToEdges, this.graphLayer.propagateHoveredNodeToEdges === true ? 1 : 0);
+    gl.uniform1i(uniforms.u_propagateSelectedNodesToEdges, this.graphLayer.propagateSelectedNodesToEdges === true ? 1 : 0);
+    gl.uniform1i(uniforms.u_stateSlotCount, this.graphLayer.stateSlotCount ?? 0);
     gl.uniform2f(uniforms.u_defaultEdgeWidth, options.defaultEdgeWidth[0], options.defaultEdgeWidth[1]);
     gl.uniform2f(
       uniforms.u_defaultEdgeEndpointSize,
       options.defaultEdgeEndpointSize[0],
       options.defaultEdgeEndpointSize[1],
     );
+    const nodeNoStateEnabled = this.graphLayer.nodeNoStateStyleEnabled === true;
+    set4f(
+      uniforms.u_nodeNoStateScale,
+      nodeNoStateEnabled ? this.graphLayer.nodeNoStateScale[0] : 1,
+      nodeNoStateEnabled ? this.graphLayer.nodeNoStateScale[1] : 1,
+      nodeNoStateEnabled ? this.graphLayer.nodeNoStateScale[2] : 1,
+      nodeNoStateEnabled ? this.graphLayer.nodeNoStateScale[3] : 0,
+    );
+    set4fv(uniforms['u_nodeStateScale[0]'], this.graphLayer.nodeStateScale);
+    const edgeNoStateEnabled = this.graphLayer.edgeNoStateStyleEnabled === true;
+    set4f(
+      uniforms.u_edgeNoStateScale,
+      edgeNoStateEnabled ? this.graphLayer.edgeNoStateScale[0] : 1,
+      edgeNoStateEnabled ? this.graphLayer.edgeNoStateScale[1] : 1,
+      edgeNoStateEnabled ? this.graphLayer.edgeNoStateScale[2] : 1,
+      edgeNoStateEnabled ? this.graphLayer.edgeNoStateScale[3] : 0,
+    );
+    set4fv(uniforms['u_edgeStateScale[0]'], this.graphLayer.edgeStateScale);
     gl.uniform1f(uniforms.u_edgeWidthBase, globalEdgeWidthBase);
     gl.uniform1f(uniforms.u_edgeWidthScale, globalEdgeWidthScale);
     gl.uniform1f(uniforms.u_nodeSizeBase, this.graphLayer.nodeSizeBase ?? 0);
     gl.uniform1f(uniforms.u_nodeSizeScale, this.graphLayer.nodeSizeScale ?? 1);
     gl.uniform1f(uniforms.u_edgeEndpointTrim, this.graphLayer.edgeEndpointTrim ?? 0.8);
+    set1ui(uniforms.u_hoverNodeIndex, this.graphLayer.hoveredNodeIndex >>> 0);
+    set1ui(uniforms.u_hoverNodeState, this.graphLayer.hoveredNodeState >>> 0);
+    set1ui(uniforms.u_hoverEdgeIndex, this.graphLayer.hoveredEdgeIndex >>> 0);
+    set1ui(uniforms.u_hoverEdgeState, this.graphLayer.hoveredEdgeState >>> 0);
     gl.uniform1f(uniforms.u_zoom2D, zoom2D);
     gl.uniform1f(uniforms.u_semanticZoomExponent, semanticZoomExponent);
   }
@@ -1795,10 +2002,13 @@ export class WebGLAttributeRenderer {
           : 0;
         const nodeSizes = nodes.sizes ?? null;
         const nodeOutlineWidths = nodes.outlineWidths ?? null;
+        const nodeStates = nodes.states ?? null;
         const nodeWidthSource = sparse.nodeEdgeSources?.width?.view ?? (usesDefaultNodeSize ? nodeSizes : null);
         const nodeEndpointSizeSource = sparse.nodeEdgeSources?.endpointSize?.view
           ?? (usesDefaultNodeSize ? nodeSizes : null);
         const edgeEndpoints = edges.endpoints ?? null;
+        const edgeStates = edges.states ?? null;
+        const edgeEndpointStates = edges.endpointStates ?? null;
 
         const totalNodeCount = delegateNodePositionTextureCount || Math.floor((nodePositions?.length ?? 0) / 3);
         const totalEdgeCount = Math.floor((edgeEndpoints?.length ?? 0) / 2);
@@ -1817,11 +2027,14 @@ export class WebGLAttributeRenderer {
           nodePositions: this.textures.nodePositions,
           nodeSizes: this.textures.nodeSizes,
           nodeOutlineWidths: this.textures.nodeOutlineWidths,
+          nodeStates: this.textures.nodeStates,
           nodeEncoded: this.textures.nodeEncoded,
           nodeTrackedFloat: this.textures.nodeTrackedFloat,
           nodeTrackedInt: this.textures.nodeTrackedInt,
           nodeTrackedUint: this.textures.nodeTrackedUint,
           edgeEndpoints: this.textures.edgeEndpoints,
+          edgeStates: this.textures.edgeStates,
+          edgeEndpointStates: this.textures.edgeEndpointStates,
           edgeWidths: this.textures.edgeWidths,
           edgeEndpointSizes: this.textures.edgeEndpointSizes,
           nodeWidthSource: this.textures.nodeWidthSource,
@@ -1835,9 +2048,12 @@ export class WebGLAttributeRenderer {
         const nodePositionVersion = nodes.versions?.positions ?? 0;
         const nodeSizeVersion = nodes.versions?.sizes ?? 0;
         const nodeOutlineVersion = nodes.versions?.outlineWidths ?? 0;
+        const nodeStateVersion = nodes.versions?.states ?? 0;
         const nodeWidthSourceVersion = sparse.nodeEdgeSources?.width?.version ?? nodeSizeVersion;
         const nodeEndpointSizeSourceVersion = sparse.nodeEdgeSources?.endpointSize?.version ?? nodeSizeVersion;
         const edgeEndpointsVersion = edges.versions?.endpoints ?? 0;
+        const edgeStateVersion = edges.versions?.states ?? 0;
+        const edgeEndpointStateVersion = edges.versions?.endpointStates ?? 0;
         const edgeWidthVersion = edges.versions?.widths ?? 0;
         const edgeEndpointSizeVersion = edges.versions?.endpointSizes ?? 0;
 
@@ -1908,6 +2124,27 @@ export class WebGLAttributeRenderer {
             ),
           });
         }
+        if (totalNodeCount > 0 && nodeStates) {
+          const stateCount = nodeStates.length ?? 0;
+          drawTextures.nodeStates = this.resolveSharedTexture({
+            slot: 'nodeStates',
+            localTexture: this.textures.nodeStates,
+            sharedResources,
+            sharedTextureKey: 'nodeStates',
+            sharedMetaKey: 'nodeStates',
+            view: nodeStates,
+            version: nodeStateVersion,
+            count: stateCount,
+            upload: () => this.uploadUintTexture(
+              'nodeStates',
+              this.textures.nodeStates,
+              nodeStates,
+              1,
+              stateCount,
+              nodeStateVersion,
+            ),
+          });
+        }
         if (totalNodeCount > 0 && nodeWidthSource) {
           const sourceCount = nodeWidthSource.length ?? 0;
           drawTextures.nodeWidthSource = this.resolveSharedTexture({
@@ -1967,6 +2204,48 @@ export class WebGLAttributeRenderer {
               2,
               totalEdgeCount,
               edgeEndpointsVersion,
+            ),
+          });
+        }
+        if (totalEdgeCount > 0 && edgeStates) {
+          const edgeStateCount = edgeStates.length ?? 0;
+          drawTextures.edgeStates = this.resolveSharedTexture({
+            slot: 'edgeStates',
+            localTexture: this.textures.edgeStates,
+            sharedResources,
+            sharedTextureKey: 'edgeStates',
+            sharedMetaKey: 'edgeStates',
+            view: edgeStates,
+            version: edgeStateVersion,
+            count: edgeStateCount,
+            upload: () => this.uploadUintTexture(
+              'edgeStates',
+              this.textures.edgeStates,
+              edgeStates,
+              1,
+              edgeStateCount,
+              edgeStateVersion,
+            ),
+          });
+        }
+        if (totalEdgeCount > 0 && edgeEndpointStates) {
+          const edgeEndpointStateCount = Math.floor((edgeEndpointStates.length ?? 0) / 2);
+          drawTextures.edgeEndpointStates = this.resolveSharedTexture({
+            slot: 'edgeEndpointStates',
+            localTexture: this.textures.edgeEndpointStates,
+            sharedResources,
+            sharedTextureKey: 'edgeEndpointStates',
+            sharedMetaKey: 'edgeEndpointStates',
+            view: edgeEndpointStates,
+            version: edgeEndpointStateVersion,
+            count: edgeEndpointStateCount,
+            upload: () => this.uploadUintTexture(
+              'edgeEndpointStates',
+              this.textures.edgeEndpointStates,
+              edgeEndpointStates,
+              2,
+              edgeEndpointStateCount,
+              edgeEndpointStateVersion,
             ),
           });
         }
@@ -2095,6 +2374,7 @@ export class WebGLAttributeRenderer {
           nodeOutlineValue: nodeOutlineValue,
           useEncodedTexture: trackedNodeValueMode === TRACKED_VALUE_MODE.ENCODED_TEXTURE,
           trackedNodeValueMode,
+          hasNodeStates: Boolean(nodeStates),
         };
         const drawEdgeArgs = {
           useEdgeIdBuffer,
@@ -2111,6 +2391,8 @@ export class WebGLAttributeRenderer {
             && edgeVariant?.endpointSizeSource !== 'node'
             && edges.endpointSizes,
           ),
+          hasEdgeStates: Boolean(edgeStates),
+          hasEdgeEndpointStates: Boolean(edgeEndpointStates),
           hasNodeWidthSource: Boolean(nodeWidthSource),
           hasNodeEndpointSizeSource: Boolean(nodeEndpointSizeSource),
           defaultEdgeWidth,
@@ -2123,6 +2405,7 @@ export class WebGLAttributeRenderer {
           this.bindTexture(0, drawTextures.nodePositions);
           this.bindTexture(1, drawTextures.nodeSizes);
           this.bindTexture(9, drawTextures.nodeOutlineWidths);
+          this.bindTexture(13, drawTextures.nodeStates);
           this.bindTexture(2, drawTextures.nodeEncoded);
           this.bindTexture(10, drawTextures.nodeTrackedFloat);
           this.bindTexture(11, drawTextures.nodeTrackedInt);
@@ -2149,6 +2432,8 @@ export class WebGLAttributeRenderer {
             this.bindTexture(6, drawTextures.edgeEndpointSizes);
             this.bindTexture(7, drawTextures.nodeWidthSource);
             this.bindTexture(8, drawTextures.nodeEndpointSizeSource);
+            this.bindTexture(13, drawTextures.edgeStates);
+            this.bindTexture(14, drawTextures.edgeEndpointStates);
             gl.bindVertexArray(this.edgeQuadVao);
             gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, drawEdgeCount);
           } else {
@@ -2298,7 +2583,9 @@ export class WebGPUAttributeRenderer {
     this.nodeBindGroupLayout = null;
     this.edgeBindGroupLayout = null;
     this.nodeIndirectBindGroupLayout = null;
+    this.nodeIndirectBindGroupLayouts = new Map();
     this.edgeIndirectBindGroupLayout = null;
+    this.edgeIndirectBindGroupLayouts = new Map();
     this.nodeBindGroup = null;
     this.edgeBindGroup = null;
 	    this.nodeBuffers = {};
@@ -2412,38 +2699,209 @@ export class WebGPUAttributeRenderer {
       ],
     });
 
-    this.nodeIndirectBindGroupLayout = device.device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
-        { binding: 1, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
-        { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
-        { binding: 3, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
-        { binding: 4, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
-        { binding: 5, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
-        { binding: 6, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
-        { binding: 7, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
-      ],
-    });
-
-    this.edgeIndirectBindGroupLayout = device.device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
-        { binding: 1, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
-        { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
-        { binding: 3, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
-        { binding: 4, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
-        { binding: 5, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
-        { binding: 6, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
-        { binding: 7, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
-        { binding: 8, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
-        { binding: 9, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
-        { binding: 10, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
-      ],
-    });
+    this.nodeIndirectBindGroupLayouts = new Map();
+    this.edgeIndirectBindGroupLayouts = new Map();
+    this.nodeIndirectBindGroupLayout = this.resolveNodeIndirectBindGroupLayout({
+      nodeSizeUniform: true,
+      nodeOutlineUniform: true,
+      nodeTrackedMode: TRACKED_SOURCE_MODE.INDEX,
+      nodeStateBuffer: false,
+    })?.layout ?? null;
+    this.edgeIndirectBindGroupLayout = this.resolveEdgeIndirectBindGroupLayout({
+      edgeWidthUniform: true,
+      edgeEndpointSizeUniform: true,
+      edgeWidthSource: 'edge',
+      edgeEndpointSizeSource: 'edge',
+      edgeTrackedMode: TRACKED_SOURCE_MODE.INDEX,
+      nodeStateBuffer: false,
+      edgeStateBuffer: false,
+    })?.layout ?? null;
 
     this._pipelineCache = new Map();
     this._shaderModuleCache = new Map();
     this._indirectPipelineCache = new Map();
+  }
+
+  composeNodeIndirectVariantKey({
+    nodeSizeUniform = false,
+    nodeOutlineUniform = false,
+    nodeTrackedMode = TRACKED_SOURCE_MODE.INDEX,
+    nodeStateBuffer = false,
+  } = {}) {
+    return [
+      nodeSizeUniform ? 'nSizeU' : 'nSizeB',
+      nodeOutlineUniform ? 'nOutU' : 'nOutB',
+      `nTrack:${nodeTrackedMode}`,
+      `nState:${nodeStateBuffer ? 1 : 0}`,
+    ].join(':');
+  }
+
+  resolveNodeIndirectBindGroupLayout(options = {}) {
+    const gpu = this.device?.device;
+    if (!gpu) return null;
+    const key = this.composeNodeIndirectVariantKey(options);
+    const cached = this.nodeIndirectBindGroupLayouts.get(key);
+    if (cached) return cached;
+
+    const bindingSlots = {
+      camera: 0,
+      globals: 1,
+      nodeIndices: 2,
+      nodePositions: 3,
+      nodeSizes: 4,
+      nodeOutlineWidths: 5,
+      nodeTrackedInt: 6,
+      nodeTrackedUint: 7,
+      nodeStates: 8,
+      track: 9,
+    };
+    const entries = [
+      { binding: bindingSlots.camera, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+      { binding: bindingSlots.globals, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+      { binding: bindingSlots.nodeIndices, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+      { binding: bindingSlots.nodePositions, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+      { binding: bindingSlots.track, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+    ];
+    const bindings = {
+      camera: bindingSlots.camera,
+      globals: bindingSlots.globals,
+      nodeIndices: bindingSlots.nodeIndices,
+      nodePositions: bindingSlots.nodePositions,
+      track: bindingSlots.track,
+    };
+    if (!options.nodeSizeUniform) {
+      entries.push({ binding: bindingSlots.nodeSizes, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } });
+      bindings.nodeSizes = bindingSlots.nodeSizes;
+    }
+    if (!options.nodeOutlineUniform) {
+      entries.push({ binding: bindingSlots.nodeOutlineWidths, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } });
+      bindings.nodeOutlineWidths = bindingSlots.nodeOutlineWidths;
+    }
+    if (options.nodeTrackedMode === TRACKED_SOURCE_MODE.INT) {
+      entries.push({ binding: bindingSlots.nodeTrackedInt, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } });
+      bindings.nodeTrackedInt = bindingSlots.nodeTrackedInt;
+    }
+    if (options.nodeTrackedMode === TRACKED_SOURCE_MODE.UINT) {
+      entries.push({ binding: bindingSlots.nodeTrackedUint, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } });
+      bindings.nodeTrackedUint = bindingSlots.nodeTrackedUint;
+    }
+    if (options.nodeStateBuffer === true) {
+      entries.push({ binding: bindingSlots.nodeStates, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } });
+      bindings.nodeStates = bindingSlots.nodeStates;
+    }
+
+    const result = {
+      key,
+      layout: gpu.createBindGroupLayout({ entries }),
+      bindings,
+      entries,
+      options: { ...options },
+    };
+    this.nodeIndirectBindGroupLayouts.set(key, result);
+    return result;
+  }
+
+  composeEdgeIndirectVariantKey({
+    edgeWidthUniform = false,
+    edgeEndpointSizeUniform = false,
+    edgeWidthSource = 'edge',
+    edgeEndpointSizeSource = 'edge',
+    edgeTrackedMode = TRACKED_SOURCE_MODE.INDEX,
+    nodeStateBuffer = false,
+    edgeStateBuffer = false,
+  } = {}) {
+    return [
+      edgeWidthUniform ? 'eWidthU' : `eWidthB:${edgeWidthSource}`,
+      edgeEndpointSizeUniform ? 'eEndU' : `eEndB:${edgeEndpointSizeSource}`,
+      `eTrack:${edgeTrackedMode}`,
+      `nState:${nodeStateBuffer ? 1 : 0}`,
+      `eState:${edgeStateBuffer ? 1 : 0}`,
+    ].join(':');
+  }
+
+  resolveEdgeIndirectBindGroupLayout(options = {}) {
+    const gpu = this.device?.device;
+    if (!gpu) return null;
+    const key = this.composeEdgeIndirectVariantKey(options);
+    const cached = this.edgeIndirectBindGroupLayouts.get(key);
+    if (cached) return cached;
+
+    const bindingSlots = {
+      camera: 0,
+      globals: 1,
+      edgeIndices: 2,
+      edgeEndpoints: 3,
+      nodePositions: 4,
+      edgeWidths: 5,
+      edgeEndpointSizes: 6,
+      nodeWidthSource: 7,
+      nodeEndpointSizeSource: 8,
+      edgeTrackedInt: 9,
+      edgeTrackedUint: 10,
+      nodeStates: 11,
+      edgeStates: 12,
+      track: 13,
+    };
+    const entries = [
+      { binding: bindingSlots.camera, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+      { binding: bindingSlots.globals, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+      { binding: bindingSlots.edgeIndices, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+      { binding: bindingSlots.edgeEndpoints, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+      { binding: bindingSlots.nodePositions, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+      { binding: bindingSlots.track, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+    ];
+    const bindings = {
+      camera: bindingSlots.camera,
+      globals: bindingSlots.globals,
+      edgeIndices: bindingSlots.edgeIndices,
+      edgeEndpoints: bindingSlots.edgeEndpoints,
+      nodePositions: bindingSlots.nodePositions,
+      track: bindingSlots.track,
+    };
+    if (!options.edgeWidthUniform) {
+      if (options.edgeWidthSource === 'node') {
+        entries.push({ binding: bindingSlots.nodeWidthSource, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } });
+        bindings.nodeWidthSource = bindingSlots.nodeWidthSource;
+      } else {
+        entries.push({ binding: bindingSlots.edgeWidths, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } });
+        bindings.edgeWidths = bindingSlots.edgeWidths;
+      }
+    }
+    if (!options.edgeEndpointSizeUniform) {
+      if (options.edgeEndpointSizeSource === 'node') {
+        entries.push({ binding: bindingSlots.nodeEndpointSizeSource, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } });
+        bindings.nodeEndpointSizeSource = bindingSlots.nodeEndpointSizeSource;
+      } else {
+        entries.push({ binding: bindingSlots.edgeEndpointSizes, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } });
+        bindings.edgeEndpointSizes = bindingSlots.edgeEndpointSizes;
+      }
+    }
+    if (options.edgeTrackedMode === TRACKED_SOURCE_MODE.INT) {
+      entries.push({ binding: bindingSlots.edgeTrackedInt, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } });
+      bindings.edgeTrackedInt = bindingSlots.edgeTrackedInt;
+    }
+    if (options.edgeTrackedMode === TRACKED_SOURCE_MODE.UINT) {
+      entries.push({ binding: bindingSlots.edgeTrackedUint, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } });
+      bindings.edgeTrackedUint = bindingSlots.edgeTrackedUint;
+    }
+    if (options.nodeStateBuffer === true) {
+      entries.push({ binding: bindingSlots.nodeStates, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } });
+      bindings.nodeStates = bindingSlots.nodeStates;
+    }
+    if (options.edgeStateBuffer === true) {
+      entries.push({ binding: bindingSlots.edgeStates, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } });
+      bindings.edgeStates = bindingSlots.edgeStates;
+    }
+
+    const result = {
+      key,
+      layout: gpu.createBindGroupLayout({ entries }),
+      bindings,
+      entries,
+      options: { ...options },
+    };
+    this.edgeIndirectBindGroupLayouts.set(key, result);
+    return result;
   }
 
   getPipelinesForVariant({
@@ -2653,20 +3111,45 @@ export class WebGPUAttributeRenderer {
     edgeEndpointSizeEndpoints = 0,
     nodeTrackedMode = TRACKED_SOURCE_MODE.INDEX,
     edgeTrackedMode = TRACKED_SOURCE_MODE.INDEX,
+    nodeStateBuffer = false,
+    edgeNodeStateBuffer = false,
+    edgeStateBuffer = false,
   } = {}) {
     const gpu = this.device?.device;
     if (!gpu) return null;
+    const nodeBindingInfo = this.resolveNodeIndirectBindGroupLayout({
+      nodeSizeUniform,
+      nodeOutlineUniform,
+      nodeTrackedMode,
+      nodeStateBuffer,
+    });
+    const edgeBindingInfo = this.resolveEdgeIndirectBindGroupLayout({
+      edgeWidthUniform,
+      edgeEndpointSizeUniform,
+      edgeWidthSource,
+      edgeEndpointSizeSource,
+      edgeTrackedMode,
+      nodeStateBuffer: edgeNodeStateBuffer,
+      edgeStateBuffer,
+    });
     const key = [
-      nodeSizeUniform ? 'nSizeU' : 'nSizeB',
-      nodeOutlineUniform ? 'nOutU' : 'nOutB',
-      edgeWidthUniform ? 'eWidthU' : 'eWidthB',
-      edgeEndpointSizeUniform ? 'eEndU' : 'eEndB',
-      `eWsrc:${edgeWidthSource}`,
+      nodeBindingInfo?.key ?? this.composeNodeIndirectVariantKey({
+        nodeSizeUniform,
+        nodeOutlineUniform,
+        nodeTrackedMode,
+        nodeStateBuffer,
+      }),
+      edgeBindingInfo?.key ?? this.composeEdgeIndirectVariantKey({
+        edgeWidthUniform,
+        edgeEndpointSizeUniform,
+        edgeWidthSource,
+        edgeEndpointSizeSource,
+        edgeTrackedMode,
+        nodeStateBuffer: edgeNodeStateBuffer,
+        edgeStateBuffer,
+      }),
       `eWend:${edgeWidthEndpoints}`,
-      `eEsrc:${edgeEndpointSizeSource}`,
       `eEend:${edgeEndpointSizeEndpoints}`,
-      `nTrack:${nodeTrackedMode}`,
-      `eTrack:${edgeTrackedMode}`,
       this.targetFormat,
       this.depthColorFormat,
       this.device?.depthFormat ?? 'depth24plus',
@@ -2678,6 +3161,7 @@ export class WebGPUAttributeRenderer {
         size: nodeSizeUniform ? 'uniform' : 'buffer',
         outline: nodeOutlineUniform ? 'uniform' : 'buffer',
         trackedMode: nodeTrackedMode,
+        stateBuffer: nodeStateBuffer,
       },
       edge: {
         width: edgeWidthUniform ? 'uniform' : 'buffer',
@@ -2687,6 +3171,8 @@ export class WebGPUAttributeRenderer {
         widthEndpointsMode: edgeWidthEndpoints,
         endpointSizeEndpointsMode: edgeEndpointSizeEndpoints,
         trackedMode: edgeTrackedMode,
+        nodeStateBuffer: edgeNodeStateBuffer,
+        stateBuffer: edgeStateBuffer,
       },
       encodedOutputMode: this.targetFormat === 'r32uint' ? 'uint32' : 'rgba8',
     });
@@ -2695,8 +3181,8 @@ export class WebGPUAttributeRenderer {
     const edgeModule = gpu.createShaderModule({ code: sources.edgeWGSL });
     const depthFormat = this.device?.depthFormat ?? 'depth24plus';
 
-    const nodeLayout = gpu.createPipelineLayout({ bindGroupLayouts: [this.nodeIndirectBindGroupLayout] });
-    const edgeLayout = gpu.createPipelineLayout({ bindGroupLayouts: [this.edgeIndirectBindGroupLayout] });
+    const nodeLayout = gpu.createPipelineLayout({ bindGroupLayouts: [nodeBindingInfo.layout] });
+    const edgeLayout = gpu.createPipelineLayout({ bindGroupLayouts: [edgeBindingInfo.layout] });
 
     const nodeVertexBuffers = [
       { arrayStride: 8, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }], stepMode: 'vertex' },
@@ -2758,6 +3244,12 @@ export class WebGPUAttributeRenderer {
 
     const entry = {
       key,
+      nodeBindGroupLayout: nodeBindingInfo.layout,
+      nodeBindings: nodeBindingInfo.bindings,
+      edgeBindGroupLayout: edgeBindingInfo.layout,
+      edgeBindings: edgeBindingInfo.bindings,
+      edgeTrackedMode,
+      nodeTrackedMode,
       nodePipeline,
       nodeOcclusionPipeline,
       nodeDepthPipeline,
@@ -3823,6 +4315,12 @@ export class WebGPUAttributeRenderer {
     const edgeEndpointSizeSource = edgeVariant?.endpointSizeSource === 'node' ? 'node' : 'edge';
     const edgeWidthEndpoints = normalizeNodeSourceEndpoints(edgeVariant?.widthEndpoints);
     const edgeEndpointSizeEndpoints = normalizeNodeSourceEndpoints(edgeVariant?.endpointSizeEndpoints);
+    const useNodeStateBuffer = Boolean(
+      nodes.states
+      && ((config.nodeAttribute && nodeCount > 0) || (config.edgeAttribute && edgeCount > 0)),
+    );
+    const useEdgeNodeStateBuffer = Boolean(config.edgeAttribute && edgeCount > 0 && nodes.states);
+    const useEdgeStateBuffer = Boolean(config.edgeAttribute && edgeCount > 0 && edges.states);
 
     const pipelines = this.getIndirectPipelinesForVariant({
       nodeSizeUniform,
@@ -3835,6 +4333,9 @@ export class WebGPUAttributeRenderer {
       edgeEndpointSizeEndpoints,
       nodeTrackedMode: nodeTracked?.mode ?? TRACKED_SOURCE_MODE.INDEX,
       edgeTrackedMode: edgeTracked?.mode ?? TRACKED_SOURCE_MODE.INDEX,
+      nodeStateBuffer: useNodeStateBuffer,
+      edgeNodeStateBuffer: useEdgeNodeStateBuffer,
+      edgeStateBuffer: useEdgeStateBuffer,
     });
     if (!pipelines) return null;
 
@@ -3924,10 +4425,12 @@ export class WebGPUAttributeRenderer {
     const nodePositionsView = nodes.positions ?? null;
     const nodePositionsDirectBuffer = nodes.positionBuffer ?? null;
     const nodeSizesView = nodes.sizes ?? null;
+    const nodeStatesView = nodes.states ?? null;
     const nodeOutlineView = nodes.outlineWidths ?? null;
     const edgeEndpointsView = edges.endpoints ?? null;
     const edgeWidthsView = edges.widths ?? null;
     const edgeEndpointSizesView = edges.endpointSizes ?? null;
+    const edgeStatesView = edges.states ?? null;
     const nodeWidthSourceView = sparse.nodeEdgeSources?.width?.view ?? nodeSizesView;
     const nodeEndpointSourceView = sparse.nodeEdgeSources?.endpointSize?.view ?? nodeSizesView;
 
@@ -4030,6 +4533,20 @@ export class WebGPUAttributeRenderer {
       }))
       : zeroStorage;
 
+    const nodeStatesBuffer = (((config.nodeAttribute && nodeCount > 0) || (config.edgeAttribute && edgeCount > 0)) && nodeStatesView)
+      ? resolveStorage({
+        key: 'indirect:node:states',
+        version: nodes.versions?.states ?? 0,
+        topologyVersion: nodeTopology,
+        byteLength: nodeStatesView?.byteLength ?? 0,
+      }, () => uploadStorage('indirect:node:states', nodeStatesView, {
+        label: 'AttributeTracker node states',
+        version: nodes.versions?.states ?? 0,
+        topologyVersion: nodeTopology,
+        count: nodeCount,
+      }))
+      : zeroStorage;
+
     const edgeEndpointsBuffer = (config.edgeAttribute && edgeCount > 0)
       ? resolveStorage({
         key: 'indirect:edge:endpoints',
@@ -4067,6 +4584,20 @@ export class WebGPUAttributeRenderer {
       }, () => uploadStorage('indirect:edge:endpointSizes', edgeEndpointSizesView, {
         label: 'AttributeTracker edge endpoint sizes',
         version: edges.versions?.endpointSizes ?? 0,
+        topologyVersion: edgeTopology,
+        count: edgeCount,
+      }))
+      : zeroStorage;
+
+    const edgeStatesBuffer = (config.edgeAttribute && edgeCount > 0 && edgeStatesView)
+      ? resolveStorage({
+        key: 'indirect:edge:states',
+        version: edges.versions?.states ?? 0,
+        topologyVersion: edgeTopology,
+        byteLength: edgeStatesView?.byteLength ?? 0,
+      }, () => uploadStorage('indirect:edge:states', edgeStatesView, {
+        label: 'AttributeTracker edge states',
+        version: edges.versions?.states ?? 0,
         topologyVersion: edgeTopology,
         count: edgeCount,
       }))
@@ -4134,35 +4665,88 @@ export class WebGPUAttributeRenderer {
       })
       : zeroStorage;
 
+    const trackConfigBuffer = gpu.createBuffer({
+      size: 1104,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      mappedAtCreation: true,
+    });
+    const trackConfigBytes = trackConfigBuffer.getMappedRange();
+    const trackConfigView = new DataView(trackConfigBytes);
+    const writeU32 = (index, value) => trackConfigView.setUint32(index * 4, value >>> 0, true);
+    const writeF32 = (index, value) => trackConfigView.setFloat32(index * 4, Number(value) || 0, true);
+    writeU32(0, this.graphLayer.hoveredNodeIndex >>> 0);
+    writeU32(1, this.graphLayer.hoveredNodeState >>> 0);
+    writeU32(4, this.graphLayer.hoveredEdgeIndex >>> 0);
+    writeU32(5, this.graphLayer.hoveredEdgeState >>> 0);
+    writeU32(6, this.graphLayer.propagateHoveredNodeToEdges === true ? 1 : 0);
+    writeU32(7, this.graphLayer.propagateSelectedNodesToEdges === true ? 1 : 0);
+    writeU32(8, nodeStatesView ? 1 : 0);
+    writeU32(9, edgeStatesView ? 1 : 0);
+    writeU32(10, TRACK_STATE_SLOTS);
+    const nodeNoStateScale = this.graphLayer.nodeNoStateStyleEnabled === true
+      ? this.graphLayer.nodeNoStateScale
+      : [1, 1, 1, 0];
+    const edgeNoStateScale = this.graphLayer.edgeNoStateStyleEnabled === true
+      ? this.graphLayer.edgeNoStateScale
+      : [1, 1, 1, 0];
+    for (let i = 0; i < 4; i += 1) writeF32(12 + i, nodeNoStateScale[i]);
+    for (let i = 0; i < 4; i += 1) writeF32(16 + i, edgeNoStateScale[i]);
+    const nodeStateScale = this.graphLayer.nodeStateScale ?? null;
+    const edgeStateScale = this.graphLayer.edgeStateScale ?? null;
+    for (let i = 0; i < TRACK_STATE_SLOTS * 4; i += 1) {
+      const defaultValue = (i % 4) === 3 ? 0 : 1;
+      writeF32(20 + i, nodeStateScale?.[i] ?? defaultValue);
+    }
+    for (let i = 0; i < TRACK_STATE_SLOTS * 4; i += 1) {
+      const defaultValue = (i % 4) === 3 ? 0 : 1;
+      writeF32(20 + (TRACK_STATE_SLOTS * 4) + i, edgeStateScale?.[i] ?? defaultValue);
+    }
+    trackConfigBuffer.unmap();
+
+    const pushBindGroupEntries = (bindings, sourceMap) => {
+      const entries = [];
+      for (const [name, binding] of Object.entries(bindings ?? {})) {
+        const buffer = sourceMap[name] ?? null;
+        if (binding == null || !buffer) continue;
+        entries.push({ binding, resource: { buffer } });
+      }
+      return entries;
+    };
+
     const nodeBindGroup = gpu.createBindGroup({
-      layout: this.nodeIndirectBindGroupLayout,
-      entries: [
-        { binding: 0, resource: { buffer: cameraBuffer } },
-        { binding: 1, resource: { buffer: globalsBuffer } },
-        { binding: 2, resource: { buffer: nodeIndicesBuffer ?? zeroStorage } },
-        { binding: 3, resource: { buffer: nodePositionsBuffer ?? zeroStorage } },
-        { binding: 4, resource: { buffer: nodeSizesBuffer ?? zeroStorage } },
-        { binding: 5, resource: { buffer: nodeOutlineBuffer ?? zeroStorage } },
-        { binding: 6, resource: { buffer: nodeTrackedIntBuffer ?? zeroStorage } },
-        { binding: 7, resource: { buffer: nodeTrackedUintBuffer ?? zeroStorage } },
-      ],
+      layout: pipelines.nodeBindGroupLayout ?? this.nodeIndirectBindGroupLayout,
+      entries: pushBindGroupEntries(pipelines.nodeBindings, {
+        camera: cameraBuffer,
+        globals: globalsBuffer,
+        nodeIndices: nodeIndicesBuffer ?? zeroStorage,
+        nodePositions: nodePositionsBuffer ?? zeroStorage,
+        nodeSizes: nodeSizesBuffer ?? zeroStorage,
+        nodeOutlineWidths: nodeOutlineBuffer ?? zeroStorage,
+        nodeTrackedInt: nodeTrackedIntBuffer ?? zeroStorage,
+        nodeTrackedUint: nodeTrackedUintBuffer ?? zeroStorage,
+        nodeStates: nodeStatesBuffer ?? zeroStorage,
+        track: trackConfigBuffer,
+      }),
     });
 
     const edgeBindGroup = gpu.createBindGroup({
-      layout: this.edgeIndirectBindGroupLayout,
-      entries: [
-        { binding: 0, resource: { buffer: cameraBuffer } },
-        { binding: 1, resource: { buffer: globalsBuffer } },
-        { binding: 2, resource: { buffer: edgeIndicesBuffer ?? zeroStorage } },
-        { binding: 3, resource: { buffer: edgeEndpointsBuffer ?? zeroStorage } },
-        { binding: 4, resource: { buffer: nodePositionsBuffer ?? zeroStorage } },
-        { binding: 5, resource: { buffer: edgeWidthsBuffer ?? zeroStorage } },
-        { binding: 6, resource: { buffer: edgeEndpointSizesBuffer ?? zeroStorage } },
-        { binding: 7, resource: { buffer: nodeWidthSourceBuffer ?? zeroStorage } },
-        { binding: 8, resource: { buffer: nodeEndpointSourceBuffer ?? zeroStorage } },
-        { binding: 9, resource: { buffer: edgeTrackedIntBuffer ?? zeroStorage } },
-        { binding: 10, resource: { buffer: edgeTrackedUintBuffer ?? zeroStorage } },
-      ],
+      layout: pipelines.edgeBindGroupLayout ?? this.edgeIndirectBindGroupLayout,
+      entries: pushBindGroupEntries(pipelines.edgeBindings, {
+        camera: cameraBuffer,
+        globals: globalsBuffer,
+        edgeIndices: edgeIndicesBuffer ?? zeroStorage,
+        edgeEndpoints: edgeEndpointsBuffer ?? zeroStorage,
+        nodePositions: nodePositionsBuffer ?? zeroStorage,
+        edgeWidths: edgeWidthsBuffer ?? zeroStorage,
+        edgeEndpointSizes: edgeEndpointSizesBuffer ?? zeroStorage,
+        nodeWidthSource: nodeWidthSourceBuffer ?? zeroStorage,
+        nodeEndpointSizeSource: nodeEndpointSourceBuffer ?? zeroStorage,
+        edgeTrackedInt: edgeTrackedIntBuffer ?? zeroStorage,
+        edgeTrackedUint: edgeTrackedUintBuffer ?? zeroStorage,
+        nodeStates: nodeStatesBuffer ?? zeroStorage,
+        edgeStates: edgeStatesBuffer ?? zeroStorage,
+        track: trackConfigBuffer,
+      }),
     });
 
     const encoder = gpu.createCommandEncoder();
@@ -4309,6 +4893,7 @@ export class WebGPUAttributeRenderer {
       gpu.queue.submit([encoder.finish()]);
       cameraBuffer.destroy();
       globalsBuffer.destroy();
+      trackConfigBuffer.destroy();
     });
 
     this.runner?.run?.(passes, { device: this.device });
@@ -4361,7 +4946,7 @@ export class WebGPUAttributeRenderer {
     const canUseDirectIndirectPath = Boolean(
       this.device?.device
       && this.nodeIndirectBindGroupLayout
-      && this.edgeIndirectBindGroupLayout,
+      && ((this.edgeIndirectBindGroupLayouts?.size ?? 0) > 0),
     );
     let topologyVersions = { node: 0, edge: 0 };
     if (typeof network.getTopologyVersions === 'function') {
@@ -4460,6 +5045,19 @@ export class AttributeTracker {
     return hash >>> 0;
   }
 
+  _hashArray(values) {
+    if (!values || typeof values.length !== 'number') return 0;
+    let hash = 2166136261;
+    for (let i = 0; i < values.length; i += 1) {
+      const v = values[i] ?? 0;
+      const n = Number.isFinite(v) ? v : 0;
+      const bits = (Math.fround(n) * 1e6) | 0;
+      hash ^= bits;
+      hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
+  }
+
   _safeVersion(fn) {
     try {
       const v = fn();
@@ -4518,6 +5116,7 @@ export class AttributeTracker {
     const edgeMode = this.graphLayer.getEffectiveEdgeRenderingMode?.() ?? this.graphLayer.edgeRenderingMode ?? 'quad';
     const projection = camera?.projection ?? '';
     const mode = camera?.mode ?? '';
+    const graphLayer = this.graphLayer ?? null;
     const interpolation = this.graphLayer.getPositionInterpolationState?.()
       ?? this.graphLayer.positionInterpolation
       ?? null;
@@ -4532,6 +5131,24 @@ export class AttributeTracker {
       ? Math.round(Math.max(0, Math.min(1, Number(interpolation.factor))) * 1e6)
       : 1000000;
     const delegateVersion = this._safeVersion(() => this.graphLayer?.positionDelegate?.version ?? 0);
+    const nodeStateScaleHash = this._hashArray(graphLayer?.nodeStateScale);
+    const edgeStateScaleHash = this._hashArray(graphLayer?.edgeStateScale);
+    const nodeNoStateScaleHash = graphLayer
+      ? this._hashArray([
+        graphLayer.nodeNoStateStyleEnabled === true ? graphLayer.nodeNoStateScale[0] : 1,
+        graphLayer.nodeNoStateStyleEnabled === true ? graphLayer.nodeNoStateScale[1] : 1,
+        graphLayer.nodeNoStateStyleEnabled === true ? graphLayer.nodeNoStateScale[2] : 1,
+        graphLayer.nodeNoStateStyleEnabled === true ? graphLayer.nodeNoStateScale[3] : 0,
+      ])
+      : 0;
+    const edgeNoStateScaleHash = graphLayer
+      ? this._hashArray([
+        graphLayer.edgeNoStateStyleEnabled === true ? graphLayer.edgeNoStateScale[0] : 1,
+        graphLayer.edgeNoStateStyleEnabled === true ? graphLayer.edgeNoStateScale[1] : 1,
+        graphLayer.edgeNoStateStyleEnabled === true ? graphLayer.edgeNoStateScale[2] : 1,
+        graphLayer.edgeNoStateStyleEnabled === true ? graphLayer.edgeNoStateScale[3] : 0,
+      ])
+      : 0;
 
     return [
       this.renderer?.device?.type ?? '',
@@ -4548,6 +5165,16 @@ export class AttributeTracker {
       interpolationSourceVersion,
       interpolationSourceCount,
       delegateVersion,
+      graphLayer?.hoveredNodeIndex ?? 0xffffffff,
+      graphLayer?.hoveredNodeState ?? 0,
+      graphLayer?.hoveredEdgeIndex ?? 0xffffffff,
+      graphLayer?.hoveredEdgeState ?? 0,
+      graphLayer?.propagateHoveredNodeToEdges === true ? 1 : 0,
+      graphLayer?.propagateSelectedNodesToEdges === true ? 1 : 0,
+      nodeStateScaleHash,
+      edgeStateScaleHash,
+      nodeNoStateScaleHash,
+      edgeNoStateScaleHash,
       // Visuals drive geometry; include their versions.
       topology,
       nodePos,

@@ -110,7 +110,16 @@ export class GraphLayerWebGPUBase extends GraphLayer {
       size: this.globalsArray.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-    this.hoverArray = new Uint32Array([GraphLayer.NO_HOVER_INDEX, 0, GraphLayer.NO_HOVER_INDEX, 0]);
+    this.hoverArray = new Uint32Array([
+      GraphLayer.NO_HOVER_INDEX,
+      0,
+      GraphLayer.NO_HOVER_INDEX,
+      0,
+      0,
+      0,
+      0,
+      0,
+    ]);
     this.hoverBuffer = device.device.createBuffer({
       size: this.hoverArray.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -399,7 +408,7 @@ export class GraphLayerWebGPUBase extends GraphLayer {
       case 'screen':
         return { key: 'screen', fragment: 'edgePremulFragment', blend: { color: { srcFactor: 'one', dstFactor: 'one-minus-src', operation: 'add' }, alpha: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' } } };
       case 'max':
-        return { key: 'max', fragment: 'edgeFragment', blend: { color: { srcFactor: 'src-alpha', dstFactor: 'one', operation: 'max' }, alpha: { srcFactor: 'src-alpha', dstFactor: 'one', operation: 'max' } } };
+        return { key: 'max', fragment: 'edgeFragment', blend: { color: { srcFactor: 'one', dstFactor: 'one', operation: 'max' }, alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'max' } } };
       default:
         return { key: 'alpha', fragment: 'edgeFragment', blend: { color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' }, alpha: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' } } };
     }
@@ -611,12 +620,36 @@ export class GraphLayerWebGPUBase extends GraphLayer {
     this.globalsArray[offset++] = 0;
 
     const slots = this.stateSlotCount;
-    this.globalsArray.set(this.nodeNoStateScale, offset); offset += 4;
-    this.globalsArray.set(this.nodeNoStateColorMul, offset); offset += 4;
-    this.globalsArray.set(this.nodeNoStateColorAdd, offset); offset += 4;
-    this.globalsArray.set(this.edgeNoStateScale, offset); offset += 4;
-    this.globalsArray.set(this.edgeNoStateColorMul, offset); offset += 4;
-    this.globalsArray.set(this.edgeNoStateColorAdd, offset); offset += 4;
+    this.globalsArray.set(
+      this.nodeNoStateStyleEnabled === true ? this.nodeNoStateScale : [1, 1, 1, 0],
+      offset,
+    );
+    offset += 4;
+    this.globalsArray.set(
+      this.nodeNoStateStyleEnabled === true ? this.nodeNoStateColorMul : [1, 1, 1, 1],
+      offset,
+    );
+    offset += 4;
+    this.globalsArray.set(
+      this.nodeNoStateStyleEnabled === true ? this.nodeNoStateColorAdd : [0, 0, 0, 0],
+      offset,
+    );
+    offset += 4;
+    this.globalsArray.set(
+      this.edgeNoStateStyleEnabled === true ? this.edgeNoStateScale : [1, 1, 1, 0],
+      offset,
+    );
+    offset += 4;
+    this.globalsArray.set(
+      this.edgeNoStateStyleEnabled === true ? this.edgeNoStateColorMul : [1, 1, 1, 1],
+      offset,
+    );
+    offset += 4;
+    this.globalsArray.set(
+      this.edgeNoStateStyleEnabled === true ? this.edgeNoStateColorAdd : [0, 0, 0, 0],
+      offset,
+    );
+    offset += 4;
     this.globalsArray.set(this.nodeStateScale, offset); offset += slots * 4;
     this.globalsArray.set(this.nodeStateColorMul, offset); offset += slots * 4;
     this.globalsArray.set(this.nodeStateColorAdd, offset); offset += slots * 4;
@@ -639,13 +672,17 @@ export class GraphLayerWebGPUBase extends GraphLayer {
     const nodeState = this.hoveredNodeState >>> 0;
     const edgeIndex = this.hoveredEdgeIndex >>> 0;
     const edgeState = this.hoveredEdgeState >>> 0;
+    const nodeForceMask = this.nodeStateForceMaxAlphaMask >>> 0;
+    const edgeForceMask = this.edgeStateForceMaxAlphaMask >>> 0;
     const prev = this._hoverLast;
     if (
       prev &&
       prev.nodeIndex === nodeIndex &&
       prev.nodeState === nodeState &&
       prev.edgeIndex === edgeIndex &&
-      prev.edgeState === edgeState
+      prev.edgeState === edgeState &&
+      prev.nodeForceMask === nodeForceMask &&
+      prev.edgeForceMask === edgeForceMask
     ) {
       return;
     }
@@ -653,8 +690,12 @@ export class GraphLayerWebGPUBase extends GraphLayer {
     this.hoverArray[1] = nodeState;
     this.hoverArray[2] = edgeIndex;
     this.hoverArray[3] = edgeState;
+    this.hoverArray[4] = nodeForceMask;
+    this.hoverArray[5] = edgeForceMask;
+    this.hoverArray[6] = 0;
+    this.hoverArray[7] = 0;
     device.queue.writeBuffer(this.hoverBuffer, 0, this.hoverArray);
-    this._hoverLast = { nodeIndex, nodeState, edgeIndex, edgeState };
+    this._hoverLast = { nodeIndex, nodeState, edgeIndex, edgeState, nodeForceMask, edgeForceMask };
   }
 
   prepareWeightedResources(context, cameraUniforms, useEdgeIndices, edgeVariant) {
