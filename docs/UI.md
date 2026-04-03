@@ -31,6 +31,8 @@ ui.createMetricsPanel(); // "Metrics" panel (Degree, Strength, Clustering, Eigen
 HeliosUI attaches to Helios’ built-in HTML overlay layer by default (via `helios.layers.addLayer('ui', ...)`).
 When panels are docked to the left or right edge, HeliosUI also feeds those insets back into Helios so SVG legends can stay inside the usable viewport automatically.
 
+The Selection panel only keeps hover picking active for the hover-driven features that are currently enabled. If you leave click selection on but disable node-hover highlight, hover labels, and hovered-edge propagation, Helios keeps click picking enabled without scheduling node-hover updates.
+
 Layout parameter bindings can describe how a control should be rendered. Numeric bindings may opt into `scale: 'log'` and `notation: 'scientific'`, which makes the Layout panel render a log slider with scientific-notation input while keeping the binding contract layout-agnostic.
 
 ## Attaching / Placement

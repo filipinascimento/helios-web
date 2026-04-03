@@ -25,6 +25,7 @@ For details on how the node colors and sizes are mapped (including the colormap 
   - Topology sync now reads the live `edgesView` only after position-buffer lookup, so a late WASM allocation cannot stale the endpoint view used to build GPU-force adjacency.
   - Very small exact-repulsion runs now soften repulsion automatically, so tiny lattices do not blow apart as aggressively as large sampled runs.
   - GPU-force recenters active nodes around the configured layout center by default.
+  - GPU-force also exposes a `Rotation damping` slider that removes fitted whole-graph spin without increasing global viscosity.
   - Missing startup positions are seeded deterministically around the center instead of randomly, which reduces the “spinning knot” startup on small graphs.
   - Delegate positions are automatic for GPU-force (no manual position-source toggle).
 - In DevTools, use `await window.__snapshotDelegatePositions()` to inspect delegate positions, and `await window.__syncDelegatePositionsToNetwork()` to copy delegate positions into network buffers.
@@ -34,6 +35,7 @@ For details on how the node colors and sizes are mapped (including the colormap 
 - Pass `?interpolationDurationMode=fixed&interpolationFixedDurationMs=160` to force a fixed interpolation interval.
 - The example now includes a Camera panel with top-level zoom/distance control plus collapsible Auto Fit, Animation, and 3D Orbit sections, including an abstract auto-fit update-frequency control instead of raw milliseconds.
 - The example also includes a Selection panel that owns the interaction demo: node click-selection, optional edge click/hover actions, shift-click multi-select, hover-only labels, optional hovered-node edge propagation, and selected/highlighted/normal state-style controls for both nodes and edges.
+  - Click-only picking is specialized: if node hover, hover labels, and hover-connected-edges are all disabled, the demo keeps click picking enabled without running node-hover updates.
 - The Layout panel now reads a shared parameter-binding contract from the active layout instance, so each layout only shows controls it actually supports.
 - D3-force and GPU-force expose a small recent-history alpha sparkline (sampled slowly, in log scale) in the panel, and the start/stop actions are available directly from that panel.
 - Force magnitude controls such as repulsion, attraction, and gravity now use log sliders with scientific-notation inputs, and the old `Damping` label is exposed as `Velocity retention` to match the solver semantics.

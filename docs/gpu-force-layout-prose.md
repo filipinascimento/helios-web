@@ -219,7 +219,7 @@ $$
 
 ## 5. Output-Space Projection
 
-The solver state remains in simulation space. After each force pass, scratch buffers are copied into persistent position/velocity buffers, then output positions are produced either by direct copy or by a scale transform:
+The solver state remains in simulation space. After each force pass, scratch buffers are copied into persistent position/velocity buffers. When `recenter` is enabled, a follow-up correction pass translates the active-set centroid back to `center` and can subtract an estimated rigid-body spin term scaled by `rotationDamping`. Output positions are then produced either by direct copy or by a scale transform:
 
 $$
 x^{out}_i =
@@ -274,12 +274,15 @@ Output: updated output position buffer
 4: Assemble uniform parameters (forces, damping, limits, center)
 5: Dispatch force compute pass over nodeCapacity
 6: Copy scratchPosition -> position, scratchVelocity -> velocity
-7: if outputScale approximately equals 1 then
-8:    copy position -> outputPosition
-9: else
-10:   dispatch output-scale compute pass
-11: end if
-12: Submit command buffer; bump delegate version
+7: if recenter is enabled then
+8:    dispatch recenter + optional rotation-damping correction pass
+9: end if
+10: if outputScale approximately equals 1 then
+11:   copy position -> outputPosition
+12: else
+13:   dispatch output-scale compute pass
+14: end if
+15: Submit command buffer; bump delegate version
 ```
 
 ## 7. Parameterization
@@ -298,6 +301,7 @@ Table 1 lists current defaults from the implementation.
 | `sampleChurn` | `0` | Fraction of repulsion sample slots refreshed each step (`0` fixed, `1` full refresh). |
 | `maxNeighborsPerNode` | `64` | Spring-neighbor truncation per node. |
 | `outputScale` | `6` | Simulation-to-render scale factor around `center`. |
+| `rotationDamping` | `0` | Fraction of fitted rigid-body rotation removed after each step. |
 | `linkDistance` | `1` | Zero-stretch spring distance. |
 | `kRepulsion` | `0.07` | Base repulsion coefficient before alpha scaling. |
 | `kAttraction` | `0.62` | Base spring coefficient before alpha scaling. |
@@ -314,4 +318,4 @@ Table 1 lists current defaults from the implementation.
 
 ## 8. Implementation Notes
 
-The `recenter` flag is currently encoded in uniforms but not consumed by the WGSL force equations. Inactive nodes are preserved by copy-through semantics and do not participate in force accumulation. CPU readback is not part of the standard render path; it occurs only through explicit snapshot/synchronization APIs.
+Recenter and rigid-rotation damping are implemented as a post-step correction pass rather than being folded into the force equations directly. Inactive nodes are preserved by copy-through semantics and do not participate in force accumulation. CPU readback is not part of the standard render path; it occurs only through explicit snapshot/synchronization APIs.

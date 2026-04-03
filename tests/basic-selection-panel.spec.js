@@ -215,6 +215,58 @@ function subpanelForHeader(header) {
 }
 
 test.describe('basic example selection panel', () => {
+  test('specializes node picking down to click-only when all node-hover features are disabled', async ({ page }) => {
+    await waitForExample(page);
+
+    const panel = page.locator('.helios-ui-panel[data-panel-id="helios-ui-selection"]').first();
+    await expect(panel).toBeVisible();
+
+    const nodeHoverToggle = panel.locator('[role="switch"][aria-label="Node hover highlight"]').first();
+    const hoverLabelToggle = panel.locator('[role="switch"][aria-label="Hover label"]').first();
+    const hoverConnectedEdgesToggle = panel.locator('[role="switch"][aria-label="Connected edges on hover"]').first();
+
+    await nodeHoverToggle.click();
+    await hoverLabelToggle.click();
+    await hoverConnectedEdgesToggle.click();
+
+    await expect.poll(async () => page.evaluate(() => ({
+      nodeClick: window.__heliosSelectionPanel?.selectionState?.nodeClick ?? null,
+      nodeHover: window.__heliosSelectionPanel?.selectionState?.nodeHover ?? null,
+      hoverLabel: window.__heliosSelectionPanel?.selectionState?.hoverLabel ?? null,
+      hoverConnectedEdges: window.__heliosSelectionPanel?.selectionState?.hoverConnectedEdges ?? null,
+      nodeHoverEnabled: window.__helios?._picking?.node?.hoverEnabled ?? null,
+      status: Array.from(document.querySelectorAll('.helios-ui-panel[data-panel-id="helios-ui-selection"] .helios-ui-row')).find((row) => {
+        return row.querySelector('.helios-ui-label__title')?.textContent?.trim() === 'Status';
+      })?.textContent?.replace(/\s+/g, ' ')?.trim() ?? null,
+    }))).toEqual({
+      nodeClick: true,
+      nodeHover: false,
+      hoverLabel: false,
+      hoverConnectedEdges: false,
+      nodeHoverEnabled: false,
+      status: 'Status0 nodes selected • 0 edges selected',
+    });
+
+    const [nodeHit] = await findNodeHits(page, 1);
+    expect(nodeHit).toBeTruthy();
+
+    await dispatchCanvasEvent(page, { type: 'pointermove', x: nodeHit.x, y: nodeHit.y });
+
+    await expect.poll(async () => page.evaluate(() => ({
+      hoveredNode: window.__heliosSelectionPanel?.selectionState?.hoveredNode ?? -1,
+      pickingHoverKind: window.__helios?._picking?.hover?.kind ?? null,
+      pickingHoverIndex: window.__helios?._picking?.hover?.index ?? -1,
+      status: Array.from(document.querySelectorAll('.helios-ui-panel[data-panel-id="helios-ui-selection"] .helios-ui-row')).find((row) => {
+        return row.querySelector('.helios-ui-label__title')?.textContent?.trim() === 'Status';
+      })?.textContent?.replace(/\s+/g, ' ')?.trim() ?? null,
+    }))).toEqual({
+      hoveredNode: -1,
+      pickingHoverKind: null,
+      pickingHoverIndex: -1,
+      status: 'Status0 nodes selected • 0 edges selected',
+    });
+  });
+
   test('ships the expected selection defaults and distinct state styles', async ({ page }) => {
     await waitForExample(page);
 

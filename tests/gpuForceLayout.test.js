@@ -755,6 +755,18 @@ test('GpuForceLayout exposes shared parameter bindings and can reheat alpha', ()
   assert.equal(outputScaleBinding.scale, 'log');
   assert.equal(outputScaleBinding.notation, 'scientific');
 
+  const rotationDampingBinding = descriptor.bindings.find((binding) => binding.key === 'rotationDamping');
+  assert.equal(rotationDampingBinding.label, 'Rotation damping');
+  assert.equal(rotationDampingBinding.min, 0);
+  assert.equal(rotationDampingBinding.max, 1);
+  assert.equal(rotationDampingBinding.inputMin, 0);
+  assert.equal(rotationDampingBinding.inputMax, 1);
+  assert.match(rotationDampingBinding.hint, /rigid-body spin/i);
+  layout.positionDelegate.alpha = 0.05;
+  rotationDampingBinding.set(0.4);
+  assert.equal(layout.options.rotationDamping, 0.4);
+  assert.equal(layout.positionDelegate.alpha, 0.75);
+
   const alphaCurrentBinding = descriptor.bindings.find((binding) => binding.key === 'alphaCurrent');
   assert.equal(alphaCurrentBinding.label, 'Temp.');
   assert.equal(alphaCurrentBinding.history.scale, 'log');
@@ -2076,6 +2088,79 @@ test('GpuForcePositionDelegate tiles large WebGPU dispatches across dimensions',
   assert.ok(dispatchCalls.length >= 1);
   assert.ok(dispatchCalls[0].x <= 65535);
   assert.ok(dispatchCalls[0].y >= 2);
+});
+
+test('GpuForcePositionDelegate uploads rotation damping into the WebGPU recenter pass', () => {
+  const network = createTopologyNetwork([
+    -10, 0, 0,
+    10, 0, 0,
+  ]);
+  const { device, writes } = createFakeWebGPUDevice();
+  const delegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    outputScale: 1,
+    recenter: true,
+    rotationDamping: 0.35,
+  });
+
+  delegate.onAttach({ network, backend: 'webgpu', device });
+  delegate.step({ network, backend: 'webgpu', device, deltaMs: 16 });
+
+  const recenterWrite = writes.findLast((entry) => entry.label === 'layout:gpu-force:recenter-params');
+  assert.ok(recenterWrite?.data instanceof Uint8Array);
+  const floats = new Float32Array(
+    recenterWrite.data.buffer.slice(
+      recenterWrite.data.byteOffset,
+      recenterWrite.data.byteOffset + recenterWrite.data.byteLength,
+    ),
+  );
+  approx(floats[8], 0.35, 1e-6);
+});
+
+test('GpuForcePositionDelegate specializes away WebGPU rotation damping work when disabled', () => {
+  const network = createTopologyNetwork([
+    -10, 0, 0,
+    10, 0, 0,
+  ]);
+  const { device, writes } = createFakeWebGPUDevice();
+  const delegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    outputScale: 1,
+    recenter: true,
+    rotationDamping: 0,
+  });
+
+  delegate.onAttach({ network, backend: 'webgpu', device });
+  delegate.step({ network, backend: 'webgpu', device, deltaMs: 16 });
+
+  const recenterWrite = writes.findLast((entry) => entry.label === 'layout:gpu-force:recenter-params');
+  assert.ok(recenterWrite?.data instanceof Uint8Array);
+  assert.equal(recenterWrite.data.byteLength, 8 * 4);
+});
+
+test('GpuForcePositionDelegate skips angular reduction on WebGL2 when rotation damping is disabled', () => {
+  const network = createTopologyNetwork([
+    -10, 0, 0,
+    10, 0, 0,
+  ]);
+  const { gl } = createFakeWebGL2ComputeContext();
+  const delegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    outputScale: 1,
+    recenter: true,
+    rotationDamping: 0,
+  });
+
+  delegate.onAttach({ network, backend: 'webgl2', gl });
+  let angularReductionCalls = 0;
+  delegate._webgl._gpu._runAngularReduction = (...args) => {
+    angularReductionCalls += 1;
+    return null;
+  };
+
+  delegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
+
+  assert.equal(angularReductionCalls, 0);
 });
 
 test('GpuForcePositionDelegate uses shader-driven WebGL2 layout when float render targets are available', () => {

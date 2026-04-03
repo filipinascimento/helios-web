@@ -550,20 +550,23 @@ export class SelectionPanel {
       applyOtherElementsState();
     };
 
+    const needsNodeHoverTracking = () => state.nodeHover || state.hoverLabel || state.hoverConnectedEdges;
+    const needsEdgeHoverTracking = () => state.edgeHover;
+
     const syncPicking = () => {
-      const needsNodePicking = state.nodeClick || state.nodeHover || state.hoverLabel;
-      const needsEdgePicking = state.edgeClick || state.edgeHover;
+      const needsNodePicking = state.nodeClick || needsNodeHoverTracking();
+      const needsEdgePicking = state.edgeClick || needsEdgeHoverTracking();
       const options = {
         resolutionScale: this.options.pickingResolutionScale ?? 0.25,
         trackDepth: this.options.pickingTrackDepth === true,
         maxFps: this.options.pickingMaxFps ?? 20,
       };
-      if (needsNodePicking) helios.enableNodePicking?.(options);
+      if (needsNodePicking) helios.enableNodePicking?.({ ...options, hoverEnabled: needsNodeHoverTracking() });
       else helios.disableNodePicking?.();
-      if (needsEdgePicking) helios.enableEdgePicking?.(options);
+      if (needsEdgePicking) helios.enableEdgePicking?.({ ...options, hoverEnabled: needsEdgeHoverTracking() });
       else helios.disableEdgePicking?.();
-      if (!needsNodePicking) clearNodeHover();
-      if (!needsEdgePicking) clearEdgeHover();
+      if (!needsNodeHoverTracking()) clearNodeHover();
+      if (!needsEdgeHoverTracking()) clearEdgeHover();
     };
 
     const applyHoverLabelConfig = () => {
@@ -651,8 +654,6 @@ export class SelectionPanel {
       const parts = [];
       parts.push(`${state.selectedNodes.size} node${state.selectedNodes.size === 1 ? '' : 's'} selected`);
       parts.push(`${state.selectedEdges.size} edge${state.selectedEdges.size === 1 ? '' : 's'} selected`);
-      if (state.hoveredNode >= 0) parts.push(`hover node ${state.hoveredNode}`);
-      else if (state.hoveredEdge >= 0) parts.push(`hover edge ${state.hoveredEdge}`);
       statusEl.textContent = parts.join(' • ');
     };
 
@@ -701,6 +702,7 @@ export class SelectionPanel {
     hoverConnectedEdgesToggle.addEventListener('change', () => {
       state.hoverConnectedEdges = hoverConnectedEdgesToggle.checked;
       applyHoverConnectedEdges();
+      syncPicking();
     });
     createRow(interactionBody, {
       title: 'Hover',
@@ -797,7 +799,7 @@ export class SelectionPanel {
 
     createRow(interactionBody, {
       title: 'Status',
-      hint: 'Live summary of hovered and selected items.',
+      hint: 'Live summary of the current selection.',
       controls: statusEl,
     });
 
@@ -1321,6 +1323,7 @@ export class SelectionPanel {
     const handleNodeHover = (event) => {
       const detail = event?.detail;
       if (!detail) return;
+      if (!needsNodeHoverTracking()) return;
       if (detail.state === 'in') {
         state.hoveredNode = detail.index;
         if (state.nodeHover) helios.hoverNodeState?.(detail.index, 'HIGHLIGHTED');
@@ -1335,6 +1338,7 @@ export class SelectionPanel {
     const handleEdgeHover = (event) => {
       const detail = event?.detail;
       if (!detail) return;
+      if (!needsEdgeHoverTracking()) return;
       if (detail.state === 'in') {
         state.hoveredEdge = detail.index;
         if (state.edgeHover) helios.hoverEdgeState?.(detail.index, 'HIGHLIGHTED');

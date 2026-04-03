@@ -43,6 +43,7 @@ const DEFAULT_OPTIONS = {
   alphaTarget: 0,
   alphaMin: 0.001,
   recenter: true,
+  rotationDamping: 0,
   resetAlphaOnTopologyChange: true,
   seed: 0,
   umapHasInitialPositions: false,
@@ -357,7 +358,7 @@ ${umap
     nextDelta.z = 0.0;
   }
 
-  var nextVel = vec3<f32>(0.0, 0.0, 0.0);
+  var nextVel = nextDelta;
   var nextPos = pos + nextDelta;
   if (use3D == 0u) {
     nextPos.z = params.center.z;
@@ -426,7 +427,7 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
 }
 `;
 
-const RECENTER_WGSL = /* wgsl */ `
+const RECENTER_WGSL_BASE = /* wgsl */ `
 struct RecenterParams {
   counts : vec4<u32>,
   center : vec4<f32>,
@@ -507,6 +508,184 @@ fn main(@builtin(local_invocation_id) lid : vec3<u32>) {
       positions[base + 2u] = positions[base + 2u] - shiftZ;
     } else {
       positions[base + 2u] = params.center.z;
+    }
+    index = index + ${WORKGROUP_SIZE}u;
+  }
+}
+`;
+
+const RECENTER_WGSL_ROTATION = /* wgsl */ `
+struct RecenterParams {
+  counts : vec4<u32>,
+  center : vec4<f32>,
+  rotation : vec4<f32>,
+};
+
+@group(0) @binding(0) var<storage, read_write> positions : array<f32>;
+@group(0) @binding(1) var<storage, read_write> velocities : array<f32>;
+@group(0) @binding(2) var<storage, read> activeIds : array<u32>;
+@group(0) @binding(3) var<uniform> params : RecenterParams;
+
+var<workgroup> partialX : array<f32, ${WORKGROUP_SIZE}>;
+var<workgroup> partialY : array<f32, ${WORKGROUP_SIZE}>;
+var<workgroup> partialZ : array<f32, ${WORKGROUP_SIZE}>;
+var<workgroup> partialTorqueX : array<f32, ${WORKGROUP_SIZE}>;
+var<workgroup> partialTorqueY : array<f32, ${WORKGROUP_SIZE}>;
+var<workgroup> partialTorqueZ : array<f32, ${WORKGROUP_SIZE}>;
+var<workgroup> partialRadiusSq : array<f32, ${WORKGROUP_SIZE}>;
+
+@compute @workgroup_size(${WORKGROUP_SIZE}u)
+fn main(@builtin(local_invocation_id) lid : vec3<u32>) {
+  let tid = lid.x;
+  let activeCount = params.counts.x;
+  if (activeCount == 0u) {
+    return;
+  }
+
+  var sumX = 0.0;
+  var sumY = 0.0;
+  var sumZ = 0.0;
+  var index = tid;
+  loop {
+    if (index >= activeCount) {
+      break;
+    }
+    let nodeId = activeIds[index];
+    let base = nodeId * 3u;
+    sumX = sumX + positions[base + 0u];
+    sumY = sumY + positions[base + 1u];
+    sumZ = sumZ + positions[base + 2u];
+    index = index + ${WORKGROUP_SIZE}u;
+  }
+
+  partialX[tid] = sumX;
+  partialY[tid] = sumY;
+  partialZ[tid] = sumZ;
+  workgroupBarrier();
+
+  var stride = ${WORKGROUP_SIZE / 2}u;
+  loop {
+    if (stride == 0u) {
+      break;
+    }
+    if (tid < stride) {
+      partialX[tid] = partialX[tid] + partialX[tid + stride];
+      partialY[tid] = partialY[tid] + partialY[tid + stride];
+      partialZ[tid] = partialZ[tid] + partialZ[tid + stride];
+    }
+    workgroupBarrier();
+    stride = stride >> 1u;
+  }
+
+  if (tid == 0u) {
+    let invCount = 1.0 / max(1.0, f32(activeCount));
+    partialX[0] = partialX[0] * invCount - params.center.x;
+    partialY[0] = partialY[0] * invCount - params.center.y;
+    partialZ[0] = select(0.0, partialZ[0] * invCount - params.center.z, params.counts.y != 0u);
+  }
+  workgroupBarrier();
+
+  let shiftX = partialX[0];
+  let shiftY = partialY[0];
+  let shiftZ = partialZ[0];
+  var torqueX = 0.0;
+  var torqueY = 0.0;
+  var torqueZ = 0.0;
+  var radiusSq = 0.0;
+  index = tid;
+  loop {
+    if (index >= activeCount) {
+      break;
+    }
+    let nodeId = activeIds[index];
+    let base = nodeId * 3u;
+    var pos = vec3<f32>(
+      positions[base + 0u] - shiftX,
+      positions[base + 1u] - shiftY,
+      positions[base + 2u] - shiftZ,
+    );
+    var vel = vec3<f32>(
+      velocities[base + 0u],
+      velocities[base + 1u],
+      velocities[base + 2u],
+    );
+    if (params.counts.y == 0u) {
+      pos.z = params.center.z;
+      vel.z = 0.0;
+    }
+    let r = pos - params.center.xyz;
+    let torque = cross(r, vel);
+    torqueX = torqueX + torque.x;
+    torqueY = torqueY + torque.y;
+    torqueZ = torqueZ + torque.z;
+    radiusSq = radiusSq + dot(r, r);
+    index = index + ${WORKGROUP_SIZE}u;
+  }
+
+  partialTorqueX[tid] = torqueX;
+  partialTorqueY[tid] = torqueY;
+  partialTorqueZ[tid] = torqueZ;
+  partialRadiusSq[tid] = radiusSq;
+  workgroupBarrier();
+
+  stride = ${WORKGROUP_SIZE / 2}u;
+  loop {
+    if (stride == 0u) {
+      break;
+    }
+    if (tid < stride) {
+      partialTorqueX[tid] = partialTorqueX[tid] + partialTorqueX[tid + stride];
+      partialTorqueY[tid] = partialTorqueY[tid] + partialTorqueY[tid + stride];
+      partialTorqueZ[tid] = partialTorqueZ[tid] + partialTorqueZ[tid + stride];
+      partialRadiusSq[tid] = partialRadiusSq[tid] + partialRadiusSq[tid + stride];
+    }
+    workgroupBarrier();
+    stride = stride >> 1u;
+  }
+
+  if (tid == 0u) {
+    let invRadiusSq = select(0.0, 1.0 / partialRadiusSq[0], partialRadiusSq[0] > 1e-6);
+    partialTorqueX[0] = partialTorqueX[0] * invRadiusSq;
+    partialTorqueY[0] = partialTorqueY[0] * invRadiusSq;
+    partialTorqueZ[0] = partialTorqueZ[0] * invRadiusSq;
+  }
+  workgroupBarrier();
+
+  let omega = vec3<f32>(partialTorqueX[0], partialTorqueY[0], partialTorqueZ[0]);
+  let rotationDamping = clamp(params.rotation.x, 0.0, 1.0);
+  index = tid;
+  loop {
+    if (index >= activeCount) {
+      break;
+    }
+    let nodeId = activeIds[index];
+    let base = nodeId * 3u;
+    var pos = vec3<f32>(
+      positions[base + 0u] - shiftX,
+      positions[base + 1u] - shiftY,
+      positions[base + 2u] - shiftZ,
+    );
+    var vel = vec3<f32>(
+      velocities[base + 0u],
+      velocities[base + 1u],
+      velocities[base + 2u],
+    );
+    let r = pos - params.center.xyz;
+    let correction = cross(omega, r) * rotationDamping;
+    pos = pos - correction;
+    vel = vel - correction;
+    positions[base + 0u] = pos.x;
+    positions[base + 1u] = pos.y;
+    if (params.counts.y != 0u) {
+      positions[base + 2u] = pos.z;
+      velocities[base + 0u] = vel.x;
+      velocities[base + 1u] = vel.y;
+      velocities[base + 2u] = vel.z;
+    } else {
+      positions[base + 2u] = params.center.z;
+      velocities[base + 0u] = vel.x;
+      velocities[base + 1u] = vel.y;
+      velocities[base + 2u] = 0.0;
     }
     index = index + ${WORKGROUP_SIZE}u;
   }
@@ -1653,7 +1832,7 @@ ${umap
     nextDelta.z = 0.0;
   }
 
-  vec3 nextVel = vec3(0.0);
+  vec3 nextVel = nextDelta;
   vec3 nextPos = pos + nextDelta;
   if (u_use3D == 0) {
     nextPos.z = u_center.z;
@@ -1760,7 +1939,67 @@ void main() {
   fragColor = sumValue;
 }`;
 
-const WEBGL_FORCE_RECENTER_FRAGMENT = `#version 300 es
+const WEBGL_FORCE_ANGULAR_REDUCTION_INIT_FRAGMENT = `#version 300 es
+precision highp float;
+precision highp int;
+precision highp usampler2D;
+
+uniform sampler2D u_positions;
+uniform sampler2D u_velocities;
+uniform sampler2D u_centroid;
+uniform usampler2D u_activeMask;
+uniform ivec2 u_nodeTexSize;
+uniform ivec2 u_outputSize;
+uniform int u_nodeCapacity;
+uniform int u_use3D;
+uniform vec3 u_center;
+
+out vec4 fragColor;
+
+ivec2 textureCoord(ivec2 size, int index) {
+  int width = max(size.x, 1);
+  return ivec2(index % width, index / width);
+}
+
+void main() {
+  ivec2 outCoord = ivec2(gl_FragCoord.xy);
+  ivec2 baseCoord = outCoord * 2;
+  vec4 angular = vec4(0.0);
+  vec4 centroidData = texelFetch(u_centroid, ivec2(0, 0), 0);
+  float count = max(centroidData.w, 1.0);
+  vec3 centroidValue = centroidData.xyz / count;
+  vec3 shift = centroidValue - u_center;
+  if (u_use3D == 0) {
+    shift.z = 0.0;
+  }
+
+  for (int dy = 0; dy < 2; dy += 1) {
+    for (int dx = 0; dx < 2; dx += 1) {
+      ivec2 srcCoord = baseCoord + ivec2(dx, dy);
+      if (srcCoord.x < u_nodeTexSize.x && srcCoord.y < u_nodeTexSize.y) {
+        int nodeId = srcCoord.x + srcCoord.y * max(u_nodeTexSize.x, 1);
+        if (nodeId >= 0 && nodeId < u_nodeCapacity) {
+          uint activeFlag = texelFetch(u_activeMask, textureCoord(u_nodeTexSize, nodeId), 0).x;
+          if (activeFlag != 0u) {
+            vec3 pos = texelFetch(u_positions, textureCoord(u_nodeTexSize, nodeId), 0).xyz - shift;
+            vec3 vel = texelFetch(u_velocities, textureCoord(u_nodeTexSize, nodeId), 0).xyz;
+            if (u_use3D == 0) {
+              pos.z = u_center.z;
+              vel.z = 0.0;
+            }
+            vec3 r = pos - u_center;
+            angular.xyz += cross(r, vel);
+            angular.w += dot(r, r);
+          }
+        }
+      }
+    }
+  }
+
+  fragColor = angular;
+}`;
+
+const WEBGL_FORCE_RECENTER_FRAGMENT_BASE = `#version 300 es
 precision highp float;
 precision highp int;
 precision highp usampler2D;
@@ -1823,6 +2062,78 @@ void main() {
   outOutputPosition = vec4(outputPos, 1.0);
 }`;
 
+const WEBGL_FORCE_RECENTER_FRAGMENT_ROTATION = `#version 300 es
+precision highp float;
+precision highp int;
+precision highp usampler2D;
+
+uniform sampler2D u_positions;
+uniform sampler2D u_velocities;
+uniform sampler2D u_centroid;
+uniform sampler2D u_angular;
+uniform usampler2D u_activeMask;
+uniform ivec2 u_nodeTexSize;
+uniform int u_nodeCapacity;
+uniform int u_use3D;
+uniform vec3 u_center;
+uniform float u_outputScale;
+uniform float u_rotationDamping;
+
+layout(location = 0) out vec4 outPosition;
+layout(location = 1) out vec4 outVelocity;
+layout(location = 2) out vec4 outOutputPosition;
+
+ivec2 textureCoord(ivec2 size, int index) {
+  int width = max(size.x, 1);
+  return ivec2(index % width, index / width);
+}
+
+void main() {
+  ivec2 coord = ivec2(gl_FragCoord.xy);
+  int nodeId = coord.x + coord.y * max(u_nodeTexSize.x, 1);
+  if (nodeId < 0 || nodeId >= u_nodeCapacity) {
+    outPosition = vec4(0.0);
+    outVelocity = vec4(0.0);
+    outOutputPosition = vec4(0.0);
+    return;
+  }
+
+  vec3 pos = texelFetch(u_positions, textureCoord(u_nodeTexSize, nodeId), 0).xyz;
+  vec3 vel = texelFetch(u_velocities, textureCoord(u_nodeTexSize, nodeId), 0).xyz;
+  vec4 centroidData = texelFetch(u_centroid, ivec2(0, 0), 0);
+  float count = max(centroidData.w, 1.0);
+  vec3 centroidValue = centroidData.xyz / count;
+  vec3 shift = centroidValue - u_center;
+  vec4 angularData = texelFetch(u_angular, ivec2(0, 0), 0);
+  float invRadiusSq = angularData.w > 0.000001 ? (1.0 / angularData.w) : 0.0;
+  vec3 omega = angularData.xyz * invRadiusSq;
+  if (u_use3D == 0) {
+    shift.z = 0.0;
+  }
+
+  if (texelFetch(u_activeMask, textureCoord(u_nodeTexSize, nodeId), 0).x != 0u) {
+    pos -= shift;
+    vec3 r = pos - u_center;
+    vec3 correction = cross(omega, r) * clamp(u_rotationDamping, 0.0, 1.0);
+    pos -= correction;
+    vel -= correction;
+  }
+  if (u_use3D == 0) {
+    pos.z = u_center.z;
+    vel.z = 0.0;
+  }
+
+  vec3 outputPos = pos;
+  outputPos.xy = u_center.xy + (pos.xy - u_center.xy) * u_outputScale;
+  outputPos.z = u_use3D != 0
+    ? (u_center.z + (pos.z - u_center.z) * u_outputScale)
+    : u_center.z;
+
+  outPosition = vec4(pos, 1.0);
+  outVelocity = vec4(vel, 1.0);
+  outOutputPosition = vec4(outputPos, 1.0);
+}`;
+
 class WebGLTextureComputePath {
   constructor(gl) {
     this.gl = gl;
@@ -1853,6 +2164,10 @@ class WebGLTextureComputePath {
       { texture: null, framebuffer: null, width: 1, height: 1 },
       { texture: null, framebuffer: null, width: 1, height: 1 },
     ];
+    this._angularReductionTargets = [
+      { texture: null, framebuffer: null, width: 1, height: 1 },
+      { texture: null, framebuffer: null, width: 1, height: 1 },
+    ];
     this._positionUploadScratch = new Float32Array(0);
     this._velocityUploadScratch = new Float32Array(0);
     this._outputUploadScratch = new Float32Array(0);
@@ -1873,7 +2188,11 @@ class WebGLTextureComputePath {
     };
     this.reductionInitProgram = createWebGLProgram(gl, WEBGL_FORCE_FULLSCREEN_VERTEX, WEBGL_FORCE_REDUCTION_INIT_FRAGMENT);
     this.reductionCombineProgram = createWebGLProgram(gl, WEBGL_FORCE_FULLSCREEN_VERTEX, WEBGL_FORCE_REDUCTION_COMBINE_FRAGMENT);
-    this.recenterProgram = createWebGLProgram(gl, WEBGL_FORCE_FULLSCREEN_VERTEX, WEBGL_FORCE_RECENTER_FRAGMENT);
+    this.angularReductionInitProgram = createWebGLProgram(gl, WEBGL_FORCE_FULLSCREEN_VERTEX, WEBGL_FORCE_ANGULAR_REDUCTION_INIT_FRAGMENT);
+    this.recenterPrograms = {
+      base: createWebGLProgram(gl, WEBGL_FORCE_FULLSCREEN_VERTEX, WEBGL_FORCE_RECENTER_FRAGMENT_BASE),
+      rotation: createWebGLProgram(gl, WEBGL_FORCE_FULLSCREEN_VERTEX, WEBGL_FORCE_RECENTER_FRAGMENT_ROTATION),
+    };
     this.reductionInitUniforms = this._cacheUniforms(this.reductionInitProgram, [
       'u_positions',
       'u_activeMask',
@@ -1887,17 +2206,43 @@ class WebGLTextureComputePath {
       'u_source',
       'u_sourceSize',
     ]);
-    this.recenterUniforms = this._cacheUniforms(this.recenterProgram, [
+    this.angularReductionInitUniforms = this._cacheUniforms(this.angularReductionInitProgram, [
       'u_positions',
       'u_velocities',
       'u_centroid',
+      'u_activeMask',
+      'u_nodeTexSize',
+      'u_outputSize',
+      'u_nodeCapacity',
+      'u_use3D',
+      'u_center',
+    ]);
+    this.recenterUniforms = {
+      base: this._cacheUniforms(this.recenterPrograms.base, [
+        'u_positions',
+        'u_velocities',
+        'u_centroid',
+        'u_activeMask',
+        'u_nodeTexSize',
+        'u_nodeCapacity',
+        'u_use3D',
+        'u_center',
+        'u_outputScale',
+      ]),
+      rotation: this._cacheUniforms(this.recenterPrograms.rotation, [
+      'u_positions',
+      'u_velocities',
+      'u_centroid',
+      'u_angular',
       'u_activeMask',
       'u_nodeTexSize',
       'u_nodeCapacity',
       'u_use3D',
       'u_center',
       'u_outputScale',
-    ]);
+      'u_rotationDamping',
+      ]),
+    };
 
     this.framebuffer = gl.createFramebuffer();
     this.readbackFramebuffer = gl.createFramebuffer();
@@ -2026,9 +2371,9 @@ class WebGLTextureComputePath {
     return texture;
   }
 
-  _ensureReductionTarget(index, width, height) {
+  _ensureReductionTarget(index, width, height, targets = this._reductionTargets) {
     const gl = this.gl;
-    const target = this._reductionTargets[index];
+    const target = targets[index];
     if (!target.texture) {
       target.texture = gl.createTexture();
     }
@@ -2274,7 +2619,7 @@ class WebGLTextureComputePath {
     while (sourceWidth > 1 || sourceHeight > 1) {
       const targetWidth = Math.max(1, Math.ceil(sourceWidth / 2));
       const targetHeight = Math.max(1, Math.ceil(sourceHeight / 2));
-      const target = this._ensureReductionTarget(targetIndex, targetWidth, targetHeight);
+      const target = this._ensureReductionTarget(targetIndex, targetWidth, targetHeight, this._reductionTargets);
       gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
       gl.viewport(0, 0, targetWidth, targetHeight);
       gl.useProgram(sourceIsInitial ? this.reductionInitProgram : this.reductionCombineProgram);
@@ -2291,6 +2636,55 @@ class WebGLTextureComputePath {
         gl.uniform1i(this.reductionInitUniforms.u_nodeCapacity, this.nodeCapacity);
         gl.uniform1i(this.reductionInitUniforms.u_use3D, is3D ? 1 : 0);
         gl.uniform3f(this.reductionInitUniforms.u_center, center[0], center[1], center[2]);
+      } else {
+        this._bindTexture(0, sourceTexture);
+        gl.uniform1i(this.reductionCombineUniforms.u_source, 0);
+        gl.uniform2i(this.reductionCombineUniforms.u_sourceSize, sourceWidth, sourceHeight);
+      }
+
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      sourceTexture = target.texture;
+      sourceWidth = targetWidth;
+      sourceHeight = targetHeight;
+      sourceIsInitial = false;
+      targetIndex = (targetIndex + 1) % 2;
+    }
+
+    return sourceTexture;
+  }
+
+  _runAngularReduction(positionTexture, velocityTexture, centroidTexture, is3D, center) {
+    const gl = this.gl;
+    let sourceTexture = null;
+    let sourceWidth = this.nodeLayout.width;
+    let sourceHeight = this.nodeLayout.height;
+    let sourceIsInitial = true;
+    let targetIndex = 0;
+
+    while (sourceWidth > 1 || sourceHeight > 1) {
+      const targetWidth = Math.max(1, Math.ceil(sourceWidth / 2));
+      const targetHeight = Math.max(1, Math.ceil(sourceHeight / 2));
+      const target = this._ensureReductionTarget(targetIndex, targetWidth, targetHeight, this._angularReductionTargets);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+      gl.viewport(0, 0, targetWidth, targetHeight);
+      gl.useProgram(sourceIsInitial ? this.angularReductionInitProgram : this.reductionCombineProgram);
+      gl.bindVertexArray(this.fullscreenVao);
+      gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+
+      if (sourceIsInitial) {
+        this._bindTexture(0, positionTexture);
+        this._bindTexture(1, velocityTexture);
+        this._bindTexture(2, centroidTexture);
+        this._bindTexture(3, this.activeMaskTexture);
+        gl.uniform1i(this.angularReductionInitUniforms.u_positions, 0);
+        gl.uniform1i(this.angularReductionInitUniforms.u_velocities, 1);
+        gl.uniform1i(this.angularReductionInitUniforms.u_centroid, 2);
+        gl.uniform1i(this.angularReductionInitUniforms.u_activeMask, 3);
+        gl.uniform2i(this.angularReductionInitUniforms.u_nodeTexSize, this.nodeLayout.width, this.nodeLayout.height);
+        gl.uniform2i(this.angularReductionInitUniforms.u_outputSize, targetWidth, targetHeight);
+        gl.uniform1i(this.angularReductionInitUniforms.u_nodeCapacity, this.nodeCapacity);
+        gl.uniform1i(this.angularReductionInitUniforms.u_use3D, is3D ? 1 : 0);
+        gl.uniform3f(this.angularReductionInitUniforms.u_center, center[0], center[1], center[2]);
       } else {
         this._bindTexture(0, sourceTexture);
         gl.uniform1i(this.reductionCombineUniforms.u_source, 0);
@@ -2341,6 +2735,8 @@ class WebGLTextureComputePath {
       const computeProgram = this.computePrograms[useUmap ? 'umap' : 'linear'];
       const computeUniforms = this.computeUniforms[useUmap ? 'umap' : 'linear'];
       const outputScale = Math.max(0.0001, toFinite(stepOptions.outputScale, DEFAULT_OPTIONS.outputScale));
+      const rotationDamping = clamp(stepOptions.rotationDamping, 0, 1, DEFAULT_OPTIONS.rotationDamping);
+      const useRotationDamping = rotationDamping > 1e-6;
 
       this._prepareMainFramebuffer(positionsOut, velocitiesOut, this.outputPositionTexture);
       gl.viewport(0, 0, this.nodeLayout.width, this.nodeLayout.height);
@@ -2401,22 +2797,40 @@ class WebGLTextureComputePath {
 
       if (stepOptions.recenter === true) {
         const centroidTexture = this._runReduction(positionsOut, is3D, center);
+        const angularTexture = useRotationDamping
+          ? this._runAngularReduction(positionsOut, velocitiesOut, centroidTexture, is3D, center)
+          : null;
+        const recenterProgram = useRotationDamping ? this.recenterPrograms.rotation : this.recenterPrograms.base;
+        const recenterUniforms = useRotationDamping ? this.recenterUniforms.rotation : this.recenterUniforms.base;
         this._prepareMainFramebuffer(this.positionTextures[readIndex], this.velocityTextures[readIndex], this.outputPositionTexture);
         gl.viewport(0, 0, this.nodeLayout.width, this.nodeLayout.height);
-        gl.useProgram(this.recenterProgram);
+        gl.useProgram(recenterProgram);
         this._bindTexture(0, positionsOut);
         this._bindTexture(1, velocitiesOut);
         this._bindTexture(2, centroidTexture);
-        this._bindTexture(3, this.activeMaskTexture);
-        gl.uniform1i(this.recenterUniforms.u_positions, 0);
-        gl.uniform1i(this.recenterUniforms.u_velocities, 1);
-        gl.uniform1i(this.recenterUniforms.u_centroid, 2);
-        gl.uniform1i(this.recenterUniforms.u_activeMask, 3);
-        gl.uniform2i(this.recenterUniforms.u_nodeTexSize, this.nodeLayout.width, this.nodeLayout.height);
-        gl.uniform1i(this.recenterUniforms.u_nodeCapacity, this.nodeCapacity);
-        gl.uniform1i(this.recenterUniforms.u_use3D, is3D ? 1 : 0);
-        gl.uniform3f(this.recenterUniforms.u_center, center[0], center[1], center[2]);
-        gl.uniform1f(this.recenterUniforms.u_outputScale, outputScale);
+        if (useRotationDamping) {
+          this._bindTexture(3, angularTexture);
+          this._bindTexture(4, this.activeMaskTexture);
+        } else {
+          this._bindTexture(3, this.activeMaskTexture);
+        }
+        gl.uniform1i(recenterUniforms.u_positions, 0);
+        gl.uniform1i(recenterUniforms.u_velocities, 1);
+        gl.uniform1i(recenterUniforms.u_centroid, 2);
+        if (useRotationDamping) {
+          gl.uniform1i(recenterUniforms.u_angular, 3);
+          gl.uniform1i(recenterUniforms.u_activeMask, 4);
+        } else {
+          gl.uniform1i(recenterUniforms.u_activeMask, 3);
+        }
+        gl.uniform2i(recenterUniforms.u_nodeTexSize, this.nodeLayout.width, this.nodeLayout.height);
+        gl.uniform1i(recenterUniforms.u_nodeCapacity, this.nodeCapacity);
+        gl.uniform1i(recenterUniforms.u_use3D, is3D ? 1 : 0);
+        gl.uniform3f(recenterUniforms.u_center, center[0], center[1], center[2]);
+        gl.uniform1f(recenterUniforms.u_outputScale, outputScale);
+        if (useRotationDamping) {
+          gl.uniform1f(recenterUniforms.u_rotationDamping, rotationDamping);
+        }
         gl.drawArrays(gl.TRIANGLES, 0, 3);
       } else {
         this.readIndex = writeIndex;
@@ -2544,6 +2958,10 @@ class WebGLTextureComputePath {
       if (target.texture) gl.deleteTexture(target.texture);
       if (target.framebuffer) gl.deleteFramebuffer(target.framebuffer);
     }
+    for (const target of this._angularReductionTargets) {
+      if (target.texture) gl.deleteTexture(target.texture);
+      if (target.framebuffer) gl.deleteFramebuffer(target.framebuffer);
+    }
     if (this.framebuffer) gl.deleteFramebuffer(this.framebuffer);
     if (this.readbackFramebuffer) gl.deleteFramebuffer(this.readbackFramebuffer);
     if (this.fullscreenVao) gl.deleteVertexArray(this.fullscreenVao);
@@ -2551,7 +2969,9 @@ class WebGLTextureComputePath {
     if (this.computePrograms.umap) gl.deleteProgram(this.computePrograms.umap);
     if (this.reductionInitProgram) gl.deleteProgram(this.reductionInitProgram);
     if (this.reductionCombineProgram) gl.deleteProgram(this.reductionCombineProgram);
-    if (this.recenterProgram) gl.deleteProgram(this.recenterProgram);
+    if (this.angularReductionInitProgram) gl.deleteProgram(this.angularReductionInitProgram);
+    if (this.recenterPrograms?.base) gl.deleteProgram(this.recenterPrograms.base);
+    if (this.recenterPrograms?.rotation) gl.deleteProgram(this.recenterPrograms.rotation);
 
     this.positionTextures = [null, null];
     this.velocityTextures = [null, null];
@@ -2568,6 +2988,9 @@ class WebGLTextureComputePath {
     this.framebuffer = null;
     this.readbackFramebuffer = null;
     this.fullscreenVao = null;
+    this.angularReductionInitProgram = null;
+    this.recenterPrograms = null;
+    this.recenterUniforms = null;
     this.textureVersion = 0;
     this._textureSizes.clear();
   }
@@ -2669,9 +3092,12 @@ class WebGPUForceComputeBackend {
     this.outputScalePipeline = null;
     this.outputScaleBindGroupLayout = null;
     this.outputScaleBindGroup = null;
-    this.recenterPipeline = null;
-    this.recenterBindGroupLayout = null;
-    this.recenterBindGroup = null;
+    this.recenterBasePipeline = null;
+    this.recenterBaseBindGroupLayout = null;
+    this.recenterBaseBindGroup = null;
+    this.recenterRotationPipeline = null;
+    this.recenterRotationBindGroupLayout = null;
+    this.recenterRotationBindGroup = null;
     this.paramsBuffer = null;
     this.outputScaleParamsBuffer = null;
     this.recenterParamsBuffer = null;
@@ -2712,7 +3138,8 @@ class WebGPUForceComputeBackend {
 
     this._ensurePipeline(false);
     this._ensureOutputScalePipeline();
-    this._ensureRecenterPipeline();
+    this._ensureRecenterPipeline(false);
+    this._ensureRecenterPipeline(true);
   }
 
   _ensurePipeline(useUmap = false) {
@@ -2759,18 +3186,27 @@ class WebGPUForceComputeBackend {
     });
   }
 
-  _ensureRecenterPipeline() {
-    if (!this.device || this.recenterPipeline) return;
-    this.recenterBindGroupLayout = this.device.createBindGroupLayout({
-      entries: [
+  _ensureRecenterPipeline(useRotation = false) {
+    if (!this.device) return;
+    const pipelineField = useRotation ? 'recenterRotationPipeline' : 'recenterBasePipeline';
+    const layoutField = useRotation ? 'recenterRotationBindGroupLayout' : 'recenterBaseBindGroupLayout';
+    if (this[pipelineField]) return;
+    const entries = useRotation
+      ? [
+        { binding: 0, visibility: this.shaderVisibility, buffer: { type: 'storage' } },
+        { binding: 1, visibility: this.shaderVisibility, buffer: { type: 'storage' } },
+        { binding: 2, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
+        { binding: 3, visibility: this.shaderVisibility, buffer: { type: 'uniform' } },
+      ]
+      : [
         { binding: 0, visibility: this.shaderVisibility, buffer: { type: 'storage' } },
         { binding: 1, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
         { binding: 2, visibility: this.shaderVisibility, buffer: { type: 'uniform' } },
-      ],
-    });
-    const module = this.device.createShaderModule({ code: RECENTER_WGSL });
-    this.recenterPipeline = this.device.createComputePipeline({
-      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.recenterBindGroupLayout] }),
+      ];
+    this[layoutField] = this.device.createBindGroupLayout({ entries });
+    const module = this.device.createShaderModule({ code: useRotation ? RECENTER_WGSL_ROTATION : RECENTER_WGSL_BASE });
+    this[pipelineField] = this.device.createComputePipeline({
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this[layoutField]] }),
       compute: { module, entryPoint: 'main' },
     });
   }
@@ -2828,17 +3264,28 @@ class WebGPUForceComputeBackend {
     });
   }
 
-  _rebuildRecenterBindGroup() {
-    if (!this.recenterBindGroupLayout) return;
+  _rebuildRecenterBindGroup(useRotation = false) {
+    const layout = useRotation ? this.recenterRotationBindGroupLayout : this.recenterBaseBindGroupLayout;
+    if (!layout) return;
     if (!this.positionBuffer || !this.activeIdsBuffer || !this.recenterParamsBuffer) return;
-    this.recenterBindGroup = this.device.createBindGroup({
-      layout: this.recenterBindGroupLayout,
-      entries: [
-        { binding: 0, resource: { buffer: this.positionBuffer } },
-        { binding: 1, resource: { buffer: this.activeIdsBuffer } },
-        { binding: 2, resource: { buffer: this.recenterParamsBuffer } },
-      ],
+    if (useRotation && !this.velocityBuffer) return;
+    const bindGroup = this.device.createBindGroup({
+      layout,
+      entries: useRotation
+        ? [
+          { binding: 0, resource: { buffer: this.positionBuffer } },
+          { binding: 1, resource: { buffer: this.velocityBuffer } },
+          { binding: 2, resource: { buffer: this.activeIdsBuffer } },
+          { binding: 3, resource: { buffer: this.recenterParamsBuffer } },
+        ]
+        : [
+          { binding: 0, resource: { buffer: this.positionBuffer } },
+          { binding: 1, resource: { buffer: this.activeIdsBuffer } },
+          { binding: 2, resource: { buffer: this.recenterParamsBuffer } },
+        ],
     });
+    if (useRotation) this.recenterRotationBindGroup = bindGroup;
+    else this.recenterBaseBindGroup = bindGroup;
   }
 
   syncTopology(payload, options = {}) {
@@ -2955,7 +3402,8 @@ class WebGPUForceComputeBackend {
 
     this._rebuildBindGroup(useUmap);
     this._rebuildOutputScaleBindGroup();
-    this._rebuildRecenterBindGroup();
+    this._rebuildRecenterBindGroup(false);
+    this._rebuildRecenterBindGroup(true);
     return true;
   }
 
@@ -3034,6 +3482,8 @@ class WebGPUForceComputeBackend {
     );
 
     const outputScale = Math.max(0.0001, toFinite(stepOptions.outputScale, DEFAULT_OPTIONS.outputScale));
+    const rotationDamping = clamp(stepOptions.rotationDamping, 0, 1, DEFAULT_OPTIONS.rotationDamping);
+    const useRotationDamping = rotationDamping > 1e-6;
 
     this.device.queue.writeBuffer(this.paramsBuffer, 0, paramsBuffer);
 
@@ -3049,12 +3499,14 @@ class WebGPUForceComputeBackend {
     encoder.copyBufferToBuffer(this.scratchVelocityBuffer, 0, this.velocityBuffer, 0, bytes);
 
     if (stepOptions.recenter === true) {
-      this._ensureRecenterPipeline();
-      this._rebuildRecenterBindGroup();
-      if (!this.recenterPipeline || !this.recenterBindGroup || !this.recenterParamsBuffer) {
+      this._ensureRecenterPipeline(useRotationDamping);
+      this._rebuildRecenterBindGroup(useRotationDamping);
+      const recenterPipeline = useRotationDamping ? this.recenterRotationPipeline : this.recenterBasePipeline;
+      const recenterBindGroup = useRotationDamping ? this.recenterRotationBindGroup : this.recenterBaseBindGroup;
+      if (!recenterPipeline || !recenterBindGroup || !this.recenterParamsBuffer) {
         return false;
       }
-      const recenterParamsBuffer = new ArrayBuffer(8 * 4);
+      const recenterParamsBuffer = new ArrayBuffer(useRotationDamping ? (12 * 4) : (8 * 4));
       const recenterParamsU32 = new Uint32Array(recenterParamsBuffer);
       const recenterParamsF32 = new Float32Array(recenterParamsBuffer);
       recenterParamsU32[0] = this.activeCount >>> 0;
@@ -3062,11 +3514,14 @@ class WebGPUForceComputeBackend {
       recenterParamsF32[4] = center[0];
       recenterParamsF32[5] = center[1];
       recenterParamsF32[6] = center[2];
+      if (useRotationDamping) {
+        recenterParamsF32[8] = rotationDamping;
+      }
       this.device.queue.writeBuffer(this.recenterParamsBuffer, 0, recenterParamsBuffer);
 
       const recenterPass = encoder.beginComputePass({ label: 'layout:gpu-force:recenter' });
-      recenterPass.setPipeline(this.recenterPipeline);
-      recenterPass.setBindGroup(0, this.recenterBindGroup);
+      recenterPass.setPipeline(recenterPipeline);
+      recenterPass.setBindGroup(0, recenterBindGroup);
       recenterPass.dispatchWorkgroups(1);
       recenterPass.end();
     }
@@ -3204,15 +3659,18 @@ class WebGPUForceComputeBackend {
     this.linearBindGroup = null;
     this.umapBindGroup = null;
     this.outputScaleBindGroup = null;
-    this.recenterBindGroup = null;
+    this.recenterBaseBindGroup = null;
+    this.recenterRotationBindGroup = null;
     this.linearPipeline = null;
     this.umapPipeline = null;
     this.outputScalePipeline = null;
-    this.recenterPipeline = null;
+    this.recenterBasePipeline = null;
+    this.recenterRotationPipeline = null;
     this.linearBindGroupLayout = null;
     this.umapBindGroupLayout = null;
     this.outputScaleBindGroupLayout = null;
-    this.recenterBindGroupLayout = null;
+    this.recenterBaseBindGroupLayout = null;
+    this.recenterRotationBindGroupLayout = null;
     this.nodeCapacity = 0;
     this.activeCount = 0;
     this.sampleFrame = 0;
@@ -3599,6 +4057,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       forceModel: umapForceModel ? 'umap' : 'linear',
       center: this.options.center,
       recenter: this.options.recenter === true,
+      rotationDamping: clamp(this.options.rotationDamping, 0, 1, DEFAULT_OPTIONS.rotationDamping),
       sampleCount,
       sampleChurn: clamp(this.options.sampleChurn, 0, 1, DEFAULT_OPTIONS.sampleChurn),
       exactRepulsionThreshold,

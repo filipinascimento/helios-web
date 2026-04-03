@@ -1692,8 +1692,8 @@ export class Helios extends EventTarget {
       controlPoseSignature: '',
     };
     this._picking = {
-      node: { enabled: false },
-      edge: { enabled: false },
+      node: { enabled: false, hoverEnabled: true },
+      edge: { enabled: false, hoverEnabled: true },
       options: {
         resolutionScale: 0.5,
         trackDepth: false,
@@ -7377,6 +7377,7 @@ export class Helios extends EventTarget {
 
   enableNodePicking(options = {}) {
     this._picking.node.enabled = true;
+    this._picking.node.hoverEnabled = options.hoverEnabled !== false && options.trackHover !== false;
     this._mergePickingOptions(options);
     this._applyPickingConfig();
     return this;
@@ -7384,6 +7385,7 @@ export class Helios extends EventTarget {
 
   enableEdgePicking(options = {}) {
     this._picking.edge.enabled = true;
+    this._picking.edge.hoverEnabled = options.hoverEnabled !== false && options.trackHover !== false;
     this._mergePickingOptions(options);
     this._applyPickingConfig();
     return this;
@@ -7460,13 +7462,14 @@ export class Helios extends EventTarget {
     });
     this.indexPickingTracker.resize(this.size);
     this._attachPickingListeners();
+    this._syncHoverTrackingState('config');
     this._reconcileAttributeUpdateConfig();
     this.scheduler.requestRender();
   }
 
   _reconcileAttributeUpdateConfig() {
     const manual = this.attributeUpdateOptions ?? { autoUpdate: false, maxFps: null, frameSkip: null };
-    const pickingEnabled = this._picking.node.enabled || this._picking.edge.enabled;
+    const pickingEnabled = this._hasHoverPickingEnabled();
     const picking = pickingEnabled
       ? { autoUpdate: true, maxFps: this._picking.options.maxFps ?? 30, frameSkip: 0 }
       : { autoUpdate: false, maxFps: null, frameSkip: null };
@@ -7486,6 +7489,56 @@ export class Helios extends EventTarget {
 
   _getInteractionCanvas() {
     return this.layers?.canvas ?? this.renderer?.canvas ?? null;
+  }
+
+  _hasHoverPickingEnabled() {
+    return (
+      (this._picking.node.enabled === true && this._picking.node.hoverEnabled !== false)
+      || (this._picking.edge.enabled === true && this._picking.edge.hoverEnabled !== false)
+    );
+  }
+
+  _resolveHoverHit(picked) {
+    if (!picked) return null;
+    const nodeEnabled = this._picking.node.enabled === true && this._picking.node.hoverEnabled !== false;
+    const edgeEnabled = this._picking.edge.enabled === true && this._picking.edge.hoverEnabled !== false;
+    const nodeHit = nodeEnabled ? picked.node : -1;
+    const edgeHit = edgeEnabled ? picked.edge : -1;
+    const nodeDepth = picked.nodeDepth;
+    const edgeDepth = picked.edgeDepth;
+    if (nodeHit < 0 && edgeHit < 0) return { kind: null, index: -1, depth: null };
+    const trackDepth = this._picking.options.trackDepth === true;
+    if (trackDepth && nodeHit >= 0 && edgeHit >= 0 && Number.isFinite(nodeDepth) && Number.isFinite(edgeDepth)) {
+      return nodeDepth <= edgeDepth
+        ? { kind: 'node', index: nodeHit, depth: nodeDepth }
+        : { kind: 'edge', index: edgeHit, depth: edgeDepth };
+    }
+    if (nodeHit >= 0) return { kind: 'node', index: nodeHit, depth: Number.isFinite(nodeDepth) ? nodeDepth : null };
+    return { kind: 'edge', index: edgeHit, depth: Number.isFinite(edgeDepth) ? edgeDepth : null };
+  }
+
+  _syncHoverTrackingState(reason = 'config') {
+    if (!this._hasHoverPickingEnabled()) {
+      if (this._picking.hoverThrottleTimer) {
+        clearTimeout(this._picking.hoverThrottleTimer);
+        this._picking.hoverThrottleTimer = null;
+      }
+      if (this._picking.cameraIdleTimer) {
+        clearTimeout(this._picking.cameraIdleTimer);
+        this._picking.cameraIdleTimer = null;
+      }
+      this._picking._rerun = false;
+      this._resetHover(reason);
+      return;
+    }
+    const prev = this._picking.hover;
+    if (prev.kind === 'node' && this._picking.node.hoverEnabled === false) {
+      this._resetHover(reason);
+      return;
+    }
+    if (prev.kind === 'edge' && this._picking.edge.hoverEnabled === false) {
+      this._resetHover(reason);
+    }
   }
 
   _attachPickingListeners() {
@@ -7664,7 +7717,7 @@ export class Helios extends EventTarget {
   }
 
   _scheduleCameraIdleHoverPick() {
-    if (!(this._picking.node.enabled || this._picking.edge.enabled)) return;
+    if (!this._hasHoverPickingEnabled()) return;
     if (this._picking.cameraIdleTimer) {
       clearTimeout(this._picking.cameraIdleTimer);
     }
@@ -7678,7 +7731,7 @@ export class Helios extends EventTarget {
   }
 
   _scheduleHoverPick() {
-    if (!(this._picking.node.enabled || this._picking.edge.enabled)) return;
+    if (!this._hasHoverPickingEnabled()) return;
     if (this._picking._raf != null) return;
     this._picking._raf = requestAnimationFrame(() => {
       this._picking._raf = null;
@@ -7722,6 +7775,7 @@ export class Helios extends EventTarget {
 
   async _runHoverPick() {
     if (!this.indexPickingTracker) return;
+    if (!this._hasHoverPickingEnabled()) return;
     if (this._picking.suppressHover) return;
     if (!this._picking.pointer.inside) {
       this._resetHover('outside');
@@ -7750,7 +7804,7 @@ export class Helios extends EventTarget {
       await this._ensureIndexPickingTargets();
       const { x, y, clientX, clientY } = this._picking.pointer;
       const picked = await this.indexPickingTracker.pick(x, y);
-      const hit = this._resolvePrimaryHit(picked);
+      const hit = this._resolveHoverHit(picked);
       const prev = this._picking.hover;
       const next = hit ?? { kind: null, index: -1, depth: null };
       if (prev.kind === next.kind && prev.index === next.index) return;

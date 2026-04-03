@@ -156,9 +156,10 @@ Total storages: min `2`, max `2`.
 | Storage | What | Core | Activates When |
 | --- | --- | --- | --- |
 | `positionBuffer` | In-place node positions to recenter. | Yes | Recenter is enabled. |
+| `velocityBuffer` | In-place motion vectors used to estimate and damp rigid-body spin. | Yes | Recenter is enabled. |
 | `activeIdsBuffer` | Active node ids used for centroid reduction. | Yes | Recenter is enabled. |
 
-Total storages: min `2`, max `2`.
+Total storages: min `3`, max `3`.
 
 ### Layout Summary: WebGPU
 
@@ -166,7 +167,7 @@ Total storages: min `2`, max `2`.
 | --- | ---: | ---: |
 | Layout Compute: Main | 9 | 10 |
 | Layout Compute: Output Scale | 2 | 2 |
-| Layout Compute: Recenter | 2 | 2 |
+| Layout Compute: Recenter | 3 | 3 |
 
 ## GPU Layout Providers: WebGPU
 

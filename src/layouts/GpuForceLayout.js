@@ -36,6 +36,7 @@ const DEFAULT_OPTIONS = {
   alphaMin: 0.001,
   autoStopAtAlphaMin: true,
   recenter: true,
+  rotationDamping: 0,
 };
 
 const DEFAULT_UMAP_SAMPLE_CHURN = 0.01;
@@ -396,6 +397,21 @@ export class GpuForceLayout extends Layout {
         }),
         get: () => Number(this.options.outputScale ?? DEFAULT_OPTIONS.outputScale),
         set: (value) => this.setSettings({ outputScale: value }, { reheat: true }),
+      },
+      {
+        key: 'rotationDamping',
+        label: 'Rotation damping',
+        hint: 'Projects out the estimated rigid-body spin after each GPU step. 0 disables the correction; 1 removes the full fitted rotation component.',
+        type: 'number',
+        min: 0,
+        max: 1,
+        step: 0.01,
+        inputMin: 0,
+        inputMax: 1,
+        sliderMin: 0,
+        sliderMax: 1,
+        get: () => Number(this.options.rotationDamping ?? DEFAULT_OPTIONS.rotationDamping),
+        set: (value) => this.setSettings({ rotationDamping: value }),
       },
     ];
 

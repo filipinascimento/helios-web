@@ -57,6 +57,8 @@ Each step executes GPU force integration and produces render-space positions:
 - WebGPU: compute pass(es) over storage buffers.
 - WebGL2: fragment-shader pass(es) over textures, with MRT outputs for
   simulation positions, velocities, and render-space positions.
+- When `recenter` is enabled, a follow-up correction pass recenters the active
+  set and can optionally damp fitted rigid-body rotation via `rotationDamping`.
 
 No per-node force math is done on CPU.
 
@@ -192,7 +194,26 @@ with `degreeNorm = max(1, localNeighborLimit)`.
 
 In 2D, the `z` component is suppressed.
 
-### 4.4 UMAP repulsion and attraction
+### 4.4 Post-step rigid rotation damping
+
+After the main force update, the optional recenter pass estimates a coarse
+rigid-body angular velocity from the active-set positions and per-step motion
+vectors, then subtracts that rotational component:
+
+- `omega ~= sum(cross(r_i, delta_i)) / sum(dot(r_i, r_i))`
+- `delta_i(corrected) = delta_i - rotationDamping * cross(omega, r_i)`
+
+where `r_i` is the node position relative to the active-set centroid after
+recentering, and `delta_i` is the stored per-step motion vector (`velocity` for
+the linear solver, step displacement for the UMAP solver).
+
+`rotationDamping = 0` disables the correction. `rotationDamping = 1` removes
+the full fitted rigid spin for that step.
+
+When disabled, the backend uses the simpler centroid-only recenter path and
+skips the extra angular-reduction work entirely.
+
+### 4.5 UMAP repulsion and attraction
 
 When `forceModel === 'umap'`, the delegate keeps the same GPU execution path
 but swaps in UMAP-style edge attraction and negative-sampling repulsion using

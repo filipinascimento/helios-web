@@ -367,6 +367,7 @@ async function bootstrap() {
     radius: 220 * Math.sqrt(nodeCount / 1000),
     depth: mode === '3d' ? 140 : 0,
     outputScale: 6.5,
+    rotationDamping: 0.6,
     ...(usingUmapDataset
       ? {
           eta: 0.4,
