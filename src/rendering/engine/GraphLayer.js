@@ -4,6 +4,7 @@ export { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './GraphLayerCommon.js';
 
 export class GraphLayer extends Layer {
   static NO_HOVER_INDEX = 0xffffffff;
+  static FORCE_VISIBILITY_BOOST = 1000.0;
 
   isSupportedTransparencyMode(mode) {
     switch (mode) {
@@ -21,14 +22,36 @@ export class GraphLayer extends Layer {
     }
   }
 
+  isWeightedTransparencyMode(mode) {
+    switch (mode) {
+      case 'weighted':
+      case 'additive-normalized':
+      case 'additive-tonemapped':
+      case 'additive-normalized-bright':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  normalizeEdgeTransparencyMode(mode) {
+    const raw = typeof mode === 'string' ? mode : '';
+    const fallback = raw ? 'alpha' : 'weighted';
+    const resolved = this.isSupportedTransparencyMode(raw) ? raw : fallback;
+    if (this.isWeightedTransparencyMode(resolved) && this.weightedSupported === false) {
+      return 'alpha';
+    }
+    return resolved;
+  }
+
   constructor(options = {}) {
     super('graph-layer');
     const requestedSlots = Number(options.stateSlots);
     const clampedSlots = Number.isFinite(requestedSlots) ? Math.floor(requestedSlots) : 4;
     this.stateSlotCount = Math.min(32, Math.max(0, clampedSlots));
     this.edgeRenderingMode = options.edgeRendering === 'line' ? 'line' : 'quad';
-    const mode = options.transparencyModeEdges;
-    this.edgeTransparencyMode = this.isSupportedTransparencyMode(mode) ? mode : 'alpha';
+    this.weightedSupported = null;
+    this.edgeTransparencyMode = this.normalizeEdgeTransparencyMode(options.transparencyModeEdges);
     this.nodeOpacityBase = 0;
     this.nodeOpacityScale = 1;
     this.nodeSizeBase = 0;
@@ -451,9 +474,7 @@ export class GraphLayer extends Layer {
   }
 
   setEdgeTransparencyMode(mode) {
-    if (this.isSupportedTransparencyMode(mode)) {
-      this.edgeTransparencyMode = mode;
-    }
+    this.edgeTransparencyMode = this.normalizeEdgeTransparencyMode(mode);
   }
 
   setPositionDelegate(delegate = null) {

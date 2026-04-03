@@ -21,6 +21,10 @@ const INTEGER_LIKE_TYPES = new Set([
 const DEFAULT_CONFIG = Object.freeze({
   enabled: false,
   source: null,
+  selectionMode: 'ranked',
+  selectedOnlySpaceAware: false,
+  hoveredNodeEnabled: false,
+  hoveredNodeSource: null,
   fallbackSources: ['Label', 'Name', '$id'],
   maxVisible: 120,
   minScreenRadiusPx: 0,
@@ -211,6 +215,17 @@ function normalizeFallbackSources(value) {
   return [...DEFAULT_CONFIG.fallbackSources];
 }
 
+function normalizeSelectionMode(value, fallback = DEFAULT_CONFIG.selectionMode) {
+  const raw = String(value ?? fallback).trim().toLowerCase();
+  if (raw === 'hover' || raw === 'hovered' || raw === 'hovered-node' || raw === 'hovered_node') {
+    return 'hovered-node';
+  }
+  if (raw === 'selected' || raw === 'selected-only' || raw === 'selected_only') {
+    return 'selected-only';
+  }
+  return 'ranked';
+}
+
 export class SvgLabelController {
   constructor(helios, options = {}) {
     this.helios = helios ?? null;
@@ -277,6 +292,21 @@ export class SvgLabelController {
     if (Object.prototype.hasOwnProperty.call(options, 'source')) {
       const value = options.source;
       next.source = typeof value === 'function'
+        ? value
+        : (value == null || String(value).trim() === '' ? null : String(value).trim());
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'selectionMode')) {
+      next.selectionMode = normalizeSelectionMode(options.selectionMode, this._config.selectionMode);
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'selectedOnlySpaceAware')) {
+      next.selectedOnlySpaceAware = options.selectedOnlySpaceAware === true;
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'hoveredNodeEnabled')) {
+      next.hoveredNodeEnabled = options.hoveredNodeEnabled === true;
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'hoveredNodeSource')) {
+      const value = options.hoveredNodeSource;
+      next.hoveredNodeSource = typeof value === 'function'
         ? value
         : (value == null || String(value).trim() === '' ? null : String(value).trim());
     }
@@ -349,7 +379,7 @@ export class SvgLabelController {
   update({ timestamp } = {}) {
     if (!this.group || !this.helios) return false;
     const now = Number.isFinite(timestamp) ? Number(timestamp) : performance.now();
-    if (this._config.enabled !== true || this._config.maxVisible <= 0) {
+    if (!this._usesBaseLabels() && !this._usesHoveredNodeOverlay()) {
       this._hideAll();
       return false;
     }
@@ -408,22 +438,14 @@ export class SvgLabelController {
     }
 
     try {
-      if (this._config.maxVisible <= 0) return null;
+      if (!this._usesBaseLabels() && !this._usesHoveredNodeOverlay()) return null;
       const now = Number.isFinite(options.timestamp) ? Number(options.timestamp) : performance.now();
       const network = this._getRenderNetwork();
       if (!network) return null;
-      const run = () => {
-        const nodeIndices = this._safe(() => network.nodeIndices, null);
-        if (!nodeIndices || !nodeIndices.length) {
-          this._visibleEntries.length = 0;
-          this._lastVisibleSet.clear();
-          return false;
-        }
-        return this._runFullUpdateUnsafe(uniforms, now, nodeIndices, { render: false });
-      };
+      const run = () => this._runFullUpdateUnsafe(uniforms, now, { render: false });
       if (typeof network.withBufferAccess === 'function') {
         try {
-          network.withBufferAccess(run, { nodeIndices: true });
+          network.withBufferAccess(run, { nodeIndices: this._needsNodeIndicesForFullUpdate() });
         } catch {
           run();
         }
@@ -474,10 +496,36 @@ export class SvgLabelController {
     ].join('|');
   }
 
+  _usesHoveredNodeSelectionMode() {
+    return this._config.selectionMode === 'hovered-node';
+  }
+
+  _usesBaseLabels() {
+    if (this._config.enabled !== true) return false;
+    if (this._usesHoveredNodeSelectionMode()) return true;
+    return this._config.maxVisible > 0;
+  }
+
+  _usesSelectedOnlySelectionMode() {
+    return this._config.selectionMode === 'selected-only';
+  }
+
+  _usesHoveredNodeOverlay() {
+    return this._config.hoveredNodeEnabled === true;
+  }
+
   _resolveLabelSourceVersion() {
     const network = this._getRenderNetwork();
     if (!network) return 0;
-    const resolved = this._resolveCandidateSourceNames(network);
+    let sum = this._sumLabelSourceVersion(network, this._config.source);
+    if (this._usesHoveredNodeOverlay()) {
+      sum += this._sumLabelSourceVersion(network, this._config.hoveredNodeSource);
+    }
+    return sum;
+  }
+
+  _sumLabelSourceVersion(network, configuredSource) {
+    const resolved = this._resolveCandidateSourceNames(network, configuredSource);
     let sum = 0;
     for (let i = 0; i < resolved.length; i += 1) {
       const name = resolved[i];
@@ -494,17 +542,10 @@ export class SvgLabelController {
       this._hideAll();
       return false;
     }
-    const run = () => {
-      const nodeIndices = this._safe(() => network.nodeIndices, null);
-      if (!nodeIndices || !nodeIndices.length) {
-        this._hideAll();
-        return false;
-      }
-      return this._runFullUpdateUnsafe(uniforms, now, nodeIndices);
-    };
+    const run = () => this._runFullUpdateUnsafe(uniforms, now);
     if (typeof network.withBufferAccess === 'function') {
       try {
-        return Boolean(network.withBufferAccess(run, { nodeIndices: true }));
+        return Boolean(network.withBufferAccess(run, { nodeIndices: this._needsNodeIndicesForFullUpdate() }));
       } catch {
         return Boolean(run());
       }
@@ -512,19 +553,177 @@ export class SvgLabelController {
     return Boolean(run());
   }
 
-  _runFullUpdateUnsafe(uniforms, now, nodeIndices, options = {}) {
-    const network = this._getRenderNetwork();
-    if (!network) return false;
+  _needsNodeIndicesForFullUpdate() {
+    return this._usesBaseLabels() && !this._usesHoveredNodeSelectionMode();
+  }
 
-    const context = this.helios?._buildPositionDelegateContext?.() ?? {};
-    const positions = this._resolvePositionView(context, now);
-    if (!positions?.view) {
+  _runHoveredNodeUpdate(uniforms, now, options = {}) {
+    const network = this._getRenderNetwork();
+    const viewport = uniforms?.viewport ?? null;
+    if (!network || !viewport) {
       this._hideAll();
       return false;
     }
+    const run = () => this._runHoveredNodeUpdateUnsafe(uniforms, now, options);
+    if (typeof network.withBufferAccess === 'function') {
+      try {
+        return Boolean(network.withBufferAccess(run));
+      } catch {
+        return Boolean(run());
+      }
+    }
+    return Boolean(run());
+  }
+
+  _runHoveredNodeUpdateUnsafe(uniforms, now, options = {}) {
+    const network = this._getRenderNetwork();
+    if (!network) return false;
+    const entries = this._collectHoveredNodeEntriesUnsafe(network, uniforms, now);
+    if (!entries.length) {
+      this._hideAll();
+      return false;
+    }
+    this._visibleEntries = entries;
+    this._lastVisibleSet = new Set(entries.map((entry) => entry.id));
+    if (options.render !== false) this._renderVisible();
+    return true;
+  }
+
+  _collectHoveredNodeEntriesUnsafe(network, uniforms, now, options = {}) {
+    const entry = this._resolveHoveredNodeEntry(network, uniforms, now, options);
+    return entry ? [entry] : [];
+  }
+
+  _resolveHoveredNodeEntry(network, uniforms, now, options = {}) {
+    const hoveredNode = this._hoveredNode;
+    if (!Number.isInteger(hoveredNode) || hoveredNode < 0) return null;
+
+    const context = this.helios?._buildPositionDelegateContext?.() ?? {};
+    const positions = this._resolvePositionView(context, now);
+    const view = positions?.view ?? null;
+    if (!view) return null;
+
+    const offset = hoveredNode * 3;
+    if (offset + 2 >= view.length) return null;
+    const x = view[offset];
+    const y = view[offset + 1];
+    const z = view[offset + 2];
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null;
+
+    const viewProjection = uniforms.viewProjection;
+    const width = Math.max(1, Math.floor(uniforms.viewport?.width ?? this.helios?.size?.width ?? 1));
+    const height = Math.max(1, Math.floor(uniforms.viewport?.height ?? this.helios?.size?.height ?? 1));
+    const projectionType = uniforms.projectionType ?? 'perspective';
+    const right = uniforms.right ?? [1, 0, 0];
+    const cameraMode = uniforms.mode ?? '2d';
+    const zoom = toFinite(this.helios?.renderer?.camera?.zoom, 1);
+    const semanticZoomExponent = toFinite(this.helios?.semanticZoomExponent?.(), 0);
+    const semanticScale = (cameraMode === '2d' && semanticZoomExponent > 0)
+      ? (1 / Math.pow(Math.max(zoom, 1e-3), semanticZoomExponent))
+      : 1;
+
+    const center = projectPoint(viewProjection, width, height, x, y, z);
+    if (!center) return null;
+    if (projectionType !== 'orthographic' && center.w <= 1e-6) return null;
+    if (center.ndcZ < -1.05 || center.ndcZ > 1.05) return null;
+    if (center.ndcX < -1.2 || center.ndcX > 1.2 || center.ndcY < -1.2 || center.ndcY > 1.2) return null;
+
+    const nodeSizes = this._safe(() => network.getNodeAttributeBuffer(NODE_SIZE_ATTRIBUTE)?.view, null);
+    const nodeOutlines = this._safe(() => network.getNodeAttributeBuffer(NODE_OUTLINE_WIDTH_ATTRIBUTE)?.view, null);
+    const nodeSizeBase = toFinite(this.helios?.nodeSizeBase?.(), 0);
+    const nodeSizeScale = toFinite(this.helios?.nodeSizeScale?.(), 1);
+    const nodeOutlineBase = toFinite(this.helios?.nodeOutlineWidthBase?.(), 0);
+    const nodeOutlineScale = toFinite(this.helios?.nodeOutlineWidthScale?.(), 0);
+    const rawSize = toFinite(nodeSizes?.[hoveredNode], DEFAULT_NODE_SIZE);
+    const rawOutline = toFinite(nodeOutlines?.[hoveredNode], DEFAULT_NODE_OUTLINE_WIDTH);
+    const outlineWidth = Math.max(0, nodeOutlineBase + nodeOutlineScale * rawOutline);
+    const fullSize = Math.max(1, (nodeSizeBase + nodeSizeScale * rawSize) + outlineWidth) * semanticScale;
+    const worldRadius = Math.max(0.5, fullSize * 0.5);
+
+    const edgePoint = projectPoint(
+      viewProjection,
+      width,
+      height,
+      x + right[0] * worldRadius,
+      y + right[1] * worldRadius,
+      z + right[2] * worldRadius,
+    );
+    if (!edgePoint) return null;
+    const radiusPx = Math.max(1, Math.hypot(edgePoint.screenX - center.screenX, edgePoint.screenY - center.screenY));
+    const minRadiusPx = Math.max(0, this._config.minScreenRadiusPx);
+    if (radiusPx < minRadiusPx) return null;
+
+    const sourceAccessors = this._buildLabelSourceAccessors(network, options.source ?? this._config.source);
+    const text = this._resolveLabelText(sourceAccessors, hoveredNode);
+    if (!text) return null;
+    const fontSizePx = 12 * this._config.fontSizeScale;
+    const formatted = this._formatLabelText(text, fontSizePx);
+    if (!formatted) return null;
+
+    const labelX = center.screenX;
+    const labelY = this._computeLabelScreenY(center.screenY, radiusPx);
+    if (
+      labelX + formatted.widthPx * 0.5 < 0
+      || labelX - formatted.widthPx * 0.5 > width
+      || labelY + formatted.heightPx * 0.5 < 0
+      || labelY - formatted.heightPx * 0.5 > height
+    ) {
+      return null;
+    }
+
+    return {
+      id: hoveredNode,
+      text: formatted.text,
+      lines: formatted.lines,
+      x: labelX,
+      y: labelY,
+      worldRadius,
+      score: radiusPx * radiusPx,
+    };
+  }
+
+  _runFullUpdateUnsafe(uniforms, now, options = {}) {
+    const network = this._getRenderNetwork();
+    if (!network) return false;
+    let nextVisible = [];
+    if (this._usesBaseLabels()) {
+      if (this._usesHoveredNodeSelectionMode()) {
+        nextVisible = this._collectHoveredNodeEntriesUnsafe(network, uniforms, now, {
+          source: this._config.source,
+        });
+      } else {
+        const nodeIndices = this._safe(() => network.nodeIndices, null);
+        if (nodeIndices?.length) {
+          nextVisible = this._collectRankedEntriesUnsafe(network, uniforms, now, nodeIndices);
+        }
+      }
+    }
+    if (this._usesHoveredNodeOverlay()) {
+      nextVisible = this._mergeVisibleEntries(
+        nextVisible,
+        this._collectHoveredNodeEntriesUnsafe(network, uniforms, now, {
+          source: this._config.hoveredNodeSource,
+        }),
+      );
+    }
+    if (!nextVisible.length) {
+      this._hideAll();
+      return false;
+    }
+    this._visibleEntries = nextVisible;
+    this._lastVisibleSet = new Set(nextVisible.map((entry) => entry.id));
+    if (options.render !== false) this._renderVisible();
+    return true;
+  }
+
+  _collectRankedEntriesUnsafe(network, uniforms, now, nodeIndices) {
+    const context = this.helios?._buildPositionDelegateContext?.() ?? {};
+    const positions = this._resolvePositionView(context, now);
+    if (!positions?.view) {
+      return [];
+    }
 
     const view = positions.view;
-
     const viewProjection = uniforms.viewProjection;
     const width = Math.max(1, Math.floor(uniforms.viewport?.width ?? this.helios?.size?.width ?? 1));
     const height = Math.max(1, Math.floor(uniforms.viewport?.height ?? this.helios?.size?.height ?? 1));
@@ -544,6 +743,8 @@ export class SvgLabelController {
     const selectedMask = toFinite(this.helios?.constructor?.STATES?.SELECTED, 1 << 1) >>> 0;
     const hoveredNode = this._hoveredNode;
     const prevVisible = this._lastVisibleSet;
+    const selectedOnly = this._usesSelectedOnlySelectionMode();
+    const selectedOnlySpaceAware = selectedOnly && this._config.selectedOnlySpaceAware === true;
 
     const nodeSizes = this._safe(() => network.getNodeAttributeBuffer(NODE_SIZE_ATTRIBUTE)?.view, null);
     const nodeOutlines = this._safe(() => network.getNodeAttributeBuffer(NODE_OUTLINE_WIDTH_ATTRIBUTE)?.view, null);
@@ -554,13 +755,17 @@ export class SvgLabelController {
     const heapCap = Math.max(maxVisible * 6, maxVisible + 24);
     const heap = [];
     const mustInclude = [];
-    const sourceAccessors = this._buildLabelSourceAccessors(network);
+    const sourceAccessors = this._buildLabelSourceAccessors(network, this._config.source);
     const collisionCellPx = Math.max(4, this._config.collisionCellPx);
     const minRadiusPx = Math.max(0, this._config.minScreenRadiusPx);
 
     for (let i = 0; i < nodeIndices.length; i += 1) {
       const id = Number(nodeIndices[i]);
       if (!Number.isInteger(id) || id < 0) continue;
+
+      const selected = maskHasSelected(nodeStates, id, selectedMask);
+      if (selectedOnly && !selected) continue;
+
       const o = id * 3;
       const x = view[o];
       const y = view[o + 1];
@@ -590,9 +795,12 @@ export class SvgLabelController {
       if (!offset) continue;
       const radiusPx = Math.max(1, Math.hypot(offset.screenX - center.screenX, offset.screenY - center.screenY));
 
-      const selected = maskHasSelected(nodeStates, id, selectedMask);
       const hovered = hoveredNode === id;
-      if (!selected && !hovered && radiusPx < minRadiusPx) continue;
+      if (selectedOnlySpaceAware) {
+        if (radiusPx < minRadiusPx) continue;
+      } else if (!selected && !hovered && radiusPx < minRadiusPx) {
+        continue;
+      }
 
       let score = radiusPx * radiusPx;
       if (selected) score *= this._config.selectedBoost;
@@ -611,7 +819,7 @@ export class SvgLabelController {
         selected,
         hovered,
       };
-      if (selected || hovered) {
+      if ((selected && !selectedOnlySpaceAware) || (!selectedOnly && hovered)) {
         mustInclude.push(entry);
         continue;
       }
@@ -645,7 +853,9 @@ export class SvgLabelController {
       if (x + labelW * 0.5 < 0 || x - labelW * 0.5 > width || y + labelH * 0.5 < 0 || y - labelH * 0.5 > height) {
         continue;
       }
-      if (!entry.selected && !entry.hovered) {
+      if ((entry.selected && !selectedOnlySpaceAware) || entry.hovered) {
+        // Keep explicit selected or hovered labels unoccluded unless selected-only is using the regular space-aware strategy.
+      } else {
         if (this._collides(occupied, x, y, labelW, labelH, collisionCellPx)) continue;
       }
       this._occupy(occupied, x, y, labelW, labelH, collisionCellPx);
@@ -659,11 +869,28 @@ export class SvgLabelController {
         score: entry.score,
       });
     }
+    return nextVisible;
+  }
 
-    this._visibleEntries = nextVisible;
-    this._lastVisibleSet = new Set(nextVisible.map((entry) => entry.id));
-    if (options.render !== false) this._renderVisible();
-    return true;
+  _mergeVisibleEntries(baseEntries, overlayEntries) {
+    if (!overlayEntries?.length) return baseEntries ?? [];
+    if (!baseEntries?.length) return [...overlayEntries];
+    const merged = [...baseEntries];
+    const indices = new Map();
+    for (let i = 0; i < merged.length; i += 1) {
+      indices.set(merged[i].id, i);
+    }
+    for (let i = 0; i < overlayEntries.length; i += 1) {
+      const entry = overlayEntries[i];
+      const existingIndex = indices.get(entry.id);
+      if (existingIndex == null) {
+        indices.set(entry.id, merged.length);
+        merged.push(entry);
+      } else {
+        merged[existingIndex] = entry;
+      }
+    }
+    return merged;
   }
 
   _reprojectVisible(uniforms, now) {
@@ -778,10 +1005,10 @@ export class SvgLabelController {
       });
   }
 
-  _resolveCandidateSourceNames(network) {
-    const configured = this._config.source;
-    if (typeof configured === 'string' && configured.trim()) {
-      return [configured.trim(), '$id'];
+  _resolveCandidateSourceNames(network, configuredSource = this._config.source) {
+    const configured = typeof configuredSource === 'string' ? configuredSource.trim() : configuredSource;
+    if (typeof configured === 'string' && configured && configured.toLowerCase() !== 'auto') {
+      return [configured, '$id'];
     }
     const topology = this._safe(() => network.getTopologyVersions?.(), null) ?? {};
     const key = `${toFinite(topology.node, 0)}|${toFinite(topology.edge, 0)}`;
@@ -814,12 +1041,11 @@ export class SvgLabelController {
     return resolved;
   }
 
-  _buildLabelSourceAccessors(network) {
-    const configured = this._config.source;
+  _buildLabelSourceAccessors(network, configured = this._config.source) {
     if (typeof configured === 'function') {
       return [{ key: '$fn', type: 'function', get: configured }];
     }
-    const names = this._resolveCandidateSourceNames(network);
+    const names = this._resolveCandidateSourceNames(network, configured);
     const accessors = [];
     for (let i = 0; i < names.length; i += 1) {
       const name = names[i];

@@ -334,6 +334,7 @@ test('selected alpha override is implemented in WebGL and WebGPU shader paths', 
   });
   assert.match(webgpu.EDGE_WGSL, /edgeStateForceMaxAlphaMask: u32/);
   assert.match(webgpu.EDGE_WGSL, /select\(alpha, 1\.0, forceMaxAlpha\)/);
+  assert.match(webgpu.EDGE_WGSL, /max\(weight, 1000\.0\)/);
 });
 
 test('webgpu max transparency mode uses a valid max blend state', () => {
@@ -360,10 +361,12 @@ test('weighted edge accumulation uses unclamped weight while keeping final alpha
   });
   assert.match(webgl.EDGE_VERTEX_SOURCE, /out float v_weight;/);
   assert.match(webgl.EDGE_VERTEX_SOURCE, /float weight = max\(baseColor\.a \* opacity \* opacityMul, 0\.0\);/);
+  assert.match(webgl.EDGE_VERTEX_SOURCE, /forceMaxAlpha \? max\(weight, 1000\.0\) : weight/);
   assert.match(webgl.EDGE_WEIGHTED_FRAGMENT_SOURCE, /float weight = v_weight;/);
 
   const webgpu = createBaseGraphWebGPUSources(4);
   assert.match(webgpu.EDGE_WGSL, /@location\(1\) weight : f32,/);
   assert.match(webgpu.EDGE_WGSL, /let weight = max\(opacity \* color\.a, 0\.0\);/);
+  assert.match(webgpu.EDGE_WGSL, /max\(weight, 1000\.0\)/);
   assert.match(webgpu.EDGE_WEIGHTED_WGSL, /let weight = input\.weight;/);
 });

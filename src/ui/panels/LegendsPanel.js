@@ -3,10 +3,11 @@ import { createToggleControl } from '../controls/createToggleControl.js';
 import { createTooltipManager } from '../controls/createTooltipManager.js';
 import { SuggestedSliderControls } from '../controls/SuggestedSliderControls.js';
 
-function clampNumber(value, min, max, fallback) {
+function toFiniteNumber(value, fallback = null) {
+  if (value == null || `${value}`.trim() === '') return fallback;
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
-  return Math.max(min, Math.min(max, numeric));
+  return numeric;
 }
 
 function subscribe(helios, eventName, handler) {
@@ -48,6 +49,11 @@ export class LegendsPanel {
     const patch = (next) => {
       helios.legends(next);
       refresh();
+    };
+    const patchNumber = (key) => (value) => {
+      const numeric = toFiniteNumber(value, null);
+      if (numeric == null) return;
+      patch({ [key]: numeric });
     };
     const createRow = ({ title, hint, controls }) => {
       const built = createAlignedRowEl({
@@ -94,7 +100,7 @@ export class LegendsPanel {
       step: 1,
       inputMin: 0,
       inputMax: 512,
-      onCommit: (value) => patch({ maxChars: clampNumber(value, 0, 512, cfg().maxChars ?? 24) }),
+      onCommit: patchNumber('maxChars'),
     });
     createRow({ title: 'Max Chars', hint: 'Maximum characters per categorical legend row. Zero disables truncation.', controls: maxCharsControls.element });
 
@@ -104,7 +110,7 @@ export class LegendsPanel {
       step: 1,
       inputMin: 1,
       inputMax: 8,
-      onCommit: (value) => patch({ maxRows: clampNumber(value, 1, 8, cfg().maxRows ?? 2) }),
+      onCommit: patchNumber('maxRows'),
     });
     createRow({ title: 'Max Rows', hint: 'Maximum wrapped rows for categorical legend text.', controls: maxRowsControls.element });
 
@@ -114,7 +120,7 @@ export class LegendsPanel {
       step: 0.1,
       inputMin: 0.6,
       inputMax: 3,
-      onCommit: (value) => patch({ scale: clampNumber(value, 0.6, 3, cfg().scale ?? 1) }),
+      onCommit: patchNumber('scale'),
     });
     createRow({ title: 'Scale', hint: 'Scale the overall legend layout proportionally.', controls: scaleControls.element });
 
@@ -124,7 +130,7 @@ export class LegendsPanel {
       step: 4,
       inputMin: 72,
       inputMax: 320,
-      onCommit: (value) => patch({ continuousHeight: clampNumber(value, 72, 320, cfg().continuousHeight ?? 132) }),
+      onCommit: patchNumber('continuousHeight'),
     });
     createRow({ title: 'Bar Height', hint: 'Height of continuous colormap legends.', controls: barHeightControls.element });
 

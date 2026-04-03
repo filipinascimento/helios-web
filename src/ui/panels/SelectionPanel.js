@@ -9,9 +9,9 @@ import { toHex8 } from '../utils/colors.js';
 import { PanelStack } from './PanelStack.js';
 
 const DEFAULT_NODE_SELECTED_STYLE = Object.freeze({
-  sizeMul: 1.55,
+  sizeMul: 2,
   opacityMul: 1,
-  outlineMul: 2.8,
+  outlineMul: 2,
   discard: false,
   forceMaxAlpha: true,
   colorMul: [1, 1, 1, 1],
@@ -19,9 +19,9 @@ const DEFAULT_NODE_SELECTED_STYLE = Object.freeze({
 });
 
 const DEFAULT_NODE_HIGHLIGHT_STYLE = Object.freeze({
-  sizeMul: 1.42,
+  sizeMul: 1.5,
   opacityMul: 1,
-  outlineMul: 1.55,
+  outlineMul: 1.25,
   discard: false,
   forceMaxAlpha: false,
   colorMul: [1, 1, 1, 1],
@@ -39,7 +39,7 @@ const DEFAULT_EDGE_SELECTED_STYLE = Object.freeze({
 
 const DEFAULT_EDGE_HIGHLIGHT_STYLE = Object.freeze({
   widthMul: 1.25,
-  opacityMul: 1,
+  opacityMul: 50,
   discard: false,
   forceMaxAlpha: false,
   colorMul: [1, 1, 1, 1],
@@ -85,9 +85,9 @@ const DEFAULT_OTHER_SELECTED_EDGE_STYLE = Object.freeze({
 });
 
 const DEFAULT_OTHER_HIGHLIGHT_NODE_STYLE = Object.freeze({
-  sizeMul: 0.96,
+  sizeMul: 1,
   opacityMul: 1,
-  outlineMul: 0.86,
+  outlineMul: 1,
   discard: false,
   forceMaxAlpha: false,
   colorMul: [1, 1, 1, 1],
@@ -95,8 +95,8 @@ const DEFAULT_OTHER_HIGHLIGHT_NODE_STYLE = Object.freeze({
 });
 
 const DEFAULT_OTHER_HIGHLIGHT_EDGE_STYLE = Object.freeze({
-  widthMul: 0.92,
-  opacityMul: 0.88,
+  widthMul: 1,
+  opacityMul: 1,
   discard: false,
   forceMaxAlpha: false,
   colorMul: [1, 1, 1, 1],
@@ -170,13 +170,23 @@ function hexWithAlphaToRgba(value, fallback) {
   ];
 }
 
+function normalizeFiniteNumber(value, fallback) {
+  if (value == null || `${value}`.trim() === '') return fallback;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function normalizeNonNegativeNumber(value, fallback) {
+  return clampNumber(normalizeFiniteNumber(value, null), { min: 0 }) ?? fallback;
+}
+
 function normalizeNodeStyle(style, fallback) {
   const seed = fallback ?? DEFAULT_NODE_SELECTED_STYLE;
   const next = style && typeof style === 'object' ? style : {};
   return {
-    sizeMul: clampNumber(next.sizeMul ?? seed.sizeMul, { min: 0, max: 10 }) ?? seed.sizeMul,
-    opacityMul: clampNumber(next.opacityMul ?? seed.opacityMul, { min: 0, max: 4 }) ?? seed.opacityMul,
-    outlineMul: clampNumber(next.outlineMul ?? seed.outlineMul, { min: 0, max: 10 }) ?? seed.outlineMul,
+    sizeMul: normalizeNonNegativeNumber(next.sizeMul ?? seed.sizeMul, seed.sizeMul),
+    opacityMul: normalizeNonNegativeNumber(next.opacityMul ?? seed.opacityMul, seed.opacityMul),
+    outlineMul: normalizeNonNegativeNumber(next.outlineMul ?? seed.outlineMul, seed.outlineMul),
     discard: next.discard === true,
     forceMaxAlpha: next.forceMaxAlpha === true,
     colorMul: rgbaArray(next.colorMul, seed.colorMul),
@@ -188,8 +198,8 @@ function normalizeEdgeStyle(style, fallback) {
   const seed = fallback ?? DEFAULT_EDGE_SELECTED_STYLE;
   const next = style && typeof style === 'object' ? style : {};
   return {
-    widthMul: clampNumber(next.widthMul ?? seed.widthMul, { min: 0, max: 10 }) ?? seed.widthMul,
-    opacityMul: clampNumber(next.opacityMul ?? seed.opacityMul, { min: 0, max: 4 }) ?? seed.opacityMul,
+    widthMul: normalizeNonNegativeNumber(next.widthMul ?? seed.widthMul, seed.widthMul),
+    opacityMul: normalizeNonNegativeNumber(next.opacityMul ?? seed.opacityMul, seed.opacityMul),
     discard: next.discard === true,
     forceMaxAlpha: next.forceMaxAlpha === true,
     colorMul: rgbaArray(next.colorMul, seed.colorMul),
@@ -200,46 +210,6 @@ function normalizeEdgeStyle(style, fallback) {
 function backgroundLuminance(color) {
   const rgba = rgbaArray(color, [1, 1, 1, 1]);
   return (rgba[0] * 0.2126) + (rgba[1] * 0.7152) + (rgba[2] * 0.0722);
-}
-
-function defaultNormalNodeStyleForBackground(color) {
-  if (backgroundLuminance(color) < 0.5) {
-    return {
-      sizeMul: 0.88,
-      opacityMul: 1,
-      outlineMul: 0.68,
-      discard: false,
-      colorMul: [0.64, 0.66, 0.72, 1],
-      colorAdd: [0, 0, 0, 0],
-    };
-  }
-  return {
-    sizeMul: 0.88,
-    opacityMul: 1,
-    outlineMul: 0.68,
-    discard: false,
-    colorMul: [1, 1, 1, 1],
-    colorAdd: [0.22, 0.22, 0.24, 0],
-  };
-}
-
-function defaultNormalEdgeStyleForBackground(color) {
-  if (backgroundLuminance(color) < 0.5) {
-    return {
-      widthMul: 0.78,
-      opacityMul: 0.72,
-      discard: false,
-      colorMul: [0.56, 0.6, 0.68, 1],
-      colorAdd: [0, 0, 0, 0],
-    };
-  }
-  return {
-    widthMul: 0.78,
-    opacityMul: 0.76,
-    discard: false,
-    colorMul: [1, 1, 1, 1],
-    colorAdd: [0.22, 0.22, 0.24, 0],
-  };
 }
 
 function resolveBackgroundColor(helios) {
@@ -379,6 +349,8 @@ export class SelectionPanel {
       return built;
     };
 
+    const initialLabelsConfig = helios.labels?.() ?? { enabled: false };
+
     const state = {
       nodeClick: this.options.enableNodeSelection !== false,
       nodeHover: this.options.enableNodeHover !== false,
@@ -392,7 +364,10 @@ export class SelectionPanel {
       hoveredEdge: -1,
       selectedNodes: new Set(),
       selectedEdges: new Set(),
-      hoverLabelRestore: null,
+      initialHoverLabelConfig: {
+        hoveredNodeEnabled: initialLabelsConfig.hoveredNodeEnabled === true,
+        hoveredNodeSource: initialLabelsConfig.hoveredNodeSource ?? null,
+      },
       otherSelectedNodeStyle: null,
       otherSelectedEdgeStyle: null,
       otherHighlightNodeStyle: null,
@@ -403,15 +378,6 @@ export class SelectionPanel {
       otherHighlightEdgeTone: null,
     };
 
-    const backgroundColor = resolveBackgroundColor(helios);
-    const legacyNormalNodeStyle = normalizeNodeStyle(
-      defaultNormalNodeStyleForBackground(backgroundColor),
-      defaultNormalNodeStyleForBackground(backgroundColor),
-    );
-    const legacyNormalEdgeStyle = normalizeEdgeStyle(
-      defaultNormalEdgeStyleForBackground(backgroundColor),
-      defaultNormalEdgeStyleForBackground(backgroundColor),
-    );
     const defaultOtherSelectedNodeStyle = normalizeNodeStyle(
       DEFAULT_OTHER_SELECTED_NODE_STYLE,
       DEFAULT_OTHER_SELECTED_NODE_STYLE,
@@ -455,11 +421,11 @@ export class SelectionPanel {
         defaultOtherSelectedEdgeStyle,
       );
       state.otherHighlightNodeStyle = normalizeNodeStyle(
-        state.otherHighlightNodeStyle ?? legacyNormalNodeStyle,
+        state.otherHighlightNodeStyle ?? defaultOtherHighlightNodeStyle,
         defaultOtherHighlightNodeStyle,
       );
       state.otherHighlightEdgeStyle = normalizeEdgeStyle(
-        state.otherHighlightEdgeStyle ?? legacyNormalEdgeStyle,
+        state.otherHighlightEdgeStyle ?? defaultOtherHighlightEdgeStyle,
         defaultOtherHighlightEdgeStyle,
       );
       state.otherSelectedNodeTone = normalizeAutoBackgroundTone(
@@ -570,23 +536,11 @@ export class SelectionPanel {
     };
 
     const applyHoverLabelConfig = () => {
-      if (!state.hoverLabel) {
-        if (state.hoverLabelRestore) {
-          helios.labels?.(state.hoverLabelRestore);
-          state.hoverLabelRestore = null;
-        }
-        return;
-      }
-      if (!state.hoverLabelRestore) {
-        state.hoverLabelRestore = { ...(helios.labels?.() ?? { enabled: false }) };
-      }
       helios.labels?.({
-        enabled: true,
-        maxVisible: 1,
-        source: (id, network) => {
-          if (id !== state.hoveredNode || state.hoveredNode < 0) return null;
-          return resolveHoverLabelValue(network, state.hoverLabelSource, id);
-        },
+        hoveredNodeEnabled: state.hoverLabel,
+        hoveredNodeSource: state.hoverLabel
+          ? ((id, network) => resolveHoverLabelValue(network, state.hoverLabelSource, id))
+          : null,
       });
     };
 
@@ -884,28 +838,26 @@ export class SelectionPanel {
         suggested: [0, 3],
         step: 0.05,
         inputMin: 0,
-        inputMax: 10,
-        onCommit: (value) => patch({ sizeMul: clampNumber(value, { min: 0, max: 10 }) ?? getter().sizeMul }),
+        onCommit: (value) => patch({ sizeMul: normalizeNonNegativeNumber(value, getter().sizeMul) }),
       });
       sliderControls.push(sizeControls);
       createRow(container, {
-        title: 'Node Size',
+        title: 'Size',
         hint: 'Multiplier applied to node size while this state is active.',
         controls: sizeControls.element,
       });
 
       const opacityControls = new SuggestedSliderControls({
         value: getter().opacityMul,
-        suggested: [0, 2],
+        suggested: [0, 5],
         step: 0.05,
         inputMin: 0,
-        inputMax: 4,
-        onCommit: (value) => patch({ opacityMul: clampNumber(value, { min: 0, max: 4 }) ?? getter().opacityMul }),
+        onCommit: (value) => patch({ opacityMul: normalizeNonNegativeNumber(value, getter().opacityMul) }),
       });
       sliderControls.push(opacityControls);
       createRow(container, {
-        title: 'Node Opacity',
-        hint: 'Multiplier applied to node opacity for this state.',
+        title: 'Opacity Gain',
+        hint: 'Gain applied to node opacity for this state. The slider suggests a typical range, but typed values can be any non-negative number.',
         controls: opacityControls.element,
       });
 
@@ -914,12 +866,11 @@ export class SelectionPanel {
         suggested: [0, 3],
         step: 0.05,
         inputMin: 0,
-        inputMax: 10,
-        onCommit: (value) => patch({ outlineMul: clampNumber(value, { min: 0, max: 10 }) ?? getter().outlineMul }),
+        onCommit: (value) => patch({ outlineMul: normalizeNonNegativeNumber(value, getter().outlineMul) }),
       });
       sliderControls.push(outlineControls);
       createRow(container, {
-        title: 'Node Outline',
+        title: 'Outline',
         hint: 'Multiplier applied to node outline width for this state.',
         controls: outlineControls.element,
       });
@@ -930,7 +881,7 @@ export class SelectionPanel {
       });
       discardToggle.addEventListener('change', () => patch({ discard: discardToggle.checked }));
       createRow(container, {
-        title: 'Node Discard',
+        title: 'Discard',
         hint: 'Discard matched nodes entirely in the fragment shader.',
         controls: discardToggle,
       });
@@ -943,8 +894,8 @@ export class SelectionPanel {
         });
         forceMaxAlphaToggle.addEventListener('change', () => patch({ forceMaxAlpha: forceMaxAlphaToggle.checked }));
         createRow(container, {
-          title: 'Node Max Alpha',
-          hint: 'Force the final rendered node alpha to 1.0 whenever this state slot is active.',
+          title: 'Visibility Boost',
+          hint: 'Force full opacity in normal blending and apply a strong accumulation boost in weighted transparency whenever this state slot is active.',
           controls: forceMaxAlphaToggle,
         });
       }
@@ -957,7 +908,7 @@ export class SelectionPanel {
       });
       colorControls.push(tintControls);
       createRow(container, {
-        title: 'Node Tint',
+        title: 'Tint',
         hint: 'Additive RGBA tint applied after the base node color.',
         controls: tintControls.element,
       });
@@ -970,7 +921,7 @@ export class SelectionPanel {
       });
       colorControls.push(blendControls);
       createRow(container, {
-        title: 'Node Blend',
+        title: 'Blend',
         hint: 'Multiplicative RGBA blend applied to the base node color.',
         controls: blendControls.element,
       });
@@ -1033,28 +984,26 @@ export class SelectionPanel {
         suggested: [0, 3],
         step: 0.05,
         inputMin: 0,
-        inputMax: 10,
-        onCommit: (value) => patch({ widthMul: clampNumber(value, { min: 0, max: 10 }) ?? getter().widthMul }),
+        onCommit: (value) => patch({ widthMul: normalizeNonNegativeNumber(value, getter().widthMul) }),
       });
       sliderControls.push(widthControls);
       createRow(container, {
-        title: 'Edge Width',
+        title: 'Width',
         hint: 'Multiplier applied to edge width while this state is active.',
         controls: widthControls.element,
       });
 
       const opacityControls = new SuggestedSliderControls({
         value: getter().opacityMul,
-        suggested: [0, 2],
+        suggested: [0, 5],
         step: 0.05,
         inputMin: 0,
-        inputMax: 4,
-        onCommit: (value) => patch({ opacityMul: clampNumber(value, { min: 0, max: 4 }) ?? getter().opacityMul }),
+        onCommit: (value) => patch({ opacityMul: normalizeNonNegativeNumber(value, getter().opacityMul) }),
       });
       sliderControls.push(opacityControls);
       createRow(container, {
-        title: 'Edge Opacity',
-        hint: 'Multiplier applied to edge opacity for this state.',
+        title: 'Opacity Gain',
+        hint: 'Gain applied to edge opacity for this state. The slider suggests a typical range, but typed values can be any non-negative number.',
         controls: opacityControls.element,
       });
 
@@ -1064,7 +1013,7 @@ export class SelectionPanel {
       });
       discardToggle.addEventListener('change', () => patch({ discard: discardToggle.checked }));
       createRow(container, {
-        title: 'Edge Discard',
+        title: 'Discard',
         hint: 'Discard matched edges entirely in the fragment shader.',
         controls: discardToggle,
       });
@@ -1077,8 +1026,8 @@ export class SelectionPanel {
         });
         forceMaxAlphaToggle.addEventListener('change', () => patch({ forceMaxAlpha: forceMaxAlphaToggle.checked }));
         createRow(container, {
-          title: 'Edge Max Alpha',
-          hint: 'Force the final rendered edge alpha to 1.0 whenever this state slot is active.',
+          title: 'Visibility Boost',
+          hint: 'Force full opacity in normal blending and apply a strong accumulation boost in weighted transparency whenever this state slot is active.',
           controls: forceMaxAlphaToggle,
         });
       }
@@ -1091,7 +1040,7 @@ export class SelectionPanel {
       });
       colorControls.push(tintControls);
       createRow(container, {
-        title: 'Edge Tint',
+        title: 'Tint',
         hint: 'Additive RGBA tint applied after the base edge color.',
         controls: tintControls.element,
       });
@@ -1104,7 +1053,7 @@ export class SelectionPanel {
       });
       colorControls.push(blendControls);
       createRow(container, {
-        title: 'Edge Blend',
+        title: 'Blend',
         hint: 'Multiplicative RGBA blend applied to the base edge color.',
         controls: blendControls.element,
       });
@@ -1331,7 +1280,6 @@ export class SelectionPanel {
         clearNodeHover();
       }
       applyOtherElementsState();
-      if (state.hoverLabel) applyHoverLabelConfig();
       refreshStatus();
     };
 
@@ -1365,6 +1313,12 @@ export class SelectionPanel {
       refreshStatus();
     };
 
+    const handleUiBindingChange = (event) => {
+      const bindingName = event?.detail?.name ?? null;
+      if (bindingName !== 'clearColor' && bindingName !== 'background') return;
+      applyOtherElementsState();
+    };
+
     refreshHoverLabelOptions();
     refreshStyleControls();
     applyHoverLabelConfig();
@@ -1379,6 +1333,7 @@ export class SelectionPanel {
       subscribe(helios, 'node:hover', handleNodeHover),
       subscribe(helios, 'edge:hover', handleEdgeHover),
       subscribe(helios, 'network:replaced', handleNetworkReplaced),
+      subscribe(helios, 'ui:binding-change', handleUiBindingChange),
     ];
 
     this.ui._controlCleanups.add(() => tooltips.destroy());
@@ -1386,10 +1341,7 @@ export class SelectionPanel {
       for (const controls of sliderControls) controls.destroy();
       for (const controls of colorControls) controls.destroy();
       for (const unsubscribe of unsubscribers) unsubscribe();
-      if (state.hoverLabelRestore) {
-        helios.labels?.(state.hoverLabelRestore);
-        state.hoverLabelRestore = null;
-      }
+      helios.labels?.(state.initialHoverLabelConfig);
       const graphLayer = helios.renderer?.graphLayer ?? null;
       if (graphLayer) {
         graphLayer.propagateHoveredNodeToEdges = false;

@@ -862,6 +862,7 @@ export class GraphLayerWebGL extends GraphLayer {
       && (extColorBufferFloat || extColorBufferHalfFloat)
       && extFloatBlend,
     );
+    this.edgeTransparencyMode = this.normalizeEdgeTransparencyMode(this.edgeTransparencyMode);
     this.nodeProgramCache.clear();
     this.edgeProgramCache.clear();
     this.edgeQuadProgramCache.clear();
@@ -2700,6 +2701,10 @@ export class GraphLayerWebGL extends GraphLayer {
             drawNodes();
           }
         } else {
+          if (weightedRequested && effectiveEdgeCount > 0) {
+            this.weightedSupported = false;
+            this.edgeTransparencyMode = this.normalizeEdgeTransparencyMode(this.edgeTransparencyMode);
+          }
           if (weightedRequested && this.edgeCount > 0 && !this.warnedWeightedFallback) {
             console.warn('Weighted edge transparency is not available in WebGL2 indirect; falling back to alpha.');
             this.warnedWeightedFallback = true;

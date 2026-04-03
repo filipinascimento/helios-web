@@ -1502,6 +1502,10 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     };
 
     if (!weightedReady) {
+      if (weightedRequested && effectiveEdgeCount > 0) {
+        this.weightedSupported = false;
+        this.edgeTransparencyMode = this.normalizeEdgeTransparencyMode(this.edgeTransparencyMode);
+      }
       if (weightedRequested && !this.warnedWeightedFallback && effectiveEdgeCount > 0) {
         console.warn('Weighted edge transparency is not available; using alpha blending instead.');
         this.warnedWeightedFallback = true;

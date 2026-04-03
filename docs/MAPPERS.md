@@ -82,7 +82,7 @@ Mapper channels support `transformType` for common pre-transforms (`log`, `log1p
 
 ## Example: Basic demo node colors
 
-The bundled basic example (`docs/examples/basic/main.js`) starts with a serializable node color mapper (`$index` → `cmasher:rainforest` across the full index domain), so the UI doesn’t treat it as a custom preset. Toggle the renderer via `?renderer=webgl` and edge transparency via `?edgeTransparency=weighted` to see how visuals react.
+The bundled basic example (`docs/examples/basic/main.js`) starts with a serializable node color mapper (`$index` → `cmasher:rainforest` across the full index domain), so the UI doesn’t treat it as a custom preset. Toggle the renderer via `?renderer=webgl` and compare edge transparency modes via `?edgeTransparency=alpha` or another explicit mode to see how visuals react.
 
 ## When things look flat
 

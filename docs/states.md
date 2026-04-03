@@ -89,7 +89,7 @@ Supported fields:
 
 ### `forceMaxAlpha`
 
-If `forceMaxAlpha: true` is enabled for any active node/edge state slot, the final rendered alpha for that item is forced to `1.0` after normal style evaluation. This is useful for making selected items stay fully opaque even when the base mapper or state multipliers would otherwise reduce alpha.
+If `forceMaxAlpha: true` is enabled for any active node/edge state slot, normal alpha blending treats that item as fully opaque after style evaluation, and weighted edge transparency also gives it a strong accumulation boost so it can dominate dense overlaps more reliably. This is useful for making selected items stand out even when the base mapper or state multipliers would otherwise reduce alpha.
 
 ### Styling `NO_STATE`
 

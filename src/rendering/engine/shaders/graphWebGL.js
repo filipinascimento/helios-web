@@ -40,6 +40,7 @@ export function createGraphWebGLSources(options = {}) {
   const node = resolveNodeOptions(options);
   const edge = resolveEdgeOptions(options);
   const stateSlots = Math.max(1, Math.min(32, Number(options?.stateSlots) || 4));
+  const forceVisibilityBoost = 1000.0;
 
   const nodeColorBuffer = node.color !== 'uniform';
   const nodeSizeBuffer = node.size !== 'uniform';
@@ -758,7 +759,7 @@ ${edgeColorNodeBlock}
   float weight = max(baseColor.a * opacity * opacityMul, 0.0);
   float alpha = clamp(weight, 0.0, 1.0);
   v_color = vec4(rgb, forceMaxAlpha ? 1.0 : alpha);
-  v_weight = forceMaxAlpha ? max(weight, 1.0) : weight;
+  v_weight = forceMaxAlpha ? max(weight, ${forceVisibilityBoost.toFixed(1)}) : weight;
   v_discardFlag = discardFlag;
 }
 `;
@@ -908,7 +909,7 @@ ${edgeColorNodeBlock}
   float weight = max(blendedColor.a * opacity * opacityMul, 0.0);
   float alpha = clamp(weight, 0.0, 1.0);
   v_color = vec4(rgb, forceMaxAlpha ? 1.0 : alpha);
-  v_weight = forceMaxAlpha ? max(weight, 1.0) : weight;
+  v_weight = forceMaxAlpha ? max(weight, ${forceVisibilityBoost.toFixed(1)}) : weight;
   v_discardFlag = discardFlag;
 }
 `;

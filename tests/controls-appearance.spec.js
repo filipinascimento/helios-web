@@ -184,6 +184,9 @@ test.describe('scene panel: tabs and appearance controls', () => {
     // Edge transparency mode selector should update graph layer.
     const edgeMode = scenePanel.locator('select[aria-label="Edge transparency mode"]').first();
     await expect(edgeMode).toBeVisible();
+    const initialEdgeMode = await page.evaluate(() => window.__helios.renderer?.graphLayer?.edgeTransparencyMode ?? null);
+    expect(['weighted', 'alpha']).toContain(initialEdgeMode);
+    await expect(edgeMode).toHaveValue(initialEdgeMode);
     await edgeMode.selectOption({ value: 'additive' });
 
     const mode = await page.evaluate(() => window.__helios.renderer?.graphLayer?.edgeTransparencyMode ?? null);
@@ -240,10 +243,39 @@ test.describe('scene panel: tabs and appearance controls', () => {
     const labelsTab = scenePanel.getByRole('button', { name: 'Labels' }).first();
     await labelsTab.click();
 
-    const showLabelsToggle = scenePanel.locator('[aria-label="Show Labels"][role="switch"], input[type="checkbox"][aria-label="Show Labels"]');
-    await enableToggle(showLabelsToggle);
-    const labelsEnabled = await page.evaluate(() => window.__helios.labels().enabled === true);
-    expect(labelsEnabled).toBe(true);
+    const labelModeSelect = scenePanel.locator('select[aria-label="Label Mode"]').first();
+    await labelModeSelect.selectOption('auto');
+    const labelsAuto = await page.evaluate(() => ({
+      enabled: window.__helios.labels().enabled === true,
+      selectionMode: window.__helios.labels().selectionMode ?? null,
+      mode: window.__helios.labelsMode?.() ?? null,
+    }));
+    expect(labelsAuto).toEqual({
+      enabled: true,
+      selectionMode: 'ranked',
+      mode: 'auto',
+    });
+
+    const selectedOnlySpaceAwareRow = scenePanel
+      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Use Available Space"))')
+      .first();
+    await expect(selectedOnlySpaceAwareRow).toBeHidden();
+
+    await labelModeSelect.selectOption('selected-only');
+    await expect(selectedOnlySpaceAwareRow).toBeVisible();
+
+    const selectedOnlySpaceAwareToggle = selectedOnlySpaceAwareRow.locator(
+      '[role="switch"][aria-label="Selected-only labels use regular space-aware placement"], input[type="checkbox"][aria-label="Selected-only labels use regular space-aware placement"]',
+    ).first();
+    await enableToggle(selectedOnlySpaceAwareToggle);
+    const selectedOnlySpaceAware = await page.evaluate(() => ({
+      mode: window.__helios.labelsMode?.() ?? null,
+      selectedOnlySpaceAware: window.__helios.labels()?.selectedOnlySpaceAware === true,
+    }));
+    expect(selectedOnlySpaceAware).toEqual({
+      mode: 'selected-only',
+      selectedOnlySpaceAware: true,
+    });
 
     const maxLabelsRow = scenePanel
       .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Max Labels"))')
@@ -387,6 +419,33 @@ test.describe('scene panel: tabs and appearance controls', () => {
     }));
     expect(supersampling2x.value).toBe('2x');
     expect(supersampling2x.sizeDpr).toBeCloseTo(initialSampling.windowDpr * 2, 3);
+  });
+
+  test('legends panel forwards typed values without panel-side clamping', async ({ page }) => {
+    await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=400');
+    await waitForHelios(page);
+
+    const legendsPanel = panelByTitle(page, 'Legends');
+    await expect(legendsPanel).toBeVisible();
+
+    await page.evaluate(() => {
+      window.__legendPatches = [];
+      const controller = window.__helios?._legends;
+      const original = controller.setConfig.bind(controller);
+      controller.setConfig = function setConfigSpy(options) {
+        window.__legendPatches.push(JSON.parse(JSON.stringify(options)));
+        return original(options);
+      };
+    });
+
+    const scaleRow = legendsPanel.locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Scale"))').first();
+    const scaleInput = scaleRow.locator('input[type="number"]').first();
+    await expect(scaleInput).toHaveAttribute('max', '3');
+    await scaleInput.fill('5');
+    await scaleInput.dispatchEvent('change');
+
+    await expect.poll(async () => page.evaluate(() => window.__legendPatches.at(-1)?.scale ?? null)).toBe(5);
+    await expect.poll(async () => page.evaluate(() => window.__helios.legends()?.scale ?? null)).toBe(3);
   });
 
   test('dimension toggle animates into 3D and keeps layout=none scenes visible', async ({ page }) => {

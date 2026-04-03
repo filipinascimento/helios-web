@@ -105,7 +105,7 @@ function resolveInterpolationDurationMode() {
 function resolveEdgeTransparencyMode() {
   const params = new URLSearchParams(window.location.search);
   const mode = params.get('edgeTransparency');
-  if (!mode) return 'alpha';
+  if (!mode) return 'weighted';
   const normalized = mode.toLowerCase();
   switch (normalized) {
     case 'weighted':

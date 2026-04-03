@@ -74,6 +74,8 @@ export class GraphLayerWebGPUBase extends GraphLayer {
     }
     super.initialize(device, size);
     this.device = device;
+    this.weightedSupported = Boolean((device?.device?.limits?.maxColorAttachments ?? 1) >= 2);
+    this.edgeTransparencyMode = this.normalizeEdgeTransparencyMode(this.edgeTransparencyMode);
     this.initializeWebGPU(device);
     this.resize(size);
   }
@@ -702,16 +704,27 @@ export class GraphLayerWebGPUBase extends GraphLayer {
     const device = this.device?.device;
     if (!device) return false;
     const maxTargets = device.limits?.maxColorAttachments ?? 1;
-    if (maxTargets < 2) return false;
+    if (maxTargets < 2) {
+      this.weightedSupported = false;
+      return false;
+    }
 
     const viewport = cameraUniforms?.viewport;
     const pixelRatio = viewport?.devicePixelRatio ?? this.size?.devicePixelRatio ?? 1;
     const width = context?.target?.width ?? Math.max(1, Math.floor((viewport?.width ?? this.size?.width ?? 1) * pixelRatio));
     const height = context?.target?.height ?? Math.max(1, Math.floor((viewport?.height ?? this.size?.height ?? 1) * pixelRatio));
-    if (!this.ensureWeightedTextures(device, width, height)) return false;
-    if (!this.ensureWeightedPipelines(device, context.format, useEdgeIndices, edgeVariant)) return false;
+    if (!this.ensureWeightedTextures(device, width, height)) {
+      this.weightedSupported = false;
+      return false;
+    }
+    if (!this.ensureWeightedPipelines(device, context.format, useEdgeIndices, edgeVariant)) {
+      this.weightedSupported = false;
+      return false;
+    }
     this.ensureWeightedResolveBindGroup(device);
-    return Boolean(this.edgeWeightedPipeline && this.edgeResolveBindGroup && this.edgeResolveLayout);
+    const ready = Boolean(this.edgeWeightedPipeline && this.edgeResolveBindGroup && this.edgeResolveLayout);
+    this.weightedSupported = ready;
+    return ready;
   }
 
   ensureWeightedTextures(device, width, height) {

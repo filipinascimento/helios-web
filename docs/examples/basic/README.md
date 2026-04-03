@@ -30,12 +30,14 @@ For details on how the node colors and sizes are mapped (including the colormap 
   - Delegate positions are automatic for GPU-force (no manual position-source toggle).
 - In DevTools, use `await window.__snapshotDelegatePositions()` to inspect delegate positions, and `await window.__syncDelegatePositionsToNetwork()` to copy delegate positions into network buffers.
 - Pass `?mode=3d` to enable the depth axis; otherwise it runs in 2D.
-- Pass `?edgeTransparency=weighted` to enable weighted blended transparency for edges (falls back to alpha if unsupported; implemented as an offscreen accumulate + resolve pass).
+- The example now requests weighted blended transparency for edges by default. Pass `?edgeTransparency=alpha` to compare against classic alpha blending, or use another supported mode explicitly. Weighted mode still falls back to alpha if unsupported.
 - Pass `?interpolationDurationMode=adaptive` (default) to average recent layout update intervals for interpolation timing.
 - Pass `?interpolationDurationMode=fixed&interpolationFixedDurationMs=160` to force a fixed interpolation interval.
 - The example now includes a Camera panel with top-level zoom/distance control plus collapsible Auto Fit, Animation, and 3D Orbit sections, including an abstract auto-fit update-frequency control instead of raw milliseconds.
 - The example also includes a Selection panel that owns the interaction demo: node click-selection, optional edge click/hover actions, shift-click multi-select, hover-only labels, optional hovered-node edge propagation, and selected/highlighted/normal state-style controls for both nodes and edges.
+  - Regular labels are configured separately in the Labels tab as `Off`, `Auto Labels`, or `Selected Only`. Hover labels stay separate and reuse the same label styling options.
   - Click-only picking is specialized: if node hover, hover labels, and hover-connected-edges are all disabled, the demo keeps click picking enabled without running node-hover updates.
+  - Hover labels also use a dedicated hovered-node label path instead of the normal ranked label-selection scan.
 - The Layout panel now reads a shared parameter-binding contract from the active layout instance, so each layout only shows controls it actually supports.
 - D3-force and GPU-force expose a small recent-history alpha sparkline (sampled slowly, in log scale) in the panel, and the start/stop actions are available directly from that panel.
 - Force magnitude controls such as repulsion, attraction, and gravity now use log sliders with scientific-notation inputs, and the old `Damping` label is exposed as `Velocity retention` to match the solver semantics.

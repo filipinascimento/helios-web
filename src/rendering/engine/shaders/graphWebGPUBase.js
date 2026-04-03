@@ -1,5 +1,6 @@
 export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
   const STATE_SLOTS = Math.max(0, Math.min(32, Math.floor(Number(stateSlots) || 0)));
+  const FORCE_VISIBILITY_BOOST = 1000.0;
   const useNodeIndices = options.useNodeIndices !== false;
   const useEdgeIndices = options.useEdgeIndices !== false;
   const bindings = options?.bindings ?? null;
@@ -601,7 +602,7 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
   var output : EdgeVertexOutput;
   output.position = camera.viewProjection * vec4<f32>(position, 1.0);
   output.color = vec4<f32>(rgb, select(alpha, 1.0, forceMaxAlpha));
-  output.weight = select(weight, max(weight, 1.0), forceMaxAlpha);
+  output.weight = select(weight, max(weight, ${FORCE_VISIBILITY_BOOST.toFixed(1)}), forceMaxAlpha);
   output.discardFlag = discardFlag;
   return output;
 }
@@ -738,7 +739,7 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   let alpha = clamp(weight, 0.0, 1.0);
   let rgb = clamp(blended.rgb * rgbMul + rgbAdd, vec3<f32>(0.0), vec3<f32>(1.0));
   output.color = vec4<f32>(rgb, select(alpha, 1.0, forceMaxAlpha));
-  output.weight = select(weight, max(weight, 1.0), forceMaxAlpha);
+  output.weight = select(weight, max(weight, ${FORCE_VISIBILITY_BOOST.toFixed(1)}), forceMaxAlpha);
   output.discardFlag = discardFlag;
   return output;
 }

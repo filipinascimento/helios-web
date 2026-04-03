@@ -282,7 +282,15 @@ test.describe('basic example selection panel', () => {
       edgeHover: window.__heliosSelectionPanel?.selectionState?.edgeHover ?? null,
       hoverConnectedEdges: window.__heliosSelectionPanel?.selectionState?.hoverConnectedEdges ?? null,
       selectedConnectedEdges: window.__heliosSelectionPanel?.selectionState?.selectedConnectedEdges ?? null,
+      labelsMode: window.__helios.labelsMode?.() ?? null,
+      labelSelectionMode: window.__helios.labels?.()?.selectionMode ?? null,
+      hoveredNodeLabels: window.__helios.labels?.()?.hoveredNodeEnabled ?? null,
+      maxVisible: window.__helios.labels?.()?.maxVisible ?? null,
       otherSelectedNodeTone: window.__heliosSelectionPanel?.selectionState?.otherSelectedNodeTone ?? null,
+      otherSelectedNodeStyle: window.__heliosSelectionPanel?.selectionState?.otherSelectedNodeStyle ?? null,
+      otherSelectedEdgeStyle: window.__heliosSelectionPanel?.selectionState?.otherSelectedEdgeStyle ?? null,
+      otherHighlightNodeStyle: window.__heliosSelectionPanel?.selectionState?.otherHighlightNodeStyle ?? null,
+      otherHighlightEdgeStyle: window.__heliosSelectionPanel?.selectionState?.otherHighlightEdgeStyle ?? null,
       nodeNoStateEnabled: window.__helios.renderer?.graphLayer?.nodeNoStateStyleEnabled ?? null,
       edgeNoStateEnabled: window.__helios.renderer?.graphLayer?.edgeNoStateStyleEnabled ?? null,
       propagateHoveredNodeToEdges: window.__helios.renderer?.graphLayer?.propagateHoveredNodeToEdges ?? null,
@@ -299,7 +307,45 @@ test.describe('basic example selection panel', () => {
       edgeHover: false,
       hoverConnectedEdges: true,
       selectedConnectedEdges: true,
+      labelsMode: 'off',
+      labelSelectionMode: 'ranked',
+      hoveredNodeLabels: true,
+      maxVisible: 120,
       otherSelectedNodeTone: { enabled: true, amount: 0.38 },
+      otherSelectedNodeStyle: {
+        sizeMul: 0.9,
+        opacityMul: 1,
+        outlineMul: 0.72,
+        discard: false,
+        forceMaxAlpha: false,
+        colorMul: [1, 1, 1, 1],
+        colorAdd: [0, 0, 0, 0],
+      },
+      otherSelectedEdgeStyle: {
+        widthMul: 0.84,
+        opacityMul: 0.82,
+        discard: false,
+        forceMaxAlpha: false,
+        colorMul: [1, 1, 1, 1],
+        colorAdd: [0, 0, 0, 0],
+      },
+      otherHighlightNodeStyle: {
+        sizeMul: 1,
+        opacityMul: 1,
+        outlineMul: 1,
+        discard: false,
+        forceMaxAlpha: false,
+        colorMul: [1, 1, 1, 1],
+        colorAdd: [0, 0, 0, 0],
+      },
+      otherHighlightEdgeStyle: {
+        widthMul: 1,
+        opacityMul: 1,
+        discard: false,
+        forceMaxAlpha: false,
+        colorMul: [1, 1, 1, 1],
+        colorAdd: [0, 0, 0, 0],
+      },
       nodeNoStateEnabled: false,
       edgeNoStateEnabled: false,
       propagateHoveredNodeToEdges: true,
@@ -320,19 +366,33 @@ test.describe('basic example selection panel', () => {
     expect(styles.selectedNode.sizeMul).toBeGreaterThan(styles.highlightedNode.sizeMul);
     expect(styles.selectedNode.outlineMul).toBeGreaterThan(styles.highlightedNode.outlineMul);
     expect(styles.selectedEdge.widthMul).toBeGreaterThan(styles.highlightedEdge.widthMul);
-    expect(styles.selectedNode.sizeMul).toBeCloseTo(1.55, 1);
-    expect(styles.highlightedNode.sizeMul).toBeCloseTo(1.42, 1);
+    expect(styles.selectedNode.sizeMul).toBeCloseTo(2, 3);
+    expect(styles.selectedNode.outlineMul).toBeCloseTo(2, 3);
+    expect(styles.highlightedNode.sizeMul).toBeCloseTo(1.5, 3);
+    expect(styles.highlightedNode.outlineMul).toBeCloseTo(1.25, 3);
     expect(styles.selectedEdge.widthMul).toBeCloseTo(1.5, 1);
+    expect(styles.highlightedEdge.opacityMul).toBeCloseTo(50, 3);
     expect(styles.highlightedEdge.widthMul).toBeCloseTo(1.25, 1);
 
     const selectedHeader = panel.locator('button.helios-ui-subpanel__header', { hasText: 'Selected Style' });
     const selectedSubpanel = subpanelForHeader(selectedHeader);
-    const selectedSizeRow = selectedSubpanel.locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Node Size"))').first();
+    const selectedSizeRow = selectedSubpanel.locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Size"))').first();
     const selectedSizeInput = selectedSizeRow.locator('input[type="number"]').first();
     await selectedSizeInput.fill('2.1');
     await selectedSizeInput.dispatchEvent('change');
 
     await expect.poll(async () => page.evaluate(() => window.__helios.nodeStateStyle?.('SELECTED')?.sizeMul ?? null)).toBeCloseTo(2.1, 1);
+
+    const selectedEdgeOpacityRow = selectedSubpanel.locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Opacity Gain"))').nth(1);
+    await expect(selectedEdgeOpacityRow).toBeVisible();
+    const selectedEdgeOpacityInput = selectedEdgeOpacityRow.locator('input[type="number"]').first();
+    const selectedEdgeOpacitySlider = selectedEdgeOpacityRow.locator('input[type="range"]').first();
+    await expect(selectedEdgeOpacityInput).not.toHaveAttribute('max', /.+/);
+    await expect(selectedEdgeOpacitySlider).toHaveAttribute('max', '5');
+    await selectedEdgeOpacityInput.fill('1000');
+    await selectedEdgeOpacityInput.dispatchEvent('change');
+
+    await expect.poll(async () => page.evaluate(() => window.__helios.edgeStateStyle?.('SELECTED')?.opacityMul ?? null)).toBe(1000);
 
     const nodeHitsRaw = await findNodeHits(page, 12);
     expect(nodeHitsRaw.length).toBeGreaterThanOrEqual(2);
@@ -366,11 +426,13 @@ test.describe('basic example selection panel', () => {
       const config = window.__helios.labels?.() ?? null;
       return {
         enabled: config?.enabled ?? false,
+        hoveredNodeEnabled: config?.hoveredNodeEnabled ?? false,
         maxVisible: config?.maxVisible ?? null,
       };
     })).toEqual({
-      enabled: true,
-      maxVisible: 1,
+      enabled: false,
+      hoveredNodeEnabled: true,
+      maxVisible: 120,
     });
 
     const edgeClickToggle = panel.locator('[role="switch"][aria-label="Edge click selection"]').first();
@@ -396,6 +458,38 @@ test.describe('basic example selection panel', () => {
 
     await dispatchCanvasEvent(page, { type: 'click', x: edgeHit.x, y: edgeHit.y });
     await expect.poll(async () => countSelected(page, 'edge')).toBe(1);
+  });
+
+  test('refreshes other-elements auto color when the background changes', async ({ page }) => {
+    await waitForExample(page);
+
+    const [nodeHit] = await findNodeHits(page, 1);
+    expect(nodeHit).toBeTruthy();
+
+    await dispatchCanvasEvent(page, { type: 'click', x: nodeHit.x, y: nodeHit.y });
+    await expect.poll(async () => countSelected(page, 'node')).toBe(1);
+
+    await page.evaluate(() => {
+      window.__helios.background([1, 1, 1, 1]);
+    });
+
+    await expect.poll(async () => page.evaluate(() => window.__helios.nodeNoStateStyle?.()?.colorAdd?.[0] ?? 0)).toBeGreaterThan(0);
+    const before = await page.evaluate(() => window.__helios.nodeNoStateStyle?.() ?? null);
+    expect(before).toBeTruthy();
+    expect(before.colorAdd?.[0] ?? 0).toBeGreaterThan(0);
+
+    await page.evaluate(() => {
+      window.__helios.background([0.08, 0.1, 0.12, 1]);
+    });
+
+    await expect.poll(async () => page.evaluate(() => window.__helios.nodeNoStateStyle?.() ?? null)).toMatchObject({
+      colorAdd: [0, 0, 0, 0],
+    });
+
+    const after = await page.evaluate(() => window.__helios.nodeNoStateStyle?.() ?? null);
+    expect(after.colorMul?.[0] ?? 1).toBeLessThan(1);
+    expect(after.colorMul?.[1] ?? 1).toBeLessThan(1);
+    expect(after.colorMul?.[2] ?? 1).toBeLessThan(1);
   });
 
   test('gates normal-state styling and keeps connected-edge propagation shader-only', async ({ page }) => {

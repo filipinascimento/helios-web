@@ -512,6 +512,9 @@ test('label accessors proxy configuration to the label controller', () => {
   const calls = { render: 0, setConfig: 0, request: 0 };
   const state = {
     enabled: false,
+    selectionMode: 'ranked',
+    selectedOnlySpaceAware: false,
+    hoveredNodeEnabled: false,
     maxVisible: 120,
     fontSizeScale: 1,
     minScreenRadiusPx: 8,
@@ -540,6 +543,22 @@ test('label accessors proxy configuration to the label controller', () => {
   assert.equal(helios.labelsEnabled(), false);
   helios.labelsEnabled(true);
   assert.equal(state.enabled, true);
+  assert.equal(helios.labelsMode(), 'auto');
+
+  helios.labelsMode('selected-only');
+  assert.equal(state.selectionMode, 'selected-only');
+  assert.equal(helios.labelsMode(), 'selected-only');
+
+  helios.labelsEnabled(false);
+  assert.equal(state.enabled, false);
+  assert.equal(helios.labelsMode(), 'off');
+
+  helios.labels({ hoveredNodeEnabled: true });
+  assert.equal(state.hoveredNodeEnabled, true);
+
+  helios.labelsSelectedOnlySpaceAware(true);
+  assert.equal(state.selectedOnlySpaceAware, true);
+  assert.equal(helios.labelsSelectedOnlySpaceAware(), true);
 
   helios.labelsMaxVisible(42);
   assert.equal(state.maxVisible, 42);
@@ -577,9 +596,9 @@ test('label accessors proxy configuration to the label controller', () => {
   helios.labelSource('name');
   assert.equal(state.source, 'name');
 
-  assert.ok(calls.setConfig >= 13);
-  assert.ok(calls.request >= 13);
-  assert.ok(calls.render >= 13);
+  assert.ok(calls.setConfig >= 16);
+  assert.ok(calls.request >= 16);
+  assert.ok(calls.render >= 16);
 });
 
 test('setMode() updates projection, active layout mode, and emits a mode change event', async () => {

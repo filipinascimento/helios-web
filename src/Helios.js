@@ -1302,6 +1302,18 @@ export class Helios extends EventTarget {
       description: 'Keep fast edges active while the active layout is still updating positions.',
       defaultValue: true,
     },
+    labelsMode: {
+      type: 'string',
+      label: 'Labels',
+      description: 'Choose whether labels are off, automatically ranked, or limited to selected nodes.',
+      defaultValue: 'off',
+    },
+    labelsSelectedOnlySpaceAware: {
+      type: 'boolean',
+      label: 'Space Aware',
+      description: 'When Selected Only is active, use the regular label culling and collision strategy instead of always forcing selected labels through.',
+      defaultValue: false,
+    },
     labelsEnabled: {
       type: 'boolean',
       label: 'Show Labels',
@@ -1478,6 +1490,9 @@ export class Helios extends EventTarget {
       throw new Error('Helios requires a helios-network instance');
     }
     super();
+    if (!Object.prototype.hasOwnProperty.call(options, 'transparencyModeEdges')) {
+      options.transparencyModeEdges = 'weighted';
+    }
     if (!Object.prototype.hasOwnProperty.call(options, 'layout')) {
       const mode = options.mode ?? '2d';
       options.layout = {
@@ -6104,7 +6119,7 @@ export class Helios extends EventTarget {
       return this._labels?.getConfig?.() ?? { enabled: false };
     }
     if (options == null) {
-      this._labels?.setConfig?.({ enabled: false });
+      this._labels?.setConfig?.({ enabled: false, hoveredNodeEnabled: false });
     } else if (typeof options === 'object') {
       this._labels?.setConfig?.(options);
     } else {
@@ -6155,8 +6170,24 @@ export class Helios extends EventTarget {
   }
 
   labelsEnabled(value) {
-    if (arguments.length === 0) return this.labels()?.enabled === true;
-    return this.labels({ enabled: value === true });
+    if (arguments.length === 0) return this.labelsMode() !== 'off';
+    return this.labelsMode(value === true ? 'auto' : 'off');
+  }
+
+  labelsMode(value) {
+    if (arguments.length === 0) {
+      const labels = this.labels?.() ?? { enabled: false };
+      if (labels.enabled !== true) return 'off';
+      return labels.selectionMode === 'selected-only' ? 'selected-only' : 'auto';
+    }
+    const raw = String(value ?? '').trim().toLowerCase();
+    if (raw === 'selected' || raw === 'selected-only' || raw === 'selected_only') {
+      return this.labels({ enabled: true, selectionMode: 'selected-only' });
+    }
+    if (raw === 'off' || raw === 'none' || raw === 'disabled' || raw === 'false') {
+      return this.labels({ enabled: false });
+    }
+    return this.labels({ enabled: true, selectionMode: 'ranked' });
   }
 
   labelsMaxVisible(value) {
@@ -6164,6 +6195,11 @@ export class Helios extends EventTarget {
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) return this;
     return this.labels({ maxVisible: Math.max(0, Math.floor(numeric)) });
+  }
+
+  labelsSelectedOnlySpaceAware(value) {
+    if (arguments.length === 0) return this.labels()?.selectedOnlySpaceAware === true;
+    return this.labels({ selectedOnlySpaceAware: value === true });
   }
 
   labelsFontSizeScale(value) {

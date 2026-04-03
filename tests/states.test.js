@@ -58,6 +58,21 @@ test('state style accessors accept and return forceMaxAlpha', () => {
   assert.equal(edgeStyle.forceMaxAlpha, true);
 });
 
+test('graph layer requests weighted edge transparency by default', () => {
+  const layer = new GraphLayer();
+  assert.equal(layer.edgeTransparencyMode, 'weighted');
+});
+
+test('graph layer falls back to alpha when weighted transparency is unavailable', () => {
+  const layer = new GraphLayer();
+  layer.weightedSupported = false;
+  layer.setEdgeTransparencyMode('weighted');
+  assert.equal(layer.edgeTransparencyMode, 'alpha');
+
+  layer.setEdgeTransparencyMode('additive-normalized');
+  assert.equal(layer.edgeTransparencyMode, 'alpha');
+});
+
 test('global accessors exist on Helios prototype', () => {
   const names = [
     'edgeWidthScale',

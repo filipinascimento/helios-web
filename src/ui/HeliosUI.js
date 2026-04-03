@@ -1317,8 +1317,8 @@ export class HeliosUI {
 
         const syncEdgeMode = () => {
           const current = this.helios?.edgeTransparencyMode?.();
-          const value = typeof current === 'string' ? current : 'alpha';
-          modeSelect.value = modes.some((m) => m.value === value) ? value : 'alpha';
+          const value = typeof current === 'string' ? current : 'weighted';
+          modeSelect.value = modes.some((m) => m.value === value) ? value : 'weighted';
         };
         syncEdgeMode();
 
@@ -1337,8 +1337,73 @@ export class HeliosUI {
 
       const createLabelsContent = () => {
         const wrapper = document.createElement('div');
-        const enableRow = createToggleRow('labelsEnabled');
-        if (enableRow) wrapper.appendChild(enableRow);
+
+        const labelsMode = this.bindHeliosAccessor('labelsMode');
+        const labelsModeSelect = createSelectControl({
+          ariaLabel: 'Label Mode',
+          options: [
+            { value: 'off', label: 'Off' },
+            { value: 'auto', label: 'Auto Labels' },
+            { value: 'selected-only', label: 'Selected Only' },
+          ],
+          value: labelsMode.value(),
+        });
+        const syncLabelsMode = (value) => {
+          const next = value === 'selected-only' ? 'selected-only' : (value === 'off' ? 'off' : 'auto');
+          labelsModeSelect.value = next;
+          labelsModeSelect.disabled = labelsMode.readOnly;
+        };
+        const unsubscribeLabelsMode = labelsMode.subscribe((value) => {
+          syncLabelsMode(value);
+        });
+        labelsModeSelect.addEventListener('change', () => {
+          labelsMode.write(labelsModeSelect.value, { source: 'ui', event: 'change' });
+        });
+        this._controlCleanups.add(() => unsubscribeLabelsMode());
+        wrapper.appendChild(createAlignedRow({
+          title: 'Labels',
+          hint: 'Off hides regular labels. Auto Labels ranks visible labels. Selected Only limits regular labels to selected nodes.',
+          controls: labelsModeSelect,
+        }).row);
+
+        const selectedOnlySpaceAware = this.bindHeliosAccessor('labelsSelectedOnlySpaceAware');
+        const selectedOnlySpaceAwareToggle = createToggleControl({
+          checked: false,
+          onLabel: 'On',
+          offLabel: 'Off',
+          ariaLabel: 'Selected-only labels use regular space-aware placement',
+          disabled: selectedOnlySpaceAware.readOnly,
+        });
+        const syncSelectedOnlySpaceAware = (value) => {
+          selectedOnlySpaceAwareToggle.checked = Boolean(value);
+          selectedOnlySpaceAwareToggle.disabled = selectedOnlySpaceAware.readOnly;
+        };
+        const unsubscribeSelectedOnlySpaceAware = selectedOnlySpaceAware.subscribe((value) => {
+          syncSelectedOnlySpaceAware(value);
+        });
+        selectedOnlySpaceAwareToggle.addEventListener('change', () => {
+          selectedOnlySpaceAware.write(selectedOnlySpaceAwareToggle.checked, { source: 'ui', event: 'change' });
+        });
+        this._controlCleanups.add(() => unsubscribeSelectedOnlySpaceAware());
+        const selectedOnlySpaceAwareRow = createAlignedRow({
+          title: 'Use Available Space',
+          hint: 'When Selected Only is active, apply the same collision and space-availability logic used by regular labels.',
+          controls: (() => {
+            const controls = document.createElement('div');
+            controls.className = 'helios-ui-row__controls';
+            controls.appendChild(selectedOnlySpaceAwareToggle);
+            return controls;
+          })(),
+        }).row;
+        const syncSelectedOnlySpaceAwareVisibility = (mode) => {
+          selectedOnlySpaceAwareRow.style.display = mode === 'selected-only' ? '' : 'none';
+        };
+        syncSelectedOnlySpaceAwareVisibility(labelsMode.value());
+        const unsubscribeLabelsModeForSpaceAware = labelsMode.subscribe((value) => {
+          syncSelectedOnlySpaceAwareVisibility(value);
+        });
+        this._controlCleanups.add(() => unsubscribeLabelsModeForSpaceAware());
+        wrapper.appendChild(selectedOnlySpaceAwareRow);
 
         wrapper.appendChild(createRows([
           'labelsMaxVisible',
