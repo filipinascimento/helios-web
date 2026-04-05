@@ -202,6 +202,8 @@ test('edge shader sources only include selected-node endpoint propagation when e
   });
   assert.equal(/endpointStatePair\.x \| endpointStatePair\.y/.test(webglOff.EDGE_QUAD_VERTEX_SOURCE), false);
   assert.match(webglOn.EDGE_QUAD_VERTEX_SOURCE, /endpointStatePair\.x \| endpointStatePair\.y/);
+  assert.match(webglOn.EDGE_VERTEX_SOURCE, /uvec2 fetchEdgeEndpointStatePair\(uint edgeId\)/);
+  assert.match(webglOn.EDGE_VERTEX_SOURCE, /endpointStatePair\.x \| endpointStatePair\.y/);
   assert.match(webglOn.EDGE_QUAD_VERTEX_SOURCE, /state \|= 2u;/);
 
   const webgpuOff = createDynamicGraphWebGPUSources(4, {
@@ -233,6 +235,25 @@ test('edge shader sources only include selected-node endpoint propagation when e
   assert.equal(/endpointStatePair\.x \| endpointStatePair\.y/.test(webgpuOff.EDGE_WGSL), false);
   assert.match(webgpuOn.EDGE_WGSL, /endpointStatePair\.x \| endpointStatePair\.y/);
   assert.match(webgpuOn.EDGE_WGSL, /state = state \| 2u;/);
+});
+
+test('webgl quad edge shader does not redeclare endpointStatePair when trim and selected propagation are both enabled', () => {
+  const webgl = createGraphWebGLSources({
+    edge: {
+      cameraMode: '2d',
+      trim: true,
+      edgeState: true,
+      endpointState: false,
+      propagateSelectedNodesToEdges: true,
+      color: { mode: 'buffer', source: 'edge' },
+      width: { mode: 'buffer', source: 'edge' },
+      opacity: { mode: 'buffer', source: 'edge' },
+      endpointSize: { mode: 'buffer', source: 'edge' },
+    },
+  });
+  const declarations = webgl.EDGE_QUAD_VERTEX_SOURCE.match(/uvec2 endpointStatePair =/g) ?? [];
+  assert.equal(declarations.length, 1);
+  assert.match(webgl.EDGE_QUAD_VERTEX_SOURCE, /uvec2 trimEndpointStatePair =/);
 });
 
 test('webgpu node variants specialize state and interpolation storage bindings', () => {

@@ -378,25 +378,25 @@ uvec2 fetchEdgeEndpointStatePair(uint edgeId) {
 
   const edgeTrimBlock = edgeTrimEnabled
     ? `
-  uvec2 endpointStatePair = ${edgeEndpointStateEnabled ? 'fetchEdgeEndpointStatePair(a_edgeId)' : 'uvec2(0u, 0u)'};
+  uvec2 trimEndpointStatePair = ${edgeEndpointStateEnabled ? 'fetchEdgeEndpointStatePair(a_edgeId)' : 'uvec2(0u, 0u)'};
   float startSizeMul = 1.0;
   float endSizeMul = 1.0;
   ${edgeEndpointStateEnabled
     ? `
-  if (endpointStatePair.x == 0u) {
+  if (trimEndpointStatePair.x == 0u) {
     startSizeMul *= u_nodeNoStateScale.x;
   } else {
     for (int i = 0; i < ${stateSlots}; i += 1) {
-      float enabledStart = float((endpointStatePair.x >> uint(i)) & 1u);
+      float enabledStart = float((trimEndpointStatePair.x >> uint(i)) & 1u);
       float slotMul = u_nodeStateScale[i].x;
       startSizeMul *= mix(1.0, slotMul, enabledStart);
     }
   }
-  if (endpointStatePair.y == 0u) {
+  if (trimEndpointStatePair.y == 0u) {
     endSizeMul *= u_nodeNoStateScale.x;
   } else {
     for (int i = 0; i < ${stateSlots}; i += 1) {
-      float enabledEnd = float((endpointStatePair.y >> uint(i)) & 1u);
+      float enabledEnd = float((trimEndpointStatePair.y >> uint(i)) & 1u);
       float slotMul = u_nodeStateScale[i].x;
       endSizeMul *= mix(1.0, slotMul, enabledEnd);
     }
@@ -689,6 +689,7 @@ ${edgeColorSourceNode ? 'uniform sampler2D u_nodeEdgeColors;\nuniform int u_hasN
 ${edgeOpacitySourceNode ? 'uniform sampler2D u_nodeOpacitySource;\nuniform int u_hasNodeOpacitySource;' : ''}${edgeColorDecl}${edgeOpacityDecl}
 uniform usampler2D u_edgeEndpoints;
 ${edgeStateUniformDecl}
+${edgeEndpointStateUniformDecl}
 uniform vec4 u_defaultNodeEdgeColor;
 uniform vec4 u_defaultEdgeColorStart;
 uniform vec4 u_defaultEdgeColorEnd;
@@ -711,6 +712,7 @@ vec3 fetchNodePos(uint id) {
 }
 
 ${edgeStateFetch}
+${edgeEndpointStateFetch}
 
 ${edgeColorSourceNode ? `
 vec4 fetchNodeColor(uint id) {
