@@ -99,8 +99,11 @@ export class WebGL2Device {
     }
     this.gl = gl;
     gl.enable(gl.BLEND);
-    // Use standard alpha blending (non-premultiplied shader outputs).
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    // Use standard straight-alpha blending for color while accumulating alpha coverage correctly.
+    gl.blendFuncSeparate?.(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    if (typeof gl.blendFuncSeparate !== 'function') {
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    }
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LEQUAL);
     gl.clearDepth(1.0);
@@ -186,6 +189,7 @@ export class WebGL2Device {
     gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, width, height);
     gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depth);
     gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.bindRenderbuffer?.(gl.RENDERBUFFER, null);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     return {
       type: 'webgl2',

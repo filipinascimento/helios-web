@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Helios } from '../src/index.js';
+import { resolveFigurePreviewRect } from '../src/export/figureExport.js';
 import { Camera } from '../src/rendering/Camera.js';
 
 function createCamera(mode = '2d') {
@@ -19,6 +20,20 @@ function createCamera(mode = '2d') {
       viewport: { width: 400, height: 400, devicePixelRatio: 1 },
     },
   );
+}
+
+function projectPoint(uniforms, point) {
+  const [x, y, z] = point;
+  const matrix = uniforms.viewProjection;
+  const clipX = (matrix[0] * x) + (matrix[4] * y) + (matrix[8] * z) + matrix[12];
+  const clipY = (matrix[1] * x) + (matrix[5] * y) + (matrix[9] * z) + matrix[13];
+  const clipW = (matrix[3] * x) + (matrix[7] * y) + (matrix[11] * z) + matrix[15];
+  const ndcX = clipX / clipW;
+  const ndcY = clipY / clipW;
+  return {
+    x: (ndcX * 0.5 + 0.5) * uniforms.viewport.width,
+    y: (1 - (ndcY * 0.5 + 0.5)) * uniforms.viewport.height,
+  };
 }
 
 test('frameNetwork trims outliers when using 95% auto-fit coverage', () => {
@@ -281,6 +296,46 @@ test('camera rotation interaction does not disable auto fit, but pan does', () =
   assert.equal(helios._cameraControlConfig.autoFit, false);
 });
 
+test('3d figure export camera matches the preview-frame sub-frustum', () => {
+  const helios = Object.create(Helios.prototype);
+  const camera = createCamera('3d');
+  camera.setViewport({ width: 1000, height: 800, devicePixelRatio: 1 });
+  camera.rotateBy(90, -55);
+  camera.pan3DBy(30, -20);
+  camera.updateMatrices();
+
+  const previewRect = resolveFigurePreviewRect(1600, 900, { width: 1000, height: 800 });
+  const exportCamera = helios._buildFigureExportCamera(camera, {
+    previewRect,
+    exportFigureLogicalViewport: {
+      width: previewRect.width,
+      height: previewRect.height,
+      devicePixelRatio: 1,
+    },
+  });
+
+  assert.notEqual(exportCamera, camera);
+
+  const liveUniforms = camera.getUniforms();
+  const exportUniforms = exportCamera.getUniforms();
+  const points = [
+    [0, 0, 0],
+    [60, -40, 30],
+    [-75, 55, -25],
+    [45, 90, -10],
+  ];
+
+  for (const point of points) {
+    const livePoint = projectPoint(liveUniforms, point);
+    const exportPoint = projectPoint(exportUniforms, point);
+
+    assert.ok(livePoint.x >= previewRect.x && livePoint.x <= (previewRect.x + previewRect.width));
+    assert.ok(livePoint.y >= previewRect.y && livePoint.y <= (previewRect.y + previewRect.height));
+    assert.ok(Math.abs(exportPoint.x - (livePoint.x - previewRect.x)) < 1e-3);
+    assert.ok(Math.abs(exportPoint.y - (livePoint.y - previewRect.y)) < 1e-3);
+  }
+});
+
 test('frameNetwork reads active node indices only inside buffer access', () => {
   const helios = Object.create(Helios.prototype);
   const camera = createCamera('2d');
@@ -514,6 +569,34 @@ test('auto fit render pump stays idle until a graph change marks it dirty', () =
   assert.equal(sampled, 1);
   assert.equal(queued, 1);
   assert.equal(helios._cameraControlRuntime.autoFitDirty, false);
+});
+
+test('resize does not retrigger 3D auto fit, but keeps 2D auto fit responsive', () => {
+  const helios3d = Object.create(Helios.prototype);
+  helios3d.renderer = { camera: createCamera('3d') };
+  helios3d._cameraControlConfig = { autoFit: true };
+  helios3d._cameraControlRuntime = {
+    autoFitDirty: false,
+    lastAutoFitAt: 123,
+  };
+
+  helios3d._handleResizeAutoFit();
+
+  assert.equal(helios3d._cameraControlRuntime.autoFitDirty, false);
+  assert.equal(helios3d._cameraControlRuntime.lastAutoFitAt, 123);
+
+  const helios2d = Object.create(Helios.prototype);
+  helios2d.renderer = { camera: createCamera('2d') };
+  helios2d._cameraControlConfig = { autoFit: true };
+  helios2d._cameraControlRuntime = {
+    autoFitDirty: false,
+    lastAutoFitAt: 123,
+  };
+
+  helios2d._handleResizeAutoFit();
+
+  assert.equal(helios2d._cameraControlRuntime.autoFitDirty, true);
+  assert.equal(helios2d._cameraControlRuntime.lastAutoFitAt, Number.NEGATIVE_INFINITY);
 });
 
 test('orbit animation advances analytically without queueing camera pose transitions every frame', () => {

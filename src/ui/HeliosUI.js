@@ -578,7 +578,7 @@ export class HeliosUI {
           },
         });
         const legendScaleRow = createSliderRow(legendScaleAttribute, {
-          hint: 'Multiplier for exported legend size. At 1x, legend size follows the current view rather than the chosen output resolution.',
+          hint: 'Multiplier for exported legend size. At 1x, legends keep the same relative size within the chosen figure.',
           precision: 2,
           step: 0.05,
         });

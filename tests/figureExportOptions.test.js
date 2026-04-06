@@ -4,6 +4,7 @@ import {
   buildFigureExportPresetList,
   normalizeFigureExportFilename,
   resolveFigureExportOptions,
+  resolveFigureRelativeOverlayScale,
   resolveFigurePreviewThumbnailOptions,
   resolveFigurePreviewRect,
 } from '../src/export/figureExport.js';
@@ -39,6 +40,32 @@ test('resolveFigureExportOptions derives preset and raster sizes', () => {
   assert.equal(resolved.legendScale, 1.25);
   assert.equal(resolved.transparentBackground, true);
   assert.equal(resolved.alphaMode, 'premultiplied');
+  assert.equal(resolved.fitsCapability, true);
+});
+
+test('resolveFigureExportOptions keeps fixed exports independent of window aspect', () => {
+  const resolved = resolveFigureExportOptions({
+    format: 'png',
+    preset: '8k',
+  }, {
+    capability: { maxBitmapDimension: 8192 },
+    windowSize: { width: 1000, height: 1000 },
+  });
+
+  assert.equal(resolved.width, 7680);
+  assert.equal(resolved.height, 4320);
+  assert.equal(resolved.bitmapWidth, 7680);
+  assert.equal(resolved.bitmapHeight, 4320);
+  assert.equal(resolved.framebufferWidth, 7680);
+  assert.equal(resolved.framebufferHeight, 4320);
+  assert.equal(resolved.cropRect.x, 0);
+  assert.equal(resolved.cropRect.width, 7680);
+  assert.equal(resolved.cropRect.height, 4320);
+  assert.equal(resolved.cropRect.y, 0);
+  assert.equal(resolved.logicalWidth, 1000);
+  assert.equal(resolved.previewRect.width, 1000);
+  assert.equal(resolved.previewRect.y, 218.75);
+  assert.ok(Math.abs(resolved.logicalHeight - 562.5) < 1e-6);
   assert.equal(resolved.fitsCapability, true);
 });
 
@@ -80,6 +107,54 @@ test('resolveFigureExportOptions defaults to a DPR-aware window preset', () => {
   assert.equal(resolved.preset, 'window@1.5x');
   assert.equal(resolved.width, 1200);
   assert.equal(resolved.height, 900);
+  assert.equal(resolved.logicalWidth, 800);
+  assert.equal(resolved.logicalHeight, 600);
+  assert.equal(resolved.devicePixelRatio, 1.5);
+});
+
+test('resolveFigureExportOptions keeps window presets tied to the live logical viewport', () => {
+  const resolved = resolveFigureExportOptions({
+    format: 'png',
+    preset: 'window@x4',
+  }, {
+    capability: { maxBitmapDimension: 16384 },
+    windowSize: { width: 900, height: 700 },
+  });
+
+  assert.equal(resolved.width, 3600);
+  assert.equal(resolved.height, 2800);
+  assert.equal(resolved.bitmapWidth, 3600);
+  assert.equal(resolved.bitmapHeight, 2800);
+  assert.equal(resolved.logicalWidth, 900);
+  assert.equal(resolved.logicalHeight, 700);
+  assert.equal(resolved.devicePixelRatio, 4);
+});
+
+test('resolveFigureExportOptions keeps arbitrary same-aspect custom exports tied to the same frame', () => {
+  const base = resolveFigureExportOptions({
+    format: 'png',
+    width: 1500,
+    height: 844,
+  }, {
+    capability: { maxBitmapDimension: 16384 },
+    windowSize: { width: 900, height: 700 },
+  });
+  const scaled = resolveFigureExportOptions({
+    format: 'png',
+    width: 3000,
+    height: 1688,
+  }, {
+    capability: { maxBitmapDimension: 16384 },
+    windowSize: { width: 900, height: 700 },
+  });
+
+  assert.equal(base.logicalWidth, scaled.logicalWidth);
+  assert.equal(base.logicalHeight, scaled.logicalHeight);
+  assert.equal(base.previewRect.x, scaled.previewRect.x);
+  assert.equal(base.previewRect.y, scaled.previewRect.y);
+  assert.equal(base.previewRect.width, scaled.previewRect.width);
+  assert.equal(base.previewRect.height, scaled.previewRect.height);
+  assert.ok(Math.abs(scaled.devicePixelRatio - (base.devicePixelRatio * 2)) < 1e-6);
 });
 
 test('resolveFigurePreviewRect letterboxes wider exports inside the current view', () => {
@@ -137,4 +212,33 @@ test('resolveFigurePreviewThumbnailOptions preserves export aspect ratio without
 
   assert.equal(small.width, 120);
   assert.equal(small.height, 80);
+});
+
+test('resolveFigureRelativeOverlayScale keeps overlay sizing proportional to the exported figure', () => {
+  assert.equal(
+    resolveFigureRelativeOverlayScale(
+      { width: 3840, height: 2160 },
+      { width: 1920, height: 1080 },
+      1,
+    ),
+    2,
+  );
+
+  assert.equal(
+    resolveFigureRelativeOverlayScale(
+      { width: 7680, height: 4320 },
+      { width: 3840, height: 2160 },
+      1,
+    ),
+    2,
+  );
+
+  assert.equal(
+    resolveFigureRelativeOverlayScale(
+      { width: 1920, height: 1080 },
+      { width: 1280, height: 720 },
+      1,
+    ),
+    1.5,
+  );
 });

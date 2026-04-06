@@ -161,11 +161,19 @@ export class WebGPUDevice {
     this.size = size;
   }
 
+  resolveFrameExtent(renderTarget, targetTexture) {
+    const textureWidth = Number.isFinite(targetTexture?.width) ? targetTexture.width : null;
+    const textureHeight = Number.isFinite(targetTexture?.height) ? targetTexture.height : null;
+    return {
+      width: renderTarget?.width ?? textureWidth ?? this.canvas.width,
+      height: renderTarget?.height ?? textureHeight ?? this.canvas.height,
+    };
+  }
+
   beginFrame(renderTarget, clearColor, rect) {
     this.counters.beginFrame = bumpCounter(this.counters.beginFrame);
     const targetTexture = renderTarget ? renderTarget.texture : this.context.getCurrentTexture();
-    const width = renderTarget?.width ?? this.canvas.width;
-    const height = renderTarget?.height ?? this.canvas.height;
+    const { width, height } = this.resolveFrameExtent(renderTarget, targetTexture);
     const sampleCount = renderTarget ? 1 : this.sampleCount;
     const colorTexture = sampleCount > 1
       ? this.ensureColorTexture(width, height, sampleCount)

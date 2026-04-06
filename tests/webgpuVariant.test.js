@@ -125,3 +125,34 @@ test('getSharedSparseResources prefers active position buffers over stale cache 
   assert.equal(shared?.buffers?.['indirect:node:positionsFrom']?.buffer, activePositionFromBuffer);
   assert.equal(shared?.buffers?.['indirect:node:positionsFrom']?.version, 9);
 });
+
+test('weighted WebGPU resources size offscreen targets from the active frame extent during resize', () => {
+  const layer = new GraphLayerWebGPU();
+  let ensuredSize = null;
+  layer.device = {
+    depthFormat: 'depth24plus',
+    device: {
+      limits: { maxColorAttachments: 2 },
+    },
+  };
+  layer.size = { width: 2696, height: 1542, devicePixelRatio: 1 };
+  layer.ensureWeightedTextures = (_device, width, height) => {
+    ensuredSize = { width, height };
+    return true;
+  };
+  layer.ensureWeightedPipelines = () => true;
+  layer.ensureWeightedResolveBindGroup = () => {};
+  layer.edgeWeightedPipeline = {};
+  layer.edgeResolveBindGroup = {};
+  layer.edgeResolveLayout = {};
+
+  const ready = layer.prepareWeightedResources(
+    { width: 2696, height: 1388, format: 'bgra8unorm' },
+    { viewport: { width: 2696, height: 1542, devicePixelRatio: 1 } },
+    true,
+    null,
+  );
+
+  assert.equal(ready, true);
+  assert.deepEqual(ensuredSize, { width: 2696, height: 1388 });
+});

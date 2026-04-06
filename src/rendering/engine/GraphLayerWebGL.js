@@ -1033,9 +1033,16 @@ export class GraphLayerWebGL extends GraphLayer {
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
         break;
       default:
-        gl.blendEquation(gl.FUNC_ADD);
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        this.applyStandardAlphaBlend(gl);
         break;
+    }
+  }
+
+  applyStandardAlphaBlend(gl) {
+    gl.blendEquation(gl.FUNC_ADD);
+    gl.blendFuncSeparate?.(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    if (typeof gl.blendFuncSeparate !== 'function') {
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     }
   }
 
@@ -2088,8 +2095,15 @@ export class GraphLayerWebGL extends GraphLayer {
         const rasterViewportWidth = viewport ? viewport[2] : (gl.drawingBufferWidth || this.size.width || 1);
         const rasterViewportHeight = viewport ? viewport[3] : (gl.drawingBufferHeight || this.size.height || 1);
         const logicalViewport = context.target?.exportFigureLogicalViewport ?? null;
-        const screenViewportWidth = Math.max(1, Math.floor(logicalViewport?.width ?? rasterViewportWidth));
-        const screenViewportHeight = Math.max(1, Math.floor(logicalViewport?.height ?? rasterViewportHeight));
+        const exportPixelRatio = Math.max(1, Number(logicalViewport?.devicePixelRatio ?? 1));
+        const screenViewportWidth = Math.max(
+          1,
+          Math.floor(logicalViewport ? logicalViewport.width * exportPixelRatio : rasterViewportWidth),
+        );
+        const screenViewportHeight = Math.max(
+          1,
+          Math.floor(logicalViewport ? logicalViewport.height * exportPixelRatio : rasterViewportHeight),
+        );
         const transparencyMode = fastEdges ? 'alpha' : this.edgeTransparencyMode;
         const nodeBlendWithEdges = this.nodeBlendWithEdges === true;
         const edgeDepthWrite = !fastEdges && this.edgeDepthWrite === true;
@@ -2119,8 +2133,7 @@ export class GraphLayerWebGL extends GraphLayer {
         gl.depthMask(true);
         gl.depthFunc(gl.LEQUAL);
         gl.enable(gl.BLEND);
-        gl.blendEquation(gl.FUNC_ADD);
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        this.applyStandardAlphaBlend(gl);
 
         const set1i = (uniforms, name, value) => {
           const loc = uniforms[name];
@@ -2714,8 +2727,7 @@ export class GraphLayerWebGL extends GraphLayer {
             if (nodeBlendWithEdges) {
               this.applyEdgeBlend(gl, transparencyMode);
             } else {
-              gl.blendEquation(gl.FUNC_ADD);
-              gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+              this.applyStandardAlphaBlend(gl);
             }
           };
 
@@ -2762,8 +2774,7 @@ export class GraphLayerWebGL extends GraphLayer {
         gl.depthMask(true);
         gl.enable(gl.DEPTH_TEST);
         gl.depthFunc(gl.LEQUAL);
-        gl.blendEquation(gl.FUNC_ADD);
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        this.applyStandardAlphaBlend(gl);
         return true;
       },
     );

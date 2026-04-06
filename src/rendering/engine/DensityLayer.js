@@ -1362,9 +1362,11 @@ export class DensityLayer extends Layer {
     const viewportWidth = Math.max(1, viewport[2]);
     const viewportHeight = Math.max(1, viewport[3]);
     const bandwidthViewport = resolveDensityBandwidthViewport(context, cameraUniforms, viewportWidth, viewportHeight);
-
-    const densityWidth = Math.max(1, Math.floor(viewportWidth * this.config.qualityScale));
-    const densityHeight = Math.max(1, Math.floor(viewportHeight * this.config.qualityScale));
+    const densityResolutionViewport = context?.target?.exportFigureLogicalViewport
+      ? bandwidthViewport
+      : { width: viewportWidth, height: viewportHeight };
+    const densityWidth = Math.max(1, Math.floor(densityResolutionViewport.width * this.config.qualityScale));
+    const densityHeight = Math.max(1, Math.floor(densityResolutionViewport.height * this.config.qualityScale));
 
     if (!this.ensureWebGLDensityTarget(gl, densityWidth, densityHeight)) {
       return;
@@ -1750,8 +1752,11 @@ export class DensityLayer extends Layer {
     const width = viewport ? Math.max(1, Math.floor(viewport.width)) : Math.max(1, Math.floor(context.width));
     const height = viewport ? Math.max(1, Math.floor(viewport.height)) : Math.max(1, Math.floor(context.height));
     const bandwidthViewport = resolveDensityBandwidthViewport(context, cameraUniforms, width, height);
-    const densityWidth = Math.max(1, Math.floor(width * this.config.qualityScale));
-    const densityHeight = Math.max(1, Math.floor(height * this.config.qualityScale));
+    const densityResolutionViewport = context?.target?.exportFigureLogicalViewport
+      ? bandwidthViewport
+      : { width, height };
+    const densityWidth = Math.max(1, Math.floor(densityResolutionViewport.width * this.config.qualityScale));
+    const densityHeight = Math.max(1, Math.floor(densityResolutionViewport.height * this.config.qualityScale));
 
     if (!this.ensureWebGPUDensityTexture(densityWidth, densityHeight)) return;
     if (!this.ensureWebGPUColormapTexture(computed.colormapKey, computed.diverging)) return;

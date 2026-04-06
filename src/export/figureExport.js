@@ -30,6 +30,16 @@ function formatWindowScale(value) {
   return numeric.toFixed(2).replace(/\.?0+$/u, '');
 }
 
+function resolveWindowPresetScale(preset) {
+  const safePreset = String(preset ?? '').trim().toLowerCase();
+  if (safePreset === 'window') return 1;
+  const fixedMatch = safePreset.match(/^window@x(\d+(?:\.\d+)?)$/u);
+  if (fixedMatch) return normalizePositiveNumber(fixedMatch[1], 1);
+  const match = safePreset.match(/^window@(\d+(?:\.\d+)?)x$/u);
+  if (!match) return null;
+  return normalizePositiveNumber(match[1], 1);
+}
+
 export function getDefaultFigureExportPreset(windowDevicePixelRatio = 1) {
   const dpr = normalizePositiveNumber(windowDevicePixelRatio, 1);
   if (approximatelyEqual(dpr, 1)) return 'window';
@@ -124,6 +134,22 @@ export function resolveFigureLegendScale(value, fallback = 1) {
   return Math.max(0.25, Math.min(8, numeric));
 }
 
+export function resolveFigureRelativeOverlayScale(exportSize = {}, viewSize = {}, fallback = 1) {
+  const exportWidth = normalizePositiveNumber(exportSize.width ?? exportSize.logicalWidth, NaN);
+  const exportHeight = normalizePositiveNumber(exportSize.height ?? exportSize.logicalHeight, NaN);
+  const viewWidth = normalizePositiveNumber(viewSize.width, NaN);
+  const viewHeight = normalizePositiveNumber(viewSize.height, NaN);
+  if (
+    !Number.isFinite(exportWidth)
+    || !Number.isFinite(exportHeight)
+    || !Number.isFinite(viewWidth)
+    || !Number.isFinite(viewHeight)
+  ) {
+    return normalizePositiveNumber(fallback, 1);
+  }
+  return Math.max(1e-6, Math.min(exportWidth / viewWidth, exportHeight / viewHeight));
+}
+
 export function resolveFigureTransparentBackground(value, fallback = false) {
   if (value == null) return fallback;
   return value === true;
@@ -192,12 +218,19 @@ export function resolveFigureExportOptions(options = {}, context = {}) {
   const bitmapWidth = Math.max(1, Math.floor(finalWidth * supersampling));
   const bitmapHeight = Math.max(1, Math.floor(finalHeight * supersampling));
   const previewRect = resolveFigurePreviewRect(finalWidth, finalHeight, windowSize);
-  const renderScale = (bitmapWidth / Math.max(1e-6, previewRect.width));
-  const framebufferWidth = Math.max(bitmapWidth, Math.ceil((windowSize.width ?? 1) * renderScale));
-  const framebufferHeight = Math.max(bitmapHeight, Math.ceil((windowSize.height ?? 1) * renderScale));
-  const cropX = Math.max(0, Math.min(framebufferWidth - bitmapWidth, Math.round(previewRect.x * renderScale)));
-  const cropY = Math.max(0, Math.min(framebufferHeight - bitmapHeight, Math.round(previewRect.y * renderScale)));
-  const fitsCapability = framebufferWidth <= capability.maxBitmapDimension && framebufferHeight <= capability.maxBitmapDimension;
+  const logicalWidth = Math.max(1, Number(previewRect.width ?? finalWidth));
+  const logicalHeight = Math.max(1, Number(previewRect.height ?? finalHeight));
+  const devicePixelRatio = Math.max(
+    1,
+    bitmapWidth / Math.max(1, logicalWidth),
+    bitmapHeight / Math.max(1, logicalHeight),
+  );
+  const renderScale = supersampling;
+  const framebufferWidth = bitmapWidth;
+  const framebufferHeight = bitmapHeight;
+  const cropX = 0;
+  const cropY = 0;
+  const fitsCapability = bitmapWidth <= capability.maxBitmapDimension && bitmapHeight <= capability.maxBitmapDimension;
 
   return {
     preset: dimensions.preset,
@@ -210,6 +243,9 @@ export function resolveFigureExportOptions(options = {}, context = {}) {
     height: finalHeight,
     bitmapWidth,
     bitmapHeight,
+    logicalWidth,
+    logicalHeight,
+    devicePixelRatio,
     renderScale,
     previewRect,
     framebufferWidth,

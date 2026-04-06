@@ -412,7 +412,14 @@ export class GraphLayerWebGPUBase extends GraphLayer {
       case 'max':
         return { key: 'max', fragment: 'edgeFragment', blend: { color: { srcFactor: 'one', dstFactor: 'one', operation: 'max' }, alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'max' } } };
       default:
-        return { key: 'alpha', fragment: 'edgeFragment', blend: { color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' }, alpha: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' } } };
+        return {
+          key: 'alpha',
+          fragment: 'edgeFragment',
+          blend: {
+            color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+            alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+          },
+        };
     }
   }
 
@@ -711,8 +718,12 @@ export class GraphLayerWebGPUBase extends GraphLayer {
 
     const viewport = cameraUniforms?.viewport;
     const pixelRatio = viewport?.devicePixelRatio ?? this.size?.devicePixelRatio ?? 1;
-    const width = context?.target?.width ?? Math.max(1, Math.floor((viewport?.width ?? this.size?.width ?? 1) * pixelRatio));
-    const height = context?.target?.height ?? Math.max(1, Math.floor((viewport?.height ?? this.size?.height ?? 1) * pixelRatio));
+    const width = context?.width
+      ?? context?.target?.width
+      ?? Math.max(1, Math.floor((viewport?.width ?? this.size?.width ?? 1) * pixelRatio));
+    const height = context?.height
+      ?? context?.target?.height
+      ?? Math.max(1, Math.floor((viewport?.height ?? this.size?.height ?? 1) * pixelRatio));
     if (!this.ensureWeightedTextures(device, width, height)) {
       this.weightedSupported = false;
       return false;
