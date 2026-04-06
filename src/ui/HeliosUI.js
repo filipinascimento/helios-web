@@ -10,7 +10,6 @@ import { createToggleControl } from './controls/createToggleControl.js';
 import { createSelectControl } from './controls/createSelectControl.js';
 import { PanelStack } from './panels/PanelStack.js';
 import { TabbedPanel } from './panels/TabbedPanel.js';
-import { TwoHandleRange } from './controls/TwoHandleRange.js';
 import { colormaps } from '../colors/colormaps.js';
 import { VISUAL_ATTRIBUTE_MAP } from '../pipeline/constants.js';
 import { MappersPanel } from './panels/MappersPanel.js';
@@ -18,6 +17,7 @@ import { LayoutPanel } from './panels/LayoutPanel.js';
 import { LegendsPanel } from './panels/LegendsPanel.js';
 import { CameraPanel } from './panels/CameraPanel.js';
 import { SelectionPanel } from './panels/SelectionPanel.js';
+import { createAttributeRuleEditor } from './panels/AttributeRuleEditor.js';
 import { clampNumber } from './utils/numbers.js';
 import { toHex8 } from './utils/colors.js';
 import { isPublicAttributeName } from './utils/attributes.js';
@@ -60,6 +60,28 @@ function createStatChip(labelText, valueEl) {
   stat.appendChild(label);
   stat.appendChild(value);
   return { stat, label, value };
+}
+
+function formatAttributeType(type) {
+  switch (type) {
+    case AttributeType.Boolean: return 'Boolean';
+    case AttributeType.Float: return 'Float';
+    case AttributeType.Double: return 'Double';
+    case AttributeType.Integer: return 'Integer';
+    case AttributeType.UnsignedInteger: return 'Unsigned Integer';
+    case AttributeType.Category: return 'Category';
+    case AttributeType.String: return 'String';
+    case AttributeType.Data: return 'Data';
+    case AttributeType.Javascript: return 'Javascript';
+    case AttributeType.BigInteger: return 'Big Integer';
+    case AttributeType.UnsignedBigInteger: return 'Unsigned Big Integer';
+    case AttributeType.MultiCategory: return 'Multi Category';
+    default: return String(type ?? 'Unknown');
+  }
+}
+
+function isHiddenAppAttributeName(name) {
+  return typeof name === 'string' && name.startsWith('_');
 }
 
 function summarizeChannelConfig(config) {
@@ -341,6 +363,8 @@ export class HeliosUI {
 
         const controls = document.createElement('div');
         controls.className = 'helios-ui-network__actions';
+        controls.style.marginTop = '8px';
+        controls.style.marginBottom = '10px';
         controls.appendChild(loadButton);
         controls.appendChild(saveButton);
         controls.appendChild(formatSelect);
@@ -375,6 +399,7 @@ export class HeliosUI {
 
         const nameBar = document.createElement('div');
         nameBar.className = 'helios-ui-network__name';
+        nameBar.style.marginTop = '6px';
 
         const nameInput = document.createElement('input');
         nameInput.type = 'text';
@@ -451,6 +476,7 @@ export class HeliosUI {
 
         const stats = document.createElement('div');
         stats.className = 'helios-ui-stats helios-ui-network__stats';
+        stats.style.marginBottom = '8px';
         const nodesValue = document.createElement('div');
         nodesValue.textContent = '—';
         const edgesValue = document.createElement('div');
@@ -486,9 +512,119 @@ export class HeliosUI {
         networkTab.appendChild(controls);
         networkTab.appendChild(nameBar);
 
+        const attributesTab = document.createElement('div');
+        const attributesHeader = document.createElement('div');
+        attributesHeader.style.display = 'flex';
+        attributesHeader.style.alignItems = 'center';
+        attributesHeader.style.justifyContent = 'space-between';
+        attributesHeader.style.gap = '8px';
+        attributesHeader.style.margin = '0 0 10px';
+
+        const attributesSummary = document.createElement('div');
+        attributesSummary.className = 'helios-ui-label__hint';
+
+        const hiddenAttributesToggle = createToggleControl({
+          checked: false,
+          onLabel: 'Hidden On',
+          offLabel: 'Hidden Off',
+          ariaLabel: 'Show hidden attributes',
+        });
+
+        const hiddenAttributesWrap = document.createElement('div');
+        hiddenAttributesWrap.style.display = 'inline-flex';
+        hiddenAttributesWrap.style.alignItems = 'center';
+        hiddenAttributesWrap.style.gap = '6px';
+        hiddenAttributesWrap.appendChild(hiddenAttributesToggle);
+
+        attributesHeader.appendChild(attributesSummary);
+        attributesHeader.appendChild(hiddenAttributesWrap);
+
+        const attributesTableWrap = document.createElement('div');
+        attributesTableWrap.className = 'helios-ui-attributes-table-wrap';
+
+        const attributesTable = document.createElement('table');
+        attributesTable.className = 'helios-ui-attributes-table';
+
+        const attributesHead = document.createElement('thead');
+        const attributesHeadRow = document.createElement('tr');
+        for (const label of ['Scope', 'Attribute', 'Type', 'Dim']) {
+          const th = document.createElement('th');
+          th.textContent = label;
+          attributesHeadRow.appendChild(th);
+        }
+        attributesHead.appendChild(attributesHeadRow);
+
+        const attributesBody = document.createElement('tbody');
+        attributesTable.appendChild(attributesHead);
+        attributesTable.appendChild(attributesBody);
+        attributesTableWrap.appendChild(attributesTable);
+
+        const attributesEmpty = document.createElement('div');
+        attributesEmpty.className = 'helios-ui-label__hint';
+        attributesEmpty.textContent = 'No attributes to show.';
+        attributesEmpty.hidden = true;
+
+        attributesTab.appendChild(attributesHeader);
+        attributesTab.appendChild(attributesTableWrap);
+        attributesTab.appendChild(attributesEmpty);
+
+        const collectAttributeRows = ({ includeHidden = false } = {}) => {
+          const network = this.helios?.network ?? null;
+          if (!network) return [];
+          const rows = [];
+          const appendRows = (scope, getNames, getInfo) => {
+            const rawNames = getNames?.call(network) ?? [];
+            for (const rawName of rawNames) {
+              const name = String(rawName);
+              if (!includeHidden && isHiddenAppAttributeName(name)) continue;
+              const info = getInfo?.call(network, name) ?? null;
+              rows.push({
+                scope,
+                name,
+                type: formatAttributeType(info?.type),
+                dimension: Number.isFinite(info?.dimension) ? String(info.dimension) : '—',
+              });
+            }
+          };
+          appendRows('node', network.getNodeAttributeNames, network.getNodeAttributeInfo);
+          appendRows('edge', network.getEdgeAttributeNames, network.getEdgeAttributeInfo);
+          appendRows('network', network.getNetworkAttributeNames, network.getNetworkAttributeInfo);
+          rows.sort((a, b) => {
+            const scopeCompare = a.scope.localeCompare(b.scope);
+            if (scopeCompare !== 0) return scopeCompare;
+            return a.name.localeCompare(b.name);
+          });
+          return rows;
+        };
+
+        const renderAttributesTable = () => {
+          const includeHidden = hiddenAttributesToggle.checked === true;
+          const rows = collectAttributeRows({ includeHidden });
+          attributesBody.replaceChildren();
+          attributesSummary.textContent = `${rows.length} attribute${rows.length === 1 ? '' : 's'}`;
+          attributesEmpty.hidden = rows.length > 0;
+          attributesTableWrap.hidden = rows.length === 0;
+          for (const row of rows) {
+            const tr = document.createElement('tr');
+            for (const value of [row.scope, row.name, row.type, row.dimension]) {
+              const td = document.createElement('td');
+              td.textContent = value;
+              tr.appendChild(td);
+            }
+            attributesBody.appendChild(tr);
+          }
+        };
+
+        hiddenAttributesToggle.addEventListener('change', () => {
+          renderAttributesTable();
+        });
+        renderAttributesTable();
+
         const exportTab = document.createElement('div');
         const exportNameBar = document.createElement('div');
         exportNameBar.className = 'helios-ui-network__name';
+        exportNameBar.style.marginTop = '8px';
+        exportNameBar.style.marginBottom = '12px';
         exportNameBar.appendChild(exportNameInput);
         exportNameBar.appendChild(exportExtEl);
 
@@ -872,6 +1008,7 @@ export class HeliosUI {
         }).row);
         exportNameBar.appendChild(exportButton);
         exportTabContent.appendChild(exportNameBar);
+        previewStack.element.style.marginTop = '8px';
         exportTabContent.appendChild(previewStack.element);
         exportTab.appendChild(exportTabContent);
 
@@ -946,7 +1083,9 @@ export class HeliosUI {
 
         // Update stats if the network is replaced externally.
         const onNetworkReplaced = () => {
+          attachAttributeListeners();
           refreshNetworkInfo();
+          renderAttributesTable();
           syncExportUi();
         };
         let unsub = null;
@@ -957,6 +1096,40 @@ export class HeliosUI {
           unsub = () => this.helios.removeEventListener('network:replaced', onNetworkReplaced);
         }
         if (unsub) this._controlCleanups.add(unsub);
+
+        let attributeEventsUnsub = null;
+        const attachAttributeListeners = () => {
+          attributeEventsUnsub?.();
+          attributeEventsUnsub = null;
+          const network = this.helios?.network ?? null;
+          if (!network) return;
+          const handler = (event) => {
+            const scope = event?.detail?.scope;
+            if (scope && scope !== 'node' && scope !== 'edge' && scope !== 'network') return;
+            renderAttributesTable();
+          };
+          if (typeof network.on === 'function') {
+            const unsubs = [
+              network.on('attribute:defined', handler),
+              network.on('attribute:removed', handler),
+              network.on('attribute:changed', handler),
+            ];
+            attributeEventsUnsub = () => {
+              for (const unsubHandler of unsubs) unsubHandler?.();
+            };
+          } else if (typeof network.addEventListener === 'function') {
+            network.addEventListener('attribute:defined', handler);
+            network.addEventListener('attribute:removed', handler);
+            network.addEventListener('attribute:changed', handler);
+            attributeEventsUnsub = () => {
+              network.removeEventListener('attribute:defined', handler);
+              network.removeEventListener('attribute:removed', handler);
+              network.removeEventListener('attribute:changed', handler);
+            };
+          }
+        };
+        attachAttributeListeners();
+        this._controlCleanups.add(() => attributeEventsUnsub?.());
 
         const onAfterRender = () => {
           if (previewIgnoreRenderEvents > 0) {
@@ -997,6 +1170,7 @@ export class HeliosUI {
           tabs: [
             { id: 'network', title: 'Network', content: networkTab },
             { id: 'figure', title: 'Figure', content: exportTab },
+            { id: 'attributes', title: 'Attributes', content: attributesTab },
           ],
         });
         this._controlCleanups.add(() => tabs.destroy());
@@ -1608,10 +1782,8 @@ export class HeliosUI {
     const content = document.createElement('div');
     content.className = 'helios-ui-filter';
 
-    const FILTER_IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
     const FILTER_SCOPE_RENDER = 'render';
     const FILTER_SCOPE_RENDER_LAYOUT = 'render+layout';
-    const FILTER_RANGE_EPSILON = 1e-9;
     const updateIntervalMs = Number.isFinite(options?.updateIntervalMs)
       ? Math.max(0, Math.floor(options.updateIntervalMs))
       : Number.isFinite(options?.debounceMs)
@@ -1629,877 +1801,13 @@ export class HeliosUI {
             scope: FILTER_SCOPE_RENDER,
           });
 
-    const isNumericAttributeType = (type) =>
-      type === AttributeType.Boolean ||
-      type === AttributeType.Float ||
-      type === AttributeType.Double ||
-      type === AttributeType.Integer ||
-      type === AttributeType.UnsignedInteger ||
-      type === AttributeType.BigInteger ||
-      type === AttributeType.UnsignedBigInteger;
-    const isIntegerAttributeType = (type) =>
-      type === AttributeType.Integer ||
-      type === AttributeType.UnsignedInteger ||
-      type === AttributeType.BigInteger ||
-      type === AttributeType.UnsignedBigInteger;
-    const isStringAttributeType = (type) => type === AttributeType.String;
-    const isCategoricalAttributeType = (type) => type === AttributeType.Category;
-
-    const getFilterableAttributes = (scope) => {
-      const network = this.helios?.network ?? null;
-      if (!network) return [];
-      const getNames = scope === 'edge'
-        ? network.getEdgeAttributeNames
-        : network.getNodeAttributeNames;
-      const getInfo = scope === 'edge'
-        ? network.getEdgeAttributeInfo
-        : network.getNodeAttributeInfo;
-      if (typeof getNames !== 'function' || typeof getInfo !== 'function') return [];
-
-      const out = [];
-      const names = getNames.call(network) ?? [];
-      for (const name of names) {
-        if (typeof name !== 'string') continue;
-        if (!isPublicAttributeName(name)) continue;
-        if (!FILTER_IDENTIFIER_RE.test(name)) continue;
-        const info = getInfo.call(network, name);
-        if (!info || info.dimension !== 1) continue;
-        let type = null;
-        let label = '';
-        if (isNumericAttributeType(info.type)) {
-          type = 'numeric';
-          label = 'Numeric';
-        } else if (isStringAttributeType(info.type)) {
-          type = 'string';
-          label = 'String';
-        } else if (isCategoricalAttributeType(info.type)) {
-          type = 'categorical';
-          label = 'Categorical';
-        }
-        if (!type) continue;
-        out.push({ name, type, label });
-      }
-      out.push({ name: '__query__', type: 'query', label: 'Query', displayName: 'Query filter' });
-      out.sort((a, b) => {
-        if (a.type === 'query' && b.type !== 'query') return 1;
-        if (b.type === 'query' && a.type !== 'query') return -1;
-        return a.name.localeCompare(b.name);
-      });
-      return out;
-    };
-
-    const getCategoryLabels = (scope, attributeName) => {
-      const network = this.helios?.network ?? null;
-      if (!network || typeof attributeName !== 'string' || !attributeName) return [];
-      const getter = scope === 'edge'
-        ? network.getEdgeAttributeCategoryDictionary
-        : network.getNodeAttributeCategoryDictionary;
-      if (typeof getter !== 'function') return [];
-      try {
-        const dictionary = getter.call(network, attributeName, { sortById: false }) ?? {};
-        const labels = Array.isArray(dictionary.labels)
-          ? dictionary.labels
-          : Array.isArray(dictionary.entries)
-            ? dictionary.entries.map((entry) => entry?.label)
-            : [];
-        const seen = new Set();
-        const out = [];
-        for (const raw of labels) {
-          const label = String(raw ?? '').trim();
-          if (!label || seen.has(label)) continue;
-          seen.add(label);
-          out.push(label);
-        }
-        out.sort((a, b) => a.localeCompare(b));
-        return out;
-      } catch (_) {
-        return [];
-      }
-    };
-
-    const parseCsvValues = (text) => {
-      const seen = new Set();
-      const out = [];
-      for (const raw of String(text ?? '').split(',')) {
-        const value = raw.trim();
-        if (!value || seen.has(value)) continue;
-        seen.add(value);
-        out.push(value);
-      }
-      return out;
-    };
-
-    const computeNumericExtent = (scope, attributeName) => {
-      const network = this.helios?.network ?? null;
-      if (!network || typeof attributeName !== 'string' || !attributeName) return null;
-      try {
-        const getInfo = scope === 'edge'
-          ? network.getEdgeAttributeInfo
-          : network.getNodeAttributeInfo;
-        const info = typeof getInfo === 'function' ? getInfo.call(network, attributeName) : null;
-        const isInteger = Boolean(info && isIntegerAttributeType(info.type));
-        const read = () => {
-          const buffer = scope === 'edge'
-            ? network.getEdgeAttributeBuffer?.(attributeName)
-            : network.getNodeAttributeBuffer?.(attributeName);
-          const indices = scope === 'edge' ? network.edgeIndices : network.nodeIndices;
-          if (!indices || !indices.length) return null;
-          const view = buffer?.view ?? null;
-          if (!view || !view.length) return null;
-          let min = Infinity;
-          let max = -Infinity;
-          for (let i = 0; i < indices.length; i += 1) {
-            const id = indices[i];
-            const value = Number(view[id]);
-            if (!Number.isFinite(value)) continue;
-            if (value < min) min = value;
-            if (value > max) max = value;
-          }
-          if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
-          if (isInteger) {
-            const minInt = Math.floor(min);
-            const maxInt = Math.ceil(max);
-            if (minInt === maxInt) {
-              return { min: minInt, max: minInt + 1, isInteger: true };
-            }
-            return { min: minInt, max: maxInt, isInteger: true };
-          }
-          if (min === max) return { min, max: min + 1, isInteger: false };
-          return { min, max, isInteger: false };
-        };
-        if (typeof network.withBufferAccess === 'function') {
-          try {
-            return network.withBufferAccess(read);
-          } catch (error) {
-            warnUiDerivationFailure('Numeric filter extent fallback outside buffer access', {
-              scope,
-              attributeName,
-              error,
-            });
-            return read();
-          }
-        }
-        return read();
-      } catch (error) {
-        warnUiDerivationFailure('Numeric filter extent computation failed', {
-          scope,
-          attributeName,
-          error,
-        });
-        return null;
-      }
-    };
-
-    const suggestHistogramBins = (count) => {
-      if (!Number.isFinite(count) || count <= 1) return 1;
-      return Math.max(8, Math.min(40, Math.round(Math.sqrt(count))));
-    };
-
-    const buildHistogram = (view, min, max, indices) => {
-      if (!view || typeof view.length !== 'number' || view.length <= 0) return null;
-      if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return null;
-      if (!indices || typeof indices.length !== 'number' || indices.length <= 0) return null;
-      const bins = suggestHistogramBins(indices.length);
-      const counts = new Array(bins).fill(0);
-      const span = max - min;
-      let maxCount = 0;
-      let seen = 0;
-      for (let i = 0; i < indices.length; i += 1) {
-        const idxValue = indices[i];
-        const value = Number(view[idxValue]);
-        if (!Number.isFinite(value)) continue;
-        let idx = Math.floor(((value - min) / span) * bins);
-        if (idx < 0) idx = 0;
-        if (idx >= bins) idx = bins - 1;
-        const next = counts[idx] + 1;
-        counts[idx] = next;
-        if (next > maxCount) maxCount = next;
-        seen += 1;
-      }
-      if (!seen || maxCount <= 0) return null;
-      return { counts, maxCount };
-    };
-
-    const createRangeHistogram = ({ scope, attributeName, range, extent }) => {
-      const network = this.helios?.network ?? null;
-      if (!network || !extent || !attributeName) return null;
-      let data = null;
-      try {
-        const compute = () => {
-          const getBuffer = scope === 'edge'
-            ? network.getEdgeAttributeBuffer
-            : network.getNodeAttributeBuffer;
-          if (typeof getBuffer !== 'function') return null;
-          const buffer = getBuffer.call(network, attributeName);
-          const indices = scope === 'edge' ? network.edgeIndices : network.nodeIndices;
-          if (!indices || !indices.length) return null;
-          const view = buffer?.view ?? null;
-          if (!view || !view.length) return null;
-          return buildHistogram(view, extent.min, extent.max, indices);
-        };
-        if (typeof network.withBufferAccess === 'function') {
-          try {
-            data = network.withBufferAccess(compute);
-          } catch (error) {
-            warnUiDerivationFailure('Numeric filter histogram fallback outside buffer access', {
-              scope,
-              attributeName,
-              error,
-            });
-            data = compute();
-          }
-        } else {
-          data = compute();
-        }
-      } catch (error) {
-        warnUiDerivationFailure('Numeric filter histogram computation failed', {
-          scope,
-          attributeName,
-          error,
-        });
-        data = null;
-      }
-      if (!data) return null;
-
-      const histogram = document.createElement('div');
-      histogram.className = 'helios-ui-range2__histogram';
-      for (const count of data.counts) {
-        const bar = document.createElement('div');
-        bar.className = 'helios-ui-range2__histogram-bin';
-        bar.style.height = `${Math.max(1, Math.round((count / data.maxCount) * 100))}%`;
-        histogram.appendChild(bar);
-      }
-
-      const minMarker = document.createElement('div');
-      minMarker.className = 'helios-ui-range2__histogram-marker';
-      const maxMarker = document.createElement('div');
-      maxMarker.className = 'helios-ui-range2__histogram-marker';
-      histogram.appendChild(minMarker);
-      histogram.appendChild(maxMarker);
-
-      const setMarkers = (lo, hi) => {
-        const span = extent.max - extent.min;
-        const toPct = (value) => {
-          if (span === 0) return 0;
-          const raw = (value - extent.min) / span;
-          return Math.max(0, Math.min(1, raw));
-        };
-        const toLeft = (pct) =>
-          `calc(${pct} * (100% - var(--helios-ui-range2-thumb)) + (var(--helios-ui-range2-thumb) / 2))`;
-        minMarker.style.left = toLeft(toPct(lo));
-        maxMarker.style.left = toLeft(toPct(hi));
-      };
-      setMarkers(Number(range?.[0] ?? extent.min), Number(range?.[1] ?? extent.max));
-      return { element: histogram, setMarkers };
-    };
-
-    const suggestStepFromExtent = (extent) => {
-      if (!extent) return 0.01;
-      if (extent.isInteger) return 1;
-      const span = Math.abs(Number(extent.max) - Number(extent.min));
-      if (!Number.isFinite(span) || span <= 0) return 0.01;
-      return Math.max(span / 400, 1e-6);
-    };
-
-    const formatRangeInputValue = (value, isInteger = false) => {
-      const numeric = Number(value);
-      if (!Number.isFinite(numeric)) return '';
-      if (isInteger) return String(Math.round(numeric));
-      return String(Number(numeric.toPrecision(12)));
-    };
-
-    const clampRangeToExtent = (range, extent) => {
-      if (!extent) return null;
-      const loRaw = Number(Array.isArray(range) ? range[0] : extent.min);
-      const hiRaw = Number(Array.isArray(range) ? range[1] : extent.max);
-      const lo = Number.isFinite(loRaw) ? Math.max(extent.min, Math.min(extent.max, loRaw)) : extent.min;
-      const hi = Number.isFinite(hiRaw) ? Math.max(extent.min, Math.min(extent.max, hiRaw)) : extent.max;
-      return lo <= hi ? [lo, hi] : [hi, lo];
-    };
-
-    const rangesClose = (range, extent) => {
-      if (!Array.isArray(range) || !extent) return false;
-      return Math.abs(Number(range[0]) - Number(extent.min)) <= FILTER_RANGE_EPSILON
-        && Math.abs(Number(range[1]) - Number(extent.max)) <= FILTER_RANGE_EPSILON;
-    };
-
-    const createScopeState = (config) => ({
-      scope: config.scope,
-      addAttributeTestId: config.addAttributeTestId,
-      sliderMinTestId: config.sliderMinTestId,
-      sliderMaxTestId: config.sliderMaxTestId,
-      minInputTestId: config.minInputTestId,
-      maxInputTestId: config.maxInputTestId,
-      numericRemoveTestId: config.numericRemoveTestId,
-      stringOperatorTestId: config.stringOperatorTestId,
-      stringValueTestId: config.stringValueTestId,
-      stringRemoveTestId: config.stringRemoveTestId,
-      categoricalModeTestId: config.categoricalModeTestId,
-      categoricalListTestId: config.categoricalListTestId,
-      categoricalTextTestId: config.categoricalTextTestId,
-      categoricalRemoveTestId: config.categoricalRemoveTestId,
-      queryInputTestId: config.queryInputTestId,
-      queryRemoveTestId: config.queryRemoveTestId,
-      addSelect: null,
-      rulesHost: null,
-      catalog: [],
-      catalogByName: new Map(),
-      rules: new Map(),
-    });
-
-    const scopeState = {
-      node: createScopeState({
-        scope: 'node',
-        addAttributeTestId: 'controls-filter-node-attribute',
-        sliderMinTestId: 'controls-filter-node-min-slider',
-        sliderMaxTestId: 'controls-filter-node-max-slider',
-        minInputTestId: 'controls-filter-node-min',
-        maxInputTestId: 'controls-filter-node-max',
-        numericRemoveTestId: 'controls-filter-node-numeric-remove',
-        stringOperatorTestId: 'controls-filter-node-string-operator',
-        stringValueTestId: 'controls-filter-node-string-value',
-        stringRemoveTestId: 'controls-filter-node-string-remove',
-        categoricalModeTestId: 'controls-filter-node-categorical-mode',
-        categoricalListTestId: 'controls-filter-node-categorical-list',
-        categoricalTextTestId: 'controls-filter-node-categorical-text',
-        categoricalRemoveTestId: 'controls-filter-node-categorical-remove',
-        queryInputTestId: 'controls-filter-node-query',
-        queryRemoveTestId: 'controls-filter-node-query-remove',
-      }),
-      edge: createScopeState({
-        scope: 'edge',
-        addAttributeTestId: 'controls-filter-edge-attribute',
-        sliderMinTestId: 'controls-filter-edge-min-slider',
-        sliderMaxTestId: 'controls-filter-edge-max-slider',
-        minInputTestId: 'controls-filter-edge-min',
-        maxInputTestId: 'controls-filter-edge-max',
-        numericRemoveTestId: 'controls-filter-edge-numeric-remove',
-        stringOperatorTestId: 'controls-filter-edge-string-operator',
-        stringValueTestId: 'controls-filter-edge-string-value',
-        stringRemoveTestId: 'controls-filter-edge-string-remove',
-        categoricalModeTestId: 'controls-filter-edge-categorical-mode',
-        categoricalListTestId: 'controls-filter-edge-categorical-list',
-        categoricalTextTestId: 'controls-filter-edge-categorical-text',
-        categoricalRemoveTestId: 'controls-filter-edge-categorical-remove',
-        queryInputTestId: 'controls-filter-edge-query',
-        queryRemoveTestId: 'controls-filter-edge-query-remove',
-      }),
-    };
-
     let applyTimer = null;
     let lastApplyAt = 0;
 
     const clearApplyTimer = () => {
-      if (applyTimer != null) {
-        clearTimeout(applyTimer);
-        applyTimer = null;
-      }
-    };
-
-    const layoutCheckbox = createToggleControl({
-      checked: false,
-      onLabel: 'Layout+Render',
-      offLabel: 'Render Only',
-      ariaLabel: 'Apply filter scope to layout',
-    });
-    layoutCheckbox.dataset.testid = 'controls-filter-layout';
-
-    const refreshAttributeSelect = (state) => {
-      if (!state.addSelect) return;
-      const previous = String(state.addSelect.value ?? '').trim();
-      state.addSelect.replaceChildren();
-      const none = document.createElement('option');
-      none.value = '';
-      none.textContent = 'Add filter...';
-      state.addSelect.appendChild(none);
-
-      const available = state.catalog.filter((entry) => !state.rules.has(entry.name));
-      for (const entry of available) {
-        const option = document.createElement('option');
-        option.value = entry.name;
-        const display = entry.displayName ?? entry.name;
-        option.textContent = `${display} (${entry.label})`;
-        state.addSelect.appendChild(option);
-      }
-      state.addSelect.value = available.some((entry) => entry.name === previous) ? previous : '';
-      state.addSelect.disabled = available.length === 0;
-    };
-
-    let scheduleApply = () => {};
-
-    const removeRule = (state, attribute, { apply = true } = {}) => {
-      const rule = state.rules.get(attribute);
-      if (!rule) return;
-      if (rule.slider) {
-        rule.slider.destroy();
-      }
-      rule.row?.remove();
-      state.rules.delete(attribute);
-      refreshAttributeSelect(state);
-      if (apply) scheduleApply();
-    };
-
-    const createRuleShell = (attribute, kindLabel, removeTestId, onRemove) => {
-      const row = document.createElement('div');
-      row.style.display = 'grid';
-      row.style.gap = '6px';
-      row.style.padding = '8px';
-      row.style.borderRadius = '10px';
-      row.style.border = '1px solid var(--helios-ui-border)';
-      row.style.background = 'color-mix(in srgb, var(--helios-ui-bg-solid) 88%, transparent)';
-
-      const header = document.createElement('div');
-      header.style.display = 'flex';
-      header.style.alignItems = 'center';
-      header.style.justifyContent = 'space-between';
-      header.style.gap = '8px';
-
-      const label = document.createElement('div');
-      label.textContent = `${attribute} (${kindLabel})`;
-      label.style.fontWeight = '600';
-      label.style.overflowWrap = 'anywhere';
-      header.appendChild(label);
-
-      const removeButton = document.createElement('button');
-      removeButton.type = 'button';
-      removeButton.className = 'helios-ui-button';
-      removeButton.textContent = 'X';
-      removeButton.dataset.testid = removeTestId;
-      removeButton.addEventListener('click', onRemove);
-      header.appendChild(removeButton);
-
-      const body = document.createElement('div');
-      body.style.display = 'grid';
-      body.style.gap = '6px';
-
-      row.appendChild(header);
-      row.appendChild(body);
-      return { row, body };
-    };
-
-    const setNumericRangeInUi = (rule, nextRange) => {
-      if (!rule.extent) return;
-      let clamped = clampRangeToExtent(nextRange, rule.extent);
-      if (!clamped) return;
-      if (rule.extent.isInteger) {
-        clamped = clampRangeToExtent([Math.round(clamped[0]), Math.round(clamped[1])], rule.extent);
-        if (!clamped) return;
-      }
-      rule.range = clamped;
-      if (rule.slider) {
-        rule.slider.aInput.value = String(clamped[0]);
-        rule.slider.bInput.value = String(clamped[1]);
-        rule.slider.setVisual(clamped[0], clamped[1]);
-      }
-      rule.setMarkers?.(clamped[0], clamped[1]);
-      if (rule.minInput) rule.minInput.value = formatRangeInputValue(clamped[0], rule.extent.isInteger);
-      if (rule.maxInput) rule.maxInput.value = formatRangeInputValue(clamped[1], rule.extent.isInteger);
-    };
-
-    const rebuildNumericRule = (rule, { resetRange = false } = {}) => {
-      rule.sliderHost?.replaceChildren();
-      rule.histogramHost?.replaceChildren();
-      if (rule.slider) {
-        rule.slider.destroy();
-        rule.slider = null;
-      }
-      rule.setMarkers = null;
-      rule.extent = computeNumericExtent(rule.scope, rule.attribute);
-      if (!rule.extent) {
-        if (rule.minInput) {
-          rule.minInput.disabled = true;
-          rule.minInput.value = '';
-        }
-        if (rule.maxInput) {
-          rule.maxInput.disabled = true;
-          rule.maxInput.value = '';
-        }
-        return;
-      }
-
-      rule.range = resetRange || !Array.isArray(rule.range)
-        ? [rule.extent.min, rule.extent.max]
-        : clampRangeToExtent(rule.range, rule.extent);
-
-      if (rule.minInput) {
-        rule.minInput.disabled = false;
-        rule.minInput.step = rule.extent.isInteger ? '1' : 'any';
-        rule.minInput.min = formatRangeInputValue(rule.extent.min, rule.extent.isInteger);
-        rule.minInput.max = formatRangeInputValue(rule.extent.max, rule.extent.isInteger);
-      }
-      if (rule.maxInput) {
-        rule.maxInput.disabled = false;
-        rule.maxInput.step = rule.extent.isInteger ? '1' : 'any';
-        rule.maxInput.min = formatRangeInputValue(rule.extent.min, rule.extent.isInteger);
-        rule.maxInput.max = formatRangeInputValue(rule.extent.max, rule.extent.isInteger);
-      }
-
-      const slider = new TwoHandleRange({
-        min: rule.extent.min,
-        max: rule.extent.max,
-        value: rule.range,
-        step: suggestStepFromExtent(rule.extent),
-        onChange: (nextRange) => {
-          setNumericRangeInUi(rule, nextRange);
-          scheduleApply();
-        },
-      });
-      slider.aInput.dataset.testid = rule.sliderMinTestId;
-      slider.bInput.dataset.testid = rule.sliderMaxTestId;
-      rule.slider = slider;
-      rule.sliderHost?.appendChild(slider.element);
-
-      const histogram = createRangeHistogram({
-        scope: rule.scope,
-        attributeName: rule.attribute,
-        range: rule.range,
-        extent: rule.extent,
-      });
-      if (histogram) {
-        rule.setMarkers = histogram.setMarkers;
-        rule.histogramHost?.appendChild(histogram.element);
-      }
-      setNumericRangeInUi(rule, rule.range);
-    };
-
-    const createNumericRule = (state, attribute) => {
-      const shell = createRuleShell(attribute, 'Numeric', state.numericRemoveTestId, () => removeRule(state, attribute));
-      const rule = {
-        scope: state.scope,
-        attribute,
-        type: 'numeric',
-        row: shell.row,
-        extent: null,
-        range: null,
-        sliderHost: document.createElement('div'),
-        histogramHost: document.createElement('div'),
-        slider: null,
-        setMarkers: null,
-        minInput: null,
-        maxInput: null,
-        sliderMinTestId: state.sliderMinTestId,
-        sliderMaxTestId: state.sliderMaxTestId,
-      };
-      rule.sliderHost.style.width = '100%';
-      rule.histogramHost.style.width = '100%';
-
-      const valuesHost = document.createElement('div');
-      valuesHost.className = 'helios-ui-range2__values';
-      valuesHost.style.width = '100%';
-
-      const minInput = document.createElement('input');
-      minInput.type = 'number';
-      minInput.className = 'helios-ui-number';
-      minInput.dataset.testid = state.minInputTestId;
-      minInput.disabled = true;
-      const maxInput = document.createElement('input');
-      maxInput.type = 'number';
-      maxInput.className = 'helios-ui-number';
-      maxInput.dataset.testid = state.maxInputTestId;
-      maxInput.disabled = true;
-      rule.minInput = minInput;
-      rule.maxInput = maxInput;
-      valuesHost.appendChild(minInput);
-      valuesHost.appendChild(maxInput);
-
-      const commitFromInputs = () => {
-        if (!rule.extent) return;
-        const loRaw = Number(minInput.value);
-        const hiRaw = Number(maxInput.value);
-        if (!Number.isFinite(loRaw) || !Number.isFinite(hiRaw)) {
-          setNumericRangeInUi(rule, rule.range ?? [rule.extent.min, rule.extent.max]);
-          return;
-        }
-        setNumericRangeInUi(rule, [loRaw, hiRaw]);
-        scheduleApply();
-      };
-      minInput.addEventListener('change', commitFromInputs);
-      maxInput.addEventListener('change', commitFromInputs);
-      minInput.addEventListener('blur', commitFromInputs);
-      maxInput.addEventListener('blur', commitFromInputs);
-      minInput.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          commitFromInputs();
-        }
-      });
-      maxInput.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          commitFromInputs();
-        }
-      });
-
-      shell.body.appendChild(rule.histogramHost);
-      shell.body.appendChild(rule.sliderHost);
-      shell.body.appendChild(valuesHost);
-
-      rebuildNumericRule(rule, { resetRange: true });
-      state.rulesHost?.appendChild(rule.row);
-      state.rules.set(attribute, rule);
-      refreshAttributeSelect(state);
-      scheduleApply();
-    };
-
-    const createStringRule = (state, attribute) => {
-      const shell = createRuleShell(attribute, 'String', state.stringRemoveTestId, () => removeRule(state, attribute));
-      const rule = {
-        scope: state.scope,
-        attribute,
-        type: 'string',
-        row: shell.row,
-        operatorSelect: null,
-        valueInput: null,
-      };
-
-      const operator = document.createElement('select');
-      operator.className = 'helios-ui-select';
-      operator.style.maxWidth = 'none';
-      operator.dataset.testid = state.stringOperatorTestId;
-      const operators = [
-        { value: 'contains', label: 'Contains' },
-        { value: 'starts_with', label: 'Starts with' },
-        { value: 'ends_with', label: 'Ends with' },
-        { value: 'regex', label: 'Regex' },
-      ];
-      for (const entry of operators) {
-        const option = document.createElement('option');
-        option.value = entry.value;
-        option.textContent = entry.label;
-        operator.appendChild(option);
-      }
-
-      const valueInput = document.createElement('input');
-      valueInput.type = 'text';
-      valueInput.className = 'helios-ui-text';
-      valueInput.placeholder = 'Value';
-      valueInput.dataset.testid = state.stringValueTestId;
-
-      operator.addEventListener('change', () => scheduleApply());
-      valueInput.addEventListener('input', () => scheduleApply());
-
-      rule.operatorSelect = operator;
-      rule.valueInput = valueInput;
-
-      shell.body.appendChild(operator);
-      shell.body.appendChild(valueInput);
-
-      state.rulesHost?.appendChild(rule.row);
-      state.rules.set(attribute, rule);
-      refreshAttributeSelect(state);
-      scheduleApply();
-    };
-
-    const refreshCategoricalRuleValues = (rule) => {
-      const labels = getCategoryLabels(rule.scope, rule.attribute);
-      const selected = new Set(Array.from(rule.listSelect?.selectedOptions ?? []).map((option) => option.value));
-      rule.listSelect?.replaceChildren();
-      for (const label of labels) {
-        const option = document.createElement('option');
-        option.value = label;
-        option.textContent = label;
-        if (selected.has(label)) option.selected = true;
-        rule.listSelect?.appendChild(option);
-      }
-      if (rule.listSelect) {
-        rule.listSelect.disabled = labels.length === 0;
-        rule.listSelect.size = Math.max(2, Math.min(6, labels.length || 2));
-      }
-    };
-
-    const createCategoricalRule = (state, attribute) => {
-      const shell = createRuleShell(attribute, 'Categorical', state.categoricalRemoveTestId, () => removeRule(state, attribute));
-      const rule = {
-        scope: state.scope,
-        attribute,
-        type: 'categorical',
-        row: shell.row,
-        modeSelect: null,
-        listSelect: null,
-        textInput: null,
-      };
-
-      const mode = document.createElement('select');
-      mode.className = 'helios-ui-select';
-      mode.style.maxWidth = 'none';
-      mode.dataset.testid = state.categoricalModeTestId;
-      const listOption = document.createElement('option');
-      listOption.value = 'list';
-      listOption.textContent = 'From list';
-      mode.appendChild(listOption);
-      const textOption = document.createElement('option');
-      textOption.value = 'text';
-      textOption.textContent = 'Text (comma separated)';
-      mode.appendChild(textOption);
-
-      const listSelect = document.createElement('select');
-      listSelect.className = 'helios-ui-select';
-      listSelect.style.maxWidth = 'none';
-      listSelect.multiple = true;
-      listSelect.dataset.testid = state.categoricalListTestId;
-
-      const textInput = document.createElement('input');
-      textInput.type = 'text';
-      textInput.className = 'helios-ui-text';
-      textInput.placeholder = 'cat1, cat2';
-      textInput.dataset.testid = state.categoricalTextTestId;
-      textInput.hidden = true;
-
-      const syncMode = () => {
-        const isText = mode.value === 'text';
-        listSelect.hidden = isText;
-        textInput.hidden = !isText;
-      };
-
-      mode.addEventListener('change', () => {
-        syncMode();
-        scheduleApply();
-      });
-      listSelect.addEventListener('change', () => scheduleApply());
-      textInput.addEventListener('input', () => scheduleApply());
-
-      rule.modeSelect = mode;
-      rule.listSelect = listSelect;
-      rule.textInput = textInput;
-
-      syncMode();
-      refreshCategoricalRuleValues(rule);
-
-      shell.body.appendChild(mode);
-      shell.body.appendChild(listSelect);
-      shell.body.appendChild(textInput);
-
-      state.rulesHost?.appendChild(rule.row);
-      state.rules.set(attribute, rule);
-      refreshAttributeSelect(state);
-      scheduleApply();
-    };
-
-    const createQueryRule = (state) => {
-      const attribute = '__query__';
-      const shell = createRuleShell('Query filter', 'Query', state.queryRemoveTestId, () => removeRule(state, attribute));
-      const rule = {
-        scope: state.scope,
-        attribute,
-        type: 'query',
-        row: shell.row,
-        input: null,
-      };
-
-      const queryInput = document.createElement('input');
-      queryInput.type = 'text';
-      queryInput.className = 'helios-ui-text';
-      queryInput.placeholder = 'Query language expression';
-      queryInput.dataset.testid = state.queryInputTestId;
-      queryInput.addEventListener('input', () => scheduleApply());
-      rule.input = queryInput;
-      shell.body.appendChild(queryInput);
-
-      state.rulesHost?.appendChild(rule.row);
-      state.rules.set(attribute, rule);
-      refreshAttributeSelect(state);
-      scheduleApply();
-    };
-
-    const addRuleForAttribute = (state, attribute) => {
-      const name = String(attribute ?? '').trim();
-      if (!name || state.rules.has(name)) return;
-      const entry = state.catalogByName.get(name);
-      if (!entry) return;
-      if (entry.type === 'numeric') {
-        createNumericRule(state, name);
-        return;
-      }
-      if (entry.type === 'string') {
-        createStringRule(state, name);
-        return;
-      }
-      if (entry.type === 'categorical') {
-        createCategoricalRule(state, name);
-        return;
-      }
-      if (entry.type === 'query') {
-        createQueryRule(state);
-      }
-    };
-
-    const refreshScope = (state) => {
-      state.catalog = getFilterableAttributes(state.scope);
-      state.catalogByName = new Map(state.catalog.map((entry) => [entry.name, entry]));
-
-      for (const attribute of Array.from(state.rules.keys())) {
-        if (!state.catalogByName.has(attribute)) {
-          removeRule(state, attribute, { apply: false });
-        }
-      }
-
-      for (const rule of state.rules.values()) {
-        if (rule.type === 'numeric') {
-          rebuildNumericRule(rule, { resetRange: false });
-        } else if (rule.type === 'categorical') {
-          refreshCategoricalRuleValues(rule);
-        }
-      }
-
-      refreshAttributeSelect(state);
-    };
-
-    const collectScopeRules = (state) => {
-      for (const rule of state.rules.values()) {
-        if (rule.type === 'numeric') {
-          if (!rule.extent || !Array.isArray(rule.range)) continue;
-          if (rangesClose(rule.range, rule.extent)) continue;
-          filterModel.addRule({
-            id: `${state.scope}-${rule.attribute}`,
-            scope: state.scope,
-            type: 'numeric',
-            attribute: rule.attribute,
-            min: rule.range[0],
-            max: rule.range[1],
-            extentMin: rule.extent.min,
-            extentMax: rule.extent.max,
-          });
-          continue;
-        }
-        if (rule.type === 'string') {
-          const value = String(rule.valueInput?.value ?? '').trim();
-          if (!value) continue;
-          filterModel.addRule({
-            id: `${state.scope}-${rule.attribute}`,
-            scope: state.scope,
-            type: 'string',
-            attribute: rule.attribute,
-            operator: String(rule.operatorSelect?.value ?? 'contains'),
-            value,
-          });
-          continue;
-        }
-        if (rule.type === 'categorical') {
-          const useText = String(rule.modeSelect?.value ?? 'list') === 'text';
-          const values = useText
-            ? parseCsvValues(rule.textInput?.value ?? '')
-            : Array.from(rule.listSelect?.selectedOptions ?? []).map((option) => option.value);
-          if (!values.length) continue;
-          filterModel.addRule({
-            id: `${state.scope}-${rule.attribute}`,
-            scope: state.scope,
-            type: 'categorical',
-            attribute: rule.attribute,
-            values,
-          });
-          continue;
-        }
-        if (rule.type === 'query') {
-          const query = String(rule.input?.value ?? '').trim();
-          if (!query) continue;
-          filterModel.addRule({
-            id: `${state.scope}-query`,
-            scope: state.scope,
-            type: 'query',
-            query,
-          });
-        }
-      }
+      if (applyTimer == null) return;
+      clearTimeout(applyTimer);
+      applyTimer = null;
     };
 
     const applyFilterNow = () => {
@@ -2511,8 +1819,8 @@ export class HeliosUI {
         filterModel.clear('node');
         filterModel.clear('edge');
         filterModel.setScope(layoutCheckbox.checked ? FILTER_SCOPE_RENDER_LAYOUT : FILTER_SCOPE_RENDER);
-        collectScopeRules(scopeState.node);
-        collectScopeRules(scopeState.edge);
+        for (const rule of nodeEditor.collectRules()) filterModel.addRule(rule);
+        for (const rule of edgeEditor.collectRules()) filterModel.addRule(rule);
         this.helios?.setGraphFilter?.(filterModel);
       } catch (error) {
         // eslint-disable-next-line no-console
@@ -2520,7 +1828,7 @@ export class HeliosUI {
       }
     };
 
-    scheduleApply = () => {
+    const scheduleApply = () => {
       const now = (typeof performance !== 'undefined' && typeof performance.now === 'function')
         ? performance.now()
         : Date.now();
@@ -2533,50 +1841,66 @@ export class HeliosUI {
       applyTimer = setTimeout(applyFilterNow, Math.max(0, updateIntervalMs - elapsed));
     };
 
-    const createScopeContent = (state) => {
-      const pane = document.createElement('div');
-      pane.style.display = 'grid';
-      pane.style.gap = '8px';
+    const nodeEditor = createAttributeRuleEditor({
+      helios: this.helios,
+      scope: 'node',
+      addPlaceholder: 'Add filter...',
+      onDirty: scheduleApply,
+      testIds: {
+        addSelect: 'controls-filter-node-attribute',
+        sliderMin: 'controls-filter-node-min-slider',
+        sliderMax: 'controls-filter-node-max-slider',
+        minInput: 'controls-filter-node-min',
+        maxInput: 'controls-filter-node-max',
+        numericRemove: 'controls-filter-node-numeric-remove',
+        stringOperator: 'controls-filter-node-string-operator',
+        stringValue: 'controls-filter-node-string-value',
+        stringRemove: 'controls-filter-node-string-remove',
+        categoricalMode: 'controls-filter-node-categorical-mode',
+        categoricalList: 'controls-filter-node-categorical-list',
+        categoricalText: 'controls-filter-node-categorical-text',
+        categoricalRemove: 'controls-filter-node-categorical-remove',
+        queryInput: 'controls-filter-node-query',
+        queryRemove: 'controls-filter-node-query-remove',
+      },
+    });
 
-      const rulesHost = document.createElement('div');
-      rulesHost.style.display = 'grid';
-      rulesHost.style.gap = '8px';
-      state.rulesHost = rulesHost;
+    const edgeEditor = createAttributeRuleEditor({
+      helios: this.helios,
+      scope: 'edge',
+      addPlaceholder: 'Add filter...',
+      onDirty: scheduleApply,
+      testIds: {
+        addSelect: 'controls-filter-edge-attribute',
+        sliderMin: 'controls-filter-edge-min-slider',
+        sliderMax: 'controls-filter-edge-max-slider',
+        minInput: 'controls-filter-edge-min',
+        maxInput: 'controls-filter-edge-max',
+        numericRemove: 'controls-filter-edge-numeric-remove',
+        stringOperator: 'controls-filter-edge-string-operator',
+        stringValue: 'controls-filter-edge-string-value',
+        stringRemove: 'controls-filter-edge-string-remove',
+        categoricalMode: 'controls-filter-edge-categorical-mode',
+        categoricalList: 'controls-filter-edge-categorical-list',
+        categoricalText: 'controls-filter-edge-categorical-text',
+        categoricalRemove: 'controls-filter-edge-categorical-remove',
+        queryInput: 'controls-filter-edge-query',
+        queryRemove: 'controls-filter-edge-query-remove',
+      },
+    });
 
-      pane.appendChild(rulesHost);
-      return pane;
-    };
-
-    const createTabBarFilterSelect = (state) => {
-      const select = document.createElement('select');
-      select.className = 'helios-ui-select helios-ui-select--compact';
-      select.style.maxWidth = '220px';
-      select.style.minWidth = '160px';
-      select.dataset.testid = state.addAttributeTestId;
-      state.addSelect = select;
-      select.addEventListener('change', () => {
-        const attribute = String(select.value ?? '').trim();
-        if (!attribute) return;
-        addRuleForAttribute(state, attribute);
-        select.value = '';
-      });
-      return select;
-    };
-
-    const nodeAddSelect = createTabBarFilterSelect(scopeState.node);
-    const edgeAddSelect = createTabBarFilterSelect(scopeState.edge);
     const tabBarFilterHost = document.createElement('div');
     tabBarFilterHost.style.display = 'flex';
     tabBarFilterHost.style.alignItems = 'center';
     tabBarFilterHost.style.justifyContent = 'flex-end';
     tabBarFilterHost.style.minWidth = '0';
-    tabBarFilterHost.appendChild(nodeAddSelect);
-    tabBarFilterHost.appendChild(edgeAddSelect);
+    tabBarFilterHost.appendChild(nodeEditor.addSelect);
+    tabBarFilterHost.appendChild(edgeEditor.addSelect);
 
     const syncTabBarFilterForActiveTab = (tabId) => {
       const active = tabId === 'edges' ? 'edge' : 'node';
-      nodeAddSelect.hidden = active !== 'node';
-      edgeAddSelect.hidden = active !== 'edge';
+      nodeEditor.addSelect.hidden = active !== 'node';
+      edgeEditor.addSelect.hidden = active !== 'edge';
     };
 
     const tabs = new TabbedPanel({
@@ -2586,12 +1910,21 @@ export class HeliosUI {
         syncTabBarFilterForActiveTab(tabId);
       },
       tabs: [
-        { id: 'nodes', title: 'Nodes', content: createScopeContent(scopeState.node) },
-        { id: 'edges', title: 'Edges', content: createScopeContent(scopeState.edge) },
+        { id: 'nodes', title: 'Nodes', content: nodeEditor.element },
+        { id: 'edges', title: 'Edges', content: edgeEditor.element },
       ],
     });
     this._controlCleanups.add(() => tabs.destroy());
     syncTabBarFilterForActiveTab(tabs.activeId?.() ?? 'nodes');
+
+    const layoutCheckbox = createToggleControl({
+      checked: false,
+      onLabel: 'Layout+Render',
+      offLabel: 'Render Only',
+      ariaLabel: 'Apply filter scope to layout',
+    });
+    layoutCheckbox.dataset.testid = 'controls-filter-layout';
+    layoutCheckbox.addEventListener('change', scheduleApply);
 
     const layoutWrap = document.createElement('div');
     layoutWrap.style.display = 'inline-flex';
@@ -2600,7 +1933,6 @@ export class HeliosUI {
     layoutWrap.style.marginTop = '6px';
     layoutWrap.style.userSelect = 'none';
     layoutWrap.appendChild(layoutCheckbox);
-    layoutCheckbox.addEventListener('change', () => scheduleApply());
 
     const syncScopeFromFilter = () => {
       const filter = this.helios?.getGraphFilter?.() ?? null;
@@ -2609,8 +1941,8 @@ export class HeliosUI {
     };
 
     const refreshFromNetwork = () => {
-      refreshScope(scopeState.node);
-      refreshScope(scopeState.edge);
+      nodeEditor.refreshFromNetwork();
+      edgeEditor.refreshFromNetwork();
     };
 
     let networkAttributeUnsub = null;
@@ -2679,11 +2011,8 @@ export class HeliosUI {
     if (networkAttributeUnsub) this._controlCleanups.add(() => networkAttributeUnsub?.());
     this._controlCleanups.add(() => {
       clearApplyTimer();
-      for (const state of [scopeState.node, scopeState.edge]) {
-        for (const attribute of Array.from(state.rules.keys())) {
-          removeRule(state, attribute, { apply: false });
-        }
-      }
+      nodeEditor.destroy();
+      edgeEditor.destroy();
     });
 
     syncScopeFromFilter();

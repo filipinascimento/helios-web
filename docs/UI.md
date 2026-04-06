@@ -20,11 +20,11 @@ const helios = new Helios(network, { container: document.querySelector('#app') }
 await helios.ready;
 
 const ui = new HeliosUI({ helios, theme: 'dark' });
-ui.createDemoPanel(); // "Scene" panel (tabbed controls) + "Data" panel (network I/O, stats, figure export, and a throttled preview thumbnail)
+ui.createDemoPanel(); // "Scene" panel (tabbed controls) + "Data" panel (network I/O, live attribute metadata, figure export, and a throttled preview thumbnail)
 ui.createLayoutPanel(); // Layout picker + per-layout live controls + start/stop actions
 ui.createLegendsPanel(); // Legend toggles + text/layout controls for the SVG legend overlay
 ui.createCameraPanel(); // Camera distance + collapsible auto-fit/animation/orbit controls
-ui.createSelectionPanel(); // Node/edge click + hover interactions, shift-multiselect, hover labels, connected-edge hover propagation, and selected/highlighted/normal state styles
+ui.createSelectionPanel(); // Root selection status/actions, saved-selection save/restore, selector rules, and grouped interaction/selected/highlight/other-elements style controls
 ui.createMetricsPanel(); // "Metrics" panel (Degree, Strength, Clustering, Eigenvector, Betweenness, Leiden, Dimensionality)
 ```
 
@@ -38,6 +38,12 @@ Selection-panel state-style sliders use suggested ranges rather than hidden caps
 Edge blend mode now defaults to weighted transparency (`Smooth`) when supported. If weighted accumulation is unavailable in the active renderer/backend, Helios automatically falls back to `Alpha`, and the Scene panel reflects that resolved mode. In the Selection panel, the repeated `Node ...` / `Edge ...` labels were removed from state-style controls because those controls already live inside `Nodes` and `Edges` sections. The `forceMaxAlpha` toggle is presented as `Visibility Boost`, which keeps normal blending fully opaque and also applies a strong weighted-transparency accumulation boost for dense overlaps.
 
 The Selection panel now seeds stronger built-in defaults for explicit selected/highlighted elements: selected nodes start at `Size 2` and `Outline 2`, highlighted nodes start at `Size 1.5` and `Outline 1.25`, and highlighted edges start at `Width 1.25` with `Opacity Gain 50`. When `Other Elements` uses `Auto Color`, changing the scene background immediately recomputes the active tint/blend treatment for the current selected/highlighted context.
+
+The Selection panel now keeps `Status`, `Clear`, `Expand Neighbors`, and saved-selection controls directly at the panel root. Selector rules live under a `Selectors` section with the add-rule menu in the section header, while interaction and selected/highlight/other-elements styling are grouped under a single `Style` section.
+
+Saved selections are stored in boolean node/edge attributes using the chosen attribute name. The menu always includes `Current Selection`; choosing any saved boolean selection attribute immediately restores that selection. The `Save` action overwrites the currently selected saved attribute, while `Shift` + `Save` or saving from `Current Selection` opens a naming dialog with a suggested incremented name.
+
+The Data panel now includes an `Attributes` tab with a live table of node, edge, and network attributes, including type and dimension metadata. A toggle lets you reveal hidden app/internal attributes whose names start with `_`.
 
 Layout parameter bindings can describe how a control should be rendered. Numeric bindings may opt into `scale: 'log'` and `notation: 'scientific'`, which makes the Layout panel render a log slider with scientific-notation input while keeping the binding contract layout-agnostic.
 

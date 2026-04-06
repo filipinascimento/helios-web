@@ -214,12 +214,23 @@ function subpanelForHeader(header) {
   return header.locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " helios-ui-subpanel ")][1]');
 }
 
+async function ensureSectionExpanded(panel, title) {
+  const header = panel.locator('button.helios-ui-subpanel__header', { hasText: title }).first();
+  const subpanel = subpanelForHeader(header);
+  if ((await subpanel.getAttribute('data-collapsed')) === 'true') {
+    await header.click();
+  }
+  await expect(subpanel).toHaveAttribute('data-collapsed', 'false');
+}
+
 test.describe('basic example selection panel', () => {
   test('specializes node picking down to click-only when all node-hover features are disabled', async ({ page }) => {
     await waitForExample(page);
 
     const panel = page.locator('.helios-ui-panel[data-panel-id="helios-ui-selection"]').first();
     await expect(panel).toBeVisible();
+    await ensureSectionExpanded(panel, 'Style');
+    await ensureSectionExpanded(panel, 'Interaction');
 
     const nodeHoverToggle = panel.locator('[role="switch"][aria-label="Node hover highlight"]').first();
     const hoverLabelToggle = panel.locator('[role="switch"][aria-label="Hover label"]').first();
@@ -235,16 +246,18 @@ test.describe('basic example selection panel', () => {
       hoverLabel: window.__heliosSelectionPanel?.selectionState?.hoverLabel ?? null,
       hoverConnectedEdges: window.__heliosSelectionPanel?.selectionState?.hoverConnectedEdges ?? null,
       nodeHoverEnabled: window.__helios?._picking?.node?.hoverEnabled ?? null,
-      status: Array.from(document.querySelectorAll('.helios-ui-panel[data-panel-id="helios-ui-selection"] .helios-ui-row')).find((row) => {
-        return row.querySelector('.helios-ui-label__title')?.textContent?.trim() === 'Status';
-      })?.textContent?.replace(/\s+/g, ' ')?.trim() ?? null,
+      status: document
+        .querySelector('.helios-ui-panel[data-panel-id="helios-ui-selection"] .helios-ui-selection__status')
+        ?.innerText
+        ?.replace(/\s+/g, ' ')
+        ?.trim() ?? null,
     }))).toEqual({
       nodeClick: true,
       nodeHover: false,
       hoverLabel: false,
       hoverConnectedEdges: false,
       nodeHoverEnabled: false,
-      status: 'Status0 nodes selected • 0 edges selected',
+      status: 'Status: 0 nodes 0 edges',
     });
 
     const [nodeHit] = await findNodeHits(page, 1);
@@ -256,14 +269,16 @@ test.describe('basic example selection panel', () => {
       hoveredNode: window.__heliosSelectionPanel?.selectionState?.hoveredNode ?? -1,
       pickingHoverKind: window.__helios?._picking?.hover?.kind ?? null,
       pickingHoverIndex: window.__helios?._picking?.hover?.index ?? -1,
-      status: Array.from(document.querySelectorAll('.helios-ui-panel[data-panel-id="helios-ui-selection"] .helios-ui-row')).find((row) => {
-        return row.querySelector('.helios-ui-label__title')?.textContent?.trim() === 'Status';
-      })?.textContent?.replace(/\s+/g, ' ')?.trim() ?? null,
+      status: document
+        .querySelector('.helios-ui-panel[data-panel-id="helios-ui-selection"] .helios-ui-selection__status')
+        ?.innerText
+        ?.replace(/\s+/g, ' ')
+        ?.trim() ?? null,
     }))).toEqual({
       hoveredNode: -1,
       pickingHoverKind: null,
       pickingHoverIndex: -1,
-      status: 'Status0 nodes selected • 0 edges selected',
+      status: 'Status: 0 nodes 0 edges',
     });
   });
 
@@ -272,6 +287,13 @@ test.describe('basic example selection panel', () => {
 
     const panel = page.locator('.helios-ui-panel[data-panel-id="helios-ui-selection"]').first();
     await expect(panel).toBeVisible();
+
+    await expect(subpanelForHeader(panel.locator('button.helios-ui-subpanel__header', { hasText: 'Selectors' }).first())).toHaveAttribute('data-collapsed', 'true');
+    await expect(subpanelForHeader(panel.locator('button.helios-ui-subpanel__header', { hasText: 'Style' }).first())).toHaveAttribute('data-collapsed', 'true');
+    await expect(subpanelForHeader(panel.locator('button.helios-ui-subpanel__header', { hasText: 'Interaction' }).first())).toHaveAttribute('data-collapsed', 'true');
+    await expect(subpanelForHeader(panel.locator('button.helios-ui-subpanel__header', { hasText: 'Selected' }).first())).toHaveAttribute('data-collapsed', 'true');
+    await expect(subpanelForHeader(panel.locator('button.helios-ui-subpanel__header', { hasText: 'Highlight' }).first())).toHaveAttribute('data-collapsed', 'true');
+    await expect(subpanelForHeader(panel.locator('button.helios-ui-subpanel__header', { hasText: 'Other Elements' }).first())).toHaveAttribute('data-collapsed', 'true');
 
     await expect.poll(async () => page.evaluate(() => ({
       hoverLabel: window.__heliosSelectionPanel?.selectionState?.hoverLabel ?? null,
@@ -295,9 +317,11 @@ test.describe('basic example selection panel', () => {
       edgeNoStateEnabled: window.__helios.renderer?.graphLayer?.edgeNoStateStyleEnabled ?? null,
       propagateHoveredNodeToEdges: window.__helios.renderer?.graphLayer?.propagateHoveredNodeToEdges ?? null,
       propagateSelectedNodesToEdges: window.__helios.renderer?.graphLayer?.propagateSelectedNodesToEdges ?? null,
-      status: Array.from(document.querySelectorAll('.helios-ui-panel[data-panel-id="helios-ui-selection"] .helios-ui-row')).find((row) => {
-        return row.querySelector('.helios-ui-label__title')?.textContent?.trim() === 'Status';
-      })?.textContent?.replace(/\s+/g, ' ')?.trim() ?? null,
+      status: document
+        .querySelector('.helios-ui-panel[data-panel-id="helios-ui-selection"] .helios-ui-selection__status')
+        ?.innerText
+        ?.replace(/\s+/g, ' ')
+        ?.trim() ?? null,
     }))).toEqual({
       hoverLabel: true,
       hoverLabelSource: 'auto',
@@ -350,7 +374,7 @@ test.describe('basic example selection panel', () => {
       edgeNoStateEnabled: false,
       propagateHoveredNodeToEdges: true,
       propagateSelectedNodesToEdges: true,
-      status: 'Status0 nodes selected • 0 edges selected',
+      status: 'Status: 0 nodes 0 edges',
     });
 
     const styles = await page.evaluate(() => ({
@@ -374,7 +398,11 @@ test.describe('basic example selection panel', () => {
     expect(styles.highlightedEdge.opacityMul).toBeCloseTo(50, 3);
     expect(styles.highlightedEdge.widthMul).toBeCloseTo(1.25, 1);
 
-    const selectedHeader = panel.locator('button.helios-ui-subpanel__header', { hasText: 'Selected Style' });
+    await ensureSectionExpanded(panel, 'Style');
+    await ensureSectionExpanded(panel, 'Selected');
+    await ensureSectionExpanded(panel, 'Interaction');
+
+    const selectedHeader = panel.locator('button.helios-ui-subpanel__header', { hasText: 'Selected' });
     const selectedSubpanel = subpanelForHeader(selectedHeader);
     const selectedSizeRow = selectedSubpanel.locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Size"))').first();
     const selectedSizeInput = selectedSizeRow.locator('input[type="number"]').first();
@@ -460,6 +488,83 @@ test.describe('basic example selection panel', () => {
     await expect.poll(async () => countSelected(page, 'edge')).toBe(1);
   });
 
+  test('supports selection actions with reusable selector rules and neighbor expansion', async ({ page }) => {
+    await waitForExample(page);
+
+    const panel = page.locator('.helios-ui-panel[data-panel-id="helios-ui-selection"]').first();
+    await expect(panel).toBeVisible();
+    const selectorsHeader = panel.locator('button.helios-ui-subpanel__header', { hasText: 'Selectors' }).first();
+    const actionsPanel = subpanelForHeader(selectorsHeader);
+    await expect(selectorsHeader).toBeDisabled();
+    await expect(actionsPanel).toHaveAttribute('data-collapsed', 'true');
+
+    const addSelector = panel.locator('.helios-ui-subpanel__header-controls select').first();
+    await addSelector.selectOption('label');
+    await expect(selectorsHeader).not.toBeDisabled();
+    await expect(actionsPanel).toHaveAttribute('data-collapsed', 'false');
+
+    const stringOperator = actionsPanel.locator('select').nth(1);
+    await stringOperator.selectOption('starts_with');
+    await actionsPanel.locator('input[type="text"]').first().fill('node-1');
+    await actionsPanel.getByRole('button', { name: 'Replace node selection with selector matches' }).click();
+
+    await expect.poll(async () => countSelected(page, 'node')).toBeGreaterThan(0);
+    const selectedAfterReplace = await countSelected(page, 'node');
+
+    await actionsPanel.getByRole('button', { name: 'Expand selection to neighbors' }).click();
+    await expect.poll(async () => countSelected(page, 'node')).toBeGreaterThanOrEqual(selectedAfterReplace);
+
+    await actionsPanel.getByRole('button', { name: 'Clear selection' }).click();
+    await expect.poll(async () => countSelected(page, 'node')).toBe(0);
+  });
+
+  test('saves and restores selections through boolean attributes', async ({ page }) => {
+    await waitForExample(page);
+
+    const panel = page.locator('.helios-ui-panel[data-panel-id="helios-ui-selection"]').first();
+    await expect(panel).toBeVisible();
+
+    const [nodeHit] = await findNodeHits(page, 1);
+    expect(nodeHit).toBeTruthy();
+
+    await dispatchCanvasEvent(page, { type: 'click', x: nodeHit.x, y: nodeHit.y });
+    await expect.poll(async () => countSelected(page, 'node')).toBe(1);
+
+    await panel.getByRole('button', { name: 'Save selection' }).click();
+    const dialog = page.locator('dialog.helios-ui-dialog').first();
+    await expect(dialog).toHaveAttribute('open', '');
+    await dialog.getByRole('textbox', { name: 'Selection attribute name' }).fill('saved_selection');
+    await dialog.getByRole('button', { name: 'Confirm save selection' }).click();
+
+    await expect.poll(async () => page.evaluate(() => ({
+      savedSelectionAttribute: window.__heliosSelectionPanel?.selectionState?.savedSelectionAttribute ?? '',
+      nodeAttributeDefined: Boolean(window.__helios.network.getNodeAttributeInfo?.('saved_selection')),
+      edgeAttributeDefined: Boolean(window.__helios.network.getEdgeAttributeInfo?.('saved_selection')),
+    }))).toEqual({
+      savedSelectionAttribute: 'saved_selection',
+      nodeAttributeDefined: true,
+      edgeAttributeDefined: true,
+    });
+
+    await panel.getByRole('button', { name: 'Clear selection' }).click();
+    await expect.poll(async () => countSelected(page, 'node')).toBe(0);
+    await expect.poll(async () => page.evaluate(() => window.__heliosSelectionPanel?.selectionState?.savedSelectionAttribute ?? '')).toBe('__current_selection__');
+
+    await panel.locator('select[aria-label="Saved selection attribute"]').selectOption('saved_selection');
+    await expect.poll(async () => countSelected(page, 'node')).toBe(1);
+    await expect.poll(async () => page.evaluate(() => {
+      return window.__helios.network.withBufferAccess(() => {
+        const ids = window.__helios.network.nodeIndices ?? [];
+        const view = window.__helios.network.getNodeAttributeBuffer('saved_selection').view;
+        let count = 0;
+        for (let index = 0; index < ids.length; index += 1) {
+          if (view[ids[index]]) count += 1;
+        }
+        return count;
+      }, { nodeIndices: true });
+    })).toBe(1);
+  });
+
   test('refreshes other-elements auto color when the background changes', async ({ page }) => {
     await waitForExample(page);
 
@@ -497,6 +602,8 @@ test.describe('basic example selection panel', () => {
 
     const panel = page.locator('.helios-ui-panel[data-panel-id="helios-ui-selection"]').first();
     await expect(panel).toBeVisible();
+    await ensureSectionExpanded(panel, 'Style');
+    await ensureSectionExpanded(panel, 'Interaction');
 
     const nodeHits = await findNodeHits(page, 1);
     expect(nodeHits.length).toBe(1);

@@ -6,7 +6,9 @@ import { createSelectControl } from '../controls/createSelectControl.js';
 import { SuggestedSliderControls } from '../controls/SuggestedSliderControls.js';
 import { clampNumber } from '../utils/numbers.js';
 import { toHex8 } from '../utils/colors.js';
+import { HeliosFilter } from '../../filters/HeliosFilter.js';
 import { PanelStack } from './PanelStack.js';
+import { createAttributeRuleEditor } from './AttributeRuleEditor.js';
 
 const DEFAULT_NODE_SELECTED_STYLE = Object.freeze({
   sizeMul: 2,
@@ -112,6 +114,8 @@ const DEFAULT_AUTO_BACKGROUND_TONE_SELECTED = Object.freeze({
   enabled: true,
   amount: 0.38,
 });
+
+const CURRENT_SELECTION_VALUE = '__current_selection__';
 
 function subscribe(helios, eventName, handler) {
   if (!helios || typeof handler !== 'function') return () => {};
@@ -288,6 +292,24 @@ function resolveStringAttributeNames(network) {
   return entries;
 }
 
+function resolveBooleanAttributeNames(network, scope = 'node') {
+  if (!network) return [];
+  const getNames = scope === 'edge'
+    ? network.getEdgeAttributeNames?.bind(network)
+    : network.getNodeAttributeNames?.bind(network);
+  const getInfo = scope === 'edge'
+    ? network.getEdgeAttributeInfo?.bind(network)
+    : network.getNodeAttributeInfo?.bind(network);
+  const entries = [];
+  for (const name of getNames?.() ?? []) {
+    const info = getInfo?.(name);
+    if (info?.type !== AttributeType.Boolean || info?.dimension !== 1) continue;
+    entries.push(String(name));
+  }
+  entries.sort((a, b) => a.localeCompare(b));
+  return entries;
+}
+
 function resolvePreferredHoverLabelSource(network) {
   if (!network) return '$id';
   const names = new Map((network.getNodeAttributeNames?.() ?? []).map((name) => [String(name).toLowerCase(), String(name)]));
@@ -364,6 +386,8 @@ export class SelectionPanel {
       hoveredEdge: -1,
       selectedNodes: new Set(),
       selectedEdges: new Set(),
+      savedSelectionAttribute: CURRENT_SELECTION_VALUE,
+      lastNamedSelectionAttribute: '',
       initialHoverLabelConfig: {
         hoveredNodeEnabled: initialLabelsConfig.hoveredNodeEnabled === true,
         hoveredNodeSource: initialLabelsConfig.hoveredNodeSource ?? null,
@@ -544,7 +568,12 @@ export class SelectionPanel {
       });
     };
 
-    const setNodeSelected = (index, selected) => {
+    const setSelectionBinding = (value = CURRENT_SELECTION_VALUE) => {
+      state.savedSelectionAttribute = value || CURRENT_SELECTION_VALUE;
+      refreshSavedSelectionOptions();
+    };
+
+    const setNodeSelected = (index, selected, options = {}) => {
       if (!Number.isInteger(index) || index < 0) return;
       if (selected) {
         if (state.selectedNodes.has(index)) return;
@@ -555,9 +584,10 @@ export class SelectionPanel {
       }
       helios.nodeState?.([index], 'SELECTED', { mode: selected ? 'add' : 'remove' });
       applyOtherElementsState();
+      if (options.preserveBinding !== true) setSelectionBinding(CURRENT_SELECTION_VALUE);
     };
 
-    const setEdgeSelected = (index, selected) => {
+    const setEdgeSelected = (index, selected, options = {}) => {
       if (!Number.isInteger(index) || index < 0) return;
       if (selected) {
         if (state.selectedEdges.has(index)) return;
@@ -568,9 +598,10 @@ export class SelectionPanel {
       }
       helios.edgeState?.([index], 'SELECTED', { mode: selected ? 'add' : 'remove' });
       applyOtherElementsState();
+      if (options.preserveBinding !== true) setSelectionBinding(CURRENT_SELECTION_VALUE);
     };
 
-    const clearSelection = () => {
+    const clearSelection = (options = {}) => {
       if (state.selectedNodes.size) {
         helios.nodeState?.(Array.from(state.selectedNodes), 'SELECTED', { mode: 'remove' });
         state.selectedNodes.clear();
@@ -580,36 +611,568 @@ export class SelectionPanel {
         state.selectedEdges.clear();
       }
       applyOtherElementsState();
+      if (options.preserveBinding !== true) setSelectionBinding(CURRENT_SELECTION_VALUE);
     };
 
-    const selectOnly = (kind, index) => {
+    const selectOnly = (kind, index, options = {}) => {
       const selectedNodes = Array.from(state.selectedNodes);
       const selectedEdges = Array.from(state.selectedEdges);
       for (const nodeIndex of selectedNodes) {
-        if (!(kind === 'node' && nodeIndex === index)) setNodeSelected(nodeIndex, false);
+        if (!(kind === 'node' && nodeIndex === index)) setNodeSelected(nodeIndex, false, options);
       }
       for (const edgeIndex of selectedEdges) {
-        if (!(kind === 'edge' && edgeIndex === index)) setEdgeSelected(edgeIndex, false);
+        if (!(kind === 'edge' && edgeIndex === index)) setEdgeSelected(edgeIndex, false, options);
       }
-      if (kind === 'node') setNodeSelected(index, true);
-      if (kind === 'edge') setEdgeSelected(index, true);
+      if (kind === 'node') setNodeSelected(index, true, options);
+      if (kind === 'edge') setEdgeSelected(index, true, options);
     };
 
-    const toggleSelection = (kind, index) => {
-      if (kind === 'node') setNodeSelected(index, !state.selectedNodes.has(index));
-      if (kind === 'edge') setEdgeSelected(index, !state.selectedEdges.has(index));
+    const toggleSelection = (kind, index, options = {}) => {
+      if (kind === 'node') setNodeSelected(index, !state.selectedNodes.has(index), options);
+      if (kind === 'edge') setEdgeSelected(index, !state.selectedEdges.has(index), options);
+    };
+
+    const applyNodeSelectionSet = (indices, mode = 'add', options = {}) => {
+      const nextIndices = [];
+      const seen = new Set();
+      for (const raw of indices ?? []) {
+        const index = Number(raw);
+        if (!Number.isInteger(index) || index < 0 || seen.has(index)) continue;
+        seen.add(index);
+        nextIndices.push(index);
+      }
+
+      const toAdd = [];
+      const toRemove = [];
+      if (mode === 'replace') {
+        for (const index of state.selectedNodes) {
+          if (!seen.has(index)) toRemove.push(index);
+        }
+      }
+      for (const index of nextIndices) {
+        if (!state.selectedNodes.has(index)) toAdd.push(index);
+      }
+
+      if (toRemove.length) {
+        helios.nodeState?.(toRemove, 'SELECTED', { mode: 'remove' });
+        for (const index of toRemove) state.selectedNodes.delete(index);
+      }
+      if (toAdd.length) {
+        helios.nodeState?.(toAdd, 'SELECTED', { mode: 'add' });
+        for (const index of toAdd) state.selectedNodes.add(index);
+      }
+      applyOtherElementsState();
+      if (options.preserveBinding !== true) setSelectionBinding(CURRENT_SELECTION_VALUE);
+      return { added: toAdd.length, removed: toRemove.length, total: state.selectedNodes.size };
+    };
+
+    const applyEdgeSelectionSet = (indices, mode = 'add', options = {}) => {
+      const nextIndices = [];
+      const seen = new Set();
+      for (const raw of indices ?? []) {
+        const index = Number(raw);
+        if (!Number.isInteger(index) || index < 0 || seen.has(index)) continue;
+        seen.add(index);
+        nextIndices.push(index);
+      }
+
+      const toAdd = [];
+      const toRemove = [];
+      if (mode === 'replace') {
+        for (const index of state.selectedEdges) {
+          if (!seen.has(index)) toRemove.push(index);
+        }
+      }
+      for (const index of nextIndices) {
+        if (!state.selectedEdges.has(index)) toAdd.push(index);
+      }
+
+      if (toRemove.length) {
+        helios.edgeState?.(toRemove, 'SELECTED', { mode: 'remove' });
+        for (const index of toRemove) state.selectedEdges.delete(index);
+      }
+      if (toAdd.length) {
+        helios.edgeState?.(toAdd, 'SELECTED', { mode: 'add' });
+        for (const index of toAdd) state.selectedEdges.add(index);
+      }
+      applyOtherElementsState();
+      if (options.preserveBinding !== true) setSelectionBinding(CURRENT_SELECTION_VALUE);
+      return { added: toAdd.length, removed: toRemove.length, total: state.selectedEdges.size };
+    };
+
+    const selectionFilterModel = new HeliosFilter({
+      id: 'helios-ui-selection-model',
+      name: 'Selection Rules',
+      scope: 'render',
+    });
+
+    const selectionMessageEl = document.createElement('div');
+    selectionMessageEl.className = 'helios-ui-label__hint';
+    selectionMessageEl.style.lineHeight = '1.4';
+    selectionMessageEl.style.margin = '8px 0 0';
+    selectionMessageEl.hidden = true;
+
+    const setSelectionMessage = (message = '') => {
+      const text = typeof message === 'string' ? message.trim() : '';
+      selectionMessageEl.textContent = text;
+      selectionMessageEl.hidden = !text;
+    };
+
+    const buildNodeSelectionQuery = () => {
+      selectionFilterModel.clear('node');
+      selectionFilterModel.clear('edge');
+      for (const rule of nodeSelectorEditor.collectRules()) {
+        selectionFilterModel.addRule(rule);
+      }
+      return selectionFilterModel.compileScopeQuery('node');
+    };
+
+    const runNodeSelector = (mode = 'add') => {
+      try {
+        const query = buildNodeSelectionQuery();
+        if (!query) {
+          setSelectionMessage('Add at least one selector before applying it.');
+          return;
+        }
+        const matches = helios.network?.selectNodes?.(query) ?? new Uint32Array();
+        applyNodeSelectionSet(matches, mode);
+        refreshStatus();
+        setSelectionMessage('');
+      } catch (error) {
+        setSelectionMessage(error instanceof Error ? error.message : String(error));
+      }
+    };
+
+    const expandSelectionToNeighbors = () => {
+      if (!state.selectedNodes.size) {
+        setSelectionMessage('Select at least one node before expanding to neighbors.');
+        return;
+      }
+      try {
+        const sourceNodes = Array.from(state.selectedNodes);
+        const neighbors = helios.network?.getNeighborsForNodes?.(sourceNodes, {
+          direction: 'both',
+          includeEdges: false,
+          includeSourceNodes: false,
+        }) ?? new Uint32Array();
+        applyNodeSelectionSet(neighbors, 'add');
+        refreshStatus();
+        setSelectionMessage('');
+      } catch (error) {
+        setSelectionMessage(error instanceof Error ? error.message : String(error));
+      }
     };
 
     const statusEl = document.createElement('div');
-    statusEl.className = 'helios-ui-label__hint';
-    statusEl.style.lineHeight = '1.4';
+    statusEl.className = 'helios-ui-selection__status helios-ui-label__hint';
+    statusEl.style.margin = '0 0 10px';
 
     const refreshStatus = () => {
-      const parts = [];
-      parts.push(`${state.selectedNodes.size} node${state.selectedNodes.size === 1 ? '' : 's'} selected`);
-      parts.push(`${state.selectedEdges.size} edge${state.selectedEdges.size === 1 ? '' : 's'} selected`);
-      statusEl.textContent = parts.join(' • ');
+      statusEl.textContent = `Status: ${state.selectedNodes.size} node${state.selectedNodes.size === 1 ? '' : 's'} ${state.selectedEdges.size} edge${state.selectedEdges.size === 1 ? '' : 's'}`;
     };
+
+    const actionsWrap = document.createElement('div');
+    actionsWrap.className = 'helios-ui-selection__actions';
+    actionsWrap.style.display = 'flex';
+    actionsWrap.style.flexWrap = 'wrap';
+    actionsWrap.style.gap = '8px';
+    actionsWrap.style.margin = '0 0 8px';
+
+    const clearButton = document.createElement('button');
+    clearButton.type = 'button';
+    clearButton.className = 'helios-ui-button';
+    clearButton.textContent = 'Clear';
+    clearButton.setAttribute('aria-label', 'Clear selection');
+    clearButton.addEventListener('click', () => {
+      clearSelection();
+      refreshStatus();
+      setSelectionMessage('');
+    });
+    actionsWrap.appendChild(clearButton);
+
+    const expandButton = document.createElement('button');
+    expandButton.type = 'button';
+    expandButton.className = 'helios-ui-button';
+    expandButton.textContent = 'Expand Neighbors';
+    expandButton.setAttribute('aria-label', 'Expand selection to neighbors');
+    expandButton.addEventListener('click', () => {
+      expandSelectionToNeighbors();
+    });
+    actionsWrap.appendChild(expandButton);
+
+    let autoReplaceToggle = null;
+    let selectorInterfaceCount = 0;
+    let selectorStackEntry = null;
+
+    const getSelectorInterfaceCount = () => {
+      const rulesHost = nodeSelectorEditor.element.firstElementChild;
+      return rulesHost instanceof HTMLElement ? rulesHost.childElementCount : 0;
+    };
+
+    const setSelectorCollapsed = (collapsed) => {
+      if (!selectorStackEntry) return;
+      selectorStackEntry.item.dataset.collapsed = collapsed ? 'true' : 'false';
+      selectorStackEntry.header.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      const toggle = selectorStackEntry.header.querySelector('.helios-ui-subpanel__toggle');
+      if (toggle) toggle.textContent = collapsed ? '+' : '−';
+    };
+
+    const updateSelectorSectionAvailability = (interfaceCount = 0) => {
+      const hasSelectors = Number(interfaceCount) > 0;
+      selectorApplyWrap.hidden = !hasSelectors;
+      if (!selectorStackEntry) return;
+      selectorStackEntry.header.disabled = !hasSelectors;
+      selectorStackEntry.header.setAttribute('aria-disabled', hasSelectors ? 'false' : 'true');
+      if (!hasSelectors) {
+        setSelectorCollapsed(true);
+      }
+    };
+
+    const nodeSelectorEditor = createAttributeRuleEditor({
+      helios,
+      scope: 'node',
+      addPlaceholder: 'Add selector...',
+      onDirty: () => {
+        const nextInterfaceCount = getSelectorInterfaceCount();
+        updateSelectorSectionAvailability(nextInterfaceCount);
+        if (nextInterfaceCount > selectorInterfaceCount && selectorStackEntry?.item?.dataset?.collapsed === 'true') {
+          setSelectorCollapsed(false);
+        }
+        selectorInterfaceCount = nextInterfaceCount;
+        if (autoReplaceToggle?.checked && nextInterfaceCount > 0) {
+          runNodeSelector('replace');
+        }
+      },
+    });
+
+    const savedSelectionWrap = document.createElement('div');
+    savedSelectionWrap.className = 'helios-ui-selection__saved';
+    savedSelectionWrap.style.display = 'flex';
+    savedSelectionWrap.style.alignItems = 'center';
+    savedSelectionWrap.style.gap = '8px';
+    savedSelectionWrap.style.margin = '0 0 8px';
+
+    const savedSelectionSelect = createSelectControl({
+      ariaLabel: 'Saved selection attribute',
+    });
+    savedSelectionSelect.style.flex = '1 1 0';
+    savedSelectionWrap.appendChild(savedSelectionSelect);
+
+    const saveSelectionButton = document.createElement('button');
+    saveSelectionButton.type = 'button';
+    saveSelectionButton.className = 'helios-ui-button';
+    saveSelectionButton.textContent = 'Save';
+    saveSelectionButton.setAttribute('aria-label', 'Save selection');
+    savedSelectionWrap.appendChild(saveSelectionButton);
+
+    const saveDialog = document.createElement('dialog');
+    saveDialog.className = 'helios-ui-dialog';
+    saveDialog.setAttribute('aria-label', 'Save selection attribute');
+
+    const saveDialogTitle = document.createElement('div');
+    saveDialogTitle.className = 'helios-ui-dialog__title';
+    saveDialogTitle.textContent = 'Save Selection';
+
+    const saveDialogHint = document.createElement('div');
+    saveDialogHint.className = 'helios-ui-label__hint';
+    saveDialogHint.textContent = 'Enter the attribute name used to store this selection.';
+
+    const saveDialogInput = document.createElement('input');
+    saveDialogInput.type = 'text';
+    saveDialogInput.className = 'helios-ui-text';
+    saveDialogInput.placeholder = 'selection_name';
+    saveDialogInput.autocomplete = 'off';
+    saveDialogInput.spellcheck = false;
+    saveDialogInput.setAttribute('aria-label', 'Selection attribute name');
+
+    const saveDialogError = document.createElement('div');
+    saveDialogError.className = 'helios-ui-label__hint';
+    saveDialogError.style.color = 'var(--helios-ui-danger)';
+    saveDialogError.hidden = true;
+
+    const saveDialogActions = document.createElement('div');
+    saveDialogActions.className = 'helios-ui-dialog__actions';
+
+    const saveDialogCancel = document.createElement('button');
+    saveDialogCancel.type = 'button';
+    saveDialogCancel.className = 'helios-ui-button';
+    saveDialogCancel.textContent = 'Cancel';
+    saveDialogCancel.setAttribute('aria-label', 'Cancel save selection');
+
+    const saveDialogConfirm = document.createElement('button');
+    saveDialogConfirm.type = 'button';
+    saveDialogConfirm.className = 'helios-ui-button';
+    saveDialogConfirm.textContent = 'Save';
+    saveDialogConfirm.setAttribute('aria-label', 'Confirm save selection');
+
+    saveDialogActions.appendChild(saveDialogCancel);
+    saveDialogActions.appendChild(saveDialogConfirm);
+    saveDialog.appendChild(saveDialogTitle);
+    saveDialog.appendChild(saveDialogHint);
+    saveDialog.appendChild(saveDialogInput);
+    saveDialog.appendChild(saveDialogError);
+    saveDialog.appendChild(saveDialogActions);
+    content.appendChild(saveDialog);
+
+    const closeSaveDialog = () => {
+      saveDialogError.hidden = true;
+      saveDialogError.textContent = '';
+      if (typeof saveDialog.close === 'function' && saveDialog.open) saveDialog.close();
+      else saveDialog.removeAttribute('open');
+    };
+
+    const openSaveDialog = (value = '') => {
+      saveDialogError.hidden = true;
+      saveDialogError.textContent = '';
+      saveDialogInput.value = value;
+      if (typeof saveDialog.showModal === 'function' && !saveDialog.open) saveDialog.showModal();
+      else saveDialog.setAttribute('open', '');
+      globalThis.setTimeout(() => {
+        saveDialogInput.focus();
+        saveDialogInput.select();
+      }, 0);
+    };
+
+    const collectSavedSelectionAttributes = () => {
+      const network = helios.network ?? null;
+      const catalog = new Map();
+      for (const name of resolveBooleanAttributeNames(network, 'node')) {
+        const entry = catalog.get(name) ?? { name, node: false, edge: false };
+        entry.node = true;
+        catalog.set(name, entry);
+      }
+      for (const name of resolveBooleanAttributeNames(network, 'edge')) {
+        const entry = catalog.get(name) ?? { name, node: false, edge: false };
+        entry.edge = true;
+        catalog.set(name, entry);
+      }
+      return Array.from(catalog.values()).sort((a, b) => a.name.localeCompare(b.name));
+    };
+
+    const resolveSuggestedSelectionName = () => {
+      const entries = collectSavedSelectionAttributes();
+      const names = new Set(entries.map((entry) => entry.name));
+      const current = state.savedSelectionAttribute !== CURRENT_SELECTION_VALUE
+        ? state.savedSelectionAttribute
+        : state.lastNamedSelectionAttribute;
+      const base = (typeof current === 'string' && current.trim()) ? current.trim() : 'selection';
+      if (!names.has(base)) return base;
+      let suffix = 2;
+      while (names.has(`${base}-${suffix}`)) suffix += 1;
+      return `${base}-${suffix}`;
+    };
+
+    const refreshSavedSelectionOptions = () => {
+      const entries = collectSavedSelectionAttributes();
+      const current = typeof state.savedSelectionAttribute === 'string'
+        ? state.savedSelectionAttribute
+        : CURRENT_SELECTION_VALUE;
+      const nextValue = current === CURRENT_SELECTION_VALUE || entries.some((entry) => entry.name === current)
+        ? current
+        : CURRENT_SELECTION_VALUE;
+      const options = [
+        {
+          value: CURRENT_SELECTION_VALUE,
+          label: 'Current Selection',
+        },
+        ...entries.map((entry) => ({
+          value: entry.name,
+          label: entry.node && entry.edge
+            ? entry.name
+            : entry.node
+              ? `${entry.name} (nodes)`
+              : `${entry.name} (edges)`,
+        })),
+      ];
+      state.savedSelectionAttribute = nextValue;
+      savedSelectionSelect.setOptions(options, nextValue);
+    };
+
+    const ensureBooleanSelectionAttribute = (network, scope, name) => {
+      const trimmed = String(name ?? '').trim();
+      if (!trimmed) throw new Error('Selection attribute name is required.');
+      const getInfo = scope === 'edge'
+        ? network.getEdgeAttributeInfo?.bind(network)
+        : network.getNodeAttributeInfo?.bind(network);
+      const defineAttribute = scope === 'edge'
+        ? network.defineEdgeAttribute?.bind(network)
+        : network.defineNodeAttribute?.bind(network);
+      const info = getInfo?.(trimmed) ?? null;
+      if (info) {
+        if (info.type !== AttributeType.Boolean || info.dimension !== 1) {
+          throw new Error(`Attribute "${trimmed}" already exists on ${scope}s and is not a boolean scalar.`);
+        }
+        return trimmed;
+      }
+      defineAttribute?.(trimmed, AttributeType.Boolean, 1);
+      return trimmed;
+    };
+
+    const saveSelectionToAttribute = (name) => {
+      const network = helios.network ?? null;
+      if (!network) throw new Error('Selection save requires an active network.');
+      const trimmed = ensureBooleanSelectionAttribute(network, 'node', name);
+      ensureBooleanSelectionAttribute(network, 'edge', trimmed);
+      if (typeof network.withBufferAccess === 'function') {
+        network.withBufferAccess(() => {
+          const nodeView = network.getNodeAttributeBuffer(trimmed).view;
+          const edgeView = network.getEdgeAttributeBuffer(trimmed).view;
+          nodeView.fill(0);
+          edgeView.fill(0);
+          for (const index of state.selectedNodes) nodeView[index] = 1;
+          for (const index of state.selectedEdges) edgeView[index] = 1;
+        });
+      }
+      network.bumpNodeAttributeVersion?.(trimmed);
+      network.bumpEdgeAttributeVersion?.(trimmed);
+      state.savedSelectionAttribute = trimmed;
+      state.lastNamedSelectionAttribute = trimmed;
+      refreshSavedSelectionOptions();
+      savedSelectionSelect.value = trimmed;
+      setSelectionMessage('');
+      return trimmed;
+    };
+
+    const collectSelectionAttributeIndices = (scope, name) => {
+      const network = helios.network ?? null;
+      if (!network || typeof network.withBufferAccess !== 'function') return [];
+      const trimmed = String(name ?? '').trim();
+      if (!trimmed) return [];
+      const getInfo = scope === 'edge'
+        ? network.getEdgeAttributeInfo?.bind(network)
+        : network.getNodeAttributeInfo?.bind(network);
+      const info = getInfo?.(trimmed) ?? null;
+      if (!info || info.type !== AttributeType.Boolean || info.dimension !== 1) return [];
+      return network.withBufferAccess(() => {
+        const ids = scope === 'edge' ? (network.edgeIndices ?? []) : (network.nodeIndices ?? []);
+        const view = scope === 'edge'
+          ? network.getEdgeAttributeBuffer(trimmed).view
+          : network.getNodeAttributeBuffer(trimmed).view;
+        const matches = [];
+        for (let index = 0; index < ids.length; index += 1) {
+          const id = Number(ids[index]);
+          if (Number(view[id]) !== 0) matches.push(id);
+        }
+        return matches;
+      }, {
+        nodeIndices: scope !== 'edge',
+        edgeIndices: scope === 'edge',
+      });
+    };
+
+    const restoreSelectionFromAttribute = (name) => {
+      const trimmed = String(name ?? '').trim();
+      if (!trimmed) {
+        setSelectionMessage('Select a saved selection before restoring.');
+        return;
+      }
+      const nodeMatches = collectSelectionAttributeIndices('node', trimmed);
+      const edgeMatches = collectSelectionAttributeIndices('edge', trimmed);
+      applyNodeSelectionSet(nodeMatches, 'replace', { preserveBinding: true });
+      applyEdgeSelectionSet(edgeMatches, 'replace', { preserveBinding: true });
+      setSelectionBinding(trimmed);
+      refreshStatus();
+      setSelectionMessage('');
+    };
+
+    savedSelectionSelect.addEventListener('change', () => {
+      state.savedSelectionAttribute = savedSelectionSelect.value || CURRENT_SELECTION_VALUE;
+      refreshSavedSelectionOptions();
+      if (state.savedSelectionAttribute !== CURRENT_SELECTION_VALUE) {
+        restoreSelectionFromAttribute(state.savedSelectionAttribute);
+      } else {
+        setSelectionMessage('');
+      }
+    });
+
+    saveSelectionButton.addEventListener('click', (event) => {
+      if (event.shiftKey === true || state.savedSelectionAttribute === CURRENT_SELECTION_VALUE) {
+        openSaveDialog(resolveSuggestedSelectionName());
+        return;
+      }
+      if (state.savedSelectionAttribute && state.savedSelectionAttribute !== CURRENT_SELECTION_VALUE) {
+        try {
+          saveSelectionToAttribute(state.savedSelectionAttribute);
+        } catch (error) {
+          setSelectionMessage(error instanceof Error ? error.message : String(error));
+        }
+      }
+    });
+
+    saveDialogCancel.addEventListener('click', () => {
+      closeSaveDialog();
+    });
+
+    saveDialog.addEventListener('cancel', (event) => {
+      event.preventDefault();
+      closeSaveDialog();
+    });
+
+    saveDialogInput.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      saveDialogConfirm.click();
+    });
+
+    saveDialogConfirm.addEventListener('click', () => {
+      try {
+        saveSelectionToAttribute(saveDialogInput.value);
+        closeSaveDialog();
+      } catch (error) {
+        saveDialogError.textContent = error instanceof Error ? error.message : String(error);
+        saveDialogError.hidden = false;
+      }
+    });
+
+    const selectorBody = document.createElement('div');
+    selectorBody.appendChild(nodeSelectorEditor.element);
+
+    const selectorApplyWrap = document.createElement('div');
+    selectorApplyWrap.style.display = 'flex';
+    selectorApplyWrap.style.alignItems = 'center';
+    selectorApplyWrap.style.justifyContent = 'space-between';
+    selectorApplyWrap.style.gap = '12px';
+    selectorApplyWrap.style.marginTop = '8px';
+
+    autoReplaceToggle = createToggleControl({
+      checked: false,
+      onLabel: 'Auto Replace',
+      offLabel: 'Manual',
+      ariaLabel: 'Automatically replace selection when selector changes',
+    });
+    autoReplaceToggle.style.transform = 'scale(0.92)';
+    autoReplaceToggle.style.transformOrigin = 'left center';
+    selectorApplyWrap.appendChild(autoReplaceToggle);
+
+    const selectorButtonsWrap = document.createElement('div');
+    selectorButtonsWrap.style.display = 'flex';
+    selectorButtonsWrap.style.alignItems = 'center';
+    selectorButtonsWrap.style.justifyContent = 'flex-end';
+    selectorButtonsWrap.style.gap = '8px';
+
+    const addMatchesButton = document.createElement('button');
+    addMatchesButton.type = 'button';
+    addMatchesButton.className = 'helios-ui-button';
+    addMatchesButton.textContent = 'Add';
+    addMatchesButton.setAttribute('aria-label', 'Add selector matches');
+    addMatchesButton.addEventListener('click', () => {
+      runNodeSelector('add');
+    });
+    selectorButtonsWrap.appendChild(addMatchesButton);
+
+    const replaceMatchesButton = document.createElement('button');
+    replaceMatchesButton.type = 'button';
+    replaceMatchesButton.className = 'helios-ui-button';
+    replaceMatchesButton.textContent = 'Replace';
+    replaceMatchesButton.setAttribute('aria-label', 'Replace node selection with selector matches');
+    replaceMatchesButton.addEventListener('click', () => {
+      runNodeSelector('replace');
+    });
+    selectorButtonsWrap.appendChild(replaceMatchesButton);
+    selectorApplyWrap.appendChild(selectorButtonsWrap);
+    nodeSelectorEditor.element.appendChild(selectorApplyWrap);
+
+    selectorApplyWrap.hidden = true;
 
     const interactionBody = document.createElement('div');
     const note = document.createElement('div');
@@ -734,27 +1297,6 @@ export class SelectionPanel {
       title: 'Label Source',
       hint: 'Node string attribute used for the hover label. Auto prefers label-like names before falling back to $id.',
       controls: hoverLabelSourceSelect,
-    });
-
-    const clearButton = document.createElement('button');
-    clearButton.type = 'button';
-    clearButton.className = 'helios-ui-button';
-    clearButton.textContent = 'Clear';
-    clearButton.setAttribute('aria-label', 'Clear selection');
-    clearButton.addEventListener('click', () => {
-      clearSelection();
-      refreshStatus();
-    });
-    createRow(interactionBody, {
-      title: 'Selection',
-      hint: 'Remove all selected node and edge states without changing the interaction settings.',
-      controls: clearButton,
-    });
-
-    createRow(interactionBody, {
-      title: 'Status',
-      hint: 'Live summary of the current selection.',
-      controls: statusEl,
     });
 
     const createColorControl = ({ ariaLabel, getValue, setValue, fallback }) => {
@@ -1195,34 +1737,59 @@ export class SelectionPanel {
       refreshHighlightOtherEdge();
     };
 
-    const stack = new PanelStack();
-    stack.add({
-      id: 'selection-interaction',
+    const styleBody = document.createElement('div');
+    const styleStack = new PanelStack();
+    styleStack.add({
+      id: 'selection-style-interaction',
       title: 'Interaction',
-      collapsed: false,
+      collapsed: true,
       statusDot: false,
       content: interactionBody,
     });
-    stack.add({
+    styleStack.add({
       id: 'selection-style-selected',
-      title: 'Selected Style',
-      collapsed: false,
+      title: 'Selected',
+      collapsed: true,
       statusDot: false,
       content: selectedBody,
     });
-    stack.add({
+    styleStack.add({
       id: 'selection-style-highlight',
-      title: 'Highlight Style',
+      title: 'Highlight',
       collapsed: true,
       statusDot: false,
       content: highlightBody,
     });
-    stack.add({
+    styleStack.add({
       id: 'selection-style-normal',
       title: 'Other Elements',
       collapsed: true,
       statusDot: false,
       content: normalBody,
+    });
+    styleBody.appendChild(styleStack.element);
+
+    content.appendChild(statusEl);
+    content.appendChild(actionsWrap);
+    content.appendChild(savedSelectionWrap);
+    content.appendChild(selectionMessageEl);
+
+    const stack = new PanelStack();
+    stack.add({
+      id: 'selection-selectors',
+      title: 'Selectors',
+      collapsed: true,
+      statusDot: false,
+      headerControls: nodeSelectorEditor.addSelect,
+      content: selectorBody,
+    });
+    selectorStackEntry = stack._items.get('selection-selectors') ?? null;
+    stack.add({
+      id: 'selection-style',
+      title: 'Style',
+      collapsed: true,
+      statusDot: false,
+      content: styleBody,
     });
     content.appendChild(stack.element);
 
@@ -1239,6 +1806,49 @@ export class SelectionPanel {
       if (!options.some((entry) => entry.value === state.hoverLabelSource)) {
         state.hoverLabelSource = 'auto';
         hoverLabelSourceSelect.value = 'auto';
+      }
+    };
+
+    let networkAttributeUnsub = null;
+    const attachNetworkAttributeListeners = () => {
+      if (networkAttributeUnsub) {
+        networkAttributeUnsub();
+        networkAttributeUnsub = null;
+      }
+      const network = helios.network ?? null;
+      if (!network) return;
+      const handler = (event) => {
+        const scope = event?.detail?.scope;
+        const type = event?.type ?? '';
+        if ((!scope || scope === 'node') && (
+          type !== 'attribute:changed'
+          || event?.detail?.op === 'categorize'
+          || event?.detail?.op === 'decategorize'
+        )) {
+          nodeSelectorEditor.refreshFromNetwork();
+        }
+        if (!scope || scope === 'node' || scope === 'edge') {
+          refreshSavedSelectionOptions();
+        }
+      };
+      if (typeof network.on === 'function') {
+        const unsubs = [
+          network.on('attribute:defined', handler),
+          network.on('attribute:removed', handler),
+          network.on('attribute:changed', handler),
+        ];
+        networkAttributeUnsub = () => {
+          for (const unsubscribe of unsubs) unsubscribe?.();
+        };
+      } else if (typeof network.addEventListener === 'function') {
+        network.addEventListener('attribute:defined', handler);
+        network.addEventListener('attribute:removed', handler);
+        network.addEventListener('attribute:changed', handler);
+        networkAttributeUnsub = () => {
+          network.removeEventListener('attribute:defined', handler);
+          network.removeEventListener('attribute:removed', handler);
+          network.removeEventListener('attribute:changed', handler);
+        };
       }
     };
 
@@ -1299,10 +1909,17 @@ export class SelectionPanel {
     };
 
     const handleNetworkReplaced = () => {
-      clearSelection();
+      clearSelection({ preserveBinding: true });
       clearNodeHover();
       clearEdgeHover();
+      state.savedSelectionAttribute = CURRENT_SELECTION_VALUE;
+      state.lastNamedSelectionAttribute = '';
+      attachNetworkAttributeListeners();
+      nodeSelectorEditor.refreshFromNetwork();
+      selectorInterfaceCount = getSelectorInterfaceCount();
+      updateSelectorSectionAvailability(selectorInterfaceCount);
       refreshHoverLabelOptions();
+      refreshSavedSelectionOptions();
       ensureStateStyleDefaults();
       applyHoverConnectedEdges();
       applySelectedConnectedEdges();
@@ -1311,6 +1928,7 @@ export class SelectionPanel {
       applyHoverLabelConfig();
       syncPicking();
       refreshStatus();
+      setSelectionMessage('');
     };
 
     const handleUiBindingChange = (event) => {
@@ -1320,6 +1938,10 @@ export class SelectionPanel {
     };
 
     refreshHoverLabelOptions();
+    refreshSavedSelectionOptions();
+    nodeSelectorEditor.refreshFromNetwork();
+    selectorInterfaceCount = getSelectorInterfaceCount();
+    updateSelectorSectionAvailability(selectorInterfaceCount);
     refreshStyleControls();
     applyHoverLabelConfig();
     applyHoverConnectedEdges();
@@ -1327,6 +1949,7 @@ export class SelectionPanel {
     syncPicking();
     applyOtherElementsState();
     refreshStatus();
+    attachNetworkAttributeListeners();
 
     const unsubscribers = [
       subscribe(helios, 'graph:click', handleGraphClick),
@@ -1341,6 +1964,10 @@ export class SelectionPanel {
       for (const controls of sliderControls) controls.destroy();
       for (const controls of colorControls) controls.destroy();
       for (const unsubscribe of unsubscribers) unsubscribe();
+      networkAttributeUnsub?.();
+      nodeSelectorEditor.destroy();
+      closeSaveDialog();
+      saveDialog.remove();
       helios.labels?.(state.initialHoverLabelConfig);
       const graphLayer = helios.renderer?.graphLayer ?? null;
       if (graphLayer) {
@@ -1350,6 +1977,7 @@ export class SelectionPanel {
         graphLayer.edgeNoStateStyleEnabled = false;
       }
       helios.requestRender?.();
+      styleStack.destroy();
       stack.destroy();
     });
 
@@ -1362,7 +1990,11 @@ export class SelectionPanel {
     });
     panel.selectionState = state;
     panel.refreshSelectionPanel = () => {
+      nodeSelectorEditor.refreshFromNetwork();
+      selectorInterfaceCount = getSelectorInterfaceCount();
+      updateSelectorSectionAvailability(selectorInterfaceCount);
       refreshHoverLabelOptions();
+      refreshSavedSelectionOptions();
       refreshStyleControls();
       applyOtherElementsState();
       refreshStatus();

@@ -26,6 +26,38 @@ async function countNonBackground(page) {
 }
 
 test.describe('docs basic demo network io', () => {
+  test('shows a live attributes table with a hidden-attribute toggle', async ({ page }) => {
+    await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=600');
+
+    await page.waitForFunction(() => Boolean(window.__helios && window.__helios.ready));
+    await page.waitForFunction(async () => {
+      const helios = window.__helios;
+      await helios.ready;
+      return true;
+    });
+
+    const dataPanel = page.locator('.helios-ui-panel[data-panel-id="helios-ui-data"]').first();
+    await expect(dataPanel).toBeVisible();
+    await dataPanel.getByRole('button', { name: 'Attributes' }).click();
+
+    const table = dataPanel.locator('.helios-ui-attributes-table').first();
+    await expect(table).toBeVisible();
+    await expect(table).toContainText('weight');
+    await expect(table).toContainText('intensity');
+
+    await page.evaluate(() => {
+      window.__helios.network.defineNodeAttribute('visible_flag', 1, 1);
+      window.__helios.network.defineNodeAttribute('_hidden_flag', 1, 1);
+    });
+
+    await expect(table).toContainText('visible_flag');
+    await expect(table).toContainText('Boolean');
+    await expect(table).not.toContainText('_hidden_flag');
+
+    await dataPanel.locator('[role="switch"][aria-label="Show hidden attributes"]').click();
+    await expect(table).toContainText('_hidden_flag');
+  });
+
   test('renders after load without requiring save', async ({ page }, testInfo) => {
     await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=600');
 
