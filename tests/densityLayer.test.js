@@ -88,7 +88,7 @@ test('DensityLayer builds normalized numerator and denominator weights for log-r
   );
 });
 
-test('DensityLayer uses Uniform as the implicit log-ratio baseline when no compare property is set', () => {
+test('DensityLayer coerces log-ratio back to difference when no compare property is set', () => {
   const layer = new DensityLayer();
   const network = {
     nodeCount: 2,
@@ -107,10 +107,63 @@ test('DensityLayer uses Uniform as the implicit log-ratio baseline when no compa
   });
   const computed = layer.computeWeightsUnsafe(network, layer.config);
 
-  assert.equal(computed.mode, 'logRatio');
-  assert.equal(computed.baselineLabel, 'Uniform');
+  assert.equal(layer.config.comparisonMode, 'difference');
+  assert.equal(computed.mode, 'difference');
   assert.deepEqual(
-    Array.from(computed.denominatorWeights).map((value) => Number(value.toFixed(6))),
-    [0.5, 0.5],
+    Array.from(computed.weights).map((value) => Number(value.toFixed(6))),
+    [0.25, 0.75],
   );
+});
+
+test('DensityLayer clears compareProperty when it matches the primary property', () => {
+  const layer = new DensityLayer();
+  layer.setConfig({
+    property: 'Degree',
+    compareProperty: 'Degree',
+    comparisonMode: 'logRatio',
+  });
+
+  assert.equal(layer.config.compareProperty, 'None');
+  assert.equal(layer.config.comparisonMode, 'difference');
+});
+
+test('DensityLayer accepts an explicit switch from log-ratio back to difference', () => {
+  const layer = new DensityLayer();
+
+  layer.setConfig({
+    property: 'Degree',
+    compareProperty: 'Uniform',
+    comparisonMode: 'logRatio',
+  });
+  assert.equal(layer.config.comparisonMode, 'logRatio');
+
+  layer.setConfig({ comparisonMode: 'difference' });
+  assert.equal(layer.config.comparisonMode, 'difference');
+  assert.deepEqual(layer.runtime.valueDomain, null);
+});
+
+test('DensityLayer difference mode keeps using the sequential colormap key', () => {
+  const layer = new DensityLayer();
+  const network = {
+    nodeCount: 2,
+    nodeIndices: new Uint32Array([0, 1]),
+    getNodeAttributeBuffer(name) {
+      if (name === 'signal') return { view: new Float32Array([0, 1]), dimension: 1 };
+      if (name === 'baseline') return { view: new Float32Array([1, 0]), dimension: 1 };
+      return null;
+    },
+  };
+
+  layer.setConfig({
+    property: 'signal',
+    compareProperty: 'baseline',
+    comparisonMode: 'difference',
+    colormap: 'interpolateViridis',
+    divergingColormap: 'interpolateRdBu',
+  });
+  const computed = layer.computeWeightsUnsafe(network, layer.config);
+
+  assert.equal(computed.mode, 'difference');
+  assert.equal(computed.diverging, true);
+  assert.equal(computed.colormapKey, 'interpolateRdBu');
 });

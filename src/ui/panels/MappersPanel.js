@@ -4575,7 +4575,13 @@ export class MappersPanel {
         helios.requestRender?.();
       };
       const isLogRatioMode = (state = cfg()) => state?.comparisonMode === 'logRatio';
-      const usesDivergingDensityColormap = (state = cfg()) => isLogRatioMode(state) || state?.diverging === true;
+      const hasDensityComparison = (state = cfg()) => state?.compareProperty && state.compareProperty !== 'None';
+      const resolveDensityPickerColormap = (state = cfg()) => {
+        if (isLogRatioMode(state)) return state?.logRatioColormap ?? state?.divergingColormap ?? state?.colormap;
+        if (state?.diverging === true) return state?.divergingColormap ?? state?.colormap;
+        return state?.colormap;
+      };
+      const listDensityCompareAttributes = (property) => listDensityAttributes().filter((value) => value !== property);
       const RESOLUTION_PRESETS = [
         { value: 0.05, label: '1/20' },
         { value: 0.1, label: '1/10' },
@@ -4640,9 +4646,9 @@ export class MappersPanel {
       };
 
       const getDensityZeroColor = (state = cfg()) => {
-        const key = usesDivergingDensityColormap(state) ? state?.divergingColormap : state?.colormap;
+        const key = resolveDensityPickerColormap(state);
         const resolved = resolveColormap(key) || resolveColormap('interpolateOrRd');
-        const sample = resolved?.interpolate?.(usesDivergingDensityColormap(state) ? 0.5 : 0) ?? [0, 0, 0, 1];
+        const sample = resolved?.interpolate?.(isLogRatioMode(state) || state?.diverging === true ? 0.5 : 0) ?? [0, 0, 0, 1];
         return normalizeColormapSample(sample);
       };
 
@@ -4712,6 +4718,10 @@ export class MappersPanel {
         for (const control of row.querySelectorAll('input, select, button, textarea')) {
           control.disabled = !enabled;
         }
+      };
+      const setRowVisible = (row, visible) => {
+        if (!row) return;
+        row.style.display = visible ? '' : 'none';
       };
 
       const enabledToggle = createCheckboxControl({
@@ -4783,11 +4793,12 @@ export class MappersPanel {
         el.textContent = option.label;
         comparisonModeSelect.appendChild(el);
       }
-      editorBody.appendChild(createAlignedRow({
+      const modeRow = createAlignedRow({
         title: 'Mode',
         hint: 'Use the current normalized difference mode or a real log-ratio density comparison.',
         controls: comparisonModeSelect,
-      }).row);
+      });
+      editorBody.appendChild(modeRow.row);
 
       const normalizeToggle = createCheckboxControl({
         checked: cfg().normalizeVs === true,
@@ -4928,12 +4939,14 @@ export class MappersPanel {
       const colormapPicker = new ColormapPickerControl({
         catalog: colormapCatalog,
         portalRoot: ui?.container ?? document.body,
-        value: usesDivergingDensityColormap(cfg()) ? cfg().divergingColormap : cfg().colormap,
+        value: resolveDensityPickerColormap(cfg()),
         fallbackValue: 'interpolateOrRd',
         searchPlaceholder: 'Search colormaps…',
         onChange: (key) => {
           const state = cfg();
-          if (usesDivergingDensityColormap(state)) {
+          if (isLogRatioMode(state)) {
+            applyDensity({ logRatioColormap: key });
+          } else if (state?.diverging === true) {
             applyDensity({ divergingColormap: key });
           } else {
             applyDensity({ colormap: key });
@@ -4950,11 +4963,23 @@ export class MappersPanel {
       }).row);
 
       propertySelect.addEventListener('change', () => {
-        applyDensity({ property: propertySelect.value });
+        const nextProperty = propertySelect.value;
+        const currentCompare = compareSelect.value;
+        const nextCompareOptions = listDensityCompareAttributes(nextProperty);
+        const patch = { property: nextProperty };
+        if (currentCompare === nextProperty || (currentCompare !== 'None' && !nextCompareOptions.includes(currentCompare))) {
+          patch.compareProperty = 'None';
+          patch.comparisonMode = 'difference';
+        }
+        applyDensity(patch);
         refresh();
       });
       compareSelect.addEventListener('change', () => {
-        applyDensity({ compareProperty: compareSelect.value });
+        if (compareSelect.value === 'None') {
+          applyDensity({ compareProperty: 'None', comparisonMode: 'difference' });
+        } else {
+          applyDensity({ compareProperty: compareSelect.value });
+        }
         refresh();
       });
       comparisonModeSelect.addEventListener('change', () => {
@@ -4965,6 +4990,9 @@ export class MappersPanel {
       const refresh = () => {
         const state = cfg();
         const attrs = listDensityAttributes();
+        const compareAttrs = listDensityCompareAttributes(state.property);
+        const compareEnabled = compareAttrs.length > 0;
+        const hasComparison = hasDensityComparison(state);
         const logRatioMode = isLogRatioMode(state);
         captureManualBackground();
 
@@ -4981,7 +5009,7 @@ export class MappersPanel {
         };
 
         ensureOptionList(propertySelect, attrs);
-        ensureOptionList(compareSelect, ['None', ...attrs]);
+        ensureOptionList(compareSelect, ['None', ...compareAttrs]);
 
         if (!attrs.includes(state.property)) {
           propertySelect.value = 'Uniform';
@@ -4990,7 +5018,7 @@ export class MappersPanel {
           propertySelect.value = state.property;
         }
 
-        if (!['None', ...attrs].includes(state.compareProperty)) {
+        if (!['None', ...compareAttrs].includes(state.compareProperty)) {
           compareSelect.value = 'None';
           applyDensity({ compareProperty: 'None' });
         } else {
@@ -5010,12 +5038,14 @@ export class MappersPanel {
         logRatioRangeControl.setValue(Math.max(0.316227766, Number(state.logRatioRange ?? 3)));
         setResolutionIndex(toResolutionIndex(state.qualityScale), { commit: false });
 
-        const activeColormap = usesDivergingDensityColormap(state) ? state.divergingColormap : state.colormap;
+        const activeColormap = resolveDensityPickerColormap(state);
         colormapPicker.setValue(activeColormap);
+        setRowEnabled(compareSelect.closest('.helios-ui-row'), compareEnabled);
+        setRowVisible(modeRow.row, hasComparison);
         setRowEnabled(normalizeRow.row, !logRatioMode && compareSelect.value !== 'None');
         setRowEnabled(weightRow.row, !logRatioMode);
-        setRowEnabled(epsilonRow.row, logRatioMode);
-        setRowEnabled(logRatioRangeRow.row, logRatioMode);
+        setRowVisible(epsilonRow.row, hasComparison && logRatioMode);
+        setRowVisible(logRatioRangeRow.row, hasComparison && logRatioMode);
         applyDensityBackground(state);
       };
 

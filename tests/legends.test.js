@@ -90,6 +90,31 @@ test('deriveLegendItems uses a real numeric domain for log-ratio density legends
   assert.deepEqual(densityLegend.tickLabels, ['-3', '0', '3']);
 });
 
+test('deriveLegendItems keeps the difference diverging colormap for difference density legends', () => {
+  const items = deriveLegendItems({
+    nodeChannels: new Map(),
+    edgeChannels: new Map(),
+    densityConfig: {
+      enabled: true,
+      property: 'signal',
+      compareProperty: 'baseline',
+      comparisonMode: 'difference',
+      colormap: 'interpolateViridis',
+      divergingColormap: 'interpolateRdBu',
+    },
+    densityRuntime: {
+      diverging: true,
+      valueDomain: null,
+    },
+    visualConfig: null,
+    config: { showDensity: true },
+  });
+
+  const densityLegend = items.find((item) => item.kind === 'density');
+  assert.ok(densityLegend);
+  assert.equal(densityLegend.colormap, 'interpolateRdBu');
+});
+
 test('deriveLegendItems formats continuous tick labels without malformed zero/exponent output', () => {
   const items = deriveLegendItems({
     nodeChannels: new Map([

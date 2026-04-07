@@ -860,8 +860,43 @@ const DENSITY_DEFAULTS = Object.freeze({
   logRatioRange: 3,
   maskThreshold: 0,
   colormap: 'interpolateOrRd',
+  logRatioColormap: 'cmasher:prinsenvlag',
   divergingColormap: 'cmasher:prinsenvlag',
 });
+
+function hasDensityComparisonTarget(compareProperty) {
+  return typeof compareProperty === 'string'
+    && compareProperty.trim().length > 0
+    && compareProperty.trim() !== 'None';
+}
+
+function resolveDensityCompareProperty(property, compareProperty) {
+  const propertyKey = typeof property === 'string' ? property.trim() : '';
+  const compareKey = typeof compareProperty === 'string' ? compareProperty.trim() : '';
+  if (!compareKey || compareKey === 'None') return 'None';
+  if (propertyKey && compareKey === propertyKey) return 'None';
+  return compareKey;
+}
+
+function resolveDensityComparisonMode(compareProperty, requestedMode) {
+  return hasDensityComparisonTarget(compareProperty) && requestedMode === 'logRatio'
+    ? 'logRatio'
+    : 'difference';
+}
+
+function usesLogRatioDensityColormap(config) {
+  return resolveDensityComparisonMode(config?.compareProperty, config?.comparisonMode) === 'logRatio';
+}
+
+function resolveDensityActiveColormap(config, runtime) {
+  if (usesLogRatioDensityColormap(config)) {
+    return config?.logRatioColormap ?? config?.divergingColormap ?? config?.colormap;
+  }
+  if (runtime?.diverging === true) {
+    return config?.divergingColormap ?? config?.colormap;
+  }
+  return config?.colormap;
+}
 
 const EDGE_ADAPTIVE_QUALITY_DEFAULTS = Object.freeze({
   enabled: true,
@@ -1981,19 +2016,22 @@ export class Helios extends EventTarget {
     const densityComparisonMode = typeof options.densityComparisonMode === 'string' && options.densityComparisonMode.trim()
       ? options.densityComparisonMode.trim()
       : DENSITY_DEFAULTS.comparisonMode;
+    const initialCompareProperty = typeof options.vsDensityProperty === 'string' && options.vsDensityProperty.trim()
+      ? options.vsDensityProperty.trim()
+      : DENSITY_DEFAULTS.compareProperty;
+    const initialProperty = typeof options.densityProperty === 'string' && options.densityProperty.trim()
+      ? options.densityProperty.trim()
+      : DENSITY_DEFAULTS.property;
+    const sanitizedInitialCompareProperty = resolveDensityCompareProperty(initialProperty, initialCompareProperty);
     this._densityConfig = {
       ...DENSITY_DEFAULTS,
       enabled: densityEnabled,
       qualityScale: clamp(toFiniteNumber(densityScale, DENSITY_DEFAULTS.qualityScale), 0.03, 1.0),
       topographic: densityTopographic,
       scaleWithZoom: densityScaleWithZoom,
-      property: typeof options.densityProperty === 'string' && options.densityProperty.trim()
-        ? options.densityProperty.trim()
-        : DENSITY_DEFAULTS.property,
-      compareProperty: typeof options.vsDensityProperty === 'string' && options.vsDensityProperty.trim()
-        ? options.vsDensityProperty.trim()
-        : DENSITY_DEFAULTS.compareProperty,
-      comparisonMode: densityComparisonMode === 'logRatio' ? 'logRatio' : 'difference',
+      property: initialProperty,
+      compareProperty: sanitizedInitialCompareProperty,
+      comparisonMode: resolveDensityComparisonMode(sanitizedInitialCompareProperty, densityComparisonMode),
       normalizeVs: densityNormalizeVs,
       epsilon: clamp(
         toFiniteNumber(options.densityEpsilon ?? options.densityLogRatioEpsilon, DENSITY_DEFAULTS.epsilon),
@@ -2023,6 +2061,9 @@ export class Helios extends EventTarget {
       colormap: typeof options.densityColormap === 'string' && options.densityColormap.trim()
         ? options.densityColormap.trim()
         : DENSITY_DEFAULTS.colormap,
+      logRatioColormap: typeof options.densityLogRatioColormap === 'string' && options.densityLogRatioColormap.trim()
+        ? options.densityLogRatioColormap.trim()
+        : DENSITY_DEFAULTS.logRatioColormap,
       divergingColormap: typeof options.densityDivergingColormap === 'string' && options.densityDivergingColormap.trim()
         ? options.densityDivergingColormap.trim()
         : DENSITY_DEFAULTS.divergingColormap,
@@ -6287,12 +6328,17 @@ export class Helios extends EventTarget {
   density(options) {
     if (arguments.length === 0) {
       const config = this._densityConfig ?? DENSITY_DEFAULTS;
-      const diverging = this._densityRuntime?.diverging === true || config.comparisonMode === 'logRatio';
+      const compareProperty = resolveDensityCompareProperty(config.property, config.compareProperty);
+      const comparisonMode = resolveDensityComparisonMode(compareProperty, config.comparisonMode);
+      const usesLogRatioColormap = usesLogRatioDensityColormap({ ...config, compareProperty, comparisonMode });
+      const diverging = this._densityRuntime?.diverging === true || comparisonMode === 'logRatio';
       return {
         ...config,
+        compareProperty,
+        comparisonMode,
         diverging,
         valueDomain: Array.isArray(this._densityRuntime?.valueDomain) ? [...this._densityRuntime.valueDomain] : null,
-        activeColormap: diverging ? config.divergingColormap : config.colormap,
+        activeColormap: resolveDensityActiveColormap({ ...config, compareProperty, comparisonMode }, this._densityRuntime),
       };
     }
 
@@ -6393,10 +6439,21 @@ export class Helios extends EventTarget {
       const trimmed = options.densityDivergingColormap.trim();
       if (trimmed) next.divergingColormap = trimmed;
     }
+    if (Object.prototype.hasOwnProperty.call(options, 'logRatioColormap') && typeof options.logRatioColormap === 'string') {
+      const trimmed = options.logRatioColormap.trim();
+      if (trimmed) next.logRatioColormap = trimmed;
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'densityLogRatioColormap') && typeof options.densityLogRatioColormap === 'string') {
+      const trimmed = options.densityLogRatioColormap.trim();
+      if (trimmed) next.logRatioColormap = trimmed;
+    }
+
+    next.compareProperty = resolveDensityCompareProperty(next.property, next.compareProperty);
+    next.comparisonMode = resolveDensityComparisonMode(next.compareProperty, next.comparisonMode);
 
     this._densityConfig = next;
     if (next.comparisonMode !== 'logRatio') {
-      this._densityRuntime = { ...this._densityRuntime, valueDomain: null };
+      this._densityRuntime = { ...this._densityRuntime, diverging: false, valueDomain: null };
     }
     this._applyDensityConfigToLayer();
     this.scheduler?.requestRender?.();

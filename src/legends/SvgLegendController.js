@@ -672,7 +672,9 @@ export function deriveLegendItems({ nodeChannels, edgeChannels, densityConfig, d
             ? `${densityConfig.property ?? 'Density'} vs ${densityConfig.compareProperty ?? ''}`.trim()
           : String(densityConfig.property ?? 'Density'),
       ),
-      colormap: diverging ? (densityConfig.divergingColormap ?? densityConfig.colormap) : densityConfig.colormap,
+      colormap: logRatioMode
+        ? (densityConfig.logRatioColormap ?? densityConfig.divergingColormap ?? densityConfig.colormap)
+        : (diverging ? (densityConfig.divergingColormap ?? densityConfig.colormap) : densityConfig.colormap),
       domain: densityDomain,
       divergent: diverging,
       ticks,

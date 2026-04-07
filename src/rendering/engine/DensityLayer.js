@@ -533,7 +533,29 @@ fn fsMain(input : VSOut) -> @location(0) vec4<f32> {
 `;
 
 function normalizeComparisonMode(value, fallback = 'difference') {
-  return value === 'logRatio' ? 'logRatio' : fallback;
+  if (value === 'logRatio') return 'logRatio';
+  if (value === 'difference') return 'difference';
+  return fallback;
+}
+
+function hasComparisonTarget(compareProperty) {
+  return typeof compareProperty === 'string'
+    && compareProperty.trim().length > 0
+    && compareProperty.trim() !== 'None';
+}
+
+function resolveCompareProperty(property, compareProperty) {
+  const propertyKey = typeof property === 'string' ? property.trim() : '';
+  const compareKey = typeof compareProperty === 'string' ? compareProperty.trim() : '';
+  if (!compareKey || compareKey === 'None') return 'None';
+  if (propertyKey && compareKey === propertyKey) return 'None';
+  return compareKey;
+}
+
+function resolveComparisonMode(compareProperty, requestedMode, fallback = 'difference') {
+  return hasComparisonTarget(compareProperty) && requestedMode === 'logRatio'
+    ? 'logRatio'
+    : fallback;
 }
 
 function defaultDensityConfig() {
@@ -552,6 +574,7 @@ function defaultDensityConfig() {
     logRatioRange: 3,
     maskThreshold: 0,
     colormap: 'interpolateOrRd',
+    logRatioColormap: 'cmasher:prinsenvlag',
     divergingColormap: 'cmasher:prinsenvlag',
   };
 }
@@ -695,15 +718,21 @@ export class DensityLayer extends Layer {
     merged.compareProperty = typeof merged.compareProperty === 'string' && merged.compareProperty.trim()
       ? merged.compareProperty.trim()
       : 'None';
+    merged.compareProperty = resolveCompareProperty(merged.property, merged.compareProperty);
+    merged.comparisonMode = resolveComparisonMode(merged.compareProperty, merged.comparisonMode);
     merged.colormap = typeof merged.colormap === 'string' && merged.colormap.trim()
       ? merged.colormap.trim()
       : this.config.colormap;
+    merged.logRatioColormap = typeof merged.logRatioColormap === 'string' && merged.logRatioColormap.trim()
+      ? merged.logRatioColormap.trim()
+      : this.config.logRatioColormap;
     merged.divergingColormap = typeof merged.divergingColormap === 'string' && merged.divergingColormap.trim()
       ? merged.divergingColormap.trim()
       : this.config.divergingColormap;
 
     this.config = merged;
     if (merged.comparisonMode !== 'logRatio') {
+      this.runtime.diverging = false;
       this.runtime.valueDomain = null;
     }
     if (!merged.scaleWithZoom || !wasZoomScaled) {
@@ -1055,9 +1084,7 @@ export class DensityLayer extends Layer {
     const numeratorWeights = this._logRatioWeights.numerator;
     const denominatorWeights = this._logRatioWeights.denominator;
     const numeratorReader = this.makePropertyReader(network, config.property, edgeIndices);
-    const baselineKey = config.compareProperty && config.compareProperty !== 'None'
-      ? config.compareProperty
-      : 'Uniform';
+    const baselineKey = config.compareProperty;
     const denominatorReader = this.makePropertyReader(network, baselineKey, edgeIndices);
 
     let numeratorTotal = 0;
@@ -1082,7 +1109,7 @@ export class DensityLayer extends Layer {
         denominatorWeights: null,
         diverging: true,
         positionCount: Math.max(0, Math.floor(Number(network?.nodeCount ?? 0))),
-        colormapKey: config.divergingColormap,
+        colormapKey: config.logRatioColormap ?? config.divergingColormap,
         valueDomain: [-config.logRatioRange, config.logRatioRange],
         baselineLabel: baselineKey,
       };
@@ -1101,7 +1128,7 @@ export class DensityLayer extends Layer {
       denominatorWeights,
       diverging: true,
       positionCount: Math.max(0, Math.floor(Number(network?.nodeCount ?? 0))),
-      colormapKey: config.divergingColormap,
+      colormapKey: config.logRatioColormap ?? config.divergingColormap,
       valueDomain: [-config.logRatioRange, config.logRatioRange],
       baselineLabel: baselineKey,
     };

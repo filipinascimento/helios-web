@@ -294,6 +294,13 @@ test.describe('density map panel', () => {
     await expect(propertyRow).toBeVisible();
     await propertyRow.locator('select').selectOption('Degree');
 
+    const compareRow = densityTab.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'vs' }),
+    }).first();
+    await expect(compareRow).toBeVisible();
+    await expect(compareRow.locator('option[value="Degree"]')).toHaveCount(0);
+    await compareRow.locator('select').selectOption('Uniform');
+
     const modeRow = densityTab.locator('.helios-ui-row', {
       has: page.locator('.helios-ui-label__title', { hasText: 'Mode' }),
     }).first();
@@ -327,6 +334,92 @@ test.describe('density map panel', () => {
     await expect(weightRow).toHaveCSS('opacity', '0.55');
     await expect(epsilonRow).toHaveCSS('opacity', '1');
 
+    await compareRow.locator('select').selectOption('None');
+
+    await expect.poll(
+      () => page.evaluate(() => {
+        const state = window.__helios?.density?.() ?? null;
+        return state
+          ? {
+              comparisonMode: state.comparisonMode,
+              diverging: state.diverging,
+              valueDomain: state.valueDomain,
+            }
+          : null;
+      }),
+      { timeout: 5000 },
+    ).toEqual({
+      comparisonMode: 'difference',
+      diverging: false,
+      valueDomain: null,
+    });
+
+    await expect(modeRow).toBeHidden();
+    await expect(weightRow).toHaveCSS('opacity', '1');
+    await expect(epsilonRow).toBeHidden();
+
+    expect(errors).toHaveLength(0);
+  });
+
+  test('restores the previous difference colormap when leaving log-ratio mode', async ({ page }) => {
+    const errors = captureBrowserErrors(page);
+    await page.goto('/tests/fixtures/demo.html?renderer=webgl&layout=none&nodes=120&mappers=1');
+    const diagnostics = await waitForDiagnostics(page);
+    expect(diagnostics.error ?? null).toBeNull();
+
+    const panel = await enableDensityFromPanel(page);
+    const densityTab = panel.locator('.helios-ui-tabpanel[data-tab-id="density"][data-active="true"]').first();
+    await expect(densityTab).toBeVisible();
+
+    const propertyRow = densityTab.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'Density' }),
+    }).first();
+    await propertyRow.locator('select').selectOption('Degree');
+
+    const compareRow = densityTab.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'vs' }),
+    }).first();
+    await compareRow.locator('select').selectOption('Uniform');
+
+    const colormapDisplay = densityTab.locator('button.helios-ui-colormap-picker__display').first();
+    await colormapDisplay.click();
+    let popover = page.locator('.helios-ui-colormap-popover:visible').first();
+    await popover.locator('input.helios-ui-colormap-popover__search').first().fill('rdbu');
+    await popover.locator('.helios-ui-colormap-picker__item', {
+      has: page.locator('.helios-ui-colormap-picker__item-title', { hasText: 'RdBu' }),
+    }).first().click();
+
+    await expect.poll(() => page.evaluate(() => window.__helios?.density?.().activeColormap ?? null)).toBe('interpolateRdBu');
+
+    const modeRow = densityTab.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'Mode' }),
+    }).first();
+    await modeRow.locator('select').selectOption('logRatio');
+    await expect.poll(() => page.evaluate(() => window.__helios?.density?.().activeColormap ?? null)).toBe('cmasher:prinsenvlag');
+
+    await colormapDisplay.click();
+    popover = page.locator('.helios-ui-colormap-popover:visible').first();
+    await popover.locator('input.helios-ui-colormap-popover__search').first().fill('spectral');
+    await popover.locator('.helios-ui-colormap-picker__item', {
+      has: page.locator('.helios-ui-colormap-picker__item-title', { hasText: 'Spectral' }),
+    }).first().click();
+
+    await expect.poll(() => page.evaluate(() => window.__helios?.density?.().activeColormap ?? null)).toBe('interpolateSpectral');
+
+    await modeRow.locator('select').selectOption('difference');
+    await expect.poll(
+      () => page.evaluate(() => ({
+        activeColormap: window.__helios?.density?.().activeColormap ?? null,
+        comparisonMode: window.__helios?._densityLayer?.config?.comparisonMode ?? null,
+        valueDomain: window.__helios?.density?.().valueDomain ?? null,
+      })),
+      { timeout: 5000 },
+    ).toEqual({
+      activeColormap: 'interpolateRdBu',
+      comparisonMode: 'difference',
+      valueDomain: null,
+    });
+
     expect(errors).toHaveLength(0);
   });
 
@@ -347,6 +440,13 @@ test.describe('density map panel', () => {
     }).first();
     await expect(propertyRow).toBeVisible();
     await propertyRow.locator('select').selectOption('Degree');
+
+    const compareRow = densityTab.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'vs' }),
+    }).first();
+    await expect(compareRow).toBeVisible();
+    await expect(compareRow.locator('option[value="Degree"]')).toHaveCount(0);
+    await compareRow.locator('select').selectOption('Uniform');
 
     const modeRow = densityTab.locator('.helios-ui-row', {
       has: page.locator('.helios-ui-label__title', { hasText: 'Mode' }),

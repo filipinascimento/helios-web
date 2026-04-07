@@ -51,6 +51,70 @@ test('renderer accessors store pending values before renderer exists', () => {
   assert.deepEqual(helios._pendingRendererProps.get('clearColor'), [1, 1, 1, 1]);
 });
 
+test('density() only keeps log-ratio mode when a comparison target is selected', () => {
+  const calls = { render: 0 };
+  const helios = Object.create(Helios.prototype);
+  helios.scheduler = { requestRender: () => { calls.render += 1; } };
+  helios._densityRuntime = { diverging: false, valueDomain: [ -3, 3 ] };
+  helios._densityConfig = undefined;
+  helios._applyDensityConfigToLayer = () => {};
+
+  helios.density({ comparisonMode: 'logRatio', compareProperty: 'None' });
+  assert.equal(helios.density().comparisonMode, 'difference');
+  assert.equal(helios.density().valueDomain, null);
+
+  helios.density({ compareProperty: 'baseline', comparisonMode: 'logRatio' });
+  assert.equal(helios.density().comparisonMode, 'logRatio');
+
+  helios.density({ compareProperty: 'None' });
+  assert.equal(helios.density().comparisonMode, 'difference');
+  assert.equal(helios.density().valueDomain, null);
+  assert.equal(calls.render, 3);
+});
+
+test('density() clears compareProperty when it matches the primary property', () => {
+  const helios = Object.create(Helios.prototype);
+  helios.scheduler = { requestRender: () => {} };
+  helios._densityRuntime = { diverging: false, valueDomain: null };
+  helios._densityConfig = undefined;
+  helios._applyDensityConfigToLayer = () => {};
+
+  helios.density({ property: 'Degree', compareProperty: 'Degree', comparisonMode: 'logRatio' });
+
+  const state = helios.density();
+  assert.equal(state.property, 'Degree');
+  assert.equal(state.compareProperty, 'None');
+  assert.equal(state.comparisonMode, 'difference');
+});
+
+test('density() restores the difference diverging colormap after leaving log-ratio mode', () => {
+  const helios = Object.create(Helios.prototype);
+  helios.scheduler = { requestRender: () => {} };
+  helios._densityRuntime = { diverging: true, valueDomain: [-3, 3] };
+  helios._densityConfig = undefined;
+  helios._applyDensityConfigToLayer = () => {};
+
+  helios.density({
+    property: 'Degree',
+    compareProperty: 'Uniform',
+    colormap: 'interpolateViridis',
+    logRatioColormap: 'cmasher:prinsenvlag',
+    divergingColormap: 'interpolateRdBu',
+    comparisonMode: 'logRatio',
+  });
+  assert.equal(helios.density().activeColormap, 'cmasher:prinsenvlag');
+
+  helios.density({ comparisonMode: 'difference' });
+  let state = helios.density();
+  assert.equal(state.activeColormap, 'interpolateViridis');
+  assert.equal(state.diverging, false);
+  assert.equal(state.valueDomain, null);
+
+  helios._densityRuntime = { diverging: true, valueDomain: null };
+  state = helios.density();
+  assert.equal(state.activeColormap, 'interpolateRdBu');
+});
+
 test('edge width scale UI binding exposes zero in the recommended slider range', () => {
   assert.equal(Helios.UI_BINDINGS.edgeWidthScale.domain.min, 0);
   assert.equal(Helios.UI_BINDINGS.edgeWidthScale.recommendedRange.min, 0);
