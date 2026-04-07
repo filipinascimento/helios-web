@@ -77,6 +77,20 @@ helios.legends({
   },
 });
 
+// Density maps:
+// - comparisonMode: 'difference' keeps the existing normalized comparison path
+// - comparisonMode: 'logRatio' enables a real-valued log-ratio surface with a numeric legend
+helios.density({
+  enabled: true,
+  property: 'weight',
+  compareProperty: 'Uniform',
+  comparisonMode: 'logRatio',
+  bandwidth: 28.1,
+  logRatioRange: 3, // symmetric legend / clipping domain: [-3, 3]
+  epsilon: 1e-6,
+  divergingColormap: 'interpolateRdBu',
+});
+
 // Figure export:
 // - preset: 'window' | 'window@x2' | 'window@x4' | '1080p' | '4k' | '8k' | 'custom'
 // - supersampling only affects the raster pass; SVG stays self-contained and embeds that bitmap.

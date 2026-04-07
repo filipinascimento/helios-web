@@ -184,6 +184,67 @@ function naturalCompare(a, b) {
   return left.localeCompare(right);
 }
 
+export function isSpecialNoneCategoryLabel(value) {
+  if (value == null) return true;
+  const normalized = String(value).trim().toLowerCase();
+  return normalized === 'none' || normalized === 'null';
+}
+
+function isSpecialNoneCategoryEntry(entry) {
+  if (!entry || typeof entry !== 'object') return false;
+  if (entry.specialNone === true) return true;
+  if (Object.prototype.hasOwnProperty.call(entry, 'rawLabel')) {
+    return isSpecialNoneCategoryLabel(entry.rawLabel);
+  }
+  return isSpecialNoneCategoryLabel(entry.label);
+}
+
+export function orderCategoricalEntries(entries, {
+  sortOrder = 'frequency',
+  manualOrder = [],
+  maxCategories = null,
+} = {}) {
+  const list = Array.isArray(entries) ? entries.slice() : [];
+  if (!list.length) return [];
+
+  if (sortOrder === 'alphabetical') {
+    list.sort((a, b) => String(a?.label ?? '').localeCompare(String(b?.label ?? '')));
+  } else if (sortOrder === 'natural') {
+    list.sort((a, b) => naturalCompare(a?.label, b?.label));
+  } else if (sortOrder === 'manual') {
+    const byId = new Map(list.map((entry) => [entry.id, entry]));
+    const ordered = manualOrder.map((id) => byId.get(id)).filter(Boolean);
+    const seen = new Set(ordered.map((entry) => entry.id));
+    for (const entry of list) {
+      if (!seen.has(entry.id)) ordered.push(entry);
+    }
+    list.splice(0, list.length, ...ordered);
+  } else {
+    list.sort((a, b) => (Number(b?.count ?? 0) - Number(a?.count ?? 0)) || String(a?.label ?? '').localeCompare(String(b?.label ?? '')));
+  }
+
+  const capped = maxCategories != null && Number.isFinite(Number(maxCategories))
+    ? Math.max(1, Math.min(list.length, Math.floor(Number(maxCategories))))
+    : list.length;
+  const regular = list.filter((entry) => !isSpecialNoneCategoryEntry(entry));
+  const specialNone = list.filter((entry) => isSpecialNoneCategoryEntry(entry));
+  let visible = list.slice(0, capped);
+
+  // Keep special None/null categories inside Others whenever overflow already exists,
+  // unless doing so would collapse the entire visible list.
+  if (capped < list.length && regular.length > 0 && specialNone.length > 0) {
+    visible = regular.slice(0, capped);
+  }
+
+  const visibleRegular = [];
+  const visibleSpecialNone = [];
+  for (const entry of visible) {
+    if (isSpecialNoneCategoryEntry(entry)) visibleSpecialNone.push(entry);
+    else visibleRegular.push(entry);
+  }
+  return visibleRegular.concat(visibleSpecialNone);
+}
+
 function warnMappersUiDerivationFailure(message, detail) {
   if (!import.meta.env?.DEV) return;
   console.warn(`[HeliosUI][MappersPanel] ${message}`, detail);
@@ -723,10 +784,11 @@ export class MappersPanel {
         if (!Number.isFinite(id)) continue;
         const rawLabel = typeof entry.label === 'string' ? entry.label : null;
         const fallbackLabel = entry.label != null ? String(entry.label) : '';
+        const specialNone = isSpecialNoneCategoryLabel(rawLabel);
         const label = rawLabel && rawLabel.trim()
           ? rawLabel
-          : (fallbackLabel && fallbackLabel.trim() ? fallbackLabel : `#${id}`);
-        entries.push({ id, label, count: counts.get(id) ?? 0 });
+          : (specialNone ? 'None' : (fallbackLabel && fallbackLabel.trim() ? fallbackLabel : `#${id}`));
+        entries.push({ id, label, count: counts.get(id) ?? 0, rawLabel, specialNone });
         seen.add(id);
       }
       for (const [id, count] of counts.entries()) {
@@ -2663,11 +2725,31 @@ export class MappersPanel {
             const entryIds = new Set(entries.map((entry) => entry.id));
             const hasMissing = pendingDomain.some((id) => !entryIds.has(id));
             const hasNew = entries.some((entry) => !pendingDomain.includes(entry.id));
+            const currentVisibleEntries = pendingDomain.map((id) => entries.find((entry) => entry.id === id)).filter(Boolean);
+            const hasHiddenEntries = entries.some((entry) => !pendingDomain.includes(entry.id));
+            const specialNoneVisible = currentVisibleEntries.some((entry) => entry.specialNone === true);
+            const regularVisible = currentVisibleEntries.some((entry) => entry.specialNone !== true);
+            let specialNoneNotLast = false;
+            let seenSpecialNone = false;
+            for (const entry of currentVisibleEntries) {
+              if (entry.specialNone === true) {
+                seenSpecialNone = true;
+                continue;
+              }
+              if (seenSpecialNone) {
+                specialNoneNotLast = true;
+                break;
+              }
+            }
+            const needsSpecialNoneRebuild =
+              (hasHiddenEntries && specialNoneVisible && regularVisible) ||
+              (!hasHiddenEntries && specialNoneNotLast);
             const needsRebuild =
               pendingDomain.length === 0 ||
               pendingRange.length !== pendingDomain.length ||
               hasMissing ||
-              hasNew;
+              hasNew ||
+              needsSpecialNoneRebuild;
 
             const AUTO_MAX_CATEGORIES = 20;
             const resolveMaxCategories = (count) => {
@@ -2687,24 +2769,11 @@ export class MappersPanel {
 
             const buildOrderedEntries = () => {
               const { sortOrder } = getCategoricalSettings();
-              const list = entries.slice();
-              if (sortOrder === 'alphabetical') {
-                list.sort((a, b) => a.label.localeCompare(b.label));
-              } else if (sortOrder === 'natural') {
-                list.sort((a, b) => naturalCompare(a.label, b.label));
-              } else if (sortOrder === 'manual') {
-                const order = Array.isArray(state.pending.domain) ? state.pending.domain : [];
-                const byId = new Map(list.map((entry) => [entry.id, entry]));
-                const ordered = order.map((id) => byId.get(id)).filter(Boolean);
-                const seen = new Set(ordered.map((entry) => entry.id));
-                for (const entry of list) {
-                  if (!seen.has(entry.id)) ordered.push(entry);
-                }
-                return ordered.slice(0, resolveMaxCategories(ordered.length));
-              } else {
-                list.sort((a, b) => (b.count - a.count) || a.label.localeCompare(b.label));
-              }
-              return list.slice(0, resolveMaxCategories(list.length));
+              return orderCategoricalEntries(entries, {
+                sortOrder,
+                manualOrder: Array.isArray(state.pending.domain) ? state.pending.domain : [],
+                maxCategories: resolveMaxCategories(entries.length),
+              });
             };
 
             const isColorChannel = state.channel === 'color' || state.channel === 'outlineColor';
@@ -4505,6 +4574,8 @@ export class MappersPanel {
         helios.scheduler?.requestRender?.();
         helios.requestRender?.();
       };
+      const isLogRatioMode = (state = cfg()) => state?.comparisonMode === 'logRatio';
+      const usesDivergingDensityColormap = (state = cfg()) => isLogRatioMode(state) || state?.diverging === true;
       const RESOLUTION_PRESETS = [
         { value: 0.05, label: '1/20' },
         { value: 0.1, label: '1/10' },
@@ -4569,9 +4640,9 @@ export class MappersPanel {
       };
 
       const getDensityZeroColor = (state = cfg()) => {
-        const key = state?.diverging ? state?.divergingColormap : state?.colormap;
+        const key = usesDivergingDensityColormap(state) ? state?.divergingColormap : state?.colormap;
         const resolved = resolveColormap(key) || resolveColormap('interpolateOrRd');
-        const sample = resolved?.interpolate?.(0) ?? [0, 0, 0, 1];
+        const sample = resolved?.interpolate?.(usesDivergingDensityColormap(state) ? 0.5 : 0) ?? [0, 0, 0, 1];
         return normalizeColormapSample(sample);
       };
 
@@ -4635,6 +4706,13 @@ export class MappersPanel {
         }
         return bestIndex;
       };
+      const setRowEnabled = (row, enabled) => {
+        if (!row) return;
+        row.style.opacity = enabled ? '1' : '0.55';
+        for (const control of row.querySelectorAll('input, select, button, textarea')) {
+          control.disabled = !enabled;
+        }
+      };
 
       const enabledToggle = createCheckboxControl({
         checked: cfg().enabled === true,
@@ -4694,17 +4772,35 @@ export class MappersPanel {
         controls: compareSelect,
       }).row);
 
+      const comparisonModeSelect = document.createElement('select');
+      comparisonModeSelect.className = 'helios-ui-select';
+      for (const option of [
+        { value: 'difference', label: 'Difference' },
+        { value: 'logRatio', label: 'Log Ratio' },
+      ]) {
+        const el = document.createElement('option');
+        el.value = option.value;
+        el.textContent = option.label;
+        comparisonModeSelect.appendChild(el);
+      }
+      editorBody.appendChild(createAlignedRow({
+        title: 'Mode',
+        hint: 'Use the current normalized difference mode or a real log-ratio density comparison.',
+        controls: comparisonModeSelect,
+      }).row);
+
       const normalizeToggle = createCheckboxControl({
         checked: cfg().normalizeVs === true,
         onChange: (checked) => applyDensity({ normalizeVs: checked }),
         onLabel: 'Normalized',
         offLabel: 'Raw',
       });
-      editorBody.appendChild(createAlignedRow({
+      const normalizeRow = createAlignedRow({
         title: 'Norm.',
         hint: 'Normalize positive/negative comparison sides independently.',
         controls: normalizeToggle,
-      }).row);
+      });
+      editorBody.appendChild(normalizeRow.row);
 
       const bandwidthControl = new LogSliderControls({
         value: cfg().bandwidth ?? 28.1,
@@ -4746,11 +4842,48 @@ export class MappersPanel {
         onCommit: (value) => applyDensity({ weightScale: value }),
       });
       registerControl(weightControl);
-      editorBody.appendChild(createAlignedRow({
+      const weightRow = createAlignedRow({
         title: 'Weight',
         hint: 'Density intensity multiplier (log scale).',
         controls: weightControl.element,
-      }).row);
+      });
+      editorBody.appendChild(weightRow.row);
+
+      const epsilonControl = new LogSliderControls({
+        value: cfg().epsilon ?? 1e-6,
+        minExp: -9,
+        maxExp: -0.5,
+        stepExp: 0.1,
+        minValue: 1e-9,
+        maxValue: 0.316227766,
+        digits: 6,
+        onCommit: (value) => applyDensity({ epsilon: value }),
+      });
+      registerControl(epsilonControl);
+      const epsilonRow = createAlignedRow({
+        title: 'Epsilon',
+        hint: 'Small stabilizer added to the log-ratio numerator and denominator.',
+        controls: epsilonControl.element,
+      });
+      editorBody.appendChild(epsilonRow.row);
+
+      const logRatioRangeControl = new LogSliderControls({
+        value: cfg().logRatioRange ?? 3,
+        minExp: -0.5,
+        maxExp: 1,
+        stepExp: 0.05,
+        minValue: 0.316227766,
+        maxValue: 10,
+        digits: 3,
+        onCommit: (value) => applyDensity({ logRatioRange: value }),
+      });
+      registerControl(logRatioRangeControl);
+      const logRatioRangeRow = createAlignedRow({
+        title: 'Range',
+        hint: 'Symmetric clipping range for the real-valued log-ratio color scale.',
+        controls: logRatioRangeControl.element,
+      });
+      editorBody.appendChild(logRatioRangeRow.row);
 
       const resolutionWrap = document.createElement('div');
       resolutionWrap.style.display = 'flex';
@@ -4795,12 +4928,12 @@ export class MappersPanel {
       const colormapPicker = new ColormapPickerControl({
         catalog: colormapCatalog,
         portalRoot: ui?.container ?? document.body,
-        value: cfg().diverging ? cfg().divergingColormap : cfg().colormap,
+        value: usesDivergingDensityColormap(cfg()) ? cfg().divergingColormap : cfg().colormap,
         fallbackValue: 'interpolateOrRd',
         searchPlaceholder: 'Search colormaps…',
         onChange: (key) => {
           const state = cfg();
-          if (state.diverging) {
+          if (usesDivergingDensityColormap(state)) {
             applyDensity({ divergingColormap: key });
           } else {
             applyDensity({ colormap: key });
@@ -4822,13 +4955,17 @@ export class MappersPanel {
       });
       compareSelect.addEventListener('change', () => {
         applyDensity({ compareProperty: compareSelect.value });
-        normalizeToggle.disabled = compareSelect.value === 'None';
+        refresh();
+      });
+      comparisonModeSelect.addEventListener('change', () => {
+        applyDensity({ comparisonMode: comparisonModeSelect.value });
         refresh();
       });
 
       const refresh = () => {
         const state = cfg();
         const attrs = listDensityAttributes();
+        const logRatioMode = isLogRatioMode(state);
         captureManualBackground();
 
         const ensureOptionList = (select, values) => {
@@ -4860,18 +4997,25 @@ export class MappersPanel {
           compareSelect.value = state.compareProperty;
         }
 
+        comparisonModeSelect.value = logRatioMode ? 'logRatio' : 'difference';
         enabledToggle.checked = state.enabled === true;
         reliefToggle.checked = state.topographic === true;
         normalizeToggle.checked = state.normalizeVs === true;
         zoomScaleToggle.checked = state.scaleWithZoom === true;
-        normalizeToggle.disabled = compareSelect.value === 'None';
+        normalizeToggle.disabled = compareSelect.value === 'None' || logRatioMode;
 
         bandwidthControl.setValue(Math.max(0.05, Number(state.bandwidth ?? 1)));
         weightControl.setValue(Math.max(1, Number(state.weightScale ?? 1)));
+        epsilonControl.setValue(Math.max(1e-9, Number(state.epsilon ?? 1e-6)));
+        logRatioRangeControl.setValue(Math.max(0.316227766, Number(state.logRatioRange ?? 3)));
         setResolutionIndex(toResolutionIndex(state.qualityScale), { commit: false });
 
-        const activeColormap = state.diverging ? state.divergingColormap : state.colormap;
+        const activeColormap = usesDivergingDensityColormap(state) ? state.divergingColormap : state.colormap;
         colormapPicker.setValue(activeColormap);
+        setRowEnabled(normalizeRow.row, !logRatioMode && compareSelect.value !== 'None');
+        setRowEnabled(weightRow.row, !logRatioMode);
+        setRowEnabled(epsilonRow.row, logRatioMode);
+        setRowEnabled(logRatioRangeRow.row, logRatioMode);
         applyDensityBackground(state);
       };
 

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveDensityBandwidthViewport } from '../src/rendering/engine/DensityLayer.js';
+import { DensityLayer, resolveDensityBandwidthViewport } from '../src/rendering/engine/DensityLayer.js';
 
 test('resolveDensityBandwidthViewport prefers the logical figure viewport over the raster target size', () => {
   const resolved = resolveDensityBandwidthViewport(
@@ -30,4 +30,87 @@ test('resolveDensityBandwidthViewport falls back to the camera viewport in norma
   );
 
   assert.deepEqual(resolved, { width: 900, height: 600 });
+});
+
+test('DensityLayer keeps difference mode normalization behavior intact', () => {
+  const layer = new DensityLayer();
+  const network = {
+    nodeCount: 3,
+    nodeIndices: new Uint32Array([0, 1, 2]),
+    getNodeAttributeBuffer(name) {
+      if (name === 'weight') return { view: new Float32Array([1, 2, 3]), dimension: 1 };
+      return null;
+    },
+  };
+
+  layer.setConfig({ comparisonMode: 'difference', property: 'weight', compareProperty: 'None' });
+  const computed = layer.computeWeightsUnsafe(network, layer.config);
+
+  assert.equal(computed.mode, 'difference');
+  assert.equal(computed.diverging, false);
+  assert.deepEqual(
+    Array.from(computed.weights).map((value) => Number(value.toFixed(6))),
+    [1 / 6, 2 / 6, 3 / 6].map((value) => Number(value.toFixed(6))),
+  );
+});
+
+test('DensityLayer builds normalized numerator and denominator weights for log-ratio mode', () => {
+  const layer = new DensityLayer();
+  const network = {
+    nodeCount: 3,
+    nodeIndices: new Uint32Array([0, 1, 2]),
+    getNodeAttributeBuffer(name) {
+      if (name === 'signal') return { view: new Float32Array([2, 0, 2]), dimension: 1 };
+      if (name === 'baseline') return { view: new Float32Array([1, 3, 0]), dimension: 1 };
+      return null;
+    },
+  };
+
+  layer.setConfig({
+    comparisonMode: 'logRatio',
+    property: 'signal',
+    compareProperty: 'baseline',
+    logRatioRange: 2.5,
+  });
+  const computed = layer.computeWeightsUnsafe(network, layer.config);
+
+  assert.equal(computed.mode, 'logRatio');
+  assert.equal(computed.diverging, true);
+  assert.deepEqual(computed.valueDomain, [-2.5, 2.5]);
+  assert.equal(computed.baselineLabel, 'baseline');
+  assert.deepEqual(
+    Array.from(computed.numeratorWeights).map((value) => Number(value.toFixed(6))),
+    [0.5, 0, 0.5],
+  );
+  assert.deepEqual(
+    Array.from(computed.denominatorWeights).map((value) => Number(value.toFixed(6))),
+    [0.25, 0.75, 0],
+  );
+});
+
+test('DensityLayer uses Uniform as the implicit log-ratio baseline when no compare property is set', () => {
+  const layer = new DensityLayer();
+  const network = {
+    nodeCount: 2,
+    nodeIndices: new Uint32Array([0, 1]),
+    getNodeAttributeBuffer(name) {
+      if (name === 'weight') return { view: new Float32Array([1, 3]), dimension: 1 };
+      return null;
+    },
+  };
+
+  layer.setConfig({
+    comparisonMode: 'logRatio',
+    property: 'weight',
+    compareProperty: 'None',
+    logRatioRange: 3,
+  });
+  const computed = layer.computeWeightsUnsafe(network, layer.config);
+
+  assert.equal(computed.mode, 'logRatio');
+  assert.equal(computed.baselineLabel, 'Uniform');
+  assert.deepEqual(
+    Array.from(computed.denominatorWeights).map((value) => Number(value.toFixed(6))),
+    [0.5, 0.5],
+  );
 });

@@ -1,3 +1,5 @@
+import { createFpsThrottle } from './createFpsThrottle.js';
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -66,11 +68,20 @@ export class LogSliderControls {
     this.element.appendChild(this.input);
 
     this.setValue(value ?? this.minValue);
+    this._commitSliderValue = createFpsThrottle((nextValue) => {
+      this.onCommit?.(nextValue);
+    });
 
     this._onSliderInput = () => {
       const numeric = this.valueFromExp(this.slider.value);
       this.setValue(numeric);
-      this.onCommit?.(numeric);
+      this._commitSliderValue(numeric);
+    };
+    this._onSliderChange = () => {
+      const numeric = this.valueFromExp(this.slider.value);
+      this.setValue(numeric);
+      this._commitSliderValue(numeric);
+      this._commitSliderValue.flush();
     };
     this._onInputCommit = () => {
       const numeric = Number(this.input.value);
@@ -86,6 +97,7 @@ export class LogSliderControls {
     };
 
     this.slider.addEventListener('input', this._onSliderInput);
+    this.slider.addEventListener('change', this._onSliderChange);
     this.input.addEventListener('change', this._onInputCommit);
     this.input.addEventListener('keydown', this._onInputKeyDown);
   }
@@ -118,7 +130,9 @@ export class LogSliderControls {
   }
 
   destroy() {
+    this._commitSliderValue?.cancel?.();
     this.slider.removeEventListener('input', this._onSliderInput);
+    this.slider.removeEventListener('change', this._onSliderChange);
     this.input.removeEventListener('change', this._onInputCommit);
     this.input.removeEventListener('keydown', this._onInputKeyDown);
     this.element.remove();

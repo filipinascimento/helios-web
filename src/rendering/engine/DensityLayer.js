@@ -244,6 +244,55 @@ void main() {
 }
 `;
 
+const COMPOSITE_LOG_RATIO_FRAG_WEBGL = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_numeratorTex;
+uniform sampler2D u_denominatorTex;
+uniform sampler2D u_colormapTex;
+uniform float u_epsilon;
+uniform float u_domainMax;
+uniform float u_maskThreshold;
+uniform int u_topographic;
+uniform float u_contourLevels;
+uniform float u_contourWidth;
+out vec4 fragColor;
+
+void main() {
+  float numerator = texture(u_numeratorTex, v_uv).r;
+  float denominator = texture(u_denominatorTex, v_uv).r;
+  float support = max(numerator, denominator);
+  float safeDomain = max(u_domainMax, 1e-6);
+  float raw = log((numerator + u_epsilon) / (denominator + u_epsilon));
+  float s = clamp(raw / safeDomain, -1.0, 1.0);
+  float t = s * 0.5 + 0.5;
+  float alpha = abs(s);
+
+  if (u_maskThreshold > 0.0) {
+    if (support <= u_maskThreshold) {
+      fragColor = vec4(0.0);
+      return;
+    }
+    float feather = max(u_maskThreshold * 0.25, 1e-9);
+    alpha *= clamp((support - u_maskThreshold) / feather, 0.0, 1.0);
+  }
+
+  vec4 color = texture(u_colormapTex, vec2(t, 0.5));
+
+  if (u_topographic == 1) {
+    float base = abs(s);
+    float phase = fract(base * max(u_contourLevels, 1.0));
+    float contour = abs(phase - 0.5) * 2.0;
+    float width = max(u_contourWidth, 1e-4);
+    float line = clamp((width - contour) / width, 0.0, 1.0);
+    color.rgb = mix(color.rgb, vec3(0.0), line * 0.35);
+    alpha = clamp(alpha + line * 0.2, 0.0, 1.0);
+  }
+
+  fragColor = vec4(color.rgb, alpha * color.a);
+}
+`;
+
 const SPLAT_WGSL = /* wgsl */ `
 struct DensityCamera {
   viewProjection : mat4x4<f32>,
@@ -416,6 +465,77 @@ fn fsMain(input : VSOut) -> @location(0) vec4<f32> {
 }
 `;
 
+const COMPOSITE_LOG_RATIO_WGSL = /* wgsl */ `
+struct LogRatioCompositeParams {
+  values : vec4<f32>, // x epsilon, y domainMax, z maskThreshold, w topographicFlag
+  values2 : vec4<f32>, // x contourLevels, y contourWidth
+};
+
+struct VSOut {
+  @builtin(position) position : vec4<f32>,
+  @location(0) uv : vec2<f32>,
+};
+
+@vertex
+fn vsMain(@location(0) position : vec2<f32>, @location(1) uv : vec2<f32>) -> VSOut {
+  var out : VSOut;
+  out.position = vec4<f32>(position, 0.0, 1.0);
+  out.uv = uv;
+  return out;
+}
+
+@group(0) @binding(0) var densitySampler : sampler;
+@group(0) @binding(1) var numeratorTexture : texture_2d<f32>;
+@group(0) @binding(2) var denominatorTexture : texture_2d<f32>;
+@group(0) @binding(3) var colormapTexture : texture_2d<f32>;
+@group(0) @binding(4) var<uniform> params : LogRatioCompositeParams;
+
+@fragment
+fn fsMain(input : VSOut) -> @location(0) vec4<f32> {
+  let uvFlipped = vec2<f32>(input.uv.x, 1.0 - input.uv.y);
+  let numerator = textureSampleLevel(numeratorTexture, densitySampler, uvFlipped, 0.0).r;
+  let denominator = textureSampleLevel(denominatorTexture, densitySampler, uvFlipped, 0.0).r;
+  let support = max(numerator, denominator);
+  let epsilon = max(params.values.x, 1e-12);
+  let domainMax = max(params.values.y, 1e-6);
+  let maskThreshold = max(params.values.z, 0.0);
+  let topographic = params.values.w > 0.5;
+
+  if (maskThreshold > 0.0 && support <= maskThreshold) {
+    return vec4<f32>(0.0);
+  }
+
+  let raw = log((numerator + epsilon) / (denominator + epsilon));
+  let s = clamp(raw / domainMax, -1.0, 1.0);
+  let t = s * 0.5 + 0.5;
+  var alpha = abs(s);
+
+  if (maskThreshold > 0.0) {
+    let feather = max(maskThreshold * 0.25, 1e-9);
+    alpha *= clamp((support - maskThreshold) / feather, 0.0, 1.0);
+  }
+
+  var color = textureSampleLevel(colormapTexture, densitySampler, vec2<f32>(t, 0.5), 0.0);
+
+  if (topographic) {
+    let contourLevels = max(params.values2.x, 1.0);
+    let contourWidth = max(params.values2.y, 1e-4);
+    let base = abs(s);
+    let phase = fract(base * contourLevels);
+    let contour = abs(phase - 0.5) * 2.0;
+    let line = clamp((contourWidth - contour) / contourWidth, 0.0, 1.0);
+    color = vec4<f32>(mix(color.rgb, vec3<f32>(0.0), line * 0.35), color.a);
+    alpha = clamp(alpha + line * 0.2, 0.0, 1.0);
+  }
+
+  return vec4<f32>(color.rgb, alpha * color.a);
+}
+`;
+
+function normalizeComparisonMode(value, fallback = 'difference') {
+  return value === 'logRatio' ? 'logRatio' : fallback;
+}
+
 function defaultDensityConfig() {
   return {
     enabled: false,
@@ -426,9 +546,13 @@ function defaultDensityConfig() {
     weightScale: 398.1071705534973,
     property: 'Uniform',
     compareProperty: 'None',
+    comparisonMode: 'difference',
     normalizeVs: false,
+    epsilon: 1e-6,
+    logRatioRange: 3,
+    maskThreshold: 0,
     colormap: 'interpolateOrRd',
-    divergingColormap: 'interpolatePrinsenvlag',
+    divergingColormap: 'cmasher:prinsenvlag',
   };
 }
 
@@ -442,11 +566,16 @@ export class DensityLayer extends Layer {
     this.onRuntimeState = options.onRuntimeState ?? (() => {});
 
     this.config = { ...defaultDensityConfig(), ...(options.initialConfig ?? {}) };
-    this.runtime = { diverging: false };
+    this.runtime = { diverging: false, valueDomain: null };
     this.version = 0;
 
     this._weightArray = null;
     this._lastWeightCount = 0;
+    this._logRatioWeights = {
+      count: 0,
+      numerator: null,
+      denominator: null,
+    };
     this._activeNodeIndicesArray = null;
     this._activeEdgeIndicesArray = null;
     this._activeIndexScratch = {
@@ -467,20 +596,35 @@ export class DensityLayer extends Layer {
       extColorFloat: false,
       programSplat: null,
       programComposite: null,
+      programCompositeLogRatio: null,
       vaoSplat: null,
       vaoQuad: null,
       cornerBuffer: null,
       quadBuffer: null,
-      fbo: null,
+      densityFbo: null,
       densityTex: null,
       densityWidth: 0,
       densityHeight: 0,
+      numeratorFbo: null,
+      numeratorTex: null,
+      numeratorWidth: 0,
+      numeratorHeight: 0,
+      denominatorFbo: null,
+      denominatorTex: null,
+      denominatorWidth: 0,
+      denominatorHeight: 0,
       nodeIndicesTex: null,
       nodeIndicesLayout: null,
       nodeIndicesMeta: null,
       nodeWeightsTex: null,
       nodeWeightsLayout: null,
       nodeWeightsMeta: null,
+      numeratorWeightsTex: null,
+      numeratorWeightsLayout: null,
+      numeratorWeightsMeta: null,
+      denominatorWeightsTex: null,
+      denominatorWeightsLayout: null,
+      denominatorWeightsMeta: null,
       fallbackPositionsTex: null,
       fallbackPositionsLayout: null,
       fallbackPositionsMeta: null,
@@ -490,6 +634,7 @@ export class DensityLayer extends Layer {
       uniforms: {
         splat: {},
         composite: {},
+        compositeLogRatio: {},
       },
       fallbackPositionCount: 0,
     };
@@ -498,14 +643,20 @@ export class DensityLayer extends Layer {
       ready: false,
       pipelineSplat: null,
       pipelineComposite: null,
+      pipelineCompositeLogRatio: null,
       bindGroupSplat: null,
       bindGroupComposite: null,
+      bindGroupCompositeLogRatio: null,
       cameraBuffer: null,
       compositeParamsBuffer: null,
+      compositeLogRatioParamsBuffer: null,
       cornersBuffer: null,
       sampler: null,
       densityTexture: null,
       densitySize: { width: 0, height: 0 },
+      numeratorTexture: null,
+      denominatorTexture: null,
+      logRatioSize: { width: 0, height: 0 },
       colormapTexture: null,
       colormapKey: null,
       colormapDiverging: null,
@@ -519,6 +670,7 @@ export class DensityLayer extends Layer {
     return {
       ...this.config,
       diverging: this.runtime.diverging,
+      valueDomain: Array.isArray(this.runtime.valueDomain) ? [...this.runtime.valueDomain] : null,
     };
   }
 
@@ -530,9 +682,13 @@ export class DensityLayer extends Layer {
     merged.topographic = merged.topographic === true;
     merged.normalizeVs = merged.normalizeVs === true;
     merged.scaleWithZoom = merged.scaleWithZoom === true;
+    merged.comparisonMode = normalizeComparisonMode(merged.comparisonMode, this.config.comparisonMode);
     merged.qualityScale = clamp(toFiniteNumber(merged.qualityScale, this.config.qualityScale), 0.03, 1.0);
     merged.bandwidth = clamp(toFiniteNumber(merged.bandwidth, this.config.bandwidth), 0.05, 1000);
     merged.weightScale = clamp(toFiniteNumber(merged.weightScale, this.config.weightScale), 0, 1e8);
+    merged.epsilon = clamp(toFiniteNumber(merged.epsilon, this.config.epsilon), 1e-12, 1);
+    merged.logRatioRange = clamp(toFiniteNumber(merged.logRatioRange, this.config.logRatioRange), 1e-3, 1e3);
+    merged.maskThreshold = clamp(toFiniteNumber(merged.maskThreshold, this.config.maskThreshold), 0, 1);
     merged.property = typeof merged.property === 'string' && merged.property.trim()
       ? merged.property.trim()
       : 'Uniform';
@@ -547,6 +703,9 @@ export class DensityLayer extends Layer {
       : this.config.divergingColormap;
 
     this.config = merged;
+    if (merged.comparisonMode !== 'logRatio') {
+      this.runtime.valueDomain = null;
+    }
     if (!merged.scaleWithZoom || !wasZoomScaled) {
       this._zoomScaleDistanceRef3D = null;
     }
@@ -613,7 +772,11 @@ export class DensityLayer extends Layer {
       if (!computed || computed.count <= 0) return;
 
       this.runtime.diverging = computed.diverging;
-      this.onRuntimeState?.({ diverging: computed.diverging });
+      this.runtime.valueDomain = Array.isArray(computed.valueDomain) ? [...computed.valueDomain] : null;
+      this.onRuntimeState?.({
+        diverging: computed.diverging,
+        valueDomain: this.runtime.valueDomain,
+      });
 
       if (context.type === 'webgl2') {
         this.renderWebGL(context, frame, uniforms, computed);
@@ -766,103 +929,181 @@ export class DensityLayer extends Layer {
         const count = nodeIndices?.length ?? 0;
         if (!count) {
           result = {
+            mode: 'difference',
             nodeIndices: null,
             count: 0,
             weights: null,
             diverging: false,
             positionCount: Math.max(0, Math.floor(Number(network?.nodeCount ?? 0))),
             colormapKey: config.colormap,
+            valueDomain: null,
           };
         } else {
-          if (!this._weightArray || this._lastWeightCount !== count) {
-            this._weightArray = new Float32Array(count);
-            this._lastWeightCount = count;
-          }
-          const weights = this._weightArray;
-
-          const primaryReader = this.makePropertyReader(network, config.property, edgeIndices);
-          const compareReader = compareEnabled
-            ? this.makePropertyReader(network, config.compareProperty, edgeIndices)
-            : null;
-
-          let totalWeight = 0;
-          let totalNegative = 0;
-          let totalPositive = 0;
-
-          for (let i = 0; i < count; i += 1) {
-            const nodeId = nodeIndices[i] >>> 0;
-            const primary = primaryReader(nodeId);
-            const compare = compareReader ? compareReader(nodeId) : 0;
-            let value = compareReader ? (compare - primary) : primary;
-            if (!Number.isFinite(value)) value = 0;
-            weights[i] = value;
-            const abs = Math.abs(value);
-            totalWeight += abs;
-            if (value < 0) totalNegative += value;
-            else totalPositive += value;
-          }
-
-          let diverging = false;
-          if (totalWeight > 0 && totalNegative === 0) {
-            for (let i = 0; i < count; i += 1) {
-              weights[i] /= totalWeight;
-            }
-            diverging = false;
-          } else {
-            diverging = totalWeight > 0;
-            let totalPositiveMax = Math.max(Math.abs(totalNegative), Math.abs(totalPositive));
-            let totalNegativeMax = Math.max(Math.abs(totalNegative), Math.abs(totalPositive));
-            if (config.normalizeVs) {
-              totalPositiveMax = Math.max(Math.abs(totalPositive), 1e-9);
-              totalNegativeMax = Math.max(Math.abs(totalNegative), 1e-9);
-            }
-
-            for (let i = 0; i < count; i += 1) {
-              const value = weights[i];
-              if (value < 0 && totalNegative < 0) {
-                weights[i] = value / Math.max(totalNegativeMax, 1e-9);
-              } else if (value > 0 && totalPositive > 0) {
-                weights[i] = value / Math.max(totalPositiveMax, 1e-9);
-              } else if (totalWeight > 0) {
-                weights[i] = value / totalWeight;
-              } else {
-                weights[i] = 0;
-              }
-            }
-          }
-
-          const colormapKey = diverging ? config.divergingColormap : config.colormap;
-          result = {
-            nodeIndices,
-            count,
-            weights,
-            diverging,
-            positionCount: Math.max(0, Math.floor(Number(network?.nodeCount ?? 0))),
-            colormapKey,
-          };
+          result = config.comparisonMode === 'logRatio'
+            ? this.buildLogRatioComputed(network, config, nodeIndices, edgeIndices, count)
+            : this.buildDifferenceComputed(network, config, nodeIndices, edgeIndices, count);
         }
       }
 
       if (!overflowRequest) {
         return result ?? {
+          mode: 'difference',
           nodeIndices: null,
           count: 0,
           weights: null,
           diverging: false,
           positionCount: Math.max(0, Math.floor(Number(network?.nodeCount ?? 0))),
           colormapKey: config.colormap,
+          valueDomain: null,
         };
       }
       this.ensureActiveIndexScratch(network, overflowRequest.scope, overflowRequest.count);
     }
 
     return result ?? {
+      mode: 'difference',
       nodeIndices: null,
       count: 0,
       weights: null,
       diverging: false,
       positionCount: Math.max(0, Math.floor(Number(network?.nodeCount ?? 0))),
       colormapKey: config.colormap,
+      valueDomain: null,
+    };
+  }
+
+  buildDifferenceComputed(network, config, nodeIndices, edgeIndices, count) {
+    if (!this._weightArray || this._lastWeightCount !== count) {
+      this._weightArray = new Float32Array(count);
+      this._lastWeightCount = count;
+    }
+    const weights = this._weightArray;
+
+    const primaryReader = this.makePropertyReader(network, config.property, edgeIndices);
+    const compareReader = config.compareProperty && config.compareProperty !== 'None'
+      ? this.makePropertyReader(network, config.compareProperty, edgeIndices)
+      : null;
+
+    let totalWeight = 0;
+    let totalNegative = 0;
+    let totalPositive = 0;
+
+    for (let i = 0; i < count; i += 1) {
+      const nodeId = nodeIndices[i] >>> 0;
+      const primary = primaryReader(nodeId);
+      const compare = compareReader ? compareReader(nodeId) : 0;
+      let value = compareReader ? (compare - primary) : primary;
+      if (!Number.isFinite(value)) value = 0;
+      weights[i] = value;
+      const abs = Math.abs(value);
+      totalWeight += abs;
+      if (value < 0) totalNegative += value;
+      else totalPositive += value;
+    }
+
+    let diverging = false;
+    if (totalWeight > 0 && totalNegative === 0) {
+      for (let i = 0; i < count; i += 1) {
+        weights[i] /= totalWeight;
+      }
+      diverging = false;
+    } else {
+      diverging = totalWeight > 0;
+      let totalPositiveMax = Math.max(Math.abs(totalNegative), Math.abs(totalPositive));
+      let totalNegativeMax = Math.max(Math.abs(totalNegative), Math.abs(totalPositive));
+      if (config.normalizeVs) {
+        totalPositiveMax = Math.max(Math.abs(totalPositive), 1e-9);
+        totalNegativeMax = Math.max(Math.abs(totalNegative), 1e-9);
+      }
+
+      for (let i = 0; i < count; i += 1) {
+        const value = weights[i];
+        if (value < 0 && totalNegative < 0) {
+          weights[i] = value / Math.max(totalNegativeMax, 1e-9);
+        } else if (value > 0 && totalPositive > 0) {
+          weights[i] = value / Math.max(totalPositiveMax, 1e-9);
+        } else if (totalWeight > 0) {
+          weights[i] = value / totalWeight;
+        } else {
+          weights[i] = 0;
+        }
+      }
+    }
+
+    const colormapKey = diverging ? config.divergingColormap : config.colormap;
+    return {
+      mode: 'difference',
+      nodeIndices,
+      count,
+      weights,
+      diverging,
+      positionCount: Math.max(0, Math.floor(Number(network?.nodeCount ?? 0))),
+      colormapKey,
+      valueDomain: null,
+    };
+  }
+
+  buildLogRatioComputed(network, config, nodeIndices, edgeIndices, count) {
+    if (!this._logRatioWeights.numerator || !this._logRatioWeights.denominator || this._logRatioWeights.count !== count) {
+      this._logRatioWeights = {
+        count,
+        numerator: new Float32Array(count),
+        denominator: new Float32Array(count),
+      };
+    }
+
+    const numeratorWeights = this._logRatioWeights.numerator;
+    const denominatorWeights = this._logRatioWeights.denominator;
+    const numeratorReader = this.makePropertyReader(network, config.property, edgeIndices);
+    const baselineKey = config.compareProperty && config.compareProperty !== 'None'
+      ? config.compareProperty
+      : 'Uniform';
+    const denominatorReader = this.makePropertyReader(network, baselineKey, edgeIndices);
+
+    let numeratorTotal = 0;
+    let denominatorTotal = 0;
+
+    for (let i = 0; i < count; i += 1) {
+      const nodeId = nodeIndices[i] >>> 0;
+      const numerator = Math.max(0, toFiniteNumber(numeratorReader(nodeId), 0));
+      const denominator = Math.max(0, toFiniteNumber(denominatorReader(nodeId), 0));
+      numeratorWeights[i] = numerator;
+      denominatorWeights[i] = denominator;
+      numeratorTotal += numerator;
+      denominatorTotal += denominator;
+    }
+
+    if (denominatorTotal <= 0) {
+      return {
+        mode: 'logRatio',
+        nodeIndices: null,
+        count: 0,
+        numeratorWeights: null,
+        denominatorWeights: null,
+        diverging: true,
+        positionCount: Math.max(0, Math.floor(Number(network?.nodeCount ?? 0))),
+        colormapKey: config.divergingColormap,
+        valueDomain: [-config.logRatioRange, config.logRatioRange],
+        baselineLabel: baselineKey,
+      };
+    }
+
+    for (let i = 0; i < count; i += 1) {
+      numeratorWeights[i] = numeratorTotal > 0 ? (numeratorWeights[i] / numeratorTotal) : 0;
+      denominatorWeights[i] = denominatorWeights[i] / denominatorTotal;
+    }
+
+    return {
+      mode: 'logRatio',
+      nodeIndices,
+      count,
+      numeratorWeights,
+      denominatorWeights,
+      diverging: true,
+      positionCount: Math.max(0, Math.floor(Number(network?.nodeCount ?? 0))),
+      colormapKey: config.divergingColormap,
+      valueDomain: [-config.logRatioRange, config.logRatioRange],
+      baselineLabel: baselineKey,
     };
   }
 
@@ -974,6 +1215,7 @@ export class DensityLayer extends Layer {
 
     this.webgl.programSplat = createProgram(gl, SPLAT_VERT_WEBGL, SPLAT_FRAG_WEBGL);
     this.webgl.programComposite = createProgram(gl, FULLSCREEN_VERT_WEBGL, COMPOSITE_FRAG_WEBGL);
+    this.webgl.programCompositeLogRatio = createProgram(gl, FULLSCREEN_VERT_WEBGL, COMPOSITE_LOG_RATIO_FRAG_WEBGL);
 
     this.webgl.uniforms.splat = {
       u_viewProjection: gl.getUniformLocation(this.webgl.programSplat, 'u_viewProjection'),
@@ -998,6 +1240,17 @@ export class DensityLayer extends Layer {
       u_topographic: gl.getUniformLocation(this.webgl.programComposite, 'u_topographic'),
       u_contourLevels: gl.getUniformLocation(this.webgl.programComposite, 'u_contourLevels'),
       u_contourWidth: gl.getUniformLocation(this.webgl.programComposite, 'u_contourWidth'),
+    };
+    this.webgl.uniforms.compositeLogRatio = {
+      u_numeratorTex: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_numeratorTex'),
+      u_denominatorTex: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_denominatorTex'),
+      u_colormapTex: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_colormapTex'),
+      u_epsilon: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_epsilon'),
+      u_domainMax: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_domainMax'),
+      u_maskThreshold: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_maskThreshold'),
+      u_topographic: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_topographic'),
+      u_contourLevels: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_contourLevels'),
+      u_contourWidth: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_contourWidth'),
     };
 
     const corners = new Float32Array([
@@ -1041,6 +1294,8 @@ export class DensityLayer extends Layer {
 
     this.webgl.nodeIndicesTex = this.createWebGLDataTexture(gl, true);
     this.webgl.nodeWeightsTex = this.createWebGLDataTexture(gl, false);
+    this.webgl.numeratorWeightsTex = this.createWebGLDataTexture(gl, false);
+    this.webgl.denominatorWeightsTex = this.createWebGLDataTexture(gl, false);
     this.webgl.fallbackPositionsTex = this.createWebGLDataTexture(gl, false);
     this.webgl.colormapTex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.webgl.colormapTex);
@@ -1050,7 +1305,9 @@ export class DensityLayer extends Layer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.bindTexture(gl.TEXTURE_2D, null);
 
-    this.webgl.fbo = gl.createFramebuffer();
+    this.webgl.densityFbo = gl.createFramebuffer();
+    this.webgl.numeratorFbo = gl.createFramebuffer();
+    this.webgl.denominatorFbo = gl.createFramebuffer();
 
     this.webgl.ready = true;
   }
@@ -1078,32 +1335,46 @@ export class DensityLayer extends Layer {
     const w = this.webgl;
     if (w.programSplat) gl.deleteProgram(w.programSplat);
     if (w.programComposite) gl.deleteProgram(w.programComposite);
+    if (w.programCompositeLogRatio) gl.deleteProgram(w.programCompositeLogRatio);
     if (w.vaoSplat) gl.deleteVertexArray(w.vaoSplat);
     if (w.vaoQuad) gl.deleteVertexArray(w.vaoQuad);
     if (w.cornerBuffer) gl.deleteBuffer(w.cornerBuffer);
     if (w.quadBuffer) gl.deleteBuffer(w.quadBuffer);
-    if (w.fbo) gl.deleteFramebuffer(w.fbo);
+    if (w.densityFbo) gl.deleteFramebuffer(w.densityFbo);
+    if (w.numeratorFbo) gl.deleteFramebuffer(w.numeratorFbo);
+    if (w.denominatorFbo) gl.deleteFramebuffer(w.denominatorFbo);
     if (w.densityTex) gl.deleteTexture(w.densityTex);
+    if (w.numeratorTex) gl.deleteTexture(w.numeratorTex);
+    if (w.denominatorTex) gl.deleteTexture(w.denominatorTex);
     if (w.nodeIndicesTex) gl.deleteTexture(w.nodeIndicesTex);
     if (w.nodeWeightsTex) gl.deleteTexture(w.nodeWeightsTex);
+    if (w.numeratorWeightsTex) gl.deleteTexture(w.numeratorWeightsTex);
+    if (w.denominatorWeightsTex) gl.deleteTexture(w.denominatorWeightsTex);
     if (w.fallbackPositionsTex) gl.deleteTexture(w.fallbackPositionsTex);
     if (w.colormapTex) gl.deleteTexture(w.colormapTex);
 
     w.ready = false;
   }
 
-  ensureWebGLDensityTarget(gl, width, height) {
+  ensureWebGLRenderTarget(gl, {
+    textureKey,
+    fboKey,
+    widthKey,
+    heightKey,
+    width,
+    height,
+  }) {
     if (
-      this.webgl.densityTex
-      && this.webgl.densityWidth === width
-      && this.webgl.densityHeight === height
+      this.webgl[textureKey]
+      && this.webgl[widthKey] === width
+      && this.webgl[heightKey] === height
     ) {
       return true;
     }
 
-    if (this.webgl.densityTex) {
-      gl.deleteTexture(this.webgl.densityTex);
-      this.webgl.densityTex = null;
+    if (this.webgl[textureKey]) {
+      gl.deleteTexture(this.webgl[textureKey]);
+      this.webgl[textureKey] = null;
     }
 
     const tex = gl.createTexture();
@@ -1119,7 +1390,7 @@ export class DensityLayer extends Layer {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     }
 
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.webgl.fbo);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.webgl[fboKey]);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
     const ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -1128,10 +1399,41 @@ export class DensityLayer extends Layer {
       return false;
     }
 
-    this.webgl.densityTex = tex;
-    this.webgl.densityWidth = width;
-    this.webgl.densityHeight = height;
+    this.webgl[textureKey] = tex;
+    this.webgl[widthKey] = width;
+    this.webgl[heightKey] = height;
     return true;
+  }
+
+  ensureWebGLDensityTarget(gl, width, height) {
+    return this.ensureWebGLRenderTarget(gl, {
+      textureKey: 'densityTex',
+      fboKey: 'densityFbo',
+      widthKey: 'densityWidth',
+      heightKey: 'densityHeight',
+      width,
+      height,
+    });
+  }
+
+  ensureWebGLLogRatioTargets(gl, width, height) {
+    const numeratorOk = this.ensureWebGLRenderTarget(gl, {
+      textureKey: 'numeratorTex',
+      fboKey: 'numeratorFbo',
+      widthKey: 'numeratorWidth',
+      heightKey: 'numeratorHeight',
+      width,
+      height,
+    });
+    if (!numeratorOk) return false;
+    return this.ensureWebGLRenderTarget(gl, {
+      textureKey: 'denominatorTex',
+      fboKey: 'denominatorFbo',
+      widthKey: 'denominatorWidth',
+      heightKey: 'denominatorHeight',
+      width,
+      height,
+    });
   }
 
   ensureWebGLColormapTexture(gl, colormapName, diverging) {
@@ -1354,6 +1656,53 @@ export class DensityLayer extends Layer {
     };
   }
 
+  uploadWebGLWeightTexture(gl, textureKey, layoutKey, metaKey, weights, count) {
+    const weightKey = `${this.version}|${textureKey}|${count}|${this.webgl[metaKey]?.tick ?? 0}`;
+    this.webgl[layoutKey] = this.uploadWebGLFloatTexture(
+      gl,
+      this.webgl[textureKey],
+      weights,
+      { count },
+      weightKey,
+    );
+    this.webgl[metaKey] = { version: weightKey, tick: (this.webgl[metaKey]?.tick ?? 0) + 1 };
+  }
+
+  renderWebGLSplatPass(gl, framebuffer, weightTexture, weightLayout, frame, cameraUniforms, computed, densityWidth, densityHeight, bandwidthViewport, positionBinding) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+    gl.viewport(0, 0, densityWidth, densityHeight);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    gl.useProgram(this.webgl.programSplat);
+    gl.bindVertexArray(this.webgl.vaoSplat);
+
+    gl.uniformMatrix4fv(this.webgl.uniforms.splat.u_viewProjection, false, cameraUniforms.viewProjection);
+    gl.uniform2f(this.webgl.uniforms.splat.u_viewport, bandwidthViewport.width, bandwidthViewport.height);
+    gl.uniform2f(this.webgl.uniforms.splat.u_densitySize, densityWidth, densityHeight);
+    const splatBandwidth = this.resolveSplatBandwidthPx(frame?.camera, cameraUniforms);
+    gl.uniform1f(this.webgl.uniforms.splat.u_bandwidthPx, splatBandwidth);
+    gl.uniform1i(this.webgl.uniforms.splat.u_nodeCount, computed.count);
+    gl.uniform1i(this.webgl.uniforms.splat.u_indexTexWidth, this.webgl.nodeIndicesLayout?.width ?? computed.count);
+    gl.uniform1i(this.webgl.uniforms.splat.u_weightTexWidth, weightLayout?.width ?? computed.count);
+    gl.uniform1i(this.webgl.uniforms.splat.u_positionTexWidth, positionBinding.texWidth);
+    gl.uniform1i(this.webgl.uniforms.splat.u_positionCount, positionBinding.positionCount);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.webgl.nodeIndicesTex);
+    gl.uniform1i(this.webgl.uniforms.splat.u_nodeIndices, 0);
+
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, weightTexture);
+    gl.uniform1i(this.webgl.uniforms.splat.u_nodeWeights, 1);
+
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, positionBinding.texture);
+    gl.uniform1i(this.webgl.uniforms.splat.u_nodePositions, 2);
+
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, computed.count);
+  }
+
   renderWebGL(context, frame, cameraUniforms, computed) {
     const gl = context.gl;
     if (!this.webgl.ready || !gl) return;
@@ -1367,10 +1716,6 @@ export class DensityLayer extends Layer {
       : { width: viewportWidth, height: viewportHeight };
     const densityWidth = Math.max(1, Math.floor(densityResolutionViewport.width * this.config.qualityScale));
     const densityHeight = Math.max(1, Math.floor(densityResolutionViewport.height * this.config.qualityScale));
-
-    if (!this.ensureWebGLDensityTarget(gl, densityWidth, densityHeight)) {
-      return;
-    }
 
     const positionBinding = this.resolveWebGLPositionTexture(frame, computed);
     if (!positionBinding?.texture || !positionBinding?.positionCount) {
@@ -1390,61 +1735,69 @@ export class DensityLayer extends Layer {
       this.webgl.nodeIndicesMeta = { version: indexKey };
     }
 
-    const weightKey = `${this.version}|${computed.count}|${this.webgl.nodeWeightsMeta?.tick ?? 0}`;
-    this.webgl.nodeWeightsLayout = this.uploadWebGLFloatTexture(
-      gl,
-      this.webgl.nodeWeightsTex,
-      computed.weights,
-      { count: computed.count },
-      weightKey,
-    );
-    this.webgl.nodeWeightsMeta = { version: weightKey, tick: (this.webgl.nodeWeightsMeta?.tick ?? 0) + 1 };
-
     this.ensureWebGLColormapTexture(gl, computed.colormapKey, computed.diverging);
 
     const prevBlendEnabled = gl.isEnabled(gl.BLEND);
     const prevDepthEnabled = gl.isEnabled(gl.DEPTH_TEST);
-
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.webgl.fbo);
-    gl.viewport(0, 0, densityWidth, densityHeight);
     gl.disable(gl.DEPTH_TEST);
     gl.enable(gl.BLEND);
     gl.blendEquation(gl.FUNC_ADD);
     gl.blendFunc(gl.ONE, gl.ONE);
-    gl.clearColor(0, 0, 0, 0);
-    gl.clear(gl.COLOR_BUFFER_BIT);
 
-    gl.useProgram(this.webgl.programSplat);
-    gl.bindVertexArray(this.webgl.vaoSplat);
+    if (computed.mode === 'logRatio') {
+      this.renderWebGLLogRatio(context, frame, cameraUniforms, computed, {
+        viewport,
+        viewportWidth,
+        viewportHeight,
+        densityWidth,
+        densityHeight,
+        bandwidthViewport,
+        positionBinding,
+      });
+    } else {
+      this.renderWebGLDifference(context, frame, cameraUniforms, computed, {
+        viewport,
+        viewportWidth,
+        viewportHeight,
+        densityWidth,
+        densityHeight,
+        bandwidthViewport,
+        positionBinding,
+      });
+    }
 
-    gl.uniformMatrix4fv(this.webgl.uniforms.splat.u_viewProjection, false, cameraUniforms.viewProjection);
-    gl.uniform2f(this.webgl.uniforms.splat.u_viewport, bandwidthViewport.width, bandwidthViewport.height);
-    gl.uniform2f(this.webgl.uniforms.splat.u_densitySize, densityWidth, densityHeight);
-    const splatBandwidth = this.resolveSplatBandwidthPx(frame?.camera, cameraUniforms);
-    gl.uniform1f(this.webgl.uniforms.splat.u_bandwidthPx, splatBandwidth);
-    gl.uniform1i(this.webgl.uniforms.splat.u_nodeCount, computed.count);
-    gl.uniform1i(this.webgl.uniforms.splat.u_indexTexWidth, this.webgl.nodeIndicesLayout?.width ?? computed.count);
-    gl.uniform1i(this.webgl.uniforms.splat.u_weightTexWidth, this.webgl.nodeWeightsLayout?.width ?? computed.count);
-    gl.uniform1i(this.webgl.uniforms.splat.u_positionTexWidth, positionBinding.texWidth);
-    gl.uniform1i(this.webgl.uniforms.splat.u_positionCount, positionBinding.positionCount);
+    gl.bindVertexArray(null);
+    if (prevDepthEnabled) gl.enable(gl.DEPTH_TEST);
+    else gl.disable(gl.DEPTH_TEST);
+    if (!prevBlendEnabled) gl.disable(gl.BLEND);
+    else gl.enable(gl.BLEND);
+    gl.blendEquation(gl.FUNC_ADD);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  }
 
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.webgl.nodeIndicesTex);
-    gl.uniform1i(this.webgl.uniforms.splat.u_nodeIndices, 0);
+  renderWebGLDifference(context, frame, cameraUniforms, computed, renderState) {
+    const gl = context.gl;
+    if (!this.ensureWebGLDensityTarget(gl, renderState.densityWidth, renderState.densityHeight)) {
+      return;
+    }
 
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.webgl.nodeWeightsTex);
-    gl.uniform1i(this.webgl.uniforms.splat.u_nodeWeights, 1);
-
-    gl.activeTexture(gl.TEXTURE2);
-    gl.bindTexture(gl.TEXTURE_2D, positionBinding.texture);
-    gl.uniform1i(this.webgl.uniforms.splat.u_nodePositions, 2);
-
-    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, computed.count);
+    this.uploadWebGLWeightTexture(gl, 'nodeWeightsTex', 'nodeWeightsLayout', 'nodeWeightsMeta', computed.weights, computed.count);
+    this.renderWebGLSplatPass(
+      gl,
+      this.webgl.densityFbo,
+      this.webgl.nodeWeightsTex,
+      this.webgl.nodeWeightsLayout,
+      frame,
+      cameraUniforms,
+      computed,
+      renderState.densityWidth,
+      renderState.densityHeight,
+      renderState.bandwidthViewport,
+      renderState.positionBinding,
+    );
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, context.target?.handle ?? null);
-    gl.viewport(viewport[0], viewport[1], viewportWidth, viewportHeight);
-
+    gl.viewport(renderState.viewport[0], renderState.viewport[1], renderState.viewportWidth, renderState.viewportHeight);
     gl.useProgram(this.webgl.programComposite);
     gl.bindVertexArray(this.webgl.vaoQuad);
     gl.enable(gl.BLEND);
@@ -1464,16 +1817,86 @@ export class DensityLayer extends Layer {
     gl.uniform1i(this.webgl.uniforms.composite.u_topographic, this.config.topographic ? 1 : 0);
     gl.uniform1f(this.webgl.uniforms.composite.u_contourLevels, 14.0);
     gl.uniform1f(this.webgl.uniforms.composite.u_contourWidth, 0.18);
-
     gl.drawArrays(gl.TRIANGLES, 0, 6);
+  }
 
-    gl.bindVertexArray(null);
-    if (prevDepthEnabled) gl.enable(gl.DEPTH_TEST);
-    else gl.disable(gl.DEPTH_TEST);
-    if (!prevBlendEnabled) gl.disable(gl.BLEND);
-    else gl.enable(gl.BLEND);
+  renderWebGLLogRatio(context, frame, cameraUniforms, computed, renderState) {
+    const gl = context.gl;
+    if (!this.ensureWebGLLogRatioTargets(gl, renderState.densityWidth, renderState.densityHeight)) {
+      return;
+    }
+
+    this.uploadWebGLWeightTexture(
+      gl,
+      'numeratorWeightsTex',
+      'numeratorWeightsLayout',
+      'numeratorWeightsMeta',
+      computed.numeratorWeights,
+      computed.count,
+    );
+    this.uploadWebGLWeightTexture(
+      gl,
+      'denominatorWeightsTex',
+      'denominatorWeightsLayout',
+      'denominatorWeightsMeta',
+      computed.denominatorWeights,
+      computed.count,
+    );
+
+    this.renderWebGLSplatPass(
+      gl,
+      this.webgl.numeratorFbo,
+      this.webgl.numeratorWeightsTex,
+      this.webgl.numeratorWeightsLayout,
+      frame,
+      cameraUniforms,
+      computed,
+      renderState.densityWidth,
+      renderState.densityHeight,
+      renderState.bandwidthViewport,
+      renderState.positionBinding,
+    );
+    this.renderWebGLSplatPass(
+      gl,
+      this.webgl.denominatorFbo,
+      this.webgl.denominatorWeightsTex,
+      this.webgl.denominatorWeightsLayout,
+      frame,
+      cameraUniforms,
+      computed,
+      renderState.densityWidth,
+      renderState.densityHeight,
+      renderState.bandwidthViewport,
+      renderState.positionBinding,
+    );
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, context.target?.handle ?? null);
+    gl.viewport(renderState.viewport[0], renderState.viewport[1], renderState.viewportWidth, renderState.viewportHeight);
+    gl.useProgram(this.webgl.programCompositeLogRatio);
+    gl.bindVertexArray(this.webgl.vaoQuad);
+    gl.enable(gl.BLEND);
     gl.blendEquation(gl.FUNC_ADD);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.webgl.numeratorTex);
+    gl.uniform1i(this.webgl.uniforms.compositeLogRatio.u_numeratorTex, 0);
+
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.webgl.denominatorTex);
+    gl.uniform1i(this.webgl.uniforms.compositeLogRatio.u_denominatorTex, 1);
+
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this.webgl.colormapTex);
+    gl.uniform1i(this.webgl.uniforms.compositeLogRatio.u_colormapTex, 2);
+
+    gl.uniform1f(this.webgl.uniforms.compositeLogRatio.u_epsilon, this.config.epsilon);
+    gl.uniform1f(this.webgl.uniforms.compositeLogRatio.u_domainMax, Math.max(Math.abs(computed.valueDomain?.[1] ?? this.config.logRatioRange), 1e-6));
+    gl.uniform1f(this.webgl.uniforms.compositeLogRatio.u_maskThreshold, this.config.maskThreshold);
+    gl.uniform1i(this.webgl.uniforms.compositeLogRatio.u_topographic, this.config.topographic ? 1 : 0);
+    gl.uniform1f(this.webgl.uniforms.compositeLogRatio.u_contourLevels, 14.0);
+    gl.uniform1f(this.webgl.uniforms.compositeLogRatio.u_contourWidth, 0.18);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
 
   initializeWebGPU(device) {
@@ -1486,6 +1909,10 @@ export class DensityLayer extends Layer {
     });
 
     this.webgpu.compositeParamsBuffer = gpu.createBuffer({
+      size: 32,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.webgpu.compositeLogRatioParamsBuffer = gpu.createBuffer({
       size: 32,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
@@ -1508,6 +1935,7 @@ export class DensityLayer extends Layer {
 
     const splatModule = gpu.createShaderModule({ code: SPLAT_WGSL });
     const compositeModule = gpu.createShaderModule({ code: COMPOSITE_WGSL });
+    const compositeLogRatioModule = gpu.createShaderModule({ code: COMPOSITE_LOG_RATIO_WGSL });
 
     const splatLayout = gpu.createBindGroupLayout({
       entries: [
@@ -1524,6 +1952,15 @@ export class DensityLayer extends Layer {
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+      ],
+    });
+    const compositeLogRatioLayout = gpu.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
       ],
     });
 
@@ -1582,17 +2019,52 @@ export class DensityLayer extends Layer {
         depthCompare: 'always',
       },
     });
+    this.webgpu.pipelineCompositeLogRatio = gpu.createRenderPipeline({
+      layout: gpu.createPipelineLayout({ bindGroupLayouts: [compositeLogRatioLayout] }),
+      vertex: {
+        module: compositeLogRatioModule,
+        entryPoint: 'vsMain',
+        buffers: [{
+          arrayStride: 16,
+          attributes: [
+            { shaderLocation: 0, offset: 0, format: 'float32x2' },
+            { shaderLocation: 1, offset: 8, format: 'float32x2' },
+          ],
+        }],
+      },
+      fragment: {
+        module: compositeLogRatioModule,
+        entryPoint: 'fsMain',
+        targets: [{
+          format: device.format,
+          blend: {
+            color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+            alpha: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+          },
+        }],
+      },
+      primitive: { topology: 'triangle-strip' },
+      depthStencil: {
+        format: device.depthFormat ?? 'depth24plus',
+        depthWriteEnabled: false,
+        depthCompare: 'always',
+      },
+    });
 
     this.webgpu.splatLayout = splatLayout;
     this.webgpu.compositeLayout = compositeLayout;
+    this.webgpu.compositeLogRatioLayout = compositeLogRatioLayout;
     this.webgpu.ready = true;
   }
 
   destroyWebGPU() {
     this.webgpu.cameraBuffer?.destroy?.();
     this.webgpu.compositeParamsBuffer?.destroy?.();
+    this.webgpu.compositeLogRatioParamsBuffer?.destroy?.();
     this.webgpu.cornersBuffer?.destroy?.();
     this.webgpu.densityTexture?.destroy?.();
+    this.webgpu.numeratorTexture?.destroy?.();
+    this.webgpu.denominatorTexture?.destroy?.();
     this.webgpu.colormapTexture?.destroy?.();
     this.webgpu.ready = false;
   }
@@ -1615,6 +2087,34 @@ export class DensityLayer extends Layer {
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     });
     this.webgpu.densitySize = { width, height };
+    return true;
+  }
+
+  ensureWebGPULogRatioTextures(width, height) {
+    const gpu = this.device?.device;
+    if (!gpu) return false;
+    if (
+      this.webgpu.numeratorTexture
+      && this.webgpu.denominatorTexture
+      && this.webgpu.logRatioSize.width === width
+      && this.webgpu.logRatioSize.height === height
+    ) {
+      return true;
+    }
+
+    this.webgpu.numeratorTexture?.destroy?.();
+    this.webgpu.denominatorTexture?.destroy?.();
+    this.webgpu.numeratorTexture = gpu.createTexture({
+      size: { width, height, depthOrArrayLayers: 1 },
+      format: 'rgba16float',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.webgpu.denominatorTexture = gpu.createTexture({
+      size: { width, height, depthOrArrayLayers: 1 },
+      format: 'rgba16float',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.webgpu.logRatioSize = { width, height };
     return true;
   }
 
@@ -1743,6 +2243,22 @@ export class DensityLayer extends Layer {
     return { indexBuffer, positionBuffer };
   }
 
+  renderWebGPUSplatPass(context, bindGroup, targetTexture, computed) {
+    const accumulatePass = context.commandEncoder.beginRenderPass({
+      colorAttachments: [{
+        view: targetTexture.createView(),
+        clearValue: { r: 0, g: 0, b: 0, a: 0 },
+        loadOp: 'clear',
+        storeOp: 'store',
+      }],
+    });
+    accumulatePass.setPipeline(this.webgpu.pipelineSplat);
+    accumulatePass.setBindGroup(0, bindGroup);
+    accumulatePass.setVertexBuffer(0, this.webgpu.cornersBuffer);
+    accumulatePass.draw(4, computed.count, 0, 0);
+    accumulatePass.end();
+  }
+
   renderWebGPU(context, frame, cameraUniforms, computed) {
     if (!this.webgpu.ready) return;
     const gpu = context.device;
@@ -1758,7 +2274,6 @@ export class DensityLayer extends Layer {
     const densityWidth = Math.max(1, Math.floor(densityResolutionViewport.width * this.config.qualityScale));
     const densityHeight = Math.max(1, Math.floor(densityResolutionViewport.height * this.config.qualityScale));
 
-    if (!this.ensureWebGPUDensityTexture(densityWidth, densityHeight)) return;
     if (!this.ensureWebGPUColormapTexture(computed.colormapKey, computed.diverging)) return;
 
     const shared = this.resolveWebGPUPositionAndIndexBuffers(frame, computed);
@@ -1767,20 +2282,6 @@ export class DensityLayer extends Layer {
     const resourceCache = this.device?.resourceCache?.webgpu;
     if (!resourceCache) return;
     const storageUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.VERTEX;
-
-    const weightsBuffer = resourceCache.uploadBuffer(
-      gpu,
-      gpu.queue,
-      'density:node:weights',
-      computed.weights,
-      {
-        label: 'Density node weights',
-        version: `${this.version}:${this.webgpu.weightUploadVersion}`,
-        count: computed.count,
-      },
-      storageUsage,
-    );
-    this.webgpu.weightUploadVersion += 1;
 
     const cameraData = new Float32Array(24);
     cameraData.set(cameraUniforms.viewProjection, 0);
@@ -1794,52 +2295,141 @@ export class DensityLayer extends Layer {
     cameraData[23] = 0;
     gpu.queue.writeBuffer(this.webgpu.cameraBuffer, 0, cameraData);
 
-    const compositeData = new Float32Array(8);
-    compositeData[0] = this.config.weightScale;
-    compositeData[1] = computed.diverging ? 1 : 0;
-    compositeData[2] = this.config.topographic ? 1 : 0;
-    compositeData[3] = 14.0;
-    compositeData[4] = 0.18;
-    gpu.queue.writeBuffer(this.webgpu.compositeParamsBuffer, 0, compositeData);
-
-    this.webgpu.bindGroupSplat = gpu.createBindGroup({
-      layout: this.webgpu.splatLayout,
-      entries: [
-        { binding: 0, resource: { buffer: this.webgpu.cameraBuffer } },
-        { binding: 1, resource: { buffer: shared.indexBuffer } },
-        { binding: 2, resource: { buffer: shared.positionBuffer } },
-        { binding: 3, resource: { buffer: weightsBuffer } },
-      ],
-    });
-
-    this.webgpu.bindGroupComposite = gpu.createBindGroup({
-      layout: this.webgpu.compositeLayout,
-      entries: [
-        { binding: 0, resource: this.webgpu.sampler },
-        { binding: 1, resource: this.webgpu.densityTexture.createView() },
-        { binding: 2, resource: this.webgpu.colormapTexture.createView() },
-        { binding: 3, resource: { buffer: this.webgpu.compositeParamsBuffer } },
-      ],
-    });
-
     if (context.passEncoder) {
       context.passEncoder.end();
       context.passEncoder = null;
     }
+    let compositePipeline = null;
+    let compositeBindGroup = null;
 
-    const accumulatePass = context.commandEncoder.beginRenderPass({
-      colorAttachments: [{
-        view: this.webgpu.densityTexture.createView(),
-        clearValue: { r: 0, g: 0, b: 0, a: 0 },
-        loadOp: 'clear',
-        storeOp: 'store',
-      }],
-    });
-    accumulatePass.setPipeline(this.webgpu.pipelineSplat);
-    accumulatePass.setBindGroup(0, this.webgpu.bindGroupSplat);
-    accumulatePass.setVertexBuffer(0, this.webgpu.cornersBuffer);
-    accumulatePass.draw(4, computed.count, 0, 0);
-    accumulatePass.end();
+    if (computed.mode === 'logRatio') {
+      if (!this.ensureWebGPULogRatioTextures(densityWidth, densityHeight)) {
+        return;
+      }
+
+      const numeratorBuffer = resourceCache.uploadBuffer(
+        gpu,
+        gpu.queue,
+        'density:logratio:numerator',
+        computed.numeratorWeights,
+        {
+          label: 'Density log-ratio numerator weights',
+          version: `${this.version}:logratio:numerator:${this.webgpu.weightUploadVersion}`,
+          count: computed.count,
+        },
+        storageUsage,
+      );
+      this.webgpu.weightUploadVersion += 1;
+
+      const denominatorBuffer = resourceCache.uploadBuffer(
+        gpu,
+        gpu.queue,
+        'density:logratio:denominator',
+        computed.denominatorWeights,
+        {
+          label: 'Density log-ratio denominator weights',
+          version: `${this.version}:logratio:denominator:${this.webgpu.weightUploadVersion}`,
+          count: computed.count,
+        },
+        storageUsage,
+      );
+      this.webgpu.weightUploadVersion += 1;
+
+      const numeratorBindGroup = gpu.createBindGroup({
+        layout: this.webgpu.splatLayout,
+        entries: [
+          { binding: 0, resource: { buffer: this.webgpu.cameraBuffer } },
+          { binding: 1, resource: { buffer: shared.indexBuffer } },
+          { binding: 2, resource: { buffer: shared.positionBuffer } },
+          { binding: 3, resource: { buffer: numeratorBuffer } },
+        ],
+      });
+      const denominatorBindGroup = gpu.createBindGroup({
+        layout: this.webgpu.splatLayout,
+        entries: [
+          { binding: 0, resource: { buffer: this.webgpu.cameraBuffer } },
+          { binding: 1, resource: { buffer: shared.indexBuffer } },
+          { binding: 2, resource: { buffer: shared.positionBuffer } },
+          { binding: 3, resource: { buffer: denominatorBuffer } },
+        ],
+      });
+
+      this.renderWebGPUSplatPass(context, numeratorBindGroup, this.webgpu.numeratorTexture, computed);
+      this.renderWebGPUSplatPass(context, denominatorBindGroup, this.webgpu.denominatorTexture, computed);
+
+      const compositeData = new Float32Array(8);
+      compositeData[0] = this.config.epsilon;
+      compositeData[1] = Math.max(Math.abs(computed.valueDomain?.[1] ?? this.config.logRatioRange), 1e-6);
+      compositeData[2] = this.config.maskThreshold;
+      compositeData[3] = this.config.topographic ? 1 : 0;
+      compositeData[4] = 14.0;
+      compositeData[5] = 0.18;
+      gpu.queue.writeBuffer(this.webgpu.compositeLogRatioParamsBuffer, 0, compositeData);
+
+      this.webgpu.bindGroupCompositeLogRatio = gpu.createBindGroup({
+        layout: this.webgpu.compositeLogRatioLayout,
+        entries: [
+          { binding: 0, resource: this.webgpu.sampler },
+          { binding: 1, resource: this.webgpu.numeratorTexture.createView() },
+          { binding: 2, resource: this.webgpu.denominatorTexture.createView() },
+          { binding: 3, resource: this.webgpu.colormapTexture.createView() },
+          { binding: 4, resource: { buffer: this.webgpu.compositeLogRatioParamsBuffer } },
+        ],
+      });
+
+      compositePipeline = this.webgpu.pipelineCompositeLogRatio;
+      compositeBindGroup = this.webgpu.bindGroupCompositeLogRatio;
+    } else {
+      if (!this.ensureWebGPUDensityTexture(densityWidth, densityHeight)) {
+        return;
+      }
+
+      const weightsBuffer = resourceCache.uploadBuffer(
+        gpu,
+        gpu.queue,
+        'density:node:weights',
+        computed.weights,
+        {
+          label: 'Density node weights',
+          version: `${this.version}:${this.webgpu.weightUploadVersion}`,
+          count: computed.count,
+        },
+        storageUsage,
+      );
+      this.webgpu.weightUploadVersion += 1;
+
+      this.webgpu.bindGroupSplat = gpu.createBindGroup({
+        layout: this.webgpu.splatLayout,
+        entries: [
+          { binding: 0, resource: { buffer: this.webgpu.cameraBuffer } },
+          { binding: 1, resource: { buffer: shared.indexBuffer } },
+          { binding: 2, resource: { buffer: shared.positionBuffer } },
+          { binding: 3, resource: { buffer: weightsBuffer } },
+        ],
+      });
+      this.renderWebGPUSplatPass(context, this.webgpu.bindGroupSplat, this.webgpu.densityTexture, computed);
+
+      const compositeData = new Float32Array(8);
+      compositeData[0] = this.config.weightScale;
+      compositeData[1] = computed.diverging ? 1 : 0;
+      compositeData[2] = this.config.topographic ? 1 : 0;
+      compositeData[3] = 14.0;
+      compositeData[4] = 0.18;
+      gpu.queue.writeBuffer(this.webgpu.compositeParamsBuffer, 0, compositeData);
+
+      this.webgpu.bindGroupComposite = gpu.createBindGroup({
+        layout: this.webgpu.compositeLayout,
+        entries: [
+          { binding: 0, resource: this.webgpu.sampler },
+          { binding: 1, resource: this.webgpu.densityTexture.createView() },
+          { binding: 2, resource: this.webgpu.colormapTexture.createView() },
+          { binding: 3, resource: { buffer: this.webgpu.compositeParamsBuffer } },
+        ],
+      });
+
+      compositePipeline = this.webgpu.pipelineComposite;
+      compositeBindGroup = this.webgpu.bindGroupComposite;
+    }
 
     const compositePass = context.commandEncoder.beginRenderPass({
       colorAttachments: [{
@@ -1862,8 +2452,9 @@ export class DensityLayer extends Layer {
       compositePass.setViewport(viewport.x, viewport.y, viewport.width, viewport.height, 0, 1);
     }
 
-    compositePass.setPipeline(this.webgpu.pipelineComposite);
-    compositePass.setBindGroup(0, this.webgpu.bindGroupComposite);
+    compositePass.setPipeline(compositePipeline);
+    compositePass.setBindGroup(0, compositeBindGroup);
+
     compositePass.setVertexBuffer(0, context.quad);
     compositePass.draw(4, 1, 0, 0);
 

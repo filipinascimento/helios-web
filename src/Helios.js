@@ -854,9 +854,13 @@ const DENSITY_DEFAULTS = Object.freeze({
   weightScale: 398.1071705534973,
   property: 'Uniform',
   compareProperty: 'None',
+  comparisonMode: 'difference',
   normalizeVs: false,
+  epsilon: 1e-6,
+  logRatioRange: 3,
+  maskThreshold: 0,
   colormap: 'interpolateOrRd',
-  divergingColormap: 'interpolatePrinsenvlag',
+  divergingColormap: 'cmasher:prinsenvlag',
 });
 
 const EDGE_ADAPTIVE_QUALITY_DEFAULTS = Object.freeze({
@@ -1974,6 +1978,9 @@ export class Helios extends EventTarget {
     const densityNormalizeVs = options.shallNormalizeVsDensity === true
       || options.vsDensityNormalize === true
       || options.densityNormalizeVs === true;
+    const densityComparisonMode = typeof options.densityComparisonMode === 'string' && options.densityComparisonMode.trim()
+      ? options.densityComparisonMode.trim()
+      : DENSITY_DEFAULTS.comparisonMode;
     this._densityConfig = {
       ...DENSITY_DEFAULTS,
       enabled: densityEnabled,
@@ -1986,7 +1993,23 @@ export class Helios extends EventTarget {
       compareProperty: typeof options.vsDensityProperty === 'string' && options.vsDensityProperty.trim()
         ? options.vsDensityProperty.trim()
         : DENSITY_DEFAULTS.compareProperty,
+      comparisonMode: densityComparisonMode === 'logRatio' ? 'logRatio' : 'difference',
       normalizeVs: densityNormalizeVs,
+      epsilon: clamp(
+        toFiniteNumber(options.densityEpsilon ?? options.densityLogRatioEpsilon, DENSITY_DEFAULTS.epsilon),
+        1e-12,
+        1,
+      ),
+      logRatioRange: clamp(
+        toFiniteNumber(options.densityLogRatioRange, DENSITY_DEFAULTS.logRatioRange),
+        1e-3,
+        1e3,
+      ),
+      maskThreshold: clamp(
+        toFiniteNumber(options.densityMaskThreshold, DENSITY_DEFAULTS.maskThreshold),
+        0,
+        1,
+      ),
       bandwidth: clamp(
         toFiniteNumber(options.densityBandwidth, DENSITY_DEFAULTS.bandwidth),
         0.05,
@@ -2004,7 +2027,7 @@ export class Helios extends EventTarget {
         ? options.densityDivergingColormap.trim()
         : DENSITY_DEFAULTS.divergingColormap,
     };
-    this._densityRuntime = { diverging: false };
+    this._densityRuntime = { diverging: false, valueDomain: null };
     this._densityLayer = null;
     this._edgeAdaptiveQualityConfig = normalizeEdgeAdaptiveQualityConfig(
       EDGE_ADAPTIVE_QUALITY_DEFAULTS,
@@ -6264,16 +6287,18 @@ export class Helios extends EventTarget {
   density(options) {
     if (arguments.length === 0) {
       const config = this._densityConfig ?? DENSITY_DEFAULTS;
-      const diverging = this._densityRuntime?.diverging === true;
+      const diverging = this._densityRuntime?.diverging === true || config.comparisonMode === 'logRatio';
       return {
         ...config,
         diverging,
+        valueDomain: Array.isArray(this._densityRuntime?.valueDomain) ? [...this._densityRuntime.valueDomain] : null,
         activeColormap: diverging ? config.divergingColormap : config.colormap,
       };
     }
 
     if (options == null || options === false) {
       this._densityConfig = { ...this._densityConfig, enabled: false };
+      this._densityRuntime = { ...this._densityRuntime, valueDomain: null };
       this._applyDensityConfigToLayer();
       this.scheduler?.requestRender?.();
       return this;
@@ -6331,6 +6356,27 @@ export class Helios extends EventTarget {
     if (Object.prototype.hasOwnProperty.call(options, 'shallNormalizeVsDensity')) {
       next.normalizeVs = options.shallNormalizeVsDensity === true;
     }
+    if (Object.prototype.hasOwnProperty.call(options, 'comparisonMode')) {
+      next.comparisonMode = options.comparisonMode === 'logRatio' ? 'logRatio' : 'difference';
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'epsilon')) {
+      next.epsilon = clamp(toFiniteNumber(options.epsilon, next.epsilon), 1e-12, 1);
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'densityEpsilon')) {
+      next.epsilon = clamp(toFiniteNumber(options.densityEpsilon, next.epsilon), 1e-12, 1);
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'logRatioRange')) {
+      next.logRatioRange = clamp(toFiniteNumber(options.logRatioRange, next.logRatioRange), 1e-3, 1e3);
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'densityLogRatioRange')) {
+      next.logRatioRange = clamp(toFiniteNumber(options.densityLogRatioRange, next.logRatioRange), 1e-3, 1e3);
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'maskThreshold')) {
+      next.maskThreshold = clamp(toFiniteNumber(options.maskThreshold, next.maskThreshold), 0, 1);
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'densityMaskThreshold')) {
+      next.maskThreshold = clamp(toFiniteNumber(options.densityMaskThreshold, next.maskThreshold), 0, 1);
+    }
     if (Object.prototype.hasOwnProperty.call(options, 'colormap') && typeof options.colormap === 'string') {
       const trimmed = options.colormap.trim();
       if (trimmed) next.colormap = trimmed;
@@ -6349,6 +6395,9 @@ export class Helios extends EventTarget {
     }
 
     this._densityConfig = next;
+    if (next.comparisonMode !== 'logRatio') {
+      this._densityRuntime = { ...this._densityRuntime, valueDomain: null };
+    }
     this._applyDensityConfigToLayer();
     this.scheduler?.requestRender?.();
     return this;

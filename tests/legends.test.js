@@ -61,6 +61,35 @@ test('deriveLegendItems includes node color and density legends, and suppresses 
   assert.equal(items.find((item) => item.kind === 'density')?.tickLabels?.join('|'), 'baseline|0|weight');
 });
 
+test('deriveLegendItems uses a real numeric domain for log-ratio density legends', () => {
+  const items = deriveLegendItems({
+    nodeChannels: new Map(),
+    edgeChannels: new Map(),
+    densityConfig: {
+      enabled: true,
+      property: 'signal',
+      compareProperty: 'baseline',
+      comparisonMode: 'logRatio',
+      logRatioRange: 2.5,
+      colormap: 'interpolateInferno',
+      divergingColormap: 'interpolateRdBu',
+    },
+    densityRuntime: {
+      diverging: true,
+      valueDomain: [-2.5, 2.5],
+    },
+    visualConfig: null,
+    config: { showDensity: true },
+  });
+
+  const densityLegend = items.find((item) => item.kind === 'density');
+  assert.ok(densityLegend);
+  assert.equal(densityLegend.title, 'signal log ratio vs baseline');
+  assert.deepEqual(densityLegend.domain, [-2.5, 2.5]);
+  assert.deepEqual(densityLegend.ticks, [-2.5, 0, 2.5]);
+  assert.deepEqual(densityLegend.tickLabels, ['-3', '0', '3']);
+});
+
 test('deriveLegendItems formats continuous tick labels without malformed zero/exponent output', () => {
   const items = deriveLegendItems({
     nodeChannels: new Map([

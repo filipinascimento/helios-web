@@ -5,6 +5,7 @@ import { ensureDefaultStyles } from './style/defaultStyles.js';
 import { defineHeliosWebComponents } from './web-components/defineHeliosWebComponents.js';
 import { createSliderRow } from './controls/createSliderRow.js';
 import { createAlignedRowEl } from './controls/createAlignedRowEl.js';
+import { createFpsThrottle } from './controls/createFpsThrottle.js';
 import { createTooltipManager } from './controls/createTooltipManager.js';
 import { createToggleControl } from './controls/createToggleControl.js';
 import { createSelectControl } from './controls/createSelectControl.js';
@@ -4925,11 +4926,20 @@ export class HeliosUI {
       };
 
       set(value);
+      const commitSliderValue = createFpsThrottle((nextValue) => {
+        onCommit?.(nextValue);
+      });
 
       slider.addEventListener('input', () => {
         input.value = String(slider.value);
         updateSliderVisual(slider);
-        onCommit?.(slider.value);
+        commitSliderValue(slider.value);
+      });
+      slider.addEventListener('change', () => {
+        input.value = String(slider.value);
+        updateSliderVisual(slider);
+        commitSliderValue(slider.value);
+        commitSliderValue.flush();
       });
       input.addEventListener('change', () => {
         set(input.value);
@@ -5003,7 +5013,7 @@ export class HeliosUI {
         aInput.value = String(orderedLo);
         bInput.value = String(orderedHi);
         setVisual(orderedLo, orderedHi);
-        onChange?.([orderedLo, orderedHi]);
+        emitRangeChange(orderedLo, orderedHi);
       };
 
       const seedLo = clampTo(value?.[0] ?? min) ?? min;
@@ -5013,6 +5023,9 @@ export class HeliosUI {
       aInput.value = String(lo0);
       bInput.value = String(hi0);
       setVisual(lo0, hi0);
+      const emitRangeChange = createFpsThrottle((lo, hi) => {
+        onChange?.([lo, hi]);
+      });
 
       const commit = (source) => {
         const a = clampTo(aInput.value);
@@ -5024,7 +5037,7 @@ export class HeliosUI {
         if (source === 'a' && a > hi) aInput.value = String(hi);
         if (source === 'b' && b < lo) bInput.value = String(lo);
         setVisual(lo, hi);
-        onChange?.([lo, hi]);
+        emitRangeChange(lo, hi);
       };
 
       // Dragging the highlighted range pans both thumbs together.
@@ -5084,6 +5097,7 @@ export class HeliosUI {
           window.removeEventListener('pointermove', onMove);
           window.removeEventListener('pointerup', onUp);
           window.removeEventListener('pointercancel', onUp);
+          emitRangeChange.flush();
         };
 
         window.addEventListener('pointermove', onMove);

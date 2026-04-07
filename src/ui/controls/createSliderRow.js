@@ -1,3 +1,5 @@
+import { createFpsThrottle } from './createFpsThrottle.js';
+
 function formatNumber(value, precision = 3) {
   const v = Number(value);
   if (!Number.isFinite(v)) return String(value);
@@ -203,12 +205,24 @@ export function createSliderRow(attribute, options = {}) {
   };
 
   const unsub = attribute.subscribe(updateFromAttribute);
+  const writeSliderValue = createFpsThrottle((nextValue) => {
+    const v = Number(nextValue);
+    if (!Number.isFinite(v)) return;
+    attribute.write(v, { source: 'ui', event: 'input' });
+  });
 
   slider.addEventListener('input', () => {
     const v = Number(slider.value);
     if (!Number.isFinite(v)) return;
     updateSliderVisual();
-    attribute.write(v, { source: 'ui', event: 'input' });
+    writeSliderValue(v);
+  });
+  slider.addEventListener('change', () => {
+    const v = Number(slider.value);
+    if (!Number.isFinite(v)) return;
+    updateSliderVisual();
+    writeSliderValue(v);
+    writeSliderValue.flush();
   });
 
   const commitTypedValue = (eventName) => {
@@ -234,6 +248,7 @@ export function createSliderRow(attribute, options = {}) {
     element: row,
     destroy: () => {
       unsub();
+      writeSliderValue.cancel();
       if (hideTooltipTimer != null) window.clearTimeout(hideTooltipTimer);
       removeTooltipListeners?.();
       tooltip?.remove?.();

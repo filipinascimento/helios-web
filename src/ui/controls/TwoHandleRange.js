@@ -1,3 +1,5 @@
+import { createFpsThrottle } from './createFpsThrottle.js';
+
 export class TwoHandleRange {
   constructor({ min, max, value, step, onChange, allowRangeDrag = true }) {
     this.element = document.createElement('div');
@@ -53,6 +55,9 @@ export class TwoHandleRange {
     aInput.value = String(lo0);
     bInput.value = String(hi0);
     setVisual(lo0, hi0);
+    const emitChange = createFpsThrottle((lo, hi) => {
+      onChange?.([lo, hi]);
+    });
 
     const commit = (source) => {
       const a = clampTo(aInput.value);
@@ -63,7 +68,12 @@ export class TwoHandleRange {
       if (source === 'a' && a > hi) aInput.value = String(hi);
       if (source === 'b' && b < lo) bInput.value = String(lo);
       setVisual(lo, hi);
-      onChange?.([lo, hi]);
+      emitChange(lo, hi);
+    };
+
+    const flushCommit = (source) => {
+      commit(source);
+      emitChange.flush();
     };
 
     // Dragging the highlighted range pans both thumbs together.
@@ -118,32 +128,42 @@ export class TwoHandleRange {
         aInput.value = String(nextLo);
         bInput.value = String(nextHi);
         setVisual(nextLo, nextHi);
-        onChange?.([nextLo, nextHi]);
+        emitChange(nextLo, nextHi);
       };
 
       const onUp = () => {
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onUp);
+        emitChange.flush();
       };
 
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
     };
 
     const onAInput = () => commit('a');
     const onBInput = () => commit('b');
+    const onAChange = () => flushCommit('a');
+    const onBChange = () => flushCommit('b');
     if (allowRangeDrag) {
       rangeEl.addEventListener('pointerdown', onRangePointerDown);
     }
     aInput.addEventListener('input', onAInput);
     bInput.addEventListener('input', onBInput);
+    aInput.addEventListener('change', onAChange);
+    bInput.addEventListener('change', onBChange);
 
     this._destroy = () => {
+      emitChange.cancel();
       if (allowRangeDrag) {
         rangeEl.removeEventListener('pointerdown', onRangePointerDown);
       }
       aInput.removeEventListener('input', onAInput);
       bInput.removeEventListener('input', onBInput);
+      aInput.removeEventListener('change', onAChange);
+      bInput.removeEventListener('change', onBChange);
       this.element.remove();
     };
 

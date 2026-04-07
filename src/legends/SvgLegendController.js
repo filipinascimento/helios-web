@@ -640,24 +640,43 @@ export function deriveLegendItems({ nodeChannels, edgeChannels, densityConfig, d
   if (config?.showEdgeWidth === true) pushScalarLegend('edgeWidth', edgeChannels.get('width'), 'Edge Width', 'line');
 
   if (config?.showDensity !== false && densityConfig?.enabled === true) {
-    const diverging = densityRuntime?.diverging === true;
-    const lowLabel = diverging ? String(densityConfig.compareProperty ?? '-') : '0';
+    const logRatioMode = densityConfig?.comparisonMode === 'logRatio';
+    const diverging = densityRuntime?.diverging === true || logRatioMode;
+    const baselineLabel = densityConfig.compareProperty && densityConfig.compareProperty !== 'None'
+      ? String(densityConfig.compareProperty)
+      : 'Uniform';
+    const lowLabel = diverging ? baselineLabel : '0';
     const highLabel = diverging ? String(densityConfig.property ?? '+') : '+';
+    const densityDomain = logRatioMode
+      ? (
+        Array.isArray(densityRuntime?.valueDomain) && densityRuntime.valueDomain.length >= 2
+          ? [Number(densityRuntime.valueDomain[0]), Number(densityRuntime.valueDomain[1])]
+          : [-Math.abs(Number(densityConfig.logRatioRange ?? 3)), Math.abs(Number(densityConfig.logRatioRange ?? 3))]
+      )
+      : (diverging ? [-1, 1] : [0, 1]);
+    const ticks = logRatioMode
+      ? continuousTickValues(densityDomain, { divergent: true })
+      : (diverging ? [-1, 0, 1] : [0, 1]);
+    const tickLabels = logRatioMode
+      ? continuousTickLabels(ticks)
+      : (diverging ? [lowLabel, '0', highLabel] : ['0', highLabel]);
     items.push({
       kind: 'density',
       legendType: 'continuous',
       title: resolveLegendTitle(
         config,
         'density',
-        diverging
-          ? `${densityConfig.property ?? 'Density'} vs ${densityConfig.compareProperty ?? ''}`.trim()
+        logRatioMode
+          ? `${densityConfig.property ?? 'Density'} log ratio vs ${baselineLabel}`.trim()
+          : diverging
+            ? `${densityConfig.property ?? 'Density'} vs ${densityConfig.compareProperty ?? ''}`.trim()
           : String(densityConfig.property ?? 'Density'),
       ),
       colormap: diverging ? (densityConfig.divergingColormap ?? densityConfig.colormap) : densityConfig.colormap,
-      domain: diverging ? [-1, 1] : [0, 1],
+      domain: densityDomain,
       divergent: diverging,
-      ticks: diverging ? [-1, 0, 1] : [0, 1],
-      tickLabels: diverging ? [lowLabel, '0', highLabel] : ['0', highLabel],
+      ticks,
+      tickLabels,
     });
   }
 

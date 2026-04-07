@@ -277,6 +277,59 @@ test.describe('density map panel', () => {
     expect(errors).toHaveLength(0);
   });
 
+  test('switches the density panel into log-ratio mode without breaking WebGL rendering', async ({ page }) => {
+    const errors = captureBrowserErrors(page);
+    await page.goto('/tests/fixtures/demo.html?renderer=webgl&layout=none&nodes=120&mappers=1');
+    const diagnostics = await waitForDiagnostics(page);
+    expect(diagnostics.error ?? null).toBeNull();
+    expect(String(diagnostics.renderer).toLowerCase()).toContain('webgl');
+
+    const panel = await enableDensityFromPanel(page);
+    const densityTab = panel.locator('.helios-ui-tabpanel[data-tab-id="density"][data-active="true"]').first();
+    await expect(densityTab).toBeVisible();
+
+    const propertyRow = densityTab.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'Density' }),
+    }).first();
+    await expect(propertyRow).toBeVisible();
+    await propertyRow.locator('select').selectOption('Degree');
+
+    const modeRow = densityTab.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'Mode' }),
+    }).first();
+    await expect(modeRow).toBeVisible();
+    await modeRow.locator('select').selectOption('logRatio');
+
+    await expect.poll(
+      () => page.evaluate(() => {
+        const state = window.__helios?.density?.() ?? null;
+        return state
+          ? {
+              comparisonMode: state.comparisonMode,
+              diverging: state.diverging,
+              valueDomain: state.valueDomain,
+            }
+          : null;
+      }),
+      { timeout: 5000 },
+    ).toEqual({
+      comparisonMode: 'logRatio',
+      diverging: true,
+      valueDomain: [-3, 3],
+    });
+
+    const weightRow = densityTab.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'Weight' }),
+    }).first();
+    const epsilonRow = densityTab.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'Epsilon' }),
+    }).first();
+    await expect(weightRow).toHaveCSS('opacity', '0.55');
+    await expect(epsilonRow).toHaveCSS('opacity', '1');
+
+    expect(errors).toHaveLength(0);
+  });
+
   test('enables density in WebGPU renderer @webgpu', async ({ page }) => {
     const errors = captureBrowserErrors(page);
     await page.goto('/tests/fixtures/demo.html?renderer=webgpu&layout=none&nodes=120&mappers=1');
@@ -285,7 +338,40 @@ test.describe('density map panel', () => {
     const renderer = String(diagnostics.renderer).toLowerCase();
     expect(renderer).toContain('webgpu');
 
-    await enableDensityFromPanel(page);
+    const panel = await enableDensityFromPanel(page);
+    const densityTab = panel.locator('.helios-ui-tabpanel[data-tab-id="density"][data-active="true"]').first();
+    await expect(densityTab).toBeVisible();
+
+    const propertyRow = densityTab.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'Density' }),
+    }).first();
+    await expect(propertyRow).toBeVisible();
+    await propertyRow.locator('select').selectOption('Degree');
+
+    const modeRow = densityTab.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'Mode' }),
+    }).first();
+    await expect(modeRow).toBeVisible();
+    await modeRow.locator('select').selectOption('logRatio');
+
+    await expect.poll(
+      () => page.evaluate(() => {
+        const state = window.__helios?.density?.() ?? null;
+        return state
+          ? {
+              comparisonMode: state.comparisonMode,
+              diverging: state.diverging,
+              valueDomain: state.valueDomain,
+            }
+          : null;
+      }),
+      { timeout: 5000 },
+    ).toEqual({
+      comparisonMode: 'logRatio',
+      diverging: true,
+      valueDomain: [-3, 3],
+    });
+
     expect(errors).toHaveLength(0);
   });
 });
