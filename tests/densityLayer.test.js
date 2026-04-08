@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DensityLayer, resolveDensityBandwidthViewport } from '../src/rendering/engine/DensityLayer.js';
+import {
+  DensityLayer,
+  resolveDensityBandwidthViewport,
+  resolveLogRatioSupportWindow,
+} from '../src/rendering/engine/DensityLayer.js';
 
 test('resolveDensityBandwidthViewport prefers the logical figure viewport over the raster target size', () => {
   const resolved = resolveDensityBandwidthViewport(
@@ -30,6 +34,21 @@ test('resolveDensityBandwidthViewport falls back to the camera viewport in norma
   );
 
   assert.deepEqual(resolved, { width: 900, height: 600 });
+});
+
+test('resolveLogRatioSupportWindow keeps supported regions raw and only corrects the epsilon-scale tail', () => {
+  assert.deepEqual(resolveLogRatioSupportWindow(1e-6, 0), {
+    floor: 128e-6,
+    ceil: 512e-6,
+  });
+  assert.deepEqual(resolveLogRatioSupportWindow(1e-6, 1e-3), {
+    floor: 1e-3,
+    ceil: 2e-3,
+  });
+  assert.deepEqual(resolveLogRatioSupportWindow(1e-6, 1e-3, false), {
+    floor: 0,
+    ceil: 0,
+  });
 });
 
 test('DensityLayer keeps difference mode normalization behavior intact', () => {
@@ -140,6 +159,19 @@ test('DensityLayer accepts an explicit switch from log-ratio back to difference'
   layer.setConfig({ comparisonMode: 'difference' });
   assert.equal(layer.config.comparisonMode, 'difference');
   assert.deepEqual(layer.runtime.valueDomain, null);
+});
+
+test('DensityLayer preserves an explicit log-ratio support correction toggle', () => {
+  const layer = new DensityLayer();
+
+  layer.setConfig({
+    property: 'Degree',
+    compareProperty: 'Uniform',
+    comparisonMode: 'logRatio',
+    logRatioSupportCorrection: false,
+  });
+
+  assert.equal(layer.config.logRatioSupportCorrection, false);
 });
 
 test('DensityLayer difference mode keeps using the sequential colormap key', () => {

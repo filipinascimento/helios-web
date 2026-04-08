@@ -859,6 +859,7 @@ const DENSITY_DEFAULTS = Object.freeze({
   epsilon: 1e-6,
   logRatioRange: 3,
   maskThreshold: 0,
+  logRatioSupportCorrection: true,
   colormap: 'interpolateOrRd',
   logRatioColormap: 'cmasher:prinsenvlag',
   divergingColormap: 'cmasher:prinsenvlag',
@@ -2048,6 +2049,8 @@ export class Helios extends EventTarget {
         0,
         1,
       ),
+      logRatioSupportCorrection: options.densityLogRatioSupportCorrection !== false
+        && options.logRatioSupportCorrection !== false,
       bandwidth: clamp(
         toFiniteNumber(options.densityBandwidth, DENSITY_DEFAULTS.bandwidth),
         0.05,
@@ -6422,6 +6425,12 @@ export class Helios extends EventTarget {
     }
     if (Object.prototype.hasOwnProperty.call(options, 'densityMaskThreshold')) {
       next.maskThreshold = clamp(toFiniteNumber(options.densityMaskThreshold, next.maskThreshold), 0, 1);
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'logRatioSupportCorrection')) {
+      next.logRatioSupportCorrection = options.logRatioSupportCorrection !== false;
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'densityLogRatioSupportCorrection')) {
+      next.logRatioSupportCorrection = options.densityLogRatioSupportCorrection !== false;
     }
     if (Object.prototype.hasOwnProperty.call(options, 'colormap') && typeof options.colormap === 'string') {
       const trimmed = options.colormap.trim();

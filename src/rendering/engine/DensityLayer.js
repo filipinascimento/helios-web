@@ -67,6 +67,24 @@ function matrixHasFiniteValues(matrix) {
   return true;
 }
 
+const LOG_RATIO_AUTO_SUPPORT_FLOOR_MULTIPLIER = 128;
+const LOG_RATIO_AUTO_SUPPORT_CEIL_MULTIPLIER = 512;
+
+export function resolveLogRatioSupportWindow(epsilon, maskThreshold = 0, enabled = true) {
+  if (enabled !== true) {
+    return { floor: 0, ceil: 0 };
+  }
+  const safeEpsilon = Math.max(toFiniteNumber(epsilon, 1e-6), 1e-12);
+  const explicitFloor = Math.max(toFiniteNumber(maskThreshold, 0), 0);
+  const autoFloor = safeEpsilon * LOG_RATIO_AUTO_SUPPORT_FLOOR_MULTIPLIER;
+  const floor = Math.max(explicitFloor, autoFloor);
+  const ceil = Math.max(
+    floor * 2,
+    safeEpsilon * LOG_RATIO_AUTO_SUPPORT_CEIL_MULTIPLIER,
+  );
+  return { floor, ceil };
+}
+
 export function resolveDensityBandwidthViewport(context, cameraUniforms, fallbackWidth = 1, fallbackHeight = 1) {
   const cameraViewport = cameraUniforms?.viewport ?? null;
   const exportViewport = context?.target?.exportFigureLogicalViewport ?? null;
@@ -252,7 +270,9 @@ uniform sampler2D u_denominatorTex;
 uniform sampler2D u_colormapTex;
 uniform float u_epsilon;
 uniform float u_domainMax;
-uniform float u_maskThreshold;
+uniform float u_supportFloor;
+uniform float u_supportCeil;
+uniform int u_supportCorrection;
 uniform int u_topographic;
 uniform float u_contourLevels;
 uniform float u_contourWidth;
@@ -261,21 +281,17 @@ out vec4 fragColor;
 void main() {
   float numerator = texture(u_numeratorTex, v_uv).r;
   float denominator = texture(u_denominatorTex, v_uv).r;
-  float support = max(numerator, denominator);
+  float support = numerator + denominator;
   float safeDomain = max(u_domainMax, 1e-6);
+  float safeSupportFloor = max(u_supportFloor, 0.0);
+  float safeSupportCeil = max(u_supportCeil, safeSupportFloor + 1e-9);
   float raw = log((numerator + u_epsilon) / (denominator + u_epsilon));
-  float s = clamp(raw / safeDomain, -1.0, 1.0);
+  float supportWeight = u_supportCorrection == 1
+    ? smoothstep(safeSupportFloor, safeSupportCeil, support)
+    : 1.0;
+  float s = clamp(raw / safeDomain, -1.0, 1.0) * supportWeight;
   float t = s * 0.5 + 0.5;
   float alpha = abs(s);
-
-  if (u_maskThreshold > 0.0) {
-    if (support <= u_maskThreshold) {
-      fragColor = vec4(0.0);
-      return;
-    }
-    float feather = max(u_maskThreshold * 0.25, 1e-9);
-    alpha *= clamp((support - u_maskThreshold) / feather, 0.0, 1.0);
-  }
 
   vec4 color = texture(u_colormapTex, vec2(t, 0.5));
 
@@ -467,8 +483,8 @@ fn fsMain(input : VSOut) -> @location(0) vec4<f32> {
 
 const COMPOSITE_LOG_RATIO_WGSL = /* wgsl */ `
 struct LogRatioCompositeParams {
-  values : vec4<f32>, // x epsilon, y domainMax, z maskThreshold, w topographicFlag
-  values2 : vec4<f32>, // x contourLevels, y contourWidth
+  values : vec4<f32>, // x epsilon, y domainMax, z supportFloor, w topographicFlag
+  values2 : vec4<f32>, // x contourLevels, y contourWidth, z supportCeil, w supportCorrectionFlag
 };
 
 struct VSOut {
@@ -495,25 +511,19 @@ fn fsMain(input : VSOut) -> @location(0) vec4<f32> {
   let uvFlipped = vec2<f32>(input.uv.x, 1.0 - input.uv.y);
   let numerator = textureSampleLevel(numeratorTexture, densitySampler, uvFlipped, 0.0).r;
   let denominator = textureSampleLevel(denominatorTexture, densitySampler, uvFlipped, 0.0).r;
-  let support = max(numerator, denominator);
+  let support = numerator + denominator;
   let epsilon = max(params.values.x, 1e-12);
   let domainMax = max(params.values.y, 1e-6);
-  let maskThreshold = max(params.values.z, 0.0);
+  let supportFloor = max(params.values.z, 0.0);
+  let supportCeil = max(params.values2.z, supportFloor + 1e-9);
+  let supportCorrection = params.values2.w > 0.5;
   let topographic = params.values.w > 0.5;
 
-  if (maskThreshold > 0.0 && support <= maskThreshold) {
-    return vec4<f32>(0.0);
-  }
-
   let raw = log((numerator + epsilon) / (denominator + epsilon));
-  let s = clamp(raw / domainMax, -1.0, 1.0);
+  let supportWeight = select(1.0, smoothstep(supportFloor, supportCeil, support), supportCorrection);
+  let s = clamp(raw / domainMax, -1.0, 1.0) * supportWeight;
   let t = s * 0.5 + 0.5;
   var alpha = abs(s);
-
-  if (maskThreshold > 0.0) {
-    let feather = max(maskThreshold * 0.25, 1e-9);
-    alpha *= clamp((support - maskThreshold) / feather, 0.0, 1.0);
-  }
 
   var color = textureSampleLevel(colormapTexture, densitySampler, vec2<f32>(t, 0.5), 0.0);
 
@@ -573,6 +583,7 @@ function defaultDensityConfig() {
     epsilon: 1e-6,
     logRatioRange: 3,
     maskThreshold: 0,
+    logRatioSupportCorrection: true,
     colormap: 'interpolateOrRd',
     logRatioColormap: 'cmasher:prinsenvlag',
     divergingColormap: 'cmasher:prinsenvlag',
@@ -704,6 +715,7 @@ export class DensityLayer extends Layer {
     merged.enabled = merged.enabled === true;
     merged.topographic = merged.topographic === true;
     merged.normalizeVs = merged.normalizeVs === true;
+    merged.logRatioSupportCorrection = merged.logRatioSupportCorrection !== false;
     merged.scaleWithZoom = merged.scaleWithZoom === true;
     merged.comparisonMode = normalizeComparisonMode(merged.comparisonMode, this.config.comparisonMode);
     merged.qualityScale = clamp(toFiniteNumber(merged.qualityScale, this.config.qualityScale), 0.03, 1.0);
@@ -1274,7 +1286,9 @@ export class DensityLayer extends Layer {
       u_colormapTex: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_colormapTex'),
       u_epsilon: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_epsilon'),
       u_domainMax: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_domainMax'),
-      u_maskThreshold: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_maskThreshold'),
+      u_supportFloor: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_supportFloor'),
+      u_supportCeil: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_supportCeil'),
+      u_supportCorrection: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_supportCorrection'),
       u_topographic: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_topographic'),
       u_contourLevels: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_contourLevels'),
       u_contourWidth: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_contourWidth'),
@@ -1917,9 +1931,16 @@ export class DensityLayer extends Layer {
     gl.bindTexture(gl.TEXTURE_2D, this.webgl.colormapTex);
     gl.uniform1i(this.webgl.uniforms.compositeLogRatio.u_colormapTex, 2);
 
+    const supportWindow = resolveLogRatioSupportWindow(
+      this.config.epsilon,
+      this.config.maskThreshold,
+      this.config.logRatioSupportCorrection,
+    );
     gl.uniform1f(this.webgl.uniforms.compositeLogRatio.u_epsilon, this.config.epsilon);
     gl.uniform1f(this.webgl.uniforms.compositeLogRatio.u_domainMax, Math.max(Math.abs(computed.valueDomain?.[1] ?? this.config.logRatioRange), 1e-6));
-    gl.uniform1f(this.webgl.uniforms.compositeLogRatio.u_maskThreshold, this.config.maskThreshold);
+    gl.uniform1f(this.webgl.uniforms.compositeLogRatio.u_supportFloor, supportWindow.floor);
+    gl.uniform1f(this.webgl.uniforms.compositeLogRatio.u_supportCeil, supportWindow.ceil);
+    gl.uniform1i(this.webgl.uniforms.compositeLogRatio.u_supportCorrection, this.config.logRatioSupportCorrection ? 1 : 0);
     gl.uniform1i(this.webgl.uniforms.compositeLogRatio.u_topographic, this.config.topographic ? 1 : 0);
     gl.uniform1f(this.webgl.uniforms.compositeLogRatio.u_contourLevels, 14.0);
     gl.uniform1f(this.webgl.uniforms.compositeLogRatio.u_contourWidth, 0.18);
@@ -2384,13 +2405,20 @@ export class DensityLayer extends Layer {
       this.renderWebGPUSplatPass(context, numeratorBindGroup, this.webgpu.numeratorTexture, computed);
       this.renderWebGPUSplatPass(context, denominatorBindGroup, this.webgpu.denominatorTexture, computed);
 
+      const supportWindow = resolveLogRatioSupportWindow(
+        this.config.epsilon,
+        this.config.maskThreshold,
+        this.config.logRatioSupportCorrection,
+      );
       const compositeData = new Float32Array(8);
       compositeData[0] = this.config.epsilon;
       compositeData[1] = Math.max(Math.abs(computed.valueDomain?.[1] ?? this.config.logRatioRange), 1e-6);
-      compositeData[2] = this.config.maskThreshold;
+      compositeData[2] = supportWindow.floor;
       compositeData[3] = this.config.topographic ? 1 : 0;
       compositeData[4] = 14.0;
       compositeData[5] = 0.18;
+      compositeData[6] = supportWindow.ceil;
+      compositeData[7] = this.config.logRatioSupportCorrection ? 1 : 0;
       gpu.queue.writeBuffer(this.webgpu.compositeLogRatioParamsBuffer, 0, compositeData);
 
       this.webgpu.bindGroupCompositeLogRatio = gpu.createBindGroup({

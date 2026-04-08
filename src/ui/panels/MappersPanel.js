@@ -4896,6 +4896,19 @@ export class MappersPanel {
       });
       editorBody.appendChild(logRatioRangeRow.row);
 
+      const supportCorrectionToggle = createCheckboxControl({
+        checked: cfg().logRatioSupportCorrection !== false,
+        onChange: (checked) => applyDensity({ logRatioSupportCorrection: checked }),
+        onLabel: 'Correct',
+        offLabel: 'Raw',
+      });
+      const supportCorrectionRow = createAlignedRow({
+        title: 'Support',
+        hint: 'Fade unstable low-support log-ratio tails while keeping well-supported regions unchanged.',
+        controls: supportCorrectionToggle,
+      });
+      editorBody.appendChild(supportCorrectionRow.row);
+
       const resolutionWrap = document.createElement('div');
       resolutionWrap.style.display = 'flex';
       resolutionWrap.style.alignItems = 'center';
@@ -5029,6 +5042,7 @@ export class MappersPanel {
         enabledToggle.checked = state.enabled === true;
         reliefToggle.checked = state.topographic === true;
         normalizeToggle.checked = state.normalizeVs === true;
+        supportCorrectionToggle.checked = state.logRatioSupportCorrection !== false;
         zoomScaleToggle.checked = state.scaleWithZoom === true;
         normalizeToggle.disabled = compareSelect.value === 'None' || logRatioMode;
 
@@ -5046,6 +5060,7 @@ export class MappersPanel {
         setRowEnabled(weightRow.row, !logRatioMode);
         setRowVisible(epsilonRow.row, hasComparison && logRatioMode);
         setRowVisible(logRatioRangeRow.row, hasComparison && logRatioMode);
+        setRowVisible(supportCorrectionRow.row, hasComparison && logRatioMode);
         applyDensityBackground(state);
       };
 

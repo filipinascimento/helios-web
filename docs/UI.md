@@ -47,7 +47,7 @@ The Data panel now includes an `Attributes` tab with a live table of node, edge,
 
 Layout parameter bindings can describe how a control should be rendered. Numeric bindings may opt into `scale: 'log'` and `notation: 'scientific'`, which makes the Layout panel render a log slider with scientific-notation input while keeping the binding contract layout-agnostic.
 
-The Mappers panel’s Density tab supports both the legacy `Difference` mode and the new `Log Ratio` mode. `Difference` preserves the existing normalized comparison path, while `Log Ratio` switches to a specialized dual-density comparison path with a real-valued numeric legend. In `Log Ratio` mode, the density panel exposes `Epsilon` and `Range` controls and disables the legacy `Weight` / `Norm.` controls because those would break the interpretation of the numeric colorbar.
+The Mappers panel’s Density tab supports both the legacy `Difference` mode and the new `Log Ratio` mode. `Difference` preserves the existing normalized comparison path, while `Log Ratio` switches to a specialized dual-density comparison path with a real-valued numeric legend. In `Log Ratio` mode, the density panel exposes `Epsilon`, `Range`, and `Support` controls and disables the legacy `Weight` / `Norm.` controls because those would break the interpretation of the numeric colorbar. The `Support` toggle enables or disables the automatic pooled-support correction that fades unstable sparse tails without changing the raw values in well-supported areas.
 
 ## Attaching / Placement
 

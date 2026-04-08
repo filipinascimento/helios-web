@@ -331,8 +331,23 @@ test.describe('density map panel', () => {
     const epsilonRow = densityTab.locator('.helios-ui-row', {
       has: page.locator('.helios-ui-label__title', { hasText: 'Epsilon' }),
     }).first();
+    const supportRow = densityTab.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'Support' }),
+    }).first();
     await expect(weightRow).toHaveCSS('opacity', '0.55');
     await expect(epsilonRow).toHaveCSS('opacity', '1');
+    await expect(supportRow).toBeVisible();
+
+    await ensureToggleDisabled(supportRow, ':scope');
+    await expect.poll(
+      () => page.evaluate(() => window.__helios?.density?.().logRatioSupportCorrection === false),
+      { timeout: 5000 },
+    ).toBe(true);
+    await ensureToggleEnabled(supportRow, ':scope');
+    await expect.poll(
+      () => page.evaluate(() => window.__helios?.density?.().logRatioSupportCorrection === true),
+      { timeout: 5000 },
+    ).toBe(true);
 
     await compareRow.locator('select').selectOption('None');
 
@@ -357,6 +372,7 @@ test.describe('density map panel', () => {
     await expect(modeRow).toBeHidden();
     await expect(weightRow).toHaveCSS('opacity', '1');
     await expect(epsilonRow).toBeHidden();
+    await expect(supportRow).toBeHidden();
 
     expect(errors).toHaveLength(0);
   });

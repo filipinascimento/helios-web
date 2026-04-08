@@ -115,6 +115,25 @@ test('density() restores the difference diverging colormap after leaving log-rat
   assert.equal(state.activeColormap, 'interpolateRdBu');
 });
 
+test('density() exposes an explicit log-ratio support correction toggle', () => {
+  const helios = Object.create(Helios.prototype);
+  helios.scheduler = { requestRender: () => {} };
+  helios._densityRuntime = { diverging: false, valueDomain: null };
+  helios._densityConfig = undefined;
+  helios._applyDensityConfigToLayer = () => {};
+
+  helios.density({
+    property: 'Degree',
+    compareProperty: 'Uniform',
+    comparisonMode: 'logRatio',
+    logRatioSupportCorrection: false,
+  });
+  assert.equal(helios.density().logRatioSupportCorrection, false);
+
+  helios.density({ logRatioSupportCorrection: true });
+  assert.equal(helios.density().logRatioSupportCorrection, true);
+});
+
 test('edge width scale UI binding exposes zero in the recommended slider range', () => {
   assert.equal(Helios.UI_BINDINGS.edgeWidthScale.domain.min, 0);
   assert.equal(Helios.UI_BINDINGS.edgeWidthScale.recommendedRange.min, 0);

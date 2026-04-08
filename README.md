@@ -80,6 +80,7 @@ helios.legends({
 // Density maps:
 // - comparisonMode: 'difference' keeps the existing normalized comparison path
 // - comparisonMode: 'logRatio' enables a real-valued log-ratio surface with a numeric legend
+//   and automatic low-support tail suppression so sparse border regions do not blow up visually
 helios.density({
   enabled: true,
   property: 'weight',
@@ -88,6 +89,8 @@ helios.density({
   bandwidth: 28.1,
   logRatioRange: 3, // symmetric legend / clipping domain: [-3, 3]
   epsilon: 1e-6,
+  logRatioSupportCorrection: true, // disable to show the raw log-ratio everywhere
+  maskThreshold: 0, // optional extra pooled-support floor; 0 keeps the automatic epsilon-based floor
   divergingColormap: 'interpolateRdBu',
 });
 
