@@ -24,6 +24,7 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
     edgeNodeWidthSource: 16,
     edgeNodeOpacitySource: 17,
     edgeNodeEndpointSizeSource: 18,
+    shading: 19,
   };
   const bindingMap = bindings ?? defaultBindings;
   const hasBinding = (name) => {
@@ -56,6 +57,7 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
   const opacity = normalizeEdgeOption(edgeOptions.opacity, 'edge');
   const endpointSize = normalizeEdgeOption(edgeOptions.endpointSize, 'edge');
   const fastEdgePath = edgeOptions.fastPath === true;
+  const useEdgeShading = !fastEdgePath && edgeOptions.shading === true;
   const positionInterpolationEnabled = edgeOptions.positionInterpolation === true;
   const cameraMode = edgeOptions.cameraMode === '2d'
     ? '2d'
@@ -401,6 +403,7 @@ fn semanticZoomScale() -> f32 {
   if (edgeStateEnabled) addBinding('edgeStates', true, 'EdgeStates');
   addBinding('globals', false, 'Globals');
   addBinding('hover', false, 'Hover');
+  if (useEdgeShading) addBinding('shading', false, 'Shading');
   addBinding('edgeNodeColorSource', true, 'EdgeNodeColorSource');
   addBinding('edgeNodeWidthSource', true, 'EdgeNodeScalarSource');
   addBinding('edgeNodeOpacitySource', true, 'EdgeNodeScalarSource');
@@ -522,6 +525,15 @@ struct Hover {
   _pad1: u32,
 };
 
+struct Shading {
+  lightDirection: vec4<f32>,
+  lightColor: vec4<f32>,
+  ambientTopColor: vec4<f32>,
+  ambientBottomColor: vec4<f32>,
+  specularColor: vec4<f32>,
+  params: vec4<f32>,
+};
+
 ${bindingLines.join('\n')}
 
 fn selectNodePair(sourceValue: f32, targetValue: f32, endpoints: u32) -> vec2<f32> {
@@ -565,11 +577,29 @@ fn semanticZoomScale() -> f32 {
   return 1.0 / pow(zoom2D, exponent);
 }
 
+${useEdgeShading
+    ? `
+fn applyEdgeShading(baseColor: vec3<f32>, edgeLocal: vec2<f32>) -> vec3<f32> {
+  let edgeY = clamp(edgeLocal.y, -1.0, 1.0);
+  let normal = normalize(vec3<f32>(0.0, edgeY, sqrt(max(1.0 - edgeY * edgeY, 0.0))));
+  let lightDir = normalize(shading.lightDirection.xyz);
+  let ambient = mix(shading.ambientBottomColor.xyz, shading.ambientTopColor.xyz, normal.z * 0.5 + 0.5);
+  let diffuse = max(dot(lightDir, normal), 0.0);
+  let reflection = reflect(-lightDir, normal);
+  let specular = pow(max(dot(vec3<f32>(0.0, 0.0, 1.0), reflection), 0.0), max(shading.params.y, 1.0))
+    * shading.params.x;
+  let shaded = baseColor * (ambient + shading.lightColor.xyz * diffuse) + shading.specularColor.xyz * specular;
+  return clamp(shaded, vec3<f32>(0.0), vec3<f32>(1.0));
+}`
+    : ''}
+
 struct EdgeVertexOutput {
   @builtin(position) position : vec4<f32>,
   @location(0) color : vec4<f32>,
   @location(1) weight : f32,
   @location(2) @interpolate(flat) discardFlag : u32,
+  ${useEdgeShading ? '@location(3) edgeLocal : vec2<f32>,' : ''}
+  ${useEdgeShading ? '@location(4) @interpolate(flat) edgeShadeEnabled : u32,' : ''}
 };
 
 @vertex
@@ -622,6 +652,7 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
   output.color = vec4<f32>(rgb, select(alpha, 1.0, forceMaxAlpha));
   output.weight = select(weight, max(weight, ${FORCE_VISIBILITY_BOOST.toFixed(1)}), forceMaxAlpha);
   output.discardFlag = discardFlag;
+  ${useEdgeShading ? 'output.edgeLocal = vec2<f32>(0.0, 0.0);\n  output.edgeShadeEnabled = 0u;' : ''}
   return output;
 }
 
@@ -703,6 +734,7 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   output.color = vec4<f32>(rgb, select(alpha, 1.0, forceMaxAlpha));
   output.weight = select(weight, max(weight, ${FORCE_VISIBILITY_BOOST.toFixed(1)}), forceMaxAlpha);
   output.discardFlag = discardFlag;
+  ${useEdgeShading ? 'output.edgeLocal = input.corner;\n  output.edgeShadeEnabled = 1u;' : ''}
   return output;
 }
 
@@ -711,7 +743,10 @@ fn edgeFragment(input : EdgeVertexOutput) -> @location(0) vec4<f32> {
   if (input.discardFlag == 1u) {
     discard;
   }
-  return vec4<f32>(input.color.rgb, input.color.a);
+  let rgb = ${useEdgeShading
+    ? 'select(input.color.rgb, applyEdgeShading(input.color.rgb, input.edgeLocal), input.edgeShadeEnabled == 1u)'
+    : 'input.color.rgb'};
+  return vec4<f32>(rgb, input.color.a);
 }
 
 @fragment
@@ -719,7 +754,10 @@ fn edgePremulFragment(input : EdgeVertexOutput) -> @location(0) vec4<f32> {
   if (input.discardFlag == 1u) {
     discard;
   }
-  return vec4<f32>(input.color.rgb * input.color.a, input.color.a);
+  let rgb = ${useEdgeShading
+    ? 'select(input.color.rgb, applyEdgeShading(input.color.rgb, input.edgeLocal), input.edgeShadeEnabled == 1u)'
+    : 'input.color.rgb'};
+  return vec4<f32>(rgb * input.color.a, input.color.a);
 }
 `;
 
@@ -736,9 +774,12 @@ fn edgeWeightedFragment(input : EdgeVertexOutput) -> EdgeWeightedOutput {
   if (input.discardFlag == 1u) {
     discard;
   }
+  let rgb = ${useEdgeShading
+    ? 'select(input.color.rgb, applyEdgeShading(input.color.rgb, input.edgeLocal), input.edgeShadeEnabled == 1u)'
+    : 'input.color.rgb'};
   let weight = input.weight;
   var output : EdgeWeightedOutput;
-  output.colorAccum = vec4<f32>(input.color.rgb * weight, weight);
+  output.colorAccum = vec4<f32>(rgb * weight, weight);
   output.weightAccum = vec4<f32>(weight, 0.0, 0.0, 0.0);
   return output;
 }`;

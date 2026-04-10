@@ -87,6 +87,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       `ow:${variant?.outlineWidthBuffer ? 'B' : 'U'}`,
       `oc:${variant?.outlineColorBuffer ? 'B' : 'U'}`,
       `pi:${variant?.positionInterpolation ? 1 : 0}`,
+      `sh:${variant?.shading ? 1 : 0}`,
     ].join('|');
   }
 
@@ -96,6 +97,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       ...base,
       stateBuffer: this.hasActiveNodeStateStyling(),
       positionInterpolation: this.getPositionInterpolationState?.()?.enabled === true,
+      shading: this.isNodeShadingEnabled(),
     };
   }
 
@@ -121,6 +123,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     if (variant?.stateBuffer) push('nodeStates', GPUShaderStage.VERTEX);
     push('globals', GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, 'uniform');
     push('hover', GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, 'uniform');
+    if (variant?.shading) push('shading', GPUShaderStage.FRAGMENT, 'uniform');
     if (variant?.outlineWidthBuffer) push('nodeOutlineWidths', GPUShaderStage.VERTEX);
     if (variant?.outlineColorBuffer) push('nodeOutlineColors', GPUShaderStage.VERTEX);
     if (variant?.positionInterpolation) push('nodePositionsFrom', GPUShaderStage.VERTEX);
@@ -159,6 +162,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
         outline: variant?.outlineWidthBuffer ? 'buffer' : 'uniform',
         outlineColor: variant?.outlineColorBuffer ? 'buffer' : 'uniform',
         positionInterpolation: variant?.positionInterpolation === true,
+        shading: variant?.shading === true,
       },
     });
     const module = device.createShaderModule({ code: sources.NODE_WGSL });
@@ -225,6 +229,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       `ph:${variant?.propagateHoveredNodeToEdges ? 1 : 0}`,
       `ps:${variant?.propagateSelectedNodesToEdges ? 1 : 0}`,
       `pi:${variant?.positionInterpolation ? 1 : 0}`,
+      `sh:${variant?.shading ? 1 : 0}`,
       `c:${variant?.colorBuffer ? 'B' : 'U'}:${variant?.colorSource}:${variant?.colorEndpoints}:${variant?.colorDoubleWidth ? 1 : 0}:${variant?.colorNodeAttribute ?? ''}`,
       `w:${variant?.widthBuffer ? 'B' : 'U'}:${variant?.widthSource}:${variant?.widthEndpoints}:${variant?.widthDoubleWidth ? 1 : 0}:${variant?.widthNodeAttribute ?? ''}`,
       `o:${variant?.opacityBuffer ? 'B' : 'U'}:${variant?.opacitySource}:${variant?.opacityEndpoints}:${variant?.opacityDoubleWidth ? 1 : 0}:${variant?.opacityNodeAttribute ?? ''}`,
@@ -344,6 +349,9 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     }
     push('globals', GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, 'uniform');
     push('hover', GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, 'uniform');
+    if (effectiveVariant?.shading) {
+      push('shading', GPUShaderStage.FRAGMENT, 'uniform');
+    }
 
     const entries = specs.map((spec) => ({
       binding: spec.binding,
@@ -414,6 +422,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
         endpointSizeEndpoints: 'both',
         endpointSizeDoubleWidth: false,
         endpointSizeNodeAttribute: null,
+        shading: false,
         cameraMode: specialization.cameraMode,
         semanticZoom: specialization.semanticZoom,
         trim: specialization.trim,
@@ -447,6 +456,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       endpointSizeEndpoints: endpointSize.endpoints,
       endpointSizeDoubleWidth: endpointSize.doubleWidth,
       endpointSizeNodeAttribute: endpointSize.nodeAttribute,
+      shading: this.isEdgeShadingEnabled(),
       cameraMode: specialization.cameraMode,
       semanticZoom: specialization.semanticZoom,
       trim: specialization.trim,
@@ -483,6 +493,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
         endpointState: effectiveVariant?.endpointState === true,
         propagateHoveredNodeToEdges: effectiveVariant?.propagateHoveredNodeToEdges === true,
         propagateSelectedNodesToEdges: effectiveVariant?.propagateSelectedNodesToEdges === true,
+        shading: effectiveVariant?.shading === true,
         color: {
           mode: effectiveVariant?.colorBuffer ? 'buffer' : 'uniform',
           source: effectiveVariant?.colorSource,
@@ -533,6 +544,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
         endpointState: effectiveVariant?.endpointState === true,
         propagateHoveredNodeToEdges: effectiveVariant?.propagateHoveredNodeToEdges === true,
         propagateSelectedNodesToEdges: effectiveVariant?.propagateSelectedNodesToEdges === true,
+        shading: effectiveVariant?.shading === true,
         color: {
           mode: effectiveVariant?.colorBuffer ? 'buffer' : 'uniform',
           source: effectiveVariant?.colorSource,
@@ -879,6 +891,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       nodeStates: this.nodeBuffersGpu.states?.buffer ?? null,
       globals: this.globalsBuffer,
       hover: this.hoverBuffer,
+      shading: this.shadingBuffer,
       nodeOutlineWidths: this.nodeBuffersGpu.outlineWidths?.buffer ?? null,
       nodeOutlineColors: this.nodeBuffersGpu.outlineColors?.buffer ?? null,
       nodePositionsFrom: this.nodeBuffersGpu.positionsFrom?.buffer ?? null,
@@ -907,6 +920,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       push('nodeStates', currentBuffers.nodeStates);
       push('globals', currentBuffers.globals);
       push('hover', currentBuffers.hover);
+      push('shading', currentBuffers.shading);
       push('nodeOutlineWidths', currentBuffers.nodeOutlineWidths);
       push('nodeOutlineColors', currentBuffers.nodeOutlineColors);
       push('nodePositionsFrom', currentBuffers.nodePositionsFrom);
@@ -1021,6 +1035,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       camera: this.cameraBuffer,
       globals: this.globalsBuffer,
       hover: this.hoverBuffer,
+      shading: this.shadingBuffer,
       edgeIndices: this.edgeBuffersGpu.indices?.buffer ?? null,
       edgeEndpoints: this.edgeBuffersGpu.endpoints?.buffer ?? null,
       nodePositions: this.nodeBuffersGpu.positions?.buffer ?? null,
@@ -1133,6 +1148,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       push('edgeNodeEndpointSizeSource', currentBuffers.edgeNodeEndpointSizeSource);
       push('globals', currentBuffers.globals);
       push('hover', currentBuffers.hover);
+      push('shading', currentBuffers.shading);
 
       const bindGroup = device.createBindGroup({
         layout: bindingInfo.layout,
@@ -1426,6 +1442,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       is2D = cameraUniforms?.mode === '2d';
 
       this.updateGlobalsGpu(gpuDevice, cameraUniforms, visualConfig);
+      this.updateShadingGpu(gpuDevice);
       this.updateCameraUniformsGpu(camera, cameraUniforms);
       this.updateHoverGpu(gpuDevice);
       if (!this.cameraBuffer) return false;

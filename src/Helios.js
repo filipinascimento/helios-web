@@ -28,6 +28,15 @@ import { SvgLegendController } from './legends/SvgLegendController.js';
 import { HeliosFilter } from './filters/HeliosFilter.js';
 import { DensityLayer } from './rendering/engine/DensityLayer.js';
 import {
+  SHADED_LIGHT_DIRECTION_DEFAULT,
+  SHADED_LIGHT_COLOR_DEFAULT,
+  SHADED_AMBIENT_TOP_COLOR_DEFAULT,
+  SHADED_AMBIENT_BOTTOM_COLOR_DEFAULT,
+  SHADED_SPECULAR_COLOR_DEFAULT,
+  SHADED_SPECULAR_STRENGTH_DEFAULT,
+  SHADED_SHININESS_DEFAULT,
+} from './rendering/engine/GraphLayer.js';
+import {
   buildFigureExportPresetList,
   getFigureExportCapability,
   resolveFigureExportOptions,
@@ -160,6 +169,22 @@ function normalizeColorInput(color) {
     return [r / 255, g / 255, b / 255, a / 255];
   }
   return null;
+}
+
+function normalizeDirectionInput(direction, fallback = SHADED_LIGHT_DIRECTION_DEFAULT) {
+  if (!(Array.isArray(direction) || ArrayBuffer.isView(direction))) return [...fallback];
+  const x = Number(direction[0]);
+  const y = Number(direction[1]);
+  const z = Number(direction[2]);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return [...fallback];
+  const length = Math.hypot(x, y, z);
+  if (!(length > 1e-6)) return [...fallback];
+  return [x / length, y / length, z / length];
+}
+
+function cloneColorInput(value, fallback) {
+  const normalized = normalizeColorInput(value);
+  return normalized ? [...normalized] : [...fallback];
 }
 
 function normalizeInsets(insets) {
@@ -1481,6 +1506,69 @@ export class Helios extends EventTarget {
       label: 'Fast Edge Lines',
       description: 'Use a reduced-cost edge path for large interactive graphs. Forces thin line rendering and disables expensive edge effects.',
       defaultValue: false,
+    },
+    shadedEnabled: {
+      type: 'boolean',
+      label: 'Shaded',
+      description: 'Enable shader-specialized lighting for the configured node and edge paths.',
+      defaultValue: false,
+    },
+    shadedNodes: {
+      type: 'boolean',
+      label: 'Nodes',
+      description: 'Apply shaded sphere lighting to nodes.',
+      defaultValue: true,
+    },
+    shadedEdges: {
+      type: 'boolean',
+      label: 'Edges',
+      description: 'Apply shaded cylindrical lighting across edge widths when the quad edge path is active.',
+      defaultValue: false,
+    },
+    shadedLightDirectionX: {
+      type: 'number',
+      label: 'Light X',
+      description: 'Shaded-light direction along the horizontal screen axis.',
+      defaultValue: SHADED_LIGHT_DIRECTION_DEFAULT[0],
+      domain: { min: -1, max: 1 },
+      recommendedRange: { min: -1, max: 1 },
+      step: 0.01,
+    },
+    shadedLightDirectionY: {
+      type: 'number',
+      label: 'Light Y',
+      description: 'Shaded-light direction along the vertical screen axis.',
+      defaultValue: SHADED_LIGHT_DIRECTION_DEFAULT[1],
+      domain: { min: -1, max: 1 },
+      recommendedRange: { min: -1, max: 1 },
+      step: 0.01,
+    },
+    shadedLightDirectionZ: {
+      type: 'number',
+      label: 'Light Z',
+      description: 'Shaded-light direction toward the camera.',
+      defaultValue: SHADED_LIGHT_DIRECTION_DEFAULT[2],
+      domain: { min: -1, max: 1 },
+      recommendedRange: { min: -1, max: 1 },
+      step: 0.01,
+    },
+    shadedSpecularStrength: {
+      type: 'number',
+      label: 'Specular',
+      description: 'Strength of the specular highlight added on top of ambient and diffuse lighting.',
+      defaultValue: SHADED_SPECULAR_STRENGTH_DEFAULT,
+      domain: { min: 0, max: 4 },
+      recommendedRange: { min: 0, max: 1.5 },
+      step: 0.01,
+    },
+    shadedShininess: {
+      type: 'number',
+      label: 'Shininess',
+      description: 'Exponent used for shaded specular highlights.',
+      defaultValue: SHADED_SHININESS_DEFAULT,
+      domain: { min: 1, max: 256 },
+      recommendedRange: { min: 8, max: 128 },
+      step: 1,
     },
     edgeAdaptiveQualityEnabled: {
       type: 'boolean',
@@ -5969,6 +6057,122 @@ export class Helios extends EventTarget {
   edgeFastRendering(value) {
     if (arguments.length === 0) return this._getGraphLayerProp('edgeFastRendering');
     return this._setGraphLayerProp('edgeFastRendering', Boolean(value));
+  }
+
+  shadedEnabled(value) {
+    if (arguments.length === 0) {
+      const current = this._getGraphLayerProp('shadedEnabled');
+      return current == null ? false : current === true;
+    }
+    return this._setGraphLayerProp('shadedEnabled', Boolean(value));
+  }
+
+  shadedNodes(value) {
+    if (arguments.length === 0) {
+      const current = this._getGraphLayerProp('shadedNodes');
+      return current == null ? true : current !== false;
+    }
+    return this._setGraphLayerProp('shadedNodes', value !== false);
+  }
+
+  shadedEdges(value) {
+    if (arguments.length === 0) {
+      const current = this._getGraphLayerProp('shadedEdges');
+      return current === true;
+    }
+    return this._setGraphLayerProp('shadedEdges', value === true);
+  }
+
+  shadedLightDirection(value) {
+    if (arguments.length === 0) {
+      return normalizeDirectionInput(this._getGraphLayerProp('shadedLightDirection'), SHADED_LIGHT_DIRECTION_DEFAULT);
+    }
+    return this._setGraphLayerProp('shadedLightDirection', normalizeDirectionInput(value, SHADED_LIGHT_DIRECTION_DEFAULT));
+  }
+
+  shadedLightDirectionX(value) {
+    if (arguments.length === 0) return this.shadedLightDirection()[0];
+    const next = this.shadedLightDirection();
+    next[0] = Number(value);
+    return this.shadedLightDirection(next);
+  }
+
+  shadedLightDirectionY(value) {
+    if (arguments.length === 0) return this.shadedLightDirection()[1];
+    const next = this.shadedLightDirection();
+    next[1] = Number(value);
+    return this.shadedLightDirection(next);
+  }
+
+  shadedLightDirectionZ(value) {
+    if (arguments.length === 0) return this.shadedLightDirection()[2];
+    const next = this.shadedLightDirection();
+    next[2] = Number(value);
+    return this.shadedLightDirection(next);
+  }
+
+  shadedLightColor(color) {
+    if (arguments.length === 0) {
+      return cloneColorInput(this._getGraphLayerProp('shadedLightColor'), SHADED_LIGHT_COLOR_DEFAULT);
+    }
+    const normalized = normalizeColorInput(color);
+    if (!normalized) {
+      throw new Error('shadedLightColor(color) expects #rgb/#rgba/#rrggbb/#rrggbbaa or [r,g,b(,a)]');
+    }
+    return this._setGraphLayerProp('shadedLightColor', normalized);
+  }
+
+  shadedAmbientTopColor(color) {
+    if (arguments.length === 0) {
+      return cloneColorInput(this._getGraphLayerProp('shadedAmbientTopColor'), SHADED_AMBIENT_TOP_COLOR_DEFAULT);
+    }
+    const normalized = normalizeColorInput(color);
+    if (!normalized) {
+      throw new Error('shadedAmbientTopColor(color) expects #rgb/#rgba/#rrggbb/#rrggbbaa or [r,g,b(,a)]');
+    }
+    return this._setGraphLayerProp('shadedAmbientTopColor', normalized);
+  }
+
+  shadedAmbientBottomColor(color) {
+    if (arguments.length === 0) {
+      return cloneColorInput(this._getGraphLayerProp('shadedAmbientBottomColor'), SHADED_AMBIENT_BOTTOM_COLOR_DEFAULT);
+    }
+    const normalized = normalizeColorInput(color);
+    if (!normalized) {
+      throw new Error('shadedAmbientBottomColor(color) expects #rgb/#rgba/#rrggbb/#rrggbbaa or [r,g,b(,a)]');
+    }
+    return this._setGraphLayerProp('shadedAmbientBottomColor', normalized);
+  }
+
+  shadedSpecularColor(color) {
+    if (arguments.length === 0) {
+      return cloneColorInput(this._getGraphLayerProp('shadedSpecularColor'), SHADED_SPECULAR_COLOR_DEFAULT);
+    }
+    const normalized = normalizeColorInput(color);
+    if (!normalized) {
+      throw new Error('shadedSpecularColor(color) expects #rgb/#rgba/#rrggbb/#rrggbbaa or [r,g,b(,a)]');
+    }
+    return this._setGraphLayerProp('shadedSpecularColor', normalized);
+  }
+
+  shadedSpecularStrength(value) {
+    if (arguments.length === 0) {
+      const current = Number(this._getGraphLayerProp('shadedSpecularStrength'));
+      return Number.isFinite(current) ? current : SHADED_SPECULAR_STRENGTH_DEFAULT;
+    }
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return this;
+    return this._setGraphLayerProp('shadedSpecularStrength', Math.max(0, numeric));
+  }
+
+  shadedShininess(value) {
+    if (arguments.length === 0) {
+      const current = Number(this._getGraphLayerProp('shadedShininess'));
+      return Number.isFinite(current) ? current : SHADED_SHININESS_DEFAULT;
+    }
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return this;
+    return this._setGraphLayerProp('shadedShininess', Math.max(1, numeric));
   }
 
   edgeAdaptiveQuality(options) {

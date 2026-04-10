@@ -18,6 +18,7 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
   const useNodeSizeBuffer = nodeOptions.size !== 'uniform';
   const useNodeStateBuffer = nodeOptions.state !== 'none';
   const useNodePositionInterpolation = nodeOptions.positionInterpolation !== false;
+  const useNodeShading = nodeOptions.shading === true;
   // Default outline to uniform unless explicitly marked as buffer.
   const useNodeOutlineWidthBuffer = nodeOptions.outline === 'buffer';
   const useNodeOutlineColorBuffer = nodeOptions.outlineColor === 'buffer';
@@ -42,6 +43,7 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
     nodeOutlineWidths: 8,
     nodeOutlineColors: 9,
     nodePositionsFrom: 10,
+    shading: 11,
     edgeIndices: 1,
     edgeSegments: 2,
     edgeColors: 3,
@@ -80,6 +82,27 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
   const NODE_TARGET_BINDING = (useNodePositionInterpolation && hasBinding('nodePositionsFrom'))
     ? `@group(0) @binding(${bindingIndex('nodePositionsFrom')}) var<storage, read> nodePositionsFrom : NodePositionsFrom;`
     : '';
+  const NODE_SHADING_BINDING = (useNodeShading && hasBinding('shading'))
+    ? `@group(0) @binding(${bindingIndex('shading')}) var<uniform> shading : Shading;`
+    : '';
+  const NODE_SHADING_HELPER = useNodeShading
+    ? `
+fn applyNodeShading(baseColor: vec3<f32>, local: vec2<f32>) -> vec3<f32> {
+  let lensqr = dot(local, local);
+  let normal = normalize(vec3<f32>(local.xy, sqrt(max(1.0 - lensqr, 0.0))));
+  let lightDir = normalize(shading.lightDirection.xyz);
+  let ambient = mix(shading.ambientBottomColor.xyz, shading.ambientTopColor.xyz, normal.z * 0.5 + 0.5);
+  let diffuse = max(dot(lightDir, normal), 0.0);
+  let reflection = reflect(-lightDir, normal);
+  let specular = pow(max(dot(vec3<f32>(0.0, 0.0, 1.0), reflection), 0.0), max(shading.params.y, 1.0))
+    * shading.params.x;
+  let shaded = baseColor * (ambient + shading.lightColor.xyz * diffuse) + shading.specularColor.xyz * specular;
+  return clamp(shaded, vec3<f32>(0.0), vec3<f32>(1.0));
+}`
+    : '';
+  const NODE_FILL_COLOR_EXPR = useNodeShading
+    ? 'vec4<f32>(applyNodeShading(input.color.rgb, input.local), input.color.a)'
+    : 'input.color';
   const EDGE_TARGET_BINDING = '';
 
   const NODE_WGSL = /* wgsl */ `
@@ -88,6 +111,7 @@ const USE_NODE_COLOR_BUFFER : bool = ${useNodeColorBuffer ? 'true' : 'false'};
 const USE_NODE_SIZE_BUFFER : bool = ${useNodeSizeBuffer ? 'true' : 'false'};
 const USE_NODE_STATE_BUFFER : bool = ${useNodeStateBuffer ? 'true' : 'false'};
 const USE_NODE_POSITION_INTERPOLATION : bool = ${useNodePositionInterpolation ? 'true' : 'false'};
+const USE_NODE_SHADING : bool = ${useNodeShading ? 'true' : 'false'};
 const USE_NODE_OUTLINE_WIDTH_BUFFER : bool = ${useNodeOutlineWidthBuffer ? 'true' : 'false'};
 const USE_NODE_OUTLINE_COLOR_BUFFER : bool = ${useNodeOutlineColorBuffer ? 'true' : 'false'};
 
@@ -162,9 +186,18 @@ struct NodeColors {
     data: array<f32>,
   };
 
-  struct NodeOutlineColors {
-    data: array<vec4<f32>>,
-  };
+struct NodeOutlineColors {
+  data: array<vec4<f32>>,
+};
+
+struct Shading {
+  lightDirection: vec4<f32>,
+  lightColor: vec4<f32>,
+  ambientTopColor: vec4<f32>,
+  ambientBottomColor: vec4<f32>,
+  specularColor: vec4<f32>,
+  params: vec4<f32>,
+};
 
 	@group(0) @binding(${bindingIndex('camera')}) var<uniform> camera : Camera;
 	${useNodeIndices && hasBinding('nodeIndices') ? `@group(0) @binding(${bindingIndex('nodeIndices')}) var<storage, read> nodeIndices : NodeIndices;` : ''}
@@ -174,6 +207,7 @@ struct NodeColors {
 	${useNodeStateBuffer && hasBinding('nodeStates') ? `@group(0) @binding(${bindingIndex('nodeStates')}) var<storage, read> nodeStates : NodeStates;` : ''}
   ${NODE_OUTLINE_STORAGE_BINDINGS}
   ${NODE_TARGET_BINDING}
+  ${NODE_SHADING_BINDING}
 	@group(0) @binding(${bindingIndex('globals')}) var<uniform> globals : Globals;
 	struct Hover {
 	  nodeIndex: u32,
@@ -340,6 +374,7 @@ struct NodeFragmentOutput {
   @location(0) color : vec4<f32>,
   @builtin(frag_depth) depth : f32,
 };
+${NODE_SHADING_HELPER}
 
 @fragment
 fn nodeFragment(input : VertexOutput) -> NodeFragmentOutput {
@@ -354,7 +389,7 @@ fn nodeFragment(input : VertexOutput) -> NodeFragmentOutput {
   if (input.outlineThreshold > 0.0 && dist > (1.0 - input.outlineThreshold)) {
     output.color = input.outlineColor;
   } else {
-    output.color = input.color;
+    output.color = ${NODE_FILL_COLOR_EXPR};
   }
   // Depth as a sphere in 3D; retain default depth in 2D (where depth test is disabled).
   if (camera.position.w < 0.5) {

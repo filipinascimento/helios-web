@@ -6,6 +6,7 @@ function resolveNodeOptions(options = {}) {
     size: mode(node.size),
     outline: mode(node.outline),
     outlineColor: mode(node.outlineColor),
+    shading: node.shading === true,
   };
 }
 
@@ -25,6 +26,7 @@ function resolveEdgeOptions(options = {}) {
     width: channel(edge.width, 'edge'),
     opacity: channel(edge.opacity, 'edge'),
     endpointSize: channel(edge.endpointSize, 'edge'),
+    shading: edge.shading === true,
     fastPath: edge.fastPath === true,
     cameraMode: edge.cameraMode === '2d' ? '2d' : (edge.cameraMode === '3d' ? '3d' : 'dynamic'),
     semanticZoom: edge.semanticZoom !== false,
@@ -63,6 +65,8 @@ export function createGraphWebGLSources(options = {}) {
     ? 1
     : (edge.endpointSize.endpoints === 'destination' ? 2 : 0);
   const fastEdgePath = edge.fastPath === true;
+  const nodeShadingEnabled = node.shading === true;
+  const edgeShadingEnabled = !fastEdgePath && edge.shading === true;
   const edgeCameraMode = edge.cameraMode;
   const edgeSemanticZoomEnabled = !fastEdgePath && edge.semanticZoom === true;
   const edgeTrimEnabled = !fastEdgePath && edge.trim === true;
@@ -479,6 +483,44 @@ uvec2 fetchEdgeEndpointStatePair(uint edgeId) {
     widthDir = widthDirLen > 1e-5 ? (widthDir / widthDirLen) : vec3(0.0, 1.0, 0.0);
   }`);
 
+  const shadedUniformDecl = `
+uniform vec3 u_shadedLightDirection;
+uniform vec3 u_shadedLightColor;
+uniform vec3 u_shadedAmbientTopColor;
+uniform vec3 u_shadedAmbientBottomColor;
+uniform vec3 u_shadedSpecularColor;
+uniform vec2 u_shadedParams;`;
+
+  const nodeShadingHelper = nodeShadingEnabled
+    ? `
+vec3 applyNodeShading(vec3 baseColor, vec2 local) {
+  float lensqr = dot(local, local);
+  vec3 normal = normalize(vec3(local.xy, sqrt(max(1.0 - lensqr, 0.0))));
+  vec3 lightDir = normalize(u_shadedLightDirection);
+  vec3 ambient = mix(u_shadedAmbientBottomColor, u_shadedAmbientTopColor, normal.z * 0.5 + 0.5);
+  float diffuse = max(dot(lightDir, normal), 0.0);
+  vec3 reflection = reflect(-lightDir, normal);
+  float specular = pow(max(dot(vec3(0.0, 0.0, 1.0), reflection), 0.0), max(u_shadedParams.y, 1.0)) * u_shadedParams.x;
+  vec3 shaded = baseColor * (ambient + u_shadedLightColor * diffuse) + u_shadedSpecularColor * specular;
+  return clamp(shaded, 0.0, 1.0);
+}`
+    : '';
+
+  const edgeShadingHelper = edgeShadingEnabled
+    ? `
+vec3 applyEdgeShading(vec3 baseColor, vec2 edgeLocal) {
+  float edgeY = clamp(edgeLocal.y, -1.0, 1.0);
+  vec3 normal = normalize(vec3(0.0, edgeY, sqrt(max(1.0 - edgeY * edgeY, 0.0))));
+  vec3 lightDir = normalize(u_shadedLightDirection);
+  vec3 ambient = mix(u_shadedAmbientBottomColor, u_shadedAmbientTopColor, normal.z * 0.5 + 0.5);
+  float diffuse = max(dot(lightDir, normal), 0.0);
+  vec3 reflection = reflect(-lightDir, normal);
+  float specular = pow(max(dot(vec3(0.0, 0.0, 1.0), reflection), 0.0), max(u_shadedParams.y, 1.0)) * u_shadedParams.x;
+  vec3 shaded = baseColor * (ambient + u_shadedLightColor * diffuse) + u_shadedSpecularColor * specular;
+  return clamp(shaded, 0.0, 1.0);
+}`
+    : '';
+
   const NODE_VERTEX_SOURCE = `#version 300 es
 precision highp float;
 precision highp int;
@@ -645,6 +687,8 @@ flat in uint v_discardFlag;
 
 uniform mat4 u_viewProjection;
 uniform int u_is2D;
+${nodeShadingEnabled ? shadedUniformDecl : ''}
+${nodeShadingHelper}
 
 out vec4 fragColor;
 
@@ -656,7 +700,9 @@ void main() {
   if (dist > 1.0) {
     discard;
   }
-  fragColor = v_color;
+  vec4 fillColor = v_color;
+  ${nodeShadingEnabled ? 'fillColor = vec4(applyNodeShading(v_color.rgb, v_local), v_color.a);' : ''}
+  fragColor = fillColor;
   if (v_outlineThreshold > 0.0 && dist > (1.0 - v_outlineThreshold)) {
     fragColor = v_outlineColor;
   }
@@ -702,6 +748,7 @@ uniform float u_edgeOpacityScale;
 out vec4 v_color;
 out float v_weight;
 flat out uint v_discardFlag;
+${edgeShadingEnabled ? 'out vec2 v_edgeLocal;\nflat out uint v_edgeShadeEnabled;' : ''}
 ${TEXTURE_INDEX_HELPERS}
 
 vec3 fetchNodePos(uint id) {
@@ -764,6 +811,7 @@ ${edgeColorNodeBlock}
   v_color = vec4(rgb, forceMaxAlpha ? 1.0 : alpha);
   v_weight = forceMaxAlpha ? max(weight, ${forceVisibilityBoost.toFixed(1)}) : weight;
   v_discardFlag = discardFlag;
+  ${edgeShadingEnabled ? 'v_edgeLocal = vec2(0.0);\n  v_edgeShadeEnabled = 0u;' : ''}
 }
 `;
 
@@ -814,6 +862,7 @@ uniform float u_semanticZoomExponent;
 out vec4 v_color;
 out float v_weight;
 flat out uint v_discardFlag;
+${edgeShadingEnabled ? 'out vec2 v_edgeLocal;\nflat out uint v_edgeShadeEnabled;' : ''}
 ${TEXTURE_INDEX_HELPERS}
 
 vec3 fetchNodePos(uint id) {
@@ -914,6 +963,7 @@ ${edgeColorNodeBlock}
   v_color = vec4(rgb, forceMaxAlpha ? 1.0 : alpha);
   v_weight = forceMaxAlpha ? max(weight, ${forceVisibilityBoost.toFixed(1)}) : weight;
   v_discardFlag = discardFlag;
+  ${edgeShadingEnabled ? 'v_edgeLocal = a_corner;\n  v_edgeShadeEnabled = 1u;' : ''}
 }
 `;
 
@@ -922,13 +972,17 @@ precision highp float;
 
 in vec4 v_color;
 flat in uint v_discardFlag;
+${edgeShadingEnabled ? 'in vec2 v_edgeLocal;\nflat in uint v_edgeShadeEnabled;\n' : ''}${edgeShadingEnabled ? shadedUniformDecl : ''}
+${edgeShadingHelper}
 out vec4 fragColor;
 
 void main() {
   if (v_discardFlag != 0u) {
     discard;
   }
-  fragColor = v_color;
+  vec3 rgb = v_color.rgb;
+  ${edgeShadingEnabled ? 'if (v_edgeShadeEnabled != 0u) {\n    rgb = applyEdgeShading(rgb, v_edgeLocal);\n  }' : ''}
+  fragColor = vec4(rgb, v_color.a);
 }
 `;
 
@@ -938,6 +992,8 @@ precision highp float;
 in vec4 v_color;
 in float v_weight;
 flat in uint v_discardFlag;
+${edgeShadingEnabled ? 'in vec2 v_edgeLocal;\nflat in uint v_edgeShadeEnabled;\n' : ''}${edgeShadingEnabled ? shadedUniformDecl : ''}
+${edgeShadingHelper}
 layout (location = 0) out vec4 fragAccum;
 layout (location = 1) out vec4 fragWeight;
 
@@ -945,8 +1001,10 @@ void main() {
   if (v_discardFlag != 0u) {
     discard;
   }
+  vec3 rgb = v_color.rgb;
+  ${edgeShadingEnabled ? 'if (v_edgeShadeEnabled != 0u) {\n    rgb = applyEdgeShading(rgb, v_edgeLocal);\n  }' : ''}
   float weight = v_weight;
-  fragAccum = vec4(v_color.rgb * weight, weight);
+  fragAccum = vec4(rgb * weight, weight);
   fragWeight = vec4(weight, 0.0, 0.0, 0.0);
 }
 `;

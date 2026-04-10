@@ -1,4 +1,13 @@
-import { GraphLayer } from './GraphLayer.js';
+import {
+  GraphLayer,
+  SHADED_LIGHT_DIRECTION_DEFAULT,
+  SHADED_LIGHT_COLOR_DEFAULT,
+  SHADED_AMBIENT_TOP_COLOR_DEFAULT,
+  SHADED_AMBIENT_BOTTOM_COLOR_DEFAULT,
+  SHADED_SPECULAR_COLOR_DEFAULT,
+  SHADED_SPECULAR_STRENGTH_DEFAULT,
+  SHADED_SHININESS_DEFAULT,
+} from './GraphLayer.js';
 import { GraphVisualSchema } from '../schema/GraphVisualSchema.js';
 import {
   VISUAL_ATTRIBUTE_NAMES,
@@ -168,6 +177,12 @@ const NODE_UNIFORM_NAMES = [
   'u_outlineWidthBase',
   'u_outlineWidthScale',
   'u_outlineColor',
+  'u_shadedLightDirection',
+  'u_shadedLightColor',
+  'u_shadedAmbientTopColor',
+  'u_shadedAmbientBottomColor',
+  'u_shadedSpecularColor',
+  'u_shadedParams',
 ];
 
 const EDGE_UNIFORM_NAMES = [
@@ -208,6 +223,12 @@ const EDGE_UNIFORM_NAMES = [
   'u_defaultNodeOpacitySource',
   'u_edgeOpacityBase',
   'u_edgeOpacityScale',
+  'u_shadedLightDirection',
+  'u_shadedLightColor',
+  'u_shadedAmbientTopColor',
+  'u_shadedAmbientBottomColor',
+  'u_shadedSpecularColor',
+  'u_shadedParams',
 ];
 
 const EDGE_QUAD_UNIFORM_NAMES = [
@@ -280,6 +301,12 @@ const EDGE_QUAD_UNIFORM_NAMES = [
   'u_edgeStateScale[0]',
   'u_edgeStateColorMul[0]',
   'u_edgeStateColorAdd[0]',
+  'u_shadedLightDirection',
+  'u_shadedLightColor',
+  'u_shadedAmbientTopColor',
+  'u_shadedAmbientBottomColor',
+  'u_shadedSpecularColor',
+  'u_shadedParams',
 ];
 
 const DEFAULT_STATE_SCALE = new Float32Array([1, 1, 1, 0]);
@@ -886,6 +913,7 @@ export class GraphLayerWebGL extends GraphLayer {
         sizeBuffer: true,
         outlineWidthBuffer: this.nodeOutlineUseAttributes === true,
         outlineColorBuffer: this.nodeOutlineUseAttributes === true,
+        shading: this.isNodeShadingEnabled(),
       };
     }
     return {
@@ -893,11 +921,12 @@ export class GraphLayerWebGL extends GraphLayer {
       sizeBuffer: nodeCfg?.size?.mode !== 'uniform',
       outlineWidthBuffer: nodeCfg?.outline?.mode !== 'uniform',
       outlineColorBuffer: nodeCfg?.outlineColor?.mode !== 'uniform',
+      shading: this.isNodeShadingEnabled(),
     };
   }
 
   getNodeVariantKey(variant) {
-    return `c:${variant?.colorBuffer ? 'B' : 'U'}|s:${variant?.sizeBuffer ? 'B' : 'U'}|o:${variant?.outlineWidthBuffer ? 'B' : 'U'}|oc:${variant?.outlineColorBuffer ? 'B' : 'U'}`;
+    return `c:${variant?.colorBuffer ? 'B' : 'U'}|s:${variant?.sizeBuffer ? 'B' : 'U'}|o:${variant?.outlineWidthBuffer ? 'B' : 'U'}|oc:${variant?.outlineColorBuffer ? 'B' : 'U'}|sh:${variant?.shading ? 1 : 0}`;
   }
 
   getEdgeVariantKey(variant) {
@@ -910,6 +939,7 @@ export class GraphLayerWebGL extends GraphLayer {
       `et:${variant?.endpointState ? 1 : 0}`,
       `ph:${variant?.propagateHoveredNodeToEdges ? 1 : 0}`,
       `ps:${variant?.propagateSelectedNodesToEdges ? 1 : 0}`,
+      `sh:${variant?.shading ? 1 : 0}`,
       `c:${variant?.colorBuffer ? 'B' : 'U'}:${variant?.colorSource}:${variant?.colorEndpoints}`,
       `w:${variant?.widthBuffer ? 'B' : 'U'}:${variant?.widthSource}:${variant?.widthEndpoints}`,
       `o:${variant?.opacityBuffer ? 'B' : 'U'}:${variant?.opacitySource}:${variant?.opacityEndpoints}`,
@@ -948,6 +978,7 @@ export class GraphLayerWebGL extends GraphLayer {
         size: nodeVariant?.sizeBuffer ? 'buffer' : 'uniform',
         outline: nodeVariant?.outlineWidthBuffer ? 'buffer' : 'uniform',
         outlineColor: nodeVariant?.outlineColorBuffer ? 'buffer' : 'uniform',
+        shading: nodeVariant?.shading === true,
       },
       edge: {
         color: {
@@ -978,6 +1009,7 @@ export class GraphLayerWebGL extends GraphLayer {
         endpointState: edgeVariant?.endpointState === true,
         propagateHoveredNodeToEdges: edgeVariant?.propagateHoveredNodeToEdges === true,
         propagateSelectedNodesToEdges: edgeVariant?.propagateSelectedNodesToEdges === true,
+        shading: edgeVariant?.shading === true,
       },
     };
   }
@@ -1323,6 +1355,7 @@ export class GraphLayerWebGL extends GraphLayer {
         endpointSizeEndpoints: 'both',
         endpointSizeNodeAttribute: null,
         endpointSizeDoubleWidth: false,
+        shading: false,
         cameraMode: specialization.cameraMode,
         semanticZoom: specialization.semanticZoom,
         trim: specialization.trim,
@@ -1354,6 +1387,7 @@ export class GraphLayerWebGL extends GraphLayer {
       endpointSizeEndpoints: endpointSize.endpoints,
       endpointSizeNodeAttribute: endpointSize.nodeAttribute,
       endpointSizeDoubleWidth: endpointSize.doubleWidth,
+      shading: this.isEdgeShadingEnabled(),
       cameraMode: specialization.cameraMode,
       semanticZoom: specialization.semanticZoom,
       trim: specialization.trim,
@@ -1753,6 +1787,19 @@ export class GraphLayerWebGL extends GraphLayer {
     const defaultEdgeEndpointSize = (edgeConfig?.endpointSize?.mode === 'uniform')
       ? toScalarPair(edgeConfig?.endpointSize?.value, [1, 1])
       : [1, 1];
+    const shadedLightDirection = Array.isArray(this.shadedLightDirection) || ArrayBuffer.isView(this.shadedLightDirection)
+      ? this.shadedLightDirection
+      : SHADED_LIGHT_DIRECTION_DEFAULT;
+    const shadedLightColor = toRgba(this.shadedLightColor, SHADED_LIGHT_COLOR_DEFAULT);
+    const shadedAmbientTopColor = toRgba(this.shadedAmbientTopColor, SHADED_AMBIENT_TOP_COLOR_DEFAULT);
+    const shadedAmbientBottomColor = toRgba(this.shadedAmbientBottomColor, SHADED_AMBIENT_BOTTOM_COLOR_DEFAULT);
+    const shadedSpecularColor = toRgba(this.shadedSpecularColor, SHADED_SPECULAR_COLOR_DEFAULT);
+    const shadedSpecularStrength = Number.isFinite(Number(this.shadedSpecularStrength))
+      ? Math.max(0, Number(this.shadedSpecularStrength))
+      : SHADED_SPECULAR_STRENGTH_DEFAULT;
+    const shadedShininess = Number.isFinite(Number(this.shadedShininess))
+      ? Math.max(1, Number(this.shadedShininess))
+      : SHADED_SHININESS_DEFAULT;
     const edgeNodeAttributes = {
       color: edgeVariant?.colorSource === 'node'
         ? (edgeVariant.colorNodeAttribute ?? NODE_COLOR_ATTRIBUTE)
@@ -2167,6 +2214,44 @@ export class GraphLayerWebGL extends GraphLayer {
           const loc = uniforms[name];
           if (loc) gl.uniformMatrix4fv(loc, false, value);
         };
+        const setShadingUniforms = (uniforms) => {
+          set3f(
+            uniforms,
+            'u_shadedLightDirection',
+            shadedLightDirection[0] ?? SHADED_LIGHT_DIRECTION_DEFAULT[0],
+            shadedLightDirection[1] ?? SHADED_LIGHT_DIRECTION_DEFAULT[1],
+            shadedLightDirection[2] ?? SHADED_LIGHT_DIRECTION_DEFAULT[2],
+          );
+          set3f(
+            uniforms,
+            'u_shadedLightColor',
+            shadedLightColor[0],
+            shadedLightColor[1],
+            shadedLightColor[2],
+          );
+          set3f(
+            uniforms,
+            'u_shadedAmbientTopColor',
+            shadedAmbientTopColor[0],
+            shadedAmbientTopColor[1],
+            shadedAmbientTopColor[2],
+          );
+          set3f(
+            uniforms,
+            'u_shadedAmbientBottomColor',
+            shadedAmbientBottomColor[0],
+            shadedAmbientBottomColor[1],
+            shadedAmbientBottomColor[2],
+          );
+          set3f(
+            uniforms,
+            'u_shadedSpecularColor',
+            shadedSpecularColor[0],
+            shadedSpecularColor[1],
+            shadedSpecularColor[2],
+          );
+          set2f(uniforms, 'u_shadedParams', shadedSpecularStrength, shadedShininess);
+        };
 
         const drawEdges = ({
           weighted = false,
@@ -2354,6 +2439,7 @@ export class GraphLayerWebGL extends GraphLayer {
             set1f(uniforms, 'u_edgeEndpointTrim', this.edgeEndpointTrim);
             set1f(uniforms, 'u_zoom2D', zoom2D);
             set1f(uniforms, 'u_semanticZoomExponent', semanticZoomExponent);
+            setShadingUniforms(uniforms);
             this.bindTexture(0, activeNodePositionTexture);
             this.bindTexture(12, resolvedNodePositionFromTexture ?? activeNodePositionTexture);
             this.bindTexture(5, this.nodeTextures.edgeColorSource);
@@ -2458,6 +2544,7 @@ export class GraphLayerWebGL extends GraphLayer {
           set2f(uniforms, 'u_defaultNodeOpacitySource', defaultNodeOpacity[0], defaultNodeOpacity[1]);
           set1f(uniforms, 'u_edgeOpacityBase', this.edgeOpacityBase);
           set1f(uniforms, 'u_edgeOpacityScale', this.edgeOpacityScale);
+          setShadingUniforms(uniforms);
           this.bindTexture(0, activeNodePositionTexture);
           this.bindTexture(12, resolvedNodePositionFromTexture ?? activeNodePositionTexture);
           this.bindTexture(5, this.nodeTextures.edgeColorSource);
@@ -2564,6 +2651,7 @@ export class GraphLayerWebGL extends GraphLayer {
           set1f(uniforms, 'u_nodeOutline', nodeDefaultOutline);
           set1f(uniforms, 'u_outlineWidthBase', this.nodeOutlineWidthBase);
           set1f(uniforms, 'u_outlineWidthScale', this.nodeOutlineWidthScale);
+          setShadingUniforms(uniforms);
           set4f(
             uniforms,
             'u_outlineColor',

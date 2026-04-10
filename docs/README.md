@@ -83,6 +83,8 @@ Some common renderer/graph-layer “global” knobs are available directly on `H
 - Blend nodes with edge transparency modes: `helios.nodeBlendWithEdges(true)`
 - Allow edges to write depth: `helios.edgeDepthWrite(true)` (best for solid edges)
 - Enable reduced-cost interaction edges: `helios.edgeFastRendering(true)` (forces a lightweight thin-line edge path)
+- Enable shader-specialized lighting: `helios.shadedEnabled(true)`, `helios.shadedNodes(true)`, `helios.shadedEdges(true)`
+- Tune shaded lighting: `helios.shadedLightDirection([x, y, z])`, `helios.shadedLightColor(...)`, `helios.shadedAmbientTopColor(...)`, `helios.shadedAmbientBottomColor(...)`, `helios.shadedSpecularColor(...)`, `helios.shadedSpecularStrength(...)`, `helios.shadedShininess(...)`
 - Configure adaptive edge fallback: `helios.edgeAdaptiveQuality({...})` (enabled by default; switches after repeated slow HQ frames, and export still forces high-quality edges)
 
 ## Mapper docs

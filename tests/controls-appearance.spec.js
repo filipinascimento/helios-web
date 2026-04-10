@@ -128,14 +128,72 @@ test.describe('scene panel: tabs and appearance controls', () => {
     // Appearance tab should expose collapsible Nodes/Edges groups.
     expect(labels).toContain('Nodes');
     expect(labels).toContain('Edges');
+    expect(labels).toContain('Shaded');
     const iNodes = labels.indexOf('Nodes');
     const iEdges = labels.indexOf('Edges');
+    const iShaded = labels.indexOf('Shaded');
     expect(iNodes).toBeGreaterThanOrEqual(0);
     expect(iEdges).toBeGreaterThanOrEqual(0);
+    expect(iShaded).toBeGreaterThanOrEqual(0);
     expect(iNodes).toBeLessThan(iEdges);
+    expect(iEdges).toBeLessThan(iShaded);
 
     // Theme row is directly visible in Appearance (not in a subpanel).
     await expect(scenePanel.locator('.helios-ui-label__title', { hasText: 'Theme' }).first()).toBeVisible();
+
+    const shadedHeader = scenePanel.getByRole('button', { name: 'Shaded' }).first();
+    await expect(shadedHeader).toBeVisible();
+
+    const shadedToggle = scenePanel.locator('[role="switch"][aria-label="Shaded"]').first();
+    await expect(shadedToggle).toBeVisible();
+    await expect(shadedToggle).toHaveAttribute('aria-checked', 'false');
+
+    if ((await shadedHeader.getAttribute('aria-expanded')) === 'false') {
+      await shadedHeader.click();
+    }
+
+    const shadedSubpanel = scenePanel
+      .locator('.helios-ui-subpanel:has(.helios-ui-subpanel__label:has-text("Shaded"))')
+      .first();
+    const shadedNodesToggle = shadedSubpanel.locator('[role="switch"][aria-label="Nodes"]').first();
+    const shadedEdgesToggle = shadedSubpanel.locator('[role="switch"][aria-label="Edges"]').first();
+    await expect(shadedNodesToggle).toBeVisible();
+    await expect(shadedEdgesToggle).toBeVisible();
+    await expect(shadedNodesToggle).toHaveAttribute('aria-checked', 'true');
+    await expect(shadedEdgesToggle).toHaveAttribute('aria-checked', 'false');
+
+    await shadedToggle.click();
+    await expect(shadedToggle).toHaveAttribute('aria-checked', 'true');
+
+    const shadedState = await page.evaluate(() => ({
+      enabled: window.__helios.shadedEnabled(),
+      nodes: window.__helios.shadedNodes(),
+      edges: window.__helios.shadedEdges(),
+    }));
+    expect(shadedState).toEqual({
+      enabled: true,
+      nodes: true,
+      edges: false,
+    });
+
+    const shadedLightDirectionBefore = await page.evaluate(() => window.__helios.shadedLightDirection());
+
+    const shadedLightXRow = shadedSubpanel
+      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Light X"))')
+      .first();
+    const shadedLightX = shadedLightXRow.locator('input[type="number"]').first();
+    await expect(shadedLightXRow).toBeVisible();
+    await shadedLightX.fill('0.25');
+    await shadedLightX.dispatchEvent('change');
+
+    const shadedLightDirection = await page.evaluate(() => window.__helios.shadedLightDirection());
+    expect(shadedLightDirection[0]).not.toBeCloseTo(shadedLightDirectionBefore[0], 3);
+    const shadedLightDirectionLength = Math.hypot(
+      shadedLightDirection[0],
+      shadedLightDirection[1],
+      shadedLightDirection[2],
+    );
+    expect(shadedLightDirectionLength).toBeCloseTo(1, 3);
 
     const dimensionToggle = scenePanel.locator('[role="switch"][aria-label="Scene dimension"]').first();
     await expect(dimensionToggle).toBeVisible();

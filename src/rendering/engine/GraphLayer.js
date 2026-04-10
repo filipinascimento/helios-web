@@ -2,6 +2,51 @@ import { Layer } from './Layer.js';
 
 export { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './GraphLayerCommon.js';
 
+export const SHADED_LIGHT_DIRECTION_DEFAULT = Object.freeze([
+  0.577350269,
+  0.577350269,
+  0.577350269,
+]);
+export const SHADED_LIGHT_COLOR_DEFAULT = Object.freeze([1, 1, 1, 1]);
+export const SHADED_AMBIENT_TOP_COLOR_DEFAULT = Object.freeze([0.62, 0.64, 0.7, 1]);
+export const SHADED_AMBIENT_BOTTOM_COLOR_DEFAULT = Object.freeze([0.22, 0.24, 0.3, 1]);
+export const SHADED_SPECULAR_COLOR_DEFAULT = Object.freeze([1, 1, 1, 1]);
+export const SHADED_SPECULAR_STRENGTH_DEFAULT = 0.35;
+export const SHADED_SHININESS_DEFAULT = 48;
+
+function clampUnit01(value, fallback = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  if (numeric <= 0) return 0;
+  if (numeric >= 1) return 1;
+  return numeric;
+}
+
+function normalizeShadedColor(value, fallback) {
+  const source = Array.isArray(value) || ArrayBuffer.isView(value) ? value : fallback;
+  return [
+    clampUnit01(source?.[0], fallback[0] ?? 0),
+    clampUnit01(source?.[1], fallback[1] ?? 0),
+    clampUnit01(source?.[2], fallback[2] ?? 0),
+    clampUnit01(source?.[3], fallback[3] ?? 1),
+  ];
+}
+
+function normalizeShadedDirection(value, fallback = SHADED_LIGHT_DIRECTION_DEFAULT) {
+  const source = Array.isArray(value) || ArrayBuffer.isView(value) ? value : fallback;
+  const x = Number(source?.[0]);
+  const y = Number(source?.[1]);
+  const z = Number(source?.[2]);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+    return [...fallback];
+  }
+  const length = Math.hypot(x, y, z);
+  if (!(length > 1e-6)) {
+    return [...fallback];
+  }
+  return [x / length, y / length, z / length];
+}
+
 export class GraphLayer extends Layer {
   static NO_HOVER_INDEX = 0xffffffff;
   static FORCE_VISIBILITY_BOOST = 1000.0;
@@ -74,6 +119,29 @@ export class GraphLayer extends Layer {
     this.edgeAdaptiveFastRendering = options.edgeAdaptiveFastRendering === true;
     this.lastRenderDurationMs = null;
     this.loggedWeightedActive = false;
+    this.shadedEnabled = options.shadedEnabled === true;
+    this.shadedNodes = options.shadedNodes !== false;
+    this.shadedEdges = options.shadedEdges === true;
+    this.shadedLightDirection = normalizeShadedDirection(options.shadedLightDirection);
+    this.shadedLightColor = normalizeShadedColor(options.shadedLightColor, SHADED_LIGHT_COLOR_DEFAULT);
+    this.shadedAmbientTopColor = normalizeShadedColor(
+      options.shadedAmbientTopColor,
+      SHADED_AMBIENT_TOP_COLOR_DEFAULT,
+    );
+    this.shadedAmbientBottomColor = normalizeShadedColor(
+      options.shadedAmbientBottomColor,
+      SHADED_AMBIENT_BOTTOM_COLOR_DEFAULT,
+    );
+    this.shadedSpecularColor = normalizeShadedColor(
+      options.shadedSpecularColor,
+      SHADED_SPECULAR_COLOR_DEFAULT,
+    );
+    this.shadedSpecularStrength = Number.isFinite(Number(options.shadedSpecularStrength))
+      ? Math.max(0, Number(options.shadedSpecularStrength))
+      : SHADED_SPECULAR_STRENGTH_DEFAULT;
+    this.shadedShininess = Number.isFinite(Number(options.shadedShininess))
+      ? Math.max(1, Number(options.shadedShininess))
+      : SHADED_SHININESS_DEFAULT;
     const slots = this.stateSlotCount;
     this.nodeStateScale = new Float32Array(slots * 4);
     this.nodeStateColorMul = new Float32Array(slots * 4);
@@ -159,6 +227,14 @@ export class GraphLayer extends Layer {
 
   hasEdgeTrim() {
     return Number.isFinite(this.edgeEndpointTrim) && this.edgeEndpointTrim !== 0;
+  }
+
+  isNodeShadingEnabled() {
+    return this.shadedEnabled === true && this.shadedNodes !== false;
+  }
+
+  isEdgeShadingEnabled() {
+    return this.shadedEnabled === true && this.shadedEdges === true;
   }
 
   hasActiveEdgeStateStyling() {

@@ -1314,6 +1314,39 @@ export class HeliosUI {
         return row;
       };
 
+      const createColorControls = ({ ariaLabel, getValue, setValue }) => {
+        const row = document.createElement('div');
+        row.style.display = 'flex';
+        row.style.gap = '8px';
+        row.style.alignItems = 'center';
+        row.style.width = '100%';
+
+        const swatchWrap = document.createElement('div');
+        swatchWrap.className = 'helios-ui-color-swatch';
+
+        const swatch = document.createElement('div');
+        swatch.className = 'helios-ui-color-swatch__swatch';
+
+        const colorInput = document.createElement('input');
+        colorInput.type = 'color';
+        colorInput.className = 'helios-ui-color-swatch__input';
+        colorInput.setAttribute('aria-label', ariaLabel);
+
+        const commit = () => {
+          setValue?.(toHex8(colorInput.value, 1));
+          swatch.style.background = colorInput.value;
+        };
+
+        colorInput.value = rgba01ToHex6(getValue?.());
+        swatch.style.background = colorInput.value;
+        colorInput.addEventListener('input', commit);
+
+        swatchWrap.appendChild(swatch);
+        swatchWrap.appendChild(colorInput);
+        row.appendChild(swatchWrap);
+        return row;
+      };
+
       const createLabelSourceSelect = () => {
         const select = document.createElement('select');
         select.className = 'helios-ui-select';
@@ -1681,6 +1714,76 @@ export class HeliosUI {
       };
 
       const nodeEdgeStack = new PanelStack();
+      const createShadedAppearanceContent = () => {
+        const container = document.createElement('div');
+        const nodesRow = createToggleRow('shadedNodes');
+        if (nodesRow) container.appendChild(nodesRow);
+        const edgesRow = createToggleRow('shadedEdges');
+        if (edgesRow) container.appendChild(edgesRow);
+        container.appendChild(createRows([
+          'shadedLightDirectionX',
+          'shadedLightDirectionY',
+          'shadedLightDirectionZ',
+        ]));
+        container.appendChild(createAlignedRow({
+          title: 'Light Color',
+          hint: 'Diffuse light tint used by shaded nodes and edges.',
+          controls: createColorControls({
+            ariaLabel: 'Shaded light color',
+            getValue: () => this.helios?.shadedLightColor?.(),
+            setValue: (value) => this.helios?.shadedLightColor?.(value),
+          }),
+        }).row);
+        container.appendChild(createAlignedRow({
+          title: 'Ambient Top',
+          hint: 'Ambient tint on the camera-facing top hemisphere.',
+          controls: createColorControls({
+            ariaLabel: 'Shaded ambient top color',
+            getValue: () => this.helios?.shadedAmbientTopColor?.(),
+            setValue: (value) => this.helios?.shadedAmbientTopColor?.(value),
+          }),
+        }).row);
+        container.appendChild(createAlignedRow({
+          title: 'Ambient Bottom',
+          hint: 'Ambient tint on the lower hemisphere.',
+          controls: createColorControls({
+            ariaLabel: 'Shaded ambient bottom color',
+            getValue: () => this.helios?.shadedAmbientBottomColor?.(),
+            setValue: (value) => this.helios?.shadedAmbientBottomColor?.(value),
+          }),
+        }).row);
+        container.appendChild(createAlignedRow({
+          title: 'Specular Color',
+          hint: 'Highlight tint added by shaded lighting.',
+          controls: createColorControls({
+            ariaLabel: 'Shaded specular color',
+            getValue: () => this.helios?.shadedSpecularColor?.(),
+            setValue: (value) => this.helios?.shadedSpecularColor?.(value),
+          }),
+        }).row);
+        container.appendChild(createRows(['shadedSpecularStrength', 'shadedShininess']));
+        return container;
+      };
+
+      const shadedEnabled = this.bindHeliosAccessor('shadedEnabled');
+      const shadedToggle = createToggleControl({
+        checked: false,
+        onLabel: 'On',
+        offLabel: 'Off',
+        ariaLabel: 'Shaded',
+        disabled: shadedEnabled.readOnly,
+      });
+      const syncShadedToggle = (value) => {
+        shadedToggle.checked = Boolean(value);
+        shadedToggle.disabled = shadedEnabled.readOnly;
+      };
+      const unsubscribeShadedToggle = shadedEnabled.subscribe((value) => {
+        syncShadedToggle(value);
+      });
+      shadedToggle.addEventListener('change', () => {
+        shadedEnabled.write(shadedToggle.checked, { source: 'ui', event: 'change' });
+      });
+      this._controlCleanups.add(() => unsubscribeShadedToggle());
       const createEdgeAppearanceContent = () => {
         const container = document.createElement('div');
         container.appendChild(createRows(['edgeWidthScale', 'edgeOpacityScale']));
@@ -1724,6 +1827,14 @@ export class HeliosUI {
         id: 'edge-appearance',
         title: 'Edges',
         content: createEdgeAppearanceContent(),
+      });
+      nodeEdgeStack.add({
+        id: 'shaded-appearance',
+        title: 'Shaded',
+        collapsed: true,
+        statusDot: false,
+        headerControls: shadedToggle,
+        content: createShadedAppearanceContent(),
       });
       this._controlCleanups.add(() => nodeEdgeStack.destroy());
 

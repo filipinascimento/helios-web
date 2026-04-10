@@ -3,7 +3,16 @@ import {
   EDGE_WEIGHTED_RESOLVE_WGSL,
   createEdgeWeightedResolveTonemapWGSL,
 } from './shaders/graphWebGPUBase.js';
-import { GraphLayer } from './GraphLayer.js';
+import {
+  GraphLayer,
+  SHADED_LIGHT_DIRECTION_DEFAULT,
+  SHADED_LIGHT_COLOR_DEFAULT,
+  SHADED_AMBIENT_TOP_COLOR_DEFAULT,
+  SHADED_AMBIENT_BOTTOM_COLOR_DEFAULT,
+  SHADED_SPECULAR_COLOR_DEFAULT,
+  SHADED_SPECULAR_STRENGTH_DEFAULT,
+  SHADED_SHININESS_DEFAULT,
+} from './GraphLayer.js';
 import { FrameGraphRunner } from './framegraph/FrameGraphRunner.js';
 import { bumpCounter } from '../../utilities/counters.js';
 
@@ -51,6 +60,8 @@ export class GraphLayerWebGPUBase extends GraphLayer {
     this.globalsBuffer = null;
     this.hoverArray = null;
     this.hoverBuffer = null;
+    this.shadingArray = null;
+    this.shadingBuffer = null;
     this.nodeBuffersGpu = {};
     this.edgeBuffersGpu = {};
     this.nodeQuadBufferGpu = null;
@@ -90,6 +101,7 @@ export class GraphLayerWebGPUBase extends GraphLayer {
     this.cameraBuffer?.destroy?.();
     this.globalsBuffer?.destroy?.();
     this.hoverBuffer?.destroy?.();
+    this.shadingBuffer?.destroy?.();
     this.nodeQuadBufferGpu?.destroy?.();
     this.edgeQuadBufferGpu?.destroy?.();
     this.weightedTextures?.color?.destroy?.();
@@ -124,6 +136,11 @@ export class GraphLayerWebGPUBase extends GraphLayer {
     ]);
     this.hoverBuffer = device.device.createBuffer({
       size: this.hoverArray.byteLength,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.shadingArray = new Float32Array(24);
+    this.shadingBuffer = device.device.createBuffer({
+      size: this.shadingArray.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     const quad = new Float32Array([
@@ -705,6 +722,58 @@ export class GraphLayerWebGPUBase extends GraphLayer {
     this.hoverArray[7] = 0;
     device.queue.writeBuffer(this.hoverBuffer, 0, this.hoverArray);
     this._hoverLast = { nodeIndex, nodeState, edgeIndex, edgeState, nodeForceMask, edgeForceMask };
+  }
+
+  updateShadingGpu(device) {
+    if (!device || !this.shadingBuffer || !this.shadingArray) return;
+    const direction = Array.isArray(this.shadedLightDirection) || ArrayBuffer.isView(this.shadedLightDirection)
+      ? this.shadedLightDirection
+      : SHADED_LIGHT_DIRECTION_DEFAULT;
+    const lightColor = Array.isArray(this.shadedLightColor) || ArrayBuffer.isView(this.shadedLightColor)
+      ? this.shadedLightColor
+      : SHADED_LIGHT_COLOR_DEFAULT;
+    const ambientTop = Array.isArray(this.shadedAmbientTopColor) || ArrayBuffer.isView(this.shadedAmbientTopColor)
+      ? this.shadedAmbientTopColor
+      : SHADED_AMBIENT_TOP_COLOR_DEFAULT;
+    const ambientBottom = Array.isArray(this.shadedAmbientBottomColor) || ArrayBuffer.isView(this.shadedAmbientBottomColor)
+      ? this.shadedAmbientBottomColor
+      : SHADED_AMBIENT_BOTTOM_COLOR_DEFAULT;
+    const specularColor = Array.isArray(this.shadedSpecularColor) || ArrayBuffer.isView(this.shadedSpecularColor)
+      ? this.shadedSpecularColor
+      : SHADED_SPECULAR_COLOR_DEFAULT;
+    const specularStrength = Number.isFinite(Number(this.shadedSpecularStrength))
+      ? Math.max(0, Number(this.shadedSpecularStrength))
+      : SHADED_SPECULAR_STRENGTH_DEFAULT;
+    const shininess = Number.isFinite(Number(this.shadedShininess))
+      ? Math.max(1, Number(this.shadedShininess))
+      : SHADED_SHININESS_DEFAULT;
+
+    let offset = 0;
+    this.shadingArray[offset++] = direction[0] ?? SHADED_LIGHT_DIRECTION_DEFAULT[0];
+    this.shadingArray[offset++] = direction[1] ?? SHADED_LIGHT_DIRECTION_DEFAULT[1];
+    this.shadingArray[offset++] = direction[2] ?? SHADED_LIGHT_DIRECTION_DEFAULT[2];
+    this.shadingArray[offset++] = 0;
+    this.shadingArray[offset++] = lightColor[0] ?? SHADED_LIGHT_COLOR_DEFAULT[0];
+    this.shadingArray[offset++] = lightColor[1] ?? SHADED_LIGHT_COLOR_DEFAULT[1];
+    this.shadingArray[offset++] = lightColor[2] ?? SHADED_LIGHT_COLOR_DEFAULT[2];
+    this.shadingArray[offset++] = lightColor[3] ?? SHADED_LIGHT_COLOR_DEFAULT[3];
+    this.shadingArray[offset++] = ambientTop[0] ?? SHADED_AMBIENT_TOP_COLOR_DEFAULT[0];
+    this.shadingArray[offset++] = ambientTop[1] ?? SHADED_AMBIENT_TOP_COLOR_DEFAULT[1];
+    this.shadingArray[offset++] = ambientTop[2] ?? SHADED_AMBIENT_TOP_COLOR_DEFAULT[2];
+    this.shadingArray[offset++] = ambientTop[3] ?? SHADED_AMBIENT_TOP_COLOR_DEFAULT[3];
+    this.shadingArray[offset++] = ambientBottom[0] ?? SHADED_AMBIENT_BOTTOM_COLOR_DEFAULT[0];
+    this.shadingArray[offset++] = ambientBottom[1] ?? SHADED_AMBIENT_BOTTOM_COLOR_DEFAULT[1];
+    this.shadingArray[offset++] = ambientBottom[2] ?? SHADED_AMBIENT_BOTTOM_COLOR_DEFAULT[2];
+    this.shadingArray[offset++] = ambientBottom[3] ?? SHADED_AMBIENT_BOTTOM_COLOR_DEFAULT[3];
+    this.shadingArray[offset++] = specularColor[0] ?? SHADED_SPECULAR_COLOR_DEFAULT[0];
+    this.shadingArray[offset++] = specularColor[1] ?? SHADED_SPECULAR_COLOR_DEFAULT[1];
+    this.shadingArray[offset++] = specularColor[2] ?? SHADED_SPECULAR_COLOR_DEFAULT[2];
+    this.shadingArray[offset++] = specularColor[3] ?? SHADED_SPECULAR_COLOR_DEFAULT[3];
+    this.shadingArray[offset++] = specularStrength;
+    this.shadingArray[offset++] = shininess;
+    this.shadingArray[offset++] = 0;
+    this.shadingArray[offset++] = 0;
+    device.queue.writeBuffer(this.shadingBuffer, 0, this.shadingArray);
   }
 
   prepareWeightedResources(context, cameraUniforms, useEdgeIndices, edgeVariant) {
