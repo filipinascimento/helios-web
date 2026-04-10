@@ -15,6 +15,9 @@ test('webgl node shading specialization only emits shaded uniforms when enabled'
   assert.equal(/u_shadedLightDirection/.test(disabled.NODE_FRAGMENT_SOURCE), false);
   assert.equal(/applyNodeShading/.test(disabled.NODE_FRAGMENT_SOURCE), false);
   assert.match(enabled.NODE_FRAGMENT_SOURCE, /uniform vec3 u_shadedLightDirection;/);
+  assert.match(enabled.NODE_FRAGMENT_SOURCE, /uniform vec4 u_shadedParams;/);
+  assert.match(enabled.NODE_FRAGMENT_SOURCE, /u_shadedParams\.z/);
+  assert.match(enabled.NODE_FRAGMENT_SOURCE, /u_shadedParams\.w/);
   assert.match(enabled.NODE_FRAGMENT_SOURCE, /vec3 applyNodeShading/);
 });
 
@@ -47,6 +50,8 @@ test('webgpu node shading specialization only emits shaded uniform binding when 
   assert.equal(/var<uniform> shading : Shading;/.test(disabled.NODE_WGSL), false);
   assert.equal(/applyNodeShading/.test(disabled.NODE_WGSL), false);
   assert.match(enabled.NODE_WGSL, /var<uniform> shading : Shading;/);
+  assert.match(enabled.NODE_WGSL, /shading\.params\.z/);
+  assert.match(enabled.NODE_WGSL, /shading\.params\.w/);
   assert.match(enabled.NODE_WGSL, /fn applyNodeShading/);
 });
 

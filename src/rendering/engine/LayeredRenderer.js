@@ -252,6 +252,15 @@ export class LayeredRenderer {
       nodeBlendWithEdges: this.options.nodeBlendWithEdges,
       edgeDepthWrite: this.options.edgeDepthWrite,
       edgeFastRendering: this.options.edgeFastRendering,
+      ambientOcclusionEnabled: this.options.ambientOcclusionEnabled,
+      ambientOcclusionNodes: this.options.ambientOcclusionNodes,
+      ambientOcclusionEdges: this.options.ambientOcclusionEdges,
+      ambientOcclusionStrength: this.options.ambientOcclusionStrength,
+      ambientOcclusionRadius: this.options.ambientOcclusionRadius,
+      ambientOcclusionBias: this.options.ambientOcclusionBias,
+      ambientOcclusionMode: this.options.ambientOcclusionMode,
+      ambientOcclusionIntensityScale: this.options.ambientOcclusionIntensityScale,
+      ambientOcclusionIntensityShift: this.options.ambientOcclusionIntensityShift,
       stateSlots: this.options.stateSlots,
     };
     if (this.device?.type === 'webgpu') {

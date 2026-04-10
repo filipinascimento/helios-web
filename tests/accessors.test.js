@@ -12,6 +12,7 @@ test('graph-layer accessors are chainable setters and return values as getters',
       edgeWidthBase: 0,
       semanticZoomExponent: 0.25,
       edgeFastRendering: false,
+      ambientOcclusionQuality: 'medium',
     },
   };
   helios.scheduler = { requestRender: () => { calls.render += 1; } };
@@ -35,6 +36,14 @@ test('graph-layer accessors are chainable setters and return values as getters',
   assert.equal(fastResult, helios);
   assert.equal(helios.edgeFastRendering(), true);
   assert.equal(calls.render, 3);
+
+  assert.equal(helios.ambientOcclusionQuality(), 'medium');
+  const qualityResult = helios.ambientOcclusionQuality('high');
+  assert.equal(qualityResult, helios);
+  assert.equal(helios.ambientOcclusionQuality(), 'high');
+  helios.ambientOcclusionQuality('invalid');
+  assert.equal(helios.ambientOcclusionQuality(), 'high');
+  assert.equal(calls.render, 4);
 });
 
 test('renderer accessors store pending values before renderer exists', () => {

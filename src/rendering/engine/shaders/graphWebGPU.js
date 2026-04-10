@@ -531,7 +531,7 @@ struct Shading {
   ambientTopColor: vec4<f32>,
   ambientBottomColor: vec4<f32>,
   specularColor: vec4<f32>,
-  params: vec4<f32>,
+  params: vec4<f32>, // x=specularStrength y=shininess z=diffuseStrength w=ambientStrength
 };
 
 ${bindingLines.join('\n')}
@@ -583,12 +583,14 @@ fn applyEdgeShading(baseColor: vec3<f32>, edgeLocal: vec2<f32>) -> vec3<f32> {
   let edgeY = clamp(edgeLocal.y, -1.0, 1.0);
   let normal = normalize(vec3<f32>(0.0, edgeY, sqrt(max(1.0 - edgeY * edgeY, 0.0))));
   let lightDir = normalize(shading.lightDirection.xyz);
-  let ambient = mix(shading.ambientBottomColor.xyz, shading.ambientTopColor.xyz, normal.z * 0.5 + 0.5);
+  let ambient = mix(shading.ambientBottomColor.xyz, shading.ambientTopColor.xyz, normal.z * 0.5 + 0.5)
+    * shading.params.w;
   let diffuse = max(dot(lightDir, normal), 0.0);
   let reflection = reflect(-lightDir, normal);
   let specular = pow(max(dot(vec3<f32>(0.0, 0.0, 1.0), reflection), 0.0), max(shading.params.y, 1.0))
     * shading.params.x;
-  let shaded = baseColor * (ambient + shading.lightColor.xyz * diffuse) + shading.specularColor.xyz * specular;
+  let shaded = baseColor * (ambient + shading.lightColor.xyz * (diffuse * shading.params.z))
+    + shading.specularColor.xyz * specular;
   return clamp(shaded, vec3<f32>(0.0), vec3<f32>(1.0));
 }`
     : ''}

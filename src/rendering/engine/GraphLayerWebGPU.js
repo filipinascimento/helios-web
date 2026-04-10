@@ -1,9 +1,16 @@
 import { GraphLayerWebGPUBase } from './GraphLayerWebGPUBase.js';
+import {
+  AMBIENT_OCCLUSION_BIAS_DEFAULT,
+  AMBIENT_OCCLUSION_RADIUS_DEFAULT,
+  AMBIENT_OCCLUSION_STRENGTH_DEFAULT,
+} from './GraphLayer.js';
 import { createGraphWebGPUSources as createDynamicGraphWebGPUSources } from './shaders/graphWebGPU.js';
 import { createGraphWebGPUSources as createBaseGraphWebGPUSources } from './shaders/graphWebGPUBase.js';
 import { GraphVisualSchema } from '../schema/GraphVisualSchema.js';
 import { VISUAL_ATTRIBUTE_NAMES } from '../../pipeline/constants.js';
 import { AttributeType } from 'helios-network';
+import { AmbientOcclusionWebGPU } from './AmbientOcclusionWebGPU.js';
+import { normalizeAmbientOcclusionQuality } from './AmbientOcclusionQuality.js';
 
 const {
   NODE_COLOR_ATTRIBUTE,
@@ -76,6 +83,13 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     this.edgeWeightedModules.clear();
     this.edgePipelineCache.clear();
     this.edgeQuadPipelineCache.clear();
+    this.ambientOcclusion = new AmbientOcclusionWebGPU(device);
+  }
+
+  destroy() {
+    this.ambientOcclusion?.destroy?.();
+    this.ambientOcclusion = null;
+    super.destroy();
   }
 
   composeNodeVariantKey(useIndices, variant) {
@@ -1494,6 +1508,18 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       edgeVariant,
       context.sampleCount ?? 1,
     );
+    const ambientOcclusionActive = !is2D && this.hasAmbientOcclusionSelection();
+    const ambientOcclusionNodePipeline = ambientOcclusionActive
+      ? this.getNodePipeline(useNodeIndices, nodeVariant, {
+        blendKey: 'alpha',
+        blend: this.getBlendForMode('alpha').blend,
+        depthMode: 'depth',
+        sampleCount: 1,
+      })
+      : null;
+    const ambientOcclusionEdgePipelines = ambientOcclusionActive
+      ? this.getEdgePipelinesForMode('alpha', gpuDevice, useEdgeIndices, edgeVariant, 1, true)
+      : null;
 
     const drawNodes = (passEncoder) => {
       const nodeBindGroup = useNodeOutlineAttributes ? this.nodeBindGroupOutline : this.nodeBindGroup;
@@ -1513,6 +1539,27 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
         passEncoder.draw(4, effectiveEdgeCount, 0, 0);
       } else if (edgePipelines?.line) {
         passEncoder.setPipeline(edgePipelines.line);
+        passEncoder.setBindGroup(0, this.edgeBindGroup);
+        passEncoder.draw(effectiveEdgeCount * 2, 1, 0, 0);
+      }
+    };
+    const drawNodesAmbientOcclusion = (passEncoder) => {
+      const nodeBindGroup = useNodeOutlineAttributes ? this.nodeBindGroupOutline : this.nodeBindGroup;
+      if (!nodeCount || !nodeBindGroup || !passEncoder || !ambientOcclusionNodePipeline) return;
+      passEncoder.setPipeline(ambientOcclusionNodePipeline);
+      passEncoder.setBindGroup(0, nodeBindGroup);
+      passEncoder.setVertexBuffer(0, this.nodeQuadBufferGpu);
+      passEncoder.draw(4, nodeCount, 0, 0);
+    };
+    const drawEdgesAmbientOcclusion = (passEncoder) => {
+      if (!effectiveEdgeCount || !this.edgeBindGroup || !passEncoder) return;
+      if (edgeRenderingMode === 'quad' && ambientOcclusionEdgePipelines?.quad) {
+        passEncoder.setPipeline(ambientOcclusionEdgePipelines.quad);
+        passEncoder.setBindGroup(0, this.edgeBindGroup);
+        passEncoder.setVertexBuffer(0, this.edgeQuadBufferGpu);
+        passEncoder.draw(4, effectiveEdgeCount, 0, 0);
+      } else if (ambientOcclusionEdgePipelines?.line) {
+        passEncoder.setPipeline(ambientOcclusionEdgePipelines.line);
         passEncoder.setBindGroup(0, this.edgeBindGroup);
         passEncoder.draw(effectiveEdgeCount * 2, 1, 0, 0);
       }
@@ -1553,6 +1600,31 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     }
 
     this.frameGraph.run(passes, context);
+    if (ambientOcclusionActive && this.ambientOcclusion?.render) {
+      this.ambientOcclusion.render(context, {
+        cameraUniforms,
+        selection: this.getAmbientOcclusionSelection(),
+        strength: Number.isFinite(Number(this.ambientOcclusionStrength))
+          ? Math.max(0, Number(this.ambientOcclusionStrength))
+          : AMBIENT_OCCLUSION_STRENGTH_DEFAULT,
+        radius: Number.isFinite(Number(this.ambientOcclusionRadius))
+          ? Math.max(1, Number(this.ambientOcclusionRadius))
+          : AMBIENT_OCCLUSION_RADIUS_DEFAULT,
+        bias: Number.isFinite(Number(this.ambientOcclusionBias))
+          ? Math.max(0, Number(this.ambientOcclusionBias))
+          : AMBIENT_OCCLUSION_BIAS_DEFAULT,
+        mode: this.ambientOcclusionMode,
+        intensityScale: Number.isFinite(Number(this.ambientOcclusionIntensityScale))
+          ? Math.max(0, Number(this.ambientOcclusionIntensityScale))
+          : 1.25,
+        intensityShift: Number.isFinite(Number(this.ambientOcclusionIntensityShift))
+          ? Math.max(0, Number(this.ambientOcclusionIntensityShift))
+          : 0.05,
+        quality: normalizeAmbientOcclusionQuality(this.ambientOcclusionQuality),
+        drawNodes: drawNodesAmbientOcclusion,
+        drawEdges: drawEdgesAmbientOcclusion,
+      });
+    }
   }
 }
 

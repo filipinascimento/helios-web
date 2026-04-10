@@ -195,6 +195,23 @@ test.describe('scene panel: tabs and appearance controls', () => {
     );
     expect(shadedLightDirectionLength).toBeCloseTo(1, 3);
 
+    const shadedDiffuse = shadedSubpanel.locator(
+      'xpath=.//*[contains(@class,"helios-ui-row")][.//*[contains(@class,"helios-ui-label__title") and normalize-space()="Diffuse"]]//input[@type="number"]',
+    ).first();
+    await shadedDiffuse.fill('0.4');
+    await shadedDiffuse.dispatchEvent('change');
+    await expect.poll(async () => page.evaluate(() => window.__helios.shadedDiffuseStrength())).toBeCloseTo(0.4, 3);
+
+    const shadedAmbient = shadedSubpanel.locator(
+      'xpath=.//*[contains(@class,"helios-ui-row")][.//*[contains(@class,"helios-ui-label__title") and normalize-space()="Ambient"]]//input[@type="number"]',
+    ).first();
+    await shadedAmbient.fill('1.6');
+    await shadedAmbient.dispatchEvent('change');
+    await expect.poll(async () => page.evaluate(() => window.__helios.shadedAmbientStrength())).toBeCloseTo(1.6, 3);
+
+    await expect(scenePanel.getByRole('button', { name: 'Ambient Occlusion' }).first()).toHaveCount(0);
+    await expect(scenePanel.locator('[role="switch"][aria-label="Ambient Occlusion"]').first()).toHaveCount(0);
+
     const dimensionToggle = scenePanel.locator('[role="switch"][aria-label="Scene dimension"]').first();
     await expect(dimensionToggle).toBeVisible();
     await expect(dimensionToggle).toHaveAttribute('aria-checked', 'false');

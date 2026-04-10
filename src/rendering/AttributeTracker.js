@@ -162,6 +162,8 @@ uniform vec3 u_cameraPosition;
 uniform vec3 u_cameraUp;
 uniform vec3 u_cameraRight;
 uniform int u_is2D;
+uniform float u_zoom2D;
+uniform float u_semanticZoomExponent;
 uniform vec2 u_viewport;
 uniform int u_useNodeIdBuffer;
 uniform int u_useNodeSize;
@@ -1735,6 +1737,7 @@ export class WebGLAttributeRenderer {
 
   setNodeUniforms(uniforms, cameraUniforms, options) {
     const { gl } = this;
+    if (!uniforms || !cameraUniforms) return false;
     const set1ui = (location, value) => {
       if (!location) return;
       if (typeof gl.uniform1ui === 'function') gl.uniform1ui(location, value);
@@ -1808,10 +1811,12 @@ export class WebGLAttributeRenderer {
       nodeNoStateEnabled ? this.graphLayer.nodeNoStateScale[3] : 0,
     );
     set4fv(uniforms['u_nodeStateScale[0]'], this.graphLayer.nodeStateScale);
+    return true;
   }
 
   setEdgeUniforms(uniforms, cameraUniforms, options) {
     const { gl } = this;
+    if (!uniforms || !cameraUniforms) return false;
     gl.uniformMatrix4fv(uniforms.u_viewProjection, false, cameraUniforms.viewProjection);
     gl.uniform1i(uniforms.u_nodePositions, 0);
     gl.uniform1i(uniforms.u_edgeEndpoints, 3);
@@ -1822,6 +1827,7 @@ export class WebGLAttributeRenderer {
     gl.uniform1i(uniforms.u_useEdgeIdBuffer, options.useEdgeIdBuffer ? 1 : 0);
     gl.uniform1i(uniforms.u_useEncodedTexture, options.useEncodedTexture ? 1 : 0);
     gl.uniform1i(uniforms.u_trackedEdgeValueMode, options.trackedEdgeValueMode ?? TRACKED_VALUE_MODE.INDEX);
+    return true;
   }
 
   setEdgeQuadUniforms(uniforms, cameraUniforms, options) {
@@ -1927,6 +1933,18 @@ export class WebGLAttributeRenderer {
 
   render(frame, size, config) {
     if (!this.gl || !frame?.network) return null;
+    if (
+      this.device?.createProgram
+      && (!this.programs.node || !this.uniforms.node || !this.uniforms.nodeOcclusion || !this.uniforms.nodeDepth)
+    ) {
+      this.initializePrograms();
+    }
+    if (this.device?.createProgram && (!this.nodeVao || !this.edgeVao || !this.edgeQuadVao)) {
+      this.initializeGeometry();
+    }
+    if (this.device?.createProgram && (!this.textures.nodePositions || !this.textures.edgeEndpoints)) {
+      this.initializeTextures();
+    }
     const network = frame.network;
     const camera = frame.camera;
     const scale = config.resolutionScale ?? 1;
@@ -2404,7 +2422,7 @@ export class WebGLAttributeRenderer {
 
         const setupNodeDraw = (program, uniforms) => {
           gl.useProgram(program);
-          this.setNodeUniforms(uniforms, cameraUniforms, drawNodeArgs);
+          if (!this.setNodeUniforms(uniforms, cameraUniforms, drawNodeArgs)) return;
           this.bindTexture(0, drawTextures.nodePositions);
           this.bindTexture(1, drawTextures.nodeSizes);
           this.bindTexture(9, drawTextures.nodeOutlineWidths);
@@ -2422,7 +2440,7 @@ export class WebGLAttributeRenderer {
           if (drawEdgeArgs.useQuads) {
             this.setEdgeQuadUniforms(uniforms, cameraUniforms, drawEdgeArgs);
           } else {
-            this.setEdgeUniforms(uniforms, cameraUniforms, drawEdgeArgs);
+            if (!this.setEdgeUniforms(uniforms, cameraUniforms, drawEdgeArgs)) return;
           }
           this.bindTexture(0, drawTextures.nodePositions);
           this.bindTexture(3, drawTextures.edgeEndpoints);

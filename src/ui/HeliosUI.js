@@ -24,6 +24,8 @@ import { toHex8 } from './utils/colors.js';
 import { isPublicAttributeName } from './utils/attributes.js';
 import { shallowCloneChannelConfig } from './utils/channelConfig.js';
 import { HeliosFilter } from '../filters/HeliosFilter.js';
+import { AMBIENT_OCCLUSION_MODE_OPTIONS } from '../rendering/engine/AmbientOcclusionMode.js';
+import { AMBIENT_OCCLUSION_QUALITY_OPTIONS } from '../rendering/engine/AmbientOcclusionQuality.js';
 import {
   buildFigureExportPresetList,
   normalizeFigureExportFilename,
@@ -1233,6 +1235,42 @@ export class HeliosUI {
         return row;
       };
 
+      const createSelectRow = (accessorName, options) => {
+        const info = bindings?.[accessorName] ?? null;
+        if (!info || info.type !== 'string') return null;
+        if (typeof this.helios?.[accessorName] !== 'function') return null;
+        const attribute = this.bindHeliosAccessor(accessorName);
+        const select = createSelectControl({
+          ariaLabel: info.label ?? accessorName,
+          options,
+          value: attribute.value(),
+        });
+
+        const syncSelect = (value) => {
+          select.value = String(value ?? '');
+          select.disabled = attribute.readOnly;
+        };
+
+        const unsub = attribute.subscribe((value) => {
+          syncSelect(value);
+        });
+
+        select.addEventListener('change', () => {
+          attribute.write(select.value, { source: 'ui', event: 'change' });
+        });
+
+        const controls = document.createElement('div');
+        controls.className = 'helios-ui-row__controls';
+        controls.appendChild(select);
+        const { row } = createAlignedRow({
+          title: info.label ?? accessorName,
+          hint: info.description ?? null,
+          controls,
+        });
+        this._controlCleanups.add(() => unsub());
+        return row;
+      };
+
       const clamp01 = (value) => {
         const v = Number(value);
         if (!Number.isFinite(v)) return 0;
@@ -1734,6 +1772,7 @@ export class HeliosUI {
             setValue: (value) => this.helios?.shadedLightColor?.(value),
           }),
         }).row);
+        container.appendChild(createRows(['shadedDiffuseStrength']));
         container.appendChild(createAlignedRow({
           title: 'Ambient Top',
           hint: 'Ambient tint on the camera-facing top hemisphere.',
@@ -1752,6 +1791,7 @@ export class HeliosUI {
             setValue: (value) => this.helios?.shadedAmbientBottomColor?.(value),
           }),
         }).row);
+        container.appendChild(createRows(['shadedAmbientStrength']));
         container.appendChild(createAlignedRow({
           title: 'Specular Color',
           hint: 'Highlight tint added by shaded lighting.',
@@ -1764,6 +1804,27 @@ export class HeliosUI {
         container.appendChild(createRows(['shadedSpecularStrength', 'shadedShininess']));
         return container;
       };
+
+      const createAmbientOcclusionContent = () => {
+        const container = document.createElement('div');
+        const nodesRow = createToggleRow('ambientOcclusionNodes');
+        if (nodesRow) container.appendChild(nodesRow);
+        const edgesRow = createToggleRow('ambientOcclusionEdges');
+        if (edgesRow) container.appendChild(edgesRow);
+        const modeRow = createSelectRow('ambientOcclusionMode', AMBIENT_OCCLUSION_MODE_OPTIONS);
+        if (modeRow) container.appendChild(modeRow);
+        const qualityRow = createSelectRow('ambientOcclusionQuality', AMBIENT_OCCLUSION_QUALITY_OPTIONS);
+        if (qualityRow) container.appendChild(qualityRow);
+        container.appendChild(createRows([
+          'ambientOcclusionStrength',
+          'ambientOcclusionRadius',
+          'ambientOcclusionBias',
+          'ambientOcclusionIntensityScale',
+          'ambientOcclusionIntensityShift',
+        ]));
+        return container;
+      };
+      const supportsAmbientOcclusion = String(this.helios?.renderer?.device?.type ?? '').toLowerCase() === 'webgpu';
 
       const shadedEnabled = this.bindHeliosAccessor('shadedEnabled');
       const shadedToggle = createToggleControl({
@@ -1784,6 +1845,28 @@ export class HeliosUI {
         shadedEnabled.write(shadedToggle.checked, { source: 'ui', event: 'change' });
       });
       this._controlCleanups.add(() => unsubscribeShadedToggle());
+      let ambientOcclusionToggle = null;
+      if (supportsAmbientOcclusion) {
+        const ambientOcclusionEnabled = this.bindHeliosAccessor('ambientOcclusionEnabled');
+        ambientOcclusionToggle = createToggleControl({
+          checked: false,
+          onLabel: 'On',
+          offLabel: 'Off',
+          ariaLabel: 'Ambient Occlusion',
+          disabled: ambientOcclusionEnabled.readOnly,
+        });
+        const syncAmbientOcclusionToggle = (value) => {
+          ambientOcclusionToggle.checked = Boolean(value);
+          ambientOcclusionToggle.disabled = ambientOcclusionEnabled.readOnly;
+        };
+        const unsubscribeAmbientOcclusionToggle = ambientOcclusionEnabled.subscribe((value) => {
+          syncAmbientOcclusionToggle(value);
+        });
+        ambientOcclusionToggle.addEventListener('change', () => {
+          ambientOcclusionEnabled.write(ambientOcclusionToggle.checked, { source: 'ui', event: 'change' });
+        });
+        this._controlCleanups.add(() => unsubscribeAmbientOcclusionToggle());
+      }
       const createEdgeAppearanceContent = () => {
         const container = document.createElement('div');
         container.appendChild(createRows(['edgeWidthScale', 'edgeOpacityScale']));
@@ -1836,6 +1919,16 @@ export class HeliosUI {
         headerControls: shadedToggle,
         content: createShadedAppearanceContent(),
       });
+      if (supportsAmbientOcclusion) {
+        nodeEdgeStack.add({
+          id: 'ambient-occlusion-appearance',
+          title: 'Ambient Occlusion',
+          collapsed: true,
+          statusDot: false,
+          headerControls: ambientOcclusionToggle,
+          content: createAmbientOcclusionContent(),
+        });
+      }
       this._controlCleanups.add(() => nodeEdgeStack.destroy());
 
       const appearanceTab = document.createElement('div');

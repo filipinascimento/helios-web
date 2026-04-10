@@ -28,14 +28,25 @@ import { SvgLegendController } from './legends/SvgLegendController.js';
 import { HeliosFilter } from './filters/HeliosFilter.js';
 import { DensityLayer } from './rendering/engine/DensityLayer.js';
 import {
+  AMBIENT_OCCLUSION_BIAS_DEFAULT,
+  AMBIENT_OCCLUSION_INTENSITY_SCALE_DEFAULT,
+  AMBIENT_OCCLUSION_INTENSITY_SHIFT_DEFAULT,
+  AMBIENT_OCCLUSION_MODE_DEFAULT,
+  AMBIENT_OCCLUSION_QUALITY_DEFAULT,
+  AMBIENT_OCCLUSION_RADIUS_DEFAULT,
+  AMBIENT_OCCLUSION_STRENGTH_DEFAULT,
+  SHADED_AMBIENT_STRENGTH_DEFAULT,
   SHADED_LIGHT_DIRECTION_DEFAULT,
   SHADED_LIGHT_COLOR_DEFAULT,
   SHADED_AMBIENT_TOP_COLOR_DEFAULT,
   SHADED_AMBIENT_BOTTOM_COLOR_DEFAULT,
+  SHADED_DIFFUSE_STRENGTH_DEFAULT,
   SHADED_SPECULAR_COLOR_DEFAULT,
   SHADED_SPECULAR_STRENGTH_DEFAULT,
   SHADED_SHININESS_DEFAULT,
 } from './rendering/engine/GraphLayer.js';
+import { normalizeAmbientOcclusionMode } from './rendering/engine/AmbientOcclusionMode.js';
+import { normalizeAmbientOcclusionQuality } from './rendering/engine/AmbientOcclusionQuality.js';
 import {
   buildFigureExportPresetList,
   getFigureExportCapability,
@@ -1552,6 +1563,24 @@ export class Helios extends EventTarget {
       recommendedRange: { min: -1, max: 1 },
       step: 0.01,
     },
+    shadedDiffuseStrength: {
+      type: 'number',
+      label: 'Diffuse',
+      description: 'Strength of the directional diffuse contribution from the shaded light color.',
+      defaultValue: SHADED_DIFFUSE_STRENGTH_DEFAULT,
+      domain: { min: 0, max: 4 },
+      recommendedRange: { min: 0, max: 2 },
+      step: 0.01,
+    },
+    shadedAmbientStrength: {
+      type: 'number',
+      label: 'Ambient',
+      description: 'Strength of the ambient top and bottom hemisphere lighting.',
+      defaultValue: SHADED_AMBIENT_STRENGTH_DEFAULT,
+      domain: { min: 0, max: 4 },
+      recommendedRange: { min: 0, max: 2 },
+      step: 0.01,
+    },
     shadedSpecularStrength: {
       type: 'number',
       label: 'Specular',
@@ -1569,6 +1598,81 @@ export class Helios extends EventTarget {
       domain: { min: 1, max: 256 },
       recommendedRange: { min: 8, max: 128 },
       step: 1,
+    },
+    ambientOcclusionEnabled: {
+      type: 'boolean',
+      label: 'Ambient Occlusion',
+      description: 'Enable a fast screen-space ambient occlusion post pass.',
+      defaultValue: false,
+    },
+    ambientOcclusionNodes: {
+      type: 'boolean',
+      label: 'Nodes',
+      description: 'Include node surfaces in the AO depth prepass and darkening pass.',
+      defaultValue: true,
+    },
+    ambientOcclusionEdges: {
+      type: 'boolean',
+      label: 'Edges',
+      description: 'Include edge surfaces in the AO depth prepass and darkening pass.',
+      defaultValue: false,
+    },
+    ambientOcclusionStrength: {
+      type: 'number',
+      label: 'Strength',
+      description: 'How strongly the AO pass darkens occluded pixels.',
+      defaultValue: AMBIENT_OCCLUSION_STRENGTH_DEFAULT,
+      domain: { min: 0, max: 2 },
+      recommendedRange: { min: 0.2, max: 1.2 },
+      step: 0.01,
+    },
+    ambientOcclusionRadius: {
+      type: 'number',
+      label: 'Radius',
+      description: 'Screen-space AO sample radius in pixels.',
+      defaultValue: AMBIENT_OCCLUSION_RADIUS_DEFAULT,
+      domain: { min: 1, max: 64 },
+      recommendedRange: { min: 4, max: 24 },
+      step: 1,
+    },
+    ambientOcclusionBias: {
+      type: 'number',
+      label: 'Bias',
+      description: 'Small positive bias that suppresses self-occlusion noise.',
+      defaultValue: AMBIENT_OCCLUSION_BIAS_DEFAULT,
+      domain: { min: 0, max: 0.1 },
+      recommendedRange: { min: 0.001, max: 0.04 },
+      step: 0.001,
+    },
+    ambientOcclusionMode: {
+      type: 'string',
+      label: 'Mode',
+      description: 'Choose between the smoother default SSAO and the VTK-inspired alternate pass.',
+      defaultValue: AMBIENT_OCCLUSION_MODE_DEFAULT,
+    },
+    ambientOcclusionIntensityScale: {
+      type: 'number',
+      label: 'Alt Scale',
+      description: 'Internal occlusion contrast scale used by SSAO Alt before final compositing.',
+      defaultValue: AMBIENT_OCCLUSION_INTENSITY_SCALE_DEFAULT,
+      domain: { min: 0, max: 4 },
+      recommendedRange: { min: 0.5, max: 2.5 },
+      step: 0.01,
+    },
+    ambientOcclusionIntensityShift: {
+      type: 'number',
+      label: 'Alt Shift',
+      description: 'Internal occlusion offset used by SSAO Alt to keep mid-tones from over-darkening.',
+      defaultValue: AMBIENT_OCCLUSION_INTENSITY_SHIFT_DEFAULT,
+      domain: { min: 0, max: 1 },
+      recommendedRange: { min: 0, max: 0.2 },
+      step: 0.01,
+    },
+    ambientOcclusionQuality: {
+      type: 'string',
+      label: 'Quality',
+      description: 'Trade AO sharpness and stability against GPU cost.',
+      defaultValue: AMBIENT_OCCLUSION_QUALITY_DEFAULT,
     },
     edgeAdaptiveQualityEnabled: {
       type: 'boolean',
@@ -3158,6 +3262,16 @@ export class Helios extends EventTarget {
       nodeBlendWithEdges: this.options.nodeBlendWithEdges,
       edgeDepthWrite: this.options.edgeDepthWrite,
       edgeFastRendering: this.options.edgeFastRendering,
+      ambientOcclusionEnabled: this.options.ambientOcclusionEnabled,
+      ambientOcclusionNodes: this.options.ambientOcclusionNodes,
+      ambientOcclusionEdges: this.options.ambientOcclusionEdges,
+      ambientOcclusionStrength: this.options.ambientOcclusionStrength,
+      ambientOcclusionRadius: this.options.ambientOcclusionRadius,
+      ambientOcclusionBias: this.options.ambientOcclusionBias,
+      ambientOcclusionMode: this.options.ambientOcclusionMode,
+      ambientOcclusionIntensityScale: this.options.ambientOcclusionIntensityScale,
+      ambientOcclusionIntensityShift: this.options.ambientOcclusionIntensityShift,
+      ambientOcclusionQuality: this.options.ambientOcclusionQuality,
       stateSlots,
       ...options,
     });
@@ -6144,6 +6258,26 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('shadedAmbientBottomColor', normalized);
   }
 
+  shadedDiffuseStrength(value) {
+    if (arguments.length === 0) {
+      const current = Number(this._getGraphLayerProp('shadedDiffuseStrength'));
+      return Number.isFinite(current) ? current : SHADED_DIFFUSE_STRENGTH_DEFAULT;
+    }
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return this;
+    return this._setGraphLayerProp('shadedDiffuseStrength', Math.max(0, numeric));
+  }
+
+  shadedAmbientStrength(value) {
+    if (arguments.length === 0) {
+      const current = Number(this._getGraphLayerProp('shadedAmbientStrength'));
+      return Number.isFinite(current) ? current : SHADED_AMBIENT_STRENGTH_DEFAULT;
+    }
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return this;
+    return this._setGraphLayerProp('shadedAmbientStrength', Math.max(0, numeric));
+  }
+
   shadedSpecularColor(color) {
     if (arguments.length === 0) {
       return cloneColorInput(this._getGraphLayerProp('shadedSpecularColor'), SHADED_SPECULAR_COLOR_DEFAULT);
@@ -6173,6 +6307,104 @@ export class Helios extends EventTarget {
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) return this;
     return this._setGraphLayerProp('shadedShininess', Math.max(1, numeric));
+  }
+
+  ambientOcclusionEnabled(value) {
+    if (arguments.length === 0) {
+      const current = this._getGraphLayerProp('ambientOcclusionEnabled');
+      return current === true;
+    }
+    return this._setGraphLayerProp('ambientOcclusionEnabled', Boolean(value));
+  }
+
+  ambientOcclusionNodes(value) {
+    if (arguments.length === 0) {
+      const current = this._getGraphLayerProp('ambientOcclusionNodes');
+      return current == null ? true : current !== false;
+    }
+    return this._setGraphLayerProp('ambientOcclusionNodes', value !== false);
+  }
+
+  ambientOcclusionEdges(value) {
+    if (arguments.length === 0) {
+      const current = this._getGraphLayerProp('ambientOcclusionEdges');
+      return current === true;
+    }
+    return this._setGraphLayerProp('ambientOcclusionEdges', value === true);
+  }
+
+  ambientOcclusionStrength(value) {
+    if (arguments.length === 0) {
+      const current = Number(this._getGraphLayerProp('ambientOcclusionStrength'));
+      return Number.isFinite(current) ? current : AMBIENT_OCCLUSION_STRENGTH_DEFAULT;
+    }
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return this;
+    return this._setGraphLayerProp('ambientOcclusionStrength', Math.max(0, numeric));
+  }
+
+  ambientOcclusionRadius(value) {
+    if (arguments.length === 0) {
+      const current = Number(this._getGraphLayerProp('ambientOcclusionRadius'));
+      return Number.isFinite(current) ? current : AMBIENT_OCCLUSION_RADIUS_DEFAULT;
+    }
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return this;
+    return this._setGraphLayerProp('ambientOcclusionRadius', Math.max(1, numeric));
+  }
+
+  ambientOcclusionBias(value) {
+    if (arguments.length === 0) {
+      const current = Number(this._getGraphLayerProp('ambientOcclusionBias'));
+      return Number.isFinite(current) ? current : AMBIENT_OCCLUSION_BIAS_DEFAULT;
+    }
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return this;
+    return this._setGraphLayerProp('ambientOcclusionBias', Math.max(0, numeric));
+  }
+
+  ambientOcclusionMode(value) {
+    if (arguments.length === 0) {
+      return normalizeAmbientOcclusionMode(
+        this._getGraphLayerProp('ambientOcclusionMode'),
+        AMBIENT_OCCLUSION_MODE_DEFAULT,
+      );
+    }
+    const normalized = normalizeAmbientOcclusionMode(value, null);
+    if (!normalized) return this;
+    return this._setGraphLayerProp('ambientOcclusionMode', normalized);
+  }
+
+  ambientOcclusionIntensityScale(value) {
+    if (arguments.length === 0) {
+      const current = Number(this._getGraphLayerProp('ambientOcclusionIntensityScale'));
+      return Number.isFinite(current) ? current : AMBIENT_OCCLUSION_INTENSITY_SCALE_DEFAULT;
+    }
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return this;
+    return this._setGraphLayerProp('ambientOcclusionIntensityScale', Math.max(0, numeric));
+  }
+
+  ambientOcclusionIntensityShift(value) {
+    if (arguments.length === 0) {
+      const current = Number(this._getGraphLayerProp('ambientOcclusionIntensityShift'));
+      return Number.isFinite(current) ? current : AMBIENT_OCCLUSION_INTENSITY_SHIFT_DEFAULT;
+    }
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return this;
+    return this._setGraphLayerProp('ambientOcclusionIntensityShift', Math.max(0, numeric));
+  }
+
+  ambientOcclusionQuality(value) {
+    if (arguments.length === 0) {
+      return normalizeAmbientOcclusionQuality(
+        this._getGraphLayerProp('ambientOcclusionQuality'),
+        AMBIENT_OCCLUSION_QUALITY_DEFAULT,
+      );
+    }
+    const normalized = normalizeAmbientOcclusionQuality(value, null);
+    if (!normalized) return this;
+    return this._setGraphLayerProp('ambientOcclusionQuality', normalized);
   }
 
   edgeAdaptiveQuality(options) {

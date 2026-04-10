@@ -1,9 +1,14 @@
 import {
   GraphLayer,
+  AMBIENT_OCCLUSION_BIAS_DEFAULT,
+  AMBIENT_OCCLUSION_RADIUS_DEFAULT,
+  AMBIENT_OCCLUSION_STRENGTH_DEFAULT,
   SHADED_LIGHT_DIRECTION_DEFAULT,
   SHADED_LIGHT_COLOR_DEFAULT,
+  SHADED_AMBIENT_STRENGTH_DEFAULT,
   SHADED_AMBIENT_TOP_COLOR_DEFAULT,
   SHADED_AMBIENT_BOTTOM_COLOR_DEFAULT,
+  SHADED_DIFFUSE_STRENGTH_DEFAULT,
   SHADED_SPECULAR_COLOR_DEFAULT,
   SHADED_SPECULAR_STRENGTH_DEFAULT,
   SHADED_SHININESS_DEFAULT,
@@ -830,6 +835,7 @@ export class GraphLayerWebGL extends GraphLayer {
     this.weightedDepth = null;
     this.weightedSize = null;
     this.weightedSupported = null;
+    this.ambientOcclusion = null;
   }
 
   initialize(device, size) {
@@ -873,6 +879,7 @@ export class GraphLayerWebGL extends GraphLayer {
     if (this.edgeQuadBuffer) gl.deleteBuffer(this.edgeQuadBuffer);
     if (this.nodeIdBuffer) gl.deleteBuffer(this.nodeIdBuffer);
     if (this.edgeIdBuffer) gl.deleteBuffer(this.edgeIdBuffer);
+    this.ambientOcclusion = null;
     Object.values(this.nodeTextures).forEach((tex) => tex && gl.deleteTexture(tex));
     Object.values(this.edgeTextures).forEach((tex) => tex && gl.deleteTexture(tex));
   }
@@ -1794,6 +1801,12 @@ export class GraphLayerWebGL extends GraphLayer {
     const shadedAmbientTopColor = toRgba(this.shadedAmbientTopColor, SHADED_AMBIENT_TOP_COLOR_DEFAULT);
     const shadedAmbientBottomColor = toRgba(this.shadedAmbientBottomColor, SHADED_AMBIENT_BOTTOM_COLOR_DEFAULT);
     const shadedSpecularColor = toRgba(this.shadedSpecularColor, SHADED_SPECULAR_COLOR_DEFAULT);
+    const shadedDiffuseStrength = Number.isFinite(Number(this.shadedDiffuseStrength))
+      ? Math.max(0, Number(this.shadedDiffuseStrength))
+      : SHADED_DIFFUSE_STRENGTH_DEFAULT;
+    const shadedAmbientStrength = Number.isFinite(Number(this.shadedAmbientStrength))
+      ? Math.max(0, Number(this.shadedAmbientStrength))
+      : SHADED_AMBIENT_STRENGTH_DEFAULT;
     const shadedSpecularStrength = Number.isFinite(Number(this.shadedSpecularStrength))
       ? Math.max(0, Number(this.shadedSpecularStrength))
       : SHADED_SPECULAR_STRENGTH_DEFAULT;
@@ -2250,7 +2263,14 @@ export class GraphLayerWebGL extends GraphLayer {
             shadedSpecularColor[1],
             shadedSpecularColor[2],
           );
-          set2f(uniforms, 'u_shadedParams', shadedSpecularStrength, shadedShininess);
+          set4f(
+            uniforms,
+            'u_shadedParams',
+            shadedSpecularStrength,
+            shadedShininess,
+            shadedDiffuseStrength,
+            shadedAmbientStrength,
+          );
         };
 
         const drawEdges = ({
@@ -2679,6 +2699,11 @@ export class GraphLayerWebGL extends GraphLayer {
           }
         };
 
+        const outputFramebuffer = context.target?.handle ?? null;
+        const outputDrawBuffers = outputFramebuffer ? [gl.COLOR_ATTACHMENT0] : [gl.BACK];
+        const mainFramebuffer = outputFramebuffer;
+        const mainDrawBuffers = mainFramebuffer ? [gl.COLOR_ATTACHMENT0] : [gl.BACK];
+
         const effectiveEdgeCount = this.shouldRenderEdges() ? this.edgeCount : 0;
         const weightedRequested = !fastEdges && (transparencyMode === 'weighted'
           || transparencyMode === 'additive-normalized'
@@ -2700,8 +2725,6 @@ export class GraphLayerWebGL extends GraphLayer {
             console.info(`GraphLayerWebGL: using weighted multipass for '${transparencyMode}'`);
             this.loggedWeightedActive = true;
           }
-          const mainFramebuffer = context.target?.handle ?? null;
-          const mainDrawBuffers = mainFramebuffer ? [gl.COLOR_ATTACHMENT0] : [gl.BACK];
 
           if (!is2D && this.nodeCount && !nodeBlendWithEdges) {
             gl.bindFramebuffer(gl.FRAMEBUFFER, mainFramebuffer);
@@ -2849,6 +2872,8 @@ export class GraphLayerWebGL extends GraphLayer {
             drawEdges();
           }
         }
+
+        if (outputFramebuffer) gl.drawBuffers(outputDrawBuffers);
 
         gl.bindVertexArray(null);
         const finalError = gl.getError();

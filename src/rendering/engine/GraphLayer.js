@@ -1,4 +1,12 @@
 import { Layer } from './Layer.js';
+import {
+  AMBIENT_OCCLUSION_QUALITY_DEFAULT,
+  normalizeAmbientOcclusionQuality,
+} from './AmbientOcclusionQuality.js';
+import {
+  AMBIENT_OCCLUSION_MODE_DEFAULT,
+  normalizeAmbientOcclusionMode,
+} from './AmbientOcclusionMode.js';
 
 export { EDGE_WIDTH_SCALE_MULTIPLIER_GLOBAL } from './GraphLayerCommon.js';
 
@@ -10,9 +18,18 @@ export const SHADED_LIGHT_DIRECTION_DEFAULT = Object.freeze([
 export const SHADED_LIGHT_COLOR_DEFAULT = Object.freeze([1, 1, 1, 1]);
 export const SHADED_AMBIENT_TOP_COLOR_DEFAULT = Object.freeze([0.62, 0.64, 0.7, 1]);
 export const SHADED_AMBIENT_BOTTOM_COLOR_DEFAULT = Object.freeze([0.22, 0.24, 0.3, 1]);
+export const SHADED_DIFFUSE_STRENGTH_DEFAULT = 1;
+export const SHADED_AMBIENT_STRENGTH_DEFAULT = 1;
 export const SHADED_SPECULAR_COLOR_DEFAULT = Object.freeze([1, 1, 1, 1]);
 export const SHADED_SPECULAR_STRENGTH_DEFAULT = 0.35;
 export const SHADED_SHININESS_DEFAULT = 48;
+export const AMBIENT_OCCLUSION_STRENGTH_DEFAULT = 0.7;
+export const AMBIENT_OCCLUSION_RADIUS_DEFAULT = 14;
+export const AMBIENT_OCCLUSION_BIAS_DEFAULT = 0.02;
+export const AMBIENT_OCCLUSION_INTENSITY_SCALE_DEFAULT = 1.25;
+export const AMBIENT_OCCLUSION_INTENSITY_SHIFT_DEFAULT = 0.05;
+export { AMBIENT_OCCLUSION_QUALITY_DEFAULT } from './AmbientOcclusionQuality.js';
+export { AMBIENT_OCCLUSION_MODE_DEFAULT } from './AmbientOcclusionMode.js';
 
 function clampUnit01(value, fallback = 0) {
   const numeric = Number(value);
@@ -132,6 +149,12 @@ export class GraphLayer extends Layer {
       options.shadedAmbientBottomColor,
       SHADED_AMBIENT_BOTTOM_COLOR_DEFAULT,
     );
+    this.shadedDiffuseStrength = Number.isFinite(Number(options.shadedDiffuseStrength))
+      ? Math.max(0, Number(options.shadedDiffuseStrength))
+      : SHADED_DIFFUSE_STRENGTH_DEFAULT;
+    this.shadedAmbientStrength = Number.isFinite(Number(options.shadedAmbientStrength))
+      ? Math.max(0, Number(options.shadedAmbientStrength))
+      : SHADED_AMBIENT_STRENGTH_DEFAULT;
     this.shadedSpecularColor = normalizeShadedColor(
       options.shadedSpecularColor,
       SHADED_SPECULAR_COLOR_DEFAULT,
@@ -142,6 +165,32 @@ export class GraphLayer extends Layer {
     this.shadedShininess = Number.isFinite(Number(options.shadedShininess))
       ? Math.max(1, Number(options.shadedShininess))
       : SHADED_SHININESS_DEFAULT;
+    this.ambientOcclusionEnabled = options.ambientOcclusionEnabled === true;
+    this.ambientOcclusionNodes = options.ambientOcclusionNodes !== false;
+    this.ambientOcclusionEdges = options.ambientOcclusionEdges === true;
+    this.ambientOcclusionStrength = Number.isFinite(Number(options.ambientOcclusionStrength))
+      ? Math.max(0, Number(options.ambientOcclusionStrength))
+      : AMBIENT_OCCLUSION_STRENGTH_DEFAULT;
+    this.ambientOcclusionRadius = Number.isFinite(Number(options.ambientOcclusionRadius))
+      ? Math.max(1, Number(options.ambientOcclusionRadius))
+      : AMBIENT_OCCLUSION_RADIUS_DEFAULT;
+    this.ambientOcclusionBias = Number.isFinite(Number(options.ambientOcclusionBias))
+      ? Math.max(0, Number(options.ambientOcclusionBias))
+      : AMBIENT_OCCLUSION_BIAS_DEFAULT;
+    this.ambientOcclusionMode = normalizeAmbientOcclusionMode(
+      options.ambientOcclusionMode,
+      AMBIENT_OCCLUSION_MODE_DEFAULT,
+    );
+    this.ambientOcclusionIntensityScale = Number.isFinite(Number(options.ambientOcclusionIntensityScale))
+      ? Math.max(0, Number(options.ambientOcclusionIntensityScale))
+      : AMBIENT_OCCLUSION_INTENSITY_SCALE_DEFAULT;
+    this.ambientOcclusionIntensityShift = Number.isFinite(Number(options.ambientOcclusionIntensityShift))
+      ? Math.max(0, Number(options.ambientOcclusionIntensityShift))
+      : AMBIENT_OCCLUSION_INTENSITY_SHIFT_DEFAULT;
+    this.ambientOcclusionQuality = normalizeAmbientOcclusionQuality(
+      options.ambientOcclusionQuality,
+      AMBIENT_OCCLUSION_QUALITY_DEFAULT,
+    );
     const slots = this.stateSlotCount;
     this.nodeStateScale = new Float32Array(slots * 4);
     this.nodeStateColorMul = new Float32Array(slots * 4);
@@ -235,6 +284,30 @@ export class GraphLayer extends Layer {
 
   isEdgeShadingEnabled() {
     return this.shadedEnabled === true && this.shadedEdges === true;
+  }
+
+  isAmbientOcclusionEnabled() {
+    return this.ambientOcclusionEnabled === true;
+  }
+
+  isAmbientOcclusionNodesEnabled() {
+    return this.isAmbientOcclusionEnabled() && this.ambientOcclusionNodes !== false;
+  }
+
+  isAmbientOcclusionEdgesEnabled() {
+    return this.isAmbientOcclusionEnabled() && this.ambientOcclusionEdges === true;
+  }
+
+  getAmbientOcclusionSelection() {
+    return {
+      nodes: this.isAmbientOcclusionNodesEnabled(),
+      edges: this.isAmbientOcclusionEdgesEnabled(),
+    };
+  }
+
+  hasAmbientOcclusionSelection() {
+    const selection = this.getAmbientOcclusionSelection();
+    return selection.nodes || selection.edges;
   }
 
   hasActiveEdgeStateStyling() {

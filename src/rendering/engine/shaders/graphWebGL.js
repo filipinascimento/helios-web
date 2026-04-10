@@ -489,7 +489,7 @@ uniform vec3 u_shadedLightColor;
 uniform vec3 u_shadedAmbientTopColor;
 uniform vec3 u_shadedAmbientBottomColor;
 uniform vec3 u_shadedSpecularColor;
-uniform vec2 u_shadedParams;`;
+uniform vec4 u_shadedParams;`;
 
   const nodeShadingHelper = nodeShadingEnabled
     ? `
@@ -497,11 +497,11 @@ vec3 applyNodeShading(vec3 baseColor, vec2 local) {
   float lensqr = dot(local, local);
   vec3 normal = normalize(vec3(local.xy, sqrt(max(1.0 - lensqr, 0.0))));
   vec3 lightDir = normalize(u_shadedLightDirection);
-  vec3 ambient = mix(u_shadedAmbientBottomColor, u_shadedAmbientTopColor, normal.z * 0.5 + 0.5);
+  vec3 ambient = mix(u_shadedAmbientBottomColor, u_shadedAmbientTopColor, normal.z * 0.5 + 0.5) * u_shadedParams.w;
   float diffuse = max(dot(lightDir, normal), 0.0);
   vec3 reflection = reflect(-lightDir, normal);
   float specular = pow(max(dot(vec3(0.0, 0.0, 1.0), reflection), 0.0), max(u_shadedParams.y, 1.0)) * u_shadedParams.x;
-  vec3 shaded = baseColor * (ambient + u_shadedLightColor * diffuse) + u_shadedSpecularColor * specular;
+  vec3 shaded = baseColor * (ambient + u_shadedLightColor * (diffuse * u_shadedParams.z)) + u_shadedSpecularColor * specular;
   return clamp(shaded, 0.0, 1.0);
 }`
     : '';
@@ -512,11 +512,11 @@ vec3 applyEdgeShading(vec3 baseColor, vec2 edgeLocal) {
   float edgeY = clamp(edgeLocal.y, -1.0, 1.0);
   vec3 normal = normalize(vec3(0.0, edgeY, sqrt(max(1.0 - edgeY * edgeY, 0.0))));
   vec3 lightDir = normalize(u_shadedLightDirection);
-  vec3 ambient = mix(u_shadedAmbientBottomColor, u_shadedAmbientTopColor, normal.z * 0.5 + 0.5);
+  vec3 ambient = mix(u_shadedAmbientBottomColor, u_shadedAmbientTopColor, normal.z * 0.5 + 0.5) * u_shadedParams.w;
   float diffuse = max(dot(lightDir, normal), 0.0);
   vec3 reflection = reflect(-lightDir, normal);
   float specular = pow(max(dot(vec3(0.0, 0.0, 1.0), reflection), 0.0), max(u_shadedParams.y, 1.0)) * u_shadedParams.x;
-  vec3 shaded = baseColor * (ambient + u_shadedLightColor * diffuse) + u_shadedSpecularColor * specular;
+  vec3 shaded = baseColor * (ambient + u_shadedLightColor * (diffuse * u_shadedParams.z)) + u_shadedSpecularColor * specular;
   return clamp(shaded, 0.0, 1.0);
 }`
     : '';

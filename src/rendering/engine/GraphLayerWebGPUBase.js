@@ -7,8 +7,10 @@ import {
   GraphLayer,
   SHADED_LIGHT_DIRECTION_DEFAULT,
   SHADED_LIGHT_COLOR_DEFAULT,
+  SHADED_AMBIENT_STRENGTH_DEFAULT,
   SHADED_AMBIENT_TOP_COLOR_DEFAULT,
   SHADED_AMBIENT_BOTTOM_COLOR_DEFAULT,
+  SHADED_DIFFUSE_STRENGTH_DEFAULT,
   SHADED_SPECULAR_COLOR_DEFAULT,
   SHADED_SPECULAR_STRENGTH_DEFAULT,
   SHADED_SHININESS_DEFAULT,
@@ -486,11 +488,13 @@ export class GraphLayerWebGPUBase extends GraphLayer {
     this.edgeQuadPipelineCache.set(cacheKey, quadPipeline);
   }
 
-  getEdgePipelinesForMode(mode, gpuDevice, useIndices, edgeVariant, sampleCount = 1) {
+  getEdgePipelinesForMode(mode, gpuDevice, useIndices, edgeVariant, sampleCount = 1, depthWriteOverride = null) {
     if (!gpuDevice) return null;
     const { key, blend, fragment } = this.getBlendForMode(mode);
     const variantKey = this.getEdgeVariantKey(useIndices, edgeVariant);
-    const depthWriteEnabled = this.edgeDepthWrite === true;
+    const depthWriteEnabled = depthWriteOverride == null
+      ? (this.edgeDepthWrite === true)
+      : (depthWriteOverride === true);
     const resolvedSampleCount = Number.isFinite(sampleCount) && sampleCount > 1 ? 4 : 1;
     const cacheKey = `${key}|${variantKey}|d${depthWriteEnabled ? 1 : 0}|s${resolvedSampleCount}`;
     if (key === 'alpha' && this.edgePipelineCache.has(cacheKey)) {
@@ -741,6 +745,12 @@ export class GraphLayerWebGPUBase extends GraphLayer {
     const specularColor = Array.isArray(this.shadedSpecularColor) || ArrayBuffer.isView(this.shadedSpecularColor)
       ? this.shadedSpecularColor
       : SHADED_SPECULAR_COLOR_DEFAULT;
+    const diffuseStrength = Number.isFinite(Number(this.shadedDiffuseStrength))
+      ? Math.max(0, Number(this.shadedDiffuseStrength))
+      : SHADED_DIFFUSE_STRENGTH_DEFAULT;
+    const ambientStrength = Number.isFinite(Number(this.shadedAmbientStrength))
+      ? Math.max(0, Number(this.shadedAmbientStrength))
+      : SHADED_AMBIENT_STRENGTH_DEFAULT;
     const specularStrength = Number.isFinite(Number(this.shadedSpecularStrength))
       ? Math.max(0, Number(this.shadedSpecularStrength))
       : SHADED_SPECULAR_STRENGTH_DEFAULT;
@@ -771,8 +781,8 @@ export class GraphLayerWebGPUBase extends GraphLayer {
     this.shadingArray[offset++] = specularColor[3] ?? SHADED_SPECULAR_COLOR_DEFAULT[3];
     this.shadingArray[offset++] = specularStrength;
     this.shadingArray[offset++] = shininess;
-    this.shadingArray[offset++] = 0;
-    this.shadingArray[offset++] = 0;
+    this.shadingArray[offset++] = diffuseStrength;
+    this.shadingArray[offset++] = ambientStrength;
     device.queue.writeBuffer(this.shadingBuffer, 0, this.shadingArray);
   }
 
