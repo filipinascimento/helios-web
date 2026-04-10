@@ -105,6 +105,8 @@ test('DensityLayer builds normalized numerator and denominator weights for log-r
     Array.from(computed.denominatorWeights).map((value) => Number(value.toFixed(6))),
     [0.25, 0.75, 0],
   );
+  assert.equal(computed.numeratorTotal, 4);
+  assert.equal(computed.denominatorTotal, 4);
 });
 
 test('DensityLayer coerces log-ratio back to difference when no compare property is set', () => {
@@ -172,6 +174,19 @@ test('DensityLayer preserves an explicit log-ratio support correction toggle', (
   });
 
   assert.equal(layer.config.logRatioSupportCorrection, false);
+});
+
+test('DensityLayer preserves an explicit approximate log-ratio z-score toggle', () => {
+  const layer = new DensityLayer();
+
+  layer.setConfig({
+    property: 'Degree',
+    compareProperty: 'Uniform',
+    comparisonMode: 'logRatio',
+    logRatioZScore: true,
+  });
+
+  assert.equal(layer.config.logRatioZScore, true);
 });
 
 test('DensityLayer difference mode keeps using the sequential colormap key', () => {

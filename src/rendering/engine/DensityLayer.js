@@ -272,7 +272,10 @@ uniform float u_epsilon;
 uniform float u_domainMax;
 uniform float u_supportFloor;
 uniform float u_supportCeil;
+uniform float u_numeratorTotal;
+uniform float u_denominatorTotal;
 uniform int u_supportCorrection;
+uniform int u_zScore;
 uniform int u_topographic;
 uniform float u_contourLevels;
 uniform float u_contourWidth;
@@ -286,10 +289,20 @@ void main() {
   float safeSupportFloor = max(u_supportFloor, 0.0);
   float safeSupportCeil = max(u_supportCeil, safeSupportFloor + 1e-9);
   float raw = log((numerator + u_epsilon) / (denominator + u_epsilon));
+  float scalar = raw;
+  if (u_zScore == 1) {
+    float totalScale = max(max(u_numeratorTotal, u_denominatorTotal), 1.0);
+    float localEpsilon = max(u_epsilon * totalScale, 1e-12);
+    float numeratorCount = max(numerator * max(u_numeratorTotal, 0.0), 0.0);
+    float denominatorCount = max(denominator * max(u_denominatorTotal, 0.0), 0.0);
+    float variance = (1.0 / max(numeratorCount + localEpsilon, 1e-12))
+      + (1.0 / max(denominatorCount + localEpsilon, 1e-12));
+    scalar = raw / sqrt(max(variance, 1e-12));
+  }
   float supportWeight = u_supportCorrection == 1
     ? smoothstep(safeSupportFloor, safeSupportCeil, support)
     : 1.0;
-  float s = clamp(raw / safeDomain, -1.0, 1.0) * supportWeight;
+  float s = clamp(scalar / safeDomain, -1.0, 1.0) * supportWeight;
   float t = s * 0.5 + 0.5;
   float alpha = abs(s);
 
@@ -485,6 +498,7 @@ const COMPOSITE_LOG_RATIO_WGSL = /* wgsl */ `
 struct LogRatioCompositeParams {
   values : vec4<f32>, // x epsilon, y domainMax, z supportFloor, w topographicFlag
   values2 : vec4<f32>, // x contourLevels, y contourWidth, z supportCeil, w supportCorrectionFlag
+  values3 : vec4<f32>, // x numeratorTotal, y denominatorTotal, z zScoreFlag
 };
 
 struct VSOut {
@@ -517,11 +531,24 @@ fn fsMain(input : VSOut) -> @location(0) vec4<f32> {
   let supportFloor = max(params.values.z, 0.0);
   let supportCeil = max(params.values2.z, supportFloor + 1e-9);
   let supportCorrection = params.values2.w > 0.5;
+  let numeratorTotal = max(params.values3.x, 0.0);
+  let denominatorTotal = max(params.values3.y, 0.0);
+  let zScoreEnabled = params.values3.z > 0.5;
   let topographic = params.values.w > 0.5;
 
   let raw = log((numerator + epsilon) / (denominator + epsilon));
+  var scalar = raw;
+  if (zScoreEnabled) {
+    let totalScale = max(max(numeratorTotal, denominatorTotal), 1.0);
+    let localEpsilon = max(epsilon * totalScale, 1e-12);
+    let numeratorCount = max(numerator * numeratorTotal, 0.0);
+    let denominatorCount = max(denominator * denominatorTotal, 0.0);
+    let variance = (1.0 / max(numeratorCount + localEpsilon, 1e-12))
+      + (1.0 / max(denominatorCount + localEpsilon, 1e-12));
+    scalar = raw / sqrt(max(variance, 1e-12));
+  }
   let supportWeight = select(1.0, smoothstep(supportFloor, supportCeil, support), supportCorrection);
-  let s = clamp(raw / domainMax, -1.0, 1.0) * supportWeight;
+  let s = clamp(scalar / domainMax, -1.0, 1.0) * supportWeight;
   let t = s * 0.5 + 0.5;
   var alpha = abs(s);
 
@@ -583,6 +610,7 @@ function defaultDensityConfig() {
     epsilon: 1e-6,
     logRatioRange: 3,
     maskThreshold: 0,
+    logRatioZScore: false,
     logRatioSupportCorrection: true,
     colormap: 'interpolateOrRd',
     logRatioColormap: 'cmasher:prinsenvlag',
@@ -715,6 +743,7 @@ export class DensityLayer extends Layer {
     merged.enabled = merged.enabled === true;
     merged.topographic = merged.topographic === true;
     merged.normalizeVs = merged.normalizeVs === true;
+    merged.logRatioZScore = merged.logRatioZScore === true;
     merged.logRatioSupportCorrection = merged.logRatioSupportCorrection !== false;
     merged.scaleWithZoom = merged.scaleWithZoom === true;
     merged.comparisonMode = normalizeComparisonMode(merged.comparisonMode, this.config.comparisonMode);
@@ -1124,6 +1153,8 @@ export class DensityLayer extends Layer {
         colormapKey: config.logRatioColormap ?? config.divergingColormap,
         valueDomain: [-config.logRatioRange, config.logRatioRange],
         baselineLabel: baselineKey,
+        numeratorTotal: 0,
+        denominatorTotal,
       };
     }
 
@@ -1143,6 +1174,8 @@ export class DensityLayer extends Layer {
       colormapKey: config.logRatioColormap ?? config.divergingColormap,
       valueDomain: [-config.logRatioRange, config.logRatioRange],
       baselineLabel: baselineKey,
+      numeratorTotal,
+      denominatorTotal,
     };
   }
 
@@ -1288,7 +1321,10 @@ export class DensityLayer extends Layer {
       u_domainMax: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_domainMax'),
       u_supportFloor: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_supportFloor'),
       u_supportCeil: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_supportCeil'),
+      u_numeratorTotal: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_numeratorTotal'),
+      u_denominatorTotal: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_denominatorTotal'),
       u_supportCorrection: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_supportCorrection'),
+      u_zScore: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_zScore'),
       u_topographic: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_topographic'),
       u_contourLevels: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_contourLevels'),
       u_contourWidth: gl.getUniformLocation(this.webgl.programCompositeLogRatio, 'u_contourWidth'),
@@ -1940,7 +1976,10 @@ export class DensityLayer extends Layer {
     gl.uniform1f(this.webgl.uniforms.compositeLogRatio.u_domainMax, Math.max(Math.abs(computed.valueDomain?.[1] ?? this.config.logRatioRange), 1e-6));
     gl.uniform1f(this.webgl.uniforms.compositeLogRatio.u_supportFloor, supportWindow.floor);
     gl.uniform1f(this.webgl.uniforms.compositeLogRatio.u_supportCeil, supportWindow.ceil);
+    gl.uniform1f(this.webgl.uniforms.compositeLogRatio.u_numeratorTotal, Math.max(Number(computed.numeratorTotal ?? 0), 0));
+    gl.uniform1f(this.webgl.uniforms.compositeLogRatio.u_denominatorTotal, Math.max(Number(computed.denominatorTotal ?? 0), 0));
     gl.uniform1i(this.webgl.uniforms.compositeLogRatio.u_supportCorrection, this.config.logRatioSupportCorrection ? 1 : 0);
+    gl.uniform1i(this.webgl.uniforms.compositeLogRatio.u_zScore, this.config.logRatioZScore ? 1 : 0);
     gl.uniform1i(this.webgl.uniforms.compositeLogRatio.u_topographic, this.config.topographic ? 1 : 0);
     gl.uniform1f(this.webgl.uniforms.compositeLogRatio.u_contourLevels, 14.0);
     gl.uniform1f(this.webgl.uniforms.compositeLogRatio.u_contourWidth, 0.18);
@@ -1961,7 +2000,7 @@ export class DensityLayer extends Layer {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.webgpu.compositeLogRatioParamsBuffer = gpu.createBuffer({
-      size: 32,
+      size: 48,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -2410,7 +2449,7 @@ export class DensityLayer extends Layer {
         this.config.maskThreshold,
         this.config.logRatioSupportCorrection,
       );
-      const compositeData = new Float32Array(8);
+      const compositeData = new Float32Array(12);
       compositeData[0] = this.config.epsilon;
       compositeData[1] = Math.max(Math.abs(computed.valueDomain?.[1] ?? this.config.logRatioRange), 1e-6);
       compositeData[2] = supportWindow.floor;
@@ -2419,6 +2458,9 @@ export class DensityLayer extends Layer {
       compositeData[5] = 0.18;
       compositeData[6] = supportWindow.ceil;
       compositeData[7] = this.config.logRatioSupportCorrection ? 1 : 0;
+      compositeData[8] = Math.max(Number(computed.numeratorTotal ?? 0), 0);
+      compositeData[9] = Math.max(Number(computed.denominatorTotal ?? 0), 0);
+      compositeData[10] = this.config.logRatioZScore ? 1 : 0;
       gpu.queue.writeBuffer(this.webgpu.compositeLogRatioParamsBuffer, 0, compositeData);
 
       this.webgpu.bindGroupCompositeLogRatio = gpu.createBindGroup({

@@ -90,6 +90,33 @@ test('deriveLegendItems uses a real numeric domain for log-ratio density legends
   assert.deepEqual(densityLegend.tickLabels, ['-3', '0', '3']);
 });
 
+test('deriveLegendItems renames the log-ratio legend when approximate z-score mode is enabled', () => {
+  const items = deriveLegendItems({
+    nodeChannels: new Map(),
+    edgeChannels: new Map(),
+    densityConfig: {
+      enabled: true,
+      property: 'signal',
+      compareProperty: 'baseline',
+      comparisonMode: 'logRatio',
+      logRatioZScore: true,
+      logRatioRange: 3,
+      colormap: 'interpolateInferno',
+      divergingColormap: 'interpolateRdBu',
+    },
+    densityRuntime: {
+      diverging: true,
+      valueDomain: [-3, 3],
+    },
+    visualConfig: null,
+    config: { showDensity: true },
+  });
+
+  const densityLegend = items.find((item) => item.kind === 'density');
+  assert.ok(densityLegend);
+  assert.equal(densityLegend.title, 'signal approx z score vs baseline');
+});
+
 test('deriveLegendItems keeps the difference diverging colormap for difference density legends', () => {
   const items = deriveLegendItems({
     nodeChannels: new Map(),

@@ -859,6 +859,7 @@ const DENSITY_DEFAULTS = Object.freeze({
   epsilon: 1e-6,
   logRatioRange: 3,
   maskThreshold: 0,
+  logRatioZScore: false,
   logRatioSupportCorrection: true,
   colormap: 'interpolateOrRd',
   logRatioColormap: 'cmasher:prinsenvlag',
@@ -2049,6 +2050,8 @@ export class Helios extends EventTarget {
         0,
         1,
       ),
+      logRatioZScore: options.densityLogRatioZScore === true
+        || options.logRatioZScore === true,
       logRatioSupportCorrection: options.densityLogRatioSupportCorrection !== false
         && options.logRatioSupportCorrection !== false,
       bandwidth: clamp(
@@ -6425,6 +6428,12 @@ export class Helios extends EventTarget {
     }
     if (Object.prototype.hasOwnProperty.call(options, 'densityMaskThreshold')) {
       next.maskThreshold = clamp(toFiniteNumber(options.densityMaskThreshold, next.maskThreshold), 0, 1);
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'logRatioZScore')) {
+      next.logRatioZScore = options.logRatioZScore === true;
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'densityLogRatioZScore')) {
+      next.logRatioZScore = options.densityLogRatioZScore === true;
     }
     if (Object.prototype.hasOwnProperty.call(options, 'logRatioSupportCorrection')) {
       next.logRatioSupportCorrection = options.logRatioSupportCorrection !== false;

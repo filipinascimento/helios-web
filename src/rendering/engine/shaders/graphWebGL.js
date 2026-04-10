@@ -588,6 +588,7 @@ void main() {
   float rawOutline = fetchNodeOutlineWidth(a_nodeId);
   float outlineWidth = max(0.0, (u_outlineWidthBase + u_outlineWidthScale * rawOutline) * outlineMul);
   float fullSize = (baseSize + outlineWidth) * semanticScale;
+  float semanticOutlineWidth = outlineWidth * semanticScale;
   float radius = max(1.0, fullSize) * 0.5;
 
   vec3 right = u_cameraRight;
@@ -617,7 +618,7 @@ void main() {
   vec4 outlineColorIn = fetchNodeOutlineColor(a_nodeId);
   float outlineAlpha = clamp(u_nodeOpacityBase + u_nodeOpacityScale * outlineColorIn.a, 0.0, 1.0) * opacityMul;
   v_outlineColor = vec4(outlineColorIn.rgb, forceMaxAlpha ? 1.0 : clamp(outlineAlpha, 0.0, 1.0));
-  v_outlineThreshold = outlineWidth / max(fullSize, 1e-5);
+  v_outlineThreshold = semanticOutlineWidth / max(fullSize, 1e-5);
   v_local = a_corner;
   v_centerWorld = position;
   v_rightWorld = right;

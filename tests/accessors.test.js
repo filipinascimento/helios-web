@@ -134,6 +134,25 @@ test('density() exposes an explicit log-ratio support correction toggle', () => 
   assert.equal(helios.density().logRatioSupportCorrection, true);
 });
 
+test('density() exposes an explicit approximate log-ratio z-score toggle', () => {
+  const helios = Object.create(Helios.prototype);
+  helios.scheduler = { requestRender: () => {} };
+  helios._densityRuntime = { diverging: false, valueDomain: null };
+  helios._densityConfig = undefined;
+  helios._applyDensityConfigToLayer = () => {};
+
+  helios.density({
+    property: 'Degree',
+    compareProperty: 'Uniform',
+    comparisonMode: 'logRatio',
+    logRatioZScore: true,
+  });
+  assert.equal(helios.density().logRatioZScore, true);
+
+  helios.density({ logRatioZScore: false });
+  assert.equal(helios.density().logRatioZScore, false);
+});
+
 test('edge width scale UI binding exposes zero in the recommended slider range', () => {
   assert.equal(Helios.UI_BINDINGS.edgeWidthScale.domain.min, 0);
   assert.equal(Helios.UI_BINDINGS.edgeWidthScale.recommendedRange.min, 0);

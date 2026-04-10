@@ -230,8 +230,11 @@ void main() {
     ? texelFetch(u_nodeOutlineWidths, textureCoord(u_nodeOutlineWidths, nodeId), 0).x
     : u_nodeOutline;
   float outlineWidth = max(0.0, (u_outlineWidthBase + u_outlineWidthScale * rawOutline) * outlineMul);
-  float fullSize = max(1.0, (u_nodeSizeBase + u_nodeSizeScale * rawSize) * sizeMul + outlineWidth);
-  float radius = fullSize * 0.5;
+  float semanticScale = (u_is2D == 1 && u_semanticZoomExponent > 0.0)
+    ? (1.0 / pow(max(u_zoom2D, 1e-3), u_semanticZoomExponent))
+    : 1.0;
+  float fullSize = ((u_nodeSizeBase + u_nodeSizeScale * rawSize) * sizeMul + outlineWidth) * semanticScale;
+  float radius = max(1.0, fullSize) * 0.5;
   vec3 right = u_cameraRight;
   if (u_is2D == 0) {
     vec3 viewDir = u_cameraPosition - position;

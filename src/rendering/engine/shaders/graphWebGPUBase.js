@@ -289,6 +289,7 @@ fn nodeVertex(input : VertexInput) -> VertexOutput {
   ${NODE_OUTLINE_RAW_EXPR}
   let outlineWidth = max(0.0, (globals.nodeOutline.x + globals.nodeOutline.y * outlineRaw) * outlineMul);
   let fullDiameter = (diameter + outlineWidth) * semanticScale;
+  let semanticOutlineWidth = outlineWidth * semanticScale;
   let radius = fullDiameter * 0.5;
   let is2D = camera.position.w > 0.5;
   var right = camera.right.xyz;
@@ -325,7 +326,7 @@ fn nodeVertex(input : VertexInput) -> VertexOutput {
   ${NODE_OUTLINE_BASE_COLOR_EXPR}
   let outlineAlpha = clamp(globals.nodeOpacity.x + globals.nodeOpacity.y * outlineBaseColor.a, 0.0, 1.0) * opacityMul;
   output.outlineColor = vec4<f32>(outlineBaseColor.rgb, select(clamp(outlineAlpha, 0.0, 1.0), 1.0, forceMaxAlpha));
-  output.outlineThreshold = select(0.0, outlineWidth / max(fullDiameter, 1e-5), outlineWidth > 0.0);
+  output.outlineThreshold = select(0.0, semanticOutlineWidth / max(fullDiameter, 1e-5), outlineWidth > 0.0);
   output.centerWorld = basePosition;
   output.rightWorld = right;
   output.upWorld = up;

@@ -331,12 +331,27 @@ test.describe('density map panel', () => {
     const epsilonRow = densityTab.locator('.helios-ui-row', {
       has: page.locator('.helios-ui-label__title', { hasText: 'Epsilon' }),
     }).first();
+    const zScoreRow = densityTab.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'Z-score' }),
+    }).first();
     const supportRow = densityTab.locator('.helios-ui-row', {
       has: page.locator('.helios-ui-label__title', { hasText: 'Support' }),
     }).first();
     await expect(weightRow).toHaveCSS('opacity', '0.55');
     await expect(epsilonRow).toHaveCSS('opacity', '1');
+    await expect(zScoreRow).toBeVisible();
     await expect(supportRow).toBeVisible();
+
+    await ensureToggleEnabled(zScoreRow, ':scope');
+    await expect.poll(
+      () => page.evaluate(() => window.__helios?.density?.().logRatioZScore === true),
+      { timeout: 5000 },
+    ).toBe(true);
+    await ensureToggleDisabled(zScoreRow, ':scope');
+    await expect.poll(
+      () => page.evaluate(() => window.__helios?.density?.().logRatioZScore === false),
+      { timeout: 5000 },
+    ).toBe(true);
 
     await ensureToggleDisabled(supportRow, ':scope');
     await expect.poll(
@@ -372,6 +387,7 @@ test.describe('density map panel', () => {
     await expect(modeRow).toBeHidden();
     await expect(weightRow).toHaveCSS('opacity', '1');
     await expect(epsilonRow).toBeHidden();
+    await expect(zScoreRow).toBeHidden();
     await expect(supportRow).toBeHidden();
 
     expect(errors).toHaveLength(0);

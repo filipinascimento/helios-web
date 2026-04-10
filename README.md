@@ -89,7 +89,8 @@ helios.density({
   bandwidth: 28.1,
   logRatioRange: 3, // symmetric legend / clipping domain: [-3, 3]
   epsilon: 1e-6,
-  logRatioSupportCorrection: true, // disable to show the raw log-ratio everywhere
+  logRatioZScore: false, // enable the fast approximate local z-score instead of the raw log-ratio
+  logRatioSupportCorrection: true, // disable to show the raw log-ratio / z-score everywhere
   maskThreshold: 0, // optional extra pooled-support floor; 0 keeps the automatic epsilon-based floor
   divergingColormap: 'interpolateRdBu',
 });

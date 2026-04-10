@@ -641,6 +641,7 @@ export function deriveLegendItems({ nodeChannels, edgeChannels, densityConfig, d
 
   if (config?.showDensity !== false && densityConfig?.enabled === true) {
     const logRatioMode = densityConfig?.comparisonMode === 'logRatio';
+    const logRatioZScore = logRatioMode && densityConfig?.logRatioZScore === true;
     const diverging = densityRuntime?.diverging === true || logRatioMode;
     const baselineLabel = densityConfig.compareProperty && densityConfig.compareProperty !== 'None'
       ? String(densityConfig.compareProperty)
@@ -667,7 +668,11 @@ export function deriveLegendItems({ nodeChannels, edgeChannels, densityConfig, d
         config,
         'density',
         logRatioMode
-          ? `${densityConfig.property ?? 'Density'} log ratio vs ${baselineLabel}`.trim()
+          ? (
+            logRatioZScore
+              ? `${densityConfig.property ?? 'Density'} approx z score vs ${baselineLabel}`.trim()
+              : `${densityConfig.property ?? 'Density'} log ratio vs ${baselineLabel}`.trim()
+          )
           : diverging
             ? `${densityConfig.property ?? 'Density'} vs ${densityConfig.compareProperty ?? ''}`.trim()
           : String(densityConfig.property ?? 'Density'),

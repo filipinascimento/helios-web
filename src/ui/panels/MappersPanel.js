@@ -4891,10 +4891,23 @@ export class MappersPanel {
       registerControl(logRatioRangeControl);
       const logRatioRangeRow = createAlignedRow({
         title: 'Range',
-        hint: 'Symmetric clipping range for the real-valued log-ratio color scale.',
+        hint: 'Symmetric clipping range for the real-valued log-ratio or approximate z-score color scale.',
         controls: logRatioRangeControl.element,
       });
       editorBody.appendChild(logRatioRangeRow.row);
+
+      const zScoreToggle = createCheckboxControl({
+        checked: cfg().logRatioZScore === true,
+        onChange: (checked) => applyDensity({ logRatioZScore: checked }),
+        onLabel: 'Z',
+        offLabel: 'Log',
+      });
+      const zScoreRow = createAlignedRow({
+        title: 'Z-score',
+        hint: 'Approximate local z-score under a fast effective-count null model. Off shows the raw log-ratio.',
+        controls: zScoreToggle,
+      });
+      editorBody.appendChild(zScoreRow.row);
 
       const supportCorrectionToggle = createCheckboxControl({
         checked: cfg().logRatioSupportCorrection !== false,
@@ -5042,6 +5055,7 @@ export class MappersPanel {
         enabledToggle.checked = state.enabled === true;
         reliefToggle.checked = state.topographic === true;
         normalizeToggle.checked = state.normalizeVs === true;
+        zScoreToggle.checked = state.logRatioZScore === true;
         supportCorrectionToggle.checked = state.logRatioSupportCorrection !== false;
         zoomScaleToggle.checked = state.scaleWithZoom === true;
         normalizeToggle.disabled = compareSelect.value === 'None' || logRatioMode;
@@ -5060,6 +5074,7 @@ export class MappersPanel {
         setRowEnabled(weightRow.row, !logRatioMode);
         setRowVisible(epsilonRow.row, hasComparison && logRatioMode);
         setRowVisible(logRatioRangeRow.row, hasComparison && logRatioMode);
+        setRowVisible(zScoreRow.row, hasComparison && logRatioMode);
         setRowVisible(supportCorrectionRow.row, hasComparison && logRatioMode);
         applyDensityBackground(state);
       };
