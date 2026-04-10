@@ -209,8 +209,8 @@ test.describe('scene panel: tabs and appearance controls', () => {
     await shadedAmbient.dispatchEvent('change');
     await expect.poll(async () => page.evaluate(() => window.__helios.shadedAmbientStrength())).toBeCloseTo(1.6, 3);
 
-    await expect(scenePanel.getByRole('button', { name: 'Ambient Occlusion' }).first()).toHaveCount(0);
-    await expect(scenePanel.locator('[role="switch"][aria-label="Ambient Occlusion"]').first()).toHaveCount(0);
+    await expect(scenePanel.getByRole('button', { name: 'Ambient Occlusion' }).first()).toBeVisible();
+    await expect(scenePanel.locator('[role="switch"][aria-label="Ambient Occlusion"]').first()).toBeVisible();
 
     const dimensionToggle = scenePanel.locator('[role="switch"][aria-label="Scene dimension"]').first();
     await expect(dimensionToggle).toBeVisible();

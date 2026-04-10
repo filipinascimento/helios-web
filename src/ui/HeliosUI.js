@@ -1824,7 +1824,8 @@ export class HeliosUI {
         ]));
         return container;
       };
-      const supportsAmbientOcclusion = String(this.helios?.renderer?.device?.type ?? '').toLowerCase() === 'webgpu';
+      const ambientOcclusionDeviceType = String(this.helios?.renderer?.device?.type ?? '').toLowerCase();
+      const supportsAmbientOcclusion = ambientOcclusionDeviceType === 'webgpu' || ambientOcclusionDeviceType === 'webgl2';
 
       const shadedEnabled = this.bindHeliosAccessor('shadedEnabled');
       const shadedToggle = createToggleControl({

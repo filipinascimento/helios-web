@@ -150,6 +150,8 @@ export class WebGL2Device {
       ? [rect.x, rect.y, rect.width, rect.height]
       : [0, 0, renderTarget?.width ?? this.canvas.width, renderTarget?.height ?? this.canvas.height];
     gl.viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+    gl.colorMask(true, true, true, true);
+    gl.depthMask(true);
     if (clearColor) {
       gl.clearColor(clearColor[0], clearColor[1], clearColor[2], clearColor[3]);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);

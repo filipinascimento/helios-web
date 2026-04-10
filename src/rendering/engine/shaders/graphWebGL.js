@@ -38,6 +38,15 @@ function resolveEdgeOptions(options = {}) {
   };
 }
 
+const PACK_DEPTH_GLSL = /* glsl */ `
+vec4 packDepthToRGBA(const in float v) {
+  const vec4 bitShift = vec4(256.0 * 256.0 * 256.0, 256.0 * 256.0, 256.0, 1.0);
+  const vec4 bitMask = vec4(0.0, 1.0 / 256.0, 1.0 / 256.0, 1.0 / 256.0);
+  vec4 res = fract(v * bitShift);
+  res -= res.xxyz * bitMask;
+  return res;
+}`;
+
 export function createGraphWebGLSources(options = {}) {
   const node = resolveNodeOptions(options);
   const edge = resolveEdgeOptions(options);
@@ -720,6 +729,47 @@ void main() {
 }
 `;
 
+  const NODE_DEPTH_FRAGMENT_SOURCE = `#version 300 es
+precision highp float;
+precision highp int;
+${PACK_DEPTH_GLSL}
+
+in vec2 v_local;
+in vec3 v_centerWorld;
+in vec3 v_rightWorld;
+in vec3 v_upWorld;
+in vec3 v_viewDir;
+in float v_radius;
+flat in uint v_discardFlag;
+
+uniform mat4 u_viewProjection;
+uniform int u_is2D;
+
+out vec4 fragColor;
+
+void main() {
+  if (v_discardFlag != 0u) {
+    discard;
+  }
+  float dist = length(v_local);
+  if (dist > 1.0) {
+    discard;
+  }
+  if (u_is2D == 0) {
+    float radius = v_radius;
+    float xyLenSq = dot(v_local * radius, v_local * radius);
+    float zOffset = sqrt(max(radius * radius - xyLenSq, 0.0));
+    vec3 worldPos = v_centerWorld
+      + (v_rightWorld * v_local.x + v_upWorld * v_local.y) * radius
+      + normalize(v_viewDir) * zOffset;
+    vec4 clip = u_viewProjection * vec4(worldPos, 1.0);
+    float depth = clip.z / clip.w;
+    gl_FragDepth = depth * 0.5 + 0.5;
+  }
+  fragColor = packDepthToRGBA(gl_FragCoord.z);
+}
+`;
+
   const EDGE_VERTEX_SOURCE = `#version 300 es
 precision highp float;
 precision highp int;
@@ -986,6 +1036,22 @@ void main() {
 }
 `;
 
+  const EDGE_DEPTH_FRAGMENT_SOURCE = `#version 300 es
+precision highp float;
+${PACK_DEPTH_GLSL}
+
+flat in uint v_discardFlag;
+
+out vec4 fragColor;
+
+void main() {
+  if (v_discardFlag != 0u) {
+    discard;
+  }
+  fragColor = packDepthToRGBA(gl_FragCoord.z);
+}
+`;
+
   const EDGE_WEIGHTED_FRAGMENT_SOURCE = `#version 300 es
 precision highp float;
 
@@ -1080,9 +1146,11 @@ void main() {
   return {
     NODE_VERTEX_SOURCE,
     NODE_FRAGMENT_SOURCE,
+    NODE_DEPTH_FRAGMENT_SOURCE,
     EDGE_VERTEX_SOURCE,
     EDGE_QUAD_VERTEX_SOURCE,
     EDGE_FRAGMENT_SOURCE,
+    EDGE_DEPTH_FRAGMENT_SOURCE,
     EDGE_WEIGHTED_FRAGMENT_SOURCE,
     EDGE_WEIGHTED_QUAD_FRAGMENT_SOURCE,
     EDGE_RESOLVE_VERTEX_SOURCE,

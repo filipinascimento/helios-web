@@ -13,6 +13,7 @@ import {
   SHADED_SPECULAR_STRENGTH_DEFAULT,
   SHADED_SHININESS_DEFAULT,
 } from './GraphLayer.js';
+import { normalizeAmbientOcclusionQuality } from './AmbientOcclusionQuality.js';
 import { GraphVisualSchema } from '../schema/GraphVisualSchema.js';
 import {
   VISUAL_ATTRIBUTE_NAMES,
@@ -23,6 +24,7 @@ import {
   DEFAULT_EDGE_WIDTH,
 } from '../../pipeline/constants.js';
 import { createGraphWebGLSources } from './shaders/graphWebGL.js';
+import { AmbientOcclusionWebGLAlt } from './AmbientOcclusionWebGLAlt.js';
 
 const {
   NODE_COLOR_ATTRIBUTE,
@@ -816,6 +818,9 @@ export class GraphLayerWebGL extends GraphLayer {
     this.edgeQuadProgramCache = new Map();
     this.edgeWeightedProgramCache = new Map();
     this.edgeWeightedQuadProgramCache = new Map();
+    this.nodeDepthProgramCache = new Map();
+    this.edgeDepthProgramCache = new Map();
+    this.edgeQuadDepthProgramCache = new Map();
     this._ownedPrograms = new Set();
 
     this.edgeResolveProgram = null;
@@ -848,6 +853,7 @@ export class GraphLayerWebGL extends GraphLayer {
     this.initializePrograms();
     this.initializeGeometry();
     this.initializeTextures();
+    this.ambientOcclusion = new AmbientOcclusionWebGLAlt(device);
   }
 
   resize(size) {
@@ -862,8 +868,11 @@ export class GraphLayerWebGL extends GraphLayer {
     }
     this._ownedPrograms.clear();
     this.nodeProgramCache.clear();
+    this.nodeDepthProgramCache.clear();
     this.edgeProgramCache.clear();
+    this.edgeDepthProgramCache.clear();
     this.edgeQuadProgramCache.clear();
+    this.edgeQuadDepthProgramCache.clear();
     this.edgeWeightedProgramCache.clear();
     this.edgeWeightedQuadProgramCache.clear();
     if (this.edgeResolveProgram) gl.deleteProgram(this.edgeResolveProgram);
@@ -879,6 +888,7 @@ export class GraphLayerWebGL extends GraphLayer {
     if (this.edgeQuadBuffer) gl.deleteBuffer(this.edgeQuadBuffer);
     if (this.nodeIdBuffer) gl.deleteBuffer(this.nodeIdBuffer);
     if (this.edgeIdBuffer) gl.deleteBuffer(this.edgeIdBuffer);
+    this.ambientOcclusion?.destroy?.();
     this.ambientOcclusion = null;
     Object.values(this.nodeTextures).forEach((tex) => tex && gl.deleteTexture(tex));
     Object.values(this.edgeTextures).forEach((tex) => tex && gl.deleteTexture(tex));
@@ -898,8 +908,11 @@ export class GraphLayerWebGL extends GraphLayer {
     );
     this.edgeTransparencyMode = this.normalizeEdgeTransparencyMode(this.edgeTransparencyMode);
     this.nodeProgramCache.clear();
+    this.nodeDepthProgramCache.clear();
     this.edgeProgramCache.clear();
+    this.edgeDepthProgramCache.clear();
     this.edgeQuadProgramCache.clear();
+    this.edgeQuadDepthProgramCache.clear();
     this.edgeWeightedProgramCache.clear();
     this.edgeWeightedQuadProgramCache.clear();
   }
@@ -1034,6 +1047,19 @@ export class GraphLayerWebGL extends GraphLayer {
     );
   }
 
+  getNodeDepthProgram(nodeVariant) {
+    const key = `node-depth|${this.getNodeVariantKey(nodeVariant)}`;
+    return this.getProgramEntry(
+      this.nodeDepthProgramCache,
+      key,
+      () => {
+        const sources = createGraphWebGLSources(this.buildIndirectShaderOptions(nodeVariant, null));
+        return { vertex: sources.NODE_VERTEX_SOURCE, fragment: sources.NODE_DEPTH_FRAGMENT_SOURCE };
+      },
+      NODE_UNIFORM_NAMES,
+    );
+  }
+
   getEdgeProgram(kind, nodeVariant, edgeVariant, weighted = false) {
     const suffix = kind === 'quad' ? 'edge-quad' : 'edge-line';
     const cache = weighted
@@ -1051,6 +1077,25 @@ export class GraphLayerWebGL extends GraphLayer {
           fragment: weighted
             ? (kind === 'quad' ? sources.EDGE_WEIGHTED_QUAD_FRAGMENT_SOURCE : sources.EDGE_WEIGHTED_FRAGMENT_SOURCE)
             : sources.EDGE_FRAGMENT_SOURCE,
+        };
+      },
+      uniformNames,
+    );
+  }
+
+  getEdgeDepthProgram(kind, nodeVariant, edgeVariant) {
+    const suffix = kind === 'quad' ? 'edge-quad-depth' : 'edge-line-depth';
+    const cache = kind === 'quad' ? this.edgeQuadDepthProgramCache : this.edgeDepthProgramCache;
+    const uniformNames = kind === 'quad' ? EDGE_QUAD_UNIFORM_NAMES : EDGE_UNIFORM_NAMES;
+    const key = `${suffix}|${this.getNodeVariantKey(nodeVariant)}|${this.getEdgeVariantKey(edgeVariant)}`;
+    return this.getProgramEntry(
+      cache,
+      key,
+      () => {
+        const sources = createGraphWebGLSources(this.buildIndirectShaderOptions(nodeVariant, edgeVariant));
+        return {
+          vertex: kind === 'quad' ? sources.EDGE_QUAD_VERTEX_SOURCE : sources.EDGE_VERTEX_SOURCE,
+          fragment: sources.EDGE_DEPTH_FRAGMENT_SOURCE,
         };
       },
       uniformNames,
@@ -1760,8 +1805,11 @@ export class GraphLayerWebGL extends GraphLayer {
     const edgeRenderingMode = this.getEffectiveEdgeRenderingMode?.() ?? this.edgeRenderingMode;
     const edgeVariant = this.resolveEdgeVariant(visualConfig, { fastPath: fastEdges, is2D });
     const nodeProgramEntry = this.getNodeProgram(nodeVariant);
+    const nodeDepthProgramEntry = this.getNodeDepthProgram(nodeVariant);
     const edgeLineProgramEntry = this.getEdgeProgram('line', nodeVariant, edgeVariant);
+    const edgeLineDepthProgramEntry = this.getEdgeDepthProgram('line', nodeVariant, edgeVariant);
     const edgeQuadProgramEntry = this.getEdgeProgram('quad', nodeVariant, edgeVariant);
+    const edgeQuadDepthProgramEntry = this.getEdgeDepthProgram('quad', nodeVariant, edgeVariant);
     const edgeLineWeightedProgramEntry = this.getEdgeProgram('line', nodeVariant, edgeVariant, true);
     const edgeQuadWeightedProgramEntry = this.getEdgeProgram('quad', nodeVariant, edgeVariant, true);
     const nodeColorBufferEnabled = nodeVariant ? nodeVariant.colorBuffer !== false : true;
@@ -2275,6 +2323,7 @@ export class GraphLayerWebGL extends GraphLayer {
 
         const drawEdges = ({
           weighted = false,
+          depthOnly = false,
           passViewportWidth = screenViewportWidth,
           passViewportHeight = screenViewportHeight,
         } = {}) => {
@@ -2301,7 +2350,9 @@ export class GraphLayerWebGL extends GraphLayer {
           const opacityEndpointMode = mapEndpointMode(edgeVariant?.opacityEndpoints);
 
           if (edgeRenderingMode === 'quad') {
-            const edgeEntry = weighted ? edgeQuadWeightedProgramEntry : edgeQuadProgramEntry;
+            const edgeEntry = depthOnly
+              ? edgeQuadDepthProgramEntry
+              : (weighted ? edgeQuadWeightedProgramEntry : edgeQuadProgramEntry);
             if (!edgeEntry?.program) return;
             const uniforms = edgeEntry.uniforms;
             gl.useProgram(edgeEntry.program);
@@ -2459,7 +2510,7 @@ export class GraphLayerWebGL extends GraphLayer {
             set1f(uniforms, 'u_edgeEndpointTrim', this.edgeEndpointTrim);
             set1f(uniforms, 'u_zoom2D', zoom2D);
             set1f(uniforms, 'u_semanticZoomExponent', semanticZoomExponent);
-            setShadingUniforms(uniforms);
+            if (!depthOnly) setShadingUniforms(uniforms);
             this.bindTexture(0, activeNodePositionTexture);
             this.bindTexture(12, resolvedNodePositionFromTexture ?? activeNodePositionTexture);
             this.bindTexture(5, this.nodeTextures.edgeColorSource);
@@ -2478,7 +2529,9 @@ export class GraphLayerWebGL extends GraphLayer {
             return;
           }
 
-          const edgeEntry = weighted ? edgeLineWeightedProgramEntry : edgeLineProgramEntry;
+          const edgeEntry = depthOnly
+            ? edgeLineDepthProgramEntry
+            : (weighted ? edgeLineWeightedProgramEntry : edgeLineProgramEntry);
           if (!edgeEntry?.program) return;
           const uniforms = edgeEntry.uniforms;
           gl.useProgram(edgeEntry.program);
@@ -2564,7 +2617,7 @@ export class GraphLayerWebGL extends GraphLayer {
           set2f(uniforms, 'u_defaultNodeOpacitySource', defaultNodeOpacity[0], defaultNodeOpacity[1]);
           set1f(uniforms, 'u_edgeOpacityBase', this.edgeOpacityBase);
           set1f(uniforms, 'u_edgeOpacityScale', this.edgeOpacityScale);
-          setShadingUniforms(uniforms);
+          if (!depthOnly) setShadingUniforms(uniforms);
           this.bindTexture(0, activeNodePositionTexture);
           this.bindTexture(12, resolvedNodePositionFromTexture ?? activeNodePositionTexture);
           this.bindTexture(5, this.nodeTextures.edgeColorSource);
@@ -2577,9 +2630,9 @@ export class GraphLayerWebGL extends GraphLayer {
           gl.drawArraysInstanced(gl.LINES, 0, 2, this.edgeCount);
         };
 
-        const drawNodes = () => {
+        const drawNodes = ({ depthOnly = false } = {}) => {
           if (!this.nodeCount || !activeNodePositionTexture) return;
-          const nodeEntry = nodeProgramEntry;
+          const nodeEntry = depthOnly ? nodeDepthProgramEntry : nodeProgramEntry;
           if (!nodeEntry?.program) return;
           const uniforms = nodeEntry.uniforms;
           gl.useProgram(nodeEntry.program);
@@ -2671,15 +2724,17 @@ export class GraphLayerWebGL extends GraphLayer {
           set1f(uniforms, 'u_nodeOutline', nodeDefaultOutline);
           set1f(uniforms, 'u_outlineWidthBase', this.nodeOutlineWidthBase);
           set1f(uniforms, 'u_outlineWidthScale', this.nodeOutlineWidthScale);
-          setShadingUniforms(uniforms);
-          set4f(
-            uniforms,
-            'u_outlineColor',
-            nodeDefaultOutlineColor[0],
-            nodeDefaultOutlineColor[1],
-            nodeDefaultOutlineColor[2],
-            nodeDefaultOutlineColor[3],
-          );
+          if (!depthOnly) {
+            setShadingUniforms(uniforms);
+            set4f(
+              uniforms,
+              'u_outlineColor',
+              nodeDefaultOutlineColor[0],
+              nodeDefaultOutlineColor[1],
+              nodeDefaultOutlineColor[2],
+              nodeDefaultOutlineColor[3],
+            );
+          }
           this.bindTexture(0, activeNodePositionTexture);
           this.bindTexture(15, resolvedNodePositionFromTexture ?? activeNodePositionTexture);
           this.bindTexture(1, this.nodeTextures.colors);
@@ -2712,9 +2767,11 @@ export class GraphLayerWebGL extends GraphLayer {
         const weightedReady = weightedRequested && effectiveEdgeCount > 0
           ? this.prepareWeightedWebGL(rasterViewportWidth, rasterViewportHeight)
           : false;
+        const ambientOcclusionActive = !is2D && this.hasAmbientOcclusionSelection();
         debugWebGLRender('graph:render:mode', {
           weightedRequested,
           weightedReady,
+          ambientOcclusionActive,
           is2D,
           nodeCount: this.nodeCount,
           edgeCount: effectiveEdgeCount,
@@ -2871,6 +2928,32 @@ export class GraphLayerWebGL extends GraphLayer {
             gl.depthFunc(gl.LEQUAL);
             drawEdges();
           }
+        }
+
+        if (ambientOcclusionActive && this.ambientOcclusion?.render) {
+          this.ambientOcclusion.render(context, {
+            cameraUniforms,
+            selection: this.getAmbientOcclusionSelection(),
+            strength: Number.isFinite(Number(this.ambientOcclusionStrength))
+              ? Math.max(0, Number(this.ambientOcclusionStrength))
+              : AMBIENT_OCCLUSION_STRENGTH_DEFAULT,
+            radius: Number.isFinite(Number(this.ambientOcclusionRadius))
+              ? Math.max(1, Number(this.ambientOcclusionRadius))
+              : AMBIENT_OCCLUSION_RADIUS_DEFAULT,
+            bias: Number.isFinite(Number(this.ambientOcclusionBias))
+              ? Math.max(0, Number(this.ambientOcclusionBias))
+              : AMBIENT_OCCLUSION_BIAS_DEFAULT,
+            mode: this.ambientOcclusionMode,
+            intensityScale: Number.isFinite(Number(this.ambientOcclusionIntensityScale))
+              ? Math.max(0, Number(this.ambientOcclusionIntensityScale))
+              : 1.25,
+            intensityShift: Number.isFinite(Number(this.ambientOcclusionIntensityShift))
+              ? Math.max(0, Number(this.ambientOcclusionIntensityShift))
+              : 0.05,
+            quality: normalizeAmbientOcclusionQuality(this.ambientOcclusionQuality),
+            drawNodes,
+            drawEdges,
+          });
         }
 
         if (outputFramebuffer) gl.drawBuffers(outputDrawBuffers);

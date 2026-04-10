@@ -15,6 +15,9 @@ function hasForbiddenAoRuntimeError(msg) {
     /Attachment state .* not compatible/i,
     /cannot read properties of null/i,
     /CreateShaderModule/i,
+    /Shader compilation error/i,
+    /Program link error/i,
+    /framebuffer incomplete/i,
   ].some((pattern) => pattern.test(msg));
 }
 
@@ -56,6 +59,15 @@ async function getCanvasCoverage(page) {
       total: sample.width * sample.height,
     };
   });
+}
+
+function countBufferDiffBytes(before, after) {
+  let diffBytes = Math.abs(before.length - after.length);
+  const sharedLength = Math.min(before.length, after.length);
+  for (let index = 0; index < sharedLength; index += 1) {
+    if (before[index] !== after[index]) diffBytes += 1;
+  }
+  return diffBytes;
 }
 
 test('ambient occlusion runtime is stable in WebGPU fixture @webgpu', async ({ page }, testInfo) => {
@@ -139,6 +151,91 @@ test('ambient occlusion runtime is stable in WebGPU fixture @webgpu', async ({ p
   const forbidden = browserIssues.filter(hasForbiddenAoRuntimeError);
   if (browserIssues.length) {
     await testInfo.attach('webgpu-browser-issues', {
+      body: browserIssues.join('\n\n'),
+      contentType: 'text/plain',
+    });
+  }
+  expect(forbidden, forbidden.join('\n\n')).toHaveLength(0);
+});
+
+test('ambient occlusion runtime is stable in WebGL fixture', async ({ page }, testInfo) => {
+  const browserIssues = [];
+
+  page.on('pageerror', (error) => {
+    browserIssues.push(`pageerror: ${error?.message ?? String(error)}`);
+  });
+  page.on('console', (msg) => {
+    if (msg.type() !== 'error' && msg.type() !== 'warning') return;
+    const text = msg.text();
+    if (isIgnorableConsoleMessage(text)) return;
+    browserIssues.push(`${msg.type()}: ${text}`);
+  });
+
+  await page.goto('/tests/fixtures/demo.html?renderer=webgl&mode=3d&nodes=2000&layout=none');
+  const diagnostics = await waitForDiagnostics(page);
+  expect(diagnostics?.ready).toBe(true);
+  expect(String(diagnostics?.renderer ?? '').toLowerCase()).toContain('webgl');
+
+  const beforeScreenshot = await page.screenshot();
+
+  const state = await page.evaluate(async () => {
+    const helios = window.__helios;
+    if (!helios) return { ok: false, reason: 'missing helios' };
+
+    helios.ambientOcclusionEnabled(true);
+    helios.ambientOcclusionNodes(true);
+    helios.ambientOcclusionEdges(true);
+    helios.ambientOcclusionMode('alt');
+    helios.ambientOcclusionStrength(1.1);
+    helios.ambientOcclusionRadius(22);
+    helios.ambientOcclusionBias(0.01);
+    helios.ambientOcclusionIntensityScale(1.35);
+    helios.ambientOcclusionIntensityShift(0.03);
+    await helios.render?.();
+
+    return {
+      ok: true,
+      renderer: helios.renderer?.device?.type ?? null,
+      mode: helios.ambientOcclusionMode(),
+      enabled: helios.ambientOcclusionEnabled(),
+      nodes: helios.ambientOcclusionNodes(),
+      edges: helios.ambientOcclusionEdges(),
+    };
+  });
+
+  expect(state.ok).toBe(true);
+  expect(state.renderer).toBe('webgl2');
+  expect(state.mode).toBe('alt');
+  expect(state.enabled).toBe(true);
+  expect(state.nodes).toBe(true);
+  expect(state.edges).toBe(true);
+
+  await page.waitForFunction(() => {
+    const ao = window.__helios?.renderer?.graphLayer?.ambientOcclusion;
+    return ao?.aoPrograms && Array.from(ao.aoPrograms.keys()).includes('alt|medium');
+  });
+
+  const afterScreenshot = await page.screenshot();
+  const visibleDiffBytes = countBufferDiffBytes(beforeScreenshot, afterScreenshot);
+
+  const runtime = await page.evaluate(() => {
+    const ao = window.__helios?.renderer?.graphLayer?.ambientOcclusion;
+    return {
+      aoProgramKeys: ao?.aoPrograms ? Array.from(ao.aoPrograms.keys()) : [],
+      aoSize: ao?.aoSize ?? null,
+      fullSize: ao?.fullSize ?? null,
+    };
+  });
+  expect(runtime.aoProgramKeys).toContain('alt|medium');
+  expect(runtime.aoSize?.width ?? 0).toBeGreaterThan(0);
+  expect(runtime.aoSize?.height ?? 0).toBeGreaterThan(0);
+  expect(runtime.fullSize?.width ?? 0).toBeGreaterThan(0);
+  expect(runtime.fullSize?.height ?? 0).toBeGreaterThan(0);
+  expect(visibleDiffBytes).toBeGreaterThan(1000);
+
+  const forbidden = browserIssues.filter(hasForbiddenAoRuntimeError);
+  if (browserIssues.length) {
+    await testInfo.attach('webgl-browser-issues', {
       body: browserIssues.join('\n\n'),
       contentType: 'text/plain',
     });
