@@ -168,6 +168,70 @@ test('SvgLabelController hovered-node selection mode projects only the hovered n
   assert.equal(controller._visibleEntries[0].text, '1');
 });
 
+test('SvgLabelController hovered-node GPU delegate path requests only the hovered node', async () => {
+  const network = {
+    withBufferAccess: (fn) => fn(),
+    getNodeAttributeBuffer: () => null,
+  };
+  const delegate = {
+    getNodePositionView() {
+      return null;
+    },
+  };
+  const requested = [];
+  const helios = {
+    network,
+    _getRenderNetwork: () => network,
+    positions: () => ({ source: 'delegate', delegate }),
+    size: { width: 100, height: 100 },
+    renderer: { camera: { zoom: 1 } },
+    scheduler: { requestRender() {} },
+    nodeSizeBase: () => 0,
+    nodeSizeScale: () => 0,
+    nodeOutlineWidthBase: () => 0,
+    nodeOutlineWidthScale: () => 0,
+    semanticZoomExponent: () => 0,
+    _buildPositionDelegateContext: () => ({ network }),
+    async snapshotNodePositions(ids) {
+      requested.push(Array.from(ids));
+      return {
+        ids: Uint32Array.from(ids),
+        positions: new Float32Array([0.25, 0.25, 0]),
+        count: ids.length,
+        version: 1,
+        source: 'test',
+      };
+    },
+    async snapshotDelegatePositions() {
+      throw new Error('hovered-node labels should not request a full delegate snapshot');
+    },
+  };
+  const controller = new SvgLabelController(helios, {});
+  controller.setConfig({ enabled: true, selectionMode: 'hovered-node', source: '$id' });
+  controller._hoveredNode = 1;
+  const uniforms = {
+    viewProjection: new Float32Array([
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, 1, 0,
+      0, 0, 0, 1,
+    ]),
+    viewport: { width: 100, height: 100 },
+    mode: '2d',
+    projectionType: 'orthographic',
+    right: [1, 0, 0],
+  };
+
+  assert.equal(controller._runFullUpdate(uniforms, performance.now()), false);
+  await Promise.resolve();
+  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(controller._runFullUpdate(uniforms, performance.now() + 20), true);
+
+  assert.deepEqual(requested, [[1]]);
+  assert.deepEqual(controller._visibleEntries.map((entry) => entry.id), [1]);
+});
+
 test('SvgLabelController can combine selected-only labels with a separate hovered-node overlay', () => {
   const positions = new Float32Array([
     -0.5, -0.5, 0,
@@ -224,6 +288,148 @@ test('SvgLabelController can combine selected-only labels with a separate hovere
 
   assert.equal(changed, true);
   assert.deepEqual(controller._visibleEntries.map((entry) => entry.id), [0, 1]);
+});
+
+test('SvgLabelController keeps selected-only delegate labels while resolving hovered-node overlay', async () => {
+  const nodeStates = new Uint32Array([2, 0, 0]);
+  const network = {
+    nodeIndices: new Uint32Array([0, 1, 2]),
+    withBufferAccess: (fn) => fn(),
+    getNodeAttributeBuffer: (name) => {
+      if (name === '_helios_visuals_state') return { view: nodeStates };
+      return null;
+    },
+  };
+  const delegate = {
+    getNodePositionView() {
+      return null;
+    },
+  };
+  const positionsById = new Map([
+    [0, [-0.5, -0.5, 0]],
+    [1, [0, 0, 0]],
+  ]);
+  const requested = [];
+  const helios = {
+    network,
+    _getRenderNetwork: () => network,
+    positions: () => ({ source: 'delegate', delegate }),
+    size: { width: 100, height: 100 },
+    renderer: { camera: { zoom: 1 } },
+    scheduler: { requestRender() {} },
+    constructor: { STATES: { SELECTED: 2 } },
+    nodeSizeBase: () => 0,
+    nodeSizeScale: () => 0,
+    nodeOutlineWidthBase: () => 0,
+    nodeOutlineWidthScale: () => 0,
+    semanticZoomExponent: () => 0,
+    _buildPositionDelegateContext: () => ({ network }),
+    async snapshotNodePositions(ids) {
+      requested.push(Array.from(ids));
+      const packed = new Float32Array(ids.length * 3);
+      for (let i = 0; i < ids.length; i += 1) {
+        packed.set(positionsById.get(ids[i]) ?? [0, 0, 0], i * 3);
+      }
+      return {
+        ids: Uint32Array.from(ids),
+        positions: packed,
+        count: ids.length,
+        version: 1,
+        source: 'test',
+      };
+    },
+    async snapshotDelegatePositions() {
+      throw new Error('selected-only hover labels should not request a full delegate snapshot');
+    },
+  };
+  const controller = new SvgLabelController(helios, {});
+  controller.setConfig({
+    enabled: true,
+    selectionMode: 'selected-only',
+    hoveredNodeEnabled: true,
+    source: '$id',
+    hoveredNodeSource: '$id',
+    maxVisible: 8,
+  });
+  controller._hoveredNode = 1;
+  const uniforms = {
+    viewProjection: new Float32Array([
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, 1, 0,
+      0, 0, 0, 1,
+    ]),
+    viewport: { width: 100, height: 100 },
+    mode: '2d',
+    projectionType: 'orthographic',
+    right: [1, 0, 0],
+  };
+
+  assert.equal(controller._runFullUpdate(uniforms, performance.now()), false);
+  await Promise.resolve();
+  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(controller._runFullUpdate(uniforms, performance.now() + 20), true);
+
+  assert.deepEqual(requested, [[0], [1]]);
+  assert.deepEqual(controller._visibleEntries.map((entry) => entry.id), [0, 1]);
+});
+
+test('SvgLabelController hover overlay does not replace regular labels', () => {
+  const positions = new Float32Array([
+    -0.5, -0.5, 0,
+    0.0, 0.0, 0,
+    0.5, 0.5, 0,
+  ]);
+  const network = {
+    nodeIndices: new Uint32Array([0, 1, 2]),
+    withBufferAccess: (fn) => fn(),
+    getNodeAttributeBuffer: (name) => {
+      if (name === '_helios_visuals_position') return { view: positions };
+      return null;
+    },
+  };
+  const helios = {
+    network,
+    _getRenderNetwork: () => network,
+    positions: () => ({ source: 'network', delegate: null }),
+    size: { width: 100, height: 100 },
+    renderer: { camera: { zoom: 1 } },
+    nodeSizeBase: () => 0,
+    nodeSizeScale: () => 0,
+    nodeOutlineWidthBase: () => 0,
+    nodeOutlineWidthScale: () => 0,
+    semanticZoomExponent: () => 0,
+    _buildPositionDelegateContext: () => ({ network }),
+  };
+  const controller = new SvgLabelController(helios, {});
+  controller.setConfig({
+    enabled: true,
+    selectionMode: 'hovered-node',
+    hoveredNodeEnabled: true,
+    source: '$id',
+    hoveredNodeSource: '$id',
+    maxVisible: 8,
+  });
+  controller._hoveredNode = 1;
+
+  const changed = controller._runFullUpdate({
+    viewProjection: new Float32Array([
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, 1, 0,
+      0, 0, 0, 1,
+    ]),
+    viewport: { width: 100, height: 100 },
+    mode: '2d',
+    projectionType: 'orthographic',
+    right: [1, 0, 0],
+  }, performance.now());
+
+  assert.equal(changed, true);
+  const visibleIds = controller._visibleEntries.map((entry) => entry.id);
+  assert.ok(visibleIds.includes(1), 'hovered label should be visible');
+  assert.ok(visibleIds.includes(0) || visibleIds.includes(2), 'at least one regular label should remain visible');
 });
 
 test('SvgLabelController selected-only space-aware mode applies regular collision culling to selected labels', () => {

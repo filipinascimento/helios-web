@@ -27,6 +27,7 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
   const useEdgeWidthBuffer = edgeOptions.width !== 'uniform';
   const useEdgeOpacityBuffer = edgeOptions.opacity !== 'uniform';
   const useEdgeEndpointSizeBuffer = edgeOptions.endpointSize !== 'uniform';
+  const edgeWidthClampToNodeDiameter = edgeOptions.widthClampToNodeDiameter !== false;
 
   // Existing optional extra bindings for outline buffers.
   const useNodeOutlineAttributes = useNodeOutlineWidthBuffer || useNodeOutlineColorBuffer;
@@ -631,7 +632,13 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
   let endpointWidth = select(globals.edgeWidthRaw, edgeWidths.data[edgeId], USE_EDGE_WIDTH_BUFFER);
   let opacityPair = select(globals.edgeOpacityRaw, edgeOpacities.data[edgeId], USE_EDGE_OPACITY_BUFFER);
   let color = select(colorStart, colorEnd, (vertexIndex & 1u) == 1u);
-  let width = (globals.edgeWidth.x + globals.edgeWidth.y * select(endpointWidth.x, endpointWidth.y, (vertexIndex & 1u) == 1u)) * widthMul * semanticScale;
+  var width = (globals.edgeWidth.x + globals.edgeWidth.y * select(endpointWidth.x, endpointWidth.y, (vertexIndex & 1u) == 1u)) * widthMul * semanticScale;
+  ${edgeWidthClampToNodeDiameter
+    ? `
+  let maxEndpointWidth = max(select(startRadius, endRadius, (vertexIndex & 1u) == 1u) * 2.0, 0.0);
+  width = min(max(width, 0.0), maxEndpointWidth);
+`
+    : ''}
   let attrOpacity = select(opacityPair.x, opacityPair.y, (vertexIndex & 1u) == 1u);
   let opacity = clamp(globals.edgeOpacity.x + globals.edgeOpacity.y * attrOpacity, 0.0, 1.0) * opacityMul;
   let rgb = clamp(color.rgb * rgbMul + rgbAdd, vec3<f32>(0.0), vec3<f32>(1.0));
@@ -728,12 +735,18 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   }
   let cornerT = clamp(input.corner.x, 0.0, 1.0);
   let semanticScale = semanticZoomScale();
-  let width = max((globals.edgeWidth.x + globals.edgeWidth.y * mix(endpointWidth.x, endpointWidth.y, cornerT)) * widthMul, 1e-3) * semanticScale;
+  var width = max((globals.edgeWidth.x + globals.edgeWidth.y * mix(endpointWidth.x, endpointWidth.y, cornerT)) * widthMul, 0.0) * semanticScale;
   let dirRaw = endPos - startPos;
   let dirLenWorld = max(length(dirRaw), 1e-5);
   let dir = dirRaw / vec3<f32>(dirLenWorld);
   let startRadius = max((globals.nodeSize.x + globals.nodeSize.y * endpointSize.x) * startSizeMul, 0.0) * 0.5 * semanticScale;
   let endRadius = max((globals.nodeSize.x + globals.nodeSize.y * endpointSize.y) * endSizeMul, 0.0) * 0.5 * semanticScale;
+  ${edgeWidthClampToNodeDiameter
+    ? `
+  let maxSegmentWidth = max(mix(startRadius, endRadius, cornerT) * 2.0, 0.0);
+  width = min(max(width, 0.0), maxSegmentWidth);
+`
+    : ''}
   let trimStart = startRadius * globals.edgeTrim.x;
   let trimEnd = endRadius * globals.edgeTrim.x;
   startPos = startPos + dir * trimStart;

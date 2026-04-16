@@ -154,6 +154,67 @@ test('snapshotDelegatePositions() returns delegate snapshots for inspection', as
   assert.deepEqual(Array.from(snapshot), Array.from(expected));
 });
 
+test('snapshotNodePositions() preserves order, duplicates, and caller output buffers', async () => {
+  const { helios } = createPositionHarness([0, 0, 0, 1, 1, 0, 2, 4, 6]);
+  const out = new Float32Array(9);
+  const snapshot = await helios.snapshotNodePositions([2, 0, 2], { out });
+
+  assert.equal(snapshot.positions, out);
+  assert.deepEqual(Array.from(snapshot.ids), [2, 0, 2]);
+  assert.equal(snapshot.count, 3);
+  assert.deepEqual(Array.from(snapshot.positions), [2, 4, 6, 0, 0, 0, 2, 4, 6]);
+});
+
+test('snapshotNodePosition() and snapshotNodeCentroid() use delegate narrow readback when available', async () => {
+  const { helios } = createPositionHarness([0, 0, 0, 1, 1, 0, 2, 4, 6]);
+  let positionCalls = 0;
+  let centroidCalls = 0;
+  class NarrowDelegate extends PositionDelegate {
+    synchronizeTopology() {}
+    getNodePositionView() { return null; }
+    async snapshotNodePositionsById(_context, ids, options = {}) {
+      positionCalls += 1;
+      const out = options.out instanceof Float32Array ? options.out : new Float32Array(ids.length * 3);
+      for (let i = 0; i < ids.length; i += 1) {
+        out[i * 3] = ids[i] * 10;
+        out[(i * 3) + 1] = ids[i] * 10 + 1;
+        out[(i * 3) + 2] = ids[i] * 10 + 2;
+      }
+      return { ids: Uint32Array.from(ids), positions: out, count: ids.length, version: 7, source: 'test' };
+    }
+    async snapshotNodeCentroidById(_context, ids, options = {}) {
+      centroidCalls += 1;
+      const out = options.out instanceof Float32Array ? options.out : new Float32Array(3);
+      out[0] = ids.length;
+      out[1] = ids.reduce((sum, id) => sum + id, 0);
+      out[2] = 9;
+      return { centroid: out, count: ids.length, version: 8, source: 'test-centroid' };
+    }
+  }
+  const delegate = new NarrowDelegate();
+  applyLayoutPositionPolicy(helios, delegate);
+
+  const one = await helios.snapshotNodePosition(2);
+  assert.deepEqual(Array.from(one.position), [20, 21, 22]);
+  assert.equal(one.version, 7);
+
+  const centroidOut = new Float32Array(3);
+  const centroid = await helios.snapshotNodeCentroid([2, 0, 2], { out: centroidOut });
+  assert.equal(centroid.centroid, centroidOut);
+  assert.deepEqual(Array.from(centroid.centroid), [3, 4, 9]);
+  assert.equal(centroid.version, 8);
+  assert.equal(positionCalls, 1);
+  assert.equal(centroidCalls, 1);
+});
+
+test('snapshotNodeCentroid() handles empty node sets', async () => {
+  const { helios } = createPositionHarness([0, 0, 0]);
+  const centroid = await helios.snapshotNodeCentroid([]);
+
+  assert.equal(centroid.count, 0);
+  assert.deepEqual(Array.from(centroid.centroid), [0, 0, 0]);
+});
+
 test('syncDelegatePositionsToNetwork() copies delegate positions into network buffers', async () => {
   const harness = createPositionHarness([0, 0, 0, 1, 1, 0]);
   const { helios, positions, getDirtyCalls, getGeometryCalls, getRenderCalls } = harness;

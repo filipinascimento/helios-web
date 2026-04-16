@@ -331,8 +331,8 @@ test.describe('basic example selection panel', () => {
       edgeHover: false,
       hoverConnectedEdges: true,
       selectedConnectedEdges: true,
-      labelsMode: 'off',
-      labelSelectionMode: 'ranked',
+      labelsMode: 'selected-only',
+      labelSelectionMode: 'selected-only',
       hoveredNodeLabels: true,
       maxVisible: 120,
       otherSelectedNodeTone: { enabled: true, amount: 0.38 },
@@ -458,7 +458,7 @@ test.describe('basic example selection panel', () => {
         maxVisible: config?.maxVisible ?? null,
       };
     })).toEqual({
-      enabled: false,
+      enabled: true,
       hoveredNodeEnabled: true,
       maxVisible: 120,
     });
@@ -511,10 +511,12 @@ test.describe('basic example selection panel', () => {
     await expect.poll(async () => countSelected(page, 'node')).toBeGreaterThan(0);
     const selectedAfterReplace = await countSelected(page, 'node');
 
-    await actionsPanel.getByRole('button', { name: 'Expand selection to neighbors' }).click();
+    await panel.getByRole('button', { name: 'Center on selection' }).click();
+
+    await panel.getByRole('button', { name: 'Expand selection to neighbors' }).click();
     await expect.poll(async () => countSelected(page, 'node')).toBeGreaterThanOrEqual(selectedAfterReplace);
 
-    await actionsPanel.getByRole('button', { name: 'Clear selection' }).click();
+    await panel.getByRole('button', { name: 'Clear selection' }).click();
     await expect.poll(async () => countSelected(page, 'node')).toBe(0);
   });
 

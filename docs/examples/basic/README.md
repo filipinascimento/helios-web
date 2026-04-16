@@ -28,14 +28,14 @@ For details on how the node colors and sizes are mapped (including the colormap 
   - GPU-force also exposes a `Rotation damping` slider that removes fitted whole-graph spin without increasing global viscosity.
   - Missing startup positions are seeded deterministically around the center instead of randomly, which reduces the “spinning knot” startup on small graphs.
   - Delegate positions are automatic for GPU-force (no manual position-source toggle).
-- In DevTools, use `await window.__snapshotDelegatePositions()` to inspect delegate positions, and `await window.__syncDelegatePositionsToNetwork()` to copy delegate positions into network buffers.
+- In DevTools, use `await window.__snapshotDelegatePositions()` for full delegate inspection, `await window.__helios.snapshotNodeCentroid([0, 1, 2])` for narrow readback, and `await window.__syncDelegatePositionsToNetwork()` to copy delegate positions into network buffers.
 - Pass `?mode=3d` to enable the depth axis; otherwise it runs in 2D.
 - The example now requests weighted blended transparency for edges by default. Pass `?edgeTransparency=alpha` to compare against classic alpha blending, or use another supported mode explicitly. Weighted mode still falls back to alpha if unsupported.
 - Pass `?interpolationDurationMode=adaptive` (default) to average recent layout update intervals for interpolation timing.
 - Pass `?interpolationDurationMode=fixed&interpolationFixedDurationMs=160` to force a fixed interpolation interval.
 - The example now includes a Camera panel with top-level zoom/distance control plus collapsible Auto Fit, Animation, and 3D Orbit sections, including an abstract auto-fit update-frequency control instead of raw milliseconds.
-- The example also includes a Selection panel that owns the interaction demo: node click-selection, optional edge click/hover actions, shift-click multi-select, hover-only labels, optional hovered-node edge propagation, node-selection actions (`Clear`, `Expand Neighbors`, rule-based add/replace), and selected/highlighted/normal state-style controls for both nodes and edges.
-  - Regular labels are configured separately in the Labels tab as `Off`, `Auto Labels`, or `Selected Only`. Hover labels stay separate and reuse the same label styling options.
+- The example also includes a Selection panel that owns the interaction demo: node click-selection, double-click selected-node camera follow, optional edge click/hover actions, shift-click multi-select, hover-only labels, optional hovered-node edge propagation, node-selection actions (`Clear`, `Expand Neighbors`, `Center`, rule-based add/replace), and selected/highlighted/normal state-style controls for both nodes and edges.
+  - Regular labels are configured separately in the Labels tab as `Off`, `Auto Labels`, or `Selected Only`; the Selection panel defaults them to selected-only labels. Hover labels stay separate and reuse the same label styling options.
   - Click-only picking is specialized: if node hover, hover labels, and hover-connected-edges are all disabled, the demo keeps click picking enabled without running node-hover updates.
   - Hover labels also use a dedicated hovered-node label path instead of the normal ranked label-selection scan.
   - All Selection sub-sections now start collapsed, and the node-selector controls reuse the same rule editor implementation as the Filter panel.

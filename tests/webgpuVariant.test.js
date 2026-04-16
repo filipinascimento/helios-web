@@ -55,6 +55,7 @@ test('fast edge rendering resolves a distinct lightweight WebGPU edge variant', 
 test('advanced WebGPU edge variants specialize trim, state, semantic zoom, and camera mode', () => {
   const layer = new GraphLayerWebGPU();
   layer.edgeEndpointTrim = 0;
+  layer.edgeWidthClampToNodeDiameter = false;
   layer.semanticZoomExponent = 0;
   const variant2D = layer.resolveEdgeVariant({
     edge: {
@@ -69,6 +70,7 @@ test('advanced WebGPU edge variants specialize trim, state, semantic zoom, and c
   assert.equal(variant2D.semanticZoom, false);
 
   layer.edgeEndpointTrim = 0.8;
+  layer.edgeWidthClampToNodeDiameter = true;
   layer.semanticZoomExponent = 0.5;
   layer.setEdgeStateStyle(0, { opacityMul: 0.5 });
   layer.setNodeStateStyle(0, { sizeMul: 1.5 });
@@ -89,6 +91,32 @@ test('advanced WebGPU edge variants specialize trim, state, semantic zoom, and c
   assert.notEqual(key2D, key3D);
   assert.match(key2D, /\bcm:2d\b/);
   assert.match(key3D, /\bcm:3d\b/);
+});
+
+test('edge width clamp to node diameter is a default shader specialization', () => {
+  const layer = new GraphLayerWebGPU();
+  layer.edgeEndpointTrim = 0;
+  const enabled = layer.resolveEdgeVariant({
+    edge: {
+      endpointSize: { mode: 'buffer', source: 'edge' },
+    },
+  }, { is2D: true });
+
+  assert.equal(enabled.widthClampToNodeDiameter, true);
+  assert.equal(enabled.endpointSizeBuffer, true);
+  assert.match(layer.getEdgeVariantKey(true, enabled), /\bwc:1\b/);
+
+  layer.edgeWidthClampToNodeDiameter = false;
+  const disabled = layer.resolveEdgeVariant({
+    edge: {
+      endpointSize: { mode: 'buffer', source: 'edge' },
+    },
+  }, { is2D: true });
+
+  assert.equal(disabled.widthClampToNodeDiameter, false);
+  assert.equal(disabled.endpointSizeBuffer, false);
+  assert.match(layer.getEdgeVariantKey(true, disabled), /\bwc:0\b/);
+  assert.notEqual(layer.getEdgeVariantKey(true, enabled), layer.getEdgeVariantKey(true, disabled));
 });
 
 test('getSharedSparseResources prefers active position buffers over stale cache entries', () => {

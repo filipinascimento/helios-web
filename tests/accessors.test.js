@@ -12,6 +12,7 @@ test('graph-layer accessors are chainable setters and return values as getters',
       edgeWidthBase: 0,
       semanticZoomExponent: 0.25,
       edgeFastRendering: false,
+      edgeWidthClampToNodeDiameter: true,
       ambientOcclusionQuality: 'medium',
     },
   };
@@ -37,13 +38,19 @@ test('graph-layer accessors are chainable setters and return values as getters',
   assert.equal(helios.edgeFastRendering(), true);
   assert.equal(calls.render, 3);
 
+  assert.equal(helios.edgeWidthClampToNodeDiameter(), true);
+  const clampResult = helios.edgeWidthClampToNodeDiameter(false);
+  assert.equal(clampResult, helios);
+  assert.equal(helios.edgeWidthClampToNodeDiameter(), false);
+  assert.equal(calls.render, 4);
+
   assert.equal(helios.ambientOcclusionQuality(), 'medium');
   const qualityResult = helios.ambientOcclusionQuality('high');
   assert.equal(qualityResult, helios);
   assert.equal(helios.ambientOcclusionQuality(), 'high');
   helios.ambientOcclusionQuality('invalid');
   assert.equal(helios.ambientOcclusionQuality(), 'high');
-  assert.equal(calls.render, 4);
+  assert.equal(calls.render, 5);
 });
 
 test('renderer accessors store pending values before renderer exists', () => {
@@ -170,6 +177,11 @@ test('edge width scale UI binding exposes zero in the recommended slider range',
 test('fast edge rendering UI binding is exposed as a boolean toggle', () => {
   assert.equal(Helios.UI_BINDINGS.edgeFastRendering.type, 'boolean');
   assert.equal(Helios.UI_BINDINGS.edgeFastRendering.label, 'Fast Edge Lines');
+});
+
+test('edge width clamp UI binding defaults on', () => {
+  assert.equal(Helios.UI_BINDINGS.edgeWidthClampToNodeDiameter.type, 'boolean');
+  assert.equal(Helios.UI_BINDINGS.edgeWidthClampToNodeDiameter.defaultValue, true);
 });
 
 test('adaptive edge quality is enabled by default and exposes configurable thresholds', () => {

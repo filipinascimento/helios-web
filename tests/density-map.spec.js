@@ -455,6 +455,47 @@ test.describe('density map panel', () => {
     expect(errors).toHaveLength(0);
   });
 
+  test('filters density comparison colormaps to divergent maps inside the picker', async ({ page }) => {
+    const errors = captureBrowserErrors(page);
+    await page.goto('/tests/fixtures/demo.html?renderer=webgl&layout=none&nodes=120&mappers=1');
+    const diagnostics = await waitForDiagnostics(page);
+    expect(diagnostics.error ?? null).toBeNull();
+
+    const panel = await enableDensityFromPanel(page);
+    const densityTab = panel.locator('.helios-ui-tabpanel[data-tab-id="density"][data-active="true"]').first();
+    await expect(densityTab).toBeVisible();
+
+    const propertyRow = densityTab.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'Density' }),
+    }).first();
+    await propertyRow.locator('select').selectOption('Degree');
+
+    const compareRow = densityTab.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'vs' }),
+    }).first();
+    await compareRow.locator('select').selectOption('Uniform');
+
+    const colormapDisplay = densityTab.locator('button.helios-ui-colormap-picker__display').first();
+    await colormapDisplay.click();
+
+    const popover = page.locator('.helios-ui-colormap-popover:visible').first();
+    await expect(popover).toBeVisible();
+    const divergentFilter = popover.locator('.helios-ui-colormap-popover__filter', { hasText: 'Diverging' }).first();
+    await expect(divergentFilter).toBeVisible();
+    await expect(divergentFilter).toHaveAttribute('aria-pressed', 'true');
+
+    await popover.locator('input.helios-ui-colormap-popover__search').first().fill('viridis');
+    await expect(popover.locator('.helios-ui-colormap-picker__note', { hasText: 'No matches.' })).toBeVisible();
+
+    await divergentFilter.click();
+    await expect(divergentFilter).toHaveAttribute('aria-pressed', 'false');
+    await expect(popover.locator('.helios-ui-colormap-picker__item', {
+      has: page.locator('.helios-ui-colormap-picker__item-title', { hasText: 'Viridis' }),
+    }).first()).toBeVisible();
+
+    expect(errors).toHaveLength(0);
+  });
+
   test('enables density in WebGPU renderer @webgpu', async ({ page }) => {
     const errors = captureBrowserErrors(page);
     await page.goto('/tests/fixtures/demo.html?renderer=webgpu&layout=none&nodes=120&mappers=1');

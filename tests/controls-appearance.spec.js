@@ -24,6 +24,18 @@ async function enableToggle(locator) {
   await expect(toggle).toHaveAttribute('aria-checked', 'true');
 }
 
+async function disableToggle(locator) {
+  const toggle = locator.first();
+  await expect(toggle).toBeVisible();
+  const tag = await toggle.evaluate((el) => el.tagName.toLowerCase());
+  if (tag === 'input') {
+    if (await toggle.isChecked()) await toggle.uncheck();
+    return;
+  }
+  if ((await toggle.getAttribute('aria-checked')) !== 'false') await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-checked', 'false');
+}
+
 function parseScreenshot(buffer) {
   return new Promise((resolve, reject) => {
     const png = new PNG();
@@ -442,6 +454,12 @@ test.describe('scene panel: tabs and appearance controls', () => {
     await enableToggle(edgeDepthToggle);
     const edgeDepthValue = await page.evaluate(() => window.__helios.renderer?.graphLayer?.edgeDepthWrite ?? null);
     expect(edgeDepthValue).toBe(true);
+
+    const edgeWidthClampToggle = scenePanel.locator('[aria-label="Clamp Edge Widths"][role="switch"], input[type="checkbox"][aria-label="Clamp Edge Widths"]');
+    await expect(edgeWidthClampToggle).toHaveAttribute('aria-checked', 'true');
+    await disableToggle(edgeWidthClampToggle);
+    const edgeWidthClampValue = await page.evaluate(() => window.__helios.renderer?.graphLayer?.edgeWidthClampToNodeDiameter ?? null);
+    expect(edgeWidthClampValue).toBe(false);
 
     const semanticZoomRow = scenePanel
       .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Semantic Zoom Exponent"))')

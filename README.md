@@ -45,15 +45,15 @@ network.addNodes(5);
 const helios = new Helios(network, { container: '#app' });
 await helios.ready;
 
-// Optional SVG labels overlay (off by default).
+// Optional SVG labels overlay (regular labels stay off until enabled directly or by the Selection panel).
 helios.labels({
   enabled: true,
   maxVisible: 120,
   source: null, // auto fallback: Label -> Name -> id
   offsetRadiusFactor: 1, // (centerY - projectedRadius) * factor
   offsetPx: 4, // additional pixel offset (positive moves up)
-  maxChars: 0, // 0 disables truncation
-  maxRows: 1, // >1 enables wrapping with ellipsis
+  maxChars: 45, // 0 disables truncation
+  maxRows: 2, // >1 enables wrapping with ellipsis
 });
 
 // SVG legends are enabled by default for legendable color mappings.
@@ -148,7 +148,13 @@ helios.cameraControls({
   orbitAngle: 0,
 });
 helios.cameraTargetNodes([0, 1, 2]);
+helios.cameraFollowNodes([0, 1, 2], { animate: true }); // keeps the centroid centered while positions move
 helios.frameNetwork({ animate: true, resetOrientation: false });
+
+// Narrow delegate readback helpers:
+await helios.snapshotNodePosition(7);
+await helios.snapshotNodePositions([7, 11, 13]);
+await helios.snapshotNodeCentroid([7, 11, 13]);
 ```
 
 The same API powers the example under `docs/examples/basic/main.js`, making it

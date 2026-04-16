@@ -40,8 +40,8 @@ const DEFAULT_CONFIG = Object.freeze({
   outlineWidth: 2,
   offsetRadiusFactor: 1,
   offsetPx: 4,
-  maxChars: 0,
-  maxRows: 1,
+  maxChars: 45,
+  maxRows: 2,
   collisionPaddingPx: 2,
   collisionCellPx: 18,
   delegateSnapshotMaxFps: 4,
@@ -242,6 +242,12 @@ export class SvgLabelController {
     this._delegateSnapshot = null;
     this._delegateSnapshotAt = -Infinity;
     this._delegateSnapshotPending = false;
+    this._sparsePositionSnapshot = null;
+    this._sparsePositionSignature = '';
+    this._sparsePositionAt = -Infinity;
+    this._sparsePositionPending = false;
+    this._sparsePositionSnapshots = new Map();
+    this._sparsePositionPendingSignatures = new Set();
     this._fallbackNameCache = { key: '', values: ['Label', 'Name'] };
     this._hoveredNode = -1;
 
@@ -264,6 +270,11 @@ export class SvgLabelController {
     this._lastVisibleSet.clear();
     this._pool.length = 0;
     this._delegateSnapshot = null;
+    this._sparsePositionSnapshot = null;
+    this._sparsePositionSignature = '';
+    this._sparsePositionPending = false;
+    this._sparsePositionSnapshots?.clear?.();
+    this._sparsePositionPendingSignatures?.clear?.();
     if (this.group) {
       this.group.remove();
     }
@@ -497,7 +508,7 @@ export class SvgLabelController {
   }
 
   _usesHoveredNodeSelectionMode() {
-    return this._config.selectionMode === 'hovered-node';
+    return this._config.selectionMode === 'hovered-node' && this._usesHoveredNodeOverlay() !== true;
   }
 
   _usesBaseLabels() {
@@ -599,15 +610,12 @@ export class SvgLabelController {
     if (!Number.isInteger(hoveredNode) || hoveredNode < 0) return null;
 
     const context = this.helios?._buildPositionDelegateContext?.() ?? {};
-    const positions = this._resolvePositionView(context, now);
-    const view = positions?.view ?? null;
-    if (!view) return null;
-
-    const offset = hoveredNode * 3;
-    if (offset + 2 >= view.length) return null;
-    const x = view[offset];
-    const y = view[offset + 1];
-    const z = view[offset + 2];
+    const positions = this._resolvePositionAccessor(context, now, [hoveredNode], { allowFullSnapshot: false });
+    const point = positions?.get?.(hoveredNode) ?? null;
+    if (!point) return null;
+    const x = point[0];
+    const y = point[1];
+    const z = point[2];
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null;
 
     const viewProjection = uniforms.viewProjection;
@@ -707,6 +715,10 @@ export class SvgLabelController {
       );
     }
     if (!nextVisible.length) {
+      if (this._visibleEntries.length && this._hasPendingPositionReadback()) {
+        if (options.render !== false) this._renderVisible();
+        return false;
+      }
       this._hideAll();
       return false;
     }
@@ -716,14 +728,12 @@ export class SvgLabelController {
     return true;
   }
 
+  _hasPendingPositionReadback() {
+    return this._delegateSnapshotPending === true || this._sparsePositionPending === true;
+  }
+
   _collectRankedEntriesUnsafe(network, uniforms, now, nodeIndices) {
     const context = this.helios?._buildPositionDelegateContext?.() ?? {};
-    const positions = this._resolvePositionView(context, now);
-    if (!positions?.view) {
-      return [];
-    }
-
-    const view = positions.view;
     const viewProjection = uniforms.viewProjection;
     const width = Math.max(1, Math.floor(uniforms.viewport?.width ?? this.helios?.size?.width ?? 1));
     const height = Math.max(1, Math.floor(uniforms.viewport?.height ?? this.helios?.size?.height ?? 1));
@@ -749,6 +759,22 @@ export class SvgLabelController {
     const nodeSizes = this._safe(() => network.getNodeAttributeBuffer(NODE_SIZE_ATTRIBUTE)?.view, null);
     const nodeOutlines = this._safe(() => network.getNodeAttributeBuffer(NODE_OUTLINE_WIDTH_ATTRIBUTE)?.view, null);
     const nodeStates = this._safe(() => network.getNodeAttributeBuffer(NODE_STATE_ATTRIBUTE)?.view, null);
+    let iterationNodeIndices = nodeIndices;
+    let positions = null;
+    if (selectedOnly) {
+      const selectedIds = [];
+      for (let i = 0; i < nodeIndices.length; i += 1) {
+        const id = Number(nodeIndices[i]);
+        if (!Number.isInteger(id) || id < 0) continue;
+        if (maskHasSelected(nodeStates, id, selectedMask)) selectedIds.push(id);
+      }
+      if (!selectedIds.length) return [];
+      iterationNodeIndices = selectedIds;
+      positions = this._resolvePositionAccessor(context, now, selectedIds, { allowFullSnapshot: false });
+    } else {
+      positions = this._resolvePositionAccessor(context, now, null, { allowFullSnapshot: true });
+    }
+    if (!positions) return [];
 
     const fontSizePx = 12 * this._config.fontSizeScale;
     const maxVisible = this._config.maxVisible;
@@ -759,17 +785,18 @@ export class SvgLabelController {
     const collisionCellPx = Math.max(4, this._config.collisionCellPx);
     const minRadiusPx = Math.max(0, this._config.minScreenRadiusPx);
 
-    for (let i = 0; i < nodeIndices.length; i += 1) {
-      const id = Number(nodeIndices[i]);
+    for (let i = 0; i < iterationNodeIndices.length; i += 1) {
+      const id = Number(iterationNodeIndices[i]);
       if (!Number.isInteger(id) || id < 0) continue;
 
       const selected = maskHasSelected(nodeStates, id, selectedMask);
       if (selectedOnly && !selected) continue;
 
-      const o = id * 3;
-      const x = view[o];
-      const y = view[o + 1];
-      const z = view[o + 2];
+      const point = positions.get(id);
+      if (!point) continue;
+      const x = point[0];
+      const y = point[1];
+      const z = point[2];
       if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
 
       const center = projectPoint(viewProjection, width, height, x, y, z);
@@ -910,10 +937,9 @@ export class SvgLabelController {
 
   _reprojectVisibleUnsafe(uniforms, now) {
     const context = this.helios?._buildPositionDelegateContext?.() ?? {};
-    const positions = this._resolvePositionView(context, now);
-    const view = positions?.view ?? null;
-    if (!view) {
-      this._hideAll();
+    const visibleIds = this._visibleEntries.map((entry) => entry.id);
+    const positions = this._resolvePositionAccessor(context, now, visibleIds, { allowFullSnapshot: false });
+    if (!positions) {
       return false;
     }
     const width = Math.max(1, Math.floor(uniforms.viewport?.width ?? this.helios?.size?.width ?? 1));
@@ -926,10 +952,11 @@ export class SvgLabelController {
     for (let i = 0; i < this._visibleEntries.length; i += 1) {
       const entry = this._visibleEntries[i];
       const id = entry.id;
-      const o = id * 3;
-      const x = view[o];
-      const y = view[o + 1];
-      const z = view[o + 2];
+      const point = positions.get(id);
+      if (!point) continue;
+      const x = point[0];
+      const y = point[1];
+      const z = point[2];
       if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
       const center = projectPoint(viewProjection, width, height, x, y, z);
       if (!center) continue;
@@ -980,6 +1007,135 @@ export class SvgLabelController {
       return { source: 'delegate-snapshot', view: this._delegateSnapshot };
     }
     return { source: 'delegate', view: null };
+  }
+
+  _positionIdSignature(nodeIds) {
+    if (!nodeIds?.length) return '';
+    return Array.from(nodeIds, (id) => Math.max(0, Math.floor(Number(id) || 0))).join(',');
+  }
+
+  _resolvePositionAccessor(context, now, nodeIds = null, options = {}) {
+    const source = this.helios?.positions?.() ?? { source: 'network', delegate: null };
+    const network = this._getRenderNetwork();
+    if (source.source !== 'delegate') {
+      const view = this._safe(() => network?.getNodeAttributeBuffer?.(NODE_POSITION_ATTRIBUTE)?.view, null);
+      if (!view) return null;
+      return {
+        source: 'network',
+        get: (id) => {
+          const offset = id * 3;
+          if (offset + 2 >= view.length) return null;
+          return [view[offset], view[offset + 1], view[offset + 2]];
+        },
+      };
+    }
+
+    const delegate = source.delegate ?? null;
+    if (!delegate) return null;
+    let view = null;
+    if (typeof delegate.getNodePositionView === 'function') {
+      view = this._safe(() => delegate.getNodePositionView(context), null);
+    } else if (typeof delegate.getPositionView === 'function') {
+      view = this._safe(() => delegate.getPositionView(context), null);
+    }
+    if (view && Number.isFinite(view.length) && view.length > 0) {
+      return {
+        source: 'delegate-view',
+        get: (id) => {
+          const offset = id * 3;
+          if (offset + 2 >= view.length) return null;
+          return [view[offset], view[offset + 1], view[offset + 2]];
+        },
+      };
+    }
+
+    if (nodeIds?.length) {
+      const signature = this._positionIdSignature(nodeIds);
+      this._scheduleSparsePositionSnapshot(delegate, nodeIds, signature, now);
+      const snapshot = this._sparsePositionSnapshots?.get?.(signature) ?? (
+        this._sparsePositionSignature === signature ? this._sparsePositionSnapshot : null
+      );
+      if (snapshot?.positions instanceof Float32Array) {
+        const positions = snapshot.positions;
+        const offsets = snapshot.offsets;
+        return {
+          source: 'delegate-sparse',
+          get: (id) => {
+            const packedIndex = offsets.get(id);
+            if (packedIndex == null) return null;
+            const offset = packedIndex * 3;
+            if (offset + 2 >= positions.length) return null;
+            return [positions[offset], positions[offset + 1], positions[offset + 2]];
+          },
+        };
+      }
+      return null;
+    }
+
+    if (options.allowFullSnapshot !== false) {
+      const resolved = this._resolvePositionView(context, now);
+      const fullView = resolved?.view ?? null;
+      if (!fullView) return null;
+      return {
+        source: resolved.source,
+        get: (id) => {
+          const offset = id * 3;
+          if (offset + 2 >= fullView.length) return null;
+          return [fullView[offset], fullView[offset + 1], fullView[offset + 2]];
+        },
+      };
+    }
+    return null;
+  }
+
+  _scheduleSparsePositionSnapshot(delegate, nodeIds, signature, now) {
+    if (!delegate || !nodeIds?.length || !signature) return;
+    if (this._sparsePositionPendingSignatures?.has?.(signature)) return;
+    const maxFps = Math.max(1, this._config.delegateSnapshotMaxFps);
+    const minIntervalMs = 1000 / Math.max(maxFps, 12);
+    const cached = this._sparsePositionSnapshots?.get?.(signature) ?? (
+      this._sparsePositionSignature === signature ? this._sparsePositionSnapshot : null
+    );
+    if (cached && now - (cached.at ?? this._sparsePositionAt) < minIntervalMs) return;
+    if (!this.helios || typeof this.helios.snapshotNodePositions !== 'function') return;
+    const ids = Array.from(nodeIds);
+    this._sparsePositionPending = true;
+    this._sparsePositionSignature = signature;
+    this._sparsePositionPendingSignatures.add(signature);
+    Promise.resolve()
+      .then(() => this.helios.snapshotNodePositions(ids, { delegate }))
+      .then((result) => {
+        const positions = result?.positions ?? null;
+        if (!(positions instanceof Float32Array)) return;
+        const offsets = new Map();
+        for (let i = 0; i < ids.length; i += 1) {
+          if (!offsets.has(ids[i])) offsets.set(ids[i], i);
+        }
+        const at = performance.now();
+        const snapshot = { positions, offsets, at };
+        this._sparsePositionSnapshot = snapshot;
+        this._sparsePositionSnapshots.set(signature, snapshot);
+        this._pruneSparsePositionSnapshots();
+        this._sparsePositionAt = performance.now();
+        this.requestFullReselect('delegate-sparse-position');
+        this.helios?.scheduler?.requestRender?.();
+      })
+      .catch(() => {})
+      .finally(() => {
+        this._sparsePositionPendingSignatures.delete(signature);
+        this._sparsePositionPending = this._sparsePositionPendingSignatures.size > 0;
+      });
+  }
+
+  _pruneSparsePositionSnapshots() {
+    const snapshots = this._sparsePositionSnapshots;
+    if (!snapshots || snapshots.size <= 8) return;
+    const entries = Array.from(snapshots.entries())
+      .sort((a, b) => (b[1]?.at ?? 0) - (a[1]?.at ?? 0));
+    snapshots.clear();
+    for (let i = 0; i < Math.min(8, entries.length); i += 1) {
+      snapshots.set(entries[i][0], entries[i][1]);
+    }
   }
 
   _scheduleDelegateSnapshot(delegate, now) {

@@ -35,8 +35,8 @@ Total storages: min `2`, max `8`.
 | `edgeNodeWidthSource` | Node scalar source for edge width. | No | Edge width is buffer-backed from node data. |
 | `edgeOpacities` | Per-edge opacity pairs. | No | Edge opacity is buffer-backed from edge data. |
 | `edgeNodeOpacitySource` | Node scalar source for edge opacity. | No | Edge opacity is buffer-backed from node data. |
-| `edgeEndpointSizes` | Per-edge endpoint-size pairs. | No | Edge endpoint size is buffer-backed from edge data. |
-| `edgeNodeEndpointSizeSource` | Node scalar source for edge endpoint size. | No | Edge endpoint size is buffer-backed from node data. |
+| `edgeEndpointSizes` | Per-edge endpoint-size pairs. | No | Edge endpoint size is buffer-backed from edge data and endpoint geometry is needed for trim or edge-width clamping. |
+| `edgeNodeEndpointSizeSource` | Node scalar source for edge endpoint size. | No | Edge endpoint size is buffer-backed from node data and endpoint geometry is needed for trim or edge-width clamping. |
 
 Total storages: min `3`, max `10`.
 
@@ -161,6 +161,16 @@ Total storages: min `2`, max `2`.
 
 Total storages: min `3`, max `3`.
 
+### Selection Centroid Readback Pass
+
+| Storage | What | Core | Activates When |
+| --- | --- | --- | --- |
+| `positionBuffer` | GPU-layout node positions for selected ids. | Yes | Large selected-node centroid readback is requested. |
+| `centroidIdsBuffer` | Requested node ids to reduce. | Yes | Large selected-node centroid readback is requested. |
+| `centroidPartialBuffer` | Per-workgroup xyz sums and counts copied to a small readback buffer. | Yes | Large selected-node centroid readback is requested. |
+
+Total storages: min `3`, max `3`.
+
 ### Layout Summary: WebGPU
 
 | Section | Min | Max |
@@ -168,6 +178,7 @@ Total storages: min `3`, max `3`.
 | Layout Compute: Main | 9 | 10 |
 | Layout Compute: Output Scale | 2 | 2 |
 | Layout Compute: Recenter | 3 | 3 |
+| Layout Compute: Selection Centroid Readback | 3 | 3 |
 
 ## GPU Layout Providers: WebGPU
 

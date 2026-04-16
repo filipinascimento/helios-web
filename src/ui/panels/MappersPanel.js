@@ -14,24 +14,70 @@ import { toHex8 } from '../utils/colors.js';
 import { isPublicAttributeName } from '../utils/attributes.js';
 import { shallowCloneChannelConfig } from '../utils/channelConfig.js';
 
+const DIVERGING_D3_COLORMAPS = new Set([
+  'interpolateBrBG',
+  'interpolatePRGn',
+  'interpolatePiYG',
+  'interpolatePuOr',
+  'interpolateRdBu',
+  'interpolateRdGy',
+  'interpolateRdYlBu',
+  'interpolateRdYlGn',
+  'interpolateSpectral',
+]);
+
+const DIVERGING_CMASHER_COLORMAPS = new Set([
+  'cmasher_copper',
+  'cmasher_emergency',
+  'cmasher_fusion',
+  'cmasher_guppy',
+  'cmasher_holly',
+  'cmasher_iceburn',
+  'cmasher_infinity',
+  'cmasher_neutral',
+  'cmasher_pride',
+  'cmasher_prinsenvlag',
+  'cmasher_redshift',
+  'cmasher_seasons',
+  'cmasher_viola',
+  'cmasher_voltage',
+  'cmasher_waterlily',
+  'cmasher_watermelon',
+]);
+
+function isDivergingColormapKey(key) {
+  const raw = String(key ?? '').trim();
+  if (!raw) return false;
+  const canonical = raw.startsWith('cmasher:')
+    ? `cmasher_${raw.slice('cmasher:'.length)}`
+    : raw;
+  if (DIVERGING_D3_COLORMAPS.has(canonical)) return true;
+  if (DIVERGING_CMASHER_COLORMAPS.has(canonical)) return true;
+  if (/^CET_D\d/i.test(canonical)) return true;
+  return /(^|[-_:])Diverg/i.test(canonical);
+}
+
 function buildColormapCatalog() {
   const entries = [];
 
   const pushEntry = ({ key, label, group, searchExtras = [] }) => {
     if (!key) return;
     const safeLabel = String(label ?? key);
+    const diverging = isDivergingColormapKey(key);
     const terms = new Set([
       String(key),
       safeLabel,
       String(group ?? ''),
       String(group ?? '').toLowerCase(),
+      diverging ? 'diverging' : '',
       ...searchExtras.map((v) => String(v)),
       ...searchExtras.map((v) => String(v).toLowerCase()),
-    ]);
+    ].filter(Boolean));
     entries.push({
       key: String(key),
       label: safeLabel,
       group: String(group ?? 'other'),
+      diverging,
       search: Array.from(terms).join(' ').toLowerCase(),
     });
   };
@@ -4968,6 +5014,15 @@ export class MappersPanel {
         value: resolveDensityPickerColormap(cfg()),
         fallbackValue: 'interpolateOrRd',
         searchPlaceholder: 'Search colormaps…',
+        filters: [
+          {
+            id: 'diverging',
+            label: 'Diverging',
+            title: 'Show diverging colormaps for comparison density maps.',
+            active: hasDensityComparison(cfg()) || cfg()?.diverging === true,
+            predicate: (entry) => entry?.diverging === true,
+          },
+        ],
         onChange: (key) => {
           const state = cfg();
           if (isLogRatioMode(state)) {
@@ -4996,6 +5051,7 @@ export class MappersPanel {
         if (currentCompare === nextProperty || (currentCompare !== 'None' && !nextCompareOptions.includes(currentCompare))) {
           patch.compareProperty = 'None';
           patch.comparisonMode = 'difference';
+          colormapPicker.setFilterActive('diverging', false, { render: false });
         }
         applyDensity(patch);
         refresh();
@@ -5003,13 +5059,18 @@ export class MappersPanel {
       compareSelect.addEventListener('change', () => {
         if (compareSelect.value === 'None') {
           applyDensity({ compareProperty: 'None', comparisonMode: 'difference' });
+          colormapPicker.setFilterActive('diverging', false, { render: false });
         } else {
           applyDensity({ compareProperty: compareSelect.value });
+          colormapPicker.setFilterActive('diverging', true, { render: false });
         }
         refresh();
       });
       comparisonModeSelect.addEventListener('change', () => {
         applyDensity({ comparisonMode: comparisonModeSelect.value });
+        if (comparisonModeSelect.value === 'logRatio') {
+          colormapPicker.setFilterActive('diverging', true, { render: false });
+        }
         refresh();
       });
 

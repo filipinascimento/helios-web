@@ -31,6 +31,7 @@ function resolveEdgeOptions(options = {}) {
     cameraMode: edge.cameraMode === '2d' ? '2d' : (edge.cameraMode === '3d' ? '3d' : 'dynamic'),
     semanticZoom: edge.semanticZoom !== false,
     trim: edge.trim !== false,
+    widthClampToNodeDiameter: edge.widthClampToNodeDiameter !== false,
     edgeState: edge.edgeState !== false,
     endpointState: edge.endpointState !== false,
     propagateHoveredNodeToEdges: edge.propagateHoveredNodeToEdges === true,
@@ -79,10 +80,12 @@ export function createGraphWebGLSources(options = {}) {
   const edgeCameraMode = edge.cameraMode;
   const edgeSemanticZoomEnabled = !fastEdgePath && edge.semanticZoom === true;
   const edgeTrimEnabled = !fastEdgePath && edge.trim === true;
+  const edgeWidthClampToNodeDiameter = !fastEdgePath && edge.widthClampToNodeDiameter === true;
+  const edgeEndpointGeometryEnabled = edgeTrimEnabled || edgeWidthClampToNodeDiameter;
   const edgeStateEnabled = !fastEdgePath && edge.edgeState === true;
   const edgeEndpointStateEnabled = !fastEdgePath
     && (edge.endpointState === true || edge.propagateSelectedNodesToEdges === true)
-    && (edgeTrimEnabled || edge.propagateSelectedNodesToEdges === true);
+    && (edgeEndpointGeometryEnabled || edge.propagateSelectedNodesToEdges === true);
 
   const nodeColorDecl = nodeColorBuffer
     ? `
@@ -389,7 +392,7 @@ uvec2 fetchEdgeEndpointStatePair(uint edgeId) {
 }`
     : '';
 
-  const edgeTrimBlock = edgeTrimEnabled
+  const edgeEndpointGeometryBlock = edgeEndpointGeometryEnabled
     ? `
   uvec2 trimEndpointStatePair = ${edgeEndpointStateEnabled ? 'fetchEdgeEndpointStatePair(a_edgeId)' : 'uvec2(0u, 0u)'};
   float startSizeMul = 1.0;
@@ -433,10 +436,17 @@ uvec2 fetchEdgeEndpointStatePair(uint edgeId) {
       : '((u_is2D == 1 && u_semanticZoomExponent > 0.0) ? (1.0 / pow(max(u_zoom2D, 1e-3), u_semanticZoomExponent)) : 1.0)')};
   float startRadius = max((u_nodeSizeBase + u_nodeSizeScale * endpointSizePair.x) * startSizeMul, 0.0) * 0.5 * semanticScale;
   float endRadius = max((u_nodeSizeBase + u_nodeSizeScale * endpointSizePair.y) * endSizeMul, 0.0) * 0.5 * semanticScale;
+  ${edgeTrimEnabled
+    ? `
   float trimStart = startRadius * u_edgeEndpointTrim;
   float trimEnd = endRadius * u_edgeEndpointTrim;
   vec3 startPos = sourcePos + dirN * trimStart;
   vec3 endPos = targetPos - dirN * trimEnd;
+`
+    : `
+  vec3 startPos = sourcePos;
+  vec3 endPos = targetPos;
+`}
 `
     : `
   float semanticScale = ${(!edgeSemanticZoomEnabled || edgeCameraMode === '3d')
@@ -447,6 +457,12 @@ uvec2 fetchEdgeEndpointStatePair(uint edgeId) {
   vec3 startPos = sourcePos;
   vec3 endPos = targetPos;
 `;
+
+  const edgeQuadWidthClampBlock = edgeWidthClampToNodeDiameter
+    ? `
+  float maxSegmentWidth = max(mix(startRadius, endRadius, segmentMix) * 2.0, 0.0);
+  width = min(max(width, 0.0), maxSegmentWidth);`
+    : '';
 
   const edgeQuadWidthDirBlock = edgeCameraMode === '2d'
     ? `
@@ -970,7 +986,7 @@ ${edgeQuadStateBlock}
   vec3 dir = targetPos - sourcePos;
   float dirLenWorld = max(length(dir), 1e-5);
   vec3 dirN = dir / dirLenWorld;
-${edgeTrimBlock}
+${edgeEndpointGeometryBlock}
 
   float segmentMix = clamp(a_corner.x, 0.0, 1.0);
   vec2 widthPair = ${edgeWidthSourceNode
@@ -985,6 +1001,7 @@ ${edgeTrimBlock}
     : 'fetchEdgeWidthPair(a_edgeId)'};
   float rawWidth = mix(widthPair.x, widthPair.y, segmentMix);
   float width = max((u_edgeWidthBase + u_edgeWidthScale * rawWidth) * widthMul, 0.0) * semanticScale;
+${edgeQuadWidthClampBlock}
   float halfWidth = max(width, 1e-3) * 0.5;
   vec3 centerPos = mix(startPos, endPos, segmentMix);
 ${edgeQuadWidthDirBlock}

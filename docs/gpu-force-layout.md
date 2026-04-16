@@ -336,9 +336,15 @@ Normal GPU delegate rendering path:
 Explicit APIs that perform GPU -> CPU (or CPU writeback):
 
 - `helios.snapshotDelegatePositions()`
+- `helios.snapshotNodePosition(nodeId, { out })`
+- `helios.snapshotNodePositions(nodeIds, { out })`
+- `helios.snapshotNodeCentroid(nodeIds, { out })`
 - `helios.syncDelegatePositionsToNetwork()`
 
-These are intended for inspection/export/manual synchronization workflows.
+The node-specific APIs use delegate-owned reusable staging buffers where possible,
+so selection, camera follow, and hovered/selected labels do not need a full
+position snapshot while a GPU layout is running. The full snapshot API remains
+intended for inspection/export/manual synchronization workflows.
 
 ## 9. Position Ownership in Delegate Mode
 

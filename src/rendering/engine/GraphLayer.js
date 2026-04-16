@@ -130,6 +130,7 @@ export class GraphLayer extends Layer {
     this.edgeWidthBase = 0;
     this.edgeWidthScale = 1;
     this.edgeEndpointTrim = Number.isFinite(options.edgeEndpointTrim) ? options.edgeEndpointTrim : 0.8;
+    this.edgeWidthClampToNodeDiameter = options.edgeWidthClampToNodeDiameter !== false;
     this.nodeBlendWithEdges = options.nodeBlendWithEdges === true;
     this.edgeDepthWrite = options.edgeDepthWrite === true;
     this.edgeFastRendering = options.edgeFastRendering === true;
@@ -278,6 +279,10 @@ export class GraphLayer extends Layer {
     return Number.isFinite(this.edgeEndpointTrim) && this.edgeEndpointTrim !== 0;
   }
 
+  hasEdgeWidthClampToNodeDiameter(options = {}) {
+    return options.fastPath === true ? false : this.edgeWidthClampToNodeDiameter !== false;
+  }
+
   isNodeShadingEnabled() {
     return this.shadedEnabled === true && this.shadedNodes !== false;
   }
@@ -391,6 +396,7 @@ export class GraphLayer extends Layer {
   resolveEdgeSpecialization(options = {}) {
     const is2D = options.is2D === true;
     const trim = options.fastPath === true ? false : this.hasEdgeTrim();
+    const widthClampToNodeDiameter = this.hasEdgeWidthClampToNodeDiameter(options);
     const propagateHoveredNodeToEdges = options.fastPath === true
       ? false
       : this.propagateHoveredNodeToEdges === true;
@@ -402,11 +408,12 @@ export class GraphLayer extends Layer {
       : (this.hasActiveEdgeStateStyling() || propagateHoveredNodeToEdges || propagateSelectedNodesToEdges);
     const endpointState = options.fastPath === true
       ? false
-      : ((trim && this.hasActiveEndpointStateStyling()) || propagateSelectedNodesToEdges);
+      : (((trim || widthClampToNodeDiameter) && this.hasActiveEndpointStateStyling()) || propagateSelectedNodesToEdges);
     return {
       cameraMode: is2D ? '2d' : '3d',
       semanticZoom: options.fastPath === true ? false : (is2D && this.hasSemanticZoom()),
       trim,
+      widthClampToNodeDiameter,
       edgeState,
       endpointState,
       propagateHoveredNodeToEdges,

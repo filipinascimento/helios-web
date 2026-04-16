@@ -36,6 +36,54 @@ test('runtime shader sources do not clamp edge quads to a 1px minimum', () => {
   }
 });
 
+test('edge quad shaders clamp mapped width to endpoint node diameters by default', () => {
+  const webglDefault = createGraphWebGLSources({
+    edge: {
+      trim: false,
+      widthClampToNodeDiameter: true,
+      edgeState: false,
+      endpointState: false,
+      endpointSize: { mode: 'buffer', source: 'edge' },
+    },
+  });
+  assert.match(webglDefault.EDGE_QUAD_VERTEX_SOURCE, /float maxSegmentWidth = max\(mix\(startRadius, endRadius, segmentMix\) \* 2\.0, 0\.0\);/);
+  assert.match(webglDefault.EDGE_QUAD_VERTEX_SOURCE, /width = min\(max\(width, 0\.0\), maxSegmentWidth\);/);
+
+  const webglDisabled = createGraphWebGLSources({
+    edge: {
+      trim: false,
+      widthClampToNodeDiameter: false,
+      edgeState: false,
+      endpointState: false,
+      endpointSize: { mode: 'buffer', source: 'edge' },
+    },
+  });
+  assert.equal(/maxSegmentWidth/.test(webglDisabled.EDGE_QUAD_VERTEX_SOURCE), false);
+
+  const webgpuDefault = createGraphWebGPUSources(4, {
+    edge: {
+      trim: false,
+      widthClampToNodeDiameter: true,
+      edgeState: false,
+      endpointState: false,
+      endpointSize: { mode: 'buffer', source: 'edge' },
+    },
+  });
+  assert.match(webgpuDefault.EDGE_WGSL, /let maxSegmentWidth = max\(mix\(startRadius, endRadius, cornerT\) \* 2\.0, 0\.0\);/);
+  assert.match(webgpuDefault.EDGE_WGSL, /width = min\(max\(width, 0\.0\), maxSegmentWidth\);/);
+
+  const webgpuDisabled = createGraphWebGPUSources(4, {
+    edge: {
+      trim: false,
+      widthClampToNodeDiameter: false,
+      edgeState: false,
+      endpointState: false,
+      endpointSize: { mode: 'buffer', source: 'edge' },
+    },
+  });
+  assert.equal(/maxSegmentWidth/.test(webgpuDisabled.EDGE_WGSL), false);
+});
+
 test('fast WebGPU edge lines skip trim and endpoint-size work in the line vertex path', () => {
   const fast = createGraphWebGPUSources(4, {
     edge: {

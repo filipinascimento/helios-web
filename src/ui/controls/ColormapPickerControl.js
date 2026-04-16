@@ -19,6 +19,7 @@ export class ColormapPickerControl {
     searchPlaceholder = 'Search colormaps…',
     groupOrder = DEFAULT_GROUP_ORDER,
     formatDisplay = null,
+    filters = [],
     onChange = null,
   } = {}) {
     this.catalog = catalog ?? { entries: [], byKey: new Map() };
@@ -29,6 +30,23 @@ export class ColormapPickerControl {
       ? formatDisplay
       : ((entry, key) => (entry ? `${entry.group}: ${entry.label}` : key));
     this.onChange = typeof onChange === 'function' ? onChange : null;
+    this.filterStates = new Map();
+    this.filters = Array.isArray(filters)
+      ? filters
+          .filter((filter) => filter && typeof filter.id === 'string' && typeof filter.predicate === 'function')
+          .map((filter) => {
+            const id = filter.id;
+            this.filterStates.set(id, filter.active === true);
+            return {
+              id,
+              label: String(filter.label ?? id),
+              title: filter.title != null ? String(filter.title) : '',
+              predicate: filter.predicate,
+            };
+          })
+      : [];
+    this.value = null;
+    this.lastQuery = '';
 
     this.element = document.createElement('div');
     this.element.className = 'helios-ui-colormap-picker';
@@ -60,6 +78,27 @@ export class ColormapPickerControl {
     this.searchInput.className = 'helios-ui-text helios-ui-colormap-popover__search';
     this.searchInput.placeholder = String(searchPlaceholder ?? 'Search colormaps…');
     this.popoverHeader.appendChild(this.searchInput);
+
+    this.filterBar = document.createElement('div');
+    this.filterBar.className = 'helios-ui-colormap-popover__filters';
+    this.filterButtons = new Map();
+    for (const filter of this.filters) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'helios-ui-colormap-popover__filter';
+      button.textContent = filter.label;
+      button.title = filter.title;
+      button.dataset.filterId = filter.id;
+      button.dataset.active = this.filterStates.get(filter.id) === true ? 'true' : 'false';
+      button.setAttribute('aria-pressed', this.filterStates.get(filter.id) === true ? 'true' : 'false');
+      button.addEventListener('click', () => {
+        this.setFilterActive(filter.id, this.filterStates.get(filter.id) !== true);
+      });
+      this.filterBar.appendChild(button);
+      this.filterButtons.set(filter.id, button);
+    }
+    this.filterBar.hidden = this.filters.length === 0;
+    this.popoverHeader.appendChild(this.filterBar);
     this.popoverPanel.appendChild(this.popoverHeader);
 
     this.popoverList = document.createElement('div');
@@ -113,6 +152,7 @@ export class ColormapPickerControl {
     };
 
     const onSearchInput = () => {
+      this.lastQuery = String(this.searchInput.value ?? '');
       this.renderPopover(this.searchInput.value);
       this.positionPopover();
     };
@@ -177,6 +217,7 @@ export class ColormapPickerControl {
 
   applySelectionToUi(keyRaw) {
     const key = String(keyRaw ?? '').trim() || this.fallbackValue;
+    this.value = key;
     const entry = this.resolveEntry(key);
     const text = this.formatDisplay(entry, key);
     this.displayLabel.textContent = text;
@@ -194,6 +235,37 @@ export class ColormapPickerControl {
 
   setValue(keyRaw) {
     this.selectValue(keyRaw, { emit: false });
+  }
+
+  setFilterActive(id, active, { render = true } = {}) {
+    if (!this.filterStates.has(id)) return;
+    const next = active === true;
+    this.filterStates.set(id, next);
+    const button = this.filterButtons.get(id);
+    if (button) {
+      button.dataset.active = next ? 'true' : 'false';
+      button.setAttribute('aria-pressed', next ? 'true' : 'false');
+    }
+    if (render && !this.popover.hidden) {
+      this.renderPopover(this.searchInput.value);
+      this.positionPopover();
+      this.scrollSelectedItemIntoView();
+    }
+  }
+
+  applyEntryFilters(entries) {
+    let filtered = entries;
+    for (const filter of this.filters) {
+      if (this.filterStates.get(filter.id) !== true) continue;
+      filtered = filtered.filter((entry) => {
+        try {
+          return filter.predicate(entry) === true;
+        } catch (_) {
+          return false;
+        }
+      });
+    }
+    return filtered;
   }
 
   ensureThumbObserver() {
@@ -223,9 +295,10 @@ export class ColormapPickerControl {
     const query = String(queryRaw ?? '').trim().toLowerCase();
     const tokens = query.split(/\s+/).filter(Boolean);
 
-    const matches = tokens.length
+    const textMatches = tokens.length
       ? this.catalog.entries.filter((entry) => tokens.every((token) => entry.search.includes(token)))
       : this.catalog.entries;
+    const matches = this.applyEntryFilters(textMatches);
 
     if (!matches.length) {
       const note = document.createElement('div');
@@ -274,6 +347,9 @@ export class ColormapPickerControl {
         item.type = 'button';
         item.className = 'helios-ui-colormap-picker__item';
         item.dataset.key = entry.key;
+        const selected = entry.key === this.value;
+        item.dataset.selected = selected ? 'true' : 'false';
+        item.setAttribute('aria-selected', selected ? 'true' : 'false');
 
         const itemTitle = document.createElement('div');
         itemTitle.className = 'helios-ui-colormap-picker__item-title helios-ui-ellipsis';
@@ -337,10 +413,13 @@ export class ColormapPickerControl {
     const spaceRight = vw - anchor.right - MARGIN;
     const spaceLeft = anchor.left - MARGIN;
 
-    this.popover.style.width = `${Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, anchor.width))}px`;
+    const targetW = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, anchor.width));
+    this.popover.style.width = `${targetW}px`;
     this.popover.style.left = '0px';
     this.popover.style.top = '0px';
     this.popover.hidden = false;
+    this.popoverPanel.style.height = '';
+    this.popoverPanel.style.maxHeight = '';
 
     const measured = this.popoverPanel.getBoundingClientRect();
     const desiredW = measured.width || Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, anchor.width));
@@ -388,20 +467,33 @@ export class ColormapPickerControl {
 
     const bottomLimit = placement === 'top' ? Math.max(MARGIN, anchor.top - OFFSET) : vh - MARGIN;
     const availableH = Math.max(120, bottomLimit - top);
-    this.popoverPanel.style.maxHeight = `${Math.min(MAX_HEIGHT, availableH)}px`;
+    const stableH = Math.min(MAX_HEIGHT, availableH);
+    this.popoverPanel.style.height = `${stableH}px`;
+    this.popoverPanel.style.maxHeight = `${stableH}px`;
     this.popoverList.style.maxHeight = '';
   }
 
   openPopover({ seedQuery } = {}) {
     this.popover.hidden = false;
-    this.searchInput.value = seedQuery != null ? String(seedQuery) : '';
+    this.searchInput.value = seedQuery != null ? String(seedQuery) : this.lastQuery;
+    this.lastQuery = this.searchInput.value;
     this.renderPopover(this.searchInput.value);
     this.positionPopover();
+    this.scrollSelectedItemIntoView();
     queueMicrotask(() => this.searchInput.focus());
   }
 
   closePopover() {
     this.popover.hidden = true;
+    this.lastQuery = String(this.searchInput.value ?? '');
+  }
+
+  scrollSelectedItemIntoView() {
+    const selected = this.popoverList.querySelector('.helios-ui-colormap-picker__item[data-selected="true"]');
+    if (!selected) return;
+    requestAnimationFrame(() => {
+      selected.scrollIntoView({ block: 'nearest' });
+    });
   }
 
   destroy() {

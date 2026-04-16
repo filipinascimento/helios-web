@@ -189,6 +189,7 @@ function createIsolatedTopologyNetwork(positions) {
 function createFakeWebGPUDevice() {
   const writes = [];
   const dispatchCalls = [];
+  const copyCalls = [];
   const queue = {
     writeBuffer(buffer, offset, data, dataOffset = 0, size = undefined) {
       let copy = null;
@@ -236,13 +237,21 @@ function createFakeWebGPUDevice() {
             end() {},
           };
         },
-        copyBufferToBuffer() {},
+        copyBufferToBuffer(source, sourceOffset, destination, destinationOffset, size) {
+          copyCalls.push({
+            sourceLabel: source?.label ?? null,
+            sourceOffset,
+            destinationLabel: destination?.label ?? null,
+            destinationOffset,
+            size,
+          });
+        },
         finish() { return {}; },
       };
     },
   };
 
-  return { device, writes, dispatchCalls };
+  return { device, writes, dispatchCalls, copyCalls };
 }
 
 function createFakeWebGL2Context() {
@@ -294,6 +303,7 @@ function createFakeWebGL2ComputeContext() {
   let texSubImageCalls = 0;
   const texImagePayloads = [];
   const texSubImagePayloads = [];
+  const readPixelsCalls = [];
   let drawArraysCalls = 0;
   let currentFramebuffer = null;
   let currentProgram = null;
@@ -406,7 +416,8 @@ function createFakeWebGL2ComputeContext() {
       return name === 'EXT_color_buffer_float' ? {} : null;
     },
     readBuffer() {},
-    readPixels(_x, _y, width, height, _format, _type, target) {
+    readPixels(x, y, width, height, _format, _type, target) {
+      readPixelsCalls.push({ x, y, width, height });
       if (target?.fill) {
         target.fill(0, 0, Math.max(0, width * height * 4));
       }
@@ -418,6 +429,7 @@ function createFakeWebGL2ComputeContext() {
     getTexImagePayloads: () => texImagePayloads.slice(),
     getTexSubImageCalls: () => texSubImageCalls,
     getTexSubImagePayloads: () => texSubImagePayloads.slice(),
+    getReadPixelsCalls: () => readPixelsCalls.slice(),
     getDrawArraysCalls: () => drawArraysCalls,
   };
 }
@@ -2048,6 +2060,26 @@ test('GpuForcePositionDelegate recenters active nodes around the configured cent
   approx(centroidY, 0, 1e-6);
 });
 
+test('GpuForcePositionDelegate WebGL2 narrow position readback uses texel reads', async () => {
+  const network = createTopologyNetwork([
+    0, 0, 0,
+    10, 0, 0,
+    20, 0, 0,
+    30, 0, 0,
+  ]);
+  const { gl, getReadPixelsCalls } = createFakeWebGL2ComputeContext();
+  const delegate = new GpuForcePositionDelegate({ mode: '2d', outputScale: 1 });
+
+  delegate.onAttach({ network, backend: 'webgl2', gl });
+  await delegate.snapshotNodePositionsById({ network, backend: 'webgl2', gl }, [2, 0]);
+
+  const reads = getReadPixelsCalls();
+  assert.deepEqual(
+    reads.map((entry) => [entry.x, entry.y, entry.width, entry.height]),
+    [[2, 0, 1, 1], [0, 0, 1, 1]],
+  );
+});
+
 test('GpuForcePositionDelegate tiles large WebGPU dispatches across dimensions', () => {
   const network = createTopologyNetwork([
     0, 0, 0,
@@ -2088,6 +2120,39 @@ test('GpuForcePositionDelegate tiles large WebGPU dispatches across dimensions',
   assert.ok(dispatchCalls.length >= 1);
   assert.ok(dispatchCalls[0].x <= 65535);
   assert.ok(dispatchCalls[0].y >= 2);
+});
+
+test('GpuForcePositionDelegate WebGPU narrow position readback copies only requested nodes', async () => {
+  const network = createTopologyNetwork([
+    0, 0, 0,
+    10, 0, 0,
+    20, 0, 0,
+    30, 0, 0,
+  ]);
+  const { device, copyCalls } = createFakeWebGPUDevice();
+  const delegate = new GpuForcePositionDelegate({ mode: '2d', outputScale: 1 });
+
+  delegate.onAttach({ network, backend: 'webgpu', device });
+  await delegate.snapshotNodePositionsById({ network, backend: 'webgpu', device }, [2, 0, 2]);
+
+  const partialCopies = copyCalls.filter((entry) => entry.destinationLabel === 'layout:gpu-force:positions-readback');
+  assert.deepEqual(
+    partialCopies.map((entry) => [entry.sourceOffset, entry.destinationOffset, entry.size]),
+    [[24, 0, 12], [0, 12, 12], [24, 24, 12]],
+  );
+});
+
+test('GpuForcePositionDelegate WebGPU large centroid uses compute reduction', async () => {
+  const network = createSizedStubNetwork(300);
+  const { device, dispatchCalls, writes } = createFakeWebGPUDevice();
+  const delegate = new GpuForcePositionDelegate({ mode: '2d', outputScale: 1 });
+  const ids = Uint32Array.from({ length: 300 }, (_, index) => index);
+
+  delegate.onAttach({ network, backend: 'webgpu', device });
+  await delegate.snapshotNodeCentroidById({ network, backend: 'webgpu', device }, ids);
+
+  assert.ok(dispatchCalls.some((entry) => entry.x === 2));
+  assert.ok(writes.some((entry) => entry.label === 'layout:gpu-force:centroid-ids'));
 });
 
 test('GpuForcePositionDelegate uploads rotation damping into the WebGPU recenter pass', () => {

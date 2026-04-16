@@ -1748,6 +1748,8 @@ export class HeliosUI {
         if (nodeBlendRow) advanced.appendChild(nodeBlendRow);
         const edgeDepthRow = createToggleRow('edgeDepthWrite');
         if (edgeDepthRow) advanced.appendChild(edgeDepthRow);
+        const edgeWidthClampRow = createToggleRow('edgeWidthClampToNodeDiameter');
+        if (edgeWidthClampRow) advanced.appendChild(edgeWidthClampRow);
         return advanced;
       };
 

@@ -7,6 +7,7 @@ const COPY_SRC_FLAG = 0x04;
 const COPY_DST_FLAG = 0x08;
 const UNIFORM_FLAG = 0x40;
 const MAP_READ_FLAG = 0x01;
+const PARTIAL_CENTROID_CPU_THRESHOLD = 256;
 
 const DEFAULT_OPTIONS = {
   mode: '2d',
@@ -387,6 +388,75 @@ ${umap
 `;
 }
 
+function buildCentroidReductionWgsl() {
+  return /* wgsl */ `
+struct Params {
+  count : u32,
+  nodeCapacity : u32,
+  _pad0 : u32,
+  _pad1 : u32,
+};
+
+@group(0) @binding(0) var<storage, read> positions : array<f32>;
+@group(0) @binding(1) var<storage, read> nodeIds : array<u32>;
+@group(0) @binding(2) var<storage, read_write> partialSums : array<vec4<f32>>;
+@group(0) @binding(3) var<uniform> params : Params;
+
+var<workgroup> localX : array<f32, ${PARTIAL_CENTROID_CPU_THRESHOLD}>;
+var<workgroup> localY : array<f32, ${PARTIAL_CENTROID_CPU_THRESHOLD}>;
+var<workgroup> localZ : array<f32, ${PARTIAL_CENTROID_CPU_THRESHOLD}>;
+var<workgroup> localCount : array<f32, ${PARTIAL_CENTROID_CPU_THRESHOLD}>;
+
+@compute @workgroup_size(${PARTIAL_CENTROID_CPU_THRESHOLD})
+fn main(
+  @builtin(global_invocation_id) globalId : vec3<u32>,
+  @builtin(local_invocation_id) localId : vec3<u32>,
+  @builtin(workgroup_id) workgroupId : vec3<u32>
+) {
+  let localIndex = localId.x;
+  let index = globalId.x;
+  var x = 0.0;
+  var y = 0.0;
+  var z = 0.0;
+  var c = 0.0;
+  if (index < params.count) {
+    let nodeId = nodeIds[index];
+    if (nodeId < params.nodeCapacity) {
+      let base = nodeId * 3u;
+      x = positions[base + 0u];
+      y = positions[base + 1u];
+      z = positions[base + 2u];
+      c = 1.0;
+    }
+  }
+  localX[localIndex] = x;
+  localY[localIndex] = y;
+  localZ[localIndex] = z;
+  localCount[localIndex] = c;
+  workgroupBarrier();
+
+  var stride = ${PARTIAL_CENTROID_CPU_THRESHOLD / 2}u;
+  loop {
+    if (stride == 0u) {
+      break;
+    }
+    if (localIndex < stride) {
+      localX[localIndex] = localX[localIndex] + localX[localIndex + stride];
+      localY[localIndex] = localY[localIndex] + localY[localIndex + stride];
+      localZ[localIndex] = localZ[localIndex] + localZ[localIndex + stride];
+      localCount[localIndex] = localCount[localIndex] + localCount[localIndex + stride];
+    }
+    workgroupBarrier();
+    stride = stride / 2u;
+  }
+
+  if (localIndex == 0u) {
+    partialSums[workgroupId.x] = vec4<f32>(localX[0], localY[0], localZ[0], localCount[0]);
+  }
+}
+`;
+}
+
 const COMPUTE_WGSL_LINEAR = buildComputeWgsl();
 const COMPUTE_WGSL_UMAP = buildComputeWgsl({ umap: true });
 
@@ -745,6 +815,77 @@ function ensureFloat32Capacity(view, length) {
     return view;
   }
   return new Float32Array(required);
+}
+
+function normalizeReadbackNodeIds(nodeIds) {
+  if (nodeIds == null) return createEmptyUintArray();
+  if (typeof nodeIds === 'number') {
+    const numeric = Math.floor(nodeIds);
+    return Number.isFinite(numeric) && numeric >= 0 ? new Uint32Array([numeric]) : createEmptyUintArray();
+  }
+  const values = [];
+  const push = (value) => {
+    const numeric = Math.floor(Number(value));
+    values.push(Number.isFinite(numeric) && numeric >= 0 ? numeric >>> 0 : 0xffffffff);
+  };
+  if (Array.isArray(nodeIds) || ArrayBuffer.isView(nodeIds)) {
+    for (let i = 0; i < nodeIds.length; i += 1) push(nodeIds[i]);
+  } else if (typeof nodeIds?.[Symbol.iterator] === 'function') {
+    for (const value of nodeIds) push(value);
+  }
+  return values.length ? Uint32Array.from(values) : createEmptyUintArray();
+}
+
+function resolveReadbackOut(out, length) {
+  if (out instanceof Float32Array && out.length >= length) return out;
+  return new Float32Array(Math.max(0, length));
+}
+
+function copyPositionsFromFullSnapshot(snapshot, ids, out = null) {
+  const count = ids?.length ?? 0;
+  const positions = resolveReadbackOut(out, count * 3);
+  positions.fill(0, 0, count * 3);
+  if (!snapshot || !Number.isFinite(snapshot.length)) return positions;
+  for (let i = 0; i < count; i += 1) {
+    const id = ids[i];
+    const src = id * 3;
+    const dst = i * 3;
+    if (id === 0xffffffff || src + 2 >= snapshot.length) continue;
+    positions[dst] = snapshot[src] ?? 0;
+    positions[dst + 1] = snapshot[src + 1] ?? 0;
+    positions[dst + 2] = snapshot[src + 2] ?? 0;
+  }
+  return positions;
+}
+
+function centroidFromPackedPositions(positions, count, out = null) {
+  const centroid = resolveReadbackOut(out, 3);
+  centroid[0] = 0;
+  centroid[1] = 0;
+  centroid[2] = 0;
+  const safeCount = Math.max(0, Math.min(Math.floor(Number(count) || 0), Math.floor((positions?.length ?? 0) / 3)));
+  if (safeCount <= 0) return { centroid, count: 0 };
+  let sumX = 0;
+  let sumY = 0;
+  let sumZ = 0;
+  let found = 0;
+  for (let i = 0; i < safeCount; i += 1) {
+    const offset = i * 3;
+    const x = positions[offset];
+    const y = positions[offset + 1];
+    const z = positions[offset + 2];
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+    sumX += x;
+    sumY += y;
+    sumZ += z;
+    found += 1;
+  }
+  if (found > 0) {
+    centroid[0] = sumX / found;
+    centroid[1] = sumY / found;
+    centroid[2] = sumZ / found;
+  }
+  return { centroid, count: found };
 }
 
 function readScalarViewValue(view, index, fallback = 0) {
@@ -2175,6 +2316,8 @@ class WebGLTextureComputePath {
     this._neighborWeightUploadScratch = new Float32Array(0);
     this._uintUploadScratch = new Uint32Array(0);
     this._readbackScratch = new Float32Array(0);
+    this._sparseReadbackScratch = new Float32Array(0);
+    this._centroidPositionScratch = new Float32Array(0);
     this._textureSizes = new Map();
     this.readIndex = 0;
     this.umapEnabled = false;
@@ -2895,6 +3038,69 @@ class WebGLTextureComputePath {
     return output;
   }
 
+  readNodePositionsById(nodeIds, options = {}) {
+    if (!this.outputPositionTexture || this.nodeCapacity <= 0) return null;
+    const ids = normalizeReadbackNodeIds(nodeIds);
+    const count = ids.length;
+    const output = resolveReadbackOut(options.out, count * 3);
+    output.fill(0, 0, count * 3);
+    if (count <= 0) return output;
+
+    const gl = this.gl;
+    const width = this.nodeLayout.width;
+    const required = count * 4;
+    if (!(this._sparseReadbackScratch instanceof Float32Array) || this._sparseReadbackScratch.length < required) {
+      this._sparseReadbackScratch = new Float32Array(required);
+    }
+    const state = this._saveState();
+    try {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.readbackFramebuffer);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.outputPositionTexture, 0);
+      gl.readBuffer(gl.COLOR_ATTACHMENT0);
+      for (let i = 0; i < count; i += 1) {
+        const id = ids[i];
+        if (id === 0xffffffff || id >= this.nodeCapacity) continue;
+        const x = id % width;
+        const y = Math.floor(id / width);
+        const target = this._sparseReadbackScratch.subarray(i * 4, (i * 4) + 4);
+        gl.readPixels(x, y, 1, 1, gl.RGBA, gl.FLOAT, target);
+      }
+    } finally {
+      this._restoreState(state);
+    }
+    for (let i = 0; i < count; i += 1) {
+      const id = ids[i];
+      if (id === 0xffffffff || id >= this.nodeCapacity) continue;
+      const src = i * 4;
+      const dst = i * 3;
+      output[dst] = this._sparseReadbackScratch[src] ?? 0;
+      output[dst + 1] = this._sparseReadbackScratch[src + 1] ?? 0;
+      output[dst + 2] = this._sparseReadbackScratch[src + 2] ?? 0;
+    }
+    return output;
+  }
+
+  readNodeCentroidById(nodeIds, options = {}) {
+    const ids = normalizeReadbackNodeIds(nodeIds);
+    const count = ids.length;
+    if (count <= 0) {
+      const centroid = resolveReadbackOut(options.out, 3);
+      centroid[0] = 0;
+      centroid[1] = 0;
+      centroid[2] = 0;
+      return { centroid, count: 0 };
+    }
+    if (count > PARTIAL_CENTROID_CPU_THRESHOLD && count > Math.max(1, this.nodeCapacity * 0.25)) {
+      const snapshot = this.readPositionSnapshot();
+      const packed = copyPositionsFromFullSnapshot(snapshot, ids, this._centroidPositionScratch);
+      this._centroidPositionScratch = packed;
+      return centroidFromPackedPositions(packed, count, options.out);
+    }
+    const packed = this.readNodePositionsById(ids, { out: this._centroidPositionScratch });
+    this._centroidPositionScratch = packed;
+    return centroidFromPackedPositions(packed, count, options.out);
+  }
+
   writePositionSnapshot(snapshot, options = {}) {
     if (!(snapshot instanceof Float32Array) || this.nodeCapacity <= 0) return false;
     const center = normalizeCenter(options.center);
@@ -3061,6 +3267,14 @@ class WebGLForceComputeBackend {
     return this._gpu?.readPositionSnapshot?.() ?? null;
   }
 
+  readNodePositionsById(nodeIds, options = {}) {
+    return this._gpu?.readNodePositionsById?.(nodeIds, options) ?? null;
+  }
+
+  readNodeCentroidById(nodeIds, options = {}) {
+    return this._gpu?.readNodeCentroidById?.(nodeIds, options) ?? null;
+  }
+
   writePositionSnapshot(snapshot, options = {}) {
     if (!this._gpu) {
       this._warnUnavailable();
@@ -3098,9 +3312,16 @@ class WebGPUForceComputeBackend {
     this.recenterRotationPipeline = null;
     this.recenterRotationBindGroupLayout = null;
     this.recenterRotationBindGroup = null;
+    this.centroidPipeline = null;
+    this.centroidBindGroupLayout = null;
     this.paramsBuffer = null;
     this.outputScaleParamsBuffer = null;
     this.recenterParamsBuffer = null;
+    this.centroidParamsBuffer = null;
+    this.centroidIdsBuffer = null;
+    this.centroidPartialBuffer = null;
+    this.centroidReadbackBuffer = null;
+    this.positionReadbackBuffer = null;
     this.positionBuffer = null;
     this.outputPositionBuffer = null;
     this.velocityBuffer = null;
@@ -3119,6 +3340,7 @@ class WebGPUForceComputeBackend {
     this.sampleFrame = 0;
     this.zeroVelocities = createEmptyFloatArray();
     this.scalarWeightsUpload = createEmptyFloatArray();
+    this._readbackChain = Promise.resolve();
     this.maxComputeWorkgroupsPerDimension = Math.max(
       1,
       Math.floor(device?.limits?.maxComputeWorkgroupsPerDimension ?? 65535),
@@ -3140,6 +3362,7 @@ class WebGPUForceComputeBackend {
     this._ensureOutputScalePipeline();
     this._ensureRecenterPipeline(false);
     this._ensureRecenterPipeline(true);
+    this._ensureCentroidPipeline();
   }
 
   _ensurePipeline(useUmap = false) {
@@ -3207,6 +3430,23 @@ class WebGPUForceComputeBackend {
     const module = this.device.createShaderModule({ code: useRotation ? RECENTER_WGSL_ROTATION : RECENTER_WGSL_BASE });
     this[pipelineField] = this.device.createComputePipeline({
       layout: this.device.createPipelineLayout({ bindGroupLayouts: [this[layoutField]] }),
+      compute: { module, entryPoint: 'main' },
+    });
+  }
+
+  _ensureCentroidPipeline() {
+    if (!this.device || this.centroidPipeline) return;
+    this.centroidBindGroupLayout = this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
+        { binding: 1, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
+        { binding: 2, visibility: this.shaderVisibility, buffer: { type: 'storage' } },
+        { binding: 3, visibility: this.shaderVisibility, buffer: { type: 'uniform' } },
+      ],
+    });
+    const module = this.device.createShaderModule({ code: buildCentroidReductionWgsl() });
+    this.centroidPipeline = this.device.createComputePipeline({
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.centroidBindGroupLayout] }),
       compute: { module, entryPoint: 'main' },
     });
   }
@@ -3564,26 +3804,190 @@ class WebGPUForceComputeBackend {
   }
 
   async readPositionSnapshot() {
+    return this._enqueueReadback(() => this._readPositionSnapshot());
+  }
+
+  async _readPositionSnapshot() {
     const sourceBuffer = this.getPositionBuffer();
     if (!this.device || !sourceBuffer || this.nodeCapacity <= 0) return null;
     const byteLength = Math.max(1, this.nodeCapacity) * 12;
-    const staging = this.device.createBuffer({
-      size: byteLength,
-      usage: getGpuUsage('MAP_READ', MAP_READ_FLAG) | getGpuUsage('COPY_DST', COPY_DST_FLAG),
-      label: 'layout:gpu-force:positions-readback',
-    });
-    try {
-      const encoder = this.device.createCommandEncoder({ label: 'layout:gpu-force:readback' });
-      encoder.copyBufferToBuffer(sourceBuffer, 0, staging, 0, byteLength);
-      this.device.queue.submit([encoder.finish()]);
-      await staging.mapAsync(getGpuMapMode('READ', MAP_READ_FLAG), 0, byteLength);
-      const mapped = staging.getMappedRange(0, byteLength);
-      const copy = new Float32Array(mapped.slice(0));
-      staging.unmap();
-      return copy;
-    } finally {
-      staging.destroy?.();
+    const staging = this._ensureBuffer(
+      'positionReadbackBuffer',
+      byteLength,
+      getGpuUsage('MAP_READ', MAP_READ_FLAG) | getGpuUsage('COPY_DST', COPY_DST_FLAG),
+      'layout:gpu-force:positions-readback',
+    );
+    const encoder = this.device.createCommandEncoder({ label: 'layout:gpu-force:readback' });
+    encoder.copyBufferToBuffer(sourceBuffer, 0, staging, 0, byteLength);
+    this.device.queue.submit([encoder.finish()]);
+    if (typeof staging.mapAsync !== 'function' || typeof staging.getMappedRange !== 'function') {
+      return new Float32Array(Math.max(1, this.nodeCapacity) * 3);
     }
+    await staging.mapAsync(getGpuMapMode('READ', MAP_READ_FLAG), 0, byteLength);
+    const mapped = staging.getMappedRange(0, byteLength);
+    const copy = new Float32Array(mapped.slice(0));
+    staging.unmap?.();
+    return copy;
+  }
+
+  async readNodePositionsById(nodeIds, options = {}) {
+    return this._enqueueReadback(() => this._readNodePositionsById(nodeIds, options));
+  }
+
+  async _readNodePositionsById(nodeIds, options = {}) {
+    const sourceBuffer = this.getPositionBuffer();
+    if (!this.device || !sourceBuffer || this.nodeCapacity <= 0) return null;
+    const ids = normalizeReadbackNodeIds(nodeIds);
+    const count = ids.length;
+    const output = resolveReadbackOut(options.out, count * 3);
+    output.fill(0, 0, count * 3);
+    if (count <= 0) return output;
+
+    const byteLength = Math.max(4, count * 12);
+    const staging = this._ensureBuffer(
+      'positionReadbackBuffer',
+      byteLength,
+      getGpuUsage('MAP_READ', MAP_READ_FLAG) | getGpuUsage('COPY_DST', COPY_DST_FLAG),
+      'layout:gpu-force:positions-readback',
+    );
+    const encoder = this.device.createCommandEncoder({ label: 'layout:gpu-force:partial-readback' });
+    for (let i = 0; i < count; i += 1) {
+      const id = ids[i];
+      if (id === 0xffffffff || id >= this.nodeCapacity) continue;
+      encoder.copyBufferToBuffer(sourceBuffer, id * 12, staging, i * 12, 12);
+    }
+    this.device.queue.submit([encoder.finish()]);
+    if (typeof staging.mapAsync !== 'function' || typeof staging.getMappedRange !== 'function') {
+      return output;
+    }
+    await staging.mapAsync(getGpuMapMode('READ', MAP_READ_FLAG), 0, byteLength);
+    const mapped = staging.getMappedRange(0, byteLength);
+    const mappedFloats = new Float32Array(mapped, 0, count * 3);
+    for (let i = 0; i < count; i += 1) {
+      const id = ids[i];
+      if (id === 0xffffffff || id >= this.nodeCapacity) continue;
+      const offset = i * 3;
+      output[offset] = mappedFloats[offset] ?? 0;
+      output[offset + 1] = mappedFloats[offset + 1] ?? 0;
+      output[offset + 2] = mappedFloats[offset + 2] ?? 0;
+    }
+    staging.unmap?.();
+    return output;
+  }
+
+  async readNodeCentroidById(nodeIds, options = {}) {
+    return this._enqueueReadback(() => this._readNodeCentroidById(nodeIds, options));
+  }
+
+  async _readNodeCentroidById(nodeIds, options = {}) {
+    const ids = normalizeReadbackNodeIds(nodeIds);
+    const count = ids.length;
+    if (count <= 0) {
+      const centroid = resolveReadbackOut(options.out, 3);
+      centroid[0] = 0;
+      centroid[1] = 0;
+      centroid[2] = 0;
+      return { centroid, count: 0 };
+    }
+    if (count <= PARTIAL_CENTROID_CPU_THRESHOLD) {
+      const packed = await this._readNodePositionsById(ids);
+      return centroidFromPackedPositions(packed, count, options.out);
+    }
+    const reduced = await this._readNodeCentroidByIdGpuReduction(ids, options);
+    if (reduced) return reduced;
+    const packed = await this._readNodePositionsById(ids);
+    return centroidFromPackedPositions(packed, count, options.out);
+  }
+
+  _enqueueReadback(fn) {
+    const previous = this._readbackChain ?? Promise.resolve();
+    const current = previous.catch(() => {}).then(fn);
+    this._readbackChain = current.catch(() => {});
+    return current;
+  }
+
+  async _readNodeCentroidByIdGpuReduction(ids, options = {}) {
+    const sourceBuffer = this.getPositionBuffer();
+    if (!this.device || !sourceBuffer || !this.centroidPipeline || !this.centroidBindGroupLayout) return null;
+    const count = ids.length;
+    const groupCount = Math.max(1, Math.ceil(count / PARTIAL_CENTROID_CPU_THRESHOLD));
+    const idsByteLength = Math.max(4, count * 4);
+    const partialByteLength = Math.max(16, groupCount * 16);
+    const paramsByteLength = 16;
+    const idsBuffer = this._ensureBuffer(
+      'centroidIdsBuffer',
+      idsByteLength,
+      getGpuUsage('STORAGE', STORAGE_FLAG) | getGpuUsage('COPY_DST', COPY_DST_FLAG),
+      'layout:gpu-force:centroid-ids',
+    );
+    const partialBuffer = this._ensureBuffer(
+      'centroidPartialBuffer',
+      partialByteLength,
+      getGpuUsage('STORAGE', STORAGE_FLAG) | getGpuUsage('COPY_SRC', COPY_SRC_FLAG),
+      'layout:gpu-force:centroid-partials',
+    );
+    const paramsBuffer = this._ensureBuffer(
+      'centroidParamsBuffer',
+      paramsByteLength,
+      getGpuUsage('UNIFORM', UNIFORM_FLAG) | getGpuUsage('COPY_DST', COPY_DST_FLAG),
+      'layout:gpu-force:centroid-params',
+    );
+    const readbackBuffer = this._ensureBuffer(
+      'centroidReadbackBuffer',
+      partialByteLength,
+      getGpuUsage('MAP_READ', MAP_READ_FLAG) | getGpuUsage('COPY_DST', COPY_DST_FLAG),
+      'layout:gpu-force:centroid-readback',
+    );
+
+    this.device.queue.writeBuffer(idsBuffer, 0, ids.buffer, ids.byteOffset, idsByteLength);
+    const params = new Uint32Array([count >>> 0, this.nodeCapacity >>> 0, 0, 0]);
+    this.device.queue.writeBuffer(paramsBuffer, 0, params);
+    const bindGroup = this.device.createBindGroup({
+      layout: this.centroidBindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: sourceBuffer } },
+        { binding: 1, resource: { buffer: idsBuffer } },
+        { binding: 2, resource: { buffer: partialBuffer } },
+        { binding: 3, resource: { buffer: paramsBuffer } },
+      ],
+    });
+    const encoder = this.device.createCommandEncoder({ label: 'layout:gpu-force:centroid-readback' });
+    const pass = encoder.beginComputePass({ label: 'layout:gpu-force:centroid-reduce' });
+    pass.setPipeline(this.centroidPipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.dispatchWorkgroups(groupCount);
+    pass.end();
+    encoder.copyBufferToBuffer(partialBuffer, 0, readbackBuffer, 0, partialByteLength);
+    this.device.queue.submit([encoder.finish()]);
+    if (typeof readbackBuffer.mapAsync !== 'function' || typeof readbackBuffer.getMappedRange !== 'function') {
+      return null;
+    }
+    await readbackBuffer.mapAsync(getGpuMapMode('READ', MAP_READ_FLAG), 0, partialByteLength);
+    const mapped = readbackBuffer.getMappedRange(0, partialByteLength);
+    const partials = new Float32Array(mapped);
+    let sumX = 0;
+    let sumY = 0;
+    let sumZ = 0;
+    let found = 0;
+    for (let i = 0; i < groupCount; i += 1) {
+      const offset = i * 4;
+      sumX += partials[offset] ?? 0;
+      sumY += partials[offset + 1] ?? 0;
+      sumZ += partials[offset + 2] ?? 0;
+      found += partials[offset + 3] ?? 0;
+    }
+    readbackBuffer.unmap?.();
+    const centroid = resolveReadbackOut(options.out, 3);
+    if (found > 0) {
+      centroid[0] = sumX / found;
+      centroid[1] = sumY / found;
+      centroid[2] = sumZ / found;
+    } else {
+      centroid[0] = 0;
+      centroid[1] = 0;
+      centroid[2] = 0;
+    }
+    return { centroid, count: found };
   }
 
   writePositionSnapshot(snapshot, options = {}) {
@@ -3641,6 +4045,11 @@ class WebGPUForceComputeBackend {
     this.paramsBuffer?.destroy?.();
     this.outputScaleParamsBuffer?.destroy?.();
     this.recenterParamsBuffer?.destroy?.();
+    this.centroidParamsBuffer?.destroy?.();
+    this.centroidIdsBuffer?.destroy?.();
+    this.centroidPartialBuffer?.destroy?.();
+    this.centroidReadbackBuffer?.destroy?.();
+    this.positionReadbackBuffer?.destroy?.();
 
     this.positionBuffer = null;
     this.outputPositionBuffer = null;
@@ -3656,6 +4065,11 @@ class WebGPUForceComputeBackend {
     this.paramsBuffer = null;
     this.outputScaleParamsBuffer = null;
     this.recenterParamsBuffer = null;
+    this.centroidParamsBuffer = null;
+    this.centroidIdsBuffer = null;
+    this.centroidPartialBuffer = null;
+    this.centroidReadbackBuffer = null;
+    this.positionReadbackBuffer = null;
     this.linearBindGroup = null;
     this.umapBindGroup = null;
     this.outputScaleBindGroup = null;
@@ -3666,16 +4080,19 @@ class WebGPUForceComputeBackend {
     this.outputScalePipeline = null;
     this.recenterBasePipeline = null;
     this.recenterRotationPipeline = null;
+    this.centroidPipeline = null;
     this.linearBindGroupLayout = null;
     this.umapBindGroupLayout = null;
     this.outputScaleBindGroupLayout = null;
     this.recenterBaseBindGroupLayout = null;
     this.recenterRotationBindGroupLayout = null;
+    this.centroidBindGroupLayout = null;
     this.nodeCapacity = 0;
     this.activeCount = 0;
     this.sampleFrame = 0;
     this.zeroVelocities = createEmptyFloatArray();
     this.scalarWeightsUpload = createEmptyFloatArray();
+    this._readbackChain = Promise.resolve();
   }
 }
 
@@ -4236,6 +4653,66 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     const view = this.getNodePositionView(context);
     if (!view || !Number.isFinite(view.length) || view.length <= 0) return null;
     return new Float32Array(view);
+  }
+
+  async snapshotNodePositionsById(context = {}, nodeIds = [], options = {}) {
+    this._markDirtyForBackend(context);
+    this.ensureSynchronized(context);
+    const ids = normalizeReadbackNodeIds(nodeIds);
+    const count = ids.length;
+    const version = this.version;
+    if (this._webgpu) {
+      const positions = await this._webgpu.readNodePositionsById(ids, options);
+      return positions
+        ? { ids, positions, count, version, source: 'webgpu' }
+        : { ids, positions: resolveReadbackOut(options.out, count * 3), count, version, source: 'webgpu' };
+    }
+    if (this._webgl) {
+      const positions = this._webgl.readNodePositionsById(ids, options);
+      return positions
+        ? { ids, positions, count, version, source: 'webgl2' }
+        : { ids, positions: resolveReadbackOut(options.out, count * 3), count, version, source: 'webgl2' };
+    }
+    const view = this.getNodePositionView(context);
+    const positions = copyPositionsFromFullSnapshot(view, ids, options.out);
+    return { ids, positions, count, version, source: 'cpu' };
+  }
+
+  async snapshotNodeCentroidById(context = {}, nodeIds = [], options = {}) {
+    this._markDirtyForBackend(context);
+    this.ensureSynchronized(context);
+    const ids = normalizeReadbackNodeIds(nodeIds);
+    const count = ids.length;
+    const version = this.version;
+    if (count <= 0) {
+      const centroid = resolveReadbackOut(options.out, 3);
+      centroid[0] = 0;
+      centroid[1] = 0;
+      centroid[2] = 0;
+      return { centroid, count: 0, version, source: this._webgpu ? 'webgpu' : this._webgl ? 'webgl2' : 'cpu' };
+    }
+    if (this._webgpu) {
+      const result = await this._webgpu.readNodeCentroidById(ids, options);
+      return {
+        centroid: result?.centroid ?? resolveReadbackOut(options.out, 3),
+        count: result?.count ?? 0,
+        version,
+        source: 'webgpu',
+      };
+    }
+    if (this._webgl) {
+      const result = this._webgl.readNodeCentroidById(ids, options);
+      return {
+        centroid: result?.centroid ?? resolveReadbackOut(options.out, 3),
+        count: result?.count ?? 0,
+        version,
+        source: 'webgl2',
+      };
+    }
+    const view = this.getNodePositionView(context);
+    const packed = copyPositionsFromFullSnapshot(view, ids);
+    const result = centroidFromPackedPositions(packed, count, options.out);
+    return { centroid: result.centroid, count: result.count, version, source: 'cpu' };
   }
 
   async synchronizeNodePositionsToNetwork(context = {}) {

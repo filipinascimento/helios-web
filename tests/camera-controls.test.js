@@ -200,6 +200,87 @@ test('frameNetwork uses delegate snapshots when positions come from a GPU layout
   assert.ok(camera.zoom > 8, `expected frameNetwork to fit delegate snapshot bounds, got ${camera.zoom}`);
 });
 
+test('cameraTargetNodes uses delegate centroid readback for GPU-only target nodes', async () => {
+  const helios = Object.create(Helios.prototype);
+  const camera = createCamera('2d');
+  let centroidCalls = 0;
+  let fullSnapshotCalls = 0;
+  let renderRequests = 0;
+  const delegate = {
+    getNodePositionView() {
+      return null;
+    },
+    async snapshotNodeCentroidById(_context, ids) {
+      centroidCalls += 1;
+      assert.deepEqual(Array.from(ids), [1, 2]);
+      return { centroid: new Float32Array([10, -4, 0]), count: ids.length, version: 3, source: 'test' };
+    },
+    async snapshotNodePositions() {
+      fullSnapshotCalls += 1;
+      return new Float32Array(0);
+    },
+  };
+
+  helios.renderer = { camera };
+  helios.size = { width: 400, height: 400 };
+  helios.scheduler = { requestRender() { renderRequests += 1; } };
+  helios._cameraControlConfig = {
+    autoFit: false,
+    autoFitCoverage: 0.95,
+    autoFitPaddingRatio: 0,
+    autoFitIntervalMs: 900,
+    autoFitMinIntervalMs: 250,
+    autoFitMaxIntervalMs: 6000,
+    autoFitLargeNetworkScale: 1,
+    autoFitIntervalNodeCountRef: 5000,
+    autoFitMaxSamples: 1000,
+    animation: false,
+    animationDurationMs: 0,
+    orbit: false,
+    orbitAngle: 0,
+    orbitSpeed: 0.08,
+    orbitDirection: 1,
+    targetNodeIndices: null,
+    followTarget: false,
+    followUpdateIntervalMs: 180,
+  };
+  helios._cameraControlRuntime = {
+    lastAutoFitAt: Number.NEGATIVE_INFINITY,
+    lastOrbitAt: 0,
+    lastFitSignature: '',
+    lastEffectiveIntervalMs: 0,
+    autoFitDirty: false,
+    delegateSnapshot: null,
+    delegateSnapshotAt: Number.NEGATIVE_INFINITY,
+    delegateSnapshotPending: false,
+    delegateSnapshotDelegate: null,
+    delegateSnapshotRequestId: 0,
+    delegateTargetBounds: null,
+    delegateTargetBoundsAt: Number.NEGATIVE_INFINITY,
+    delegateTargetBoundsPending: false,
+    delegateTargetBoundsDelegate: null,
+    delegateTargetBoundsSignature: '',
+    delegateTargetBoundsRequestId: 0,
+    orbitBaseRotation: null,
+    controlPoseActive: false,
+  };
+  helios._positionsConfig = { source: 'delegate', delegate };
+  helios._activePositionDelegate = delegate;
+  helios._getRenderNetwork = () => ({ nodeCount: 3, nodeIndices: [0, 1, 2] });
+  helios._buildPositionDelegateContext = () => ({ network: null });
+  helios.emit = () => {};
+
+  helios.cameraTargetNodes([1, 2], { animate: false, zoomScale: 1.25 });
+  await Promise.resolve();
+  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(centroidCalls, 1);
+  assert.equal(fullSnapshotCalls, 0);
+  assert.equal(renderRequests > 0, true);
+  assert.deepEqual(Array.from(camera.target), [10, -4, 0]);
+});
+
 test('orbit angle acts as a stable orbit tilt while orbiting keeps azimuth internal', () => {
   const emitted = [];
   const helios = Object.create(Helios.prototype);
@@ -278,6 +359,8 @@ test('camera rotation interaction does not disable auto fit, but pan does', () =
     orbitAngle: 0,
     orbitSpeed: 0.08,
     orbitDirection: 1,
+    followTarget: true,
+    followUpdateIntervalMs: 0,
     targetNodeIndices: null,
   };
   helios._cameraControlRuntime = {
@@ -291,9 +374,82 @@ test('camera rotation interaction does not disable auto fit, but pan does', () =
 
   helios._disableAutomaticCameraControlFromInteraction({ action: 'rotate' });
   assert.equal(helios._cameraControlConfig.autoFit, true);
+  assert.equal(helios._cameraControlConfig.followTarget, true);
 
   helios._disableAutomaticCameraControlFromInteraction({ action: 'pan' });
   assert.equal(helios._cameraControlConfig.autoFit, false);
+  assert.equal(helios._cameraControlConfig.followTarget, false);
+  assert.equal(helios._cameraControlConfig.targetNodeIndices, null);
+});
+
+test('camera follow keeps a moving node centroid centered in 2D', () => {
+  const helios = Object.create(Helios.prototype);
+  const camera = createCamera('2d');
+  const positions = new Float32Array([
+    0, 0, 0,
+    10, 20, 0,
+    100, 100, 0,
+  ]);
+
+  helios.renderer = { camera };
+  helios.size = { width: 400, height: 400 };
+  helios.scheduler = { requestRender() {} };
+  helios._positionsConfig = { source: 'network', delegate: null };
+  helios._cameraControlConfig = {
+    autoFit: false,
+    autoFitCoverage: 1,
+    autoFitPaddingRatio: 0,
+    autoFitIntervalMs: 100,
+    autoFitMinIntervalMs: 100,
+    autoFitMaxIntervalMs: 100,
+    autoFitLargeNetworkScale: 1,
+    autoFitIntervalNodeCountRef: 5000,
+    autoFitMaxSamples: 1000,
+    animation: false,
+    animationDurationMs: 0,
+    orbit: false,
+    orbitAngle: 0,
+    orbitSpeed: 0,
+    orbitDirection: 1,
+    followTarget: true,
+    followUpdateIntervalMs: 0,
+    targetNodeIndices: [0, 1],
+  };
+  helios._cameraControlRuntime = {
+    lastAutoFitAt: Number.NEGATIVE_INFINITY,
+    lastOrbitAt: 0,
+    lastFitSignature: '',
+    lastEffectiveIntervalMs: 0,
+    autoFitDirty: false,
+    appliedOrbitAngle: 0,
+    suspended: false,
+    controlPoseActive: false,
+    controlPoseFrom: null,
+    controlPoseTo: null,
+    controlPoseStartedAt: 0,
+    controlPoseDurationMs: 0,
+    controlPoseSignature: '',
+    lastFollowUpdateAt: Number.NEGATIVE_INFINITY,
+  };
+  helios._getRenderNetwork = () => ({
+    nodeCount: 3,
+    nodeIndices: [0, 1, 2],
+  });
+  helios._withPositionBufferAccess = (fn) => fn();
+  helios._readNodePositionViewUnsafe = () => positions;
+
+  helios._stepCameraControlRenderPump(100);
+  assert.equal(camera.pan2D[0], -5);
+  assert.equal(camera.pan2D[1], -10);
+
+  positions[0] = 20;
+  positions[1] = 30;
+  positions[3] = 40;
+  positions[4] = 50;
+  helios._stepCameraControlRenderPump(116);
+
+  assert.equal(camera.pan2D[0], -30);
+  assert.equal(camera.pan2D[1], -40);
 });
 
 test('3d figure export camera matches the preview-frame sub-frustum', () => {

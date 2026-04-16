@@ -46,4 +46,52 @@ test.describe('mappers panel colormap picker', () => {
     await items.first().click();
     await expect(display).toHaveAttribute('data-colormap-key', dataKey);
   });
+
+  test('keeps search, size, selected row, and top layer after selecting', async ({ page }) => {
+    await page.goto('/tests/fixtures/demo.html?renderer=webgl&nodes=50&mappers=1');
+    const diagnostics = await waitForDiagnostics(page);
+    expect(diagnostics.ready).toBe(true);
+
+    const typeRow = page.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'Type' }),
+    }).first();
+    await expect(typeRow).toBeVisible();
+    await typeRow.locator('select.helios-ui-select').first().selectOption('colormap');
+
+    const display = page.locator('button.helios-ui-colormap-picker__display').first();
+    await expect(display).toBeVisible();
+    await display.click();
+
+    let popover = page.locator('.helios-ui-colormap-popover:visible').first();
+    await expect(popover).toBeVisible();
+    const initialBox = await popover.locator('.helios-ui-colormap-popover__panel').first().boundingBox();
+    expect(initialBox?.height ?? 0).toBeGreaterThan(170);
+
+    const layering = await popover.evaluate((el) => {
+      const popoverZ = Number.parseInt(getComputedStyle(el).zIndex, 10);
+      const panelZ = Array.from(document.querySelectorAll('.helios-ui-panel'))
+        .map((panel) => Number.parseInt(getComputedStyle(panel).zIndex, 10))
+        .filter(Number.isFinite);
+      return { popoverZ, maxPanelZ: Math.max(0, ...panelZ) };
+    });
+    expect(layering.popoverZ).toBeGreaterThan(layering.maxPanelZ);
+
+    const search = popover.locator('input.helios-ui-colormap-popover__search').first();
+    await search.fill('viridis');
+    const filteredBox = await popover.locator('.helios-ui-colormap-popover__panel').first().boundingBox();
+    expect(filteredBox?.height ?? 0).toBeGreaterThanOrEqual((initialBox?.height ?? 0) - 2);
+
+    const viridis = popover.locator('.helios-ui-colormap-picker__item', {
+      has: page.locator('.helios-ui-colormap-picker__item-title', { hasText: 'Viridis' }),
+    }).first();
+    await viridis.click();
+    await expect(display).toHaveAttribute('data-colormap-key', 'interpolateViridis');
+
+    await display.click();
+    popover = page.locator('.helios-ui-colormap-popover:visible').first();
+    await expect(popover.locator('input.helios-ui-colormap-popover__search').first()).toHaveValue('viridis');
+    const selected = popover.locator('.helios-ui-colormap-picker__item[data-selected="true"]').first();
+    await expect(selected).toBeVisible();
+    await expect(selected).toHaveAttribute('data-key', 'interpolateViridis');
+  });
 });

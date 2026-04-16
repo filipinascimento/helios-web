@@ -282,13 +282,20 @@ export class GraphLayerWebGPUBase extends GraphLayer {
   resolveEdgeVariant(visualConfig) {
     const edgeCfg = visualConfig?.edge;
     if (!edgeCfg) {
-      return { colorBuffer: true, widthBuffer: true, opacityBuffer: true, endpointSizeBuffer: true };
+      return {
+        colorBuffer: true,
+        widthBuffer: true,
+        opacityBuffer: true,
+        endpointSizeBuffer: true,
+        widthClampToNodeDiameter: this.edgeWidthClampToNodeDiameter !== false,
+      };
     }
     return {
       colorBuffer: edgeCfg?.color?.mode !== 'uniform',
       widthBuffer: edgeCfg?.width?.mode !== 'uniform',
       opacityBuffer: edgeCfg?.opacity?.mode !== 'uniform',
       endpointSizeBuffer: edgeCfg?.endpointSize?.mode !== 'uniform',
+      widthClampToNodeDiameter: this.edgeWidthClampToNodeDiameter !== false,
     };
   }
 
@@ -329,6 +336,7 @@ export class GraphLayerWebGPUBase extends GraphLayer {
       variant?.widthBuffer ? 'wB' : 'wU',
       variant?.opacityBuffer ? 'oB' : 'oU',
       variant?.endpointSizeBuffer ? 'esB' : 'esU',
+      variant?.widthClampToNodeDiameter ? 'wc1' : 'wc0',
     ].join('|');
   }
 
@@ -345,6 +353,7 @@ export class GraphLayerWebGPUBase extends GraphLayer {
         width: variant?.widthBuffer ? 'buffer' : 'uniform',
         opacity: variant?.opacityBuffer ? 'buffer' : 'uniform',
         endpointSize: variant?.endpointSizeBuffer ? 'buffer' : 'uniform',
+        widthClampToNodeDiameter: variant?.widthClampToNodeDiameter === true,
       },
     });
     const module = device.createShaderModule({ code: sources.EDGE_WGSL });
@@ -365,6 +374,7 @@ export class GraphLayerWebGPUBase extends GraphLayer {
         width: variant?.widthBuffer ? 'buffer' : 'uniform',
         opacity: variant?.opacityBuffer ? 'buffer' : 'uniform',
         endpointSize: variant?.endpointSizeBuffer ? 'buffer' : 'uniform',
+        widthClampToNodeDiameter: variant?.widthClampToNodeDiameter === true,
       },
     });
     const module = device.createShaderModule({ code: sources.EDGE_WEIGHTED_WGSL });

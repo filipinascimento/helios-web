@@ -895,7 +895,7 @@ export const defaultStylesText = `
   position: fixed;
   left: 0;
   top: 0;
-  z-index: calc(var(--helios-ui-z) + 200);
+  z-index: 2147483000;
   pointer-events: auto;
 }
 
@@ -921,6 +921,35 @@ export const defaultStylesText = `
 
 .helios-ui-colormap-popover__search {
   width: 100%;
+}
+
+.helios-ui-colormap-popover__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.helios-ui-colormap-popover__filter {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--helios-ui-border);
+  background: color-mix(in srgb, var(--helios-ui-bg-solid) 84%, transparent);
+  color: inherit;
+  font: 600 11px/1.2 var(--helios-ui-font);
+  cursor: pointer;
+  user-select: none;
+}
+
+.helios-ui-colormap-popover__filter[data-active="true"] {
+  border-color: color-mix(in srgb, var(--helios-ui-accent) 58%, var(--helios-ui-border));
+  background: color-mix(in srgb, var(--helios-ui-accent) 18%, var(--helios-ui-bg-solid));
+  color: color-mix(in srgb, var(--helios-ui-accent) 82%, var(--helios-ui-fg));
 }
 
 .helios-ui-colormap-popover__list {
@@ -949,6 +978,11 @@ export const defaultStylesText = `
 .helios-ui-colormap-picker__item:hover {
   background: color-mix(in srgb, var(--helios-ui-fg) 8%, transparent);
   border-color: color-mix(in srgb, var(--helios-ui-fg) 14%, transparent);
+}
+
+.helios-ui-colormap-picker__item[data-selected="true"] {
+  background: color-mix(in srgb, var(--helios-ui-accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--helios-ui-accent) 42%, var(--helios-ui-border));
 }
 
 .helios-ui-colormap-picker__item:focus-visible {

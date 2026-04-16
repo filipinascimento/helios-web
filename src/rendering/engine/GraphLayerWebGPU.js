@@ -238,6 +238,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       `cm:${variant?.cameraMode ?? '3d'}`,
       `sz:${variant?.semanticZoom ? 1 : 0}`,
       `tr:${variant?.trim ? 1 : 0}`,
+      `wc:${variant?.widthClampToNodeDiameter ? 1 : 0}`,
       `st:${variant?.edgeState ? 1 : 0}`,
       `et:${variant?.endpointState ? 1 : 0}`,
       `ph:${variant?.propagateHoveredNodeToEdges ? 1 : 0}`,
@@ -440,14 +441,15 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
         cameraMode: specialization.cameraMode,
         semanticZoom: specialization.semanticZoom,
         trim: specialization.trim,
+        widthClampToNodeDiameter: specialization.widthClampToNodeDiameter,
         edgeState: specialization.edgeState,
         endpointState: specialization.endpointState,
-      propagateHoveredNodeToEdges: specialization.propagateHoveredNodeToEdges,
-      propagateSelectedNodesToEdges: specialization.propagateSelectedNodesToEdges,
-      positionInterpolation: this.getPositionInterpolationState?.()?.enabled === true,
-      fastPath: true,
-    };
-  }
+        propagateHoveredNodeToEdges: specialization.propagateHoveredNodeToEdges,
+        propagateSelectedNodesToEdges: specialization.propagateSelectedNodesToEdges,
+        positionInterpolation: this.getPositionInterpolationState?.()?.enabled === true,
+        fastPath: true,
+      };
+    }
 
     return {
       colorBuffer: color.mode !== 'uniform',
@@ -465,7 +467,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       opacityEndpoints: opacity.endpoints,
       opacityDoubleWidth: opacity.doubleWidth,
       opacityNodeAttribute: opacity.nodeAttribute,
-      endpointSizeBuffer: specialization.trim && endpointSize.mode !== 'uniform',
+      endpointSizeBuffer: (specialization.trim || specialization.widthClampToNodeDiameter) && endpointSize.mode !== 'uniform',
       endpointSizeSource: endpointSize.source,
       endpointSizeEndpoints: endpointSize.endpoints,
       endpointSizeDoubleWidth: endpointSize.doubleWidth,
@@ -474,6 +476,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       cameraMode: specialization.cameraMode,
       semanticZoom: specialization.semanticZoom,
       trim: specialization.trim,
+      widthClampToNodeDiameter: specialization.widthClampToNodeDiameter,
       edgeState: specialization.edgeState,
       endpointState: specialization.endpointState,
       propagateHoveredNodeToEdges: specialization.propagateHoveredNodeToEdges,
@@ -503,6 +506,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
         cameraMode: effectiveVariant?.cameraMode ?? '3d',
         semanticZoom: effectiveVariant?.semanticZoom === true,
         trim: effectiveVariant?.trim === true,
+        widthClampToNodeDiameter: effectiveVariant?.widthClampToNodeDiameter === true,
         edgeState: effectiveVariant?.edgeState === true,
         endpointState: effectiveVariant?.endpointState === true,
         propagateHoveredNodeToEdges: effectiveVariant?.propagateHoveredNodeToEdges === true,
@@ -554,6 +558,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
         cameraMode: effectiveVariant?.cameraMode ?? '3d',
         semanticZoom: effectiveVariant?.semanticZoom === true,
         trim: effectiveVariant?.trim === true,
+        widthClampToNodeDiameter: effectiveVariant?.widthClampToNodeDiameter === true,
         edgeState: effectiveVariant?.edgeState === true,
         endpointState: effectiveVariant?.endpointState === true,
         propagateHoveredNodeToEdges: effectiveVariant?.propagateHoveredNodeToEdges === true,

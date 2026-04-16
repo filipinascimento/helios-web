@@ -64,11 +64,13 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
     : (edgeOptions.cameraMode === '3d' ? '3d' : 'dynamic');
   const semanticZoomEnabled = !fastEdgePath && edgeOptions.semanticZoom !== false;
   const trimEnabled = !fastEdgePath && edgeOptions.trim !== false;
+  const widthClampToNodeDiameter = !fastEdgePath && edgeOptions.widthClampToNodeDiameter !== false;
+  const endpointGeometryEnabled = trimEnabled || widthClampToNodeDiameter;
   const edgeStateEnabled = !fastEdgePath && edgeOptions.edgeState !== false;
   const propagateSelectedNodesToEdges = !fastEdgePath && edgeOptions.propagateSelectedNodesToEdges === true;
   const endpointStateEnabled = !fastEdgePath
     && (edgeOptions.endpointState !== false || propagateSelectedNodesToEdges)
-    && (trimEnabled || propagateSelectedNodesToEdges);
+    && (endpointGeometryEnabled || propagateSelectedNodesToEdges);
   const propagateHoveredNodeToEdges = !fastEdgePath && edgeOptions.propagateHoveredNodeToEdges === true;
 
   const useEdgeColorBuffer = color.mode !== 'uniform' && color.source !== 'node';
@@ -190,7 +192,7 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
   var discardFlag = 0u;
 `;
 
-  const edgeTrimSnippet = trimEnabled
+  const edgeEndpointGeometrySnippet = endpointGeometryEnabled
     ? `
   var endpointSize = globals.edgeEndpointSizeRaw;
   ${edgeEndpointSizeBufferSnippet}
@@ -229,14 +231,18 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
   let semanticScale = ${semanticScaleExpr};
   let startRadius = max((globals.nodeSize.x + globals.nodeSize.y * endpointSize.x) * startSizeMul, 0.0) * 0.5 * semanticScale;
   let endRadius = max((globals.nodeSize.x + globals.nodeSize.y * endpointSize.y) * endSizeMul, 0.0) * 0.5 * semanticScale;
+  ${trimEnabled
+    ? `
   let trimStart = startRadius * globals.edgeTrim.x;
   let trimEnd = endRadius * globals.edgeTrim.x;
   startPos = startPos + dir * trimStart;
   endPos = endPos - dir * trimEnd;
 `
+    : ''}
+`
     : '';
 
-  const edgeGeometrySetupSnippet = trimEnabled
+  const edgeGeometrySetupSnippet = endpointGeometryEnabled
     ? ''
     : `
   let dirRaw = endPos - startPos;
@@ -244,6 +250,20 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
   let dir = dirRaw / vec3<f32>(dirLen);
   let semanticScale = ${semanticScaleExpr};
 `;
+
+  const edgeLineWidthClampSnippet = widthClampToNodeDiameter
+    ? `
+  let maxEndpointWidth = max(select(startRadius, endRadius, (vertexIndex & 1u) == 1u) * 2.0, 0.0);
+  width = min(max(width, 0.0), maxEndpointWidth);
+`
+    : '';
+
+  const edgeQuadWidthClampSnippet = widthClampToNodeDiameter
+    ? `
+  let maxSegmentWidth = max(mix(startRadius, endRadius, cornerT) * 2.0, 0.0);
+  width = min(max(width, 0.0), maxSegmentWidth);
+`
+    : '';
 
   const edgeLineGeometrySnippet = fastEdgePath
     ? `
@@ -254,7 +274,7 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
 `
     : `
   ${edgeGeometrySetupSnippet}
-  ${edgeTrimSnippet}
+  ${edgeEndpointGeometrySnippet}
   var position = startPos;
   if ((vertexIndex & 1u) == 1u) {
     position = endPos;
@@ -285,7 +305,8 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
   ${edgeOpacityNodeSnippet}
 
   let color = select(colorStart, colorEnd, (vertexIndex & 1u) == 1u);
-  let width = (globals.edgeWidth.x + globals.edgeWidth.y * select(endpointWidth.x, endpointWidth.y, (vertexIndex & 1u) == 1u)) * widthMul * semanticScale;
+  var width = (globals.edgeWidth.x + globals.edgeWidth.y * select(endpointWidth.x, endpointWidth.y, (vertexIndex & 1u) == 1u)) * widthMul * semanticScale;
+  ${edgeLineWidthClampSnippet}
   let attrOpacity = select(opacityPair.x, opacityPair.y, (vertexIndex & 1u) == 1u);
 `;
 
@@ -702,7 +723,7 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   ${edgeStateSnippet}
 
   ${edgeGeometrySetupSnippet}
-  ${edgeTrimSnippet}
+  ${edgeEndpointGeometrySnippet}
 
   var colorStart = globals.edgeColorStart;
   var colorEnd = globals.edgeColorEnd;
@@ -718,7 +739,8 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   ${edgeOpacityNodeSnippet}
 
   let cornerT = clamp(input.corner.x, 0.0, 1.0);
-  let width = max((globals.edgeWidth.x + globals.edgeWidth.y * mix(endpointWidth.x, endpointWidth.y, cornerT)) * widthMul, 1e-3) * semanticScale;
+  var width = max((globals.edgeWidth.x + globals.edgeWidth.y * mix(endpointWidth.x, endpointWidth.y, cornerT)) * widthMul, 0.0) * semanticScale;
+  ${edgeQuadWidthClampSnippet}
   let halfWidth = max(width, 1e-3) * 0.5;
   let centerPos = mix(startPos, endPos, cornerT);
   ${edgeQuadWidthDirSnippet}

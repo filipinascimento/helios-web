@@ -79,7 +79,9 @@ Some common renderer/graph-layer “global” knobs are available directly on `H
 - Background/clear color: `helios.background('#0b1020')` (alias: `helios.clearColor(...)`)
 - Scene dimension: `helios.mode()` / `await helios.setMode('3d')`
 - Camera poses/transitions: `helios.cameraPose()` / `helios.setCameraPose(...)` / `await helios.transitionCamera(...)`
-- Camera automation: `helios.cameraControls({...})` / `helios.cameraTargetNodes([...])` / `helios.frameNetwork({ animate: true, resetOrientation: false })` including delegate-aware auto-fit and 3D orbit angle control
+- Camera automation: `helios.cameraControls({...})` / `helios.cameraTargetNodes([...])` / `helios.cameraFollowNodes([...])` / `helios.frameNetwork({ animate: true, resetOrientation: false })` including delegate-aware auto-fit, moving node-centroid follow, and 3D orbit angle control
+- Narrow position readback: `await helios.snapshotNodePosition(id)`, `await helios.snapshotNodePositions(ids)`, and `await helios.snapshotNodeCentroid(ids)` for selection/camera work without full delegate snapshots
+- Clamp edge widths to endpoint node diameters after mapping/state styles: `helios.edgeWidthClampToNodeDiameter(true)` (default)
 - Blend nodes with edge transparency modes: `helios.nodeBlendWithEdges(true)`
 - Allow edges to write depth: `helios.edgeDepthWrite(true)` (best for solid edges)
 - Enable reduced-cost interaction edges: `helios.edgeFastRendering(true)` (forces a lightweight thin-line edge path)

@@ -568,6 +568,15 @@ export class SelectionPanel {
       });
     };
 
+    const applySelectionLabelDefaults = () => {
+      if (this.options.enableSelectionLabels === false) return;
+      const current = helios.labels?.() ?? {};
+      helios.labels?.({
+        enabled: current.enabled === true ? current.enabled : true,
+        selectionMode: current.enabled === true && current.selectionMode === 'ranked' ? 'ranked' : 'selected-only',
+      });
+    };
+
     const setSelectionBinding = (value = CURRENT_SELECTION_VALUE) => {
       state.savedSelectionAttribute = value || CURRENT_SELECTION_VALUE;
       refreshSavedSelectionOptions();
@@ -583,6 +592,9 @@ export class SelectionPanel {
         state.selectedNodes.delete(index);
       }
       helios.nodeState?.([index], 'SELECTED', { mode: selected ? 'add' : 'remove' });
+      if (!state.selectedNodes.size) {
+        helios.cameraFollowNodes?.([], { frame: false });
+      }
       applyOtherElementsState();
       if (options.preserveBinding !== true) setSelectionBinding(CURRENT_SELECTION_VALUE);
     };
@@ -612,6 +624,9 @@ export class SelectionPanel {
       }
       applyOtherElementsState();
       if (options.preserveBinding !== true) setSelectionBinding(CURRENT_SELECTION_VALUE);
+      if (options.preserveCameraFollow !== true) {
+        helios.cameraFollowNodes?.([], { frame: false });
+      }
     };
 
     const selectOnly = (kind, index, options = {}) => {
@@ -763,6 +778,25 @@ export class SelectionPanel {
       }
     };
 
+    const centerSelectedNodesOrNetwork = (options = {}) => {
+      const selectedNodes = Array.from(state.selectedNodes);
+      if (selectedNodes.length) {
+        helios.cameraFollowNodes?.(selectedNodes, {
+          animate: options.animate ?? true,
+          durationMs: options.durationMs,
+          followUpdateIntervalMs: options.followUpdateIntervalMs ?? 180,
+          zoomScale: options.zoomScale ?? 1.35,
+        });
+        return true;
+      }
+      helios.cameraFollowNodes?.([], {
+        animate: options.animate ?? true,
+        durationMs: options.durationMs,
+        resetOrientation: false,
+      });
+      return false;
+    };
+
     const statusEl = document.createElement('div');
     statusEl.className = 'helios-ui-selection__status helios-ui-label__hint';
     statusEl.style.margin = '0 0 10px';
@@ -799,6 +833,17 @@ export class SelectionPanel {
       expandSelectionToNeighbors();
     });
     actionsWrap.appendChild(expandButton);
+
+    const centerButton = document.createElement('button');
+    centerButton.type = 'button';
+    centerButton.className = 'helios-ui-button';
+    centerButton.textContent = 'Center';
+    centerButton.setAttribute('aria-label', 'Center on selection');
+    centerButton.addEventListener('click', () => {
+      centerSelectedNodesOrNetwork();
+      setSelectionMessage('');
+    });
+    actionsWrap.appendChild(centerButton);
 
     let autoReplaceToggle = null;
     let selectorInterfaceCount = 0;
@@ -1178,7 +1223,7 @@ export class SelectionPanel {
     const note = document.createElement('div');
     note.className = 'helios-ui-label__hint';
     note.style.margin = '0 0 10px';
-    note.textContent = 'Click selects. Shift-click adds or removes from the current selection.';
+    note.textContent = 'Click selects. Double-click follows selected nodes. Shift-click adds or removes from the current selection.';
     interactionBody.appendChild(note);
 
     const nodeClickToggle = createToggleControl({
@@ -1879,6 +1924,27 @@ export class SelectionPanel {
       }
     };
 
+    const handleGraphDoubleClick = (event) => {
+      const detail = event?.detail;
+      if (!detail) return;
+      const shiftKey = detail.modifiers?.shiftKey === true;
+      const isNodeHit = detail.kind === 'node' && detail.index >= 0;
+
+      if (isNodeHit && state.nodeClick) {
+        if (shiftKey) toggleSelection('node', detail.index);
+        else selectOnly('node', detail.index);
+        refreshStatus();
+        centerSelectedNodesOrNetwork();
+        setSelectionMessage('');
+        return;
+      }
+
+      clearSelection();
+      refreshStatus();
+      centerSelectedNodesOrNetwork();
+      setSelectionMessage('');
+    };
+
     const handleNodeHover = (event) => {
       const detail = event?.detail;
       if (!detail) return;
@@ -1926,6 +1992,7 @@ export class SelectionPanel {
       applyOtherElementsState();
       refreshStyleControls();
       applyHoverLabelConfig();
+      applySelectionLabelDefaults();
       syncPicking();
       refreshStatus();
       setSelectionMessage('');
@@ -1943,6 +2010,7 @@ export class SelectionPanel {
     selectorInterfaceCount = getSelectorInterfaceCount();
     updateSelectorSectionAvailability(selectorInterfaceCount);
     refreshStyleControls();
+    applySelectionLabelDefaults();
     applyHoverLabelConfig();
     applyHoverConnectedEdges();
     applySelectedConnectedEdges();
@@ -1953,6 +2021,7 @@ export class SelectionPanel {
 
     const unsubscribers = [
       subscribe(helios, 'graph:click', handleGraphClick),
+      subscribe(helios, 'graph:dblclick', handleGraphDoubleClick),
       subscribe(helios, 'node:hover', handleNodeHover),
       subscribe(helios, 'edge:hover', handleEdgeHover),
       subscribe(helios, 'network:replaced', handleNetworkReplaced),
