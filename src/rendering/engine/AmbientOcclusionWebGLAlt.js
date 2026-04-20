@@ -483,7 +483,7 @@ export class AmbientOcclusionWebGLAlt {
       this.aoPrograms.set(
         aoKey,
         this.createProgram(
-          mode === 'alt' ? createAltAoFragmentSource(quality) : createSmoothAoFragmentSource(quality),
+          mode === 'fast' ? createAltAoFragmentSource(quality) : createSmoothAoFragmentSource(quality),
           [
             'u_invViewProjection',
             'u_viewProjection',

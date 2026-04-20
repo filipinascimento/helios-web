@@ -20,6 +20,7 @@ const DEFAULT_OPTIONS = {
   kGravity: 0.005,
   edgeWeightAttribute: null,
   nodeMassAttribute: null,
+  forceNormalizationType: 'local-degree',
   umapA: 1.5769434601962196,
   umapB: 0.8950608779914887,
   umapGamma: 1,
@@ -93,6 +94,14 @@ function shouldAutoStopAtAlphaMin(alpha, alphaMin) {
 
 function isUmapForceModel(value) {
   return String(value ?? '').trim().toLowerCase() === 'umap';
+}
+
+function normalizeForceNormalizationType(value) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'degree' || normalized === 'endpoint-degree') return 'degree';
+  if (normalized === 'strength' || normalized === 'weighted-strength') return 'strength';
+  if (normalized === 'none' || normalized === 'off' || normalized === 'disabled') return 'none';
+  return 'local-degree';
 }
 
 function clamp01(value) {
@@ -547,6 +556,19 @@ export class GpuForceLayout extends Layout {
           step: 0.01,
           get: () => Number(this.options.linkDistance ?? DEFAULT_OPTIONS.linkDistance),
           set: (value) => this.setSettings({ linkDistance: value }, { reheat: true }),
+        },
+        {
+          key: 'forceNormalizationType',
+          label: 'Normalize by',
+          type: 'select',
+          options: [
+            { value: 'local-degree', label: 'Local degree' },
+            { value: 'degree', label: 'Degree' },
+            { value: 'strength', label: 'Strength' },
+            { value: 'none', label: 'None' },
+          ],
+          get: () => normalizeForceNormalizationType(this.options.forceNormalizationType),
+          set: (value) => this.setSettings({ forceNormalizationType: normalizeForceNormalizationType(value) }, { reheat: true }),
         },
         {
           key: 'kRepulsion',

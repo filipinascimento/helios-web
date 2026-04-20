@@ -107,6 +107,7 @@ test('ambient occlusion runtime is stable in WebGPU fixture @webgpu', async ({ p
     return {
       ok: true,
       renderer: helios.renderer?.device?.type ?? null,
+      mode: helios.ambientOcclusionMode(),
       enabled: helios.ambientOcclusionEnabled(),
       nodes: helios.ambientOcclusionNodes(),
       edges: helios.ambientOcclusionEdges(),
@@ -115,6 +116,7 @@ test('ambient occlusion runtime is stable in WebGPU fixture @webgpu', async ({ p
 
   expect(state.ok).toBe(true);
   expect(state.renderer).toBe('webgpu');
+  expect(state.mode).toBe('fast');
   expect(state.enabled).toBe(true);
   expect(state.nodes).toBe(true);
   expect(state.edges).toBe(true);
@@ -125,18 +127,30 @@ test('ambient occlusion runtime is stable in WebGPU fixture @webgpu', async ({ p
   await page.evaluate(async () => {
     const helios = window.__helios;
     if (!helios) return;
-    helios.ambientOcclusionMode('alt');
-    helios.ambientOcclusionIntensityScale(1.4);
-    helios.ambientOcclusionIntensityShift(0.03);
-    await helios.render?.();
+    helios.ambientOcclusionMode('smooth');
+    helios.requestRender?.();
   });
 
   await page.waitForFunction(() => {
     const ao = window.__helios?.renderer?.graphLayer?.ambientOcclusion;
-    return ao?.aoPipelines && Array.from(ao.aoPipelines.keys()).includes('alt|medium');
+    return ao?.aoPipelines && Array.from(ao.aoPipelines.keys()).includes('smooth|medium');
   });
 
-  const altRuntime = await page.evaluate(() => {
+  await page.evaluate(async () => {
+    const helios = window.__helios;
+    if (!helios) return;
+    helios.ambientOcclusionMode('fast');
+    helios.ambientOcclusionIntensityScale(1.4);
+    helios.ambientOcclusionIntensityShift(0.03);
+    helios.requestRender?.();
+  });
+
+  await page.waitForFunction(() => {
+    const ao = window.__helios?.renderer?.graphLayer?.ambientOcclusion;
+    return ao?.aoPipelines && Array.from(ao.aoPipelines.keys()).includes('fast|medium');
+  });
+
+  const fastRuntime = await page.evaluate(() => {
     const helios = window.__helios;
     const ao = helios?.renderer?.graphLayer?.ambientOcclusion;
     return {
@@ -144,9 +158,9 @@ test('ambient occlusion runtime is stable in WebGPU fixture @webgpu', async ({ p
       aoPipelineKeys: ao?.aoPipelines ? Array.from(ao.aoPipelines.keys()) : [],
     };
   });
-  expect(altRuntime.mode).toBe('alt');
-  expect(altRuntime.aoPipelineKeys).toContain('smooth|medium');
-  expect(altRuntime.aoPipelineKeys).toContain('alt|medium');
+  expect(fastRuntime.mode).toBe('fast');
+  expect(fastRuntime.aoPipelineKeys).toContain('smooth|medium');
+  expect(fastRuntime.aoPipelineKeys).toContain('fast|medium');
 
   const forbidden = browserIssues.filter(hasForbiddenAoRuntimeError);
   if (browserIssues.length) {
@@ -185,7 +199,7 @@ test('ambient occlusion runtime is stable in WebGL fixture', async ({ page }, te
     helios.ambientOcclusionEnabled(true);
     helios.ambientOcclusionNodes(true);
     helios.ambientOcclusionEdges(true);
-    helios.ambientOcclusionMode('alt');
+    helios.ambientOcclusionMode('fast');
     helios.ambientOcclusionStrength(1.1);
     helios.ambientOcclusionRadius(22);
     helios.ambientOcclusionBias(0.01);
@@ -205,14 +219,33 @@ test('ambient occlusion runtime is stable in WebGL fixture', async ({ page }, te
 
   expect(state.ok).toBe(true);
   expect(state.renderer).toBe('webgl2');
-  expect(state.mode).toBe('alt');
+  expect(state.mode).toBe('fast');
   expect(state.enabled).toBe(true);
   expect(state.nodes).toBe(true);
   expect(state.edges).toBe(true);
 
+  await page.evaluate(() => {
+    const helios = window.__helios;
+    if (!helios) return;
+    helios.ambientOcclusionMode('smooth');
+    helios.requestRender?.();
+  });
+
   await page.waitForFunction(() => {
     const ao = window.__helios?.renderer?.graphLayer?.ambientOcclusion;
-    return ao?.aoPrograms && Array.from(ao.aoPrograms.keys()).includes('alt|medium');
+    return ao?.aoPrograms && Array.from(ao.aoPrograms.keys()).includes('smooth|medium');
+  });
+
+  await page.evaluate(() => {
+    const helios = window.__helios;
+    if (!helios) return;
+    helios.ambientOcclusionMode('fast');
+    helios.requestRender?.();
+  });
+
+  await page.waitForFunction(() => {
+    const ao = window.__helios?.renderer?.graphLayer?.ambientOcclusion;
+    return ao?.aoPrograms && Array.from(ao.aoPrograms.keys()).includes('fast|medium');
   });
 
   const afterScreenshot = await page.screenshot();
@@ -226,7 +259,8 @@ test('ambient occlusion runtime is stable in WebGL fixture', async ({ page }, te
       fullSize: ao?.fullSize ?? null,
     };
   });
-  expect(runtime.aoProgramKeys).toContain('alt|medium');
+  expect(runtime.aoProgramKeys).toContain('fast|medium');
+  expect(runtime.aoProgramKeys).toContain('smooth|medium');
   expect(runtime.aoSize?.width ?? 0).toBeGreaterThan(0);
   expect(runtime.aoSize?.height ?? 0).toBeGreaterThan(0);
   expect(runtime.fullSize?.width ?? 0).toBeGreaterThan(0);

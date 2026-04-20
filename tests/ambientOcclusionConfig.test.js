@@ -13,6 +13,7 @@ import {
 
 test('graph layer ambient occlusion defaults mirror UI expectations', () => {
   const layer = new GraphLayer();
+  assert.equal(AMBIENT_OCCLUSION_MODE_DEFAULT, 'fast');
   assert.equal(layer.ambientOcclusionEnabled, false);
   assert.equal(layer.ambientOcclusionNodes, true);
   assert.equal(layer.ambientOcclusionEdges, false);
@@ -49,7 +50,13 @@ test('graph layer ambient occlusion quality normalizes invalid values', () => {
 
 test('graph layer ambient occlusion mode normalizes invalid values', () => {
   const alt = new GraphLayer({ ambientOcclusionMode: 'ALT' });
-  assert.equal(alt.ambientOcclusionMode, 'alt');
+  assert.equal(alt.ambientOcclusionMode, 'fast');
+
+  const fast = new GraphLayer({ ambientOcclusionMode: 'FAST' });
+  assert.equal(fast.ambientOcclusionMode, 'fast');
+
+  const smooth = new GraphLayer({ ambientOcclusionMode: 'SMOOTH' });
+  assert.equal(smooth.ambientOcclusionMode, 'smooth');
 
   const fallback = new GraphLayer({ ambientOcclusionMode: 'vtk-ish' });
   assert.equal(fallback.ambientOcclusionMode, AMBIENT_OCCLUSION_MODE_DEFAULT);

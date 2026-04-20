@@ -115,6 +115,10 @@ const DEFAULT_AUTO_BACKGROUND_TONE_SELECTED = Object.freeze({
   amount: 0.38,
 });
 
+const DEFAULT_SELECTION_FOCUS_MAX_ZOOM = 3;
+const DEFAULT_SELECTION_FOCUS_MIN_DISTANCE = 260;
+const DEFAULT_SELECTION_FOCUS_ZOOM_TOLERANCE = 0.05;
+
 const CURRENT_SELECTION_VALUE = '__current_selection__';
 
 function subscribe(helios, eventName, handler) {
@@ -786,6 +790,9 @@ export class SelectionPanel {
           durationMs: options.durationMs,
           followUpdateIntervalMs: options.followUpdateIntervalMs ?? 180,
           zoomScale: options.zoomScale ?? 1.35,
+          maxFocusZoom: options.maxFocusZoom ?? DEFAULT_SELECTION_FOCUS_MAX_ZOOM,
+          minFocusDistance: options.minFocusDistance ?? DEFAULT_SELECTION_FOCUS_MIN_DISTANCE,
+          focusZoomTolerance: options.focusZoomTolerance ?? DEFAULT_SELECTION_FOCUS_ZOOM_TOLERANCE,
         });
         return true;
       }

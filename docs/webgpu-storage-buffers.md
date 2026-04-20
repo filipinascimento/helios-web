@@ -139,8 +139,10 @@ These tables describe the storage-buffer inputs used by the GPU-force layout com
 | `neighborCountsBuffer` | Per-node adjacency counts. | Yes | Always. |
 | `neighborsBuffer` | Flattened adjacency ids. | Yes | Always. |
 | `scalarWeightsBuffer` | Packed node mass and neighbor weights. | No | UMAP force model is active. |
+| `neighborEdgesBuffer` | Original sparse edge id for each flattened neighbor slot. | No | Non-UMAP GPU-force uses weighted attraction or strength normalization. |
+| `scalarWeightsBuffer` | Packed node strength values followed by sparse edge weights. | No | Non-UMAP GPU-force uses weighted attraction or strength normalization. |
 
-Total storages: min `9`, max `10`.
+Total storages: min `9`, max `11`.
 
 ### Output Scale Pass
 
@@ -175,7 +177,7 @@ Total storages: min `3`, max `3`.
 
 | Section | Min | Max |
 | --- | ---: | ---: |
-| Layout Compute: Main | 9 | 10 |
+| Layout Compute: Main | 9 | 11 |
 | Layout Compute: Output Scale | 2 | 2 |
 | Layout Compute: Recenter | 3 | 3 |
 | Layout Compute: Selection Centroid Readback | 3 | 3 |
@@ -312,6 +314,8 @@ These tables describe the texture inputs used by the GPU-force layout texture-co
 | `neighborsTexture` | Flattened adjacency ids. | Yes | Always. |
 | `nodeMassTexture` | Per-node mass values. | No | UMAP force model is active. |
 | `neighborWeightsTexture` | Per-neighbor UMAP weights. | No | UMAP force model is active. |
+| `neighborEdgesTexture` | Original sparse edge id for each flattened neighbor slot. | No | Non-UMAP GPU-force uses weighted attraction or strength normalization. |
+| `scalarValuesTexture` | Packed node strength values followed by sparse edge weights. | No | Non-UMAP GPU-force uses weighted attraction or strength normalization. |
 
 Total textures: min `7`, max `9`.
 

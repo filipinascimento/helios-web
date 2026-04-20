@@ -281,6 +281,49 @@ test('cameraTargetNodes uses delegate centroid readback for GPU-only target node
   assert.deepEqual(Array.from(camera.target), [10, -4, 0]);
 });
 
+test('camera focus caps repeated 2d zoom-in while still recentering', () => {
+  const helios = Object.create(Helios.prototype);
+  const camera = createCamera('2d');
+  camera.maxZoom = 10;
+  camera.zoom = 2.9;
+  helios.renderer = { camera };
+
+  const pose = helios._resolveCameraFocusPose(
+    { centroid: [12, -8, 0], bboxCenter: [0, 0, 0] },
+    {
+      focusMode: 'centroid',
+      zoomScale: 1.35,
+      maxFocusZoom: 3,
+      focusZoomTolerance: 0.05,
+    },
+  );
+
+  assert.equal(pose.zoom, 2.9);
+  assert.deepEqual(Array.from(pose.target), [12, -8, 0]);
+  assert.ok(Math.abs(pose.pan2D[0] - (-12 * 2.9)) < 1e-5);
+  assert.ok(Math.abs(pose.pan2D[1] - (8 * 2.9)) < 1e-5);
+});
+
+test('camera focus caps repeated 3d dolly-in while still retargeting', () => {
+  const helios = Object.create(Helios.prototype);
+  const camera = createCamera('3d');
+  camera.distance = 270;
+  helios.renderer = { camera };
+
+  const pose = helios._resolveCameraFocusPose(
+    { centroid: [4, 6, -2], bboxCenter: [0, 0, 0] },
+    {
+      focusMode: 'centroid',
+      zoomScale: 1.35,
+      minFocusDistance: 260,
+      focusZoomTolerance: 0.05,
+    },
+  );
+
+  assert.equal(pose.distance, 270);
+  assert.deepEqual(Array.from(pose.target), [4, 6, -2]);
+});
+
 test('orbit angle acts as a stable orbit tilt while orbiting keeps azimuth internal', () => {
   const emitted = [];
   const helios = Object.create(Helios.prototype);

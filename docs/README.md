@@ -88,8 +88,8 @@ Some common renderer/graph-layer “global” knobs are available directly on `H
 - Enable shader-specialized lighting: `helios.shadedEnabled(true)`, `helios.shadedNodes(true)`, `helios.shadedEdges(true)`
 - Tune shaded lighting: `helios.shadedLightDirection([x, y, z])`, `helios.shadedLightColor(...)`, `helios.shadedDiffuseStrength(...)`, `helios.shadedAmbientTopColor(...)`, `helios.shadedAmbientBottomColor(...)`, `helios.shadedAmbientStrength(...)`, `helios.shadedSpecularColor(...)`, `helios.shadedSpecularStrength(...)`, `helios.shadedShininess(...)`
 - Enable screen-space ambient occlusion: `helios.ambientOcclusionEnabled(true)`, `helios.ambientOcclusionNodes(true)`, `helios.ambientOcclusionEdges(true)`
-- Tune ambient occlusion: `helios.ambientOcclusionMode('smooth'|'alt')`, `helios.ambientOcclusionQuality('low'|'medium'|'high')`, `helios.ambientOcclusionStrength(...)`, `helios.ambientOcclusionRadius(...)`, `helios.ambientOcclusionBias(...)`
-- Tune SSAO Alt response: `helios.ambientOcclusionIntensityScale(...)`, `helios.ambientOcclusionIntensityShift(...)` (currently WebGPU-only)
+- Tune ambient occlusion: `helios.ambientOcclusionMode('fast'|'smooth')`, `helios.ambientOcclusionQuality('low'|'medium'|'high')`, `helios.ambientOcclusionStrength(...)`, `helios.ambientOcclusionRadius(...)`, `helios.ambientOcclusionBias(...)`
+- Tune Fast SSAO response: `helios.ambientOcclusionIntensityScale(...)`, `helios.ambientOcclusionIntensityShift(...)` (WebGPU and WebGL)
 - Configure adaptive edge fallback: `helios.edgeAdaptiveQuality({...})` (enabled by default; switches after repeated slow HQ frames, and export still forces high-quality edges)
 
 ## Mapper docs

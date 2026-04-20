@@ -1733,13 +1733,13 @@ export class Helios extends EventTarget {
     ambientOcclusionMode: {
       type: 'string',
       label: 'Mode',
-      description: 'Choose between the smoother default SSAO and the VTK-inspired alternate pass.',
+      description: 'Choose between Fast SSAO and Smooth SSAO.',
       defaultValue: AMBIENT_OCCLUSION_MODE_DEFAULT,
     },
     ambientOcclusionIntensityScale: {
       type: 'number',
-      label: 'Alt Scale',
-      description: 'Internal occlusion contrast scale used by SSAO Alt before final compositing.',
+      label: 'Fast Scale',
+      description: 'Internal occlusion contrast scale used by Fast SSAO before final compositing.',
       defaultValue: AMBIENT_OCCLUSION_INTENSITY_SCALE_DEFAULT,
       domain: { min: 0, max: 4 },
       recommendedRange: { min: 0.5, max: 2.5 },
@@ -1747,8 +1747,8 @@ export class Helios extends EventTarget {
     },
     ambientOcclusionIntensityShift: {
       type: 'number',
-      label: 'Alt Shift',
-      description: 'Internal occlusion offset used by SSAO Alt to keep mid-tones from over-darkening.',
+      label: 'Fast Shift',
+      description: 'Internal occlusion offset used by Fast SSAO to keep mid-tones from over-darkening.',
       defaultValue: AMBIENT_OCCLUSION_INTENSITY_SHIFT_DEFAULT,
       domain: { min: 0, max: 1 },
       recommendedRange: { min: 0, max: 0.2 },
@@ -2695,6 +2695,9 @@ export class Helios extends EventTarget {
               : Number.isFinite(options.zoomFactor)
                 ? Number(options.zoomFactor)
                 : 1,
+            maxFocusZoom: options.maxFocusZoom,
+            minFocusDistance: options.minFocusDistance,
+            focusZoomTolerance: options.focusZoomTolerance,
           });
           const animate = options.animate ?? this._cameraControlConfig?.animation === true;
           const durationMs = options.durationMs ?? this._cameraControlConfig?.animationDurationMs;
@@ -2944,8 +2947,14 @@ export class Helios extends EventTarget {
       ? copyVec3(bounds.centroid ?? bounds.bboxCenter ?? [0, 0, 0], 0)
       : copyVec3(bounds.bboxCenter ?? bounds.centroid ?? [0, 0, 0], 0);
     const zoomScale = Math.max(1e-6, Number.isFinite(options.zoomScale) ? Number(options.zoomScale) : 1);
+    const focusZoomTolerance = normalizeNonNegativeNumber(options.focusZoomTolerance, 0, 0, 1);
     if (camera.mode === '2d') {
-      const desiredZoom = current.zoom * zoomScale;
+      let desiredZoom = current.zoom * zoomScale;
+      if (zoomScale > 1 && Number.isFinite(options.maxFocusZoom)) {
+        const maxFocusZoom = Math.max(camera.minZoom ?? 1e-6, Number(options.maxFocusZoom));
+        const closeEnoughZoom = current.zoom >= (maxFocusZoom / (1 + focusZoomTolerance));
+        desiredZoom = closeEnoughZoom ? current.zoom : Math.min(desiredZoom, maxFocusZoom);
+      }
       const nextZoom = Math.min(camera.maxZoom ?? desiredZoom, Math.max(camera.minZoom ?? desiredZoom, desiredZoom));
       return mergeCameraPose(current, {
         mode: '2d',
@@ -2960,7 +2969,12 @@ export class Helios extends EventTarget {
         zoom: nextZoom,
       });
     }
-    const desiredDistance = current.distance / zoomScale;
+    let desiredDistance = current.distance / zoomScale;
+    if (zoomScale > 1 && Number.isFinite(options.minFocusDistance)) {
+      const minFocusDistance = Math.max(camera.minDistance ?? 1e-6, Number(options.minFocusDistance));
+      const closeEnoughDistance = current.distance <= (minFocusDistance * (1 + focusZoomTolerance));
+      desiredDistance = closeEnoughDistance ? current.distance : Math.max(desiredDistance, minFocusDistance);
+    }
     const nextDistance = Math.min(camera.maxDistance ?? desiredDistance, Math.max(camera.minDistance ?? desiredDistance, desiredDistance));
     return mergeCameraPose(current, {
       mode: '3d',
@@ -6892,12 +6906,18 @@ export class Helios extends EventTarget {
       maxSamples: this._cameraControlConfig?.autoFitMaxSamples ?? CAMERA_FIT_DEFAULT_MAX_SAMPLES,
       applyFocusOnResolve: normalized?.length > 0,
       zoomScale,
+      maxFocusZoom: options.maxFocusZoom,
+      minFocusDistance: options.minFocusDistance,
+      focusZoomTolerance: options.focusZoomTolerance,
       animate,
       durationMs,
     });
     const nextPose = this._resolveCameraFocusPose(bounds, {
       focusMode: normalized?.length ? 'centroid' : 'bbox',
       zoomScale,
+      maxFocusZoom: options.maxFocusZoom,
+      minFocusDistance: options.minFocusDistance,
+      focusZoomTolerance: options.focusZoomTolerance,
     });
     if (followTarget) {
       this._queueCameraControlPose(nextPose, { animate, durationMs });

@@ -121,6 +121,18 @@ function resolveEdgeTransparencyMode() {
   }
 }
 
+function resolveGpuForceNormalizationType() {
+  const params = new URLSearchParams(window.location.search);
+  const raw = params.get('forceNormalizationType')
+    ?? params.get('forceNormalization')
+    ?? params.get('gpuForceNormalization');
+  const normalized = String(raw ?? '').trim().toLowerCase();
+  if (normalized === 'degree') return 'degree';
+  if (normalized === 'strength') return 'strength';
+  if (normalized === 'none') return 'none';
+  return 'local-degree';
+}
+
 function resolveNodeCount() {
   const params = new URLSearchParams(window.location.search);
   const value = Number(params.get('nodes') ?? params.get('nodeCount'));
@@ -361,6 +373,7 @@ async function bootstrap() {
   let interpolationDurationMs = resolveInterpolationDurationMs();
   let interpolationDurationMode = resolveInterpolationDurationMode();
   const edgeTransparency = resolveEdgeTransparencyMode();
+  const forceNormalizationType = resolveGpuForceNormalizationType();
   const gpuForceLayoutOptions = {
     mode,
     center: [0, 0, 0],
@@ -386,6 +399,10 @@ async function bootstrap() {
           kAttraction: 0.62,
           kGravity: 0.005,
         }),
+    forceNormalizationType,
+    ...(!usingUmapDataset && forceNormalizationType === 'strength'
+      ? { edgeWeightAttribute: edgeAttribute }
+      : {}),
   };
   const heliosOptions = {
     container: target,

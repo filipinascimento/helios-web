@@ -162,6 +162,49 @@ function createTopologyNetwork(positions) {
   };
 }
 
+function createWeightedTopologyNetwork({
+  positions,
+  edgeWeights = [2],
+  nodeStrength = [2, 2],
+  edgeWeightAttribute = 'w',
+  strengthAttribute = '_helios_layout_strength',
+} = {}) {
+  const base = createTopologyNetwork(positions ?? [
+    0, 0, 0,
+    10, 0, 0,
+  ]);
+  const edgeWeightView = new Float32Array(edgeWeights);
+  const nodeStrengthView = new Float32Array(nodeStrength);
+  let strengthResolveCalls = 0;
+  return {
+    ...base,
+    edgeCapacity: Math.max(edgeWeightView.length, base.edgeIndices.length),
+    hasEdgeAttribute(name) {
+      return name === edgeWeightAttribute;
+    },
+    getEdgeAttributeVersion(name) {
+      return name === edgeWeightAttribute ? 3 : 0;
+    },
+    getNodeAttributeVersion(name) {
+      return name === strengthAttribute ? 5 : base.getNodeAttributeBuffer(name)?.version ?? 0;
+    },
+    getNodeAttributeBuffer(name) {
+      if (name === strengthAttribute) return { view: nodeStrengthView, version: 5 };
+      return base.getNodeAttributeBuffer(name);
+    },
+    getEdgeAttributeBuffer(name) {
+      if (name === edgeWeightAttribute) return { view: edgeWeightView, version: 3 };
+      return base.getEdgeAttributeBuffer(name);
+    },
+    __heliosResolveLayoutStrengthAttribute(name = null) {
+      assert.equal(name, edgeWeightAttribute);
+      strengthResolveCalls += 1;
+      return { name: strengthAttribute, version: 5, edgeWeightAttribute };
+    },
+    getStrengthResolveCalls: () => strengthResolveCalls,
+  };
+}
+
 function createIsolatedTopologyNetwork(positions) {
   const positionView = new Float32Array(positions);
   const nodeCount = Math.floor(positionView.length / 3);
@@ -190,6 +233,7 @@ function createFakeWebGPUDevice() {
   const writes = [];
   const dispatchCalls = [];
   const copyCalls = [];
+  const shaderModules = [];
   const queue = {
     writeBuffer(buffer, offset, data, dataOffset = 0, size = undefined) {
       let copy = null;
@@ -220,8 +264,11 @@ function createFakeWebGPUDevice() {
         destroy() {},
       };
     },
-    createBindGroupLayout() { return {}; },
-    createShaderModule() { return {}; },
+    createBindGroupLayout(descriptor = {}) { return { descriptor }; },
+    createShaderModule(descriptor = {}) {
+      shaderModules.push(descriptor.code ?? '');
+      return {};
+    },
     createPipelineLayout() { return {}; },
     createComputePipeline() { return {}; },
     createBindGroup() { return {}; },
@@ -251,7 +298,7 @@ function createFakeWebGPUDevice() {
     },
   };
 
-  return { device, writes, dispatchCalls, copyCalls };
+  return { device, writes, dispatchCalls, copyCalls, shaderModules };
 }
 
 function createFakeWebGL2Context() {
@@ -304,6 +351,8 @@ function createFakeWebGL2ComputeContext() {
   const texImagePayloads = [];
   const texSubImagePayloads = [];
   const readPixelsCalls = [];
+  const uniformCalls = [];
+  const shaderSources = [];
   let drawArraysCalls = 0;
   let currentFramebuffer = null;
   let currentProgram = null;
@@ -361,7 +410,7 @@ function createFakeWebGL2ComputeContext() {
       texSubImagePayloads.push(args);
     },
     createShader(type) { return { id: shaderId += 1, type }; },
-    shaderSource() {},
+    shaderSource(_shader, source) { shaderSources.push(source); },
     compileShader() {},
     getShaderParameter(_shader, param) {
       return param === this.COMPILE_STATUS;
@@ -394,11 +443,11 @@ function createFakeWebGL2ComputeContext() {
     },
     useProgram(program) { currentProgram = program ?? null; },
     activeTexture(textureUnit) { currentActiveTexture = textureUnit; },
-    uniform1i() {},
-    uniform2i() {},
-    uniform1ui() {},
-    uniform3f() {},
-    uniform1f() {},
+    uniform1i(location, value) { uniformCalls.push({ fn: 'uniform1i', location, value }); },
+    uniform2i(location, x, y) { uniformCalls.push({ fn: 'uniform2i', location, value: [x, y] }); },
+    uniform1ui(location, value) { uniformCalls.push({ fn: 'uniform1ui', location, value }); },
+    uniform3f(location, x, y, z) { uniformCalls.push({ fn: 'uniform3f', location, value: [x, y, z] }); },
+    uniform1f(location, value) { uniformCalls.push({ fn: 'uniform1f', location, value }); },
     drawArrays() { drawArraysCalls += 1; },
     getParameter(param) {
       if (param === this.MAX_TEXTURE_SIZE) return 64;
@@ -431,6 +480,8 @@ function createFakeWebGL2ComputeContext() {
     getTexSubImagePayloads: () => texSubImagePayloads.slice(),
     getReadPixelsCalls: () => readPixelsCalls.slice(),
     getDrawArraysCalls: () => drawArraysCalls,
+    getShaderSources: () => shaderSources.slice(),
+    getUniformCalls: () => uniformCalls.slice(),
   };
 }
 
@@ -1402,6 +1453,80 @@ test('GpuForcePositionDelegate adds deterministic depth jitter for planar 3D see
   assert.ok(Math.abs(zValues[0] + zValues[1] + zValues[2]) < 1e-5);
 });
 
+test('GpuForcePositionDelegate default WebGPU linear path binds no scalar force sources', () => {
+  const network = createTopologyNetwork([
+    0, 0, 0,
+    10, 0, 0,
+  ]);
+  const { device, writes, shaderModules } = createFakeWebGPUDevice();
+  const delegate = new GpuForcePositionDelegate({ mode: '2d' });
+
+  delegate.onAttach({ network, backend: 'webgpu', device });
+
+  assert.ok(!writes.some((entry) => entry.label === 'layout:gpu-force:neighbor-edges'));
+  assert.ok(!writes.some((entry) => entry.label === 'layout:gpu-force:scalar-weights'));
+  assert.ok(!shaderModules.some((source) => source.includes('neighborEdges')));
+  assert.ok(!shaderModules.some((source) => source.includes('scalarValues')));
+});
+
+test('GpuForcePositionDelegate degree normalization uses endpoint degree without scalar sources', () => {
+  const network = createTopologyNetwork([
+    0, 0, 0,
+    10, 0, 0,
+    20, 0, 0,
+  ]);
+  let strengthResolveCalls = 0;
+  network.__heliosResolveLayoutStrengthAttribute = () => {
+    strengthResolveCalls += 1;
+    return { name: '_helios_layout_strength', version: 1 };
+  };
+  const { device, writes, shaderModules } = createFakeWebGPUDevice();
+  const delegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    forceNormalizationType: 'degree',
+  });
+
+  delegate.onAttach({ network, backend: 'webgpu', device });
+  delegate.step({ network, backend: 'webgpu', device, deltaMs: 16 });
+
+  assert.equal(strengthResolveCalls, 0);
+  assert.ok(!writes.some((entry) => entry.label === 'layout:gpu-force:neighbor-edges'));
+  assert.ok(!writes.some((entry) => entry.label === 'layout:gpu-force:scalar-weights'));
+  assert.ok(shaderModules.some((source) => source.includes('endpointDegreeNorm') && source.includes('min(degree, otherDegree)')));
+  const paramsWrite = writes.filter((entry) => entry.label === 'layout:gpu-force:params').at(-1);
+  const params = new Uint32Array(paramsWrite.data.buffer, paramsWrite.data.byteOffset, paramsWrite.data.byteLength / 4);
+  assert.equal(params[11], 1);
+});
+
+test('GpuForcePositionDelegate strength normalization uploads derived strength and edge weights', () => {
+  const network = createWeightedTopologyNetwork({
+    positions: [
+      0, 0, 0,
+      10, 0, 0,
+    ],
+    edgeWeights: [2],
+    nodeStrength: [2, 2],
+  });
+  const { device, writes, shaderModules } = createFakeWebGPUDevice();
+  const delegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    forceNormalizationType: 'strength',
+    edgeWeightAttribute: 'w',
+  });
+
+  delegate.onAttach({ network, backend: 'webgpu', device });
+
+  assert.ok(network.getStrengthResolveCalls() > 0);
+  assert.ok(writes.some((entry) => entry.label === 'layout:gpu-force:neighbor-edges'));
+  const scalarWrite = writes.find((entry) => entry.label === 'layout:gpu-force:scalar-weights');
+  assert.ok(scalarWrite);
+  const scalars = new Float32Array(scalarWrite.data.buffer, scalarWrite.data.byteOffset, scalarWrite.data.byteLength / 4);
+  assert.equal(scalars[0], 2);
+  assert.equal(scalars[1], 2);
+  assert.equal(scalars[2], 2);
+  assert.ok(shaderModules.some((source) => source.includes('endpointStrengthNorm') && source.includes('scalarValues[nodeCapacity + edgeId]')));
+});
+
 test('GpuForcePositionDelegate exposes WebGL2 texture resource when running on WebGL backend', () => {
   const network = createTopologyNetwork([
     0, 0, 0,
@@ -1419,6 +1544,33 @@ test('GpuForcePositionDelegate exposes WebGL2 texture resource when running on W
   assert.equal(resource.version, delegate.version);
   assert.ok(getTexImageCalls() > 0);
   assert.equal(delegate.getNodePositionView({ network, backend: 'webgl2', gl }), null);
+});
+
+test('GpuForcePositionDelegate WebGL2 strength specialization binds scalar textures', () => {
+  const network = createWeightedTopologyNetwork({
+    positions: [
+      0, 0, 0,
+      10, 0, 0,
+    ],
+    edgeWeights: [3],
+    nodeStrength: [3, 3],
+  });
+  const { gl, getUniformCalls, getShaderSources } = createFakeWebGL2ComputeContext();
+  const delegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    forceNormalizationType: 'strength',
+    edgeWeightAttribute: 'w',
+    recenter: false,
+  });
+
+  delegate.onAttach({ network, backend: 'webgl2', gl });
+  const changed = delegate.step({ network, backend: 'webgl2', gl, deltaMs: 16 });
+
+  assert.equal(changed, true);
+  assert.ok(getShaderSources().some((source) => source.includes('endpointStrengthNorm') && source.includes('fetchScalarEdge')));
+  assert.ok(getUniformCalls().some((call) => call.location === 'u_neighborEdges' && call.value === 7));
+  assert.ok(getUniformCalls().some((call) => call.location === 'u_scalarValues' && call.value === 8));
+  assert.ok(getUniformCalls().some((call) => call.location === 'u_forceNormalizationMode' && call.value === 2));
 });
 
 test('GpuForcePositionDelegate preserves dynamic positions across version-change topology syncs', async () => {

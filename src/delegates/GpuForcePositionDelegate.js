@@ -29,6 +29,7 @@ const DEFAULT_OPTIONS = {
   kGravity: 0.005,
   edgeWeightAttribute: null,
   nodeMassAttribute: null,
+  forceNormalizationType: 'local-degree',
   umapA: 1.5769434601962196,
   umapB: 0.8950608779914887,
   umapGamma: 1,
@@ -55,7 +56,7 @@ const DEFAULT_UMAP_EPOCHS_LARGE = 200;
 const DEFAULT_UMAP_SAMPLE_CHURN = 0.01;
 const DEFAULT_UMAP_ALPHA_DECAY = 0.0025;
 
-function buildComputeWgsl({ umap = false } = {}) {
+function buildComputeWgsl({ umap = false, scalar = false, normalized = false } = {}) {
   return /* wgsl */ `
 struct Params {
   counts : vec4<u32>,
@@ -78,7 +79,9 @@ struct Params {
 @group(0) @binding(8) var<storage, read> neighbors : array<u32>;
 ${umap
   ? '@group(0) @binding(9) var<storage, read> scalarWeights : array<f32>;\n@group(0) @binding(10) var<uniform> params : Params;'
-  : '@group(0) @binding(9) var<uniform> params : Params;'}
+  : scalar
+    ? '@group(0) @binding(9) var<storage, read> neighborEdges : array<u32>;\n@group(0) @binding(10) var<storage, read> scalarValues : array<f32>;\n@group(0) @binding(11) var<uniform> params : Params;'
+    : '@group(0) @binding(9) var<uniform> params : Params;'}
 
 fn hash32(value : u32) -> u32 {
   var x = value;
@@ -200,6 +203,9 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
   let seed = params.flags.z;
   let exactRepulsionThreshold = params.flags.w;
   let sampleFrame = params.dispatch.z;
+  let scalarFlags = params.dispatch.w;
+  let normalizationMode = scalarFlags & 255u;
+  let hasEdgeWeights = (scalarFlags & 256u) != 0u;
 
   var pos = loadPosition(nodeId);
   var vel = loadVelocity(nodeId);
@@ -319,7 +325,8 @@ ${umap
       if (n >= limit) {
         break;
       }
-      let otherId = neighbors[start + n];
+      let neighborIndex = start + n;
+      let otherId = neighbors[neighborIndex];
       if (otherId != nodeId) {
         var delta = loadPosition(otherId) - pos;
         if (use3D == 0u) {
@@ -328,9 +335,53 @@ ${umap
         let distSq = max(dot(delta, delta), minDistSq);
         let dist = sqrt(distSq);
         let invDist = 1.0 / dist;
-        let degreeNorm = max(1.0, f32(limit));
+${scalar
+    ? `        let edgeId = neighborEdges[neighborIndex];
+        let edgeWeight = select(
+          1.0,
+          max(0.0, scalarValues[nodeCapacity + edgeId]),
+          hasEdgeWeights,
+        );
+        let otherDegree = neighborCounts[otherId];
+        let endpointDegreeNorm = max(1.0, f32(min(degree, otherDegree)));
+        let endpointStrengthNorm = max(1.0, min(
+          max(0.0, scalarValues[nodeId]),
+          max(0.0, scalarValues[otherId]),
+        ));
+        let degreeNorm = select(
+          max(1.0, f32(limit)),
+          endpointDegreeNorm,
+          normalizationMode == 1u,
+        );
+        let strengthOrDegreeNorm = select(
+          degreeNorm,
+          endpointStrengthNorm,
+          normalizationMode == 2u,
+        );
+        let finalNorm = select(
+          strengthOrDegreeNorm,
+          1.0,
+          normalizationMode == 3u,
+        );`
+    : normalized
+      ? `        let otherDegree = neighborCounts[otherId];
+        let endpointDegreeNorm = max(1.0, f32(min(degree, otherDegree)));
+        let localDegreeNorm = max(1.0, f32(limit));
+        let degreeNorm = select(
+          localDegreeNorm,
+          endpointDegreeNorm,
+          normalizationMode == 1u,
+        );
+        let finalNorm = select(
+          degreeNorm,
+          1.0,
+          normalizationMode == 3u,
+        );
+        let edgeWeight = 1.0;`
+      : `        let finalNorm = max(1.0, f32(limit));
+        let edgeWeight = 1.0;`}
         let stretch = dist - params.constantsB.w;
-        let springScale = (params.constantsA.y * stretch * invDist) / degreeNorm;
+        let springScale = (params.constantsA.y * edgeWeight * stretch * invDist) / finalNorm;
         force = force + delta * springScale;
       }
       n = n + 1u;
@@ -458,6 +509,8 @@ fn main(
 }
 
 const COMPUTE_WGSL_LINEAR = buildComputeWgsl();
+const COMPUTE_WGSL_LINEAR_NORMALIZED = buildComputeWgsl({ normalized: true });
+const COMPUTE_WGSL_LINEAR_SCALAR = buildComputeWgsl({ scalar: true });
 const COMPUTE_WGSL_UMAP = buildComputeWgsl({ umap: true });
 
 const OUTPUT_SCALE_WGSL = /* wgsl */ `
@@ -795,6 +848,22 @@ function isUmapForceModel(value) {
   return String(value ?? '').trim().toLowerCase() === 'umap';
 }
 
+function normalizeForceNormalizationType(value) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'degree' || normalized === 'endpoint-degree') return 'degree';
+  if (normalized === 'strength' || normalized === 'weighted-strength') return 'strength';
+  if (normalized === 'none' || normalized === 'off' || normalized === 'disabled') return 'none';
+  return 'local-degree';
+}
+
+function forceNormalizationMode(value) {
+  const normalized = normalizeForceNormalizationType(value);
+  if (normalized === 'degree') return 1;
+  if (normalized === 'strength') return 2;
+  if (normalized === 'none') return 3;
+  return 0;
+}
+
 function normalizeAttributeName(value, fallback = null) {
   if (typeof value !== 'string') return fallback;
   const trimmed = value.trim();
@@ -1009,8 +1078,18 @@ function snapshotTopologyInputs(network) {
     ? Math.floor(nodeCapacityRaw)
     : 0;
   const inferredCapacity = Math.max(0, Math.floor(nodeIndices.length));
+  const edgeCapacityRaw = Number(safeReadWithWarning(
+    () => network?.edgeCapacity,
+    0,
+    'gpu-force:edge-capacity',
+    'GpuForcePositionDelegate: failed to read network.edgeCapacity. Falling back to active edge count.',
+  ));
+  const edgeCapacity = Number.isFinite(edgeCapacityRaw) && edgeCapacityRaw > 0
+    ? Math.floor(edgeCapacityRaw)
+    : Math.max(0, Math.floor(edgeIndices.length));
   return {
     nodeCapacity: Math.max(nodeCapacity, inferredCapacity),
+    edgeCapacity,
     nodeIndices,
     edgeIndices,
     positionView: null,
@@ -1037,11 +1116,18 @@ function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
     nodeIndices = createEmptyUintArray(),
     edgeIndices = createEmptyUintArray(),
     edgesView = createEmptyUintArray(),
+    edgeCapacity = 0,
     positionView = null,
     edgeWeightView = null,
     nodeMassView = null,
+    nodeStrengthView = null,
   } = topologyInputs ?? {};
   const umapModel = isUmapForceModel(options.forceModel);
+  const forceNormalizationType = normalizeForceNormalizationType(options.forceNormalizationType);
+  const useLinearScalarInputs = !umapModel && (
+    Boolean(normalizeAttributeName(options.edgeWeightAttribute))
+    || forceNormalizationType === 'strength'
+  );
   const useExplicitInitialPositions = !umapModel
     || options.umapHasInitialPositions === true
     || options.forceInitialPositions === true;
@@ -1139,6 +1225,10 @@ function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
 
   const neighbors = ensureUint32Capacity(scratch.neighbors, neighborLength);
   scratch.neighbors = neighbors;
+  const neighborEdges = useLinearScalarInputs
+    ? ensureUint32Capacity(scratch.neighborEdges, neighborLength)
+    : createEmptyUintArray();
+  scratch.neighborEdges = neighborEdges;
   let neighborWeights = createEmptyFloatArray();
   if (umapModel) {
     neighborWeights = ensureFloat32Capacity(scratch.neighborWeights, neighborLength);
@@ -1169,6 +1259,10 @@ function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
     const targetCursor = cursor[target]++;
     neighbors[sourceCursor] = target;
     neighbors[targetCursor] = source;
+    if (useLinearScalarInputs) {
+      neighborEdges[sourceCursor] = edgeId;
+      neighborEdges[targetCursor] = edgeId;
+    }
     if (umapModel) {
       const normalizedWeight = maxUmapEdgeWeight > 0 ? (weight / maxUmapEdgeWeight) : 0;
       neighborWeights[sourceCursor] = normalizedWeight;
@@ -1312,8 +1406,16 @@ function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
     neighborStarts,
     neighborCounts,
     neighbors,
+    neighborEdges,
     neighborWeights,
     nodeMass,
+    nodeStrength: ArrayBuffer.isView(nodeStrengthView) ? nodeStrengthView : createEmptyFloatArray(),
+    edgeWeightValues: ArrayBuffer.isView(edgeWeightView) ? edgeWeightView : createEmptyFloatArray(),
+    edgeCapacity: Math.max(0, Math.floor(Number(edgeCapacity) || 0)),
+    forceNormalizationType,
+    linearScalarInputs: useLinearScalarInputs,
+    linearNormalizedInputs: !umapModel && !useLinearScalarInputs && forceNormalizationType !== 'local-degree',
+    linearHasEdgeWeights: !umapModel && Boolean(edgeWeightAttribute),
     packedPositions,
     packedOutputPositions,
     neighborLength,
@@ -1668,7 +1770,7 @@ void main() {
   gl_Position = vec4(position, 0.0, 1.0);
 }`;
 
-function buildWebglComputeFragment({ umap = false } = {}) {
+function buildWebglComputeFragment({ umap = false, scalar = false, normalized = false } = {}) {
   return `#version 300 es
 precision highp float;
 precision highp int;
@@ -1682,10 +1784,12 @@ uniform usampler2D u_neighborStarts;
 uniform usampler2D u_neighborCounts;
 uniform usampler2D u_neighbors;
 ${umap ? 'uniform sampler2D u_nodeMass;\nuniform sampler2D u_neighborWeights;\n' : ''}
+${scalar ? 'uniform usampler2D u_neighborEdges;\nuniform sampler2D u_scalarValues;\n' : ''}
 
 uniform ivec2 u_nodeTexSize;
 uniform ivec2 u_activeIdsTexSize;
 uniform ivec2 u_neighborTexSize;
+${scalar ? 'uniform ivec2 u_scalarTexSize;\n' : ''}
 
 uniform int u_nodeCapacity;
 uniform int u_activeCount;
@@ -1694,6 +1798,8 @@ uniform int u_maxNeighbors;
 uniform int u_use3D;
 uniform int u_exactRepulsionThreshold;
 uniform int u_sampleChurnCount;
+uniform int u_forceNormalizationMode;
+uniform int u_hasEdgeWeights;
 
 uniform uint u_seed;
 uniform uint u_sampleFrame;
@@ -1793,6 +1899,20 @@ uint fetchNeighborValue(int index) {
   return texelFetch(u_neighbors, textureCoord(u_neighborTexSize, index), 0).x;
 }
 
+${scalar ? `uint fetchNeighborEdge(int index) {
+  return texelFetch(u_neighborEdges, textureCoord(u_neighborTexSize, index), 0).x;
+}
+
+float fetchScalarNode(int nodeId) {
+  return texelFetch(u_scalarValues, textureCoord(u_nodeTexSize, nodeId), 0).x;
+}
+
+float fetchScalarEdge(int edgeId) {
+  int offset = u_nodeCapacity + edgeId;
+  return texelFetch(u_scalarValues, textureCoord(u_scalarTexSize, offset), 0).x;
+}
+
+` : ''}
 ${umap ? `float fetchNodeMass(int nodeId) {
   return texelFetch(u_nodeMass, textureCoord(u_nodeTexSize, nodeId), 0).x;
 }
@@ -1933,10 +2053,10 @@ ${umap
       }
       n += 1;
     }`
-  : `    float degreeNorm = max(1.0, float(limit));
-    int n = 0;
+  : `    int n = 0;
     while (n < limit) {
-      int otherId = int(fetchNeighborValue(start + n));
+      int neighborIndex = start + n;
+      int otherId = int(fetchNeighborValue(neighborIndex));
       if (otherId != nodeId && otherId >= 0 && otherId < u_nodeCapacity) {
         vec3 delta = fetchPosition(otherId) - pos;
         if (u_use3D == 0) {
@@ -1946,7 +2066,31 @@ ${umap
         float dist = sqrt(distSq);
         float invDist = 1.0 / max(0.00000001, dist);
         float stretch = dist - u_linkDistance;
-        float springScale = ((u_kAttraction * stretch * invDist) / degreeNorm);
+${scalar
+    ? `        uint edgeId = fetchNeighborEdge(neighborIndex);
+        float edgeWeight = u_hasEdgeWeights != 0 ? max(0.0, fetchScalarEdge(int(edgeId))) : 1.0;
+        float endpointDegreeNorm = max(1.0, float(min(uint(degree), fetchNodeUint(u_neighborCounts, otherId))));
+        float endpointStrengthNorm = max(1.0, min(max(0.0, fetchScalarNode(nodeId)), max(0.0, fetchScalarNode(otherId))));
+        float degreeNorm = max(1.0, float(limit));
+        if (u_forceNormalizationMode == 1) {
+          degreeNorm = endpointDegreeNorm;
+        } else if (u_forceNormalizationMode == 2) {
+          degreeNorm = endpointStrengthNorm;
+        } else if (u_forceNormalizationMode == 3) {
+          degreeNorm = 1.0;
+        }`
+    : normalized
+      ? `        float edgeWeight = 1.0;
+        float endpointDegreeNorm = max(1.0, float(min(uint(degree), fetchNodeUint(u_neighborCounts, otherId))));
+        float degreeNorm = max(1.0, float(limit));
+        if (u_forceNormalizationMode == 1) {
+          degreeNorm = endpointDegreeNorm;
+        } else if (u_forceNormalizationMode == 3) {
+          degreeNorm = 1.0;
+        }`
+      : `        float edgeWeight = 1.0;
+        float degreeNorm = max(1.0, float(limit));`}
+        float springScale = ((u_kAttraction * edgeWeight * stretch * invDist) / degreeNorm);
         force += delta * springScale;
       }
       n += 1;
@@ -2005,6 +2149,8 @@ ${umap
 }
 
 const WEBGL_FORCE_COMPUTE_FRAGMENT_LINEAR = buildWebglComputeFragment();
+const WEBGL_FORCE_COMPUTE_FRAGMENT_LINEAR_NORMALIZED = buildWebglComputeFragment({ normalized: true });
+const WEBGL_FORCE_COMPUTE_FRAGMENT_LINEAR_SCALAR = buildWebglComputeFragment({ scalar: true });
 const WEBGL_FORCE_COMPUTE_FRAGMENT_UMAP = buildWebglComputeFragment({ umap: true });
 
 const WEBGL_FORCE_REDUCTION_INIT_FRAGMENT = `#version 300 es
@@ -2287,6 +2433,7 @@ class WebGLTextureComputePath {
     this.nodeLayout = { width: 1, height: 1 };
     this.activeLayout = { width: 1, height: 1 };
     this.neighborLayout = { width: 1, height: 1 };
+    this.scalarLayout = { width: 1, height: 1 };
 
     this.positionTextures = [null, null];
     this.velocityTextures = [null, null];
@@ -2296,8 +2443,10 @@ class WebGLTextureComputePath {
     this.neighborStartsTexture = null;
     this.neighborCountsTexture = null;
     this.neighborsTexture = null;
+    this.neighborEdgesTexture = null;
     this.nodeMassTexture = null;
     this.neighborWeightsTexture = null;
+    this.scalarValuesTexture = null;
     this.framebuffer = null;
     this.readbackFramebuffer = null;
     this.fullscreenVao = null;
@@ -2314,6 +2463,8 @@ class WebGLTextureComputePath {
     this._outputUploadScratch = new Float32Array(0);
     this._nodeMassUploadScratch = new Float32Array(0);
     this._neighborWeightUploadScratch = new Float32Array(0);
+    this._scalarValuesUploadScratch = new Float32Array(0);
+    this._scalarValuesLinearScratch = new Float32Array(0);
     this._uintUploadScratch = new Uint32Array(0);
     this._readbackScratch = new Float32Array(0);
     this._sparseReadbackScratch = new Float32Array(0);
@@ -2323,10 +2474,14 @@ class WebGLTextureComputePath {
     this.umapEnabled = false;
     this.computePrograms = {
       linear: null,
+      linearNormalized: null,
+      linearScalar: null,
       umap: null,
     };
     this.computeUniforms = {
       linear: null,
+      linearNormalized: null,
+      linearScalar: null,
       umap: null,
     };
     this.reductionInitProgram = createWebGLProgram(gl, WEBGL_FORCE_FULLSCREEN_VERTEX, WEBGL_FORCE_REDUCTION_INIT_FRAGMENT);
@@ -2401,13 +2556,19 @@ class WebGLTextureComputePath {
     return map;
   }
 
-  _ensureComputeProgram(useUmap = false) {
-    const key = useUmap ? 'umap' : 'linear';
+  _ensureComputeProgram(useUmap = false, useLinearScalar = false, useLinearNormalized = false) {
+    const key = useUmap ? 'umap' : useLinearScalar ? 'linearScalar' : useLinearNormalized ? 'linearNormalized' : 'linear';
     if (this.computePrograms[key]) return;
     const program = createWebGLProgram(
       this.gl,
       WEBGL_FORCE_FULLSCREEN_VERTEX,
-      useUmap ? WEBGL_FORCE_COMPUTE_FRAGMENT_UMAP : WEBGL_FORCE_COMPUTE_FRAGMENT_LINEAR,
+      useUmap
+        ? WEBGL_FORCE_COMPUTE_FRAGMENT_UMAP
+        : useLinearScalar
+          ? WEBGL_FORCE_COMPUTE_FRAGMENT_LINEAR_SCALAR
+          : useLinearNormalized
+            ? WEBGL_FORCE_COMPUTE_FRAGMENT_LINEAR_NORMALIZED
+            : WEBGL_FORCE_COMPUTE_FRAGMENT_LINEAR,
     );
     const uniformNames = [
       'u_positions',
@@ -2420,6 +2581,7 @@ class WebGLTextureComputePath {
       'u_nodeTexSize',
       'u_activeIdsTexSize',
       'u_neighborTexSize',
+      ...(useLinearScalar ? ['u_scalarTexSize'] : []),
       'u_nodeCapacity',
       'u_activeCount',
       'u_sampleCount',
@@ -2427,6 +2589,8 @@ class WebGLTextureComputePath {
       'u_use3D',
       'u_exactRepulsionThreshold',
       'u_sampleChurnCount',
+      'u_forceNormalizationMode',
+      'u_hasEdgeWeights',
       'u_seed',
       'u_sampleFrame',
       'u_center',
@@ -2440,6 +2604,7 @@ class WebGLTextureComputePath {
       'u_damping',
       'u_maxStep',
       ...(useUmap ? ['u_nodeMass', 'u_neighborWeights', 'u_umapA', 'u_umapB', 'u_umapGamma', 'u_umapNegativeSampleRate', 'u_umapEpochs'] : []),
+      ...(useLinearScalar ? ['u_neighborEdges', 'u_scalarValues'] : []),
     ];
     this.computePrograms[key] = program;
     this.computeUniforms[key] = this._cacheUniforms(program, uniformNames);
@@ -2631,6 +2796,19 @@ class WebGLTextureComputePath {
     this._neighborWeightUploadScratch = new Float32Array(0);
   }
 
+  _releaseLinearScalarTextures() {
+    const gl = this.gl;
+    if (!gl) return;
+    if (this.neighborEdgesTexture) gl.deleteTexture(this.neighborEdgesTexture);
+    if (this.scalarValuesTexture) gl.deleteTexture(this.scalarValuesTexture);
+    this.neighborEdgesTexture = null;
+    this.scalarValuesTexture = null;
+    this._textureSizes.delete('neighborEdgesTexture');
+    this._textureSizes.delete('scalarValuesTexture');
+    this._scalarValuesUploadScratch = new Float32Array(0);
+    this._scalarValuesLinearScratch = new Float32Array(0);
+  }
+
   _prepareMainFramebuffer(positionTexture, velocityTexture, outputTexture) {
     const gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
@@ -2677,13 +2855,19 @@ class WebGLTextureComputePath {
     const preserveDynamicState = options?.preserveDynamicState === true;
     const previousNodeCapacity = this.nodeCapacity;
     const useUmap = payload.umapModel === true;
+    const useLinearScalar = !useUmap && payload.linearScalarInputs === true;
+    const useLinearNormalized = !useUmap && !useLinearScalar && payload.linearNormalizedInputs === true;
     this.umapEnabled = useUmap;
-    this._ensureComputeProgram(useUmap);
+    this._ensureComputeProgram(useUmap, useLinearScalar, useLinearNormalized);
     this.nodeCapacity = Math.max(0, payload.nodeCapacity | 0);
     this.activeCount = Math.max(0, payload.activeCount | 0);
     this.nodeLayout = resolveWebGLTextureLayout(this.gl, Math.max(1, this.nodeCapacity));
     this.activeLayout = resolveWebGLTextureLayout(this.gl, Math.max(1, this.activeCount));
     this.neighborLayout = resolveWebGLTextureLayout(this.gl, Math.max(1, payload.neighborLength | 0));
+    const scalarValueCount = useLinearScalar
+      ? (this.nodeCapacity + Math.max(0, payload.edgeCapacity | 0))
+      : 0;
+    this.scalarLayout = resolveWebGLTextureLayout(this.gl, Math.max(1, scalarValueCount));
 
     this._ensureFloatTextureAt(this.positionTextures, 0, this.nodeLayout.width, this.nodeLayout.height);
     this._ensureFloatTextureAt(this.positionTextures, 1, this.nodeLayout.width, this.nodeLayout.height);
@@ -2701,6 +2885,42 @@ class WebGLTextureComputePath {
     this._uploadUintTexture(this.neighborStartsTexture, this.nodeLayout, payload.neighborStarts);
     this._uploadUintTexture(this.neighborCountsTexture, this.nodeLayout, payload.neighborCounts);
     this._uploadUintTexture(this.neighborsTexture, this.neighborLayout, payload.neighbors);
+    if (useLinearScalar) {
+      this._ensureUintTexture('neighborEdgesTexture', this.neighborLayout.width, this.neighborLayout.height);
+      this._ensureFloatTexture('scalarValuesTexture', this.scalarLayout.width, this.scalarLayout.height);
+      this._uploadUintTexture(this.neighborEdgesTexture, this.neighborLayout, payload.neighborEdges);
+      const scalarValues = ensureFloat32Capacity(this._scalarValuesLinearScratch, scalarValueCount);
+      this._scalarValuesLinearScratch = scalarValues;
+      scalarValues.fill(0, 0, scalarValueCount);
+      if (this.nodeCapacity > 0 && ArrayBuffer.isView(payload.nodeStrength)) {
+        const nodeLimit = Math.min(this.nodeCapacity, payload.nodeStrength.length);
+        for (let i = 0; i < nodeLimit; i += 1) {
+          const value = Number(payload.nodeStrength[i]);
+          scalarValues[i] = Number.isFinite(value) ? value : 0;
+        }
+      }
+      if (payload.linearHasEdgeWeights && ArrayBuffer.isView(payload.edgeWeightValues)) {
+        const edgeLimit = Math.min(Math.max(0, payload.edgeCapacity | 0), payload.edgeWeightValues.length);
+        for (let i = 0; i < edgeLimit; i += 1) {
+          const value = Number(payload.edgeWeightValues[i]);
+          scalarValues[this.nodeCapacity + i] = Number.isFinite(value) ? value : 0;
+        }
+      }
+      const scalarValuesPacked = this._packScalarSource(
+        scalarValues,
+        scalarValueCount,
+        this.scalarLayout.width * this.scalarLayout.height,
+        '_scalarValuesUploadScratch',
+      );
+      this._uploadPackedFloatTexture(
+        this.scalarValuesTexture,
+        scalarValuesPacked,
+        this.scalarLayout.width,
+        this.scalarLayout.height,
+      );
+    } else {
+      this._releaseLinearScalarTextures();
+    }
     if (useUmap) {
       this._ensureFloatTexture('nodeMassTexture', this.nodeLayout.width, this.nodeLayout.height);
       this._ensureFloatTexture('neighborWeightsTexture', this.neighborLayout.width, this.neighborLayout.height);
@@ -2874,9 +3094,12 @@ class WebGLTextureComputePath {
         DEFAULT_OPTIONS.maxNeighborsPerNode,
       )));
       const useUmap = isUmapForceModel(stepOptions.forceModel);
-      this._ensureComputeProgram(useUmap);
-      const computeProgram = this.computePrograms[useUmap ? 'umap' : 'linear'];
-      const computeUniforms = this.computeUniforms[useUmap ? 'umap' : 'linear'];
+      const useLinearScalar = !useUmap && stepOptions.linearScalarInputs === true;
+      const useLinearNormalized = !useUmap && !useLinearScalar && stepOptions.linearNormalizedInputs === true;
+      this._ensureComputeProgram(useUmap, useLinearScalar, useLinearNormalized);
+      const computeKey = useUmap ? 'umap' : useLinearScalar ? 'linearScalar' : useLinearNormalized ? 'linearNormalized' : 'linear';
+      const computeProgram = this.computePrograms[computeKey];
+      const computeUniforms = this.computeUniforms[computeKey];
       const outputScale = Math.max(0.0001, toFinite(stepOptions.outputScale, DEFAULT_OPTIONS.outputScale));
       const rotationDamping = clamp(stepOptions.rotationDamping, 0, 1, DEFAULT_OPTIONS.rotationDamping);
       const useRotationDamping = rotationDamping > 1e-6;
@@ -2903,10 +3126,18 @@ class WebGLTextureComputePath {
         this._bindTexture(8, this.neighborWeightsTexture);
         gl.uniform1i(computeUniforms.u_nodeMass, 7);
         gl.uniform1i(computeUniforms.u_neighborWeights, 8);
+      } else if (useLinearScalar) {
+        this._bindTexture(7, this.neighborEdgesTexture);
+        this._bindTexture(8, this.scalarValuesTexture);
+        gl.uniform1i(computeUniforms.u_neighborEdges, 7);
+        gl.uniform1i(computeUniforms.u_scalarValues, 8);
       }
       gl.uniform2i(computeUniforms.u_nodeTexSize, this.nodeLayout.width, this.nodeLayout.height);
       gl.uniform2i(computeUniforms.u_activeIdsTexSize, this.activeLayout.width, this.activeLayout.height);
       gl.uniform2i(computeUniforms.u_neighborTexSize, this.neighborLayout.width, this.neighborLayout.height);
+      if (useLinearScalar) {
+        gl.uniform2i(computeUniforms.u_scalarTexSize, this.scalarLayout.width, this.scalarLayout.height);
+      }
       gl.uniform1i(computeUniforms.u_nodeCapacity, this.nodeCapacity);
       gl.uniform1i(computeUniforms.u_activeCount, this.activeCount);
       gl.uniform1i(computeUniforms.u_sampleCount, sampleCount);
@@ -2914,6 +3145,10 @@ class WebGLTextureComputePath {
       gl.uniform1i(computeUniforms.u_use3D, is3D ? 1 : 0);
       gl.uniform1i(computeUniforms.u_exactRepulsionThreshold, exactRepulsionThreshold);
       gl.uniform1i(computeUniforms.u_sampleChurnCount, sampleChurnCount);
+      if (!useUmap) {
+        gl.uniform1i(computeUniforms.u_forceNormalizationMode, forceNormalizationMode(stepOptions.forceNormalizationType));
+        gl.uniform1i(computeUniforms.u_hasEdgeWeights, stepOptions.hasEdgeWeights ? 1 : 0);
+      }
       gl.uniform1ui(computeUniforms.u_seed, this.seed >>> 0);
       gl.uniform1ui(computeUniforms.u_sampleFrame, this.sampleFrame >>> 0);
       gl.uniform3f(computeUniforms.u_center, center[0], center[1], center[2]);
@@ -3158,8 +3393,10 @@ class WebGLTextureComputePath {
     if (this.neighborStartsTexture) gl.deleteTexture(this.neighborStartsTexture);
     if (this.neighborCountsTexture) gl.deleteTexture(this.neighborCountsTexture);
     if (this.neighborsTexture) gl.deleteTexture(this.neighborsTexture);
+    if (this.neighborEdgesTexture) gl.deleteTexture(this.neighborEdgesTexture);
     if (this.nodeMassTexture) gl.deleteTexture(this.nodeMassTexture);
     if (this.neighborWeightsTexture) gl.deleteTexture(this.neighborWeightsTexture);
+    if (this.scalarValuesTexture) gl.deleteTexture(this.scalarValuesTexture);
     for (const target of this._reductionTargets) {
       if (target.texture) gl.deleteTexture(target.texture);
       if (target.framebuffer) gl.deleteFramebuffer(target.framebuffer);
@@ -3172,6 +3409,8 @@ class WebGLTextureComputePath {
     if (this.readbackFramebuffer) gl.deleteFramebuffer(this.readbackFramebuffer);
     if (this.fullscreenVao) gl.deleteVertexArray(this.fullscreenVao);
     if (this.computePrograms.linear) gl.deleteProgram(this.computePrograms.linear);
+    if (this.computePrograms.linearNormalized) gl.deleteProgram(this.computePrograms.linearNormalized);
+    if (this.computePrograms.linearScalar) gl.deleteProgram(this.computePrograms.linearScalar);
     if (this.computePrograms.umap) gl.deleteProgram(this.computePrograms.umap);
     if (this.reductionInitProgram) gl.deleteProgram(this.reductionInitProgram);
     if (this.reductionCombineProgram) gl.deleteProgram(this.reductionCombineProgram);
@@ -3187,10 +3426,12 @@ class WebGLTextureComputePath {
     this.neighborStartsTexture = null;
     this.neighborCountsTexture = null;
     this.neighborsTexture = null;
+    this.neighborEdgesTexture = null;
     this.nodeMassTexture = null;
     this.neighborWeightsTexture = null;
-    this.computePrograms = { linear: null, umap: null };
-    this.computeUniforms = { linear: null, umap: null };
+    this.scalarValuesTexture = null;
+    this.computePrograms = { linear: null, linearNormalized: null, linearScalar: null, umap: null };
+    this.computeUniforms = { linear: null, linearNormalized: null, linearScalar: null, umap: null };
     this.framebuffer = null;
     this.readbackFramebuffer = null;
     this.fullscreenVao = null;
@@ -3298,8 +3539,12 @@ class WebGPUForceComputeBackend {
   constructor(device) {
     this.device = device;
     this.linearPipeline = null;
+    this.linearNormalizedPipeline = null;
     this.linearBindGroupLayout = null;
     this.linearBindGroup = null;
+    this.linearScalarPipeline = null;
+    this.linearScalarBindGroupLayout = null;
+    this.linearScalarBindGroup = null;
     this.umapPipeline = null;
     this.umapBindGroupLayout = null;
     this.umapBindGroup = null;
@@ -3332,6 +3577,7 @@ class WebGPUForceComputeBackend {
     this.neighborStartsBuffer = null;
     this.neighborCountsBuffer = null;
     this.neighborsBuffer = null;
+    this.neighborEdgesBuffer = null;
     this.scalarWeightsBuffer = null;
     this.nodeCapacity = 0;
     this.activeCount = 0;
@@ -3365,10 +3611,10 @@ class WebGPUForceComputeBackend {
     this._ensureCentroidPipeline();
   }
 
-  _ensurePipeline(useUmap = false) {
+  _ensurePipeline(useUmap = false, useLinearScalar = false, useLinearNormalized = false) {
     if (!this.device) return;
-    const pipelineField = useUmap ? 'umapPipeline' : 'linearPipeline';
-    const layoutField = useUmap ? 'umapBindGroupLayout' : 'linearBindGroupLayout';
+    const pipelineField = useUmap ? 'umapPipeline' : useLinearScalar ? 'linearScalarPipeline' : useLinearNormalized ? 'linearNormalizedPipeline' : 'linearPipeline';
+    const layoutField = useUmap ? 'umapBindGroupLayout' : useLinearScalar ? 'linearScalarBindGroupLayout' : 'linearBindGroupLayout';
     if (this[pipelineField]) return;
     const entries = [
       { binding: 0, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
@@ -3382,11 +3628,24 @@ class WebGPUForceComputeBackend {
       { binding: 8, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
       ...(useUmap
         ? [{ binding: 9, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } }]
+        : useLinearScalar
+          ? [
+            { binding: 9, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
+            { binding: 10, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
+          ]
         : []),
-      { binding: useUmap ? 10 : 9, visibility: this.shaderVisibility, buffer: { type: 'uniform' } },
+      { binding: useUmap ? 10 : useLinearScalar ? 11 : 9, visibility: this.shaderVisibility, buffer: { type: 'uniform' } },
     ];
     this[layoutField] = this.device.createBindGroupLayout({ entries });
-    const module = this.device.createShaderModule({ code: useUmap ? COMPUTE_WGSL_UMAP : COMPUTE_WGSL_LINEAR });
+    const module = this.device.createShaderModule({
+      code: useUmap
+        ? COMPUTE_WGSL_UMAP
+        : useLinearScalar
+          ? COMPUTE_WGSL_LINEAR_SCALAR
+          : useLinearNormalized
+            ? COMPUTE_WGSL_LINEAR_NORMALIZED
+            : COMPUTE_WGSL_LINEAR,
+    });
     this[pipelineField] = this.device.createComputePipeline({
       layout: this.device.createPipelineLayout({ bindGroupLayouts: [this[layoutField]] }),
       compute: { module, entryPoint: 'main' },
@@ -3464,14 +3723,23 @@ class WebGPUForceComputeBackend {
   }
 
   _releaseUmapBuffer() {
+    this.neighborEdgesBuffer?.destroy?.();
     this.scalarWeightsBuffer?.destroy?.();
+    this.neighborEdgesBuffer = null;
     this.scalarWeightsBuffer = null;
     this.scalarWeightsUpload = createEmptyFloatArray();
     this.umapBindGroup = null;
+    this.linearScalarBindGroup = null;
   }
 
-  _rebuildBindGroup(useUmap = false) {
-    const layout = useUmap ? this.umapBindGroupLayout : this.linearBindGroupLayout;
+  _releaseLinearScalarBuffer() {
+    this.neighborEdgesBuffer?.destroy?.();
+    this.neighborEdgesBuffer = null;
+    this.linearScalarBindGroup = null;
+  }
+
+  _rebuildBindGroup(useUmap = false, useLinearScalar = false) {
+    const layout = useUmap ? this.umapBindGroupLayout : useLinearScalar ? this.linearScalarBindGroupLayout : this.linearBindGroupLayout;
     if (!layout) return;
     const entries = [
       { binding: 0, resource: { buffer: this.positionBuffer } },
@@ -3484,10 +3752,15 @@ class WebGPUForceComputeBackend {
       { binding: 7, resource: { buffer: this.neighborCountsBuffer } },
       { binding: 8, resource: { buffer: this.neighborsBuffer } },
       ...(useUmap ? [{ binding: 9, resource: { buffer: this.scalarWeightsBuffer } }] : []),
-      { binding: useUmap ? 10 : 9, resource: { buffer: this.paramsBuffer } },
+      ...(!useUmap && useLinearScalar ? [
+        { binding: 9, resource: { buffer: this.neighborEdgesBuffer } },
+        { binding: 10, resource: { buffer: this.scalarWeightsBuffer } },
+      ] : []),
+      { binding: useUmap ? 10 : useLinearScalar ? 11 : 9, resource: { buffer: this.paramsBuffer } },
     ];
     const bindGroup = this.device.createBindGroup({ layout, entries });
     if (useUmap) this.umapBindGroup = bindGroup;
+    else if (useLinearScalar) this.linearScalarBindGroup = bindGroup;
     else this.linearBindGroup = bindGroup;
   }
 
@@ -3538,16 +3811,21 @@ class WebGPUForceComputeBackend {
       neighborStarts,
       neighborCounts,
       neighbors,
+      neighborEdges,
       nodeMass,
       neighborWeights,
+      nodeStrength,
+      edgeWeightValues,
       packedPositions,
       packedOutputPositions,
     } = payload;
     const preserveDynamicState = options?.preserveDynamicState === true;
     const previousNodeCapacity = this.nodeCapacity;
     const useUmap = payload.umapModel === true;
+    const useLinearScalar = !useUmap && payload.linearScalarInputs === true;
+    const useLinearNormalized = !useUmap && !useLinearScalar && payload.linearNormalizedInputs === true;
     this.umapEnabled = useUmap;
-    this._ensurePipeline(useUmap);
+    this._ensurePipeline(useUmap, useLinearScalar, useLinearNormalized);
 
     this.nodeCapacity = Math.max(0, nodeCapacity | 0);
     this.activeCount = Math.max(0, activeCount | 0);
@@ -3566,8 +3844,22 @@ class WebGPUForceComputeBackend {
     this._ensureBuffer('neighborStartsBuffer', nodeU32Bytes, this.storageUsage, 'layout:gpu-force:neighbor-starts');
     this._ensureBuffer('neighborCountsBuffer', nodeU32Bytes, this.storageUsage, 'layout:gpu-force:neighbor-counts');
     this._ensureBuffer('neighborsBuffer', Math.max(1, neighbors.length) * 4, this.storageUsage, 'layout:gpu-force:neighbors');
-    const scalarWeightCount = useUmap ? (this.nodeCapacity + Math.max(0, payload.neighborLength | 0)) : 0;
-    if (useUmap) {
+    if (useLinearScalar) {
+      this._ensureBuffer(
+        'neighborEdgesBuffer',
+        Math.max(1, neighborEdges.length) * 4,
+        this.storageUsage,
+        'layout:gpu-force:neighbor-edges',
+      );
+    } else {
+      this._releaseLinearScalarBuffer();
+    }
+    const scalarWeightCount = useUmap
+      ? (this.nodeCapacity + Math.max(0, payload.neighborLength | 0))
+      : useLinearScalar
+        ? (this.nodeCapacity + Math.max(0, payload.edgeCapacity | 0))
+        : 0;
+    if (useUmap || useLinearScalar) {
       this.scalarWeightsUpload = ensureFloat32Capacity(this.scalarWeightsUpload, scalarWeightCount);
       this._ensureBuffer(
         'scalarWeightsBuffer',
@@ -3621,6 +3913,9 @@ class WebGPUForceComputeBackend {
     }
     if (payload.neighborLength > 0) {
       queue.writeBuffer(this.neighborsBuffer, 0, neighbors.buffer, neighbors.byteOffset, payload.neighborLength * 4);
+      if (useLinearScalar) {
+        queue.writeBuffer(this.neighborEdgesBuffer, 0, neighborEdges.buffer, neighborEdges.byteOffset, payload.neighborLength * 4);
+      }
     }
     if (useUmap && scalarWeightCount > 0) {
       const scalarWeights = this.scalarWeightsUpload;
@@ -3638,9 +3933,33 @@ class WebGPUForceComputeBackend {
         scalarWeights.byteOffset,
         scalarWeightCount * 4,
       );
+    } else if (useLinearScalar && scalarWeightCount > 0) {
+      const scalarWeights = this.scalarWeightsUpload;
+      scalarWeights.fill(0, 0, scalarWeightCount);
+      if (this.nodeCapacity > 0 && ArrayBuffer.isView(nodeStrength)) {
+        const limit = Math.min(this.nodeCapacity, nodeStrength.length);
+        for (let i = 0; i < limit; i += 1) {
+          const value = Number(nodeStrength[i]);
+          scalarWeights[i] = Number.isFinite(value) ? value : 0;
+        }
+      }
+      if (payload.linearHasEdgeWeights && ArrayBuffer.isView(edgeWeightValues)) {
+        const edgeLimit = Math.min(Math.max(0, payload.edgeCapacity | 0), edgeWeightValues.length);
+        for (let i = 0; i < edgeLimit; i += 1) {
+          const value = Number(edgeWeightValues[i]);
+          scalarWeights[this.nodeCapacity + i] = Number.isFinite(value) ? value : 0;
+        }
+      }
+      queue.writeBuffer(
+        this.scalarWeightsBuffer,
+        0,
+        scalarWeights.buffer,
+        scalarWeights.byteOffset,
+        scalarWeightCount * 4,
+      );
     }
 
-    this._rebuildBindGroup(useUmap);
+    this._rebuildBindGroup(useUmap, useLinearScalar);
     this._rebuildOutputScaleBindGroup();
     this._rebuildRecenterBindGroup(false);
     this._rebuildRecenterBindGroup(true);
@@ -3667,8 +3986,10 @@ class WebGPUForceComputeBackend {
     const sampleFrame = this.sampleFrame >>> 0;
     const forceModel = isUmapForceModel(stepOptions.forceModel) ? 1 : 0;
     const useUmap = forceModel === 1;
-    const pipeline = useUmap ? this.umapPipeline : this.linearPipeline;
-    const bindGroup = useUmap ? this.umapBindGroup : this.linearBindGroup;
+    const useLinearScalar = !useUmap && stepOptions.linearScalarInputs === true;
+    const useLinearNormalized = !useUmap && !useLinearScalar && stepOptions.linearNormalizedInputs === true;
+    const pipeline = useUmap ? this.umapPipeline : useLinearScalar ? this.linearScalarPipeline : useLinearNormalized ? this.linearNormalizedPipeline : this.linearPipeline;
+    const bindGroup = useUmap ? this.umapBindGroup : useLinearScalar ? this.linearScalarBindGroup : this.linearBindGroup;
     if (!pipeline || !bindGroup) return false;
 
     const dispatchShape = resolveComputeDispatchShape(
@@ -3693,7 +4014,13 @@ class WebGPUForceComputeBackend {
     paramsU32[8] = dispatchShape.rowStride >>> 0;
     paramsU32[9] = dispatchShape.layerStride >>> 0;
     paramsU32[10] = sampleFrame >>> 0;
-    paramsU32[11] = forceModel >>> 0;
+    paramsU32[11] = useUmap
+      ? (forceModel >>> 0)
+      : useLinearScalar
+      ? ((forceNormalizationMode(stepOptions.forceNormalizationType) & 255) | (stepOptions.hasEdgeWeights ? 256 : 0))
+      : useLinearNormalized
+        ? (forceNormalizationMode(stepOptions.forceNormalizationType) & 255)
+        : (forceModel >>> 0);
 
     paramsF32[12] = toFinite(stepOptions.kRepulsion, DEFAULT_OPTIONS.kRepulsion);
     paramsF32[13] = toFinite(stepOptions.kAttraction, DEFAULT_OPTIONS.kAttraction);
@@ -4129,6 +4456,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       neighborStarts: createEmptyUintArray(),
       neighborCounts: createEmptyUintArray(),
       neighbors: createEmptyUintArray(),
+      neighborEdges: createEmptyUintArray(),
       neighborWeights: createEmptyFloatArray(),
       nodeMass: createEmptyFloatArray(),
       cursor: createEmptyUintArray(),
@@ -4149,6 +4477,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     const prevForceModel = this.options.forceModel;
     const prevEdgeWeightAttribute = this.options.edgeWeightAttribute;
     const prevNodeMassAttribute = this.options.nodeMassAttribute;
+    const prevForceNormalizationType = this.options.forceNormalizationType;
     this.options = {
       ...this.options,
       ...next,
@@ -4174,7 +4503,8 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     const modelChanged = prevForceModel !== this.options.forceModel;
     const edgeWeightChanged = prevEdgeWeightAttribute !== this.options.edgeWeightAttribute;
     const nodeMassChanged = prevNodeMassAttribute !== this.options.nodeMassAttribute;
-    if (prevMode !== this.options.mode || centerChanged || modelChanged || edgeWeightChanged || nodeMassChanged) {
+    const forceNormalizationChanged = prevForceNormalizationType !== this.options.forceNormalizationType;
+    if (prevMode !== this.options.mode || centerChanged || modelChanged || edgeWeightChanged || nodeMassChanged || forceNormalizationChanged) {
       this.markTopologyDirty('options');
     }
     return this;
@@ -4196,6 +4526,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       neighborStarts: createEmptyUintArray(),
       neighborCounts: createEmptyUintArray(),
       neighbors: createEmptyUintArray(),
+      neighborEdges: createEmptyUintArray(),
       neighborWeights: createEmptyFloatArray(),
       nodeMass: createEmptyFloatArray(),
       cursor: createEmptyUintArray(),
@@ -4264,15 +4595,31 @@ export class GpuForcePositionDelegate extends PositionDelegate {
 
   captureNetworkVersionSnapshot(network) {
     const snapshot = super.captureNetworkVersionSnapshot(network);
-    if (!isUmapForceModel(this.options.forceModel)) {
+    const forceNormalizationType = normalizeForceNormalizationType(this.options.forceNormalizationType);
+    const usesLinearStrength = !isUmapForceModel(this.options.forceModel) && forceNormalizationType === 'strength';
+    const usesLinearEdgeWeights = !isUmapForceModel(this.options.forceModel)
+      && Boolean(normalizeAttributeName(this.options.edgeWeightAttribute));
+    if (!isUmapForceModel(this.options.forceModel) && !usesLinearStrength && !usesLinearEdgeWeights) {
       return {
         ...snapshot,
         edgeWeightAttributeVersion: 0,
         nodeMassAttributeVersion: 0,
+        nodeStrengthAttributeVersion: 0,
       };
     }
     const edgeWeightAttribute = normalizeAttributeName(this.options.edgeWeightAttribute);
     const nodeMassAttribute = normalizeAttributeName(this.options.nodeMassAttribute);
+    let nodeStrengthAttributeVersion = 0;
+    if (usesLinearStrength && typeof network?.__heliosResolveLayoutStrengthAttribute === 'function') {
+      try {
+        nodeStrengthAttributeVersion = toFinite(
+          network.__heliosResolveLayoutStrengthAttribute(edgeWeightAttribute)?.version,
+          0,
+        );
+      } catch (_) {
+        nodeStrengthAttributeVersion = 0;
+      }
+    }
     return {
       ...snapshot,
       edgeWeightAttributeVersion: edgeWeightAttribute && typeof network?.getEdgeAttributeVersion === 'function'
@@ -4281,6 +4628,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       nodeMassAttributeVersion: nodeMassAttribute && typeof network?.getNodeAttributeVersion === 'function'
         ? toFinite(network.getNodeAttributeVersion(nodeMassAttribute), 0)
         : 0,
+      nodeStrengthAttributeVersion,
     };
   }
 
@@ -4289,6 +4637,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       super._snapshotKey(snapshot),
       toFinite(snapshot?.edgeWeightAttributeVersion, 0),
       toFinite(snapshot?.nodeMassAttributeVersion, 0),
+      toFinite(snapshot?.nodeStrengthAttributeVersion, 0),
     ].join('|');
   }
 
@@ -4349,6 +4698,18 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     }
 
     let payload = null;
+    const forceNormalizationType = normalizeForceNormalizationType(this.options.forceNormalizationType);
+    const linearEdgeWeightAttribute = !isUmapForceModel(this.options.forceModel)
+      ? normalizeAttributeName(this.options.edgeWeightAttribute)
+      : null;
+    let layoutStrengthAttribute = null;
+    if (
+      !isUmapForceModel(this.options.forceModel)
+      && forceNormalizationType === 'strength'
+      && typeof network.__heliosResolveLayoutStrengthAttribute === 'function'
+    ) {
+      layoutStrengthAttribute = network.__heliosResolveLayoutStrengthAttribute(linearEdgeWeightAttribute)?.name ?? null;
+    }
     const materializePayload = () => {
       // Access attribute buffers before taking WASM-backed topology views so
       // hidden metadata allocation cannot stale a previously captured edgesView.
@@ -4362,9 +4723,15 @@ export class GpuForcePositionDelegate extends PositionDelegate {
         topologyInputs.nodeMassView = nodeMassAttribute
           ? (network?.getNodeAttributeBuffer?.(nodeMassAttribute)?.view ?? null)
           : null;
+        topologyInputs.nodeStrengthView = null;
       } else {
-        topologyInputs.edgeWeightView = null;
+        topologyInputs.edgeWeightView = linearEdgeWeightAttribute
+          ? (network?.getEdgeAttributeBuffer?.(linearEdgeWeightAttribute)?.view ?? null)
+          : null;
         topologyInputs.nodeMassView = null;
+        topologyInputs.nodeStrengthView = layoutStrengthAttribute
+          ? (network?.getNodeAttributeBuffer?.(layoutStrengthAttribute)?.view ?? null)
+          : null;
       }
       topologyInputs.edgesView = network?.edgesView instanceof Uint32Array ? network.edgesView : createEmptyUintArray();
       payload = buildTopologyPayload({
@@ -4423,6 +4790,15 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     const dtScale = dt * 60;
 
     const umapForceModel = isUmapForceModel(this.options.forceModel);
+    const forceNormalizationType = normalizeForceNormalizationType(this.options.forceNormalizationType);
+    const hasLinearEdgeWeights = !umapForceModel && Boolean(normalizeAttributeName(this.options.edgeWeightAttribute));
+    const linearScalarInputs = !umapForceModel && (
+      hasLinearEdgeWeights
+      || forceNormalizationType === 'strength'
+    );
+    const linearNormalizedInputs = !umapForceModel
+      && !linearScalarInputs
+      && forceNormalizationType !== 'local-degree';
     const alphaTarget = clamp(this.options.alphaTarget, 0, 1, DEFAULT_OPTIONS.alphaTarget);
     const alphaDecay = clamp(this.options.alphaDecay, 0, 1, DEFAULT_OPTIONS.alphaDecay);
     const alphaMin = clamp(this.options.alphaMin, 0, 1, DEFAULT_OPTIONS.alphaMin);
@@ -4472,6 +4848,10 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     const stepPayload = {
       mode: this.options.mode,
       forceModel: umapForceModel ? 'umap' : 'linear',
+      forceNormalizationType,
+      linearScalarInputs,
+      linearNormalizedInputs,
+      hasEdgeWeights: hasLinearEdgeWeights,
       center: this.options.center,
       recenter: this.options.recenter === true,
       rotationDamping: clamp(this.options.rotationDamping, 0, 1, DEFAULT_OPTIONS.rotationDamping),

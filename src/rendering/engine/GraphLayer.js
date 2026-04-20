@@ -16,12 +16,12 @@ export const SHADED_LIGHT_DIRECTION_DEFAULT = Object.freeze([
   0.577350269,
 ]);
 export const SHADED_LIGHT_COLOR_DEFAULT = Object.freeze([1, 1, 1, 1]);
-export const SHADED_AMBIENT_TOP_COLOR_DEFAULT = Object.freeze([0.62, 0.64, 0.7, 1]);
-export const SHADED_AMBIENT_BOTTOM_COLOR_DEFAULT = Object.freeze([0.22, 0.24, 0.3, 1]);
-export const SHADED_DIFFUSE_STRENGTH_DEFAULT = 1;
+export const SHADED_AMBIENT_TOP_COLOR_DEFAULT = Object.freeze([1, 1, 1, 1]);
+export const SHADED_AMBIENT_BOTTOM_COLOR_DEFAULT = Object.freeze([163 / 255, 163 / 255, 163 / 255, 1]);
+export const SHADED_DIFFUSE_STRENGTH_DEFAULT = 0.5;
 export const SHADED_AMBIENT_STRENGTH_DEFAULT = 1;
 export const SHADED_SPECULAR_COLOR_DEFAULT = Object.freeze([1, 1, 1, 1]);
-export const SHADED_SPECULAR_STRENGTH_DEFAULT = 0.35;
+export const SHADED_SPECULAR_STRENGTH_DEFAULT = 0;
 export const SHADED_SHININESS_DEFAULT = 48;
 export const AMBIENT_OCCLUSION_STRENGTH_DEFAULT = 0.7;
 export const AMBIENT_OCCLUSION_RADIUS_DEFAULT = 14;

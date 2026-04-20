@@ -527,7 +527,7 @@ export class AmbientOcclusionWebGPU {
     const aoKey = `${mode}|${quality.key}`;
     if (!this.aoPipelines.has(aoKey)) {
       const module = this.gpu.createShaderModule({
-        code: mode === 'alt' ? createAltAoComputeSource(quality) : createSmoothAoComputeSource(quality),
+        code: mode === 'fast' ? createAltAoComputeSource(quality) : createSmoothAoComputeSource(quality),
       });
       this.aoPipelines.set(aoKey, this.gpu.createComputePipeline({
         layout: this.gpu.createPipelineLayout({ bindGroupLayouts: [this.aoBindGroupLayout] }),

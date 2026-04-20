@@ -141,6 +141,28 @@ When UMAP mode is active:
 - `linkDistance` and exposed `minDistance` tuning are hidden because the force
   law is driven by the exported UMAP parameters instead
 
+### 4.1 Linear force normalization specializations
+
+The non-UMAP linear force model keeps the legacy local-degree normalization by
+default. `forceNormalizationType` selects the denominator used for spring
+attraction:
+
+- `local-degree`: divide by the sampled/truncated neighbor count for the current
+  node. This is the default and keeps the previous GPU-force behavior.
+- `degree`: divide by `max(1, min(degree(source), degree(target)))`, using the
+  full adjacency counts already uploaded for layout topology.
+- `strength`: divide by `max(1, min(strength(source), strength(target)))`.
+  Strength is maintained by `helios-network` as an internal sparse node buffer
+  derived from the configured edge weights.
+- `none`: use no normalization denominator.
+
+For non-UMAP linear attraction, `edgeWeightAttribute` is now reused as a spring
+weight source. If it is absent, every edge has weight `1`. If it is present,
+the shader reads edge weights indirectly through per-neighbor edge ids, and
+the strength buffer sums those same weights for each endpoint. Layout metrics
+ignore self-loops and treat directed edges as contributing to both endpoints,
+matching the current d3-force-3d convention used by the layout.
+
 For the real exported demo fixtures in `docs/examples/basic`, use:
 
 - `/?nodes=200&mode=2d&renderer=webgpu&layout=gpuforce&dataset=umap-export`
@@ -290,6 +312,8 @@ From `GpuForceLayout` / `GpuForcePositionDelegate`:
 - `kRepulsion`: `0.07`
 - `kAttraction`: `0.62`
 - `kGravity`: `0.005`
+- `edgeWeightAttribute`: `null`
+- `forceNormalizationType`: `'local-degree'`
 - `eta`: `0.4`
 - `damping`: `0.92`
 - `maxStep`: `2.5`

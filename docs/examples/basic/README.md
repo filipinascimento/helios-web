@@ -26,6 +26,7 @@ For details on how the node colors and sizes are mapped (including the colormap 
   - Very small exact-repulsion runs now soften repulsion automatically, so tiny lattices do not blow apart as aggressively as large sampled runs.
   - GPU-force recenters active nodes around the configured layout center by default.
   - GPU-force also exposes a `Rotation damping` slider that removes fitted whole-graph spin without increasing global viscosity.
+  - Pass `?forceNormalizationType=degree`, `strength`, `local-degree`, or `none` to exercise GPU-force normalization variants. The synthetic demo uses the `intensity` edge attribute for `strength`.
   - Missing startup positions are seeded deterministically around the center instead of randomly, which reduces the “spinning knot” startup on small graphs.
   - Delegate positions are automatic for GPU-force (no manual position-source toggle).
 - In DevTools, use `await window.__snapshotDelegatePositions()` for full delegate inspection, `await window.__helios.snapshotNodeCentroid([0, 1, 2])` for narrow readback, and `await window.__syncDelegatePositionsToNetwork()` to copy delegate positions into network buffers.

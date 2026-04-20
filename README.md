@@ -30,6 +30,11 @@ ship this as a reusable dependency. The directory includes a growing set of
 examples (starting with [`docs/examples/basic`](./docs/examples/basic/)) plus
 step-by-step installation and API guidance.
 
+The GPU-force layout supports `forceNormalizationType` for linear attraction:
+`local-degree` keeps the legacy GPU behavior, `degree` matches d3-style
+endpoint-degree normalization, `strength` uses a derived weighted endpoint
+strength buffer, and `none` disables the attraction denominator.
+
 ## Using as a Library
 
 The build artifact targets WebGPU first with WebGL2 as a fallback. After running
