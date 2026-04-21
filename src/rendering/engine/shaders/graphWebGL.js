@@ -533,9 +533,12 @@ vec3 applyNodeShading(vec3 baseColor, vec2 local) {
 
   const edgeShadingHelper = edgeShadingEnabled
     ? `
-vec3 applyEdgeShading(vec3 baseColor, vec2 edgeLocal) {
-  float edgeY = clamp(edgeLocal.y, -1.0, 1.0);
-  vec3 normal = normalize(vec3(0.0, edgeY, sqrt(max(1.0 - edgeY * edgeY, 0.0))));
+vec3 applyEdgeShading(vec3 baseColor, float edgeYInput, vec2 shadeBasis) {
+  float edgeY = clamp(edgeYInput, -1.0, 1.0);
+  vec2 basis = shadeBasis;
+  float basisLen = length(basis);
+  basis = basisLen > 1e-5 ? (basis / basisLen) : vec2(0.0, 1.0);
+  vec3 normal = normalize(vec3(basis * edgeY, sqrt(max(1.0 - edgeY * edgeY, 0.0))));
   vec3 lightDir = normalize(u_shadedLightDirection);
   vec3 ambient = mix(u_shadedAmbientBottomColor, u_shadedAmbientTopColor, normal.z * 0.5 + 0.5) * u_shadedParams.w;
   float diffuse = max(dot(lightDir, normal), 0.0);
@@ -814,7 +817,7 @@ uniform float u_edgeOpacityScale;
 out vec4 v_color;
 out float v_weight;
 flat out uint v_discardFlag;
-${edgeShadingEnabled ? 'out vec2 v_edgeLocal;\nflat out uint v_edgeShadeEnabled;' : ''}
+${edgeShadingEnabled ? 'out vec2 v_edgeLocal;\nout vec2 v_edgeShadeBasis;\nflat out uint v_edgeShadeEnabled;' : ''}
 ${TEXTURE_INDEX_HELPERS}
 
 vec3 fetchNodePos(uint id) {
@@ -877,7 +880,7 @@ ${edgeColorNodeBlock}
   v_color = vec4(rgb, forceMaxAlpha ? 1.0 : alpha);
   v_weight = forceMaxAlpha ? max(weight, ${forceVisibilityBoost.toFixed(1)}) : weight;
   v_discardFlag = discardFlag;
-  ${edgeShadingEnabled ? 'v_edgeLocal = vec2(0.0);\n  v_edgeShadeEnabled = 0u;' : ''}
+  ${edgeShadingEnabled ? 'v_edgeLocal = vec2(0.0);\n  v_edgeShadeBasis = vec2(0.0, 1.0);\n  v_edgeShadeEnabled = 0u;' : ''}
 }
 `;
 
@@ -928,7 +931,7 @@ uniform float u_semanticZoomExponent;
 out vec4 v_color;
 out float v_weight;
 flat out uint v_discardFlag;
-${edgeShadingEnabled ? 'out vec2 v_edgeLocal;\nflat out uint v_edgeShadeEnabled;' : ''}
+${edgeShadingEnabled ? 'out vec2 v_edgeLocal;\nout vec2 v_edgeShadeBasis;\nflat out uint v_edgeShadeEnabled;' : ''}
 ${TEXTURE_INDEX_HELPERS}
 
 vec3 fetchNodePos(uint id) {
@@ -1005,6 +1008,9 @@ ${edgeQuadWidthClampBlock}
   float halfWidth = max(width, 1e-3) * 0.5;
   vec3 centerPos = mix(startPos, endPos, segmentMix);
 ${edgeQuadWidthDirBlock}
+  vec2 shadeBasis = vec2(dot(widthDir, normalize(u_cameraRight)), dot(widthDir, normalize(u_cameraUp)));
+  float shadeBasisLen = length(shadeBasis);
+  shadeBasis = shadeBasisLen > 1e-5 ? (shadeBasis / shadeBasisLen) : vec2(0.0, 1.0);
   vec3 worldPos = centerPos + widthDir * halfWidth * a_corner.y;
   gl_Position = u_viewProjection * vec4(worldPos, 1.0);
 
@@ -1030,7 +1036,7 @@ ${edgeColorNodeBlock}
   v_color = vec4(rgb, forceMaxAlpha ? 1.0 : alpha);
   v_weight = forceMaxAlpha ? max(weight, ${forceVisibilityBoost.toFixed(1)}) : weight;
   v_discardFlag = discardFlag;
-  ${edgeShadingEnabled ? 'v_edgeLocal = a_corner;\n  v_edgeShadeEnabled = 1u;' : ''}
+  ${edgeShadingEnabled ? 'v_edgeLocal = a_corner;\n  v_edgeShadeBasis = shadeBasis;\n  v_edgeShadeEnabled = 1u;' : ''}
 }
 `;
 
@@ -1039,7 +1045,7 @@ precision highp float;
 
 in vec4 v_color;
 flat in uint v_discardFlag;
-${edgeShadingEnabled ? 'in vec2 v_edgeLocal;\nflat in uint v_edgeShadeEnabled;\n' : ''}${edgeShadingEnabled ? shadedUniformDecl : ''}
+${edgeShadingEnabled ? 'in vec2 v_edgeLocal;\nin vec2 v_edgeShadeBasis;\nflat in uint v_edgeShadeEnabled;\n' : ''}${edgeShadingEnabled ? shadedUniformDecl : ''}
 ${edgeShadingHelper}
 out vec4 fragColor;
 
@@ -1048,7 +1054,7 @@ void main() {
     discard;
   }
   vec3 rgb = v_color.rgb;
-  ${edgeShadingEnabled ? 'if (v_edgeShadeEnabled != 0u) {\n    rgb = applyEdgeShading(rgb, v_edgeLocal);\n  }' : ''}
+  ${edgeShadingEnabled ? 'if (v_edgeShadeEnabled != 0u) {\n    rgb = applyEdgeShading(rgb, v_edgeLocal.y, v_edgeShadeBasis);\n  }' : ''}
   fragColor = vec4(rgb, v_color.a);
 }
 `;
@@ -1075,7 +1081,7 @@ precision highp float;
 in vec4 v_color;
 in float v_weight;
 flat in uint v_discardFlag;
-${edgeShadingEnabled ? 'in vec2 v_edgeLocal;\nflat in uint v_edgeShadeEnabled;\n' : ''}${edgeShadingEnabled ? shadedUniformDecl : ''}
+${edgeShadingEnabled ? 'in vec2 v_edgeLocal;\nin vec2 v_edgeShadeBasis;\nflat in uint v_edgeShadeEnabled;\n' : ''}${edgeShadingEnabled ? shadedUniformDecl : ''}
 ${edgeShadingHelper}
 layout (location = 0) out vec4 fragAccum;
 layout (location = 1) out vec4 fragWeight;
@@ -1085,7 +1091,7 @@ void main() {
     discard;
   }
   vec3 rgb = v_color.rgb;
-  ${edgeShadingEnabled ? 'if (v_edgeShadeEnabled != 0u) {\n    rgb = applyEdgeShading(rgb, v_edgeLocal);\n  }' : ''}
+  ${edgeShadingEnabled ? 'if (v_edgeShadeEnabled != 0u) {\n    rgb = applyEdgeShading(rgb, v_edgeLocal.y, v_edgeShadeBasis);\n  }' : ''}
   float weight = v_weight;
   fragAccum = vec4(rgb * weight, weight);
   fragWeight = vec4(weight, 0.0, 0.0, 0.0);

@@ -600,9 +600,12 @@ fn semanticZoomScale() -> f32 {
 
 ${useEdgeShading
     ? `
-fn applyEdgeShading(baseColor: vec3<f32>, edgeLocal: vec2<f32>) -> vec3<f32> {
-  let edgeY = clamp(edgeLocal.y, -1.0, 1.0);
-  let normal = normalize(vec3<f32>(0.0, edgeY, sqrt(max(1.0 - edgeY * edgeY, 0.0))));
+fn applyEdgeShading(baseColor: vec3<f32>, edgeYInput: f32, shadeBasis: vec2<f32>) -> vec3<f32> {
+  let edgeY = clamp(edgeYInput, -1.0, 1.0);
+  var basis = shadeBasis;
+  let basisLen = length(basis);
+  basis = select(vec2<f32>(0.0, 1.0), basis / vec2<f32>(max(basisLen, 1e-5)), basisLen > 1e-5);
+  let normal = normalize(vec3<f32>(basis * edgeY, sqrt(max(1.0 - edgeY * edgeY, 0.0))));
   let lightDir = normalize(shading.lightDirection.xyz);
   let ambient = mix(shading.ambientBottomColor.xyz, shading.ambientTopColor.xyz, normal.z * 0.5 + 0.5)
     * shading.params.w;
@@ -622,7 +625,8 @@ struct EdgeVertexOutput {
   @location(1) weight : f32,
   @location(2) @interpolate(flat) discardFlag : u32,
   ${useEdgeShading ? '@location(3) edgeLocal : vec2<f32>,' : ''}
-  ${useEdgeShading ? '@location(4) @interpolate(flat) edgeShadeEnabled : u32,' : ''}
+  ${useEdgeShading ? '@location(4) edgeShadeBasis : vec2<f32>,' : ''}
+  ${useEdgeShading ? '@location(5) @interpolate(flat) edgeShadeEnabled : u32,' : ''}
 };
 
 @vertex
@@ -675,7 +679,7 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
   output.color = vec4<f32>(rgb, select(alpha, 1.0, forceMaxAlpha));
   output.weight = select(weight, max(weight, ${FORCE_VISIBILITY_BOOST.toFixed(1)}), forceMaxAlpha);
   output.discardFlag = discardFlag;
-  ${useEdgeShading ? 'output.edgeLocal = vec2<f32>(0.0, 0.0);\n  output.edgeShadeEnabled = 0u;' : ''}
+  ${useEdgeShading ? 'output.edgeLocal = vec2<f32>(0.0, 0.0);\n  output.edgeShadeBasis = vec2<f32>(0.0, 1.0);\n  output.edgeShadeEnabled = 0u;' : ''}
   return output;
 }
 
@@ -744,6 +748,16 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   let halfWidth = max(width, 1e-3) * 0.5;
   let centerPos = mix(startPos, endPos, cornerT);
   ${edgeQuadWidthDirSnippet}
+  var shadeBasis = vec2<f32>(
+    dot(widthDir, normalize(camera.right.xyz)),
+    dot(widthDir, normalize(camera.up.xyz))
+  );
+  let shadeBasisLen = length(shadeBasis);
+  shadeBasis = select(
+    vec2<f32>(0.0, 1.0),
+    shadeBasis / vec2<f32>(max(shadeBasisLen, 1e-5)),
+    shadeBasisLen > 1e-5
+  );
   let worldPos = centerPos + widthDir * halfWidth * input.corner.y;
   let clipPos = camera.viewProjection * vec4<f32>(worldPos, 1.0);
 
@@ -758,7 +772,7 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   output.color = vec4<f32>(rgb, select(alpha, 1.0, forceMaxAlpha));
   output.weight = select(weight, max(weight, ${FORCE_VISIBILITY_BOOST.toFixed(1)}), forceMaxAlpha);
   output.discardFlag = discardFlag;
-  ${useEdgeShading ? 'output.edgeLocal = input.corner;\n  output.edgeShadeEnabled = 1u;' : ''}
+  ${useEdgeShading ? 'output.edgeLocal = input.corner;\n  output.edgeShadeBasis = shadeBasis;\n  output.edgeShadeEnabled = 1u;' : ''}
   return output;
 }
 
@@ -768,7 +782,7 @@ fn edgeFragment(input : EdgeVertexOutput) -> @location(0) vec4<f32> {
     discard;
   }
   let rgb = ${useEdgeShading
-    ? 'select(input.color.rgb, applyEdgeShading(input.color.rgb, input.edgeLocal), input.edgeShadeEnabled == 1u)'
+    ? 'select(input.color.rgb, applyEdgeShading(input.color.rgb, input.edgeLocal.y, input.edgeShadeBasis), input.edgeShadeEnabled == 1u)'
     : 'input.color.rgb'};
   return vec4<f32>(rgb, input.color.a);
 }
@@ -779,7 +793,7 @@ fn edgePremulFragment(input : EdgeVertexOutput) -> @location(0) vec4<f32> {
     discard;
   }
   let rgb = ${useEdgeShading
-    ? 'select(input.color.rgb, applyEdgeShading(input.color.rgb, input.edgeLocal), input.edgeShadeEnabled == 1u)'
+    ? 'select(input.color.rgb, applyEdgeShading(input.color.rgb, input.edgeLocal.y, input.edgeShadeBasis), input.edgeShadeEnabled == 1u)'
     : 'input.color.rgb'};
   return vec4<f32>(rgb * input.color.a, input.color.a);
 }
@@ -799,7 +813,7 @@ fn edgeWeightedFragment(input : EdgeVertexOutput) -> EdgeWeightedOutput {
     discard;
   }
   let rgb = ${useEdgeShading
-    ? 'select(input.color.rgb, applyEdgeShading(input.color.rgb, input.edgeLocal), input.edgeShadeEnabled == 1u)'
+    ? 'select(input.color.rgb, applyEdgeShading(input.color.rgb, input.edgeLocal.y, input.edgeShadeBasis), input.edgeShadeEnabled == 1u)'
     : 'input.color.rgb'};
   let weight = input.weight;
   var output : EdgeWeightedOutput;

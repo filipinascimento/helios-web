@@ -11,6 +11,7 @@ const AUTO_FIT_FREQUENCY_MIN = 1;
 const AUTO_FIT_FREQUENCY_MAX = 10;
 const AUTO_FIT_INTERVAL_MIN_MS = 100;
 const AUTO_FIT_INTERVAL_MAX_MS = 5000;
+const CAMERA_MOVE_SYNC_INTERVAL_MS = 240;
 
 function subscribe(helios, eventName, handler) {
   if (!helios || typeof handler !== 'function') return () => {};
@@ -22,6 +23,48 @@ function subscribe(helios, eventName, handler) {
     return () => helios.removeEventListener(eventName, handler);
   }
   return () => {};
+}
+
+export function createTrailingThrottle(callback, delayMs = 0) {
+  let timerId = null;
+  let lastArgs = null;
+  let lastThis = null;
+
+  const invoke = () => {
+    timerId = null;
+    if (!lastArgs) return;
+    const args = lastArgs;
+    const context = lastThis;
+    lastArgs = null;
+    lastThis = null;
+    callback.apply(context, args);
+  };
+
+  const throttled = function throttled(...args) {
+    lastArgs = args;
+    lastThis = this;
+    if (timerId != null) return;
+    timerId = setTimeout(invoke, Math.max(0, delayMs));
+  };
+
+  throttled.flush = () => {
+    if (timerId != null) {
+      clearTimeout(timerId);
+      timerId = null;
+    }
+    invoke();
+  };
+
+  throttled.cancel = () => {
+    if (timerId != null) {
+      clearTimeout(timerId);
+      timerId = null;
+    }
+    lastArgs = null;
+    lastThis = null;
+  };
+
+  return throttled;
 }
 
 function clampNumber(value, min, max, fallback) {
@@ -345,10 +388,9 @@ export class CameraPanel {
 
     content.appendChild(sectionStack.element);
 
-    const sync = () => {
-      const pose = helios.cameraPose?.() ?? null;
+    const syncDistanceControl = (poseOverride = null) => {
+      const pose = poseOverride ?? helios.cameraPose?.() ?? null;
       const camera = helios.renderer?.camera ?? null;
-      const controls = helios.cameraControls?.() ?? {};
       const is3D = pose?.mode === '3d';
 
       const minValue = is3D
@@ -364,6 +406,28 @@ export class CameraPanel {
         is3D ? Math.max(0.1, (maxValue - minValue) / 500) : 0.001,
       );
       distanceControls.set(is3D ? (pose?.distance ?? minValue) : (pose?.zoom ?? minValue));
+    };
+
+    const syncDistanceControlThrottled = createTrailingThrottle((event) => {
+      const detail = event?.detail ?? event ?? null;
+      const state = detail?.state ?? null;
+      const pose = state
+        ? {
+            mode: state.mode,
+            distance: state.distance,
+            zoom: state.zoom,
+          }
+        : null;
+      syncDistanceControl(pose);
+    }, CAMERA_MOVE_SYNC_INTERVAL_MS);
+
+    const sync = () => {
+      const pose = helios.cameraPose?.() ?? null;
+      const camera = helios.renderer?.camera ?? null;
+      const controls = helios.cameraControls?.() ?? {};
+      const is3D = pose?.mode === '3d';
+
+      syncDistanceControl(pose);
 
       const distanceLabel = distanceRow.querySelector('.helios-ui-label__title');
       if (distanceLabel) distanceLabel.textContent = is3D ? 'Distance' : 'Zoom';
@@ -393,6 +457,7 @@ export class CameraPanel {
     sync();
 
     const unsubscribers = [
+      subscribe(helios, EVENTS.CAMERA_MOVE, syncDistanceControlThrottled),
       subscribe(helios, EVENTS.CAMERA_CONTROL_CHANGE, sync),
       subscribe(helios, EVENTS.NETWORK_REPLACED, sync),
       subscribe(helios, EVENTS.GRAPH_FILTER_CHANGED, sync),
@@ -410,6 +475,7 @@ export class CameraPanel {
 
     const originalDestroy = panel.destroy?.bind(panel);
     panel.destroy = () => {
+      syncDistanceControlThrottled.cancel?.();
       for (const unsubscribe of unsubscribers) unsubscribe?.();
       tooltipManager.destroy();
       sectionStack.destroy();
