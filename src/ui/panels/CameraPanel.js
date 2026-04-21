@@ -4,13 +4,13 @@ import { createToggleControl } from '../controls/createToggleControl.js';
 import { createTooltipManager } from '../controls/createTooltipManager.js';
 import { SuggestedSliderControls } from '../controls/SuggestedSliderControls.js';
 import { createSelectControl } from '../controls/createSelectControl.js';
+import { createLightDirectionControl } from '../controls/LightDirectionControl.js';
 import { PanelStack } from './PanelStack.js';
 
 const AUTO_FIT_FREQUENCY_MIN = 1;
 const AUTO_FIT_FREQUENCY_MAX = 10;
 const AUTO_FIT_INTERVAL_MIN_MS = 100;
 const AUTO_FIT_INTERVAL_MAX_MS = 5000;
-const CAMERA_MOVE_SYNC_INTERVAL_MS = 80;
 
 function subscribe(helios, eventName, handler) {
   if (!helios || typeof handler !== 'function') return () => {};
@@ -28,6 +28,35 @@ function clampNumber(value, min, max, fallback) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
   return Math.max(min, Math.min(max, numeric));
+}
+
+function normalizeDirection(value, fallback = [0, 1, 0]) {
+  const source = Array.isArray(value) || ArrayBuffer.isView(value) ? value : fallback;
+  const x = Number(source?.[0]);
+  const y = Number(source?.[1]);
+  const z = Number(source?.[2]);
+  const length = Math.hypot(x, y, z);
+  if (!Number.isFinite(length) || length <= 1e-6) return Array.from(fallback);
+  return [x / length, y / length, z / length];
+}
+
+function resolveCameraBasis(helios) {
+  const camera = helios?.renderer?.camera ?? null;
+  camera?.updateBasis?.();
+  const right = normalizeDirection(camera?.right, [1, 0, 0]);
+  const up = normalizeDirection(camera?.up, [0, 1, 0]);
+  const forward = normalizeDirection(camera?.forward, [0, 0, -1]);
+  return { right, up, forward };
+}
+
+function orbitAxisViewToWorld(helios, viewAxis, basis = resolveCameraBasis(helios)) {
+  const axis = normalizeDirection(viewAxis, [0, 1, 0]);
+  const { right, up, forward } = basis;
+  return normalizeDirection([
+    (axis[0] * right[0]) + (axis[1] * up[0]) - (axis[2] * forward[0]),
+    (axis[0] * right[1]) + (axis[1] * up[1]) - (axis[2] * forward[1]),
+    (axis[0] * right[2]) + (axis[1] * up[2]) - (axis[2] * forward[2]),
+  ]);
 }
 
 function updateSliderBounds(controls, min, max, step = null) {
@@ -229,9 +258,6 @@ export class CameraPanel {
       offLabel: 'Off',
       ariaLabel: 'Orbit target',
     });
-    orbitToggle.addEventListener('change', () => {
-      helios.cameraControls?.({ orbit: orbitToggle.checked });
-    });
     const orbitBody = document.createElement('div');
     const appendOrbitRow = createRowAppender(orbitBody, tooltipManager);
 
@@ -253,22 +279,42 @@ export class CameraPanel {
       controls: orbitSpeedControls.element,
     });
 
-    const orbitAngleControls = new SuggestedSliderControls({
-      value: 0,
-      suggested: [-60, 60],
-      step: 1,
-      inputMin: -89,
-      inputMax: 89,
-      onCommit: (value) => {
+    let orbitAxisView = [0, 1, 0];
+    let orbitAxisReferenceBasis = resolveCameraBasis(helios);
+    let lastOrbitEnabled = false;
+    const commitOrbitAxis = (basis = resolveCameraBasis(helios)) => {
+      orbitAxisReferenceBasis = basis;
+      helios.cameraControls?.({ orbitAxis: orbitAxisViewToWorld(helios, orbitAxisView, basis) });
+    };
+    orbitToggle.addEventListener('change', () => {
+      if (orbitToggle.checked) {
+        orbitAxisReferenceBasis = resolveCameraBasis(helios);
         helios.cameraControls?.({
-          orbitAngle: clampNumber(value, -89, 89, 0),
+          orbit: true,
+          orbitAxis: orbitAxisViewToWorld(helios, orbitAxisView, orbitAxisReferenceBasis),
         });
+      } else {
+        helios.cameraControls?.({ orbit: false });
+      }
+    });
+    const orbitAxisAttribute = {
+      readOnly: false,
+      value: () => orbitAxisView,
+      write: (value) => {
+        orbitAxisView = normalizeDirection(value, orbitAxisView);
+        commitOrbitAxis(resolveCameraBasis(helios));
       },
+    };
+    const orbitAxisControl = createLightDirectionControl(orbitAxisAttribute, {
+      mode: 'axis',
+      ariaLabel: 'Orbit axis',
+      testId: 'controls-camera-orbit-axis',
+      fieldTestIdPrefix: 'controls-camera-orbit-axis',
     });
     appendOrbitRow({
-      title: 'Orbit Tilt',
-      hint: 'Tilts the orbit path up or down while azimuth keeps moving internally.',
-      controls: orbitAngleControls.element,
+      title: 'Orbit Axis',
+      hint: 'Axis used for 3D camera orbit. Drag either end of the axis or edit the vector fields directly.',
+      controls: orbitAxisControl.element,
     });
 
     const directionSelect = createSelectControl({
@@ -328,46 +374,25 @@ export class CameraPanel {
       animationToggle.checked = controls.animation === true;
       durationControls.set(controls.animationDurationMs ?? 280);
 
+      const orbitEnabled = controls.orbit === true;
+      if (orbitEnabled && !lastOrbitEnabled) {
+        orbitAxisReferenceBasis = resolveCameraBasis(helios);
+      } else if (!orbitEnabled) {
+        orbitAxisReferenceBasis = resolveCameraBasis(helios);
+      }
+      lastOrbitEnabled = orbitEnabled;
+
       orbitToggle.checked = controls.orbit === true;
       orbitSpeedControls.set(controls.orbitSpeed ?? 0.08);
-      orbitAngleControls.set(controls.orbitAngle ?? 0);
+      orbitAxisControl.set(orbitAxisView);
       directionSelect.value = Number(controls.orbitDirection) < 0 ? 'ccw' : 'cw';
 
       const orbitSectionItem = sectionStack._items.get('camera-orbit')?.item ?? null;
       if (orbitSectionItem) orbitSectionItem.hidden = !is3D;
     };
-    const moveSyncIntervalMs = Math.max(
-      16,
-      Number.isFinite(this.options.moveSyncIntervalMs)
-        ? Math.floor(this.options.moveSyncIntervalMs)
-        : CAMERA_MOVE_SYNC_INTERVAL_MS,
-    );
-    let moveSyncTimer = null;
-    let lastMoveSyncAt = 0;
-    const syncCameraMove = () => {
-      const now = performance.now();
-      const elapsed = now - lastMoveSyncAt;
-      if (elapsed >= moveSyncIntervalMs) {
-        if (moveSyncTimer != null) {
-          clearTimeout(moveSyncTimer);
-          moveSyncTimer = null;
-        }
-        lastMoveSyncAt = now;
-        sync();
-        return;
-      }
-      if (moveSyncTimer != null) return;
-      moveSyncTimer = setTimeout(() => {
-        moveSyncTimer = null;
-        lastMoveSyncAt = performance.now();
-        sync();
-      }, Math.max(0, moveSyncIntervalMs - elapsed));
-    };
-
     sync();
 
     const unsubscribers = [
-      subscribe(helios, EVENTS.CAMERA_MOVE, syncCameraMove),
       subscribe(helios, EVENTS.CAMERA_CONTROL_CHANGE, sync),
       subscribe(helios, EVENTS.NETWORK_REPLACED, sync),
       subscribe(helios, EVENTS.GRAPH_FILTER_CHANGED, sync),
@@ -385,10 +410,6 @@ export class CameraPanel {
 
     const originalDestroy = panel.destroy?.bind(panel);
     panel.destroy = () => {
-      if (moveSyncTimer != null) {
-        clearTimeout(moveSyncTimer);
-        moveSyncTimer = null;
-      }
       for (const unsubscribe of unsubscribers) unsubscribe?.();
       tooltipManager.destroy();
       sectionStack.destroy();
@@ -396,7 +417,7 @@ export class CameraPanel {
       intervalControls.destroy();
       durationControls.destroy();
       orbitSpeedControls.destroy();
-      orbitAngleControls.destroy();
+      orbitAxisControl.destroy();
       originalDestroy?.();
     };
 

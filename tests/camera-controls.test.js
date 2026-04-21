@@ -382,6 +382,59 @@ test('orbit angle acts as a stable orbit tilt while orbiting keeps azimuth inter
   assert.ok(emitted.some((entry) => entry.type === Helios.EVENTS?.CAMERA_CONTROL_CHANGE || entry.type === 'camera:control-change'));
 });
 
+test('orbit axis controls the 3D camera orbit rotation axis', () => {
+  const helios = Object.create(Helios.prototype);
+  const camera = createCamera('3d');
+  const renders = [];
+
+  helios.renderer = { camera };
+  helios.scheduler = { requestRender() { renders.push('render'); } };
+  helios.emit = () => {};
+  helios._getRenderNetwork = () => ({ nodeCount: 1, nodeIndices: [0] });
+  helios._cameraControlConfig = {
+    autoFit: false,
+    autoFitCoverage: 0.95,
+    autoFitPaddingRatio: 0.05,
+    autoFitIntervalMs: 900,
+    autoFitMinIntervalMs: 250,
+    autoFitMaxIntervalMs: 6000,
+    autoFitLargeNetworkScale: 1,
+    autoFitIntervalNodeCountRef: 5000,
+    autoFitMaxSamples: 50000,
+    animation: false,
+    animationDurationMs: 0,
+    orbit: true,
+    orbitAngle: 0,
+    orbitAxis: [0, 1, 0],
+    orbitSpeed: 0.25,
+    orbitDirection: 1,
+    targetNodeIndices: null,
+  };
+  helios._cameraControlRuntime = {
+    lastAutoFitAt: Number.NEGATIVE_INFINITY,
+    lastOrbitAt: 1000,
+    lastFitSignature: '',
+    lastEffectiveIntervalMs: 0,
+    delegateSnapshot: null,
+    delegateSnapshotAt: Number.NEGATIVE_INFINITY,
+    delegateSnapshotPending: false,
+    delegateSnapshotDelegate: null,
+    delegateSnapshotRequestId: 0,
+    orbitBaseRotation: null,
+    appliedOrbitAngle: 0,
+    suspended: false,
+  };
+
+  helios.cameraControls({ orbitAxis: [0, 0, 2] });
+  assert.deepEqual(helios.cameraControls().orbitAxis, [0, 0, 1]);
+  assert.ok(renders.length > 0);
+
+  helios._stepCameraControlRenderPump(1100);
+  const rotationAroundZ = Array.from(camera.rotation);
+  assert.ok(Math.abs(rotationAroundZ[2]) > 0.01);
+  assert.ok(Math.abs(rotationAroundZ[1]) < 0.01);
+});
+
 test('camera rotation interaction does not disable auto fit, but pan does', () => {
   const helios = Object.create(Helios.prototype);
   helios.scheduler = { requestRender() {} };

@@ -4,6 +4,7 @@ export const AMBIENT_OCCLUSION_QUALITY_OPTIONS = Object.freeze([
   Object.freeze({ value: 'low', label: 'Low' }),
   Object.freeze({ value: 'medium', label: 'Medium' }),
   Object.freeze({ value: 'high', label: 'High' }),
+  Object.freeze({ value: 'ultra', label: 'Ultra' }),
 ]);
 
 function freezeKernel(kernel) {
@@ -81,9 +82,9 @@ export const AMBIENT_OCCLUSION_QUALITY_PRESETS = Object.freeze({
     occlusionScale: 1.6,
   }),
   medium: createPreset('medium', 'Medium', {
-    resolutionScale: 0.75,
+    resolutionScale: 1.0,
     smoothSampleCount: 12,
-    altSampleCount: 20,
+    altSampleCount: 28,
     blurRadius: 3,
     blurSigma: 1.55,
     depthSharpness: 380.0,
@@ -91,12 +92,21 @@ export const AMBIENT_OCCLUSION_QUALITY_PRESETS = Object.freeze({
   }),
   high: createPreset('high', 'High', {
     resolutionScale: 1.0,
-    smoothSampleCount: 16,
-    altSampleCount: 28,
+    smoothSampleCount: 20,
+    altSampleCount: 40,
     blurRadius: 4,
     blurSigma: 1.9,
     depthSharpness: 460.0,
     occlusionScale: 1.46,
+  }),
+  ultra: createPreset('ultra', 'Ultra', {
+    resolutionScale: 1.0,
+    smoothSampleCount: 28,
+    altSampleCount: 64,
+    blurRadius: 5,
+    blurSigma: 2.2,
+    depthSharpness: 520.0,
+    occlusionScale: 1.42,
   }),
 });
 

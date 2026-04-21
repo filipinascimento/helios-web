@@ -57,12 +57,28 @@ vec3 reconstructWorld(vec2 uv, float depth) {
   return world.xyz / max(world.w, 1e-6);
 }
 
-vec3 reconstructNormal(vec2 uv, vec3 center) {
+vec3 reconstructNormal(vec2 uv, float centerDepth, vec3 center) {
   vec2 texel = vec2(1.0 / max(u_sizes.x, 1.0), 1.0 / max(u_sizes.y, 1.0));
-  vec3 px = reconstructWorld(uv + vec2(texel.x, 0.0), readDepthFromUv(uv + vec2(texel.x, 0.0)));
-  vec3 py = reconstructWorld(uv + vec2(0.0, texel.y), readDepthFromUv(uv + vec2(0.0, texel.y)));
-  vec3 dx = px - center;
-  vec3 dy = py - center;
+  vec2 uvLeft = clamp(uv - vec2(texel.x, 0.0), vec2(0.0), vec2(1.0));
+  vec2 uvRight = clamp(uv + vec2(texel.x, 0.0), vec2(0.0), vec2(1.0));
+  vec2 uvDown = clamp(uv - vec2(0.0, texel.y), vec2(0.0), vec2(1.0));
+  vec2 uvUp = clamp(uv + vec2(0.0, texel.y), vec2(0.0), vec2(1.0));
+  float depthLeft = readDepthFromUv(uvLeft);
+  float depthRight = readDepthFromUv(uvRight);
+  float depthDown = readDepthFromUv(uvDown);
+  float depthUp = readDepthFromUv(uvUp);
+  vec3 pLeft = reconstructWorld(uvLeft, depthLeft);
+  vec3 pRight = reconstructWorld(uvRight, depthRight);
+  vec3 pDown = reconstructWorld(uvDown, depthDown);
+  vec3 pUp = reconstructWorld(uvUp, depthUp);
+  vec3 dx = center - pLeft;
+  if (abs(depthRight - centerDepth) <= abs(centerDepth - depthLeft)) {
+    dx = pRight - center;
+  }
+  vec3 dy = center - pDown;
+  if (abs(depthUp - centerDepth) <= abs(centerDepth - depthDown)) {
+    dy = pUp - center;
+  }
   vec3 n = cross(dx, dy);
   float lenN = length(n);
   if (!(lenN > 1e-6)) {
@@ -86,11 +102,11 @@ void main() {
   }
 
   vec3 center = reconstructWorld(uv, centerDepth);
-  vec3 normal = reconstructNormal(uv, center);
+  vec3 normal = reconstructNormal(uv, centerDepth, center);
   vec2 fullTexel = vec2(1.0 / max(u_sizes.x, 1.0), 1.0 / max(u_sizes.y, 1.0));
   float radius = max(u_params.x, 1.0);
   float bias = max(u_params.y, 0.0);
-  float angle = hash12(pixel + center.xy) * 6.28318530718;
+  float angle = hash12(pixel) * 6.28318530718;
   mat2 rot = mat2(
     vec2(cos(angle), sin(angle)),
     vec2(-sin(angle), cos(angle))
@@ -174,12 +190,28 @@ vec3 reconstructWorld(vec2 uv, float depth) {
   return world.xyz / max(world.w, 1e-6);
 }
 
-vec3 reconstructNormal(vec2 uv, vec3 center) {
+vec3 reconstructNormal(vec2 uv, float centerDepth, vec3 center) {
   vec2 texel = vec2(1.0 / max(u_sizes.x, 1.0), 1.0 / max(u_sizes.y, 1.0));
-  vec3 px = reconstructWorld(uv + vec2(texel.x, 0.0), readDepthFromUv(uv + vec2(texel.x, 0.0)));
-  vec3 py = reconstructWorld(uv + vec2(0.0, texel.y), readDepthFromUv(uv + vec2(0.0, texel.y)));
-  vec3 dx = px - center;
-  vec3 dy = py - center;
+  vec2 uvLeft = clamp(uv - vec2(texel.x, 0.0), vec2(0.0), vec2(1.0));
+  vec2 uvRight = clamp(uv + vec2(texel.x, 0.0), vec2(0.0), vec2(1.0));
+  vec2 uvDown = clamp(uv - vec2(0.0, texel.y), vec2(0.0), vec2(1.0));
+  vec2 uvUp = clamp(uv + vec2(0.0, texel.y), vec2(0.0), vec2(1.0));
+  float depthLeft = readDepthFromUv(uvLeft);
+  float depthRight = readDepthFromUv(uvRight);
+  float depthDown = readDepthFromUv(uvDown);
+  float depthUp = readDepthFromUv(uvUp);
+  vec3 pLeft = reconstructWorld(uvLeft, depthLeft);
+  vec3 pRight = reconstructWorld(uvRight, depthRight);
+  vec3 pDown = reconstructWorld(uvDown, depthDown);
+  vec3 pUp = reconstructWorld(uvUp, depthUp);
+  vec3 dx = center - pLeft;
+  if (abs(depthRight - centerDepth) <= abs(centerDepth - depthLeft)) {
+    dx = pRight - center;
+  }
+  vec3 dy = center - pDown;
+  if (abs(depthUp - centerDepth) <= abs(centerDepth - depthDown)) {
+    dy = pUp - center;
+  }
   vec3 n = cross(dx, dy);
   float lenN = length(n);
   if (!(lenN > 1e-6)) {
@@ -215,7 +247,7 @@ void main() {
 
   vec3 center = reconstructWorld(uv, centerDepth);
   vec3 centerView = worldToView(center);
-  vec3 normal = reconstructNormal(uv, center);
+  vec3 normal = reconstructNormal(uv, centerDepth, center);
   vec2 fullTexel = vec2(1.0 / max(u_sizes.x, 1.0), 1.0 / max(u_sizes.y, 1.0));
   vec3 px = reconstructWorld(uv + vec2(fullTexel.x, 0.0), readDepthFromUv(uv + vec2(fullTexel.x, 0.0)));
   vec3 py = reconstructWorld(uv + vec2(0.0, fullTexel.y), readDepthFromUv(uv + vec2(0.0, fullTexel.y)));
@@ -223,7 +255,7 @@ void main() {
   float worldRadius = max(u_params.x, 1.0) * pixelWorld;
   float bias = max(u_params.y, 0.0);
 
-  float angle = hash12(pixel + center.xy) * 6.28318530718;
+  float angle = hash12(pixel) * 6.28318530718;
   vec3 randomVec = vec3(cos(angle), sin(angle), 0.0);
   vec3 tangent = randomVec - normal * dot(randomVec, normal);
   float tangentLength = length(tangent);

@@ -855,6 +855,7 @@ const CAMERA_CONTROL_DEFAULTS = Object.freeze({
   animationDurationMs: 280,
   orbit: false,
   orbitAngle: 0,
+  orbitAxis: Object.freeze([0, 1, 0]),
   orbitSpeed: 0.08,
   orbitDirection: 1,
   followTarget: false,
@@ -1104,6 +1105,12 @@ function normalizeCameraControlConfig(base = {}, patch = {}) {
       next.orbitAngle ?? CAMERA_CONTROL_DEFAULTS.orbitAngle,
     );
   }
+  if (Object.prototype.hasOwnProperty.call(patch, 'orbitAxis')) {
+    next.orbitAxis = normalizeDirectionInput(
+      patch.orbitAxis,
+      next.orbitAxis ?? CAMERA_CONTROL_DEFAULTS.orbitAxis,
+    );
+  }
   if (Object.prototype.hasOwnProperty.call(patch, 'orbitSpeed')) {
     next.orbitSpeed = normalizeNonNegativeNumber(patch.orbitSpeed, next.orbitSpeed ?? 0, 0, 10);
   }
@@ -1133,6 +1140,7 @@ function normalizeCameraControlConfig(base = {}, patch = {}) {
 function copyCameraControlConfig(config = {}) {
   return {
     ...config,
+    orbitAxis: normalizeDirectionInput(config.orbitAxis, CAMERA_CONTROL_DEFAULTS.orbitAxis),
     targetNodeIndices: Array.isArray(config.targetNodeIndices) ? [...config.targetNodeIndices] : null,
   };
 }
@@ -1546,7 +1554,7 @@ export class Helios extends EventTarget {
     },
     semanticZoomExponent: {
       type: 'number',
-      label: 'Semantic Zoom Exponent',
+      label: 'Semantic Zoom Exp.',
       description: 'Compensates node and edge sizes as camera zoom changes (0 = geometric zoom only)',
       defaultValue: 0,
       domain: { min: 0, max: 2 },
@@ -1588,7 +1596,7 @@ export class Helios extends EventTarget {
     },
     nodeBlendWithEdges: {
       type: 'boolean',
-      label: 'Blend Nodes With Edges',
+      label: 'Blend Nodes',
       description: 'Blend nodes using the edge transparency mode (weighted modes still use alpha; disables node depth testing)',
       defaultValue: false,
     },
@@ -1708,8 +1716,8 @@ export class Helios extends EventTarget {
       label: 'Strength',
       description: 'How strongly the AO pass darkens occluded pixels.',
       defaultValue: AMBIENT_OCCLUSION_STRENGTH_DEFAULT,
-      domain: { min: 0, max: 2 },
-      recommendedRange: { min: 0.2, max: 1.2 },
+      domain: { min: 0, max: 3 },
+      recommendedRange: { min: 0.2, max: 3.0 },
       step: 0.01,
     },
     ambientOcclusionRadius: {
@@ -1717,8 +1725,8 @@ export class Helios extends EventTarget {
       label: 'Radius',
       description: 'Screen-space AO sample radius in pixels.',
       defaultValue: AMBIENT_OCCLUSION_RADIUS_DEFAULT,
-      domain: { min: 1, max: 64 },
-      recommendedRange: { min: 4, max: 24 },
+      domain: { min: 1, max: 100 },
+      recommendedRange: { min: 4, max: 100 },
       step: 1,
     },
     ambientOcclusionBias: {
@@ -2496,9 +2504,10 @@ export class Helios extends EventTarget {
     let nextRotation = new Float32Array(source);
     const yawRadians = Number.isFinite(options.yawRadians) ? Number(options.yawRadians) : 0;
     const pitchRadians = Number.isFinite(options.pitchRadians) ? Number(options.pitchRadians) : 0;
+    const orbitAxis = normalizeDirectionInput(options.axis, CAMERA_CONTROL_DEFAULTS.orbitAxis);
 
     if (Math.abs(yawRadians) > 1e-12) {
-      const yaw = quatFromAxisAngle([0, 1, 0], yawRadians);
+      const yaw = quatFromAxisAngle(orbitAxis, yawRadians);
       const rotated = new Float32Array(4);
       quatMultiplyInto(rotated, yaw, nextRotation);
       nextRotation = rotated;
@@ -3291,6 +3300,7 @@ export class Helios extends EventTarget {
           rotation: this._composeOrbitRotation(finalPose.rotation, {
             yawRadians,
             pitchRadians,
+            axis: config.orbitAxis ?? CAMERA_CONTROL_DEFAULTS.orbitAxis,
           }),
         });
         wantsRender = true;

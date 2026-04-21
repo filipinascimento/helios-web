@@ -150,6 +150,7 @@ helios.cameraControls({
   autoFit: true,
   animation: true,
   orbit: false,
+  orbitAxis: [0, 1, 0],
   orbitAngle: 0,
 });
 helios.cameraTargetNodes([0, 1, 2]);

@@ -45,11 +45,11 @@ test('graph-layer accessors are chainable setters and return values as getters',
   assert.equal(calls.render, 4);
 
   assert.equal(helios.ambientOcclusionQuality(), 'medium');
-  const qualityResult = helios.ambientOcclusionQuality('high');
+  const qualityResult = helios.ambientOcclusionQuality('ultra');
   assert.equal(qualityResult, helios);
-  assert.equal(helios.ambientOcclusionQuality(), 'high');
+  assert.equal(helios.ambientOcclusionQuality(), 'ultra');
   helios.ambientOcclusionQuality('invalid');
-  assert.equal(helios.ambientOcclusionQuality(), 'high');
+  assert.equal(helios.ambientOcclusionQuality(), 'ultra');
   assert.equal(calls.render, 5);
 });
 
@@ -182,6 +182,16 @@ test('fast edge rendering UI binding is exposed as a boolean toggle', () => {
 test('edge width clamp UI binding defaults on', () => {
   assert.equal(Helios.UI_BINDINGS.edgeWidthClampToNodeDiameter.type, 'boolean');
   assert.equal(Helios.UI_BINDINGS.edgeWidthClampToNodeDiameter.defaultValue, true);
+});
+
+test('ambient occlusion UI bindings expose the intended defaults and slider ranges', () => {
+  assert.equal(Helios.UI_BINDINGS.ambientOcclusionStrength.defaultValue, 1.5);
+  assert.equal(Helios.UI_BINDINGS.ambientOcclusionStrength.domain.max, 3);
+  assert.deepEqual(Helios.UI_BINDINGS.ambientOcclusionStrength.recommendedRange, { min: 0.2, max: 3 });
+
+  assert.equal(Helios.UI_BINDINGS.ambientOcclusionRadius.defaultValue, 50);
+  assert.equal(Helios.UI_BINDINGS.ambientOcclusionRadius.domain.max, 100);
+  assert.deepEqual(Helios.UI_BINDINGS.ambientOcclusionRadius.recommendedRange, { min: 4, max: 100 });
 });
 
 test('adaptive edge quality is enabled by default and exposes configurable thresholds', () => {

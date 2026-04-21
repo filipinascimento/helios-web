@@ -79,7 +79,7 @@ Some common renderer/graph-layer “global” knobs are available directly on `H
 - Background/clear color: `helios.background('#0b1020')` (alias: `helios.clearColor(...)`)
 - Scene dimension: `helios.mode()` / `await helios.setMode('3d')`
 - Camera poses/transitions: `helios.cameraPose()` / `helios.setCameraPose(...)` / `await helios.transitionCamera(...)`
-- Camera automation: `helios.cameraControls({...})` / `helios.cameraTargetNodes([...])` / `helios.cameraFollowNodes([...])` / `helios.frameNetwork({ animate: true, resetOrientation: false })` including delegate-aware auto-fit, moving node-centroid follow, and 3D orbit angle control
+- Camera automation: `helios.cameraControls({...})` / `helios.cameraTargetNodes([...])` / `helios.cameraFollowNodes([...])` / `helios.frameNetwork({ animate: true, resetOrientation: false })` including delegate-aware auto-fit, moving node-centroid follow, and 3D orbit axis control
 - Narrow position readback: `await helios.snapshotNodePosition(id)`, `await helios.snapshotNodePositions(ids)`, and `await helios.snapshotNodeCentroid(ids)` for selection/camera work without full delegate snapshots
 - Clamp edge widths to endpoint node diameters after mapping/state styles: `helios.edgeWidthClampToNodeDiameter(true)` (default)
 - Blend nodes with edge transparency modes: `helios.nodeBlendWithEdges(true)`
@@ -88,7 +88,7 @@ Some common renderer/graph-layer “global” knobs are available directly on `H
 - Enable shader-specialized lighting: `helios.shadedEnabled(true)`, `helios.shadedNodes(true)`, `helios.shadedEdges(true)`
 - Tune shaded lighting: `helios.shadedLightDirection([x, y, z])`, `helios.shadedLightColor(...)`, `helios.shadedDiffuseStrength(...)`, `helios.shadedAmbientTopColor(...)`, `helios.shadedAmbientBottomColor(...)`, `helios.shadedAmbientStrength(...)`, `helios.shadedSpecularColor(...)`, `helios.shadedSpecularStrength(...)`, `helios.shadedShininess(...)`
 - Enable screen-space ambient occlusion: `helios.ambientOcclusionEnabled(true)`, `helios.ambientOcclusionNodes(true)`, `helios.ambientOcclusionEdges(true)`
-- Tune ambient occlusion: `helios.ambientOcclusionMode('fast'|'smooth')`, `helios.ambientOcclusionQuality('low'|'medium'|'high')`, `helios.ambientOcclusionStrength(...)`, `helios.ambientOcclusionRadius(...)`, `helios.ambientOcclusionBias(...)`
+- Tune ambient occlusion: `helios.ambientOcclusionMode('fast'|'smooth')`, `helios.ambientOcclusionQuality('low'|'medium'|'high'|'ultra')`, `helios.ambientOcclusionStrength(...)`, `helios.ambientOcclusionRadius(...)`, `helios.ambientOcclusionBias(...)`
 - Tune Fast SSAO response: `helios.ambientOcclusionIntensityScale(...)`, `helios.ambientOcclusionIntensityShift(...)` (WebGPU and WebGL)
 - Configure adaptive edge fallback: `helios.edgeAdaptiveQuality({...})` (enabled by default; switches after repeated slow HQ frames, and export still forces high-quality edges)
 

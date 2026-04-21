@@ -1160,6 +1160,126 @@ export const defaultStylesText = `
   cursor: default;
 }
 
+.helios-ui-light-direction {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  width: min(164px, 100%);
+  min-width: 0;
+}
+
+.helios-ui-light-direction__pad {
+  appearance: none;
+  width: 76px;
+  height: 76px;
+  padding: 0;
+  border: 1px solid var(--helios-ui-border);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 34% 28%, color-mix(in srgb, var(--helios-ui-fg) 18%, transparent), transparent 26%),
+    radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--helios-ui-accent) 18%, var(--helios-ui-bg-solid)) 0, color-mix(in srgb, var(--helios-ui-bg-solid) 86%, transparent) 62%, color-mix(in srgb, var(--helios-ui-fg) 8%, transparent) 100%);
+  color: inherit;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.helios-ui-light-direction__pad:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.helios-ui-light-direction__pad:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--helios-ui-accent) 22%, transparent);
+}
+
+.helios-ui-light-direction__sphere {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.helios-ui-light-direction__outline,
+.helios-ui-light-direction__latitude {
+  fill: none;
+  stroke: color-mix(in srgb, var(--helios-ui-fg) 28%, transparent);
+  stroke-width: 1.2;
+}
+
+.helios-ui-light-direction__latitude {
+  stroke: color-mix(in srgb, var(--helios-ui-fg) 16%, transparent);
+}
+
+.helios-ui-light-direction__ray {
+  stroke: color-mix(in srgb, var(--helios-ui-accent) 86%, var(--helios-ui-fg));
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: 4 4;
+}
+
+.helios-ui-light-direction--axis .helios-ui-light-direction__ray {
+  stroke-dasharray: none;
+}
+
+.helios-ui-light-direction__center {
+  fill: color-mix(in srgb, var(--helios-ui-fg) 78%, transparent);
+}
+
+.helios-ui-light-direction--axis .helios-ui-light-direction__center {
+  fill: color-mix(in srgb, var(--helios-ui-accent) 70%, var(--helios-ui-fg));
+}
+
+.helios-ui-light-direction__handle {
+  fill: color-mix(in srgb, var(--helios-ui-accent) 92%, var(--helios-ui-bg-solid));
+  stroke: color-mix(in srgb, var(--helios-ui-accent) 40%, var(--helios-ui-fg));
+  stroke-width: 1.5;
+}
+
+.helios-ui-light-direction__axis-arrow {
+  display: none;
+  fill: color-mix(in srgb, var(--helios-ui-accent) 92%, var(--helios-ui-bg-solid));
+  stroke: color-mix(in srgb, var(--helios-ui-accent) 40%, var(--helios-ui-fg));
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+}
+
+.helios-ui-light-direction--axis .helios-ui-light-direction__axis-arrow {
+  display: block;
+}
+
+.helios-ui-light-direction__handle-group--back {
+  display: none;
+}
+
+.helios-ui-light-direction--axis .helios-ui-light-direction__handle-group--back {
+  display: block;
+}
+
+.helios-ui-light-direction__handle-group[data-back="true"] .helios-ui-light-direction__handle,
+.helios-ui-light-direction__pad[data-back="true"] .helios-ui-light-direction__ray {
+  opacity: 0.62;
+}
+
+.helios-ui-light-direction--axis .helios-ui-light-direction__pad[data-back="true"] .helios-ui-light-direction__ray {
+  opacity: 1;
+}
+
+.helios-ui-light-direction__fields {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.helios-ui-light-direction__fields .helios-ui-number {
+  width: 68px;
+  min-width: 0;
+  padding: 2px 4px;
+  border-radius: 8px;
+  font-size: 11px;
+}
+
 .helios-ui-color-swatch {
   position: relative;
   display: inline-block;

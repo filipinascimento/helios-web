@@ -9,6 +9,7 @@ import { createFpsThrottle } from './controls/createFpsThrottle.js';
 import { createTooltipManager } from './controls/createTooltipManager.js';
 import { createToggleControl } from './controls/createToggleControl.js';
 import { createSelectControl } from './controls/createSelectControl.js';
+import { createLightDirectionControl } from './controls/LightDirectionControl.js';
 import { PanelStack } from './panels/PanelStack.js';
 import { TabbedPanel } from './panels/TabbedPanel.js';
 import { colormaps } from '../colors/colormaps.js';
@@ -1760,11 +1761,19 @@ export class HeliosUI {
         if (nodesRow) container.appendChild(nodesRow);
         const edgesRow = createToggleRow('shadedEdges');
         if (edgesRow) container.appendChild(edgesRow);
-        container.appendChild(createRows([
-          'shadedLightDirectionX',
-          'shadedLightDirectionY',
-          'shadedLightDirectionZ',
-        ]));
+        const lightDirectionAttribute = this.bindHeliosAccessor('shadedLightDirection', {
+          label: 'Light Direction',
+          defaultValue: [0.577350269, 0.577350269, 0.577350269],
+        });
+        const lightDirectionControl = createLightDirectionControl(lightDirectionAttribute, {
+          ariaLabel: 'Shaded light direction',
+        });
+        container.appendChild(createAlignedRow({
+          title: 'Light Direction',
+          hint: 'Drag the end marker to aim shaded lighting; edit X/Y/Z directly for precise values.',
+          controls: lightDirectionControl.element,
+        }).row);
+        this._controlCleanups.add(() => lightDirectionControl.destroy());
         container.appendChild(createAlignedRow({
           title: 'Light Color',
           hint: 'Diffuse light tint used by shaded nodes and edges.',

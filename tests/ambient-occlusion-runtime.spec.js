@@ -156,11 +156,17 @@ test('ambient occlusion runtime is stable in WebGPU fixture @webgpu', async ({ p
     return {
       mode: helios?.ambientOcclusionMode?.() ?? null,
       aoPipelineKeys: ao?.aoPipelines ? Array.from(ao.aoPipelines.keys()) : [],
+      blurDirectionBuffersDistinct: Boolean(
+        ao?.blurHorizontalDirectionBuffer
+          && ao?.blurVerticalDirectionBuffer
+          && ao.blurHorizontalDirectionBuffer !== ao.blurVerticalDirectionBuffer,
+      ),
     };
   });
   expect(fastRuntime.mode).toBe('fast');
   expect(fastRuntime.aoPipelineKeys).toContain('smooth|medium');
   expect(fastRuntime.aoPipelineKeys).toContain('fast|medium');
+  expect(fastRuntime.blurDirectionBuffersDistinct).toBe(true);
 
   const forbidden = browserIssues.filter(hasForbiddenAoRuntimeError);
   if (browserIssues.length) {

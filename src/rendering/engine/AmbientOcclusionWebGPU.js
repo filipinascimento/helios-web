@@ -60,12 +60,28 @@ fn reconstructWorld(uv : vec2<f32>, depth : f32) -> vec3<f32> {
   return world.xyz / max(world.w, 1e-6);
 }
 
-fn reconstructNormal(uv : vec2<f32>, center : vec3<f32>) -> vec3<f32> {
+fn reconstructNormal(uv : vec2<f32>, centerDepth : f32, center : vec3<f32>) -> vec3<f32> {
   let texel = vec2<f32>(1.0 / settings.sizes.x, 1.0 / settings.sizes.y);
-  let px = reconstructWorld(uv + vec2<f32>(texel.x, 0.0), readDepthFromUv(uv + vec2<f32>(texel.x, 0.0)));
-  let py = reconstructWorld(uv + vec2<f32>(0.0, texel.y), readDepthFromUv(uv + vec2<f32>(0.0, texel.y)));
-  let dx = px - center;
-  let dy = py - center;
+  let uvLeft = clamp(uv - vec2<f32>(texel.x, 0.0), vec2<f32>(0.0), vec2<f32>(1.0));
+  let uvRight = clamp(uv + vec2<f32>(texel.x, 0.0), vec2<f32>(0.0), vec2<f32>(1.0));
+  let uvDown = clamp(uv - vec2<f32>(0.0, texel.y), vec2<f32>(0.0), vec2<f32>(1.0));
+  let uvUp = clamp(uv + vec2<f32>(0.0, texel.y), vec2<f32>(0.0), vec2<f32>(1.0));
+  let depthLeft = readDepthFromUv(uvLeft);
+  let depthRight = readDepthFromUv(uvRight);
+  let depthDown = readDepthFromUv(uvDown);
+  let depthUp = readDepthFromUv(uvUp);
+  let pLeft = reconstructWorld(uvLeft, depthLeft);
+  let pRight = reconstructWorld(uvRight, depthRight);
+  let pDown = reconstructWorld(uvDown, depthDown);
+  let pUp = reconstructWorld(uvUp, depthUp);
+  var dx = center - pLeft;
+  if (abs(depthRight - centerDepth) <= abs(centerDepth - depthLeft)) {
+    dx = pRight - center;
+  }
+  var dy = center - pDown;
+  if (abs(depthUp - centerDepth) <= abs(centerDepth - depthDown)) {
+    dy = pUp - center;
+  }
   var n = cross(dx, dy);
   let lenN = length(n);
   if (!(lenN > 1e-6)) {
@@ -94,11 +110,11 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
   }
 
   let center = reconstructWorld(uv, centerDepth);
-  let normal = reconstructNormal(uv, center);
+  let normal = reconstructNormal(uv, centerDepth, center);
   let fullTexel = vec2<f32>(1.0 / settings.sizes.x, 1.0 / settings.sizes.y);
   let radius = max(settings.params.x, 1.0);
   let bias = max(settings.params.y, 0.0);
-  let angle = hash12(pixel + center.xy) * 6.28318530718;
+  let angle = hash12(pixel) * 6.28318530718;
   let rot = mat2x2<f32>(
     vec2<f32>(cos(angle), sin(angle)),
     vec2<f32>(-sin(angle), cos(angle))
@@ -182,12 +198,28 @@ fn reconstructWorld(uv : vec2<f32>, depth : f32) -> vec3<f32> {
   return world.xyz / max(world.w, 1e-6);
 }
 
-fn reconstructNormal(uv : vec2<f32>, center : vec3<f32>) -> vec3<f32> {
+fn reconstructNormal(uv : vec2<f32>, centerDepth : f32, center : vec3<f32>) -> vec3<f32> {
   let texel = vec2<f32>(1.0 / settings.sizes.x, 1.0 / settings.sizes.y);
-  let px = reconstructWorld(uv + vec2<f32>(texel.x, 0.0), readDepthFromUv(uv + vec2<f32>(texel.x, 0.0)));
-  let py = reconstructWorld(uv + vec2<f32>(0.0, texel.y), readDepthFromUv(uv + vec2<f32>(0.0, texel.y)));
-  let dx = px - center;
-  let dy = py - center;
+  let uvLeft = clamp(uv - vec2<f32>(texel.x, 0.0), vec2<f32>(0.0), vec2<f32>(1.0));
+  let uvRight = clamp(uv + vec2<f32>(texel.x, 0.0), vec2<f32>(0.0), vec2<f32>(1.0));
+  let uvDown = clamp(uv - vec2<f32>(0.0, texel.y), vec2<f32>(0.0), vec2<f32>(1.0));
+  let uvUp = clamp(uv + vec2<f32>(0.0, texel.y), vec2<f32>(0.0), vec2<f32>(1.0));
+  let depthLeft = readDepthFromUv(uvLeft);
+  let depthRight = readDepthFromUv(uvRight);
+  let depthDown = readDepthFromUv(uvDown);
+  let depthUp = readDepthFromUv(uvUp);
+  let pLeft = reconstructWorld(uvLeft, depthLeft);
+  let pRight = reconstructWorld(uvRight, depthRight);
+  let pDown = reconstructWorld(uvDown, depthDown);
+  let pUp = reconstructWorld(uvUp, depthUp);
+  var dx = center - pLeft;
+  if (abs(depthRight - centerDepth) <= abs(centerDepth - depthLeft)) {
+    dx = pRight - center;
+  }
+  var dy = center - pDown;
+  if (abs(depthUp - centerDepth) <= abs(centerDepth - depthDown)) {
+    dy = pUp - center;
+  }
   var n = cross(dx, dy);
   let lenN = length(n);
   if (!(lenN > 1e-6)) {
@@ -228,7 +260,7 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
 
   let center = reconstructWorld(uv, centerDepth);
   let centerView = worldToView(center);
-  let normal = reconstructNormal(uv, center);
+  let normal = reconstructNormal(uv, centerDepth, center);
   let fullTexel = vec2<f32>(1.0 / settings.sizes.x, 1.0 / settings.sizes.y);
   let px = reconstructWorld(uv + vec2<f32>(fullTexel.x, 0.0), readDepthFromUv(uv + vec2<f32>(fullTexel.x, 0.0)));
   let py = reconstructWorld(uv + vec2<f32>(0.0, fullTexel.y), readDepthFromUv(uv + vec2<f32>(0.0, fullTexel.y)));
@@ -236,7 +268,7 @@ fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
   let worldRadius = max(settings.params.x, 1.0) * pixelWorld;
   let bias = max(settings.params.y, 0.0);
 
-  let angle = hash12(pixel + center.xy) * 6.28318530718;
+  let angle = hash12(pixel) * 6.28318530718;
   let randomVec = vec3<f32>(cos(angle), sin(angle), 0.0);
   var tangent = randomVec - normal * dot(randomVec, normal);
   let tangentLength = length(tangent);
@@ -393,8 +425,8 @@ export class AmbientOcclusionWebGPU {
     this.sampler = null;
     this.settingsBuffer = null;
     this.settingsArray = new Float32Array(64);
-    this.blurDirectionBuffer = null;
-    this.blurDirectionArray = new Float32Array(4);
+    this.blurHorizontalDirectionBuffer = null;
+    this.blurVerticalDirectionBuffer = null;
     this.compositeSettingsBuffer = null;
     this.compositeSettingsArray = new Float32Array(4);
     this.prepassColor = null;
@@ -424,7 +456,8 @@ export class AmbientOcclusionWebGPU {
     this.aoPing?.destroy?.();
     this.aoPong?.destroy?.();
     this.settingsBuffer?.destroy?.();
-    this.blurDirectionBuffer?.destroy?.();
+    this.blurHorizontalDirectionBuffer?.destroy?.();
+    this.blurVerticalDirectionBuffer?.destroy?.();
     this.compositeSettingsBuffer?.destroy?.();
   }
 
@@ -434,10 +467,16 @@ export class AmbientOcclusionWebGPU {
       size: this.settingsArray.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-    this.blurDirectionBuffer = this.gpu.createBuffer({
-      size: this.blurDirectionArray.byteLength,
+    this.blurHorizontalDirectionBuffer = this.gpu.createBuffer({
+      size: 16,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
+    this.blurVerticalDirectionBuffer = this.gpu.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.gpu.queue.writeBuffer(this.blurHorizontalDirectionBuffer, 0, new Float32Array([1, 0, 0, 0]));
+    this.gpu.queue.writeBuffer(this.blurVerticalDirectionBuffer, 0, new Float32Array([0, 1, 0, 0]));
     this.compositeSettingsBuffer = this.gpu.createBuffer({
       size: this.compositeSettingsArray.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -609,7 +648,16 @@ export class AmbientOcclusionWebGPU {
   }
 
   ensureBindGroups() {
-    if (!this.gpu || !this.settingsBuffer || !this.prepassDepth || !this.aoRaw || !this.aoPing || !this.aoPong) {
+    if (
+      !this.gpu
+      || !this.settingsBuffer
+      || !this.blurHorizontalDirectionBuffer
+      || !this.blurVerticalDirectionBuffer
+      || !this.prepassDepth
+      || !this.aoRaw
+      || !this.aoPing
+      || !this.aoPong
+    ) {
       return false;
     }
     this.aoBindGroup = this.gpu.createBindGroup({
@@ -627,7 +675,7 @@ export class AmbientOcclusionWebGPU {
         { binding: 1, resource: this.prepassDepth.createView() },
         { binding: 2, resource: this.aoRaw.createView() },
         { binding: 3, resource: this.aoPing.createView() },
-        { binding: 4, resource: { buffer: this.blurDirectionBuffer } },
+        { binding: 4, resource: { buffer: this.blurHorizontalDirectionBuffer } },
       ],
     });
     this.blurVerticalBindGroup = this.gpu.createBindGroup({
@@ -637,7 +685,7 @@ export class AmbientOcclusionWebGPU {
         { binding: 1, resource: this.prepassDepth.createView() },
         { binding: 2, resource: this.aoPing.createView() },
         { binding: 3, resource: this.aoPong.createView() },
-        { binding: 4, resource: { buffer: this.blurDirectionBuffer } },
+        { binding: 4, resource: { buffer: this.blurVerticalDirectionBuffer } },
       ],
     });
     this.compositeBindGroup = this.gpu.createBindGroup({
@@ -668,11 +716,6 @@ export class AmbientOcclusionWebGPU {
       options.intensityScale,
       options.intensityShift,
     )) return false;
-    this.blurDirectionArray[0] = 1;
-    this.blurDirectionArray[1] = 0;
-    this.blurDirectionArray[2] = 0;
-    this.blurDirectionArray[3] = 0;
-    this.gpu.queue.writeBuffer(this.blurDirectionBuffer, 0, this.blurDirectionArray);
     this.compositeSettingsArray[0] = Math.max(0, Number(options.strength) || 0);
     this.gpu.queue.writeBuffer(this.compositeSettingsBuffer, 0, this.compositeSettingsArray);
     if (!this.ensureBindGroups()) return false;
@@ -711,18 +754,12 @@ export class AmbientOcclusionWebGPU {
     aoPass.dispatchWorkgroups(Math.ceil(this.aoSize.width / 8), Math.ceil(this.aoSize.height / 8), 1);
     aoPass.end();
 
-    this.blurDirectionArray[0] = 1;
-    this.blurDirectionArray[1] = 0;
-    this.gpu.queue.writeBuffer(this.blurDirectionBuffer, 0, this.blurDirectionArray);
     const blurHorizontal = commandEncoder.beginComputePass();
     blurHorizontal.setPipeline(blurPipeline);
     blurHorizontal.setBindGroup(0, this.blurHorizontalBindGroup);
     blurHorizontal.dispatchWorkgroups(Math.ceil(this.aoSize.width / 8), Math.ceil(this.aoSize.height / 8), 1);
     blurHorizontal.end();
 
-    this.blurDirectionArray[0] = 0;
-    this.blurDirectionArray[1] = 1;
-    this.gpu.queue.writeBuffer(this.blurDirectionBuffer, 0, this.blurDirectionArray);
     const blurVertical = commandEncoder.beginComputePass();
     blurVertical.setPipeline(blurPipeline);
     blurVertical.setBindGroup(0, this.blurVerticalBindGroup);

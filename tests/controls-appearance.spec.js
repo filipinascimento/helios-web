@@ -190,11 +190,14 @@ test.describe('scene panel: tabs and appearance controls', () => {
 
     const shadedLightDirectionBefore = await page.evaluate(() => window.__helios.shadedLightDirection());
 
-    const shadedLightXRow = shadedSubpanel
-      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Light X"))')
-      .first();
-    const shadedLightX = shadedLightXRow.locator('input[type="number"]').first();
-    await expect(shadedLightXRow).toBeVisible();
+    const shadedLightDirectionPad = shadedSubpanel.locator('[data-testid="controls-shaded-light-direction"]').first();
+    const shadedLightX = shadedSubpanel.locator('[data-testid="controls-shaded-light-direction-x"]').first();
+    const shadedLightY = shadedSubpanel.locator('[data-testid="controls-shaded-light-direction-y"]').first();
+    const shadedLightZ = shadedSubpanel.locator('[data-testid="controls-shaded-light-direction-z"]').first();
+    await expect(shadedLightDirectionPad).toBeVisible();
+    await expect(shadedLightX).toBeVisible();
+    await expect(shadedLightY).toBeVisible();
+    await expect(shadedLightZ).toBeVisible();
     await shadedLightX.fill('0.25');
     await shadedLightX.dispatchEvent('change');
 
@@ -206,6 +209,20 @@ test.describe('scene panel: tabs and appearance controls', () => {
       shadedLightDirection[2],
     );
     expect(shadedLightDirectionLength).toBeCloseTo(1, 3);
+
+    const directionBox = await shadedLightDirectionPad.boundingBox();
+    expect(directionBox).not.toBeNull();
+    await page.mouse.move(directionBox.x + directionBox.width / 2, directionBox.y + directionBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(directionBox.x + directionBox.width * 0.2, directionBox.y + directionBox.height * 0.2, { steps: 4 });
+    await page.mouse.up();
+    const draggedLightDirection = await page.evaluate(() => window.__helios.shadedLightDirection());
+    expect(draggedLightDirection[0]).toBeLessThan(-0.2);
+    expect(draggedLightDirection[1]).toBeGreaterThan(0.2);
+    expect(Math.hypot(...draggedLightDirection)).toBeCloseTo(1, 3);
+    await expect.poll(async () => Number(await shadedLightX.inputValue())).toBeCloseTo(draggedLightDirection[0], 2);
+    await expect.poll(async () => Number(await shadedLightY.inputValue())).toBeCloseTo(draggedLightDirection[1], 2);
+    await expect.poll(async () => Number(await shadedLightZ.inputValue())).toBeCloseTo(draggedLightDirection[2], 2);
 
     const shadedDiffuse = shadedSubpanel.locator(
       'xpath=.//*[contains(@class,"helios-ui-row")][.//*[contains(@class,"helios-ui-label__title") and normalize-space()="Diffuse"]]//input[@type="number"]',
@@ -445,7 +462,7 @@ test.describe('scene panel: tabs and appearance controls', () => {
     const advancedTab = scenePanel.getByRole('button', { name: 'Advanced' }).first();
     await advancedTab.click();
 
-    const nodeBlendToggle = scenePanel.locator('[aria-label="Blend Nodes With Edges"][role="switch"], input[type="checkbox"][aria-label="Blend Nodes With Edges"]');
+    const nodeBlendToggle = scenePanel.locator('[aria-label="Blend Nodes"][role="switch"], input[type="checkbox"][aria-label="Blend Nodes"]');
     await enableToggle(nodeBlendToggle);
     const nodeBlendValue = await page.evaluate(() => window.__helios.renderer?.graphLayer?.nodeBlendWithEdges ?? null);
     expect(nodeBlendValue).toBe(true);
@@ -462,7 +479,7 @@ test.describe('scene panel: tabs and appearance controls', () => {
     expect(edgeWidthClampValue).toBe(false);
 
     const semanticZoomRow = scenePanel
-      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Semantic Zoom Exponent"))')
+      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Semantic Zoom Exp."))')
       .first();
     await expect(semanticZoomRow).toBeVisible();
     const semanticZoomInput = semanticZoomRow.locator('input[type="number"]').first();
@@ -576,6 +593,118 @@ test.describe('scene panel: tabs and appearance controls', () => {
     expect(afterPixels).toBeGreaterThan(500);
   });
 
+  test('camera orbit uses axis selector control', async ({ page }) => {
+    await page.goto('/?renderer=webgl&layout=none&mode=3d&nodes=400');
+    await waitForHelios(page);
+
+    const cameraPanel = panelByTitle(page, 'Camera');
+    await expect(cameraPanel).toBeVisible();
+
+    const orbitHeader = cameraPanel.getByRole('button', { name: 'Orbit' }).first();
+    await expect(orbitHeader).toBeVisible();
+    if ((await orbitHeader.getAttribute('aria-expanded')) === 'false') {
+      await orbitHeader.click();
+    }
+
+    await expect(cameraPanel.locator('.helios-ui-label__title', { hasText: 'Orbit Tilt' })).toHaveCount(0);
+    const orbitAxisPad = cameraPanel.locator('[data-testid="controls-camera-orbit-axis"]').first();
+    const orbitAxisX = cameraPanel.locator('[data-testid="controls-camera-orbit-axis-x"]').first();
+    const orbitAxisY = cameraPanel.locator('[data-testid="controls-camera-orbit-axis-y"]').first();
+    const orbitAxisZ = cameraPanel.locator('[data-testid="controls-camera-orbit-axis-z"]').first();
+    await expect(orbitAxisPad).toBeVisible();
+    await expect(orbitAxisX).toBeVisible();
+    await expect(orbitAxisY).toBeVisible();
+    await expect(orbitAxisZ).toBeVisible();
+
+    await orbitAxisX.fill('0');
+    await orbitAxisX.dispatchEvent('change');
+    await orbitAxisY.fill('1');
+    await orbitAxisY.dispatchEvent('change');
+    await orbitAxisZ.fill('0');
+    await orbitAxisZ.dispatchEvent('change');
+
+    const verticalAxisAlignment = await page.evaluate(() => {
+      const camera = window.__helios.renderer.camera;
+      camera.updateBasis();
+      const axis = window.__helios.cameraControls().orbitAxis;
+      const up = Array.from(camera.up);
+      return axis[0] * up[0] + axis[1] * up[1] + axis[2] * up[2];
+    });
+    expect(verticalAxisAlignment).toBeGreaterThan(0.98);
+
+    const orbitToggle = cameraPanel.locator('[role="switch"][aria-label="Orbit target"]').first();
+    await page.evaluate(() => {
+      window.__helios.cameraControls({ orbitSpeed: 1 });
+    });
+    const startRight = await page.evaluate(() => {
+      const camera = window.__helios.renderer.camera;
+      camera.updateBasis();
+      return Array.from(camera.right);
+    });
+    await orbitToggle.click();
+    await expect(orbitToggle).toHaveAttribute('aria-checked', 'true');
+    await page.waitForFunction((initialRight) => {
+      const camera = window.__helios.renderer.camera;
+      camera.updateBasis();
+      const right = Array.from(camera.right);
+      const dot = right[0] * initialRight[0] + right[1] * initialRight[1] + right[2] * initialRight[2];
+      return Math.abs(dot) < 0.35;
+    }, startRight);
+    await page.evaluate(() => {
+      window.__helios.cameraControls({ orbitSpeed: 0 });
+    });
+    await page.waitForTimeout(80);
+    await expect.poll(async () => Number(await orbitAxisY.inputValue())).toBeCloseTo(1, 2);
+
+    await orbitAxisX.fill('1');
+    await orbitAxisX.dispatchEvent('change');
+    await orbitAxisY.fill('0');
+    await orbitAxisY.dispatchEvent('change');
+    await orbitAxisZ.fill('0');
+    await orbitAxisZ.dispatchEvent('change');
+
+    const activeOrbitAxisAlignment = await page.evaluate(() => {
+      const camera = window.__helios.renderer.camera;
+      camera.updateBasis();
+      const axis = window.__helios.cameraControls().orbitAxis;
+      const right = Array.from(camera.right);
+      return axis[0] * right[0] + axis[1] * right[1] + axis[2] * right[2];
+    });
+    expect(activeOrbitAxisAlignment).toBeGreaterThan(0.98);
+
+    await orbitAxisX.fill('0');
+    await orbitAxisX.dispatchEvent('change');
+    await orbitAxisY.fill('1');
+    await orbitAxisY.dispatchEvent('change');
+    await orbitAxisZ.fill('0');
+    await orbitAxisZ.dispatchEvent('change');
+
+    await orbitToggle.click();
+    await expect(orbitToggle).toHaveAttribute('aria-checked', 'false');
+    const axisBox = await orbitAxisPad.boundingBox();
+    expect(axisBox).not.toBeNull();
+    await page.mouse.move(axisBox.x + axisBox.width * 0.5, axisBox.y + axisBox.height * 0.9);
+    await page.mouse.down();
+    await page.mouse.move(axisBox.x + axisBox.width * 0.9, axisBox.y + axisBox.height * 0.5, { steps: 4 });
+    await page.mouse.up();
+
+    const draggedViewAxis = await page.evaluate(() => {
+      const camera = window.__helios.renderer.camera;
+      camera.updateBasis();
+      const axis = window.__helios.cameraControls().orbitAxis;
+      const right = Array.from(camera.right);
+      const up = Array.from(camera.up);
+      const forward = Array.from(camera.forward);
+      return [
+        axis[0] * right[0] + axis[1] * right[1] + axis[2] * right[2],
+        axis[0] * up[0] + axis[1] * up[1] + axis[2] * up[2],
+        -(axis[0] * forward[0] + axis[1] * forward[1] + axis[2] * forward[2]),
+      ];
+    });
+    expect(draggedViewAxis[0]).toBeLessThan(-0.5);
+    expect(draggedViewAxis[2]).toBeLessThan(-0.1);
+  });
+
   test('dimension toggle keeps layout=none scenes visible when going from 3D to 2D', async ({ page }) => {
     await page.goto('/?renderer=webgl&layout=none&mode=3d&nodes=400');
     await waitForHelios(page);
@@ -589,7 +718,7 @@ test.describe('scene panel: tabs and appearance controls', () => {
 
     await dimensionToggle.click();
     await expect(dimensionToggle).toHaveAttribute('aria-checked', 'false');
-    await page.waitForTimeout(450);
+    await page.waitForFunction(() => window.__helios?.renderer?.camera?.mode === '2d');
 
     const cameraState = await page.evaluate(() => {
       const camera = window.__helios?.renderer?.camera;

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { AMBIENT_OCCLUSION_QUALITY_PRESETS } from '../src/rendering/engine/AmbientOcclusionQuality.js';
 import {
   AMBIENT_OCCLUSION_BIAS_DEFAULT,
   AMBIENT_OCCLUSION_INTENSITY_SCALE_DEFAULT,
@@ -14,6 +15,8 @@ import {
 test('graph layer ambient occlusion defaults mirror UI expectations', () => {
   const layer = new GraphLayer();
   assert.equal(AMBIENT_OCCLUSION_MODE_DEFAULT, 'fast');
+  assert.equal(AMBIENT_OCCLUSION_STRENGTH_DEFAULT, 1.5);
+  assert.equal(AMBIENT_OCCLUSION_RADIUS_DEFAULT, 50);
   assert.equal(layer.ambientOcclusionEnabled, false);
   assert.equal(layer.ambientOcclusionNodes, true);
   assert.equal(layer.ambientOcclusionEdges, false);
@@ -44,8 +47,21 @@ test('graph layer ambient occlusion quality normalizes invalid values', () => {
   const low = new GraphLayer({ ambientOcclusionQuality: 'LOW' });
   assert.equal(low.ambientOcclusionQuality, 'low');
 
+  const ultra = new GraphLayer({ ambientOcclusionQuality: 'ULTRA' });
+  assert.equal(ultra.ambientOcclusionQuality, 'ultra');
+
   const fallback = new GraphLayer({ ambientOcclusionQuality: 'cinematic' });
   assert.equal(fallback.ambientOcclusionQuality, AMBIENT_OCCLUSION_QUALITY_DEFAULT);
+});
+
+test('ambient occlusion quality presets reserve full resolution for fidelity tiers', () => {
+  assert.equal(AMBIENT_OCCLUSION_QUALITY_PRESETS.low.resolutionScale, 0.5);
+  assert.equal(AMBIENT_OCCLUSION_QUALITY_PRESETS.medium.resolutionScale, 1.0);
+  assert.equal(AMBIENT_OCCLUSION_QUALITY_PRESETS.ultra.resolutionScale, 1.0);
+  assert.ok(
+    AMBIENT_OCCLUSION_QUALITY_PRESETS.ultra.altSampleCount
+      > AMBIENT_OCCLUSION_QUALITY_PRESETS.high.altSampleCount,
+  );
 });
 
 test('graph layer ambient occlusion mode normalizes invalid values', () => {
