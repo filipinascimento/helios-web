@@ -27,6 +27,16 @@ test.describe('filter panel', () => {
     await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=900');
     await waitForHelios(page);
 
+    await page.evaluate(() => {
+      window.__filterBehaviorCalls = [];
+      const behavior = window.__helios?.behavior?.filters;
+      const original = behavior?.replaceRules?.bind(behavior);
+      behavior.replaceRules = function replaceRulesSpy(payload) {
+        window.__filterBehaviorCalls.push(JSON.parse(JSON.stringify(payload)));
+        return original(payload);
+      };
+    });
+
     const filterPanel = panelByTitle(page, 'Filter');
     await expect(filterPanel).toBeVisible();
 
@@ -51,6 +61,7 @@ test.describe('filter panel', () => {
     expect(filterAfterNode.enabled).toBe(true);
     expect(filterAfterNode.scope).toBe('render');
     expect(filterAfterNode.nodeCount).toBeLessThan(filterAfterNode.baseNodeCount);
+    await expect.poll(async () => page.evaluate(() => window.__filterBehaviorCalls.at(-1)?.nodeRules?.length ?? 0)).toBeGreaterThan(0);
 
     const layoutCheckbox = filterPanel.locator('[data-testid="controls-filter-layout"]').first();
     await enableToggle(layoutCheckbox);

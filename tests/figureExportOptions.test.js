@@ -22,6 +22,7 @@ test('resolveFigureExportOptions derives preset and raster sizes', () => {
     preset: '4k',
     supersampling: 2,
     includeLabels: true,
+    includeInterface: true,
     legendScale: 1.25,
     transparentBackground: true,
     alphaMode: 'premultiplied',
@@ -37,6 +38,7 @@ test('resolveFigureExportOptions derives preset and raster sizes', () => {
   assert.equal(resolved.bitmapHeight, 4320);
   assert.equal(resolved.includeLabels, true);
   assert.equal(resolved.includeLegends, true);
+  assert.equal(resolved.includeInterface, true);
   assert.equal(resolved.legendScale, 1.25);
   assert.equal(resolved.transparentBackground, true);
   assert.equal(resolved.alphaMode, 'premultiplied');
@@ -181,6 +183,7 @@ test('resolveFigurePreviewThumbnailOptions preserves export aspect ratio without
     height: 2160,
     includeLabels: true,
     includeLegends: false,
+    includeInterface: true,
     legendScale: 1.5,
     transparentBackground: true,
     alphaMode: 'premultiplied',
@@ -196,6 +199,7 @@ test('resolveFigurePreviewThumbnailOptions preserves export aspect ratio without
   assert.equal(wide.preset, 'custom');
   assert.equal(wide.includeLabels, true);
   assert.equal(wide.includeLegends, false);
+  assert.equal(wide.includeInterface, true);
   assert.equal(wide.legendScale, 1.5);
   assert.equal(wide.transparentBackground, true);
   assert.equal(wide.alphaMode, 'premultiplied');

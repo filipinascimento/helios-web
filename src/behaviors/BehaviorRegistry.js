@@ -25,7 +25,7 @@ export class BehaviorRegistry {
     if (!instance || typeof instance !== 'object') {
       throw new Error(`Behavior factory for "${key}" did not return an instance`);
     }
-    if (!instance.id) instance.id = key;
+    instance.id = key;
     return instance;
   }
 }

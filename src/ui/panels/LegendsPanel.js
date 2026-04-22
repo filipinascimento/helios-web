@@ -32,7 +32,7 @@ export class LegendsPanel {
     const helios = this.ui.helios ?? null;
     const content = document.createElement('div');
     this.ui._lastLegendsPanel = this;
-    const legendsBehavior = helios?.behaviors?.get?.('legends') ?? helios?.behaviors?.use?.('legends');
+    const legendsBehavior = helios?.behavior?.legends ?? helios?.useBehavior?.('legends');
     this.legendsBehavior = legendsBehavior ?? null;
     this.state = legendsBehavior?.state ?? null;
     if (!helios || !legendsBehavior || typeof legendsBehavior.legends !== 'function') {

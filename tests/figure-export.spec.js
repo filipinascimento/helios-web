@@ -49,9 +49,58 @@ test.describe('figure export', () => {
     await dataPanel.locator('button.helios-ui-tab', { hasText: 'Figure' }).click();
     await expect(dataPanel.locator('button', { hasText: 'Export' })).toBeVisible();
     await expect(dataPanel.locator('.helios-ui-row', { hasText: 'Supersampling' })).toBeVisible();
+    await expect(dataPanel.locator('.helios-ui-row', { hasText: 'Interface' })).toBeVisible();
     await expect(dataPanel.locator('.helios-ui-row', { hasText: 'Alpha' })).toBeVisible();
     await expect(dataPanel.locator('.helios-ui-row', { hasText: 'Alpha' }).locator('select.helios-ui-select')).toBeVisible();
     await expect(dataPanel.locator('.helios-ui-row', { hasText: 'Frame' })).toBeVisible();
+  });
+
+  test('figure controls route config and export actions through ExporterBehavior', async ({ page }) => {
+    await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=64');
+    await page.waitForFunction(() =>
+      Boolean(window.__helios && window.__helios.ready && window.__HELIOS_DIAGNOSTICS__?.ready === true),
+    );
+
+    await page.evaluate(() => {
+      window.__exporterUpdates = [];
+      window.__exporterBlobCalls = [];
+      const behavior = window.__helios?.behavior?.exporter;
+      const originalUpdate = behavior.update.bind(behavior);
+      const originalExportBlob = behavior.exportBlob.bind(behavior);
+      behavior.update = function updateSpy(options) {
+        window.__exporterUpdates.push(JSON.parse(JSON.stringify(options)));
+        return originalUpdate(options);
+      };
+      behavior.exportBlob = async function exportBlobSpy(options) {
+        window.__exporterBlobCalls.push(JSON.parse(JSON.stringify(options ?? {})));
+        return await originalExportBlob(options);
+      };
+    });
+
+    const dataPanel = page.locator('helios-panel[heading="Data"]').first();
+    await dataPanel.locator('button.helios-ui-tab', { hasText: 'Figure' }).click();
+
+    await dataPanel.locator('.helios-ui-row', { hasText: 'Format' }).locator('select').selectOption('svg');
+    await dataPanel.locator('.helios-ui-row', { hasText: 'Interface' }).locator('[role="switch"]').click();
+    await dataPanel.locator('.helios-ui-row', { hasText: 'Labels' }).locator('[role="switch"]').click();
+
+    await expect.poll(async () => page.evaluate(() => ({
+      format: window.__helios?.behavior?.exporter?.format?.(),
+      includeInterface: window.__helios?.behavior?.exporter?.includeInterface?.(),
+      includeLabels: window.__helios?.behavior?.exporter?.includeLabels?.(),
+    }))).toEqual({
+      format: 'svg',
+      includeInterface: true,
+      includeLabels: true,
+    });
+
+    await dataPanel.locator('button', { hasText: 'Export' }).click();
+
+    await expect.poll(async () => page.evaluate(() => window.__exporterBlobCalls.length)).toBe(1);
+    await expect.poll(async () => page.evaluate(() => window.__exporterUpdates.length)).toBeGreaterThan(0);
+    await expect.poll(async () => page.evaluate(() => window.__exporterUpdates.some((entry) =>
+      entry?.format === 'svg' || entry?.includeInterface === true || entry?.includeLabels === true,
+    ))).toBe(true);
   });
 
   test('figure frame preview matches the chosen export aspect ratio', async ({ page }) => {

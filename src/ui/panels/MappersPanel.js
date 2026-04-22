@@ -322,6 +322,7 @@ export class MappersPanel {
   create() {
     const ui = this.ui;
     const helios = this.helios;
+    const mappersBehavior = helios?.behavior?.mappers ?? helios?.useBehavior?.('mappers');
     const net = () => helios?.network ?? null;
     const options = this.options ?? {};
     const showDistributions = options.showDistributions !== false;
@@ -1040,6 +1041,9 @@ export class MappersPanel {
     };
 
     const resolveLiveConfig = (mode, channel) => {
+      if (mappersBehavior?.getChannelConfig) {
+        return mappersBehavior.getChannelConfig(mode, channel);
+      }
       const collection = resolveCollection(mode);
       const mapper = collection?.defaultMapper ?? null;
       if (!mapper || typeof mapper.getChannel !== 'function') return null;
@@ -1047,6 +1051,9 @@ export class MappersPanel {
     };
 
     const applyConfig = (mode, channel, config) => {
+      if (mappersBehavior?.setChannelConfig) {
+        return mappersBehavior.setChannelConfig(mode, channel, config);
+      }
       const collection = resolveCollection(mode);
       const mapper = collection?.defaultMapper ?? null;
       if (!collection || !mapper || typeof mapper.setChannel !== 'function') return false;

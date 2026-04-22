@@ -37,12 +37,17 @@ export { WebGPURenderer } from './rendering/WebGPURenderer.js';
 export { PositionDelegate } from './delegates/PositionDelegate.js';
 export { GpuForcePositionDelegate } from './delegates/GpuForcePositionDelegate.js';
 export {
+  AppearanceBehavior,
   Behavior,
   BehaviorManager,
   BehaviorRegistry,
+  ExporterBehavior,
+  FilterBehavior,
   HoverBehavior,
+  LayoutBehavior,
   LegendsBehavior,
   LabelsBehavior,
+  MappersBehavior,
   SelectionBehavior,
 } from './behaviors/index.js';
 export { HeliosUI } from './ui/HeliosUI.js';

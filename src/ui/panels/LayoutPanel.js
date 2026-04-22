@@ -126,123 +126,6 @@ export function buildSparklinePath(samples, width, height, scale = 'linear', bou
   }).join(' ');
 }
 
-function getLayoutDescriptor(layout) {
-  const descriptor = typeof layout?.getParameterBindings === 'function'
-    ? (layout.getParameterBindings() ?? null)
-    : null;
-  if (descriptor && typeof descriptor === 'object') return descriptor;
-  return {
-    key: 'static',
-    label: layout?.constructor?.name ?? 'Layout',
-    dynamic: false,
-    bindings: [],
-  };
-}
-
-function getRendererLabel(helios) {
-  const type = String(helios?.renderer?.device?.type ?? '').toLowerCase();
-  if (type === 'webgpu') return 'GPU/WebGPU';
-  if (type === 'webgl2' || type === 'webgl') return 'GPU/WebGL2';
-  return 'GPU';
-}
-
-function getLayoutChoices(helios) {
-  return [
-    { value: 'worker:force3d', label: 'Force (worker)' },
-    { value: 'gpu-force', label: `Force (${getRendererLabel(helios)})` },
-    { value: 'd3force3d', label: 'D3 Force 3D (worker)' },
-    { value: 'worker:jitter', label: 'Jitter (worker)' },
-    { value: 'static', label: 'Static (no layout)' },
-  ];
-}
-
-function getLayoutRunState(helios) {
-  const scheduler = helios?.scheduler ?? null;
-  if (!scheduler) return 'stopped';
-  if (typeof scheduler.getLayoutState === 'function') {
-    return scheduler.getLayoutState();
-  }
-  return scheduler.layoutEnabled !== false ? 'running' : 'stopped';
-}
-
-function buildLayoutInstance(helios, value) {
-  const mode = helios?.options?.mode === '3d' ? '3d' : '2d';
-  const nodeCount = Math.max(1, Number(helios?.network?.nodeCount ?? helios?.network?.nodeCapacity ?? 1000));
-  const radius = 220 * Math.sqrt(nodeCount / 1000);
-  const depth = mode === '3d' ? 140 : 0;
-
-  if (value === 'static') {
-    return helios.createLayout({
-      type: 'static',
-      options: { bounds: [-500, -500, 500, 500] },
-    });
-  }
-
-  if (value === 'd3force3d') {
-    return helios.createLayout({
-      type: 'd3force3d',
-      options: {
-        settings: {
-          use2D: mode !== '3d',
-          alphaDecay: 0.003,
-        },
-      },
-    });
-  }
-
-  if (value === 'gpu-force') {
-    return helios.createLayout({
-      type: 'gpu-force',
-      options: {
-        mode,
-        center: [0, 0, 0],
-        radius,
-        depth,
-        outputScale: 6.5,
-        linkDistance: 1,
-        kRepulsion: 0.07,
-        kAttraction: 0.62,
-        kGravity: 0.005,
-        eta: 0.4,
-        damping: 0.92,
-        maxStep: 2.5,
-        minDistance: 0.15,
-      },
-    });
-  }
-
-  if (value === 'worker:jitter') {
-    return helios.createLayout({
-      type: 'worker',
-      options: {
-        layout: 'jitter',
-        mode,
-        center: [0, 0, 0],
-        radius,
-        depth,
-        jitter: 3,
-      },
-    });
-  }
-
-  return helios.createLayout({
-    type: 'worker',
-    options: {
-      layout: 'force3d',
-      mode,
-      center: [0, 0, 0],
-      radius,
-      depth,
-      kRepulsion: 3,
-      kAttraction: 0.003,
-      kGravity: 0.0008,
-      repulsionStrategy: 'barnes-hut',
-      negativesPerNode: 64,
-      negativeSampling: true,
-    },
-  });
-}
-
 function createPlayIcon() {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 24 24');
@@ -314,11 +197,12 @@ export class LayoutPanel {
   create() {
     const helios = this.ui.helios ?? null;
     const content = document.createElement('div');
+    const layoutBehavior = helios?.behavior?.layout ?? helios?.useBehavior?.('layout');
 
-    if (!helios) {
+    if (!helios || !layoutBehavior) {
       const placeholder = document.createElement('div');
       placeholder.className = 'helios-ui-label__hint';
-      placeholder.textContent = this.options.placeholder ?? 'Layout controls require a Helios instance.';
+      placeholder.textContent = this.options.placeholder ?? 'Layout controls require LayoutBehavior.';
       const { row } = createAlignedRowEl({
         title: this.options.placeholderTitle ?? 'Status',
         controls: placeholder,
@@ -329,7 +213,7 @@ export class LayoutPanel {
         title: this.options.title ?? 'Layout',
         position: this.options.position ?? { x: 16, y: 360 },
         dock: this.options.dock ?? 'top-right',
-        content,
+      content,
       });
     }
 
@@ -337,7 +221,7 @@ export class LayoutPanel {
     let currentDescriptorKey = null;
     let lastChoiceSignature = null;
     let lastPositionChoiceSignature = null;
-    let selectedPositionAttribute = CURRENT_POSITION_ATTRIBUTE;
+    let selectedPositionAttribute = layoutBehavior.positionAttribute?.() ?? CURRENT_POSITION_ATTRIBUTE;
 
     const layoutSelect = document.createElement('select');
     layoutSelect.className = 'helios-ui-select';
@@ -423,11 +307,16 @@ export class LayoutPanel {
       content,
     });
 
-    const getCurrentDescriptor = () => getLayoutDescriptor(helios.layout?.());
+    const getCurrentDescriptor = () => layoutBehavior.descriptor?.() ?? {
+      key: 'static',
+      label: 'Static',
+      dynamic: false,
+      bindings: [],
+    };
 
     const syncLayoutChoices = () => {
       const descriptor = getCurrentDescriptor();
-      const choices = getLayoutChoices(helios);
+      const choices = layoutBehavior.choices?.() ?? [];
       const signature = JSON.stringify([
         descriptor.key,
         ...choices.map((choice) => [choice.value, choice.label]),
@@ -457,9 +346,10 @@ export class LayoutPanel {
 
     const syncPositionChoices = () => {
       const descriptor = getCurrentDescriptor();
-      const enabled = helios?.scheduler?.layoutEnabled !== false;
-      const choices = typeof helios.getLayoutPositionAttributeChoices === 'function'
-        ? helios.getLayoutPositionAttributeChoices()
+      const layoutState = layoutBehavior.runState?.() ?? 'stopped';
+      const enabled = layoutState !== 'stopped';
+      const choices = typeof layoutBehavior.positionAttributeChoices === 'function'
+        ? layoutBehavior.positionAttributeChoices()
         : [{ value: CURRENT_POSITION_ATTRIBUTE, label: 'Current positions', dimension: 3 }];
       const signature = JSON.stringify(choices.map((choice) => [choice.value, choice.label, choice.dimension]));
       const fallbackValue = choices[0]?.value ?? CURRENT_POSITION_ATTRIBUTE;
@@ -487,7 +377,7 @@ export class LayoutPanel {
     const refreshRunState = () => {
       const descriptor = getCurrentDescriptor();
       const dynamic = descriptor.dynamic === true;
-      const state = dynamic ? getLayoutRunState(helios) : 'stopped';
+      const state = dynamic ? (layoutBehavior.runState?.() ?? 'stopped') : 'stopped';
       const running = state === 'running';
       const stoppable = state === 'running' || state === 'idle';
       const label = state === 'idle' ? 'idle' : (running ? 'running' : 'stopped');
@@ -784,18 +674,15 @@ export class LayoutPanel {
     };
 
     const applySelectedPositionAttribute = () => {
-      const didSet = helios.setLayoutPositionsFromNodeAttribute?.(selectedPositionAttribute);
+      layoutBehavior.positionAttribute?.(selectedPositionAttribute);
+      const didSet = layoutBehavior.applyPositionAttribute?.(selectedPositionAttribute);
       if (!didSet) {
         sync(false);
         return;
       }
       const descriptor = getCurrentDescriptor();
-      const layoutState = getLayoutRunState(helios);
-      const layout = helios.layout?.();
-      layout?.seedFromNetworkPositions?.();
+      const layoutState = layoutBehavior.runState?.() ?? 'stopped';
       if (descriptor.dynamic === true && layoutState !== 'stopped') {
-        layout?.reheat?.('layout-position-attribute');
-        helios.startLayout();
         selectedPositionAttribute = CURRENT_POSITION_ATTRIBUTE;
       }
       sync(false);
@@ -809,33 +696,29 @@ export class LayoutPanel {
     runButton.addEventListener('click', () => {
       const descriptor = getCurrentDescriptor();
       if (descriptor.dynamic !== true) return;
-      const state = getLayoutRunState(helios);
+      const state = layoutBehavior.runState?.() ?? 'stopped';
       if (state === 'running' || state === 'idle') {
-        helios.stopLayout('ui:layout-panel');
+        layoutBehavior.stop?.('ui:layout-panel');
       } else {
-        const layout = helios.layout?.();
-        layout?.reheat?.('ui:layout-panel');
-        helios.startLayout();
+        layoutBehavior.reheat?.('ui:layout-panel');
+        layoutBehavior.start?.();
         selectedPositionAttribute = CURRENT_POSITION_ATTRIBUTE;
       }
       sync(false);
     });
 
     layoutSelect.addEventListener('change', () => {
-      const previousRunState = getLayoutRunState(helios);
-      const layout = buildLayoutInstance(helios, layoutSelect.value);
-      helios.layout(layout);
+      layoutBehavior.type?.(layoutSelect.value);
       if (layoutSelect.value === 'static') {
-        helios.stopLayout('ui:layout-panel');
-      } else if (previousRunState !== 'stopped') {
-        layout?.reheat?.('ui:layout-panel');
-        helios.startLayout();
+        layoutBehavior.stop?.('ui:layout-panel');
+      } else if ((layoutBehavior.runState?.() ?? 'stopped') !== 'stopped') {
         selectedPositionAttribute = CURRENT_POSITION_ATTRIBUTE;
       }
       sync(true);
     });
 
     const unsubscribers = [
+      layoutBehavior.on?.('change', () => sync(true)) ?? (() => {}),
       subscribe(helios, EVENTS.LAYOUT_CHANGED, () => sync(true)),
       subscribe(helios, EVENTS.LAYOUT_START, () => {
         selectedPositionAttribute = CURRENT_POSITION_ATTRIBUTE;

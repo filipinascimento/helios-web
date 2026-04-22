@@ -27,7 +27,7 @@ import { SvgLabelController } from './labels/SvgLabelController.js';
 import { SvgLegendController } from './legends/SvgLegendController.js';
 import { HeliosFilter } from './filters/HeliosFilter.js';
 import { DensityLayer } from './rendering/engine/DensityLayer.js';
-import { BehaviorManager, createDefaultBehaviorRegistry } from './behaviors/index.js';
+import { Behavior, BehaviorManager, createDefaultBehaviorRegistry } from './behaviors/index.js';
 import {
   AMBIENT_OCCLUSION_BIAS_DEFAULT,
   AMBIENT_OCCLUSION_INTENSITY_SCALE_DEFAULT,
@@ -248,6 +248,30 @@ function cloneMapperCollection(previous, network, onChange, debug) {
   return collection;
 }
 
+function serializeMapperCollectionState(collection) {
+  const describeMapper = (mapper) => {
+    const channels = {};
+    for (const [channelName, config] of mapper?.channels?.entries?.() ?? []) {
+      channels[channelName] = {
+        type: config?.type ?? config?.mode ?? null,
+        meta: config?.meta && typeof config.meta === 'object' ? { ...config.meta } : config?.meta ?? null,
+      };
+    }
+    return { channels };
+  };
+  const mappers = {};
+  let defaultId = null;
+  for (const [id, mapper] of collection?.mappers?.entries?.() ?? []) {
+    mappers[id] = describeMapper(mapper);
+    if (!defaultId && mapper === collection?.defaultMapper) defaultId = id;
+  }
+  return {
+    mode: collection?.mode ?? null,
+    defaultId,
+    mappers,
+  };
+}
+
 function inferNetworkFormatFromName(name) {
   if (typeof name !== 'string') return null;
   const lower = name.trim().toLowerCase();
@@ -255,6 +279,27 @@ function inferNetworkFormatFromName(name) {
   if (lower.endsWith('.zxnet')) return 'zxnet';
   if (lower.endsWith('.xnet')) return 'xnet';
   return null;
+}
+
+function isBehaviorLike(candidate) {
+  return candidate instanceof Behavior || Boolean(candidate && typeof candidate.attach === 'function');
+}
+
+function createBehaviorNamespace(helios) {
+  const behaviorAccessor = function behavior(name) {
+    return helios._resolveBehavior(name);
+  };
+  return new Proxy(behaviorAccessor, {
+    apply(_target, _thisArg, args) {
+      return helios._resolveBehavior(args[0]);
+    },
+    get(target, prop, receiver) {
+      if (typeof prop !== 'string' || Reflect.has(target, prop)) {
+        return Reflect.get(target, prop, receiver);
+      }
+      return helios._resolveBehavior(prop);
+    },
+  });
 }
 
 function elementToMarkup(element) {
@@ -1466,6 +1511,7 @@ export const EVENTS = Object.freeze({
   CAMERA_MOVE: 'camera:move',
   CAMERA_CONTROL_CHANGE: 'camera:control-change',
   NETWORK_REPLACED: 'network:replaced',
+  MAPPERS_CHANGED: 'mappers:changed',
   GRAPH_FILTER_CHANGED: 'graph:filter-changed',
 });
 
@@ -2033,6 +2079,10 @@ export class Helios extends EventTarget {
       this.mappersDirty = true;
       this.prewarmPromise = null;
       this.scheduler?.requestGeometry?.();
+      this.emit?.(EVENTS.MAPPERS_CHANGED, {
+        node: serializeMapperCollectionState(this.nodeMapper),
+        edge: serializeMapperCollectionState(this.edgeMapper),
+      });
     };
     const container = options.container ?? document.getElementById('app') ?? document.body;
     this.layers = new LayerManager(container, {
@@ -2371,6 +2421,7 @@ export class Helios extends EventTarget {
     this._densityRuntime = { diverging: false, valueDomain: null };
     this._densityLayer = null;
     this.behaviors = new BehaviorManager(this, createDefaultBehaviorRegistry());
+    this._initializeBehaviorNamespace();
     this._edgeAdaptiveQualityConfig = normalizeEdgeAdaptiveQualityConfig(
       EDGE_ADAPTIVE_QUALITY_DEFAULTS,
       options.edgeAdaptiveQuality ?? { enabled: options.edgeAdaptiveQualityEnabled },
@@ -2419,25 +2470,84 @@ export class Helios extends EventTarget {
     this.size = { ...this.layers.size };
     this.removeResizeListener = null;
     this.firstGeometryUpdateComplete = false;
-    this.behaviors.use('legends', options.behaviors?.options?.legends ?? options.legends);
-    this.behaviors.use('labels', options.behaviors?.options?.labels);
+    this.useBehavior('legends', options.behaviors?.options?.legends ?? options.legends);
+    this.useBehavior('labels', options.behaviors?.options?.labels);
     this._initializeBehaviors(options.behaviors);
     this.ready = this.initialize();
+  }
+
+  _resolveBehavior(name) {
+    const id = String(name ?? '').trim();
+    if (!id) return null;
+    const existing = this.behaviors?.get?.(id) ?? null;
+    if (existing) return existing;
+    if (this.behaviors?.registry?.has?.(id)) {
+      return this.useBehavior(id);
+    }
+    return null;
+  }
+
+  _initializeBehaviorNamespace() {
+    this.behavior = createBehaviorNamespace(this);
+    return this.behavior;
+  }
+
+  registerBehavior(name, behaviorCtor) {
+    this.behaviors?.registry?.register?.(name, behaviorCtor);
+    return this;
+  }
+
+  useBehavior(name, behaviorOrOptions) {
+    const id = String(name ?? '').trim();
+    if (!id) throw new Error('useBehavior(name, behaviorOrOptions) requires a non-empty behavior name');
+
+    if (isBehaviorLike(behaviorOrOptions)) {
+      behaviorOrOptions.id = id;
+      return this.behaviors.use(behaviorOrOptions);
+    }
+
+    const existing = this.behaviors?.get?.(id) ?? null;
+    if (existing && behaviorOrOptions && typeof behaviorOrOptions === 'object') {
+      existing.update?.(behaviorOrOptions);
+      return existing;
+    }
+    if (existing && (behaviorOrOptions === undefined || behaviorOrOptions === true)) {
+      return existing;
+    }
+    if (!this.behaviors?.registry?.has?.(id)) {
+      throw new Error(`Unknown behavior "${id}"`);
+    }
+    if (behaviorOrOptions === undefined || behaviorOrOptions === true) {
+      return this.behaviors.use(id);
+    }
+    return this.behaviors.use(id, behaviorOrOptions);
   }
 
   _initializeBehaviors(config) {
     if (!config) return;
     if (Array.isArray(config)) {
       for (const entry of config) {
-        this.behaviors.use(entry);
+        if (typeof entry === 'string') this.useBehavior(entry);
+        else if (isBehaviorLike(entry)) this.useBehavior(entry.id ?? entry.constructor?.id, entry);
       }
       return;
     }
     if (typeof config === 'string') {
-      this.behaviors.use(config);
+      this.useBehavior(config);
       return;
     }
     if (typeof config !== 'object') return;
+
+    const reservedKeys = new Set(['use', 'options']);
+    for (const [name, value] of Object.entries(config)) {
+      if (reservedKeys.has(name) || value === false) continue;
+      if (value === true || isBehaviorLike(value)) {
+        this.useBehavior(name, value === true ? undefined : value);
+        continue;
+      }
+      this.useBehavior(name, value);
+    }
+
     const useEntries = [];
     if (Array.isArray(config.use)) useEntries.push(...config.use);
     else if (config.use) useEntries.push(config.use);
@@ -2447,9 +2557,9 @@ export class Helios extends EventTarget {
     for (const entry of useEntries) {
       if (typeof entry === 'string') {
         const behaviorOptions = config.options?.[entry];
-        this.behaviors.use(entry, behaviorOptions);
-      } else {
-        this.behaviors.use(entry);
+        this.useBehavior(entry, behaviorOptions);
+      } else if (isBehaviorLike(entry)) {
+        this.useBehavior(entry.id ?? entry.constructor?.id, entry);
       }
     }
   }
@@ -4746,13 +4856,21 @@ export class Helios extends EventTarget {
       }
     }
     if (options.includeLegends) {
+      const exportInsets = options.includeInterface === true
+        ? {
+            top: Math.max(0, Number(this._overlayInsets?.top ?? 0)),
+            right: Math.max(0, Number(this._overlayInsets?.right ?? 0)),
+            bottom: Math.max(0, Number(this._overlayInsets?.bottom ?? 0)),
+            left: Math.max(0, Number(this._overlayInsets?.left ?? 0)),
+          }
+        : { top: 0, right: 0, bottom: 0, left: 0 };
       const legendGroup = this._legends?.createSnapshot?.({
         size: targetSize,
-        insets: { top: 0, right: 0, bottom: 0, left: 0 },
+        insets: exportInsets,
         viewportHeight: options.height * Number(options.legendScale ?? 1),
         config: {
           enabled: true,
-          respectDockInsets: false,
+          respectDockInsets: options.includeInterface === true,
           margin: Number(legendBaseConfig.margin ?? 12) * exportRelativeScale,
           gap: Number(legendBaseConfig.gap ?? 12) * exportRelativeScale,
           scale: legendScale,
@@ -4999,7 +5117,7 @@ export class Helios extends EventTarget {
   emit(type, detail) {
     const event = new CustomEvent(type, { detail });
     this.dispatchEvent(event);
-    if (this._anyListeners.size) {
+    if (this._anyListeners?.size) {
       for (const handler of this._anyListeners) {
         try {
           handler({ type, detail, event, target: this });
@@ -7423,7 +7541,7 @@ export class Helios extends EventTarget {
   }
 
   labels(options) {
-    const labelsBehavior = this.behaviors?.get?.('labels') ?? null;
+    const labelsBehavior = this.behavior?.labels ?? null;
     if (arguments.length === 0) {
       return labelsBehavior?.labels?.() ?? this._getLabelsControllerConfig();
     }
@@ -7474,7 +7592,7 @@ export class Helios extends EventTarget {
   }
 
   legends(options) {
-    const legendsBehavior = this.behaviors?.get?.('legends') ?? null;
+    const legendsBehavior = this.behavior?.legends ?? null;
     if (arguments.length === 0) {
       return legendsBehavior?.legends?.() ?? this._getLegendsControllerConfig();
     }
@@ -7508,7 +7626,7 @@ export class Helios extends EventTarget {
   }
 
   labelsEnabled(value) {
-    const labelsBehavior = this.behaviors?.get?.('labels') ?? null;
+    const labelsBehavior = this.behavior?.labels ?? null;
     if (arguments.length === 0) return labelsBehavior?.enabled?.() ?? (this.labelsMode() !== 'off');
     labelsBehavior?.enabled?.(value);
     if (labelsBehavior) return this;
@@ -7516,7 +7634,7 @@ export class Helios extends EventTarget {
   }
 
   labelsMode(value) {
-    const labelsBehavior = this.behaviors?.get?.('labels') ?? null;
+    const labelsBehavior = this.behavior?.labels ?? null;
     if (arguments.length === 0) {
       if (labelsBehavior) return labelsBehavior.mode();
       const labels = this.labels?.() ?? { enabled: false };
@@ -7974,6 +8092,10 @@ export class Helios extends EventTarget {
         this.markMappersDirty();
       }, this.debug);
       this.mappersDirty = true;
+      this.emit(EVENTS.MAPPERS_CHANGED, {
+        node: serializeMapperCollectionState(this.nodeMapper),
+        edge: serializeMapperCollectionState(this.edgeMapper),
+      });
       this.scheduler?.requestGeometry?.();
       this.scheduler.requestGeometry();
       return this;
@@ -7987,6 +8109,10 @@ export class Helios extends EventTarget {
       this.edgeMapper.setDefault(edgeMapper);
     }
     this.mappersDirty = true;
+    this.emit(EVENTS.MAPPERS_CHANGED, {
+      node: serializeMapperCollectionState(this.nodeMapper),
+      edge: serializeMapperCollectionState(this.edgeMapper),
+    });
     this.scheduler.requestGeometry();
     return this;
   }

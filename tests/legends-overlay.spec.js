@@ -30,7 +30,7 @@ test.describe('legends overlay', () => {
     await waitForHelios(page);
 
     await expect.poll(async () => page.evaluate(() => ({
-      sameInstance: window.__heliosUI?._lastLegendsPanel?.legendsBehavior === window.__helios?.behaviors?.get?.('legends'),
+      sameInstance: window.__heliosUI?._lastLegendsPanel?.legendsBehavior === window.__helios?.behavior?.legends,
       exposedState: window.__heliosUI?._lastLegendsPanel?.legendsBehavior?.state === window.__heliosUI?._lastLegendsPanel?.state,
     }))).toEqual({
       sameInstance: true,

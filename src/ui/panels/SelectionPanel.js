@@ -374,9 +374,9 @@ export class SelectionPanel {
       return built;
     };
 
-    const selectionBehavior = helios.behaviors?.get('selection') ?? helios.behaviors?.use?.('selection', this.options);
-    const hoverBehavior = helios.behaviors?.get('hover') ?? helios.behaviors?.use?.('hover', this.options);
-    const labelsBehavior = helios.behaviors?.get('labels') ?? helios.behaviors?.use?.('labels');
+    const selectionBehavior = helios.useBehavior?.('selection', this.options) ?? helios.behavior?.selection ?? null;
+    const hoverBehavior = helios.useBehavior?.('hover', this.options) ?? helios.behavior?.hover ?? null;
+    const labelsBehavior = helios.behavior?.labels ?? helios.useBehavior?.('labels');
     if (!selectionBehavior) {
       throw new Error('SelectionPanel requires Helios.behaviors to provide SelectionBehavior.');
     }

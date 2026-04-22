@@ -133,6 +133,17 @@ test.describe('scene panel: tabs and appearance controls', () => {
     const appearanceTab = scenePanel.getByRole('button', { name: 'Appearance' }).first();
     await appearanceTab.click();
 
+    const appearanceBindingState = await page.evaluate(() => ({
+      sameInstance: window.__heliosUI?._lastAppearanceBehavior === window.__helios?.behavior?.appearance,
+      blendMode: window.__heliosUI?._lastAppearanceBehavior?.edgeTransparencyMode?.(),
+      shadedEnabled: window.__heliosUI?._lastAppearanceBehavior?.shadedEnabled?.(),
+    }));
+    expect(appearanceBindingState).toEqual({
+      sameInstance: true,
+      blendMode: 'weighted',
+      shadedEnabled: false,
+    });
+
     const labels = await scenePanel.locator('.helios-ui-tabpanel[data-active="true"] .helios-ui-subpanel__label').evaluateAll((els) =>
       els.map((el) => (el.textContent ?? '').trim()).filter(Boolean),
     );
@@ -181,11 +192,13 @@ test.describe('scene panel: tabs and appearance controls', () => {
       enabled: window.__helios.shadedEnabled(),
       nodes: window.__helios.shadedNodes(),
       edges: window.__helios.shadedEdges(),
+      behaviorEnabled: window.__helios.behavior.appearance.shadedEnabled(),
     }));
     expect(shadedState).toEqual({
       enabled: true,
       nodes: true,
       edges: false,
+      behaviorEnabled: true,
     });
 
     const shadedLightDirectionBefore = await page.evaluate(() => window.__helios.shadedLightDirection());
@@ -438,7 +451,7 @@ test.describe('scene panel: tabs and appearance controls', () => {
     await labelSource.selectOption('$index');
     const labelSourceValue = await page.evaluate(() => ({
       accessor: window.__helios.labelSource?.() ?? null,
-      behavior: window.__helios.behaviors?.get?.('labels')?.state?.source ?? null,
+      behavior: window.__helios.behavior?.labels?.state?.source ?? null,
     }));
     expect(labelSourceValue).toEqual({ accessor: '$id', behavior: '$id' });
 
@@ -448,7 +461,7 @@ test.describe('scene panel: tabs and appearance controls', () => {
     await labelFontFamily.dispatchEvent('change');
     const fontFamily = await page.evaluate(() => ({
       accessor: window.__helios.labelFontFamily?.() ?? '',
-      behavior: window.__helios.behaviors?.get?.('labels')?.state?.fontFamily ?? '',
+      behavior: window.__helios.behavior?.labels?.state?.fontFamily ?? '',
     }));
     expect(fontFamily.accessor).toContain('Menlo');
     expect(fontFamily.behavior).toContain('Menlo');
@@ -465,7 +478,7 @@ test.describe('scene panel: tabs and appearance controls', () => {
     }, '#00ff00');
     const labelFillValue = await page.evaluate(() => ({
       accessor: String(window.__helios.labelFill?.() ?? ''),
-      behavior: String(window.__helios.behaviors?.get?.('labels')?.state?.fill ?? ''),
+      behavior: String(window.__helios.behavior?.labels?.state?.fill ?? ''),
     }));
     expect(labelFillValue.accessor.toLowerCase()).toContain('#00ff00');
     expect(labelFillValue.behavior.toLowerCase()).toContain('#00ff00');
@@ -551,7 +564,7 @@ test.describe('scene panel: tabs and appearance controls', () => {
 
     await page.evaluate(() => {
       window.__legendPatches = [];
-      const behavior = window.__helios?.behaviors?.get?.('legends');
+      const behavior = window.__helios?.behavior?.legends;
       const original = behavior.legends.bind(behavior);
       behavior.legends = function legendsSpy(options) {
         window.__legendPatches.push(JSON.parse(JSON.stringify(options)));
@@ -566,7 +579,7 @@ test.describe('scene panel: tabs and appearance controls', () => {
     await scaleInput.dispatchEvent('change');
 
     await expect.poll(async () => page.evaluate(() => window.__legendPatches.at(-1)?.scale ?? null)).toBe(5);
-    await expect.poll(async () => page.evaluate(() => window.__helios.behaviors?.get?.('legends')?.state?.scale ?? null)).toBe(3);
+    await expect.poll(async () => page.evaluate(() => window.__helios.behavior?.legends?.state?.scale ?? null)).toBe(3);
   });
 
   test('dimension toggle animates into 3D and keeps layout=none scenes visible', async ({ page }) => {

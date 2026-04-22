@@ -253,6 +253,44 @@ export class HeliosUI {
     return attribute;
   }
 
+  bindBehaviorAccessor(behavior, accessorName, options = {}) {
+    if (!behavior || typeof behavior?.[accessorName] !== 'function') {
+      throw new Error(`Behavior has no accessor method "${accessorName}()"`);
+    }
+    const info = typeof this.helios?.uiBindingInfo === 'function'
+      ? (this.helios.uiBindingInfo(accessorName) ?? null)
+      : null;
+    const merged = info ? { ...info, ...options } : options;
+    const id = merged.id ?? `helios.behavior.${behavior.id ?? 'behavior'}.${accessorName}`;
+    const label = merged.label ?? accessorName;
+    const defaultValue = merged.defaultValue ?? null;
+    const type = merged.type ?? 'number';
+    const makeAttribute = (factory) => factory({
+      id,
+      label,
+      readOnly: Boolean(merged.readOnly ?? false),
+      min: merged.min ?? null,
+      max: merged.max ?? null,
+      step: merged.step ?? null,
+      domain: merged.domain ?? null,
+      recommendedRange: merged.recommendedRange ?? null,
+      meta: { source: 'behavior', behavior: behavior.id ?? null, accessor: accessorName, ...merged.meta },
+      get: () => {
+        const value = behavior[accessorName]();
+        return value == null ? defaultValue : value;
+      },
+      set: (value) => behavior[accessorName](value),
+    });
+    const attribute = type === 'boolean'
+      ? makeAttribute(UIAttribute.boolean)
+      : type === 'string'
+        ? makeAttribute(UIAttribute.string)
+        : makeAttribute(UIAttribute.number);
+    const unsubscribe = behavior.on?.('change', () => attribute.notify()) ?? (() => {});
+    this._controlCleanups.add(() => unsubscribe());
+    return attribute;
+  }
+
   createPanel(options) {
     return this.panelManager.createPanel(options);
   }
@@ -453,6 +491,7 @@ export class HeliosUI {
             baseName = candidate;
             if (nameInput.value !== candidate) nameInput.value = candidate;
             if (exportNameInput.value !== candidate) exportNameInput.value = candidate;
+            exporterBehavior?.baseName?.(candidate);
           } else {
             input.value = lastValidBaseName;
           }
@@ -635,6 +674,7 @@ export class HeliosUI {
 
         const presetSelect = document.createElement('select');
         presetSelect.className = 'helios-ui-select';
+        const exporterBehavior = this.helios?.behavior?.exporter ?? null;
 
         const customWidthInput = document.createElement('input');
         customWidthInput.type = 'number';
@@ -681,6 +721,12 @@ export class HeliosUI {
           offLabel: 'Off',
           ariaLabel: 'Export legends',
         });
+        const interfaceToggle = createToggleControl({
+          checked: false,
+          onLabel: 'On',
+          offLabel: 'Off',
+          ariaLabel: 'Include interface margins',
+        });
         const frameToggle = createToggleControl({
           checked: false,
           onLabel: 'On',
@@ -702,7 +748,7 @@ export class HeliosUI {
           ],
           onChange: () => syncExportUi(),
         });
-        let exportLegendScale = 1;
+        let exportLegendScale = exporterBehavior?.legendScale?.() ?? 1;
         const legendScaleAttribute = UIAttribute.number({
           id: 'figure.legendScale',
           label: 'Legend Scale',
@@ -716,6 +762,7 @@ export class HeliosUI {
             const numeric = Number(value);
             if (!Number.isFinite(numeric)) return;
             exportLegendScale = clampNumber(numeric, 0.25, 4);
+            exporterBehavior?.legendScale?.(exportLegendScale);
           },
         });
         const legendScaleRow = createSliderRow(legendScaleAttribute, {
@@ -812,10 +859,15 @@ export class HeliosUI {
           const generation = ++previewCaptureGeneration;
           try {
             previewIgnoreRenderEvents += 1;
-            const blob = await this.helios.exportFigurePreviewBlob(resolved, {
-              maxWidth: 320,
-              maxHeight: 180,
-            });
+            const blob = exporterBehavior
+              ? await exporterBehavior.exportPreviewBlob({}, {
+                maxWidth: 320,
+                maxHeight: 180,
+              })
+              : await this.helios.exportFigurePreviewBlob(resolved, {
+                maxWidth: 320,
+                maxHeight: 180,
+              });
             const nextUrl = URL.createObjectURL(blob);
             await new Promise((resolve, reject) => {
               const image = new Image();
@@ -856,11 +908,38 @@ export class HeliosUI {
           exportExtEl.textContent = `.${exportFormatSelect.value}`;
         };
 
-        const getExportCapability = () => this.helios?.getFigureExportCapabilities?.({
+        const getExportCapability = () => exporterBehavior?.getCapabilities?.({
+          supersampling: Number(supersamplingSelect.value || 1),
+        }) ?? this.helios?.getFigureExportCapabilities?.({
           supersampling: Number(supersamplingSelect.value || 1),
         }) ?? {
           maxBitmapDimension: 8192,
           presets: buildFigureExportPresetList(this.helios?.layers?.size ?? this.helios?.size ?? {}, { maxBitmapDimension: 8192 }, Number(supersamplingSelect.value || 1)),
+        };
+
+        const pushExporterUiState = (patch = {}) => {
+          if (!exporterBehavior) return;
+          exporterBehavior.update(patch);
+          exportLegendScale = exporterBehavior.legendScale?.() ?? exportLegendScale;
+        };
+
+        const applyExporterStateToControls = () => {
+          const state = exporterBehavior?.getPublicState?.() ?? null;
+          if (!state) return;
+          if (exportNameInput.value !== state.baseName) exportNameInput.value = state.baseName;
+          if (exportFormatSelect.value !== state.format) exportFormatSelect.value = state.format;
+          if (presetSelect.value !== String(state.preset ?? '')) presetSelect.value = String(state.preset ?? '');
+          if (customWidthInput.value !== String(state.width ?? customWidthInput.value)) customWidthInput.value = String(state.width ?? customWidthInput.value);
+          if (customHeightInput.value !== String(state.height ?? customHeightInput.value)) customHeightInput.value = String(state.height ?? customHeightInput.value);
+          if (supersamplingSelect.value !== String(state.supersampling ?? 1)) supersamplingSelect.value = String(state.supersampling ?? 1);
+          labelsToggle.checked = state.includeLabels === true;
+          legendsToggle.checked = state.includeLegends !== false;
+          interfaceToggle.checked = state.includeInterface === true;
+          frameToggle.checked = state.showFrame === true;
+          backgroundToggle.checked = state.transparentBackground !== true;
+          alphaModeControl.value = state.alphaMode ?? 'straight';
+          exportLegendScale = Number(state.legendScale ?? exportLegendScale);
+          legendScaleAttribute.notify();
         };
 
         const exportFrame = document.createElement('div');
@@ -895,9 +974,12 @@ export class HeliosUI {
           presetSelect.value = Array.from(presetSelect.options).some((opt) => opt.value === previous && !opt.disabled)
             ? previous
             : firstAvailable;
+          if (exporterBehavior && exporterBehavior.preset?.() !== presetSelect.value) {
+            pushExporterUiState({ preset: presetSelect.value });
+          }
         };
 
-        const resolveFigureState = () => {
+        const resolveFigureState = () => exporterBehavior?.getResolvedOptions?.() ?? (() => {
           const capability = getExportCapability();
           return resolveFigureExportOptions({
             filename: exportNameInput.value,
@@ -908,6 +990,7 @@ export class HeliosUI {
             supersampling: Number(supersamplingSelect.value || 1),
             includeLabels: labelsToggle.checked,
             includeLegends: legendsToggle.checked,
+            includeInterface: interfaceToggle.checked,
             legendScale: exportLegendScale,
             transparentBackground: backgroundToggle.checked !== true,
             alphaMode: alphaModeControl.value,
@@ -916,11 +999,11 @@ export class HeliosUI {
             capability,
             windowSize: this.helios?.layers?.size ?? this.helios?.size ?? { width: 1, height: 1 },
           });
-        };
+        })();
 
         const syncExportFrame = (resolved) => {
           const rect = resolved?.previewRect ?? null;
-          const visible = Boolean(figureTabActive && frameToggle.checked && rect);
+          const visible = Boolean(figureTabActive && (exporterBehavior?.showFrame?.() ?? frameToggle.checked) && rect);
           exportFrame.style.display = visible ? 'block' : 'none';
           if (!visible) return;
           exportFrame.style.left = `${rect.x}px`;
@@ -930,8 +1013,9 @@ export class HeliosUI {
         };
 
         const syncExportUi = () => {
-          syncExportExtension();
           syncPresetOptions();
+          applyExporterStateToControls();
+          syncExportExtension();
           const resolved = resolveFigureState();
           const isCustom = resolved.preset === 'custom';
           customWidthInput.disabled = !isCustom;
@@ -952,17 +1036,59 @@ export class HeliosUI {
           }
         };
 
-        exportFormatSelect.addEventListener('change', syncExportUi);
-        presetSelect.addEventListener('change', syncExportUi);
-        supersamplingSelect.addEventListener('change', syncExportUi);
-        customWidthInput.addEventListener('change', syncExportUi);
-        customHeightInput.addEventListener('change', syncExportUi);
-        labelsToggle.addEventListener('change', syncExportUi);
-        legendsToggle.addEventListener('change', syncExportUi);
-        frameToggle.addEventListener('change', syncExportUi);
-        backgroundToggle.addEventListener('change', syncExportUi);
+        exportFormatSelect.addEventListener('change', () => {
+          pushExporterUiState({ format: exportFormatSelect.value });
+          syncExportUi();
+        });
+        presetSelect.addEventListener('change', () => {
+          pushExporterUiState({ preset: presetSelect.value });
+          syncExportUi();
+        });
+        supersamplingSelect.addEventListener('change', () => {
+          pushExporterUiState({ supersampling: Number(supersamplingSelect.value || 1) });
+          syncExportUi();
+        });
+        customWidthInput.addEventListener('change', () => {
+          pushExporterUiState({ customSize: { width: customWidthInput.value, height: customHeightInput.value } });
+          syncExportUi();
+        });
+        customHeightInput.addEventListener('change', () => {
+          pushExporterUiState({ customSize: { width: customWidthInput.value, height: customHeightInput.value } });
+          syncExportUi();
+        });
+        labelsToggle.addEventListener('change', () => {
+          pushExporterUiState({ includeLabels: labelsToggle.checked });
+          syncExportUi();
+        });
+        legendsToggle.addEventListener('change', () => {
+          pushExporterUiState({ includeLegends: legendsToggle.checked });
+          syncExportUi();
+        });
+        interfaceToggle.addEventListener('change', () => {
+          pushExporterUiState({ includeInterface: interfaceToggle.checked });
+          syncExportUi();
+        });
+        frameToggle.addEventListener('change', () => {
+          pushExporterUiState({ showFrame: frameToggle.checked });
+          syncExportUi();
+        });
+        backgroundToggle.addEventListener('change', () => {
+          pushExporterUiState({ transparentBackground: backgroundToggle.checked !== true });
+          syncExportUi();
+        });
+        alphaModeControl.addEventListener('change', () => {
+          pushExporterUiState({ alphaMode: alphaModeControl.value });
+          syncExportUi();
+        });
         const unsubscribeLegendScale = legendScaleAttribute.subscribe(() => syncExportUi(), { immediate: false });
         this._controlCleanups.add(() => unsubscribeLegendScale());
+        if (exporterBehavior?.on) {
+          const unsubscribe = exporterBehavior.on('change', () => {
+            applyExporterStateToControls();
+            syncExportUi();
+          });
+          this._controlCleanups.add(unsubscribe);
+        }
 
         const exportTabContent = document.createElement('div');
         exportTabContent.appendChild(createAlignedRow({
@@ -989,6 +1115,11 @@ export class HeliosUI {
           title: 'Legends',
           hint: 'Adds the SVG legends using figure-relative placement, ignoring docked UI insets.',
           controls: legendsToggle,
+        }).row);
+        exportTabContent.appendChild(createAlignedRow({
+          title: 'Interface',
+          hint: 'Keeps docked-panel margins when placing legends in the export. Off uses the full figure area.',
+          controls: interfaceToggle,
         }).row);
         exportTabContent.appendChild(legendScaleRow.element);
         exportTabContent.appendChild(createAlignedRow({
@@ -1033,6 +1164,7 @@ export class HeliosUI {
               lastValidBaseName = sanitized;
               nameInput.value = sanitized;
               exportNameInput.value = sanitized;
+              exporterBehavior?.baseName?.(sanitized);
             }
             loadedFormat = this.helios._lastLoadedNetworkFormat ?? loadedFormat;
             if (loadedFormat && ['bxnet', 'zxnet', 'xnet'].includes(loadedFormat)) {
@@ -1073,8 +1205,11 @@ export class HeliosUI {
           exportButton.disabled = true;
           try {
             commitBaseName(exportNameInput);
+            exporterBehavior?.baseName?.(exportNameInput.value);
             const resolved = resolveFigureState();
-            const blob = await this.helios.exportFigureBlob(resolved);
+            const blob = exporterBehavior
+              ? await exporterBehavior.exportBlob()
+              : await this.helios.exportFigureBlob(resolved);
             downloadBlob(blob, normalizeFigureExportFilename(exportNameInput.value, resolved.format, lastValidBaseName));
           } catch (error) {
             // eslint-disable-next-line no-console
@@ -1101,6 +1236,10 @@ export class HeliosUI {
           unsub = () => this.helios.removeEventListener('network:replaced', onNetworkReplaced);
         }
         if (unsub) this._controlCleanups.add(unsub);
+        if (exporterBehavior) {
+          exporterBehavior.baseName?.(lastValidBaseName);
+          applyExporterStateToControls();
+        }
 
         let attributeEventsUnsub = null;
         const attachAttributeListeners = () => {
@@ -1184,13 +1323,16 @@ export class HeliosUI {
         return container;
       })();
 
-      const createRows = (accessorNames) => {
+      const createRows = (accessorNames, {
+        source = this.helios,
+        bind = (accessorName) => this.bindHeliosAccessor(accessorName),
+      } = {}) => {
         const container = document.createElement('div');
         for (const accessorName of accessorNames) {
           const info = bindings?.[accessorName] ?? null;
           if (info?.type && info.type !== 'number') continue;
-          if (typeof this.helios[accessorName] !== 'function') continue;
-          const attribute = this.bindHeliosAccessor(accessorName);
+          if (typeof source?.[accessorName] !== 'function') continue;
+          const attribute = bind(accessorName);
           const row = createSliderRow(attribute, { hint: info?.description ?? null });
           container.appendChild(row.element);
           this._controlCleanups.add(row.destroy);
@@ -1198,11 +1340,14 @@ export class HeliosUI {
         return container;
       };
 
-      const createToggleRow = (accessorName) => {
+      const createToggleRow = (accessorName, {
+        source = this.helios,
+        bind = (name) => this.bindHeliosAccessor(name),
+      } = {}) => {
         const info = bindings?.[accessorName] ?? null;
         if (!info || info.type !== 'boolean') return null;
-        if (typeof this.helios[accessorName] !== 'function') return null;
-        const attribute = this.bindHeliosAccessor(accessorName);
+        if (typeof source?.[accessorName] !== 'function') return null;
+        const attribute = bind(accessorName);
         const toggle = createToggleControl({
           checked: false,
           onLabel: 'On',
@@ -1237,11 +1382,14 @@ export class HeliosUI {
         return row;
       };
 
-      const createSelectRow = (accessorName, options) => {
+      const createSelectRow = (accessorName, options, {
+        source = this.helios,
+        bind = (name) => this.bindHeliosAccessor(name),
+      } = {}) => {
         const info = bindings?.[accessorName] ?? null;
         if (!info || info.type !== 'string') return null;
-        if (typeof this.helios?.[accessorName] !== 'function') return null;
-        const attribute = this.bindHeliosAccessor(accessorName);
+        if (typeof source?.[accessorName] !== 'function') return null;
+        const attribute = bind(accessorName);
         const select = createSelectControl({
           ariaLabel: info.label ?? accessorName,
           options,
@@ -1484,6 +1632,15 @@ export class HeliosUI {
         return input;
       };
 
+      const appearanceBehavior = this.helios?.behavior?.appearance ?? this.helios?.useBehavior?.('appearance');
+      this._lastAppearanceBehavior = appearanceBehavior ?? null;
+      const bindAppearanceAccessor = (accessorName, options = {}) => (
+        appearanceBehavior
+          ? this.bindBehaviorAccessor(appearanceBehavior, accessorName, options)
+          : this.bindHeliosAccessor(accessorName, options)
+      );
+      const appearanceAccessorSource = appearanceBehavior ?? this.helios;
+
       const createAppearanceContent = () => {
         const wrapper = document.createElement('div');
         wrapper.appendChild(themeRow);
@@ -1536,15 +1693,10 @@ export class HeliosUI {
           hint: 'Clear/background color (including opacity).',
           controls: createColorWithAlphaControls({
             ariaLabel: 'Background color',
-            getValue: () => this.helios?.clearColor?.(),
-            setValue: (value) => this.helios?.clearColor?.(value),
+            getValue: () => appearanceBehavior?.background?.() ?? this.helios?.clearColor?.(),
+            setValue: (value) => appearanceBehavior?.background?.(value) ?? this.helios?.clearColor?.(value),
           }),
         }).row);
-
-        const modeSelect = document.createElement('select');
-        modeSelect.className = 'helios-ui-select';
-        modeSelect.setAttribute('aria-label', 'Edge transparency mode');
-        tooltips.attachTooltip(modeSelect, 'How edges blend/accumulate when overlapping.');
 
         const modes = [
           { value: 'alpha', label: 'Alpha' },
@@ -1556,23 +1708,23 @@ export class HeliosUI {
           { value: 'additive-tonemapped', label: 'Additive (tonemapped)' },
           { value: 'additive-normalized-bright', label: 'Additive (normalized bright)' },
         ];
-        for (const info of modes) {
-          const opt = document.createElement('option');
-          opt.value = info.value;
-          opt.textContent = info.label;
-          modeSelect.appendChild(opt);
-        }
-
-        const syncEdgeMode = () => {
-          const current = this.helios?.edgeTransparencyMode?.();
-          const value = typeof current === 'string' ? current : 'weighted';
-          modeSelect.value = modes.some((m) => m.value === value) ? value : 'weighted';
-        };
-        syncEdgeMode();
-
-        modeSelect.addEventListener('change', () => {
-          this.helios?.edgeTransparencyMode?.(modeSelect.value);
+        const edgeTransparencyAttribute = bindAppearanceAccessor('edgeTransparencyMode');
+        const modeSelect = createSelectControl({
+          ariaLabel: 'Edge transparency mode',
+          options: modes,
+          value: edgeTransparencyAttribute.value(),
         });
+        tooltips.attachTooltip(modeSelect, 'How edges blend/accumulate when overlapping.');
+        const syncEdgeMode = (value) => {
+          const next = typeof value === 'string' ? value : 'weighted';
+          modeSelect.value = modes.some((entry) => entry.value === next) ? next : 'weighted';
+          modeSelect.disabled = edgeTransparencyAttribute.readOnly;
+        };
+        const unsubscribeEdgeMode = edgeTransparencyAttribute.subscribe((value) => syncEdgeMode(value));
+        modeSelect.addEventListener('change', () => {
+          edgeTransparencyAttribute.write(modeSelect.value, { source: 'ui', event: 'change' });
+        });
+        this._controlCleanups.add(() => unsubscribeEdgeMode());
 
         wrapper.appendChild(createAlignedRow({
           title: 'Blend Mode',
@@ -1585,7 +1737,7 @@ export class HeliosUI {
 
       const createLabelsContent = () => {
         const wrapper = document.createElement('div');
-        const labelsBehavior = this.helios?.behaviors?.get?.('labels') ?? this.helios?.behaviors?.use?.('labels');
+        const labelsBehavior = this.helios?.behavior?.labels ?? this.helios?.useBehavior?.('labels');
 
         const labelsModeSelect = createSelectControl({
           ariaLabel: 'Label Mode',
@@ -1750,11 +1902,17 @@ export class HeliosUI {
           }).row);
         }
 
-        const nodeBlendRow = createToggleRow('nodeBlendWithEdges');
+        const nodeBlendRow = createToggleRow('nodeBlendWithEdges', {
+          source: appearanceAccessorSource,
+          bind: bindAppearanceAccessor,
+        });
         if (nodeBlendRow) advanced.appendChild(nodeBlendRow);
         const edgeDepthRow = createToggleRow('edgeDepthWrite');
         if (edgeDepthRow) advanced.appendChild(edgeDepthRow);
-        const edgeWidthClampRow = createToggleRow('edgeWidthClampToNodeDiameter');
+        const edgeWidthClampRow = createToggleRow('edgeWidthClampToNodeDiameter', {
+          source: appearanceAccessorSource,
+          bind: bindAppearanceAccessor,
+        });
         if (edgeWidthClampRow) advanced.appendChild(edgeWidthClampRow);
         return advanced;
       };
@@ -1762,11 +1920,17 @@ export class HeliosUI {
       const nodeEdgeStack = new PanelStack();
       const createShadedAppearanceContent = () => {
         const container = document.createElement('div');
-        const nodesRow = createToggleRow('shadedNodes');
+        const nodesRow = createToggleRow('shadedNodes', {
+          source: appearanceAccessorSource,
+          bind: bindAppearanceAccessor,
+        });
         if (nodesRow) container.appendChild(nodesRow);
-        const edgesRow = createToggleRow('shadedEdges');
+        const edgesRow = createToggleRow('shadedEdges', {
+          source: appearanceAccessorSource,
+          bind: bindAppearanceAccessor,
+        });
         if (edgesRow) container.appendChild(edgesRow);
-        const lightDirectionAttribute = this.bindHeliosAccessor('shadedLightDirection', {
+        const lightDirectionAttribute = bindAppearanceAccessor('shadedLightDirection', {
           label: 'Light Direction',
           defaultValue: [0.577350269, 0.577350269, 0.577350269],
         });
@@ -1784,18 +1948,21 @@ export class HeliosUI {
           hint: 'Diffuse light tint used by shaded nodes and edges.',
           controls: createColorControls({
             ariaLabel: 'Shaded light color',
-            getValue: () => this.helios?.shadedLightColor?.(),
-            setValue: (value) => this.helios?.shadedLightColor?.(value),
+            getValue: () => appearanceBehavior?.shadedLightColor?.() ?? this.helios?.shadedLightColor?.(),
+            setValue: (value) => appearanceBehavior?.shadedLightColor?.(value) ?? this.helios?.shadedLightColor?.(value),
           }),
         }).row);
-        container.appendChild(createRows(['shadedDiffuseStrength']));
+        container.appendChild(createRows(['shadedDiffuseStrength'], {
+          source: appearanceAccessorSource,
+          bind: bindAppearanceAccessor,
+        }));
         container.appendChild(createAlignedRow({
           title: 'Ambient Top',
           hint: 'Ambient tint on the camera-facing top hemisphere.',
           controls: createColorControls({
             ariaLabel: 'Shaded ambient top color',
-            getValue: () => this.helios?.shadedAmbientTopColor?.(),
-            setValue: (value) => this.helios?.shadedAmbientTopColor?.(value),
+            getValue: () => appearanceBehavior?.shadedAmbientTopColor?.() ?? this.helios?.shadedAmbientTopColor?.(),
+            setValue: (value) => appearanceBehavior?.shadedAmbientTopColor?.(value) ?? this.helios?.shadedAmbientTopColor?.(value),
           }),
         }).row);
         container.appendChild(createAlignedRow({
@@ -1803,33 +1970,51 @@ export class HeliosUI {
           hint: 'Ambient tint on the lower hemisphere.',
           controls: createColorControls({
             ariaLabel: 'Shaded ambient bottom color',
-            getValue: () => this.helios?.shadedAmbientBottomColor?.(),
-            setValue: (value) => this.helios?.shadedAmbientBottomColor?.(value),
+            getValue: () => appearanceBehavior?.shadedAmbientBottomColor?.() ?? this.helios?.shadedAmbientBottomColor?.(),
+            setValue: (value) => appearanceBehavior?.shadedAmbientBottomColor?.(value) ?? this.helios?.shadedAmbientBottomColor?.(value),
           }),
         }).row);
-        container.appendChild(createRows(['shadedAmbientStrength']));
+        container.appendChild(createRows(['shadedAmbientStrength'], {
+          source: appearanceAccessorSource,
+          bind: bindAppearanceAccessor,
+        }));
         container.appendChild(createAlignedRow({
           title: 'Specular Color',
           hint: 'Highlight tint added by shaded lighting.',
           controls: createColorControls({
             ariaLabel: 'Shaded specular color',
-            getValue: () => this.helios?.shadedSpecularColor?.(),
-            setValue: (value) => this.helios?.shadedSpecularColor?.(value),
+            getValue: () => appearanceBehavior?.shadedSpecularColor?.() ?? this.helios?.shadedSpecularColor?.(),
+            setValue: (value) => appearanceBehavior?.shadedSpecularColor?.(value) ?? this.helios?.shadedSpecularColor?.(value),
           }),
         }).row);
-        container.appendChild(createRows(['shadedSpecularStrength', 'shadedShininess']));
+        container.appendChild(createRows(['shadedSpecularStrength', 'shadedShininess'], {
+          source: appearanceAccessorSource,
+          bind: bindAppearanceAccessor,
+        }));
         return container;
       };
 
       const createAmbientOcclusionContent = () => {
         const container = document.createElement('div');
-        const nodesRow = createToggleRow('ambientOcclusionNodes');
+        const nodesRow = createToggleRow('ambientOcclusionNodes', {
+          source: appearanceAccessorSource,
+          bind: bindAppearanceAccessor,
+        });
         if (nodesRow) container.appendChild(nodesRow);
-        const edgesRow = createToggleRow('ambientOcclusionEdges');
+        const edgesRow = createToggleRow('ambientOcclusionEdges', {
+          source: appearanceAccessorSource,
+          bind: bindAppearanceAccessor,
+        });
         if (edgesRow) container.appendChild(edgesRow);
-        const modeRow = createSelectRow('ambientOcclusionMode', AMBIENT_OCCLUSION_MODE_OPTIONS);
+        const modeRow = createSelectRow('ambientOcclusionMode', AMBIENT_OCCLUSION_MODE_OPTIONS, {
+          source: appearanceAccessorSource,
+          bind: bindAppearanceAccessor,
+        });
         if (modeRow) container.appendChild(modeRow);
-        const qualityRow = createSelectRow('ambientOcclusionQuality', AMBIENT_OCCLUSION_QUALITY_OPTIONS);
+        const qualityRow = createSelectRow('ambientOcclusionQuality', AMBIENT_OCCLUSION_QUALITY_OPTIONS, {
+          source: appearanceAccessorSource,
+          bind: bindAppearanceAccessor,
+        });
         if (qualityRow) container.appendChild(qualityRow);
         container.appendChild(createRows([
           'ambientOcclusionStrength',
@@ -1837,13 +2022,16 @@ export class HeliosUI {
           'ambientOcclusionBias',
           'ambientOcclusionIntensityScale',
           'ambientOcclusionIntensityShift',
-        ]));
+        ], {
+          source: appearanceAccessorSource,
+          bind: bindAppearanceAccessor,
+        }));
         return container;
       };
       const ambientOcclusionDeviceType = String(this.helios?.renderer?.device?.type ?? '').toLowerCase();
       const supportsAmbientOcclusion = ambientOcclusionDeviceType === 'webgpu' || ambientOcclusionDeviceType === 'webgl2';
 
-      const shadedEnabled = this.bindHeliosAccessor('shadedEnabled');
+      const shadedEnabled = bindAppearanceAccessor('shadedEnabled');
       const shadedToggle = createToggleControl({
         checked: false,
         onLabel: 'On',
@@ -1864,7 +2052,7 @@ export class HeliosUI {
       this._controlCleanups.add(() => unsubscribeShadedToggle());
       let ambientOcclusionToggle = null;
       if (supportsAmbientOcclusion) {
-        const ambientOcclusionEnabled = this.bindHeliosAccessor('ambientOcclusionEnabled');
+        const ambientOcclusionEnabled = bindAppearanceAccessor('ambientOcclusionEnabled');
         ambientOcclusionToggle = createToggleControl({
           checked: false,
           onLabel: 'On',
@@ -1886,22 +2074,40 @@ export class HeliosUI {
       }
       const createEdgeAppearanceContent = () => {
         const container = document.createElement('div');
-        container.appendChild(createRows(['edgeWidthScale', 'edgeOpacityScale']));
-        const edgeFastRow = createToggleRow('edgeFastRendering');
+        container.appendChild(createRows(['edgeWidthScale', 'edgeOpacityScale'], {
+          source: appearanceAccessorSource,
+          bind: bindAppearanceAccessor,
+        }));
+        const edgeFastRow = createToggleRow('edgeFastRendering', {
+          source: appearanceAccessorSource,
+          bind: bindAppearanceAccessor,
+        });
         if (edgeFastRow) container.appendChild(edgeFastRow);
         if (typeof this.helios?.edgeAdaptiveQuality === 'function') {
           const adaptiveContent = document.createElement('div');
-          const enabledRow = createToggleRow('edgeAdaptiveQualityEnabled');
+          const enabledRow = createToggleRow('edgeAdaptiveQualityEnabled', {
+            source: appearanceAccessorSource,
+            bind: bindAppearanceAccessor,
+          });
           if (enabledRow) adaptiveContent.appendChild(enabledRow);
           adaptiveContent.appendChild(createRows([
             'edgeAdaptiveQualitySlowFrameThresholdMs',
             'edgeAdaptiveQualitySlowFrameConsecutiveFrames',
             'edgeAdaptiveQualityProbeIntervalMs',
             'edgeAdaptiveQualityInteractionHoldMs',
-          ]));
-          const fastDuringCameraRow = createToggleRow('edgeAdaptiveQualityFastDuringCamera');
+          ], {
+            source: appearanceAccessorSource,
+            bind: bindAppearanceAccessor,
+          }));
+          const fastDuringCameraRow = createToggleRow('edgeAdaptiveQualityFastDuringCamera', {
+            source: appearanceAccessorSource,
+            bind: bindAppearanceAccessor,
+          });
           if (fastDuringCameraRow) adaptiveContent.appendChild(fastDuringCameraRow);
-          const fastDuringLayoutRow = createToggleRow('edgeAdaptiveQualityFastDuringLayout');
+          const fastDuringLayoutRow = createToggleRow('edgeAdaptiveQualityFastDuringLayout', {
+            source: appearanceAccessorSource,
+            bind: bindAppearanceAccessor,
+          });
           if (fastDuringLayoutRow) adaptiveContent.appendChild(fastDuringLayoutRow);
 
           const adaptiveStack = new PanelStack();
@@ -1921,7 +2127,10 @@ export class HeliosUI {
       nodeEdgeStack.add({
         id: 'node-appearance',
         title: 'Nodes',
-        content: createRows(['nodeSizeScale', 'nodeOpacityScale', 'nodeOutlineWidthScale']),
+        content: createRows(['nodeSizeScale', 'nodeOpacityScale', 'nodeOutlineWidthScale'], {
+          source: appearanceAccessorSource,
+          bind: bindAppearanceAccessor,
+        }),
       });
       nodeEdgeStack.add({
         id: 'edge-appearance',
@@ -2012,16 +2221,10 @@ export class HeliosUI {
         ? Math.max(0, Math.floor(options.debounceMs))
         : 32;
 
-    const activeFilter = this.helios?.getActiveHeliosFilter?.();
-    const filterModel = options.filterModel instanceof HeliosFilter
-      ? options.filterModel
-      : activeFilter instanceof HeliosFilter
-        ? activeFilter
-        : new HeliosFilter({
-            id: options.filterId ?? 'helios-ui-filter-model',
-            name: options.filterName ?? 'UI Filter',
-            scope: FILTER_SCOPE_RENDER,
-          });
+    const filterBehavior = this.helios?.behavior?.filters ?? this.helios?.useBehavior?.('filters');
+    if (options.filterModel instanceof HeliosFilter) {
+      filterBehavior?.setFilterModel?.(options.filterModel, { reason: 'panel-init' });
+    }
 
     let applyTimer = null;
     let lastApplyAt = 0;
@@ -2038,12 +2241,11 @@ export class HeliosUI {
         ? performance.now()
         : Date.now();
       try {
-        filterModel.clear('node');
-        filterModel.clear('edge');
-        filterModel.setScope(layoutCheckbox.checked ? FILTER_SCOPE_RENDER_LAYOUT : FILTER_SCOPE_RENDER);
-        for (const rule of nodeEditor.collectRules()) filterModel.addRule(rule);
-        for (const rule of edgeEditor.collectRules()) filterModel.addRule(rule);
-        this.helios?.setGraphFilter?.(filterModel);
+        filterBehavior?.replaceRules?.({
+          scope: layoutCheckbox.checked ? FILTER_SCOPE_RENDER_LAYOUT : FILTER_SCOPE_RENDER,
+          nodeRules: nodeEditor.collectRules(),
+          edgeRules: edgeEditor.collectRules(),
+        });
       } catch (error) {
         // eslint-disable-next-line no-console
         console.error('[HeliosUI] Failed to apply graph filter', error);
@@ -2157,9 +2359,8 @@ export class HeliosUI {
     layoutWrap.appendChild(layoutCheckbox);
 
     const syncScopeFromFilter = () => {
-      const filter = this.helios?.getGraphFilter?.() ?? null;
+      const filter = filterBehavior?.filters?.() ?? this.helios?.getGraphFilter?.() ?? null;
       layoutCheckbox.checked = filter?.scope === FILTER_SCOPE_RENDER_LAYOUT;
-      filterModel.setScope(layoutCheckbox.checked ? FILTER_SCOPE_RENDER_LAYOUT : FILTER_SCOPE_RENDER);
     };
 
     const refreshFromNetwork = () => {
@@ -2229,6 +2430,8 @@ export class HeliosUI {
     }
     if (unsubNetwork) this._controlCleanups.add(unsubNetwork);
     if (unsubFilter) this._controlCleanups.add(unsubFilter);
+    const unsubBehavior = filterBehavior?.on?.('change', onFilterChanged) ?? null;
+    if (unsubBehavior) this._controlCleanups.add(unsubBehavior);
     attachNetworkAttributeListeners();
     if (networkAttributeUnsub) this._controlCleanups.add(() => networkAttributeUnsub?.());
     this._controlCleanups.add(() => {

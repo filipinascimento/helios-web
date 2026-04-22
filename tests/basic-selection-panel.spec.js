@@ -228,9 +228,9 @@ test.describe('basic example selection panel', () => {
     await waitForExample(page);
 
     await expect.poll(async () => page.evaluate(() => ({
-      sameInstance: window.__heliosSelectionPanel?.selectionBehavior === window.__helios?.behaviors?.get?.('selection'),
-      sameHoverInstance: window.__heliosSelectionPanel?.hoverBehavior === window.__helios?.behaviors?.get?.('hover'),
-      sameLabelsInstance: window.__heliosSelectionPanel?.labelsBehavior === window.__helios?.behaviors?.get?.('labels'),
+      sameInstance: window.__heliosSelectionPanel?.selectionBehavior === window.__helios?.behavior?.selection,
+      sameHoverInstance: window.__heliosSelectionPanel?.hoverBehavior === window.__helios?.behavior?.hover,
+      sameLabelsInstance: window.__heliosSelectionPanel?.labelsBehavior === window.__helios?.behavior?.labels,
       exposedSelectionState: window.__heliosSelectionPanel?.selectionBehavior?.state === window.__heliosSelectionPanel?.selectionState,
       exposedHoverState: window.__heliosSelectionPanel?.hoverBehavior?.state === window.__heliosSelectionPanel?.hoverState,
     }))).toEqual({

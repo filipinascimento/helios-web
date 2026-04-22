@@ -14,6 +14,21 @@ test.describe('mappers panel', () => {
     await waitForHelios(page);
 
     await page.evaluate(() => {
+      window.__mappersBehaviorCalls = [];
+      const behavior = window.__helios?.behavior?.mappers;
+      const original = behavior?.setChannelConfig?.bind(behavior);
+      behavior.setChannelConfig = function setChannelConfigSpy(mode, channel, config) {
+        window.__mappersBehaviorCalls.push({
+          mode,
+          channel,
+          type: config?.type ?? config?.mode ?? null,
+          attributes: config?.attributes ?? null,
+        });
+        return original(mode, channel, config);
+      };
+    });
+
+    await page.evaluate(() => {
       const mapper = window.__helios?.nodeMapper?.defaultMapper;
       if (!mapper) throw new Error('Node mapper unavailable');
       mapper.setChannel('size', {
@@ -43,7 +58,7 @@ test.describe('mappers panel', () => {
 
     const rangeInputs = panel.locator('.helios-ui-row', {
       has: page.locator('.helios-ui-label__title', { hasText: 'Range' }),
-    }).locator('input[type="number"]');
+    }).locator('input[type="number"]:visible');
     await expect(rangeInputs).toHaveCount(2);
     await expect(rangeInputs.nth(0)).toHaveValue('1');
     await expect(rangeInputs.nth(1)).toHaveValue('20');
@@ -51,6 +66,13 @@ test.describe('mappers panel', () => {
     const applyButton = panel.getByRole('button', { name: 'Apply' }).first();
     await expect(applyButton).toBeEnabled();
     await applyButton.click();
+
+    await expect.poll(async () => page.evaluate(() => window.__mappersBehaviorCalls.at(-1) ?? null)).toEqual({
+      mode: 'node',
+      channel: 'size',
+      type: 'linear',
+      attributes: '$index',
+    });
 
     await expect.poll(async () => page.evaluate(() => {
       const cfg = window.__helios?.nodeMapper?.defaultMapper?.getChannel?.('size');
