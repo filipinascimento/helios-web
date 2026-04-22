@@ -36,6 +36,15 @@ export { WebGL2Renderer } from './rendering/WebGL2Renderer.js';
 export { WebGPURenderer } from './rendering/WebGPURenderer.js';
 export { PositionDelegate } from './delegates/PositionDelegate.js';
 export { GpuForcePositionDelegate } from './delegates/GpuForcePositionDelegate.js';
+export {
+  Behavior,
+  BehaviorManager,
+  BehaviorRegistry,
+  HoverBehavior,
+  LegendsBehavior,
+  LabelsBehavior,
+  SelectionBehavior,
+} from './behaviors/index.js';
 export { HeliosUI } from './ui/HeliosUI.js';
 export { Store } from './ui/state/Store.js';
 export { UIAttribute } from './ui/state/UIAttribute.js';

@@ -6,7 +6,6 @@ import { createSelectControl } from '../controls/createSelectControl.js';
 import { SuggestedSliderControls } from '../controls/SuggestedSliderControls.js';
 import { clampNumber } from '../utils/numbers.js';
 import { toHex8 } from '../utils/colors.js';
-import { HeliosFilter } from '../../filters/HeliosFilter.js';
 import { PanelStack } from './PanelStack.js';
 import { createAttributeRuleEditor } from './AttributeRuleEditor.js';
 
@@ -375,36 +374,17 @@ export class SelectionPanel {
       return built;
     };
 
-    const initialLabelsConfig = helios.labels?.() ?? { enabled: false };
-
-    const state = {
-      nodeClick: this.options.enableNodeSelection !== false,
-      nodeHover: this.options.enableNodeHover !== false,
-      edgeClick: this.options.enableEdgeSelection === true,
-      edgeHover: this.options.enableEdgeHover === true,
-      hoverLabel: this.options.enableHoverLabels !== false,
-      hoverLabelSource: this.options.hoverLabelSource ?? 'auto',
-      hoverConnectedEdges: this.options.hoverConnectedEdges !== false,
-      selectedConnectedEdges: this.options.selectedConnectedEdges !== false,
-      hoveredNode: -1,
-      hoveredEdge: -1,
-      selectedNodes: new Set(),
-      selectedEdges: new Set(),
-      savedSelectionAttribute: CURRENT_SELECTION_VALUE,
-      lastNamedSelectionAttribute: '',
-      initialHoverLabelConfig: {
-        hoveredNodeEnabled: initialLabelsConfig.hoveredNodeEnabled === true,
-        hoveredNodeSource: initialLabelsConfig.hoveredNodeSource ?? null,
-      },
-      otherSelectedNodeStyle: null,
-      otherSelectedEdgeStyle: null,
-      otherHighlightNodeStyle: null,
-      otherHighlightEdgeStyle: null,
-      otherSelectedNodeTone: null,
-      otherSelectedEdgeTone: null,
-      otherHighlightNodeTone: null,
-      otherHighlightEdgeTone: null,
-    };
+    const selectionBehavior = helios.behaviors?.get('selection') ?? helios.behaviors?.use?.('selection', this.options);
+    const hoverBehavior = helios.behaviors?.get('hover') ?? helios.behaviors?.use?.('hover', this.options);
+    const labelsBehavior = helios.behaviors?.get('labels') ?? helios.behaviors?.use?.('labels');
+    if (!selectionBehavior) {
+      throw new Error('SelectionPanel requires Helios.behaviors to provide SelectionBehavior.');
+    }
+    if (!hoverBehavior) {
+      throw new Error('SelectionPanel requires Helios.behaviors to provide HoverBehavior.');
+    }
+    const selectionState = selectionBehavior.state;
+    const hoverState = hoverBehavior.state;
 
     const defaultOtherSelectedNodeStyle = normalizeNodeStyle(
       DEFAULT_OTHER_SELECTED_NODE_STYLE,
@@ -423,307 +403,22 @@ export class SelectionPanel {
       DEFAULT_OTHER_HIGHLIGHT_EDGE_STYLE,
     );
 
-    const ensureStateStyleDefaults = () => {
-      if (isNeutralNodeStateStyle(helios.nodeStateStyle?.('SELECTED'))) {
-        helios.nodeStateStyle?.('SELECTED', { ...DEFAULT_NODE_SELECTED_STYLE });
-      }
-      if (isNeutralNodeStateStyle(helios.nodeStateStyle?.('HIGHLIGHTED'))) {
-        helios.nodeStateStyle?.('HIGHLIGHTED', { ...DEFAULT_NODE_HIGHLIGHT_STYLE });
-      }
-      if (isNeutralEdgeStateStyle(helios.edgeStateStyle?.('SELECTED'))) {
-        helios.edgeStateStyle?.('SELECTED', { ...DEFAULT_EDGE_SELECTED_STYLE });
-      }
-      if (isNeutralEdgeStateStyle(helios.edgeStateStyle?.('HIGHLIGHTED'))) {
-        helios.edgeStateStyle?.('HIGHLIGHTED', { ...DEFAULT_EDGE_HIGHLIGHT_STYLE });
-      }
-      const existingNodeNoState = helios.nodeNoStateStyle?.();
-      const existingEdgeNoState = helios.edgeNoStateStyle?.();
-      const seededNodeNoState = isNeutralNodeStateStyle(existingNodeNoState) ? null : existingNodeNoState;
-      const seededEdgeNoState = isNeutralEdgeStateStyle(existingEdgeNoState) ? null : existingEdgeNoState;
-      state.otherSelectedNodeStyle = normalizeNodeStyle(
-        state.otherSelectedNodeStyle ?? seededNodeNoState ?? defaultOtherSelectedNodeStyle,
-        defaultOtherSelectedNodeStyle,
-      );
-      state.otherSelectedEdgeStyle = normalizeEdgeStyle(
-        state.otherSelectedEdgeStyle ?? seededEdgeNoState ?? defaultOtherSelectedEdgeStyle,
-        defaultOtherSelectedEdgeStyle,
-      );
-      state.otherHighlightNodeStyle = normalizeNodeStyle(
-        state.otherHighlightNodeStyle ?? defaultOtherHighlightNodeStyle,
-        defaultOtherHighlightNodeStyle,
-      );
-      state.otherHighlightEdgeStyle = normalizeEdgeStyle(
-        state.otherHighlightEdgeStyle ?? defaultOtherHighlightEdgeStyle,
-        defaultOtherHighlightEdgeStyle,
-      );
-      state.otherSelectedNodeTone = normalizeAutoBackgroundTone(
-        state.otherSelectedNodeTone,
-        DEFAULT_AUTO_BACKGROUND_TONE_SELECTED,
-      );
-      state.otherSelectedEdgeTone = normalizeAutoBackgroundTone(
-        state.otherSelectedEdgeTone,
-        DEFAULT_AUTO_BACKGROUND_TONE_SELECTED,
-      );
-      state.otherHighlightNodeTone = normalizeAutoBackgroundTone(
-        state.otherHighlightNodeTone,
-        DEFAULT_AUTO_BACKGROUND_TONE_DISABLED,
-      );
-      state.otherHighlightEdgeTone = normalizeAutoBackgroundTone(
-        state.otherHighlightEdgeTone,
-        DEFAULT_AUTO_BACKGROUND_TONE_DISABLED,
-      );
-    };
-
-    ensureStateStyleDefaults();
-
-    const resolveOtherElementsMode = () => {
-      if (state.selectedNodes.size > 0 || state.selectedEdges.size > 0) return 'selected';
-      if ((state.nodeHover && state.hoveredNode >= 0) || (state.edgeHover && state.hoveredEdge >= 0)) return 'highlighted';
-      return 'neutral';
-    };
-
-    const resolveOtherElementsStyle = (mode) => {
-      const nextBackground = resolveBackgroundColor(helios);
-      if (mode === 'selected') {
-        return {
-          node: applyAutoBackgroundTone(state.otherSelectedNodeStyle, nextBackground, state.otherSelectedNodeTone),
-          edge: applyAutoBackgroundTone(state.otherSelectedEdgeStyle, nextBackground, state.otherSelectedEdgeTone),
-        };
-      }
-      if (mode === 'highlighted') {
-        return {
-          node: applyAutoBackgroundTone(state.otherHighlightNodeStyle, nextBackground, state.otherHighlightNodeTone),
-          edge: applyAutoBackgroundTone(state.otherHighlightEdgeStyle, nextBackground, state.otherHighlightEdgeTone),
-        };
-      }
-      return {
-        node: { ...NEUTRAL_NODE_NO_STATE_STYLE },
-        edge: { ...NEUTRAL_EDGE_NO_STATE_STYLE },
-      };
-    };
-
-    const applyOtherElementsState = () => {
-      const mode = resolveOtherElementsMode();
-      const styles = resolveOtherElementsStyle(mode);
-      const graphLayer = helios.renderer?.graphLayer ?? null;
-      helios.nodeNoStateStyle?.(styles.node);
-      helios.edgeNoStateStyle?.(styles.edge);
-      if (graphLayer) {
-        const enabled = mode !== 'neutral';
-        graphLayer.nodeNoStateStyleEnabled = enabled;
-        graphLayer.edgeNoStateStyleEnabled = enabled;
-      }
-      helios.requestRender?.();
-    };
-
-    const applyHoverConnectedEdges = () => {
-      const graphLayer = helios.renderer?.graphLayer ?? null;
-      if (graphLayer) {
-        graphLayer.propagateHoveredNodeToEdges = state.hoverConnectedEdges === true;
-      }
-      helios.requestRender?.();
-    };
-
-    const applySelectedConnectedEdges = () => {
-      const graphLayer = helios.renderer?.graphLayer ?? null;
-      if (graphLayer) {
-        graphLayer.propagateSelectedNodesToEdges = state.selectedConnectedEdges === true;
-      }
-      helios.requestRender?.();
-    };
-
-    const clearNodeHover = () => {
-      state.hoveredNode = -1;
-      helios.hoverNodeState?.(null, 0);
-      applyOtherElementsState();
-    };
-
-    const clearEdgeHover = () => {
-      state.hoveredEdge = -1;
-      helios.hoverEdgeState?.(null, 0);
-      applyOtherElementsState();
-    };
-
-    const needsNodeHoverTracking = () => state.nodeHover || state.hoverLabel || state.hoverConnectedEdges;
-    const needsEdgeHoverTracking = () => state.edgeHover;
-
-    const syncPicking = () => {
-      const needsNodePicking = state.nodeClick || needsNodeHoverTracking();
-      const needsEdgePicking = state.edgeClick || needsEdgeHoverTracking();
-      const options = {
-        resolutionScale: this.options.pickingResolutionScale ?? 0.25,
-        trackDepth: this.options.pickingTrackDepth === true,
-        maxFps: this.options.pickingMaxFps ?? 20,
-      };
-      if (needsNodePicking) helios.enableNodePicking?.({ ...options, hoverEnabled: needsNodeHoverTracking() });
-      else helios.disableNodePicking?.();
-      if (needsEdgePicking) helios.enableEdgePicking?.({ ...options, hoverEnabled: needsEdgeHoverTracking() });
-      else helios.disableEdgePicking?.();
-      if (!needsNodeHoverTracking()) clearNodeHover();
-      if (!needsEdgeHoverTracking()) clearEdgeHover();
-    };
-
-    const applyHoverLabelConfig = () => {
-      helios.labels?.({
-        hoveredNodeEnabled: state.hoverLabel,
-        hoveredNodeSource: state.hoverLabel
-          ? ((id, network) => resolveHoverLabelValue(network, state.hoverLabelSource, id))
-          : null,
-      });
-    };
-
-    const applySelectionLabelDefaults = () => {
-      if (this.options.enableSelectionLabels === false) return;
-      const current = helios.labels?.() ?? {};
-      helios.labels?.({
-        enabled: current.enabled === true ? current.enabled : true,
-        selectionMode: current.enabled === true && current.selectionMode === 'ranked' ? 'ranked' : 'selected-only',
-      });
-    };
-
+    const ensureStateStyleDefaults = () => selectionBehavior.ensureStateStyleDefaults();
+    const applyOtherElementsState = () => selectionBehavior.applyOtherElementsState();
+    const applyHoverConnectedEdges = () => hoverBehavior.applyHoverConnectedEdges();
+    const applySelectedConnectedEdges = () => selectionBehavior.applySelectedConnectedEdges();
+    const clearNodeHover = () => hoverBehavior.clearNodeHover();
+    const clearEdgeHover = () => hoverBehavior.clearEdgeHover();
+    const syncPicking = () => hoverBehavior.syncPicking();
+    const applyHoverLabelConfig = () => hoverBehavior.applyHoverLabelConfig();
+    const applySelectionLabelDefaults = () => selectionBehavior.applySelectionLabelDefaults();
     const setSelectionBinding = (value = CURRENT_SELECTION_VALUE) => {
-      state.savedSelectionAttribute = value || CURRENT_SELECTION_VALUE;
+      selectionBehavior.setSelectionBinding(value);
       refreshSavedSelectionOptions();
     };
-
-    const setNodeSelected = (index, selected, options = {}) => {
-      if (!Number.isInteger(index) || index < 0) return;
-      if (selected) {
-        if (state.selectedNodes.has(index)) return;
-        state.selectedNodes.add(index);
-      } else {
-        if (!state.selectedNodes.has(index)) return;
-        state.selectedNodes.delete(index);
-      }
-      helios.nodeState?.([index], 'SELECTED', { mode: selected ? 'add' : 'remove' });
-      if (!state.selectedNodes.size) {
-        helios.cameraFollowNodes?.([], { frame: false });
-      }
-      applyOtherElementsState();
-      if (options.preserveBinding !== true) setSelectionBinding(CURRENT_SELECTION_VALUE);
-    };
-
-    const setEdgeSelected = (index, selected, options = {}) => {
-      if (!Number.isInteger(index) || index < 0) return;
-      if (selected) {
-        if (state.selectedEdges.has(index)) return;
-        state.selectedEdges.add(index);
-      } else {
-        if (!state.selectedEdges.has(index)) return;
-        state.selectedEdges.delete(index);
-      }
-      helios.edgeState?.([index], 'SELECTED', { mode: selected ? 'add' : 'remove' });
-      applyOtherElementsState();
-      if (options.preserveBinding !== true) setSelectionBinding(CURRENT_SELECTION_VALUE);
-    };
-
-    const clearSelection = (options = {}) => {
-      if (state.selectedNodes.size) {
-        helios.nodeState?.(Array.from(state.selectedNodes), 'SELECTED', { mode: 'remove' });
-        state.selectedNodes.clear();
-      }
-      if (state.selectedEdges.size) {
-        helios.edgeState?.(Array.from(state.selectedEdges), 'SELECTED', { mode: 'remove' });
-        state.selectedEdges.clear();
-      }
-      applyOtherElementsState();
-      if (options.preserveBinding !== true) setSelectionBinding(CURRENT_SELECTION_VALUE);
-      if (options.preserveCameraFollow !== true) {
-        helios.cameraFollowNodes?.([], { frame: false });
-      }
-    };
-
-    const selectOnly = (kind, index, options = {}) => {
-      const selectedNodes = Array.from(state.selectedNodes);
-      const selectedEdges = Array.from(state.selectedEdges);
-      for (const nodeIndex of selectedNodes) {
-        if (!(kind === 'node' && nodeIndex === index)) setNodeSelected(nodeIndex, false, options);
-      }
-      for (const edgeIndex of selectedEdges) {
-        if (!(kind === 'edge' && edgeIndex === index)) setEdgeSelected(edgeIndex, false, options);
-      }
-      if (kind === 'node') setNodeSelected(index, true, options);
-      if (kind === 'edge') setEdgeSelected(index, true, options);
-    };
-
-    const toggleSelection = (kind, index, options = {}) => {
-      if (kind === 'node') setNodeSelected(index, !state.selectedNodes.has(index), options);
-      if (kind === 'edge') setEdgeSelected(index, !state.selectedEdges.has(index), options);
-    };
-
-    const applyNodeSelectionSet = (indices, mode = 'add', options = {}) => {
-      const nextIndices = [];
-      const seen = new Set();
-      for (const raw of indices ?? []) {
-        const index = Number(raw);
-        if (!Number.isInteger(index) || index < 0 || seen.has(index)) continue;
-        seen.add(index);
-        nextIndices.push(index);
-      }
-
-      const toAdd = [];
-      const toRemove = [];
-      if (mode === 'replace') {
-        for (const index of state.selectedNodes) {
-          if (!seen.has(index)) toRemove.push(index);
-        }
-      }
-      for (const index of nextIndices) {
-        if (!state.selectedNodes.has(index)) toAdd.push(index);
-      }
-
-      if (toRemove.length) {
-        helios.nodeState?.(toRemove, 'SELECTED', { mode: 'remove' });
-        for (const index of toRemove) state.selectedNodes.delete(index);
-      }
-      if (toAdd.length) {
-        helios.nodeState?.(toAdd, 'SELECTED', { mode: 'add' });
-        for (const index of toAdd) state.selectedNodes.add(index);
-      }
-      applyOtherElementsState();
-      if (options.preserveBinding !== true) setSelectionBinding(CURRENT_SELECTION_VALUE);
-      return { added: toAdd.length, removed: toRemove.length, total: state.selectedNodes.size };
-    };
-
-    const applyEdgeSelectionSet = (indices, mode = 'add', options = {}) => {
-      const nextIndices = [];
-      const seen = new Set();
-      for (const raw of indices ?? []) {
-        const index = Number(raw);
-        if (!Number.isInteger(index) || index < 0 || seen.has(index)) continue;
-        seen.add(index);
-        nextIndices.push(index);
-      }
-
-      const toAdd = [];
-      const toRemove = [];
-      if (mode === 'replace') {
-        for (const index of state.selectedEdges) {
-          if (!seen.has(index)) toRemove.push(index);
-        }
-      }
-      for (const index of nextIndices) {
-        if (!state.selectedEdges.has(index)) toAdd.push(index);
-      }
-
-      if (toRemove.length) {
-        helios.edgeState?.(toRemove, 'SELECTED', { mode: 'remove' });
-        for (const index of toRemove) state.selectedEdges.delete(index);
-      }
-      if (toAdd.length) {
-        helios.edgeState?.(toAdd, 'SELECTED', { mode: 'add' });
-        for (const index of toAdd) state.selectedEdges.add(index);
-      }
-      applyOtherElementsState();
-      if (options.preserveBinding !== true) setSelectionBinding(CURRENT_SELECTION_VALUE);
-      return { added: toAdd.length, removed: toRemove.length, total: state.selectedEdges.size };
-    };
-
-    const selectionFilterModel = new HeliosFilter({
-      id: 'helios-ui-selection-model',
-      name: 'Selection Rules',
-      scope: 'render',
-    });
+    const clearSelection = (options = {}) => selectionBehavior.clearSelection(options);
+    const applyNodeSelectionSet = (indices, mode = 'add', options = {}) => selectionBehavior.applyNodeSelectionSet(indices, mode, options);
+    const applyEdgeSelectionSet = (indices, mode = 'add', options = {}) => selectionBehavior.applyEdgeSelectionSet(indices, mode, options);
 
     const selectionMessageEl = document.createElement('div');
     selectionMessageEl.className = 'helios-ui-label__hint';
@@ -737,24 +432,14 @@ export class SelectionPanel {
       selectionMessageEl.hidden = !text;
     };
 
-    const buildNodeSelectionQuery = () => {
-      selectionFilterModel.clear('node');
-      selectionFilterModel.clear('edge');
-      for (const rule of nodeSelectorEditor.collectRules()) {
-        selectionFilterModel.addRule(rule);
-      }
-      return selectionFilterModel.compileScopeQuery('node');
-    };
-
     const runNodeSelector = (mode = 'add') => {
       try {
-        const query = buildNodeSelectionQuery();
-        if (!query) {
+        const rules = nodeSelectorEditor.collectRules();
+        if (!rules.length) {
           setSelectionMessage('Add at least one selector before applying it.');
           return;
         }
-        const matches = helios.network?.selectNodes?.(query) ?? new Uint32Array();
-        applyNodeSelectionSet(matches, mode);
+        selectionBehavior.applyNodeSelectionQuery(rules, mode);
         refreshStatus();
         setSelectionMessage('');
       } catch (error) {
@@ -763,18 +448,12 @@ export class SelectionPanel {
     };
 
     const expandSelectionToNeighbors = () => {
-      if (!state.selectedNodes.size) {
+      if (!selectionState.selectedNodes.size) {
         setSelectionMessage('Select at least one node before expanding to neighbors.');
         return;
       }
       try {
-        const sourceNodes = Array.from(state.selectedNodes);
-        const neighbors = helios.network?.getNeighborsForNodes?.(sourceNodes, {
-          direction: 'both',
-          includeEdges: false,
-          includeSourceNodes: false,
-        }) ?? new Uint32Array();
-        applyNodeSelectionSet(neighbors, 'add');
+        selectionBehavior.expandSelectionToNeighbors();
         refreshStatus();
         setSelectionMessage('');
       } catch (error) {
@@ -782,34 +461,14 @@ export class SelectionPanel {
       }
     };
 
-    const centerSelectedNodesOrNetwork = (options = {}) => {
-      const selectedNodes = Array.from(state.selectedNodes);
-      if (selectedNodes.length) {
-        helios.cameraFollowNodes?.(selectedNodes, {
-          animate: options.animate ?? true,
-          durationMs: options.durationMs,
-          followUpdateIntervalMs: options.followUpdateIntervalMs ?? 180,
-          zoomScale: options.zoomScale ?? 1.35,
-          maxFocusZoom: options.maxFocusZoom ?? DEFAULT_SELECTION_FOCUS_MAX_ZOOM,
-          minFocusDistance: options.minFocusDistance ?? DEFAULT_SELECTION_FOCUS_MIN_DISTANCE,
-          focusZoomTolerance: options.focusZoomTolerance ?? DEFAULT_SELECTION_FOCUS_ZOOM_TOLERANCE,
-        });
-        return true;
-      }
-      helios.cameraFollowNodes?.([], {
-        animate: options.animate ?? true,
-        durationMs: options.durationMs,
-        resetOrientation: false,
-      });
-      return false;
-    };
+    const centerSelectedNodesOrNetwork = (options = {}) => selectionBehavior.centerSelectedNodesOrNetwork(options);
 
     const statusEl = document.createElement('div');
     statusEl.className = 'helios-ui-selection__status helios-ui-label__hint';
     statusEl.style.margin = '0 0 10px';
 
     const refreshStatus = () => {
-      statusEl.textContent = `Status: ${state.selectedNodes.size} node${state.selectedNodes.size === 1 ? '' : 's'} ${state.selectedEdges.size} edge${state.selectedEdges.size === 1 ? '' : 's'}`;
+      statusEl.textContent = `Status: ${selectionState.selectedNodes.size} node${selectionState.selectedNodes.size === 1 ? '' : 's'} ${selectionState.selectedEdges.size} edge${selectionState.selectedEdges.size === 1 ? '' : 's'}`;
     };
 
     const actionsWrap = document.createElement('div');
@@ -985,28 +644,14 @@ export class SelectionPanel {
       }, 0);
     };
 
-    const collectSavedSelectionAttributes = () => {
-      const network = helios.network ?? null;
-      const catalog = new Map();
-      for (const name of resolveBooleanAttributeNames(network, 'node')) {
-        const entry = catalog.get(name) ?? { name, node: false, edge: false };
-        entry.node = true;
-        catalog.set(name, entry);
-      }
-      for (const name of resolveBooleanAttributeNames(network, 'edge')) {
-        const entry = catalog.get(name) ?? { name, node: false, edge: false };
-        entry.edge = true;
-        catalog.set(name, entry);
-      }
-      return Array.from(catalog.values()).sort((a, b) => a.name.localeCompare(b.name));
-    };
+    const collectSavedSelectionAttributes = () => selectionBehavior.collectSavedSelectionAttributes();
 
     const resolveSuggestedSelectionName = () => {
       const entries = collectSavedSelectionAttributes();
       const names = new Set(entries.map((entry) => entry.name));
-      const current = state.savedSelectionAttribute !== CURRENT_SELECTION_VALUE
-        ? state.savedSelectionAttribute
-        : state.lastNamedSelectionAttribute;
+      const current = selectionState.savedSelectionAttribute !== CURRENT_SELECTION_VALUE
+        ? selectionState.savedSelectionAttribute
+        : selectionState.lastNamedSelectionAttribute;
       const base = (typeof current === 'string' && current.trim()) ? current.trim() : 'selection';
       if (!names.has(base)) return base;
       let suffix = 2;
@@ -1016,8 +661,8 @@ export class SelectionPanel {
 
     const refreshSavedSelectionOptions = () => {
       const entries = collectSavedSelectionAttributes();
-      const current = typeof state.savedSelectionAttribute === 'string'
-        ? state.savedSelectionAttribute
+      const current = typeof selectionState.savedSelectionAttribute === 'string'
+        ? selectionState.savedSelectionAttribute
         : CURRENT_SELECTION_VALUE;
       const nextValue = current === CURRENT_SELECTION_VALUE || entries.some((entry) => entry.name === current)
         ? current
@@ -1036,115 +681,42 @@ export class SelectionPanel {
               : `${entry.name} (edges)`,
         })),
       ];
-      state.savedSelectionAttribute = nextValue;
+      selectionState.savedSelectionAttribute = nextValue;
       savedSelectionSelect.setOptions(options, nextValue);
     };
 
-    const ensureBooleanSelectionAttribute = (network, scope, name) => {
-      const trimmed = String(name ?? '').trim();
-      if (!trimmed) throw new Error('Selection attribute name is required.');
-      const getInfo = scope === 'edge'
-        ? network.getEdgeAttributeInfo?.bind(network)
-        : network.getNodeAttributeInfo?.bind(network);
-      const defineAttribute = scope === 'edge'
-        ? network.defineEdgeAttribute?.bind(network)
-        : network.defineNodeAttribute?.bind(network);
-      const info = getInfo?.(trimmed) ?? null;
-      if (info) {
-        if (info.type !== AttributeType.Boolean || info.dimension !== 1) {
-          throw new Error(`Attribute "${trimmed}" already exists on ${scope}s and is not a boolean scalar.`);
-        }
-        return trimmed;
-      }
-      defineAttribute?.(trimmed, AttributeType.Boolean, 1);
-      return trimmed;
-    };
-
     const saveSelectionToAttribute = (name) => {
-      const network = helios.network ?? null;
-      if (!network) throw new Error('Selection save requires an active network.');
-      const trimmed = ensureBooleanSelectionAttribute(network, 'node', name);
-      ensureBooleanSelectionAttribute(network, 'edge', trimmed);
-      if (typeof network.withBufferAccess === 'function') {
-        network.withBufferAccess(() => {
-          const nodeView = network.getNodeAttributeBuffer(trimmed).view;
-          const edgeView = network.getEdgeAttributeBuffer(trimmed).view;
-          nodeView.fill(0);
-          edgeView.fill(0);
-          for (const index of state.selectedNodes) nodeView[index] = 1;
-          for (const index of state.selectedEdges) edgeView[index] = 1;
-        });
-      }
-      network.bumpNodeAttributeVersion?.(trimmed);
-      network.bumpEdgeAttributeVersion?.(trimmed);
-      state.savedSelectionAttribute = trimmed;
-      state.lastNamedSelectionAttribute = trimmed;
+      const trimmed = selectionBehavior.saveSelectionToAttribute(name);
       refreshSavedSelectionOptions();
       savedSelectionSelect.value = trimmed;
       setSelectionMessage('');
       return trimmed;
     };
 
-    const collectSelectionAttributeIndices = (scope, name) => {
-      const network = helios.network ?? null;
-      if (!network || typeof network.withBufferAccess !== 'function') return [];
-      const trimmed = String(name ?? '').trim();
-      if (!trimmed) return [];
-      const getInfo = scope === 'edge'
-        ? network.getEdgeAttributeInfo?.bind(network)
-        : network.getNodeAttributeInfo?.bind(network);
-      const info = getInfo?.(trimmed) ?? null;
-      if (!info || info.type !== AttributeType.Boolean || info.dimension !== 1) return [];
-      return network.withBufferAccess(() => {
-        const ids = scope === 'edge' ? (network.edgeIndices ?? []) : (network.nodeIndices ?? []);
-        const view = scope === 'edge'
-          ? network.getEdgeAttributeBuffer(trimmed).view
-          : network.getNodeAttributeBuffer(trimmed).view;
-        const matches = [];
-        for (let index = 0; index < ids.length; index += 1) {
-          const id = Number(ids[index]);
-          if (Number(view[id]) !== 0) matches.push(id);
-        }
-        return matches;
-      }, {
-        nodeIndices: scope !== 'edge',
-        edgeIndices: scope === 'edge',
-      });
-    };
-
     const restoreSelectionFromAttribute = (name) => {
-      const trimmed = String(name ?? '').trim();
-      if (!trimmed) {
-        setSelectionMessage('Select a saved selection before restoring.');
-        return;
-      }
-      const nodeMatches = collectSelectionAttributeIndices('node', trimmed);
-      const edgeMatches = collectSelectionAttributeIndices('edge', trimmed);
-      applyNodeSelectionSet(nodeMatches, 'replace', { preserveBinding: true });
-      applyEdgeSelectionSet(edgeMatches, 'replace', { preserveBinding: true });
-      setSelectionBinding(trimmed);
+      selectionBehavior.restoreSelectionFromAttribute(name);
       refreshStatus();
       setSelectionMessage('');
     };
 
     savedSelectionSelect.addEventListener('change', () => {
-      state.savedSelectionAttribute = savedSelectionSelect.value || CURRENT_SELECTION_VALUE;
+      selectionState.savedSelectionAttribute = savedSelectionSelect.value || CURRENT_SELECTION_VALUE;
       refreshSavedSelectionOptions();
-      if (state.savedSelectionAttribute !== CURRENT_SELECTION_VALUE) {
-        restoreSelectionFromAttribute(state.savedSelectionAttribute);
+      if (selectionState.savedSelectionAttribute !== CURRENT_SELECTION_VALUE) {
+        restoreSelectionFromAttribute(selectionState.savedSelectionAttribute);
       } else {
         setSelectionMessage('');
       }
     });
 
     saveSelectionButton.addEventListener('click', (event) => {
-      if (event.shiftKey === true || state.savedSelectionAttribute === CURRENT_SELECTION_VALUE) {
+      if (event.shiftKey === true || selectionState.savedSelectionAttribute === CURRENT_SELECTION_VALUE) {
         openSaveDialog(resolveSuggestedSelectionName());
         return;
       }
-      if (state.savedSelectionAttribute && state.savedSelectionAttribute !== CURRENT_SELECTION_VALUE) {
+      if (selectionState.savedSelectionAttribute && selectionState.savedSelectionAttribute !== CURRENT_SELECTION_VALUE) {
         try {
-          saveSelectionToAttribute(state.savedSelectionAttribute);
+          saveSelectionToAttribute(selectionState.savedSelectionAttribute);
         } catch (error) {
           setSelectionMessage(error instanceof Error ? error.message : String(error));
         }
@@ -1234,12 +806,11 @@ export class SelectionPanel {
     interactionBody.appendChild(note);
 
     const nodeClickToggle = createToggleControl({
-      checked: state.nodeClick,
+      checked: selectionState.nodeClick,
       ariaLabel: 'Node click selection',
     });
     nodeClickToggle.addEventListener('change', () => {
-      state.nodeClick = nodeClickToggle.checked;
-      syncPicking();
+      selectionBehavior.update({ nodeClick: nodeClickToggle.checked });
     });
     createRow(interactionBody, {
       title: 'Node Click',
@@ -1248,13 +819,12 @@ export class SelectionPanel {
     });
 
     const nodeHoverToggle = createToggleControl({
-      checked: state.nodeHover,
+      checked: hoverState.nodeHover,
       ariaLabel: 'Node hover highlight',
     });
     nodeHoverToggle.addEventListener('change', () => {
-      state.nodeHover = nodeHoverToggle.checked;
-      if (!state.nodeHover) clearNodeHover();
-      syncPicking();
+      hoverBehavior.update({ nodeHover: nodeHoverToggle.checked });
+      if (!nodeHoverToggle.checked) clearNodeHover();
     });
     createRow(interactionBody, {
       title: 'Node Hover',
@@ -1265,13 +835,11 @@ export class SelectionPanel {
     appendSectionHeading(interactionBody, 'Connected Edges');
 
     const hoverConnectedEdgesToggle = createToggleControl({
-      checked: state.hoverConnectedEdges,
+      checked: hoverState.hoverConnectedEdges,
       ariaLabel: 'Connected edges on hover',
     });
     hoverConnectedEdgesToggle.addEventListener('change', () => {
-      state.hoverConnectedEdges = hoverConnectedEdgesToggle.checked;
-      applyHoverConnectedEdges();
-      syncPicking();
+      hoverBehavior.update({ hoverConnectedEdges: hoverConnectedEdgesToggle.checked });
     });
     createRow(interactionBody, {
       title: 'Hover',
@@ -1280,12 +848,11 @@ export class SelectionPanel {
     });
 
     const selectedConnectedEdgesToggle = createToggleControl({
-      checked: state.selectedConnectedEdges,
+      checked: selectionState.selectedConnectedEdges,
       ariaLabel: 'Connected edges on selection',
     });
     selectedConnectedEdgesToggle.addEventListener('change', () => {
-      state.selectedConnectedEdges = selectedConnectedEdgesToggle.checked;
-      applySelectedConnectedEdges();
+      selectionBehavior.update({ selectedConnectedEdges: selectedConnectedEdgesToggle.checked });
     });
     createRow(interactionBody, {
       title: 'Selected',
@@ -1294,12 +861,11 @@ export class SelectionPanel {
     });
 
     const edgeClickToggle = createToggleControl({
-      checked: state.edgeClick,
+      checked: selectionState.edgeClick,
       ariaLabel: 'Edge click selection',
     });
     edgeClickToggle.addEventListener('change', () => {
-      state.edgeClick = edgeClickToggle.checked;
-      syncPicking();
+      selectionBehavior.update({ edgeClick: edgeClickToggle.checked });
     });
     createRow(interactionBody, {
       title: 'Edge Click',
@@ -1308,13 +874,12 @@ export class SelectionPanel {
     });
 
     const edgeHoverToggle = createToggleControl({
-      checked: state.edgeHover,
+      checked: hoverState.edgeHover,
       ariaLabel: 'Edge hover highlight',
     });
     edgeHoverToggle.addEventListener('change', () => {
-      state.edgeHover = edgeHoverToggle.checked;
-      if (!state.edgeHover) clearEdgeHover();
-      syncPicking();
+      hoverBehavior.update({ edgeHover: edgeHoverToggle.checked });
+      if (!edgeHoverToggle.checked) clearEdgeHover();
     });
     createRow(interactionBody, {
       title: 'Edge Hover',
@@ -1323,13 +888,11 @@ export class SelectionPanel {
     });
 
     const hoverLabelToggle = createToggleControl({
-      checked: state.hoverLabel,
+      checked: hoverState.hoverLabel,
       ariaLabel: 'Hover label',
     });
     hoverLabelToggle.addEventListener('change', () => {
-      state.hoverLabel = hoverLabelToggle.checked;
-      applyHoverLabelConfig();
-      syncPicking();
+      hoverBehavior.update({ hoverLabel: hoverLabelToggle.checked });
     });
     createRow(interactionBody, {
       title: 'Hover Label',
@@ -1342,8 +905,7 @@ export class SelectionPanel {
       compact: false,
     });
     hoverLabelSourceSelect.addEventListener('change', () => {
-      state.hoverLabelSource = hoverLabelSourceSelect.value || 'auto';
-      if (state.hoverLabel) applyHoverLabelConfig();
+      hoverBehavior.update({ hoverLabelSource: hoverLabelSourceSelect.value || 'auto' });
     });
     createRow(interactionBody, {
       title: 'Label Source',
@@ -1713,68 +1275,76 @@ export class SelectionPanel {
     appendSectionHeading(normalBody, 'When Selected');
     const refreshSelectedOtherNode = createNodeStyleSection(normalBody, 'other-selected', defaultOtherSelectedNodeStyle, {
       allowForceMaxAlpha: false,
-      getStyle: () => normalizeNodeStyle(state.otherSelectedNodeStyle, defaultOtherSelectedNodeStyle),
+      getStyle: () => normalizeNodeStyle(selectionState.otherSelectedNodeStyle, defaultOtherSelectedNodeStyle),
       patchStyle: (changes) => {
-        state.otherSelectedNodeStyle = normalizeNodeStyle({ ...state.otherSelectedNodeStyle, ...changes }, defaultOtherSelectedNodeStyle);
-        applyOtherElementsState();
+        selectionBehavior.update({
+          otherSelectedNodeStyle: normalizeNodeStyle({ ...selectionState.otherSelectedNodeStyle, ...changes }, defaultOtherSelectedNodeStyle),
+        });
       },
-      getTone: () => normalizeAutoBackgroundTone(state.otherSelectedNodeTone, DEFAULT_AUTO_BACKGROUND_TONE_SELECTED),
+      getTone: () => normalizeAutoBackgroundTone(selectionState.otherSelectedNodeTone, DEFAULT_AUTO_BACKGROUND_TONE_SELECTED),
       patchTone: (changes) => {
-        state.otherSelectedNodeTone = normalizeAutoBackgroundTone(
-          { ...state.otherSelectedNodeTone, ...changes },
-          DEFAULT_AUTO_BACKGROUND_TONE_SELECTED,
-        );
-        applyOtherElementsState();
+        selectionBehavior.update({
+          otherSelectedNodeTone: normalizeAutoBackgroundTone(
+            { ...selectionState.otherSelectedNodeTone, ...changes },
+            DEFAULT_AUTO_BACKGROUND_TONE_SELECTED,
+          ),
+        });
       },
     });
     const refreshSelectedOtherEdge = createEdgeStyleSection(normalBody, 'other-selected', defaultOtherSelectedEdgeStyle, {
       allowForceMaxAlpha: false,
-      getStyle: () => normalizeEdgeStyle(state.otherSelectedEdgeStyle, defaultOtherSelectedEdgeStyle),
+      getStyle: () => normalizeEdgeStyle(selectionState.otherSelectedEdgeStyle, defaultOtherSelectedEdgeStyle),
       patchStyle: (changes) => {
-        state.otherSelectedEdgeStyle = normalizeEdgeStyle({ ...state.otherSelectedEdgeStyle, ...changes }, defaultOtherSelectedEdgeStyle);
-        applyOtherElementsState();
+        selectionBehavior.update({
+          otherSelectedEdgeStyle: normalizeEdgeStyle({ ...selectionState.otherSelectedEdgeStyle, ...changes }, defaultOtherSelectedEdgeStyle),
+        });
       },
-      getTone: () => normalizeAutoBackgroundTone(state.otherSelectedEdgeTone, DEFAULT_AUTO_BACKGROUND_TONE_SELECTED),
+      getTone: () => normalizeAutoBackgroundTone(selectionState.otherSelectedEdgeTone, DEFAULT_AUTO_BACKGROUND_TONE_SELECTED),
       patchTone: (changes) => {
-        state.otherSelectedEdgeTone = normalizeAutoBackgroundTone(
-          { ...state.otherSelectedEdgeTone, ...changes },
-          DEFAULT_AUTO_BACKGROUND_TONE_SELECTED,
-        );
-        applyOtherElementsState();
+        selectionBehavior.update({
+          otherSelectedEdgeTone: normalizeAutoBackgroundTone(
+            { ...selectionState.otherSelectedEdgeTone, ...changes },
+            DEFAULT_AUTO_BACKGROUND_TONE_SELECTED,
+          ),
+        });
       },
     });
 
     appendSectionHeading(normalBody, 'When Highlighted');
     const refreshHighlightOtherNode = createNodeStyleSection(normalBody, 'other-highlighted', defaultOtherHighlightNodeStyle, {
       allowForceMaxAlpha: false,
-      getStyle: () => normalizeNodeStyle(state.otherHighlightNodeStyle, defaultOtherHighlightNodeStyle),
+      getStyle: () => normalizeNodeStyle(hoverState.otherHighlightNodeStyle, defaultOtherHighlightNodeStyle),
       patchStyle: (changes) => {
-        state.otherHighlightNodeStyle = normalizeNodeStyle({ ...state.otherHighlightNodeStyle, ...changes }, defaultOtherHighlightNodeStyle);
-        applyOtherElementsState();
+        hoverBehavior.update({
+          otherHighlightNodeStyle: normalizeNodeStyle({ ...hoverState.otherHighlightNodeStyle, ...changes }, defaultOtherHighlightNodeStyle),
+        });
       },
-      getTone: () => normalizeAutoBackgroundTone(state.otherHighlightNodeTone, DEFAULT_AUTO_BACKGROUND_TONE_DISABLED),
+      getTone: () => normalizeAutoBackgroundTone(hoverState.otherHighlightNodeTone, DEFAULT_AUTO_BACKGROUND_TONE_DISABLED),
       patchTone: (changes) => {
-        state.otherHighlightNodeTone = normalizeAutoBackgroundTone(
-          { ...state.otherHighlightNodeTone, ...changes },
-          DEFAULT_AUTO_BACKGROUND_TONE_DISABLED,
-        );
-        applyOtherElementsState();
+        hoverBehavior.update({
+          otherHighlightNodeTone: normalizeAutoBackgroundTone(
+            { ...hoverState.otherHighlightNodeTone, ...changes },
+            DEFAULT_AUTO_BACKGROUND_TONE_DISABLED,
+          ),
+        });
       },
     });
     const refreshHighlightOtherEdge = createEdgeStyleSection(normalBody, 'other-highlighted', defaultOtherHighlightEdgeStyle, {
       allowForceMaxAlpha: false,
-      getStyle: () => normalizeEdgeStyle(state.otherHighlightEdgeStyle, defaultOtherHighlightEdgeStyle),
+      getStyle: () => normalizeEdgeStyle(hoverState.otherHighlightEdgeStyle, defaultOtherHighlightEdgeStyle),
       patchStyle: (changes) => {
-        state.otherHighlightEdgeStyle = normalizeEdgeStyle({ ...state.otherHighlightEdgeStyle, ...changes }, defaultOtherHighlightEdgeStyle);
-        applyOtherElementsState();
+        hoverBehavior.update({
+          otherHighlightEdgeStyle: normalizeEdgeStyle({ ...hoverState.otherHighlightEdgeStyle, ...changes }, defaultOtherHighlightEdgeStyle),
+        });
       },
-      getTone: () => normalizeAutoBackgroundTone(state.otherHighlightEdgeTone, DEFAULT_AUTO_BACKGROUND_TONE_DISABLED),
+      getTone: () => normalizeAutoBackgroundTone(hoverState.otherHighlightEdgeTone, DEFAULT_AUTO_BACKGROUND_TONE_DISABLED),
       patchTone: (changes) => {
-        state.otherHighlightEdgeTone = normalizeAutoBackgroundTone(
-          { ...state.otherHighlightEdgeTone, ...changes },
-          DEFAULT_AUTO_BACKGROUND_TONE_DISABLED,
-        );
-        applyOtherElementsState();
+        hoverBehavior.update({
+          otherHighlightEdgeTone: normalizeAutoBackgroundTone(
+            { ...hoverState.otherHighlightEdgeTone, ...changes },
+            DEFAULT_AUTO_BACKGROUND_TONE_DISABLED,
+          ),
+        });
       },
     });
 
@@ -1854,9 +1424,9 @@ export class SelectionPanel {
         { value: '$id', label: '$id' },
         ...names.map((name) => ({ value: name, label: name })),
       ];
-      hoverLabelSourceSelect.setOptions(options, state.hoverLabelSource);
-      if (!options.some((entry) => entry.value === state.hoverLabelSource)) {
-        state.hoverLabelSource = 'auto';
+      hoverLabelSourceSelect.setOptions(options, hoverState.hoverLabelSource);
+      if (!options.some((entry) => entry.value === hoverState.hoverLabelSource)) {
+        hoverState.hoverLabelSource = 'auto';
         hoverLabelSourceSelect.value = 'auto';
       }
     };
@@ -1904,135 +1474,25 @@ export class SelectionPanel {
       }
     };
 
-    const handleGraphClick = (event) => {
-      const detail = event?.detail;
-      if (!detail) return;
-      const shiftKey = detail.modifiers?.shiftKey === true;
-      const isNodeHit = detail.kind === 'node' && detail.index >= 0;
-      const isEdgeHit = detail.kind === 'edge' && detail.index >= 0;
-
-      if (isNodeHit && state.nodeClick) {
-        if (shiftKey) toggleSelection('node', detail.index);
-        else selectOnly('node', detail.index);
-        refreshStatus();
-        return;
-      }
-
-      if (isEdgeHit && state.edgeClick) {
-        if (shiftKey) toggleSelection('edge', detail.index);
-        else selectOnly('edge', detail.index);
-        refreshStatus();
-        return;
-      }
-
-      if (!shiftKey) {
-        clearSelection();
-        refreshStatus();
-      }
-    };
-
-    const handleGraphDoubleClick = (event) => {
-      const detail = event?.detail;
-      if (!detail) return;
-      const shiftKey = detail.modifiers?.shiftKey === true;
-      const isNodeHit = detail.kind === 'node' && detail.index >= 0;
-
-      if (isNodeHit && state.nodeClick) {
-        if (shiftKey) toggleSelection('node', detail.index);
-        else selectOnly('node', detail.index);
-        refreshStatus();
-        centerSelectedNodesOrNetwork();
-        setSelectionMessage('');
-        return;
-      }
-
-      clearSelection();
-      refreshStatus();
-      centerSelectedNodesOrNetwork();
-      setSelectionMessage('');
-    };
-
-    const handleNodeHover = (event) => {
-      const detail = event?.detail;
-      if (!detail) return;
-      if (!needsNodeHoverTracking()) return;
-      if (detail.state === 'in') {
-        state.hoveredNode = detail.index;
-        if (state.nodeHover) helios.hoverNodeState?.(detail.index, 'HIGHLIGHTED');
-      } else if (detail.state === 'out' && state.hoveredNode === detail.index) {
-        clearNodeHover();
-      }
-      applyOtherElementsState();
-      refreshStatus();
-    };
-
-    const handleEdgeHover = (event) => {
-      const detail = event?.detail;
-      if (!detail) return;
-      if (!needsEdgeHoverTracking()) return;
-      if (detail.state === 'in') {
-        state.hoveredEdge = detail.index;
-        if (state.edgeHover) helios.hoverEdgeState?.(detail.index, 'HIGHLIGHTED');
-      } else if (detail.state === 'out' && state.hoveredEdge === detail.index) {
-        state.hoveredEdge = -1;
-        helios.hoverEdgeState?.(null, 0);
-      }
-      applyOtherElementsState();
-      refreshStatus();
-    };
-
-    const handleNetworkReplaced = () => {
-      clearSelection({ preserveBinding: true });
-      clearNodeHover();
-      clearEdgeHover();
-      state.savedSelectionAttribute = CURRENT_SELECTION_VALUE;
-      state.lastNamedSelectionAttribute = '';
-      attachNetworkAttributeListeners();
-      nodeSelectorEditor.refreshFromNetwork();
-      selectorInterfaceCount = getSelectorInterfaceCount();
-      updateSelectorSectionAvailability(selectorInterfaceCount);
-      refreshHoverLabelOptions();
-      refreshSavedSelectionOptions();
-      ensureStateStyleDefaults();
-      applyHoverConnectedEdges();
-      applySelectedConnectedEdges();
-      applyOtherElementsState();
-      refreshStyleControls();
-      applyHoverLabelConfig();
-      applySelectionLabelDefaults();
-      syncPicking();
-      refreshStatus();
-      setSelectionMessage('');
-    };
-
-    const handleUiBindingChange = (event) => {
-      const bindingName = event?.detail?.name ?? null;
-      if (bindingName !== 'clearColor' && bindingName !== 'background') return;
-      applyOtherElementsState();
-    };
-
     refreshHoverLabelOptions();
     refreshSavedSelectionOptions();
     nodeSelectorEditor.refreshFromNetwork();
     selectorInterfaceCount = getSelectorInterfaceCount();
     updateSelectorSectionAvailability(selectorInterfaceCount);
     refreshStyleControls();
-    applySelectionLabelDefaults();
-    applyHoverLabelConfig();
-    applyHoverConnectedEdges();
-    applySelectedConnectedEdges();
-    syncPicking();
-    applyOtherElementsState();
     refreshStatus();
     attachNetworkAttributeListeners();
 
     const unsubscribers = [
-      subscribe(helios, 'graph:click', handleGraphClick),
-      subscribe(helios, 'graph:dblclick', handleGraphDoubleClick),
-      subscribe(helios, 'node:hover', handleNodeHover),
-      subscribe(helios, 'edge:hover', handleEdgeHover),
-      subscribe(helios, 'network:replaced', handleNetworkReplaced),
-      subscribe(helios, 'ui:binding-change', handleUiBindingChange),
+      selectionBehavior.on('change', () => {
+        refreshStatus();
+        refreshSavedSelectionOptions();
+        refreshStyleControls();
+      }),
+      hoverBehavior.on('change', () => {
+        refreshStyleControls();
+        refreshHoverLabelOptions();
+      }),
     ];
 
     this.ui._controlCleanups.add(() => tooltips.destroy());
@@ -2044,15 +1504,6 @@ export class SelectionPanel {
       nodeSelectorEditor.destroy();
       closeSaveDialog();
       saveDialog.remove();
-      helios.labels?.(state.initialHoverLabelConfig);
-      const graphLayer = helios.renderer?.graphLayer ?? null;
-      if (graphLayer) {
-        graphLayer.propagateHoveredNodeToEdges = false;
-        graphLayer.propagateSelectedNodesToEdges = false;
-        graphLayer.nodeNoStateStyleEnabled = false;
-        graphLayer.edgeNoStateStyleEnabled = false;
-      }
-      helios.requestRender?.();
       styleStack.destroy();
       stack.destroy();
     });
@@ -2064,7 +1515,11 @@ export class SelectionPanel {
       dock: this.options.dock ?? 'top-right',
       content,
     });
-    panel.selectionState = state;
+    panel.selectionState = selectionState;
+    panel.selectionBehavior = selectionBehavior;
+    panel.hoverState = hoverState;
+    panel.hoverBehavior = hoverBehavior;
+    panel.labelsBehavior = labelsBehavior ?? null;
     panel.refreshSelectionPanel = () => {
       nodeSelectorEditor.refreshFromNetwork();
       selectorInterfaceCount = getSelectorInterfaceCount();
@@ -2072,7 +1527,6 @@ export class SelectionPanel {
       refreshHoverLabelOptions();
       refreshSavedSelectionOptions();
       refreshStyleControls();
-      applyOtherElementsState();
       refreshStatus();
     };
     return panel;

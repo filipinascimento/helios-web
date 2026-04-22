@@ -439,6 +439,7 @@ test.describe('figure export', () => {
     await waitForDiagnostics(page);
 
     const result = await page.evaluate(async () => {
+      window.__helios.legends({ showNodeSize: true, showEdgeWidth: true });
       const extractLegendMetrics = async (preset, legendScale = 1) => {
         const blob = await window.__helios.exportFigureBlob({
           format: 'svg',
@@ -451,14 +452,18 @@ test.describe('figure export', () => {
         const doc = new DOMParser().parseFromString(text, 'image/svg+xml');
         const layer = doc.querySelector('.helios-legends-layer');
         const legendText = doc.querySelector('.helios-legend text');
+        const outlinedText = doc.querySelector('.helios-legend text[stroke-width]');
         const nodeColorLegend = doc.querySelector('.helios-legend[data-legend-kind="nodeColor"]');
+        const barOutline = Array.from(nodeColorLegend?.querySelectorAll('rect[fill="none"]') ?? [])[0];
         const bar = nodeColorLegend?.querySelector('image')
           ?? nodeColorLegend?.querySelector('rect[fill^="url("]');
         const transformMatch = /translate\(([-\d.]+),\s*([-\d.]+)\)/u.exec(nodeColorLegend?.getAttribute('transform') ?? '');
         return {
           exportLegendScale: Number.parseFloat(layer?.getAttribute('data-export-legend-scale') ?? '0'),
           fontSize: Number.parseFloat(legendText?.getAttribute('font-size') ?? '0'),
+          textOutlineWidth: Number.parseFloat(outlinedText?.getAttribute('stroke-width') ?? '0'),
           barHeight: Number.parseFloat(bar?.getAttribute('height') ?? '0'),
+          barOutlineStroke: Number.parseFloat(barOutline?.getAttribute('stroke-width') ?? '0'),
           x: Number.parseFloat(transformMatch?.[1] ?? '0'),
           y: Number.parseFloat(transformMatch?.[2] ?? '0'),
         };
@@ -479,40 +484,60 @@ test.describe('figure export', () => {
     expect(result.base1080.barHeight).toBeGreaterThan(0);
     expect(result.scaled4k.fontSize / result.base1080.fontSize).toBeGreaterThan(1.8);
     expect(result.scaled4k.fontSize / result.base1080.fontSize).toBeLessThan(2.2);
+    expect(result.scaled4k.textOutlineWidth / result.base1080.textOutlineWidth).toBeGreaterThan(1.8);
+    expect(result.scaled4k.textOutlineWidth / result.base1080.textOutlineWidth).toBeLessThan(2.2);
     expect(result.scaled4k.barHeight / result.base1080.barHeight).toBeGreaterThan(1.8);
     expect(result.scaled4k.barHeight / result.base1080.barHeight).toBeLessThan(2.2);
+    expect(result.scaled4k.barOutlineStroke / result.base1080.barOutlineStroke).toBeGreaterThan(1.8);
+    expect(result.scaled4k.barOutlineStroke / result.base1080.barOutlineStroke).toBeLessThan(2.2);
     expect(result.scaled4k.x / result.base1080.x).toBeGreaterThan(1.8);
     expect(result.scaled4k.x / result.base1080.x).toBeLessThan(2.2);
     expect(result.scaled4k.y / result.base1080.y).toBeGreaterThan(1.8);
     expect(result.scaled4k.y / result.base1080.y).toBeLessThan(2.2);
     expect(result.scaled8k.fontSize / result.scaled4k.fontSize).toBeGreaterThan(1.8);
     expect(result.scaled8k.fontSize / result.scaled4k.fontSize).toBeLessThan(2.2);
+    expect(result.scaled8k.textOutlineWidth / result.scaled4k.textOutlineWidth).toBeGreaterThan(1.8);
+    expect(result.scaled8k.textOutlineWidth / result.scaled4k.textOutlineWidth).toBeLessThan(2.2);
     expect(result.scaled8k.barHeight / result.scaled4k.barHeight).toBeGreaterThan(1.8);
     expect(result.scaled8k.barHeight / result.scaled4k.barHeight).toBeLessThan(2.2);
+    expect(result.scaled8k.barOutlineStroke / result.scaled4k.barOutlineStroke).toBeGreaterThan(1.8);
+    expect(result.scaled8k.barOutlineStroke / result.scaled4k.barOutlineStroke).toBeLessThan(2.2);
     expect(result.scaled8k.x / result.scaled4k.x).toBeGreaterThan(1.8);
     expect(result.scaled8k.x / result.scaled4k.x).toBeLessThan(2.2);
     expect(result.scaled8k.y / result.scaled4k.y).toBeGreaterThan(1.8);
     expect(result.scaled8k.y / result.scaled4k.y).toBeLessThan(2.2);
     expect(result.window2x.fontSize / result.windowBase.fontSize).toBeGreaterThan(1.8);
     expect(result.window2x.fontSize / result.windowBase.fontSize).toBeLessThan(2.2);
+    expect(result.window2x.textOutlineWidth / result.windowBase.textOutlineWidth).toBeGreaterThan(1.8);
+    expect(result.window2x.textOutlineWidth / result.windowBase.textOutlineWidth).toBeLessThan(2.2);
     expect(result.window2x.barHeight / result.windowBase.barHeight).toBeGreaterThan(1.8);
     expect(result.window2x.barHeight / result.windowBase.barHeight).toBeLessThan(2.2);
+    expect(result.window2x.barOutlineStroke / result.windowBase.barOutlineStroke).toBeGreaterThan(1.8);
+    expect(result.window2x.barOutlineStroke / result.windowBase.barOutlineStroke).toBeLessThan(2.2);
     expect(result.window2x.x / result.windowBase.x).toBeGreaterThan(1.8);
     expect(result.window2x.x / result.windowBase.x).toBeLessThan(2.2);
     expect(result.window2x.y / result.windowBase.y).toBeGreaterThan(1.8);
     expect(result.window2x.y / result.windowBase.y).toBeLessThan(2.2);
     expect(result.window4x.fontSize / result.windowBase.fontSize).toBeGreaterThan(3.6);
     expect(result.window4x.fontSize / result.windowBase.fontSize).toBeLessThan(4.4);
+    expect(result.window4x.textOutlineWidth / result.windowBase.textOutlineWidth).toBeGreaterThan(3.6);
+    expect(result.window4x.textOutlineWidth / result.windowBase.textOutlineWidth).toBeLessThan(4.4);
     expect(result.window4x.barHeight / result.windowBase.barHeight).toBeGreaterThan(3.6);
     expect(result.window4x.barHeight / result.windowBase.barHeight).toBeLessThan(4.4);
+    expect(result.window4x.barOutlineStroke / result.windowBase.barOutlineStroke).toBeGreaterThan(3.6);
+    expect(result.window4x.barOutlineStroke / result.windowBase.barOutlineStroke).toBeLessThan(4.4);
     expect(result.window4x.x / result.windowBase.x).toBeGreaterThan(3.6);
     expect(result.window4x.x / result.windowBase.x).toBeLessThan(4.4);
     expect(result.window4x.y / result.windowBase.y).toBeGreaterThan(3.6);
     expect(result.window4x.y / result.windowBase.y).toBeLessThan(4.4);
     expect(result.doubled1080.fontSize / result.base1080.fontSize).toBeGreaterThan(1.8);
     expect(result.doubled1080.fontSize / result.base1080.fontSize).toBeLessThan(2.2);
+    expect(result.doubled1080.textOutlineWidth / result.base1080.textOutlineWidth).toBeGreaterThan(1.8);
+    expect(result.doubled1080.textOutlineWidth / result.base1080.textOutlineWidth).toBeLessThan(2.2);
     expect(result.doubled1080.barHeight / result.base1080.barHeight).toBeGreaterThan(1.8);
     expect(result.doubled1080.barHeight / result.base1080.barHeight).toBeLessThan(2.2);
+    expect(result.doubled1080.barOutlineStroke / result.base1080.barOutlineStroke).toBeGreaterThan(1.8);
+    expect(result.doubled1080.barOutlineStroke / result.base1080.barOutlineStroke).toBeLessThan(2.2);
   });
 
   test('same-aspect fixed presets preserve framing between 1080p and 4k exports', async ({ page }) => {

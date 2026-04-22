@@ -498,6 +498,17 @@ function legendMetrics(config, options = {}) {
   };
 }
 
+function resolveLegendStrokeScale(config, metrics = null) {
+  if (metrics?.scale != null) return Math.max(0.25, toFinite(metrics.scale, 1));
+  return Math.max(0.25, clamp(toFinite(config?.scale, DEFAULT_CONFIG.scale), 0.6, Math.max(0.6, toFinite(config?.maxScale, 3))));
+}
+
+function resolveTextOutlineStrokeWidth(config, fontSize) {
+  const baseFontSize = Math.max(1, toFinite(config?.fontSize, DEFAULT_CONFIG.fontSize));
+  const scale = Math.max(0.25, toFinite(fontSize, baseFontSize) / baseFontSize);
+  return Math.max(0, toFinite(config?.textOutlineWidth, DEFAULT_CONFIG.textOutlineWidth)) * 2 * scale;
+}
+
 function createContinuousLegendRampHref(item, n = 256) {
   if (typeof document === 'undefined') return '';
   const samples = Math.max(2, clampInt(n, 2, 2048));
@@ -852,6 +863,51 @@ export class SvgLegendController {
     this._config = next;
   }
 
+  _resolveConfig(options = {}) {
+    return {
+      ...this._config,
+      ...(options.config ?? {}),
+      placements: normalizePlacements({
+        ...this._config.placements,
+        ...(options.config?.placements ?? {}),
+      }),
+      titles: {
+        ...(this._config.titles ?? {}),
+        ...(options.config?.titles ?? {}),
+      },
+    };
+  }
+
+  _createLegendRuntime(config, options = {}) {
+    const size = options.size ?? this.helios?.size ?? this.helios?.layers?.size ?? { width: 1, height: 1 };
+    return {
+      enabled: config.zoomAwareSizeIn2D !== false,
+      mode: typeof this.helios?.mode === 'function' ? this.helios.mode() : this.helios?.options?.mode,
+      projection: options.projection ?? this.helios?.renderer?.camera?.projection ?? null,
+      zoom: options.zoom ?? this.helios?.renderer?.camera?.zoom ?? 1,
+      distance: options.distance ?? this.helios?.renderer?.camera?.distance ?? 1,
+      viewportHeight: options.viewportHeight ?? size?.height ?? 1,
+      nodeSizeBase: typeof this.helios?.nodeSizeBase === 'function' ? this.helios.nodeSizeBase() : 0,
+      nodeSizeScale: typeof this.helios?.nodeSizeScale === 'function' ? this.helios.nodeSizeScale() : 1,
+      semanticZoomExponent: typeof this.helios?.semanticZoomExponent === 'function' ? this.helios.semanticZoomExponent() : 0,
+    };
+  }
+
+  deriveItems(options = {}) {
+    if (!this.helios) return [];
+    const config = this._resolveConfig(options);
+    return deriveLegendItems({
+      nodeChannels: combineMapperChannels(this.helios.nodeMapper),
+      edgeChannels: combineMapperChannels(this.helios.edgeMapper),
+      densityConfig: typeof this.helios.density === 'function' ? this.helios.density() : null,
+      densityRuntime: this.helios._densityRuntime ?? null,
+      visualConfig: this.helios.network?.__heliosVisualConfig ?? null,
+      network: this.helios.network ?? null,
+      config,
+      legendRuntime: this._createLegendRuntime(config, options),
+    });
+  }
+
   update() {
     if (!this.group || !this.helios) return false;
     if (this._config.enabled !== true) {
@@ -864,26 +920,7 @@ export class SvgLegendController {
       typeof this.helios.overlayInsets === 'function' ? this.helios.overlayInsets() : null,
       this._config,
     );
-    const items = deriveLegendItems({
-      nodeChannels: combineMapperChannels(this.helios.nodeMapper),
-      edgeChannels: combineMapperChannels(this.helios.edgeMapper),
-      densityConfig: typeof this.helios.density === 'function' ? this.helios.density() : null,
-      densityRuntime: this.helios._densityRuntime ?? null,
-      visualConfig: this.helios.network?.__heliosVisualConfig ?? null,
-      network: this.helios.network ?? null,
-      config: this._config,
-      legendRuntime: {
-        enabled: this._config.zoomAwareSizeIn2D !== false,
-        mode: typeof this.helios.mode === 'function' ? this.helios.mode() : this.helios.options?.mode,
-        projection: this.helios.renderer?.camera?.projection ?? null,
-        zoom: this.helios.renderer?.camera?.zoom ?? 1,
-        distance: this.helios.renderer?.camera?.distance ?? 1,
-        viewportHeight: size?.height ?? 1,
-        nodeSizeBase: typeof this.helios.nodeSizeBase === 'function' ? this.helios.nodeSizeBase() : 0,
-        nodeSizeScale: typeof this.helios.nodeSizeScale === 'function' ? this.helios.nodeSizeScale() : 1,
-        semanticZoomExponent: typeof this.helios.semanticZoomExponent === 'function' ? this.helios.semanticZoomExponent() : 0,
-      },
-    });
+    const items = this.deriveItems({ size });
     if (!items.length) {
       this._clear();
       return false;
@@ -904,40 +941,14 @@ export class SvgLegendController {
 
   createSnapshot(options = {}) {
     if (!this.helios || typeof document === 'undefined') return null;
-    const config = {
-      ...this._config,
-      ...(options.config ?? {}),
-      placements: normalizePlacements({
-        ...this._config.placements,
-        ...(options.config?.placements ?? {}),
-      }),
-    };
+    const config = this._resolveConfig(options);
     const size = options.size ?? this.helios.size ?? this.helios.layers?.size ?? { width: 1, height: 1 };
     const safeRect = safeRectFromSize(
       size,
       options.insets ?? null,
       config,
     );
-    const items = deriveLegendItems({
-      nodeChannels: combineMapperChannels(this.helios.nodeMapper),
-      edgeChannels: combineMapperChannels(this.helios.edgeMapper),
-      densityConfig: typeof this.helios.density === 'function' ? this.helios.density() : null,
-      densityRuntime: this.helios._densityRuntime ?? null,
-      visualConfig: this.helios.network?.__heliosVisualConfig ?? null,
-      network: this.helios.network ?? null,
-      config,
-      legendRuntime: {
-        enabled: config.zoomAwareSizeIn2D !== false,
-        mode: typeof this.helios.mode === 'function' ? this.helios.mode() : this.helios.options?.mode,
-        projection: options.projection ?? this.helios.renderer?.camera?.projection ?? null,
-        zoom: options.zoom ?? this.helios.renderer?.camera?.zoom ?? 1,
-        distance: options.distance ?? this.helios.renderer?.camera?.distance ?? 1,
-        viewportHeight: options.viewportHeight ?? size?.height ?? 1,
-        nodeSizeBase: typeof this.helios.nodeSizeBase === 'function' ? this.helios.nodeSizeBase() : 0,
-        nodeSizeScale: typeof this.helios.nodeSizeScale === 'function' ? this.helios.nodeSizeScale() : 1,
-        semanticZoomExponent: typeof this.helios.semanticZoomExponent === 'function' ? this.helios.semanticZoomExponent() : 0,
-      },
-    });
+    const items = this.deriveItems({ ...options, config, size });
     if (!items.length) return null;
     const positioned = layoutLegendItems(items, safeRect, config);
     return this._buildSnapshotGroup(positioned, config, options.background ?? this.helios.background?.());
@@ -1075,11 +1086,12 @@ export class SvgLegendController {
   }) {
     const appended = [];
     if (config.textOutline !== false && outline) {
+      const outlineWidth = resolveTextOutlineStrokeWidth(config, fontSize);
       const outlineText = this._createTextElement({
         x, y, lines, fill: outline, config, fontWeight, fontSize, anchor, baseline, rotation,
       });
       setSvgPaintAttributes(outlineText, 'stroke', outline, '#000000');
-      outlineText.setAttribute('stroke-width', `${Math.max(0, config.textOutlineWidth) * 2}`);
+      outlineText.setAttribute('stroke-width', `${outlineWidth}`);
       outlineText.setAttribute('stroke-linejoin', 'round');
       if (config.illustratorCompatible !== true) outlineText.setAttribute('paint-order', 'stroke');
       group.appendChild(outlineText);
@@ -1185,6 +1197,7 @@ export class SvgLegendController {
 
   _renderContinuousLegend(group, item, theme, config = this._config, defs = this.defs) {
     const metrics = legendMetrics(config);
+    const strokeScale = resolveLegendStrokeScale(config, metrics);
     const titleText = item.titleLines.join(' ').trim();
     const hasTitle = item.titleLines.length > 0;
     const barX = metrics.paddingX + (hasTitle ? metrics.fontSize + metrics.continuousTitleGap : 0);
@@ -1255,7 +1268,7 @@ export class SvgLegendController {
     barOuter.setAttribute('ry', '2');
     barOuter.setAttribute('fill', 'none');
     setSvgPaintAttributes(barOuter, 'stroke', theme.barOuterStroke, '#000000');
-    barOuter.setAttribute('stroke-width', `${theme.barOuterWidth ?? 2.25}`);
+    barOuter.setAttribute('stroke-width', `${(theme.barOuterWidth ?? 2.25) * strokeScale}`);
     group.appendChild(barOuter);
 
     const barInner = document.createElementNS(SVG_NS, 'rect');
@@ -1267,7 +1280,7 @@ export class SvgLegendController {
     barInner.setAttribute('ry', '2');
     barInner.setAttribute('fill', 'none');
     setSvgPaintAttributes(barInner, 'stroke', theme.barInnerStroke, '#000000');
-    barInner.setAttribute('stroke-width', `${theme.barInnerWidth ?? 1.5}`);
+    barInner.setAttribute('stroke-width', `${(theme.barInnerWidth ?? 1.5) * strokeScale}`);
     group.appendChild(barInner);
 
     const lo = Number(item.domain?.[0] ?? 0);
@@ -1284,7 +1297,7 @@ export class SvgLegendController {
       tickOutline.setAttribute('y1', `${y}`);
       tickOutline.setAttribute('y2', `${y}`);
       setSvgPaintAttributes(tickOutline, 'stroke', theme.tickOutline, '#000000');
-      tickOutline.setAttribute('stroke-width', '3');
+      tickOutline.setAttribute('stroke-width', `${3 * strokeScale}`);
       tickOutline.setAttribute('stroke-linecap', 'round');
       group.appendChild(tickOutline);
       const tickLine = document.createElementNS(SVG_NS, 'line');
@@ -1293,7 +1306,7 @@ export class SvgLegendController {
       tickLine.setAttribute('y1', `${y}`);
       tickLine.setAttribute('y2', `${y}`);
       setSvgPaintAttributes(tickLine, 'stroke', theme.text, '#000000');
-      tickLine.setAttribute('stroke-width', '1.5');
+      tickLine.setAttribute('stroke-width', `${1.5 * strokeScale}`);
       tickLine.setAttribute('stroke-linecap', 'round');
       group.appendChild(tickLine);
       this._appendText(group, {
@@ -1313,6 +1326,7 @@ export class SvgLegendController {
     const metrics = legendMetrics(config, {
       ignoreScale: Boolean(item.preview) && config?.scalePreviewLegends !== true,
     });
+    const strokeScale = resolveLegendStrokeScale(config, metrics);
     const labelFontSize = Math.max(10, metrics.fontSize - 1);
     const titleText = item.titleLines.join(' ').trim();
     const minRange = Math.min(Number(item.range?.[0] ?? 0), Number(item.range?.[1] ?? 1));
@@ -1355,7 +1369,7 @@ export class SvgLegendController {
           circle.setAttribute('r', `${radius}`);
           setSvgPaintAttributes(circle, 'fill', 'rgba(24, 28, 36, 0.26)', '#181c24');
           setSvgPaintAttributes(circle, 'stroke', withAlpha(theme.accentOuter, 0.85), '#ffffff');
-          circle.setAttribute('stroke-width', '2');
+          circle.setAttribute('stroke-width', `${2 * strokeScale}`);
           group.appendChild(circle);
         });
       samples
@@ -1400,7 +1414,7 @@ export class SvgLegendController {
         const source = minRange + (rangeSpan * t);
         return {
           sample,
-          strokeWidth: clamp(source, 1.5, 12),
+          strokeWidth: clamp(source, 1.5, 12) * strokeScale,
         };
       })
       .sort((a, b) => b.sample - a.sample);

@@ -150,6 +150,7 @@ function warnUiDerivationFailure(message, detail) {
 export class HeliosUI {
   constructor(options = {}) {
     this.helios = options.helios ?? null;
+    this.helios?.behaviors?.setUI?.(this);
     this.layerName = options.layerName ?? 'ui';
     this.theme = options.theme ?? 'dark';
     this.styles = options.styles ?? 'default';
@@ -1386,7 +1387,7 @@ export class HeliosUI {
         return row;
       };
 
-      const createLabelSourceSelect = () => {
+      const createLabelSourceSelect = (labelsBehavior = null) => {
         const select = document.createElement('select');
         select.className = 'helios-ui-select';
         select.setAttribute('aria-label', 'Label source attribute');
@@ -1410,7 +1411,7 @@ export class HeliosUI {
         };
 
         const refreshOptions = () => {
-          const currentRaw = this.helios?.labelSource?.();
+          const currentRaw = labelsBehavior?.source?.() ?? this.helios?.labelSource?.();
           const current = typeof currentRaw === 'string' ? currentRaw.trim() : '';
           const currentUi = current === '$id' ? '$index' : current;
 
@@ -1442,11 +1443,11 @@ export class HeliosUI {
         select.addEventListener('change', () => {
           const next = String(select.value ?? '').trim();
           if (!next) {
-            this.helios?.labelSource?.(null);
+            labelsBehavior?.source?.(null) ?? this.helios?.labelSource?.(null);
           } else if (next === '$index') {
-            this.helios?.labelSource?.('$id');
+            labelsBehavior?.source?.('$id') ?? this.helios?.labelSource?.('$id');
           } else {
-            this.helios?.labelSource?.(next);
+            labelsBehavior?.source?.(next) ?? this.helios?.labelSource?.(next);
           }
           refreshOptions();
         });
@@ -1469,16 +1470,16 @@ export class HeliosUI {
         };
       };
 
-      const createLabelFontFamilyInput = () => {
+      const createLabelFontFamilyInput = (labelsBehavior = null) => {
         const input = document.createElement('input');
         input.type = 'text';
         input.className = 'helios-ui-text';
         input.placeholder = 'ui-sans-serif, system-ui, sans-serif';
         input.setAttribute('aria-label', 'Label font family');
-        input.value = String(this.helios?.labelFontFamily?.() ?? '');
+        input.value = String(labelsBehavior?.fontFamily?.() ?? this.helios?.labelFontFamily?.() ?? '');
         input.addEventListener('change', () => {
           const next = String(input.value ?? '').trim();
-          this.helios?.labelFontFamily?.(next);
+          labelsBehavior?.fontFamily?.(next) ?? this.helios?.labelFontFamily?.(next);
         });
         return input;
       };
@@ -1584,8 +1585,8 @@ export class HeliosUI {
 
       const createLabelsContent = () => {
         const wrapper = document.createElement('div');
+        const labelsBehavior = this.helios?.behaviors?.get?.('labels') ?? this.helios?.behaviors?.use?.('labels');
 
-        const labelsMode = this.bindHeliosAccessor('labelsMode');
         const labelsModeSelect = createSelectControl({
           ariaLabel: 'Label Mode',
           options: [
@@ -1593,18 +1594,20 @@ export class HeliosUI {
             { value: 'auto', label: 'Auto Labels' },
             { value: 'selected-only', label: 'Selected Only' },
           ],
-          value: labelsMode.value(),
+          value: labelsBehavior?.mode?.() ?? this.helios?.labelsMode?.(),
         });
         const syncLabelsMode = (value) => {
           const next = value === 'selected-only' ? 'selected-only' : (value === 'off' ? 'off' : 'auto');
           labelsModeSelect.value = next;
-          labelsModeSelect.disabled = labelsMode.readOnly;
+          labelsModeSelect.disabled = false;
         };
-        const unsubscribeLabelsMode = labelsMode.subscribe((value) => {
-          syncLabelsMode(value);
-        });
+        const unsubscribeLabelsMode = labelsBehavior?.on?.('change', (event) => {
+          syncLabelsMode(event?.detail?.state?.enabled === true
+            ? (event?.detail?.state?.selectionMode === 'selected-only' ? 'selected-only' : 'auto')
+            : 'off');
+        }) ?? (() => {});
         labelsModeSelect.addEventListener('change', () => {
-          labelsMode.write(labelsModeSelect.value, { source: 'ui', event: 'change' });
+          labelsBehavior?.mode?.(labelsModeSelect.value);
         });
         this._controlCleanups.add(() => unsubscribeLabelsMode());
         wrapper.appendChild(createAlignedRow({
@@ -1613,23 +1616,22 @@ export class HeliosUI {
           controls: labelsModeSelect,
         }).row);
 
-        const selectedOnlySpaceAware = this.bindHeliosAccessor('labelsSelectedOnlySpaceAware');
         const selectedOnlySpaceAwareToggle = createToggleControl({
-          checked: false,
+          checked: labelsBehavior?.state?.selectedOnlySpaceAware === true,
           onLabel: 'On',
           offLabel: 'Off',
           ariaLabel: 'Selected-only labels use regular space-aware placement',
-          disabled: selectedOnlySpaceAware.readOnly,
+          disabled: false,
         });
         const syncSelectedOnlySpaceAware = (value) => {
           selectedOnlySpaceAwareToggle.checked = Boolean(value);
-          selectedOnlySpaceAwareToggle.disabled = selectedOnlySpaceAware.readOnly;
+          selectedOnlySpaceAwareToggle.disabled = false;
         };
-        const unsubscribeSelectedOnlySpaceAware = selectedOnlySpaceAware.subscribe((value) => {
-          syncSelectedOnlySpaceAware(value);
-        });
+        const unsubscribeSelectedOnlySpaceAware = labelsBehavior?.on?.('change', (event) => {
+          syncSelectedOnlySpaceAware(event?.detail?.state?.selectedOnlySpaceAware === true);
+        }) ?? (() => {});
         selectedOnlySpaceAwareToggle.addEventListener('change', () => {
-          selectedOnlySpaceAware.write(selectedOnlySpaceAwareToggle.checked, { source: 'ui', event: 'change' });
+          labelsBehavior?.update?.({ selectedOnlySpaceAware: selectedOnlySpaceAwareToggle.checked });
         });
         this._controlCleanups.add(() => unsubscribeSelectedOnlySpaceAware());
         const selectedOnlySpaceAwareRow = createAlignedRow({
@@ -1645,10 +1647,13 @@ export class HeliosUI {
         const syncSelectedOnlySpaceAwareVisibility = (mode) => {
           selectedOnlySpaceAwareRow.style.display = mode === 'selected-only' ? '' : 'none';
         };
-        syncSelectedOnlySpaceAwareVisibility(labelsMode.value());
-        const unsubscribeLabelsModeForSpaceAware = labelsMode.subscribe((value) => {
-          syncSelectedOnlySpaceAwareVisibility(value);
-        });
+        syncSelectedOnlySpaceAwareVisibility(labelsBehavior?.mode?.() ?? this.helios?.labelsMode?.());
+        const unsubscribeLabelsModeForSpaceAware = labelsBehavior?.on?.('change', (event) => {
+          const state = event?.detail?.state ?? {};
+          syncSelectedOnlySpaceAwareVisibility(state.enabled === true
+            ? (state.selectionMode === 'selected-only' ? 'selected-only' : 'auto')
+            : 'off');
+        }) ?? (() => {});
         this._controlCleanups.add(() => unsubscribeLabelsModeForSpaceAware());
         wrapper.appendChild(selectedOnlySpaceAwareRow);
 
@@ -1663,7 +1668,7 @@ export class HeliosUI {
           'labelsMaxRows',
         ]));
 
-        const labelSourceControl = createLabelSourceSelect();
+        const labelSourceControl = createLabelSourceSelect(labelsBehavior);
         wrapper.appendChild(createAlignedRow({
           title: 'Source',
           hint: 'Node attribute used for labels. Empty = auto fallback (Label, Name, id).',
@@ -1674,7 +1679,7 @@ export class HeliosUI {
         wrapper.appendChild(createAlignedRow({
           title: 'Font Family',
           hint: 'CSS font-family used by SVG labels.',
-          controls: createLabelFontFamilyInput(),
+          controls: createLabelFontFamilyInput(labelsBehavior),
         }).row);
 
         wrapper.appendChild(createAlignedRow({
@@ -1682,8 +1687,8 @@ export class HeliosUI {
           hint: 'Label text color + alpha.',
           controls: createColorWithAlphaControls({
             ariaLabel: 'Label fill color',
-            getValue: () => this.helios?.labelFill?.(),
-            setValue: (value) => this.helios?.labelFill?.(value),
+            getValue: () => labelsBehavior?.fill?.() ?? this.helios?.labelFill?.(),
+            setValue: (value) => labelsBehavior?.fill?.(value) ?? this.helios?.labelFill?.(value),
           }),
         }).row);
 
@@ -1692,8 +1697,8 @@ export class HeliosUI {
           hint: 'Label outline/halo color + alpha.',
           controls: createColorWithAlphaControls({
             ariaLabel: 'Label outline color',
-            getValue: () => this.helios?.labelOutlineColor?.(),
-            setValue: (value) => this.helios?.labelOutlineColor?.(value),
+            getValue: () => labelsBehavior?.outlineColor?.() ?? this.helios?.labelOutlineColor?.(),
+            setValue: (value) => labelsBehavior?.outlineColor?.(value) ?? this.helios?.labelOutlineColor?.(value),
           }),
         }).row);
         return wrapper;

@@ -436,15 +436,22 @@ test.describe('scene panel: tabs and appearance controls', () => {
     expect(sourceValues).toContain('');
     expect(sourceValues).toContain('$index');
     await labelSource.selectOption('$index');
-    const labelSourceValue = await page.evaluate(() => window.__helios.labelSource?.() ?? null);
-    expect(labelSourceValue).toBe('$id');
+    const labelSourceValue = await page.evaluate(() => ({
+      accessor: window.__helios.labelSource?.() ?? null,
+      behavior: window.__helios.behaviors?.get?.('labels')?.state?.source ?? null,
+    }));
+    expect(labelSourceValue).toEqual({ accessor: '$id', behavior: '$id' });
 
     const labelFontFamily = scenePanel.locator('input[aria-label="Label font family"]').first();
     await expect(labelFontFamily).toBeVisible();
     await labelFontFamily.fill('Menlo, monospace');
     await labelFontFamily.dispatchEvent('change');
-    const fontFamily = await page.evaluate(() => window.__helios.labelFontFamily?.() ?? '');
-    expect(fontFamily).toContain('Menlo');
+    const fontFamily = await page.evaluate(() => ({
+      accessor: window.__helios.labelFontFamily?.() ?? '',
+      behavior: window.__helios.behaviors?.get?.('labels')?.state?.fontFamily ?? '',
+    }));
+    expect(fontFamily.accessor).toContain('Menlo');
+    expect(fontFamily.behavior).toContain('Menlo');
 
     const labelFill = scenePanel.locator('input[type="color"][aria-label="Label fill color"]').first();
     const labelFillAlpha = scenePanel.locator('input[type="number"][aria-label="Label fill color alpha"]').first();
@@ -456,8 +463,12 @@ test.describe('scene panel: tabs and appearance controls', () => {
       el.value = value;
       el.dispatchEvent(new Event('input', { bubbles: true }));
     }, '#00ff00');
-    const labelFillValue = await page.evaluate(() => String(window.__helios.labelFill?.() ?? ''));
-    expect(labelFillValue.toLowerCase()).toContain('#00ff00');
+    const labelFillValue = await page.evaluate(() => ({
+      accessor: String(window.__helios.labelFill?.() ?? ''),
+      behavior: String(window.__helios.behaviors?.get?.('labels')?.state?.fill ?? ''),
+    }));
+    expect(labelFillValue.accessor.toLowerCase()).toContain('#00ff00');
+    expect(labelFillValue.behavior.toLowerCase()).toContain('#00ff00');
 
     const advancedTab = scenePanel.getByRole('button', { name: 'Advanced' }).first();
     await advancedTab.click();
@@ -540,9 +551,9 @@ test.describe('scene panel: tabs and appearance controls', () => {
 
     await page.evaluate(() => {
       window.__legendPatches = [];
-      const controller = window.__helios?._legends;
-      const original = controller.setConfig.bind(controller);
-      controller.setConfig = function setConfigSpy(options) {
+      const behavior = window.__helios?.behaviors?.get?.('legends');
+      const original = behavior.legends.bind(behavior);
+      behavior.legends = function legendsSpy(options) {
         window.__legendPatches.push(JSON.parse(JSON.stringify(options)));
         return original(options);
       };
@@ -555,7 +566,7 @@ test.describe('scene panel: tabs and appearance controls', () => {
     await scaleInput.dispatchEvent('change');
 
     await expect.poll(async () => page.evaluate(() => window.__legendPatches.at(-1)?.scale ?? null)).toBe(5);
-    await expect.poll(async () => page.evaluate(() => window.__helios.legends()?.scale ?? null)).toBe(3);
+    await expect.poll(async () => page.evaluate(() => window.__helios.behaviors?.get?.('legends')?.state?.scale ?? null)).toBe(3);
   });
 
   test('dimension toggle animates into 3D and keeps layout=none scenes visible', async ({ page }) => {

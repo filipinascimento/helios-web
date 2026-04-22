@@ -31,9 +31,13 @@ export class LegendsPanel {
   create() {
     const helios = this.ui.helios ?? null;
     const content = document.createElement('div');
-    if (!helios || typeof helios.legends !== 'function') {
+    this.ui._lastLegendsPanel = this;
+    const legendsBehavior = helios?.behaviors?.get?.('legends') ?? helios?.behaviors?.use?.('legends');
+    this.legendsBehavior = legendsBehavior ?? null;
+    this.state = legendsBehavior?.state ?? null;
+    if (!helios || !legendsBehavior || typeof legendsBehavior.legends !== 'function') {
       const placeholder = document.createElement('div');
-      placeholder.textContent = 'Legends controls require a Helios instance.';
+      placeholder.textContent = 'Legends controls require LegendsBehavior.';
       content.appendChild(placeholder);
       return this.ui.createPanel({
         id: this.options.id ?? 'helios-ui-legends',
@@ -45,9 +49,9 @@ export class LegendsPanel {
     }
 
     const tooltips = createTooltipManager();
-    const cfg = () => helios.legends();
+    const cfg = () => legendsBehavior.legends();
     const patch = (next) => {
-      helios.legends(next);
+      legendsBehavior.legends(next);
       refresh();
     };
     const patchNumber = (key) => (value) => {
@@ -151,6 +155,7 @@ export class LegendsPanel {
 
     refresh();
     const unsubscribers = [
+      legendsBehavior.on?.('change', refresh) ?? (() => {}),
       subscribe(helios, 'network:replaced', refresh),
     ];
     this.ui._controlCleanups.add(() => tooltips.destroy());

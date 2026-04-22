@@ -224,6 +224,24 @@ async function ensureSectionExpanded(panel, title) {
 }
 
 test.describe('basic example selection panel', () => {
+  test('selection panel binds to SelectionBehavior instead of owning selection logic', async ({ page }) => {
+    await waitForExample(page);
+
+    await expect.poll(async () => page.evaluate(() => ({
+      sameInstance: window.__heliosSelectionPanel?.selectionBehavior === window.__helios?.behaviors?.get?.('selection'),
+      sameHoverInstance: window.__heliosSelectionPanel?.hoverBehavior === window.__helios?.behaviors?.get?.('hover'),
+      sameLabelsInstance: window.__heliosSelectionPanel?.labelsBehavior === window.__helios?.behaviors?.get?.('labels'),
+      exposedSelectionState: window.__heliosSelectionPanel?.selectionBehavior?.state === window.__heliosSelectionPanel?.selectionState,
+      exposedHoverState: window.__heliosSelectionPanel?.hoverBehavior?.state === window.__heliosSelectionPanel?.hoverState,
+    }))).toEqual({
+      sameInstance: true,
+      sameHoverInstance: true,
+      sameLabelsInstance: true,
+      exposedSelectionState: true,
+      exposedHoverState: true,
+    });
+  });
+
   test('specializes node picking down to click-only when all node-hover features are disabled', async ({ page }) => {
     await waitForExample(page);
 
@@ -242,9 +260,9 @@ test.describe('basic example selection panel', () => {
 
     await expect.poll(async () => page.evaluate(() => ({
       nodeClick: window.__heliosSelectionPanel?.selectionState?.nodeClick ?? null,
-      nodeHover: window.__heliosSelectionPanel?.selectionState?.nodeHover ?? null,
-      hoverLabel: window.__heliosSelectionPanel?.selectionState?.hoverLabel ?? null,
-      hoverConnectedEdges: window.__heliosSelectionPanel?.selectionState?.hoverConnectedEdges ?? null,
+      nodeHover: window.__heliosSelectionPanel?.hoverState?.nodeHover ?? null,
+      hoverLabel: window.__heliosSelectionPanel?.hoverState?.hoverLabel ?? null,
+      hoverConnectedEdges: window.__heliosSelectionPanel?.hoverState?.hoverConnectedEdges ?? null,
       nodeHoverEnabled: window.__helios?._picking?.node?.hoverEnabled ?? null,
       status: document
         .querySelector('.helios-ui-panel[data-panel-id="helios-ui-selection"] .helios-ui-selection__status')
@@ -266,7 +284,7 @@ test.describe('basic example selection panel', () => {
     await dispatchCanvasEvent(page, { type: 'pointermove', x: nodeHit.x, y: nodeHit.y });
 
     await expect.poll(async () => page.evaluate(() => ({
-      hoveredNode: window.__heliosSelectionPanel?.selectionState?.hoveredNode ?? -1,
+      hoveredNode: window.__heliosSelectionPanel?.hoverState?.hoveredNode ?? -1,
       pickingHoverKind: window.__helios?._picking?.hover?.kind ?? null,
       pickingHoverIndex: window.__helios?._picking?.hover?.index ?? -1,
       status: document
@@ -296,13 +314,13 @@ test.describe('basic example selection panel', () => {
     await expect(subpanelForHeader(panel.locator('button.helios-ui-subpanel__header', { hasText: 'Other Elements' }).first())).toHaveAttribute('data-collapsed', 'true');
 
     await expect.poll(async () => page.evaluate(() => ({
-      hoverLabel: window.__heliosSelectionPanel?.selectionState?.hoverLabel ?? null,
-      hoverLabelSource: window.__heliosSelectionPanel?.selectionState?.hoverLabelSource ?? null,
+      hoverLabel: window.__heliosSelectionPanel?.hoverState?.hoverLabel ?? null,
+      hoverLabelSource: window.__heliosSelectionPanel?.hoverState?.hoverLabelSource ?? null,
       nodeClick: window.__heliosSelectionPanel?.selectionState?.nodeClick ?? null,
-      nodeHover: window.__heliosSelectionPanel?.selectionState?.nodeHover ?? null,
+      nodeHover: window.__heliosSelectionPanel?.hoverState?.nodeHover ?? null,
       edgeClick: window.__heliosSelectionPanel?.selectionState?.edgeClick ?? null,
-      edgeHover: window.__heliosSelectionPanel?.selectionState?.edgeHover ?? null,
-      hoverConnectedEdges: window.__heliosSelectionPanel?.selectionState?.hoverConnectedEdges ?? null,
+      edgeHover: window.__heliosSelectionPanel?.hoverState?.edgeHover ?? null,
+      hoverConnectedEdges: window.__heliosSelectionPanel?.hoverState?.hoverConnectedEdges ?? null,
       selectedConnectedEdges: window.__heliosSelectionPanel?.selectionState?.selectedConnectedEdges ?? null,
       labelsMode: window.__helios.labelsMode?.() ?? null,
       labelSelectionMode: window.__helios.labels?.()?.selectionMode ?? null,
@@ -311,8 +329,8 @@ test.describe('basic example selection panel', () => {
       otherSelectedNodeTone: window.__heliosSelectionPanel?.selectionState?.otherSelectedNodeTone ?? null,
       otherSelectedNodeStyle: window.__heliosSelectionPanel?.selectionState?.otherSelectedNodeStyle ?? null,
       otherSelectedEdgeStyle: window.__heliosSelectionPanel?.selectionState?.otherSelectedEdgeStyle ?? null,
-      otherHighlightNodeStyle: window.__heliosSelectionPanel?.selectionState?.otherHighlightNodeStyle ?? null,
-      otherHighlightEdgeStyle: window.__heliosSelectionPanel?.selectionState?.otherHighlightEdgeStyle ?? null,
+      otherHighlightNodeStyle: window.__heliosSelectionPanel?.hoverState?.otherHighlightNodeStyle ?? null,
+      otherHighlightEdgeStyle: window.__heliosSelectionPanel?.hoverState?.otherHighlightEdgeStyle ?? null,
       nodeNoStateEnabled: window.__helios.renderer?.graphLayer?.nodeNoStateStyleEnabled ?? null,
       edgeNoStateEnabled: window.__helios.renderer?.graphLayer?.edgeNoStateStyleEnabled ?? null,
       propagateHoveredNodeToEdges: window.__helios.renderer?.graphLayer?.propagateHoveredNodeToEdges ?? null,
@@ -448,7 +466,7 @@ test.describe('basic example selection panel', () => {
     await dispatchCanvasEvent(page, { type: 'click', x: secondNode.x, y: secondNode.y, shiftKey: true });
     await expect.poll(async () => countSelected(page, 'node')).toBe(2);
     await dispatchCanvasEvent(page, { type: 'pointermove', x: nodeHits[0].x, y: nodeHits[0].y });
-    await expect.poll(async () => page.evaluate(() => window.__heliosSelectionPanel?.selectionState?.hoveredNode ?? -1)).toBe(nodeHits[0].index);
+    await expect.poll(async () => page.evaluate(() => window.__heliosSelectionPanel?.hoverState?.hoveredNode ?? -1)).toBe(nodeHits[0].index);
 
     await expect.poll(async () => page.evaluate(() => {
       const config = window.__helios.labels?.() ?? null;
@@ -470,7 +488,7 @@ test.describe('basic example selection panel', () => {
 
     await expect.poll(async () => page.evaluate(() => ({
       edgeClick: window.__heliosSelectionPanel?.selectionState?.edgeClick ?? false,
-      edgeHover: window.__heliosSelectionPanel?.selectionState?.edgeHover ?? false,
+      edgeHover: window.__heliosSelectionPanel?.hoverState?.edgeHover ?? false,
       edgePicking: window.__helios?._picking?.edge?.enabled ?? false,
     }))).toEqual({
       edgeClick: true,
@@ -482,7 +500,7 @@ test.describe('basic example selection panel', () => {
     expect(edgeHit).toBeTruthy();
 
     await dispatchCanvasEvent(page, { type: 'pointermove', x: edgeHit.x, y: edgeHit.y });
-    await expect.poll(async () => page.evaluate(() => window.__heliosSelectionPanel?.selectionState?.hoveredEdge ?? -1)).toBe(edgeHit.index);
+    await expect.poll(async () => page.evaluate(() => window.__heliosSelectionPanel?.hoverState?.hoveredEdge ?? -1)).toBe(edgeHit.index);
 
     await dispatchCanvasEvent(page, { type: 'click', x: edgeHit.x, y: edgeHit.y });
     await expect.poll(async () => countSelected(page, 'edge')).toBe(1);
@@ -613,7 +631,7 @@ test.describe('basic example selection panel', () => {
     const highlightedEdgesBefore = await countStateBit(page, 'edge', 'HIGHLIGHTED');
     await dispatchCanvasEvent(page, { type: 'pointermove', x: nodeHits[0].x, y: nodeHits[0].y });
     await expect.poll(async () => page.evaluate(() => ({
-      hoveredNode: window.__heliosSelectionPanel?.selectionState?.hoveredNode ?? -1,
+      hoveredNode: window.__heliosSelectionPanel?.hoverState?.hoveredNode ?? -1,
       propagateHoveredNodeToEdges: window.__helios.renderer?.graphLayer?.propagateHoveredNodeToEdges ?? null,
       propagateSelectedNodesToEdges: window.__helios.renderer?.graphLayer?.propagateSelectedNodesToEdges ?? null,
       nodeNoStateEnabled: window.__helios.renderer?.graphLayer?.nodeNoStateStyleEnabled ?? null,
@@ -664,7 +682,7 @@ test.describe('basic example selection panel', () => {
 
     await dispatchCanvasEvent(page, { type: 'pointermove', x: 0, y: 0 });
     await expect.poll(async () => page.evaluate(() => ({
-      hoveredNode: window.__heliosSelectionPanel?.selectionState?.hoveredNode ?? -1,
+      hoveredNode: window.__heliosSelectionPanel?.hoverState?.hoveredNode ?? -1,
       nodeNoStateEnabled: window.__helios.renderer?.graphLayer?.nodeNoStateStyleEnabled ?? null,
       edgeNoStateEnabled: window.__helios.renderer?.graphLayer?.edgeNoStateStyleEnabled ?? null,
     }))).toEqual({

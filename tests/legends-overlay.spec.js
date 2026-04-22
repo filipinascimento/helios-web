@@ -25,6 +25,19 @@ async function readLegends(page) {
 }
 
 test.describe('legends overlay', () => {
+  test('legends panel binds to LegendsBehavior instead of owning legend policy', async ({ page }) => {
+    await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=800');
+    await waitForHelios(page);
+
+    await expect.poll(async () => page.evaluate(() => ({
+      sameInstance: window.__heliosUI?._lastLegendsPanel?.legendsBehavior === window.__helios?.behaviors?.get?.('legends'),
+      exposedState: window.__heliosUI?._lastLegendsPanel?.legendsBehavior?.state === window.__heliosUI?._lastLegendsPanel?.state,
+    }))).toEqual({
+      sameInstance: true,
+      exposedState: true,
+    });
+  });
+
   test('renders default node color legend and keeps density legend inside the dock-adjusted view', async ({ page }) => {
     await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=800');
     await waitForHelios(page);

@@ -27,6 +27,7 @@ import { SvgLabelController } from './labels/SvgLabelController.js';
 import { SvgLegendController } from './legends/SvgLegendController.js';
 import { HeliosFilter } from './filters/HeliosFilter.js';
 import { DensityLayer } from './rendering/engine/DensityLayer.js';
+import { BehaviorManager, createDefaultBehaviorRegistry } from './behaviors/index.js';
 import {
   AMBIENT_OCCLUSION_BIAS_DEFAULT,
   AMBIENT_OCCLUSION_INTENSITY_SCALE_DEFAULT,
@@ -2369,6 +2370,7 @@ export class Helios extends EventTarget {
     };
     this._densityRuntime = { diverging: false, valueDomain: null };
     this._densityLayer = null;
+    this.behaviors = new BehaviorManager(this, createDefaultBehaviorRegistry());
     this._edgeAdaptiveQualityConfig = normalizeEdgeAdaptiveQualityConfig(
       EDGE_ADAPTIVE_QUALITY_DEFAULTS,
       options.edgeAdaptiveQuality ?? { enabled: options.edgeAdaptiveQualityEnabled },
@@ -2417,7 +2419,39 @@ export class Helios extends EventTarget {
     this.size = { ...this.layers.size };
     this.removeResizeListener = null;
     this.firstGeometryUpdateComplete = false;
+    this.behaviors.use('legends', options.behaviors?.options?.legends ?? options.legends);
+    this.behaviors.use('labels', options.behaviors?.options?.labels);
+    this._initializeBehaviors(options.behaviors);
     this.ready = this.initialize();
+  }
+
+  _initializeBehaviors(config) {
+    if (!config) return;
+    if (Array.isArray(config)) {
+      for (const entry of config) {
+        this.behaviors.use(entry);
+      }
+      return;
+    }
+    if (typeof config === 'string') {
+      this.behaviors.use(config);
+      return;
+    }
+    if (typeof config !== 'object') return;
+    const useEntries = [];
+    if (Array.isArray(config.use)) useEntries.push(...config.use);
+    else if (config.use) useEntries.push(config.use);
+    if (!useEntries.length && config.selection === true) {
+      useEntries.push('selection');
+    }
+    for (const entry of useEntries) {
+      if (typeof entry === 'string') {
+        const behaviorOptions = config.options?.[entry];
+        this.behaviors.use(entry, behaviorOptions);
+      } else {
+        this.behaviors.use(entry);
+      }
+    }
   }
 
   _snapshotCameraState() {
@@ -7389,9 +7423,22 @@ export class Helios extends EventTarget {
   }
 
   labels(options) {
+    const labelsBehavior = this.behaviors?.get?.('labels') ?? null;
     if (arguments.length === 0) {
-      return this._labels?.getConfig?.() ?? { enabled: false };
+      return labelsBehavior?.labels?.() ?? this._getLabelsControllerConfig();
     }
+    if (labelsBehavior) {
+      labelsBehavior.labels(options);
+      return this;
+    }
+    return this._applyLabelsControllerConfig(options == null ? { enabled: false, hoveredNodeEnabled: false } : options);
+  }
+
+  _getLabelsControllerConfig() {
+    return this._labels?.getConfig?.() ?? { enabled: false };
+  }
+
+  _applyLabelsControllerConfig(options, { silent = false } = {}) {
     if (options == null) {
       this._labels?.setConfig?.({ enabled: false, hoveredNodeEnabled: false });
     } else if (typeof options === 'object') {
@@ -7401,14 +7448,15 @@ export class Helios extends EventTarget {
     }
     this._labels?.requestFullReselect?.('api');
     this.scheduler?.requestRender?.();
-    this._refreshUIBindings();
+    if (!silent) this._refreshUIBindings();
     return this;
   }
 
-  legends(options) {
-    if (arguments.length === 0) {
-      return this._legends?.getConfig?.() ?? { enabled: true };
-    }
+  _getLegendsControllerConfig() {
+    return this._legends?.getConfig?.() ?? { enabled: true };
+  }
+
+  _applyLegendsControllerConfig(options, { silent = false } = {}) {
     if (options === false || options == null) {
       this._legends?.setConfig?.({ enabled: false });
     } else if (typeof options === 'object') {
@@ -7417,8 +7465,24 @@ export class Helios extends EventTarget {
       throw new TypeError('legends(options) expects an object, false, or null');
     }
     this.scheduler?.requestRender?.();
-    this._refreshUIBindings();
+    if (!silent) this._refreshUIBindings();
     return this;
+  }
+
+  _getLegendItems(options = {}) {
+    return this._legends?.deriveItems?.(options) ?? [];
+  }
+
+  legends(options) {
+    const legendsBehavior = this.behaviors?.get?.('legends') ?? null;
+    if (arguments.length === 0) {
+      return legendsBehavior?.legends?.() ?? this._getLegendsControllerConfig();
+    }
+    if (legendsBehavior) {
+      legendsBehavior.legends(options);
+      return this;
+    }
+    return this._applyLegendsControllerConfig(options);
   }
 
   legendsEnabled(value) {
@@ -7444,15 +7508,24 @@ export class Helios extends EventTarget {
   }
 
   labelsEnabled(value) {
-    if (arguments.length === 0) return this.labelsMode() !== 'off';
+    const labelsBehavior = this.behaviors?.get?.('labels') ?? null;
+    if (arguments.length === 0) return labelsBehavior?.enabled?.() ?? (this.labelsMode() !== 'off');
+    labelsBehavior?.enabled?.(value);
+    if (labelsBehavior) return this;
     return this.labelsMode(value === true ? 'auto' : 'off');
   }
 
   labelsMode(value) {
+    const labelsBehavior = this.behaviors?.get?.('labels') ?? null;
     if (arguments.length === 0) {
+      if (labelsBehavior) return labelsBehavior.mode();
       const labels = this.labels?.() ?? { enabled: false };
       if (labels.enabled !== true) return 'off';
       return labels.selectionMode === 'selected-only' ? 'selected-only' : 'auto';
+    }
+    if (labelsBehavior) {
+      labelsBehavior.mode(value);
+      return this;
     }
     const raw = String(value ?? '').trim().toLowerCase();
     if (raw === 'selected' || raw === 'selected-only' || raw === 'selected_only') {
