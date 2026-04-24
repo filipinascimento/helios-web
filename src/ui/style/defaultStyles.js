@@ -105,24 +105,103 @@ export const defaultStylesText = `
 
 .helios-ui-interface-fullscreen-bar {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: 0;
+  bottom: 0;
+  left: 0;
   display: inline-flex;
-  align-items: center;
-  gap: 4px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  width: 40px;
+  pointer-events: auto;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.helios-ui[data-interface-mode="fullscreen"][data-controls-open="true"] .helios-ui-interface-fullscreen-bar {
+  background: color-mix(in srgb, var(--helios-ui-bg-solid) 82%, transparent);
+  -webkit-backdrop-filter: blur(calc(var(--helios-ui-blur) * 0.8));
+  backdrop-filter: blur(calc(var(--helios-ui-blur) * 0.8));
 }
 
 .helios-ui-interface-bar__button--icon {
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border-radius: 999px;
+  width: 28px !important;
+  height: 28px !important;
+  min-width: 28px !important;
+  min-height: 28px !important;
+  margin: 4px auto 0 !important;
+  padding: 0 !important;
+  border-radius: 8px !important;
+  border: 1px solid var(--helios-ui-border) !important;
+  background: var(--helios-ui-bg) !important;
+  box-shadow: none !important;
+  -webkit-backdrop-filter: blur(calc(var(--helios-ui-blur) * 0.7));
+  backdrop-filter: blur(calc(var(--helios-ui-blur) * 0.7));
+}
+
+.helios-ui-interface-bar__button--icon:hover {
+  border-color: color-mix(in srgb, var(--helios-ui-fg) 12%, var(--helios-ui-border)) !important;
+  background: var(--helios-ui-bg) !important;
 }
 
 .helios-ui-interface-icon {
-  width: 14px;
-  height: 14px;
-  opacity: 0.86;
+  width: 20px;
+  height: 20px;
+  opacity: 0.96;
+}
+
+.helios-ui-fullscreen-panel-nav {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0;
+  flex: 1 1 auto;
+  width: 100%;
+  padding: 0;
+  border-radius: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.helios-ui-fullscreen-panel-nav[hidden] {
+  display: none !important;
+}
+
+.helios-ui-fullscreen-panel-nav__button {
+  width: 100%;
+  height: 34px;
+  min-width: 0;
+  min-height: 34px;
+  margin: 0;
+  padding: 0 !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: color-mix(in srgb, var(--helios-ui-fg) 94%, transparent);
+  box-shadow: none !important;
+  outline: none !important;
+  appearance: none;
+}
+
+.helios-ui-fullscreen-panel-nav__button:hover {
+  background: transparent !important;
+}
+
+.helios-ui-fullscreen-panel-nav__button[data-active="true"] {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--helios-ui-accent) 88%, transparent) 0 2px, transparent 2px);
+}
+
+.helios-ui-fullscreen-panel-nav__icon {
+  width: 22px;
+  height: 22px;
 }
 
 .helios-ui[data-compact-dock-side="right"] .helios-ui-interface-dock-toggle {
@@ -183,18 +262,22 @@ export const defaultStylesText = `
   gap: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 48px 0 max(16px, env(safe-area-inset-bottom, 0px)) 0;
+  padding: 0 0 max(16px, env(safe-area-inset-bottom, 0px)) 0;
   min-height: 0;
   pointer-events: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
 }
 
+.helios-ui[data-interface-mode="fullscreen"][data-controls-open="true"] .helios-ui-fullscreen-flow {
+  padding-left: 40px;
+}
+
 .helios-ui-fullscreen-flow[hidden] {
   display: none;
 }
 
-.helios-ui[data-interface-mode="fullscreen"] .helios-ui-fullscreen-flow {
+.helios-ui[data-interface-mode="fullscreen"][data-controls-open="true"] .helios-ui-fullscreen-flow {
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--helios-ui-bg-solid) 18%, transparent), color-mix(in srgb, var(--helios-ui-bg-solid) 8%, transparent) 22%, transparent 56%);
 }
@@ -249,6 +332,11 @@ export const defaultStylesText = `
   opacity: 1 !important;
 }
 
+.helios-ui[data-interface-mode="fullscreen"][data-focused-control="true"][data-focused-control-scope="row"] .helios-ui-interface-fullscreen-bar {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .helios-ui-panel {
   position: absolute;
   width: 320px;
@@ -298,10 +386,70 @@ export const defaultStylesText = `
   padding: 7px 7px 5px;
   user-select: none;
   cursor: default;
+  position: relative;
+  overflow: hidden;
+}
+
+.helios-ui-panel__header::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.helios-ui-panel__header[data-nav-shine="true"]::after {
+  opacity: 1;
+  background: linear-gradient(
+    102deg,
+    transparent 0%,
+    transparent 24%,
+    color-mix(in srgb, var(--helios-ui-accent) 18%, transparent) 38%,
+    color-mix(in srgb, var(--helios-ui-accent) 56%, white 12%) 50%,
+    color-mix(in srgb, var(--helios-ui-accent) 22%, transparent) 62%,
+    transparent 78%,
+    transparent 100%
+  );
+  transform: translateX(-130%);
+  animation: helios-ui-panel-nav-shine 1280ms cubic-bezier(0.2, 0.76, 0.18, 1) forwards;
+}
+
+.helios-ui-panel__header[data-nav-shine="true"] {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--helios-ui-accent) 34%, transparent),
+    inset 0 0 24px color-mix(in srgb, var(--helios-ui-accent) 10%, transparent);
+}
+
+.helios-ui-panel__title-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
+}
+
+.helios-ui-panel__title-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  flex: none;
+  color: color-mix(in srgb, var(--helios-ui-accent) 72%, var(--helios-ui-fg));
+}
+
+.helios-ui-panel__title-icon[hidden] {
+  display: none !important;
+}
+
+.helios-ui-panel__title-icon svg {
+  width: 15px;
+  height: 15px;
 }
 
 .helios-ui-panel__title {
   flex: 1;
+  min-width: 0;
   font-weight: 600;
   letter-spacing: 0.2px;
   font-size: 12.5px;
@@ -378,6 +526,22 @@ export const defaultStylesText = `
 
 @keyframes helios-ui-spin {
   to { transform: rotate(360deg); }
+}
+
+@keyframes helios-ui-panel-nav-shine {
+  0% {
+    opacity: 0;
+    transform: translateX(-130%);
+  }
+
+  22% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateX(135%);
+  }
 }
 
 .helios-ui-select {

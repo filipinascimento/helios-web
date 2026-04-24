@@ -20,6 +20,7 @@ import { LegendsPanel } from './panels/LegendsPanel.js';
 import { CameraPanel } from './panels/CameraPanel.js';
 import { SelectionPanel } from './panels/SelectionPanel.js';
 import { createAttributeRuleEditor } from './panels/AttributeRuleEditor.js';
+import { createPanelIcon, resolvePanelIconKind } from './panelIcons.js';
 import { clampNumber } from './utils/numbers.js';
 import { toHex8 } from './utils/colors.js';
 import { isPublicAttributeName } from './utils/attributes.js';
@@ -35,6 +36,7 @@ import {
 } from '../export/figureExport.js';
 
 const INTERFACE_CONTROL_RELEASE_MS = 420;
+const FULLSCREEN_OVERLAY_LEFT_INSET_PX = 28;
 
 function resolveUiContainer({ helios, container, layerName }) {
   if (container) return container;
@@ -193,6 +195,8 @@ export class HeliosUI {
     this._latestDockInsets = { top: 0, right: 0, bottom: 0, left: 0 };
     this._interfaceReleaseTimer = null;
     this._activeControlScope = null;
+    this._panelHeaderShineTimers = new WeakMap();
+    this._pendingPanelHeaderShine = null;
 
     this.panelManager = new PanelManager({
       container: this.container,
@@ -306,7 +310,7 @@ export class HeliosUI {
     }
     this.helios?.layers?.setViewportInsets?.({ top: 0, right: 0, bottom: 0, left: 0 });
     if (mode === 'fullscreen') {
-      this.helios?.overlayInsets?.({ top: 0, right: 0, bottom: 0, left: 0 });
+      this.helios?.overlayInsets?.({ top: 0, right: 0, bottom: 0, left: FULLSCREEN_OVERLAY_LEFT_INSET_PX });
       return;
     }
     this.helios?.overlayInsets?.(this._latestDockInsets);
@@ -371,7 +375,11 @@ export class HeliosUI {
       }
     });
 
+    const fullscreenPanelNav = doc.createElement('div');
+    fullscreenPanelNav.className = 'helios-ui-fullscreen-panel-nav';
+
     fullscreenBar.appendChild(launcherButton);
+    fullscreenBar.appendChild(fullscreenPanelNav);
 
     const resumePrompt = doc.createElement('div');
     resumePrompt.className = 'helios-ui-resume-prompt';
@@ -413,6 +421,7 @@ export class HeliosUI {
       compactDockToggle,
       fullscreenBar,
       launcherButton,
+      fullscreenPanelNav,
       resumePrompt,
       resumeText,
     };
@@ -450,6 +459,7 @@ export class HeliosUI {
         snapshot.controlsOpen === true ? 'close' : 'controls',
       ),
     );
+    this._renderFullscreenPanelNav(snapshot);
 
     const prompt = snapshot.resumePrompt ?? null;
     chrome.resumePrompt.hidden = !prompt?.visible;
@@ -457,6 +467,146 @@ export class HeliosUI {
       const sourceName = prompt.networkSource?.name ?? prompt.networkSource?.baseName ?? 'previous session';
       chrome.resumeText.textContent = `Resume unfinished session from ${sourceName}?`;
     }
+  }
+
+  _orderedFullscreenPanels() {
+    const manager = this.panelManager ?? null;
+    if (!manager) return [];
+    const ordered = [];
+    const seen = new Set();
+    const appendFrom = (container) => {
+      for (const element of Array.from(container?.children ?? [])) {
+        const panelId = element?.dataset?.panelId;
+        if (!panelId || seen.has(panelId)) continue;
+        const panel = manager.getPanel?.(panelId) ?? null;
+        if (!panel) continue;
+        seen.add(panelId);
+        ordered.push(panel);
+      }
+    };
+    appendFrom(manager.fullscreenFlow);
+    appendFrom(manager.dockLeft);
+    appendFrom(manager.dockRight);
+    for (const panel of manager.getPanels?.() ?? []) {
+      if (!panel?.id || seen.has(panel.id)) continue;
+      seen.add(panel.id);
+      ordered.push(panel);
+    }
+    return ordered;
+  }
+
+  _renderFullscreenPanelNav(state = {}) {
+    const chrome = this._interfaceChrome;
+    const nav = chrome?.fullscreenPanelNav;
+    if (!nav) return;
+    const snapshot = state && typeof state === 'object' ? state : {};
+    const visible = snapshot.mode === 'fullscreen' && snapshot.controlsOpen === true;
+    nav.hidden = !visible;
+    if (!visible) {
+      nav.replaceChildren();
+      return;
+    }
+
+    const doc = this.container?.ownerDocument ?? document;
+    const buttons = this._orderedFullscreenPanels().map((panel) => {
+      const button = doc.createElement('button');
+      button.type = 'button';
+      button.className = 'helios-ui-button helios-ui-fullscreen-panel-nav__button';
+      button.dataset.panelId = panel.id;
+      button.dataset.active = snapshot.activePanelId === panel.id ? 'true' : 'false';
+      button.setAttribute('aria-label', `Jump to ${panel.title}`);
+      button.setAttribute('title', panel.title);
+      button.appendChild(
+        createPanelIcon(doc, { id: panel.id, title: panel.title }, { className: 'helios-ui-fullscreen-panel-nav__icon' }),
+      );
+      button.addEventListener('click', () => {
+        this._jumpToFullscreenPanel(panel.id);
+      });
+      return button;
+    });
+    nav.replaceChildren(...buttons);
+  }
+
+  _jumpToFullscreenPanel(panelId) {
+    const panel = this.panelManager?.getPanel?.(panelId) ?? null;
+    if (!panel) return;
+    if (typeof panel.collapsed === 'function' && panel.collapsed()) {
+      panel.setCollapsed?.(false);
+    } else if (panel.element?.dataset?.collapsed === 'true') {
+      panel.setCollapsed?.(false);
+    }
+    this.interfaceBehavior?.clearActiveControl?.();
+    this._setActiveControlScope(null);
+    const scroller = this.panelManager?.fullscreenFlow ?? null;
+    const waitForScroll = this._fullscreenPanelJumpNeedsScroll(panel, scroller);
+    this._queueFullscreenPanelHeaderShine(panel, { scroller, waitForScroll });
+    panel.element?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+  }
+
+  _fullscreenPanelJumpNeedsScroll(panel, scroller) {
+    if (!panel?.element?.getBoundingClientRect || !scroller?.getBoundingClientRect) return false;
+    const panelRect = panel.element.getBoundingClientRect();
+    const scrollerRect = scroller.getBoundingClientRect();
+    if (!Number.isFinite(panelRect?.top) || !Number.isFinite(panelRect?.bottom)) return false;
+    if (!Number.isFinite(scrollerRect?.top) || !Number.isFinite(scrollerRect?.bottom)) return false;
+    const tolerance = 2;
+    return panelRect.top < scrollerRect.top + tolerance || panelRect.bottom > scrollerRect.bottom - tolerance;
+  }
+
+  _queueFullscreenPanelHeaderShine(panel, options = {}) {
+    this._cancelPendingPanelHeaderShine();
+    const { scroller = null, waitForScroll = false } = options;
+    if (!waitForScroll || !scroller || typeof scroller.addEventListener !== 'function') {
+      this._shineFullscreenPanelHeader(panel);
+      return;
+    }
+    const clock = this.container?.ownerDocument?.defaultView ?? globalThis;
+    let settleTimer = null;
+    const finish = () => {
+      cleanup();
+      this._shineFullscreenPanelHeader(panel);
+    };
+    const scheduleFinish = (delay = 140) => {
+      if (settleTimer != null) clock.clearTimeout?.(settleTimer);
+      settleTimer = clock.setTimeout?.(finish, delay) ?? null;
+    };
+    const onScroll = () => {
+      scheduleFinish(140);
+    };
+    const cleanup = () => {
+      if (settleTimer != null) {
+        clock.clearTimeout?.(settleTimer);
+        settleTimer = null;
+      }
+      scroller.removeEventListener?.('scroll', onScroll);
+      if (this._pendingPanelHeaderShine?.cleanup === cleanup) this._pendingPanelHeaderShine = null;
+    };
+    this._pendingPanelHeaderShine = { cleanup };
+    scroller.addEventListener('scroll', onScroll);
+    scheduleFinish(160);
+  }
+
+  _cancelPendingPanelHeaderShine() {
+    this._pendingPanelHeaderShine?.cleanup?.();
+    this._pendingPanelHeaderShine = null;
+  }
+
+  _shineFullscreenPanelHeader(panel) {
+    const header = panel?.header ?? panel?.element?.querySelector?.('.helios-ui-panel__header') ?? null;
+    if (!header?.dataset) return;
+    if (!this._panelHeaderShineTimers) this._panelHeaderShineTimers = new WeakMap();
+    const previousTimer = this._panelHeaderShineTimers.get(header);
+    if (previousTimer != null) {
+      const clock = this.container?.ownerDocument?.defaultView ?? globalThis;
+      clock.clearTimeout?.(previousTimer);
+    }
+    header.dataset.navShine = 'true';
+    const clock = this.container?.ownerDocument?.defaultView ?? globalThis;
+    const timer = clock.setTimeout?.(() => {
+      if (header?.dataset) delete header.dataset.navShine;
+      this._panelHeaderShineTimers?.delete?.(header);
+    }, 1150);
+    if (timer != null) this._panelHeaderShineTimers.set(header, timer);
   }
 
   _resolveActiveControlScope(target) {
@@ -636,7 +786,10 @@ export class HeliosUI {
   }
 
   createPanel(options) {
-    return this.panelManager.createPanel(options);
+    return this.panelManager.createPanel({
+      ...options,
+      icon: options?.icon ?? resolvePanelIconKind({ id: options?.id, title: options?.title }),
+    });
   }
 
   createTabbedPanel(options = {}) {

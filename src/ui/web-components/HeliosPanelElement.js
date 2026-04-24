@@ -1,8 +1,10 @@
+import { createPanelIcon, resolvePanelIconKind } from '../panelIcons.js';
+
 const BaseHTMLElement = globalThis.HTMLElement ?? class {};
 
 export class HeliosPanelElement extends BaseHTMLElement {
   static get observedAttributes() {
-    return ['heading', 'collapsed', 'dock', 'panel-id'];
+    return ['heading', 'collapsed', 'dock', 'panel-id', 'panel-icon'];
   }
 
   constructor() {
@@ -30,6 +32,12 @@ export class HeliosPanelElement extends BaseHTMLElement {
     this.headerEl = doc.createElement('div');
     this.headerEl.className = 'helios-ui-panel__header';
 
+    this.titleWrapEl = doc.createElement('div');
+    this.titleWrapEl.className = 'helios-ui-panel__title-wrap';
+
+    this.titleIconEl = doc.createElement('div');
+    this.titleIconEl.className = 'helios-ui-panel__title-icon';
+
     this.titleEl = doc.createElement('div');
     this.titleEl.className = 'helios-ui-panel__title';
 
@@ -41,7 +49,9 @@ export class HeliosPanelElement extends BaseHTMLElement {
     this.collapseButtonEl.type = 'button';
 
     this.actionsEl.appendChild(this.collapseButtonEl);
-    this.headerEl.appendChild(this.titleEl);
+    this.titleWrapEl.appendChild(this.titleIconEl);
+    this.titleWrapEl.appendChild(this.titleEl);
+    this.headerEl.appendChild(this.titleWrapEl);
     this.headerEl.appendChild(this.actionsEl);
 
     this.bodyEl = doc.createElement('div');
@@ -91,6 +101,13 @@ export class HeliosPanelElement extends BaseHTMLElement {
   _syncFromAttributes() {
     const heading = this.getAttribute('heading') ?? '';
     if (this.titleEl) this.titleEl.textContent = heading;
+    const panelId = this.getAttribute('panel-id') ?? this.dataset.panelId ?? null;
+    const explicitIcon = this.getAttribute('panel-icon') ?? null;
+    const iconKind = explicitIcon || resolvePanelIconKind({ id: panelId, heading });
+    if (this.titleIconEl) {
+      this.titleIconEl.replaceChildren(createPanelIcon(this.ownerDocument ?? document, iconKind));
+      this.titleIconEl.hidden = !iconKind;
+    }
 
     const dock = this.getAttribute('dock') ?? this.dataset.dock ?? 'free';
     this.dataset.dock = dock;
@@ -102,8 +119,6 @@ export class HeliosPanelElement extends BaseHTMLElement {
       this.collapseButtonEl.textContent = collapsed ? '+' : '—';
       this.collapseButtonEl.title = collapsed ? 'Expand' : 'Collapse';
     }
-
-    const panelId = this.getAttribute('panel-id') ?? this.dataset.panelId ?? null;
     if (panelId != null) {
       this.dataset.panelId = String(panelId);
     }
@@ -134,6 +149,15 @@ export class HeliosPanelElement extends BaseHTMLElement {
   set panelId(value) {
     if (value == null) this.removeAttribute('panel-id');
     else this.setAttribute('panel-id', String(value));
+  }
+
+  get panelIcon() {
+    return this.getAttribute('panel-icon') ?? null;
+  }
+
+  set panelIcon(value) {
+    if (value == null || value === '') this.removeAttribute('panel-icon');
+    else this.setAttribute('panel-icon', String(value));
   }
 
   get collapsed() {

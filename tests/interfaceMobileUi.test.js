@@ -188,14 +188,23 @@ function createPanelStub(document, id, dock = 'free') {
   const element = document.createElement('div');
   element.dataset.panelId = id;
   element._rect = { left: 0, top: 0, width: 280, height: 180 };
+  element.scrollIntoView = () => {
+    element._scrolled = true;
+  };
   const header = document.createElement('div');
   header._rect = { left: 0, top: 0, width: 280, height: 32 };
   const titleEl = document.createElement('div');
-  titleEl.textContent = id;
+  const title = id
+    .replace(/^helios-ui-/, '')
+    .split('-')
+    .map((part) => (part ? `${part[0].toUpperCase()}${part.slice(1)}` : ''))
+    .join(' ');
+  titleEl.textContent = title;
   header.appendChild(titleEl);
   element.appendChild(header);
   return {
     id,
+    title,
     dock,
     draggable: true,
     element,
@@ -209,6 +218,12 @@ function createPanelStub(document, id, dock = 'free') {
       this.responsiveMode = mode;
       this.draggable = mode !== 'fullscreen';
       this.element.dataset.responsiveMode = mode;
+    },
+    collapsed() {
+      return this.element.dataset.collapsed === 'true';
+    },
+    setCollapsed(value) {
+      this.element.dataset.collapsed = value ? 'true' : 'false';
     },
     syncDockStyles() {},
   };
@@ -267,6 +282,7 @@ test('compact and fullscreen interface chrome uses a compact dock toggle and a f
     assert.equal(chrome.compactDockToggle.getAttribute('aria-label'), 'Move dock to the right side');
     assert.equal(chrome.compactDockToggle.hidden, false);
     assert.equal(chrome.fullscreenBar.hidden, true);
+    assert.equal(chrome.fullscreenPanelNav.hidden, true);
 
     ui._renderInterfaceChrome({ mode: 'fullscreen', controlsOpen: false, dockSide: 'left' });
 
@@ -274,6 +290,7 @@ test('compact and fullscreen interface chrome uses a compact dock toggle and a f
     assert.equal(chrome.launcherButton.getAttribute('aria-label'), 'Open controls');
     assert.equal(chrome.compactDockToggle.hidden, true);
     assert.equal(chrome.fullscreenBar.hidden, false);
+    assert.equal(chrome.fullscreenPanelNav.hidden, true);
 
     ui._renderInterfaceChrome({ mode: 'fullscreen', controlsOpen: true, dockSide: 'left' });
 
@@ -648,11 +665,14 @@ test('compact viewport policy uses viewport insets without duplicating overlay i
   };
 
   ui._applyGraphViewportPolicy({ mode: 'compact' });
+  ui._applyGraphViewportPolicy({ mode: 'fullscreen' });
   ui._applyGraphViewportPolicy({ mode: 'desktop' });
 
   assert.deepEqual(calls, [
     { type: 'viewport', insets: { top: 0, right: 0, bottom: 0, left: 280 } },
     { type: 'overlay', insets: { top: 0, right: 0, bottom: 0, left: 0 } },
+    { type: 'viewport', insets: { top: 0, right: 0, bottom: 0, left: 0 } },
+    { type: 'overlay', insets: { top: 0, right: 0, bottom: 0, left: 28 } },
     { type: 'viewport', insets: { top: 0, right: 0, bottom: 0, left: 0 } },
     { type: 'overlay', insets: { top: 0, right: 0, bottom: 0, left: 280 } },
   ]);
@@ -671,4 +691,150 @@ test('compact dock background uses a theme-aware fill instead of staying transpa
     defaultStylesText,
     /\.helios-ui\[data-interface-mode="compact"\] \.helios-ui-dock--side\s*\{[\s\S]*background:\s*var\(--helios-ui-dock-fill\);/,
   );
+});
+
+test('fullscreen panel nav hides during focused-control transparency mode', () => {
+  assert.match(
+    defaultStylesText,
+    /\.helios-ui\[data-interface-mode="fullscreen"\]\[data-focused-control="true"\]\[data-focused-control-scope="row"\] \.helios-ui-interface-fullscreen-bar\s*\{[\s\S]*opacity:\s*0;[\s\S]*pointer-events:\s*none;/,
+  );
+});
+
+test('fullscreen controls render a left-side panel icon rail in visible panel order', () => {
+  const { document, window } = createFakeDomEnvironment();
+  const originalDocument = globalThis.document;
+  const originalWindow = globalThis.window;
+  const originalResizeObserver = globalThis.ResizeObserver;
+  globalThis.document = document;
+  globalThis.window = window;
+  globalThis.ResizeObserver = undefined;
+
+  try {
+    const container = document.createElement('div');
+    container.ownerDocument = document;
+    container._rect = { left: 0, top: 0, width: 1000, height: 640 };
+    const manager = new PanelManager({ container });
+    const dataPanel = createPanelStub(document, 'helios-ui-data', 'left');
+    const scenePanel = createPanelStub(document, 'helios-ui-demo', 'left');
+    const filterPanel = createPanelStub(document, 'helios-ui-filter', 'left');
+    manager.panels.set(dataPanel.id, dataPanel);
+    manager.panels.set(scenePanel.id, scenePanel);
+    manager.panels.set(filterPanel.id, filterPanel);
+    manager.setResponsivePresentation({ mode: 'fullscreen', controlsOpen: true });
+
+    const ui = Object.create(HeliosUI.prototype);
+    ui.container = container;
+    ui.panelManager = manager;
+    ui.interfaceBehavior = {
+      controlsOpen() { return true; },
+      clearActiveControl() {},
+    };
+    ui._setActiveControlScope = () => {};
+    ui._interfaceChrome = ui._createInterfaceChrome();
+    ui._renderInterfaceChrome({ mode: 'fullscreen', controlsOpen: true, dockSide: 'left' });
+
+    assert.equal(ui._interfaceChrome.fullscreenPanelNav.hidden, false);
+    assert.deepEqual(
+      ui._interfaceChrome.fullscreenPanelNav.children.map((child) => child.dataset.panelId),
+      ['helios-ui-data', 'helios-ui-demo', 'helios-ui-filter'],
+    );
+  } finally {
+    globalThis.document = originalDocument;
+    globalThis.window = originalWindow;
+    globalThis.ResizeObserver = originalResizeObserver;
+  }
+});
+
+test('fullscreen panel rail jumps to a panel and expands it before showing the header cue', async () => {
+  const { document, window } = createFakeDomEnvironment();
+  const originalDocument = globalThis.document;
+  const originalWindow = globalThis.window;
+  const originalResizeObserver = globalThis.ResizeObserver;
+  globalThis.document = document;
+  globalThis.window = window;
+  globalThis.ResizeObserver = undefined;
+
+  try {
+    const container = document.createElement('div');
+    container.ownerDocument = document;
+    container._rect = { left: 0, top: 0, width: 1000, height: 640 };
+    const manager = new PanelManager({ container });
+    manager.fullscreenFlow._rect = { left: 0, top: 0, width: 1000, height: 640 };
+    const scenePanel = createPanelStub(document, 'helios-ui-demo', 'left');
+    scenePanel.setCollapsed(true);
+    manager.panels.set(scenePanel.id, scenePanel);
+
+    const ui = Object.create(HeliosUI.prototype);
+    ui.container = container;
+    ui.panelManager = manager;
+    ui._panelHeaderShineTimers = new WeakMap();
+    ui._pendingPanelHeaderShine = null;
+    let clearCalls = 0;
+    ui.interfaceBehavior = {
+      clearActiveControl() { clearCalls += 1; },
+    };
+    ui._setActiveControlScope = () => {};
+
+    ui._jumpToFullscreenPanel('helios-ui-demo');
+    await new Promise((resolve) => setTimeout(resolve, 220));
+
+    assert.equal(scenePanel.element.dataset.collapsed, 'false');
+    assert.equal(scenePanel.element._scrolled, true);
+    assert.equal(scenePanel.header.dataset.navShine, 'true');
+    assert.equal(clearCalls, 1);
+  } finally {
+    globalThis.document = originalDocument;
+    globalThis.window = originalWindow;
+    globalThis.ResizeObserver = originalResizeObserver;
+  }
+});
+
+test('fullscreen panel rail waits for scroll settle before shining the header', async () => {
+  const { document, window } = createFakeDomEnvironment();
+  const originalDocument = globalThis.document;
+  const originalWindow = globalThis.window;
+  const originalResizeObserver = globalThis.ResizeObserver;
+  globalThis.document = document;
+  globalThis.window = window;
+  globalThis.ResizeObserver = undefined;
+
+  try {
+    const container = document.createElement('div');
+    container.ownerDocument = document;
+    container._rect = { left: 0, top: 0, width: 1000, height: 640 };
+    const manager = new PanelManager({ container });
+    manager.fullscreenFlow._rect = { left: 0, top: 0, width: 320, height: 160 };
+    const scenePanel = createPanelStub(document, 'helios-ui-demo', 'free');
+    scenePanel.element._rect = { left: 0, top: 240, width: 280, height: 180 };
+    scenePanel.element.scrollIntoView = () => {
+      scenePanel.element._scrolled = true;
+      manager.fullscreenFlow.dispatchEvent({ type: 'scroll' });
+      window.setTimeout(() => {
+        manager.fullscreenFlow.dispatchEvent({ type: 'scroll' });
+      }, 20);
+    };
+    manager.panels.set(scenePanel.id, scenePanel);
+
+    const ui = Object.create(HeliosUI.prototype);
+    ui.container = container;
+    ui.panelManager = manager;
+    ui._panelHeaderShineTimers = new WeakMap();
+    ui._pendingPanelHeaderShine = null;
+    ui.interfaceBehavior = {
+      clearActiveControl() {},
+    };
+    ui._setActiveControlScope = () => {};
+
+    ui._jumpToFullscreenPanel('helios-ui-demo');
+
+    assert.equal(scenePanel.header.dataset.navShine, undefined);
+
+    await new Promise((resolve) => setTimeout(resolve, 240));
+
+    assert.equal(scenePanel.header.dataset.navShine, 'true');
+  } finally {
+    globalThis.document = originalDocument;
+    globalThis.window = originalWindow;
+    globalThis.ResizeObserver = originalResizeObserver;
+  }
 });
