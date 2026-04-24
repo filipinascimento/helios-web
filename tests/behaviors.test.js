@@ -9,6 +9,7 @@ import {
   ExporterBehavior,
   FilterBehavior,
   HoverBehavior,
+  InterfaceBehavior,
   LayoutBehavior,
   LegendsBehavior,
   LabelsBehavior,
@@ -127,6 +128,7 @@ test('behavior manager registers and reuses built-in behaviors by name', () => {
     .register('exporter', ExporterBehavior)
     .register('mappers', MappersBehavior)
     .register('filters', FilterBehavior)
+    .register('interface', InterfaceBehavior)
     .register('layout', LayoutBehavior)
     .register('legends', LegendsBehavior)
     .register('labels', LabelsBehavior)
@@ -184,6 +186,7 @@ test('behavior manager serializes and restores attached behavior state', () => {
     .register('exporter', ExporterBehavior)
     .register('mappers', MappersBehavior)
     .register('filters', FilterBehavior)
+    .register('interface', InterfaceBehavior)
     .register('layout', LayoutBehavior)
     .register('legends', LegendsBehavior)
     .register('labels', LabelsBehavior)
@@ -246,6 +249,7 @@ test('default behavior registry exposes appearance, mappers, filters, layout, le
   assert.equal(registry.has('exporter'), true);
   assert.equal(registry.has('mappers'), true);
   assert.equal(registry.has('filters'), true);
+  assert.equal(registry.has('interface'), true);
   assert.equal(registry.has('layout'), true);
   assert.equal(registry.has('legends'), true);
   assert.equal(registry.has('labels'), true);
@@ -435,6 +439,7 @@ test('helios.behavior exposes named and dynamic public access for built-in behav
   const exporter = helios.behavior.exporter;
   const mappers = helios.behavior.mappers;
   const filters = helios.behavior.filters;
+  const iface = helios.behavior.interface;
   const labels = helios.behavior.labels;
   const hover = helios.behavior('hover');
   const layout = helios.behavior.layout;
@@ -443,6 +448,7 @@ test('helios.behavior exposes named and dynamic public access for built-in behav
   assert.ok(exporter instanceof ExporterBehavior);
   assert.ok(mappers instanceof MappersBehavior);
   assert.ok(filters instanceof FilterBehavior);
+  assert.ok(iface instanceof InterfaceBehavior);
   assert.ok(labels instanceof LabelsBehavior);
   assert.ok(hover instanceof HoverBehavior);
   assert.ok(layout instanceof LayoutBehavior);
@@ -450,6 +456,7 @@ test('helios.behavior exposes named and dynamic public access for built-in behav
   assert.equal(helios.behavior('exporter'), exporter);
   assert.equal(helios.behavior('mappers'), mappers);
   assert.equal(helios.behavior('filters'), filters);
+  assert.equal(helios.behavior('interface'), iface);
   assert.equal(helios.behavior('labels'), labels);
   assert.equal(helios.behavior.hover, hover);
   assert.equal(helios.behavior('layout'), layout);

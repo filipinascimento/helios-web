@@ -23,7 +23,7 @@ export class ColormapPickerControl {
     onChange = null,
   } = {}) {
     this.catalog = catalog ?? { entries: [], byKey: new Map() };
-    this.portalRoot = portalRoot ?? document.body;
+    this.portalRoot = portalRoot;
     this.fallbackValue = String(fallbackValue ?? 'interpolateInferno');
     this.groupOrder = Array.isArray(groupOrder) && groupOrder.length ? [...groupOrder] : [...DEFAULT_GROUP_ORDER];
     this.formatDisplay = typeof formatDisplay === 'function'
@@ -54,6 +54,7 @@ export class ColormapPickerControl {
     this.display = document.createElement('button');
     this.display.type = 'button';
     this.display.className = 'helios-ui-select helios-ui-colormap-picker__display';
+    this.display.dataset.interfaceFocusControl = 'true';
 
     this.displayLabel = document.createElement('span');
     this.displayLabel.className = 'helios-ui-ellipsis';
@@ -61,6 +62,7 @@ export class ColormapPickerControl {
 
     this.preview = document.createElement('div');
     this.preview.className = 'helios-ui-colormap-picker__preview helios-ui-colormap-thumb';
+    this.preview.dataset.interfaceFocusControl = 'true';
 
     this.popover = document.createElement('div');
     this.popover.className = 'helios-ui-colormap-popover';
@@ -86,6 +88,7 @@ export class ColormapPickerControl {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'helios-ui-colormap-popover__filter';
+      button.dataset.interfaceFocusControl = 'true';
       button.textContent = filter.label;
       button.title = filter.title;
       button.dataset.filterId = filter.id;
@@ -107,7 +110,7 @@ export class ColormapPickerControl {
 
     this.element.appendChild(this.display);
     this.element.appendChild(this.preview);
-    this.portalRoot.appendChild(this.popover);
+    this._ensurePortalRoot();
 
     this.cleanups = [];
     this.thumbObserver = null;
@@ -207,6 +210,27 @@ export class ColormapPickerControl {
 
   addCleanup(fn) {
     if (typeof fn === 'function') this.cleanups.push(fn);
+  }
+
+  _ensurePortalRoot() {
+    const nextRoot = this.portalRoot ?? this.element.closest?.('.helios-ui') ?? document.body;
+    if (!nextRoot) return;
+    if (this.popover.parentElement !== nextRoot) nextRoot.appendChild(this.popover);
+  }
+
+  _syncFocusMetadata() {
+    const scope = this.element.closest?.('.helios-ui-row') ?? null;
+    if (scope) {
+      if (!scope.dataset.interfaceFocusScopeId) {
+        scope.dataset.interfaceFocusScopeId = `helios-ui-scope-${Math.random().toString(16).slice(2)}`;
+      }
+      this.popover.dataset.interfaceFocusScopeId = scope.dataset.interfaceFocusScopeId;
+    } else {
+      delete this.popover.dataset.interfaceFocusScopeId;
+    }
+    const panelId = this.element.closest?.('.helios-ui-panel')?.dataset?.panelId ?? '';
+    if (panelId) this.popover.dataset.interfacePanelId = panelId;
+    else delete this.popover.dataset.interfacePanelId;
   }
 
   resolveEntry(keyRaw) {
@@ -346,6 +370,7 @@ export class ColormapPickerControl {
         const item = document.createElement('button');
         item.type = 'button';
         item.className = 'helios-ui-colormap-picker__item';
+        item.dataset.interfaceFocusControl = 'true';
         item.dataset.key = entry.key;
         const selected = entry.key === this.value;
         item.dataset.selected = selected ? 'true' : 'false';
@@ -474,6 +499,8 @@ export class ColormapPickerControl {
   }
 
   openPopover({ seedQuery } = {}) {
+    this._ensurePortalRoot();
+    this._syncFocusMetadata();
     this.popover.hidden = false;
     this.searchInput.value = seedQuery != null ? String(seedQuery) : this.lastQuery;
     this.lastQuery = this.searchInput.value;

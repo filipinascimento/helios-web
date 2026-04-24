@@ -29,6 +29,15 @@ import { HeliosFilter } from './filters/HeliosFilter.js';
 import { DensityLayer } from './rendering/engine/DensityLayer.js';
 import { Behavior, BehaviorManager, createDefaultBehaviorRegistry } from './behaviors/index.js';
 import {
+  HeliosPersistenceService,
+  PERSISTENCE_KINDS,
+  createDefaultNetworkSource,
+  createPersistenceEnvelope,
+  migratePersistenceEnvelope,
+  parsePersistenceEnvelope,
+  serializePersistenceEnvelope,
+} from './persistence/index.js';
+import {
   AMBIENT_OCCLUSION_BIAS_DEFAULT,
   AMBIENT_OCCLUSION_INTENSITY_SCALE_DEFAULT,
   AMBIENT_OCCLUSION_INTENSITY_SHIFT_DEFAULT,
@@ -950,6 +959,8 @@ const DENSITY_DEFAULTS = Object.freeze({
   logRatioColormap: 'cmasher:prinsenvlag',
   divergingColormap: 'cmasher:prinsenvlag',
 });
+
+const NETWORK_VISUALIZATION_STATE_ATTRIBUTE = '_helios_visualization_state';
 
 function hasDensityComparisonTarget(compareProperty) {
   return typeof compareProperty === 'string'
@@ -2470,6 +2481,10 @@ export class Helios extends EventTarget {
     this.size = { ...this.layers.size };
     this.removeResizeListener = null;
     this.firstGeometryUpdateComplete = false;
+    this.persistence = new HeliosPersistenceService({
+      helios: this,
+      ...(options.persistence && typeof options.persistence === 'object' ? options.persistence : {}),
+    });
     this.useBehavior('legends', options.behaviors?.options?.legends ?? options.legends);
     this.useBehavior('labels', options.behaviors?.options?.labels);
     this._initializeBehaviors(options.behaviors);
@@ -4537,6 +4552,12 @@ export class Helios extends EventTarget {
       this._lastLoadedNetworkBase = getBaseFilename(source.name);
       this._lastLoadedNetworkFormat = inferNetworkFormatFromName(source.name);
     }
+    if (options.restoreVisualizationState !== false) {
+      const attachedState = this.getAttachedVisualizationState(next);
+      if (attachedState) {
+        await this.importVisualizationState(attachedState, { reason: 'network-load' });
+      }
+    }
     return next;
   }
 
@@ -4561,6 +4582,132 @@ export class Helios extends EventTarget {
       return this.network.saveXNet(saveOptions);
     }
     throw new Error(`Unsupported network format: ${format}`);
+  }
+
+  serializeBehaviorState() {
+    return this.behaviors?.serialize?.() ?? {};
+  }
+
+  restoreBehaviorState(snapshot = {}) {
+    this.behaviors?.restore?.(snapshot);
+    return this;
+  }
+
+  _capturePersistenceNetworkSource(extra = {}) {
+    return createDefaultNetworkSource({
+      name: this._lastLoadedNetworkName ?? null,
+      baseName: this._lastLoadedNetworkBase ?? null,
+      format: this._lastLoadedNetworkFormat ?? null,
+      nodeCount: this.network?.nodeCount ?? null,
+      edgeCount: this.network?.edgeCount ?? null,
+      portableVisualizationAttached: this.network?.hasNetworkAttribute?.(NETWORK_VISUALIZATION_STATE_ATTRIBUTE) === true,
+      ...extra,
+    });
+  }
+
+  serializeVisualizationState(options = {}) {
+    const preferences = options.preferences ?? this.persistence?.getPreferences?.() ?? null;
+    const envelope = createPersistenceEnvelope(PERSISTENCE_KINDS.visualization, {
+      preferences,
+      responsivePreferences: preferences?.responsive ?? null,
+      uiState: this.behaviors?.ui?.serializeState?.() ?? {},
+      behaviorState: this.serializeBehaviorState(),
+      cameraState: this._snapshotCameraState(),
+      networkSource: this._capturePersistenceNetworkSource(),
+    }, {
+      source: 'helios',
+    });
+    return envelope;
+  }
+
+  async importVisualizationState(source, options = {}) {
+    const envelope = parsePersistenceEnvelope(source, PERSISTENCE_KINDS.visualization);
+    const payload = envelope.payload;
+    this.restoreBehaviorState(payload.behaviorState);
+    this.behaviors?.ui?.restoreState?.(payload.uiState, options);
+    if (payload.cameraState) this._restoreCameraState(payload.cameraState);
+    return envelope;
+  }
+
+  exportVisualizationState(options = {}) {
+    const envelope = this.serializeVisualizationState(options);
+    const format = options.format ?? 'object';
+    if (format === 'string') return serializePersistenceEnvelope(envelope, options.pretty !== false);
+    if (format === 'blob') {
+      return new Blob([serializePersistenceEnvelope(envelope, options.pretty !== false)], { type: 'application/json' });
+    }
+    return envelope;
+  }
+
+  getAttachedVisualizationState(network = this.network, options = {}) {
+    if (!network?.hasNetworkAttribute?.(options.attributeName ?? NETWORK_VISUALIZATION_STATE_ATTRIBUTE)) return null;
+    const raw = network.getNetworkStringAttribute(options.attributeName ?? NETWORK_VISUALIZATION_STATE_ATTRIBUTE);
+    if (!raw) return null;
+    try {
+      return parsePersistenceEnvelope(raw, PERSISTENCE_KINDS.visualization);
+    } catch (error) {
+      console.warn('Failed to parse attached visualization state', error);
+      return null;
+    }
+  }
+
+  attachVisualizationStateToNetwork(snapshot = null, options = {}) {
+    const network = options.network ?? this.network;
+    if (!network) throw new Error('attachVisualizationStateToNetwork requires an active network');
+    const attributeName = options.attributeName ?? NETWORK_VISUALIZATION_STATE_ATTRIBUTE;
+    if (!network.hasNetworkAttribute?.(attributeName)) {
+      network.defineNetworkAttribute(attributeName, AttributeType.String, 1);
+    }
+    const state = snapshot ?? this.serializeVisualizationState(options);
+    network.setNetworkStringAttribute(attributeName, serializePersistenceEnvelope(state, options.pretty !== false));
+    return this;
+  }
+
+  clearAttachedVisualizationState(options = {}) {
+    const network = options.network ?? this.network;
+    const attributeName = options.attributeName ?? NETWORK_VISUALIZATION_STATE_ATTRIBUTE;
+    if (!network?.hasNetworkAttribute?.(attributeName)) return this;
+    network.removeNetworkAttribute(attributeName);
+    return this;
+  }
+
+  async savePortableNetwork(format = 'bxnet', options = {}) {
+    if (!this.network) throw new Error('savePortableNetwork requires an active network');
+    const attributeName = options.attributeName ?? NETWORK_VISUALIZATION_STATE_ATTRIBUTE;
+    const saveOptions = { ...(options.saveOptions ?? {}) };
+    const ignoreAttributes = {
+      ...(saveOptions.ignoreAttributes ?? {}),
+      network: Array.isArray(saveOptions.ignoreAttributes?.network)
+        ? [...saveOptions.ignoreAttributes.network]
+        : [],
+    };
+    const output = options.output ?? 'blob';
+    if (options.includeVisualization !== true) {
+      if (!ignoreAttributes.network.includes(attributeName)) ignoreAttributes.network.push(attributeName);
+      return this.saveNetwork(format, {
+        output,
+        saveOptions: {
+          ...saveOptions,
+          ignoreAttributes,
+        },
+      });
+    }
+
+    const hadExisting = this.network.hasNetworkAttribute?.(attributeName) === true;
+    const previousValue = hadExisting ? this.network.getNetworkStringAttribute(attributeName) : null;
+    try {
+      this.attachVisualizationStateToNetwork(options.visualizationState ?? this.serializeVisualizationState(options), {
+        attributeName,
+        pretty: options.pretty,
+      });
+      return await this.saveNetwork(format, { output, saveOptions });
+    } finally {
+      if (hadExisting) {
+        this.network.setNetworkStringAttribute(attributeName, previousValue);
+      } else if (this.network.hasNetworkAttribute?.(attributeName)) {
+        this.network.removeNetworkAttribute(attributeName);
+      }
+    }
   }
 
   getFigureExportCapabilities(options = {}) {

@@ -44,12 +44,29 @@ export {
   ExporterBehavior,
   FilterBehavior,
   HoverBehavior,
+  InterfaceBehavior,
   LayoutBehavior,
   LegendsBehavior,
   LabelsBehavior,
   MappersBehavior,
   SelectionBehavior,
 } from './behaviors/index.js';
+export {
+  HeliosPersistenceService,
+  IndexedDBSessionStore,
+  LocalStoragePreferenceStore,
+  PERSISTENCE_KINDS,
+  PERSISTENCE_SCHEMA_VERSION,
+  createDefaultNetworkSource,
+  createDefaultPreferencesState,
+  createDefaultUIState,
+  createMemoryIndexedDBFactory,
+  createMemoryStorage,
+  createPersistenceEnvelope,
+  migratePersistenceEnvelope,
+  parsePersistenceEnvelope,
+  serializePersistenceEnvelope,
+} from './persistence/index.js';
 export { HeliosUI } from './ui/HeliosUI.js';
 export { Store } from './ui/state/Store.js';
 export { UIAttribute } from './ui/state/UIAttribute.js';

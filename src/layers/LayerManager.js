@@ -16,6 +16,22 @@ function resolveContainer(target) {
   return target;
 }
 
+function normalizeViewportInsets(insets) {
+  if (!insets || typeof insets !== 'object') {
+    return { top: 0, right: 0, bottom: 0, left: 0 };
+  }
+  const coerce = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? Math.max(0, numeric) : 0;
+  };
+  return {
+    top: coerce(insets.top),
+    right: coerce(insets.right),
+    bottom: coerce(insets.bottom),
+    left: coerce(insets.left),
+  };
+}
+
 /**
  * Manages the DOM layers (canvas, SVG overlay, HTML overlays) that can be used
  * by Helios for rendering and interaction.
@@ -74,9 +90,18 @@ export class LayerManager {
       pointerEvents: 'none',
     });
 
-    this.root.appendChild(this.canvas3d);
-    this.root.appendChild(this.svgLayer);
-    this.root.appendChild(this.htmlOverlay);
+    this.viewport = document.createElement('div');
+    this.viewport.className = 'helios-layer-viewport';
+    Object.assign(this.viewport.style, {
+      position: 'absolute',
+      inset: '0px',
+      overflow: 'hidden',
+    });
+
+    this.viewport.appendChild(this.canvas3d);
+    this.viewport.appendChild(this.svgLayer);
+    this.viewport.appendChild(this.htmlOverlay);
+    this.root.appendChild(this.viewport);
 
     this.container.appendChild(this.root);
 
@@ -91,6 +116,7 @@ export class LayerManager {
 
     this.layers = new Map();
     this.resizeListeners = new Set();
+    this.viewportInsets = { top: 0, right: 0, bottom: 0, left: 0 };
     const pixelRatio = resolveEffectiveDevicePixelRatio(getWindowDevicePixelRatio(), this.options);
     this.size = { width: 0, height: 0, devicePixelRatio: pixelRatio };
 
@@ -124,6 +150,26 @@ export class LayerManager {
     this.root.appendChild(element);
   }
 
+  setViewportInsets(insets) {
+    const next = normalizeViewportInsets(insets);
+    const prev = this.viewportInsets;
+    if (
+      prev.top === next.top
+      && prev.right === next.right
+      && prev.bottom === next.bottom
+      && prev.left === next.left
+    ) {
+      return this;
+    }
+    this.viewportInsets = next;
+    this.viewport.style.top = `${next.top}px`;
+    this.viewport.style.right = `${next.right}px`;
+    this.viewport.style.bottom = `${next.bottom}px`;
+    this.viewport.style.left = `${next.left}px`;
+    this.handleResize();
+    return this;
+  }
+
   removeLayer(name) {
     const element = this.layers.get(name);
     if (element) {
@@ -144,7 +190,7 @@ export class LayerManager {
   }
 
   handleResize() {
-    const rect = this.root.getBoundingClientRect();
+    const rect = this.viewport.getBoundingClientRect();
     const pixelRatio = resolveEffectiveDevicePixelRatio(getWindowDevicePixelRatio(), this.options);
     const width = Math.max(1, Math.floor(rect.width));
     const height = Math.max(1, Math.floor(rect.height));

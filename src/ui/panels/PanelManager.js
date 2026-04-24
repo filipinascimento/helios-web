@@ -19,13 +19,24 @@ export class PanelManager {
     this._freeDragDockGuards = new Map();
     this._dockMetricsListeners = new Set();
     this._eventTarget = this.container?.ownerDocument?.defaultView ?? globalThis.window ?? this.container;
+    this._responsivePresentation = {
+      mode: 'desktop',
+      dockSide: 'left',
+      controlsOpen: false,
+      activePanelId: null,
+      focused: false,
+    };
 
     this.dockLeft = document.createElement('div');
     this.dockLeft.className = 'helios-ui-dock helios-ui-dock--side helios-ui-dock--left';
     this.dockRight = document.createElement('div');
     this.dockRight.className = 'helios-ui-dock helios-ui-dock--side helios-ui-dock--right';
+    this.fullscreenFlow = document.createElement('div');
+    this.fullscreenFlow.className = 'helios-ui-fullscreen-flow';
+    this.fullscreenFlow.hidden = true;
     this.container.appendChild(this.dockLeft);
     this.container.appendChild(this.dockRight);
+    this.container.appendChild(this.fullscreenFlow);
 
     this._boundDockMetricsResize = () => this._emitDockMetricsChange();
     if (typeof ResizeObserver === 'function') {
@@ -67,6 +78,44 @@ export class PanelManager {
 
   getPanel(id) {
     return this.panels.get(id) ?? null;
+  }
+
+  getPanels() {
+    return Array.from(this.panels.values());
+  }
+
+  serializeState() {
+    const panels = {};
+    for (const [id, panel] of this.panels.entries()) {
+      panels[id] = panel.serializeState?.() ?? null;
+    }
+    return {
+      panels,
+      dockOrder: {
+        left: Array.from(this.dockLeft?.children ?? []).map((element) => element.dataset.panelId).filter(Boolean),
+        right: Array.from(this.dockRight?.children ?? []).map((element) => element.dataset.panelId).filter(Boolean),
+      },
+    };
+  }
+
+  restoreState(state = {}) {
+    if (!state || typeof state !== 'object') return this;
+    const panels = state.panels && typeof state.panels === 'object' ? state.panels : {};
+    for (const [id, panelState] of Object.entries(panels)) {
+      this.panels.get(id)?.restoreState?.(panelState);
+    }
+    const leftOrder = Array.isArray(state.dockOrder?.left) ? state.dockOrder.left : [];
+    const rightOrder = Array.isArray(state.dockOrder?.right) ? state.dockOrder.right : [];
+    for (const id of leftOrder) {
+      const panel = this.panels.get(id);
+      if (panel?.element && panel.dock !== 'free') this.dockLeft.appendChild(panel.element);
+    }
+    for (const id of rightOrder) {
+      const panel = this.panels.get(id);
+      if (panel?.element && panel.dock !== 'free') this.dockRight.appendChild(panel.element);
+    }
+    this._emitDockMetricsChange();
+    return this;
   }
 
   removePanel(id) {
@@ -127,8 +176,9 @@ export class PanelManager {
       return;
     }
 
-    const target = resolveDockTarget(panel.dock);
+    const target = this._resolveEffectiveSideDockTarget(panel);
     if (target === 'left') {
+      this._matchSideDockWidth(panel, 'left');
       panel.element.dataset.sideDocked = 'true';
       if (panel.element.parentElement !== this.dockLeft) this.dockLeft.appendChild(panel.element);
       panel.syncDockStyles();
@@ -136,6 +186,7 @@ export class PanelManager {
       return;
     }
     if (target === 'right') {
+      this._matchSideDockWidth(panel, 'right');
       panel.element.dataset.sideDocked = 'true';
       if (panel.element.parentElement !== this.dockRight) this.dockRight.appendChild(panel.element);
       panel.syncDockStyles();
@@ -150,7 +201,7 @@ export class PanelManager {
   }
 
   _syncDockedWidths(sourcePanel, width) {
-    const target = resolveDockTarget(sourcePanel?.dock);
+    const target = this._resolveEffectiveSideDockTarget(sourcePanel);
     let side = null;
     if (target === 'left') side = 'left';
     else if (target === 'right') side = 'right';
@@ -160,7 +211,7 @@ export class PanelManager {
     if (!Number.isFinite(numeric)) return;
     const nextWidth = Math.max(sourcePanel?.minWidth ?? 240, numeric);
     for (const panel of this.panels.values()) {
-      const panelTarget = resolveDockTarget(panel?.dock);
+      const panelTarget = this._resolveEffectiveSideDockTarget(panel);
       if (panelTarget !== side) continue;
       panel.width = nextWidth;
       panel.element.style.width = `${nextWidth}px`;
@@ -168,7 +219,42 @@ export class PanelManager {
     this._emitDockMetricsChange();
   }
 
+  _matchSideDockWidth(panel, side) {
+    if (!panel || (side !== 'left' && side !== 'right')) return;
+    let width = null;
+    for (const candidate of this.panels.values()) {
+      if (!candidate || candidate === panel) continue;
+      if (this._resolveEffectiveSideDockTarget(candidate) !== side) continue;
+      const candidateWidth = Number(candidate.width ?? candidate.element?.getBoundingClientRect?.().width);
+      if (!Number.isFinite(candidateWidth) || candidateWidth <= 0) continue;
+      width = Math.max(candidate.minWidth ?? panel.minWidth ?? 240, candidateWidth);
+      break;
+    }
+    if (!Number.isFinite(width) || width <= 0) return;
+    panel.width = width;
+    panel.element.style.width = `${width}px`;
+  }
+
+  _resolveEffectiveSideDockTarget(panel) {
+    const target = resolveDockTarget(panel?.dock);
+    if (
+      this._responsivePresentation?.mode === 'compact'
+      && (target === 'left' || target === 'right')
+    ) {
+      return this._responsivePresentation?.dockSide === 'right' ? 'right' : 'left';
+    }
+    return target;
+  }
+
   getDockInsets() {
+    if (this._responsivePresentation?.mode === 'fullscreen') {
+      return {
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
+      };
+    }
     const leftWidth = this.dockLeft?.childElementCount
       ? Math.max(0, Math.round(this.dockLeft.getBoundingClientRect().width))
       : 0;
@@ -190,6 +276,93 @@ export class PanelManager {
     return () => this._dockMetricsListeners.delete(callback);
   }
 
+  setResponsivePresentation(presentation = {}) {
+    const next = {
+      ...this._responsivePresentation,
+      ...(presentation && typeof presentation === 'object' ? presentation : {}),
+    };
+    next.mode = typeof next.mode === 'string' ? next.mode : 'desktop';
+    next.dockSide = next.dockSide === 'right' ? 'right' : 'left';
+    next.controlsOpen = next.controlsOpen === true;
+    next.activePanelId = typeof next.activePanelId === 'string' ? next.activePanelId : null;
+    next.focused = next.focused === true;
+    this._responsivePresentation = next;
+
+    this.container.dataset.responsiveMode = next.mode;
+    this.container.dataset.compactDockSide = next.dockSide;
+    this.container.dataset.controlsOpen = next.controlsOpen ? 'true' : 'false';
+    this.container.dataset.focusedControl = next.focused ? 'true' : 'false';
+    if (next.activePanelId) this.container.dataset.activePanelId = next.activePanelId;
+    else delete this.container.dataset.activePanelId;
+
+    this.fullscreenFlow.hidden = !(next.mode === 'fullscreen' && next.controlsOpen);
+    this.fullscreenFlow.dataset.focused = next.focused ? 'true' : 'false';
+
+    if (next.mode === 'compact') {
+      const compactPanels = Array.from(this.panels.values())
+        .filter((panel) => {
+          const panelTarget = resolveDockTarget(panel?.dock);
+          return panelTarget === 'left' || panelTarget === 'right';
+        })
+        .sort((a, b) => {
+          const targetA = resolveDockTarget(a?.dock);
+          const targetB = resolveDockTarget(b?.dock);
+          if (targetA !== targetB) return targetA === 'left' ? -1 : 1;
+          return 0;
+        });
+      const dock = next.dockSide === 'right' ? this.dockRight : this.dockLeft;
+      for (const panel of compactPanels) {
+        panel.setResponsiveMode?.('desktop');
+        dock.appendChild(panel.element);
+        panel.setDockEdgeOverride(next.dockSide);
+        panel.element.dataset.sideDocked = 'true';
+        this._matchSideDockWidth(panel, next.dockSide);
+      }
+    }
+
+    for (const panel of this.panels.values()) {
+      const panelTarget = resolveDockTarget(panel?.dock);
+      if (next.mode === 'fullscreen') {
+        panel.setResponsiveMode?.('fullscreen');
+        if (panel.element.parentElement !== this.fullscreenFlow) this.fullscreenFlow.appendChild(panel.element);
+        panel.setDockEdgeOverride(null);
+        delete panel.element.dataset.sideDocked;
+      } else if (next.mode === 'compact') {
+        if (panelTarget === 'left' || panelTarget === 'right') {
+          panel.setResponsiveMode?.('desktop');
+          panel.setDockEdgeOverride(next.dockSide);
+          panel.element.dataset.sideDocked = 'true';
+        } else {
+          panel.setResponsiveMode?.('desktop');
+          panel.setDockEdgeOverride(null);
+          delete panel.element.dataset.sideDocked;
+          this._placePanel(panel);
+        }
+      } else {
+        panel.setResponsiveMode?.('desktop');
+        panel.setDockEdgeOverride(null);
+        delete panel.element.dataset.sideDocked;
+        this._placePanel(panel);
+      }
+
+      let visible = true;
+      let visibilityState = 'visible';
+      if (next.mode === 'fullscreen') {
+        visible = next.controlsOpen === true;
+        if (!visible) visibilityState = 'hidden';
+        else if (next.focused === true && next.activePanelId) {
+          visibilityState = next.activePanelId === panel.id ? 'active' : 'background';
+        }
+      }
+      panel.element.dataset.interfaceVisible = visible ? 'true' : 'false';
+      panel.element.dataset.interfaceActive = next.activePanelId === panel.id ? 'true' : 'false';
+      panel.element.dataset.interfaceState = visibilityState;
+    }
+
+    this._emitDockMetricsChange();
+    return this;
+  }
+
   _emitDockMetricsChange() {
     const insets = this.getDockInsets();
     for (const listener of this._dockMetricsListeners) {
@@ -200,13 +373,14 @@ export class PanelManager {
   }
 
   _startSideDockReorder(panel, event) {
+    if (this._responsivePresentation?.mode === 'fullscreen') return false;
     if (!this.allowDrag) return false;
     if (!panel) return false;
     const primaryPressed = (Number(event?.buttons ?? 0) & 1) === 1 || event?.button === 0;
     if (!primaryPressed) return false;
     if (event.shiftKey) return false;
 
-    const target = resolveDockTarget(panel.dock);
+    const target = this._resolveEffectiveSideDockTarget(panel);
     if (target !== 'left' && target !== 'right') return false;
 
     const dockEl = target === 'left' ? this.dockLeft : this.dockRight;
@@ -350,7 +524,7 @@ export class PanelManager {
     if (this._dockReorder) return false;
     if (!panel?._drag || panel._drag.pointerId !== event.pointerId) return false;
     if (this._hasActiveFreeDragDockGuard(panel, event)) return false;
-    const target = resolveDockTarget(panel.dock);
+    const target = this._resolveEffectiveSideDockTarget(panel);
     if (target !== 'left' && target !== 'right') return false;
     const dockEl = target === 'left' ? this.dockLeft : this.dockRight;
     const dockRect = dockEl?.getBoundingClientRect?.();
@@ -403,7 +577,7 @@ export class PanelManager {
   _shouldForceFreeWhileDragging(panel, event) {
     if (!panel?._drag || panel._drag.pointerId !== event?.pointerId) return false;
     if (this._hasActiveFreeDragDockGuard(panel, event)) return true;
-    const target = resolveDockTarget(panel?.dock);
+    const target = this._resolveEffectiveSideDockTarget(panel);
     if (target !== 'left' && target !== 'right') return false;
     const dockEl = target === 'left' ? this.dockLeft : this.dockRight;
     const dockRect = dockEl?.getBoundingClientRect?.();

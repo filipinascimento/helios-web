@@ -11,12 +11,15 @@ export class Panel {
     if (!options?.id) throw new Error('Panel requires an id');
     this.id = options.id;
     this.title = options.title ?? options.id;
-    this.draggable = Boolean(options.draggable ?? true);
+    this._baseDraggable = Boolean(options.draggable ?? true);
+    this.draggable = this._baseDraggable;
     this.onDockChange = typeof options.onDockChange === 'function' ? options.onDockChange : null;
     this.onHeaderPointerDown = typeof options.onHeaderPointerDown === 'function' ? options.onHeaderPointerDown : null;
     this.position = { ...(options.position ?? DEFAULT_POSITION) };
     this.lastFreePosition = { ...this.position };
     this.dock = options.dock ?? 'free';
+    this._dockEdgeOverride = null;
+    this._responsiveMode = 'desktop';
     this.dockThreshold = options.dockThreshold ?? DEFAULT_DOCK_THRESHOLD;
     this.minWidth = options.minWidth ?? DEFAULT_MIN_WIDTH;
     this.width = options.width ?? null;
@@ -83,12 +86,57 @@ export class Panel {
   }
 
   _syncResizeHandleEdge() {
-    const dock = this.dock ?? 'free';
+    const dock = this._dockEdgeOverride ?? this.dock ?? 'free';
     const edge = dock.includes('right') ? 'left' : 'right';
     if (this.resizeHandle) this.resizeHandle.dataset.edge = edge;
   }
 
+  setDockEdgeOverride(side = null) {
+    this._dockEdgeOverride = side === 'left' || side === 'right' ? side : null;
+    this._syncResizeHandleEdge();
+    return this;
+  }
+
+  setResponsiveMode(mode = 'desktop') {
+    const next = typeof mode === 'string' ? mode : 'desktop';
+    this._responsiveMode = next;
+    this.draggable = next === 'fullscreen' ? false : this._baseDraggable;
+    this.element.dataset.responsiveMode = next;
+    this._applyDock();
+    return this;
+  }
+
   _applyDock() {
+    if (this._responsiveMode === 'fullscreen') {
+      this.element.style.position = 'relative';
+      this.element.style.left = '';
+      this.element.style.top = '';
+      this.element.style.right = '';
+      this.element.style.bottom = '';
+      this.element.style.width = '100%';
+      this.element.style.maxWidth = 'none';
+      this.element.style.minWidth = '0';
+      this.element.style.height = '';
+      this._syncResizeHandleEdge();
+      return;
+    }
+
+    if (this._responsiveMode === 'compact') {
+      const rect = this.element.getBoundingClientRect();
+      const width = this.width ?? (rect.width || 320);
+      this.element.style.position = 'relative';
+      this.element.style.left = '';
+      this.element.style.top = '';
+      this.element.style.right = '';
+      this.element.style.bottom = '';
+      this.element.style.width = `${width}px`;
+      this.element.style.maxWidth = 'none';
+      this.element.style.minWidth = `${Number(this.minWidth)}px`;
+      this.element.style.height = '';
+      this._syncResizeHandleEdge();
+      return;
+    }
+
     const mode = this.dock ?? 'free';
     if (mode === 'free') {
       this.element.style.position = 'absolute';
@@ -172,6 +220,44 @@ export class Panel {
       return;
     }
     this.setCollapsed(!this.collapsed());
+  }
+
+  serializeState() {
+    return {
+      id: this.id,
+      dock: this.dock,
+      position: { ...this.position },
+      lastFreePosition: { ...this.lastFreePosition },
+      width: Number.isFinite(this.width) ? this.width : null,
+      collapsed: this.collapsed(),
+    };
+  }
+
+  restoreState(state = {}) {
+    if (!state || typeof state !== 'object') return this;
+    if (state.lastFreePosition && typeof state.lastFreePosition === 'object') {
+      this.lastFreePosition = {
+        x: Number.isFinite(state.lastFreePosition.x) ? Number(state.lastFreePosition.x) : this.lastFreePosition.x,
+        y: Number.isFinite(state.lastFreePosition.y) ? Number(state.lastFreePosition.y) : this.lastFreePosition.y,
+      };
+    }
+    if (Number.isFinite(state.width)) {
+      this.width = Number(state.width);
+      this.element.style.width = `${this.width}px`;
+    }
+    if (typeof state.dock === 'string' && state.dock.trim()) {
+      this.setDock(state.dock);
+    }
+    if (state.position && typeof state.position === 'object') {
+      this.setPosition(
+        Number.isFinite(state.position.x) ? Number(state.position.x) : this.position.x,
+        Number.isFinite(state.position.y) ? Number(state.position.y) : this.position.y,
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(state, 'collapsed')) {
+      this.setCollapsed(state.collapsed === true);
+    }
+    return this;
   }
 
   _handlePointerDown(event) {

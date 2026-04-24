@@ -34,6 +34,8 @@ import {
   resolveFigurePreviewThumbnailOptions,
 } from '../export/figureExport.js';
 
+const INTERFACE_CONTROL_RELEASE_MS = 420;
+
 function resolveUiContainer({ helios, container, layerName }) {
   if (container) return container;
   if (helios?.layers?.layers && typeof helios.layers.addLayer === 'function') {
@@ -147,6 +149,24 @@ function warnUiDerivationFailure(message, detail) {
   console.warn(`[HeliosUI] ${message}`, detail);
 }
 
+function createInterfaceIcon(doc, kind) {
+  const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.classList.add('helios-ui-interface-icon');
+  const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', 'currentColor');
+  path.setAttribute('stroke-width', '1.8');
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+  if (kind === 'dock-left') path.setAttribute('d', 'M4 5h4v14H4zM10 5h10v14H10z');
+  else if (kind === 'dock-right') path.setAttribute('d', 'M4 5h10v14H4zM16 5h4v14h-4z');
+  else if (kind === 'close') path.setAttribute('d', 'M7 7l10 10M17 7L7 17');
+  else path.setAttribute('d', 'M5 7h14M5 12h14M5 17h14M9 5v4M15 10v4M11 15v4');
+  svg.appendChild(path);
+  return svg;
+}
+
 export class HeliosUI {
   constructor(options = {}) {
     this.helios = options.helios ?? null;
@@ -167,18 +187,30 @@ export class HeliosUI {
     });
     this.container.classList.add('helios-ui');
     this.container.dataset.theme = this.theme;
+    this._controlCleanups = new Set();
+    this._boundAttributesById = new Map();
+    this._heliosBindingUnsubscribe = null;
+    this._latestDockInsets = { top: 0, right: 0, bottom: 0, left: 0 };
+    this._interfaceReleaseTimer = null;
+    this._activeControlScope = null;
 
     this.panelManager = new PanelManager({
       container: this.container,
       allowDrag: options.allowDrag ?? true,
       labelColumn: options.labelColumn ?? undefined,
     });
-
-    this._controlCleanups = new Set();
-    this._boundAttributesById = new Map();
-    this._heliosBindingUnsubscribe = null;
+    this.interfaceBehavior = this.helios?.useBehavior?.('interface', options.interface ?? options.behaviors?.options?.interface) ?? null;
+    this._interfaceResizeObserver = null;
+    this._interfaceChrome = this._createInterfaceChrome();
+    this.interfaceBehavior?.bindUI?.(this);
+    this._installInterfaceViewportTracking();
+    this._installInterfaceControlTracking();
+    this._syncInterfaceState();
     const dockMetricsUnsubscribe = this.panelManager.onDockMetricsChange?.((insets) => {
-      this.helios?.overlayInsets?.(insets);
+      this._latestDockInsets = { ...insets };
+      this.container?.style?.setProperty?.('--helios-ui-left-dock-width', `${Math.max(0, Number(insets?.left) || 0)}px`);
+      this.container?.style?.setProperty?.('--helios-ui-right-dock-width', `${Math.max(0, Number(insets?.right) || 0)}px`);
+      this._applyGraphViewportPolicy();
     });
     if (dockMetricsUnsubscribe) this._controlCleanups.add(dockMetricsUnsubscribe);
   }
@@ -208,6 +240,318 @@ export class HeliosUI {
 
   toggleTheme() {
     this.setTheme(this.theme === 'dark' ? 'light' : 'dark');
+  }
+
+  serializeState() {
+    const panelState = this.panelManager?.serializeState?.() ?? {};
+    const interfaceState = this.interfaceBehavior?.serializeInterfaceState?.() ?? {};
+    return {
+      theme: this.theme,
+      panels: panelState.panels ?? {},
+      dockOrder: panelState.dockOrder ?? {},
+      interface: interfaceState,
+    };
+  }
+
+  restoreState(state = {}) {
+    if (!state || typeof state !== 'object') return this;
+    if (typeof state.theme === 'string' && state.theme) {
+      this.setTheme(state.theme);
+    }
+    this.panelManager?.restoreState?.(state);
+    this.interfaceBehavior?.restoreInterfaceState?.(state.interface ?? {});
+    this._syncInterfaceState();
+    return this;
+  }
+
+  getViewportWidth() {
+    const width = Number(
+      this.container?.clientWidth
+      ?? this.container?.getBoundingClientRect?.()?.width
+      ?? this.helios?.layers?.size?.width
+      ?? this.helios?.size?.width
+      ?? 0,
+    );
+    return Number.isFinite(width) ? width : 0;
+  }
+
+  applyInterfaceBehaviorState(state = {}) {
+    const snapshot = state && typeof state === 'object' ? state : {};
+    this.container.dataset.interfaceMode = snapshot.mode ?? 'desktop';
+    this.container.dataset.interfaceVisible = snapshot.interfaceVisible === false ? 'false' : 'true';
+    this.panelManager?.setResponsivePresentation?.({
+      mode: snapshot.mode ?? 'desktop',
+      dockSide: snapshot.dockSide ?? 'left',
+      controlsOpen: snapshot.controlsOpen === true,
+      activePanelId: snapshot.activePanelId ?? null,
+      focused: snapshot.focused === true,
+    });
+    if (snapshot.focused !== true || snapshot.controlsOpen !== true) {
+      this._setActiveControlScope(null);
+    }
+    this._applyGraphViewportPolicy(snapshot);
+    this._renderInterfaceChrome(snapshot);
+    return this;
+  }
+
+  _applyGraphViewportPolicy(state = null) {
+    const snapshot = state && typeof state === 'object'
+      ? state
+      : (this.interfaceBehavior?.serializeInterfaceState?.() ?? { mode: 'desktop' });
+    const mode = snapshot.mode ?? 'desktop';
+    if (mode === 'compact') {
+      this.helios?.layers?.setViewportInsets?.(this._latestDockInsets);
+      this.helios?.overlayInsets?.({ top: 0, right: 0, bottom: 0, left: 0 });
+      return;
+    }
+    this.helios?.layers?.setViewportInsets?.({ top: 0, right: 0, bottom: 0, left: 0 });
+    if (mode === 'fullscreen') {
+      this.helios?.overlayInsets?.({ top: 0, right: 0, bottom: 0, left: 0 });
+      return;
+    }
+    this.helios?.overlayInsets?.(this._latestDockInsets);
+  }
+
+  _installInterfaceViewportTracking() {
+    const report = () => {
+      this.interfaceBehavior?.setViewportWidth?.(this.getViewportWidth(), { silent: true });
+      this._syncInterfaceState();
+    };
+    if (typeof ResizeObserver === 'function') {
+      this._interfaceResizeObserver = new ResizeObserver(() => report());
+      this._interfaceResizeObserver.observe(this.container);
+    } else if (typeof window?.addEventListener === 'function') {
+      window.addEventListener('resize', report);
+      this._controlCleanups.add(() => window.removeEventListener('resize', report));
+    }
+    this._controlCleanups.add(() => this._interfaceResizeObserver?.disconnect?.());
+    report();
+  }
+
+  _syncInterfaceState() {
+    this.applyInterfaceBehaviorState(this.interfaceBehavior?.serializeInterfaceState?.() ?? {
+      dockSide: 'left',
+      mode: 'desktop',
+      interfaceVisible: true,
+      controlsOpen: false,
+      activePanelId: null,
+      focused: false,
+      resumePrompt: null,
+    });
+  }
+
+  _createInterfaceChrome() {
+    const doc = this.container?.ownerDocument ?? document;
+    const surface = doc.createElement('div');
+    surface.className = 'helios-ui-interface-surface';
+
+    const compactDockToggle = doc.createElement('button');
+    compactDockToggle.type = 'button';
+    compactDockToggle.className = 'helios-ui-interface-dock-toggle';
+    compactDockToggle.setAttribute('aria-label', 'Move compact dock to the other side');
+    compactDockToggle.setAttribute('title', 'Move compact dock to the other side');
+    compactDockToggle.addEventListener('click', () => {
+      this.interfaceBehavior?.toggleDockSide?.();
+    });
+
+    const fullscreenBar = doc.createElement('div');
+    fullscreenBar.className = 'helios-ui-interface-fullscreen-bar';
+
+    const launcherButton = doc.createElement('button');
+    launcherButton.type = 'button';
+    launcherButton.className = 'helios-ui-button helios-ui-interface-bar__button helios-ui-interface-bar__button--icon';
+    launcherButton.addEventListener('click', () => {
+      const controlsOpen = this.interfaceBehavior?.controlsOpen?.() === true;
+      if (controlsOpen) {
+        this.interfaceBehavior?.closeControlsSurface?.();
+        this.interfaceBehavior?.clearActiveControl?.();
+        this._setActiveControlScope(null);
+      } else {
+        this.interfaceBehavior?.openControlsSurface?.();
+      }
+    });
+
+    fullscreenBar.appendChild(launcherButton);
+
+    const resumePrompt = doc.createElement('div');
+    resumePrompt.className = 'helios-ui-resume-prompt';
+
+    const resumeText = doc.createElement('div');
+    resumeText.className = 'helios-ui-resume-prompt__text';
+
+    const resumeActions = doc.createElement('div');
+    resumeActions.className = 'helios-ui-resume-prompt__actions';
+
+    const resumeButton = doc.createElement('button');
+    resumeButton.type = 'button';
+    resumeButton.className = 'helios-ui-button';
+    resumeButton.textContent = 'Resume';
+    resumeButton.addEventListener('click', () => {
+      this.interfaceBehavior?.resumeSession?.();
+    });
+
+    const freshButton = doc.createElement('button');
+    freshButton.type = 'button';
+    freshButton.className = 'helios-ui-button';
+    freshButton.textContent = 'Start Fresh';
+    freshButton.addEventListener('click', () => {
+      this.interfaceBehavior?.startFresh?.();
+    });
+
+    resumeActions.appendChild(resumeButton);
+    resumeActions.appendChild(freshButton);
+    resumePrompt.appendChild(resumeText);
+    resumePrompt.appendChild(resumeActions);
+
+    surface.appendChild(compactDockToggle);
+    surface.appendChild(fullscreenBar);
+    surface.appendChild(resumePrompt);
+    this.container.appendChild(surface);
+
+    return {
+      surface,
+      compactDockToggle,
+      fullscreenBar,
+      launcherButton,
+      resumePrompt,
+      resumeText,
+    };
+  }
+
+  _renderInterfaceChrome(state = {}) {
+    const snapshot = state && typeof state === 'object' ? state : {};
+    const chrome = this._interfaceChrome;
+    if (!chrome) return;
+
+    chrome.surface.dataset.mode = snapshot.mode ?? 'desktop';
+    chrome.compactDockToggle.hidden = snapshot.mode !== 'compact';
+    chrome.fullscreenBar.hidden = snapshot.mode !== 'fullscreen';
+    chrome.launcherButton.hidden = snapshot.mode !== 'fullscreen';
+    chrome.compactDockToggle.dataset.side = snapshot.dockSide === 'right' ? 'right' : 'left';
+    chrome.compactDockToggle.setAttribute(
+      'aria-label',
+      snapshot.dockSide === 'right' ? 'Move dock to the left side' : 'Move dock to the right side',
+    );
+    chrome.compactDockToggle.setAttribute(
+      'title',
+      snapshot.dockSide === 'right' ? 'Move dock to the left side' : 'Move dock to the right side',
+    );
+    chrome.compactDockToggle.replaceChildren(
+      createInterfaceIcon(
+        this.container?.ownerDocument ?? document,
+        snapshot.dockSide === 'right' ? 'dock-left' : 'dock-right',
+      ),
+    );
+    chrome.launcherButton.setAttribute('aria-label', snapshot.controlsOpen === true ? 'Close controls' : 'Open controls');
+    chrome.launcherButton.setAttribute('title', snapshot.controlsOpen === true ? 'Close controls' : 'Open controls');
+    chrome.launcherButton.replaceChildren(
+      createInterfaceIcon(
+        this.container?.ownerDocument ?? document,
+        snapshot.controlsOpen === true ? 'close' : 'controls',
+      ),
+    );
+
+    const prompt = snapshot.resumePrompt ?? null;
+    chrome.resumePrompt.hidden = !prompt?.visible;
+    if (prompt?.visible) {
+      const sourceName = prompt.networkSource?.name ?? prompt.networkSource?.baseName ?? 'previous session';
+      chrome.resumeText.textContent = `Resume unfinished session from ${sourceName}?`;
+    }
+  }
+
+  _resolveActiveControlScope(target) {
+    if (!target || typeof target.closest !== 'function') return null;
+    if (!this._isTransparencyEligibleControl(target)) return null;
+    const localScope = target.closest('.helios-ui-row, .helios-ui-layout__actions, .helios-ui-network__actions');
+    if (localScope) return localScope;
+    const scopeId = target.closest('[data-interface-focus-scope-id]')?.dataset?.interfaceFocusScopeId;
+    if (!scopeId) return null;
+    return this.container?.querySelector?.(`[data-interface-focus-scope-id="${scopeId}"]`) ?? null;
+  }
+
+  _isTransparencyEligibleControl(target) {
+    if (!target || typeof target.closest !== 'function') return false;
+    if (target.closest('[data-interface-focus-ignore="true"]')) return false;
+    if (target.closest('[data-interface-focus-control="true"]')) return true;
+
+    const control = target.closest('input, select, textarea, [role="switch"]');
+    if (!control) return false;
+    if (control.closest('[data-interface-focus-ignore="true"]')) return false;
+    if (control.tagName === 'INPUT') {
+      const type = String(control.getAttribute?.('type') ?? control.type ?? '').toLowerCase();
+      if (type === 'button' || type === 'submit' || type === 'reset' || type === 'file') return false;
+    }
+    return true;
+  }
+
+  _resolveActivePanelId(target, scope = null) {
+    const explicitPanelId = target?.closest?.('[data-interface-panel-id]')?.dataset?.interfacePanelId;
+    if (explicitPanelId) return explicitPanelId;
+    const panelId = scope?.closest?.('.helios-ui-panel')?.dataset?.panelId
+      ?? target?.closest?.('.helios-ui-panel')?.dataset?.panelId
+      ?? null;
+    return typeof panelId === 'string' && panelId ? panelId : null;
+  }
+
+  _installInterfaceControlTracking() {
+    const host = this.container;
+    if (!host?.addEventListener) return;
+
+    const activate = (event) => {
+      const scope = this._resolveActiveControlScope(event?.target);
+      if (!scope) return;
+      this._setActiveControlScope(scope);
+      const panelId = this._resolveActivePanelId(event?.target, scope);
+      if (panelId) this.interfaceBehavior?.activateControl?.(panelId);
+    };
+    const release = () => {
+      this._scheduleInterfaceControlRelease();
+    };
+
+    host.addEventListener('pointerdown', activate, { capture: true });
+    host.addEventListener('focusin', activate);
+    host.addEventListener('input', activate);
+    host.addEventListener('change', activate);
+    host.addEventListener('click', activate);
+    host.addEventListener('pointerup', release, { capture: true });
+    host.addEventListener('change', release);
+    host.addEventListener('focusout', release);
+
+    this._controlCleanups.add(() => {
+      host.removeEventListener('pointerdown', activate, { capture: true });
+      host.removeEventListener('focusin', activate);
+      host.removeEventListener('input', activate);
+      host.removeEventListener('change', activate);
+      host.removeEventListener('click', activate);
+      host.removeEventListener('pointerup', release, { capture: true });
+      host.removeEventListener('change', release);
+      host.removeEventListener('focusout', release);
+    });
+  }
+
+  _setActiveControlScope(scope) {
+    if (this._activeControlScope === scope) return;
+    if (this._activeControlScope?.dataset) {
+      delete this._activeControlScope.dataset.controlFocusActive;
+    }
+    this._activeControlScope = scope ?? null;
+    if (this._activeControlScope?.dataset) {
+      this._activeControlScope.dataset.controlFocusActive = 'true';
+      if (this.container?.dataset) this.container.dataset.focusedControlScope = 'row';
+    } else if (this.container?.dataset) {
+      delete this.container.dataset.focusedControlScope;
+    }
+  }
+
+  _scheduleInterfaceControlRelease() {
+    if (this._interfaceReleaseTimer != null) {
+      clearTimeout(this._interfaceReleaseTimer);
+    }
+    this._interfaceReleaseTimer = setTimeout(() => {
+      this._interfaceReleaseTimer = null;
+      this._setActiveControlScope(null);
+      this.interfaceBehavior?.clearActiveControl?.();
+    }, INTERFACE_CONTROL_RELEASE_MS);
   }
 
   bindHeliosAccessor(accessorName, options = {}) {
@@ -333,6 +677,7 @@ export class HeliosUI {
       offLabel: 'Light',
       ariaLabel: 'Theme',
     });
+    themeToggle.dataset.interfaceFocusIgnore = 'true';
     themeToggle.addEventListener('change', () => {
       this.toggleTheme();
       themeToggle.checked = this.theme === 'dark';

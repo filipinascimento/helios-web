@@ -5,6 +5,7 @@ import { BehaviorRegistry } from './BehaviorRegistry.js';
 import { ExporterBehavior } from './ExporterBehavior.js';
 import { FilterBehavior } from './FilterBehavior.js';
 import { HoverBehavior } from './HoverBehavior.js';
+import { InterfaceBehavior } from './InterfaceBehavior.js';
 import { LayoutBehavior } from './LayoutBehavior.js';
 import { LegendsBehavior } from './LegendsBehavior.js';
 import { LabelsBehavior } from './LabelsBehavior.js';
@@ -17,6 +18,7 @@ export function createDefaultBehaviorRegistry() {
     .register(ExporterBehavior.id, ExporterBehavior)
     .register(MappersBehavior.id, MappersBehavior)
     .register(FilterBehavior.id, FilterBehavior)
+    .register(InterfaceBehavior.id, InterfaceBehavior)
     .register(LayoutBehavior.id, LayoutBehavior)
     .register(LegendsBehavior.id, LegendsBehavior)
     .register(LabelsBehavior.id, LabelsBehavior)
@@ -32,6 +34,7 @@ export {
   ExporterBehavior,
   FilterBehavior,
   HoverBehavior,
+  InterfaceBehavior,
   LayoutBehavior,
   LegendsBehavior,
   LabelsBehavior,
