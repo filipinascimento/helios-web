@@ -1,6 +1,7 @@
 import { AttributeType } from 'helios-network';
 import { createAlignedRowEl } from '../controls/createAlignedRowEl.js';
 import { createToggleControl } from '../controls/createToggleControl.js';
+import { createSegmentedToggleControl } from '../controls/createSegmentedToggleControl.js';
 import { createTooltipManager } from '../controls/createTooltipManager.js';
 import { createSelectControl } from '../controls/createSelectControl.js';
 import { SuggestedSliderControls } from '../controls/SuggestedSliderControls.js';
@@ -758,7 +759,7 @@ export class SelectionPanel {
     selectorApplyWrap.style.gap = '12px';
     selectorApplyWrap.style.marginTop = '8px';
 
-    autoReplaceToggle = createToggleControl({
+    autoReplaceToggle = createSegmentedToggleControl({
       checked: false,
       onLabel: 'Auto Replace',
       offLabel: 'Manual',

@@ -20,7 +20,30 @@ function captureBrowserErrors(page) {
   return errors;
 }
 
+async function ensurePanelVisible(page, panelId) {
+  const panel = page.locator(`.helios-ui-panel[data-panel-id="${panelId}"]`).first();
+  if (await panel.isVisible()) return panel;
+
+  await page.evaluate((id) => {
+    const behavior = window.__helios?.behavior?.interface;
+    behavior?.openControlsSurface?.();
+    behavior?.activateControl?.(id);
+  }, panelId);
+
+  await expect(panel).toBeVisible();
+  return panel;
+}
+
 async function ensureToggleEnabled(scope, selector) {
+  const segmented = scope.locator(`${selector} [role="radiogroup"]`).first();
+  if (await segmented.count()) {
+    await expect(segmented).toBeVisible();
+    const onOption = segmented.locator('[role="radio"][data-value="true"]').first();
+    await expect(onOption).toBeVisible();
+    if ((await onOption.getAttribute('aria-checked')) !== 'true') await onOption.click();
+    await expect(onOption).toHaveAttribute('aria-checked', 'true');
+    return;
+  }
   const toggle = scope.locator(`${selector} [role="switch"], ${selector} input[type="checkbox"]`).first();
   await expect(toggle).toBeVisible();
   const tag = await toggle.evaluate((el) => el.tagName.toLowerCase());
@@ -33,6 +56,15 @@ async function ensureToggleEnabled(scope, selector) {
 }
 
 async function ensureToggleDisabled(scope, selector) {
+  const segmented = scope.locator(`${selector} [role="radiogroup"]`).first();
+  if (await segmented.count()) {
+    await expect(segmented).toBeVisible();
+    const offOption = segmented.locator('[role="radio"][data-value="false"]').first();
+    await expect(offOption).toBeVisible();
+    if ((await offOption.getAttribute('aria-checked')) !== 'true') await offOption.click();
+    await expect(offOption).toHaveAttribute('aria-checked', 'true');
+    return;
+  }
   const toggle = scope.locator(`${selector} [role="switch"], ${selector} input[type="checkbox"]`).first();
   await expect(toggle).toBeVisible();
   const tag = await toggle.evaluate((el) => el.tagName.toLowerCase());
@@ -45,8 +77,7 @@ async function ensureToggleDisabled(scope, selector) {
 }
 
 async function enableDensityFromPanel(page) {
-  const panel = page.locator('.helios-ui-panel[data-panel-id="helios-ui-mappers"]').first();
-  await expect(panel).toBeVisible();
+  const panel = await ensurePanelVisible(page, 'helios-ui-mappers');
 
   const densityTabButton = panel.locator('button', { hasText: 'Density' }).first();
   await densityTabButton.click();
@@ -73,8 +104,7 @@ test.describe('density map panel', () => {
     expect(diagnostics.error ?? null).toBeNull();
     expect(String(diagnostics.renderer).toLowerCase()).toContain('webgl');
 
-    const panel = page.locator('.helios-ui-panel[data-panel-id="helios-ui-mappers"]').first();
-    await expect(panel).toBeVisible();
+    const panel = await ensurePanelVisible(page, 'helios-ui-mappers');
     await panel.locator('button', { hasText: 'Density' }).first().click();
     const densityTab = panel.locator('.helios-ui-tabpanel[data-tab-id="density"][data-active="true"]').first();
     await expect(densityTab).toBeVisible();
@@ -254,13 +284,20 @@ test.describe('density map panel', () => {
       );
     }), { timeout: 5000 }).toBe(true);
 
-    const autoBgToggle = autoBgRow.locator('[role="switch"], input[type="checkbox"]').first();
-    const autoBgTag = await autoBgToggle.evaluate((el) => el.tagName.toLowerCase());
-    if (autoBgTag === 'input') {
-      await autoBgToggle.uncheck();
+    const autoBgSegmented = autoBgRow.locator('[role="radiogroup"]').first();
+    if (await autoBgSegmented.count()) {
+      const manualOption = autoBgSegmented.locator('[role="radio"][data-value="false"]').first();
+      if ((await manualOption.getAttribute('aria-checked')) !== 'true') await manualOption.click();
+      await expect(manualOption).toHaveAttribute('aria-checked', 'true');
     } else {
-      if ((await autoBgToggle.getAttribute('aria-checked')) === 'true') await autoBgToggle.click();
-      await expect(autoBgToggle).toHaveAttribute('aria-checked', 'false');
+      const autoBgToggle = autoBgRow.locator('[role="switch"], input[type="checkbox"]').first();
+      const autoBgTag = await autoBgToggle.evaluate((el) => el.tagName.toLowerCase());
+      if (autoBgTag === 'input') {
+        await autoBgToggle.uncheck();
+      } else {
+        if ((await autoBgToggle.getAttribute('aria-checked')) === 'true') await autoBgToggle.click();
+        await expect(autoBgToggle).toHaveAttribute('aria-checked', 'false');
+      }
     }
 
     await expect.poll(() => page.evaluate((expected) => {

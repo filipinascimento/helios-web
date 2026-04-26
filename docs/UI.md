@@ -33,6 +33,8 @@ When panels are docked to the left or right edge, HeliosUI also feeds those inse
 
 Responsive interface presentation uses three layouts. `Full` keeps normal desktop placement with dock columns on both sides, `Mid` collapses all side-docked panels onto one chosen side while leaving free panels windowed, and `Mobile` opens controls as a full-screen stacked surface from the controls button. The side-switch control only appears in `Mid`, and mobile presentation temporarily treats every panel as docked until the viewport grows back to `Mid` or `Full`.
 
+On iPhone Safari, make the host graph container use a dynamic viewport height such as `height: 100dvh` instead of only `height: 100%` or `100vh`. Safari's browser chrome changes the visual viewport height at runtime, and a static layout viewport can make the mobile panel stack appear compressed instead of leaving one continuous vertical scroller.
+
 The Labels tab now separates regular label mode from hover labels. Regular labels can be `Off`, `Auto Labels` (ranked from the visible graph), or `Selected Only`, while the Selection panel’s hover-label toggle remains a separate hovered-node overlay that reuses the same text styling options. When `Selected Only` is active, the Labels tab also exposes a `Use Available Space` toggle so selected labels can optionally use the same collision and space-availability strategy as regular auto labels instead of always forcing every selected label through. The Selection panel only keeps hover picking active for the hover-driven features that are currently enabled. If you leave click selection on but disable node-hover highlight, hover labels, and hovered-edge propagation, Helios keeps click picking enabled without scheduling node-hover updates. When hover labels are enabled through that panel, they use a dedicated hovered-node path instead of the general ranked-label selection pass.
 
 Selection-panel state-style sliders use suggested ranges rather than hidden caps. For example, node and edge `Opacity Gain` suggest `0..5` on the slider while still accepting any non-negative typed value. Controls with real bounded domains, such as color alpha or auto-mix amounts, continue to use explicit min/max domains.
@@ -118,6 +120,8 @@ Switch themes at runtime:
 ui.setTheme('light'); // or 'dark'
 ui.toggleTheme();
 ```
+
+Named two-way choices such as `Light`/`Dark`, `2D`/`3D`, or `Raw`/`Normalized` now use a segmented controller that shows both options at once instead of a single-label on/off switch.
 
 If you don’t want the built-in stylesheet injection, pass:
 

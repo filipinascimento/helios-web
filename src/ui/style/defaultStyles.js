@@ -308,6 +308,7 @@ export const defaultStylesText = `
   max-width: none !important;
   max-height: none !important;
   min-width: 0 !important;
+  flex: 0 0 auto !important;
   z-index: auto !important;
   border-radius: 0 !important;
   border-left-width: 0 !important;
@@ -1116,6 +1117,8 @@ export const defaultStylesText = `
   align-items: center;
   gap: 8px;
   line-height: 1;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .helios-ui-toggle__thumb {
@@ -1157,6 +1160,61 @@ export const defaultStylesText = `
 .helios-ui-toggle:focus-visible {
   outline: none;
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--helios-ui-accent) 22%, transparent);
+}
+
+.helios-ui-segmented-toggle {
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 1px;
+  padding: 2px;
+  border-radius: 999px;
+  border: 1px solid var(--helios-ui-border);
+  background: color-mix(in srgb, var(--helios-ui-bg-solid) 84%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--helios-ui-fg) 3%, transparent);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.helios-ui-segmented-toggle[aria-disabled="true"] {
+  opacity: 0.56;
+}
+
+.helios-ui-segmented-toggle__option {
+  min-width: 0;
+  min-height: 28px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--helios-ui-muted);
+  font: inherit;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+
+.helios-ui-segmented-toggle__option:hover {
+  color: var(--helios-ui-fg);
+}
+
+.helios-ui-segmented-toggle__option[data-selected="true"] {
+  background: color-mix(in srgb, var(--helios-ui-accent) 22%, var(--helios-ui-bg-solid));
+  color: var(--helios-ui-fg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--helios-ui-accent) 28%, transparent);
+}
+
+.helios-ui-segmented-toggle__option:focus-visible {
+  outline: none;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--helios-ui-accent) 28%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--helios-ui-accent) 28%, transparent);
 }
 
 .helios-ui-number::-webkit-outer-spin-button,
@@ -1422,7 +1480,7 @@ export const defaultStylesText = `
   --helios-ui-slider-track: color-mix(in srgb, var(--helios-ui-fg) 12%, transparent);
   --helios-ui-slider-fill: color-mix(in srgb, var(--helios-ui-accent) 92%, transparent);
   --helios-ui-slider-track-h: 6px;
-  --helios-ui-slider-thumb: 12px;
+  --helios-ui-slider-thumb: 16px;
 
   appearance: none;
   -webkit-appearance: none;
@@ -1837,6 +1895,11 @@ export const defaultStylesText = `
 .helios-ui-dock--side {
   overflow-y: auto;
   overflow-x: hidden;
+  min-height: 0;
+  pointer-events: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
 }
 
 .helios-ui[data-interface-mode="compact"] .helios-ui-dock--side {

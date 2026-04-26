@@ -64,6 +64,7 @@ import {
   resolveFigureRelativeOverlayScale,
   resolveFigurePreviewThumbnailOptions,
 } from './export/figureExport.js';
+import { classifyGestureForSuppression } from './rendering/touchGestureMath.js';
 
 const {
   NODE_POSITION_ATTRIBUTE,
@@ -85,6 +86,23 @@ const DEFAULT_UMAP_FORCE_OPTIONS = Object.freeze({
   umapNeighborCount: 15,
   umapEpochs: null,
 });
+
+function createPickingGestureState() {
+  return {
+    active: false,
+    moved: false,
+    cameraMoved: false,
+    wheelZoomed: false,
+    lastWheelAt: -Infinity,
+    lastCameraMoveAt: -Infinity,
+    lastTouchAt: -Infinity,
+    lastTapAt: -Infinity,
+    lastTapClientX: 0,
+    lastTapClientY: 0,
+    suppressNativeClickUntil: -Infinity,
+    pointers: new Map(),
+  };
+}
 
 function isLayoutInstance(candidate) {
   return candidate && typeof candidate.step === 'function' && typeof candidate.initialize === 'function';
@@ -2311,16 +2329,7 @@ export class Helios extends EventTarget {
       suppressHover: false,
       cameraIdleTimer: null,
       hoverThrottleTimer: null,
-      gesture: {
-        active: false,
-        startClientX: 0,
-        startClientY: 0,
-        moved: false,
-        cameraMoved: false,
-        wheelZoomed: false,
-        lastWheelAt: -Infinity,
-        lastCameraMoveAt: -Infinity,
-      },
+      gesture: createPickingGestureState(),
       _raf: null,
       _inFlight: false,
       _rerun: false,
@@ -2330,12 +2339,12 @@ export class Helios extends EventTarget {
     this._boundPickingHandlers = {
       down: (event) => this._handlePointerDown(event),
       move: (event) => this._handlePointerMove(event),
-      up: () => this._handlePointerUp(),
-      cancel: () => this._handlePointerUp(),
+      up: (event) => this._handlePointerUp(event),
+      cancel: (event) => this._handlePointerUp(event),
       leave: () => this._handlePointerLeave(),
       wheel: (event) => this._handleWheel(event),
-      click: (event) => this._handlePointerClick(event, false),
-      dblclick: (event) => this._handlePointerClick(event, true),
+      click: (event) => this._handlePointerClick(event, false, { synthetic: false }),
+      dblclick: (event) => this._handlePointerClick(event, true, { synthetic: false }),
     };
     this._pendingFrameNetwork = null;
     this._graphFilterState = this._graphFilterState ?? {
@@ -9344,27 +9353,54 @@ export class Helios extends EventTarget {
 
   _handlePointerDown(event) {
     const g = this._picking.gesture;
+    if (g.pointers.size === 0) {
+      g.moved = false;
+      g.cameraMoved = false;
+    }
     g.active = true;
-    g.startClientX = event.clientX ?? 0;
-    g.startClientY = event.clientY ?? 0;
-    g.moved = false;
-    g.cameraMoved = false;
+    g.pointers.set(event.pointerId, {
+      pointerId: event.pointerId,
+      pointerType: event.pointerType ?? 'mouse',
+      startClientX: event.clientX ?? 0,
+      startClientY: event.clientY ?? 0,
+      clientX: event.clientX ?? 0,
+      clientY: event.clientY ?? 0,
+    });
     // Keep wheelZoomed/lastWheelAt so we can suppress click after a zoom gesture.
   }
 
-  _handlePointerUp() {
-    this._picking.gesture.active = false;
+  async _handlePointerUp(event) {
+    const g = this._picking.gesture;
+    const pointer = g.pointers.get(event?.pointerId);
+    if (pointer && pointer.pointerType === 'touch') {
+      g.lastTouchAt = performance.now();
+    }
+    if (event?.type !== 'pointercancel' && pointer && pointer.pointerType === 'touch' && !g.moved && !g.cameraMoved) {
+      await this._handleTouchTap(event, pointer);
+    }
+    g.pointers.delete(event?.pointerId);
+    g.active = g.pointers.size > 0;
   }
 
   _handlePointerMove(event) {
     const canvas = this._getInteractionCanvas();
     if (!canvas) return;
     const g = this._picking.gesture;
-    if (g.active) {
-      const dx = (event.clientX ?? 0) - g.startClientX;
-      const dy = (event.clientY ?? 0) - g.startClientY;
-      const dist = Math.hypot(dx, dy);
-      if (dist > (this._picking.options.clickMoveTolerancePx ?? 4)) {
+    const pointer = g.pointers.get(event.pointerId);
+    if (pointer) {
+      const startPoints = Array.from(g.pointers.values(), (entry) => ({
+        pointerId: entry.pointerId,
+        clientX: entry.startClientX,
+        clientY: entry.startClientY,
+      }));
+      pointer.clientX = event.clientX ?? 0;
+      pointer.clientY = event.clientY ?? 0;
+      const classification = classifyGestureForSuppression(
+        startPoints,
+        g.pointers.values(),
+        this._picking.options.clickMoveTolerancePx ?? 4,
+      );
+      if (classification.moved) {
         g.moved = true;
         g.cameraMoved = true;
       }
@@ -9379,8 +9415,9 @@ export class Helios extends EventTarget {
       clientY: event.clientY,
       inside: x >= 0 && y >= 0 && x <= rect.width && y <= rect.height,
     };
-    // Suppress hover while panning/rotating (mouse button down).
-    if (event.buttons && event.buttons !== 0) {
+    const touchActive = Array.from(g.pointers.values()).some((entry) => entry.pointerType === 'touch');
+    // Suppress hover while dragging or during touch gestures.
+    if ((event.buttons && event.buttons !== 0) || touchActive) {
       this._picking.suppressHover = true;
       this._resetHover('camera');
       return;
@@ -9397,6 +9434,7 @@ export class Helios extends EventTarget {
       this._picking.hoverThrottleTimer = null;
     }
     this._picking.gesture.active = false;
+    this._picking.gesture.pointers.clear();
     this._resetHover('leave');
   }
 
@@ -9409,12 +9447,39 @@ export class Helios extends EventTarget {
     this._scheduleCameraIdleHoverPick();
   }
 
-  async _handlePointerClick(event, isDouble) {
+  async _handleTouchTap(event, pointer) {
+    const g = this._picking.gesture;
+    const now = performance.now();
+    g.suppressNativeClickUntil = now + 700;
+    const dx = (event.clientX ?? 0) - (g.lastTapClientX ?? 0);
+    const dy = (event.clientY ?? 0) - (g.lastTapClientY ?? 0);
+    const isDouble = Number.isFinite(g.lastTapAt) && now - g.lastTapAt <= 320 && Math.hypot(dx, dy) <= 24;
+    g.lastTapAt = now;
+    g.lastTapClientX = event.clientX ?? pointer?.clientX ?? 0;
+    g.lastTapClientY = event.clientY ?? pointer?.clientY ?? 0;
+    await this._handlePointerClick({
+      ...event,
+      button: 0,
+      altKey: event.altKey === true,
+      ctrlKey: event.ctrlKey === true,
+      metaKey: event.metaKey === true,
+      shiftKey: event.shiftKey === true,
+      clientX: event.clientX ?? pointer?.clientX ?? 0,
+      clientY: event.clientY ?? pointer?.clientY ?? 0,
+      pointerType: 'touch',
+    }, isDouble, { synthetic: true });
+  }
+
+  async _handlePointerClick(event, isDouble, options = {}) {
     if (!this.indexPickingTracker) return;
+    const synthetic = options.synthetic === true;
     const clickRequiresStationary = this._picking.options.clickRequiresStationary !== false;
+    const g = this._picking.gesture;
+    const now = performance.now();
+    if (!synthetic && Number.isFinite(g.suppressNativeClickUntil) && now <= g.suppressNativeClickUntil) {
+      return;
+    }
     if (clickRequiresStationary) {
-      const g = this._picking.gesture;
-      const now = performance.now();
       const suppressWheelMs = this._picking.options.suppressClickAfterWheelMs ?? 200;
       const wheelRecently = Number.isFinite(g.lastWheelAt) && now - g.lastWheelAt <= suppressWheelMs;
       if (g.cameraMoved || g.moved || wheelRecently) {

@@ -2,6 +2,14 @@ import { test, expect } from '@playwright/test';
 
 async function ensureToggleOn(locator) {
   await expect(locator).toBeVisible();
+  const role = await locator.getAttribute('role');
+  if (role === 'radiogroup') {
+    const onOption = locator.locator('[role="radio"][data-value="true"]').first();
+    await expect(onOption).toBeVisible();
+    if ((await onOption.getAttribute('aria-checked')) !== 'true') await onOption.click();
+    await expect(onOption).toHaveAttribute('aria-checked', 'true');
+    return;
+  }
   const tag = await locator.evaluate((el) => el.tagName.toLowerCase());
   if (tag === 'input') {
     if (!(await locator.isChecked())) await locator.check();

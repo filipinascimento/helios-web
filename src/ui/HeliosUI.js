@@ -8,6 +8,7 @@ import { createAlignedRowEl } from './controls/createAlignedRowEl.js';
 import { createFpsThrottle } from './controls/createFpsThrottle.js';
 import { createTooltipManager } from './controls/createTooltipManager.js';
 import { createToggleControl } from './controls/createToggleControl.js';
+import { createSegmentedToggleControl } from './controls/createSegmentedToggleControl.js';
 import { createSelectControl } from './controls/createSelectControl.js';
 import { createLightDirectionControl } from './controls/LightDirectionControl.js';
 import { PanelStack } from './panels/PanelStack.js';
@@ -624,7 +625,7 @@ export class HeliosUI {
     if (target.closest('[data-interface-focus-ignore="true"]')) return false;
     if (target.closest('[data-interface-focus-control="true"]')) return true;
 
-    const control = target.closest('input, select, textarea, [role="switch"]');
+    const control = target.closest('input, select, textarea, [role="switch"], [role="radiogroup"], [role="radio"]');
     if (!control) return false;
     if (control.closest('[data-interface-focus-ignore="true"]')) return false;
     if (control.tagName === 'INPUT') {
@@ -654,26 +655,46 @@ export class HeliosUI {
       const panelId = this._resolveActivePanelId(event?.target, scope);
       if (panelId) this.interfaceBehavior?.activateControl?.(panelId);
     };
+    const activateFromPointerDown = (event) => {
+      // On touch screens, pointerdown often begins a scroll gesture.
+      // Defer transparency activation until we see a real control interaction
+      // such as input/change/click, otherwise mobile scrolling can get stuck
+      // in focused-control mode.
+      if (event?.pointerType === 'touch') return;
+      activate(event);
+    };
     const release = () => {
       this._scheduleInterfaceControlRelease();
     };
+    const releaseImmediately = () => {
+      if (this._interfaceReleaseTimer != null) {
+        clearTimeout(this._interfaceReleaseTimer);
+        this._interfaceReleaseTimer = null;
+      }
+      this._setActiveControlScope(null);
+      this.interfaceBehavior?.clearActiveControl?.();
+    };
 
-    host.addEventListener('pointerdown', activate, { capture: true });
+    host.addEventListener('pointerdown', activateFromPointerDown, { capture: true });
     host.addEventListener('focusin', activate);
     host.addEventListener('input', activate);
     host.addEventListener('change', activate);
     host.addEventListener('click', activate);
     host.addEventListener('pointerup', release, { capture: true });
+    host.addEventListener('pointercancel', releaseImmediately, { capture: true });
+    host.addEventListener('scroll', releaseImmediately, { capture: true });
     host.addEventListener('change', release);
     host.addEventListener('focusout', release);
 
     this._controlCleanups.add(() => {
-      host.removeEventListener('pointerdown', activate, { capture: true });
+      host.removeEventListener('pointerdown', activateFromPointerDown, { capture: true });
       host.removeEventListener('focusin', activate);
       host.removeEventListener('input', activate);
       host.removeEventListener('change', activate);
       host.removeEventListener('click', activate);
       host.removeEventListener('pointerup', release, { capture: true });
+      host.removeEventListener('pointercancel', releaseImmediately, { capture: true });
+      host.removeEventListener('scroll', releaseImmediately, { capture: true });
       host.removeEventListener('change', release);
       host.removeEventListener('focusout', release);
     });
@@ -824,7 +845,7 @@ export class HeliosUI {
     });
 
     let themeRow = document.createElement('div');
-    const themeToggle = createToggleControl({
+    const themeToggle = createSegmentedToggleControl({
       checked: this.theme === 'dark',
       onLabel: 'Dark',
       offLabel: 'Light',
@@ -1065,7 +1086,7 @@ export class HeliosUI {
         const attributesSummary = document.createElement('div');
         attributesSummary.className = 'helios-ui-label__hint';
 
-        const hiddenAttributesToggle = createToggleControl({
+        const hiddenAttributesToggle = createSegmentedToggleControl({
           checked: false,
           onLabel: 'Hidden On',
           offLabel: 'Hidden Off',
@@ -2143,7 +2164,7 @@ export class HeliosUI {
         const wrapper = document.createElement('div');
         wrapper.appendChild(themeRow);
 
-        const dimensionToggle = createToggleControl({
+        const dimensionToggle = createSegmentedToggleControl({
           checked: false,
           onLabel: '3D',
           offLabel: '2D',
@@ -2839,7 +2860,7 @@ export class HeliosUI {
     this._controlCleanups.add(() => tabs.destroy());
     syncTabBarFilterForActiveTab(tabs.activeId?.() ?? 'nodes');
 
-    const layoutCheckbox = createToggleControl({
+    const layoutCheckbox = createSegmentedToggleControl({
       checked: false,
       onLabel: 'Layout+Render',
       offLabel: 'Render Only',
@@ -3845,7 +3866,7 @@ export class HeliosUI {
     const betweenness = document.createElement('div');
 
     const betweennessWeightSelect = createEdgeWeightSelect('metrics-betweenness-weight', options?.betweenness?.edgeWeightAttribute ?? '');
-    const betweennessNormalizeCheckbox = createToggleControl({
+    const betweennessNormalizeCheckbox = createSegmentedToggleControl({
       checked: options?.betweenness?.normalize !== false,
       onLabel: 'Normalized',
       offLabel: 'Raw',
@@ -4203,7 +4224,7 @@ export class HeliosUI {
     dimensionOutLevelsAttrInput.value = String(options?.dimension?.outNodeDimensionLevelsAttribute ?? '');
     dimensionOutLevelsAttrInput.dataset.testid = 'metrics-dimension-outLevelsAttr';
 
-    const dimensionSaveLevelsCheckbox = createToggleControl({
+    const dimensionSaveLevelsCheckbox = createSegmentedToggleControl({
       checked: Boolean(
         options?.dimension?.saveLevelsDistribution
         ?? options?.dimension?.saveNodeDimensionLevels
@@ -6463,7 +6484,7 @@ export class HeliosUI {
             ('source' in pendingValue || 'target' in pendingValue);
 
           if (isEdgeSplitCapable) {
-            const toggle = createToggleControl({
+            const toggle = createSegmentedToggleControl({
               checked: Boolean(isSplit),
               onLabel: 'Source/Target',
               offLabel: 'Single',
@@ -6633,7 +6654,7 @@ export class HeliosUI {
           };
 
           if (isEdgeSplitCapable) {
-            const toggle = createToggleControl({
+            const toggle = createSegmentedToggleControl({
               checked: Boolean(isSplit),
               onLabel: 'Source/Target',
               offLabel: 'Single',
@@ -7206,7 +7227,7 @@ export class HeliosUI {
           }).row);
 
           const advanced = document.createElement('div');
-          const divergentInput = createToggleControl({
+          const divergentInput = createSegmentedToggleControl({
             checked: Boolean(state.pending.divergent) && allowDivergent,
             disabled: !allowDivergent,
             onLabel: 'Divergent',
@@ -7218,12 +7239,12 @@ export class HeliosUI {
           clampWrap.style.alignItems = 'center';
           clampWrap.style.gap = '10px';
           const clampState = normalizeClampSetting(state.pending.clamp);
-          const clampMinInput = createToggleControl({
+          const clampMinInput = createSegmentedToggleControl({
             checked: clampState.min,
             onLabel: 'Min Clamp',
             offLabel: 'Min Free',
           });
-          const clampMaxInput = createToggleControl({
+          const clampMaxInput = createSegmentedToggleControl({
             checked: clampState.max,
             onLabel: 'Max Clamp',
             offLabel: 'Max Free',

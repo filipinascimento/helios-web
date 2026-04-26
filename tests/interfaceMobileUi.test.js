@@ -317,7 +317,7 @@ test('mobile transparency focus only activates for eligible controls and can res
   const toggleTarget = createClosestTarget({
     '[data-interface-focus-ignore="true"]': null,
     '[data-interface-focus-control="true"]': null,
-    'input, select, textarea, [role="switch"]': { tagName: 'BUTTON', closest: () => null, getAttribute: () => null },
+    'input, select, textarea, [role="switch"], [role="radiogroup"], [role="radio"]': { tagName: 'BUTTON', closest: () => null, getAttribute: () => null },
     '.helios-ui-row, .helios-ui-layout__actions, .helios-ui-network__actions': row,
   });
   assert.equal(ui._isTransparencyEligibleControl(toggleTarget), true);
@@ -336,6 +336,66 @@ test('mobile transparency focus only activates for eligible controls and can res
     '[data-interface-focus-scope-id]': { dataset: { interfaceFocusScopeId: 'scope-1' } },
   });
   assert.equal(ui._resolveActiveControlScope(portalTarget), row);
+});
+
+test('touch pointerdown does not activate fullscreen transparency before a real control interaction', () => {
+  const ui = Object.create(HeliosUI.prototype);
+  let activePanelId = null;
+  const row = { dataset: {}, closest: () => ({ dataset: { panelId: 'scene' } }) };
+  const host = new FakeElement('div');
+  ui.container = host;
+  ui.interfaceBehavior = {
+    activateControl(panelId) {
+      activePanelId = panelId;
+    },
+    clearActiveControl() {
+      activePanelId = null;
+    },
+  };
+  ui._controlCleanups = new Set();
+  ui._interfaceReleaseTimer = null;
+  ui._activeControlScope = null;
+  ui._resolveActiveControlScope = () => row;
+  ui._resolveActivePanelId = () => 'scene';
+  ui._setActiveControlScope = HeliosUI.prototype._setActiveControlScope;
+  ui._scheduleInterfaceControlRelease = HeliosUI.prototype._scheduleInterfaceControlRelease;
+
+  ui._installInterfaceControlTracking();
+
+  host.dispatchEvent({ type: 'pointerdown', pointerType: 'touch', target: host });
+  assert.equal(ui._activeControlScope, null);
+  assert.equal(activePanelId, null);
+
+  host.dispatchEvent({ type: 'input', target: host });
+  assert.equal(ui._activeControlScope, row);
+  assert.equal(activePanelId, 'scene');
+});
+
+test('scrolling while a control is focused clears fullscreen transparency immediately', () => {
+  const ui = Object.create(HeliosUI.prototype);
+  let cleared = 0;
+  const row = { dataset: { controlFocusActive: 'true' } };
+  const host = new FakeElement('div');
+  ui.container = host;
+  ui.interfaceBehavior = {
+    clearActiveControl() {
+      cleared += 1;
+    },
+  };
+  ui._controlCleanups = new Set();
+  ui._interfaceReleaseTimer = setTimeout(() => {}, 1000);
+  ui._activeControlScope = row;
+  ui._setActiveControlScope = HeliosUI.prototype._setActiveControlScope;
+  ui._scheduleInterfaceControlRelease = HeliosUI.prototype._scheduleInterfaceControlRelease;
+  ui._resolveActiveControlScope = () => row;
+  ui._resolveActivePanelId = () => 'scene';
+
+  ui._installInterfaceControlTracking();
+  host.dispatchEvent({ type: 'scroll', target: host });
+
+  assert.equal(ui._activeControlScope, null);
+  assert.equal(cleared, 1);
+  assert.equal(row.dataset.controlFocusActive, undefined);
 });
 
 test('fullscreen compact mode moves docked and floating panels into one sequential full-space flow', () => {
@@ -368,6 +428,13 @@ test('fullscreen compact mode moves docked and floating panels into one sequenti
     globalThis.window = originalWindow;
     globalThis.ResizeObserver = originalResizeObserver;
   }
+});
+
+test('fullscreen mobile flow keeps panels at intrinsic height so the parent flow scrolls', () => {
+  assert.match(
+    defaultStylesText,
+    /\.helios-ui\[data-interface-mode="fullscreen"\] \.helios-ui-fullscreen-flow > \.helios-ui-panel\[data-interface-visible="true"\][\s\S]*flex: 0 0 auto !important;/,
+  );
 });
 
 test('compact side-docked mode keeps free panels windowed and only stacks docked panels on the chosen side', () => {
@@ -649,6 +716,37 @@ test('one-sided compact mode shifts the effective render viewport to the remaini
   }
 });
 
+test('renderer viewport layers disable text selection without affecting external UI layers', () => {
+  const { document, window } = createFakeDomEnvironment();
+  const originalDocument = globalThis.document;
+  const originalWindow = globalThis.window;
+  const originalResizeObserver = globalThis.ResizeObserver;
+  globalThis.document = document;
+  globalThis.window = window;
+  globalThis.ResizeObserver = undefined;
+
+  try {
+    const host = document.createElement('div');
+    host._rect = { left: 0, top: 0, width: 1000, height: 640 };
+    document.body.appendChild(host);
+    const layers = new LayerManager(host);
+
+    const uiLayer = document.createElement('div');
+    layers.addLayer('ui', uiLayer);
+
+    assert.equal(layers.viewport.style.userSelect, 'none');
+    assert.equal(layers.viewport.style.webkitUserSelect, 'none');
+    assert.equal(layers.canvas.style.userSelect, 'none');
+    assert.equal(layers.svg.style.userSelect, 'none');
+    assert.equal(layers.overlay.style.userSelect, 'none');
+    assert.equal(uiLayer.style.userSelect ?? '', '');
+  } finally {
+    globalThis.document = originalDocument;
+    globalThis.window = originalWindow;
+    globalThis.ResizeObserver = originalResizeObserver;
+  }
+});
+
 test('compact viewport policy uses viewport insets without duplicating overlay insets for legends', () => {
   const ui = Object.create(HeliosUI.prototype);
   const calls = [];
@@ -690,6 +788,13 @@ test('compact dock background uses a theme-aware fill instead of staying transpa
   assert.match(
     defaultStylesText,
     /\.helios-ui\[data-interface-mode="compact"\] \.helios-ui-dock--side\s*\{[\s\S]*background:\s*var\(--helios-ui-dock-fill\);/,
+  );
+});
+
+test('compact side dock opts into iOS touch scrolling behavior', () => {
+  assert.match(
+    defaultStylesText,
+    /\.helios-ui-dock--side\s*\{[\s\S]*overflow-y:\s*auto;[\s\S]*pointer-events:\s*auto;[\s\S]*overscroll-behavior:\s*contain;[\s\S]*-webkit-overflow-scrolling:\s*touch;[\s\S]*touch-action:\s*pan-y;/,
   );
 });
 

@@ -53,7 +53,7 @@ export class LayerManager {
       width: '100%',
       height: '100%',
       overflow: 'hidden',
-      touchAction: 'none',
+      touchAction: suppressBrowserGestures ? 'none' : 'auto',
       ...(suppressBrowserGestures
         ? { overscrollBehavior: 'none', overscrollBehaviorX: 'none', overscrollBehaviorY: 'none' }
         : null),
@@ -67,6 +67,9 @@ export class LayerManager {
       width: '100%',
       height: '100%',
       display: 'block',
+      userSelect: 'none',
+      webkitUserSelect: 'none',
+      touchAction: suppressBrowserGestures ? 'none' : 'auto',
       ...(suppressBrowserGestures
         ? { overscrollBehavior: 'none', overscrollBehaviorX: 'none', overscrollBehaviorY: 'none' }
         : null),
@@ -80,6 +83,8 @@ export class LayerManager {
       width: '100%',
       height: '100%',
       pointerEvents: 'none',
+      userSelect: 'none',
+      webkitUserSelect: 'none',
     });
 
     this.htmlOverlay = document.createElement('div');
@@ -88,6 +93,8 @@ export class LayerManager {
       position: 'absolute',
       inset: 0,
       pointerEvents: 'none',
+      userSelect: 'none',
+      webkitUserSelect: 'none',
     });
 
     this.viewport = document.createElement('div');
@@ -96,6 +103,8 @@ export class LayerManager {
       position: 'absolute',
       inset: '0px',
       overflow: 'hidden',
+      userSelect: 'none',
+      webkitUserSelect: 'none',
     });
 
     this.viewport.appendChild(this.canvas3d);

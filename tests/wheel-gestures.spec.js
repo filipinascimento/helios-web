@@ -12,8 +12,11 @@ test.describe('wheel gestures', () => {
     await waitForReady(page);
 
     const root = page.locator('.helios-root');
+    const canvas = page.locator('canvas.helios-layer-canvas3d');
     await expect(root).toBeVisible();
     await expect(root).toHaveCSS('overscroll-behavior', 'none');
+    await expect(root).toHaveCSS('touch-action', 'none');
+    await expect(canvas).toHaveCSS('touch-action', 'none');
 
     await page.evaluate(() => {
       const canvas = document.querySelector('canvas.helios-layer-canvas3d');
@@ -28,6 +31,11 @@ test.describe('wheel gestures', () => {
   test('can opt out and allow wheel bubbling', async ({ page }) => {
     await page.goto('/tests/fixtures/wheel-gestures.html?suppress=0&renderer=webgl');
     await waitForReady(page);
+
+    const root = page.locator('.helios-root');
+    const canvas = page.locator('canvas.helios-layer-canvas3d');
+    await expect(root).toHaveCSS('touch-action', 'auto');
+    await expect(canvas).toHaveCSS('touch-action', 'auto');
 
     await page.evaluate(() => {
       const canvas = document.querySelector('canvas.helios-layer-canvas3d');

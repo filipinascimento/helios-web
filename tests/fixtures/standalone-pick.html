@@ -26,6 +26,8 @@
         try {
           const params = new URLSearchParams(window.location.search);
           const renderer = params.get('renderer');
+          const mode = params.get('mode') === '3d' ? '3d' : '2d';
+          const suppressBrowserGestures = params.get('suppress') !== '0';
           const container = document.getElementById('app');
           const network = await HeliosNetwork.create({ directed: false, initialNodes: 0 });
           network.defineNodeAttribute('_helios_visuals_position', AttributeType.Float, 3);
@@ -55,17 +57,27 @@
           const helios = new Helios(network, {
             container,
             layout: { type: 'static', options: { bounds: [-100, -100, 100, 100] } },
-            mode: '2d',
+            mode,
             renderer,
+            suppressBrowserGestures,
           });
           await helios.ready;
           helios.renderer?.camera?.setTarget?.([0, 0, 0]);
-          helios.renderer?.camera?.setMode?.('2d');
+          helios.renderer?.camera?.setMode?.(mode);
           if (helios.renderer?.camera) {
-            helios.renderer.camera.zoom = 1;
-            if (helios.renderer.camera.pan2D?.length >= 2) {
-              helios.renderer.camera.pan2D[0] = 0;
-              helios.renderer.camera.pan2D[1] = 0;
+            if (mode === '2d') {
+              helios.renderer.camera.zoom = 1;
+              if (helios.renderer.camera.pan2D?.length >= 2) {
+                helios.renderer.camera.pan2D[0] = 0;
+                helios.renderer.camera.pan2D[1] = 0;
+              }
+            } else {
+              helios.renderer.camera.distance = 500;
+              if (helios.renderer.camera.pan3D?.length >= 3) {
+                helios.renderer.camera.pan3D[0] = 0;
+                helios.renderer.camera.pan3D[1] = 0;
+                helios.renderer.camera.pan3D[2] = 0;
+              }
             }
             helios.renderer.camera.updateMatrices?.();
           }
@@ -81,9 +93,16 @@
           helios.visuals?.bumpNodeAttributes?.('_helios_visuals_position', '_helios_visuals_size');
           await helios.renderAttributeTracking();
           window.__helios = helios;
+          window.__HELIOS_DIAGNOSTICS__ = {
+            ready: true,
+            renderer: helios.renderer?.device?.type ?? helios.renderer?.constructor?.name ?? null,
+            suppressBrowserGestures,
+            mode,
+          };
         } catch (error) {
           console.error('helios init failed', error);
           window.__heliosError = error?.stack ?? error?.message ?? String(error);
+          window.__HELIOS_DIAGNOSTICS__ = { ready: false, error: window.__heliosError };
         }
       }
 

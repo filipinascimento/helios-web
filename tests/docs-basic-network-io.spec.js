@@ -54,7 +54,7 @@ test.describe('docs basic demo network io', () => {
     await expect(table).toContainText('Boolean');
     await expect(table).not.toContainText('_hidden_flag');
 
-    await dataPanel.locator('[role="switch"][aria-label="Show hidden attributes"]').click();
+    await dataPanel.locator('[role="radiogroup"][aria-label="Show hidden attributes"]').getByRole('radio', { name: 'Hidden On' }).click();
     await expect(table).toContainText('_hidden_flag');
   });
 

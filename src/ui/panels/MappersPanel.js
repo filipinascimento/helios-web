@@ -3,6 +3,7 @@ import { PanelStack } from './PanelStack.js';
 import { createAlignedRowEl } from '../controls/createAlignedRowEl.js';
 import { createTooltipManager } from '../controls/createTooltipManager.js';
 import { createToggleControl } from '../controls/createToggleControl.js';
+import { createSegmentedToggleControl } from '../controls/createSegmentedToggleControl.js';
 import { SuggestedSliderControls } from '../controls/SuggestedSliderControls.js';
 import { TwoHandleRange } from '../controls/TwoHandleRange.js';
 import { LogSliderControls } from '../controls/LogSliderControls.js';
@@ -1772,7 +1773,7 @@ export class MappersPanel {
             ('source' in pendingValue || 'target' in pendingValue);
 
           if (isEdgeSplitCapable) {
-            const toggle = createToggleControl({
+            const toggle = createSegmentedToggleControl({
               checked: Boolean(isSplit),
               onLabel: 'Source/Target',
               offLabel: 'Single',
@@ -1954,7 +1955,7 @@ export class MappersPanel {
           };
 
           if (isEdgeSplitCapable) {
-            const toggle = createToggleControl({
+            const toggle = createSegmentedToggleControl({
               checked: Boolean(isSplit),
               onLabel: 'Source/Target',
               offLabel: 'Single',
@@ -3395,7 +3396,7 @@ export class MappersPanel {
                 controls: palettePicker,
               }).row);
 
-              const preferSchemeInput = createToggleControl({
+              const preferSchemeInput = createSegmentedToggleControl({
                 checked: preferScheme,
                 onLabel: 'Prefer Scheme',
                 offLabel: 'Use Order',
@@ -4020,7 +4021,7 @@ export class MappersPanel {
           }).row);
 
           const advanced = document.createElement('div');
-          const divergentInput = createToggleControl({
+          const divergentInput = createSegmentedToggleControl({
             checked: Boolean(state.pending.divergent) && allowDivergent,
             disabled: !allowDivergent,
             onLabel: 'Divergent',
@@ -4032,12 +4033,12 @@ export class MappersPanel {
           clampWrap.style.alignItems = 'center';
           clampWrap.style.gap = '10px';
           const clampState = normalizeClampSetting(state.pending.clamp);
-          const clampMinInput = createToggleControl({
+          const clampMinInput = createSegmentedToggleControl({
             checked: clampState.min,
             onLabel: 'Min Clamp',
             offLabel: 'Min Free',
           });
-          const clampMaxInput = createToggleControl({
+          const clampMaxInput = createSegmentedToggleControl({
             checked: clampState.max,
             onLabel: 'Max Clamp',
             offLabel: 'Max Free',
@@ -4574,7 +4575,8 @@ export class MappersPanel {
       ui._controlCleanups.add(() => destroyControls());
 
       const createCheckboxControl = ({ checked = false, onChange, onLabel = 'On', offLabel = 'Off' }) => {
-        const toggle = createToggleControl({
+        const useSegmented = onLabel !== 'On' || offLabel !== 'Off';
+        const toggle = (useSegmented ? createSegmentedToggleControl : createToggleControl)({
           checked: Boolean(checked),
           onLabel,
           offLabel,

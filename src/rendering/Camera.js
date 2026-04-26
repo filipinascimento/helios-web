@@ -1,3 +1,7 @@
+import {
+  snapshotTouchGesture,
+} from './touchGestureMath.js';
+
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
@@ -407,11 +411,13 @@ export class Camera {
     this._needsUpdate = true;
     this._changeListener = typeof options.onChange === 'function' ? options.onChange : null;
     this._pendingChangeDetail = null;
-    this._pointerId = null;
-    this._lastPointer = null;
+    this.touchTwistEnabled = options.touchTwistEnabled === true;
+    this._activePointers = new Map();
+    this._gestureSnapshot = snapshotTouchGesture([]);
     this._boundPointerDown = (event) => this.handlePointerDown(event);
     this._boundMove = (event) => this.handlePointerMove(event);
     this._boundUp = (event) => this.handlePointerUp(event);
+    this._boundCancel = (event) => this.handlePointerUp(event);
     this._boundWheel = (event) => this.handleWheel(event);
     this._firstStateLogged = false;
     this._arcballLast = null;
@@ -479,41 +485,91 @@ export class Camera {
     this.canvas.addEventListener('wheel', this._boundWheel, { passive: false });
   }
 
+  _getInputEventTarget() {
+    return typeof window !== 'undefined' ? window : null;
+  }
+
   setChangeListener(listener) {
     this._changeListener = typeof listener === 'function' ? listener : null;
   }
 
   destroy() {
+    const target = this._getInputEventTarget();
     this.canvas?.removeEventListener?.('wheel', this._boundWheel);
     this.canvas?.removeEventListener?.('pointerdown', this._boundPointerDown);
-    window.removeEventListener('pointermove', this._boundMove);
-    window.removeEventListener('pointerup', this._boundUp);
+    target?.removeEventListener?.('pointermove', this._boundMove);
+    target?.removeEventListener?.('pointerup', this._boundUp);
+    target?.removeEventListener?.('pointercancel', this._boundCancel);
     this._changeListener = null;
+  }
+
+  zoom2DAtClientPoint(clientX, clientY, scale) {
+    if (!Number.isFinite(scale) || scale <= 0) return false;
+    const rect = this.canvas?.getBoundingClientRect?.();
+    const newZoom = clamp(this.zoom * scale, this.minZoom, this.maxZoom);
+    if (!Number.isFinite(newZoom) || Math.abs(newZoom - this.zoom) <= 1e-9) {
+      return false;
+    }
+    const vpWidth = Math.max(1, this.viewport.width || 1);
+    const vpHeight = Math.max(1, this.viewport.height || 1);
+    const screenX = rect
+      ? ((clientX - rect.left) / Math.max(1, rect.width)) * vpWidth
+      : vpWidth * 0.5;
+    const screenY = rect
+      ? ((clientY - rect.top) / Math.max(1, rect.height)) * vpHeight
+      : vpHeight * 0.5;
+    const centerX = vpWidth * 0.5;
+    const centerY = vpHeight * 0.5;
+    const worldX = (screenX - centerX - this.pan2D[0]) / this.zoom;
+    const worldY = (centerY - screenY - this.pan2D[1]) / this.zoom;
+    this.zoom = newZoom;
+    // Keep the gesture center pinned to the same world-space position.
+    this.pan2D[0] = screenX - centerX - worldX * this.zoom;
+    this.pan2D[1] = centerY - screenY - worldY * this.zoom;
+    return true;
+  }
+
+  dollyByScale(scale) {
+    if (!Number.isFinite(scale) || scale <= 0) return false;
+    const next = this.distance / scale;
+    const clamped = clamp(Number.isFinite(next) ? next : this.minDistance, this.minDistance, this.maxDistance);
+    if (Math.abs(clamped - this.distance) <= 1e-9) return false;
+    this.distance = clamped;
+    return true;
+  }
+
+  rollBy(rad) {
+    if (!Number.isFinite(rad) || rad === 0) return;
+    this.updateBasis();
+    const delta = quatFromAxisAngle(new Float32Array(4), this.forward, -rad);
+    quatMultiply(this.rotation, delta, this.rotation);
+    quatNormalize(this.rotation, this.rotation);
+    if (!this.ensureFinite(this.rotation)) {
+      quatIdentity(this.rotation);
+    }
+  }
+
+  _syncGestureSnapshot() {
+    this._gestureSnapshot = snapshotTouchGesture(this._activePointers);
+    return this._gestureSnapshot;
+  }
+
+  _updateArcballAnchor() {
+    const snapshot = this._gestureSnapshot ?? this._syncGestureSnapshot();
+    if (snapshot.count === 1) {
+      const pointer = snapshot.pointers[0];
+      this._arcballLast = this.projectToArcball(pointer.clientX, pointer.clientY);
+      return;
+    }
+    this._arcballLast = null;
   }
 
   handleWheel(event) {
     event.preventDefault();
     if (this.suppressBrowserGestures) event.stopPropagation();
     if (this.mode === '2d') {
-      const rect = this.canvas?.getBoundingClientRect?.();
       const scale = Math.exp(-event.deltaY * 0.001);
-      const newZoom = clamp(this.zoom * scale, this.minZoom, this.maxZoom);
-      const vpWidth = Math.max(1, this.viewport.width || 1);
-      const vpHeight = Math.max(1, this.viewport.height || 1);
-      const screenX = rect
-        ? ((event.clientX - rect.left) / Math.max(1, rect.width)) * vpWidth
-        : vpWidth * 0.5;
-      const screenY = rect
-        ? ((event.clientY - rect.top) / Math.max(1, rect.height)) * vpHeight
-        : vpHeight * 0.5;
-      const centerX = vpWidth * 0.5;
-      const centerY = vpHeight * 0.5;
-      const worldX = (screenX - centerX - this.pan2D[0]) / this.zoom;
-      const worldY = (centerY - screenY - this.pan2D[1]) / this.zoom;
-      this.zoom = newZoom;
-      // Keep the cursor's world position stationary by compensating pan around centered origin.
-      this.pan2D[0] = screenX - centerX - worldX * this.zoom;
-      this.pan2D[1] = centerY - screenY - worldY * this.zoom;
+      this.zoom2DAtClientPoint(event.clientX, event.clientY, scale);
       this._pendingChangeDetail = {
         origin: 'interaction',
         type: 'wheel',
@@ -542,53 +598,97 @@ export class Camera {
   }
 
   handlePointerDown(event) {
-    if (event.button !== 0) return;
-    if (this._pointerId !== null) return;
-    this._pointerId = event.pointerId;
-    this._lastPointer = { x: event.clientX, y: event.clientY, shift: event.shiftKey };
-    this._arcballLast = this.projectToArcball(event.clientX, event.clientY);
+    if ((event.pointerType === 'mouse' || event.pointerType === 'pen') && event.button !== 0) return;
+    if (event.pointerType === 'mouse' && this._activePointers.size > 0) return;
+    if (this.suppressBrowserGestures && event.pointerType === 'touch') {
+      event.preventDefault?.();
+      event.stopPropagation?.();
+    }
+    this._activePointers.set(event.pointerId, {
+      pointerId: event.pointerId,
+      pointerType: event.pointerType ?? 'mouse',
+      clientX: event.clientX,
+      clientY: event.clientY,
+      shiftKey: event.shiftKey === true,
+    });
+    this._syncGestureSnapshot();
+    this._updateArcballAnchor();
+    const target = this._getInputEventTarget();
     this.canvas?.setPointerCapture?.(event.pointerId);
-    window.addEventListener('pointermove', this._boundMove);
-    window.addEventListener('pointerup', this._boundUp);
+    target?.addEventListener?.('pointermove', this._boundMove);
+    target?.addEventListener?.('pointerup', this._boundUp);
+    target?.addEventListener?.('pointercancel', this._boundCancel);
     this.logDebug('pointerdown', { mode: this.mode, shift: event.shiftKey });
   }
 
   handlePointerMove(event) {
-    if (this._pointerId !== event.pointerId || !this._lastPointer) return;
-    const dx = event.clientX - this._lastPointer.x;
-    const dy = event.clientY - this._lastPointer.y;
-    this._lastPointer = { x: event.clientX, y: event.clientY, shift: event.shiftKey };
-
-    if (this.mode === '2d') {
-      this.pan2D[0] += dx;
-      this.pan2D[1] -= dy;
-      this._pendingChangeDetail = {
-        origin: 'interaction',
-        type: 'pointer',
-        action: 'pan',
-        mode: this.mode,
-      };
-    } else if (event.shiftKey) {
-      this.pan3DBy(dx, dy);
-      this._pendingChangeDetail = {
-        origin: 'interaction',
-        type: 'pointer',
-        action: 'pan',
-        mode: this.mode,
-      };
-    } else {
-      this.arcballRotate(event.clientX, event.clientY);
-      this._pendingChangeDetail = {
-        origin: 'interaction',
-        type: 'pointer',
-        action: 'rotate',
-        mode: this.mode,
-      };
+    const previousPointer = this._activePointers.get(event.pointerId);
+    if (!previousPointer) return;
+    if (this.suppressBrowserGestures && event.pointerType === 'touch') {
+      event.preventDefault?.();
+      event.stopPropagation?.();
     }
+    const previousGesture = this._gestureSnapshot ?? this._syncGestureSnapshot();
+    const dx = event.clientX - previousPointer.clientX;
+    const dy = event.clientY - previousPointer.clientY;
+    this._activePointers.set(event.pointerId, {
+      ...previousPointer,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      shiftKey: event.shiftKey === true,
+    });
+    const nextGesture = this._syncGestureSnapshot();
+    const primaryPointer = nextGesture.pointers[0] ?? null;
+    let action = null;
+
+    if (nextGesture.count >= 2) {
+      const centroidDx = nextGesture.centroid.x - previousGesture.centroid.x;
+      const centroidDy = nextGesture.centroid.y - previousGesture.centroid.y;
+      if (this.mode === '2d') {
+        this.pan2D[0] += centroidDx;
+        this.pan2D[1] -= centroidDy;
+        const scale = previousGesture.distance > 0 ? nextGesture.distance / previousGesture.distance : 1;
+        if (this.zoom2DAtClientPoint(nextGesture.centroid.x, nextGesture.centroid.y, scale)) {
+          action = 'pinch-pan';
+        } else {
+          action = 'pan';
+        }
+      } else {
+        this.pan3DBy(centroidDx, centroidDy);
+        const scale = previousGesture.distance > 0 ? nextGesture.distance / previousGesture.distance : 1;
+        const dollyChanged = this.dollyByScale(scale);
+        if (this.touchTwistEnabled && previousGesture.distance > 0) {
+          this.rollBy(nextGesture.angle - previousGesture.angle);
+        }
+        action = dollyChanged ? 'dolly-pan' : 'pan';
+      }
+      this._arcballLast = null;
+    } else if (primaryPointer) {
+      if (this.mode === '2d') {
+        this.pan2D[0] += dx;
+        this.pan2D[1] -= dy;
+        action = 'pan';
+      } else if (primaryPointer.pointerType === 'mouse' && primaryPointer.shiftKey) {
+        this.pan3DBy(dx, dy);
+        action = 'pan';
+      } else {
+        this.arcballRotate(primaryPointer.clientX, primaryPointer.clientY);
+        action = 'rotate';
+      }
+    }
+    if (!action) return;
+    this._pendingChangeDetail = {
+      origin: 'interaction',
+      type: nextGesture.count >= 2 ? 'touch' : 'pointer',
+      action,
+      mode: this.mode,
+      pointerCount: nextGesture.count,
+    };
     this.logDebug('pointermove', {
       mode: this.mode,
       dx,
       dy,
+      pointerCount: nextGesture.count,
       pan2D: Array.from(this.pan2D),
       pan3D: Array.from(this.pan3D),
       quaternion: Array.from(this.rotation),
@@ -598,12 +698,16 @@ export class Camera {
   }
 
   handlePointerUp(event) {
-    if (event.pointerId !== this._pointerId) return;
-    this._pointerId = null;
-    this._lastPointer = null;
-    this._arcballLast = null;
-    window.removeEventListener('pointermove', this._boundMove);
-    window.removeEventListener('pointerup', this._boundUp);
+    if (!this._activePointers.has(event.pointerId)) return;
+    this._activePointers.delete(event.pointerId);
+    this.canvas?.releasePointerCapture?.(event.pointerId);
+    this._syncGestureSnapshot();
+    this._updateArcballAnchor();
+    if (this._activePointers.size > 0) return;
+    const target = this._getInputEventTarget();
+    target?.removeEventListener?.('pointermove', this._boundMove);
+    target?.removeEventListener?.('pointerup', this._boundUp);
+    target?.removeEventListener?.('pointercancel', this._boundCancel);
   }
 
   rotateBy(dx, dy) {
@@ -868,6 +972,8 @@ export class Camera {
     this.pan3D[2] = 0;
     this.pan2D[0] = 0;
     this.pan2D[1] = 0;
+    this._activePointers.clear();
+    this._gestureSnapshot = snapshotTouchGesture([]);
     this._arcballLast = null;
   }
 

@@ -254,16 +254,18 @@ test.describe('scene panel: tabs and appearance controls', () => {
     await expect(scenePanel.getByRole('button', { name: 'Ambient Occlusion' }).first()).toBeVisible();
     await expect(scenePanel.locator('[role="switch"][aria-label="Ambient Occlusion"]').first()).toBeVisible();
 
-    const dimensionToggle = scenePanel.locator('[role="switch"][aria-label="Scene dimension"]').first();
-    await expect(dimensionToggle).toBeVisible();
-    await expect(dimensionToggle).toHaveAttribute('aria-checked', 'false');
-    await dimensionToggle.click();
-    await expect(dimensionToggle).toHaveAttribute('aria-checked', 'true');
+    const dimensionControl = scenePanel.locator('[role="radiogroup"][aria-label="Scene dimension"]').first();
+    const to3DOption = dimensionControl.getByRole('radio', { name: '3D' }).first();
+    const to2DOption = dimensionControl.getByRole('radio', { name: '2D' }).first();
+    await expect(dimensionControl).toBeVisible();
+    await expect(to2DOption).toHaveAttribute('aria-checked', 'true');
+    await to3DOption.click();
+    await expect(to3DOption).toHaveAttribute('aria-checked', 'true');
     const sceneMode3D = await page.evaluate(() => window.__helios.mode());
     expect(sceneMode3D).toBe('3d');
 
     await page.evaluate(() => window.__helios.setMode('2d'));
-    await expect(dimensionToggle).toHaveAttribute('aria-checked', 'false');
+    await expect(to2DOption).toHaveAttribute('aria-checked', 'true');
 
     const nodesHeader = scenePanel.getByRole('button', { name: 'Nodes' }).first();
     if ((await nodesHeader.getAttribute('aria-expanded')) === 'false') {
@@ -590,14 +592,16 @@ test.describe('scene panel: tabs and appearance controls', () => {
     await expect(scenePanel).toBeVisible();
     await scenePanel.getByRole('button', { name: 'Appearance' }).first().click();
 
-    const dimensionToggle = scenePanel.locator('[role="switch"][aria-label="Scene dimension"]').first();
-    await expect(dimensionToggle).toHaveAttribute('aria-checked', 'false');
+    const dimensionControl = scenePanel.locator('[role="radiogroup"][aria-label="Scene dimension"]').first();
+    const to3DOption = dimensionControl.getByRole('radio', { name: '3D' }).first();
+    const to2DOption = dimensionControl.getByRole('radio', { name: '2D' }).first();
+    await expect(to2DOption).toHaveAttribute('aria-checked', 'true');
 
     const beforePixels = await countNonBackgroundPixels(page);
     expect(beforePixels).toBeGreaterThan(500);
 
-    await dimensionToggle.click();
-    await expect(dimensionToggle).toHaveAttribute('aria-checked', 'true');
+    await to3DOption.click();
+    await expect(to3DOption).toHaveAttribute('aria-checked', 'true');
     await page.waitForTimeout(80);
 
     const midTransition = await page.evaluate(() => {
@@ -737,11 +741,13 @@ test.describe('scene panel: tabs and appearance controls', () => {
     await expect(scenePanel).toBeVisible();
     await scenePanel.getByRole('button', { name: 'Appearance' }).first().click();
 
-    const dimensionToggle = scenePanel.locator('[role="switch"][aria-label="Scene dimension"]').first();
-    await expect(dimensionToggle).toHaveAttribute('aria-checked', 'true');
+    const dimensionControl = scenePanel.locator('[role="radiogroup"][aria-label="Scene dimension"]').first();
+    const to3DOption = dimensionControl.getByRole('radio', { name: '3D' }).first();
+    const to2DOption = dimensionControl.getByRole('radio', { name: '2D' }).first();
+    await expect(to3DOption).toHaveAttribute('aria-checked', 'true');
 
-    await dimensionToggle.click();
-    await expect(dimensionToggle).toHaveAttribute('aria-checked', 'false');
+    await to2DOption.click();
+    await expect(to2DOption).toHaveAttribute('aria-checked', 'true');
     await page.waitForFunction(() => window.__helios?.renderer?.camera?.mode === '2d');
 
     const cameraState = await page.evaluate(() => {

@@ -31,13 +31,17 @@ function createPickingHarness() {
     hoverThrottleTimer: null,
     gesture: {
       active: false,
-      startClientX: 0,
-      startClientY: 0,
       moved: false,
       cameraMoved: false,
       wheelZoomed: false,
       lastWheelAt: -Infinity,
       lastCameraMoveAt: -Infinity,
+      lastTouchAt: -Infinity,
+      lastTapAt: -Infinity,
+      lastTapClientX: 0,
+      lastTapClientY: 0,
+      suppressNativeClickUntil: -Infinity,
+      pointers: new Map(),
     },
     _raf: null,
     _inFlight: false,
@@ -73,6 +77,11 @@ function createPickingHarness() {
   helios._resetHover = (reason) => {
     calls.reset.push(reason);
     helios._picking.hover = { kind: null, index: -1, depth: null };
+  };
+  helios._ensureIndexPickingTargets = async () => {};
+  helios.emit = (...args) => {
+    calls.emit ??= [];
+    calls.emit.push(args);
   };
   return { helios, calls };
 }
@@ -118,4 +127,124 @@ test('hover hit resolution ignores click-only node picking and keeps edge hover 
   });
 
   assert.deepEqual(hit, { kind: 'edge', index: 7, depth: 0.4 });
+});
+
+test('touch tap emits synthetic click and suppresses ghost native clicks', async () => {
+  const { helios, calls } = createPickingHarness();
+  helios._picking.node.enabled = true;
+  helios._getInteractionCanvas = () => ({
+    getBoundingClientRect() {
+      return { left: 0, top: 0, width: 100, height: 80 };
+    },
+  });
+  helios.indexPickingTracker = {
+    async pick() {
+      return { node: 3, edge: -1, nodeDepth: 0.2, edgeDepth: null };
+    },
+  };
+
+  Helios.prototype._handlePointerDown.call(helios, {
+    pointerId: 1,
+    pointerType: 'touch',
+    clientX: 30,
+    clientY: 20,
+  });
+  await Helios.prototype._handlePointerUp.call(helios, {
+    type: 'pointerup',
+    pointerId: 1,
+    pointerType: 'touch',
+    clientX: 30,
+    clientY: 20,
+    button: 0,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+  });
+
+  const syntheticClickCount = calls.emit.filter(([type]) => type === 'node:click').length;
+  assert.equal(syntheticClickCount, 1);
+
+  await Helios.prototype._handlePointerClick.call(helios, {
+    clientX: 30,
+    clientY: 20,
+    button: 0,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+  }, false, { synthetic: false });
+  const afterGhostClick = calls.emit.filter(([type]) => type === 'node:click').length;
+  assert.equal(afterGhostClick, 1);
+});
+
+test('touch drag marks picking gesture as moved for click suppression', () => {
+  const { helios } = createPickingHarness();
+  helios._getInteractionCanvas = () => ({
+    getBoundingClientRect() {
+      return { left: 0, top: 0, width: 100, height: 80 };
+    },
+  });
+
+  Helios.prototype._handlePointerDown.call(helios, {
+    pointerId: 7,
+    pointerType: 'touch',
+    clientX: 10,
+    clientY: 10,
+  });
+  Helios.prototype._handlePointerMove.call(helios, {
+    pointerId: 7,
+    pointerType: 'touch',
+    clientX: 30,
+    clientY: 10,
+    buttons: 0,
+  });
+
+  assert.equal(helios._picking.gesture.moved, true);
+  assert.equal(helios._picking.gesture.cameraMoved, true);
+});
+
+test('second touch tap within the threshold emits synthetic double-click', async () => {
+  const { helios, calls } = createPickingHarness();
+  helios._picking.node.enabled = true;
+  helios._getInteractionCanvas = () => ({
+    getBoundingClientRect() {
+      return { left: 0, top: 0, width: 100, height: 80 };
+    },
+  });
+  helios.indexPickingTracker = {
+    async pick() {
+      return { node: 5, edge: -1, nodeDepth: 0.1, edgeDepth: null };
+    },
+  };
+  const tap = {
+    type: 'pointerup',
+    pointerId: 1,
+    pointerType: 'touch',
+    clientX: 44,
+    clientY: 22,
+    button: 0,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+  };
+
+  Helios.prototype._handlePointerDown.call(helios, {
+    pointerId: 1,
+    pointerType: 'touch',
+    clientX: 44,
+    clientY: 22,
+  });
+  await Helios.prototype._handlePointerUp.call(helios, tap);
+  Helios.prototype._handlePointerDown.call(helios, {
+    pointerId: 1,
+    pointerType: 'touch',
+    clientX: 44,
+    clientY: 22,
+  });
+  await Helios.prototype._handlePointerUp.call(helios, tap);
+
+  const doubleClicks = calls.emit.filter(([type]) => type === 'node:dblclick').length;
+  assert.equal(doubleClicks, 1);
 });

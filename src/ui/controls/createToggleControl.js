@@ -28,10 +28,17 @@ export function createToggleControl({
   };
 
   let currentChecked = Boolean(checked);
+  let suppressClick = false;
 
   const sync = () => {
     button.setAttribute('aria-checked', currentChecked ? 'true' : 'false');
     text.textContent = currentChecked ? labels.on : labels.off;
+  };
+
+  const commitToggle = () => {
+    if (button.disabled) return;
+    button.checked = !button.checked;
+    button.dispatchEvent(new Event('change', { bubbles: true }));
   };
 
   Object.defineProperty(button, 'checked', {
@@ -52,10 +59,19 @@ export function createToggleControl({
     sync();
   };
 
-  button.addEventListener('click', () => {
+  button.addEventListener('pointerup', (event) => {
     if (button.disabled) return;
-    button.checked = !button.checked;
-    button.dispatchEvent(new Event('change', { bubbles: true }));
+    if (event.button != null && event.button !== 0) return;
+    suppressClick = true;
+    commitToggle();
+  });
+
+  button.addEventListener('click', () => {
+    if (suppressClick) {
+      suppressClick = false;
+      return;
+    }
+    commitToggle();
   });
 
   button.disabled = Boolean(disabled);
