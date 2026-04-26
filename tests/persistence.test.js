@@ -258,3 +258,19 @@ test('savePortableNetwork supports graph-only exports and graph-plus-visualizati
     network.dispose();
   }
 });
+
+test('restoreVisualizationState is a stable alias for importVisualizationState', async () => {
+  const helios = Object.create(Helios.prototype);
+  let calls = 0;
+  helios.importVisualizationState = async (source, options = {}) => {
+    calls += 1;
+    return { source, options };
+  };
+
+  const result = await helios.restoreVisualizationState({ kind: 'visualization' }, { reason: 'alias-test' });
+  assert.equal(calls, 1);
+  assert.deepEqual(result, {
+    source: { kind: 'visualization' },
+    options: { reason: 'alias-test' },
+  });
+});

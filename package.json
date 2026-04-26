@@ -28,8 +28,10 @@
   },
   "main": "./dist/helios-web.umd.cjs",
   "module": "./dist/helios-web.es.js",
+  "types": "./src/index.d.ts",
   "exports": {
     ".": {
+      "types": "./src/index.d.ts",
       "import": "./dist/helios-web.es.js",
       "require": "./dist/helios-web.umd.cjs"
     }

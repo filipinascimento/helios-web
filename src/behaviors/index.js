@@ -12,18 +12,31 @@ import { LabelsBehavior } from './LabelsBehavior.js';
 import { MappersBehavior } from './MappersBehavior.js';
 import { SelectionBehavior } from './SelectionBehavior.js';
 
+export const BEHAVIOR_IDS = Object.freeze([
+  AppearanceBehavior.id,
+  ExporterBehavior.id,
+  MappersBehavior.id,
+  FilterBehavior.id,
+  InterfaceBehavior.id,
+  LayoutBehavior.id,
+  LegendsBehavior.id,
+  LabelsBehavior.id,
+  HoverBehavior.id,
+  SelectionBehavior.id,
+]);
+
 export function createDefaultBehaviorRegistry() {
   return new BehaviorRegistry()
-    .register(AppearanceBehavior.id, AppearanceBehavior)
-    .register(ExporterBehavior.id, ExporterBehavior)
-    .register(MappersBehavior.id, MappersBehavior)
-    .register(FilterBehavior.id, FilterBehavior)
-    .register(InterfaceBehavior.id, InterfaceBehavior)
-    .register(LayoutBehavior.id, LayoutBehavior)
-    .register(LegendsBehavior.id, LegendsBehavior)
-    .register(LabelsBehavior.id, LabelsBehavior)
-    .register(HoverBehavior.id, HoverBehavior)
-    .register(SelectionBehavior.id, SelectionBehavior);
+    .register(BEHAVIOR_IDS[0], AppearanceBehavior)
+    .register(BEHAVIOR_IDS[1], ExporterBehavior)
+    .register(BEHAVIOR_IDS[2], MappersBehavior)
+    .register(BEHAVIOR_IDS[3], FilterBehavior)
+    .register(BEHAVIOR_IDS[4], InterfaceBehavior)
+    .register(BEHAVIOR_IDS[5], LayoutBehavior)
+    .register(BEHAVIOR_IDS[6], LegendsBehavior)
+    .register(BEHAVIOR_IDS[7], LabelsBehavior)
+    .register(BEHAVIOR_IDS[8], HoverBehavior)
+    .register(BEHAVIOR_IDS[9], SelectionBehavior);
 }
 
 export {

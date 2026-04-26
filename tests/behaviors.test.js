@@ -460,6 +460,11 @@ test('helios.behavior exposes named and dynamic public access for built-in behav
   assert.equal(helios.behavior('labels'), labels);
   assert.equal(helios.behavior.hover, hover);
   assert.equal(helios.behavior('layout'), layout);
+  assert.equal(helios.getBehavior('appearance'), appearance);
+  assert.equal(helios.getBehavior('layout'), layout);
+  assert.equal(helios.hasBehavior('appearance'), true);
+  assert.equal(helios.hasBehavior('selection'), true);
+  assert.equal(helios.hasBehavior('missing-behavior'), false);
 });
 
 test('constructor-style behavior config object can be initialized through _initializeBehaviors', () => {

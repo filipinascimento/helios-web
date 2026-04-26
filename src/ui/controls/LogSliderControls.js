@@ -24,6 +24,12 @@ function defaultFormat(value, digits = 2) {
   return numeric.toFixed(digits);
 }
 
+function clampFinite(value, min, max, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return clamp(numeric, min, max);
+}
+
 export class LogSliderControls {
   constructor({
     value,
@@ -72,14 +78,19 @@ export class LogSliderControls {
       this.onCommit?.(nextValue);
     });
 
-    this._onSliderInput = () => {
+    this._syncInputFromSlider = () => {
       const numeric = this.valueFromExp(this.slider.value);
-      this.setValue(numeric);
+      this.input.value = this.format(numeric);
+      updateSliderVisual(this.slider);
+      return numeric;
+    };
+
+    this._onSliderInput = () => {
+      const numeric = this._syncInputFromSlider();
       this._commitSliderValue(numeric);
     };
     this._onSliderChange = () => {
-      const numeric = this.valueFromExp(this.slider.value);
-      this.setValue(numeric);
+      const numeric = this._syncInputFromSlider();
       this._commitSliderValue(numeric);
       this._commitSliderValue.flush();
     };
@@ -117,15 +128,12 @@ export class LogSliderControls {
   }
 
   setValue(nextValue) {
-    const numeric = Number(nextValue);
-    const typed = Number.isFinite(numeric)
-      ? clamp(numeric, this.inputMin, this.inputMax)
-      : this.minValue;
+    const typed = clampFinite(nextValue, this.inputMin, this.inputMax, this.minValue);
     const sliderSource = typed > 0 ? typed : this.minValue;
     const exp = this.expFromValue(sliderSource);
     const actual = this.valueFromExp(exp);
     this.slider.value = String(exp);
-    this.input.value = this.format(Number.isFinite(numeric) ? typed : actual);
+    this.input.value = this.format(Number.isFinite(Number(nextValue)) ? typed : actual);
     updateSliderVisual(this.slider);
   }
 

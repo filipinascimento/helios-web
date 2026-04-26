@@ -1,24 +1,30 @@
-export { Helios } from './Helios.js';
+// Primary public API.
+export { Helios, EVENTS } from './Helios.js';
 export { default } from './Helios.js';
-export { EVENTS } from './Helios.js';
 export { HeliosFilter } from './filters/HeliosFilter.js';
+
+// Layout and position primitives.
 export { StaticLayout, WorkerLayout, Layout } from './layouts/Layout.js';
 export { D3Force3DLayout } from './layouts/d3force3dLayoutWorker.js';
 export { GpuForceLayout } from './layouts/GpuForceLayout.js';
+export { PositionDelegate } from './delegates/PositionDelegate.js';
+export { GpuForcePositionDelegate } from './delegates/GpuForcePositionDelegate.js';
+
+// Mapper and visual configuration.
 export { Mapper, createDefaultMappers, VISUAL_ATTRIBUTES } from './pipeline/Mapper.js';
 export { MapperCollection } from './pipeline/Mapper.js';
 export { VisualAttributes } from './pipeline/VisualAttributes.js';
 export {
-	colormaps,
-	createCategoricalColormap,
-	createColormapScale,
-	colormapToScheme,
-	colormapToInterpolator,
-	decodeColormapData,
-	base64ToUint8Array,
+  colormaps,
+  createCategoricalColormap,
+  createColormapScale,
+  colormapToScheme,
+  colormapToInterpolator,
+  decodeColormapData,
+  base64ToUint8Array,
 } from './colors/colormaps.js';
-export { LayeredRenderer } from './rendering/engine/LayeredRenderer.js';
-export { Camera } from './rendering/Camera.js';
+
+// Figure export and camera helpers that are intentionally documented as reusable.
 export {
   FIGURE_EXPORT_PRESETS,
   buildFigureExportPresetList,
@@ -32,12 +38,11 @@ export {
   mergeCameraPose,
   createYawPitchQuaternion,
 } from './rendering/CameraTransitionController.js';
-export { WebGL2Renderer } from './rendering/WebGL2Renderer.js';
-export { WebGPURenderer } from './rendering/WebGPURenderer.js';
-export { PositionDelegate } from './delegates/PositionDelegate.js';
-export { GpuForcePositionDelegate } from './delegates/GpuForcePositionDelegate.js';
+
+// Behavior layer.
 export {
   AppearanceBehavior,
+  BEHAVIOR_IDS,
   Behavior,
   BehaviorManager,
   BehaviorRegistry,
@@ -50,7 +55,10 @@ export {
   LabelsBehavior,
   MappersBehavior,
   SelectionBehavior,
+  createDefaultBehaviorRegistry,
 } from './behaviors/index.js';
+
+// Persistence/public session helpers.
 export {
   HeliosPersistenceService,
   IndexedDBSessionStore,
@@ -67,8 +75,9 @@ export {
   parsePersistenceEnvelope,
   serializePersistenceEnvelope,
 } from './persistence/index.js';
+
+// Optional UI layer.
 export { HeliosUI } from './ui/HeliosUI.js';
-export { Store } from './ui/state/Store.js';
 export { UIAttribute } from './ui/state/UIAttribute.js';
 export { TabbedPanel } from './ui/panels/TabbedPanel.js';
 export { PanelStack } from './ui/panels/PanelStack.js';

@@ -314,17 +314,17 @@ function isBehaviorLike(candidate) {
 
 function createBehaviorNamespace(helios) {
   const behaviorAccessor = function behavior(name) {
-    return helios._resolveBehavior(name);
+    return helios.getBehavior(name);
   };
   return new Proxy(behaviorAccessor, {
     apply(_target, _thisArg, args) {
-      return helios._resolveBehavior(args[0]);
+      return helios.getBehavior(args[0]);
     },
     get(target, prop, receiver) {
       if (typeof prop !== 'string' || Reflect.has(target, prop)) {
         return Reflect.get(target, prop, receiver);
       }
-      return helios._resolveBehavior(prop);
+      return helios.getBehavior(prop);
     },
   });
 }
@@ -2511,6 +2511,16 @@ export class Helios extends EventTarget {
     return null;
   }
 
+  hasBehavior(name) {
+    const id = String(name ?? '').trim();
+    if (!id) return false;
+    return this.behaviors?.has?.(id) === true || this.behaviors?.registry?.has?.(id) === true;
+  }
+
+  getBehavior(name) {
+    return this._resolveBehavior(name);
+  }
+
   _initializeBehaviorNamespace() {
     this.behavior = createBehaviorNamespace(this);
     return this.behavior;
@@ -4636,6 +4646,10 @@ export class Helios extends EventTarget {
     this.behaviors?.ui?.restoreState?.(payload.uiState, options);
     if (payload.cameraState) this._restoreCameraState(payload.cameraState);
     return envelope;
+  }
+
+  async restoreVisualizationState(source, options = {}) {
+    return this.importVisualizationState(source, options);
   }
 
   exportVisualizationState(options = {}) {

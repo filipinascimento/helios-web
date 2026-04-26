@@ -714,12 +714,14 @@ export class LayoutPanel {
       } else if ((layoutBehavior.runState?.() ?? 'stopped') !== 'stopped') {
         selectedPositionAttribute = CURRENT_POSITION_ATTRIBUTE;
       }
-      sync(true);
+      sync(false);
     });
 
     const unsubscribers = [
-      layoutBehavior.on?.('change', () => sync(true)) ?? (() => {}),
-      subscribe(helios, EVENTS.LAYOUT_CHANGED, () => sync(true)),
+      // Binding updates and run-state changes should refresh values in place.
+      // Rebuilding controls during an active drag breaks native range interaction.
+      layoutBehavior.on?.('change', () => sync(false)) ?? (() => {}),
+      subscribe(helios, EVENTS.LAYOUT_CHANGED, () => sync(false)),
       subscribe(helios, EVENTS.LAYOUT_START, () => {
         selectedPositionAttribute = CURRENT_POSITION_ATTRIBUTE;
         sync(false);

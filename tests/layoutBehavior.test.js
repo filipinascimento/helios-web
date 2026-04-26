@@ -475,3 +475,97 @@ test('layout panel routes layout controls through LayoutBehavior', () => {
     globalThis.window = originalWindow;
   }
 });
+
+test('layout panel keeps slider controls stable across non-structural behavior changes', () => {
+  const { document, window } = createFakeDomEnvironment();
+  const originalDocument = globalThis.document;
+  const originalWindow = globalThis.window;
+  globalThis.document = document;
+  globalThis.window = window;
+
+  try {
+    let onChange = null;
+    const layoutBehavior = {
+      descriptor() {
+        return {
+          key: 'gpu-force',
+          label: 'Force (GPU)',
+          dynamic: true,
+          bindings: [
+            {
+              key: 'alphaMin',
+              label: 'Temp. min',
+              type: 'number',
+              scale: 'log',
+              notation: 'scientific',
+              sliderMin: 0.000001,
+              sliderMax: 1,
+              inputMin: 0,
+              inputMax: 1,
+              sliderStep: 0.01,
+              get: () => 1,
+              set() {},
+            },
+          ],
+        };
+      },
+      choices() {
+        return [{ value: 'gpu-force', label: 'Force (GPU)' }];
+      },
+      runState() {
+        return 'idle';
+      },
+      positionAttribute() {
+        return '_helios_visuals_position';
+      },
+      positionAttributeChoices() {
+        return [{ value: '_helios_visuals_position', label: 'Current positions', dimension: 3 }];
+      },
+      on(type, handler) {
+        if (type === 'change') onChange = handler;
+        return () => {};
+      },
+    };
+
+    const helios = {
+      behavior: { layout: layoutBehavior },
+      on() {
+        return () => {};
+      },
+    };
+
+    const ui = {
+      helios,
+      _controlCleanups: new Set(),
+      createPanel(config) {
+        return {
+          ...config,
+          destroy() {},
+        };
+      },
+    };
+
+    const panel = new LayoutPanel(ui, {}).create();
+    try {
+      const initialSlider = findFirst(
+        panel.content,
+        (element) => element.tagName === 'INPUT' && element.type === 'range',
+      );
+      assert.ok(initialSlider);
+      document.activeElement = initialSlider;
+
+      onChange?.(new Event('change'));
+
+      const refreshedSlider = findFirst(
+        panel.content,
+        (element) => element.tagName === 'INPUT' && element.type === 'range',
+      );
+      assert.equal(refreshedSlider, initialSlider);
+    } finally {
+      panel.destroy();
+    }
+  } finally {
+    globalThis.document = originalDocument;
+    globalThis.window = originalWindow;
+  }
+});
