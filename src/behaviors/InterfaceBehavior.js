@@ -64,6 +64,17 @@ function resolveMode(width, options) {
   return 'desktop';
 }
 
+/**
+ * Built-in behavior for responsive interface and touch-oriented app state.
+ *
+ * @public
+ * @param {object} [options] - Compact/fullscreen breakpoints, preferred dock
+ * side, and restore-prompt behavior.
+ * @returns {InterfaceBehavior} Behavior that tracks dock side, viewport class,
+ * active panels, controls visibility, and resume-session prompts.
+ * @remarks Helios Web can render without `HeliosUI`; this behavior stores the
+ * serializable interface state that an app shell or UI layer can bind to.
+ */
 export class InterfaceBehavior extends Behavior {
   static id = 'interface';
 

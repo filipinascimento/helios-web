@@ -789,6 +789,17 @@ const CHANNEL_DEFS = {
   },
 };
 
+/**
+ * Low-level mapper for one node or edge visual mode.
+ *
+ * @public
+ * @param {object} [options] - Mapper mode (`node` or `edge`), network, and
+ * optional bookkeeping dependencies.
+ * @returns {Mapper} Mapper with an initially empty channel set.
+ * @remarks Most applications should use `MapperCollection` or
+ * `MappersBehavior`. Direct mapper access is still public for custom pipelines
+ * that need to build visual attributes programmatically.
+ */
 export class Mapper {
   constructor(options = {}) {
     this.mode = options.mode ?? 'node';
@@ -1072,6 +1083,14 @@ export class Mapper {
   }
 }
 
+/**
+ * Create the default node and edge mapper collections for a network.
+ *
+ * @public
+ * @param {import('helios-network').default} network - Source graph.
+ * @returns {{nodeMapper:Mapper,edgeMapper:Mapper}} Default node and edge
+ * mappers used when Helios is constructed without custom mappers.
+ */
 export function createDefaultMappers(network) {
   const denom = Math.max(1, (network?.nodeCount ?? network?.nodeCapacity ?? 1) - 1);
   const infernoDefault = createColormapScale('interpolateInferno', { domain: [0, 1], alpha: 1 })(0.6);
@@ -1099,6 +1118,18 @@ export { VISUAL_ATTRIBUTE_MAP as VISUAL_ATTRIBUTES };
 /**
  * Convenience container that can hold multiple mappers of the same mode and
  * build a combined mapper when applying visuals.
+ */
+/**
+ * Collection of named mappers for either node or edge visuals.
+ *
+ * @public
+ * @param {'node'|'edge'} mode - Visual target scope.
+ * @param {import('helios-network').default} network - Source graph.
+ * @param {Function} [onChange] - Callback invoked when mapper configuration
+ * changes.
+ * @returns {MapperCollection} Collection with a default mapper.
+ * @remarks Collections let apps keep multiple named mapper presets and combine
+ * them before applying visual attributes.
  */
 export class MapperCollection {
   constructor(mode, network, onChange, debug) {

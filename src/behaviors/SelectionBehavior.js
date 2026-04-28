@@ -37,6 +37,20 @@ function collectUniqueIndices(indices) {
   return next;
 }
 
+/**
+ * Built-in behavior for node and edge selection state.
+ *
+ * @public
+ * @param {object} [options] - Selection options such as `nodeClick`,
+ * `edgeClick`, `selectedConnectedEdges`, saved-selection attribute names, and
+ * inactive-item styling.
+ * @returns {SelectionBehavior} Behavior that can be attached through
+ * `helios.useBehavior('selection', options)`.
+ * @remarks Selection state is serializable. The behavior also synchronizes
+ * picking, labels, and optional connected-edge highlighting.
+ * @example
+ * helios.behavior.selection.selectNodes([0, 2, 4], { mode: 'replace' });
+ */
 export class SelectionBehavior extends Behavior {
   static id = 'selection';
 

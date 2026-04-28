@@ -1,3 +1,11 @@
+/**
+ * Built-in figure size presets for Helios exports.
+ *
+ * @public
+ * @remarks Presets include current-window sizes, common video/print raster
+ * sizes, and a custom target. Availability still depends on renderer texture
+ * limits and requested supersampling.
+ */
 export const FIGURE_EXPORT_PRESETS = Object.freeze([
   { id: 'window', label: 'Window' },
   { id: 'window@x2', label: 'Window @2x' },
@@ -160,6 +168,15 @@ export function resolveFigureExportAlphaMode(value, fallback = 'straight') {
   return normalized === 'premultiplied' ? 'premultiplied' : 'straight';
 }
 
+/**
+ * Resolve renderer limits that constrain figure export dimensions.
+ *
+ * @public
+ * @param {object} renderer - Active Helios renderer.
+ * @param {number|string} [supersampling=1] - Requested supersampling factor.
+ * @returns {{supersampling:number,maxBitmapDimension:number,maxFigureDimension:number}}
+ * Export capability for the current WebGL/WebGPU device.
+ */
 export function getFigureExportCapability(renderer, supersampling = 1) {
   const safeSupersampling = resolveFigureExportSupersampling(supersampling, 1);
   let maxBitmapDimension = 8192;
@@ -180,6 +197,19 @@ export function getFigureExportCapability(renderer, supersampling = 1) {
   };
 }
 
+/**
+ * Normalize figure export options into concrete dimensions and capture flags.
+ *
+ * @public
+ * @param {object} [options] - Requested filename, format, preset, width,
+ * height, supersampling, overlay inclusion, transparency, and legend scale.
+ * @param {object} [context] - Renderer, viewport, device pixel ratio, and
+ * capability context.
+ * @returns {object} Resolved export options including logical dimensions,
+ * bitmap dimensions, crop rectangle, filename, and capability fit status.
+ * @remarks Callers should check `fitsCapability` before allocating render
+ * targets for the result.
+ */
 export function resolveFigureExportOptions(options = {}, context = {}) {
   const requestedPreset = String(options.preset ?? options.dimensions ?? '').trim().toLowerCase();
   const windowDevicePixelRatio = normalizePositiveNumber(context.windowDevicePixelRatio, 1);
@@ -293,6 +323,15 @@ export function resolveFigurePreviewThumbnailOptions(exportOptions = {}, preview
   };
 }
 
+/**
+ * Build export preset metadata for a viewport and renderer capability.
+ *
+ * @public
+ * @param {object} [windowSize] - Current logical viewport size.
+ * @param {object} [capability] - Result of `getFigureExportCapability`.
+ * @param {number|string} [supersampling=1] - Requested supersampling factor.
+ * @returns {Array<object>} Preset records with dimensions and availability.
+ */
 export function buildFigureExportPresetList(windowSize = {}, capability = { maxBitmapDimension: Infinity }, supersampling = 1) {
   const safeSupersampling = resolveFigureExportSupersampling(supersampling, 1);
   const maxBitmapDimension = Math.max(1, Math.floor(Number(capability?.maxBitmapDimension) || Infinity));

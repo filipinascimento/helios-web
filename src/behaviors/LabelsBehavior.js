@@ -58,6 +58,24 @@ function normalizeConfigPatch(options = {}) {
   return next;
 }
 
+/**
+ * Built-in behavior for SVG label overlays.
+ *
+ * @public
+ * @param {object} [options] - Label options including `enabled`, `source`,
+ * `selectionMode`, `maxVisible`, collision settings, font settings, and export
+ * compatibility flags.
+ * @returns {LabelsBehavior} Behavior controlling the live label overlay.
+ * @remarks Labels can be driven by a node attribute, callback, selection state,
+ * hover state, and screen-space collision/ranking limits.
+ * @example
+ * helios.behavior.labels.update({
+ *   enabled: true,
+ *   source: 'label',
+ *   selectionMode: 'ranked',
+ *   maxVisible: 80,
+ * });
+ */
 export class LabelsBehavior extends Behavior {
   static id = 'labels';
 

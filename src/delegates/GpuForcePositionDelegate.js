@@ -4423,6 +4423,17 @@ class WebGPUForceComputeBackend {
   }
 }
 
+/**
+ * Position delegate used by GPU force layouts.
+ *
+ * @public
+ * @param {object} [options] - GPU force layout delegate options and resource
+ * handles.
+ * @returns {GpuForcePositionDelegate} Delegate that synchronizes graph topology
+ * to GPU buffers and exposes position snapshots to Helios renderers.
+ * @remarks This is a low-level extension point. Most applications configure it
+ * indirectly through `GpuForceLayout` or `LayoutBehavior`.
+ */
 export class GpuForcePositionDelegate extends PositionDelegate {
   constructor(options = {}) {
     super();

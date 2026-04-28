@@ -19,6 +19,18 @@ import {
   syncPicking,
 } from './interactionShared.js';
 
+/**
+ * Built-in behavior for hover picking and hover labels.
+ *
+ * @public
+ * @param {object} [options] - Hover options including `nodeHover`,
+ * `edgeHover`, `hoverLabel`, and connected-edge highlighting.
+ * @returns {HoverBehavior} Behavior that tracks the current hovered node and
+ * edge.
+ * @remarks Hover requires picking to be available on the active renderer. The
+ * behavior coordinates with `LabelsBehavior` when transient hover labels are
+ * enabled.
+ */
 export class HoverBehavior extends Behavior {
   static id = 'hover';
 

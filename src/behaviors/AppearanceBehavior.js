@@ -198,6 +198,18 @@ function buildAppearanceSnapshot(helios, fallback = {}) {
   };
 }
 
+/**
+ * Built-in behavior for global visual appearance and render quality.
+ *
+ * @public
+ * @param {object} [options] - Background, node/edge scale and opacity,
+ * shading, ambient occlusion, and adaptive edge quality options.
+ * @returns {AppearanceBehavior} Behavior that keeps appearance settings
+ * serializable and synchronized with UI bindings.
+ * @remarks Renderer capability affects some appearance options. Query
+ * `supportsAmbientOcclusion()` after `await helios.ready` before exposing
+ * ambient-occlusion controls.
+ */
 export class AppearanceBehavior extends Behavior {
   static id = 'appearance';
 

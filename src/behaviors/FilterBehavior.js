@@ -35,6 +35,18 @@ function summarizeFilter(helios, model) {
   };
 }
 
+/**
+ * Built-in behavior for graph filtering.
+ *
+ * @public
+ * @param {object|HeliosFilter} [options] - Filter model or rule options for
+ * numeric, categorical, string, and query rules.
+ * @returns {FilterBehavior} Behavior that applies render-only or
+ * render-plus-layout filtered graph views.
+ * @remarks `scope: "render"` keeps the layout topology intact; `scope:
+ * "render+layout"` rebuilds the active graph view used by both rendering and
+ * dynamic layouts.
+ */
 export class FilterBehavior extends Behavior {
   static id = 'filters';
 
@@ -133,6 +145,18 @@ export class FilterBehavior extends Behavior {
     return this.setFilterModel(next, { reason: 'scope' });
   }
 
+  /**
+   * Replace all active node and edge filter rules.
+   *
+   * @public
+   * @param {object} [options] - Replacement filter options.
+   * @param {Array<object>} [options.nodeRules] - Node rules to apply.
+   * @param {Array<object>} [options.edgeRules] - Edge rules to apply.
+   * @param {'render'|'render+layout'} [options.scope] - Filter scope.
+   * @returns {FilterBehavior} This behavior instance.
+   * @remarks `render+layout` changes the graph view consumed by dynamic
+   * layouts. Use `render` when hiding items should not change layout forces.
+   */
   replaceRules({ nodeRules = [], edgeRules = [], scope } = {}) {
     const next = createFilterModel({
       id: this.filterModel?.id,
@@ -143,6 +167,12 @@ export class FilterBehavior extends Behavior {
     return this.setFilterModel(next, { reason: 'rules' });
   }
 
+  /**
+   * Remove the active graph filter and restore the unfiltered render view.
+   *
+   * @public
+   * @returns {FilterBehavior} This behavior instance.
+   */
   clear() {
     const helios = this.context?.helios ?? null;
     this.filterModel = createFilterModel({

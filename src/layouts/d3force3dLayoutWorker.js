@@ -85,6 +85,17 @@ function hash32(value) {
   return x >>> 0;
 }
 
+/**
+ * Worker-backed layout adapter for the D3 Force 3D engine.
+ *
+ * @public
+ * @param {import('helios-network').default} network - Source graph.
+ * @param {import('../pipeline/VisualAttributes.js').VisualAttributes} visuals
+ * Visual attribute owner.
+ * @param {object} [options] - D3 force settings and worker options.
+ * @remarks Use this when CPU worker force layout behavior is preferred over
+ * GPU force layout, especially for compatibility testing.
+ */
 export class D3Force3DLayout extends Layout {
   constructor(network, visuals, options = {}) {
     super(network, visuals);

@@ -21,6 +21,16 @@ function warnOnce(owner, key, message, detail) {
   console.warn(message, detail);
 }
 
+/**
+ * Abstract source for layout positions owned outside the network buffers.
+ *
+ * @public
+ * @returns {PositionDelegate} Subclasses provide synchronized topology and
+ * position snapshots for renderers.
+ * @remarks Use position delegates when layout state lives in GPU buffers or
+ * another external system. Subclasses must implement synchronization hooks and
+ * bump `version` whenever positions change.
+ */
 export class PositionDelegate {
   constructor() {
     if (new.target === PositionDelegate) {

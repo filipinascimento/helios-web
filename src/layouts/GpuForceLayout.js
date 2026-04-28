@@ -191,6 +191,19 @@ function createAutoTuneBaseOptions(options = {}) {
   };
 }
 
+/**
+ * GPU-backed force layout that can run through WebGPU or WebGL2 delegates.
+ *
+ * @public
+ * @param {import('helios-network').default} network - Source graph.
+ * @param {import('../pipeline/VisualAttributes.js').VisualAttributes} visuals
+ * Visual attribute owner.
+ * @param {object} [options] - Force, UMAP-like force, sampling, damping,
+ * recentering, and renderer delegate options.
+ * @remarks Renderer support and graph size determine whether WebGPU or WebGL2
+ * backing is selected. Position output is written into Helios visual position
+ * buffers for rendering.
+ */
 export class GpuForceLayout extends Layout {
   constructor(network, visuals, options = {}) {
     super(network, visuals);

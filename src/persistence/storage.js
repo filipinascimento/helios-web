@@ -6,6 +6,15 @@ function queueTask(callback) {
   Promise.resolve().then(callback);
 }
 
+/**
+ * Preference store backed by the browser `localStorage` API.
+ *
+ * @public
+ * @param {object} [options] - Optional storage object, preference key, and
+ * unfinished-session key.
+ * @returns {LocalStoragePreferenceStore} Async preference store implementation.
+ * @remarks Inject `storage` for tests or app shells that need isolated storage.
+ */
 export class LocalStoragePreferenceStore {
   constructor(options = {}) {
     this.storage = options.storage ?? globalThis.localStorage ?? null;
@@ -49,6 +58,16 @@ function requestToPromise(request) {
   });
 }
 
+/**
+ * Session store backed by IndexedDB.
+ *
+ * @public
+ * @param {object} [options] - Optional IndexedDB factory, database name, object
+ * store name, and schema version.
+ * @returns {IndexedDBSessionStore} Async session store implementation.
+ * @throws {Error} When IndexedDB is unavailable and a read/write method opens
+ * the database.
+ */
 export class IndexedDBSessionStore {
   constructor(options = {}) {
     this.indexedDB = options.indexedDB ?? globalThis.indexedDB ?? null;
@@ -127,6 +146,13 @@ export class IndexedDBSessionStore {
   }
 }
 
+/**
+ * Create an in-memory Storage-compatible object.
+ *
+ * @public
+ * @returns {Storage} Minimal Storage implementation for tests and non-browser
+ * examples.
+ */
 export function createMemoryStorage() {
   const values = new Map();
   return {
@@ -145,6 +171,13 @@ export function createMemoryStorage() {
   };
 }
 
+/**
+ * Create an in-memory IndexedDB-like factory for persistence tests.
+ *
+ * @public
+ * @returns {IDBFactory} Minimal IndexedDB factory compatible with
+ * `IndexedDBSessionStore`.
+ */
 export function createMemoryIndexedDBFactory() {
   class MemoryRequest {
     constructor() {

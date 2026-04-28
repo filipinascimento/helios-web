@@ -1,3 +1,15 @@
+/**
+ * Registry mapping behavior ids to behavior constructors or factories.
+ *
+ * @public
+ * @returns {BehaviorRegistry} Empty registry ready for built-in or custom
+ * behavior registration.
+ * @remarks The registry is the public extension point behind
+ * `helios.registerBehavior(...)`; created behaviors still attach through
+ * `BehaviorManager`, so persistence and cleanup flow remains consistent.
+ * @example
+ * const registry = new BehaviorRegistry().register('custom', CustomBehavior);
+ */
 export class BehaviorRegistry {
   constructor() {
     this._entries = new Map();

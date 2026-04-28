@@ -137,6 +137,19 @@ function summarizeViewState(helios) {
   };
 }
 
+/**
+ * Built-in behavior for figure export settings and preview capture.
+ *
+ * @public
+ * @param {object} [options] - Figure filename, format, preset, custom
+ * dimensions, supersampling, label/legend/interface inclusion, transparency,
+ * and frame-preview options.
+ * @returns {ExporterBehavior} Behavior that stores export settings and calls
+ * `helios.exportFigureBlob`, `helios.exportFigurePreviewBlob`, or
+ * `helios.exportFigure`.
+ * @remarks The actual capture capability depends on the active renderer and
+ * should be checked through `capabilities()` after the renderer is ready.
+ */
 export class ExporterBehavior extends Behavior {
   static id = 'exporter';
 

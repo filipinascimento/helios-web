@@ -22,9 +22,14 @@ export function withVelocityRetentionBinding(binding) {
 }
 
 /**
- * Base class for layout algorithms. Concrete implementations can override the
- * lifecycle hooks to move nodes around by writing into
- * `_helios_visuals_position`.
+ * Base class for layout algorithms.
+ *
+ * @public
+ * @param {HeliosNetwork} network - Source graph.
+ * @param {import('../pipeline/VisualAttributes.js').VisualAttributes} visuals
+ * Visual attribute owner used by renderers.
+ * @remarks Concrete implementations override lifecycle hooks to move nodes by
+ * writing into `_helios_visuals_position`.
  */
 export class Layout {
   constructor(network, visuals) {
@@ -147,6 +152,15 @@ export class Layout {
  * Keeps nodes at their current positions. Useful as a default fallback when no
  * dynamic layout is configured yet.
  */
+/**
+ * Layout that keeps existing node positions fixed.
+ *
+ * @public
+ * @param {HeliosNetwork} network - Source graph.
+ * @param {import('../pipeline/VisualAttributes.js').VisualAttributes} visuals
+ * Visual attribute owner.
+ * @param {object} [options] - Static bounds and sizing options.
+ */
 export class StaticLayout extends Layout {
   constructor(network, visuals, options = {}) {
     super(network, visuals);
@@ -195,6 +209,16 @@ export class StaticLayout extends Layout {
 
 /**
  * Proxies layout execution to a WebWorker.
+ */
+/**
+ * Worker-backed force or jitter layout.
+ *
+ * @public
+ * @param {HeliosNetwork} network - Source graph.
+ * @param {import('../pipeline/VisualAttributes.js').VisualAttributes} visuals
+ * Visual attribute owner.
+ * @param {object} [options] - Worker layout options such as layout kind, mode,
+ * force constants, and sampling settings.
  */
 export class WorkerLayout extends Layout {
   constructor(network, visuals, options = {}) {

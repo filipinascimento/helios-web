@@ -1515,6 +1515,19 @@ function bumpVersionCounter(value) {
   return current + 1;
 }
 
+/**
+ * Stable event names emitted by `Helios` instances.
+ *
+ * @public
+ * @remarks Event payloads are delivered through `CustomEvent.detail` where the
+ * browser supports `CustomEvent`. Use these constants instead of string
+ * literals when wiring app behavior to render, layout, camera, picking, mapper,
+ * filter, or network replacement changes.
+ * @example
+ * helios.on(EVENTS.NODE_HOVER, (event) => {
+ *   console.log(event.detail?.index);
+ * });
+ */
 export const EVENTS = Object.freeze({
   LAYOUT_START: 'layout:start',
   LAYOUT_STOP: 'layout:stop',
@@ -1544,6 +1557,31 @@ export const EVENTS = Object.freeze({
   GRAPH_FILTER_CHANGED: 'graph:filter-changed',
 });
 
+/**
+ * Main Helios Web visualization controller for one `helios-network` graph.
+ *
+ * @public
+ * @param {import('helios-network').default} network - WASM-backed graph store
+ * that supplies topology, attributes, and serialization.
+ * @param {object} [options] - Renderer, layout, behavior, mapper, interface,
+ * persistence, touch, camera, and quality options.
+ * @returns {Helios} Visualization controller with a `ready` promise that
+ * resolves after renderer, scheduler, layers, behaviors, and initial geometry
+ * are initialized.
+ * @remarks `options.container` should be an element or selector that already
+ * has stable dimensions. `options.renderer` can prefer `webgpu` or `webgl`;
+ * Helios falls back according to renderer availability. `options.behaviors`
+ * accepts built-in behavior options or custom behavior instances. Set
+ * `suppressBrowserGestures: true` for touch-first embedded canvases.
+ * @example
+ * const helios = new Helios(network, {
+ *   container: document.querySelector('#app'),
+ *   renderer: 'webgl',
+ *   layout: { type: 'gpu-force', options: { mode: '2d' } },
+ *   behaviors: { selection: true, hover: true, labels: { enabled: true } },
+ * });
+ * await helios.ready;
+ */
 export class Helios extends EventTarget {
   static STATES = Object.freeze({
     FILTERED: 1 << 0,
@@ -4733,6 +4771,18 @@ export class Helios extends EventTarget {
     }
   }
 
+  /**
+   * Return renderer-aware figure export limits and preset availability.
+   *
+   * @public
+   * @param {{supersampling?: number|string}} [options] - Supersampling request
+   * used when computing max safe output dimensions.
+   * @returns {{maxBitmapDimension:number,maxFigureDimension:number,defaultPreset:string,presets:Array<object>}}
+   * Export capability record for the current renderer and viewport.
+   * @remarks WebGL and WebGPU expose different maximum texture dimensions, so
+   * this method should be called after `await helios.ready` and whenever
+   * supersampling changes.
+   */
   getFigureExportCapabilities(options = {}) {
     const supersampling = Number(options.supersampling ?? 1);
     const capability = getFigureExportCapability(this.renderer, supersampling);
@@ -5107,6 +5157,26 @@ export class Helios extends EventTarget {
     return new Blob([svgText], { type: 'image/svg+xml' });
   }
 
+  /**
+   * Capture the current visualization as a PNG or SVG `Blob`.
+   *
+   * @public
+   * @param {object} [options] - Figure export options including `format`,
+   * `preset`, `width`, `height`, `supersampling`, `includeLabels`,
+   * `includeLegends`, `includeInterface`, `transparentBackground`, and
+   * `legendScale`.
+   * @returns {Promise<Blob>} Image blob for the requested figure.
+   * @throws {Error} When the browser, renderer, network, camera, or requested
+   * dimensions cannot support the export.
+   * @example
+   * const blob = await helios.exportFigureBlob({
+   *   format: 'png',
+   *   width: 1920,
+   *   height: 1080,
+   *   includeLabels: true,
+   *   includeLegends: true,
+   * });
+   */
   async exportFigureBlob(options = {}) {
     const resolved = this._resolveFigureExportOptions(options);
     const exportOptions = {
@@ -5135,6 +5205,17 @@ export class Helios extends EventTarget {
     }
   }
 
+  /**
+   * Capture a scaled PNG preview for a full-size figure export request.
+   *
+   * @public
+   * @param {object} [options] - Full export options that should be previewed.
+   * @param {{maxWidth?:number,maxHeight?:number,supersampling?:number|string}} [previewOptions]
+   * Preview output constraints.
+   * @returns {Promise<Blob>} PNG preview blob.
+   * @remarks Preview capture keeps the full export's framing and overlay intent
+   * while using smaller raster dimensions for UI previews.
+   */
   async exportFigurePreviewBlob(options = {}, previewOptions = {}) {
     const resolved = this._resolveFigureExportOptions(options);
     const fullExportOptions = {
@@ -5174,6 +5255,19 @@ export class Helios extends EventTarget {
     return await this._composeFigurePng(bitmapCanvas, overlaySvg, previewExportOptions);
   }
 
+  /**
+   * Capture and download the current visualization.
+   *
+   * @public
+   * @param {string|object} [filenameOrOptions] - Download filename or figure
+   * export options.
+   * @param {object} [maybeOptions] - Figure export options when the first
+   * argument is a filename.
+   * @returns {Promise<object>} Download metadata containing `blob`, `filename`,
+   * `format`, logical dimensions, bitmap dimensions, and supersampling.
+   * @remarks In non-browser runtimes the method still creates the figure blob
+   * and returns metadata, but no download link is clicked.
+   */
   async exportFigure(filenameOrOptions, maybeOptions = {}) {
     const options = typeof filenameOrOptions === 'string'
       ? { ...maybeOptions, filename: filenameOrOptions }

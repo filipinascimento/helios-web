@@ -30,6 +30,25 @@ function getCollection(helios, mode) {
   return mode === 'edge' ? helios?.edgeMapper ?? null : helios?.nodeMapper ?? null;
 }
 
+/**
+ * Built-in behavior for node and edge visual mappers.
+ *
+ * @public
+ * @param {object} [options] - Serializable node/edge mapper snapshots or
+ * channel configurations for color, size, opacity, outline, and edge width.
+ * @returns {MappersBehavior} Behavior that applies and serializes mapper
+ * channel state.
+ * @remarks Mapper channel configs should avoid functions when they need to be
+ * persisted. Use serializable `constant`, `linear`, `categorical`,
+ * `colormap`, `nodeToEdge`, and `passthrough` configurations.
+ * @example
+ * helios.behavior.mappers.setChannelConfig('node', 'color', {
+ *   type: 'colormap',
+ *   attributes: 'score',
+ *   colormap: 'interpolateViridis',
+ *   domain: [0, 1],
+ * });
+ */
 export class MappersBehavior extends Behavior {
   static id = 'mappers';
 
@@ -102,10 +121,38 @@ export class MappersBehavior extends Behavior {
     return shallowCloneChannelConfig(mapper.getChannel(channel));
   }
 
+  /**
+   * Return a serializable snapshot for one visual channel.
+   *
+   * @public
+   * @param {'node'|'edge'} mode - Mapper collection to inspect.
+   * @param {string} channel - Visual channel name such as `color`, `size`,
+   * `opacity`, `outline`, or `width`.
+   * @returns {object|null} JSON-safe channel configuration, or `null` when
+   * the channel is not registered.
+   */
   getSerializedChannelConfig(mode, channel) {
     return serializeChannelConfig(this.getChannelConfig(mode, channel));
   }
 
+  /**
+   * Replace the default mapper configuration for one visual channel.
+   *
+   * @public
+   * @param {'node'|'edge'} mode - Mapper collection to update.
+   * @param {string} channel - Visual channel name.
+   * @param {object} config - Serializable channel configuration.
+   * @returns {boolean} `true` when the channel was applied.
+   * @remarks This mutates the active default mapper and emits a mapper change
+   * event. Persisted configurations should avoid functions.
+   * @example
+   * helios.behavior.mappers.setChannelConfig('node', 'color', {
+   *   type: 'colormap',
+   *   attributes: 'score',
+   *   colormap: 'interpolateViridis',
+   *   domain: [0, 1],
+   * });
+   */
   setChannelConfig(mode, channel, config) {
     const collection = getCollection(this.context?.helios, mode);
     const mapper = collection?.defaultMapper ?? null;

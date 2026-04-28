@@ -1,6 +1,19 @@
 import { Behavior } from './Behavior.js';
 import { BehaviorContext } from './BehaviorContext.js';
 
+/**
+ * Runtime owner for active behavior instances on a Helios visualization.
+ *
+ * @public
+ * @param {import('../Helios.js').Helios} helios - Visualization controller that
+ * behaviors will attach to.
+ * @param {BehaviorRegistry} registry - Registry used to instantiate named
+ * behaviors.
+ * @returns {BehaviorManager} Manager with no active behaviors attached.
+ * @remarks The manager creates, attaches, detaches, serializes, and restores
+ * behavior instances against a shared Helios context. Use the higher-level
+ * `helios.behavior` namespace for most app code.
+ */
 export class BehaviorManager {
   constructor(helios, registry) {
     this.helios = helios ?? null;

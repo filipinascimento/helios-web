@@ -88,6 +88,17 @@ function normalizeConfigPatch(options = {}) {
   return next;
 }
 
+/**
+ * Built-in behavior for legend overlays.
+ *
+ * @public
+ * @param {object} [options] - Legend visibility, placement, typography, scale,
+ * title, and export compatibility options.
+ * @returns {LegendsBehavior} Behavior controlling SVG legends for mapper and
+ * density channels.
+ * @remarks Legends read mapper and density configuration from the live Helios
+ * instance and preserve serializable placement, title, and visibility state.
+ */
 export class LegendsBehavior extends Behavior {
   static id = 'legends';
 

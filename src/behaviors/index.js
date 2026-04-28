@@ -12,6 +12,13 @@ import { LabelsBehavior } from './LabelsBehavior.js';
 import { MappersBehavior } from './MappersBehavior.js';
 import { SelectionBehavior } from './SelectionBehavior.js';
 
+/**
+ * Ordered ids for the built-in behavior set.
+ *
+ * @public
+ * @remarks The order matches `createDefaultBehaviorRegistry()` registration and
+ * is stable for UI/persistence code that needs to list built-ins.
+ */
 export const BEHAVIOR_IDS = Object.freeze([
   AppearanceBehavior.id,
   ExporterBehavior.id,
@@ -25,6 +32,16 @@ export const BEHAVIOR_IDS = Object.freeze([
   SelectionBehavior.id,
 ]);
 
+/**
+ * Create a registry containing all built-in Helios Web behaviors.
+ *
+ * @public
+ * @returns {BehaviorRegistry} Registry preloaded with appearance, exporter,
+ * mappers, filters, interface, layout, legends, labels, hover, and selection.
+ * @example
+ * const registry = createDefaultBehaviorRegistry()
+ *   .register('custom', CustomBehavior);
+ */
 export function createDefaultBehaviorRegistry() {
   return new BehaviorRegistry()
     .register(BEHAVIOR_IDS[0], AppearanceBehavior)

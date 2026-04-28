@@ -168,6 +168,18 @@ function snapshotLowLevelLayoutConfig(layout) {
   return null;
 }
 
+/**
+ * Built-in behavior for choosing and controlling the active layout.
+ *
+ * @public
+ * @param {object} [options] - Layout options such as `layoutType`,
+ * `positionAttribute`, low-level `parameters`, and `running` state.
+ * @returns {LayoutBehavior} Behavior wrapping static, worker, D3 force, and
+ * GPU force layouts.
+ * @remarks Use this behavior when UI or persistence needs to switch layouts,
+ * copy numeric position attributes into current positions, or start/stop a
+ * dynamic layout without replacing the Helios instance.
+ */
 export class LayoutBehavior extends Behavior {
   static id = 'layout';
 

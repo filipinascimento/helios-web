@@ -26,6 +26,21 @@ function defaultIdFactory() {
   return `helios-session-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/**
+ * Persistence coordinator for preferences, visualization snapshots, and sessions.
+ *
+ * @public
+ * @param {object} [options] - Optional `helios` instance, preference/session
+ * stores, defaults, id factory, and clock factory.
+ * @returns {HeliosPersistenceService} Service that can run attached to Helios
+ * or standalone with injected stores.
+ * @remarks Browser builds default to localStorage for preferences and IndexedDB
+ * for sessions. Tests and non-browser shells can inject memory stores created
+ * by `createMemoryStorage()` and `createMemoryIndexedDBFactory()`.
+ * @example
+ * const persistence = new HeliosPersistenceService({ helios });
+ * const snapshot = persistence.exportVisualizationState({ format: 'string' });
+ */
 export class HeliosPersistenceService {
   constructor(options = {}) {
     this.helios = options.helios ?? null;

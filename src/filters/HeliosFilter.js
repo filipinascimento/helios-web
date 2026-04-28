@@ -210,6 +210,20 @@ function cloneRule(rule) {
   return out;
 }
 
+/**
+ * Builder for reusable graph filter rule sets.
+ *
+ * @public
+ * @param {object} [options] - Filter id, display name, graph scope, and initial
+ * rules.
+ * @returns {HeliosFilter} Filter model that can be activated through
+ * `helios.activateHeliosFilter(...)` or `FilterBehavior`.
+ * @remarks Rules compile to Helios Network query expressions. Supported rule
+ * types are `numeric`, `categorical`, `string`, and raw `query`.
+ * @example
+ * const filter = new HeliosFilter({ scope: 'render' })
+ *   .addRule({ type: 'numeric', scope: 'node', attribute: 'score', min: 0.5, max: 1 });
+ */
 export class HeliosFilter {
   constructor(options = {}) {
     this.id = typeof options.id === 'string' && options.id.trim()
