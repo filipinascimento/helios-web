@@ -58,27 +58,21 @@ async function computeFirstNodeHit(page) {
       expectedIndex: hit.value,
       clientX: rect.left + localX,
       clientY: rect.top + localY,
+      localX,
+      localY,
     };
   });
 }
 
-async function expectHoverIndexAt(page, clientX, clientY, expectedIndex) {
-  await page.evaluate(() => {
-    window.__lastHover = null;
-    window.__helios.addEventListener('node:hover', (e) => {
-      if (e?.detail?.state === 'in') {
-        window.__lastHover = e.detail;
-      }
-    }, { once: false });
-  });
-  await page.mouse.move(clientX, clientY);
-  await page.waitForFunction(
-    (idx) => window.__lastHover?.index === idx,
-    expectedIndex,
-    { timeout: 10_000 },
-  );
-  const detail = await page.evaluate(() => window.__lastHover);
-  expect(detail.index).toBe(expectedIndex);
+async function expectPickedIndexAt(page, localX, localY, expectedIndex) {
+  const pickedIndex = await page.evaluate(async ({ x, y }) => {
+    const helios = window.__helios;
+    if (!helios?.indexPickingTracker) throw new Error('Missing indexPickingTracker');
+    await helios._ensureIndexPickingTargets?.();
+    const result = await helios.indexPickingTracker.pick(x, y);
+    return result?.node ?? -1;
+  }, { x: localX, y: localY });
+  expect(pickedIndex).toBe(expectedIndex);
 }
 
 test('node picking remains correct after resize', async ({ page }) => {
@@ -94,12 +88,11 @@ test('node picking remains correct after resize', async ({ page }) => {
   await waitForHelios(page);
 
   const before = await computeFirstNodeHit(page);
-  await expectHoverIndexAt(page, before.clientX, before.clientY, before.expectedIndex);
+  await expectPickedIndexAt(page, before.localX, before.localY, before.expectedIndex);
 
   await page.setViewportSize({ width: 1100, height: 720 });
   await page.waitForTimeout(100);
 
   const after = await computeFirstNodeHit(page);
-  await expectHoverIndexAt(page, after.clientX, after.clientY, after.expectedIndex);
+  await expectPickedIndexAt(page, after.localX, after.localY, after.expectedIndex);
 });
-

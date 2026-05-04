@@ -776,8 +776,10 @@ test('GpuForceLayout exposes shared parameter bindings and can reheat alpha', ()
   const helios = createStubHelios();
   const layout = new GpuForceLayout(network, visuals, { helios, mode: '2d', alpha: 0.75 });
   assert.equal(layout.options.eta, 0.4);
+  assert.equal(layout.options.damping, 0.82);
   assert.equal(layout.options.kGravity, 0.005);
   assert.equal(layout.options.alphaDecay, 0.005);
+  assert.equal(layout.options.rotationDamping, 0.6);
   const descriptor = layout.getParameterBindings();
   assert.equal(descriptor.key, 'gpu-force');
   assert.ok(descriptor.bindings.some((binding) => binding.key === 'alphaCurrent'));

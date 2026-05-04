@@ -170,6 +170,18 @@ function createInterfaceIcon(doc, kind) {
   return svg;
 }
 
+/**
+ * Optional built-in control surface for a Helios visualization.
+ *
+ * @public
+ * @apiSection User Interface
+ * @param {object} [options] - UI construction options.
+ * @param {Helios} [options.helios] - Helios instance to inspect and control.
+ * @param {HTMLElement} [options.container] - Existing UI container.
+ * @param {'dark'|'light'} [options.theme] - Initial UI theme.
+ * @example
+ * const ui = new HeliosUI({ helios, theme: 'dark' });
+ */
 export class HeliosUI {
   constructor(options = {}) {
     this.helios = options.helios ?? null;
@@ -270,14 +282,19 @@ export class HeliosUI {
   }
 
   getViewportWidth() {
-    const width = Number(
-      this.container?.clientWidth
-      ?? this.container?.getBoundingClientRect?.()?.width
-      ?? this.helios?.layers?.size?.width
-      ?? this.helios?.size?.width
-      ?? 0,
-    );
-    return Number.isFinite(width) ? width : 0;
+    const candidates = [
+      this.container?.clientWidth,
+      this.container?.getBoundingClientRect?.()?.width,
+      this.helios?.layers?.size?.width,
+      this.helios?.size?.width,
+      this.container?.ownerDocument?.defaultView?.innerWidth,
+      globalThis.window?.innerWidth,
+    ];
+    for (const value of candidates) {
+      const width = Number(value);
+      if (Number.isFinite(width) && width > 0) return width;
+    }
+    return 0;
   }
 
   applyInterfaceBehaviorState(state = {}) {

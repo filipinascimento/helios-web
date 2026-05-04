@@ -267,6 +267,8 @@ export class BehaviorManager {
   use<T extends Behavior = Behavior>(id: string, options?: Record<string, unknown>): T;
   use<T extends Behavior = Behavior>(behavior: T, options?: Record<string, unknown>): T;
   detach(id: string): boolean;
+  detachAll(): this;
+  destroy(): void;
   serialize(): HeliosBehaviorSnapshot;
   restore(snapshot?: HeliosBehaviorSnapshot): this;
 }
@@ -344,6 +346,7 @@ export interface LabelsBehaviorOptions {
   enabled?: boolean;
   source?: string | ((...args: any[]) => unknown) | null;
   selectionMode?: 'auto' | 'selected-only' | 'ranked';
+  pinnedNodes?: Iterable<number>;
   selectedOnlySpaceAware?: boolean;
   fallbackSources?: string[];
   maxVisible?: number;
@@ -849,9 +852,16 @@ export interface HeliosOptions extends Record<string, unknown> {
   container?: string | HTMLElement | null;
   canvas?: HTMLCanvasElement | null;
   mode?: HeliosMode;
+  autoCleanup?: boolean;
+  disposeNetworkOnDestroy?: boolean;
   legends?: LegendsBehaviorOptions;
   labels?: LabelsBehaviorOptions;
-  behaviors?: string | Behavior | Array<string | Behavior> | BehaviorConfigObject;
+  /**
+   * Built-in behaviors attach by default. Pass an object to tune individual
+   * behaviors, custom behavior instances to attach extra behavior, or `false`
+   * to opt out of default behavior attachment.
+   */
+  behaviors?: false | string | Behavior | Array<string | Behavior> | BehaviorConfigObject;
   persistence?: Omit<HeliosPersistenceServiceOptions, 'helios'>;
 }
 

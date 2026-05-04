@@ -17,6 +17,18 @@ function formatBrowserErrors(errors) {
   }).join('\n\n');
 }
 
+async function ensureMappersPanelVisible(page) {
+  const panel = page.locator('.helios-ui-panel[data-panel-id="helios-ui-mappers"]').first();
+  if (await panel.isVisible()) return panel;
+  await page.evaluate(() => {
+    const behavior = window.__helios?.behavior?.interface;
+    behavior?.openControlsSurface?.();
+    behavior?.activateControl?.('helios-ui-mappers');
+  });
+  await expect(panel).toBeVisible();
+  return panel;
+}
+
 test.describe('mappers panel', () => {
   test('allows applying edge node passthrough endpoint changes', async ({ page }, testInfo) => {
     const errors = [];
@@ -36,14 +48,7 @@ test.describe('mappers panel', () => {
 
     await page.waitForFunction(() => Boolean(window.__helios && window.__helios.ready));
 
-    const panel = page.locator('.helios-ui-panel[data-panel-id="helios-ui-mappers"]').first();
-    await expect(panel).toBeVisible();
-
-    const editorToggle = panel.getByRole('button', { name: 'Editor' }).first();
-    await expect(editorToggle).toBeVisible();
-    if ((await editorToggle.getAttribute('aria-expanded')) === 'false') {
-      await editorToggle.click();
-    }
+    const panel = await ensureMappersPanelVisible(page);
 
     const edgesTab = panel.getByRole('button', { name: 'Edges' }).first();
     await expect(edgesTab).toBeVisible();

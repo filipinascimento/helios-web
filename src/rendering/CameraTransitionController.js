@@ -139,6 +139,17 @@ function quatSlerp(out, a, b, t) {
   return quatNormalize(out, out);
 }
 
+/**
+ * Build a normalized camera rotation quaternion from yaw and pitch angles.
+ *
+ * @public
+ * @apiSection Camera Helpers
+ * @param {number} [yawRadians=0] - Horizontal rotation in radians.
+ * @param {number} [pitchRadians=0] - Vertical rotation in radians.
+ * @returns {Float32Array} Quaternion in `[x, y, z, w]` order.
+ * @example
+ * const rotation = createYawPitchQuaternion(Math.PI / 4, 0);
+ */
 export function createYawPitchQuaternion(yawRadians = 0, pitchRadians = 0) {
   const yaw = quatFromAxisAngle([0, 1, 0], yawRadians);
   const pitch = quatFromAxisAngle([1, 0, 0], pitchRadians);
@@ -147,6 +158,16 @@ export function createYawPitchQuaternion(yawRadians = 0, pitchRadians = 0) {
   return quatNormalize(out, out);
 }
 
+/**
+ * Capture a renderer camera into a serializable pose object.
+ *
+ * @public
+ * @apiSection Camera Helpers
+ * @param {object} camera - Camera object owned by the active renderer.
+ * @returns {object|null} Pose snapshot, or `null` when no camera is supplied.
+ * @example
+ * const pose = captureCameraPose(helios.renderer.camera);
+ */
 export function captureCameraPose(camera) {
   if (!camera) return null;
   return {
@@ -167,6 +188,17 @@ export function captureCameraPose(camera) {
   };
 }
 
+/**
+ * Merge a partial camera pose into an existing pose.
+ *
+ * @public
+ * @apiSection Camera Helpers
+ * @param {object|null} basePose - Existing pose to use as defaults.
+ * @param {object} [patch] - Pose fields to replace.
+ * @returns {object} Normalized camera pose.
+ * @example
+ * const next = mergeCameraPose(currentPose, { zoom: 2 });
+ */
 export function mergeCameraPose(basePose, patch = {}) {
   const base = basePose ?? {
     mode: '2d',
@@ -208,6 +240,19 @@ export function mergeCameraPose(basePose, patch = {}) {
   };
 }
 
+/**
+ * Apply a captured or merged pose to a renderer camera.
+ *
+ * @public
+ * @apiSection Camera Helpers
+ * @param {object} camera - Renderer camera to update.
+ * @param {object} pose - Pose fields to apply.
+ * @param {object} [options] - Application options.
+ * @param {boolean} [options.update=true] - Run the camera update hook after applying values.
+ * @returns {object|null} Updated camera, or `null` when no camera is supplied.
+ * @example
+ * applyCameraPose(helios.renderer.camera, pose);
+ */
 export function applyCameraPose(camera, pose, { update = true } = {}) {
   if (!camera || !pose) return camera;
   camera.mode = pose.mode === '3d' ? '3d' : '2d';
@@ -250,6 +295,16 @@ export function applyCameraPose(camera, pose, { update = true } = {}) {
   return camera;
 }
 
+/**
+ * Interpolate between two camera poses.
+ *
+ * @public
+ * @apiSection Camera Helpers
+ * @param {object} fromPose - Starting pose.
+ * @param {object} toPose - Target pose.
+ * @param {number} t - Interpolation progress from `0` to `1`.
+ * @returns {object} Interpolated camera pose.
+ */
 export function interpolateCameraPose(fromPose, toPose, t) {
   const factor = smoothstep(t);
   const pose = {
@@ -276,6 +331,16 @@ export function interpolateCameraPose(fromPose, toPose, t) {
   return pose;
 }
 
+/**
+ * Time-based camera transition controller used by Helios camera animations.
+ *
+ * @public
+ * @apiSection Camera Helpers
+ * @param {object} options - Controller dependencies.
+ * @param {object} options.camera - Renderer camera to animate.
+ * @param {Function} [options.requestRender] - Callback used to schedule a render.
+ * @param {Function} [options.now] - Clock function returning milliseconds.
+ */
 export class CameraTransitionController {
   constructor({ requestRender = null } = {}) {
     this.requestRender = typeof requestRender === 'function' ? requestRender : null;

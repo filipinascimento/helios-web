@@ -96,7 +96,7 @@ function buildLayoutInstance(helios, value) {
         kAttraction: 0.62,
         kGravity: 0.005,
         eta: 0.4,
-        damping: 0.92,
+        damping: 0.82,
         maxStep: 2.5,
         minDistance: 0.15,
       },

@@ -229,6 +229,7 @@ where `r_i` is the node position relative to the active-set centroid after
 recentering, and `delta_i` is the stored per-step motion vector (`velocity` for
 the linear solver, step displacement for the UMAP solver).
 
+The default `rotationDamping = 0.6` removes most fitted rigid-body spin.
 `rotationDamping = 0` disables the correction. `rotationDamping = 1` removes
 the full fitted rigid spin for that step.
 
@@ -315,7 +316,7 @@ From `GpuForceLayout` / `GpuForcePositionDelegate`:
 - `edgeWeightAttribute`: `null`
 - `forceNormalizationType`: `'local-degree'`
 - `eta`: `0.4`
-- `damping`: `0.92`
+- `damping`: `0.82`
 - `maxStep`: `2.5`
 - `minDistance`: `0.15`
 - `alpha`: `1`

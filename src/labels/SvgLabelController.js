@@ -22,6 +22,7 @@ const DEFAULT_CONFIG = Object.freeze({
   enabled: false,
   source: null,
   selectionMode: 'ranked',
+  pinnedNodes: [],
   selectedOnlySpaceAware: false,
   hoveredNodeEnabled: false,
   hoveredNodeSource: null,
@@ -84,6 +85,11 @@ function normalizeColorString(value, fallback) {
   }
   if (typeof value === 'string' && value.trim()) return value.trim();
   return fallback;
+}
+
+function normalizePinnedNodes(value) {
+  return Array.from(new Set(Array.from(value ?? [], (entry) => Number(entry))
+    .filter((entry) => Number.isInteger(entry) && entry >= 0)));
 }
 
 function colorStringToSvgPaint(value, fallback = '#000000') {
@@ -290,6 +296,7 @@ export class SvgLabelController {
   getConfig() {
     return {
       ...this._config,
+      pinnedNodes: [...this._config.pinnedNodes],
       fallbackSources: [...this._config.fallbackSources],
     };
   }
@@ -311,6 +318,9 @@ export class SvgLabelController {
     }
     if (Object.prototype.hasOwnProperty.call(options, 'selectedOnlySpaceAware')) {
       next.selectedOnlySpaceAware = options.selectedOnlySpaceAware === true;
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'pinnedNodes')) {
+      next.pinnedNodes = normalizePinnedNodes(options.pinnedNodes);
     }
     if (Object.prototype.hasOwnProperty.call(options, 'hoveredNodeEnabled')) {
       next.hoveredNodeEnabled = options.hoveredNodeEnabled === true;
@@ -504,6 +514,7 @@ export class SvgLabelController {
       stateVersion,
       labelVersion,
       this._hoveredNode,
+      this._config.pinnedNodes.join(','),
     ].join('|');
   }
 
@@ -752,6 +763,7 @@ export class SvgLabelController {
     const nodeOutlineScale = toFinite(this.helios?.nodeOutlineWidthScale?.(), 0);
     const selectedMask = toFinite(this.helios?.constructor?.STATES?.SELECTED, 1 << 1) >>> 0;
     const hoveredNode = this._hoveredNode;
+    const pinnedNodes = new Set(this._config.pinnedNodes);
     const prevVisible = this._lastVisibleSet;
     const selectedOnly = this._usesSelectedOnlySelectionMode();
     const selectedOnlySpaceAware = selectedOnly && this._config.selectedOnlySpaceAware === true;
@@ -766,7 +778,7 @@ export class SvgLabelController {
       for (let i = 0; i < nodeIndices.length; i += 1) {
         const id = Number(nodeIndices[i]);
         if (!Number.isInteger(id) || id < 0) continue;
-        if (maskHasSelected(nodeStates, id, selectedMask)) selectedIds.push(id);
+        if (maskHasSelected(nodeStates, id, selectedMask) || pinnedNodes.has(id)) selectedIds.push(id);
       }
       if (!selectedIds.length) return [];
       iterationNodeIndices = selectedIds;
@@ -790,7 +802,8 @@ export class SvgLabelController {
       if (!Number.isInteger(id) || id < 0) continue;
 
       const selected = maskHasSelected(nodeStates, id, selectedMask);
-      if (selectedOnly && !selected) continue;
+      const pinned = pinnedNodes.has(id);
+      if (selectedOnly && !selected && !pinned) continue;
 
       const point = positions.get(id);
       if (!point) continue;
@@ -825,7 +838,7 @@ export class SvgLabelController {
       const hovered = hoveredNode === id;
       if (selectedOnlySpaceAware) {
         if (radiusPx < minRadiusPx) continue;
-      } else if (!selected && !hovered && radiusPx < minRadiusPx) {
+      } else if (!selected && !pinned && !hovered && radiusPx < minRadiusPx) {
         continue;
       }
 
@@ -846,7 +859,7 @@ export class SvgLabelController {
         selected,
         hovered,
       };
-      if ((selected && !selectedOnlySpaceAware) || (!selectedOnly && hovered)) {
+      if (((selected || pinned) && !selectedOnlySpaceAware) || (!selectedOnly && hovered)) {
         mustInclude.push(entry);
         continue;
       }
@@ -880,7 +893,7 @@ export class SvgLabelController {
       if (x + labelW * 0.5 < 0 || x - labelW * 0.5 > width || y + labelH * 0.5 < 0 || y - labelH * 0.5 > height) {
         continue;
       }
-      if ((entry.selected && !selectedOnlySpaceAware) || entry.hovered) {
+      if (((entry.selected || pinnedNodes.has(entry.id)) && !selectedOnlySpaceAware) || entry.hovered) {
         // Keep explicit selected or hovered labels unoccluded unless selected-only is using the regular space-aware strategy.
       } else {
         if (this._collides(occupied, x, y, labelW, labelH, collisionCellPx)) continue;

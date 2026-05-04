@@ -1,7 +1,7 @@
 import { createFpsThrottle } from './createFpsThrottle.js';
 
 export class TwoHandleRange {
-  constructor({ min, max, value, step, onChange, allowRangeDrag = true }) {
+  constructor({ min, max, value, step, onChange, onCommit, allowRangeDrag = true }) {
     this.element = document.createElement('div');
     this.element.className = 'helios-ui-range2';
 
@@ -58,6 +58,9 @@ export class TwoHandleRange {
     const emitChange = createFpsThrottle((lo, hi) => {
       onChange?.([lo, hi]);
     });
+    const emitCommit = (lo, hi) => {
+      onCommit?.([lo, hi]);
+    };
 
     const commit = (source) => {
       const a = clampTo(aInput.value);
@@ -69,11 +72,13 @@ export class TwoHandleRange {
       if (source === 'b' && b < lo) bInput.value = String(lo);
       setVisual(lo, hi);
       emitChange(lo, hi);
+      return [lo, hi];
     };
 
     const flushCommit = (source) => {
-      commit(source);
+      const committed = commit(source);
       emitChange.flush();
+      if (committed) emitCommit(...committed);
     };
 
     // Dragging the highlighted range pans both thumbs together.
@@ -136,6 +141,10 @@ export class TwoHandleRange {
         window.removeEventListener('pointerup', onUp);
         window.removeEventListener('pointercancel', onUp);
         emitChange.flush();
+        const a = clampTo(aInput.value);
+        const b = clampTo(bInput.value);
+        if (a == null || b == null) return;
+        emitCommit(Math.min(a, b), Math.max(a, b));
       };
 
       window.addEventListener('pointermove', onMove);

@@ -18,6 +18,14 @@ async function enableToggle(locator) {
     if (!(await locator.isChecked())) await locator.check();
     return;
   }
+  const role = await locator.getAttribute('role');
+  if (role === 'radiogroup') {
+    const onOption = locator.locator('[role="radio"][data-value="true"]').first();
+    await expect(onOption).toBeVisible();
+    if ((await onOption.getAttribute('aria-checked')) !== 'true') await onOption.click();
+    await expect(onOption).toHaveAttribute('aria-checked', 'true');
+    return;
+  }
   if ((await locator.getAttribute('aria-checked')) !== 'true') await locator.click();
   await expect(locator).toHaveAttribute('aria-checked', 'true');
 }

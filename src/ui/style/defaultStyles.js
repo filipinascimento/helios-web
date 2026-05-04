@@ -1,5 +1,17 @@
+/**
+ * DOM id used for the injected default Helios UI stylesheet.
+ *
+ * @public
+ * @apiSection User Interface
+ */
 export const DEFAULT_STYLE_ELEMENT_ID = 'helios-ui-default-styles';
 
+/**
+ * Default CSS text for the optional Helios UI controls.
+ *
+ * @public
+ * @apiSection User Interface
+ */
 export const defaultStylesText = `
 .helios-ui {
   --helios-ui-font: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
@@ -2302,6 +2314,14 @@ export const defaultStylesText = `
 .helios-ui-subpanel[data-collapsed="true"] .helios-ui-subpanel__body { display: none; }
 `;
 
+/**
+ * Ensure the default Helios UI stylesheet is present in a document.
+ *
+ * @public
+ * @apiSection User Interface
+ * @param {Document} [doc=document] - Target document.
+ * @returns {HTMLStyleElement|null} Existing or inserted stylesheet element.
+ */
 export function ensureDefaultStyles(doc = document) {
   if (!doc || doc.getElementById(DEFAULT_STYLE_ELEMENT_ID)) return;
   const style = doc.createElement('style');

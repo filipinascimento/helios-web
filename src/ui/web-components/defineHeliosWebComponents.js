@@ -1,5 +1,13 @@
 import { HeliosPanelElement } from './HeliosPanelElement.js';
 
+/**
+ * Register Helios Web custom elements in a document or window.
+ *
+ * @public
+ * @apiSection User Interface
+ * @param {Document|Window} [docOrWin=document] - Registration target.
+ * @returns {{defined:Array<string>,supported:boolean}} Registration result.
+ */
 export function defineHeliosWebComponents(docOrWin = document) {
   const doc = docOrWin?.nodeType === 9
     ? docOrWin

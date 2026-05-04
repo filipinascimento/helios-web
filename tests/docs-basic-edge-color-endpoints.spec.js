@@ -10,12 +10,6 @@ test.describe('docs basic demo mappers', () => {
     const panel = page.locator('.helios-ui-panel[data-panel-id="helios-ui-mappers"]').first();
     await expect(panel).toBeVisible();
 
-    const editorToggle = panel.getByRole('button', { name: 'Editor' }).first();
-    await expect(editorToggle).toBeVisible();
-    if ((await editorToggle.getAttribute('aria-expanded')) === 'false') {
-      await editorToggle.click();
-    }
-
     const edgesTab = panel.getByRole('button', { name: 'Edges' }).first();
     await expect(edgesTab).toBeVisible();
     await edgesTab.click();

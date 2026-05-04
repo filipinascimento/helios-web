@@ -125,6 +125,7 @@ export class MappersBehavior extends Behavior {
    * Return a serializable snapshot for one visual channel.
    *
    * @public
+   * @apiSection Mapper Configuration
    * @param {'node'|'edge'} mode - Mapper collection to inspect.
    * @param {string} channel - Visual channel name such as `color`, `size`,
    * `opacity`, `outline`, or `width`.
@@ -139,6 +140,7 @@ export class MappersBehavior extends Behavior {
    * Replace the default mapper configuration for one visual channel.
    *
    * @public
+   * @apiSection Mapper Configuration
    * @param {'node'|'edge'} mode - Mapper collection to update.
    * @param {string} channel - Visual channel name.
    * @param {object} config - Serializable channel configuration.

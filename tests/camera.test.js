@@ -98,6 +98,7 @@ test('touch gesture math computes centroid, pinch distance, twist, and suppressi
 });
 
 test('2D camera supports two-finger pinch zoom and pan', () => {
+  const events = [];
   const canvas = {
     addEventListener() {},
     removeEventListener() {},
@@ -112,9 +113,11 @@ test('2D camera supports two-finger pinch zoom and pan', () => {
     projection: 'orthographic',
     disableControls: true,
     viewport: { width: 200, height: 100, devicePixelRatio: 1 },
+    onChange: (detail) => events.push(detail),
   });
   camera.zoom = 1;
   camera.updateMatrices();
+  events.length = 0;
 
   camera.handlePointerDown({ pointerId: 1, pointerType: 'touch', button: 0, clientX: 80, clientY: 50, shiftKey: false });
   camera.handlePointerDown({ pointerId: 2, pointerType: 'touch', button: 0, clientX: 120, clientY: 50, shiftKey: false });
@@ -123,6 +126,7 @@ test('2D camera supports two-finger pinch zoom and pan', () => {
 
   assert.ok(camera.zoom > 1.5, `expected pinch zoom to increase zoom, got ${camera.zoom}`);
   assert.ok(camera.pan2D[1] > 5, `expected two-finger drag to pan, got ${camera.pan2D[1]}`);
+  assert.ok(events.some((detail) => detail?.origin === 'interaction' && detail?.action === 'pinch-pan' && detail?.mode === '2d'));
 });
 
 test('3D camera tracks multiple touch pointers for dolly/pan and clears them on release', () => {

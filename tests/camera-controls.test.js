@@ -472,7 +472,62 @@ test('camera rotation interaction does not disable auto fit, but pan does', () =
   assert.equal(helios._cameraControlConfig.autoFit, true);
   assert.equal(helios._cameraControlConfig.followTarget, true);
 
+  helios._disableAutomaticCameraControlFromInteraction({ action: 'pinch-pan', mode: '2d' });
+  assert.equal(helios._cameraControlConfig.autoFit, false);
+  assert.equal(helios._cameraControlConfig.followTarget, false);
+  assert.equal(helios._cameraControlConfig.targetNodeIndices, null);
+
+  helios._cameraControlConfig.autoFit = true;
+  helios._cameraControlConfig.followTarget = true;
+  helios._cameraControlConfig.targetNodeIndices = [1];
+  helios._disableAutomaticCameraControlFromInteraction({ action: 'zoom', mode: '2d' });
+  assert.equal(helios._cameraControlConfig.autoFit, false);
+  assert.equal(helios._cameraControlConfig.followTarget, false);
+  assert.equal(helios._cameraControlConfig.targetNodeIndices, null);
+
+  helios._cameraControlConfig.autoFit = true;
+  helios._cameraControlConfig.followTarget = true;
+  helios._cameraControlConfig.targetNodeIndices = [1];
   helios._disableAutomaticCameraControlFromInteraction({ action: 'pan' });
+  assert.equal(helios._cameraControlConfig.autoFit, false);
+  assert.equal(helios._cameraControlConfig.followTarget, false);
+  assert.equal(helios._cameraControlConfig.targetNodeIndices, null);
+});
+
+test('2D camera movement without action detail disables auto fit defensively', () => {
+  const helios = Object.create(Helios.prototype);
+  helios.scheduler = { requestRender() {} };
+  helios.emit = () => {};
+  helios._cameraControlConfig = {
+    autoFit: true,
+    autoFitCoverage: 0.95,
+    autoFitPaddingRatio: 0.05,
+    autoFitIntervalMs: 900,
+    autoFitMinIntervalMs: 250,
+    autoFitMaxIntervalMs: 6000,
+    autoFitLargeNetworkScale: 1,
+    autoFitIntervalNodeCountRef: 5000,
+    autoFitMaxSamples: 50000,
+    animation: true,
+    animationDurationMs: 280,
+    orbit: false,
+    orbitAngle: 0,
+    orbitSpeed: 0.08,
+    orbitDirection: 1,
+    followTarget: true,
+    followUpdateIntervalMs: 0,
+    targetNodeIndices: [2],
+  };
+  helios._cameraControlRuntime = {
+    lastAutoFitAt: Number.NEGATIVE_INFINITY,
+    lastOrbitAt: 0,
+    lastFitSignature: '',
+    lastEffectiveIntervalMs: 0,
+    autoFitDirty: false,
+    suspended: false,
+  };
+
+  helios._disableAutomaticCameraControlFromInteraction({ mode: '2d', type: 'pointer' });
   assert.equal(helios._cameraControlConfig.autoFit, false);
   assert.equal(helios._cameraControlConfig.followTarget, false);
   assert.equal(helios._cameraControlConfig.targetNodeIndices, null);

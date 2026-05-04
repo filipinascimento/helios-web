@@ -384,7 +384,7 @@ async function bootstrap() {
     ...(usingUmapDataset
       ? {
           eta: 0.4,
-          damping: 0.92,
+          damping: 0.82,
           maxStep: 2.5,
           kRepulsion: 1,
           kAttraction: 1,
@@ -392,7 +392,7 @@ async function bootstrap() {
         }
       : {
           eta: 0.4,
-          damping: 0.92,
+          damping: 0.82,
           maxStep: 2.5,
           linkDistance: 1,
           kRepulsion: 0.07,

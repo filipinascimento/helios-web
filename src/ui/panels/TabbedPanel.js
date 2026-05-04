@@ -12,6 +12,15 @@ function resolveVariantClassName(variant) {
   return ` helios-ui-tabs--${cleaned}`;
 }
 
+/**
+ * Small tabbed panel primitive used by the optional Helios UI.
+ *
+ * @public
+ * @apiSection User Interface
+ * @param {object} [options] - Tab panel options.
+ * @param {Array<object>} [options.tabs] - Initial tabs.
+ * @param {string} [options.activeId] - Initially active tab id.
+ */
 export class TabbedPanel {
   constructor(options = {}) {
     this.element = document.createElement('div');

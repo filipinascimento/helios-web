@@ -10,12 +10,6 @@ test.describe('docs basic demo mappers', () => {
     const panel = page.locator('.helios-ui-panel[data-panel-id="helios-ui-mappers"]').first();
     await expect(panel).toBeVisible();
 
-    const editorToggle = panel.getByRole('button', { name: 'Editor' }).first();
-    await expect(editorToggle).toBeVisible();
-    if ((await editorToggle.getAttribute('aria-expanded')) === 'false') {
-      await editorToggle.click();
-    }
-
     const typeValue = await panel.locator('select').evaluateAll((selects) => {
       const isTypeSelect = (sel) => {
         const options = Array.from(sel.options ?? []);
@@ -37,12 +31,6 @@ test.describe('docs basic demo mappers', () => {
 
     const panel = page.locator('.helios-ui-panel[data-panel-id="helios-ui-mappers"]').first();
     await expect(panel).toBeVisible();
-
-    const editorToggle = panel.getByRole('button', { name: 'Editor' }).first();
-    await expect(editorToggle).toBeVisible();
-    if ((await editorToggle.getAttribute('aria-expanded')) === 'false') {
-      await editorToggle.click();
-    }
 
     const attributeRow = panel.locator('.helios-ui-row', {
       has: page.locator('.helios-ui-label__title', { hasText: 'Attribute' }),

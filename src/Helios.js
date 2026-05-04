@@ -27,7 +27,7 @@ import { SvgLabelController } from './labels/SvgLabelController.js';
 import { SvgLegendController } from './legends/SvgLegendController.js';
 import { HeliosFilter } from './filters/HeliosFilter.js';
 import { DensityLayer } from './rendering/engine/DensityLayer.js';
-import { Behavior, BehaviorManager, createDefaultBehaviorRegistry } from './behaviors/index.js';
+import { BEHAVIOR_IDS, Behavior, BehaviorManager, createDefaultBehaviorRegistry } from './behaviors/index.js';
 import {
   HeliosPersistenceService,
   PERSISTENCE_KINDS,
@@ -1565,32 +1565,94 @@ export const EVENTS = Object.freeze({
  * that supplies topology, attributes, and serialization.
  * @param {object} [options] - Renderer, layout, behavior, mapper, interface,
  * persistence, touch, camera, and quality options.
+ * @param {Element|string} [options.container=document.body] - Element or selector
+ * that receives the Helios canvas, SVG overlays, and interaction layers.
+ * @param {'auto'|'webgpu'|'webgl'} [options.renderer='auto'] - Preferred
+ * renderer backend. `auto` chooses WebGPU when available and falls back to WebGL2.
+ * @param {'2d'|'3d'} [options.mode='2d'] - Initial dimensional mode.
+ * @param {'perspective'|'orthographic'} [options.projection='perspective'] - Initial
+ * 3D camera projection.
+ * @param {object|Layout} [options.layout] - Layout configuration or a layout
+ * instance to use for graph positions.
+ * @param {string} [options.layout.type='gpu-force'] - Built-in layout key used
+ * when `options.layout` is a configuration object.
+ * @param {object} [options.layout.options] - Layout-specific options passed to
+ * the selected layout implementation.
+ * @param {object|false} [options.behaviors] - Built-in behavior options, custom
+ * behavior instances, or `false` to disable default behaviors.
+ * @param {object|null} [options.mappers] - Initial node and edge mapper
+ * configuration. Pass `null` to skip default mapper setup.
+ * @param {object} [options.labels] - Initial label overlay options handled by
+ * `LabelsBehavior`.
+ * @param {object} [options.legends] - Initial legend overlay options handled by
+ * `LegendsBehavior`.
+ * @param {boolean|object} [options.density=false] - Density layer enablement or
+ * density layer options.
+ * @param {object} [options.camera] - Camera framing, controls, and target
+ * tracking options.
+ * @param {boolean} [options.suppressBrowserGestures=true] - Prevent native
+ * browser pan, zoom, and selection gestures over the visualization.
+ * @param {boolean} [options.autoCleanup=true] - Destroy this Helios instance when
+ * its root or container is removed from the DOM.
+ * @param {boolean} [options.disposeNetworkOnDestroy=true] - Dispose the active
+ * network when `destroy()` runs.
+ * @param {boolean} [options.manualRendering=false] - Disable automatic scheduler
+ * rendering so the host application can request frames explicitly.
+ * @param {number} [options.maxFps] - Optional scheduler FPS cap.
+ * @param {boolean|string|number} [options.supersampling] - Canvas
+ * supersampling mode or scale factor.
+ * @param {string|Array<number>} [options.clearColor] - Renderer clear color.
  * @returns {Helios} Visualization controller with a `ready` promise that
  * resolves after renderer, scheduler, layers, behaviors, and initial geometry
  * are initialized.
  * @remarks `options.container` should be an element or selector that already
  * has stable dimensions. `options.renderer` can prefer `webgpu` or `webgl`;
- * Helios falls back according to renderer availability. `options.behaviors`
- * accepts built-in behavior options or custom behavior instances. Set
- * `suppressBrowserGestures: true` for touch-first embedded canvases.
+ * Helios falls back according to renderer availability. Built-in behaviors are
+ * attached by default; `options.behaviors` accepts behavior options or custom
+ * behavior instances when an app needs to tune or extend them. Set
+ * `suppressBrowserGestures: true` for touch-first embedded canvases. Helios
+ * automatically destroys itself when its root or container is removed from the
+ * DOM unless `options.autoCleanup` is `false`. Destroying Helios disposes the
+ * current network by default; pass `disposeNetworkOnDestroy: false` when the
+ * application will keep using the same network after unmount.
  * @example
  * const helios = new Helios(network, {
  *   container: document.querySelector('#app'),
- *   renderer: 'webgl',
  *   layout: { type: 'gpu-force', options: { mode: '2d' } },
- *   behaviors: { selection: true, hover: true, labels: { enabled: true } },
+ *   behaviors: { labels: { enabled: true, source: 'label' } },
  * });
  * await helios.ready;
  */
 export class Helios extends EventTarget {
+  /**
+   * Built-in bit flags used by node and edge interaction state.
+   *
+   * @public
+   * @apiSection Static Properties
+   * @returns {object} State bit constants for filtered, selected, and highlighted items.
+   */
   static STATES = Object.freeze({
     FILTERED: 1 << 0,
     SELECTED: 1 << 1,
     HIGHLIGHTED: 1 << 2,
   });
 
+  /**
+   * Alias for `STATES` kept for compatibility with earlier public APIs.
+   *
+   * @public
+   * @apiSection Static Properties
+   * @returns {object} State bit constants.
+   */
   static STATE_BITS = Helios.STATES;
 
+  /**
+   * Metadata describing settings that can be bound to controls in the UI.
+   *
+   * @public
+   * @apiSection Static Properties
+   * @returns {object} UI binding descriptors keyed by Helios setting name.
+   */
   static UI_BINDINGS = Object.freeze({
     edgeWidthScale: {
       type: 'number',
@@ -2050,6 +2112,14 @@ export class Helios extends EventTarget {
     },
   });
 
+  /**
+   * Return the UI control metadata registered for one Helios setting.
+   *
+   * @public
+   * @apiSection Configuration
+   * @param {string} name - UI binding name such as `nodeSizeScale` or `labelsEnabled`.
+   * @returns {object|null} Binding descriptor, or `null` when the name is unknown.
+   */
   uiBindingInfo(name) {
     return this.constructor.UI_BINDINGS?.[name] ?? null;
   }
@@ -2124,6 +2194,8 @@ export class Helios extends EventTarget {
       throw new Error('Helios requires a helios-network instance');
     }
     super();
+    this._destroyed = false;
+    this._autoCleanupObserver = null;
     if (!Object.prototype.hasOwnProperty.call(options, 'transparencyModeEdges')) {
       options.transparencyModeEdges = 'weighted';
     }
@@ -2159,6 +2231,7 @@ export class Helios extends EventTarget {
       supersamplingAutoFactor: options.supersamplingAutoFactor,
       supersamplingAutoThreshold: options.supersamplingAutoThreshold,
     });
+    this._setupAutoCleanup();
     this.visuals = new VisualAttributes(network, this.debug);
     this.nodeMapper = new MapperCollection('node', network, this.markMappersDirty, this.debug);
     this.edgeMapper = new MapperCollection('edge', network, this.markMappersDirty, this.debug);
@@ -2532,10 +2605,49 @@ export class Helios extends EventTarget {
       helios: this,
       ...(options.persistence && typeof options.persistence === 'object' ? options.persistence : {}),
     });
-    this.useBehavior('legends', options.behaviors?.options?.legends ?? options.legends);
-    this.useBehavior('labels', options.behaviors?.options?.labels);
+    this._initializeDefaultBehaviors(options.behaviors);
     this._initializeBehaviors(options.behaviors);
     this.ready = this.initialize();
+  }
+
+  _setupAutoCleanup() {
+    if (this.options?.autoCleanup === false) return;
+    if (typeof MutationObserver !== 'function') return;
+    const root = this.layers?.root ?? null;
+    const container = this.layers?.container ?? null;
+    if (!root || !container) return;
+
+    const isObservedRemoval = (node) => (
+      node === root
+      || node === container
+      || (typeof node?.contains === 'function' && (node.contains(root) || node.contains(container)))
+    );
+
+    const observer = new MutationObserver((records) => {
+      if (this._destroyed) {
+        observer.disconnect();
+        return;
+      }
+      for (const record of records) {
+        for (const node of record.removedNodes ?? []) {
+          if (!isObservedRemoval(node)) continue;
+          observer.disconnect();
+          this.destroy();
+          return;
+        }
+      }
+    });
+
+    observer.observe(container, { childList: true });
+    if (container.parentNode) {
+      observer.observe(container.parentNode, { childList: true });
+    }
+    this._autoCleanupObserver = observer;
+  }
+
+  _disconnectAutoCleanup() {
+    this._autoCleanupObserver?.disconnect?.();
+    this._autoCleanupObserver = null;
   }
 
   _resolveBehavior(name) {
@@ -2549,12 +2661,28 @@ export class Helios extends EventTarget {
     return null;
   }
 
+  /**
+   * Check whether a behavior is active or registered.
+   *
+   * @public
+   * @apiSection Behaviors
+   * @param {string} name - Behavior id.
+   * @returns {boolean} True when the behavior is active or available in the registry.
+   */
   hasBehavior(name) {
     const id = String(name ?? '').trim();
     if (!id) return false;
     return this.behaviors?.has?.(id) === true || this.behaviors?.registry?.has?.(id) === true;
   }
 
+  /**
+   * Return an active behavior, lazily creating registered built-ins when needed.
+   *
+   * @public
+   * @apiSection Behaviors
+   * @param {string} name - Behavior id.
+   * @returns {Behavior|null} Active behavior instance, or `null` when unavailable.
+   */
   getBehavior(name) {
     return this._resolveBehavior(name);
   }
@@ -2564,11 +2692,32 @@ export class Helios extends EventTarget {
     return this.behavior;
   }
 
+  /**
+   * Register a behavior constructor or factory for later activation.
+   *
+   * @public
+   * @apiSection Behaviors
+   * @param {string} name - Behavior id.
+   * @param {Function} behaviorCtor - Constructor or factory that creates a behavior.
+   * @returns {Helios} This Helios instance.
+   */
   registerBehavior(name, behaviorCtor) {
     this.behaviors?.registry?.register?.(name, behaviorCtor);
     return this;
   }
 
+  /**
+   * Activate a behavior, update an existing behavior, or return the active one.
+   *
+   * @public
+   * @apiSection Behaviors
+   * @param {string} name - Behavior id.
+   * @param {Behavior|object|boolean} [behaviorOrOptions] - Behavior instance,
+   * behavior options, or `true` to activate with defaults.
+   * @returns {Behavior} Active behavior instance.
+   * @example
+   * const selection = helios.useBehavior('selection', { multiple: true });
+   */
   useBehavior(name, behaviorOrOptions) {
     const id = String(name ?? '').trim();
     if (!id) throw new Error('useBehavior(name, behaviorOrOptions) requires a non-empty behavior name');
@@ -2596,7 +2745,7 @@ export class Helios extends EventTarget {
   }
 
   _initializeBehaviors(config) {
-    if (!config) return;
+    if (!config || config === false) return;
     if (Array.isArray(config)) {
       for (const entry of config) {
         if (typeof entry === 'string') this.useBehavior(entry);
@@ -2633,6 +2782,30 @@ export class Helios extends EventTarget {
       } else if (isBehaviorLike(entry)) {
         this.useBehavior(entry.id ?? entry.constructor?.id, entry);
       }
+    }
+  }
+
+  _initializeDefaultBehaviors(config) {
+    if (config === false) return;
+    const disabled = new Set();
+    const optionOverrides = {};
+    if (config && typeof config === 'object' && !Array.isArray(config) && !isBehaviorLike(config)) {
+      for (const [name, value] of Object.entries(config)) {
+        if (value === false) disabled.add(name);
+        else if (value && typeof value === 'object' && !isBehaviorLike(value)) {
+          optionOverrides[name] = value;
+        }
+      }
+      if (config.options && typeof config.options === 'object') {
+        Object.assign(optionOverrides, config.options);
+      }
+    }
+    if (this.options?.labels && !optionOverrides.labels) optionOverrides.labels = this.options.labels;
+    if (this.options?.legends && !optionOverrides.legends) optionOverrides.legends = this.options.legends;
+
+    for (const id of BEHAVIOR_IDS) {
+      if (disabled.has(id)) continue;
+      this.useBehavior(id, optionOverrides[id]);
     }
   }
 
@@ -3090,18 +3263,26 @@ export class Helios extends EventTarget {
     this._invalidateCameraOrbitReference();
     let changed = false;
     const action = detail?.action ?? null;
-    if (action === 'pan' || action === 'rotate' || action === 'zoom' || action === 'dolly') {
+    const actionTokens = new Set(String(action ?? '').split(/[^a-z0-9]+/i).filter(Boolean));
+    const isPan = actionTokens.has('pan') || actionTokens.has('translate');
+    const isRotate = actionTokens.has('rotate');
+    const isZoom = actionTokens.has('zoom');
+    const isDolly = actionTokens.has('dolly');
+    const is2DMovementWithoutAction = detail?.mode === '2d'
+      && (detail?.type === 'pointer' || detail?.type === 'touch' || detail?.type === 'wheel')
+      && !action;
+    if (isPan || isRotate || isZoom || isDolly || is2DMovementWithoutAction) {
       this._stopCameraControlPoseInterpolation();
     }
-    if (config.autoFit === true && (action === 'pan' || action === 'zoom' || action === 'dolly')) {
+    if (config.autoFit === true && (isPan || isZoom || isDolly || is2DMovementWithoutAction)) {
       config.autoFit = false;
       changed = true;
     }
-    if (config.orbit === true && action !== 'zoom' && action !== 'dolly') {
+    if (config.orbit === true && !isZoom && !isDolly) {
       config.orbit = false;
       changed = true;
     }
-    if (config.followTarget === true && action === 'pan') {
+    if (config.followTarget === true && (isPan || isZoom || isDolly || is2DMovementWithoutAction)) {
       config.followTarget = false;
       config.targetNodeIndices = null;
       changed = true;
@@ -4261,6 +4442,17 @@ export class Helios extends EventTarget {
     return this._refreshGraphFilterNetworks().layoutNetwork ?? this.network ?? null;
   }
 
+  /**
+   * Return the active graph filter state and filtered graph sizes.
+   *
+   * @public
+   * @apiSection Filtering And State
+   * @returns {object} Filter state with `enabled`, `scope`, normalized
+   * `options`, filtered/base node and edge counts, and the last filter error.
+   * @example
+   * const state = helios.getGraphFilter();
+   * if (state.enabled) console.log(state.nodeCount, state.edgeCount);
+   */
   getGraphFilter() {
     const state = this._refreshGraphFilterNetworks();
     const options = state.options ? { ...state.options } : null;
@@ -4279,6 +4471,21 @@ export class Helios extends EventTarget {
     };
   }
 
+  /**
+   * Read or replace the active graph filter.
+   *
+   * @public
+   * @apiSection Filtering And State
+   * @param {object|false|null} [options] - Filter options, `false`, or `null`.
+   * Omit the argument to read the current state.
+   * @returns {object|Helios} Current filter state when called without
+   * arguments, otherwise this Helios instance for chaining.
+   * @example
+   * helios.graphFilter({
+   *   nodeRules: [{ attribute: 'degree', operator: '>=', value: 3 }],
+   *   scope: 'render',
+   * });
+   */
   graphFilter(options) {
     if (arguments.length === 0) {
       return this.getGraphFilter();
@@ -4289,6 +4496,25 @@ export class Helios extends EventTarget {
     return this.setGraphFilter(options);
   }
 
+  /**
+   * Apply a render or render-and-layout graph filter.
+   *
+   * @public
+   * @apiSection Filtering And State
+   * @param {object|HeliosFilter} options - Filter rule set or reusable
+   * `HeliosFilter` instance.
+   * @param {Array<object>} [options.nodeRules] - Node rules to apply.
+   * @param {Array<object>} [options.edgeRules] - Edge rules to apply.
+   * @param {'render'|'render+layout'} [options.scope] - Filter scope.
+   * @returns {Helios} This Helios instance.
+   * @remarks `render` hides filtered items without changing dynamic layout
+   * forces. `render+layout` also feeds the filtered graph to the active layout.
+   * @example
+   * helios.setGraphFilter({
+   *   nodeRules: [{ attribute: 'group', operator: '==', value: 'core' }],
+   *   scope: 'render+layout',
+   * });
+   */
   setGraphFilter(options = {}) {
     if (options == null || options === false) {
       return this.clearGraphFilter();
@@ -4329,6 +4555,18 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Activate a reusable `HeliosFilter` instance.
+   *
+   * @public
+   * @apiSection Filtering And State
+   * @param {HeliosFilter|null|false} filter - Filter instance to activate, or
+   * `null`/`false` to clear filtering.
+   * @returns {Helios} This Helios instance.
+   * @example
+   * const filter = new HeliosFilter({ nodeRules: [{ attribute: 'kind', value: 'paper' }] });
+   * helios.activateHeliosFilter(filter);
+   */
   activateHeliosFilter(filter) {
     if (filter == null || filter === false) {
       this._activeHeliosFilter = null;
@@ -4340,15 +4578,38 @@ export class Helios extends EventTarget {
     return this.setGraphFilter(filter);
   }
 
+  /**
+   * Return the reusable filter currently attached to this view.
+   *
+   * @public
+   * @apiSection Filtering And State
+   * @returns {HeliosFilter|null} Active reusable filter, if one was supplied.
+   */
   getActiveHeliosFilter() {
     return this._activeHeliosFilter ?? null;
   }
 
+  /**
+   * Re-run the active reusable filter after its rules or source data changed.
+   *
+   * @public
+   * @apiSection Filtering And State
+   * @returns {Helios} This Helios instance.
+   */
   reapplyActiveHeliosFilter() {
     if (!this._activeHeliosFilter) return this;
     return this.activateHeliosFilter(this._activeHeliosFilter);
   }
 
+  /**
+   * Remove the active graph filter and restore the base graph view.
+   *
+   * @public
+   * @apiSection Filtering And State
+   * @returns {Helios} This Helios instance.
+   * @example
+   * helios.clearGraphFilter();
+   */
   clearGraphFilter() {
     const state = this._ensureGraphFilterState();
     const hadFilter = state.enabled === true || state.filteredNetwork != null || state.options != null;
@@ -4372,6 +4633,21 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Replace the graph store while preserving visualization state by default.
+   *
+   * @public
+   * @apiSection Network And Persistence
+   * @param {import('helios-network').default} nextNetwork - Replacement graph.
+   * @param {object} [options] - Replacement behavior options.
+   * @param {boolean} [options.disposeOld=true] - Dispose the previous network.
+   * @param {boolean} [options.keepCamera=true] - Preserve the current camera.
+   * @param {boolean} [options.keepMappers=true] - Preserve mapper settings.
+   * @returns {Promise<Helios>} This Helios instance after the renderer and
+   * layout are rebound to the new graph.
+   * @example
+   * await helios.replaceNetwork(nextNetwork, { keepCamera: false });
+   */
   async replaceNetwork(nextNetwork, options = {}) {
     if (!nextNetwork) {
       throw new Error('replaceNetwork requires a helios-network instance');
@@ -4539,6 +4815,15 @@ export class Helios extends EventTarget {
     return false;
   }
 
+  /**
+   * Queue a camera fit once the renderer and graph bounds are ready.
+   *
+   * @public
+   * @apiSection Camera And View
+   * @param {object} [options] - Camera fit options.
+   * @param {number} [options.maxAttempts=25] - Maximum geometry ticks to retry.
+   * @returns {Helios} This Helios instance.
+   */
   requestFrameNetwork(options = {}) {
     const maxAttempts = Number.isFinite(options.maxAttempts) ? Math.max(1, Math.floor(options.maxAttempts)) : 25;
     const { maxAttempts: _ignored, ...frameOptions } = options ?? {};
@@ -4559,6 +4844,19 @@ export class Helios extends EventTarget {
     });
   }
 
+  /**
+   * Fit the camera to the current visible graph or selected node set.
+   *
+   * @public
+   * @apiSection Camera And View
+   * @param {object} [options] - Camera fit options.
+   * @param {Array<number>|TypedArray} [options.nodeIndices] - Node indices to frame.
+   * @param {boolean} [options.animate=false] - Animate the transition.
+   * @param {number} [options.paddingRatio] - Extra viewport padding ratio.
+   * @returns {boolean} True when a camera pose was applied.
+   * @example
+   * helios.frameNetwork({ animate: true, paddingRatio: 0.08 });
+   */
   frameNetwork(options = {}) {
     const camera = this.renderer?.camera ?? null;
     if (!camera) return false;
@@ -4587,6 +4885,19 @@ export class Helios extends EventTarget {
     });
   }
 
+  /**
+   * Load a serialized network and replace the active graph.
+   *
+   * @public
+   * @apiSection Network And Persistence
+   * @param {Blob|ArrayBuffer|string|File} source - Network payload or file-like object.
+   * @param {object} [options] - Load and replacement options.
+   * @param {'xnet'|'zxnet'|'bxnet'} [options.format] - Input format when it
+   * cannot be inferred from `source.name`.
+   * @returns {Promise<HeliosNetwork>} Loaded network instance.
+   * @example
+   * const network = await helios.loadNetwork(file, { format: 'bxnet' });
+   */
   async loadNetwork(source, options = {}) {
     const requestedFormat = options.format ?? null;
     const formatFromName = source && typeof source === 'object' && typeof source.name === 'string'
@@ -4618,6 +4929,15 @@ export class Helios extends EventTarget {
     return next;
   }
 
+  /**
+   * Serialize the active graph in a Helios Network format.
+   *
+   * @public
+   * @apiSection Network And Persistence
+   * @param {'xnet'|'zxnet'|'bxnet'} [format='bxnet'] - Output format.
+   * @param {object} [options] - Save options forwarded to the network serializer.
+   * @returns {Promise<Blob|string|ArrayBuffer>} Serialized network payload.
+   */
   async saveNetwork(format = 'bxnet', options = {}) {
     const normalized = String(format).toLowerCase();
     if (!this.network) throw new Error('saveNetwork requires an active network');
@@ -4641,10 +4961,25 @@ export class Helios extends EventTarget {
     throw new Error(`Unsupported network format: ${format}`);
   }
 
+  /**
+   * Serialize state held by active behaviors.
+   *
+   * @public
+   * @apiSection Behaviors
+   * @returns {object} Behavior state keyed by behavior id.
+   */
   serializeBehaviorState() {
     return this.behaviors?.serialize?.() ?? {};
   }
 
+  /**
+   * Restore state for active behaviors.
+   *
+   * @public
+   * @apiSection Behaviors
+   * @param {object} [snapshot] - Behavior state keyed by behavior id.
+   * @returns {Helios} This Helios instance.
+   */
   restoreBehaviorState(snapshot = {}) {
     this.behaviors?.restore?.(snapshot);
     return this;
@@ -4662,6 +4997,15 @@ export class Helios extends EventTarget {
     });
   }
 
+  /**
+   * Build a portable visualization-state envelope.
+   *
+   * @public
+   * @apiSection Network And Persistence
+   * @param {object} [options] - Serialization options.
+   * @returns {object} Visualization-state envelope containing UI, behavior,
+   * camera, and network-source state.
+   */
   serializeVisualizationState(options = {}) {
     const preferences = options.preferences ?? this.persistence?.getPreferences?.() ?? null;
     const envelope = createPersistenceEnvelope(PERSISTENCE_KINDS.visualization, {
@@ -4677,6 +5021,15 @@ export class Helios extends EventTarget {
     return envelope;
   }
 
+  /**
+   * Import a visualization-state envelope and apply it to this view.
+   *
+   * @public
+   * @apiSection Network And Persistence
+   * @param {object|string|Blob} source - Visualization-state envelope or JSON payload.
+   * @param {object} [options] - Restore options forwarded to behaviors.
+   * @returns {Promise<object>} Parsed persistence envelope.
+   */
   async importVisualizationState(source, options = {}) {
     const envelope = parsePersistenceEnvelope(source, PERSISTENCE_KINDS.visualization);
     const payload = envelope.payload;
@@ -4686,10 +5039,28 @@ export class Helios extends EventTarget {
     return envelope;
   }
 
+  /**
+   * Alias for `importVisualizationState`.
+   *
+   * @public
+   * @apiSection Network And Persistence
+   * @param {object|string|Blob} source - Visualization-state envelope or JSON payload.
+   * @param {object} [options] - Restore options.
+   * @returns {Promise<object>} Parsed persistence envelope.
+   */
   async restoreVisualizationState(source, options = {}) {
     return this.importVisualizationState(source, options);
   }
 
+  /**
+   * Export visualization state as an object, JSON string, or Blob.
+   *
+   * @public
+   * @apiSection Network And Persistence
+   * @param {object} [options] - Export options.
+   * @param {'object'|'string'|'blob'} [options.format='object'] - Output shape.
+   * @returns {object|string|Blob} Visualization-state payload.
+   */
   exportVisualizationState(options = {}) {
     const envelope = this.serializeVisualizationState(options);
     const format = options.format ?? 'object';
@@ -4700,6 +5071,15 @@ export class Helios extends EventTarget {
     return envelope;
   }
 
+  /**
+   * Read a visualization-state envelope stored on a network attribute.
+   *
+   * @public
+   * @apiSection Network And Persistence
+   * @param {HeliosNetwork} [network=this.network] - Network to inspect.
+   * @param {object} [options] - Attribute lookup options.
+   * @returns {object|null} Parsed envelope, or `null` when no valid state is attached.
+   */
   getAttachedVisualizationState(network = this.network, options = {}) {
     if (!network?.hasNetworkAttribute?.(options.attributeName ?? NETWORK_VISUALIZATION_STATE_ATTRIBUTE)) return null;
     const raw = network.getNetworkStringAttribute(options.attributeName ?? NETWORK_VISUALIZATION_STATE_ATTRIBUTE);
@@ -4712,6 +5092,15 @@ export class Helios extends EventTarget {
     }
   }
 
+  /**
+   * Store visualization state on a network string attribute.
+   *
+   * @public
+   * @apiSection Network And Persistence
+   * @param {object|null} [snapshot=null] - Existing envelope, or `null` to capture current state.
+   * @param {object} [options] - Attachment options.
+   * @returns {Helios} This Helios instance.
+   */
   attachVisualizationStateToNetwork(snapshot = null, options = {}) {
     const network = options.network ?? this.network;
     if (!network) throw new Error('attachVisualizationStateToNetwork requires an active network');
@@ -4724,6 +5113,14 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Remove visualization state attached to the active network.
+   *
+   * @public
+   * @apiSection Network And Persistence
+   * @param {object} [options] - Attribute removal options.
+   * @returns {Helios} This Helios instance.
+   */
   clearAttachedVisualizationState(options = {}) {
     const network = options.network ?? this.network;
     const attributeName = options.attributeName ?? NETWORK_VISUALIZATION_STATE_ATTRIBUTE;
@@ -4732,6 +5129,17 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Save the graph with optional embedded visualization state.
+   *
+   * @public
+   * @apiSection Network And Persistence
+   * @param {'xnet'|'zxnet'|'bxnet'} [format='bxnet'] - Output network format.
+   * @param {object} [options] - Portable save options.
+   * @param {boolean} [options.includeVisualization=false] - Attach current
+   * visualization state before saving.
+   * @returns {Promise<Blob|string|ArrayBuffer>} Serialized network payload.
+   */
   async savePortableNetwork(format = 'bxnet', options = {}) {
     if (!this.network) throw new Error('savePortableNetwork requires an active network');
     const attributeName = options.attributeName ?? NETWORK_VISUALIZATION_STATE_ATTRIBUTE;
@@ -4775,6 +5183,7 @@ export class Helios extends EventTarget {
    * Return renderer-aware figure export limits and preset availability.
    *
    * @public
+   * @apiSection Figure Export
    * @param {{supersampling?: number|string}} [options] - Supersampling request
    * used when computing max safe output dimensions.
    * @returns {{maxBitmapDimension:number,maxFigureDimension:number,defaultPreset:string,presets:Array<object>}}
@@ -5161,6 +5570,7 @@ export class Helios extends EventTarget {
    * Capture the current visualization as a PNG or SVG `Blob`.
    *
    * @public
+   * @apiSection Figure Export
    * @param {object} [options] - Figure export options including `format`,
    * `preset`, `width`, `height`, `supersampling`, `includeLabels`,
    * `includeLegends`, `includeInterface`, `transparentBackground`, and
@@ -5209,6 +5619,7 @@ export class Helios extends EventTarget {
    * Capture a scaled PNG preview for a full-size figure export request.
    *
    * @public
+   * @apiSection Figure Export
    * @param {object} [options] - Full export options that should be previewed.
    * @param {{maxWidth?:number,maxHeight?:number,supersampling?:number|string}} [previewOptions]
    * Preview output constraints.
@@ -5259,6 +5670,7 @@ export class Helios extends EventTarget {
    * Capture and download the current visualization.
    *
    * @public
+   * @apiSection Figure Export
    * @param {string|object} [filenameOrOptions] - Download filename or figure
    * export options.
    * @param {object} [maybeOptions] - Figure export options when the first
@@ -5297,6 +5709,20 @@ export class Helios extends EventTarget {
     };
   }
 
+  /**
+   * Add an event listener and receive an unsubscribe function.
+   *
+   * @public
+   * @apiSection Events
+   * @param {string} type - Event type, usually one of the `EVENTS` constants.
+   * @param {Function} handler - Listener function.
+   * @param {object|boolean} [options] - DOM `addEventListener` options.
+   * @returns {Function} Function that removes the listener.
+   * @example
+   * const unsubscribe = helios.on(EVENTS.NODE_CLICK, (event) => {
+   *   console.log(event.detail.index);
+   * });
+   */
   on(type, handler, options) {
     this.addEventListener(type, handler, options);
     if (options?.signal && typeof options.signal.addEventListener === 'function') {
@@ -5310,6 +5736,21 @@ export class Helios extends EventTarget {
     return () => this.off(type, handler, options);
   }
 
+  /**
+   * Add or replace a namespaced event listener.
+   *
+   * @public
+   * @apiSection Events
+   * @param {string} typeWithNamespace - Event type, optionally followed by
+   * `.namespace` for replacement/removal.
+   * @param {Function|null} handler - Listener function, or `null` to remove.
+   * @param {object|boolean} [options] - DOM listener options.
+   * @returns {Helios} This Helios instance.
+   * @example
+   * helios.listen(`${EVENTS.NODE_HOVER}.tooltip`, ({ detail }) => {
+   *   updateTooltip(detail);
+   * });
+   */
   listen(typeWithNamespace, handler, options) {
     const parsed = parseNamespacedEventType(typeWithNamespace);
     const namespace = parsed.namespace ?? '';
@@ -5359,10 +5800,28 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Remove an event listener.
+   *
+   * @public
+   * @apiSection Events
+   * @param {string} type - Event type.
+   * @param {Function} handler - Listener function originally registered.
+   * @param {object|boolean} [options] - DOM listener options.
+   */
   off(type, handler, options) {
     this.removeEventListener(type, handler, options);
   }
 
+  /**
+   * Observe every event emitted through Helios.
+   *
+   * @public
+   * @apiSection Events
+   * @param {Function} handler - Listener receiving `{ type, detail, event, target }`.
+   * @param {object} [options] - Listener options, including `signal`.
+   * @returns {Function} Function that removes the listener.
+   */
   onAny(handler, options) {
     if (typeof handler !== 'function') return () => {};
     this._anyListeners.add(handler);
@@ -5378,6 +5837,15 @@ export class Helios extends EventTarget {
     return unsubscribe;
   }
 
+  /**
+   * Dispatch a Helios event.
+   *
+   * @public
+   * @apiSection Events
+   * @param {string} type - Event type.
+   * @param {object} [detail] - Event detail payload.
+   * @returns {CustomEvent} Dispatched event object.
+   */
   emit(type, detail) {
     const event = new CustomEvent(type, { detail });
     this.dispatchEvent(event);
@@ -5394,6 +5862,15 @@ export class Helios extends EventTarget {
     return event;
   }
 
+  /**
+   * Initialize layout, renderer, picking, attribute tracking, and scheduler state.
+   *
+   * @public
+   * @apiSection Lifecycle
+   * @returns {Promise<void>} Resolves when the first renderer and layout setup is complete.
+   * @remarks The constructor calls this automatically and exposes the promise as
+   * `helios.ready`; applications usually await `ready` instead of calling this directly.
+   */
   async initialize() {
     this.debug.log('helios', 'Initializing layout');
     this._enforcePositionSourcePolicy(this._layout, { resetInterpolation: false });
@@ -9808,7 +10285,11 @@ export class Helios extends EventTarget {
   }
 
   destroy() {
+    if (this._destroyed) return;
+    this._destroyed = true;
+    this._disconnectAutoCleanup();
     this.scheduler.stop();
+    this.behaviors?.destroy?.();
     this._clearEdgeAdaptiveTimer('cameraIdleTimer');
     this._clearEdgeAdaptiveTimer('probeTimer');
     this._detachPositionDelegate(this._activePositionDelegate ?? this._positionsConfig?.delegate ?? null);
@@ -9835,6 +10316,14 @@ export class Helios extends EventTarget {
     this._labels = null;
     this._legends?.destroy?.();
     this._legends = null;
+    if (this.options?.disposeNetworkOnDestroy !== false && this.network && typeof this.network.dispose === 'function') {
+      try {
+        this.network.dispose();
+      } catch (_) {
+        // ignore disposal failures during teardown
+      }
+    }
+    this.network = null;
     this.layers.destroy();
   }
 }

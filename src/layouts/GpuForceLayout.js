@@ -28,7 +28,7 @@ const DEFAULT_OPTIONS = {
   umapNegativeSampleRate: 5,
   umapEpochs: null,
   eta: 0.4,
-  damping: 0.92,
+  damping: 0.82,
   maxStep: 2.5,
   minDistance: 0.15,
   alpha: 1,
@@ -37,7 +37,7 @@ const DEFAULT_OPTIONS = {
   alphaMin: 0.001,
   autoStopAtAlphaMin: true,
   recenter: true,
-  rotationDamping: 0,
+  rotationDamping: 0.6,
 };
 
 const DEFAULT_UMAP_SAMPLE_CHURN = 0.01;

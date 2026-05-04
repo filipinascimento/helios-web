@@ -39,7 +39,14 @@ function resolveAttributeMetadata(network, scope, name) {
   const cached = internalMap?.get?.(name) ?? null;
   if (cached) return cached;
   const infoGetter = scope === 'node' ? 'getNodeAttributeInfo' : 'getEdgeAttributeInfo';
-  return network[infoGetter]?.(name) ?? null;
+  const info = network[infoGetter]?.(name) ?? null;
+  if (info) return info;
+  const bufferGetter = scope === 'node' ? 'getNodeAttributeBuffer' : 'getEdgeAttributeBuffer';
+  try {
+    return network[bufferGetter]?.(name) ?? null;
+  } catch (_) {
+    return null;
+  }
 }
 
 function clamp01(value) {
@@ -994,7 +1001,11 @@ export class Mapper {
     if (!attribute || !sourceAttribute) return;
     this.unregisterNodeToEdge(attribute);
     if (resolveAttributeMetadata(this.network, 'edge', attribute)) {
-      this.removeEdgeAttribute(attribute);
+      try {
+        this.removeEdgeAttribute(attribute);
+      } catch (_) {
+        // The registration path below retries removal if the edge attribute still exists.
+      }
     }
     const sourceInfo = resolveAttributeMetadata(this.network, 'node', sourceAttribute);
     if (!sourceInfo) {
@@ -1113,7 +1124,13 @@ export function createDefaultMappers(network) {
   return { nodeMapper, edgeMapper };
 }
 
-export { VISUAL_ATTRIBUTE_MAP as VISUAL_ATTRIBUTES };
+/**
+ * Map of public mapper channel names to internal Helios visual attribute names.
+ *
+ * @public
+ * @apiSection Mappers
+ */
+export const VISUAL_ATTRIBUTES = VISUAL_ATTRIBUTE_MAP;
 
 /**
  * Convenience container that can hold multiple mappers of the same mode and

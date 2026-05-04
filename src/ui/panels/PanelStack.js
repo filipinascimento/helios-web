@@ -18,6 +18,14 @@ function appendResolved(target, value) {
   target.appendChild(resolveContainer(value));
 }
 
+/**
+ * Collapsible stack of UI subpanels used by the optional Helios UI.
+ *
+ * @public
+ * @apiSection User Interface
+ * @param {object} [options] - Stack options.
+ * @param {Array<object>} [options.items] - Initial panel items.
+ */
 export class PanelStack {
   constructor(options = {}) {
     this.element = document.createElement('div');

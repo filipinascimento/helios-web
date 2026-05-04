@@ -73,6 +73,23 @@ export class BehaviorManager {
     return true;
   }
 
+  detachAll() {
+    for (const [id, behavior] of this._attached.entries()) {
+      try {
+        behavior.detach?.();
+      } finally {
+        this._attached.delete(id);
+      }
+    }
+    return this;
+  }
+
+  destroy() {
+    this.detachAll();
+    this.ui = null;
+    this.helios = null;
+  }
+
   serialize() {
     const snapshot = {};
     for (const [id, behavior] of this._attached.entries()) {

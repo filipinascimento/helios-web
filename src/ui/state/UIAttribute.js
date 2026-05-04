@@ -13,6 +13,16 @@ function normalizeRange(range) {
   return null;
 }
 
+/**
+ * Observable UI attribute descriptor used to bind controls to Helios state.
+ *
+ * @public
+ * @apiSection User Interface
+ * @param {object} options - Attribute descriptor.
+ * @param {string} options.id - Stable attribute id.
+ * @param {Function} options.get - Read callback.
+ * @param {Function} [options.set] - Write callback.
+ */
 export class UIAttribute {
   constructor(options) {
     if (!options?.id) throw new Error('UIAttribute requires an id');

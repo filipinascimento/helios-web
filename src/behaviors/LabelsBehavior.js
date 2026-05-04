@@ -26,6 +26,10 @@ function normalizeConfigPatch(options = {}) {
   if (Object.prototype.hasOwnProperty.call(options, 'fallbackSources') && Array.isArray(options.fallbackSources)) {
     next.fallbackSources = options.fallbackSources.map((entry) => String(entry ?? '').trim()).filter(Boolean);
   }
+  if (Object.prototype.hasOwnProperty.call(options, 'pinnedNodes')) {
+    next.pinnedNodes = Array.from(new Set(Array.from(options.pinnedNodes ?? [], (entry) => Number(entry))
+      .filter((entry) => Number.isInteger(entry) && entry >= 0)));
+  }
   const scalarKeys = [
     'maxVisible',
     'minScreenRadiusPx',
@@ -129,6 +133,7 @@ export class LabelsBehavior extends Behavior {
   getPublicState() {
     return {
       ...this.state,
+      pinnedNodes: Array.from(this.state.pinnedNodes ?? []),
       hoveredNodeEnabled: this._hoverPolicy.enabled,
       hoveredNodeSource: this._hoverPolicy.enabled ? this._hoverPolicy.source : null,
     };
@@ -146,6 +151,10 @@ export class LabelsBehavior extends Behavior {
       this.applyConfig({ silent: true, reason: 'disable' });
       this.emitChange('disable');
       return this;
+    }
+    if (options && typeof options === 'object' && options.enabled === true
+      && !Object.prototype.hasOwnProperty.call(options, 'selectionMode')) {
+      return this.update({ selectionMode: 'ranked', ...options });
     }
     return this.update(options);
   }

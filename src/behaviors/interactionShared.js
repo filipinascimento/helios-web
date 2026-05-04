@@ -29,16 +29,20 @@ function getHoverState(context) {
 
 export function ensureInteractionStateStyleDefaults(helios) {
   if (!helios) return;
-  if (isNeutralNodeStateStyle(helios.nodeStateStyle?.('SELECTED'))) {
+  const selectedNodeStyle = helios.nodeStateStyle?.('SELECTED') ?? null;
+  const highlightedNodeStyle = helios.nodeStateStyle?.('HIGHLIGHTED') ?? null;
+  const selectedEdgeStyle = helios.edgeStateStyle?.('SELECTED') ?? null;
+  const highlightedEdgeStyle = helios.edgeStateStyle?.('HIGHLIGHTED') ?? null;
+  if (!selectedNodeStyle || isNeutralNodeStateStyle(selectedNodeStyle)) {
     helios.nodeStateStyle?.('SELECTED', { ...DEFAULT_NODE_SELECTED_STYLE });
   }
-  if (isNeutralNodeStateStyle(helios.nodeStateStyle?.('HIGHLIGHTED'))) {
+  if (!highlightedNodeStyle || isNeutralNodeStateStyle(highlightedNodeStyle)) {
     helios.nodeStateStyle?.('HIGHLIGHTED', { ...DEFAULT_NODE_HIGHLIGHT_STYLE });
   }
-  if (isNeutralEdgeStateStyle(helios.edgeStateStyle?.('SELECTED'))) {
+  if (!selectedEdgeStyle || isNeutralEdgeStateStyle(selectedEdgeStyle)) {
     helios.edgeStateStyle?.('SELECTED', { ...DEFAULT_EDGE_SELECTED_STYLE });
   }
-  if (isNeutralEdgeStateStyle(helios.edgeStateStyle?.('HIGHLIGHTED'))) {
+  if (!highlightedEdgeStyle || isNeutralEdgeStateStyle(highlightedEdgeStyle)) {
     helios.edgeStateStyle?.('HIGHLIGHTED', { ...DEFAULT_EDGE_HIGHLIGHT_STYLE });
   }
 }

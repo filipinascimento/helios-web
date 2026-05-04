@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { PNG } from 'pngjs';
 
 test('edges render with correct relative widths', async ({ page }, testInfo) => {
   await page.goto('/tests/fixtures/blank.html');
@@ -226,41 +227,56 @@ test('supersampling does not change apparent edge width', async ({ page }, testI
     window.__helios = helios;
   });
 
-  const readBlueCoverage = async () => page.evaluate(async () => {
-    const helios = window.__helios;
-    if (!helios) throw new Error('Helios instance missing');
-    helios.scheduler?.requestRender?.();
-    await new Promise((resolve) => {
-      let attempts = 0;
-      const waitFrame = () => {
-        if (helios.scheduler?._needsRender === false || attempts > 10) {
-          resolve();
-          return;
-        }
-        attempts += 1;
-        requestAnimationFrame(waitFrame);
-      };
-      requestAnimationFrame(waitFrame);
+  const settleRender = async (mode) => {
+    await page.evaluate((nextMode) => {
+      const helios = window.__helios;
+      if (!helios) throw new Error('Helios instance missing');
+      helios.supersampling(nextMode);
+      helios.scheduler?.requestGeometry?.();
+      helios.scheduler?.requestRender?.();
+    }, mode);
+    await page.waitForFunction((nextMode) => {
+      const helios = window.__helios;
+      const expectedRatio = nextMode === '2x' ? 2 : 1;
+      return helios?.layers?.size?.devicePixelRatio === expectedRatio
+        && helios.scheduler?._needsGeometry === false
+        && helios.scheduler?._needsRender === false;
+    }, mode, { timeout: 5_000 });
+    await page.waitForTimeout(100);
+  };
+
+  const readBlueCoverage = async () => {
+    const box = await page.locator('#app canvas').boundingBox();
+    if (!box) throw new Error('Canvas unavailable for screenshot coverage');
+    const image = await page.screenshot({
+      clip: {
+        x: Math.floor(box.x),
+        y: Math.floor(box.y),
+        width: Math.floor(box.width),
+        height: Math.floor(box.height),
+      },
     });
-    const renderer = helios.renderer;
-    const { width, height } = renderer.size ?? { width: 0, height: 0 };
-    const data = await Promise.resolve(renderer.readPixels(null, { x: 0, y: 0, width, height }));
+    const png = PNG.sync.read(image);
     let blueCount = 0;
-    for (let i = 0; i < data.length; i += 4) {
-      const r = data[i];
-      const g = data[i + 1];
-      const b = data[i + 2];
+    for (let i = 0; i < png.data.length; i += 4) {
+      const r = png.data[i];
+      const g = png.data[i + 1];
+      const b = png.data[i + 2];
       if (b > r + g + 10 && b > 30) blueCount += 1;
     }
-    return { blueCount, width, height };
-  });
+    const pixelCount = Math.max(1, png.width * png.height);
+    return {
+      blueCount,
+      width: png.width,
+      height: png.height,
+      blueRatio: blueCount / pixelCount,
+    };
+  };
 
-  await page.waitForTimeout(150);
-  await page.evaluate(() => window.__helios.supersampling('off'));
+  await settleRender('off');
   const offMetrics = await readBlueCoverage();
 
-  await page.evaluate(() => window.__helios.supersampling('2x'));
-  await page.waitForTimeout(150);
+  await settleRender('2x');
   const twoXMetrics = await readBlueCoverage();
 
   await testInfo.attach('edge-width-supersampling-metrics', {
@@ -272,7 +288,7 @@ test('supersampling does not change apparent edge width', async ({ page }, testI
   expect(offMetrics.height).toBeGreaterThan(0);
   expect(offMetrics.blueCount).toBeGreaterThan(0);
   expect(twoXMetrics.blueCount).toBeGreaterThan(0);
-  const ratio = twoXMetrics.blueCount / offMetrics.blueCount;
+  const ratio = twoXMetrics.blueRatio / offMetrics.blueRatio;
   expect(ratio).toBeGreaterThan(0.7);
   expect(ratio).toBeLessThan(1.2);
 });

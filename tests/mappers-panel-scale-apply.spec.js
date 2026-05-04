@@ -8,6 +8,18 @@ async function waitForHelios(page) {
   await page.waitForFunction(() => Boolean(window.__helios && window.__helios.ready));
 }
 
+async function ensurePanelVisible(page, id) {
+  const panel = panelById(page, id);
+  if (await panel.isVisible()) return panel;
+  await page.evaluate((panelId) => {
+    const behavior = window.__helios?.behavior?.interface;
+    behavior?.openControlsSurface?.();
+    behavior?.activateControl?.(panelId);
+  }, id);
+  await expect(panel).toBeVisible();
+  return panel;
+}
+
 test.describe('mappers panel', () => {
   test('repairs stale categorical ranges when switching node size back to scale', async ({ page }) => {
     await page.goto('/tests/fixtures/demo.html?renderer=webgl&layout=none&nodes=120&mappers=1');
@@ -40,8 +52,7 @@ test.describe('mappers panel', () => {
       });
     });
 
-    const panel = panelById(page, 'helios-ui-mappers');
-    await expect(panel).toBeVisible();
+    const panel = await ensurePanelVisible(page, 'helios-ui-mappers');
 
     const channelSelect = panel.locator('select').first();
     await channelSelect.selectOption({ label: 'Size' });

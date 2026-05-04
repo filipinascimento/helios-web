@@ -27,6 +27,14 @@ function lerpColor(a, b, t) {
   return next;
 }
 
+/**
+ * Decode base64-encoded binary colormap data.
+ *
+ * @public
+ * @apiSection Colormaps
+ * @param {string} b64 - Base64-encoded byte payload.
+ * @returns {Uint8Array} Decoded bytes.
+ */
 export function base64ToUint8Array(b64) {
   if (typeof atob === 'function') {
     return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
@@ -34,6 +42,15 @@ export function base64ToUint8Array(b64) {
   return Uint8Array.from(Buffer.from(b64, 'base64'));
 }
 
+/**
+ * Decode packed RGB colormap bytes into color tuples.
+ *
+ * @public
+ * @apiSection Colormaps
+ * @param {string} b64 - Base64-encoded RGB byte payload.
+ * @param {number} [expectedN] - Expected number of colors.
+ * @returns {Array<Array<number>>} RGB colors in byte space.
+ */
 export function decodeColormapData(b64, expectedN) {
   const bytes = base64ToUint8Array(b64);
   if (expectedN != null && bytes.length !== expectedN * 3) {
@@ -345,6 +362,13 @@ function primeRegistry() {
 
 primeRegistry();
 
+/**
+ * Built-in color map registry grouped by source collection.
+ *
+ * @public
+ * @apiSection Colormaps
+ * @returns {object} D3, CET, cmasher, and Helios colormap collections.
+ */
 export const colormaps = {
   d3: d3Descriptors,
   CET: CETDescriptors,
@@ -352,6 +376,16 @@ export const colormaps = {
   helios: heliosDescriptors,
 };
 
+/**
+ * Resolve a colormap name, descriptor, or function to a descriptor.
+ *
+ * @public
+ * @apiSection Colormaps
+ * @param {string|Function|object} input - Colormap reference.
+ * @returns {object|null} Resolved descriptor, or `null` when not found.
+ * @example
+ * const viridis = resolveColormap('interpolateViridis');
+ */
 export function resolveColormap(input) {
   if (!input) return null;
   if (typeof input === 'function') {
@@ -391,18 +425,48 @@ export function resolveColormap(input) {
   return null;
 }
 
+/**
+ * Resolve a colormap to an interpolation function.
+ *
+ * @public
+ * @apiSection Colormaps
+ * @param {string|Function|object} input - Colormap reference.
+ * @returns {Function|null} Function that maps `0..1` values to colors.
+ */
 export function colormapToInterpolator(input) {
   const resolved = resolveColormap(input);
   if (!resolved?.interpolate) throw new Error(`Unknown colormap: ${input}`);
   return resolved.interpolate;
 }
 
+/**
+ * Resolve a colormap to a discrete color scheme.
+ *
+ * @public
+ * @apiSection Colormaps
+ * @param {string|Function|object} input - Colormap reference.
+ * @param {number} count - Number of colors to sample.
+ * @returns {Array<Array<number>>|null} Sampled RGBA colors.
+ */
 export function colormapToScheme(input, count) {
   const resolved = resolveColormap(input);
   if (!resolved?.scheme) throw new Error(`Unknown colormap: ${input}`);
   return resolved.scheme(count ?? 10);
 }
 
+/**
+ * Create a numeric colormap scale.
+ *
+ * @public
+ * @apiSection Colormaps
+ * @param {string|Function|object} colormapInput - Colormap reference.
+ * @param {object} [options] - Scale options.
+ * @param {Array<number>} [options.domain] - Numeric input domain.
+ * @param {number} [options.alpha] - Output alpha override.
+ * @returns {Function} Function that maps values to RGBA colors.
+ * @example
+ * const color = createColormapScale('interpolateViridis', { domain: [0, 1] });
+ */
 export function createColormapScale(colormapInput, options = {}) {
   const { domain = [0, 1], clamp = true, alpha } = options;
   const clampSpec = (() => {
@@ -440,6 +504,15 @@ export function createColormapScale(colormapInput, options = {}) {
   };
 }
 
+/**
+ * Create a categorical palette from a colormap.
+ *
+ * @public
+ * @apiSection Colormaps
+ * @param {string|Function|object} colormapInput - Colormap reference.
+ * @param {number} count - Number of categories.
+ * @returns {Array<Array<number>>} RGBA colors for categories.
+ */
 export function createCategoricalColormap(colormapInput, count) {
   return colormapToScheme(colormapInput, count);
 }

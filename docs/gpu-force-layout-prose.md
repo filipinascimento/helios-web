@@ -301,13 +301,13 @@ Table 1 lists current defaults from the implementation.
 | `sampleChurn` | `0` | Fraction of repulsion sample slots refreshed each step (`0` fixed, `1` full refresh). |
 | `maxNeighborsPerNode` | `64` | Spring-neighbor truncation per node. |
 | `outputScale` | `6` | Simulation-to-render scale factor around `center`. |
-| `rotationDamping` | `0` | Fraction of fitted rigid-body rotation removed after each step. |
+| `rotationDamping` | `0.6` | Fraction of fitted rigid-body rotation removed after each step. |
 | `linkDistance` | `1` | Zero-stretch spring distance. |
 | `kRepulsion` | `0.07` | Base repulsion coefficient before alpha scaling. |
 | `kAttraction` | `0.62` | Base spring coefficient before alpha scaling. |
 | `kGravity` | `0.00035` | Base center-gravity coefficient before alpha scaling. |
 | `eta` | `0.04` | Force-to-velocity gain before `dtScale`. |
-| `damping` | `0.92` | Velocity persistence factor. |
+| `damping` | `0.82` | Velocity persistence factor. |
 | `maxStep` | `2.5` | Velocity magnitude cap before `dtScale`. |
 | `minDistance` | `0.15` | Distance floor preventing singular forces. |
 | `alpha` | `1` | Initial cooling multiplier. |

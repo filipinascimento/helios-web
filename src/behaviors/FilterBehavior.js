@@ -149,6 +149,7 @@ export class FilterBehavior extends Behavior {
    * Replace all active node and edge filter rules.
    *
    * @public
+   * @apiSection Filtering And State
    * @param {object} [options] - Replacement filter options.
    * @param {Array<object>} [options.nodeRules] - Node rules to apply.
    * @param {Array<object>} [options.edgeRules] - Edge rules to apply.
@@ -171,6 +172,7 @@ export class FilterBehavior extends Behavior {
    * Remove the active graph filter and restore the unfiltered render view.
    *
    * @public
+   * @apiSection Filtering And State
    * @returns {FilterBehavior} This behavior instance.
    */
   clear() {

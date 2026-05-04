@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { Helios } from '../src/index.js';
 import {
   AppearanceBehavior,
+  BEHAVIOR_IDS,
   Behavior,
   BehaviorManager,
   BehaviorRegistry,
@@ -157,6 +158,34 @@ test('behavior manager registers and reuses built-in behaviors by name', () => {
   assert.equal(hover.state.hoverLabel, false);
 });
 
+test('Helios default behavior initialization attaches built-ins and applies options', () => {
+  const helios = new MockHelios();
+  Object.assign(helios, {
+    options: {
+      labels: { enabled: true, source: 'label' },
+    },
+    behaviors: new BehaviorManager(helios, createDefaultBehaviorRegistry()),
+    useBehavior: Helios.prototype.useBehavior,
+  });
+
+  Helios.prototype._initializeDefaultBehaviors.call(helios, {
+    hover: { edgeHover: true },
+    filters: false,
+  });
+
+  const attached = new Set(helios.behaviors.entries().map(([id]) => id));
+  for (const id of BEHAVIOR_IDS) {
+    if (id === 'filters') {
+      assert.equal(attached.has(id), false);
+    } else {
+      assert.equal(attached.has(id), true, `${id} should be attached by default`);
+    }
+  }
+  assert.equal(helios.behaviors.get('labels').state.enabled, true);
+  assert.equal(helios.behaviors.get('labels').state.source, 'label');
+  assert.equal(helios.behaviors.get('hover').state.edgeHover, true);
+});
+
 test('behavior manager attaches and detaches instantiated custom behaviors', () => {
   const helios = new MockHelios();
   const registry = new BehaviorRegistry().register('probe', ProbeBehavior);
@@ -177,6 +206,114 @@ test('behavior manager attaches and detaches instantiated custom behaviors', () 
   assert.equal(manager.detach('probe'), true);
   assert.equal(probe.detachCount, 1);
   assert.equal(manager.get('probe'), null);
+});
+
+test('behavior manager destroy detaches active behavior cleanups', () => {
+  const helios = new MockHelios();
+  const registry = new BehaviorRegistry().register('probe', ProbeBehavior);
+  const manager = new BehaviorManager(helios, registry);
+  const probe = manager.use('probe');
+
+  manager.destroy();
+
+  assert.equal(probe.detachCount, 1);
+  assert.equal(manager.get('probe'), null);
+  assert.equal(manager.helios, null);
+  assert.equal(manager.ui, null);
+});
+
+function makeDestroyHarness(options = {}) {
+  const calls = [];
+  const helios = Object.create(Helios.prototype);
+  Object.assign(helios, {
+    _destroyed: false,
+    _autoCleanupObserver: { disconnect: () => calls.push('disconnect') },
+    options,
+    scheduler: { stop: () => calls.push('scheduler.stop') },
+    behaviors: { destroy: () => calls.push('behaviors.destroy') },
+    _edgeAdaptiveRuntime: {},
+    _activePositionDelegate: null,
+    _positionsConfig: { delegate: null },
+    _layout: { dispose: () => calls.push('layout.dispose') },
+    _listenHandlers: new Map(),
+    _pendingGraphLayerProps: new Map(),
+    _pendingRendererProps: new Map(),
+    removeResizeListener: () => calls.push('resize.remove'),
+    _pickingListenersAttached: false,
+    attributeTracker: { destroy: () => calls.push('attributeTracker.destroy') },
+    indexPickingTracker: { destroy: () => calls.push('indexPickingTracker.destroy') },
+    renderer: { destroy: () => calls.push('renderer.destroy') },
+    _densityLayer: {},
+    _labels: { destroy: () => calls.push('labels.destroy') },
+    _legends: { destroy: () => calls.push('legends.destroy') },
+    network: { dispose: () => calls.push('network.dispose') },
+    layers: { destroy: () => calls.push('layers.destroy') },
+  });
+  return { helios, calls };
+}
+
+test('Helios destroy tears down behaviors and owned network once', () => {
+  const { helios, calls } = makeDestroyHarness();
+
+  helios.destroy();
+  helios.destroy();
+
+  assert.deepEqual(calls.filter((call) => call === 'behaviors.destroy'), ['behaviors.destroy']);
+  assert.deepEqual(calls.filter((call) => call === 'network.dispose'), ['network.dispose']);
+  assert.deepEqual(calls.filter((call) => call === 'layers.destroy'), ['layers.destroy']);
+  assert.equal(helios.network, null);
+});
+
+test('Helios destroy can leave caller-owned network alive', () => {
+  const { helios, calls } = makeDestroyHarness({ disposeNetworkOnDestroy: false });
+
+  helios.destroy();
+
+  assert.equal(calls.includes('network.dispose'), false);
+  assert.equal(helios.network, null);
+});
+
+test('Helios auto cleanup destroys when its root is removed', () => {
+  const previousMutationObserver = globalThis.MutationObserver;
+  const observers = [];
+  globalThis.MutationObserver = class MutationObserver {
+    constructor(callback) {
+      this.callback = callback;
+      this.observed = [];
+      this.disconnected = false;
+      observers.push(this);
+    }
+
+    observe(target, options) {
+      this.observed.push({ target, options });
+    }
+
+    disconnect() {
+      this.disconnected = true;
+    }
+  };
+
+  try {
+    const { helios, calls } = makeDestroyHarness();
+    const parent = {};
+    const root = { contains: (node) => node === root };
+    const container = {
+      parentNode: parent,
+      contains: (node) => node === root || node === container,
+    };
+    helios._autoCleanupObserver = null;
+    helios.layers.root = root;
+    helios.layers.container = container;
+
+    helios._setupAutoCleanup();
+    observers[0].callback([{ removedNodes: [root] }]);
+
+    assert.equal(observers[0].observed.length, 2);
+    assert.equal(observers[0].disconnected, true);
+    assert.equal(calls.includes('network.dispose'), true);
+  } finally {
+    globalThis.MutationObserver = previousMutationObserver;
+  }
 });
 
 test('behavior manager serializes and restores attached behavior state', () => {
