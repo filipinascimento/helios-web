@@ -7,6 +7,7 @@ export type SerializableValue =
   | { [key: string]: SerializableValue };
 
 export type HeliosMode = '2d' | '3d';
+export type DensityInteractionFilter = 'auto' | 'off' | 'selected' | 'highlighted' | 'selected-or-highlighted';
 export type DockSide = 'left' | 'right';
 export type InterfaceMode = 'desktop' | 'compact' | 'fullscreen';
 export type PersistenceKind = 'preferences' | 'visualization' | 'session';
@@ -327,6 +328,10 @@ export interface HoverBehaviorOptions {
   hoverLabel?: boolean;
   nodeHover?: boolean;
   edgeHover?: boolean;
+  hoverConnectedEdges?: boolean;
+  highlightConnectedEdges?: boolean;
+  hoverAffectsOtherElements?: boolean;
+  hoverStyleFromHighlight?: boolean;
   [key: string]: unknown;
 }
 
@@ -403,6 +408,9 @@ export interface LegendsBehaviorOptions {
   showNodeSize?: boolean;
   showEdgeWidth?: boolean;
   scalePreviewLegends?: boolean;
+  interactiveCategorical?: boolean;
+  legendHoverHighlight?: boolean;
+  legendClickSelect?: boolean;
   margin?: number;
   gap?: number;
   maxChars?: number;
@@ -416,6 +424,25 @@ export interface LegendsBehaviorOptions {
   fontFamily?: string | null;
   titles?: Partial<Record<'nodeColor' | 'density' | 'edgeColor' | 'nodeSize' | 'edgeWidth', string | null>>;
   placements?: Partial<Record<'nodeColor' | 'density' | 'edgeColor' | 'nodeSize' | 'edgeWidth', 'auto' | string | LegendPlacement>>;
+}
+
+export interface NodeHoverStyle {
+  sizeMul?: number;
+  opacityMul?: number;
+  outlineMul?: number;
+  discard?: boolean;
+  colorMul?: number[];
+  colorAdd?: number[];
+  forceMaxAlpha?: boolean;
+}
+
+export interface EdgeHoverStyle {
+  widthMul?: number;
+  opacityMul?: number;
+  discard?: boolean;
+  colorMul?: number[];
+  colorAdd?: number[];
+  forceMaxAlpha?: boolean;
 }
 
 export interface LegendsBehaviorState extends LegendsBehaviorOptions {
@@ -843,6 +870,18 @@ export class Helios extends EventTarget {
   transitionCamera(pose: Partial<CameraPose>, options?: CameraTransitionOptions): Promise<this>;
   stopCameraTransition(): this;
   frameNetwork(options?: FrameNetworkOptions): this;
+  nodeHoverStyle(): NodeHoverStyle | null;
+  nodeHoverStyle(style: NodeHoverStyle): this;
+  edgeHoverStyle(): EdgeHoverStyle | null;
+  edgeHoverStyle(style: EdgeHoverStyle): this;
+  hoverStyleFromHighlight(): boolean;
+  hoverStyleFromHighlight(value: boolean): this;
+  highlightConnectedEdges(): boolean;
+  highlightConnectedEdges(value: boolean): this;
+  setNodeHoverStyle(style: NodeHoverStyle): this;
+  setEdgeHoverStyle(style: EdgeHoverStyle): this;
+  setHoverStyleFromHighlight(value: boolean): this;
+  setHighlightConnectedEdges(value: boolean): this;
   mode(): HeliosMode;
   setMode(mode: HeliosMode, options?: Record<string, unknown>): Promise<this>;
   loadNetwork(source: Blob | ArrayBuffer | Uint8Array | string, options?: Record<string, unknown>): Promise<unknown>;
@@ -851,11 +890,15 @@ export class Helios extends EventTarget {
 export interface HeliosOptions extends Record<string, unknown> {
   container?: string | HTMLElement | null;
   canvas?: HTMLCanvasElement | null;
+  hoverStyleFromHighlight?: boolean;
+  highlightConnectedEdges?: boolean;
+  hoverAffectsOtherElements?: boolean;
   mode?: HeliosMode;
   autoCleanup?: boolean;
   disposeNetworkOnDestroy?: boolean;
   legends?: LegendsBehaviorOptions;
   labels?: LabelsBehaviorOptions;
+  densityInteractionFilter?: DensityInteractionFilter;
   /**
    * Built-in behaviors attach by default. Pass an object to tune individual
    * behaviors, custom behavior instances to attach extra behavior, or `false`

@@ -297,9 +297,15 @@ export class SelectionBehavior extends Behavior {
       for (const index of this.state.selectedNodes) {
         if (!nextIndexSet.has(index)) toRemove.push(index);
       }
+    } else if (mode === 'remove') {
+      for (const index of nextIndices) {
+        if (this.state.selectedNodes.has(index)) toRemove.push(index);
+      }
     }
-    for (const index of nextIndices) {
-      if (!this.state.selectedNodes.has(index)) toAdd.push(index);
+    if (mode !== 'remove') {
+      for (const index of nextIndices) {
+        if (!this.state.selectedNodes.has(index)) toAdd.push(index);
+      }
     }
     if (toRemove.length) {
       helios.nodeState?.(toRemove, 'SELECTED', { mode: 'remove' });
@@ -326,9 +332,15 @@ export class SelectionBehavior extends Behavior {
       for (const index of this.state.selectedEdges) {
         if (!nextIndexSet.has(index)) toRemove.push(index);
       }
+    } else if (mode === 'remove') {
+      for (const index of nextIndices) {
+        if (this.state.selectedEdges.has(index)) toRemove.push(index);
+      }
     }
-    for (const index of nextIndices) {
-      if (!this.state.selectedEdges.has(index)) toAdd.push(index);
+    if (mode !== 'remove') {
+      for (const index of nextIndices) {
+        if (!this.state.selectedEdges.has(index)) toAdd.push(index);
+      }
     }
     if (toRemove.length) {
       helios.edgeState?.(toRemove, 'SELECTED', { mode: 'remove' });

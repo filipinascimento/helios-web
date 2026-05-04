@@ -4637,6 +4637,13 @@ export class MappersPanel {
         return state?.colormap;
       };
       const listDensityCompareAttributes = (property) => listDensityAttributes().filter((value) => value !== property);
+      const DENSITY_INTERACTION_FILTERS = [
+        { value: 'auto', label: 'Auto' },
+        { value: 'off', label: 'All Active' },
+        { value: 'selected', label: 'Selected' },
+        { value: 'highlighted', label: 'Highlighted' },
+        { value: 'selected-or-highlighted', label: 'Selected, then Highlighted' },
+      ];
       const RESOLUTION_PRESETS = [
         { value: 0.05, label: '1/20' },
         { value: 0.1, label: '1/10' },
@@ -5017,6 +5024,24 @@ export class MappersPanel {
         controls: resolutionWrap,
       }).row);
 
+      const interactionFilterSelect = document.createElement('select');
+      interactionFilterSelect.className = 'helios-ui-select';
+      interactionFilterSelect.setAttribute('aria-label', 'Density Focus');
+      for (const option of DENSITY_INTERACTION_FILTERS) {
+        const el = document.createElement('option');
+        el.value = option.value;
+        el.textContent = option.label;
+        interactionFilterSelect.appendChild(el);
+      }
+      interactionFilterSelect.addEventListener('change', () => {
+        applyDensity({ interactionFilter: interactionFilterSelect.value });
+      });
+      editorBody.appendChild(createAlignedRow({
+        title: 'Focus',
+        hint: 'Choose which active nodes contribute to density. Auto uses selected nodes first, then real highlighted nodes, then all active nodes.',
+        controls: interactionFilterSelect,
+      }).row);
+
       const colormapPicker = new ColormapPickerControl({
         catalog: colormapCatalog,
         portalRoot: ui?.container ?? document.body,
@@ -5123,6 +5148,9 @@ export class MappersPanel {
 
         comparisonModeSelect.value = logRatioMode ? 'logRatio' : 'difference';
         enabledToggle.checked = state.enabled === true;
+        interactionFilterSelect.value = DENSITY_INTERACTION_FILTERS.some((entry) => entry.value === state.interactionFilter)
+          ? state.interactionFilter
+          : 'auto';
         reliefToggle.checked = state.topographic === true;
         normalizeToggle.checked = state.normalizeVs === true;
         zScoreToggle.checked = state.logRatioZScore === true;

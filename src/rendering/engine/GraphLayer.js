@@ -214,8 +214,18 @@ export class GraphLayer extends Layer {
 
     this.hoveredNodeIndex = GraphLayer.NO_HOVER_INDEX;
     this.hoveredNodeState = 0;
+    this.hoveredNodeIsVirtual = false;
     this.hoveredEdgeIndex = GraphLayer.NO_HOVER_INDEX;
     this.hoveredEdgeState = 0;
+    this.hoveredEdgeIsVirtual = false;
+    this.nodeHoverScale = new Float32Array([1.35, 1, 1.1, 0]);
+    this.nodeHoverColorMul = new Float32Array([1, 1, 1, 1]);
+    this.nodeHoverColorAdd = new Float32Array([0.08, 0.08, 0.08, 0]);
+    this.nodeHoverForceMaxAlpha = false;
+    this.edgeHoverScale = new Float32Array([1.35, 50, 1, 0]);
+    this.edgeHoverColorMul = new Float32Array([1, 1, 1, 1]);
+    this.edgeHoverColorAdd = new Float32Array([0.08, 0.08, 0.08, 0]);
+    this.edgeHoverForceMaxAlpha = false;
     this.positionDelegate = null;
     this.positionInterpolation = {
       enabled: false,
@@ -429,6 +439,7 @@ export class GraphLayer extends Layer {
         : (Number(index) >>> 0);
     this.hoveredNodeIndex = nextIndex;
     this.hoveredNodeState = (Number(mask) >>> 0);
+    this.hoveredNodeIsVirtual = false;
     return this;
   }
 
@@ -439,7 +450,53 @@ export class GraphLayer extends Layer {
         : (Number(index) >>> 0);
     this.hoveredEdgeIndex = nextIndex;
     this.hoveredEdgeState = (Number(mask) >>> 0);
+    this.hoveredEdgeIsVirtual = false;
     return this;
+  }
+
+  setNodeHoverStyle(style = {}) {
+    if (style.sizeMul != null) this.nodeHoverScale[0] = Number(style.sizeMul);
+    if (style.opacityMul != null) this.nodeHoverScale[1] = Number(style.opacityMul);
+    if (style.outlineMul != null) this.nodeHoverScale[2] = Number(style.outlineMul);
+    if (style.discard != null) this.nodeHoverScale[3] = style.discard ? 1 : 0;
+    if (style.colorMul != null) {
+      const v = style.colorMul;
+      this.nodeHoverColorMul[0] = v[0] ?? this.nodeHoverColorMul[0];
+      this.nodeHoverColorMul[1] = v[1] ?? this.nodeHoverColorMul[1];
+      this.nodeHoverColorMul[2] = v[2] ?? this.nodeHoverColorMul[2];
+      this.nodeHoverColorMul[3] = v[3] ?? this.nodeHoverColorMul[3];
+    }
+    if (style.colorAdd != null) {
+      const v = style.colorAdd;
+      this.nodeHoverColorAdd[0] = v[0] ?? this.nodeHoverColorAdd[0];
+      this.nodeHoverColorAdd[1] = v[1] ?? this.nodeHoverColorAdd[1];
+      this.nodeHoverColorAdd[2] = v[2] ?? this.nodeHoverColorAdd[2];
+      this.nodeHoverColorAdd[3] = v[3] ?? this.nodeHoverColorAdd[3];
+    }
+    if (style.forceMaxAlpha != null) this.nodeHoverForceMaxAlpha = style.forceMaxAlpha === true;
+    this._hoverLast = null;
+  }
+
+  setEdgeHoverStyle(style = {}) {
+    if (style.widthMul != null) this.edgeHoverScale[0] = Number(style.widthMul);
+    if (style.opacityMul != null) this.edgeHoverScale[1] = Number(style.opacityMul);
+    if (style.discard != null) this.edgeHoverScale[3] = style.discard ? 1 : 0;
+    if (style.colorMul != null) {
+      const v = style.colorMul;
+      this.edgeHoverColorMul[0] = v[0] ?? this.edgeHoverColorMul[0];
+      this.edgeHoverColorMul[1] = v[1] ?? this.edgeHoverColorMul[1];
+      this.edgeHoverColorMul[2] = v[2] ?? this.edgeHoverColorMul[2];
+      this.edgeHoverColorMul[3] = v[3] ?? this.edgeHoverColorMul[3];
+    }
+    if (style.colorAdd != null) {
+      const v = style.colorAdd;
+      this.edgeHoverColorAdd[0] = v[0] ?? this.edgeHoverColorAdd[0];
+      this.edgeHoverColorAdd[1] = v[1] ?? this.edgeHoverColorAdd[1];
+      this.edgeHoverColorAdd[2] = v[2] ?? this.edgeHoverColorAdd[2];
+      this.edgeHoverColorAdd[3] = v[3] ?? this.edgeHoverColorAdd[3];
+    }
+    if (style.forceMaxAlpha != null) this.edgeHoverForceMaxAlpha = style.forceMaxAlpha === true;
+    this._hoverLast = null;
   }
 
   resetStateStyles() {

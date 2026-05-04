@@ -23,7 +23,7 @@ const DEFAULT_CONFIG = Object.freeze({
   source: null,
   selectionMode: 'ranked',
   pinnedNodes: [],
-  selectedOnlySpaceAware: false,
+  selectedOnlySpaceAware: true,
   hoveredNodeEnabled: false,
   hoveredNodeSource: null,
   fallbackSources: ['Label', 'Name', '$id'],

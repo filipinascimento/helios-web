@@ -20,6 +20,16 @@ export const DEFAULT_NODE_HIGHLIGHT_STYLE = Object.freeze({
   colorAdd: [0.02, 0.18, 0.34, 0],
 });
 
+export const DEFAULT_NODE_HOVER_STYLE = Object.freeze({
+  sizeMul: 1.35,
+  opacityMul: 1,
+  outlineMul: 1.1,
+  discard: false,
+  forceMaxAlpha: false,
+  colorMul: [1, 1, 1, 1],
+  colorAdd: [0.08, 0.08, 0.08, 0],
+});
+
 export const DEFAULT_EDGE_SELECTED_STYLE = Object.freeze({
   widthMul: 1.5,
   opacityMul: 1,
@@ -36,6 +46,15 @@ export const DEFAULT_EDGE_HIGHLIGHT_STYLE = Object.freeze({
   forceMaxAlpha: false,
   colorMul: [1, 1, 1, 1],
   colorAdd: [0.03, 0.16, 0.28, 0],
+});
+
+export const DEFAULT_EDGE_HOVER_STYLE = Object.freeze({
+  widthMul: 1.35,
+  opacityMul: 50,
+  discard: false,
+  forceMaxAlpha: false,
+  colorMul: [1, 1, 1, 1],
+  colorAdd: [0.08, 0.08, 0.08, 0],
 });
 
 export const NEUTRAL_NODE_NO_STATE_STYLE = Object.freeze({
@@ -58,9 +77,9 @@ export const NEUTRAL_EDGE_NO_STATE_STYLE = Object.freeze({
 });
 
 export const DEFAULT_OTHER_SELECTED_NODE_STYLE = Object.freeze({
-  sizeMul: 0.9,
+  sizeMul: 0.75,
   opacityMul: 1,
-  outlineMul: 0.72,
+  outlineMul: 0.75,
   discard: false,
   forceMaxAlpha: false,
   colorMul: [1, 1, 1, 1],
@@ -68,8 +87,8 @@ export const DEFAULT_OTHER_SELECTED_NODE_STYLE = Object.freeze({
 });
 
 export const DEFAULT_OTHER_SELECTED_EDGE_STYLE = Object.freeze({
-  widthMul: 0.84,
-  opacityMul: 0.82,
+  widthMul: 0.85,
+  opacityMul: 0.85,
   discard: false,
   forceMaxAlpha: false,
   colorMul: [1, 1, 1, 1],
@@ -77,9 +96,9 @@ export const DEFAULT_OTHER_SELECTED_EDGE_STYLE = Object.freeze({
 });
 
 export const DEFAULT_OTHER_HIGHLIGHT_NODE_STYLE = Object.freeze({
-  sizeMul: 1,
+  sizeMul: 0.9,
   opacityMul: 1,
-  outlineMul: 1,
+  outlineMul: 0.9,
   discard: false,
   forceMaxAlpha: false,
   colorMul: [1, 1, 1, 1],
@@ -87,8 +106,8 @@ export const DEFAULT_OTHER_HIGHLIGHT_NODE_STYLE = Object.freeze({
 });
 
 export const DEFAULT_OTHER_HIGHLIGHT_EDGE_STYLE = Object.freeze({
-  widthMul: 1,
-  opacityMul: 1,
+  widthMul: 0.9,
+  opacityMul: 0.9,
   discard: false,
   forceMaxAlpha: false,
   colorMul: [1, 1, 1, 1],
@@ -96,13 +115,13 @@ export const DEFAULT_OTHER_HIGHLIGHT_EDGE_STYLE = Object.freeze({
 });
 
 export const DEFAULT_AUTO_BACKGROUND_TONE_DISABLED = Object.freeze({
-  enabled: false,
-  amount: 0.35,
+  enabled: true,
+  amount: 0.15,
 });
 
 export const DEFAULT_AUTO_BACKGROUND_TONE_SELECTED = Object.freeze({
   enabled: true,
-  amount: 0.38,
+  amount: 0.4,
 });
 
 export const DEFAULT_SELECTION_FOCUS_MAX_ZOOM = 3;

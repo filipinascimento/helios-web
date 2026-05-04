@@ -27,6 +27,9 @@ const DEFAULT_CONFIG = Object.freeze({
   showEdgeColor: true,
   showNodeSize: false,
   showEdgeWidth: false,
+  interactiveCategorical: true,
+  legendHoverHighlight: true,
+  legendClickSelect: true,
   titles: Object.freeze({}),
   placements: Object.freeze({
     nodeColor: 'auto',
@@ -244,6 +247,31 @@ function dedupeTicks(values) {
   return ticks.sort((a, b) => a - b);
 }
 
+function scheduleAfterPaint(callback) {
+  let cancelled = false;
+  let frameId = null;
+  let timerId = null;
+  const run = () => {
+    if (!cancelled) callback();
+  };
+  const scheduleTimer = () => {
+    if (cancelled) return;
+    timerId = setTimeout(run, 0);
+  };
+  if (typeof requestAnimationFrame === 'function') {
+    frameId = requestAnimationFrame(scheduleTimer);
+  } else {
+    scheduleTimer();
+  }
+  return {
+    cancel() {
+      cancelled = true;
+      if (frameId != null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frameId);
+      if (timerId != null) clearTimeout(timerId);
+    },
+  };
+}
+
 function niceStep(span, count) {
   const safeSpan = Math.abs(Number(span));
   if (!Number.isFinite(safeSpan) || safeSpan <= 0) return 1;
@@ -414,12 +442,18 @@ function categoricalLegendEntries(channel, network, scope) {
     const numericValue = Number(value);
     const label = labelsById?.get(numericValue) || String(value);
     return {
+      scope,
+      attribute: attributeName,
+      categoryValue: Number.isFinite(numericValue) ? numericValue : value,
       label,
       color: rgbaArrayToCss(range[index % range.length]),
     };
   });
   if (channel?.defaultValue != null && hasOthers) {
     entries.push({
+      scope,
+      attribute: attributeName,
+      categoryValue: null,
       label: String(channel?.meta?.legendOthersLabel ?? DEFAULT_CATEGORICAL_OTHERS_LABEL),
       color: rgbaArrayToCss(channel.defaultValue),
     });
@@ -791,6 +825,9 @@ export class SvgLegendController {
       placements: normalizePlacements(DEFAULT_CONFIG.placements),
     };
     this._lastSignature = '';
+    this._activeLegendHover = null;
+    this._pendingLegendHover = null;
+    this._pendingLegendHoverClear = null;
 
     const svg = this.helios?.layers?.svg ?? null;
     if (!svg || typeof document === 'undefined') {
@@ -810,6 +847,8 @@ export class SvgLegendController {
   }
 
   destroy() {
+    this._cancelPendingLegendHover();
+    this._cancelPendingLegendHoverClear();
     this.group?.remove?.();
     this.group = null;
     this.defs = null;
@@ -854,6 +893,9 @@ export class SvgLegendController {
     if (Object.prototype.hasOwnProperty.call(options, 'showEdgeColor')) next.showEdgeColor = options.showEdgeColor !== false;
     if (Object.prototype.hasOwnProperty.call(options, 'showNodeSize')) next.showNodeSize = options.showNodeSize === true;
     if (Object.prototype.hasOwnProperty.call(options, 'showEdgeWidth')) next.showEdgeWidth = options.showEdgeWidth === true;
+    if (Object.prototype.hasOwnProperty.call(options, 'interactiveCategorical')) next.interactiveCategorical = options.interactiveCategorical !== false;
+    if (Object.prototype.hasOwnProperty.call(options, 'legendHoverHighlight')) next.legendHoverHighlight = options.legendHoverHighlight !== false;
+    if (Object.prototype.hasOwnProperty.call(options, 'legendClickSelect')) next.legendClickSelect = options.legendClickSelect !== false;
     if (Object.prototype.hasOwnProperty.call(options, 'titles')) {
       next.titles = normalizeLegendTitles(options.titles, next.titles);
     }
@@ -932,6 +974,7 @@ export class SvgLegendController {
       insets: typeof this.helios.overlayInsets === 'function' ? this.helios.overlayInsets() : null,
       background: this.helios.background?.() ?? null,
       config: this._config,
+      interaction: this._legendInteractionSignature(items),
     });
     if (signature === this._lastSignature) return false;
     this._lastSignature = signature;
@@ -955,7 +998,13 @@ export class SvgLegendController {
   }
 
   _clear() {
+    this._cancelPendingLegendHover();
+    this._cancelPendingLegendHoverClear();
     this._lastSignature = '';
+    this._removeLegendChildren();
+  }
+
+  _removeLegendChildren() {
     if (!this.group) return;
     for (const child of Array.from(this.group.children)) {
       if (child !== this.defs) child.remove();
@@ -1049,6 +1098,7 @@ export class SvgLegendController {
     anchor = 'start',
     baseline = 'hanging',
     rotation = null,
+    fontStyle = 'normal',
   }) {
     const text = document.createElementNS(SVG_NS, 'text');
     text.setAttribute('x', `${x}`);
@@ -1057,6 +1107,7 @@ export class SvgLegendController {
     text.setAttribute('font-family', config.fontFamily);
     text.setAttribute('font-size', `${fontSize}`);
     text.setAttribute('font-weight', fontWeight);
+    text.setAttribute('font-style', fontStyle);
     text.setAttribute('text-anchor', anchor);
     text.setAttribute('dominant-baseline', baseline);
     if (rotation != null) text.setAttribute('transform', `rotate(${rotation}, ${x}, ${y})`);
@@ -1083,12 +1134,13 @@ export class SvgLegendController {
     anchor = 'start',
     baseline = 'hanging',
     rotation = null,
+    fontStyle = 'normal',
   }) {
     const appended = [];
     if (config.textOutline !== false && outline) {
       const outlineWidth = resolveTextOutlineStrokeWidth(config, fontSize);
       const outlineText = this._createTextElement({
-        x, y, lines, fill: outline, config, fontWeight, fontSize, anchor, baseline, rotation,
+        x, y, lines, fill: outline, config, fontWeight, fontSize, anchor, baseline, rotation, fontStyle,
       });
       setSvgPaintAttributes(outlineText, 'stroke', outline, '#000000');
       outlineText.setAttribute('stroke-width', `${outlineWidth}`);
@@ -1098,7 +1150,7 @@ export class SvgLegendController {
       appended.push(outlineText);
     }
     const text = this._createTextElement({
-      x, y, lines, fill, config, fontWeight, fontSize, anchor, baseline, rotation,
+      x, y, lines, fill, config, fontWeight, fontSize, anchor, baseline, rotation, fontStyle,
     });
     group.appendChild(text);
     appended.push(text);
@@ -1106,7 +1158,7 @@ export class SvgLegendController {
   }
 
   _render(positioned) {
-    this._clear();
+    this._removeLegendChildren();
     if (!this.group) return;
     this._renderInto(this.group, this.defs, positioned, this._config, this._theme());
   }
@@ -1164,7 +1216,70 @@ export class SvgLegendController {
     }
     let y = metrics.paddingY + (item.titleLines.length * metrics.lineHeight) + (item.entries.length ? metrics.titleGap : 0);
     for (const entry of item.entries) {
+      const row = document.createElementNS(SVG_NS, 'g');
+      row.setAttribute('class', 'helios-legend-row');
+      const interactive = this._isInteractiveCategory(item, entry, config);
+      if (interactive) {
+        let suppressClick = false;
+        row.setAttribute('pointer-events', 'all');
+        row.setAttribute('cursor', 'pointer');
+        row.dataset.scope = entry.scope;
+        row.dataset.attribute = entry.attribute;
+        row.dataset.categoryValue = String(entry.categoryValue);
+        if (row.style) {
+          row.style.touchAction = 'manipulation';
+          row.style.webkitTapHighlightColor = 'transparent';
+        }
+        const handleEnter = () => {
+          this._setCategoryRowVisual(row, { selected: this._isCategoryRowSelected(row), hovered: true, theme });
+          this._handleCategoryEnter(item, entry);
+        };
+        const handleLeave = () => {
+          this._setCategoryRowVisual(row, { selected: this._isCategoryRowSelected(row), hovered: false, theme });
+          this._handleCategoryLeave(item, entry);
+        };
+        row.addEventListener('pointerenter', handleEnter);
+        row.addEventListener('pointerleave', handleLeave);
+        row.addEventListener('pointerover', (event) => {
+          if (event?.relatedTarget && row.contains?.(event.relatedTarget)) return;
+          handleEnter();
+        });
+        row.addEventListener('pointerout', (event) => {
+          if (event?.relatedTarget && row.contains?.(event.relatedTarget)) return;
+          handleLeave();
+        });
+        row.addEventListener('pointerup', (event) => {
+          if (event.button != null && event.button !== 0) return;
+          suppressClick = true;
+          this._handleCategoryClick(event, item, entry);
+        });
+        row.addEventListener('click', (event) => {
+          if (suppressClick) {
+            suppressClick = false;
+            event?.preventDefault?.();
+            event?.stopPropagation?.();
+            return;
+          }
+          this._handleCategoryClick(event, item, entry);
+        });
+      }
       const rowHeight = Math.max(metrics.swatchSize, entry.lines.length * metrics.lineHeight);
+      if (interactive) {
+        const hit = document.createElementNS(SVG_NS, 'rect');
+        hit.setAttribute('x', `${metrics.paddingX - 3}`);
+        hit.setAttribute('y', `${y - 2}`);
+        hit.setAttribute('width', `${Math.max(1, item.box.width - (metrics.paddingX * 2) + 6)}`);
+        hit.setAttribute('height', `${rowHeight + 4}`);
+        hit.setAttribute('rx', '4');
+        hit.setAttribute('ry', '4');
+        hit.setAttribute('fill', 'transparent');
+        hit.setAttribute('stroke-width', '1.5');
+        hit.setAttribute('stroke', 'transparent');
+        hit.setAttribute('stroke-opacity', '0');
+        hit.setAttribute('vector-effect', 'non-scaling-stroke');
+        row.__heliosLegendRowOutline = hit;
+        row.appendChild(hit);
+      }
       const singleLine = entry.lines.length === 1;
       const firstLineCenterY = y + (metrics.fontSize * 0.68);
       const rowCenterY = y + (rowHeight * 0.5);
@@ -1180,7 +1295,7 @@ export class SvgLegendController {
       swatch.setAttribute('ry', '3');
       setSvgPaintAttributes(swatch, 'fill', entry.color, '#808080');
       setSvgPaintAttributes(swatch, 'stroke', withAlpha(theme.textOutline, 0.35), '#000000');
-      group.appendChild(swatch);
+      row.appendChild(swatch);
       this._appendText(group, {
         x: metrics.paddingX + metrics.swatchSize + metrics.swatchGap,
         y: (singleLine ? rowCenterY : firstLineCenterY) + (metrics.fontSize * 0.34),
@@ -1190,9 +1305,204 @@ export class SvgLegendController {
         outline: theme.textOutline,
         fontSize: metrics.fontSize,
         baseline: 'alphabetic',
+      }).forEach((node) => {
+        node.remove();
+        row.appendChild(node);
+        if (interactive) {
+          const nodes = row.__heliosLegendRowTextNodes ?? [];
+          nodes.push(node);
+          row.__heliosLegendRowTextNodes = nodes;
+        }
       });
+      if (interactive) {
+        this._setCategoryRowVisual(row, {
+          selected: this._isCategorySelected(entry),
+          hovered: this._isActiveLegendHoverEntry(item, entry),
+          theme,
+        });
+      }
+      group.appendChild(row);
       y += rowHeight + metrics.entryGap;
     }
+  }
+
+  _legendInteractionSignature(items) {
+    const signatures = [];
+    for (const item of items ?? []) {
+      if (item?.legendType !== 'categorical') continue;
+      for (const entry of item.entries ?? []) {
+        if (!this._isInteractiveCategory(item, entry)) continue;
+        signatures.push([
+          item.kind,
+          entry.attribute,
+          String(entry.categoryValue),
+          this._isCategorySelected(entry),
+        ]);
+      }
+    }
+    return signatures;
+  }
+
+  _selectionBehavior() {
+    return this.helios?.getBehavior?.('selection') ?? this.helios?.behavior?.selection ?? null;
+  }
+
+  _isCategorySelected(entry) {
+    const selected = this._selectionBehavior()?.state?.selectedNodes ?? null;
+    if (!selected?.size) return false;
+    const nodes = this._collectCategoryNodes(entry);
+    return nodes.length > 0 && nodes.every((id) => selected.has(id));
+  }
+
+  _isCategoryRowSelected(row) {
+    return row?.dataset?.selected === 'true';
+  }
+
+  _categoryEntryKey(item, entry) {
+    if (!item || !entry) return '';
+    return [
+      item.kind ?? '',
+      entry.scope ?? '',
+      entry.attribute ?? '',
+      String(entry.categoryValue ?? ''),
+    ].join('\u0000');
+  }
+
+  _isActiveLegendHoverEntry(item, entry) {
+    const active = this._activeLegendHover;
+    if (!active?.item || !active?.entry) return false;
+    return this._categoryEntryKey(active.item, active.entry) === this._categoryEntryKey(item, entry);
+  }
+
+  _setCategoryRowVisual(row, { selected = false, hovered = false, theme = this._theme() } = {}) {
+    if (!row) return;
+    row.dataset.selected = selected ? 'true' : 'false';
+    row.dataset.hovered = hovered ? 'true' : 'false';
+    const outline = row.__heliosLegendRowOutline ?? null;
+    if (outline) {
+      const stroke = selected
+        ? withAlpha(theme.text, 0.72)
+        : hovered
+          ? withAlpha(theme.text, 0.38)
+          : 'transparent';
+      setSvgPaintAttributes(outline, 'stroke', stroke, '#808080');
+      if (!selected && !hovered) outline.setAttribute('stroke-opacity', '0');
+    }
+  }
+
+  _isInteractiveCategory(item, entry, config = this._config) {
+    return config.interactiveCategorical !== false
+      && item?.kind === 'nodeColor'
+      && entry?.scope === 'node'
+      && typeof entry.attribute === 'string'
+      && entry.attribute
+      && entry.categoryValue != null;
+  }
+
+  _collectCategoryNodes(entry) {
+    const network = this.helios?.network ?? null;
+    if (!network || !entry?.attribute) return [];
+    return network.withBufferAccess?.(() => {
+      const ids = network.nodeIndices ?? [];
+      const view = network.getNodeAttributeBuffer?.(entry.attribute)?.view ?? null;
+      if (!view) return [];
+      const matches = [];
+      for (const idRaw of ids) {
+        const id = Number(idRaw);
+        if (Number(view[id]) === Number(entry.categoryValue)) matches.push(id);
+      }
+      return matches;
+    }) ?? [];
+  }
+
+  _collectConnectedEdges(nodeIds) {
+    const network = this.helios?.network ?? null;
+    const nodes = new Set(nodeIds ?? []);
+    if (!network || !nodes.size) return [];
+    return network.withBufferAccess?.(() => {
+      const ids = network.edgeIndices ?? [];
+      const edges = network.edgesView ?? null;
+      if (!edges) return [];
+      const matches = [];
+      for (const edgeRaw of ids) {
+        const edge = Number(edgeRaw);
+        const source = Number(edges[edge * 2]);
+        const target = Number(edges[edge * 2 + 1]);
+        if (nodes.has(source) || nodes.has(target)) matches.push(edge);
+      }
+      return matches;
+    }) ?? [];
+  }
+
+  _cancelPendingLegendHover() {
+    const pending = this._pendingLegendHover;
+    this._pendingLegendHover = null;
+    try {
+      pending?.cancel?.();
+    } catch (_) {
+      // ignore cancellation failures
+    }
+  }
+
+  _cancelPendingLegendHoverClear() {
+    const pending = this._pendingLegendHoverClear;
+    this._pendingLegendHoverClear = null;
+    if (pending != null) clearTimeout(pending);
+  }
+
+  _handleCategoryEnter(item, entry) {
+    if (this._config.legendHoverHighlight === false || !this._isInteractiveCategory(item, entry)) return;
+    this._cancelPendingLegendHover();
+    this._cancelPendingLegendHoverClear();
+    this._activeLegendHover = { item, entry };
+    this._pendingLegendHover = scheduleAfterPaint(() => {
+      this._pendingLegendHover = null;
+      if (this._activeLegendHover?.entry !== entry) return;
+      const nodes = this._collectCategoryNodes(entry);
+      this.helios?._setHighlightSource?.('legend:hover', { nodes });
+    });
+  }
+
+  _handleCategoryLeave(item, entry) {
+    this._cancelPendingLegendHover();
+    if (!this._activeLegendHover) return;
+    this._cancelPendingLegendHoverClear();
+    this._pendingLegendHoverClear = setTimeout(() => {
+      this._pendingLegendHoverClear = null;
+      this._activeLegendHover = null;
+      this.helios?._clearHighlightSource?.('legend:hover');
+      this.helios?.updateDensityMap?.();
+    }, 40);
+  }
+
+  _handleCategoryClick(event, item, entry) {
+    if (this._config.legendClickSelect === false || !this._isInteractiveCategory(item, entry)) return;
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    this._cancelPendingLegendHover();
+    this._cancelPendingLegendHoverClear();
+    const nodes = this._collectCategoryNodes(entry);
+    const selection = this.helios?.getBehavior?.('selection') ?? this.helios?.behavior?.selection ?? null;
+    if (!selection?.selectNodes) return;
+    const selected = selection.state?.selectedNodes ?? new Set();
+    const fullySelected = nodes.length > 0 && nodes.every((id) => selected.has(id));
+    if (fullySelected) {
+      selection.selectNodes(nodes, { mode: 'remove' });
+    } else if (event?.shiftKey === true) {
+      selection.selectNodes(nodes, { mode: 'add' });
+    } else {
+      selection.clearSelection?.();
+      selection.selectNodes(nodes, { mode: 'replace' });
+    }
+    const row = event?.currentTarget ?? event?.target ?? null;
+    if (row) {
+      this._setCategoryRowVisual(row, {
+        selected: this._isCategorySelected(entry),
+        hovered: true,
+        theme: this._theme(),
+      });
+    }
+    this.helios?.updateDensityMap?.();
   }
 
   _renderContinuousLegend(group, item, theme, config = this._config, defs = this.defs) {

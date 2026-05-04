@@ -1,5 +1,6 @@
 import { Layer } from './Layer.js';
 import { resolveColormap } from '../../colors/colormaps.js';
+import { NODE_STATE_ATTRIBUTE } from '../../pipeline/constants.js';
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -615,7 +616,15 @@ function defaultDensityConfig() {
     colormap: 'interpolateOrRd',
     logRatioColormap: 'cmasher:prinsenvlag',
     divergingColormap: 'cmasher:prinsenvlag',
+    interactionFilter: 'auto',
   };
+}
+
+function normalizeInteractionFilter(value, fallback = 'auto') {
+  const raw = String(value ?? '').trim();
+  return ['auto', 'off', 'selected', 'highlighted', 'selected-or-highlighted'].includes(raw)
+    ? raw
+    : fallback;
 }
 
 export class DensityLayer extends Layer {
@@ -745,6 +754,10 @@ export class DensityLayer extends Layer {
     merged.normalizeVs = merged.normalizeVs === true;
     merged.logRatioZScore = merged.logRatioZScore === true;
     merged.logRatioSupportCorrection = merged.logRatioSupportCorrection !== false;
+    merged.interactionFilter = normalizeInteractionFilter(
+      merged.interactionFilter ?? merged.densityInteractionFilter,
+      this.config.interactionFilter,
+    );
     merged.scaleWithZoom = merged.scaleWithZoom === true;
     merged.comparisonMode = normalizeComparisonMode(merged.comparisonMode, this.config.comparisonMode);
     merged.qualityScale = clamp(toFiniteNumber(merged.qualityScale, this.config.qualityScale), 0.03, 1.0);
@@ -932,6 +945,16 @@ export class DensityLayer extends Layer {
     return this.withBufferAccess(() => this.computeWeightsUnsafe(network, config));
   }
 
+  computeNodeIndexVersion(nodeIndices, count = nodeIndices?.length ?? 0) {
+    if (!nodeIndices || count <= 0) return 'empty';
+    let hash = 2166136261 >>> 0;
+    for (let i = 0; i < count; i += 1) {
+      hash ^= (Number(nodeIndices[i] ?? 0) >>> 0);
+      hash = Math.imul(hash, 16777619) >>> 0;
+    }
+    return `${count}:${hash.toString(16)}`;
+  }
+
   computeWeightsUnsafe(network, config) {
     const compareEnabled = config.compareProperty && config.compareProperty !== 'None';
     const needsEdgeIndices = config.property === 'Degree' || (compareEnabled && config.compareProperty === 'Degree');
@@ -1009,9 +1032,15 @@ export class DensityLayer extends Layer {
             valueDomain: null,
           };
         } else {
+          const focusedNodeIndices = this.applyInteractionFilter(network, config, nodeIndices);
+          const focusedCount = focusedNodeIndices?.length ?? 0;
           result = config.comparisonMode === 'logRatio'
-            ? this.buildLogRatioComputed(network, config, nodeIndices, edgeIndices, count)
-            : this.buildDifferenceComputed(network, config, nodeIndices, edgeIndices, count);
+            ? this.buildLogRatioComputed(network, config, focusedNodeIndices, edgeIndices, focusedCount)
+            : this.buildDifferenceComputed(network, config, focusedNodeIndices, edgeIndices, focusedCount);
+          if (result) {
+            result.nodeIndexVersion = this.computeNodeIndexVersion(result.nodeIndices, result.count);
+            result.usesActiveNodeIndexBuffer = result.nodeIndices === nodeIndices;
+          }
         }
       }
 
@@ -1040,6 +1069,33 @@ export class DensityLayer extends Layer {
       colormapKey: config.colormap,
       valueDomain: null,
     };
+  }
+
+  applyInteractionFilter(network, config, nodeIndices) {
+    const mode = normalizeInteractionFilter(config?.interactionFilter, 'auto');
+    if (mode === 'off' || !nodeIndices?.length) return nodeIndices;
+    let stateView = null;
+    try {
+      stateView = network?.getNodeAttributeBuffer?.(NODE_STATE_ATTRIBUTE)?.view ?? null;
+    } catch (_) {
+      stateView = null;
+    }
+    if (!stateView) return nodeIndices;
+    const selected = [];
+    const highlighted = [];
+    for (let i = 0; i < nodeIndices.length; i += 1) {
+      const id = nodeIndices[i] >>> 0;
+      const state = Number(stateView[id] ?? 0) >>> 0;
+      if ((state & 2) !== 0) selected.push(id);
+      if ((state & 4) !== 0) highlighted.push(id);
+    }
+    let focus = null;
+    if (mode === 'selected') focus = selected.length ? selected : null;
+    else if (mode === 'highlighted') focus = highlighted.length ? highlighted : null;
+    else if (mode === 'selected-or-highlighted' || mode === 'auto') {
+      focus = selected.length ? selected : (highlighted.length ? highlighted : null);
+    }
+    return focus ? Uint32Array.from(focus) : nodeIndices;
   }
 
   buildDifferenceComputed(network, config, nodeIndices, edgeIndices, count) {
@@ -1800,7 +1856,7 @@ export class DensityLayer extends Layer {
     }
 
     const nodeIndices = computed.nodeIndices;
-    const indexKey = `${nodeIndices.buffer}|${nodeIndices.byteOffset}|${nodeIndices.byteLength}|${computed.count}`;
+    const indexKey = computed.nodeIndexVersion ?? this.computeNodeIndexVersion(nodeIndices, computed.count);
     if (this.webgl.nodeIndicesMeta?.version !== indexKey) {
       this.webgl.nodeIndicesLayout = this.uploadWebGLUintTexture(
         gl,
@@ -2272,7 +2328,9 @@ export class DensityLayer extends Layer {
       || !hasCurrentVersion
       || (Number.isFinite(sharedPositionVersion) && sharedPositionVersion === currentPositionVersion);
 
-    const useSharedIndices = sharedIndices?.buffer && Number(sharedIndices?.count) === computed.count;
+    const useSharedIndices = computed.usesActiveNodeIndexBuffer === true
+      && sharedIndices?.buffer
+      && Number(sharedIndices?.count) === computed.count;
     const useSharedPositions = sharedPositions?.buffer
       && sharedPositionCount >= requiredPositionCount
       && positionVersionMatches;
@@ -2294,7 +2352,7 @@ export class DensityLayer extends Layer {
         computed.nodeIndices,
         {
           label: 'Density node indices',
-          version: `${computed.nodeIndices.buffer}|${computed.nodeIndices.byteOffset}|${computed.nodeIndices.byteLength}`,
+          version: computed.nodeIndexVersion ?? this.computeNodeIndexVersion(computed.nodeIndices, computed.count),
           count: computed.count,
           trackViewIdentity: true,
         },

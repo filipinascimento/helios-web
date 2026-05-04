@@ -42,6 +42,9 @@ class MockHelios extends EventTarget {
     this._edgeStateStyles = new Map();
     this._nodeNoStateStyle = null;
     this._edgeNoStateStyle = null;
+    this._hoverStyleFromHighlight = false;
+    this._highlightConnectedEdges = false;
+    this._highlightUnion = { nodes: new Set(), edges: new Set() };
     this._picking = { node: { enabled: false, hoverEnabled: false }, edge: { enabled: false, hoverEnabled: false } };
     this.renderer = {
       graphLayer: {
@@ -91,6 +94,18 @@ class MockHelios extends EventTarget {
   edgeNoStateStyle(style) {
     if (arguments.length === 0) return this._edgeNoStateStyle;
     this._edgeNoStateStyle = style;
+    return this;
+  }
+
+  hoverStyleFromHighlight(value) {
+    if (arguments.length === 0) return this._hoverStyleFromHighlight;
+    this._hoverStyleFromHighlight = value === true;
+    return this;
+  }
+
+  highlightConnectedEdges(value) {
+    if (arguments.length === 0) return this._highlightConnectedEdges;
+    this._highlightConnectedEdges = value !== false;
     return this;
   }
 
@@ -168,6 +183,10 @@ test('hover behavior updates hover state, labels, and picking policy independent
   hover.update({ nodeHover: false, hoverConnectedEdges: false });
   assert.equal(hover.state.nodeHover, false);
   assert.equal(hover.state.hoverConnectedEdges, false);
+  hover.update({ highlightConnectedEdges: true, hoverAffectsOtherElements: true });
+  assert.equal(hover.state.highlightConnectedEdges, true);
+  assert.equal(hover.state.hoverAffectsOtherElements, true);
+  assert.equal(helios._highlightConnectedEdges, true);
   assert.equal(selection.state.nodeClick, true);
   assert.equal(helios._picking.node.enabled, true);
   assert.equal(helios._picking.node.hoverEnabled, false);
@@ -178,7 +197,7 @@ test('hover behavior handles node and edge hover events and clears renderer hove
 
   helios.emit('node:hover', { state: 'in', index: 2 });
   assert.equal(hover.state.hoveredNode, 2);
-  assert.deepEqual(helios._hoverNode, { index: 2, mask: 'HIGHLIGHTED' });
+  assert.deepEqual(helios._hoverNode, { index: 2, mask: 'HOVER' });
 
   helios.emit('node:hover', { state: 'out', index: 2 });
   assert.equal(hover.state.hoveredNode, -1);
@@ -186,15 +205,45 @@ test('hover behavior handles node and edge hover events and clears renderer hove
 
   helios.emit('edge:hover', { state: 'in', index: 1 });
   assert.equal(hover.state.hoveredEdge, 1);
-  assert.deepEqual(helios._hoverEdge, { index: 1, mask: 'HIGHLIGHTED' });
+  assert.deepEqual(helios._hoverEdge, { index: 1, mask: 'HOVER' });
 
   hover.clearEdgeHover();
   assert.equal(hover.state.hoveredEdge, -1);
   assert.deepEqual(helios._hoverEdge, { index: null, mask: 0 });
 });
 
+test('virtual hover does not dim other elements unless explicitly enabled', () => {
+  const { helios } = attachHover();
+
+  helios.emit('node:hover', { state: 'in', index: 2 });
+  assert.equal(helios.renderer.graphLayer.nodeNoStateStyleEnabled, false);
+  assert.equal(helios.renderer.graphLayer.edgeNoStateStyleEnabled, false);
+
+  const { helios: optInHelios } = attachHover({ hoverAffectsOtherElements: true });
+  optInHelios.emit('node:hover', { state: 'in', index: 2 });
+  assert.equal(optInHelios.renderer.graphLayer.nodeNoStateStyleEnabled, true);
+  assert.equal(optInHelios.renderer.graphLayer.edgeNoStateStyleEnabled, true);
+});
+
+test('real highlighted sources dim other elements independent of virtual hover', () => {
+  const { helios } = attachHover();
+
+  helios._highlightUnion = { nodes: new Set([1]), edges: new Set() };
+  helios.emit('highlight:change', { nodes: [1], edges: [] });
+
+  assert.equal(helios.renderer.graphLayer.nodeNoStateStyleEnabled, true);
+  assert.equal(helios.renderer.graphLayer.edgeNoStateStyleEnabled, true);
+});
+
 test('hover behavior serializes hover options without persisting transient hovered state', () => {
-  const { hover } = attachHover({ hoverLabel: false, hoverLabelSource: 'label', edgeHover: true });
+  const { helios, hover } = attachHover({
+    hoverLabel: false,
+    hoverLabelSource: 'label',
+    edgeHover: true,
+    highlightConnectedEdges: true,
+    hoverAffectsOtherElements: true,
+    hoverStyleFromHighlight: true,
+  });
   hover.state.hoveredNode = 1;
   hover.state.hoveredEdge = 0;
 
@@ -202,9 +251,13 @@ test('hover behavior serializes hover options without persisting transient hover
   const { hover: restored } = attachHover();
   restored.restore(snapshot);
 
+  assert.equal(helios._hoverStyleFromHighlight, true);
   assert.equal(restored.state.hoverLabel, false);
   assert.equal(restored.state.hoverLabelSource, 'label');
   assert.equal(restored.state.edgeHover, true);
+  assert.equal(restored.state.highlightConnectedEdges, true);
+  assert.equal(restored.state.hoverAffectsOtherElements, true);
+  assert.equal(restored.state.hoverStyleFromHighlight, true);
   assert.equal(restored.state.hoveredNode, -1);
   assert.equal(restored.state.hoveredEdge, -1);
 });

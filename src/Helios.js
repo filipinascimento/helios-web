@@ -145,6 +145,7 @@ function parseNamespacedEventType(type) {
 }
 
 function resolveStateMask(mask, states) {
+  if (typeof mask === 'string' && mask === 'HOVER') return 0;
   if (typeof mask === 'string') {
     const value = states?.[mask];
     if (value == null) {
@@ -976,6 +977,7 @@ const DENSITY_DEFAULTS = Object.freeze({
   colormap: 'interpolateOrRd',
   logRatioColormap: 'cmasher:prinsenvlag',
   divergingColormap: 'cmasher:prinsenvlag',
+  interactionFilter: 'auto',
 });
 
 const NETWORK_VISUALIZATION_STATE_ATTRIBUTE = '_helios_visualization_state';
@@ -1996,7 +1998,7 @@ export class Helios extends EventTarget {
       type: 'boolean',
       label: 'Layout',
       description: 'Keep fast edges active while the active layout is still updating positions.',
-      defaultValue: true,
+      defaultValue: EDGE_ADAPTIVE_QUALITY_DEFAULTS.fastDuringLayout,
     },
     labelsMode: {
       type: 'string',
@@ -2008,7 +2010,7 @@ export class Helios extends EventTarget {
       type: 'boolean',
       label: 'Space Aware',
       description: 'When Selected Only is active, use the regular label culling and collision strategy instead of always forcing selected labels through.',
-      defaultValue: false,
+      defaultValue: true,
     },
     labelsEnabled: {
       type: 'boolean',
@@ -2480,7 +2482,13 @@ export class Helios extends EventTarget {
       edgeSlots: new Map(),
       nodeNoState: null,
       edgeNoState: null,
+      nodeHover: null,
+      edgeHover: null,
     };
+    this._hoverStyleFromHighlight = options.hoverStyleFromHighlight === true;
+    this._highlightConnectedEdges = options.highlightConnectedEdges === true;
+    this._highlightSources = new Map();
+    this._highlightUnion = { nodes: new Set(), edges: new Set() };
     const densityEnabled = options.density === true || options.densityEnabled === true;
     const densityScale = options.densityScale ?? options.densityQualityScale ?? DENSITY_DEFAULTS.qualityScale;
     const densityTopographic = options.topographic === true || options.densityTopographic === true;
@@ -2548,6 +2556,9 @@ export class Helios extends EventTarget {
       divergingColormap: typeof options.densityDivergingColormap === 'string' && options.densityDivergingColormap.trim()
         ? options.densityDivergingColormap.trim()
         : DENSITY_DEFAULTS.divergingColormap,
+      interactionFilter: typeof options.densityInteractionFilter === 'string'
+        ? options.densityInteractionFilter
+        : DENSITY_DEFAULTS.interactionFilter,
     };
     this._densityRuntime = { diverging: false, valueDomain: null };
     this._densityLayer = null;
@@ -4003,6 +4014,7 @@ export class Helios extends EventTarget {
     this._attachDensityLayer();
     this._refreshUIBindings();
     this._applyCachedStateStyles();
+    if (this._hoverStyleFromHighlight === true) this._copyHighlightStyleToHover();
     this.attributeTracker?.destroy?.();
     this.attributeTracker = new AttributeTracker(this.renderer);
     this.attributeTracker.resize(this.layers.size);
@@ -5948,15 +5960,7 @@ export class Helios extends EventTarget {
     if (this.renderer?.camera?.setChangeListener) {
       this.renderer.camera.setChangeListener((detail) => {
         this.scheduler.requestRender();
-        if (this._edgeAdaptiveRuntime) {
-          const now = performance.now();
-          const holdMs = Number(
-            this._edgeAdaptiveQualityConfig?.interactionHoldMs
-              ?? EDGE_ADAPTIVE_QUALITY_DEFAULTS.interactionHoldMs,
-          );
-          this._edgeAdaptiveRuntime.cameraMovingUntil = now + holdMs;
-          this._scheduleEdgeAdaptiveCameraIdleRender();
-        }
+        this._markEdgeAdaptiveCameraInteraction(detail);
         if (detail?.origin === 'interaction') {
           this._disableAutomaticCameraControlFromInteraction(detail);
         }
@@ -6026,10 +6030,12 @@ export class Helios extends EventTarget {
         this._frameId += 1;
         this._updateEdgeAdaptiveQualityBeforeRender(now);
         this.emit(EVENTS.BEFORE_RENDER, { frameId: this._frameId, dt, frame, size: { ...this.size } });
+        const renderStart = performance.now();
         this.renderer.render(frame, this.size);
+        const renderEnd = performance.now();
         this._updateEdgeAdaptiveQualityAfterRender(
-          Number.isFinite(dt) ? dt : null,
-          performance.now(),
+          Number.isFinite(renderEnd - renderStart) ? renderEnd - renderStart : null,
+          renderEnd,
         );
         this._labels?.update?.({ timestamp: now });
         this._legends?.update?.({ timestamp: now });
@@ -6061,7 +6067,7 @@ export class Helios extends EventTarget {
     if (!layer) return false;
     const cached = this._stateStyleCache;
     if (!cached) return false;
-    if (!cached.nodeSlots.size && !cached.edgeSlots.size && !cached.nodeNoState && !cached.edgeNoState) {
+    if (!cached.nodeSlots.size && !cached.edgeSlots.size && !cached.nodeNoState && !cached.edgeNoState && !cached.nodeHover && !cached.edgeHover) {
       return false;
     }
     layer.resetStateStyles?.();
@@ -6070,6 +6076,12 @@ export class Helios extends EventTarget {
     }
     if (cached.edgeNoState) {
       layer.setEdgeNoStateStyle?.(cached.edgeNoState);
+    }
+    if (cached.nodeHover) {
+      layer.setNodeHoverStyle?.(cached.nodeHover);
+    }
+    if (cached.edgeHover) {
+      layer.setEdgeHoverStyle?.(cached.edgeHover);
     }
     for (const [slot, style] of cached.nodeSlots.entries()) {
       layer.setNodeStateStyle?.(slot, style);
@@ -6926,6 +6938,17 @@ export class Helios extends EventTarget {
       runtime.probeTimer = null;
       this.scheduler?.requestRender?.();
     }, delay);
+  }
+
+  _markEdgeAdaptiveCameraInteraction(detail = null, now = performance.now()) {
+    const runtime = this._edgeAdaptiveRuntime ?? null;
+    const config = this._edgeAdaptiveQualityConfig ?? EDGE_ADAPTIVE_QUALITY_DEFAULTS;
+    if (!runtime || config.enabled !== true || config.fastDuringCamera !== true) return false;
+    if (detail?.origin !== 'interaction') return false;
+    const holdMs = Number(config.interactionHoldMs ?? EDGE_ADAPTIVE_QUALITY_DEFAULTS.interactionHoldMs);
+    runtime.cameraMovingUntil = now + Math.max(0, Number.isFinite(holdMs) ? holdMs : 0);
+    this._scheduleEdgeAdaptiveCameraIdleRender();
+    return true;
   }
 
   _edgeAdaptiveEdgesVisible() {
@@ -8193,6 +8216,12 @@ export class Helios extends EventTarget {
       const trimmed = options.densityLogRatioColormap.trim();
       if (trimmed) next.logRatioColormap = trimmed;
     }
+    if (Object.prototype.hasOwnProperty.call(options, 'interactionFilter') && typeof options.interactionFilter === 'string') {
+      next.interactionFilter = options.interactionFilter;
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'densityInteractionFilter') && typeof options.densityInteractionFilter === 'string') {
+      next.interactionFilter = options.densityInteractionFilter;
+    }
 
     next.compareProperty = resolveDensityCompareProperty(next.property, next.compareProperty);
     next.comparisonMode = resolveDensityComparisonMode(next.compareProperty, next.comparisonMode);
@@ -8680,31 +8709,115 @@ export class Helios extends EventTarget {
 
   hoverNodeState(index, mask) {
     const resolvedIndex = index == null || Number(index) < 0 ? 0xffffffff : (Number(index) >>> 0);
+    const isVirtual = mask === 'HOVER';
     const value = (Number(resolveStateMask(mask, this.constructor.STATES)) >>> 0);
     const layer = this.renderer?.graphLayer ?? null;
     if (layer && 'hoveredNodeIndex' in layer) {
       layer.hoveredNodeIndex = resolvedIndex;
       layer.hoveredNodeState = value;
+      layer.hoveredNodeIsVirtual = isVirtual && resolvedIndex !== 0xffffffff;
       this.scheduler.requestRender();
       return this;
     }
     this._pendingGraphLayerProps.set('hoveredNodeIndex', resolvedIndex);
     this._pendingGraphLayerProps.set('hoveredNodeState', value);
+    this._pendingGraphLayerProps.set('hoveredNodeIsVirtual', isVirtual && resolvedIndex !== 0xffffffff);
     return this;
   }
 
   hoverEdgeState(index, mask) {
     const resolvedIndex = index == null || Number(index) < 0 ? 0xffffffff : (Number(index) >>> 0);
+    const isVirtual = mask === 'HOVER';
     const value = (Number(resolveStateMask(mask, this.constructor.STATES)) >>> 0);
     const layer = this.renderer?.graphLayer ?? null;
     if (layer && 'hoveredEdgeIndex' in layer) {
       layer.hoveredEdgeIndex = resolvedIndex;
       layer.hoveredEdgeState = value;
+      layer.hoveredEdgeIsVirtual = isVirtual && resolvedIndex !== 0xffffffff;
       this.scheduler.requestRender();
       return this;
     }
     this._pendingGraphLayerProps.set('hoveredEdgeIndex', resolvedIndex);
     this._pendingGraphLayerProps.set('hoveredEdgeState', value);
+    this._pendingGraphLayerProps.set('hoveredEdgeIsVirtual', isVirtual && resolvedIndex !== 0xffffffff);
+    return this;
+  }
+
+  _setHighlightSource(source, { nodes = [], edges = [] } = {}) {
+    const key = String(source ?? '').trim();
+    if (!key) return this;
+    this._highlightSources.set(key, {
+      nodes: new Set(Array.from(nodes ?? []).map(Number).filter((id) => Number.isInteger(id) && id >= 0)),
+      edges: new Set(Array.from(edges ?? []).map(Number).filter((id) => Number.isInteger(id) && id >= 0)),
+    });
+    return this._applyHighlightSources();
+  }
+
+  _collectConnectedHighlightEdges(nodeIds) {
+    const network = this._getRenderNetwork?.() ?? this.network ?? null;
+    const nodes = new Set(Array.from(nodeIds ?? []).map(Number).filter((id) => Number.isInteger(id) && id >= 0));
+    if (!network || !nodes.size) return [];
+    return network.withBufferAccess?.(() => {
+      const ids = network.edgeIndices ?? [];
+      const edges = network.edgesView ?? null;
+      if (!edges) return [];
+      const matches = [];
+      for (const edgeRaw of ids) {
+        const edge = Number(edgeRaw);
+        const source = Number(edges[edge * 2]);
+        const target = Number(edges[edge * 2 + 1]);
+        if (nodes.has(source) || nodes.has(target)) matches.push(edge);
+      }
+      return matches;
+    }) ?? [];
+  }
+
+  _clearHighlightSource(source) {
+    const key = String(source ?? '').trim();
+    if (!key || !this._highlightSources?.has(key)) return this;
+    this._highlightSources.delete(key);
+    return this._applyHighlightSources();
+  }
+
+  _applyHighlightSources() {
+    const nextNodes = new Set();
+    const nextEdges = new Set();
+    for (const entry of this._highlightSources?.values?.() ?? []) {
+      for (const id of entry.nodes ?? []) nextNodes.add(id);
+      for (const id of entry.edges ?? []) nextEdges.add(id);
+    }
+    if (this._highlightConnectedEdges === true) {
+      for (const edge of this._collectConnectedHighlightEdges(nextNodes)) nextEdges.add(edge);
+    }
+    const prev = this._highlightUnion ?? { nodes: new Set(), edges: new Set() };
+    const removeNodes = Array.from(prev.nodes).filter((id) => !nextNodes.has(id));
+    const addNodes = Array.from(nextNodes).filter((id) => !prev.nodes.has(id));
+    const removeEdges = Array.from(prev.edges).filter((id) => !nextEdges.has(id));
+    const addEdges = Array.from(nextEdges).filter((id) => !prev.edges.has(id));
+    if (removeNodes.length) this.nodeState(removeNodes, 'HIGHLIGHTED', { mode: 'remove' });
+    if (addNodes.length) this.nodeState(addNodes, 'HIGHLIGHTED', { mode: 'add' });
+    if (removeEdges.length) this.edgeState(removeEdges, 'HIGHLIGHTED', { mode: 'remove' });
+    if (addEdges.length) this.edgeState(addEdges, 'HIGHLIGHTED', { mode: 'add' });
+    this._highlightUnion = { nodes: nextNodes, edges: nextEdges };
+    this.emit?.('highlight:change', {
+      nodes: Array.from(nextNodes),
+      edges: Array.from(nextEdges),
+      addedNodes: addNodes,
+      removedNodes: removeNodes,
+      addedEdges: addEdges,
+      removedEdges: removeEdges,
+    });
+    return this;
+  }
+
+  highlightConnectedEdges(value) {
+    if (arguments.length === 0) return this._highlightConnectedEdges === true;
+    this._highlightConnectedEdges = value === true;
+    this.options ??= {};
+    this.options.highlightConnectedEdges = this._highlightConnectedEdges;
+    this._applyHighlightSources();
+    this._emitUIBindingChange?.('highlightConnectedEdges', this._highlightConnectedEdges);
+    this.scheduler?.requestRender?.();
     return this;
   }
 
@@ -8734,6 +8847,12 @@ export class Helios extends EventTarget {
       this._stateStyleCache.nodeSlots.set(resolvedSlot, style);
     }
     this.renderer?.graphLayer?.setNodeStateStyle?.(resolvedSlot, style);
+    if (
+      this._hoverStyleFromHighlight === true
+      && resolvedSlot === resolveStateSlot('HIGHLIGHTED', this.constructor.STATES)
+    ) {
+      this.nodeHoverStyle(style);
+    }
     this.scheduler.requestRender();
     return this;
   }
@@ -8784,6 +8903,12 @@ export class Helios extends EventTarget {
       this._stateStyleCache.edgeSlots.set(resolvedSlot, style);
     }
     this.renderer?.graphLayer?.setEdgeStateStyle?.(resolvedSlot, style);
+    if (
+      this._hoverStyleFromHighlight === true
+      && resolvedSlot === resolveStateSlot('HIGHLIGHTED', this.constructor.STATES)
+    ) {
+      this.edgeHoverStyle(style);
+    }
     this.scheduler.requestRender();
     return this;
   }
@@ -8808,12 +8933,74 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  nodeHoverStyle(style) {
+    if (arguments.length === 0) {
+      const layer = this.renderer?.graphLayer;
+      if (!layer || !layer.nodeHoverScale || !layer.nodeHoverColorMul || !layer.nodeHoverColorAdd) {
+        return this._stateStyleCache?.nodeHover ?? null;
+      }
+      return {
+        sizeMul: layer.nodeHoverScale[0],
+        opacityMul: layer.nodeHoverScale[1],
+        outlineMul: layer.nodeHoverScale[2],
+        forceMaxAlpha: layer.nodeHoverForceMaxAlpha === true,
+        colorMul: Array.from(layer.nodeHoverColorMul.slice(0, 4)),
+        colorAdd: Array.from(layer.nodeHoverColorAdd.slice(0, 4)),
+      };
+    }
+    if (this._stateStyleCache) this._stateStyleCache.nodeHover = style;
+    this.renderer?.graphLayer?.setNodeHoverStyle?.(style);
+    this.scheduler.requestRender();
+    return this;
+  }
+
+  edgeHoverStyle(style) {
+    if (arguments.length === 0) {
+      const layer = this.renderer?.graphLayer;
+      if (!layer || !layer.edgeHoverScale || !layer.edgeHoverColorMul || !layer.edgeHoverColorAdd) {
+        return this._stateStyleCache?.edgeHover ?? null;
+      }
+      return {
+        widthMul: layer.edgeHoverScale[0],
+        opacityMul: layer.edgeHoverScale[1],
+        forceMaxAlpha: layer.edgeHoverForceMaxAlpha === true,
+        colorMul: Array.from(layer.edgeHoverColorMul.slice(0, 4)),
+        colorAdd: Array.from(layer.edgeHoverColorAdd.slice(0, 4)),
+      };
+    }
+    if (this._stateStyleCache) this._stateStyleCache.edgeHover = style;
+    this.renderer?.graphLayer?.setEdgeHoverStyle?.(style);
+    this.scheduler.requestRender();
+    return this;
+  }
+
+  _copyHighlightStyleToHover() {
+    const nodeStyle = this.nodeStateStyle?.('HIGHLIGHTED') ?? null;
+    const edgeStyle = this.edgeStateStyle?.('HIGHLIGHTED') ?? null;
+    if (nodeStyle) this.nodeHoverStyle(nodeStyle);
+    if (edgeStyle) this.edgeHoverStyle(edgeStyle);
+    return this;
+  }
+
+  hoverStyleFromHighlight(value) {
+    if (arguments.length === 0) return this._hoverStyleFromHighlight === true;
+    this._hoverStyleFromHighlight = value === true;
+    this.options ??= {};
+    this.options.hoverStyleFromHighlight = this._hoverStyleFromHighlight;
+    if (this._hoverStyleFromHighlight) this._copyHighlightStyleToHover();
+    this._emitUIBindingChange?.('hoverStyleFromHighlight', this._hoverStyleFromHighlight);
+    this.scheduler?.requestRender?.();
+    return this;
+  }
+
   resetStateStyles() {
     if (this._stateStyleCache) {
       this._stateStyleCache.nodeSlots.clear();
       this._stateStyleCache.edgeSlots.clear();
       this._stateStyleCache.nodeNoState = null;
       this._stateStyleCache.edgeNoState = null;
+      this._stateStyleCache.nodeHover = null;
+      this._stateStyleCache.edgeHover = null;
     }
     this.renderer?.graphLayer?.resetStateStyles?.();
     this.scheduler.requestRender();
@@ -9406,6 +9593,10 @@ export class Helios extends EventTarget {
   setEdgeStateStyle(slot, style) { return this.edgeStateStyle(slot, style); }
   setNodeNoStateStyle(style) { return this.nodeNoStateStyle(style); }
   setEdgeNoStateStyle(style) { return this.edgeNoStateStyle(style); }
+  setNodeHoverStyle(style) { return this.nodeHoverStyle(style); }
+  setEdgeHoverStyle(style) { return this.edgeHoverStyle(style); }
+  setHoverStyleFromHighlight(value) { return this.hoverStyleFromHighlight(value); }
+  setHighlightConnectedEdges(value) { return this.highlightConnectedEdges(value); }
 
   startLayout(algo = null, params = null) {
     const requestedAlgo = typeof algo === 'string' ? algo : null;

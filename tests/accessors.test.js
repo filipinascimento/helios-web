@@ -184,6 +184,10 @@ test('edge width clamp UI binding defaults on', () => {
   assert.equal(Helios.UI_BINDINGS.edgeWidthClampToNodeDiameter.defaultValue, true);
 });
 
+test('selected-only labels use available space by default', () => {
+  assert.equal(Helios.UI_BINDINGS.labelsSelectedOnlySpaceAware.defaultValue, true);
+});
+
 test('ambient occlusion UI bindings expose the intended defaults and slider ranges', () => {
   assert.equal(Helios.UI_BINDINGS.ambientOcclusionStrength.defaultValue, 1.5);
   assert.equal(Helios.UI_BINDINGS.ambientOcclusionStrength.domain.max, 3);
@@ -401,6 +405,42 @@ test('camera and layout adaptive toggles do not force fast edges before a perfor
   assert.deepEqual(decision, { fast: false, reason: 'quality' });
 });
 
+test('adaptive edge quality keeps an earned fallback during layout activity by default', () => {
+  const helios = Object.create(Helios.prototype);
+  helios._edgeAdaptiveQualityConfig = {
+    enabled: true,
+    slowFrameThresholdMs: 20,
+    averageWindowFrames: 12,
+    probeIntervalMs: 900,
+    interactionHoldMs: 180,
+    fastDuringCamera: true,
+    fastDuringLayout: true,
+  };
+  helios._edgeAdaptiveRuntime = {
+    nextProbeAt: 1400,
+    lastRenderMs: null,
+    qualityFrameSamples: [],
+    qualityFrameAverageMs: null,
+    reason: 'performance',
+    cameraMovingUntil: Number.NEGATIVE_INFINITY,
+    cameraIdleTimer: null,
+    probeTimer: null,
+    forceHighQuality: false,
+  };
+  helios.renderer = {
+    graphLayer: {
+      edgeFastRendering: false,
+      edgeAdaptiveFastRendering: true,
+      shouldRenderEdges() { return true; },
+    },
+  };
+  helios.scheduler = {
+    getLayoutState() { return 'running'; },
+  };
+
+  assert.deepEqual(helios._resolveEdgeAdaptiveFastState(1000), { fast: true, reason: 'performance' });
+});
+
 test('camera and layout adaptive toggles keep an earned performance fallback stable', () => {
   const helios = Object.create(Helios.prototype);
   helios._edgeAdaptiveQualityConfig = {
@@ -603,6 +643,46 @@ test('camera adaptive quality stays fast until the interaction debounce window f
 
   assert.deepEqual(helios._resolveEdgeAdaptiveFastState(499), { fast: true, reason: 'performance' });
   assert.deepEqual(helios._resolveEdgeAdaptiveFastState(501), { fast: false, reason: 'quality' });
+});
+
+test('adaptive edge camera activity only follows explicit user interaction', () => {
+  const calls = [];
+  const helios = Object.create(Helios.prototype);
+  helios._edgeAdaptiveQualityConfig = {
+    enabled: true,
+    slowFrameThresholdMs: 40,
+    averageWindowFrames: 3,
+    probeIntervalMs: 100,
+    interactionHoldMs: 180,
+    fastDuringCamera: true,
+    fastDuringLayout: false,
+  };
+  helios._edgeAdaptiveRuntime = {
+    nextProbeAt: Number.NEGATIVE_INFINITY,
+    lastRenderMs: null,
+    qualityFrameSamples: [],
+    qualityFrameAverageMs: null,
+    fastFrameSamples: [],
+    fastFrameAverageMs: null,
+    reason: 'quality',
+    cameraMovingUntil: Number.NEGATIVE_INFINITY,
+    cameraIdleTimer: null,
+    probeTimer: null,
+    failedProbeCount: 0,
+    performanceFallbackAt: Number.NEGATIVE_INFINITY,
+    performanceFallbackAlpha: NaN,
+    forceHighQuality: false,
+  };
+  helios._scheduleEdgeAdaptiveCameraIdleRender = () => {
+    calls.push(['schedule-idle-render']);
+  };
+
+  assert.equal(helios._markEdgeAdaptiveCameraInteraction({ origin: 'camera-follow' }, 1000), false);
+  assert.equal(helios._edgeAdaptiveRuntime.cameraMovingUntil, Number.NEGATIVE_INFINITY);
+
+  assert.equal(helios._markEdgeAdaptiveCameraInteraction({ origin: 'interaction' }, 1000), true);
+  assert.equal(helios._edgeAdaptiveRuntime.cameraMovingUntil, 1180);
+  assert.deepEqual(calls, [['schedule-idle-render']]);
 });
 
 test('supersampling accessor updates layer sizing mode live', () => {

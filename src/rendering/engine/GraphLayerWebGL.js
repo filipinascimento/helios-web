@@ -169,7 +169,11 @@ const NODE_UNIFORM_NAMES = [
   'u_defaultNodeSize',
   'u_hoverNodeIndex',
   'u_hoverNodeState',
+  'u_hoverNodeIsVirtual',
   'u_nodeStateForceMaxAlphaMask',
+  'u_nodeHoverScale',
+  'u_nodeHoverColorMul',
+  'u_nodeHoverColorAdd',
   'u_nodeNoStateScale',
   'u_nodeNoStateColorMul',
   'u_nodeNoStateColorAdd',
@@ -206,9 +210,14 @@ const EDGE_UNIFORM_NAMES = [
   'u_edgeEndpoints',
   'u_hasEdgeStates',
   'u_hoverNodeIndex',
+  'u_hoverNodeIsVirtual',
   'u_hoverEdgeIndex',
   'u_hoverEdgeState',
+  'u_hoverEdgeIsVirtual',
   'u_edgeStateForceMaxAlphaMask',
+  'u_edgeHoverScale',
+  'u_edgeHoverColorMul',
+  'u_edgeHoverColorAdd',
   'u_edgeNoStateScale',
   'u_edgeNoStateColorMul',
   'u_edgeNoStateColorAdd',
@@ -297,9 +306,14 @@ const EDGE_QUAD_UNIFORM_NAMES = [
   'u_zoom2D',
   'u_semanticZoomExponent',
   'u_hoverNodeIndex',
+  'u_hoverNodeIsVirtual',
   'u_hoverEdgeIndex',
   'u_hoverEdgeState',
+  'u_hoverEdgeIsVirtual',
   'u_edgeStateForceMaxAlphaMask',
+  'u_edgeHoverScale',
+  'u_edgeHoverColorMul',
+  'u_edgeHoverColorAdd',
   'u_nodeNoStateScale',
   'u_nodeStateScale[0]',
   'u_edgeNoStateScale',
@@ -2418,9 +2432,14 @@ export class GraphLayerWebGL extends GraphLayer {
             set1i(uniforms, 'u_hasNodeOpacitySource', hasNodeOpacitySource ? 1 : 0);
             set1i(uniforms, 'u_hasNodeEndpointSizeSource', hasNodeEndpointSizeSource ? 1 : 0);
             set1ui(uniforms, 'u_hoverNodeIndex', this.hoveredNodeIndex);
+            set1ui(uniforms, 'u_hoverNodeIsVirtual', this.hoveredNodeIsVirtual ? 1 : 0);
             set1ui(uniforms, 'u_hoverEdgeIndex', this.hoveredEdgeIndex);
             set1ui(uniforms, 'u_hoverEdgeState', this.hoveredEdgeState);
+            set1ui(uniforms, 'u_hoverEdgeIsVirtual', this.hoveredEdgeIsVirtual ? 1 : 0);
             set1ui(uniforms, 'u_edgeStateForceMaxAlphaMask', this.edgeStateForceMaxAlphaMask >>> 0);
+            set4fv(uniforms, 'u_edgeHoverScale', this.edgeHoverScale);
+            set4fv(uniforms, 'u_edgeHoverColorMul', this.edgeHoverForceMaxAlpha ? [1, 1, 1, 2] : this.edgeHoverColorMul);
+            set4fv(uniforms, 'u_edgeHoverColorAdd', this.edgeHoverColorAdd);
             set4fv(
               uniforms,
               'u_nodeNoStateScale',
@@ -2560,9 +2579,14 @@ export class GraphLayerWebGL extends GraphLayer {
           set1i(uniforms, 'u_hasEdgeOpacities', hasEdgeOpacities ? 1 : 0);
           set1i(uniforms, 'u_hasNodeOpacitySource', hasNodeOpacitySource ? 1 : 0);
           set1ui(uniforms, 'u_hoverNodeIndex', this.hoveredNodeIndex);
+          set1ui(uniforms, 'u_hoverNodeIsVirtual', this.hoveredNodeIsVirtual ? 1 : 0);
           set1ui(uniforms, 'u_hoverEdgeIndex', this.hoveredEdgeIndex);
           set1ui(uniforms, 'u_hoverEdgeState', this.hoveredEdgeState);
+          set1ui(uniforms, 'u_hoverEdgeIsVirtual', this.hoveredEdgeIsVirtual ? 1 : 0);
           set1ui(uniforms, 'u_edgeStateForceMaxAlphaMask', this.edgeStateForceMaxAlphaMask >>> 0);
+          set4fv(uniforms, 'u_edgeHoverScale', this.edgeHoverScale);
+          set4fv(uniforms, 'u_edgeHoverColorMul', this.edgeHoverForceMaxAlpha ? [1, 1, 1, 2] : this.edgeHoverColorMul);
+          set4fv(uniforms, 'u_edgeHoverColorAdd', this.edgeHoverColorAdd);
           set4fv(
             uniforms,
             'u_edgeNoStateScale',
@@ -2681,7 +2705,11 @@ export class GraphLayerWebGL extends GraphLayer {
           set1i(uniforms, 'u_hasNodeStates', hasNodeStatesForNodes ? 1 : 0);
           set1ui(uniforms, 'u_hoverNodeIndex', this.hoveredNodeIndex);
           set1ui(uniforms, 'u_hoverNodeState', this.hoveredNodeState);
+          set1ui(uniforms, 'u_hoverNodeIsVirtual', this.hoveredNodeIsVirtual ? 1 : 0);
           set1ui(uniforms, 'u_nodeStateForceMaxAlphaMask', this.nodeStateForceMaxAlphaMask >>> 0);
+          set4fv(uniforms, 'u_nodeHoverScale', this.nodeHoverScale);
+          set4fv(uniforms, 'u_nodeHoverColorMul', this.nodeHoverForceMaxAlpha ? [1, 1, 1, 2] : this.nodeHoverColorMul);
+          set4fv(uniforms, 'u_nodeHoverColorAdd', this.nodeHoverColorAdd);
           set4fv(
             uniforms,
             'u_nodeNoStateScale',

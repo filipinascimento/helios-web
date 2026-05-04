@@ -199,6 +199,14 @@ test('deriveLegendItems resolves categorical legend labels from the network dict
   const nodeLegend = items.find((item) => item.kind === 'nodeColor');
   assert.ok(nodeLegend);
   assert.deepEqual(nodeLegend.entries.map((entry) => entry.label), ['alpha', 'beta', 'gamma']);
+  assert.deepEqual(
+    nodeLegend.entries.map((entry) => ({ scope: entry.scope, attribute: entry.attribute, categoryValue: entry.categoryValue })),
+    [
+      { scope: 'node', attribute: 'category', categoryValue: 0 },
+      { scope: 'node', attribute: 'category', categoryValue: 1 },
+      { scope: 'node', attribute: 'category', categoryValue: 2 },
+    ],
+  );
 });
 
 test('deriveLegendItems appends gray Others entry for categorical fallbacks', () => {
@@ -319,6 +327,218 @@ test('SvgLegendController reverses continuous legend contrast on light backgroun
   assert.equal(theme.barOuterStroke, 'rgba(255, 255, 255, 0.98)');
   assert.equal(theme.barInnerStroke, 'rgba(16, 20, 28, 0.96)');
   assert.equal(theme.tickOutline, 'rgba(255, 255, 255, 0.96)');
+});
+
+test('SvgLegendController detects fully selected categorical legend rows', () => {
+  const controller = Object.create(SvgLegendController.prototype);
+  controller.helios = {
+    network: {
+      nodeIndices: [0, 1, 2, 3],
+      withBufferAccess(callback) {
+        return callback();
+      },
+      getNodeAttributeBuffer(name) {
+        assert.equal(name, 'category');
+        return { view: new Int32Array([1, 2, 1, 3]) };
+      },
+    },
+    getBehavior(name) {
+      assert.equal(name, 'selection');
+      return { state: { selectedNodes: new Set([0, 2]) } };
+    },
+  };
+
+  assert.equal(controller._isCategorySelected({ attribute: 'category', categoryValue: 1 }), true);
+  assert.equal(controller._isCategorySelected({ attribute: 'category', categoryValue: 2 }), false);
+});
+
+test('SvgLegendController applies hover and selected row outlines without changing font size', () => {
+  const makeElement = () => ({
+    attributes: new Map(),
+    setAttribute(name, value) {
+      this.attributes.set(String(name), String(value));
+    },
+    removeAttribute(name) {
+      this.attributes.delete(String(name));
+    },
+    getAttribute(name) {
+      return this.attributes.get(String(name)) ?? null;
+    },
+  });
+  const controller = Object.create(SvgLegendController.prototype);
+  const outline = makeElement();
+  const text = makeElement();
+  text.setAttribute('font-size', '12');
+  const row = {
+    dataset: {},
+    __heliosLegendRowOutline: outline,
+    __heliosLegendRowTextNodes: [text],
+  };
+  const theme = {
+    text: 'rgba(246, 248, 252, 0.96)',
+    textOutline: 'rgba(5, 8, 12, 0.96)',
+    guide: 'rgba(255, 255, 255, 0.74)',
+  };
+
+  controller._setCategoryRowVisual(row, { selected: false, hovered: true, theme });
+  assert.equal(row.dataset.hovered, 'true');
+  assert.equal(outline.getAttribute('stroke-opacity'), '0.38');
+  assert.equal(text.getAttribute('font-style'), null);
+  assert.equal(text.getAttribute('font-size'), '12');
+
+  controller._setCategoryRowVisual(row, { selected: true, hovered: false, theme });
+  assert.equal(row.dataset.selected, 'true');
+  assert.equal(outline.getAttribute('stroke-opacity'), '0.72');
+  assert.equal(text.getAttribute('font-style'), null);
+  assert.equal(text.getAttribute('font-size'), '12');
+
+  controller._setCategoryRowVisual(row, { selected: false, hovered: false, theme });
+  assert.equal(outline.getAttribute('stroke-opacity'), '0');
+  assert.equal(text.getAttribute('font-style'), null);
+  assert.equal(text.getAttribute('font-size'), '12');
+});
+
+test('SvgLegendController reads cached selected state for immediate row hover feedback', () => {
+  const controller = Object.create(SvgLegendController.prototype);
+  assert.equal(controller._isCategoryRowSelected({ dataset: { selected: 'true' } }), true);
+  assert.equal(controller._isCategoryRowSelected({ dataset: { selected: 'false' } }), false);
+  assert.equal(controller._isCategoryRowSelected({ dataset: {} }), false);
+  assert.equal(controller._isCategoryRowSelected(null), false);
+});
+
+test('SvgLegendController preserves active hover category across legend redraws', () => {
+  const controller = Object.create(SvgLegendController.prototype);
+  const item = { kind: 'nodeColor' };
+  const entry = { scope: 'node', attribute: 'category', categoryValue: 2 };
+  controller._activeLegendHover = { item, entry };
+
+  assert.equal(controller._isActiveLegendHoverEntry(
+    { kind: 'nodeColor' },
+    { scope: 'node', attribute: 'category', categoryValue: 2 },
+  ), true);
+  assert.equal(controller._isActiveLegendHoverEntry(
+    { kind: 'nodeColor' },
+    { scope: 'node', attribute: 'category', categoryValue: 3 },
+  ), false);
+});
+
+test('SvgLegendController coalesces legend hover clear when moving between categories', () => {
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  const timers = new Map();
+  let timerId = 0;
+  globalThis.setTimeout = (callback) => {
+    timerId += 1;
+    timers.set(timerId, callback);
+    return timerId;
+  };
+  globalThis.clearTimeout = (id) => {
+    timers.delete(id);
+  };
+
+  try {
+    const calls = [];
+    const controller = Object.create(SvgLegendController.prototype);
+    controller._config = { interactiveCategorical: true, legendHoverHighlight: true };
+    controller._activeLegendHover = null;
+    controller._pendingLegendHover = null;
+    controller._pendingLegendHoverClear = null;
+    controller.helios = {
+      network: {
+        nodeIndices: [0, 1, 2],
+        edgeIndices: [],
+        withBufferAccess(callback) {
+          return callback();
+        },
+        getNodeAttributeBuffer() {
+          return { view: new Int32Array([1, 2, 1]) };
+        },
+      },
+      _setHighlightSource(source, payload) {
+        calls.push(['highlight', source, payload.nodes]);
+      },
+      _clearHighlightSource(source) {
+        calls.push(['clear', source]);
+      },
+      updateDensityMap() {
+        calls.push(['density']);
+      },
+    };
+    const item = { kind: 'nodeColor' };
+    const first = { scope: 'node', attribute: 'category', categoryValue: 1 };
+    const second = { scope: 'node', attribute: 'category', categoryValue: 2 };
+
+    controller._handleCategoryEnter(item, first);
+    controller._handleCategoryLeave(item, first);
+    controller._handleCategoryEnter(item, second);
+    for (const callback of timers.values()) callback();
+
+    assert.deepEqual(calls, [
+      ['highlight', 'legend:hover', [1]],
+    ]);
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+  }
+});
+
+test('SvgLegendController toggles active categories off on normal and shift click', () => {
+  const calls = [];
+  const selection = {
+    state: { selectedNodes: new Set([0, 2]) },
+    selectNodes(nodes, options) {
+      calls.push(['selectNodes', nodes, options]);
+      if (options.mode === 'remove') {
+        for (const node of nodes) this.state.selectedNodes.delete(node);
+      }
+    },
+    clearSelection() {
+      calls.push(['clearSelection']);
+      this.state.selectedNodes.clear();
+    },
+  };
+  const controller = Object.create(SvgLegendController.prototype);
+  controller._config = { interactiveCategorical: true, legendClickSelect: true };
+  controller._pendingLegendHover = null;
+  controller.helios = {
+    network: {
+      nodeIndices: [0, 1, 2],
+      withBufferAccess(callback) {
+        return callback();
+      },
+      getNodeAttributeBuffer() {
+        return { view: new Int32Array([1, 2, 1]) };
+      },
+    },
+    getBehavior() {
+      return selection;
+    },
+    updateDensityMap() {
+      calls.push(['density']);
+    },
+  };
+  const item = { kind: 'nodeColor' };
+  const entry = { scope: 'node', attribute: 'category', categoryValue: 1 };
+  const makeEvent = (shiftKey = false) => ({
+    shiftKey,
+    preventDefault() {},
+    stopPropagation() {},
+    currentTarget: null,
+  });
+
+  controller._handleCategoryClick(makeEvent(false), item, entry);
+  assert.deepEqual(calls, [
+    ['selectNodes', [0, 2], { mode: 'remove' }],
+    ['density'],
+  ]);
+
+  selection.state.selectedNodes = new Set([0, 2]);
+  calls.length = 0;
+  controller._handleCategoryClick(makeEvent(true), item, entry);
+  assert.deepEqual(calls, [
+    ['selectNodes', [0, 2], { mode: 'remove' }],
+    ['density'],
+  ]);
 });
 
 test('scalarSampleValues omits the zero minimum for line legends', () => {

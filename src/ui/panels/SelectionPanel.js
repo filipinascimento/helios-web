@@ -30,6 +30,16 @@ const DEFAULT_NODE_HIGHLIGHT_STYLE = Object.freeze({
   colorAdd: [0.02, 0.18, 0.34, 0],
 });
 
+const DEFAULT_NODE_HOVER_STYLE = Object.freeze({
+  sizeMul: 1.35,
+  opacityMul: 1,
+  outlineMul: 1.1,
+  discard: false,
+  forceMaxAlpha: false,
+  colorMul: [1, 1, 1, 1],
+  colorAdd: [0.08, 0.08, 0.08, 0],
+});
+
 const DEFAULT_EDGE_SELECTED_STYLE = Object.freeze({
   widthMul: 1.5,
   opacityMul: 1,
@@ -46,6 +56,15 @@ const DEFAULT_EDGE_HIGHLIGHT_STYLE = Object.freeze({
   forceMaxAlpha: false,
   colorMul: [1, 1, 1, 1],
   colorAdd: [0.03, 0.16, 0.28, 0],
+});
+
+const DEFAULT_EDGE_HOVER_STYLE = Object.freeze({
+  widthMul: 1.35,
+  opacityMul: 50,
+  discard: false,
+  forceMaxAlpha: false,
+  colorMul: [1, 1, 1, 1],
+  colorAdd: [0.08, 0.08, 0.08, 0],
 });
 
 const NEUTRAL_NODE_NO_STATE_STYLE = Object.freeze({
@@ -68,9 +87,9 @@ const NEUTRAL_EDGE_NO_STATE_STYLE = Object.freeze({
 });
 
 const DEFAULT_OTHER_SELECTED_NODE_STYLE = Object.freeze({
-  sizeMul: 0.9,
+  sizeMul: 0.75,
   opacityMul: 1,
-  outlineMul: 0.72,
+  outlineMul: 0.75,
   discard: false,
   forceMaxAlpha: false,
   colorMul: [1, 1, 1, 1],
@@ -78,8 +97,8 @@ const DEFAULT_OTHER_SELECTED_NODE_STYLE = Object.freeze({
 });
 
 const DEFAULT_OTHER_SELECTED_EDGE_STYLE = Object.freeze({
-  widthMul: 0.84,
-  opacityMul: 0.82,
+  widthMul: 0.85,
+  opacityMul: 0.85,
   discard: false,
   forceMaxAlpha: false,
   colorMul: [1, 1, 1, 1],
@@ -87,9 +106,9 @@ const DEFAULT_OTHER_SELECTED_EDGE_STYLE = Object.freeze({
 });
 
 const DEFAULT_OTHER_HIGHLIGHT_NODE_STYLE = Object.freeze({
-  sizeMul: 1,
+  sizeMul: 0.9,
   opacityMul: 1,
-  outlineMul: 1,
+  outlineMul: 0.9,
   discard: false,
   forceMaxAlpha: false,
   colorMul: [1, 1, 1, 1],
@@ -97,8 +116,8 @@ const DEFAULT_OTHER_HIGHLIGHT_NODE_STYLE = Object.freeze({
 });
 
 const DEFAULT_OTHER_HIGHLIGHT_EDGE_STYLE = Object.freeze({
-  widthMul: 1,
-  opacityMul: 1,
+  widthMul: 0.9,
+  opacityMul: 0.9,
   discard: false,
   forceMaxAlpha: false,
   colorMul: [1, 1, 1, 1],
@@ -106,13 +125,13 @@ const DEFAULT_OTHER_HIGHLIGHT_EDGE_STYLE = Object.freeze({
 });
 
 const DEFAULT_AUTO_BACKGROUND_TONE_DISABLED = Object.freeze({
-  enabled: false,
-  amount: 0.35,
+  enabled: true,
+  amount: 0.15,
 });
 
 const DEFAULT_AUTO_BACKGROUND_TONE_SELECTED = Object.freeze({
   enabled: true,
-  amount: 0.38,
+  amount: 0.4,
 });
 
 const DEFAULT_SELECTION_FOCUS_MAX_ZOOM = 3;
@@ -407,6 +426,7 @@ export class SelectionPanel {
     const ensureStateStyleDefaults = () => selectionBehavior.ensureStateStyleDefaults();
     const applyOtherElementsState = () => selectionBehavior.applyOtherElementsState();
     const applyHoverConnectedEdges = () => hoverBehavior.applyHoverConnectedEdges();
+    const applyHighlightConnectedEdges = () => hoverBehavior.applyHighlightConnectedEdges();
     const applySelectedConnectedEdges = () => selectionBehavior.applySelectedConnectedEdges();
     const clearNodeHover = () => hoverBehavior.clearNodeHover();
     const clearEdgeHover = () => hoverBehavior.clearEdgeHover();
@@ -829,8 +849,21 @@ export class SelectionPanel {
     });
     createRow(interactionBody, {
       title: 'Node Hover',
-      hint: 'Apply the highlighted state style to the hovered node.',
+      hint: 'Apply the dedicated virtual HOVER style to the single hovered node.',
       controls: nodeHoverToggle,
+    });
+
+    const hoverAffectsOtherElementsToggle = createToggleControl({
+      checked: hoverState.hoverAffectsOtherElements === true,
+      ariaLabel: 'Dim other elements on hover',
+    });
+    hoverAffectsOtherElementsToggle.addEventListener('change', () => {
+      hoverBehavior.update({ hoverAffectsOtherElements: hoverAffectsOtherElementsToggle.checked });
+    });
+    createRow(interactionBody, {
+      title: 'Dim Others on Hover',
+      hint: 'Apply the non-highlight style to other elements during virtual HOVER. Disabled by default; real HIGHLIGHTED groups still dim others.',
+      controls: hoverAffectsOtherElementsToggle,
     });
 
     appendSectionHeading(interactionBody, 'Connected Edges');
@@ -844,8 +877,21 @@ export class SelectionPanel {
     });
     createRow(interactionBody, {
       title: 'Hover',
-      hint: 'Highlight incident edges in the shader while a node is hovered, without mutating edge state buffers.',
+      hint: 'Apply the dedicated virtual HOVER edge style to incident edges while a node is hovered, without mutating edge state buffers.',
       controls: hoverConnectedEdgesToggle,
+    });
+
+    const highlightConnectedEdgesToggle = createToggleControl({
+      checked: hoverState.highlightConnectedEdges === true,
+      ariaLabel: 'Connected edges on highlight',
+    });
+    highlightConnectedEdgesToggle.addEventListener('change', () => {
+      hoverBehavior.update({ highlightConnectedEdges: highlightConnectedEdgesToggle.checked });
+    });
+    createRow(interactionBody, {
+      title: 'Highlight',
+      hint: 'Apply the real HIGHLIGHTED edge style to edges incident to source-managed highlighted nodes, such as legend hover.',
+      controls: highlightConnectedEdgesToggle,
     });
 
     const selectedConnectedEdgesToggle = createToggleControl({
@@ -884,7 +930,7 @@ export class SelectionPanel {
     });
     createRow(interactionBody, {
       title: 'Edge Hover',
-      hint: 'Apply the highlighted state style to hovered edges.',
+      hint: 'Apply the dedicated virtual HOVER style to the single hovered edge.',
       controls: edgeHoverToggle,
     });
 
@@ -1262,6 +1308,46 @@ export class SelectionPanel {
     const refreshSelectedNode = createNodeStyleSection(selectedBody, 'SELECTED', DEFAULT_NODE_SELECTED_STYLE);
     const refreshSelectedEdge = createEdgeStyleSection(selectedBody, 'SELECTED', DEFAULT_EDGE_SELECTED_STYLE);
 
+    const hoverBody = document.createElement('div');
+    const hoverCopyToggle = createToggleControl({
+      checked: hoverState.hoverStyleFromHighlight === true,
+      ariaLabel: 'Copy hover style from highlighted',
+    });
+    hoverCopyToggle.addEventListener('change', () => {
+      hoverBehavior.update({ hoverStyleFromHighlight: hoverCopyToggle.checked });
+    });
+    createRow(hoverBody, {
+      title: 'Use Highlight Style',
+      hint: 'Copy the real HIGHLIGHTED node and edge styles into the virtual HOVER style. Disabled by default so hover and group highlight stay visually distinct.',
+      controls: hoverCopyToggle,
+    });
+
+    const hoverCopyNote = document.createElement('div');
+    hoverCopyNote.className = 'helios-ui-label__hint';
+    hoverCopyNote.style.display = 'none';
+    hoverCopyNote.style.margin = '8px 0 10px';
+    hoverCopyNote.style.padding = '8px 10px';
+    hoverCopyNote.style.border = '1px solid rgba(128, 128, 128, 0.42)';
+    hoverCopyNote.style.borderRadius = '6px';
+    hoverCopyNote.style.background = 'rgba(128, 128, 128, 0.10)';
+    hoverCopyNote.textContent = 'HOVER is currently copying HIGHLIGHTED. Hover style controls are shown read-only until this option is disabled.';
+    hoverBody.appendChild(hoverCopyNote);
+
+    const hoverStyleControls = document.createElement('div');
+    hoverBody.appendChild(hoverStyleControls);
+    const refreshHoverNode = createNodeStyleSection(hoverStyleControls, 'HOVER', DEFAULT_NODE_HOVER_STYLE, {
+      getStyle: () => normalizeNodeStyle(helios.nodeHoverStyle?.(), DEFAULT_NODE_HOVER_STYLE),
+      patchStyle: (changes) => {
+        helios.nodeHoverStyle?.(normalizeNodeStyle({ ...normalizeNodeStyle(helios.nodeHoverStyle?.(), DEFAULT_NODE_HOVER_STYLE), ...changes }, DEFAULT_NODE_HOVER_STYLE));
+      },
+    });
+    const refreshHoverEdge = createEdgeStyleSection(hoverStyleControls, 'HOVER', DEFAULT_EDGE_HOVER_STYLE, {
+      getStyle: () => normalizeEdgeStyle(helios.edgeHoverStyle?.(), DEFAULT_EDGE_HOVER_STYLE),
+      patchStyle: (changes) => {
+        helios.edgeHoverStyle?.(normalizeEdgeStyle({ ...normalizeEdgeStyle(helios.edgeHoverStyle?.(), DEFAULT_EDGE_HOVER_STYLE), ...changes }, DEFAULT_EDGE_HOVER_STYLE));
+      },
+    });
+
     const highlightBody = document.createElement('div');
     const refreshHighlightNode = createNodeStyleSection(highlightBody, 'HIGHLIGHTED', DEFAULT_NODE_HIGHLIGHT_STYLE);
     const refreshHighlightEdge = createEdgeStyleSection(highlightBody, 'HIGHLIGHTED', DEFAULT_EDGE_HIGHLIGHT_STYLE);
@@ -1352,12 +1438,22 @@ export class SelectionPanel {
     const refreshStyleControls = () => {
       refreshSelectedNode();
       refreshSelectedEdge();
+      refreshHoverNode();
+      refreshHoverEdge();
       refreshHighlightNode();
       refreshHighlightEdge();
       refreshSelectedOtherNode();
       refreshSelectedOtherEdge();
       refreshHighlightOtherNode();
       refreshHighlightOtherEdge();
+      const copyHover = hoverState.hoverStyleFromHighlight === true || helios.hoverStyleFromHighlight?.() === true;
+      hoverCopyToggle.checked = copyHover;
+      hoverCopyNote.style.display = copyHover ? 'block' : 'none';
+      hoverStyleControls.style.opacity = copyHover ? '0.56' : '';
+      hoverStyleControls.style.pointerEvents = copyHover ? 'none' : '';
+      hoverConnectedEdgesToggle.checked = hoverState.hoverConnectedEdges === true;
+      hoverAffectsOtherElementsToggle.checked = hoverState.hoverAffectsOtherElements === true;
+      highlightConnectedEdgesToggle.checked = hoverState.highlightConnectedEdges === true && helios.highlightConnectedEdges?.() === true;
     };
 
     const styleBody = document.createElement('div');
@@ -1375,6 +1471,13 @@ export class SelectionPanel {
       collapsed: true,
       statusDot: false,
       content: selectedBody,
+    });
+    styleStack.add({
+      id: 'selection-style-hover',
+      title: 'Hover',
+      collapsed: true,
+      statusDot: false,
+      content: hoverBody,
     });
     styleStack.add({
       id: 'selection-style-highlight',

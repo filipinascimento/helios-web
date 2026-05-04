@@ -20,6 +20,11 @@ Helios exposes a convenience object with a few common bits:
 - `Helios.STATES.SELECTED` (bit `1`)
 - `Helios.STATES.HIGHLIGHTED` (bit `2`)
 
+`HOVER` is intentionally not listed here. It is a virtual hover overlay used by
+normal pointer hover and does not occupy a bit, a state slot, or a
+`helios-network` state-buffer value. `HIGHLIGHTED` is a real semantic/group
+state for things like legend hover, search results, and filters.
+
 Custom bits can be added by your application by defining additional bit positions. By default, Helios compiles shaders with 4 styling slots (bits `0..3`), which leaves `bit 3` available as a “custom styled” bit if you want it.
 
 ## Mutating State
@@ -38,12 +43,18 @@ Supported `mode` values:
 - `remove` (bitwise AND NOT)
 - `toggle` (bitwise XOR)
 
-## Ephemeral Hover State (No Buffer Writes)
+## Ephemeral Hover Overlays (No Buffer Writes)
 
-For very large graphs, hover interactions can be made cheaper by applying an additional state bitmask in the shaders for a single hovered node/edge, without mutating the underlying `helios-network` buffers:
+For very large graphs, hover interactions can be made cheaper by applying a
+single-item overlay in the shaders, without mutating the underlying
+`helios-network` buffers:
 
 ```js
-// Apply HIGHLIGHTED style to just the hovered node (overlay in shaders).
+// Normal pointer hover: applies the virtual hover style, not a real bit.
+helios.hoverNodeState(nodeId, 'HOVER');
+helios.hoverEdgeState(edgeId, 'HOVER');
+
+// Advanced compatibility path: apply a real state style virtually to one item.
 helios.hoverNodeState(nodeId, 'HIGHLIGHTED');
 helios.hoverEdgeState(edgeId, 'HIGHLIGHTED');
 
@@ -51,6 +62,38 @@ helios.hoverEdgeState(edgeId, 'HIGHLIGHTED');
 helios.hoverNodeState(null, 0);
 helios.hoverEdgeState(null, 0);
 ```
+
+Configure the virtual hover style separately from state slots:
+
+```js
+helios.nodeHoverStyle({ sizeMul: 1.35, outlineMul: 1.1 });
+helios.edgeHoverStyle({ widthMul: 1.35, opacityMul: 50 });
+```
+
+By default, virtual `HOVER` and real `HIGHLIGHTED` use separate styles:
+`HOVER` is for the single pointer-owned item, while `HIGHLIGHTED` is for
+semantic/group emphasis. If you need legacy-style parity, opt in explicitly:
+
+```js
+helios.hoverStyleFromHighlight(true);
+```
+
+When that option is enabled, updates to the `HIGHLIGHTED` node or edge style are
+copied into the corresponding virtual hover style. Because `HOVER` is virtual,
+it does not affect density focus in the default `auto` density mode.
+
+Connected edge propagation also follows this split: edges connected to the
+single hovered node use the virtual edge hover style, while real highlighted
+groups can opt into the `HIGHLIGHTED` edge state style with
+`helios.highlightConnectedEdges(true)` or the Selection panel
+`Connected Edges > Highlight` toggle. This group-highlight edge propagation is
+disabled by default.
+
+Ordinary virtual `HOVER` also does not apply the non-highlight/non-selected
+"other elements" style by default. Real source-managed `HIGHLIGHTED` groups do.
+Enable hover-driven dimming explicitly with the Selection panel
+`Dim Others on Hover` toggle or `HoverBehavior` option
+`hoverAffectsOtherElements: true`.
 
 ## Styling State in Shaders
 

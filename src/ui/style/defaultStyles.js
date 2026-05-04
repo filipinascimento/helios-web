@@ -673,6 +673,8 @@ export const defaultStylesText = `
   background: color-mix(in srgb, var(--helios-ui-bg-solid) 78%, transparent);
   color: color-mix(in srgb, var(--helios-ui-fg) 90%, white 10%);
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .helios-ui-layout__status-button[data-state="running"] {

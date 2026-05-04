@@ -649,6 +649,21 @@ export class LayoutPanel {
       }
     };
 
+    let suppressRunButtonClick = false;
+    const activateRunButton = () => {
+      const descriptor = getCurrentDescriptor();
+      if (descriptor.dynamic !== true) return;
+      const state = layoutBehavior.runState?.() ?? 'stopped';
+      if (state === 'running' || state === 'idle') {
+        layoutBehavior.stop?.('ui:layout-panel');
+      } else {
+        layoutBehavior.reheat?.('ui:layout-panel');
+        layoutBehavior.start?.();
+        selectedPositionAttribute = CURRENT_POSITION_ATTRIBUTE;
+      }
+      sync(false);
+    };
+
     const refreshBindingValues = () => {
       for (const control of controlsByKey.values()) {
         control.refresh?.();
@@ -693,18 +708,19 @@ export class LayoutPanel {
       applySelectedPositionAttribute();
     });
 
+    runButton.addEventListener('pointerup', (event) => {
+      if (runButton.disabled) return;
+      if (event.button != null && event.button !== 0) return;
+      suppressRunButtonClick = true;
+      activateRunButton();
+    });
+
     runButton.addEventListener('click', () => {
-      const descriptor = getCurrentDescriptor();
-      if (descriptor.dynamic !== true) return;
-      const state = layoutBehavior.runState?.() ?? 'stopped';
-      if (state === 'running' || state === 'idle') {
-        layoutBehavior.stop?.('ui:layout-panel');
-      } else {
-        layoutBehavior.reheat?.('ui:layout-panel');
-        layoutBehavior.start?.();
-        selectedPositionAttribute = CURRENT_POSITION_ATTRIBUTE;
+      if (suppressRunButtonClick) {
+        suppressRunButtonClick = false;
+        return;
       }
-      sync(false);
+      activateRunButton();
     });
 
     layoutSelect.addEventListener('change', () => {

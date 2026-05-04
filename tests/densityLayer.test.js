@@ -5,6 +5,7 @@ import {
   resolveDensityBandwidthViewport,
   resolveLogRatioSupportWindow,
 } from '../src/rendering/engine/DensityLayer.js';
+import { NODE_STATE_ATTRIBUTE } from '../src/pipeline/constants.js';
 
 test('resolveDensityBandwidthViewport prefers the logical figure viewport over the raster target size', () => {
   const resolved = resolveDensityBandwidthViewport(
@@ -213,4 +214,52 @@ test('DensityLayer difference mode keeps using the sequential colormap key', () 
   assert.equal(computed.mode, 'difference');
   assert.equal(computed.diverging, true);
   assert.equal(computed.colormapKey, 'interpolateRdBu');
+});
+
+test('DensityLayer auto interaction filter prefers selected, then highlighted, then all active nodes', () => {
+  const layer = new DensityLayer();
+  const state = new Uint32Array([0, 4, 2, 0]);
+  const network = {
+    nodeCount: 4,
+    nodeIndices: new Uint32Array([0, 1, 2, 3]),
+    getNodeAttributeBuffer(name) {
+      if (name === NODE_STATE_ATTRIBUTE) return { view: state, dimension: 1 };
+      return null;
+    },
+  };
+
+  layer.setConfig({ interactionFilter: 'auto' });
+  assert.deepEqual(Array.from(layer.applyInteractionFilter(network, layer.config, network.nodeIndices)), [2]);
+
+  state[2] = 0;
+  assert.deepEqual(Array.from(layer.applyInteractionFilter(network, layer.config, network.nodeIndices)), [1]);
+
+  state[1] = 0;
+  assert.deepEqual(Array.from(layer.applyInteractionFilter(network, layer.config, network.nodeIndices)), [0, 1, 2, 3]);
+});
+
+test('DensityLayer auto interaction filter ignores virtual hover state', () => {
+  const layer = new DensityLayer();
+  const network = {
+    nodeCount: 3,
+    nodeIndices: new Uint32Array([0, 1, 2]),
+    getNodeAttributeBuffer(name) {
+      if (name === NODE_STATE_ATTRIBUTE) return { view: new Uint32Array([0, 0, 0]), dimension: 1 };
+      return null;
+    },
+  };
+
+  layer.setConfig({ interactionFilter: 'auto' });
+  assert.deepEqual(Array.from(layer.applyInteractionFilter(network, layer.config, network.nodeIndices)), [0, 1, 2]);
+});
+
+test('DensityLayer node index version changes when focused ids change with same count', () => {
+  const layer = new DensityLayer();
+  const first = new Uint32Array([4]);
+  const second = new Uint32Array([9]);
+
+  assert.notEqual(
+    layer.computeNodeIndexVersion(first, first.length),
+    layer.computeNodeIndexVersion(second, second.length),
+  );
 });

@@ -229,6 +229,15 @@ test('selection behavior commands support direct selection and neighbor expansio
   behavior.selectNodes([1, 3], { mode: 'replace' });
   assert.deepEqual(Array.from(behavior.state.selectedNodes).sort((a, b) => a - b), [1, 3]);
 
+  behavior.selectNodes([1], { mode: 'remove' });
+  assert.deepEqual(Array.from(behavior.state.selectedNodes).sort((a, b) => a - b), [3]);
+
+  behavior.selectEdges([2], { mode: 'replace' });
+  assert.deepEqual(Array.from(behavior.state.selectedEdges), [2]);
+  behavior.selectEdges([2], { mode: 'remove' });
+  assert.deepEqual(Array.from(behavior.state.selectedEdges), []);
+
+  behavior.selectNodes([1, 3], { mode: 'replace' });
   behavior.expandSelectionToNeighbors();
   assert.deepEqual(Array.from(behavior.state.selectedNodes).sort((a, b) => a - b), [0, 1, 2, 3]);
 });

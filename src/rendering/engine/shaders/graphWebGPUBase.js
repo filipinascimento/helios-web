@@ -219,8 +219,14 @@ struct Shading {
 	  edgeState: u32,
     nodeStateForceMaxAlphaMask: u32,
     edgeStateForceMaxAlphaMask: u32,
-    _pad0: u32,
-    _pad1: u32,
+    nodeVirtual: u32,
+    edgeVirtual: u32,
+    nodeHoverScale: vec4<f32>,
+    nodeHoverColorMul: vec4<f32>,
+    nodeHoverColorAdd: vec4<f32>,
+    edgeHoverScale: vec4<f32>,
+    edgeHoverColorMul: vec4<f32>,
+    edgeHoverColorAdd: vec4<f32>,
 	};
 		@group(0) @binding(${bindingIndex('hover')}) var<uniform> hover : Hover;
 
@@ -287,15 +293,18 @@ fn nodeVertex(input : VertexInput) -> VertexOutput {
   let rawSize = ${useNodeSizeBuffer ? 'nodeSizes.data[index]' : 'globals.nodeRaw.x'};
 	  var state = ${useNodeStateBuffer ? 'nodeStates.data[index]' : '0u'};
 	  if (hover.nodeIndex != 0xffffffffu && index == hover.nodeIndex) {
-	    state = state | hover.nodeState;
+	    if (hover.nodeVirtual == 0u) {
+        state = state | hover.nodeState;
+      }
 	  }
-    let forceMaxAlpha = (state & hover.nodeStateForceMaxAlphaMask) != 0u;
+    var forceMaxAlpha = (state & hover.nodeStateForceMaxAlphaMask) != 0u;
 	  var sizeMul = 1.0;
 	  var opacityMul = 1.0;
 	  var outlineMul = 1.0;
 	  var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
 	  var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
   var discardFlag = 0u;
+  let virtualHover = hover.nodeIndex != 0xffffffffu && index == hover.nodeIndex && hover.nodeVirtual != 0u;
   if (state == 0u) {
     let scale = globals.nodeNoStateScale;
     sizeMul = sizeMul * scale.x;
@@ -319,6 +328,18 @@ fn nodeVertex(input : VertexInput) -> VertexOutput {
         }
       }
     }
+  }
+  if (virtualHover) {
+    let scale = hover.nodeHoverScale;
+    sizeMul = sizeMul * scale.x;
+    opacityMul = opacityMul * scale.y;
+    outlineMul = outlineMul * scale.z;
+    rgbMul = rgbMul * hover.nodeHoverColorMul.rgb;
+    rgbAdd = rgbAdd + hover.nodeHoverColorAdd.rgb;
+    if (scale.w > 0.5) {
+      discardFlag = 1u;
+    }
+    forceMaxAlpha = forceMaxAlpha || hover.nodeHoverColorMul.a > 1.5;
   }
 
   let semanticScale = semanticZoomScale();
@@ -498,8 +519,14 @@ struct EdgeStates {
 	  edgeState: u32,
     nodeStateForceMaxAlphaMask: u32,
     edgeStateForceMaxAlphaMask: u32,
-    _pad0: u32,
-    _pad1: u32,
+    nodeVirtual: u32,
+    edgeVirtual: u32,
+    nodeHoverScale: vec4<f32>,
+    nodeHoverColorMul: vec4<f32>,
+    nodeHoverColorAdd: vec4<f32>,
+    edgeHoverScale: vec4<f32>,
+    edgeHoverColorMul: vec4<f32>,
+    edgeHoverColorAdd: vec4<f32>,
 	};
 
 	@group(0) @binding(0) var<uniform> camera : Camera;
@@ -558,14 +585,17 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
   );
 	  var state = edgeStates.data[edgeId];
 	  if (hover.edgeIndex != 0xffffffffu && edgeId == hover.edgeIndex) {
-	    state = state | hover.edgeState;
+	    if (hover.edgeVirtual == 0u) {
+        state = state | hover.edgeState;
+      }
 	  }
-    let forceMaxAlpha = (state & hover.edgeStateForceMaxAlphaMask) != 0u;
+    var forceMaxAlpha = (state & hover.edgeStateForceMaxAlphaMask) != 0u;
 	  var widthMul = 1.0;
 	  var opacityMul = 1.0;
 	  var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
 	  var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
 	  var discardFlag = 0u;
+  let virtualHover = hover.edgeIndex != 0xffffffffu && edgeId == hover.edgeIndex && hover.edgeVirtual != 0u;
   if (state == 0u) {
     let scale = globals.edgeNoStateScale;
     widthMul = widthMul * scale.x;
@@ -587,6 +617,17 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
         }
       }
     }
+  }
+  if (virtualHover) {
+    let scale = hover.edgeHoverScale;
+    widthMul = widthMul * scale.x;
+    opacityMul = opacityMul * scale.y;
+    rgbMul = rgbMul * hover.edgeHoverColorMul.rgb;
+    rgbAdd = rgbAdd + hover.edgeHoverColorAdd.rgb;
+    if (scale.w > 0.5) {
+      discardFlag = 1u;
+    }
+    forceMaxAlpha = forceMaxAlpha || hover.edgeHoverColorMul.a > 1.5;
   }
 
   let endpointSize = select(globals.edgeEndpointSizeRaw, edgeEndpointSizes.data[edgeId], USE_EDGE_ENDPOINT_SIZE_BUFFER);
@@ -676,14 +717,17 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   );
 	  var state = edgeStates.data[edgeId];
 	  if (hover.edgeIndex != 0xffffffffu && edgeId == hover.edgeIndex) {
-	    state = state | hover.edgeState;
+	    if (hover.edgeVirtual == 0u) {
+        state = state | hover.edgeState;
+      }
 	  }
-    let forceMaxAlpha = (state & hover.edgeStateForceMaxAlphaMask) != 0u;
+    var forceMaxAlpha = (state & hover.edgeStateForceMaxAlphaMask) != 0u;
 	  var widthMul = 1.0;
 	  var opacityMul = 1.0;
 	  var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
 	  var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
 	  var discardFlag = 0u;
+  let virtualHover = hover.edgeIndex != 0xffffffffu && edgeId == hover.edgeIndex && hover.edgeVirtual != 0u;
   if (state == 0u) {
     let scale = globals.edgeNoStateScale;
     widthMul = widthMul * scale.x;
@@ -705,6 +749,17 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
         }
       }
     }
+  }
+  if (virtualHover) {
+    let scale = hover.edgeHoverScale;
+    widthMul = widthMul * scale.x;
+    opacityMul = opacityMul * scale.y;
+    rgbMul = rgbMul * hover.edgeHoverColorMul.rgb;
+    rgbAdd = rgbAdd + hover.edgeHoverColorAdd.rgb;
+    if (scale.w > 0.5) {
+      discardFlag = 1u;
+    }
+    forceMaxAlpha = forceMaxAlpha || hover.edgeHoverColorMul.a > 1.5;
   }
 
   let endpointSize = select(globals.edgeEndpointSizeRaw, edgeEndpointSizes.data[edgeId], USE_EDGE_ENDPOINT_SIZE_BUFFER);

@@ -54,6 +54,9 @@ function normalizeConfigPatch(options = {}) {
     'showNodeSize',
     'showEdgeWidth',
     'scalePreviewLegends',
+    'interactiveCategorical',
+    'legendHoverHighlight',
+    'legendClickSelect',
   ];
   for (const key of booleanKeys) {
     if (Object.prototype.hasOwnProperty.call(options, key)) next[key] = options[key] === true;

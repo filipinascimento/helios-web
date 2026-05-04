@@ -507,9 +507,11 @@ test('attributeWebGPU track sources include node and edge state geometry adjustm
     },
   });
   assert.match(sources.nodeWGSL, /@group\(0\) @binding\(8\) var<storage, read> nodeStates : U32Data;/);
-  assert.match(sources.nodeWGSL, /if \(track\.hoverNode\.x != 0xffffffffu && nodeId == track\.hoverNode\.x\)/);
+  assert.match(sources.nodeWGSL, /if \(track\.hoverNode\.z == 0u && track\.hoverNode\.x != 0xffffffffu && nodeId == track\.hoverNode\.x\)/);
   assert.match(sources.edgeWGSL, /@group\(0\) @binding\(11\) var<storage, read> nodeStates : U32Data;/);
   assert.match(sources.edgeWGSL, /@group\(0\) @binding\(12\) var<storage, read> edgeStates : U32Data;/);
+  assert.match(sources.edgeWGSL, /if \(track\.stateMeta\.w == 0u && track\.hoverEdge\.x != 0xffffffffu && edgeId == track\.hoverEdge\.x\)/);
+  assert.match(sources.edgeWGSL, /if \(track\.hoverNode\.z == 0u && track\.hoverEdge\.z == 1u && track\.hoverNode\.x != 0xffffffffu/);
   assert.match(sources.edgeWGSL, /if \(track\.hoverEdge\.w == 1u && \(\(sourceState \| targetState\) & 2u\) != 0u\)/);
 });
 

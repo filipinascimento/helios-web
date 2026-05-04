@@ -2,8 +2,10 @@ import {
   DEFAULT_AUTO_BACKGROUND_TONE_DISABLED,
   DEFAULT_AUTO_BACKGROUND_TONE_SELECTED,
   DEFAULT_EDGE_HIGHLIGHT_STYLE,
+  DEFAULT_EDGE_HOVER_STYLE,
   DEFAULT_EDGE_SELECTED_STYLE,
   DEFAULT_NODE_HIGHLIGHT_STYLE,
+  DEFAULT_NODE_HOVER_STYLE,
   DEFAULT_NODE_SELECTED_STYLE,
   NEUTRAL_EDGE_NO_STATE_STYLE,
   NEUTRAL_NODE_NO_STATE_STYLE,
@@ -45,6 +47,12 @@ export function ensureInteractionStateStyleDefaults(helios) {
   if (!highlightedEdgeStyle || isNeutralEdgeStateStyle(highlightedEdgeStyle)) {
     helios.edgeStateStyle?.('HIGHLIGHTED', { ...DEFAULT_EDGE_HIGHLIGHT_STYLE });
   }
+  if (!helios.nodeHoverStyle?.()) {
+    helios.nodeHoverStyle?.({ ...DEFAULT_NODE_HOVER_STYLE });
+  }
+  if (!helios.edgeHoverStyle?.()) {
+    helios.edgeHoverStyle?.({ ...DEFAULT_EDGE_HOVER_STYLE });
+  }
 }
 
 export function resolveOtherElementsMode(context) {
@@ -52,8 +60,13 @@ export function resolveOtherElementsMode(context) {
   if (selectionState && (selectionState.selectedNodes.size > 0 || selectionState.selectedEdges.size > 0)) {
     return 'selected';
   }
+  const helios = context?.helios ?? null;
+  const highlightUnion = helios?._highlightUnion ?? null;
+  if (highlightUnion && ((highlightUnion.nodes?.size ?? 0) > 0 || (highlightUnion.edges?.size ?? 0) > 0)) {
+    return 'highlighted';
+  }
   const hoverState = getHoverState(context);
-  if (hoverState && (
+  if (hoverState?.hoverAffectsOtherElements === true && (
     (hoverState.nodeHover && hoverState.hoveredNode >= 0)
     || (hoverState.edgeHover && hoverState.hoveredEdge >= 0)
   )) {

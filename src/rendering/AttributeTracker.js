@@ -173,6 +173,7 @@ uniform int u_trackedNodeValueMode;
 uniform int u_hasNodeStates;
 uniform uint u_hoverNodeIndex;
 uniform uint u_hoverNodeState;
+uniform uint u_hoverNodeIsVirtual;
 uniform int u_stateSlotCount;
 uniform float u_nodeSizeBase;
 uniform float u_nodeSizeScale;
@@ -208,7 +209,7 @@ void main() {
   uint nodeId = (u_useNodeIdBuffer == 1) ? a_nodeId : uint(gl_InstanceID);
   vec3 position = texelFetch(u_nodePositions, textureCoord(u_nodePositions, nodeId), 0).xyz;
   uint state = (u_hasNodeStates == 1) ? texelFetch(u_nodeStates, textureCoord(u_nodeStates, nodeId), 0).x : 0u;
-  if (u_hoverNodeIndex != 4294967295u && nodeId == u_hoverNodeIndex) {
+  if (u_hoverNodeIsVirtual == 0u && u_hoverNodeIndex != 4294967295u && nodeId == u_hoverNodeIndex) {
     state |= u_hoverNodeState;
   }
   float sizeMul = 1.0;
@@ -402,8 +403,10 @@ uniform float u_nodeSizeScale;
 uniform float u_edgeEndpointTrim;
 uniform uint u_hoverNodeIndex;
 uniform uint u_hoverNodeState;
+uniform uint u_hoverNodeIsVirtual;
 uniform uint u_hoverEdgeIndex;
 uniform uint u_hoverEdgeState;
+uniform uint u_hoverEdgeIsVirtual;
 
 out vec4 v_encoded;
 
@@ -504,7 +507,7 @@ void main() {
   vec3 dirN = dir / dirLenWorld;
 
   uvec2 endpointStatePair = fetchEdgeEndpointStatePair(edgeId);
-  if (u_hoverNodeIndex != 4294967295u) {
+  if (u_hoverNodeIsVirtual == 0u && u_hoverNodeIndex != 4294967295u) {
     if (sourceId == u_hoverNodeIndex) endpointStatePair.x |= u_hoverNodeState;
     if (targetId == u_hoverNodeIndex) endpointStatePair.y |= u_hoverNodeState;
   }
@@ -537,10 +540,10 @@ void main() {
   vec3 endPos = targetPos - dirN * trimEnd;
 
   uint state = fetchEdgeState(edgeId);
-  if (u_hoverEdgeIndex != 4294967295u && edgeId == u_hoverEdgeIndex) {
+  if (u_hoverEdgeIsVirtual == 0u && u_hoverEdgeIndex != 4294967295u && edgeId == u_hoverEdgeIndex) {
     state |= u_hoverEdgeState;
   }
-  if (u_propagateHoveredNodeToEdges == 1 && u_hoverNodeIndex != 4294967295u && (sourceId == u_hoverNodeIndex || targetId == u_hoverNodeIndex)) {
+  if (u_hoverNodeIsVirtual == 0u && u_propagateHoveredNodeToEdges == 1 && u_hoverNodeIndex != 4294967295u && (sourceId == u_hoverNodeIndex || targetId == u_hoverNodeIndex)) {
     state |= 4u;
   }
   if (u_propagateSelectedNodesToEdges == 1 && ((endpointStatePair.x | endpointStatePair.y) & 2u) != 0u) {
@@ -1140,6 +1143,7 @@ export class WebGLAttributeRenderer {
       'u_hasNodeStates',
       'u_hoverNodeIndex',
       'u_hoverNodeState',
+      'u_hoverNodeIsVirtual',
       'u_stateSlotCount',
       'u_nodeSizeBase',
       'u_nodeSizeScale',
@@ -1220,8 +1224,10 @@ export class WebGLAttributeRenderer {
       'u_edgeEndpointTrim',
       'u_hoverNodeIndex',
       'u_hoverNodeState',
+      'u_hoverNodeIsVirtual',
       'u_hoverEdgeIndex',
       'u_hoverEdgeState',
+      'u_hoverEdgeIsVirtual',
       'u_zoom2D',
       'u_semanticZoomExponent',
     ];
@@ -1796,6 +1802,7 @@ export class WebGLAttributeRenderer {
     gl.uniform1i(uniforms.u_hasNodeStates, options.hasNodeStates ? 1 : 0);
     set1ui(uniforms.u_hoverNodeIndex, this.graphLayer.hoveredNodeIndex >>> 0);
     set1ui(uniforms.u_hoverNodeState, this.graphLayer.hoveredNodeState >>> 0);
+    set1ui(uniforms.u_hoverNodeIsVirtual, this.graphLayer.hoveredNodeIsVirtual ? 1 : 0);
     gl.uniform1i(uniforms.u_stateSlotCount, this.graphLayer.stateSlotCount ?? 0);
     gl.uniform1f(uniforms.u_nodeSizeBase, this.graphLayer.nodeSizeBase ?? 0);
     gl.uniform1f(uniforms.u_nodeSizeScale, this.graphLayer.nodeSizeScale ?? 1);
@@ -1925,8 +1932,10 @@ export class WebGLAttributeRenderer {
     gl.uniform1f(uniforms.u_edgeEndpointTrim, this.graphLayer.edgeEndpointTrim ?? 0.8);
     set1ui(uniforms.u_hoverNodeIndex, this.graphLayer.hoveredNodeIndex >>> 0);
     set1ui(uniforms.u_hoverNodeState, this.graphLayer.hoveredNodeState >>> 0);
+    set1ui(uniforms.u_hoverNodeIsVirtual, this.graphLayer.hoveredNodeIsVirtual ? 1 : 0);
     set1ui(uniforms.u_hoverEdgeIndex, this.graphLayer.hoveredEdgeIndex >>> 0);
     set1ui(uniforms.u_hoverEdgeState, this.graphLayer.hoveredEdgeState >>> 0);
+    set1ui(uniforms.u_hoverEdgeIsVirtual, this.graphLayer.hoveredEdgeIsVirtual ? 1 : 0);
     gl.uniform1f(uniforms.u_zoom2D, zoom2D);
     gl.uniform1f(uniforms.u_semanticZoomExponent, semanticZoomExponent);
   }
@@ -4697,6 +4706,7 @@ export class WebGPUAttributeRenderer {
     const writeF32 = (index, value) => trackConfigView.setFloat32(index * 4, Number(value) || 0, true);
     writeU32(0, this.graphLayer.hoveredNodeIndex >>> 0);
     writeU32(1, this.graphLayer.hoveredNodeState >>> 0);
+    writeU32(2, this.graphLayer.hoveredNodeIsVirtual ? 1 : 0);
     writeU32(4, this.graphLayer.hoveredEdgeIndex >>> 0);
     writeU32(5, this.graphLayer.hoveredEdgeState >>> 0);
     writeU32(6, this.graphLayer.propagateHoveredNodeToEdges === true ? 1 : 0);
@@ -4704,6 +4714,7 @@ export class WebGPUAttributeRenderer {
     writeU32(8, nodeStatesView ? 1 : 0);
     writeU32(9, edgeStatesView ? 1 : 0);
     writeU32(10, TRACK_STATE_SLOTS);
+    writeU32(11, this.graphLayer.hoveredEdgeIsVirtual ? 1 : 0);
     const nodeNoStateScale = this.graphLayer.nodeNoStateStyleEnabled === true
       ? this.graphLayer.nodeNoStateScale
       : [1, 1, 1, 0];
@@ -5188,8 +5199,10 @@ export class AttributeTracker {
       delegateVersion,
       graphLayer?.hoveredNodeIndex ?? 0xffffffff,
       graphLayer?.hoveredNodeState ?? 0,
+      graphLayer?.hoveredNodeIsVirtual === true ? 1 : 0,
       graphLayer?.hoveredEdgeIndex ?? 0xffffffff,
       graphLayer?.hoveredEdgeState ?? 0,
+      graphLayer?.hoveredEdgeIsVirtual === true ? 1 : 0,
       graphLayer?.propagateHoveredNodeToEdges === true ? 1 : 0,
       graphLayer?.propagateSelectedNodesToEdges === true ? 1 : 0,
       nodeStateScaleHash,

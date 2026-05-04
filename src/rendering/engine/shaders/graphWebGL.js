@@ -261,7 +261,11 @@ uniform usampler2D u_edgeStates;
 uniform int u_hasEdgeStates;
 uniform uint u_hoverEdgeIndex;
 uniform uint u_hoverEdgeState;
-${edge.propagateHoveredNodeToEdges ? 'uniform uint u_hoverNodeIndex;\n' : ''}uniform uint u_edgeStateForceMaxAlphaMask;
+uniform uint u_hoverEdgeIsVirtual;
+${edge.propagateHoveredNodeToEdges ? 'uniform uint u_hoverNodeIndex;\nuniform uint u_hoverNodeIsVirtual;\n' : ''}uniform uint u_edgeStateForceMaxAlphaMask;
+uniform vec4 u_edgeHoverScale;
+uniform vec4 u_edgeHoverColorMul;
+uniform vec4 u_edgeHoverColorAdd;
 uniform vec4 u_edgeNoStateScale;
 uniform vec4 u_edgeNoStateColorMul;
 uniform vec4 u_edgeNoStateColorAdd;
@@ -283,12 +287,12 @@ uint fetchEdgeState(uint id) {
   uint state = fetchEdgeState(a_edgeId);
   uvec2 endpointStatePair = ${edgeEndpointStateEnabled ? 'fetchEdgeEndpointStatePair(a_edgeId)' : 'uvec2(0u, 0u)'};
   if (u_hoverEdgeIndex != 4294967295u && a_edgeId == u_hoverEdgeIndex) {
-    state |= u_hoverEdgeState;
+    if (u_hoverEdgeIsVirtual == 0u) state |= u_hoverEdgeState;
   }
   ${edge.propagateHoveredNodeToEdges
     ? `
   if (u_hoverNodeIndex != 4294967295u && (sourceId == u_hoverNodeIndex || targetId == u_hoverNodeIndex)) {
-    state |= 4u;
+    if (u_hoverNodeIsVirtual == 0u) state |= 4u;
   }`
     : ''}
   ${edge.propagateSelectedNodesToEdges
@@ -302,6 +306,7 @@ uint fetchEdgeState(uint id) {
   vec3 rgbMul = vec3(1.0);
   vec3 rgbAdd = vec3(0.0);
   uint discardFlag = 0u;
+  bool virtualHover = (u_hoverEdgeIndex != 4294967295u && a_edgeId == u_hoverEdgeIndex && u_hoverEdgeIsVirtual != 0u)${edge.propagateHoveredNodeToEdges ? ' || (u_hoverNodeIndex != 4294967295u && (sourceId == u_hoverNodeIndex || targetId == u_hoverNodeIndex) && u_hoverNodeIsVirtual != 0u)' : ''};
   if (state == 0u) {
     vec4 scale = u_edgeNoStateScale;
     opacityMul *= scale.y;
@@ -317,6 +322,14 @@ uint fetchEdgeState(uint id) {
       rgbAdd += u_edgeStateColorAdd[i].rgb * enabled;
       discardFlag |= uint((scale.w > 0.5) && (enabled > 0.5));
     }
+  }
+  if (virtualHover) {
+    vec4 scale = u_edgeHoverScale;
+    opacityMul *= scale.y;
+    rgbMul *= u_edgeHoverColorMul.rgb;
+    rgbAdd += u_edgeHoverColorAdd.rgb;
+    discardFlag |= uint(scale.w > 0.5);
+    forceMaxAlpha = forceMaxAlpha || (u_edgeHoverColorMul.a > 1.5);
   }`
     : `
   bool forceMaxAlpha = false;
@@ -330,12 +343,12 @@ uint fetchEdgeState(uint id) {
   uint state = fetchEdgeState(a_edgeId);
   uvec2 endpointStatePair = ${edgeEndpointStateEnabled ? 'fetchEdgeEndpointStatePair(a_edgeId)' : 'uvec2(0u, 0u)'};
   if (u_hoverEdgeIndex != 4294967295u && a_edgeId == u_hoverEdgeIndex) {
-    state |= u_hoverEdgeState;
+    if (u_hoverEdgeIsVirtual == 0u) state |= u_hoverEdgeState;
   }
   ${edge.propagateHoveredNodeToEdges
     ? `
   if (u_hoverNodeIndex != 4294967295u && (sourceId == u_hoverNodeIndex || targetId == u_hoverNodeIndex)) {
-    state |= 4u;
+    if (u_hoverNodeIsVirtual == 0u) state |= 4u;
   }`
     : ''}
   ${edge.propagateSelectedNodesToEdges
@@ -350,6 +363,7 @@ uint fetchEdgeState(uint id) {
   vec3 rgbMul = vec3(1.0);
   vec3 rgbAdd = vec3(0.0);
   uint discardFlag = 0u;
+  bool virtualHover = (u_hoverEdgeIndex != 4294967295u && a_edgeId == u_hoverEdgeIndex && u_hoverEdgeIsVirtual != 0u)${edge.propagateHoveredNodeToEdges ? ' || (u_hoverNodeIndex != 4294967295u && (sourceId == u_hoverNodeIndex || targetId == u_hoverNodeIndex) && u_hoverNodeIsVirtual != 0u)' : ''};
   if (state == 0u) {
     vec4 scale = u_edgeNoStateScale;
     widthMul *= scale.x;
@@ -367,6 +381,15 @@ uint fetchEdgeState(uint id) {
       rgbAdd += u_edgeStateColorAdd[i].rgb * enabled;
       discardFlag |= uint((scale.w > 0.5) && (enabled > 0.5));
     }
+  }
+  if (virtualHover) {
+    vec4 scale = u_edgeHoverScale;
+    widthMul *= scale.x;
+    opacityMul *= scale.y;
+    rgbMul *= u_edgeHoverColorMul.rgb;
+    rgbAdd += u_edgeHoverColorAdd.rgb;
+    discardFlag |= uint(scale.w > 0.5);
+    forceMaxAlpha = forceMaxAlpha || (u_edgeHoverColorMul.a > 1.5);
   }`
     : `
   bool forceMaxAlpha = false;
@@ -582,7 +605,11 @@ uniform usampler2D u_nodeStates;
 uniform int u_hasNodeStates;
 uniform uint u_hoverNodeIndex;
 uniform uint u_hoverNodeState;
+uniform uint u_hoverNodeIsVirtual;
 uniform uint u_nodeStateForceMaxAlphaMask;
+uniform vec4 u_nodeHoverScale;
+uniform vec4 u_nodeHoverColorMul;
+uniform vec4 u_nodeHoverColorAdd;
 uniform vec4 u_nodeNoStateScale;
 uniform vec4 u_nodeNoStateColorMul;
 uniform vec4 u_nodeNoStateColorAdd;
@@ -618,7 +645,7 @@ ${nodeFetchState}
 void main() {
   uint state = fetchNodeState(a_nodeId);
   if (u_hoverNodeIndex != 4294967295u && a_nodeId == u_hoverNodeIndex) {
-    state |= u_hoverNodeState;
+    if (u_hoverNodeIsVirtual == 0u) state |= u_hoverNodeState;
   }
   bool forceMaxAlpha = (state & u_nodeStateForceMaxAlphaMask) != 0u;
   float sizeMul = 1.0;
@@ -627,6 +654,7 @@ void main() {
   vec3 rgbMul = vec3(1.0);
   vec3 rgbAdd = vec3(0.0);
   uint discardFlag = 0u;
+  bool virtualHover = u_hoverNodeIndex != 4294967295u && a_nodeId == u_hoverNodeIndex && u_hoverNodeIsVirtual != 0u;
   if (state == 0u) {
     vec4 scale = u_nodeNoStateScale;
     sizeMul *= scale.x;
@@ -646,6 +674,16 @@ void main() {
       rgbAdd += u_nodeStateColorAdd[i].rgb * enabled;
       discardFlag |= uint((scale.w > 0.5) && (enabled > 0.5));
     }
+  }
+  if (virtualHover) {
+    vec4 scale = u_nodeHoverScale;
+    sizeMul *= scale.x;
+    opacityMul *= scale.y;
+    outlineMul *= scale.z;
+    rgbMul *= u_nodeHoverColorMul.rgb;
+    rgbAdd += u_nodeHoverColorAdd.rgb;
+    discardFlag |= uint(scale.w > 0.5);
+    forceMaxAlpha = forceMaxAlpha || (u_nodeHoverColorMul.a > 1.5);
   }
   v_discardFlag = discardFlag;
 

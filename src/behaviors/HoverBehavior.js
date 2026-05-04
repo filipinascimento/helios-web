@@ -42,6 +42,9 @@ export class HoverBehavior extends Behavior {
       hoverLabel: true,
       hoverLabelSource: 'auto',
       hoverConnectedEdges: true,
+      highlightConnectedEdges: false,
+      hoverAffectsOtherElements: false,
+      hoverStyleFromHighlight: false,
       hoveredNode: -1,
       hoveredEdge: -1,
       otherHighlightNodeStyle: normalizeNodeStyle(DEFAULT_OTHER_HIGHLIGHT_NODE_STYLE, DEFAULT_OTHER_HIGHLIGHT_NODE_STYLE),
@@ -68,13 +71,16 @@ export class HoverBehavior extends Behavior {
       };
     }
     this.ensureStateStyleDefaults();
+    this.applyHoverStylePolicy();
     this.applyHoverLabelConfig();
     this.applyHoverConnectedEdges();
+    this.applyHighlightConnectedEdges();
     this.syncPicking();
     this.applyOtherElementsState();
 
     this.addCleanup(this.context.subscribe(helios, 'node:hover', (event) => this.handleNodeHover(event)));
     this.addCleanup(this.context.subscribe(helios, 'edge:hover', (event) => this.handleEdgeHover(event)));
+    this.addCleanup(this.context.subscribe(helios, 'highlight:change', () => this.handleHighlightChange()));
     this.addCleanup(this.context.subscribe(helios, 'network:replaced', () => this.handleNetworkReplaced()));
     this.addCleanup(this.context.subscribe(helios, 'ui:binding-change', (event) => this.handleUiBindingChange(event)));
     return this;
@@ -107,6 +113,11 @@ export class HoverBehavior extends Behavior {
       state.hoverLabelSource = options.hoverLabelSource || 'auto';
     }
     if (Object.prototype.hasOwnProperty.call(options, 'hoverConnectedEdges')) state.hoverConnectedEdges = options.hoverConnectedEdges !== false;
+    if (Object.prototype.hasOwnProperty.call(options, 'highlightConnectedEdges')) state.highlightConnectedEdges = options.highlightConnectedEdges !== false;
+    if (Object.prototype.hasOwnProperty.call(options, 'hoverAffectsOtherElements')) state.hoverAffectsOtherElements = options.hoverAffectsOtherElements === true;
+    if (Object.prototype.hasOwnProperty.call(options, 'hoverStyleFromHighlight')) {
+      state.hoverStyleFromHighlight = options.hoverStyleFromHighlight === true;
+    }
     if (Object.prototype.hasOwnProperty.call(options, 'otherHighlightNodeStyle')) {
       state.otherHighlightNodeStyle = normalizeNodeStyle(options.otherHighlightNodeStyle, DEFAULT_OTHER_HIGHLIGHT_NODE_STYLE);
     }
@@ -124,6 +135,8 @@ export class HoverBehavior extends Behavior {
       if (!needsEdgeHoverTracking(this.context)) this.clearEdgeHover({ silent: true });
       this.applyHoverLabelConfig();
       this.applyHoverConnectedEdges();
+      this.applyHighlightConnectedEdges();
+      this.context?.helios?.hoverStyleFromHighlight?.(state.hoverStyleFromHighlight);
       this.syncPicking();
       this.applyOtherElementsState();
     }
@@ -139,6 +152,9 @@ export class HoverBehavior extends Behavior {
         hoverLabel: this.state.hoverLabel,
         hoverLabelSource: this.state.hoverLabelSource,
         hoverConnectedEdges: this.state.hoverConnectedEdges,
+        highlightConnectedEdges: this.state.highlightConnectedEdges,
+        hoverAffectsOtherElements: this.state.hoverAffectsOtherElements,
+        hoverStyleFromHighlight: this.state.hoverStyleFromHighlight,
         otherHighlightNodeStyle: { ...this.state.otherHighlightNodeStyle },
         otherHighlightEdgeStyle: { ...this.state.otherHighlightEdgeStyle },
         otherHighlightNodeTone: { ...this.state.otherHighlightNodeTone },
@@ -176,6 +192,14 @@ export class HoverBehavior extends Behavior {
     applyHoverConnectedEdges(this.context);
   }
 
+  applyHighlightConnectedEdges() {
+    this.context?.helios?.highlightConnectedEdges?.(this.state.highlightConnectedEdges);
+  }
+
+  applyHoverStylePolicy() {
+    this.context?.helios?.hoverStyleFromHighlight?.(this.state.hoverStyleFromHighlight);
+  }
+
   applyOtherElementsState() {
     applyOtherElementsState(this.context);
   }
@@ -209,7 +233,7 @@ export class HoverBehavior extends Behavior {
     if (!detail || !needsNodeHoverTracking(this.context)) return;
     if (detail.state === 'in') {
       this.state.hoveredNode = detail.index;
-      if (this.state.nodeHover) this.context?.helios?.hoverNodeState?.(detail.index, 'HIGHLIGHTED');
+      if (this.state.nodeHover) this.context?.helios?.hoverNodeState?.(detail.index, 'HOVER');
     } else if (detail.state === 'out' && this.state.hoveredNode === detail.index) {
       this.clearNodeHover({ silent: true });
     }
@@ -222,7 +246,7 @@ export class HoverBehavior extends Behavior {
     if (!detail || !needsEdgeHoverTracking(this.context)) return;
     if (detail.state === 'in') {
       this.state.hoveredEdge = detail.index;
-      if (this.state.edgeHover) this.context?.helios?.hoverEdgeState?.(detail.index, 'HIGHLIGHTED');
+      if (this.state.edgeHover) this.context?.helios?.hoverEdgeState?.(detail.index, 'HOVER');
     } else if (detail.state === 'out' && this.state.hoveredEdge === detail.index) {
       this.clearEdgeHover({ silent: true });
     }
@@ -243,6 +267,7 @@ export class HoverBehavior extends Behavior {
     this.clearEdgeHover({ silent: true, force: true });
     this.ensureStateStyleDefaults();
     this.applyHoverConnectedEdges();
+    this.applyHighlightConnectedEdges();
     this.applyOtherElementsState();
     this.applyHoverLabelConfig();
     this.syncPicking();
@@ -254,6 +279,11 @@ export class HoverBehavior extends Behavior {
     if (bindingName !== 'clearColor' && bindingName !== 'background') return;
     this.applyOtherElementsState();
     this.emitChange('ui-binding');
+  }
+
+  handleHighlightChange() {
+    this.applyOtherElementsState();
+    this.emitChange('highlight');
   }
 }
 

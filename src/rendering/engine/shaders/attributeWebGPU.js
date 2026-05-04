@@ -479,9 +479,9 @@ struct Globals {
 };
 
 struct TrackConfig {
-  hoverNode: vec4<u32>, // x=index y=state
+  hoverNode: vec4<u32>, // x=index y=state z=isVirtual
   hoverEdge: vec4<u32>, // x=index y=state z=propHovered w=propSelected
-  stateMeta: vec4<u32>, // x=hasNodeStates y=hasEdgeStates z=stateSlotCount
+  stateMeta: vec4<u32>, // x=hasNodeStates y=hasEdgeStates z=stateSlotCount w=edgeHoverIsVirtual
   nodeNoStateScale: vec4<f32>,
   edgeNoStateScale: vec4<f32>,
   nodeStateScale: array<vec4<f32>, ${TRACK_STATE_SLOTS}>,
@@ -573,7 +573,7 @@ fn nodeVertex(input : NodeVertexInput) -> NodeVertexOutput {
   if (track.stateMeta.x == 1u) {
     state = nodeStates.data[nodeId];
   }` : ''}
-  if (track.hoverNode.x != 0xffffffffu && nodeId == track.hoverNode.x) {
+  if (track.hoverNode.z == 0u && track.hoverNode.x != 0xffffffffu && nodeId == track.hoverNode.x) {
     state = state | track.hoverNode.y;
   }
   var sizeMul = 1.0;
@@ -815,7 +815,7 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeLineVertexOutput {
     sourceState = nodeStates.data[sourceId];
     targetState = nodeStates.data[targetId];
   }` : ''}
-  if (track.hoverNode.x != 0xffffffffu) {
+  if (track.hoverNode.z == 0u && track.hoverNode.x != 0xffffffffu) {
     if (sourceId == track.hoverNode.x) {
       sourceState = sourceState | track.hoverNode.y;
     }
@@ -864,10 +864,10 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeLineVertexOutput {
   if (track.stateMeta.y == 1u) {
     state = edgeStates.data[edgeId];
   }` : ''}
-  if (track.hoverEdge.x != 0xffffffffu && edgeId == track.hoverEdge.x) {
+  if (track.stateMeta.w == 0u && track.hoverEdge.x != 0xffffffffu && edgeId == track.hoverEdge.x) {
     state = state | track.hoverEdge.y;
   }
-  if (track.hoverEdge.z == 1u && track.hoverNode.x != 0xffffffffu && (sourceId == track.hoverNode.x || targetId == track.hoverNode.x)) {
+  if (track.hoverNode.z == 0u && track.hoverEdge.z == 1u && track.hoverNode.x != 0xffffffffu && (sourceId == track.hoverNode.x || targetId == track.hoverNode.x)) {
     state = state | 4u;
   }
   if (track.hoverEdge.w == 1u && ((sourceState | targetState) & 2u) != 0u) {

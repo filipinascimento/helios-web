@@ -61,6 +61,7 @@ export class GraphLayerWebGPUBase extends GraphLayer {
     this.globalsArray = null;
     this.globalsBuffer = null;
     this.hoverArray = null;
+    this.hoverU32Array = null;
     this.hoverBuffer = null;
     this.shadingArray = null;
     this.shadingBuffer = null;
@@ -126,16 +127,10 @@ export class GraphLayerWebGPUBase extends GraphLayer {
       size: this.globalsArray.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-    this.hoverArray = new Uint32Array([
-      GraphLayer.NO_HOVER_INDEX,
-      0,
-      GraphLayer.NO_HOVER_INDEX,
-      0,
-      0,
-      0,
-      0,
-      0,
-    ]);
+    this.hoverArray = new Float32Array(32);
+    this.hoverU32Array = new Uint32Array(this.hoverArray.buffer);
+    this.hoverU32Array[0] = GraphLayer.NO_HOVER_INDEX;
+    this.hoverU32Array[2] = GraphLayer.NO_HOVER_INDEX;
     this.hoverBuffer = device.device.createBuffer({
       size: this.hoverArray.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -707,13 +702,15 @@ export class GraphLayerWebGPUBase extends GraphLayer {
   }
 
   updateHoverGpu(device) {
-    if (!device || !this.hoverBuffer || !this.hoverArray) return;
+    if (!device || !this.hoverBuffer || !this.hoverArray || !this.hoverU32Array) return;
     const nodeIndex = this.hoveredNodeIndex >>> 0;
     const nodeState = this.hoveredNodeState >>> 0;
     const edgeIndex = this.hoveredEdgeIndex >>> 0;
     const edgeState = this.hoveredEdgeState >>> 0;
     const nodeForceMask = this.nodeStateForceMaxAlphaMask >>> 0;
     const edgeForceMask = this.edgeStateForceMaxAlphaMask >>> 0;
+    const nodeVirtual = this.hoveredNodeIsVirtual ? 1 : 0;
+    const edgeVirtual = this.hoveredEdgeIsVirtual ? 1 : 0;
     const prev = this._hoverLast;
     if (
       prev &&
@@ -722,20 +719,30 @@ export class GraphLayerWebGPUBase extends GraphLayer {
       prev.edgeIndex === edgeIndex &&
       prev.edgeState === edgeState &&
       prev.nodeForceMask === nodeForceMask &&
-      prev.edgeForceMask === edgeForceMask
+      prev.edgeForceMask === edgeForceMask &&
+      prev.nodeVirtual === nodeVirtual &&
+      prev.edgeVirtual === edgeVirtual
     ) {
       return;
     }
-    this.hoverArray[0] = nodeIndex;
-    this.hoverArray[1] = nodeState;
-    this.hoverArray[2] = edgeIndex;
-    this.hoverArray[3] = edgeState;
-    this.hoverArray[4] = nodeForceMask;
-    this.hoverArray[5] = edgeForceMask;
-    this.hoverArray[6] = 0;
-    this.hoverArray[7] = 0;
+    this.hoverU32Array[0] = nodeIndex;
+    this.hoverU32Array[1] = nodeState;
+    this.hoverU32Array[2] = edgeIndex;
+    this.hoverU32Array[3] = edgeState;
+    this.hoverU32Array[4] = nodeForceMask;
+    this.hoverU32Array[5] = edgeForceMask;
+    this.hoverU32Array[6] = nodeVirtual;
+    this.hoverU32Array[7] = edgeVirtual;
+    this.hoverArray.set(this.nodeHoverScale, 8);
+    this.hoverArray.set(this.nodeHoverColorMul, 12);
+    this.hoverArray.set(this.nodeHoverColorAdd, 16);
+    this.hoverArray[15] = this.nodeHoverForceMaxAlpha ? 2 : this.hoverArray[15];
+    this.hoverArray.set(this.edgeHoverScale, 20);
+    this.hoverArray.set(this.edgeHoverColorMul, 24);
+    this.hoverArray.set(this.edgeHoverColorAdd, 28);
+    this.hoverArray[27] = this.edgeHoverForceMaxAlpha ? 2 : this.hoverArray[27];
     device.queue.writeBuffer(this.hoverBuffer, 0, this.hoverArray);
-    this._hoverLast = { nodeIndex, nodeState, edgeIndex, edgeState, nodeForceMask, edgeForceMask };
+    this._hoverLast = { nodeIndex, nodeState, edgeIndex, edgeState, nodeForceMask, edgeForceMask, nodeVirtual, edgeVirtual };
   }
 
   updateShadingGpu(device) {

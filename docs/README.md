@@ -90,7 +90,8 @@ Some common renderer/graph-layer “global” knobs are available directly on `H
 - Enable screen-space ambient occlusion: `helios.ambientOcclusionEnabled(true)`, `helios.ambientOcclusionNodes(true)`, `helios.ambientOcclusionEdges(true)`
 - Tune ambient occlusion: `helios.ambientOcclusionMode('fast'|'smooth')`, `helios.ambientOcclusionQuality('low'|'medium'|'high'|'ultra')`, `helios.ambientOcclusionStrength(...)`, `helios.ambientOcclusionRadius(...)`, `helios.ambientOcclusionBias(...)`
 - Tune Fast SSAO response: `helios.ambientOcclusionIntensityScale(...)`, `helios.ambientOcclusionIntensityShift(...)` (WebGPU and WebGL)
-- Configure adaptive edge fallback: `helios.edgeAdaptiveQuality({...})` (enabled by default; switches after repeated slow HQ frames, and export still forces high-quality edges)
+- Configure adaptive edge fallback: `helios.edgeAdaptiveQuality({...})` (enabled by default; switches after repeated slow high-quality render durations during camera or layout activity, returns to high-quality edges after activity stops, and export still forces high-quality edges)
+- Configure pointer hover styling separately from real group highlight: `helios.nodeHoverStyle(...)`, `helios.edgeHoverStyle(...)`; opt into legacy parity with `helios.hoverStyleFromHighlight(true)`, and tune source-managed highlight edge propagation with `helios.highlightConnectedEdges(...)`
 
 ## Mapper docs
 
@@ -104,6 +105,23 @@ See [`docs/UI.md`](./UI.md) for the optional `HeliosUI` overlay (panels, docking
 ## State docs
 
 See [`docs/states.md`](./states.md) for the bitmask-based node/edge state system (selected/highlighted/filtered/custom) and shader-applied styling.
+
+## Legends and Density Focus
+
+Categorical node-color legends are interactive by default. Hovering a category
+sets real `HIGHLIGHTED` state for matching nodes. Connected edges can opt into
+the same real highlighted state with `helios.highlightConnectedEdges(true)`.
+clicking selects that category, and Shift-click adds or removes categories from
+the current selection. Hovered rows show a gray outline; fully selected
+categories keep a theme-aware gray outline. Disable this with
+`legends({ interactiveCategorical: false })`, or tune hover and click separately
+with `legendHoverHighlight` and `legendClickSelect`.
+
+Density uses `interactionFilter: 'auto'` by default: selected nodes contribute
+when any are selected, otherwise real highlighted nodes contribute when present,
+otherwise the active/render-filtered graph contributes. Virtual `HOVER` does not
+change density. Other modes are `off`, `selected`, `highlighted`, and
+`selected-or-highlighted`.
 
 ## Backend and mode requirements
 

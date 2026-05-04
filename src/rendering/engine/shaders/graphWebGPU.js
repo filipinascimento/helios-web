@@ -140,12 +140,16 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
   var state = edgeStates.data[edgeId];
   let endpointStatePair = ${endpointStateEnabled ? 'vec2<u32>(nodeStates.data[sourceId], nodeStates.data[targetId])' : 'vec2<u32>(0u, 0u)'};
   if (hover.edgeIndex != 0xffffffffu && edgeId == hover.edgeIndex) {
-    state = state | hover.edgeState;
+    if (hover.edgeVirtual == 0u) {
+      state = state | hover.edgeState;
+    }
   }
   ${propagateHoveredNodeToEdges
     ? `
   if (hover.nodeIndex != 0xffffffffu && (sourceId == hover.nodeIndex || targetId == hover.nodeIndex)) {
-    state = state | 4u;
+    if (hover.nodeVirtual == 0u) {
+      state = state | 4u;
+    }
   }`
     : ''}
   ${propagateSelectedNodesToEdges
@@ -154,12 +158,13 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
     state = state | 2u;
   }`
     : ''}
-  let forceMaxAlpha = (state & hover.edgeStateForceMaxAlphaMask) != 0u;
+  var forceMaxAlpha = (state & hover.edgeStateForceMaxAlphaMask) != 0u;
   var widthMul = 1.0;
   var opacityMul = 1.0;
   var rgbMul = vec3<f32>(1.0, 1.0, 1.0);
   var rgbAdd = vec3<f32>(0.0, 0.0, 0.0);
   var discardFlag = 0u;
+  let virtualHover = (hover.edgeIndex != 0xffffffffu && edgeId == hover.edgeIndex && hover.edgeVirtual != 0u)${propagateHoveredNodeToEdges ? ' || (hover.nodeIndex != 0xffffffffu && (sourceId == hover.nodeIndex || targetId == hover.nodeIndex) && hover.nodeVirtual != 0u)' : ''};
   if (state == 0u) {
     let scale = globals.edgeNoStateScale;
     widthMul = widthMul * scale.x;
@@ -181,6 +186,17 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
         }
       }
     }
+  }
+  if (virtualHover) {
+    let scale = hover.edgeHoverScale;
+    widthMul = widthMul * scale.x;
+    opacityMul = opacityMul * scale.y;
+    rgbMul = rgbMul * hover.edgeHoverColorMul.rgb;
+    rgbAdd = rgbAdd + hover.edgeHoverColorAdd.rgb;
+    if (scale.w > 0.5) {
+      discardFlag = 1u;
+    }
+    forceMaxAlpha = forceMaxAlpha || hover.edgeHoverColorMul.a > 1.5;
   }
 `
     : `
@@ -542,8 +558,14 @@ struct Hover {
   edgeState: u32,
   nodeStateForceMaxAlphaMask: u32,
   edgeStateForceMaxAlphaMask: u32,
-  _pad0: u32,
-  _pad1: u32,
+  nodeVirtual: u32,
+  edgeVirtual: u32,
+  nodeHoverScale: vec4<f32>,
+  nodeHoverColorMul: vec4<f32>,
+  nodeHoverColorAdd: vec4<f32>,
+  edgeHoverScale: vec4<f32>,
+  edgeHoverColorMul: vec4<f32>,
+  edgeHoverColorAdd: vec4<f32>,
 };
 
 struct Shading {

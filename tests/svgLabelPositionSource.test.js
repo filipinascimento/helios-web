@@ -487,6 +487,11 @@ test('SvgLabelController selected-only space-aware mode applies regular collisio
   assert.equal(controller._visibleEntries.length, 1);
 });
 
+test('SvgLabelController enables selected-only space-aware placement by default', () => {
+  const controller = new SvgLabelController({}, {});
+  assert.equal(controller.getConfig().selectedOnlySpaceAware, true);
+});
+
 test('SvgLabelController truncates single-line labels with maxChars', () => {
   const controller = new SvgLabelController({}, {});
   controller.setConfig({ maxChars: 5, maxRows: 1 });

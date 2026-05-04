@@ -476,6 +476,76 @@ test('layout panel routes layout controls through LayoutBehavior', () => {
   }
 });
 
+test('layout panel status button activates on primary pointerup and suppresses the following click', () => {
+  const { document, window } = createFakeDomEnvironment();
+  const originalDocument = globalThis.document;
+  const originalWindow = globalThis.window;
+  globalThis.document = document;
+  globalThis.window = window;
+
+  try {
+    const behaviorCalls = [];
+    const layoutBehavior = {
+      descriptor() {
+        return { key: 'worker:force3d', label: 'Force (worker)', dynamic: true, bindings: [] };
+      },
+      choices() {
+        return [{ value: 'worker:force3d', label: 'Force (worker)' }];
+      },
+      runState() {
+        return 'running';
+      },
+      positionAttribute() {
+        return '_helios_visuals_position';
+      },
+      positionAttributeChoices() {
+        return [{ value: '_helios_visuals_position', label: 'Current positions', dimension: 3 }];
+      },
+      stop(reason) {
+        behaviorCalls.push(['stop', reason]);
+      },
+      on() {
+        return () => {};
+      },
+    };
+
+    const ui = {
+      helios: {
+        behavior: { layout: layoutBehavior },
+        on() {
+          return () => {};
+        },
+      },
+      _controlCleanups: new Set(),
+      createPanel(config) {
+        return {
+          ...config,
+          destroy() {},
+        };
+      },
+    };
+
+    const panel = new LayoutPanel(ui, {}).create();
+    try {
+      const runButton = findFirst(panel.content, (element) => element.tagName === 'BUTTON');
+      assert.ok(runButton);
+
+      runButton.dispatchEvent({ type: 'pointerup', button: 0 });
+      runButton.dispatchEvent(new Event('click'));
+      runButton.dispatchEvent({ type: 'pointerup', button: 1 });
+
+      assert.deepEqual(behaviorCalls, [
+        ['stop', 'ui:layout-panel'],
+      ]);
+    } finally {
+      panel.destroy();
+    }
+  } finally {
+    globalThis.document = originalDocument;
+    globalThis.window = originalWindow;
+  }
+});
+
 test('layout panel keeps slider controls stable across non-structural behavior changes', () => {
   const { document, window } = createFakeDomEnvironment();
   const originalDocument = globalThis.document;

@@ -97,6 +97,27 @@ async function enableDensityFromPanel(page) {
 }
 
 test.describe('density map panel', () => {
+  test('exposes density focus interaction filter control', async ({ page }) => {
+    const errors = captureBrowserErrors(page);
+    await page.goto('/tests/fixtures/demo.html?renderer=webgl&layout=none&nodes=120&mappers=1');
+    const diagnostics = await waitForDiagnostics(page);
+    expect(diagnostics.error ?? null).toBeNull();
+
+    const panel = await enableDensityFromPanel(page);
+    const densityTab = panel.locator('.helios-ui-tabpanel[data-tab-id="density"][data-active="true"]').first();
+    const focusSelect = densityTab.locator('select[aria-label="Density Focus"]').first();
+    await expect(focusSelect).toBeVisible();
+    await expect(focusSelect).toHaveValue('auto');
+
+    await focusSelect.selectOption('off');
+    await expect.poll(
+      () => page.evaluate(() => window.__helios?.density?.().interactionFilter ?? null),
+      { timeout: 5000 },
+    ).toBe('off');
+
+    expect(errors).toEqual([]);
+  });
+
   test('applies Map BG only while density is enabled', async ({ page }) => {
     const errors = captureBrowserErrors(page);
     await page.goto('/tests/fixtures/demo.html?renderer=webgl&layout=none&nodes=120&mappers=1');

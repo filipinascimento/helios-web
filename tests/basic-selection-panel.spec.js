@@ -321,14 +321,19 @@ test.describe('basic example selection panel', () => {
       edgeClick: window.__heliosSelectionPanel?.selectionState?.edgeClick ?? null,
       edgeHover: window.__heliosSelectionPanel?.hoverState?.edgeHover ?? null,
       hoverConnectedEdges: window.__heliosSelectionPanel?.hoverState?.hoverConnectedEdges ?? null,
+      highlightConnectedEdges: window.__heliosSelectionPanel?.hoverState?.highlightConnectedEdges ?? null,
+      hoverAffectsOtherElements: window.__heliosSelectionPanel?.hoverState?.hoverAffectsOtherElements ?? null,
       selectedConnectedEdges: window.__heliosSelectionPanel?.selectionState?.selectedConnectedEdges ?? null,
       labelsMode: window.__helios.labelsMode?.() ?? null,
       labelSelectionMode: window.__helios.labels?.()?.selectionMode ?? null,
       hoveredNodeLabels: window.__helios.labels?.()?.hoveredNodeEnabled ?? null,
       maxVisible: window.__helios.labels?.()?.maxVisible ?? null,
       otherSelectedNodeTone: window.__heliosSelectionPanel?.selectionState?.otherSelectedNodeTone ?? null,
+      otherSelectedEdgeTone: window.__heliosSelectionPanel?.selectionState?.otherSelectedEdgeTone ?? null,
       otherSelectedNodeStyle: window.__heliosSelectionPanel?.selectionState?.otherSelectedNodeStyle ?? null,
       otherSelectedEdgeStyle: window.__heliosSelectionPanel?.selectionState?.otherSelectedEdgeStyle ?? null,
+      otherHighlightNodeTone: window.__heliosSelectionPanel?.hoverState?.otherHighlightNodeTone ?? null,
+      otherHighlightEdgeTone: window.__heliosSelectionPanel?.hoverState?.otherHighlightEdgeTone ?? null,
       otherHighlightNodeStyle: window.__heliosSelectionPanel?.hoverState?.otherHighlightNodeStyle ?? null,
       otherHighlightEdgeStyle: window.__heliosSelectionPanel?.hoverState?.otherHighlightEdgeStyle ?? null,
       nodeNoStateEnabled: window.__helios.renderer?.graphLayer?.nodeNoStateStyleEnabled ?? null,
@@ -348,41 +353,46 @@ test.describe('basic example selection panel', () => {
       edgeClick: false,
       edgeHover: false,
       hoverConnectedEdges: true,
+      highlightConnectedEdges: false,
+      hoverAffectsOtherElements: false,
       selectedConnectedEdges: true,
       labelsMode: 'selected-only',
       labelSelectionMode: 'selected-only',
       hoveredNodeLabels: true,
       maxVisible: 120,
-      otherSelectedNodeTone: { enabled: true, amount: 0.38 },
+      otherSelectedNodeTone: { enabled: true, amount: 0.4 },
+      otherSelectedEdgeTone: { enabled: true, amount: 0.4 },
       otherSelectedNodeStyle: {
-        sizeMul: 0.9,
+        sizeMul: 0.75,
         opacityMul: 1,
-        outlineMul: 0.72,
+        outlineMul: 0.75,
         discard: false,
         forceMaxAlpha: false,
         colorMul: [1, 1, 1, 1],
         colorAdd: [0, 0, 0, 0],
       },
       otherSelectedEdgeStyle: {
-        widthMul: 0.84,
-        opacityMul: 0.82,
+        widthMul: 0.85,
+        opacityMul: 0.85,
         discard: false,
         forceMaxAlpha: false,
         colorMul: [1, 1, 1, 1],
         colorAdd: [0, 0, 0, 0],
       },
+      otherHighlightNodeTone: { enabled: true, amount: 0.15 },
+      otherHighlightEdgeTone: { enabled: true, amount: 0.15 },
       otherHighlightNodeStyle: {
-        sizeMul: 1,
+        sizeMul: 0.9,
         opacityMul: 1,
-        outlineMul: 1,
+        outlineMul: 0.9,
         discard: false,
         forceMaxAlpha: false,
         colorMul: [1, 1, 1, 1],
         colorAdd: [0, 0, 0, 0],
       },
       otherHighlightEdgeStyle: {
-        widthMul: 1,
-        opacityMul: 1,
+        widthMul: 0.9,
+        opacityMul: 0.9,
         discard: false,
         forceMaxAlpha: false,
         colorMul: [1, 1, 1, 1],
@@ -649,9 +659,21 @@ test.describe('basic example selection panel', () => {
       hoveredNode: nodeHits[0].index,
       propagateHoveredNodeToEdges: true,
       propagateSelectedNodesToEdges: true,
+      nodeNoStateEnabled: false,
+      edgeNoStateEnabled: false,
+      highlightedEdges: highlightedEdgesBefore,
+    });
+
+    const hoverAffectsOtherElementsToggle = panel.locator('[role="switch"][aria-label="Dim other elements on hover"]').first();
+    await hoverAffectsOtherElementsToggle.click();
+    await expect.poll(async () => page.evaluate(() => ({
+      hoverAffectsOtherElements: window.__heliosSelectionPanel?.hoverState?.hoverAffectsOtherElements ?? null,
+      nodeNoStateEnabled: window.__helios.renderer?.graphLayer?.nodeNoStateStyleEnabled ?? null,
+      edgeNoStateEnabled: window.__helios.renderer?.graphLayer?.edgeNoStateStyleEnabled ?? null,
+    }))).toEqual({
+      hoverAffectsOtherElements: true,
       nodeNoStateEnabled: true,
       edgeNoStateEnabled: true,
-      highlightedEdges: highlightedEdgesBefore,
     });
 
     const hoverConnectedEdgesToggle = panel.locator('[role="switch"][aria-label="Connected edges on hover"]').first();
@@ -671,6 +693,16 @@ test.describe('basic example selection panel', () => {
     }))).toEqual({
       propagateHoveredNodeToEdges: false,
       highlightedEdges: highlightedEdgesBefore,
+    });
+
+    const highlightConnectedEdgesToggle = panel.locator('[role="switch"][aria-label="Connected edges on highlight"]').first();
+    await highlightConnectedEdgesToggle.click();
+    await expect.poll(async () => page.evaluate(() => ({
+      highlightConnectedEdges: window.__helios.highlightConnectedEdges?.() ?? null,
+      hoverStateHighlightConnectedEdges: window.__heliosSelectionPanel?.hoverState?.highlightConnectedEdges ?? null,
+    }))).toEqual({
+      highlightConnectedEdges: true,
+      hoverStateHighlightConnectedEdges: true,
     });
 
     const selectedConnectedEdgesToggle = panel.locator('[role="switch"][aria-label="Connected edges on selection"]').first();
