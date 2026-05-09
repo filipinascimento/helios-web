@@ -866,6 +866,19 @@ export class SelectionPanel {
       controls: hoverAffectsOtherElementsToggle,
     });
 
+    const renderOrderToggle = createToggleControl({
+      checked: helios.interactionRenderOrder?.() !== false,
+      ariaLabel: 'Interaction render order',
+    });
+    renderOrderToggle.addEventListener('change', () => {
+      helios.interactionRenderOrder?.(renderOrderToggle.checked);
+    });
+    createRow(interactionBody, {
+      title: 'Render on Top',
+      hint: 'Draw hovered, highlighted, and selected items later in their node or edge pass by promoting active index order.',
+      controls: renderOrderToggle,
+    });
+
     appendSectionHeading(interactionBody, 'Connected Edges');
 
     const hoverConnectedEdgesToggle = createToggleControl({
@@ -1451,6 +1464,7 @@ export class SelectionPanel {
       hoverCopyNote.style.display = copyHover ? 'block' : 'none';
       hoverStyleControls.style.opacity = copyHover ? '0.56' : '';
       hoverStyleControls.style.pointerEvents = copyHover ? 'none' : '';
+      renderOrderToggle.checked = helios.interactionRenderOrder?.() !== false;
       hoverConnectedEdgesToggle.checked = hoverState.hoverConnectedEdges === true;
       hoverAffectsOtherElementsToggle.checked = hoverState.hoverAffectsOtherElements === true;
       highlightConnectedEdgesToggle.checked = hoverState.highlightConnectedEdges === true && helios.highlightConnectedEdges?.() === true;
@@ -1596,6 +1610,9 @@ export class SelectionPanel {
       hoverBehavior.on('change', () => {
         refreshStyleControls();
         refreshHoverLabelOptions();
+      }),
+      subscribe(helios, 'ui:binding-change', (event) => {
+        if (event?.detail?.name === 'interactionRenderOrder') refreshStyleControls();
       }),
     ];
 

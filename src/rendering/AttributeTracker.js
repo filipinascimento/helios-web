@@ -1606,7 +1606,7 @@ export class WebGLAttributeRenderer {
     return true;
   }
 
-  uploadIdBuffer(slot, buffer, view, version, count) {
+  uploadIdBuffer(slot, buffer, view, version, count, dirtyRange = null) {
     if (!view || !buffer) return false;
     const meta = this.bufferMeta[slot];
     const same = Boolean(
@@ -1619,7 +1619,33 @@ export class WebGLAttributeRenderer {
     );
     if (!same) {
       this.gl.bindBuffer(this.gl.ARRAY_BUFFER, buffer);
-      this.gl.bufferData(this.gl.ARRAY_BUFFER, view, this.gl.DYNAMIC_DRAW);
+      const canSubData = Boolean(
+        dirtyRange
+        && meta
+        && meta.count === count
+        && meta.buffer === view.buffer
+        && meta.byteOffset === view.byteOffset
+        && meta.byteLength === view.byteLength
+        && Number.isFinite(Number(dirtyRange.start))
+        && Number.isFinite(Number(dirtyRange.count))
+        && Number(dirtyRange.count) > 0
+      );
+      if (canSubData) {
+        const start = Math.max(0, Math.floor(Number(dirtyRange.start)));
+        const dirtyCount = Math.max(0, Math.floor(Number(dirtyRange.count)));
+        const end = Math.min(view.length ?? 0, start + dirtyCount);
+        if (end > start) {
+          this.gl.bufferSubData(
+            this.gl.ARRAY_BUFFER,
+            start * (view.BYTES_PER_ELEMENT || Uint32Array.BYTES_PER_ELEMENT),
+            view.subarray(start, end),
+          );
+        } else {
+          this.gl.bufferData(this.gl.ARRAY_BUFFER, view, this.gl.DYNAMIC_DRAW);
+        }
+      } else {
+        this.gl.bufferData(this.gl.ARRAY_BUFFER, view, this.gl.DYNAMIC_DRAW);
+      }
       this.bufferMeta[slot] = {
         version: version ?? 0,
         count,
@@ -2391,10 +2417,10 @@ export class WebGLAttributeRenderer {
         const useNodeIdBuffer = Boolean(nodes.indices && drawNodeCount > 0);
         const useEdgeIdBuffer = Boolean(edges.indices && drawEdgeCount > 0);
         if (useNodeIdBuffer) {
-          this.uploadIdBuffer('nodeIds', this.nodeIdBuffer, nodes.indices, nodes.versions?.indices, drawNodeCount);
+          this.uploadIdBuffer('nodeIds', this.nodeIdBuffer, nodes.indices, nodes.versions?.indices, drawNodeCount, nodes.indexDirtyRange);
         }
         if (useEdgeIdBuffer) {
-          this.uploadIdBuffer('edgeIds', this.edgeIdBuffer, edges.indices, edges.versions?.indices, drawEdgeCount);
+          this.uploadIdBuffer('edgeIds', this.edgeIdBuffer, edges.indices, edges.versions?.indices, drawEdgeCount, edges.indexDirtyRange);
         }
 
         const drawNodeArgs = {
@@ -4504,6 +4530,7 @@ export class WebGPUAttributeRenderer {
         version: nodes.versions?.indices ?? nodeTopology,
         topologyVersion: nodeTopology,
         count: nodeCount,
+        dirtyRange: nodes.indexDirtyRange ?? null,
       }))
       : zeroStorage;
 
@@ -4518,6 +4545,7 @@ export class WebGPUAttributeRenderer {
         version: edges.versions?.indices ?? edgeTopology,
         topologyVersion: edgeTopology,
         count: edgeCount,
+        dirtyRange: edges.indexDirtyRange ?? null,
       }))
       : zeroStorage;
 

@@ -790,6 +790,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
         version: versions.indices ?? 0,
         topologyVersion: versions.topology ?? 0,
         count: nodeCount,
+        dirtyRange: nodes.indexDirtyRange ?? null,
         trackViewIdentity: true,
       }, storageUsage);
       if (uploadPositions && !delegatePositionBuffer && positions) {
@@ -1085,6 +1086,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
           version: versions.indices ?? 0,
           topologyVersion: versions.topology ?? 0,
           count: edgeCount,
+          dirtyRange: edges.indexDirtyRange ?? null,
           trackViewIdentity: true,
         }, storageUsage);
       }
@@ -1259,6 +1261,12 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     return network.withBufferAccess(() => {
       const nodeIndices = indices?.node ?? network.nodeIndices ?? null;
       const edgeIndices = indices?.edge ?? network.edgeIndices ?? null;
+      const nodeIndexDirtyRange = typeof network.getActiveIndexDirtyRange === 'function'
+        ? network.getActiveIndexDirtyRange('node')
+        : null;
+      const edgeIndexDirtyRange = typeof network.getActiveIndexDirtyRange === 'function'
+        ? network.getActiveIndexDirtyRange('edge')
+        : null;
       const safeGet = (scope, name) => {
         if (!name) return null;
         if (scope === 'node' && !hasNodeAttribute(name)) return null;
@@ -1332,6 +1340,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
         outlineWidths: nodeOutlineWidths?.view ?? null,
         outlineColors: nodeOutlineColors?.view ?? null,
         indices: nodeIndices,
+        indexDirtyRange: nodeIndexDirtyRange,
         count: nodeIndices?.length ?? 0,
         versions: {
           positions: resolvedNodePositionVersion,
@@ -1340,7 +1349,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
           states: nodeStates?.version ?? 0,
           outlineWidths: nodeOutlineWidths?.version ?? 0,
           outlineColors: nodeOutlineColors?.version ?? 0,
-          indices: topologyVersions?.node ?? 0,
+          indices: nodeIndices?.version ?? topologyVersions?.node ?? 0,
           topology: topologyVersions?.node ?? 0,
         },
       };
@@ -1354,6 +1363,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
         states: edgeStates?.view ?? null,
         endpointStates: edgeEndpointStates?.view ?? null,
         indices: edgeIndices,
+        indexDirtyRange: edgeIndexDirtyRange,
         count: edgeIndices?.length ?? 0,
         versions: {
           endpoints: topologyVersions?.edge ?? 0,
@@ -1363,13 +1373,17 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
           endpointSizes: edgeEndpointSizes?.version ?? 0,
           states: edgeStates?.version ?? 0,
           endpointStates: edgeEndpointStates?.version ?? 0,
-          indices: topologyVersions?.edge ?? 0,
+          indices: edgeIndices?.version ?? topologyVersions?.edge ?? 0,
           topology: topologyVersions?.edge ?? 0,
         },
       };
 
       return fn({ nodes, edges, nodeEdgeSources });
     });
+  }
+
+  resolveNodeDepthMode(is2D, nodeBlendWithEdges) {
+    return (is2D === true || nodeBlendWithEdges === true) ? 'none' : 'depth';
   }
 
   render(context, frame) {
@@ -1502,7 +1516,7 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     const nodePipeline = this.getNodePipeline(useNodeIndices, nodeVariant, {
       blendKey: nodeBlend.key,
       blend: nodeBlend.blend,
-      depthMode: nodeBlendWithEdges ? 'none' : 'depth',
+      depthMode: this.resolveNodeDepthMode(is2D, nodeBlendWithEdges),
       sampleCount: context.sampleCount ?? 1,
     });
     if (!nodePipeline) return;

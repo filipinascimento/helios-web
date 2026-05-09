@@ -154,6 +154,15 @@ test('getSharedSparseResources prefers active position buffers over stale cache 
   assert.equal(shared?.buffers?.['indirect:node:positionsFrom']?.version, 9);
 });
 
+test('WebGPU disables node depth in 2D so render-order promotion controls overlap', () => {
+  const layer = new GraphLayerWebGPU();
+
+  assert.equal(layer.resolveNodeDepthMode(true, false), 'none');
+  assert.equal(layer.resolveNodeDepthMode(true, true), 'none');
+  assert.equal(layer.resolveNodeDepthMode(false, true), 'none');
+  assert.equal(layer.resolveNodeDepthMode(false, false), 'depth');
+});
+
 test('weighted WebGPU resources size offscreen targets from the active frame extent during resize', () => {
   const layer = new GraphLayerWebGPU();
   let ensuredSize = null;

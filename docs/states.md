@@ -134,6 +134,17 @@ Supported fields:
 
 If `forceMaxAlpha: true` is enabled for any active node/edge state slot, normal alpha blending treats that item as fully opaque after style evaluation, and weighted edge transparency also gives it a strong accumulation boost so it can dominate dense overlaps more reliably. This is useful for making selected items stand out even when the base mapper or state multipliers would otherwise reduce alpha.
 
+### Interaction Render Order
+
+Interaction render ordering is enabled by default. It moves hovered, highlighted, and selected active indices toward the end of the native render-order buffers as interaction state changes:
+
+```js
+const helios = new Helios(network, { interactionRenderOrder: false });
+helios.interactionRenderOrder(false);
+```
+
+When enabled, Helios promotes hovered items first, then persistent highlighted items, then selected items so selected elements draw latest within their node or edge pass. The Selection panel exposes this as `Render on Top`. If connected-edge hover/selection propagation is active, incident active edges are promoted through native helios-network batch APIs. Renderers use the dirty range reported by the network wrapper for partial node/edge index-buffer uploads when the underlying GPU buffer can be reused.
+
 ### Styling `NO_STATE`
 
 You can also configure a style that applies when the state bitmask is `0` (no active bits):

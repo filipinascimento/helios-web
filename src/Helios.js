@@ -2487,6 +2487,12 @@ export class Helios extends EventTarget {
     };
     this._hoverStyleFromHighlight = options.hoverStyleFromHighlight === true;
     this._highlightConnectedEdges = options.highlightConnectedEdges === true;
+    this._interactionRenderOrder = {
+      enabled: options.interactionRenderOrder !== false && options.renderOrderInteractions !== false,
+      promoteHoverConnectedEdges: options.interactionRenderOrderHoverConnectedEdges !== false,
+      promoteSelectedConnectedEdges: options.interactionRenderOrderSelectedConnectedEdges !== false,
+      promoteHighlightedConnectedEdges: options.interactionRenderOrderHighlightedConnectedEdges !== false,
+    };
     this._highlightSources = new Map();
     this._highlightUnion = { nodes: new Set(), edges: new Set() };
     const densityEnabled = options.density === true || options.densityEnabled === true;
@@ -4189,8 +4195,33 @@ export class Helios extends EventTarget {
     const selectorNode = nodeSelector && typeof nodeSelector === 'object' ? nodeSelector : null;
     const selectorEdge = edgeSelector && typeof edgeSelector === 'object' ? edgeSelector : null;
     const emptyIndices = new Uint32Array(0);
+    const orderVersions = { node: 0, edge: 0 };
+    const dirtyRanges = { node: null, edge: null };
+    const currentVersion = (scope) => `${safeNumber(version, 0)}:${orderVersions[scope] ?? 0}`;
+    const mergeDirtyRange = (scope, start, count) => {
+      if (!(count > 0)) return null;
+      const current = dirtyRanges[scope] ?? null;
+      const nextStart = Math.max(0, Math.floor(Number(start) || 0));
+      const nextEnd = nextStart + Math.max(0, Math.floor(Number(count) || 0));
+      const mergedStart = current ? Math.min(current.start, nextStart) : nextStart;
+      const mergedEnd = current ? Math.max(current.start + current.count, nextEnd) : nextEnd;
+      const merged = {
+        start: mergedStart,
+        count: mergedEnd - mergedStart,
+        version: currentVersion(scope),
+      };
+      dirtyRanges[scope] = merged;
+      return merged;
+    };
     const buildSelectorView = (selector, fallback) => {
-      if (!selector) return fallback;
+      if (!selector) {
+        try {
+          fallback.version = currentVersion(fallback === fallbackNodeIndices ? 'node' : 'edge');
+        } catch (_) {
+          // ignore non-extensible typed arrays
+        }
+        return fallback;
+      }
       if ((baseNetwork?._bufferSessionDepth ?? 0) <= 0) {
         throw new Error('Cannot access filtered active indices outside buffer access');
       }
@@ -4200,7 +4231,7 @@ export class Helios extends EventTarget {
       if (!count || !dataPointer || !heap) return fallback;
       const view = new Uint32Array(heap, dataPointer, count);
       try {
-        view.version = safeNumber(version, 0);
+        view.version = currentVersion(selector === selectorNode ? 'node' : 'edge');
       } catch (_) {
         // ignore non-extensible typed arrays
       }
@@ -4231,6 +4262,91 @@ export class Helios extends EventTarget {
       target.set(fallback.subarray(0, count));
       return count;
     };
+    const materializeSelection = (scope) => {
+      const selector = scope === 'node' ? selectorNode : selectorEdge;
+      const fallback = scope === 'node' ? fallbackNodeIndices : fallbackEdgeIndices;
+      if (typeof selector?.toTypedArray === 'function') {
+        return selector.toTypedArray();
+      }
+      return fallback.slice();
+    };
+    const fillSelection = (scope, indices) => {
+      const selector = scope === 'node' ? selectorNode : selectorEdge;
+      if (!selector || typeof selector.fillFromArray !== 'function') return false;
+      selector.fillFromArray(baseNetwork, indices);
+      return true;
+    };
+    const promoteSelectionToEnd = (scope, indices) => {
+      const requested = new Set(Array.from(indices || [])
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value >= 0));
+      const current = materializeSelection(scope);
+      if (!requested.size || !current.length) {
+        return { changed: false, start: 0, count: 0, version: currentVersion(scope) };
+      }
+      const kept = [];
+      const promoted = [];
+      for (let i = 0; i < current.length; i += 1) {
+        const value = current[i] >>> 0;
+        if (requested.has(value)) promoted.push(value);
+        else kept.push(value);
+      }
+      if (!promoted.length) {
+        return { changed: false, start: 0, count: 0, version: currentVersion(scope) };
+      }
+      const next = Uint32Array.from([...kept, ...promoted]);
+      let first = -1;
+      let last = -1;
+      for (let i = 0; i < next.length; i += 1) {
+        if (next[i] !== current[i]) {
+          if (first < 0) first = i;
+          last = i;
+        }
+      }
+      if (first < 0 || !fillSelection(scope, next)) {
+        return { changed: false, start: 0, count: 0, version: currentVersion(scope) };
+      }
+      orderVersions[scope] += 1;
+      const changed = mergeDirtyRange(scope, first, last - first + 1);
+      return { changed: true, ...changed };
+    };
+    const normalizeDirection = (value) => {
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        if (value === 0) return 'out';
+        if (value === 1) return 'in';
+        return 'both';
+      }
+      const normalized = String(value ?? 'both').trim().toLowerCase();
+      if (normalized === 'out' || normalized === 'outgoing') return 'out';
+      if (normalized === 'in' || normalized === 'incoming') return 'in';
+      return 'both';
+    };
+    const resolveIncidentEdges = (nodeIds, direction) => {
+      const nodes = new Set(Array.from(nodeIds || [])
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value >= 0));
+      if (!nodes.size) return emptyIndices;
+      const activeEdges = materializeSelection('edge');
+      if (!activeEdges.length) return emptyIndices;
+      const mode = normalizeDirection(direction);
+      const result = [];
+      baseNetwork.withBufferAccess(() => {
+        const endpoints = baseNetwork.edgesView ?? null;
+        if (!endpoints) return;
+        for (let i = 0; i < activeEdges.length; i += 1) {
+          const edge = activeEdges[i] >>> 0;
+          const source = endpoints[edge * 2] >>> 0;
+          const target = endpoints[(edge * 2) + 1] >>> 0;
+          if (
+            (mode !== 'in' && nodes.has(source))
+            || (mode !== 'out' && nodes.has(target))
+          ) {
+            result.push(edge);
+          }
+        }
+      }, { edgesView: true });
+      return result.length ? Uint32Array.from(result) : emptyIndices;
+    };
     return new Proxy(baseNetwork, {
       get(target, property) {
         if (property === 'nodeIndices') return buildSelectorView(selectorNode, fallbackNodeIndices);
@@ -4254,6 +4370,23 @@ export class Helios extends EventTarget {
         }
         if (property === 'writeActiveEdges') {
           return (buffer) => copySelection('edge', buffer);
+        }
+        if (property === 'promoteActiveNodesToRenderEnd') {
+          return (indices) => promoteSelectionToEnd('node', indices);
+        }
+        if (property === 'promoteActiveEdgesToRenderEnd') {
+          return (indices) => promoteSelectionToEnd('edge', indices);
+        }
+        if (property === 'promoteActiveEdgesForNodesToRenderEnd') {
+          return (indices, options = {}) => promoteSelectionToEnd('edge', resolveIncidentEdges(indices, options.direction ?? 'both'));
+        }
+        if (property === 'getActiveIndexDirtyRange') {
+          return (scope) => {
+            if (scope === 'node' || scope === 'edge') {
+              return dirtyRanges[scope] ? { ...dirtyRanges[scope] } : null;
+            }
+            return null;
+          };
         }
         if (property === 'getTopologyVersions') {
           return () => {
@@ -8638,6 +8771,66 @@ export class Helios extends EventTarget {
     this._labels?.requestFullReselect?.('network-changed');
   }
 
+  interactionRenderOrder(value) {
+    if (arguments.length === 0) return this._interactionRenderOrder?.enabled === true;
+    this._interactionRenderOrder ??= {};
+    this._interactionRenderOrder.enabled = value === true;
+    this.options ??= {};
+    this.options.interactionRenderOrder = this._interactionRenderOrder.enabled;
+    this._emitUIBindingChange?.('interactionRenderOrder', this._interactionRenderOrder.enabled);
+    if (this._interactionRenderOrder.enabled) this._reprioritizePersistentInteractionRenderOrder?.();
+    this.scheduler?.requestRender?.();
+    return this;
+  }
+
+  _shouldPromoteInteractionRenderOrder() {
+    return this._interactionRenderOrder?.enabled === true;
+  }
+
+  _promoteInteractionNodes(indices, options = {}) {
+    if (!this._shouldPromoteInteractionRenderOrder() || !indices) return null;
+    const network = this._getRenderNetwork?.() ?? this.network ?? null;
+    if (typeof network?.promoteActiveNodesToRenderEnd !== 'function') return null;
+    const result = network.promoteActiveNodesToRenderEnd(indices);
+    if (result?.changed) this.scheduler?.requestRender?.();
+    if (
+      options.connectedEdges === true
+      && typeof network.promoteActiveEdgesForNodesToRenderEnd === 'function'
+    ) {
+      const edgeResult = network.promoteActiveEdgesForNodesToRenderEnd(indices, { direction: options.direction ?? 'both' });
+      if (edgeResult?.changed) this.scheduler?.requestRender?.();
+    }
+    return result;
+  }
+
+  _promoteInteractionEdges(indices) {
+    if (!this._shouldPromoteInteractionRenderOrder() || !indices) return null;
+    const network = this._getRenderNetwork?.() ?? this.network ?? null;
+    if (typeof network?.promoteActiveEdgesToRenderEnd !== 'function') return null;
+    const result = network.promoteActiveEdgesToRenderEnd(indices);
+    if (result?.changed) this.scheduler?.requestRender?.();
+    return result;
+  }
+
+  _reprioritizePersistentInteractionRenderOrder() {
+    if (!this._shouldPromoteInteractionRenderOrder()) return;
+    const highlighted = this._highlightUnion ?? null;
+    if (highlighted?.nodes?.size) {
+      this._promoteInteractionNodes(Array.from(highlighted.nodes), {
+        connectedEdges: this._interactionRenderOrder?.promoteHighlightedConnectedEdges === true && this._highlightConnectedEdges === true,
+      });
+    }
+    if (highlighted?.edges?.size) this._promoteInteractionEdges(Array.from(highlighted.edges));
+    const selection = this.behaviors?.get?.('selection')?.state ?? null;
+    if (selection?.selectedNodes?.size) {
+      this._promoteInteractionNodes(Array.from(selection.selectedNodes), {
+        connectedEdges: this._interactionRenderOrder?.promoteSelectedConnectedEdges !== false
+          && this.renderer?.graphLayer?.propagateSelectedNodesToEdges === true,
+      });
+    }
+    if (selection?.selectedEdges?.size) this._promoteInteractionEdges(Array.from(selection.selectedEdges));
+  }
+
   nodeState(indices, mask, options = {}) {
     const mode = options.mode ?? 'replace';
     const value = (Number(resolveStateMask(mask, this.constructor.STATES)) >>> 0);
@@ -8669,6 +8862,18 @@ export class Helios extends EventTarget {
       // Endpoint states are derived via node-to-edge mapping; bump versions so edge state consumers notice.
       this.visuals.bumpEdgeAttributes(EDGE_ENDPOINTS_STATE_ATTRIBUTE);
     });
+    if (mode !== 'remove' && (value & this.constructor.STATES.HIGHLIGHTED) !== 0) {
+      this._promoteInteractionNodes?.(indices, {
+        connectedEdges: this._interactionRenderOrder?.promoteHighlightedConnectedEdges === true && this._highlightConnectedEdges === true,
+      });
+      this._reprioritizePersistentInteractionRenderOrder?.();
+    }
+    if (mode !== 'remove' && (value & this.constructor.STATES.SELECTED) !== 0) {
+      this._promoteInteractionNodes?.(indices, {
+        connectedEdges: this._interactionRenderOrder?.promoteSelectedConnectedEdges !== false
+          && this.renderer?.graphLayer?.propagateSelectedNodesToEdges === true,
+      });
+    }
     this.scheduler.requestGeometry();
     this._labels?.requestFullReselect?.('node-state');
     return this;
@@ -8703,6 +8908,10 @@ export class Helios extends EventTarget {
       });
       this.visuals.bumpEdgeAttributes(EDGE_STATE_ATTRIBUTE);
     });
+    if (mode !== 'remove' && (value & (this.constructor.STATES.HIGHLIGHTED | this.constructor.STATES.SELECTED)) !== 0) {
+      this._promoteInteractionEdges?.(indices);
+      if ((value & this.constructor.STATES.HIGHLIGHTED) !== 0) this._reprioritizePersistentInteractionRenderOrder?.();
+    }
     this.scheduler.requestGeometry();
     return this;
   }
@@ -8716,12 +8925,23 @@ export class Helios extends EventTarget {
       layer.hoveredNodeIndex = resolvedIndex;
       layer.hoveredNodeState = value;
       layer.hoveredNodeIsVirtual = isVirtual && resolvedIndex !== 0xffffffff;
+      if (resolvedIndex !== 0xffffffff) {
+        this._promoteInteractionNodes?.([resolvedIndex], {
+          connectedEdges: this._interactionRenderOrder?.promoteHoverConnectedEdges !== false
+            && layer.propagateHoveredNodeToEdges === true,
+        });
+        this._reprioritizePersistentInteractionRenderOrder?.();
+      }
       this.scheduler.requestRender();
       return this;
     }
     this._pendingGraphLayerProps.set('hoveredNodeIndex', resolvedIndex);
     this._pendingGraphLayerProps.set('hoveredNodeState', value);
     this._pendingGraphLayerProps.set('hoveredNodeIsVirtual', isVirtual && resolvedIndex !== 0xffffffff);
+    if (resolvedIndex !== 0xffffffff) {
+      this._promoteInteractionNodes?.([resolvedIndex]);
+      this._reprioritizePersistentInteractionRenderOrder?.();
+    }
     return this;
   }
 
@@ -8734,12 +8954,20 @@ export class Helios extends EventTarget {
       layer.hoveredEdgeIndex = resolvedIndex;
       layer.hoveredEdgeState = value;
       layer.hoveredEdgeIsVirtual = isVirtual && resolvedIndex !== 0xffffffff;
+      if (resolvedIndex !== 0xffffffff) {
+        this._promoteInteractionEdges?.([resolvedIndex]);
+        this._reprioritizePersistentInteractionRenderOrder?.();
+      }
       this.scheduler.requestRender();
       return this;
     }
     this._pendingGraphLayerProps.set('hoveredEdgeIndex', resolvedIndex);
     this._pendingGraphLayerProps.set('hoveredEdgeState', value);
     this._pendingGraphLayerProps.set('hoveredEdgeIsVirtual', isVirtual && resolvedIndex !== 0xffffffff);
+    if (resolvedIndex !== 0xffffffff) {
+      this._promoteInteractionEdges?.([resolvedIndex]);
+      this._reprioritizePersistentInteractionRenderOrder?.();
+    }
     return this;
   }
 
@@ -8799,6 +9027,7 @@ export class Helios extends EventTarget {
     if (removeEdges.length) this.edgeState(removeEdges, 'HIGHLIGHTED', { mode: 'remove' });
     if (addEdges.length) this.edgeState(addEdges, 'HIGHLIGHTED', { mode: 'add' });
     this._highlightUnion = { nodes: nextNodes, edges: nextEdges };
+    this._reprioritizePersistentInteractionRenderOrder?.();
     this.emit?.('highlight:change', {
       nodes: Array.from(nextNodes),
       edges: Array.from(nextEdges),

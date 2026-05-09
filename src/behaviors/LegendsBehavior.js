@@ -81,6 +81,10 @@ function normalizeConfigPatch(options = {}) {
   if (Object.prototype.hasOwnProperty.call(options, 'fontFamily')) {
     next.fontFamily = typeof options.fontFamily === 'string' ? options.fontFamily.trim() : options.fontFamily;
   }
+  if (Object.prototype.hasOwnProperty.call(options, 'legendClickAction')) {
+    const action = String(options.legendClickAction ?? '').trim().toLowerCase();
+    if (action === 'highlight' || action === 'select') next.legendClickAction = action;
+  }
   if (Object.prototype.hasOwnProperty.call(options, 'titles')) {
     next.titles = cloneTitles(options.titles);
   }

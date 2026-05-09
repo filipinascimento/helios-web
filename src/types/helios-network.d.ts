@@ -306,6 +306,13 @@ declare module 'helios-network' {
     hasEdgeIndex(index: number): boolean;
     hasNodeIndices(indices: Iterable<number> | Uint32Array): boolean[];
     hasEdgeIndices(indices: Iterable<number> | Uint32Array): boolean[];
+    promoteActiveNodesToRenderEnd(indices: Iterable<number> | Uint32Array): { changed: boolean; start: number; count: number; version: string | number };
+    promoteActiveEdgesToRenderEnd(indices: Iterable<number> | Uint32Array): { changed: boolean; start: number; count: number; version: string | number };
+    promoteActiveEdgesForNodesToRenderEnd(
+      nodeIndices: Iterable<number> | Uint32Array,
+      options?: { direction?: 'out' | 'in' | 'both' | number }
+    ): { changed: boolean; start: number; count: number; version: string | number };
+    getActiveIndexDirtyRange(scope: 'node' | 'edge'): { start: number; count: number; version: string | number } | null;
 
     leidenModularity(options?: LeidenOptions): LeidenResult;
     createLeidenSession(options?: LeidenOptions): LeidenSession;

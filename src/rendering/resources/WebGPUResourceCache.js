@@ -51,6 +51,34 @@ export class WebGPUResourceCache {
       return entry.buffer;
     }
 
+    const dirtyRange = meta.dirtyRange ?? null;
+    if (
+      dirtyRange
+      && sameBytes
+      && sameTopo
+      && sameCount
+      && sameView
+      && entry.byteLength > 0
+      && Number.isFinite(Number(dirtyRange.start))
+      && Number.isFinite(Number(dirtyRange.count))
+      && Number(dirtyRange.count) > 0
+    ) {
+      const elementSize = typedArray.BYTES_PER_ELEMENT || 1;
+      const start = Math.max(0, Math.floor(Number(dirtyRange.start)));
+      const count = Math.max(0, Math.floor(Number(dirtyRange.count)));
+      const end = Math.min(typedArray.length ?? 0, start + count);
+      if (end > start) {
+        queue.writeBuffer(entry.buffer, start * elementSize, typedArray.subarray(start, end));
+        entry.byteLength = byteLength;
+        entry.version = version;
+        entry.topologyVersion = topologyVersion;
+        entry.count = meta.count ?? entry.count;
+        entry.viewSig = viewSig;
+        this.buffers.set(key, entry);
+        return entry.buffer;
+      }
+    }
+
     queue.writeBuffer(entry.buffer, 0, typedArray);
     entry.byteLength = byteLength;
     entry.version = version;

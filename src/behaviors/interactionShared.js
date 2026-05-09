@@ -121,6 +121,10 @@ export function applyHoverConnectedEdges(context) {
   if (graphLayer) {
     graphLayer.propagateHoveredNodeToEdges = hoverState?.hoverConnectedEdges === true;
   }
+  if (graphLayer?.propagateHoveredNodeToEdges === true && Number.isInteger(hoverState?.hoveredNode) && hoverState.hoveredNode >= 0) {
+    helios?._promoteInteractionNodes?.([hoverState.hoveredNode], { connectedEdges: true });
+    helios?._reprioritizePersistentInteractionRenderOrder?.();
+  }
   helios?.requestRender?.();
 }
 
@@ -130,6 +134,9 @@ export function applySelectedConnectedEdges(context) {
   const selectionState = getSelectionState(context);
   if (graphLayer) {
     graphLayer.propagateSelectedNodesToEdges = selectionState?.selectedConnectedEdges === true;
+  }
+  if (graphLayer?.propagateSelectedNodesToEdges === true) {
+    helios?._reprioritizePersistentInteractionRenderOrder?.();
   }
   helios?.requestRender?.();
 }

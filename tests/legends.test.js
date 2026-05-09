@@ -482,7 +482,68 @@ test('SvgLegendController coalesces legend hover clear when moving between categ
   }
 });
 
-test('SvgLegendController toggles active categories off on normal and shift click', () => {
+test('SvgLegendController highlights categories by default on normal and shift click', () => {
+  const calls = [];
+  const controller = Object.create(SvgLegendController.prototype);
+  controller._config = { interactiveCategorical: true, legendClickSelect: true, legendClickAction: 'highlight' };
+  controller._pendingLegendHover = null;
+  controller._pendingLegendHoverClear = null;
+  controller._legendClickHighlightEntries = new Map();
+  controller.helios = {
+    network: {
+      nodeIndices: [0, 1, 2, 3],
+      withBufferAccess(callback) {
+        return callback();
+      },
+      getNodeAttributeBuffer() {
+        return { view: new Int32Array([1, 2, 1, 2]) };
+      },
+    },
+    _setHighlightSource(source, payload) {
+      calls.push(['highlight', source, payload.nodes]);
+    },
+    _clearHighlightSource(source) {
+      calls.push(['clear', source]);
+    },
+    updateDensityMap() {
+      calls.push(['density']);
+    },
+  };
+  const item = { kind: 'nodeColor' };
+  const first = { scope: 'node', attribute: 'category', categoryValue: 1 };
+  const second = { scope: 'node', attribute: 'category', categoryValue: 2 };
+  const makeEvent = (shiftKey = false) => ({
+    shiftKey,
+    preventDefault() {},
+    stopPropagation() {},
+    currentTarget: null,
+  });
+
+  controller._handleCategoryClick(makeEvent(false), item, first);
+  assert.deepEqual(calls, [
+    ['highlight', 'legend:click', [0, 2]],
+    ['density'],
+  ]);
+  assert.equal(controller._isCategoryActive(item, first), true);
+
+  calls.length = 0;
+  controller._handleCategoryClick(makeEvent(true), item, second);
+  assert.deepEqual(calls, [
+    ['highlight', 'legend:click', [0, 2, 1, 3]],
+    ['density'],
+  ]);
+  assert.equal(controller._isCategoryActive(item, second), true);
+
+  calls.length = 0;
+  controller._handleCategoryClick(makeEvent(false), item, first);
+  assert.deepEqual(calls, [
+    ['highlight', 'legend:click', [1, 3]],
+    ['density'],
+  ]);
+  assert.equal(controller._isCategoryActive(item, first), false);
+});
+
+test('SvgLegendController can use selection for categorical legend clicks', () => {
   const calls = [];
   const selection = {
     state: { selectedNodes: new Set([0, 2]) },
@@ -498,7 +559,7 @@ test('SvgLegendController toggles active categories off on normal and shift clic
     },
   };
   const controller = Object.create(SvgLegendController.prototype);
-  controller._config = { interactiveCategorical: true, legendClickSelect: true };
+  controller._config = { interactiveCategorical: true, legendClickSelect: true, legendClickAction: 'select' };
   controller._pendingLegendHover = null;
   controller.helios = {
     network: {

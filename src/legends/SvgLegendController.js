@@ -30,6 +30,7 @@ const DEFAULT_CONFIG = Object.freeze({
   interactiveCategorical: true,
   legendHoverHighlight: true,
   legendClickSelect: true,
+  legendClickAction: 'highlight',
   titles: Object.freeze({}),
   placements: Object.freeze({
     nodeColor: 'auto',
@@ -82,6 +83,11 @@ function normalizeInsets(insets) {
     bottom: Math.max(0, toFinite(insets.bottom, 0)),
     left: Math.max(0, toFinite(insets.left, 0)),
   };
+}
+
+function normalizeLegendClickAction(value, fallback = DEFAULT_CONFIG.legendClickAction) {
+  const action = String(value ?? '').trim().toLowerCase();
+  return action === 'highlight' || action === 'select' ? action : fallback;
 }
 
 function rgbaArrayToCss(color, fallback = 'rgba(120, 120, 120, 1)') {
@@ -828,6 +834,7 @@ export class SvgLegendController {
     this._activeLegendHover = null;
     this._pendingLegendHover = null;
     this._pendingLegendHoverClear = null;
+    this._legendClickHighlightEntries = new Map();
 
     const svg = this.helios?.layers?.svg ?? null;
     if (!svg || typeof document === 'undefined') {
@@ -849,6 +856,7 @@ export class SvgLegendController {
   destroy() {
     this._cancelPendingLegendHover();
     this._cancelPendingLegendHoverClear();
+    this._clearLegendClickHighlights();
     this.group?.remove?.();
     this.group = null;
     this.defs = null;
@@ -864,6 +872,7 @@ export class SvgLegendController {
   }
 
   setConfig(options = {}) {
+    const previousClickAction = this._config.legendClickAction;
     const next = {
       ...this._config,
       titles: { ...(this._config.titles ?? {}) },
@@ -896,6 +905,9 @@ export class SvgLegendController {
     if (Object.prototype.hasOwnProperty.call(options, 'interactiveCategorical')) next.interactiveCategorical = options.interactiveCategorical !== false;
     if (Object.prototype.hasOwnProperty.call(options, 'legendHoverHighlight')) next.legendHoverHighlight = options.legendHoverHighlight !== false;
     if (Object.prototype.hasOwnProperty.call(options, 'legendClickSelect')) next.legendClickSelect = options.legendClickSelect !== false;
+    if (Object.prototype.hasOwnProperty.call(options, 'legendClickAction')) {
+      next.legendClickAction = normalizeLegendClickAction(options.legendClickAction, next.legendClickAction);
+    }
     if (Object.prototype.hasOwnProperty.call(options, 'titles')) {
       next.titles = normalizeLegendTitles(options.titles, next.titles);
     }
@@ -903,6 +915,12 @@ export class SvgLegendController {
       next.placements = normalizePlacements({ ...next.placements, ...options.placements });
     }
     this._config = next;
+    if (
+      previousClickAction === 'highlight'
+      && (next.legendClickAction !== 'highlight' || next.legendClickSelect === false || next.interactiveCategorical === false)
+    ) {
+      this._clearLegendClickHighlights();
+    }
   }
 
   _resolveConfig(options = {}) {
@@ -964,9 +982,11 @@ export class SvgLegendController {
     );
     const items = this.deriveItems({ size });
     if (!items.length) {
+      this._clearLegendClickHighlights();
       this._clear();
       return false;
     }
+    this._syncLegendClickHighlights(items);
     const positioned = layoutLegendItems(items, safeRect, this._config);
     const signature = JSON.stringify({
       positioned,
@@ -1316,7 +1336,7 @@ export class SvgLegendController {
       });
       if (interactive) {
         this._setCategoryRowVisual(row, {
-          selected: this._isCategorySelected(entry),
+          selected: this._isCategoryActive(item, entry),
           hovered: this._isActiveLegendHoverEntry(item, entry),
           theme,
         });
@@ -1336,7 +1356,7 @@ export class SvgLegendController {
           item.kind,
           entry.attribute,
           String(entry.categoryValue),
-          this._isCategorySelected(entry),
+          this._isCategoryActive(item, entry),
         ]);
       }
     }
@@ -1352,6 +1372,17 @@ export class SvgLegendController {
     if (!selected?.size) return false;
     const nodes = this._collectCategoryNodes(entry);
     return nodes.length > 0 && nodes.every((id) => selected.has(id));
+  }
+
+  _isCategoryHighlighted(item, entry) {
+    const key = this._categoryEntryKey(item, entry);
+    return Boolean(key && this._legendClickHighlightEntries?.has?.(key));
+  }
+
+  _isCategoryActive(item, entry) {
+    return this._config.legendClickAction === 'select'
+      ? this._isCategorySelected(entry)
+      : this._isCategoryHighlighted(item, entry);
   }
 
   _isCategoryRowSelected(row) {
@@ -1481,6 +1512,36 @@ export class SvgLegendController {
     event?.stopPropagation?.();
     this._cancelPendingLegendHover();
     this._cancelPendingLegendHoverClear();
+    if (this._config.legendClickAction !== 'select') {
+      this._handleCategoryHighlightClick(event, item, entry);
+      return;
+    }
+    this._handleCategorySelectClick(event, entry);
+  }
+
+  _handleCategoryHighlightClick(event, item, entry) {
+    const key = this._categoryEntryKey(item, entry);
+    if (!key) return;
+    if (!this._legendClickHighlightEntries) this._legendClickHighlightEntries = new Map();
+    if (this._legendClickHighlightEntries.has(key)) {
+      this._legendClickHighlightEntries.delete(key);
+    } else {
+      if (event?.shiftKey !== true) this._legendClickHighlightEntries.clear();
+      this._legendClickHighlightEntries.set(key, { item, entry });
+    }
+    this._applyLegendClickHighlights();
+    const row = event?.currentTarget ?? event?.target ?? null;
+    if (row) {
+      this._setCategoryRowVisual(row, {
+        selected: this._isCategoryHighlighted(item, entry),
+        hovered: true,
+        theme: this._theme(),
+      });
+    }
+    this.helios?.updateDensityMap?.();
+  }
+
+  _handleCategorySelectClick(event, entry) {
     const nodes = this._collectCategoryNodes(entry);
     const selection = this.helios?.getBehavior?.('selection') ?? this.helios?.behavior?.selection ?? null;
     if (!selection?.selectNodes) return;
@@ -1503,6 +1564,42 @@ export class SvgLegendController {
       });
     }
     this.helios?.updateDensityMap?.();
+  }
+
+  _applyLegendClickHighlights() {
+    const nodes = new Set();
+    for (const { entry } of this._legendClickHighlightEntries?.values?.() ?? []) {
+      for (const node of this._collectCategoryNodes(entry)) nodes.add(node);
+    }
+    if (nodes.size) {
+      this.helios?._setHighlightSource?.('legend:click', { nodes: Array.from(nodes) });
+    } else {
+      this.helios?._clearHighlightSource?.('legend:click');
+    }
+  }
+
+  _clearLegendClickHighlights() {
+    this._legendClickHighlightEntries?.clear?.();
+    this.helios?._clearHighlightSource?.('legend:click');
+  }
+
+  _syncLegendClickHighlights(items) {
+    if (!this._legendClickHighlightEntries?.size) return;
+    const valid = new Set();
+    for (const item of items ?? []) {
+      if (item?.legendType !== 'categorical') continue;
+      for (const entry of item.entries ?? []) {
+        if (!this._isInteractiveCategory(item, entry)) continue;
+        valid.add(this._categoryEntryKey(item, entry));
+      }
+    }
+    let changed = false;
+    for (const key of Array.from(this._legendClickHighlightEntries.keys())) {
+      if (valid.has(key)) continue;
+      this._legendClickHighlightEntries.delete(key);
+      changed = true;
+    }
+    if (changed) this._applyLegendClickHighlights();
   }
 
   _renderContinuousLegend(group, item, theme, config = this._config, defs = this.defs) {

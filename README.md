@@ -68,6 +68,7 @@ helios.legends({
   // Legends default to outlined text with no surrounding frame.
   showPanel: true, // optional subtle backdrop if you want one
   panelOpacity: 0.14, // keep it light; default is ignored unless showPanel is true
+  legendClickAction: 'highlight', // default; use 'select' for selection clicks
   scale: 1.1, // scales legend geometry
   continuousHeight: 160, // taller continuous colorbars
   zoomAwareSizeIn2D: true, // node size legends track 2D orthographic zoom by default

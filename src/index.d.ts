@@ -411,6 +411,7 @@ export interface LegendsBehaviorOptions {
   interactiveCategorical?: boolean;
   legendHoverHighlight?: boolean;
   legendClickSelect?: boolean;
+  legendClickAction?: 'highlight' | 'select';
   margin?: number;
   gap?: number;
   maxChars?: number;
@@ -878,6 +879,8 @@ export class Helios extends EventTarget {
   hoverStyleFromHighlight(value: boolean): this;
   highlightConnectedEdges(): boolean;
   highlightConnectedEdges(value: boolean): this;
+  interactionRenderOrder(): boolean;
+  interactionRenderOrder(value: boolean): this;
   setNodeHoverStyle(style: NodeHoverStyle): this;
   setEdgeHoverStyle(style: EdgeHoverStyle): this;
   setHoverStyleFromHighlight(value: boolean): this;
@@ -893,6 +896,11 @@ export interface HeliosOptions extends Record<string, unknown> {
   hoverStyleFromHighlight?: boolean;
   highlightConnectedEdges?: boolean;
   hoverAffectsOtherElements?: boolean;
+  interactionRenderOrder?: boolean;
+  renderOrderInteractions?: boolean;
+  interactionRenderOrderHoverConnectedEdges?: boolean;
+  interactionRenderOrderSelectedConnectedEdges?: boolean;
+  interactionRenderOrderHighlightedConnectedEdges?: boolean;
   mode?: HeliosMode;
   autoCleanup?: boolean;
   disposeNetworkOnDestroy?: boolean;

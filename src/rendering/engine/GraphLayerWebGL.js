@@ -1484,6 +1484,12 @@ export class GraphLayerWebGL extends GraphLayer {
     return network.withBufferAccess(() => {
       const nodeIndices = indices?.node ?? network.nodeIndices ?? null;
       const edgeIndices = indices?.edge ?? network.edgeIndices ?? null;
+      const nodeIndexDirtyRange = typeof network.getActiveIndexDirtyRange === 'function'
+        ? network.getActiveIndexDirtyRange('node')
+        : null;
+      const edgeIndexDirtyRange = typeof network.getActiveIndexDirtyRange === 'function'
+        ? network.getActiveIndexDirtyRange('edge')
+        : null;
       const safeGet = (scope, name) => {
         if (!name) return null;
         if (scope === 'node' && !hasNodeAttribute(name)) return null;
@@ -1542,6 +1548,7 @@ export class GraphLayerWebGL extends GraphLayer {
         positionTextureCount: resolvedNodePositionTextureCount,
         positionTextureMeta: resolvedNodePositionTextureMeta,
         indices: nodeIndices,
+        indexDirtyRange: nodeIndexDirtyRange,
         count: nodeIndices?.length ?? 0,
         versions: {
           positions: resolvedNodePositionVersion,
@@ -1550,7 +1557,7 @@ export class GraphLayerWebGL extends GraphLayer {
           states: nodeStates?.version ?? 0,
           outlineWidths: nodeOutlineWidths?.version ?? 0,
           outlineColors: nodeOutlineColors?.version ?? 0,
-          indices: topologyVersions?.node ?? 0,
+          indices: nodeIndices?.version ?? topologyVersions?.node ?? 0,
           topology: topologyVersions?.node ?? 0,
         },
       };
@@ -1564,6 +1571,7 @@ export class GraphLayerWebGL extends GraphLayer {
         states: edgeStates?.view ?? null,
         endpointStates: edgeEndpointStates?.view ?? null,
         indices: edgeIndices,
+        indexDirtyRange: edgeIndexDirtyRange,
         count: edgeIndices?.length ?? 0,
         versions: {
           endpoints: topologyVersions?.edge ?? 0,
@@ -1573,7 +1581,7 @@ export class GraphLayerWebGL extends GraphLayer {
           endpointSizes: edgeEndpointSizes?.version ?? 0,
           states: edgeStates?.version ?? 0,
           endpointStates: edgeEndpointStates?.version ?? 0,
-          indices: topologyVersions?.edge ?? 0,
+          indices: edgeIndices?.version ?? topologyVersions?.edge ?? 0,
           topology: topologyVersions?.edge ?? 0,
         },
       };
@@ -1712,7 +1720,7 @@ export class GraphLayerWebGL extends GraphLayer {
     return true;
   }
 
-  uploadIdBuffer(slot, buffer, view, version, count) {
+  uploadIdBuffer(slot, buffer, view, version, count, dirtyRange = null) {
     if (!view || !buffer) return 0;
     const meta = this.bufferMeta[slot];
     const same = Boolean(
@@ -1725,7 +1733,33 @@ export class GraphLayerWebGL extends GraphLayer {
     );
     if (!same) {
       this.gl.bindBuffer(this.gl.ARRAY_BUFFER, buffer);
-      this.gl.bufferData(this.gl.ARRAY_BUFFER, view, this.gl.DYNAMIC_DRAW);
+      const canSubData = Boolean(
+        dirtyRange
+        && meta
+        && meta.count === count
+        && meta.buffer === view.buffer
+        && meta.byteOffset === view.byteOffset
+        && meta.byteLength === view.byteLength
+        && Number.isFinite(Number(dirtyRange.start))
+        && Number.isFinite(Number(dirtyRange.count))
+        && Number(dirtyRange.count) > 0
+      );
+      if (canSubData) {
+        const start = Math.max(0, Math.floor(Number(dirtyRange.start)));
+        const dirtyCount = Math.max(0, Math.floor(Number(dirtyRange.count)));
+        const end = Math.min(view.length ?? 0, start + dirtyCount);
+        if (end > start) {
+          this.gl.bufferSubData(
+            this.gl.ARRAY_BUFFER,
+            start * (view.BYTES_PER_ELEMENT || Uint32Array.BYTES_PER_ELEMENT),
+            view.subarray(start, end),
+          );
+        } else {
+          this.gl.bufferData(this.gl.ARRAY_BUFFER, view, this.gl.DYNAMIC_DRAW);
+        }
+      } else {
+        this.gl.bufferData(this.gl.ARRAY_BUFFER, view, this.gl.DYNAMIC_DRAW);
+      }
       this.bufferMeta[slot] = {
         version: version ?? 0,
         count,
@@ -2007,8 +2041,22 @@ export class GraphLayerWebGL extends GraphLayer {
         this._activeNodePositionTexture = activeNodePositionTexture;
         this._activeNodePositionTextureMeta = activeNodePositionMeta;
 
-        this.nodeCount = this.uploadIdBuffer('nodeIds', this.nodeIdBuffer, nodes.indices, nodes.versions?.indices, nodes.count);
-        this.edgeCount = this.uploadIdBuffer('edgeIds', this.edgeIdBuffer, edges.indices, edges.versions?.indices, edges.count);
+        this.nodeCount = this.uploadIdBuffer(
+          'nodeIds',
+          this.nodeIdBuffer,
+          nodes.indices,
+          nodes.versions?.indices,
+          nodes.count,
+          nodes.indexDirtyRange,
+        );
+        this.edgeCount = this.uploadIdBuffer(
+          'edgeIds',
+          this.edgeIdBuffer,
+          edges.indices,
+          edges.versions?.indices,
+          edges.count,
+          edges.indexDirtyRange,
+        );
 
         if (this.nodeCount > 0) {
           if (!activeNodePositionTexture) {

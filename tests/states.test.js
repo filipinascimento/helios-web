@@ -244,6 +244,7 @@ test('global accessors exist on Helios prototype', () => {
     'edgeFastRendering',
     'background',
     'clearColor',
+    'interactionRenderOrder',
   ];
   for (const name of names) {
     assert.equal(typeof Helios.prototype[name], 'function', `${name} should be a function`);

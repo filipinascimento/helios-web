@@ -24,10 +24,11 @@ function createHarness({
     : null;
   const makeSelector = (scope, indices, wordOffset) => {
     if (!module) return null;
-    const values = Uint32Array.from(indices);
+    let values = Uint32Array.from(indices);
     module.HEAPU32.set(values, wordOffset);
     return {
       module,
+      network,
       get count() {
         return values.length;
       },
@@ -36,6 +37,11 @@ function createHarness({
       },
       toTypedArray() {
         return Uint32Array.from(values);
+      },
+      fillFromArray(_network, nextValues) {
+        values = Uint32Array.from(nextValues);
+        module.HEAPU32.set(values, wordOffset);
+        return this;
       },
       dispose() {
         selectorDisposals[scope] += 1;
@@ -242,6 +248,58 @@ test('selector-backed filters expose WASM active-index writers on render proxy',
   const disposed = getSelectorDisposals();
   assert.ok(disposed.node >= 1);
   assert.ok(disposed.edge >= 1);
+});
+
+test('selector-backed render filters reprioritize filtered active indices for interaction render order', () => {
+  const harness = createHarness({ filteredNodes: [0, 1, 2, 3], filteredEdges: [0, 1, 2], selectorBacked: true });
+  const { helios, network, getRenderRequests } = harness;
+  let baseNodePromotionCalls = 0;
+  let baseEdgePromotionCalls = 0;
+  network.promoteActiveNodesToRenderEnd = () => {
+    baseNodePromotionCalls += 1;
+    return { changed: false, start: 0, count: 0, version: 0 };
+  };
+  network.promoteActiveEdgesToRenderEnd = () => {
+    baseEdgePromotionCalls += 1;
+    return { changed: false, start: 0, count: 0, version: 0 };
+  };
+
+  helios.setGraphFilter({ nodeQuery: 'weight >= 0.5', scope: 'render' });
+  helios._interactionRenderOrder = { enabled: true };
+
+  const result = helios._promoteInteractionNodes([1]);
+  const renderNetwork = helios._getRenderNetwork();
+  const nodeTarget = new Uint32Array(network.module.HEAPU32.buffer, 0, 4);
+  const written = renderNetwork.writeActiveNodes(nodeTarget);
+
+  assert.equal(result.changed, true);
+  assert.equal(written, 4);
+  assert.deepEqual(Array.from(nodeTarget.subarray(0, 4)), [0, 2, 3, 1]);
+  assert.equal(baseNodePromotionCalls, 0);
+  assert.equal(baseEdgePromotionCalls, 0);
+  assert.ok(getRenderRequests() >= 2);
+});
+
+test('selector-backed render filters merge dirty ranges across consecutive promotions', () => {
+  const harness = createHarness({ filteredNodes: [0, 1, 2, 3], filteredEdges: [0, 1, 2], selectorBacked: true });
+  const { helios, network } = harness;
+
+  helios.setGraphFilter({ nodeQuery: 'weight >= 0.5', scope: 'render' });
+  helios._interactionRenderOrder = { enabled: true };
+
+  helios._promoteInteractionNodes([1]);
+  helios._promoteInteractionNodes([2]);
+
+  const renderNetwork = helios._getRenderNetwork();
+  const nodeTarget = new Uint32Array(network.module.HEAPU32.buffer, 0, 4);
+  renderNetwork.writeActiveNodes(nodeTarget);
+
+  assert.deepEqual(Array.from(nodeTarget.subarray(0, 4)), [0, 3, 1, 2]);
+  assert.deepEqual(renderNetwork.getActiveIndexDirtyRange('node'), {
+    start: 1,
+    count: 3,
+    version: '1:2',
+  });
 });
 
 test('activateHeliosFilter() applies a HeliosFilter instance and tracks it as active', () => {
