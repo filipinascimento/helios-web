@@ -34,6 +34,12 @@ The GPU-force layout supports `forceNormalizationType` for linear attraction:
 `local-degree` keeps the legacy GPU behavior, `degree` matches d3-style
 endpoint-degree normalization, `strength` uses a derived weighted endpoint
 strength buffer, and `none` disables the attraction denominator.
+The default linear GPU-force layout also applies a small generated tuning model
+that only adjusts `outputScale`, leaving the force constants at their defaults.
+This gives tiny and dense graphs more visual separation without changing the
+physical force balance. Pass
+`layout.options.tuningModel = false` to restore the hand defaults, or pass a
+custom model function/object to override the bundled coefficients.
 
 ## Using as a Library
 

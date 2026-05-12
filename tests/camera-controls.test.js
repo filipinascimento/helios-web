@@ -3,21 +3,22 @@ import assert from 'node:assert/strict';
 import { Helios } from '../src/index.js';
 import { resolveFigurePreviewRect } from '../src/export/figureExport.js';
 import { Camera } from '../src/rendering/Camera.js';
+import { applyCameraPose } from '../src/rendering/CameraTransitionController.js';
 
-function createCamera(mode = '2d') {
+function createCamera(mode = '2d', width = 400, height = 400) {
   return new Camera(
     {
       addEventListener() {},
       removeEventListener() {},
       getBoundingClientRect() {
-        return { left: 0, top: 0, width: 400, height: 400 };
+        return { left: 0, top: 0, width, height };
       },
     },
     {
       mode,
       projection: mode === '3d' ? 'perspective' : 'orthographic',
       disableControls: true,
-      viewport: { width: 400, height: 400, devicePixelRatio: 1 },
+      viewport: { width, height, devicePixelRatio: 1 },
     },
   );
 }
@@ -34,6 +35,27 @@ function projectPoint(uniforms, point) {
     x: (ndcX * 0.5 + 0.5) * uniforms.viewport.width,
     y: (1 - (ndcY * 0.5 + 0.5)) * uniforms.viewport.height,
   };
+}
+
+function projectBounds(camera, bounds) {
+  const corners = [];
+  for (const x of [bounds.fitMinX, bounds.fitMaxX]) {
+    for (const y of [bounds.fitMinY, bounds.fitMaxY]) {
+      for (const z of [bounds.fitMinZ, bounds.fitMaxZ]) {
+        corners.push(projectPoint(camera.getUniforms(), [x, y, z]));
+      }
+    }
+  }
+  return corners;
+}
+
+function assertFitsViewport(points, width, height, padding = 0) {
+  for (const point of points) {
+    assert.ok(point.x >= padding - 1e-3, `expected x ${point.x} >= ${padding}`);
+    assert.ok(point.x <= width - padding + 1e-3, `expected x ${point.x} <= ${width - padding}`);
+    assert.ok(point.y >= padding - 1e-3, `expected y ${point.y} >= ${padding}`);
+    assert.ok(point.y <= height - padding + 1e-3, `expected y ${point.y} <= ${height - padding}`);
+  }
 }
 
 test('frameNetwork trims outliers when using 95% auto-fit coverage', () => {
@@ -81,6 +103,153 @@ test('frameNetwork trims outliers when using 95% auto-fit coverage', () => {
   assert.ok(camera.zoom > 3, `expected trimmed zoom to stay near the dense cluster, got ${camera.zoom}`);
   assert.ok(Math.abs(camera.pan2D[0]) < 10);
   assert.ok(Math.abs(camera.pan2D[1]) < 10);
+});
+
+test('3D frameNetwork fit honors portrait viewport aspect ratio', () => {
+  const helios = Object.create(Helios.prototype);
+  const camera = createCamera('3d', 240, 600);
+  camera.maxDistance = 10000;
+  helios.renderer = { camera };
+  helios.size = { width: 240, height: 600 };
+
+  const bounds = {
+    paddingPx: 0,
+    fitMinX: -120,
+    fitMaxX: 120,
+    fitMinY: -20,
+    fitMaxY: 20,
+    fitMinZ: -10,
+    fitMaxZ: 10,
+    bboxCenter: [0, 0, 0],
+    centroid: [0, 0, 0],
+  };
+
+  const pose = helios._resolveCameraFitPose(bounds, { resetOrientation: true });
+  applyCameraPose(camera, pose);
+
+  assertFitsViewport(projectBounds(camera, bounds), 240, 600);
+});
+
+test('3D frameNetwork fit honors landscape viewport aspect ratio', () => {
+  const helios = Object.create(Helios.prototype);
+  const camera = createCamera('3d', 600, 240);
+  camera.maxDistance = 10000;
+  helios.renderer = { camera };
+  helios.size = { width: 600, height: 240 };
+
+  const bounds = {
+    paddingPx: 0,
+    fitMinX: -20,
+    fitMaxX: 20,
+    fitMinY: -120,
+    fitMaxY: 120,
+    fitMinZ: -10,
+    fitMaxZ: 10,
+    bboxCenter: [0, 0, 0],
+    centroid: [0, 0, 0],
+  };
+
+  const pose = helios._resolveCameraFitPose(bounds, { resetOrientation: true });
+  applyCameraPose(camera, pose);
+
+  assertFitsViewport(projectBounds(camera, bounds), 600, 240);
+});
+
+test('2D frameNetwork fit reserves room for rendered node radius', () => {
+  const helios = Object.create(Helios.prototype);
+  const camera = createCamera('2d', 200, 200);
+  camera.maxZoom = 10000;
+  helios.renderer = { camera };
+  helios.size = { width: 200, height: 200 };
+
+  const bounds = {
+    paddingPx: 0,
+    nodeRadiusWorld: 20,
+    fitMinX: -50,
+    fitMaxX: 50,
+    fitMinY: -50,
+    fitMaxY: 50,
+    fitMinZ: 0,
+    fitMaxZ: 0,
+    bboxCenter: [0, 0, 0],
+    centroid: [0, 0, 0],
+  };
+
+  const pose = helios._resolveCameraFitPose(bounds, { resetOrientation: false });
+  applyCameraPose(camera, pose);
+
+  assertFitsViewport(projectBounds(camera, {
+    ...bounds,
+    fitMinX: -70,
+    fitMaxX: 70,
+    fitMinY: -70,
+    fitMaxY: 70,
+  }), 200, 200);
+});
+
+test('3D frameNetwork fit reserves room for billboard node radius', () => {
+  const helios = Object.create(Helios.prototype);
+  const camera = createCamera('3d', 240, 240);
+  camera.maxDistance = 10000;
+  helios.renderer = { camera };
+  helios.size = { width: 240, height: 240 };
+
+  const bounds = {
+    paddingPx: 0,
+    nodeRadiusWorld: 20,
+    fitMinX: -50,
+    fitMaxX: 50,
+    fitMinY: -50,
+    fitMaxY: 50,
+    fitMinZ: 0,
+    fitMaxZ: 0,
+    bboxCenter: [0, 0, 0],
+    centroid: [0, 0, 0],
+  };
+
+  const withoutRadius = helios._resolveCameraFitPose({ ...bounds, nodeRadiusWorld: 0 }, { resetOrientation: true });
+  const withRadius = helios._resolveCameraFitPose(bounds, { resetOrientation: true });
+
+  assert.ok(withRadius.distance > withoutRadius.distance);
+});
+
+test('constructor UI panel option maps requested panels to HeliosUI creators', () => {
+  const helios = Object.create(Helios.prototype);
+  const calls = [];
+  const ui = {
+    createCameraPanel(options) { calls.push(['camera', options]); },
+    createLayoutPanel(options) { calls.push(['layout', options]); },
+    createSelectionPanel(options) { calls.push(['selection', options]); },
+  };
+
+  helios._createOptionalUIPanels(ui, ['camera', 'layout', 'selection'], {
+    camera: { collapsed: true },
+  });
+
+  assert.deepEqual(calls, [
+    ['camera', { collapsed: true }],
+    ['layout', {}],
+    ['selection', {}],
+  ]);
+});
+
+test('constructor UI panel option expands default panel presets', () => {
+  const helios = Object.create(Helios.prototype);
+  const calls = [];
+  const ui = {
+    createDemoPanel() { calls.push('demo'); },
+    createMetricsPanel() { calls.push('metrics'); },
+    createMappersPanel() { calls.push('mappers'); },
+    createLayoutPanel() { calls.push('layout'); },
+    createLegendsPanel() { calls.push('legends'); },
+    createFilterPanel() { calls.push('filter'); },
+    createCameraPanel() { calls.push('camera'); },
+    createSelectionPanel() { calls.push('selection'); },
+  };
+
+  helios._createOptionalUIPanels(ui, true);
+
+  assert.deepEqual(calls, ['demo', 'metrics', 'mappers', 'layout', 'legends', 'filter', 'camera', 'selection']);
 });
 
 test('manual camera pose changes disable automatic camera fitting', () => {
@@ -197,7 +366,7 @@ test('frameNetwork uses delegate snapshots when positions come from a GPU layout
   const fitted = helios.frameNetwork({ coverage: 1, paddingRatio: 0, animate: false });
 
   assert.equal(fitted, true);
-  assert.ok(camera.zoom > 8, `expected frameNetwork to fit delegate snapshot bounds, got ${camera.zoom}`);
+  assert.ok(camera.zoom > 7, `expected frameNetwork to fit delegate snapshot bounds, got ${camera.zoom}`);
 });
 
 test('cameraTargetNodes uses delegate centroid readback for GPU-only target nodes', async () => {
@@ -702,7 +871,7 @@ test('frameNetwork reads active node indices only inside buffer access', () => {
   const fitted = helios.frameNetwork({ coverage: 1, paddingRatio: 0, animate: false });
 
   assert.equal(fitted, true);
-  assert.ok(camera.zoom > 8);
+  assert.ok(camera.zoom > 7);
 });
 
 test('initial camera fit requests a non-animated frame before first render', () => {

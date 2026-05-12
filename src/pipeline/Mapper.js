@@ -1,5 +1,5 @@
 import { AttributeType } from 'helios-network';
-import { createColormapScale } from '../colors/colormaps.js';
+import { DEFAULT_NODE_COLORMAP, createColormapScale } from '../colors/colormaps.js';
 import { VISUAL_ATTRIBUTE_NAMES, DEFAULT_VISUALS, VISUAL_ATTRIBUTE_MAP } from './constants.js';
 
 const {
@@ -1104,13 +1104,13 @@ export class Mapper {
  */
 export function createDefaultMappers(network) {
   const denom = Math.max(1, (network?.nodeCount ?? network?.nodeCapacity ?? 1) - 1);
-  const infernoDefault = createColormapScale('interpolateInferno', { domain: [0, 1], alpha: 1 })(0.6);
+  const defaultNodeColor = createColormapScale(DEFAULT_NODE_COLORMAP, { domain: [0, 1], alpha: 1 })(0.6);
   const nodeMapper = new Mapper({ mode: 'node', network });
   nodeMapper
     .channel('color')
     .from('$index')
-    .colormap('interpolateInferno', { domain: [0, denom + 1], alpha: 1, clamp: true })
-    .default(infernoDefault)
+    .colormap(DEFAULT_NODE_COLORMAP, { domain: [0, denom + 1], alpha: 1, clamp: true })
+    .default(defaultNodeColor)
     .done();
   nodeMapper.channel('size').constant(DEFAULT_NODE_SIZE).done();
   nodeMapper.channel('outline').constant(DEFAULT_NODE_OUTLINE_WIDTH).done();

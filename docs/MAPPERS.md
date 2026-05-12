@@ -5,10 +5,16 @@ Visual mappings convert your graph attributes into colors, sizes, widths, and op
 ## Quick start
 
 ```js
-import { Mapper, createColormapScale, colormaps, colormapToScheme } from 'helios-web-next';
+import {
+  DEFAULT_NODE_COLORMAP,
+  Mapper,
+  createColormapScale,
+  colormaps,
+  colormapToScheme,
+} from 'helios-web-next';
 
 // Continuous values → RGBA via a perceptual colormap
-const nodeColor = createColormapScale('cmasher:rainforest', { domain: [0, 1], alpha: 1 });
+const nodeColor = createColormapScale(DEFAULT_NODE_COLORMAP, { domain: [0, 1], alpha: 1 });
 mapper.channel('color').from('weight').transform((v) => nodeColor(v ?? 0)).done();
 
 // Size from the same attribute
@@ -33,6 +39,7 @@ Tips:
 - Set `domain` to your data min/max so the scale spans your range; leaving it at `[0,1]` assumes normalized inputs.
 - Use `alpha` to enforce a uniform opacity while keeping RGB from the colormap.
 - For discrete categories, prefer `colormapToScheme` to avoid banding from continuous ramps.
+- The default node color mapper uses `CET_L08-NeonBurst`; the alias `CET: L08-NeonBurst` resolves to the same built-in ramp.
 
 If you’re using `HeliosUI`, the Mappers panel includes a searchable colormap picker with thumbnail previews to make it easier to browse ramps.
 
@@ -82,7 +89,7 @@ Mapper channels support `transformType` for common pre-transforms (`log`, `log1p
 
 ## Example: Basic demo node colors
 
-The bundled basic example (`docs/examples/basic/main.js`) starts with a serializable node color mapper (`$index` → `cmasher:rainforest` across the full index domain), so the UI doesn’t treat it as a custom preset. Toggle the renderer via `?renderer=webgl` and compare edge transparency modes via `?edgeTransparency=alpha` or another explicit mode to see how visuals react.
+The bundled basic example (`docs/examples/basic/main.js`) starts with a serializable node color mapper (`$index` → `CET_L08-NeonBurst` across the full index domain), so the UI doesn’t treat it as a custom preset. Toggle the renderer via `?renderer=webgl` and compare edge transparency modes via `?edgeTransparency=alpha` or another explicit mode to see how visuals react.
 
 ## When things look flat
 

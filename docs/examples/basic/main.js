@@ -1,6 +1,6 @@
 import HeliosNetwork, { AttributeType } from 'helios-network';
 // When consuming the published package use `import { Helios } from 'helios-web-next';`
-import { Helios, EVENTS, HeliosUI } from '../../../src/index.js';
+import { DEFAULT_NODE_COLORMAP, Helios, EVENTS, HeliosUI } from '../../../src/index.js';
 
 // Set this to an object like { helios: true, mapper: true, scheduler: true } to re-enable debug logs.
 const DEFAULT_NODE_COUNT = 2_000;
@@ -395,9 +395,9 @@ async function bootstrap() {
           damping: 0.82,
           maxStep: 2.5,
           linkDistance: 1,
-          kRepulsion: 0.07,
+          kRepulsion: 1,
           kAttraction: 0.62,
-          kGravity: 0.005,
+          kGravity: 0.001,
         }),
     forceNormalizationType,
     ...(!usingUmapDataset && forceNormalizationType === 'strength'
@@ -494,8 +494,8 @@ async function bootstrap() {
     // Start with a serializable mapper so the UI doesn't show this as a custom preset.
     // Color nodes by index across the full domain.
     const maxIndex = Math.max(1, (net?.nodeCount ?? 1) - 1);
-    console.log("  Node colors ($index/rainforest)...");
-    helios.nodeMapper.channel('color').from('$index').colormap('cmasher:rainforest', { domain: [0, maxIndex], alpha: 1 }).done();
+    console.log(`  Node colors ($index/${DEFAULT_NODE_COLORMAP})...`);
+    helios.nodeMapper.channel('color').from('$index').colormap(DEFAULT_NODE_COLORMAP, { domain: [0, maxIndex], alpha: 1 }).done();
 
     if (hasWeight) {
       console.log("  Node sizes (weight)...");

@@ -7,6 +7,11 @@ export { HeliosFilter } from './filters/HeliosFilter.js';
 export { StaticLayout, WorkerLayout, Layout } from './layouts/Layout.js';
 export { D3Force3DLayout } from './layouts/d3force3dLayoutWorker.js';
 export { GpuForceLayout } from './layouts/GpuForceLayout.js';
+export {
+  DEFAULT_LAYOUT_TUNING_MODEL,
+  extractLayoutTuningFeatures,
+  predictLayoutTuningOptions,
+} from './layouts/layoutTuningModel.generated.js';
 export { PositionDelegate } from './delegates/PositionDelegate.js';
 export { GpuForcePositionDelegate } from './delegates/GpuForcePositionDelegate.js';
 
@@ -22,6 +27,7 @@ export {
   colormapToInterpolator,
   decodeColormapData,
   base64ToUint8Array,
+  DEFAULT_NODE_COLORMAP,
 } from './colors/colormaps.js';
 
 // Figure export and camera helpers that are intentionally documented as reusable.

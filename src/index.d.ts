@@ -43,6 +43,22 @@ export interface HeliosUIState {
   interface: Record<string, SerializableValue>;
 }
 
+export type HeliosUIPanelName =
+  | 'camera'
+  | 'demo'
+  | 'scene'
+  | 'data'
+  | 'layout'
+  | 'legends'
+  | 'mappers'
+  | 'selection'
+  | 'metrics';
+
+export interface HeliosUIAutoOptions extends Record<string, unknown> {
+  panels?: boolean | 'default' | 'all' | HeliosUIPanelName | HeliosUIPanelName[];
+  panelOptions?: Record<string, Record<string, unknown>>;
+}
+
 export interface HeliosNetworkSource {
   name: string | null;
   baseName: string | null;
@@ -842,6 +858,7 @@ export class Helios extends EventTarget {
   behaviors: BehaviorManager;
   persistence: HeliosPersistenceService;
   network: HeliosNetwork | null;
+  ui: HeliosUI | null;
   ready: Promise<this>;
   constructor(network?: HeliosNetwork | null, options?: HeliosOptions);
   hasBehavior(name: string): boolean;
@@ -907,6 +924,7 @@ export interface HeliosOptions extends Record<string, unknown> {
   legends?: LegendsBehaviorOptions;
   labels?: LabelsBehaviorOptions;
   densityInteractionFilter?: DensityInteractionFilter;
+  ui?: boolean | HeliosUIAutoOptions;
   /**
    * Built-in behaviors attach by default. Pass an object to tune individual
    * behaviors, custom behavior instances to attach extra behavior, or `false`
@@ -954,6 +972,36 @@ export class StaticLayout extends Layout {}
 export class WorkerLayout extends Layout {}
 export class D3Force3DLayout extends Layout {}
 export class GpuForceLayout extends Layout {}
+export interface LayoutTuningFeatures {
+  nodeCount: number;
+  edgeCount: number;
+  avgDegree: number;
+  density: number;
+  degreeVariance: number;
+  isolateFraction: number;
+  componentProxy: number;
+  communityCount: number;
+  vector: number[];
+}
+export interface LayoutTuningParameter {
+  coefficients: number[];
+  clamp: [number, number];
+}
+export interface LayoutTuningModel {
+  version: number;
+  featureNames: string[];
+  parameters: Record<string, LayoutTuningParameter>;
+}
+export const DEFAULT_LAYOUT_TUNING_MODEL: LayoutTuningModel;
+export function extractLayoutTuningFeatures(network: HeliosNetwork | null, hints?: Record<string, unknown>): LayoutTuningFeatures;
+export function predictLayoutTuningOptions(
+  network: HeliosNetwork | null,
+  options?: {
+    model?: LayoutTuningModel | false | ((features: LayoutTuningFeatures, baseOptions: Record<string, number>) => Record<string, number>);
+    baseOptions?: Record<string, number>;
+    hints?: Record<string, unknown>;
+  },
+): Record<string, number>;
 
 export class PositionDelegate {
   constructor(...args: any[]);
@@ -978,6 +1026,7 @@ export class VisualAttributes {
 }
 
 export const colormaps: Record<string, unknown>;
+export const DEFAULT_NODE_COLORMAP: string;
 export function createCategoricalColormap(...args: any[]): unknown;
 export function createColormapScale(...args: any[]): unknown;
 export function colormapToScheme(...args: any[]): unknown;

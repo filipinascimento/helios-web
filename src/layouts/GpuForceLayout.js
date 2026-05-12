@@ -1,5 +1,6 @@
 import { Layout, withLogScaleBinding, withVelocityRetentionBinding } from './Layout.js';
 import { GpuForcePositionDelegate } from '../delegates/GpuForcePositionDelegate.js';
+import { DEFAULT_LAYOUT_TUNING_MODEL, predictLayoutTuningOptions } from './layoutTuningModel.generated.js';
 
 const DEFAULT_OPTIONS = {
   mode: '2d',
@@ -15,9 +16,9 @@ const DEFAULT_OPTIONS = {
   maxNeighborsPerNode: 64,
   outputScale: 6.5,
   linkDistance: 1,
-  kRepulsion: 0.07,
+  kRepulsion: 1,
   kAttraction: 0.62,
-  kGravity: 0.005,
+  kGravity: 0.001,
   edgeWeightAttribute: null,
   nodeMassAttribute: null,
   forceNormalizationType: 'local-degree',
@@ -47,6 +48,7 @@ const AUTO_TUNED_OPTION_KEYS = Object.freeze([
   'sampleCount2D',
   'sampleCount3D',
   'sampleChurn',
+  'outputScale',
 ]);
 const AUTO_TUNE_MIN_NODE_COUNT = 10_000;
 const AUTO_TUNE_MAX_NODE_COUNT = 1_000_000;
@@ -141,8 +143,23 @@ function interpolateAutoTunedValue(base, target, progress, { round = false } = {
   return round ? Math.round(value) : value;
 }
 
-export function resolveGpuForceAutoTuning(nodeCount, baseOptions = {}) {
+export function resolveGpuForceAutoTuning(nodeCount, baseOptions = {}, modelOptions = {}) {
   const progress = resolveAutoTuneProgress(nodeCount);
+  const model = modelOptions.model === undefined ? DEFAULT_LAYOUT_TUNING_MODEL : modelOptions.model;
+  const modelTuned = model === false || isUmapForceModel(modelOptions.forceModel)
+    ? {}
+    : predictLayoutTuningOptions(modelOptions.network ?? null, {
+        model,
+        baseOptions: {
+          outputScale: baseOptions.outputScale ?? DEFAULT_OPTIONS.outputScale,
+        },
+        hints: {
+          nodeCount,
+          edgeCount: modelOptions.edgeCount,
+          avgDegree: modelOptions.avgDegree,
+          communityCount: modelOptions.communityCount,
+        },
+      });
   return {
     maxNeighborsPerNode: interpolateAutoTunedValue(
       baseOptions.maxNeighborsPerNode ?? DEFAULT_OPTIONS.maxNeighborsPerNode,
@@ -167,12 +184,22 @@ export function resolveGpuForceAutoTuning(nodeCount, baseOptions = {}) {
       AUTO_TUNE_TARGET_OPTIONS.sampleChurn,
       progress,
     ),
+    linkDistance: baseOptions.linkDistance ?? DEFAULT_OPTIONS.linkDistance,
+    minDistance: baseOptions.minDistance ?? DEFAULT_OPTIONS.minDistance,
+    kRepulsion: baseOptions.kRepulsion ?? DEFAULT_OPTIONS.kRepulsion,
+    kAttraction: baseOptions.kAttraction ?? DEFAULT_OPTIONS.kAttraction,
+    kGravity: baseOptions.kGravity ?? DEFAULT_OPTIONS.kGravity,
+    outputScale: modelTuned.outputScale ?? (baseOptions.outputScale ?? DEFAULT_OPTIONS.outputScale),
   };
 }
 
 function applyGpuForceAutoTuning(options, explicitOptions, network, baseAutoTuneOptions) {
   const nodeCount = resolveLayoutNodeCount(network);
-  const tuned = resolveGpuForceAutoTuning(nodeCount, baseAutoTuneOptions);
+  const tuned = resolveGpuForceAutoTuning(nodeCount, baseAutoTuneOptions, {
+    network,
+    model: options.skipTuningModel || options.umapHasInitialPositions ? false : options.tuningModel,
+    forceModel: options.forceModel,
+  });
   const next = { ...options };
   for (const key of AUTO_TUNED_OPTION_KEYS) {
     if (!hasOwn(explicitOptions, key)) {
@@ -188,6 +215,12 @@ function createAutoTuneBaseOptions(options = {}) {
     sampleCount2D: options.sampleCount2D ?? DEFAULT_OPTIONS.sampleCount2D,
     sampleCount3D: options.sampleCount3D ?? DEFAULT_OPTIONS.sampleCount3D,
     sampleChurn: options.sampleChurn ?? DEFAULT_OPTIONS.sampleChurn,
+    linkDistance: options.linkDistance ?? DEFAULT_OPTIONS.linkDistance,
+    minDistance: options.minDistance ?? DEFAULT_OPTIONS.minDistance,
+    kRepulsion: options.kRepulsion ?? DEFAULT_OPTIONS.kRepulsion,
+    kAttraction: options.kAttraction ?? DEFAULT_OPTIONS.kAttraction,
+    kGravity: options.kGravity ?? DEFAULT_OPTIONS.kGravity,
+    outputScale: options.outputScale ?? DEFAULT_OPTIONS.outputScale,
   };
 }
 
@@ -587,8 +620,8 @@ export class GpuForceLayout extends Layout {
           key: 'kRepulsion',
           ...withLogScaleBinding({
             label: 'Repulsion',
-            min: 0.0007,
-            max: 7,
+            min: 0.01,
+            max: 100,
           }),
           get: () => Number(this.options.kRepulsion ?? DEFAULT_OPTIONS.kRepulsion),
           set: (value) => this.setSettings({ kRepulsion: value }, { reheat: true }),
@@ -611,8 +644,8 @@ export class GpuForceLayout extends Layout {
         key: 'kGravity',
         ...withLogScaleBinding({
           label: 'Gravity',
-          min: 0.0000035,
-          max: 0.035,
+          min: 0.00001,
+          max: 0.1,
           inputMin: 0,
         }),
         get: () => Number(this.options.kGravity ?? DEFAULT_OPTIONS.kGravity),

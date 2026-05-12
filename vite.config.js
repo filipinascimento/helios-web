@@ -34,6 +34,9 @@ export default defineConfig(({ mode }) => {
           getRealpathSafe(resolve(__dirname, 'node_modules/vite/dist/client')),
         ].filter(Boolean),
       },
+      watch: {
+        ignored: ['**/for_reference/**'],
+      },
     },
     esbuild: {
       target: 'esnext',
@@ -43,6 +46,11 @@ export default defineConfig(({ mode }) => {
       // Needed so Vite rewrites helios-network's `runWorker()` helper to a served worker chunk.
       // If the dep is pre-bundled, Vite may not transform the worker URL and requests can hang.
       exclude: ['helios-network'],
+      entries: [
+        'tests/fixtures/**/*.html',
+        'scripts/layout-calibration/calibration-page.html',
+        'docs/examples/**/*.html',
+      ],
     },
     build: {
       target: 'esnext',

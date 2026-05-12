@@ -22,11 +22,12 @@ import { VisualAttributes } from './pipeline/VisualAttributes.js';
 import { createDefaultMappers, MapperCollection } from './pipeline/Mapper.js';
 import { createDebugLogger } from './utilities/DebugLogger.js';
 import { PositionDelegate } from './delegates/PositionDelegate.js';
-import { VISUAL_ATTRIBUTE_NAMES } from './pipeline/constants.js';
+import { DEFAULT_NODE_OUTLINE_WIDTH, DEFAULT_NODE_SIZE, VISUAL_ATTRIBUTE_NAMES } from './pipeline/constants.js';
 import { SvgLabelController } from './labels/SvgLabelController.js';
 import { SvgLegendController } from './legends/SvgLegendController.js';
 import { HeliosFilter } from './filters/HeliosFilter.js';
 import { DensityLayer } from './rendering/engine/DensityLayer.js';
+import { HeliosUI } from './ui/HeliosUI.js';
 import { BEHAVIOR_IDS, Behavior, BehaviorManager, createDefaultBehaviorRegistry } from './behaviors/index.js';
 import {
   HeliosPersistenceService,
@@ -68,11 +69,14 @@ import { classifyGestureForSuppression } from './rendering/touchGestureMath.js';
 
 const {
   NODE_POSITION_ATTRIBUTE,
+  NODE_SIZE_ATTRIBUTE,
   NODE_STATE_ATTRIBUTE,
+  NODE_OUTLINE_WIDTH_ATTRIBUTE,
   EDGE_STATE_ATTRIBUTE,
   EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
   EDGE_ENDPOINTS_STATE_ATTRIBUTE,
 } = VISUAL_ATTRIBUTE_NAMES;
+const DEFAULT_CAMERA_FIT_NODE_RADIUS_WORLD = 0;
 
 const UMAP_FORCE_FLAG_ATTRIBUTE = 'umap';
 const DEFAULT_UMAP_EDGE_WEIGHT_ATTRIBUTE = 'umap_weight';
@@ -694,8 +698,9 @@ function readNetworkNumberAttribute(network, name, fallback) {
 function resolveGpuForceLayoutOptionsFromNetwork(network, requestedOptions = {}) {
   const explicitModel = normalizeForceModel(requestedOptions.forceModel);
   const enabledByGraph = normalizeTruthyNetworkFlag(readNetworkAttributeValue(network, UMAP_FORCE_FLAG_ATTRIBUTE));
+  const skipTuningModelForEmbeddedGraph = requestedOptions.skipTuningModel ?? (enabledByGraph ? true : undefined);
   if (explicitModel === 'linear') {
-    return { ...requestedOptions, forceModel: 'linear' };
+    return { ...requestedOptions, forceModel: 'linear', skipTuningModel: skipTuningModelForEmbeddedGraph };
   }
   if (!enabledByGraph && explicitModel !== 'umap') {
     return { ...requestedOptions, forceModel: 'linear' };
@@ -714,7 +719,7 @@ function resolveGpuForceLayoutOptionsFromNetwork(network, requestedOptions = {})
     console.warn(
       `Helios: ignoring gpu-force UMAP mode because edge attribute "${edgeWeightAttribute || DEFAULT_UMAP_EDGE_WEIGHT_ATTRIBUTE}" is unavailable.`,
     );
-    return { ...requestedOptions, forceModel: 'linear' };
+    return { ...requestedOptions, forceModel: 'linear', skipTuningModel: skipTuningModelForEmbeddedGraph };
   }
 
   const requestedMassAttribute = requestedOptions.nodeMassAttribute ?? readNetworkStringAttributeValue(network, 'umap_node_mass_attr');
@@ -737,6 +742,7 @@ function resolveGpuForceLayoutOptionsFromNetwork(network, requestedOptions = {})
   return {
     ...requestedOptions,
     forceModel: 'umap',
+    skipTuningModel: skipTuningModelForEmbeddedGraph,
     edgeWeightAttribute,
     nodeMassAttribute,
     umapPositionAttribute: umapHasInitialPositions ? normalizedPositionAttribute : null,
@@ -1286,6 +1292,49 @@ function quatFromAxisAngle(axis, radians) {
   return out;
 }
 
+function transformDirectionByQuat(q, x, y, z) {
+  const qx = q?.[0] ?? 0;
+  const qy = q?.[1] ?? 0;
+  const qz = q?.[2] ?? 0;
+  const qw = q?.[3] ?? 1;
+  const ix = (qw * x) + (qy * z) - (qz * y);
+  const iy = (qw * y) + (qz * x) - (qx * z);
+  const iz = (qw * z) + (qx * y) - (qy * x);
+  const iw = (-qx * x) - (qy * y) - (qz * z);
+  return [
+    (ix * qw) + (iw * -qx) + (iy * -qz) - (iz * -qy),
+    (iy * qw) + (iw * -qy) + (iz * -qx) - (ix * -qz),
+    (iz * qw) + (iw * -qz) + (ix * -qy) - (iy * -qx),
+  ];
+}
+
+function normalizeVec3Array(v, fallback) {
+  const len = Math.hypot(v?.[0] ?? 0, v?.[1] ?? 0, v?.[2] ?? 0);
+  if (!Number.isFinite(len) || len <= 1e-9) return [...fallback];
+  return [v[0] / len, v[1] / len, v[2] / len];
+}
+
+function crossVec3Array(a, b) {
+  return [
+    (a[1] * b[2]) - (a[2] * b[1]),
+    (a[2] * b[0]) - (a[0] * b[2]),
+    (a[0] * b[1]) - (a[1] * b[0]),
+  ];
+}
+
+function dotVec3Array(a, b) {
+  return (a[0] * b[0]) + (a[1] * b[1]) + (a[2] * b[2]);
+}
+
+function resolveCameraBasisForRotation(rotation) {
+  const forward = normalizeVec3Array(transformDirectionByQuat(rotation, 0, 0, -1), [0, 0, -1]);
+  let up = normalizeVec3Array(transformDirectionByQuat(rotation, 0, 1, 0), [0, 1, 0]);
+  let right = normalizeVec3Array(crossVec3Array(forward, up), [1, 0, 0]);
+  up = normalizeVec3Array(crossVec3Array(right, forward), [0, 1, 0]);
+  right = normalizeVec3Array(right, [1, 0, 0]);
+  return { right, up, forward };
+}
+
 function normalizeInterpolationMode(value, fallback = POSITION_INTERPOLATION_DEFAULTS.mode) {
   const raw = String(value ?? fallback).trim().toLowerCase();
   if (!raw) return 'gpu';
@@ -1592,6 +1641,9 @@ export const EVENTS = Object.freeze({
  * density layer options.
  * @param {object} [options.camera] - Camera framing, controls, and target
  * tracking options.
+ * @param {boolean|object} [options.ui=false] - Optional HeliosUI creation.
+ * Pass `true` to create the standard panel set, or an object with HeliosUI
+ * options and `panels` set to a panel name, array of names, `true`, or `false`.
  * @param {boolean} [options.suppressBrowserGestures=true] - Prevent native
  * browser pan, zoom, and selection gestures over the visualization.
  * @param {boolean} [options.autoCleanup=true] - Destroy this Helios instance when
@@ -2624,6 +2676,7 @@ export class Helios extends EventTarget {
     });
     this._initializeDefaultBehaviors(options.behaviors);
     this._initializeBehaviors(options.behaviors);
+    this.ui = null;
     this.ready = this.initialize();
   }
 
@@ -3155,10 +3208,26 @@ export class Helios extends EventTarget {
     let maxX = -Infinity; let maxY = -Infinity; let maxZ = -Infinity;
     let sumX = 0; let sumY = 0; let sumZ = 0;
     let count = 0;
+    let nodeRadiusWorld = 0;
     let found = false;
     const sampleX = coverage < 0.999999 ? [] : null;
     const sampleY = coverage < 0.999999 ? [] : null;
     const sampleZ = coverage < 0.999999 ? [] : null;
+    const graphLayer = this.renderer?.graphLayer ?? null;
+    const network = this._getRenderNetwork?.() ?? null;
+    const readNodeAttributeView = (name) => {
+      try {
+        return network?.getNodeAttributeBuffer?.(name)?.view ?? null;
+      } catch {
+        return null;
+      }
+    };
+    const nodeSizeBase = Math.max(0, Number(graphLayer?.nodeSizeBase ?? 0) || 0);
+    const nodeSizeScale = Math.max(0, Number(graphLayer?.nodeSizeScale ?? 1) || 0);
+    const nodeOutlineBase = Math.max(0, Number(graphLayer?.nodeOutlineWidthBase ?? 0) || 0);
+    const nodeOutlineScale = Math.max(0, Number(graphLayer?.nodeOutlineWidthScale ?? 0) || 0);
+    const sizeView = readNodeAttributeView(NODE_SIZE_ATTRIBUTE);
+    const outlineView = readNodeAttributeView(NODE_OUTLINE_WIDTH_ATTRIBUTE);
 
     for (let i = 0; i < nodeIndices.length; i += step) {
       const id = nodeIndices[i];
@@ -3168,6 +3237,10 @@ export class Helios extends EventTarget {
       const y = positions[o + 1];
       const z = positions[o + 2];
       if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+      const rawSize = Number.isFinite(sizeView?.[id]) ? Number(sizeView[id]) : DEFAULT_NODE_SIZE;
+      const rawOutline = Number.isFinite(outlineView?.[id]) ? Number(outlineView[id]) : DEFAULT_NODE_OUTLINE_WIDTH;
+      const fullDiameter = Math.max(1, (nodeSizeBase + nodeSizeScale * rawSize) + Math.max(0, nodeOutlineBase + nodeOutlineScale * rawOutline));
+      nodeRadiusWorld = Math.max(nodeRadiusWorld, fullDiameter * 0.5);
       found = true;
       sumX += x; sumY += y; sumZ += z;
       count += 1;
@@ -3208,6 +3281,9 @@ export class Helios extends EventTarget {
     return {
       paddingPx,
       coverage,
+      nodeRadiusWorld: Number.isFinite(options.nodeRadiusWorld)
+        ? Math.max(0, Number(options.nodeRadiusWorld))
+        : Math.max(DEFAULT_CAMERA_FIT_NODE_RADIUS_WORLD, nodeRadiusWorld),
       sourceCount: nodeIndices.length,
       sampledCount: count,
       minX,
@@ -3419,14 +3495,15 @@ export class Helios extends EventTarget {
     const fitWidth = Math.max(1e-6, bounds.fitMaxX - bounds.fitMinX);
     const fitHeight = Math.max(1e-6, bounds.fitMaxY - bounds.fitMinY);
     const fitDepth = Math.max(1e-6, bounds.fitMaxZ - bounds.fitMinZ);
+    const nodeRadiusWorld = Math.max(0, Number(bounds.nodeRadiusWorld ?? 0) || 0);
 
     if (camera.mode === '2d') {
       const viewportW = Math.max(1, camera.viewport?.width ?? this.size?.width ?? 1);
       const viewportH = Math.max(1, camera.viewport?.height ?? this.size?.height ?? 1);
       const availW = Math.max(1, viewportW - bounds.paddingPx * 2);
       const availH = Math.max(1, viewportH - bounds.paddingPx * 2);
-      const zoomX = availW / fitWidth;
-      const zoomY = availH / fitHeight;
+      const zoomX = availW / Math.max(1e-6, fitWidth + nodeRadiusWorld * 2);
+      const zoomY = availH / Math.max(1e-6, fitHeight + nodeRadiusWorld * 2);
       const nextZoom = Math.min(zoomX, zoomY);
       const clampedZoom = Math.min(camera.maxZoom ?? nextZoom, Math.max(camera.minZoom ?? nextZoom, nextZoom));
       return mergeCameraPose(current, {
@@ -3443,20 +3520,55 @@ export class Helios extends EventTarget {
       });
     }
 
-    const radius = 0.5 * Math.hypot(fitWidth, fitHeight, fitDepth);
+    const viewportW = Math.max(1, camera.viewport?.width ?? this.size?.width ?? 1);
+    const viewportH = Math.max(1, camera.viewport?.height ?? this.size?.height ?? 1);
+    const availW = Math.max(1, viewportW - bounds.paddingPx * 2);
+    const availH = Math.max(1, viewportH - bounds.paddingPx * 2);
+    const aspect = Math.max(1e-3, viewportW / viewportH);
+    const fitRotation = options.resetOrientation === true
+      ? DEFAULT_MODE_SWITCH_3D_ROTATION
+      : current.rotation;
+    const basis = resolveCameraBasisForRotation(fitRotation);
+    let maxAbsX = 0;
+    let maxAbsY = 0;
+    let requiredPerspectiveDistance = 0;
     const fovRad = (Number.isFinite(camera.fov) ? camera.fov : 60) * (Math.PI / 180);
-    const distPerspective = radius / Math.max(1e-3, Math.tan(fovRad * 0.5));
-    const desired = camera.projection === 'orthographic' ? radius * 1.2 : distPerspective * 1.25;
+    const tanHalfY = Math.max(1e-3, Math.tan(fovRad * 0.5));
+    const tanHalfX = Math.max(1e-3, tanHalfY * aspect);
+    const effectiveTanX = Math.max(1e-3, tanHalfX * (availW / viewportW));
+    const effectiveTanY = Math.max(1e-3, tanHalfY * (availH / viewportH));
+    for (const x of [bounds.fitMinX, bounds.fitMaxX]) {
+      for (const y of [bounds.fitMinY, bounds.fitMaxY]) {
+        for (const z of [bounds.fitMinZ, bounds.fitMaxZ]) {
+          const delta = [x - center[0], y - center[1], z - center[2]];
+          const viewX = dotVec3Array(delta, basis.right);
+          const viewY = dotVec3Array(delta, basis.up);
+          const viewForward = dotVec3Array(delta, basis.forward);
+          maxAbsX = Math.max(maxAbsX, Math.abs(viewX) + nodeRadiusWorld);
+          maxAbsY = Math.max(maxAbsY, Math.abs(viewY) + nodeRadiusWorld);
+          requiredPerspectiveDistance = Math.max(
+            requiredPerspectiveDistance,
+            ((Math.abs(viewX) + nodeRadiusWorld) / effectiveTanX) - viewForward,
+            ((Math.abs(viewY) + nodeRadiusWorld) / effectiveTanY) - viewForward,
+          );
+        }
+      }
+    }
+    const desired = camera.projection === 'orthographic'
+      ? Math.max(
+          (maxAbsY * viewportH) / availH,
+          (maxAbsX * viewportW) / (availW * aspect),
+        )
+      : requiredPerspectiveDistance;
     const distance = Math.min(camera.maxDistance ?? desired, Math.max(camera.minDistance ?? desired, desired));
-    const resetOrientation = options.resetOrientation === true;
     return mergeCameraPose(current, {
       mode: '3d',
       target: new Float32Array(center),
       pan3D: new Float32Array([0, 0, 0]),
-      pan2D: resetOrientation ? new Float32Array([0, 0, 0]) : current.pan2D,
+      pan2D: options.resetOrientation === true ? new Float32Array([0, 0, 0]) : current.pan2D,
       distance,
-      rotation: resetOrientation
-        ? new Float32Array(DEFAULT_MODE_SWITCH_3D_ROTATION)
+      rotation: options.resetOrientation === true
+        ? new Float32Array(fitRotation)
         : current.rotation,
     });
   }
@@ -6193,6 +6305,8 @@ export class Helios extends EventTarget {
     }
     this.debug.log('helios', 'Initialization complete');
     this._applyPickingConfig();
+    await this._initializeOptionalUI();
+    return this;
   }
 
   _applyCachedStateStyles() {
@@ -10704,6 +10818,49 @@ export class Helios extends EventTarget {
     this.scheduler?.requestRender?.();
   }
 
+  async _initializeOptionalUI() {
+    const requested = this.options?.ui ?? false;
+    if (requested === false || requested == null) return null;
+    if (this.ui) return this.ui;
+    const uiOptions = requested === true
+      ? {}
+      : (requested && typeof requested === 'object' ? requested : {});
+    const ui = new HeliosUI({ helios: this, ...uiOptions });
+    this.ui = ui;
+    const panels = Object.prototype.hasOwnProperty.call(uiOptions, 'panels')
+      ? uiOptions.panels
+      : (requested === true ? true : false);
+    this._createOptionalUIPanels(ui, panels, uiOptions.panelOptions ?? uiOptions.panelsOptions ?? {});
+    return ui;
+  }
+
+  _createOptionalUIPanels(ui, panels, panelOptions = {}) {
+    if (!ui || panels === false || panels == null) return;
+    const fullPanelList = ['demo', 'metrics', 'mappers', 'layout', 'legends', 'filter', 'camera', 'selection'];
+    const normalized = panels === true || panels === 'default' || panels === 'all'
+      ? fullPanelList
+      : (Array.isArray(panels) ? panels : [panels]);
+    const creators = {
+      demo: 'createDemoPanel',
+      scene: 'createDemoPanel',
+      data: 'createDemoPanel',
+      mappers: 'createMappersPanel',
+      layout: 'createLayoutPanel',
+      legends: 'createLegendsPanel',
+      filter: 'createFilterPanel',
+      filters: 'createFilterPanel',
+      camera: 'createCameraPanel',
+      selection: 'createSelectionPanel',
+      metrics: 'createMetricsPanel',
+    };
+    for (const entry of normalized) {
+      const key = String(entry ?? '').trim().toLowerCase();
+      const method = creators[key];
+      if (!method || typeof ui[method] !== 'function') continue;
+      ui[method](panelOptions?.[key] ?? {});
+    }
+  }
+
   destroy() {
     if (this._destroyed) return;
     this._destroyed = true;
@@ -10730,6 +10887,8 @@ export class Helios extends EventTarget {
     this.attributeTracker?.destroy?.();
     this.indexPickingTracker?.destroy?.();
     this.indexPickingTracker = null;
+    this.ui?.destroy?.();
+    this.ui = null;
     this.renderer?.destroy?.();
     this._densityLayer = null;
     this._labels?.destroy?.();

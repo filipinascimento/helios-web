@@ -16,9 +16,9 @@ Scope:
 - Legacy constructor accepted raw `nodes` and `edges` and could create an internal `Network`.
 - Current constructor requires a `helios-network` instance: `new Helios(network, options)`.
 
-3. Density rendering path (`DensityGL`)
-- Legacy included density mode in constructor/options (`density`, `densityScale`) and density rendering integration.
-- Current implementation has no density rendering pipeline.
+3. Legacy density constructor/API shape (`DensityGL`, `density`, `densityScale`)
+- Legacy included density mode in constructor/options (`density`, `densityScale`) and a `DensityGL` path.
+- Current implementation has density rendering through the new `DensityLayer` and behavior/UI pipeline, not the legacy constructor/API shape.
 
 4. Topographic density mode
 - Legacy supported topographic density rendering (`topographic`).
@@ -34,19 +34,15 @@ Scope:
 
 ## Demo/UI-level gaps
 
-1. Legends support in the legacy demo
-- Legacy demo had legend toggle (`legendsEnabled`) and rendered legends using `d3Legend(...)`.
-- Current `helios-web-next` codebase has no legend feature in `src/` or docs.
-
-2. Multi-format upload in legacy demo
+1. Multi-format upload in legacy demo
 - Legacy demo accepted `.gml`, `.xnet`, `.gexf`, `.json` uploads.
 - Current UI accepts `.xnet`, `.zxnet`, `.bxnet` only.
 
-3. Legacy map-oriented demo
+2. Legacy map-oriented demo
 - Legacy included a map-focused example integrating `d3-geo` and `topojson` overlays.
 - Current docs/examples are focused on the basic graph example and core renderer/UI workflows.
 
-4. Large legacy public demo matrix
+3. Large legacy public demo matrix
 - Legacy README exposed many preconfigured demo links/variants (light/dark, 2D, additive, density, etc.).
 - Current docs intentionally keep a smaller, maintainable example catalog.
 
@@ -54,6 +50,7 @@ Scope:
 
 - Some legacy capabilities were intentionally replaced by the new architecture (WASM-backed `helios-network`, layered renderer, mapper/state pipeline), not accidentally removed.
 - This list describes missing feature parity, not necessarily regressions for the new design goals.
+- Legends and density are present in the current implementation. They are not listed as missing unless the gap is specifically about the old API shape or demo wiring.
 
 ## Evidence pointers
 

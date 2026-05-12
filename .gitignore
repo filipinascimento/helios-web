@@ -177,3 +177,5 @@ dist*/
 /paper_downloads
 /.playwright
 /.get-paper-pdf
+/scripts/layout-calibration/data/
+/scripts/layout-calibration/results/

@@ -133,6 +133,7 @@ See [`docs/rendering-mode-requirements.md`](./rendering-mode-requirements.md) fo
 ## GPU Force layout internals
 
 See [`docs/gpu-force-layout.md`](./gpu-force-layout.md) for the WebGPU force algorithm details (equations, parameters, GPU/CPU split, and delegate synchronization behavior).
+The linear GPU-force defaults include the generated layout tuning model described there; explicit layout options still win, and `layout.options.tuningModel = false` disables it.
 For a prose-first deep dive with full equation listing and pseudo algorithms, see [`docs/gpu-force-layout-prose.md`](./gpu-force-layout-prose.md).
 
 ## Comparing with legacy Helios Web

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   Mapper,
+  DEFAULT_NODE_COLORMAP,
   colormaps,
   colormapToScheme,
   colormapToInterpolator,
@@ -19,6 +20,13 @@ function rgbaInRange(rgba) {
 test('loads embedded cmasher colormap', () => {
   const colors = colormapToScheme('cmasher_amber', 4);
   assert.equal(colors.length, 4);
+  colors.forEach(rgbaInRange);
+});
+
+test('default node colormap resolves with CET aliases', () => {
+  assert.equal(colormapToInterpolator(DEFAULT_NODE_COLORMAP), colormapToInterpolator('CET: L08-NeonBurst'));
+  const colors = colormapToScheme(DEFAULT_NODE_COLORMAP, 5);
+  assert.equal(colors.length, 5);
   colors.forEach(rgbaInRange);
 });
 

@@ -377,6 +377,14 @@ export const colormaps = {
 };
 
 /**
+ * Default node colormap used by Helios when no explicit node color mapper is set.
+ *
+ * @public
+ * @apiSection Colormaps
+ */
+export const DEFAULT_NODE_COLORMAP = 'CET_L08-NeonBurst';
+
+/**
  * Resolve a colormap name, descriptor, or function to a descriptor.
  *
  * @public
@@ -419,9 +427,14 @@ export function resolveColormap(input) {
     };
   }
   if (typeof input !== 'string') return null;
-  const key = input.toLowerCase().replace(/^d3:/, '').replace(/^cmasher:/, 'cmasher_');
+  const normalizedInput = input.trim();
+  const key = normalizedInput
+    .toLowerCase()
+    .replace(/^d3:\s*/, '')
+    .replace(/^cmasher:\s*/, 'cmasher_')
+    .replace(/^cet:\s*/, 'cet_');
   if (registry.has(key)) return registry.get(key);
-  if (registry.has(input.toLowerCase())) return registry.get(input.toLowerCase());
+  if (registry.has(normalizedInput.toLowerCase())) return registry.get(normalizedInput.toLowerCase());
   return null;
 }
 

@@ -3,6 +3,7 @@ import {
   Mapper,
   createDefaultMappers,
 } from '../src/pipeline/Mapper.js';
+import { DEFAULT_NODE_COLORMAP } from '../src/colors/colormaps.js';
 import { AttributeType } from 'helios-network';
 import { EDGE_ENDPOINTS_SIZE_ATTRIBUTE } from '../src/pipeline/constants.js';
 import { DEFAULT_NODE_SIZE } from '../src/pipeline/constants.js';
@@ -249,6 +250,7 @@ test('nodeAttribute mapping retries node-to-edge registration when edge attribut
 
 test('default mappers expose sensible defaults', () => {
   const { nodeMapper, edgeMapper } = createDefaultMappers();
+  expect(nodeMapper.getChannel('color').colormap).toBe(DEFAULT_NODE_COLORMAP);
   const node = nodeMapper.mapItem({ attributes: {} }, { index: 3 });
   expect(node.size).toBe(DEFAULT_NODE_SIZE);
   expect(node.outline).toBeGreaterThan(0);

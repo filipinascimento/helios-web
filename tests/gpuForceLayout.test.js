@@ -4,6 +4,7 @@ import { Helios } from '../src/Helios.js';
 import { StaticLayout, WorkerLayout } from '../src/layouts/Layout.js';
 import { D3Force3DLayout } from '../src/layouts/d3force3dLayoutWorker.js';
 import { GpuForceLayout, resolveGpuForceAutoTuning } from '../src/layouts/GpuForceLayout.js';
+import { predictLayoutTuningOptions } from '../src/layouts/layoutTuningModel.generated.js';
 import {
   GpuForcePositionDelegate,
   resolveUmapEpochCount,
@@ -774,10 +775,10 @@ test('GpuForceLayout exposes shared parameter bindings and can reheat alpha', ()
   const network = createStubNetwork();
   const visuals = {};
   const helios = createStubHelios();
-  const layout = new GpuForceLayout(network, visuals, { helios, mode: '2d', alpha: 0.75 });
+  const layout = new GpuForceLayout(network, visuals, { helios, mode: '2d', alpha: 0.75, tuningModel: false });
   assert.equal(layout.options.eta, 0.4);
   assert.equal(layout.options.damping, 0.82);
-  assert.equal(layout.options.kGravity, 0.005);
+  assert.equal(layout.options.kGravity, 0.001);
   assert.equal(layout.options.alphaDecay, 0.005);
   assert.equal(layout.options.rotationDamping, 0.6);
   const descriptor = layout.getParameterBindings();
@@ -946,11 +947,11 @@ test('Helios.createLayout resolves gpu-force into GpuForceLayout', () => {
   helios.options = { mode: '3d' };
   helios.debug = { log: () => {} };
 
-  const layout = helios.createLayout({ type: 'gpu-force', options: { mode: '3d' } });
+  const layout = helios.createLayout({ type: 'gpu-force', options: { mode: '3d', tuningModel: false } });
   assert.ok(layout instanceof GpuForceLayout);
   assert.equal(layout.options.mode, '3d');
   assert.equal(layout.options.eta, 0.4);
-  assert.equal(layout.options.kGravity, 0.005);
+  assert.equal(layout.options.kGravity, 0.001);
   assert.equal(layout.options.alphaDecay, 0.005);
 });
 
@@ -960,19 +961,75 @@ test('resolveGpuForceAutoTuning scales GPU force defaults by log-sized node coun
     sampleCount2D: 64,
     sampleCount3D: 96,
     sampleChurn: 0,
+    linkDistance: 1,
+    minDistance: 0.15,
+    kRepulsion: 1,
+    kAttraction: 0.62,
+    kGravity: 0.001,
+    outputScale: 6.5,
   };
 
-  assert.deepEqual(resolveGpuForceAutoTuning(10_000, base), base);
-  const large = resolveGpuForceAutoTuning(1_000_000, base);
+  assert.deepEqual(resolveGpuForceAutoTuning(10_000, base, { model: false }), base);
+  const large = resolveGpuForceAutoTuning(1_000_000, base, { model: false });
   assert.equal(large.maxNeighborsPerNode, 20);
   assert.equal(large.sampleCount2D, 10);
   assert.equal(large.sampleCount3D, 10);
   approx(large.sampleChurn, 0.05);
-  const mid = resolveGpuForceAutoTuning(100_000, base);
+  const mid = resolveGpuForceAutoTuning(100_000, base, { model: false });
   assert.equal(mid.maxNeighborsPerNode, 42);
   assert.equal(mid.sampleCount2D, 37);
   assert.equal(mid.sampleCount3D, 53);
   approx(mid.sampleChurn, 0.025);
+});
+
+test('layout tuning model predicts only finite clamped output scale', () => {
+  const tuned = predictLayoutTuningOptions(createStubNetwork(), {
+    hints: { nodeCount: 5, edgeCount: 7, avgDegree: 2.8 },
+  });
+  assert.deepEqual(Object.keys(tuned), ['outputScale']);
+  assert.ok(Number.isFinite(tuned.outputScale));
+  assert.ok(tuned.outputScale >= 4);
+  assert.ok(tuned.outputScale <= 20);
+  assert.deepEqual(
+    tuned,
+    predictLayoutTuningOptions(createStubNetwork(), {
+      hints: { nodeCount: 5, edgeCount: 7, avgDegree: 2.8 },
+    }),
+  );
+});
+
+test('GpuForceLayout applies layout tuning model by default and supports opt-out and custom models', () => {
+  const autoLayout = new GpuForceLayout(createStubNetwork(), {}, { mode: '2d' });
+  approx(autoLayout.options.linkDistance, 1);
+  approx(autoLayout.options.minDistance, 0.15);
+  approx(autoLayout.options.kRepulsion, 1);
+  approx(autoLayout.options.kAttraction, 0.62);
+  approx(autoLayout.options.kGravity, 0.001);
+  assert.ok(Number.isFinite(autoLayout.options.outputScale));
+
+  const disabledLayout = new GpuForceLayout(createStubNetwork(), {}, { mode: '2d', tuningModel: false });
+  approx(disabledLayout.options.linkDistance, 1);
+  approx(disabledLayout.options.minDistance, 0.15);
+  approx(disabledLayout.options.kRepulsion, 1);
+  approx(disabledLayout.options.kAttraction, 0.62);
+  approx(disabledLayout.options.kGravity, 0.001);
+  approx(disabledLayout.options.outputScale, 6.5);
+
+  const explicitLayout = new GpuForceLayout(createStubNetwork(), {}, {
+    mode: '2d',
+    linkDistance: 1.25,
+    minDistance: 0.2,
+  });
+  approx(explicitLayout.options.linkDistance, 1.25);
+  approx(explicitLayout.options.minDistance, 0.2);
+
+  const customLayout = new GpuForceLayout(createStubNetwork(), {}, {
+    mode: '2d',
+    tuningModel: () => ({ outputScale: 12 }),
+  });
+  approx(customLayout.options.linkDistance, 1);
+  approx(customLayout.options.minDistance, 0.15);
+  approx(customLayout.options.outputScale, 12);
 });
 
 test('Helios.createLayout auto-tunes gpu-force defaults for large graphs while preserving explicit overrides', () => {
@@ -1012,6 +1069,8 @@ test('Helios.createLayout auto-enables UMAP gpu-force mode from graph metadata',
   assert.equal(layout.options.kRepulsion, 1);
   assert.equal(layout.options.kAttraction, 1);
   assert.equal(layout.options.kGravity, 0);
+  approx(layout.options.linkDistance, 1);
+  assert.equal(layout.options.skipTuningModel, true);
   approx(layout.options.umapA, 1.7);
   approx(layout.options.umapB, 0.83);
   approx(layout.options.umapGamma, 1.25);
@@ -1035,6 +1094,7 @@ test('Helios.createLayout keeps legacy linear gpu-force behavior unless UMAP is 
   });
 
   assert.equal(layout.options.forceModel, 'linear');
+  assert.equal(layout.options.skipTuningModel, true);
   assert.equal(layout.options.kRepulsion, 0.33);
   assert.equal(layout.options.kAttraction, 0.44);
 });

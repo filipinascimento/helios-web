@@ -110,7 +110,49 @@ In 2D mode:
 - `z` velocity is forced to `0`
 - position `z` is clamped to `center.z`
 
-### 4.0 UMAP-gated mode selection
+### 4.0 Default layout tuning model
+
+The default linear `gpu-force` layout applies a compact generated tuning model
+before the delegate is created. The model estimates graph features such as node
+count, edge density, average degree, degree variance, and component structure,
+then adjusts only `outputScale`. Force parameters such as `linkDistance`,
+`minDistance`, `kRepulsion`, `kAttraction`, and `kGravity` stay at their normal
+defaults unless the developer explicitly sets them.
+
+This is primarily meant to keep small and moderately dense graphs from starting
+with node disks so close together that connected edges are hidden. Explicit
+layout options always win:
+
+```js
+new Helios(network, {
+  container,
+  layout: {
+    type: 'gpu-force',
+    options: {
+      outputScale: 10,
+    },
+  },
+});
+```
+
+Disable the generated model with:
+
+```js
+new Helios(network, {
+  container,
+  layout: {
+    type: 'gpu-force',
+    options: { tuningModel: false },
+  },
+});
+```
+
+Custom model functions can be supplied as `tuningModel`. They receive the
+extracted feature object and base options, and return partial layout options.
+UMAP force mode and UMAP-flagged embedded graphs skip the generic tuning model
+because they are driven by exported UMAP parameters and graph metadata.
+
+### 4.1 UMAP-gated mode selection
 
 The default `gpu-force` behavior is unchanged. Helios only switches into the
 UMAP-specific force law when all of the following are true:
@@ -141,7 +183,7 @@ When UMAP mode is active:
 - `linkDistance` and exposed `minDistance` tuning are hidden because the force
   law is driven by the exported UMAP parameters instead
 
-### 4.1 Linear force normalization specializations
+### 4.2 Linear force normalization specializations
 
 The non-UMAP linear force model keeps the legacy local-degree normalization by
 default. `forceNormalizationType` selects the denominator used for spring
@@ -173,7 +215,7 @@ These assets are graph-only UMAP exports. They intentionally omit
 `umap_embedding` and `_helios_visuals_position`, so the interactive GPU layout
 starts from Helios seeding rather than from a finished offline embedding.
 
-### 4.1 Repulsion (sampled all-pairs approximation)
+### 4.3 Repulsion (sampled all-pairs approximation)
 
 For each sampled other node `j`:
 
@@ -195,7 +237,7 @@ With `sampleChurn > 0`, a fraction of repulsion sample slots is progressively
 refreshed each step; `0` keeps the sampled set fixed and `1` refreshes all
 sample slots every step.
 
-### 4.2 Spring attraction (edge-local)
+### 4.4 Spring attraction (edge-local)
 
 For each neighbor `j` of `i` (optionally truncated by `maxNeighborsPerNode`):
 
@@ -210,13 +252,13 @@ Contribution:
 
 with `degreeNorm = max(1, localNeighborLimit)`.
 
-### 4.3 Gravity toward center
+### 4.5 Gravity toward center
 
 `F_gravity = kGravity * (center - x_i)`
 
 In 2D, the `z` component is suppressed.
 
-### 4.4 Post-step rigid rotation damping
+### 4.6 Post-step rigid rotation damping
 
 After the main force update, the optional recenter pass estimates a coarse
 rigid-body angular velocity from the active-set positions and per-step motion
@@ -236,7 +278,7 @@ the full fitted rigid spin for that step.
 When disabled, the backend uses the simpler centroid-only recenter path and
 skips the extra angular-reduction work entirely.
 
-### 4.5 UMAP repulsion and attraction
+### 4.7 UMAP repulsion and attraction
 
 When `forceModel === 'umap'`, the delegate keeps the same GPU execution path
 but swaps in UMAP-style edge attraction and negative-sampling repulsion using
@@ -310,9 +352,9 @@ From `GpuForceLayout` / `GpuForcePositionDelegate`:
 - `maxNeighborsPerNode`: `64`
 - `outputScale`: `6.5`
 - `linkDistance`: `1`
-- `kRepulsion`: `0.07`
+- `kRepulsion`: `1`
 - `kAttraction`: `0.62`
-- `kGravity`: `0.005`
+- `kGravity`: `0.001`
 - `edgeWeightAttribute`: `null`
 - `forceNormalizationType`: `'local-degree'`
 - `eta`: `0.4`

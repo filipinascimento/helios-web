@@ -90,15 +90,9 @@ function buildLayoutInstance(helios, value) {
         center: [0, 0, 0],
         radius,
         depth,
-        outputScale: 6.5,
-        linkDistance: 1,
-        kRepulsion: 0.07,
-        kAttraction: 0.62,
-        kGravity: 0.005,
         eta: 0.4,
         damping: 0.82,
         maxStep: 2.5,
-        minDistance: 0.15,
       },
     });
   }

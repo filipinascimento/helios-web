@@ -52,6 +52,13 @@ test('resolveLogRatioSupportWindow keeps supported regions raw and only corrects
   });
 });
 
+test('DensityLayer keeps its density-specific default colormaps', () => {
+  const layer = new DensityLayer();
+  assert.equal(layer.config.colormap, 'interpolateOrRd');
+  assert.equal(layer.config.logRatioColormap, 'cmasher:prinsenvlag');
+  assert.equal(layer.config.divergingColormap, 'cmasher:prinsenvlag');
+});
+
 test('DensityLayer keeps difference mode normalization behavior intact', () => {
   const layer = new DensityLayer();
   const network = {

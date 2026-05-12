@@ -300,18 +300,18 @@ Table 1 lists current defaults from the implementation.
 | `sampleCount3D` | `96` | Default repulsion samples in 3D. |
 | `sampleChurn` | `0` | Fraction of repulsion sample slots refreshed each step (`0` fixed, `1` full refresh). |
 | `maxNeighborsPerNode` | `64` | Spring-neighbor truncation per node. |
-| `outputScale` | `6` | Simulation-to-render scale factor around `center`. |
+| `outputScale` | `6.5` | Simulation-to-render scale factor around `center`. |
 | `rotationDamping` | `0.6` | Fraction of fitted rigid-body rotation removed after each step. |
 | `linkDistance` | `1` | Zero-stretch spring distance. |
-| `kRepulsion` | `0.07` | Base repulsion coefficient before alpha scaling. |
+| `kRepulsion` | `1` | Base repulsion coefficient before alpha scaling. |
 | `kAttraction` | `0.62` | Base spring coefficient before alpha scaling. |
-| `kGravity` | `0.00035` | Base center-gravity coefficient before alpha scaling. |
-| `eta` | `0.04` | Force-to-velocity gain before `dtScale`. |
+| `kGravity` | `0.001` | Base center-gravity coefficient before alpha scaling. |
+| `eta` | `0.4` | Force-to-velocity gain before `dtScale`. |
 | `damping` | `0.82` | Velocity persistence factor. |
 | `maxStep` | `2.5` | Velocity magnitude cap before `dtScale`. |
 | `minDistance` | `0.15` | Distance floor preventing singular forces. |
 | `alpha` | `1` | Initial cooling multiplier. |
-| `alphaDecay` | `0.001` | Per-tick decay toward `alphaTarget`. |
+| `alphaDecay` | `0.005` | Per-tick decay toward `alphaTarget`. |
 | `alphaTarget` | `0` | Cooling asymptote. |
 | `alphaMin` | `0.001` | Lower bound on cooling factor. |
 | `resetAlphaOnTopologyChange` | `true` | Resets alpha to initial value after topology rebuild. |

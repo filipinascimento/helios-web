@@ -28,6 +28,36 @@ ui.createSelectionPanel(); // Root selection status/actions, saved-selection sav
 ui.createMetricsPanel(); // "Metrics" panel (Degree, Strength, Clustering, Eigenvector, Betweenness, Leiden, Dimensionality)
 ```
 
+For the smallest visible UI, create the camera panel only:
+
+```js
+const ui = new HeliosUI({ helios, theme: 'dark' });
+ui.createCameraPanel();
+```
+
+You can also let `Helios` create and retain the UI instance:
+
+```js
+const helios = new Helios(network, {
+  container: document.querySelector('#app'),
+  ui: true, // creates helios.ui with the standard panel set
+});
+await helios.ready;
+```
+
+To tune which panels are created, pass panel names explicitly:
+
+```js
+const helios = new Helios(network, {
+  container: document.querySelector('#app'),
+  ui: {
+    theme: 'dark',
+    panels: ['camera', 'layout', 'legends', 'selection'],
+  },
+});
+await helios.ready;
+```
+
 HeliosUI attaches to Helios’ built-in HTML overlay layer by default (via `helios.layers.addLayer('ui', ...)`).
 When panels are docked to the left or right edge, HeliosUI also feeds those insets back into Helios so SVG legends can stay inside the usable viewport automatically.
 
