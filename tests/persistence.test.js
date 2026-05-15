@@ -274,3 +274,43 @@ test('restoreVisualizationState is a stable alias for importVisualizationState',
     options: { reason: 'alias-test' },
   });
 });
+
+test('importVisualizationState restores saved view mode before camera pose', async () => {
+  const helios = Object.create(Helios.prototype);
+  const calls = [];
+  helios.options = { mode: '2d' };
+  helios.mode = () => helios.options.mode;
+  helios.setMode = async (mode, options = {}) => {
+    calls.push({ type: 'setMode', mode, options });
+    helios.options.mode = mode;
+    return helios;
+  };
+  helios.restoreBehaviorState = (state) => {
+    calls.push({ type: 'restoreBehaviorState', state });
+  };
+  helios.behaviors = {
+    ui: {
+      restoreState: (state) => calls.push({ type: 'restoreUiState', state }),
+    },
+  };
+  helios._restoreCameraState = (state) => {
+    calls.push({ type: 'restoreCameraState', mode: helios.mode(), state });
+  };
+
+  const envelope = createPersistenceEnvelope(PERSISTENCE_KINDS.visualization, {
+    behaviorState: { appearance: { options: { shaded: { enabled: true } } } },
+    uiState: { theme: 'dark' },
+    cameraState: { mode: '3d', distance: 42 },
+  });
+
+  await helios.importVisualizationState(envelope);
+
+  assert.equal(helios.mode(), '3d');
+  assert.deepEqual(calls[0], {
+    type: 'setMode',
+    mode: '3d',
+    options: { animate: false, syncDelegate: false },
+  });
+  assert.equal(calls.at(-1).type, 'restoreCameraState');
+  assert.equal(calls.at(-1).mode, '3d');
+});

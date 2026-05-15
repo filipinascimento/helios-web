@@ -5290,6 +5290,19 @@ export class Helios extends EventTarget {
   async importVisualizationState(source, options = {}) {
     const envelope = parsePersistenceEnvelope(source, PERSISTENCE_KINDS.visualization);
     const payload = envelope.payload;
+    const restoredMode = payload.cameraState?.mode;
+    if (
+      options.restoreMode !== false
+      && (restoredMode === '2d' || restoredMode === '3d')
+      && restoredMode !== this.mode()
+      && typeof this.setMode === 'function'
+    ) {
+      await this.setMode(restoredMode, {
+        animate: false,
+        syncDelegate: false,
+        ...(options.modeOptions ?? {}),
+      });
+    }
     this.restoreBehaviorState(payload.behaviorState);
     this.behaviors?.ui?.restoreState?.(payload.uiState, options);
     if (payload.cameraState) this._restoreCameraState(payload.cameraState);
