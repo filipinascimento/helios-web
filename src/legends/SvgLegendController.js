@@ -754,9 +754,10 @@ export function layoutLegendItems(items, safeRect, config) {
       let totalEntryHeight = 0;
       const entries = item.entries.map((entry) => {
         const lines = wrapTextLines(entry.label, config?.maxChars, config?.maxRows);
-        maxLabelWidth = Math.max(maxLabelWidth, ...lines.map((line) => estimateTextWidthPx(line, fontSize)));
+        const labelWidth = Math.max(0, ...lines.map((line) => estimateTextWidthPx(line, fontSize)));
+        maxLabelWidth = Math.max(maxLabelWidth, labelWidth);
         totalEntryHeight += Math.max(metrics.swatchSize, lines.length * lineHeight);
-        return { ...entry, lines };
+        return { ...entry, lines, labelWidth };
       });
       const width = Math.ceil(metrics.paddingX * 2 + metrics.swatchSize + metrics.swatchGap + Math.max(titleWidth, maxLabelWidth));
       const titleHeight = titleLines.length * lineHeight;
@@ -1286,9 +1287,10 @@ export class SvgLegendController {
       const rowHeight = Math.max(metrics.swatchSize, entry.lines.length * metrics.lineHeight);
       if (interactive) {
         const hit = document.createElementNS(SVG_NS, 'rect');
+        const rowWidth = metrics.swatchSize + metrics.swatchGap + Math.max(0, entry.labelWidth ?? 0);
         hit.setAttribute('x', `${metrics.paddingX - 3}`);
         hit.setAttribute('y', `${y - 2}`);
-        hit.setAttribute('width', `${Math.max(1, item.box.width - (metrics.paddingX * 2) + 6)}`);
+        hit.setAttribute('width', `${Math.max(metrics.swatchSize + 6, rowWidth + 6)}`);
         hit.setAttribute('height', `${rowHeight + 4}`);
         hit.setAttribute('rx', '4');
         hit.setAttribute('ry', '4');

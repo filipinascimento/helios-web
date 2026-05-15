@@ -75,6 +75,82 @@ test('camera emits interaction detail for wheel zoom changes', () => {
   assert.equal(events[0]?.action, 'zoom');
 });
 
+test('camera ignores sub-threshold pointer motion before pan or rotate', () => {
+  const events = [];
+  const canvas = {
+    addEventListener() {},
+    removeEventListener() {},
+    setPointerCapture() {},
+    releasePointerCapture() {},
+    getBoundingClientRect() {
+      return { left: 0, top: 0, width: 200, height: 100 };
+    },
+  };
+  const camera = new Camera(canvas, {
+    mode: '2d',
+    projection: 'orthographic',
+    disableControls: true,
+    viewport: { width: 200, height: 100, devicePixelRatio: 1 },
+    pointerMoveTolerancePx: 4,
+    onChange: (detail) => events.push(detail),
+  });
+  camera.zoom = 1;
+  camera.updateMatrices();
+  events.length = 0;
+
+  camera.handlePointerDown({ pointerId: 1, pointerType: 'mouse', button: 0, clientX: 100, clientY: 50, shiftKey: false });
+  camera.handlePointerMove({ pointerId: 1, pointerType: 'mouse', clientX: 102, clientY: 51, shiftKey: false });
+
+  assert.equal(camera.pan2D[0], 0);
+  assert.equal(camera.pan2D[1], 0);
+  assert.equal(events.length, 0);
+
+  camera.handlePointerMove({ pointerId: 1, pointerType: 'mouse', clientX: 106, clientY: 50, shiftKey: false });
+
+  assert.equal(camera.pan2D[0], 6);
+  assert.equal(camera.pan2D[1], 0);
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.origin, 'interaction');
+  assert.equal(events[0]?.action, 'pan');
+});
+
+test('camera ignores sub-threshold touch motion before touch pan or pinch', () => {
+  const events = [];
+  const canvas = {
+    addEventListener() {},
+    removeEventListener() {},
+    setPointerCapture() {},
+    releasePointerCapture() {},
+    getBoundingClientRect() {
+      return { left: 0, top: 0, width: 200, height: 100 };
+    },
+  };
+  const camera = new Camera(canvas, {
+    mode: '2d',
+    projection: 'orthographic',
+    disableControls: true,
+    viewport: { width: 200, height: 100, devicePixelRatio: 1 },
+    touchMoveTolerancePx: 8,
+    onChange: (detail) => events.push(detail),
+  });
+  camera.zoom = 1;
+  camera.updateMatrices();
+  events.length = 0;
+
+  camera.handlePointerDown({ pointerId: 1, pointerType: 'touch', button: 0, clientX: 80, clientY: 50, shiftKey: false });
+  camera.handlePointerDown({ pointerId: 2, pointerType: 'touch', button: 0, clientX: 120, clientY: 50, shiftKey: false });
+  camera.handlePointerMove({ pointerId: 1, pointerType: 'touch', clientX: 76, clientY: 50, shiftKey: false });
+
+  assert.equal(camera.zoom, 1);
+  assert.equal(camera.pan2D[0], 0);
+  assert.equal(events.length, 0);
+
+  camera.handlePointerMove({ pointerId: 2, pointerType: 'touch', clientX: 132, clientY: 50, shiftKey: false });
+
+  assert.ok(camera.zoom > 1.3, `expected pinch zoom after threshold, got ${camera.zoom}`);
+  assert.ok(events.some((detail) => detail?.origin === 'interaction' && detail?.action === 'pinch-pan'));
+});
+
 test('touch gesture math computes centroid, pinch distance, twist, and suppression state', () => {
   const start = [
     { pointerId: 2, clientX: 0, clientY: 0 },

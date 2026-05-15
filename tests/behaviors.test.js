@@ -645,6 +645,33 @@ test('constructor-style behavior config object can be initialized through _initi
   assert.equal(helios.behavior.legends.state.scale, 2);
 });
 
+test('behavior renderer bindings can be reapplied after renderer creation', () => {
+  const helios = createHeliosBehaviorHarness();
+  helios.renderer = null;
+  helios._initializeDefaultBehaviors({
+    hover: { hoverConnectedEdges: true },
+    selection: { selectedConnectedEdges: true },
+  });
+
+  const hover = helios.behaviors.get('hover');
+  const selection = helios.behaviors.get('selection');
+  assert.equal(hover.state.hoverConnectedEdges, true);
+  assert.equal(selection.state.selectedConnectedEdges, true);
+
+  helios.renderer = {
+    clearColor: [1, 1, 1, 1],
+    graphLayer: {
+      propagateHoveredNodeToEdges: false,
+      propagateSelectedNodesToEdges: false,
+    },
+  };
+
+  Helios.prototype._reapplyBehaviorRendererBindings.call(helios);
+
+  assert.equal(helios.renderer.graphLayer.propagateHoveredNodeToEdges, true);
+  assert.equal(helios.renderer.graphLayer.propagateSelectedNodesToEdges, true);
+});
+
 test('registerBehavior() and useBehavior() place custom behaviors under helios.behavior namespace', () => {
   const helios = createHeliosBehaviorHarness();
   helios.registerBehavior('clusterFocus', ProbeBehavior);

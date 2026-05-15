@@ -174,6 +174,28 @@ test('EventTarget API + picking events + AbortController teardown', async ({ pag
   const clickAfterDrag = await page.evaluate(() => window.__events?.click ?? 0);
   expect(clickAfterDrag).toBe(clickBeforeDrag);
 
+  // Sub-threshold pointer drift should remain a click, not a camera gesture.
+  const beforeTinyMove = await page.evaluate(() => ({
+    bgClick: window.__events?.bgClick ?? 0,
+    camera: window.__events?.camera ?? 0,
+  }));
+  await page.evaluate(({ blank, box }) => {
+    const canvas = document.querySelector('canvas');
+    if (!canvas) return;
+    const clientX = box.x + blank.x;
+    const clientY = box.y + blank.y;
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { clientX, clientY, buttons: 1, button: 0, pointerId: 99, pointerType: 'mouse', bubbles: true }));
+    canvas.dispatchEvent(new PointerEvent('pointermove', { clientX: clientX + 2, clientY: clientY + 1, buttons: 1, button: 0, pointerId: 99, pointerType: 'mouse', bubbles: true }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { clientX: clientX + 2, clientY: clientY + 1, buttons: 0, button: 0, pointerId: 99, pointerType: 'mouse', bubbles: true }));
+    canvas.dispatchEvent(new MouseEvent('click', { clientX: clientX + 2, clientY: clientY + 1, button: 0, bubbles: true }));
+  }, { blank, box });
+  await page.waitForFunction(({ start }) => (window.__events?.bgClick ?? 0) > start, { start: beforeTinyMove.bgClick }, { timeout: 5000 });
+  const afterTinyMove = await page.evaluate(() => ({
+    bgClick: window.__events?.bgClick ?? 0,
+    camera: window.__events?.camera ?? 0,
+  }));
+  expect(afterTinyMove.camera).toBe(beforeTinyMove.camera);
+
   // Background clicks/double-clicks should still emit graph events (kind === null).
   const bgBefore = await page.evaluate(() => ({ bgClick: window.__events?.bgClick ?? 0, bgDblClick: window.__events?.bgDblClick ?? 0 }));
   await page.mouse.click(box.x + blank.x, box.y + blank.y);

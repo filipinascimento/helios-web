@@ -2879,6 +2879,23 @@ export class Helios extends EventTarget {
     }
   }
 
+  _reapplyBehaviorRendererBindings() {
+    const behaviors = this.behaviors?.values?.() ?? [];
+    for (const behavior of behaviors) {
+      behavior.ensureStateStyleDefaults?.();
+      behavior.applyHoverStylePolicy?.();
+      behavior.applyHoverLabelConfig?.();
+      behavior.applyHoverConnectedEdges?.();
+      behavior.applyHighlightConnectedEdges?.();
+      behavior.applySelectedConnectedEdges?.();
+      behavior.syncPicking?.();
+    }
+    for (const behavior of behaviors) {
+      behavior.applyOtherElementsState?.();
+    }
+    return this;
+  }
+
   _snapshotCameraState() {
     const camera = this.renderer?.camera ?? null;
     return captureCameraPose(camera);
@@ -4139,6 +4156,7 @@ export class Helios extends EventTarget {
     if (typeof this.renderer.resize === 'function') {
       this.renderer.resize(this.layers.size);
     }
+    this._reapplyBehaviorRendererBindings();
     if (this.mappersDirty) {
       this._applyMappersSafely();
     }
@@ -5008,6 +5026,7 @@ export class Helios extends EventTarget {
       this._applyPickingConfig();
       this._applyPositionPipelineToRenderer();
       this._refreshUIBindings();
+      this._reapplyBehaviorRendererBindings();
       if (frameNetwork) {
         this.requestFrameNetwork({ paddingPx: options.framePaddingPx ?? 24 });
       } else {
@@ -6190,6 +6209,7 @@ export class Helios extends EventTarget {
     if (typeof this.renderer.resize === 'function') {
       this.renderer.resize(this.layers.size);
     }
+    this._reapplyBehaviorRendererBindings();
     if (this.mappersDirty) {
       this._applyMappersSafely();
     }

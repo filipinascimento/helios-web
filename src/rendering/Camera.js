@@ -1,4 +1,5 @@
 import {
+  classifyGestureForSuppression,
   snapshotTouchGesture,
 } from './touchGestureMath.js';
 
@@ -414,6 +415,10 @@ export class Camera {
     this.touchTwistEnabled = options.touchTwistEnabled === true;
     this._activePointers = new Map();
     this._gestureSnapshot = snapshotTouchGesture([]);
+    this._gestureStartSnapshot = snapshotTouchGesture([]);
+    this._gestureDragActive = false;
+    this.pointerMoveTolerancePx = Math.max(0, Number(options.pointerMoveTolerancePx ?? 4) || 0);
+    this.touchMoveTolerancePx = Math.max(0, Number(options.touchMoveTolerancePx ?? 8) || 0);
     this._boundPointerDown = (event) => this.handlePointerDown(event);
     this._boundMove = (event) => this.handlePointerMove(event);
     this._boundUp = (event) => this.handlePointerUp(event);
@@ -554,6 +559,18 @@ export class Camera {
     return this._gestureSnapshot;
   }
 
+  _resetGestureStart() {
+    this._gestureStartSnapshot = snapshotTouchGesture(this._activePointers);
+    this._gestureDragActive = false;
+  }
+
+  _resolveMoveTolerance(snapshot) {
+    const pointers = snapshot?.pointers ?? [];
+    return pointers.some((pointer) => pointer.pointerType === 'touch')
+      ? this.touchMoveTolerancePx
+      : this.pointerMoveTolerancePx;
+  }
+
   _updateArcballAnchor() {
     const snapshot = this._gestureSnapshot ?? this._syncGestureSnapshot();
     if (snapshot.count === 1) {
@@ -612,6 +629,7 @@ export class Camera {
       shiftKey: event.shiftKey === true,
     });
     this._syncGestureSnapshot();
+    this._resetGestureStart();
     this._updateArcballAnchor();
     const target = this._getInputEventTarget();
     this.canvas?.setPointerCapture?.(event.pointerId);
@@ -629,8 +647,6 @@ export class Camera {
       event.stopPropagation?.();
     }
     const previousGesture = this._gestureSnapshot ?? this._syncGestureSnapshot();
-    const dx = event.clientX - previousPointer.clientX;
-    const dy = event.clientY - previousPointer.clientY;
     this._activePointers.set(event.pointerId, {
       ...previousPointer,
       clientX: event.clientX,
@@ -638,16 +654,35 @@ export class Camera {
       shiftKey: event.shiftKey === true,
     });
     const nextGesture = this._syncGestureSnapshot();
+    let previousForAction = previousGesture;
+    let dx = event.clientX - previousPointer.clientX;
+    let dy = event.clientY - previousPointer.clientY;
+    if (!this._gestureDragActive) {
+      const startGesture = this._gestureStartSnapshot ?? previousGesture;
+      const classification = classifyGestureForSuppression(
+        startGesture.pointers,
+        nextGesture.pointers,
+        this._resolveMoveTolerance(nextGesture),
+      );
+      if (!classification.moved) return;
+      this._gestureDragActive = true;
+      previousForAction = startGesture;
+      const startPointer = startGesture.pointers.find((pointer) => pointer.pointerId === event.pointerId);
+      if (startPointer) {
+        dx = event.clientX - (startPointer.clientX ?? event.clientX);
+        dy = event.clientY - (startPointer.clientY ?? event.clientY);
+      }
+    }
     const primaryPointer = nextGesture.pointers[0] ?? null;
     let action = null;
 
     if (nextGesture.count >= 2) {
-      const centroidDx = nextGesture.centroid.x - previousGesture.centroid.x;
-      const centroidDy = nextGesture.centroid.y - previousGesture.centroid.y;
+      const centroidDx = nextGesture.centroid.x - previousForAction.centroid.x;
+      const centroidDy = nextGesture.centroid.y - previousForAction.centroid.y;
       if (this.mode === '2d') {
         this.pan2D[0] += centroidDx;
         this.pan2D[1] -= centroidDy;
-        const scale = previousGesture.distance > 0 ? nextGesture.distance / previousGesture.distance : 1;
+        const scale = previousForAction.distance > 0 ? nextGesture.distance / previousForAction.distance : 1;
         if (this.zoom2DAtClientPoint(nextGesture.centroid.x, nextGesture.centroid.y, scale)) {
           action = 'pinch-pan';
         } else {
@@ -655,10 +690,10 @@ export class Camera {
         }
       } else {
         this.pan3DBy(centroidDx, centroidDy);
-        const scale = previousGesture.distance > 0 ? nextGesture.distance / previousGesture.distance : 1;
+        const scale = previousForAction.distance > 0 ? nextGesture.distance / previousForAction.distance : 1;
         const dollyChanged = this.dollyByScale(scale);
-        if (this.touchTwistEnabled && previousGesture.distance > 0) {
-          this.rollBy(nextGesture.angle - previousGesture.angle);
+        if (this.touchTwistEnabled && previousForAction.distance > 0) {
+          this.rollBy(nextGesture.angle - previousForAction.angle);
         }
         action = dollyChanged ? 'dolly-pan' : 'pan';
       }
@@ -702,6 +737,7 @@ export class Camera {
     this._activePointers.delete(event.pointerId);
     this.canvas?.releasePointerCapture?.(event.pointerId);
     this._syncGestureSnapshot();
+    this._resetGestureStart();
     this._updateArcballAnchor();
     if (this._activePointers.size > 0) return;
     const target = this._getInputEventTarget();
