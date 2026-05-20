@@ -1,5 +1,14 @@
 import { createFpsThrottle } from './createFpsThrottle.js';
 
+function createDefaultPersistenceIndicator() {
+  const indicator = document.createElement('span');
+  indicator.className = 'helios-ui-dirty-indicator helios-ui-dirty-indicator--static';
+  indicator.dataset.state = 'default';
+  indicator.setAttribute('aria-hidden', 'true');
+  indicator.destroy = () => {};
+  return indicator;
+}
+
 function formatNumber(value, precision = 3) {
   const v = Number(value);
   if (!Number.isFinite(v)) return String(value);
@@ -61,6 +70,10 @@ export function createSliderRow(attribute, options = {}) {
   labelTitleText.className = 'helios-ui-label__title';
   labelTitleText.textContent = title;
   labelTitle.appendChild(labelTitleText);
+  const dirtyIndicator = options.dirtyIndicator === undefined
+    ? createDefaultPersistenceIndicator()
+    : options.dirtyIndicator;
+  if (dirtyIndicator) labelTitle.appendChild(dirtyIndicator);
 
   let tooltip = null;
   let tooltipRoot = null;

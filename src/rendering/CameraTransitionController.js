@@ -170,9 +170,10 @@ export function createYawPitchQuaternion(yawRadians = 0, pitchRadians = 0) {
  */
 export function captureCameraPose(camera) {
   if (!camera) return null;
+  const mode = camera.mode === '3d' ? '3d' : '2d';
   return {
-    mode: camera.mode === '3d' ? '3d' : '2d',
-    projection: camera.projection === 'orthographic' ? 'orthographic' : 'perspective',
+    mode,
+    projection: mode === '2d' || camera.projection === 'orthographic' ? 'orthographic' : 'perspective',
     zoom: Number.isFinite(camera.zoom) ? camera.zoom : 1,
     distance: Number.isFinite(camera.distance) ? camera.distance : 800,
     fov: Number.isFinite(camera.fov) ? camera.fov : 60,
@@ -255,8 +256,9 @@ export function mergeCameraPose(basePose, patch = {}) {
  */
 export function applyCameraPose(camera, pose, { update = true } = {}) {
   if (!camera || !pose) return camera;
-  camera.mode = pose.mode === '3d' ? '3d' : '2d';
-  camera.projection = pose.projection === 'orthographic' ? 'orthographic' : 'perspective';
+  const mode = pose.mode === '3d' ? '3d' : '2d';
+  camera.mode = mode;
+  camera.projection = mode === '2d' || pose.projection === 'orthographic' ? 'orthographic' : 'perspective';
 
   if (Number.isFinite(pose.zoom)) camera.zoom = pose.zoom;
   if (Number.isFinite(pose.distance)) camera.distance = pose.distance;

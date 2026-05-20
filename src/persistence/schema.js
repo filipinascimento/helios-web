@@ -102,10 +102,19 @@ export function normalizeVisualizationPayload(value = {}) {
     behaviorState: source.behaviorState && typeof source.behaviorState === 'object'
       ? cloneSerializable(source.behaviorState)
       : (source.behaviors && typeof source.behaviors === 'object' ? cloneSerializable(source.behaviors) : {}),
+    overrides: source.overrides && typeof source.overrides === 'object'
+      ? cloneSerializable(source.overrides)
+      : null,
     cameraState: source.cameraState && typeof source.cameraState === 'object'
       ? cloneSerializable(source.cameraState)
       : (source.camera && typeof source.camera === 'object' ? cloneSerializable(source.camera) : null),
+    cameraControlState: source.cameraControlState && typeof source.cameraControlState === 'object'
+      ? cloneSerializable(source.cameraControlState)
+      : (source.cameraControls && typeof source.cameraControls === 'object' ? cloneSerializable(source.cameraControls) : null),
     networkSource: createDefaultNetworkSource(source.networkSource ?? source.source),
+    layoutRuntimeState: source.layoutRuntimeState && typeof source.layoutRuntimeState === 'object'
+      ? cloneSerializable(source.layoutRuntimeState)
+      : null,
   };
 }
 

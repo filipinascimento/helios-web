@@ -1,6 +1,7 @@
 import { EVENTS } from '../../Helios.js';
 import { createToggleControl } from '../controls/createToggleControl.js';
 import { createAlignedRowEl } from '../controls/createAlignedRowEl.js';
+import { createDirtyIndicator } from '../controls/createDirtyIndicator.js';
 import { SuggestedSliderControls } from '../controls/SuggestedSliderControls.js';
 import { LogSliderControls } from '../controls/LogSliderControls.js';
 
@@ -63,6 +64,12 @@ function resolveFiniteBound(primary, fallback = null) {
 
 function usesLogScale(binding) {
   return binding?.scale === 'log';
+}
+
+function scopeForPersistencePath(path) {
+  const parts = String(path ?? '').split('.').filter(Boolean);
+  if (parts.length >= 2) return `${parts[0]}.${parts[1]}`;
+  return parts[0] ?? '';
 }
 
 function formatInputNumber(value, binding) {
@@ -218,6 +225,7 @@ export class LayoutPanel {
     }
 
     const controlsByKey = new Map();
+    const staticIndicatorCleanups = new Set();
     let currentDescriptorKey = null;
     let lastChoiceSignature = null;
     let lastPositionChoiceSignature = null;
@@ -279,9 +287,24 @@ export class LayoutPanel {
     let statusHistory = [];
     let lastStatusSampleAt = Number.NEGATIVE_INFINITY;
 
+    const createPersistenceIndicator = (path = '', scope = null) => {
+      if (this.ui.persistenceIndicators === false) return null;
+      return createDirtyIndicator({
+        helios,
+        path,
+        scope: scope ?? scopeForPersistencePath(path),
+      });
+    };
+
+    const trackStaticIndicator = (indicator) => {
+      if (indicator?.destroy) staticIndicatorCleanups.add(() => indicator.destroy());
+      return indicator;
+    };
+
     const layoutRow = createAlignedRowEl({
       title: 'Layout',
       controls: layoutSelect,
+      dirtyIndicator: trackStaticIndicator(createPersistenceIndicator('layout.layoutType', 'layout')),
     });
     content.appendChild(layoutRow.row);
 
@@ -289,12 +312,14 @@ export class LayoutPanel {
       title: 'Set from',
       hint: 'Copies a numeric 2D/3D node attribute into the current layout positions.',
       controls: positionAttributeSelect,
+      dirtyIndicator: trackStaticIndicator(createPersistenceIndicator('layout.positionAttribute', 'layout')),
     });
     content.appendChild(sourceRow.row);
 
     const runRow = createAlignedRowEl({
       title: 'Status',
       controls: statusControls,
+      dirtyIndicator: trackStaticIndicator(createPersistenceIndicator('layout.running', 'layout')),
     });
     content.appendChild(runRow.row);
     content.appendChild(bindingsRoot);
@@ -413,6 +438,28 @@ export class LayoutPanel {
       statusSparklinePath.setAttribute('d', d || '');
     };
 
+    const commitBindingValue = (binding, value) => {
+      if (!binding) return;
+      if (binding.key && typeof layoutBehavior.parameter === 'function') {
+        layoutBehavior.parameter(binding.key, value, { silent: true });
+      } else if (typeof binding.set === 'function') {
+        binding.set(value);
+      } else {
+        return;
+      }
+      layoutBehavior.emitChange?.('parameter', {
+        key: binding.key ?? null,
+        value,
+        source: 'ui',
+      });
+      const descriptor = getCurrentDescriptor();
+      const runState = layoutBehavior.runState?.() ?? 'stopped';
+      if (descriptor.dynamic === true && runState !== 'stopped') {
+        helios.startLayout?.();
+      }
+      sync(false);
+    };
+
     const refreshStatusBinding = () => {
       statusTempLabel.textContent = statusBinding?.label ?? 'Temp.';
       statusVisual.style.display = statusBinding ? '' : 'none';
@@ -441,6 +488,7 @@ export class LayoutPanel {
       let refresh = () => {};
       let sample = null;
       let destroy = () => {};
+      let dirtyIndicator = null;
 
       if (binding.type === 'display') {
         const wrap = document.createElement('div');
@@ -498,6 +546,7 @@ export class LayoutPanel {
           };
         }
       } else if (binding.type === 'boolean') {
+        dirtyIndicator = createPersistenceIndicator(`layout.parameters.${binding.key}`, 'layout.parameters');
         const toggle = createToggleControl({
           checked: Boolean(binding.get?.()),
           onLabel: 'On',
@@ -505,7 +554,7 @@ export class LayoutPanel {
           ariaLabel: binding.label ?? binding.key,
         });
         toggle.addEventListener('change', () => {
-          binding.set?.(toggle.checked);
+          commitBindingValue(binding, toggle.checked);
         });
         controls = toggle;
         refresh = () => {
@@ -513,6 +562,7 @@ export class LayoutPanel {
           toggle.checked = Boolean(binding.get?.());
         };
       } else if (binding.type === 'select') {
+        dirtyIndicator = createPersistenceIndicator(`layout.parameters.${binding.key}`, 'layout.parameters');
         const select = document.createElement('select');
         select.className = 'helios-ui-select';
         for (const entry of binding.options ?? []) {
@@ -522,7 +572,7 @@ export class LayoutPanel {
           select.appendChild(option);
         }
         select.addEventListener('change', () => {
-          binding.set?.(select.value);
+          commitBindingValue(binding, select.value);
         });
         controls = select;
         refresh = () => {
@@ -531,6 +581,7 @@ export class LayoutPanel {
           if (select.value !== nextValue) select.value = nextValue;
         };
       } else {
+        dirtyIndicator = createPersistenceIndicator(`layout.parameters.${binding.key}`, 'layout.parameters');
         const wrap = document.createElement('div');
         const sliderMin = resolveFiniteBound(binding.sliderMin, binding.min);
         const sliderMax = resolveFiniteBound(binding.sliderMax, binding.max);
@@ -553,7 +604,7 @@ export class LayoutPanel {
               onCommit: (next) => {
                 const clamped = clampNumber(next, inputMin, inputMax);
                 if (clamped == null) return;
-                binding.set?.(clamped);
+                commitBindingValue(binding, clamped);
               },
             });
             controls = logControls.element;
@@ -575,7 +626,7 @@ export class LayoutPanel {
               onCommit: (next) => {
                 const clamped = clampNumber(next, inputMin, inputMax);
                 if (clamped == null) return;
-                binding.set?.(clamped);
+                commitBindingValue(binding, clamped);
               },
             });
             linearControls.input.inputMode = 'decimal';
@@ -600,7 +651,7 @@ export class LayoutPanel {
             const committed = clampNumber(input.value, binding.min, binding.max);
             if (committed == null) return;
             input.value = formatInputNumber(committed, binding);
-            binding.set?.(committed);
+            commitBindingValue(binding, committed);
           });
           wrap.appendChild(input);
           controls = wrap;
@@ -615,9 +666,15 @@ export class LayoutPanel {
         title: binding.label ?? binding.key,
         hint: binding.hint ?? null,
         controls,
+        dirtyIndicator,
         rowClass,
       });
       bindingsRoot.appendChild(row.row);
+      const previousDestroy = destroy;
+      destroy = () => {
+        previousDestroy?.();
+        dirtyIndicator?.destroy?.();
+      };
       controlsByKey.set(binding.key, { refresh, sample, destroy });
       refresh();
       sample?.(performance.now());
@@ -736,8 +793,11 @@ export class LayoutPanel {
     const unsubscribers = [
       // Binding updates and run-state changes should refresh values in place.
       // Rebuilding controls during an active drag breaks native range interaction.
-      layoutBehavior.on?.('change', () => sync(false)) ?? (() => {}),
-      subscribe(helios, EVENTS.LAYOUT_CHANGED, () => sync(false)),
+      layoutBehavior.on?.('change', (event) => {
+        const reason = event?.reason;
+        sync(reason === 'restore' || reason === 'type');
+      }) ?? (() => {}),
+      subscribe(helios, EVENTS.LAYOUT_CHANGED, () => sync(true)),
       subscribe(helios, EVENTS.LAYOUT_START, () => {
         selectedPositionAttribute = CURRENT_POSITION_ATTRIBUTE;
         sync(false);
@@ -762,6 +822,8 @@ export class LayoutPanel {
           control.destroy?.();
         }
         controlsByKey.clear();
+        for (const cleanup of staticIndicatorCleanups) cleanup?.();
+        staticIndicatorCleanups.clear();
         originalDestroy();
       };
     }

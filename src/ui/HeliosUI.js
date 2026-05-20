@@ -5,6 +5,7 @@ import { ensureDefaultStyles } from './style/defaultStyles.js';
 import { defineHeliosWebComponents } from './web-components/defineHeliosWebComponents.js';
 import { createSliderRow } from './controls/createSliderRow.js';
 import { createAlignedRowEl } from './controls/createAlignedRowEl.js';
+import { createDirtyIndicator } from './controls/createDirtyIndicator.js';
 import { createFpsThrottle } from './controls/createFpsThrottle.js';
 import { createTooltipManager } from './controls/createTooltipManager.js';
 import { createToggleControl } from './controls/createToggleControl.js';
@@ -38,6 +39,66 @@ import {
 
 const INTERFACE_CONTROL_RELEASE_MS = 420;
 const FULLSCREEN_OVERLAY_LEFT_INSET_PX = 28;
+
+const PERSISTENCE_ACCESSOR_PATHS = Object.freeze({
+  background: 'appearance.background',
+  edgeTransparencyMode: 'appearance.edgeTransparencyMode',
+  supersampling: 'appearance.supersampling',
+  nodeSizeScale: 'appearance.nodeStyle.sizeScale',
+  nodeSizeBase: 'appearance.nodeStyle.sizeBase',
+  nodeOpacityScale: 'appearance.nodeStyle.opacityScale',
+  nodeOpacityBase: 'appearance.nodeStyle.opacityBase',
+  nodeOutlineWidthScale: 'appearance.nodeStyle.outlineWidthScale',
+  nodeOutlineWidthBase: 'appearance.nodeStyle.outlineWidthBase',
+  semanticZoomExponent: 'appearance.nodeStyle.semanticZoomExponent',
+  nodeBlendWithEdges: 'appearance.nodeStyle.blendWithEdges',
+  edgeWidthScale: 'appearance.edgeStyle.widthScale',
+  edgeWidthBase: 'appearance.edgeStyle.widthBase',
+  edgeOpacityScale: 'appearance.edgeStyle.opacityScale',
+  edgeOpacityBase: 'appearance.edgeStyle.opacityBase',
+  edgeEndpointTrim: 'appearance.edgeStyle.endpointTrim',
+  edgeDepthWrite: 'appearance.edgeStyle.depthWrite',
+  edgeFastRendering: 'appearance.edgeStyle.fastRendering',
+  edgeWidthClampToNodeDiameter: 'appearance.edgeStyle.clampToNodeDiameter',
+  edgeAdaptiveQualityEnabled: 'appearance.edgeStyle.adaptiveQuality.enabled',
+  edgeAdaptiveQualitySlowFrameThresholdMs: 'appearance.edgeStyle.adaptiveQuality.slowFrameThresholdMs',
+  edgeAdaptiveQualitySlowFrameConsecutiveFrames: 'appearance.edgeStyle.adaptiveQuality.slowFrameConsecutiveFrames',
+  edgeAdaptiveQualityProbeIntervalMs: 'appearance.edgeStyle.adaptiveQuality.probeIntervalMs',
+  edgeAdaptiveQualityInteractionHoldMs: 'appearance.edgeStyle.adaptiveQuality.interactionHoldMs',
+  edgeAdaptiveQualityFastDuringCamera: 'appearance.edgeStyle.adaptiveQuality.fastDuringCamera',
+  edgeAdaptiveQualityFastDuringLayout: 'appearance.edgeStyle.adaptiveQuality.fastDuringLayout',
+  shadedEnabled: 'appearance.shaded.enabled',
+  shadedNodes: 'appearance.shaded.nodes',
+  shadedEdges: 'appearance.shaded.edges',
+  shadedLightDirection: 'appearance.shaded.lightDirection',
+  shadedLightDirectionX: 'appearance.shaded.lightDirection.0',
+  shadedLightDirectionY: 'appearance.shaded.lightDirection.1',
+  shadedLightDirectionZ: 'appearance.shaded.lightDirection.2',
+  shadedLightColor: 'appearance.shaded.lightColor',
+  shadedAmbientTopColor: 'appearance.shaded.ambientTopColor',
+  shadedAmbientBottomColor: 'appearance.shaded.ambientBottomColor',
+  shadedDiffuseStrength: 'appearance.shaded.diffuseStrength',
+  shadedAmbientStrength: 'appearance.shaded.ambientStrength',
+  shadedSpecularColor: 'appearance.shaded.specularColor',
+  shadedSpecularStrength: 'appearance.shaded.specularStrength',
+  shadedShininess: 'appearance.shaded.shininess',
+  ambientOcclusionEnabled: 'appearance.ambientOcclusion.enabled',
+  ambientOcclusionNodes: 'appearance.ambientOcclusion.nodes',
+  ambientOcclusionEdges: 'appearance.ambientOcclusion.edges',
+  ambientOcclusionStrength: 'appearance.ambientOcclusion.strength',
+  ambientOcclusionRadius: 'appearance.ambientOcclusion.radius',
+  ambientOcclusionBias: 'appearance.ambientOcclusion.bias',
+  ambientOcclusionMode: 'appearance.ambientOcclusion.mode',
+  ambientOcclusionIntensityScale: 'appearance.ambientOcclusion.intensityScale',
+  ambientOcclusionIntensityShift: 'appearance.ambientOcclusion.intensityShift',
+  ambientOcclusionQuality: 'appearance.ambientOcclusion.quality',
+});
+
+function scopeForPersistencePath(path) {
+  const parts = String(path ?? '').split('.').filter(Boolean);
+  if (parts.length >= 2) return `${parts[0]}.${parts[1]}`;
+  return parts[0] ?? '';
+}
 
 function resolveUiContainer({ helios, container, layerName }) {
   if (container) return container;
@@ -189,6 +250,7 @@ export class HeliosUI {
     this.layerName = options.layerName ?? 'ui';
     this.theme = options.theme ?? 'dark';
     this.styles = options.styles ?? 'default';
+    this.persistenceIndicators = options.persistenceIndicators !== false;
 
     if (this.styles === 'default') ensureDefaultStyles(options.document ?? document);
 
@@ -210,6 +272,8 @@ export class HeliosUI {
     this._activeControlScope = null;
     this._panelHeaderShineTimers = new WeakMap();
     this._pendingPanelHeaderShine = null;
+    this._persistenceIndicatorObserver = null;
+    this._persistenceIndicatorFrame = null;
 
     this.panelManager = new PanelManager({
       container: this.container,
@@ -222,6 +286,7 @@ export class HeliosUI {
     this.interfaceBehavior?.bindUI?.(this);
     this._installInterfaceViewportTracking();
     this._installInterfaceControlTracking();
+    this._installPersistenceIndicatorFallback();
     this._syncInterfaceState();
     const dockMetricsUnsubscribe = this.panelManager.onDockMetricsChange?.((insets) => {
       this._latestDockInsets = { ...insets };
@@ -359,6 +424,98 @@ export class HeliosUI {
       activePanelId: null,
       focused: false,
       resumePrompt: null,
+    });
+  }
+
+  _installPersistenceIndicatorFallback() {
+    if (!this.persistenceIndicators || !this.container) return;
+
+    const doc = this.container.ownerDocument ?? document;
+    const win = doc.defaultView ?? globalThis;
+    const createStaticIndicator = () => {
+      const indicator = createDirtyIndicator({
+        helios: this.helios,
+        path: '',
+      });
+      indicator.classList.add('helios-ui-dirty-indicator--fallback');
+      this._controlCleanups.add(() => indicator.destroy?.());
+      return indicator;
+    };
+    const createGroupIndicator = () => {
+      const indicator = doc.createElement('span');
+      indicator.className = 'helios-ui-dirty-indicator helios-ui-dirty-indicator--static helios-ui-dirty-indicator--group';
+      indicator.dataset.state = 'default';
+      indicator.setAttribute('aria-hidden', 'true');
+      return indicator;
+    };
+    const syncGroupIndicator = (indicator, scope) => {
+      const changed = Boolean(scope?.querySelector?.('.helios-ui-row .helios-ui-dirty-indicator[data-state="changed"]'));
+      indicator.dataset.state = changed ? 'partial' : 'default';
+    };
+
+    const apply = () => {
+      this._persistenceIndicatorFrame = null;
+      for (const row of this.container.querySelectorAll('.helios-ui-row')) {
+        if (row.querySelector('.helios-ui-dirty-indicator')) continue;
+        const titleRow = row.querySelector('.helios-ui-label__title-row');
+        if (titleRow) {
+          titleRow.appendChild(createStaticIndicator());
+          continue;
+        }
+        const title = row.querySelector('.helios-ui-label__title');
+        if (title?.parentElement) {
+          title.parentElement.appendChild(createStaticIndicator());
+        }
+      }
+      for (const panel of this.container.querySelectorAll('.helios-ui-panel')) {
+        const titleWrap = panel.querySelector(':scope > .helios-ui-panel__header .helios-ui-panel__title-wrap');
+        if (!titleWrap) continue;
+        let indicator = titleWrap.querySelector(':scope > .helios-ui-dirty-indicator--group');
+        if (!indicator) {
+          indicator = createGroupIndicator();
+          titleWrap.appendChild(indicator);
+        }
+        syncGroupIndicator(indicator, panel.querySelector(':scope > .helios-ui-panel__body'));
+      }
+      for (const subpanel of this.container.querySelectorAll('.helios-ui-subpanel')) {
+        const header = subpanel.querySelector(':scope > .helios-ui-subpanel__header-row > .helios-ui-subpanel__header');
+        if (!header) continue;
+        let indicator = header.querySelector(':scope > .helios-ui-dirty-indicator--group');
+        if (!indicator) {
+          indicator = createGroupIndicator();
+          header.appendChild(indicator);
+        }
+        syncGroupIndicator(indicator, subpanel.querySelector(':scope > .helios-ui-subpanel__body'));
+      }
+    };
+
+    const schedule = () => {
+      if (this._persistenceIndicatorFrame != null) return;
+      this._persistenceIndicatorFrame = win.requestAnimationFrame?.(apply)
+        ?? win.setTimeout?.(apply, 0);
+    };
+
+    schedule();
+    if (typeof win.MutationObserver === 'function') {
+      this._persistenceIndicatorObserver = new win.MutationObserver(schedule);
+      this._persistenceIndicatorObserver.observe(this.container, {
+        childList: true,
+        subtree: true,
+      });
+      this._controlCleanups.add(() => this._persistenceIndicatorObserver?.disconnect?.());
+    }
+    const sessionController = this.helios?.persistence?.sessionController ?? null;
+    sessionController?.addEventListener?.('change', schedule);
+    sessionController?.addEventListener?.('config', schedule);
+    this._controlCleanups.add(() => {
+      sessionController?.removeEventListener?.('change', schedule);
+      sessionController?.removeEventListener?.('config', schedule);
+    });
+    this._controlCleanups.add(() => {
+      if (this._persistenceIndicatorFrame == null) return;
+      win.cancelAnimationFrame?.(this._persistenceIndicatorFrame);
+      win.clearTimeout?.(this._persistenceIndicatorFrame);
+      this._persistenceIndicatorFrame = null;
     });
   }
 
@@ -854,12 +1011,36 @@ export class HeliosUI {
     const tooltips = createTooltipManager();
     this._controlCleanups.add(() => tooltips.destroy());
 
-    const createAlignedRow = ({ title, hint, controls }) => createAlignedRowEl({
+    const createPersistenceIndicator = (path = '', scope = null) => {
+      if (!this.persistenceIndicators) return null;
+      const indicator = createDirtyIndicator({
+        helios: this.helios,
+        path: path ?? '',
+        scope: scope ?? scopeForPersistencePath(path),
+        attachTooltip: tooltips.attachTooltip,
+      });
+      this._controlCleanups.add(() => indicator.destroy?.());
+      return indicator;
+    };
+
+    const createAlignedRow = ({ title, hint, controls, dirtyIndicator }) => createAlignedRowEl({
       title,
       hint,
       controls,
+      dirtyIndicator: dirtyIndicator === undefined ? createPersistenceIndicator() : dirtyIndicator,
       attachTooltip: tooltips.attachTooltip,
     });
+
+    const persistencePathForAccessor = (accessorName) => PERSISTENCE_ACCESSOR_PATHS[accessorName] ?? null;
+
+    const createHeaderControlsWithIndicator = (control, path) => {
+      const controls = document.createElement('div');
+      controls.className = 'helios-ui-row__controls';
+      const indicator = createPersistenceIndicator(path);
+      if (indicator) controls.appendChild(indicator);
+      controls.appendChild(control);
+      return controls;
+    };
 
     let themeRow = document.createElement('div');
     const themeToggle = createSegmentedToggleControl({
@@ -870,11 +1051,23 @@ export class HeliosUI {
     });
     themeToggle.dataset.interfaceFocusIgnore = 'true';
     themeToggle.addEventListener('change', () => {
+      const before = this.helios?.serializeVisualizationState?.();
       this.toggleTheme();
       themeToggle.checked = this.theme === 'dark';
+      this.helios?.persistence?.recordSessionChange?.({
+        before,
+        after: this.helios?.serializeVisualizationState?.(),
+        source: 'user',
+        reason: 'theme',
+      });
     });
 
-    const built = createAlignedRow({ title: 'Theme', hint: 'Toggle light/dark', controls: themeToggle });
+    const built = createAlignedRow({
+      title: 'Theme',
+      hint: 'Toggle light/dark',
+      controls: themeToggle,
+      dirtyIndicator: createPersistenceIndicator('ui.theme', 'ui'),
+    });
     themeRow = built.row;
 
     if (this.helios) {
@@ -1722,7 +1915,11 @@ export class HeliosUI {
           try {
             commitBaseName(nameInput);
             const fmt = formatSelect.value;
-            const blob = await this.helios.saveNetwork(fmt, { output: 'blob' });
+            const blob = await this.helios.savePortableNetwork?.(fmt, {
+              output: 'blob',
+              includeVisualization: true,
+              trackedOnly: true,
+            }) ?? await this.helios.saveNetwork(fmt, { output: 'blob' });
             if (blob) {
               const filename = `${lastValidBaseName}.${fmt}`;
               downloadBlob(blob, filename);
@@ -1869,7 +2066,11 @@ export class HeliosUI {
           if (info?.type && info.type !== 'number') continue;
           if (typeof source?.[accessorName] !== 'function') continue;
           const attribute = bind(accessorName);
-          const row = createSliderRow(attribute, { hint: info?.description ?? null });
+          const path = persistencePathForAccessor(accessorName);
+          const row = createSliderRow(attribute, {
+            hint: info?.description ?? null,
+            dirtyIndicator: createPersistenceIndicator(path),
+          });
           container.appendChild(row.element);
           this._controlCleanups.add(row.destroy);
         }
@@ -1913,6 +2114,7 @@ export class HeliosUI {
           title: info.label ?? accessorName,
           hint: info.description ?? null,
           controls,
+          dirtyIndicator: createPersistenceIndicator(persistencePathForAccessor(accessorName)),
         });
         this._controlCleanups.add(() => unsub());
         return row;
@@ -1952,6 +2154,7 @@ export class HeliosUI {
           title: info.label ?? accessorName,
           hint: info.description ?? null,
           controls,
+          dirtyIndicator: createPersistenceIndicator(persistencePathForAccessor(accessorName)),
         });
         this._controlCleanups.add(() => unsub());
         return row;
@@ -2222,6 +2425,7 @@ export class HeliosUI {
           title: 'Dimension',
           hint: 'Switch camera and active layout between 2D and 3D.',
           controls: dimensionToggle,
+          dirtyIndicator: createPersistenceIndicator('camera.mode', 'camera'),
         }).row);
 
         wrapper.appendChild(createAlignedRow({
@@ -2232,6 +2436,7 @@ export class HeliosUI {
             getValue: () => appearanceBehavior?.background?.() ?? this.helios?.clearColor?.(),
             setValue: (value) => appearanceBehavior?.background?.(value) ?? this.helios?.clearColor?.(value),
           }),
+          dirtyIndicator: createPersistenceIndicator(persistencePathForAccessor('background')),
         }).row);
 
         const modes = [
@@ -2266,6 +2471,7 @@ export class HeliosUI {
           title: 'Blend Mode',
           hint: 'Controls how overlapping edges are composited ("Smooth" reduces overlap artifacts).',
           controls: modeSelect,
+          dirtyIndicator: createPersistenceIndicator(persistencePathForAccessor('edgeTransparencyMode')),
         }).row);
 
         return wrapper;
@@ -2431,11 +2637,12 @@ export class HeliosUI {
             supersampling.write(supersamplingSelect.value, { source: 'ui', event: 'change' });
           });
           this._controlCleanups.add(() => unsubscribeSupersampling());
-          advanced.appendChild(createAlignedRow({
-            title: 'Supersampling',
-            hint: 'Adjust canvas backing resolution live. Auto matches the legacy default.',
-            controls: supersamplingSelect,
-          }).row);
+              advanced.appendChild(createAlignedRow({
+                title: 'Supersampling',
+                hint: 'Adjust canvas backing resolution live. Auto matches the legacy default.',
+                controls: supersamplingSelect,
+                dirtyIndicator: createPersistenceIndicator(persistencePathForAccessor('supersampling')),
+              }).row);
         }
 
         const nodeBlendRow = createToggleRow('nodeBlendWithEdges', {
@@ -2477,6 +2684,7 @@ export class HeliosUI {
           title: 'Light Direction',
           hint: 'Drag the end marker to aim shaded lighting; edit X/Y/Z directly for precise values.',
           controls: lightDirectionControl.element,
+          dirtyIndicator: createPersistenceIndicator(persistencePathForAccessor('shadedLightDirection')),
         }).row);
         this._controlCleanups.add(() => lightDirectionControl.destroy());
         container.appendChild(createAlignedRow({
@@ -2487,6 +2695,7 @@ export class HeliosUI {
             getValue: () => appearanceBehavior?.shadedLightColor?.() ?? this.helios?.shadedLightColor?.(),
             setValue: (value) => appearanceBehavior?.shadedLightColor?.(value) ?? this.helios?.shadedLightColor?.(value),
           }),
+          dirtyIndicator: createPersistenceIndicator(persistencePathForAccessor('shadedLightColor')),
         }).row);
         container.appendChild(createRows(['shadedDiffuseStrength'], {
           source: appearanceAccessorSource,
@@ -2500,6 +2709,7 @@ export class HeliosUI {
             getValue: () => appearanceBehavior?.shadedAmbientTopColor?.() ?? this.helios?.shadedAmbientTopColor?.(),
             setValue: (value) => appearanceBehavior?.shadedAmbientTopColor?.(value) ?? this.helios?.shadedAmbientTopColor?.(value),
           }),
+          dirtyIndicator: createPersistenceIndicator(persistencePathForAccessor('shadedAmbientTopColor')),
         }).row);
         container.appendChild(createAlignedRow({
           title: 'Ambient Bottom',
@@ -2509,6 +2719,7 @@ export class HeliosUI {
             getValue: () => appearanceBehavior?.shadedAmbientBottomColor?.() ?? this.helios?.shadedAmbientBottomColor?.(),
             setValue: (value) => appearanceBehavior?.shadedAmbientBottomColor?.(value) ?? this.helios?.shadedAmbientBottomColor?.(value),
           }),
+          dirtyIndicator: createPersistenceIndicator(persistencePathForAccessor('shadedAmbientBottomColor')),
         }).row);
         container.appendChild(createRows(['shadedAmbientStrength'], {
           source: appearanceAccessorSource,
@@ -2522,6 +2733,7 @@ export class HeliosUI {
             getValue: () => appearanceBehavior?.shadedSpecularColor?.() ?? this.helios?.shadedSpecularColor?.(),
             setValue: (value) => appearanceBehavior?.shadedSpecularColor?.(value) ?? this.helios?.shadedSpecularColor?.(value),
           }),
+          dirtyIndicator: createPersistenceIndicator(persistencePathForAccessor('shadedSpecularColor')),
         }).row);
         container.appendChild(createRows(['shadedSpecularStrength', 'shadedShininess'], {
           source: appearanceAccessorSource,
@@ -2678,7 +2890,7 @@ export class HeliosUI {
         title: 'Shaded',
         collapsed: true,
         statusDot: false,
-        headerControls: shadedToggle,
+        headerControls: createHeaderControlsWithIndicator(shadedToggle, persistencePathForAccessor('shadedEnabled')),
         content: createShadedAppearanceContent(),
       });
       if (supportsAmbientOcclusion) {
@@ -2687,7 +2899,7 @@ export class HeliosUI {
           title: 'Ambient Occlusion',
           collapsed: true,
           statusDot: false,
-          headerControls: ambientOcclusionToggle,
+          headerControls: createHeaderControlsWithIndicator(ambientOcclusionToggle, persistencePathForAccessor('ambientOcclusionEnabled')),
           content: createAmbientOcclusionContent(),
         });
       }

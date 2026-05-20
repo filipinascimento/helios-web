@@ -5,12 +5,20 @@ const ACCESSOR_NAMES = Object.freeze([
   'clearColor',
   'edgeTransparencyMode',
   'nodeSizeScale',
+  'nodeSizeBase',
   'nodeOpacityScale',
+  'nodeOpacityBase',
   'nodeOutlineWidthScale',
+  'nodeOutlineWidthBase',
+  'semanticZoomExponent',
   'edgeWidthScale',
+  'edgeWidthBase',
   'edgeOpacityScale',
+  'edgeOpacityBase',
+  'edgeEndpointTrim',
   'nodeBlendWithEdges',
   'edgeWidthClampToNodeDiameter',
+  'edgeDepthWrite',
   'edgeFastRendering',
   'edgeAdaptiveQuality',
   'edgeAdaptiveQualityEnabled',
@@ -45,6 +53,7 @@ const ACCESSOR_NAMES = Object.freeze([
   'ambientOcclusionIntensityScale',
   'ambientOcclusionIntensityShift',
   'ambientOcclusionQuality',
+  'supersampling',
 ]);
 
 const ACCESSOR_NAME_SET = new Set(ACCESSOR_NAMES);
@@ -90,16 +99,24 @@ function normalizeAppearancePatch(options = {}) {
   const nodeStyle = options.nodeStyle;
   if (nodeStyle && typeof nodeStyle === 'object') {
     if (Object.prototype.hasOwnProperty.call(nodeStyle, 'sizeScale')) next.nodeSizeScale = cloneSerializable(nodeStyle.sizeScale);
+    if (Object.prototype.hasOwnProperty.call(nodeStyle, 'sizeBase')) next.nodeSizeBase = cloneSerializable(nodeStyle.sizeBase);
     if (Object.prototype.hasOwnProperty.call(nodeStyle, 'opacityScale')) next.nodeOpacityScale = cloneSerializable(nodeStyle.opacityScale);
+    if (Object.prototype.hasOwnProperty.call(nodeStyle, 'opacityBase')) next.nodeOpacityBase = cloneSerializable(nodeStyle.opacityBase);
     if (Object.prototype.hasOwnProperty.call(nodeStyle, 'outlineWidthScale')) next.nodeOutlineWidthScale = cloneSerializable(nodeStyle.outlineWidthScale);
+    if (Object.prototype.hasOwnProperty.call(nodeStyle, 'outlineWidthBase')) next.nodeOutlineWidthBase = cloneSerializable(nodeStyle.outlineWidthBase);
+    if (Object.prototype.hasOwnProperty.call(nodeStyle, 'semanticZoomExponent')) next.semanticZoomExponent = cloneSerializable(nodeStyle.semanticZoomExponent);
     if (Object.prototype.hasOwnProperty.call(nodeStyle, 'blendWithEdges')) next.nodeBlendWithEdges = nodeStyle.blendWithEdges === true;
   }
 
   const edgeStyle = options.edgeStyle;
   if (edgeStyle && typeof edgeStyle === 'object') {
     if (Object.prototype.hasOwnProperty.call(edgeStyle, 'widthScale')) next.edgeWidthScale = cloneSerializable(edgeStyle.widthScale);
+    if (Object.prototype.hasOwnProperty.call(edgeStyle, 'widthBase')) next.edgeWidthBase = cloneSerializable(edgeStyle.widthBase);
     if (Object.prototype.hasOwnProperty.call(edgeStyle, 'opacityScale')) next.edgeOpacityScale = cloneSerializable(edgeStyle.opacityScale);
+    if (Object.prototype.hasOwnProperty.call(edgeStyle, 'opacityBase')) next.edgeOpacityBase = cloneSerializable(edgeStyle.opacityBase);
+    if (Object.prototype.hasOwnProperty.call(edgeStyle, 'endpointTrim')) next.edgeEndpointTrim = cloneSerializable(edgeStyle.endpointTrim);
     if (Object.prototype.hasOwnProperty.call(edgeStyle, 'fastRendering')) next.edgeFastRendering = edgeStyle.fastRendering === true;
+    if (Object.prototype.hasOwnProperty.call(edgeStyle, 'depthWrite')) next.edgeDepthWrite = edgeStyle.depthWrite === true;
     if (Object.prototype.hasOwnProperty.call(edgeStyle, 'clampToNodeDiameter')) {
       next.edgeWidthClampToNodeDiameter = edgeStyle.clampToNodeDiameter !== false;
     }
@@ -155,16 +172,25 @@ function buildAppearanceSnapshot(helios, fallback = {}) {
   return {
     background: read('background', null),
     edgeTransparencyMode: read('edgeTransparencyMode', 'weighted'),
+    supersampling: read('supersampling', 'auto'),
     nodeStyle: {
       sizeScale: read('nodeSizeScale', 1),
+      sizeBase: read('nodeSizeBase', 0),
       opacityScale: read('nodeOpacityScale', 1),
+      opacityBase: read('nodeOpacityBase', 0),
       outlineWidthScale: read('nodeOutlineWidthScale', 1),
+      outlineWidthBase: read('nodeOutlineWidthBase', 0),
+      semanticZoomExponent: read('semanticZoomExponent', 0),
       blendWithEdges: read('nodeBlendWithEdges', false),
     },
     edgeStyle: {
       widthScale: read('edgeWidthScale', 1),
+      widthBase: read('edgeWidthBase', 0),
       opacityScale: read('edgeOpacityScale', 1),
+      opacityBase: read('edgeOpacityBase', 0),
+      endpointTrim: read('edgeEndpointTrim', 0.8),
       clampToNodeDiameter: read('edgeWidthClampToNodeDiameter', true),
+      depthWrite: read('edgeDepthWrite', false),
       fastRendering: read('edgeFastRendering', false),
       adaptiveQuality: read('edgeAdaptiveQuality', null),
     },

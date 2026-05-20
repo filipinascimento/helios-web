@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Helios } from '../src/index.js';
 import { resolveFigurePreviewRect } from '../src/export/figureExport.js';
 import { Camera } from '../src/rendering/Camera.js';
-import { applyCameraPose } from '../src/rendering/CameraTransitionController.js';
+import { applyCameraPose, captureCameraPose } from '../src/rendering/CameraTransitionController.js';
 
 function createCamera(mode = '2d', width = 400, height = 400) {
   return new Camera(
@@ -48,6 +48,20 @@ function projectBounds(camera, bounds) {
   }
   return corners;
 }
+
+test('2D camera pose capture and restore normalize to orthographic projection', () => {
+  const camera = createCamera('2d');
+  camera.projection = 'perspective';
+
+  const pose = captureCameraPose(camera);
+  assert.equal(pose.mode, '2d');
+  assert.equal(pose.projection, 'orthographic');
+
+  applyCameraPose(camera, { mode: '2d', projection: 'perspective', zoom: 3 });
+  assert.equal(camera.mode, '2d');
+  assert.equal(camera.projection, 'orthographic');
+  assert.equal(camera.zoom, 3);
+});
 
 function assertFitsViewport(points, width, height, padding = 0) {
   for (const point of points) {

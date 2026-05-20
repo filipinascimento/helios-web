@@ -10,6 +10,7 @@ import {
   parsePersistenceEnvelope,
   serializePersistenceEnvelope,
 } from './schema.js';
+import { HeliosSessionController } from './HeliosSessionController.js';
 
 function cloneSerializable(value) {
   if (Array.isArray(value)) return value.map((entry) => cloneSerializable(entry));
@@ -49,6 +50,7 @@ export class HeliosPersistenceService {
     this.idFactory = options.idFactory ?? defaultIdFactory;
     this.now = options.now ?? (() => Date.now());
     this.preferences = createDefaultPreferencesState(options.defaults);
+    this.sessionController = null;
   }
 
   async loadPreferences() {
@@ -103,6 +105,61 @@ export class HeliosPersistenceService {
     const envelope = parsePersistenceEnvelope(source, PERSISTENCE_KINDS.visualization);
     await this.helios.importVisualizationState(envelope, options);
     return envelope;
+  }
+
+  configureSession(options = {}) {
+    if (!this.sessionController) {
+      this.sessionController = new HeliosSessionController({
+        helios: this.helios,
+        persistence: this,
+        sessionStore: this.sessionStore,
+        now: this.now,
+        ...(options.controllerOptions ?? {}),
+      });
+    }
+    if (this.sessionController.sessionId) return this.sessionController.updateConfig(options);
+    return this.sessionController.configure(options);
+  }
+
+  getOverrides() {
+    return this.sessionController?.getOverrides?.() ?? {};
+  }
+
+  getDirtyState() {
+    return this.sessionController?.getDirtyState?.() ?? { controls: {}, sections: {}, panels: {} };
+  }
+
+  getChangeJournal(options = {}) {
+    return this.sessionController?.getChangeJournal?.(options) ?? [];
+  }
+
+  checkpoint(seq = null) {
+    return this.sessionController?.checkpoint?.(seq) ?? { checkpointSeq: 0 };
+  }
+
+  resetOverride(pathOrScope) {
+    return this.sessionController?.resetOverride?.(pathOrScope) ?? Promise.resolve({ reset: false, overrides: {} });
+  }
+
+  flush(options = {}) {
+    return this.sessionController?.flush?.(options) ?? Promise.resolve(null);
+  }
+
+  persistenceStatus() {
+    return this.sessionController?.status?.() ?? null;
+  }
+
+  recordSessionChange(detail = {}) {
+    return this.sessionController?.recordSnapshotChange?.(detail) ?? [];
+  }
+
+  setSessionOverride(path, value, detail = {}) {
+    return this.sessionController?.setOverride?.(path, value, detail) ?? [];
+  }
+
+  runWithSessionSource(source, fn) {
+    if (this.sessionController?.runWithSource) return this.sessionController.runWithSource(source, fn);
+    return Promise.resolve().then(fn);
   }
 
   async saveSession(options = {}) {
@@ -177,7 +234,12 @@ export class HeliosPersistenceService {
     const envelope = typeof idOrEnvelope === 'string'
       ? await this.getSession(idOrEnvelope)
       : migratePersistenceEnvelope(idOrEnvelope, PERSISTENCE_KINDS.session);
-    if (!envelope) return null;
+    if (!envelope) {
+      if (typeof idOrEnvelope === 'string' && this.sessionController?.restore) {
+        return this.sessionController.restore(idOrEnvelope, options);
+      }
+      return null;
+    }
     const payload = envelope.payload;
     await this.helios.loadNetwork(payload.networkData.data, {
       format: payload.networkData.format,
@@ -186,7 +248,12 @@ export class HeliosPersistenceService {
       keepCamera: false,
       restoreVisualizationState: false,
     });
-    await this.helios.importVisualizationState(payload.visualizationState, options);
+    if (options.restoreVisualizationState !== false) {
+      await this.helios.importVisualizationState(payload.visualizationState, options);
+    }
+    if (options.restoreOverrides !== false && this.sessionController?.restore) {
+      await this.sessionController.restore(payload.session.id, { ...options, applyNetwork: false });
+    }
     this.preferences = createDefaultPreferencesState(payload.preferences);
     await this.savePreferences(this.preferences);
     if (options.markFinished === true) {

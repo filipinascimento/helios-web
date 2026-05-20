@@ -2994,6 +2994,21 @@ export class MappersPanel {
               paletteSearch.className = 'helios-ui-text helios-ui-colormap-popover__search';
               paletteSearch.placeholder = 'Search palettes (e.g. tableau, scheme)…';
               paletteHeader.appendChild(paletteSearch);
+              let palettePreferScheme = preferScheme;
+              const paletteFilterBar = document.createElement('div');
+              paletteFilterBar.className = 'helios-ui-colormap-popover__filters';
+              const schemeFilterButton = document.createElement('button');
+              schemeFilterButton.type = 'button';
+              schemeFilterButton.className = 'helios-ui-colormap-popover__filter';
+              schemeFilterButton.textContent = 'Schemes';
+              schemeFilterButton.title = 'Show only discrete schemes and use scheme colors when available.';
+              const syncSchemeFilterButton = () => {
+                schemeFilterButton.dataset.active = palettePreferScheme ? 'true' : 'false';
+                schemeFilterButton.setAttribute('aria-pressed', palettePreferScheme ? 'true' : 'false');
+              };
+              syncSchemeFilterButton();
+              paletteFilterBar.appendChild(schemeFilterButton);
+              paletteHeader.appendChild(paletteFilterBar);
               palettePopoverPanel.appendChild(paletteHeader);
 
               const paletteList = document.createElement('div');
@@ -3038,6 +3053,7 @@ export class MappersPanel {
                 if (!entry) return key;
                 return `${entry.group}: ${entry.label}`;
               };
+              let selectedPaletteName = paletteName;
 
               const updatePalettePreview = (keyRaw) => {
                 const key = String(keyRaw ?? '').trim() || defaultCategoricalPalette;
@@ -3045,13 +3061,14 @@ export class MappersPanel {
                 const palette = resolveCategoricalPalette({
                   paletteName: key,
                   count: 8,
-                  preferScheme,
+                  preferScheme: palettePreferScheme,
                 });
                 palettePreview.style.backgroundImage = paletteToCssGradient(palette, { isScheme: resolved?.isScheme });
               };
 
               const applyPaletteUi = (keyRaw) => {
                 const key = String(keyRaw ?? '').trim() || defaultCategoricalPalette;
+                selectedPaletteName = key;
                 paletteDisplayLabel.textContent = resolvePaletteDisplay(key);
                 paletteDisplay.title = paletteDisplayLabel.textContent;
                 paletteDisplay.dataset.colormapKey = key;
@@ -3086,7 +3103,7 @@ export class MappersPanel {
                     const previewPalette = resolveCategoricalPalette({
                       paletteName: key,
                       count: 8,
-                      preferScheme,
+                      preferScheme: palettePreferScheme,
                     });
                     el.style.backgroundImage = paletteToCssGradient(previewPalette, { isScheme: resolved?.isScheme });
                     paletteObserver.unobserve(el);
@@ -3104,7 +3121,7 @@ export class MappersPanel {
                 const query = String(queryRaw ?? '').trim().toLowerCase();
                 const tokens = query.split(/\s+/).filter(Boolean);
                 const matches = paletteCatalog.entries.filter((entry) => {
-                  if (!shouldShowCategoricalPaletteEntry(entry, preferScheme)) return false;
+                  if (!shouldShowCategoricalPaletteEntry(entry, palettePreferScheme)) return false;
                   if (!tokens.length) return true;
                   return tokens.every((t) => entry.search.includes(t));
                 });
@@ -3351,6 +3368,21 @@ export class MappersPanel {
               paletteSearch.addEventListener('input', onPaletteSearch);
               registerPaletteCleanup(() => paletteSearch.removeEventListener('input', onPaletteSearch));
 
+              const onSchemeFilterClick = () => {
+                palettePreferScheme = !palettePreferScheme;
+                syncSchemeFilterButton();
+                const nextMeta = ensureCategoricalMeta();
+                nextMeta.categorical.preferScheme = palettePreferScheme;
+                updatePendingMeta(nextMeta);
+                updatePalettePreview(selectedPaletteName);
+                applyOrdering({ forcePalette: true });
+                renderPalettePopover(paletteSearch.value);
+                positionPalettePopover();
+                setDirty(true);
+              };
+              schemeFilterButton.addEventListener('click', onSchemeFilterClick);
+              registerPaletteCleanup(() => schemeFilterButton.removeEventListener('click', onSchemeFilterClick));
+
               const onPaletteSearchKeyDown = (e) => {
                 if (e.key === 'Escape') {
                   closePalettePopover();
@@ -3394,24 +3426,6 @@ export class MappersPanel {
                 title: 'Palette',
                 hint: 'Pick a categorical palette (schemes preferred when available).',
                 controls: palettePicker,
-              }).row);
-
-              const preferSchemeInput = createSegmentedToggleControl({
-                checked: preferScheme,
-                onLabel: 'Prefer Scheme',
-                offLabel: 'Use Order',
-              });
-              preferSchemeInput.addEventListener('change', () => {
-                const nextMeta = ensureCategoricalMeta();
-                nextMeta.categorical.preferScheme = preferSchemeInput.checked;
-                updatePendingMeta(nextMeta);
-                applyOrdering({ forcePalette: true });
-                renderEditor();
-              });
-              editorBody.appendChild(createAlignedRow({
-                title: 'Scheme',
-                hint: 'Prefer discrete scheme colors when available for the selected palette.',
-                controls: preferSchemeInput,
               }).row);
 
               applyPaletteButton = document.createElement('button');

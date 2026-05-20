@@ -32,6 +32,7 @@ import { BEHAVIOR_IDS, Behavior, BehaviorManager, createDefaultBehaviorRegistry 
 import {
   HeliosPersistenceService,
   PERSISTENCE_KINDS,
+  applyOverridesToVisualizationState,
   createDefaultNetworkSource,
   createPersistenceEnvelope,
   migratePersistenceEnvelope,
@@ -77,6 +78,7 @@ const {
   EDGE_ENDPOINTS_STATE_ATTRIBUTE,
 } = VISUAL_ATTRIBUTE_NAMES;
 const DEFAULT_CAMERA_FIT_NODE_RADIUS_WORLD = 0;
+const DEFAULT_LAYOUT_RUNTIME_POSITION_LIMIT_BYTES = 2 * 1024 * 1024;
 
 const UMAP_FORCE_FLAG_ATTRIBUTE = 'umap';
 const DEFAULT_UMAP_EDGE_WEIGHT_ATTRIBUTE = 'umap_weight';
@@ -110,6 +112,47 @@ function createPickingGestureState() {
 
 function isLayoutInstance(candidate) {
   return candidate && typeof candidate.step === 'function' && typeof candidate.initialize === 'function';
+}
+
+function uint8ArrayToBase64(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length <= 0) return '';
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(bytes).toString('base64');
+  }
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, offset + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+function base64ToUint8Array(value) {
+  if (typeof value !== 'string' || value.length <= 0) return null;
+  if (typeof Buffer !== 'undefined') {
+    return Uint8Array.from(Buffer.from(value, 'base64'));
+  }
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function encodeFloat32ArrayBase64(values) {
+  if (!(values instanceof Float32Array) || values.length <= 0) return null;
+  const bytes = new Uint8Array(values.buffer, values.byteOffset, values.byteLength);
+  return uint8ArrayToBase64(bytes);
+}
+
+function decodeFloat32ArrayBase64(value, expectedLength = null) {
+  const bytes = base64ToUint8Array(value);
+  if (!bytes || bytes.byteLength <= 0 || bytes.byteLength % Float32Array.BYTES_PER_ELEMENT !== 0) return null;
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  const view = new Float32Array(copy.buffer);
+  if (expectedLength != null && view.length !== Number(expectedLength)) return null;
+  return view;
 }
 
 function forEachIndex(indices, visitor) {
@@ -2674,6 +2717,12 @@ export class Helios extends EventTarget {
       helios: this,
       ...(options.persistence && typeof options.persistence === 'object' ? options.persistence : {}),
     });
+    this._sessionPersistenceOptions = options.session === false
+      ? false
+      : {
+        ...(options.persistence?.session && typeof options.persistence.session === 'object' ? options.persistence.session : {}),
+        ...(options.session && typeof options.session === 'object' ? options.session : {}),
+      };
     this._initializeDefaultBehaviors(options.behaviors);
     this._initializeBehaviors(options.behaviors);
     this.ui = null;
@@ -2896,15 +2945,33 @@ export class Helios extends EventTarget {
     return this;
   }
 
-  _snapshotCameraState() {
+  _snapshotCameraState(options = {}) {
     const camera = this.renderer?.camera ?? null;
-    return captureCameraPose(camera);
+    const pose = captureCameraPose(camera);
+    if (pose && options.includeViewport !== true) delete pose.viewport;
+    return pose;
   }
 
-  _restoreCameraState(state) {
+  _restoreCameraState(state, options = {}) {
     const camera = this.renderer?.camera ?? null;
-    applyCameraPose(camera, state);
+    const pose = state && options.restoreViewport !== true ? { ...state } : state;
+    if (pose && options.restoreViewport !== true) delete pose.viewport;
+    applyCameraPose(camera, pose);
   }
+
+  _snapshotCameraControlState() {
+    return copyCameraControlConfig(this._cameraControlConfig ?? CAMERA_CONTROL_DEFAULTS);
+  }
+
+  _restoreCameraControlState(state) {
+    if (!state || typeof state !== 'object') return;
+    if (!this._cameraControlRuntime) {
+      this._cameraControlConfig = normalizeCameraControlConfig(this._cameraControlConfig ?? CAMERA_CONTROL_DEFAULTS, state);
+      return;
+    }
+    this.cameraControls?.(state);
+  }
+
 
   _ensureCameraTransitionController() {
     if (!this._cameraTransitionController) {
@@ -4166,7 +4233,7 @@ export class Helios extends EventTarget {
         if (detail?.origin === 'interaction') {
           this._disableAutomaticCameraControlFromInteraction(detail);
         }
-        this._scheduleCameraMove();
+        this._scheduleCameraMove(detail);
         this.debug.log('helios', 'Camera change requested render');
       });
     }
@@ -5289,12 +5356,30 @@ export class Helios extends EventTarget {
       responsivePreferences: preferences?.responsive ?? null,
       uiState: this.behaviors?.ui?.serializeState?.() ?? {},
       behaviorState: this.serializeBehaviorState(),
-      cameraState: this._snapshotCameraState(),
+      cameraState: this._snapshotCameraState(options.camera ?? {}),
+      cameraControlState: this._snapshotCameraControlState(),
       networkSource: this._capturePersistenceNetworkSource(),
+      layoutRuntimeState: this.snapshotLayoutRuntimeState(options.layoutRuntime ?? {}),
     }, {
       source: 'helios',
     });
     return envelope;
+  }
+
+  async serializeVisualizationStateAsync(options = {}) {
+    const preferences = options.preferences ?? this.persistence?.getPreferences?.() ?? null;
+    return createPersistenceEnvelope(PERSISTENCE_KINDS.visualization, {
+      preferences,
+      responsivePreferences: preferences?.responsive ?? null,
+      uiState: this.behaviors?.ui?.serializeState?.() ?? {},
+      behaviorState: this.serializeBehaviorState(),
+      cameraState: this._snapshotCameraState(options.camera ?? {}),
+      cameraControlState: this._snapshotCameraControlState(),
+      networkSource: this._capturePersistenceNetworkSource(),
+      layoutRuntimeState: await this.snapshotLayoutRuntimeStateAsync(options.layoutRuntime ?? {}),
+    }, {
+      source: 'helios',
+    });
   }
 
   /**
@@ -5308,7 +5393,12 @@ export class Helios extends EventTarget {
    */
   async importVisualizationState(source, options = {}) {
     const envelope = parsePersistenceEnvelope(source, PERSISTENCE_KINDS.visualization);
-    const payload = envelope.payload;
+    let payload = envelope.payload;
+    if (payload.overrides && typeof payload.overrides === 'object') {
+      const base = this.serializeVisualizationState({ layoutRuntime: { includePositions: false } });
+      payload = applyOverridesToVisualizationState(base, payload.overrides).payload;
+      payload.layoutRuntimeState = envelope.payload.layoutRuntimeState ?? payload.layoutRuntimeState;
+    }
     const restoredMode = payload.cameraState?.mode;
     if (
       options.restoreMode !== false
@@ -5324,7 +5414,13 @@ export class Helios extends EventTarget {
     }
     this.restoreBehaviorState(payload.behaviorState);
     this.behaviors?.ui?.restoreState?.(payload.uiState, options);
-    if (payload.cameraState) this._restoreCameraState(payload.cameraState);
+    if (payload.cameraState) this._restoreCameraState(payload.cameraState, { restoreViewport: options.restoreCameraViewport === true });
+    if (payload.cameraControlState) this._restoreCameraControlState(payload.cameraControlState);
+    if (payload.layoutRuntimeState && options.restoreLayoutRuntime !== false) {
+      await this.restoreLayoutRuntimeState(payload.layoutRuntimeState, {
+        reason: options.reason ?? 'visualization-state-restore',
+      });
+    }
     return envelope;
   }
 
@@ -5358,6 +5454,40 @@ export class Helios extends EventTarget {
       return new Blob([serializePersistenceEnvelope(envelope, options.pretty !== false)], { type: 'application/json' });
     }
     return envelope;
+  }
+
+  serializeTrackedVisualizationState(options = {}) {
+    const preferences = options.preferences ?? this.persistence?.getPreferences?.() ?? null;
+    return createPersistenceEnvelope(PERSISTENCE_KINDS.visualization, {
+      preferences,
+      responsivePreferences: preferences?.responsive ?? null,
+      uiState: {},
+      behaviorState: {},
+      cameraState: null,
+      networkSource: this._capturePersistenceNetworkSource(),
+      overrides: this.persistence?.getOverrides?.() ?? {},
+      layoutRuntimeState: this.snapshotLayoutRuntimeState(options.layoutRuntime ?? {}),
+    }, {
+      source: 'helios',
+      sparse: true,
+    });
+  }
+
+  async serializeTrackedVisualizationStateAsync(options = {}) {
+    const preferences = options.preferences ?? this.persistence?.getPreferences?.() ?? null;
+    return createPersistenceEnvelope(PERSISTENCE_KINDS.visualization, {
+      preferences,
+      responsivePreferences: preferences?.responsive ?? null,
+      uiState: {},
+      behaviorState: {},
+      cameraState: null,
+      networkSource: this._capturePersistenceNetworkSource(),
+      overrides: this.persistence?.getOverrides?.() ?? {},
+      layoutRuntimeState: await this.snapshotLayoutRuntimeStateAsync(options.layoutRuntime ?? {}),
+    }, {
+      source: 'helios',
+      sparse: true,
+    });
   }
 
   /**
@@ -5451,21 +5581,52 @@ export class Helios extends EventTarget {
       });
     }
 
-    const hadExisting = this.network.hasNetworkAttribute?.(attributeName) === true;
-    const previousValue = hadExisting ? this.network.getNetworkStringAttribute(attributeName) : null;
-    try {
-      this.attachVisualizationStateToNetwork(options.visualizationState ?? this.serializeVisualizationState(options), {
-        attributeName,
-        pretty: options.pretty,
-      });
-      return await this.saveNetwork(format, { output, saveOptions });
-    } finally {
-      if (hadExisting) {
-        this.network.setNetworkStringAttribute(attributeName, previousValue);
-      } else if (this.network.hasNetworkAttribute?.(attributeName)) {
-        this.network.removeNetworkAttribute(attributeName);
+    const saveWithVisualizationAttribute = async () => {
+      const hadExisting = this.network.hasNetworkAttribute?.(attributeName) === true;
+      const previousValue = hadExisting ? this.network.getNetworkStringAttribute(attributeName) : null;
+      let previousPositions = null;
+      let wroteCurrentPositionsForSave = false;
+      try {
+        const visualizationState = options.visualizationState
+          ?? await (options.trackedOnly === true
+            ? this.serializeTrackedVisualizationStateAsync(options)
+            : this.serializeVisualizationStateAsync(options));
+        const layoutPositions = visualizationState?.payload?.layoutRuntimeState?.positions ?? null;
+        if (
+          options.includeCurrentPositions !== false
+          && layoutPositions?.encoding === 'float32-base64'
+          && typeof layoutPositions.data === 'string'
+        ) {
+          const currentPositions = decodeFloat32ArrayBase64(layoutPositions.data, layoutPositions.length);
+          if (currentPositions instanceof Float32Array && currentPositions.length > 0) {
+            this.visuals?.seedMissingPositions?.(this.layers?.size);
+            previousPositions = this._snapshotNodePositions();
+            if (previousPositions instanceof Float32Array && previousPositions.length === currentPositions.length) {
+              wroteCurrentPositionsForSave = this._writeNodePositions(currentPositions);
+            }
+          }
+        }
+        this.attachVisualizationStateToNetwork(visualizationState, {
+          attributeName,
+          pretty: options.pretty,
+        });
+        return await this.saveNetwork(format, { output, saveOptions });
+      } finally {
+        if (wroteCurrentPositionsForSave && previousPositions instanceof Float32Array) {
+          this._writeNodePositions(previousPositions);
+        }
+        if (hadExisting) {
+          this.network.setNetworkStringAttribute(attributeName, previousValue);
+        } else if (this.network.hasNetworkAttribute?.(attributeName)) {
+          this.network.removeNetworkAttribute(attributeName);
+        }
       }
+    };
+    const sessionController = this.persistence?.sessionController ?? null;
+    if (typeof sessionController?.suspendDuring === 'function') {
+      return await sessionController.suspendDuring(saveWithVisualizationAttribute);
     }
+    return await saveWithVisualizationAttribute();
   }
 
   /**
@@ -6242,7 +6403,7 @@ export class Helios extends EventTarget {
         if (detail?.origin === 'interaction') {
           this._disableAutomaticCameraControlFromInteraction(detail);
         }
-        this._scheduleCameraMove();
+        this._scheduleCameraMove(detail);
         this.debug.log('helios', 'Camera change requested render');
       });
     }
@@ -6320,7 +6481,33 @@ export class Helios extends EventTarget {
         this.emit(EVENTS.AFTER_RENDER, { frameId: this._frameId, dt, frame, size: { ...this.size } });
       }
     });
-    this._requestInitialCameraFit();
+    let sessionController = null;
+    const sessionOptions = this._sessionPersistenceOptions && typeof this._sessionPersistenceOptions === 'object'
+      ? this._sessionPersistenceOptions
+      : {};
+    if (this._sessionPersistenceOptions !== false) {
+      this.persistence?.configureSession?.({
+        ...sessionOptions,
+        deferRestore: true,
+      });
+      sessionController = this.persistence?.sessionController ?? null;
+    }
+    if (sessionController?.suspendDuring) {
+      await sessionController.suspendDuring(() => this._initializeOptionalUI());
+    } else {
+      await this._initializeOptionalUI();
+    }
+    if (sessionController) {
+      sessionController.captureBaseline?.();
+      if (sessionOptions.restore !== false) {
+        this._sessionRestoreResult = await sessionController.restore?.(sessionController.sessionId, {
+          applyNetwork: sessionOptions.restoreNetwork === true,
+        });
+      } else if (sessionOptions.saveInitialManifest !== false) {
+        await sessionController.saveManifest?.();
+      }
+    }
+    if (!this._sessionRestoreResult) this._requestInitialCameraFit();
     if (!this.manualRendering) {
       this.scheduler.start();
       this.scheduler.requestGeometry();
@@ -6338,7 +6525,6 @@ export class Helios extends EventTarget {
     }
     this.debug.log('helios', 'Initialization complete');
     this._applyPickingConfig();
-    await this._initializeOptionalUI();
     return this;
   }
 
@@ -6405,6 +6591,168 @@ export class Helios extends EventTarget {
       snapshot = out;
     });
     return snapshot;
+  }
+
+  _buildLayoutRuntimeState(snapshot, options = {}) {
+    const layout = this._layout ?? null;
+    const scheduler = this.scheduler ?? null;
+    const layoutState = typeof scheduler?.getLayoutState === 'function'
+      ? scheduler.getLayoutState()
+      : (scheduler?.layoutEnabled !== false ? 'running' : 'stopped');
+    const maxPositionBytes = Number.isFinite(options.maxPositionBytes)
+      ? Math.max(0, Number(options.maxPositionBytes))
+      : DEFAULT_LAYOUT_RUNTIME_POSITION_LIMIT_BYTES;
+    const alpha = this._readLayoutAlpha(layout);
+    const center = this._computePositionSnapshotCenter(snapshot, this.network);
+    const layoutBehavior = this.behaviors?.get?.('layout') ?? this.behaviors?.layout ?? null;
+    const positionSource = this._positionsConfig?.source === 'delegate' ? 'delegate' : 'network';
+    const delegate = positionSource === 'delegate'
+      ? (this._positionsConfig?.delegate ?? layout?.getPositionDelegate?.() ?? layout?.positionDelegate ?? null)
+      : null;
+    const state = {
+      schema: 'helios-web.layout-runtime-state',
+      version: 1,
+      capturedAt: Date.now(),
+      layoutType: layoutBehavior?.type?.() ?? layout?.constructor?.name ?? null,
+      positionSource,
+      delegateType: delegate?.constructor?.name ?? null,
+      layoutState,
+      layoutEnabled: scheduler?.layoutEnabled !== false,
+      running: layoutState === 'running',
+      nodeCount: Number.isFinite(this.network?.nodeCount) ? Number(this.network.nodeCount) : null,
+      alpha: Number.isFinite(alpha) ? alpha : null,
+      center,
+      positions: null,
+    };
+    if (snapshot instanceof Float32Array && snapshot.length > 0) {
+      if (snapshot.byteLength <= maxPositionBytes) {
+        state.positions = {
+          encoding: 'float32-base64',
+          length: snapshot.length,
+          byteLength: snapshot.byteLength,
+          data: encodeFloat32ArrayBase64(snapshot),
+        };
+      } else {
+        state.positionsSkipped = {
+          reason: 'size-limit',
+          byteLength: snapshot.byteLength,
+          maxBytes: maxPositionBytes,
+        };
+      }
+    }
+    return state;
+  }
+
+  snapshotLayoutRuntimeState(options = {}) {
+    const snapshot = options.includePositions === false ? null : this._snapshotNodePositions();
+    return this._buildLayoutRuntimeState(snapshot, options);
+  }
+
+  async snapshotLayoutRuntimeStateAsync(options = {}) {
+    if (options.includePositions === false) return this._buildLayoutRuntimeState(null, options);
+    let snapshot = null;
+    if (options.positions instanceof Float32Array) {
+      snapshot = new Float32Array(options.positions);
+    } else {
+      const source = this._positionsConfig ?? { source: 'network', delegate: null };
+      const delegate = options.delegate ?? (source.source === 'delegate'
+        ? (source.delegate ?? this._activePositionDelegate ?? null)
+        : null);
+      if (delegate) {
+        try {
+          snapshot = await this.snapshotDelegatePositions({
+            ...options,
+            delegate,
+            scope: options.scope ?? 'layout-runtime',
+            reason: options.reason ?? 'layout-runtime-snapshot',
+          });
+        } catch (error) {
+          console.warn('Helios: failed to snapshot delegate positions for persistence; falling back to network positions.', error);
+        }
+      }
+      if (!(snapshot instanceof Float32Array) || snapshot.length <= 0) {
+        snapshot = this._snapshotNodePositions();
+      }
+    }
+    return this._buildLayoutRuntimeState(snapshot, options);
+  }
+
+  restoreLayoutRuntimeState(state = {}, options = {}) {
+    if (!state || typeof state !== 'object') return false;
+    const layout = this._layout ?? null;
+    const scheduler = this.scheduler ?? null;
+    let restoredPositions = false;
+    const encoded = state.positions && typeof state.positions === 'object' ? state.positions : null;
+    if (encoded?.encoding === 'float32-base64' && typeof encoded.data === 'string') {
+      const snapshot = decodeFloat32ArrayBase64(encoded.data, encoded.length);
+      const current = this._snapshotNodePositions();
+      if (
+        snapshot instanceof Float32Array
+        && current instanceof Float32Array
+        && snapshot.length === current.length
+      ) {
+        const delegate = this._positionsConfig?.source === 'delegate'
+          ? (this._positionsConfig?.delegate ?? layout?.getPositionDelegate?.() ?? layout?.positionDelegate ?? null)
+          : (layout?.getPositionDelegate?.() ?? layout?.positionDelegate ?? null);
+        if (delegate && typeof delegate.writePositionSnapshot === 'function') {
+          const beforeDelegateVersion = Number(delegate.version);
+          restoredPositions = delegate.writePositionSnapshot(snapshot, {
+            ...this._buildPositionDelegateContext({
+              scope: 'layout-runtime-restore',
+              reason: options.reason ?? 'layout-runtime-restore',
+            }),
+            center: Array.isArray(state.center) ? state.center : undefined,
+            outputScale: layout?.options?.outputScale ?? delegate?.options?.outputScale,
+          }) === true;
+          if (
+            restoredPositions
+            && typeof delegate.bumpVersion === 'function'
+            && Number(delegate.version) === beforeDelegateVersion
+          ) {
+            delegate.bumpVersion();
+          }
+        }
+        const wroteLayout = layout?.seedFromPositionSnapshot?.(snapshot, {
+          emitUpdate: false,
+          requestUpdate: false,
+        }) === true;
+        const wroteNetwork = this._writeNodePositions(snapshot);
+        restoredPositions = restoredPositions || wroteLayout || wroteNetwork;
+        if (restoredPositions) {
+          const runtime = this._resetInterpolationRuntime({ keepLastRendered: false, keepIntervalHistory: true });
+          runtime.lastRenderedPositions = new Float32Array(snapshot);
+          this._interpolationRuntime = runtime;
+          this.visuals?.markPositionsDirty?.();
+          this.visuals?.bumpNodeAttributes?.(NODE_POSITION_ATTRIBUTE);
+          this._applyPositionPipelineToRenderer();
+          this.scheduler?.requestGeometry?.();
+          this.scheduler?.requestRender?.();
+          this._labels?.requestFullReselect?.(options.reason ?? 'layout-runtime-restore');
+        }
+      }
+    }
+
+    const alpha = Number(state.alpha);
+    if (Number.isFinite(alpha)) {
+      const center = Array.isArray(state.center) ? state.center : undefined;
+      if (typeof layout?.adoptHandoffState === 'function') {
+        layout.adoptHandoffState({ alpha, center });
+      }
+      const delegate = layout?.getPositionDelegate?.() ?? layout?.positionDelegate ?? null;
+      delegate?.updateOptions?.({ alpha });
+    }
+
+    if (scheduler && options.restoreRunState !== false) {
+      if (state.layoutState === 'running' || state.running === true) {
+        scheduler.setLayoutEnabled?.(true, options.reason ?? 'layout-runtime-restore');
+        scheduler.requestLayout?.(options.reason ?? 'layout-runtime-restore');
+      } else if (state.layoutState === 'idle') {
+        scheduler.setLayoutEnabled?.(false, 'idle');
+      } else {
+        scheduler.setLayoutEnabled?.(false, options.reason ?? 'layout-runtime-restore');
+      }
+    }
+    return restoredPositions;
   }
 
   _writeNodePositions(values) {
@@ -8171,6 +8519,7 @@ export class Helios extends EventTarget {
     if (
       options.source === 'ui'
       || options.source === 'interaction'
+      || options.source === 'cli'
       || options.manual === true
       || Object.prototype.hasOwnProperty.call(pose, 'rotation')
     ) {
@@ -8178,8 +8527,20 @@ export class Helios extends EventTarget {
       this._stopCameraControlPoseInterpolation();
     }
     const nextPose = mergeCameraPose(captureCameraPose(camera), pose);
+    if ('_pendingChangeDetail' in camera && (options.source || options.manual === true)) {
+      camera._pendingChangeDetail = {
+        origin: options.source ?? 'interaction',
+        type: 'api',
+        action: Object.prototype.hasOwnProperty.call(pose, 'zoom')
+          ? 'zoom'
+          : Object.prototype.hasOwnProperty.call(pose, 'distance')
+            ? 'dolly'
+            : 'pan',
+        mode: nextPose.mode ?? camera.mode,
+      };
+    }
     applyCameraPose(camera, nextPose, { update: options.update !== false });
-    if (options.source === 'ui' || options.source === 'interaction' || options.manual === true) {
+    if (options.source === 'ui' || options.source === 'interaction' || options.source === 'cli' || options.manual === true) {
       this._disableAutomaticCameraControlFromInteraction({
         origin: options.source ?? 'interaction',
         action: Object.prototype.hasOwnProperty.call(pose, 'zoom') ? 'zoom' : Object.prototype.hasOwnProperty.call(pose, 'distance') ? 'dolly' : 'pan',
@@ -8202,7 +8563,7 @@ export class Helios extends EventTarget {
       toPose,
       durationMs: options.durationMs ?? DEFAULT_MODE_SWITCH_DURATION_MS,
     });
-    if (options.source === 'ui' || options.source === 'interaction' || options.manual === true) {
+    if (options.source === 'ui' || options.source === 'interaction' || options.source === 'cli' || options.manual === true) {
       this._disableAutomaticCameraControlFromInteraction({
         origin: options.source ?? 'interaction',
         action: Object.prototype.hasOwnProperty.call(pose, 'zoom') ? 'zoom' : Object.prototype.hasOwnProperty.call(pose, 'distance') ? 'dolly' : 'pan',
@@ -10675,14 +11036,22 @@ export class Helios extends EventTarget {
     }
   }
 
-  _scheduleCameraMove() {
+  _scheduleCameraMove(changeDetail = null) {
+    if (changeDetail?.origin || !this._pendingCameraMoveDetail) {
+      this._pendingCameraMoveDetail = changeDetail ?? null;
+    }
     if (this._cameraMoveRaf != null) return;
     this._cameraMoveRaf = requestAnimationFrame((ts) => {
       this._cameraMoveRaf = null;
+      const cameraChange = this._pendingCameraMoveDetail ?? null;
+      this._pendingCameraMoveDetail = null;
       const camera = this.renderer?.camera ?? null;
       const detail = {
         timestamp: ts,
         camera,
+        origin: cameraChange?.origin ?? null,
+        action: cameraChange?.action ?? null,
+        change: cameraChange,
         state: camera
           ? {
               mode: camera.mode,

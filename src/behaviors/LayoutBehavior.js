@@ -243,7 +243,6 @@ export class LayoutBehavior extends Behavior {
       this.parameters(options.parameters, { silent: true });
     }
     if (options.running === true && this.isDynamic()) {
-      this.reheat('restore');
       this.start();
     } else if (options.running === false || !this.isDynamic()) {
       this.stop('restore');

@@ -5106,6 +5106,22 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     return { centroid: result.centroid, count: result.count, version, source: 'cpu' };
   }
 
+  writePositionSnapshot(snapshot, options = {}) {
+    if (!(snapshot instanceof Float32Array) || snapshot.length <= 0) return false;
+    const context = options && typeof options === 'object' ? options : {};
+    this._markDirtyForBackend(context);
+    this.ensureSynchronized(context);
+    const backend = this._webgpu ?? this._webgl;
+    if (!backend || typeof backend.writePositionSnapshot !== 'function') return false;
+    const wroteBackend = backend.writePositionSnapshot(snapshot, {
+      center: options.center ?? this.options.center,
+      outputScale: options.outputScale ?? this.options.outputScale,
+    });
+    if (!wroteBackend) return false;
+    this.bumpVersion();
+    return true;
+  }
+
   async synchronizeNodePositionsToNetwork(context = {}) {
     const network = context.network ?? this._context?.network ?? null;
     if (!network) return false;

@@ -1,7 +1,17 @@
+function createDefaultPersistenceIndicator() {
+  const indicator = document.createElement('span');
+  indicator.className = 'helios-ui-dirty-indicator helios-ui-dirty-indicator--static';
+  indicator.dataset.state = 'default';
+  indicator.setAttribute('aria-hidden', 'true');
+  indicator.destroy = () => {};
+  return indicator;
+}
+
 export function createAlignedRowEl({
   title,
   hint,
   controls,
+  dirtyIndicator,
   attachTooltip,
   rowClass = null,
 }) {
@@ -21,6 +31,8 @@ export function createAlignedRowEl({
   titleEl.className = 'helios-ui-label__title';
   titleEl.textContent = title ?? '';
   titleRowEl.appendChild(titleEl);
+  const indicator = dirtyIndicator === undefined ? createDefaultPersistenceIndicator() : dirtyIndicator;
+  if (indicator) titleRowEl.appendChild(indicator);
   label.appendChild(titleRowEl);
   if (hint) attachTooltip?.(titleEl, hint);
 
