@@ -43,3 +43,21 @@ For details on how the node colors and sizes are mapped (including the colormap 
 - The Layout panel now reads a shared parameter-binding contract from the active layout instance, so each layout only shows controls it actually supports.
 - D3-force and GPU-force expose a small recent-history alpha sparkline (sampled slowly, in log scale) in the panel, and the start/stop actions are available directly from that panel.
 - Force magnitude controls such as repulsion, attraction, and gravity now use log sliders with scientific-notation inputs, and the old `Damping` label is exposed as `Velocity retention` to match the solver semantics.
+
+### Performance history
+
+Run the main-example performance history benchmark with:
+
+```bash
+npm run perf:history
+```
+
+The benchmark loads the default main example at 10k, 100k, and 1M nodes in the headed `chromium-webgpu-headed` Playwright project, requests the WebGPU renderer, samples rendering with the GPU layout running and stopped, times user-like pan/zoom/frame actions, records machine/build/date/browser/GPU metadata, and appends JSONL history to `artifacts/performance-history/helios-main-example.jsonl`.
+
+Useful overrides:
+
+```bash
+HELIOS_PERF_NODE_COUNTS=10000,100000 npm run perf:history
+HELIOS_PERF_HISTORY_FILE=/tmp/helios-perf.jsonl npm run perf:history
+HELIOS_PERF_SAMPLE_MS=10000 npm run perf:history
+```

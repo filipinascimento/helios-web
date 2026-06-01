@@ -247,6 +247,7 @@ export class HeliosPersistenceService {
       recreateRenderer: options.recreateRenderer !== false,
       keepCamera: false,
       restoreVisualizationState: false,
+      allowDuringInitialize: true,
     });
     if (options.restoreVisualizationState !== false) {
       await this.helios.importVisualizationState(payload.visualizationState, options);

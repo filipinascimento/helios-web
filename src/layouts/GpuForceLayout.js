@@ -41,6 +41,8 @@ const DEFAULT_OPTIONS = {
   rotationDamping: 0.6,
 };
 
+const DEFAULT_UMAP_OUTPUT_SCALE = 24;
+const OUTPUT_SCALE_CONTROL_MAX = 100;
 const DEFAULT_UMAP_SAMPLE_CHURN = 0.01;
 const DEFAULT_UMAP_ALPHA_DECAY = 0.0025;
 const AUTO_TUNED_OPTION_KEYS = Object.freeze([
@@ -248,6 +250,7 @@ export class GpuForceLayout extends Layout {
       center: normalizeCenter(options.center ?? DEFAULT_OPTIONS.center),
     };
     if (isUmapForceModel(normalized.forceModel)) {
+      if (options.outputScale == null) normalized.outputScale = DEFAULT_UMAP_OUTPUT_SCALE;
       if (options.kRepulsion == null) normalized.kRepulsion = 1;
       if (options.kAttraction == null) normalized.kAttraction = 1;
       if (options.kGravity == null) normalized.kGravity = 0;
@@ -368,6 +371,7 @@ export class GpuForceLayout extends Layout {
       mode: (next.mode ?? this.options.mode) === '3d' ? '3d' : '2d',
     };
     if (isUmapForceModel(this.options.forceModel) && !isUmapForceModel(prevForceModel)) {
+      if (next.outputScale == null) this.options.outputScale = DEFAULT_UMAP_OUTPUT_SCALE;
       if (next.kRepulsion == null) this.options.kRepulsion = 1;
       if (next.kAttraction == null) this.options.kAttraction = 1;
       if (next.kGravity == null) this.options.kGravity = 0;
@@ -448,7 +452,7 @@ export class GpuForceLayout extends Layout {
         ...withLogScaleBinding({
           label: 'Output scale',
           min: 0.1,
-          max: 20,
+          max: OUTPUT_SCALE_CONTROL_MAX,
         }),
         get: () => Number(this.options.outputScale ?? DEFAULT_OPTIONS.outputScale),
         set: (value) => this.setSettings({ outputScale: value }, { reheat: true }),

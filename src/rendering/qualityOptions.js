@@ -1,5 +1,6 @@
 const DEFAULT_SUPERSAMPLING_FACTOR = 2;
 const DEFAULT_SUPERSAMPLING_THRESHOLD = 2;
+export const DEFAULT_GRAPHICS_POWER_PREFERENCE = 'high-performance';
 
 function normalizePositiveNumber(value, fallback) {
   const numeric = Number(value);
@@ -67,6 +68,30 @@ export function resolveEffectiveDevicePixelRatio(baseDevicePixelRatio = getWindo
 
 export function resolveWebGLAntialiasEnabled(options = {}) {
   return options.antialias !== false;
+}
+
+function objectOption(value) {
+  return value && typeof value === 'object' ? value : {};
+}
+
+export function resolveGraphicsPowerPreference(options = {}) {
+  return options.powerPreference ?? DEFAULT_GRAPHICS_POWER_PREFERENCE;
+}
+
+export function resolveWebGLContextAttributes(options = {}) {
+  return {
+    antialias: resolveWebGLAntialiasEnabled(options),
+    premultipliedAlpha: true,
+    powerPreference: resolveGraphicsPowerPreference(options),
+    ...objectOption(options.webglContextAttributes),
+  };
+}
+
+export function resolveWebGPUAdapterOptions(options = {}) {
+  return {
+    powerPreference: resolveGraphicsPowerPreference(options),
+    ...objectOption(options.webgpuAdapterOptions),
+  };
 }
 
 export function resolveWebGPUCanvasSampleCount(options = {}) {

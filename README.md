@@ -135,12 +135,18 @@ await helios.exportFigure('figure.png', {
 // - supersampling defaults to "auto": DPR < 2 gets a 2x backing-store boost,
 //   retina-class screens stay at native DPR unless you force it on.
 // - antialias defaults to WebGL on / WebGPU off unless you opt in.
+// - WebGL/WebGPU initialization defaults to powerPreference: "high-performance";
+//   pass backend-specific option objects when an embed needs stricter control.
 // - edgeAdaptiveQuality is enabled by default and averages recent active-frame
 //   times while the camera/layout is moving; if that average gets too high it
 //   temporarily uses cheap line edges, then returns to high quality once static.
 const crispHelios = new Helios(network, {
   container: '#app',
   antialias: true,     // WebGL context AA, or 4x MSAA on the WebGPU canvas pass
+  powerPreference: 'high-performance',
+  webglContextAttributes: { preserveDrawingBuffer: false },
+  webgpuAdapterOptions: { powerPreference: 'high-performance' },
+  webgpuCanvasConfiguration: { alphaMode: 'premultiplied' },
   supersampling: 'auto', // false | true | number | 'auto'
   edgeAdaptiveQuality: {
     enabled: true,

@@ -21,6 +21,23 @@ function resolveRendererPreference() {
   return null;
 }
 
+function resolveSessionOptions() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('session') === '0') return false;
+  if (!params.has('sessionId') && params.get('session') !== '1') return undefined;
+  return {
+    id: params.get('sessionId') || undefined,
+    autosave: params.get('autosave') !== '0',
+    restore: params.get('restore') !== '0',
+    restoreNetwork: params.get('restoreNetwork') === '1',
+    maxJournalEntries: 200,
+    networkPersistence: {
+      enabled: params.get('networkPersistence') !== '0',
+      format: params.get('networkFormat') || 'xnet',
+    },
+  };
+}
+
 function resolveMode() {
   const params = new URLSearchParams(window.location.search);
   const mode = params.get('mode');
@@ -462,6 +479,10 @@ async function bootstrap() {
   const rendererPreference = resolveRendererPreference();
   if (rendererPreference) {
     heliosOptions.renderer = rendererPreference;
+  }
+  const sessionOptions = resolveSessionOptions();
+  if (sessionOptions !== undefined) {
+    heliosOptions.session = sessionOptions;
   }
 
   if (layoutType === 'none' && !usingExportedUmapDataset) {

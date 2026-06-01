@@ -48,6 +48,11 @@ test('public declaration file covers Phase 1 behavior, persistence, and camera s
   const declarations = await readFile(new URL('../src/index.d.ts', import.meta.url), 'utf8');
   for (const token of [
     'export interface HeliosOptions',
+    'powerPreference?:',
+    'webglContextAttributes?:',
+    'webgpuAdapterOptions?:',
+    'webgpuDeviceDescriptor?:',
+    'webgpuCanvasConfiguration?:',
     'export interface CameraControlsOptions',
     'export interface HeliosVisualizationStatePayload',
     'export interface HeliosSessionPayload',

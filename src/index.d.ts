@@ -910,6 +910,14 @@ export class Helios extends EventTarget {
 export interface HeliosOptions extends Record<string, unknown> {
   container?: string | HTMLElement | null;
   canvas?: HTMLCanvasElement | null;
+  renderer?: 'auto' | 'webgpu' | 'webgl';
+  antialias?: boolean | number;
+  supersampling?: number | boolean | 'auto';
+  powerPreference?: 'high-performance' | 'low-power';
+  webglContextAttributes?: WebGLContextAttributes;
+  webgpuAdapterOptions?: GPURequestAdapterOptions;
+  webgpuDeviceDescriptor?: GPUDeviceDescriptor;
+  webgpuCanvasConfiguration?: Partial<GPUCanvasConfiguration>;
   hoverStyleFromHighlight?: boolean;
   highlightConnectedEdges?: boolean;
   hoverAffectsOtherElements?: boolean;

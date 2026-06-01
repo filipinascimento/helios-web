@@ -1,6 +1,6 @@
 import { bumpCounter } from '../../utilities/counters.js';
 import { ResourceCache } from '../resources/ResourceCache.js';
-import { resolveWebGPUCanvasSampleCount } from '../qualityOptions.js';
+import { resolveWebGPUAdapterOptions, resolveWebGPUCanvasSampleCount } from '../qualityOptions.js';
 
 const PRESENT_WGSL = /* wgsl */ `
 struct VertexOut {
@@ -23,6 +23,11 @@ fn vs(@location(0) position : vec2<f32>, @location(1) uv : vec2<f32>) -> VertexO
 fn fs(input : VertexOut) -> @location(0) vec4<f32> {
   return textureSample(textureData, textureSampler, input.uv);
 }`;
+
+function objectOption(value) {
+  return value && typeof value === 'object' ? value : {};
+}
+
 export class WebGPUDevice {
   constructor(canvas, options = {}) {
     this.canvas = canvas;
@@ -49,6 +54,9 @@ export class WebGPUDevice {
     this.counters = { beginFrame: 0, presentFramebuffer: 0 };
     this.resourceCache = new ResourceCache(this.type);
     this.sampleCount = 1;
+    this.adapterOptions = null;
+    this.deviceDescriptor = null;
+    this.canvasConfiguration = null;
   }
 
   static async isSupported() {
@@ -59,7 +67,8 @@ export class WebGPUDevice {
     if (!(await WebGPUDevice.isSupported())) {
       throw new Error('WebGPU is not available in this environment');
     }
-    this.adapter = await navigator.gpu.requestAdapter();
+    this.adapterOptions = resolveWebGPUAdapterOptions(this.options);
+    this.adapter = await navigator.gpu.requestAdapter(this.adapterOptions);
     if (!this.adapter) {
       throw new Error('Unable to acquire GPU adapter');
     }
@@ -87,21 +96,35 @@ export class WebGPUDevice {
     if (adapterStorageBuffersPerStage && adapterStorageBuffersPerStage > 8) {
       requiredLimits.maxStorageBuffersPerShaderStage = Math.min(adapterStorageBuffersPerStage, 10);
     }
-    this.requestedLimits = Object.keys(requiredLimits).length ? requiredLimits : null;
-    this.device = await this.adapter.requestDevice(this.requestedLimits ? { requiredLimits } : {});
+    const descriptor = { ...objectOption(this.options.webgpuDeviceDescriptor) };
+    const requestedLimits = {
+      ...requiredLimits,
+      ...objectOption(descriptor.requiredLimits),
+    };
+    this.requestedLimits = Object.keys(requestedLimits).length ? requestedLimits : null;
+    if (this.requestedLimits) {
+      descriptor.requiredLimits = this.requestedLimits;
+    }
+    this.deviceDescriptor = descriptor;
+    this.device = await this.adapter.requestDevice(descriptor);
     this.limits = this.device.limits;
     this.maxStorageBufferBindingSize = this.device.limits?.maxStorageBufferBindingSize ?? null;
     this.context = this.canvas.getContext('webgpu');
     if (!this.context) {
       throw new Error('Unable to create WebGPU context');
     }
-    this.format = navigator.gpu.getPreferredCanvasFormat();
+    const canvasConfigOverrides = objectOption(this.options.webgpuCanvasConfiguration);
+    this.format = canvasConfigOverrides.format ?? navigator.gpu.getPreferredCanvasFormat();
     this.sampleCount = resolveWebGPUCanvasSampleCount(this.options);
-    this.context.configure({
+    this.canvasConfiguration = {
       device: this.device,
       format: this.format,
       alphaMode: 'premultiplied',
-    });
+      ...canvasConfigOverrides,
+    };
+    this.canvasConfiguration.device = this.device;
+    this.format = this.canvasConfiguration.format;
+    this.context.configure(this.canvasConfiguration);
     this.createQuadBuffer();
     this.createPresentPipeline();
   }

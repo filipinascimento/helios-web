@@ -1943,7 +1943,7 @@ export class HeliosUI {
             const blob = exporterBehavior
               ? await exporterBehavior.exportBlob()
               : await this.helios.exportFigureBlob(resolved);
-            downloadBlob(blob, normalizeFigureExportFilename(exportNameInput.value, resolved.format, lastValidBaseName));
+            downloadBlob(blob, resolved.filename);
           } catch (error) {
             // eslint-disable-next-line no-console
             console.error('Failed to export figure', error);

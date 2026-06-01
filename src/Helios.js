@@ -1696,6 +1696,17 @@ export const EVENTS = Object.freeze({
  * @param {boolean} [options.manualRendering=false] - Disable automatic scheduler
  * rendering so the host application can request frames explicitly.
  * @param {number} [options.maxFps] - Optional scheduler FPS cap.
+ * @param {'high-performance'|'low-power'} [options.powerPreference='high-performance'] -
+ * Preferred GPU class for WebGL and WebGPU initialization.
+ * @param {WebGLContextAttributes} [options.webglContextAttributes] - Extra
+ * WebGL2 context attributes merged over Helios defaults.
+ * @param {GPURequestAdapterOptions} [options.webgpuAdapterOptions] - Extra
+ * WebGPU adapter options merged over Helios defaults.
+ * @param {GPUDeviceDescriptor} [options.webgpuDeviceDescriptor] - Extra
+ * WebGPU device descriptor options. Explicit `requiredLimits` are merged with
+ * Helios' graph-oriented limit requests.
+ * @param {Partial<GPUCanvasConfiguration>} [options.webgpuCanvasConfiguration] -
+ * Extra WebGPU canvas configuration values merged over Helios defaults.
  * @param {boolean|string|number} [options.supersampling] - Canvas
  * supersampling mode or scale factor.
  * @param {string|Array<number>} [options.clearColor] - Renderer clear color.
@@ -1813,7 +1824,7 @@ export class Helios extends EventTarget {
       description: 'Scales mapped node sizes',
       defaultValue: 1,
       domain: { min: 0, max: 100 },
-      recommendedRange: { min: 0.25, max: 3.0 },
+      recommendedRange: { min: 0.0, max: 3.0 },
       step: 0.01,
     },
     nodeSizeBase: {
@@ -4186,6 +4197,11 @@ export class Helios extends EventTarget {
       projection: this.options.projection ?? 'perspective',
       suppressBrowserGestures: this.options.suppressBrowserGestures !== false,
       antialias: this.options.antialias,
+      powerPreference: this.options.powerPreference,
+      webglContextAttributes: this.options.webglContextAttributes,
+      webgpuAdapterOptions: this.options.webgpuAdapterOptions,
+      webgpuDeviceDescriptor: this.options.webgpuDeviceDescriptor,
+      webgpuCanvasConfiguration: this.options.webgpuCanvasConfiguration,
       supersampling: this.options.supersampling,
       forceSupersample: this.options.forceSupersample,
       supersamplingAutoFactor: this.options.supersamplingAutoFactor,
@@ -4994,7 +5010,9 @@ export class Helios extends EventTarget {
     if (!nextNetwork) {
       throw new Error('replaceNetwork requires a helios-network instance');
     }
-    await this.ready;
+    if (options.allowDuringInitialize !== true) {
+      await this.ready;
+    }
 
     const disposeOld = options.disposeOld !== false;
     const keepCamera = options.keepCamera !== false;
@@ -6349,6 +6367,11 @@ export class Helios extends EventTarget {
       projection: this.options.projection ?? 'perspective',
       suppressBrowserGestures: this.options.suppressBrowserGestures !== false,
       antialias: this.options.antialias,
+      powerPreference: this.options.powerPreference,
+      webglContextAttributes: this.options.webglContextAttributes,
+      webgpuAdapterOptions: this.options.webgpuAdapterOptions,
+      webgpuDeviceDescriptor: this.options.webgpuDeviceDescriptor,
+      webgpuCanvasConfiguration: this.options.webgpuCanvasConfiguration,
       supersampling: this.options.supersampling,
       forceSupersample: this.options.forceSupersample,
       supersamplingAutoFactor: this.options.supersamplingAutoFactor,
@@ -6473,7 +6496,7 @@ export class Helios extends EventTarget {
         this.renderer.render(frame, this.size);
         const renderEnd = performance.now();
         this._updateEdgeAdaptiveQualityAfterRender(
-          Number.isFinite(renderEnd - renderStart) ? renderEnd - renderStart : null,
+          this._resolveEdgeAdaptiveFrameCostMs(renderEnd - renderStart, dt),
           renderEnd,
         );
         this._labels?.update?.({ timestamp: now });
@@ -7669,6 +7692,17 @@ export class Helios extends EventTarget {
       sampleCount: samples.length,
       targetCount,
     };
+  }
+
+  _resolveEdgeAdaptiveFrameCostMs(renderMs, frameIntervalMs) {
+    const renderDuration = Number(renderMs);
+    const frameInterval = Number(frameIntervalMs);
+    const hasRenderDuration = Number.isFinite(renderDuration) && renderDuration >= 0;
+    const hasFrameInterval = Number.isFinite(frameInterval) && frameInterval >= 0;
+    if (hasRenderDuration && hasFrameInterval) return Math.max(renderDuration, frameInterval);
+    if (hasRenderDuration) return renderDuration;
+    if (hasFrameInterval) return frameInterval;
+    return null;
   }
 
   _readLayoutAlphaMin(layout = null) {
@@ -9257,26 +9291,55 @@ export class Helios extends EventTarget {
     return edgeIndices;
   }
 
-  notifyNetworkChanged({ nodes, edges } = {}) {
-    if (nodes) {
+  notifyNetworkChanged({
+    nodes,
+    edges,
+    topology = false,
+    attributes = false,
+    categories = false,
+    reason = 'network-changed',
+  } = {}) {
+    const hasNodeChange = nodes != null && nodes !== false;
+    const hasEdgeChange = edges != null && edges !== false;
+    const nodeDefaults = hasNodeChange && nodes !== true ? nodes : null;
+    const edgeDefaults = hasEdgeChange && edges !== true ? edges : null;
+    const oldNodeCount = null;
+    const oldEdgeCount = null;
+
+    if (hasNodeChange) {
       this.debug.log('helios', 'Network nodes changed', { count: nodes.length ?? nodes.size ?? nodes });
-      this.visuals.applyNodeDefaults(nodes);
+      if (nodeDefaults) this.visuals.applyNodeDefaults(nodeDefaults);
       this.visuals.seedMissingPositions(resolveSeedBoundsForLayout(this.options.layout, this.layers.size, this.options.mode));
     }
-    if (edges) {
+    if (hasEdgeChange) {
       this.debug.log('helios', 'Network edges changed', { count: edges.length ?? edges.size ?? edges });
-      this.visuals.applyEdgeDefaults(edges);
+      if (edgeDefaults) this.visuals.applyEdgeDefaults(edgeDefaults);
     }
     this.visuals.markPositionsDirty();
     this._markAutoFitDirty(false);
-    if (nodes) {
+    if (hasNodeChange || topology) {
       this._layout?.syncAutoSettingsForNetwork?.();
+    }
+    if (topology || attributes || categories) {
+      this._refreshGraphFilterNetworks?.({ force: true, throwOnError: false });
+      this._syncLayoutNetworkFromFilter?.();
     }
     this.mappersDirty = true;
     this._requestLayoutReheat('data');
     this.scheduler.requestLayout('data');
     this.scheduler.requestGeometry();
+    this.scheduler.requestRender();
     this._labels?.requestFullReselect?.('network-changed');
+    this.emit(EVENTS.NETWORK_REPLACED, {
+      oldNetwork: this.network ?? null,
+      network: this.network ?? null,
+      oldNodeCount,
+      oldEdgeCount,
+      nodeCount: this.network?.nodeCount ?? null,
+      edgeCount: this.network?.edgeCount ?? null,
+      live: true,
+      reason,
+    });
   }
 
   interactionRenderOrder(value) {

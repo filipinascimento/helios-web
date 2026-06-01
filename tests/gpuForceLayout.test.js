@@ -820,6 +820,7 @@ test('GpuForceLayout exposes shared parameter bindings and can reheat alpha', ()
   const outputScaleBinding = descriptor.bindings.find((binding) => binding.key === 'outputScale');
   assert.equal(outputScaleBinding.scale, 'log');
   assert.equal(outputScaleBinding.notation, 'scientific');
+  assert.equal(outputScaleBinding.max, 100);
 
   const rotationDampingBinding = descriptor.bindings.find((binding) => binding.key === 'rotationDamping');
   assert.equal(rotationDampingBinding.label, 'Rotation damping');
@@ -1069,6 +1070,7 @@ test('Helios.createLayout auto-enables UMAP gpu-force mode from graph metadata',
   assert.equal(layout.options.kRepulsion, 1);
   assert.equal(layout.options.kAttraction, 1);
   assert.equal(layout.options.kGravity, 0);
+  approx(layout.options.outputScale, 24);
   approx(layout.options.linkDistance, 1);
   assert.equal(layout.options.skipTuningModel, true);
   approx(layout.options.umapA, 1.7);
@@ -1450,8 +1452,10 @@ test('GpuForceLayout exposes UMAP-specific controls without altering linear defa
   assert.notEqual(descriptor.bindings.find((binding) => binding.key === 'umapB')?.type, 'display');
   assert.equal(descriptor.bindings.find((binding) => binding.key === 'umapNegativeSampleRate')?.type, 'number');
   assert.notEqual(descriptor.bindings.find((binding) => binding.key === 'umapGamma')?.type, 'display');
+  assert.equal(descriptor.bindings.find((binding) => binding.key === 'outputScale')?.max, 100);
   assert.equal(descriptor.bindings.find((binding) => binding.key === 'kRepulsion')?.label, 'Repulsion importance');
   assert.equal(descriptor.bindings.find((binding) => binding.key === 'kAttraction')?.label, 'Attraction importance');
+  assert.equal(layout.options.outputScale, 24);
   assert.equal(layout.options.alphaDecay, 0.0025);
   layout.positionDelegate._webgl = { sampleFrame: 17 };
   assert.equal(descriptor.bindings.find((binding) => binding.key === 'umapEpochCurrent')?.get?.(), 17);

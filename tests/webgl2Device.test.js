@@ -84,4 +84,41 @@ test('WebGL2Device.initialize forwards the antialias option to the WebGL context
   assert.equal(calls[0].type, 'webgl2');
   assert.equal(calls[0].options.antialias, false);
   assert.equal(calls[0].options.premultipliedAlpha, true);
+  assert.equal(calls[0].options.powerPreference, 'high-performance');
+});
+
+test('WebGL2Device.initialize forwards explicit WebGL context attributes', async () => {
+  const fakeGl = {
+    BLEND: 0x0BE2,
+    SRC_ALPHA: 0x0302,
+    ONE_MINUS_SRC_ALPHA: 0x0303,
+    DEPTH_TEST: 0x0B71,
+    LEQUAL: 0x0203,
+    enable() {},
+    blendFunc() {},
+    depthFunc() {},
+    clearDepth() {},
+  };
+  const calls = [];
+  const canvas = {
+    getContext(type, options) {
+      calls.push({ type, options });
+      return fakeGl;
+    },
+  };
+  const device = new WebGL2Device(canvas, {
+    antialias: false,
+    webglContextAttributes: {
+      antialias: true,
+      alpha: false,
+      preserveDrawingBuffer: true,
+      powerPreference: 'low-power',
+    },
+  });
+  device.setupPresentPipeline = () => {};
+  await device.initialize();
+  assert.equal(calls[0].options.antialias, true);
+  assert.equal(calls[0].options.alpha, false);
+  assert.equal(calls[0].options.preserveDrawingBuffer, true);
+  assert.equal(calls[0].options.powerPreference, 'low-power');
 });

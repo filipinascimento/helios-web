@@ -481,8 +481,15 @@ export class HeliosSessionController extends EventTarget {
     return `${this.manifestKey(id)}${SESSION_MANIFEST_PENDING_SUFFIX}`;
   }
 
+  captureOverrideSnapshot(snapshot = null) {
+    if (snapshot) return snapshot;
+    return this.helios?.serializeVisualizationState?.({
+      layoutRuntime: { includePositions: false },
+    }) ?? null;
+  }
+
   captureBaseline(snapshot = null) {
-    const state = snapshot ?? this.helios?.serializeVisualizationState?.();
+    const state = this.captureOverrideSnapshot(snapshot);
     if (!state) return null;
     this.baseline = migratePersistenceEnvelope(state, PERSISTENCE_KINDS.visualization);
     this.baselineMap = flattenVisualizationOverrides(this.baseline);
@@ -559,6 +566,7 @@ export class HeliosSessionController extends EventTarget {
         cameraMoveTimer = null;
       });
       this.unsubscribers.push(this.helios.on('network:replaced', () => {
+        if (this.suspended) return;
         this.markNetworkDirty('network-replaced');
       }));
     }
@@ -650,7 +658,7 @@ export class HeliosSessionController extends EventTarget {
 
   recordCurrentState(detail = {}) {
     if (this.isChangeSuppressed(detail)) return [];
-    const snapshot = this.helios?.serializeVisualizationState?.();
+    const snapshot = this.captureOverrideSnapshot();
     if (!snapshot) return [];
     return this.recordSnapshotChange({
       ...detail,
@@ -991,10 +999,15 @@ export class HeliosSessionController extends EventTarget {
     if (options.applyNetwork === true && this.sessionStore?.get && this.persistence?.restoreSession) {
       const stored = await this.sessionStore.get(this.sessionId);
       if (stored?.payload?.networkData?.data) {
-        await this.persistence.restoreSession(stored, { ...options, restoreOverrides: false });
+        this.suspended = true;
+        try {
+          await this.persistence.restoreSession(stored, { ...options, restoreOverrides: false });
+        } finally {
+          this.suspended = false;
+        }
       }
     }
-    const base = this.helios?.serializeVisualizationState?.();
+    const base = this.captureOverrideSnapshot();
     if (base) {
       this.captureBaseline(base);
       const restored = applyOverridesToVisualizationState(base, this.overrides);

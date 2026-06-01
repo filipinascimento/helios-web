@@ -40,6 +40,7 @@ class FakeHelios extends MockHelios {
     super();
     this.loaded = [];
     this.importedVisualization = [];
+    this.serializationOptions = [];
     this.layoutRuntimeState = {
       schema: 'helios-web.layout-runtime-state',
       version: 1,
@@ -64,6 +65,10 @@ class FakeHelios extends MockHelios {
   }
 
   serializeVisualizationState(options = {}) {
+    this.serializationOptions.push(options);
+    const layoutRuntimeState = options.layoutRuntime?.includePositions === false
+      ? { ...this.layoutRuntimeState, positions: null }
+      : this.layoutRuntimeState;
     return createPersistenceEnvelope(PERSISTENCE_KINDS.visualization, {
       preferences: options.preferences ?? { autosave: true, responsive: { compactDockSide: 'left' } },
       uiState: {
@@ -76,7 +81,7 @@ class FakeHelios extends MockHelios {
       behaviorState: this.currentBehaviorState,
       cameraState: this.cameraState,
       networkSource: { name: 'demo.xnet', format: 'xnet', nodeCount: 4, edgeCount: 2 },
-      layoutRuntimeState: this.layoutRuntimeState,
+      layoutRuntimeState,
     });
   }
 
@@ -323,6 +328,37 @@ test('session persistence stores sparse overrides and supports checkpoint/reset'
   assert.equal(service.getOverrides()['appearance.nodeStyle.sizeScale'], undefined);
   assert.equal(service.getDirtyState().controls['appearance.nodeStyle.sizeScale'], undefined);
   assert.equal(helios.currentBehaviorState.appearance, undefined);
+});
+
+test('session override tracking skips layout position snapshots', () => {
+  const helios = new FakeHelios();
+  const controller = new HeliosSessionController({
+    helios,
+    storage: createMemoryStorage(),
+    now: () => 1000,
+  });
+  controller.configure({
+    id: 'skip-layout-position-tracking',
+    restore: false,
+    autosave: false,
+  });
+
+  assert.equal(helios.serializationOptions.at(-1)?.layoutRuntime?.includePositions, false);
+  assert.equal(controller.baseline.payload.layoutRuntimeState.positions, null);
+
+  helios.currentBehaviorState = {
+    ...helios.currentBehaviorState,
+    appearance: { options: { nodeStyle: { sizeScale: 1.7 } } },
+  };
+  const entries = controller.recordCurrentState({
+    source: 'user',
+    reason: 'command',
+    behavior: 'appearance',
+  });
+
+  assert.ok(entries.length >= 1);
+  assert.equal(helios.serializationOptions.at(-1)?.layoutRuntime?.includePositions, false);
+  assert.equal(controller.getOverrides()['appearance.nodeStyle.sizeScale'], 1.7);
 });
 
 test('camera viewport is not stored or restored as a sparse override', () => {

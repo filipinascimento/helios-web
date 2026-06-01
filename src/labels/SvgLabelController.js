@@ -48,6 +48,11 @@ const DEFAULT_CONFIG = Object.freeze({
   delegateSnapshotMaxFps: 4,
 });
 
+const LARGE_GRAPH_LABEL_RANK_NODE_THRESHOLD = 100_000;
+const LARGE_GRAPH_LABEL_INTERACTION_FULL_FPS = 2;
+const LARGE_GRAPH_LABEL_VIEW_SETTLE_MS = 160;
+const LARGE_GRAPH_LABEL_PROGRESSIVE_CHUNK_SIZE = 20_000;
+
 function clamp(value, min, max) {
   const v = Number(value);
   if (!Number.isFinite(v)) return min;
@@ -141,7 +146,7 @@ function composeViewSignature(uniforms) {
   return parts.join('|');
 }
 
-function projectPoint(viewProjection, width, height, x, y, z) {
+function projectPointInto(out, viewProjection, width, height, x, y, z) {
   const cx = viewProjection[0] * x + viewProjection[4] * y + viewProjection[8] * z + viewProjection[12];
   const cy = viewProjection[1] * x + viewProjection[5] * y + viewProjection[9] * z + viewProjection[13];
   const cz = viewProjection[2] * x + viewProjection[6] * y + viewProjection[10] * z + viewProjection[14];
@@ -154,7 +159,24 @@ function projectPoint(viewProjection, width, height, x, y, z) {
   const ndcZ = cz * invW;
   const screenX = (ndcX * 0.5 + 0.5) * width;
   const screenY = (1 - (ndcY * 0.5 + 0.5)) * height;
-  return { ndcX, ndcY, ndcZ, w: cw, screenX, screenY };
+  out.ndcX = ndcX;
+  out.ndcY = ndcY;
+  out.ndcZ = ndcZ;
+  out.w = cw;
+  out.screenX = screenX;
+  out.screenY = screenY;
+  return out;
+}
+
+function readPositionInto(positions, id, out) {
+  if (!positions) return null;
+  if (typeof positions.getInto === 'function') return positions.getInto(id, out);
+  const point = positions.get?.(id);
+  if (!point) return null;
+  out[0] = point[0];
+  out[1] = point[1];
+  out[2] = point[2];
+  return out;
 }
 
 function estimateTextWidthPx(text, fontSizePx) {
@@ -240,6 +262,11 @@ export class SvgLabelController {
     this._viewSignature = '';
     this._dataSignature = '';
     this._lastFullUpdateAt = -Infinity;
+    this._viewSettleTimer = null;
+    this._lastRankedCandidateCount = 0;
+    this._progressiveRankJob = null;
+    this._progressiveRankTimer = null;
+    this._progressiveRankSerial = 0;
     this._lastVisibleSet = new Set();
     this._visibleEntries = [];
     this._pool = [];
@@ -272,6 +299,8 @@ export class SvgLabelController {
   }
 
   destroy() {
+    this._clearViewSettleTimer();
+    this._cancelProgressiveRankJob();
     this._visibleEntries.length = 0;
     this._lastVisibleSet.clear();
     this._pool.length = 0;
@@ -289,6 +318,7 @@ export class SvgLabelController {
   }
 
   requestFullReselect(reason = 'manual') {
+    this._cancelProgressiveRankJob();
     this._needsFullReselect = true;
     this._lastReason = reason;
   }
@@ -428,22 +458,81 @@ export class SvgLabelController {
     const dataSignature = this._composeDataSignature();
     const viewChanged = viewSignature !== this._viewSignature;
     const dataChanged = dataSignature !== this._dataSignature;
-    const fullIntervalMs = 1000 / Math.max(1, this._config.maxUpdateFps);
+    if (this._progressiveRankJob && (viewChanged || dataChanged || this._needsFullReselect)) {
+      this._cancelProgressiveRankJob();
+    }
+    const network = this._getRenderNetwork();
+    const useAdaptiveViewUpdates = this._shouldUseAdaptiveViewUpdates(network, viewChanged, dataChanged);
+    const fullIntervalMs = this._resolveFullUpdateIntervalMs(useAdaptiveViewUpdates);
     const canRunPeriodicFull = (now - this._lastFullUpdateAt) >= fullIntervalMs;
     const runFull = this._needsFullReselect || dataChanged || (viewChanged && canRunPeriodicFull);
 
     let changed = false;
     if (runFull) {
+      this._clearViewSettleTimer();
       changed = this._runFullUpdate(uniforms, now) || changed;
       this._lastFullUpdateAt = now;
       this._needsFullReselect = false;
     } else if (viewChanged) {
       changed = this._reprojectVisible(uniforms, now) || changed;
+      if (useAdaptiveViewUpdates) this._scheduleViewSettleFullReselect();
     }
 
     this._viewSignature = viewSignature;
     this._dataSignature = dataSignature;
     return changed;
+  }
+
+  _resolveFullUpdateIntervalMs(useAdaptiveViewUpdates = false) {
+    const maxUpdateFps = Math.max(1, this._config.maxUpdateFps);
+    const fps = useAdaptiveViewUpdates
+      ? Math.min(maxUpdateFps, LARGE_GRAPH_LABEL_INTERACTION_FULL_FPS)
+      : maxUpdateFps;
+    return 1000 / Math.max(1, fps);
+  }
+
+  _shouldUseAdaptiveViewUpdates(network, viewChanged, dataChanged) {
+    if (!viewChanged || dataChanged || this._needsFullReselect) return false;
+    if (!this._visibleEntries.length) return false;
+    if (!this._usesBaseLabels()) return false;
+    return this._isLargeGraphLabelRanking(network);
+  }
+
+  _isLargeGraphLabelRanking(network) {
+    if (this._usesSelectedOnlySelectionMode() && this._hasSparseSelectedNodeSource()) return false;
+    const nodeCount = toFinite(network?.nodeCount, 0);
+    const rankedCount = toFinite(this._lastRankedCandidateCount, 0);
+    return Math.max(nodeCount, rankedCount) >= LARGE_GRAPH_LABEL_RANK_NODE_THRESHOLD;
+  }
+
+  _scheduleViewSettleFullReselect() {
+    if (!this.helios?.scheduler?.requestRender) return;
+    this._clearViewSettleTimer();
+    this._viewSettleTimer = setTimeout(() => {
+      this._viewSettleTimer = null;
+      if (!this.group || !this.helios) return;
+      this.requestFullReselect('view-settle');
+      this.helios?.scheduler?.requestRender?.();
+    }, LARGE_GRAPH_LABEL_VIEW_SETTLE_MS);
+    this._viewSettleTimer?.unref?.();
+  }
+
+  _clearViewSettleTimer() {
+    if (this._viewSettleTimer != null) {
+      clearTimeout(this._viewSettleTimer);
+      this._viewSettleTimer = null;
+    }
+  }
+
+  _cancelProgressiveRankJob() {
+    if (this._progressiveRankTimer != null) {
+      clearTimeout(this._progressiveRankTimer);
+      this._progressiveRankTimer = null;
+    }
+    if (this._progressiveRankJob) {
+      this._progressiveRankJob.cancelled = true;
+      this._progressiveRankJob = null;
+    }
   }
 
   createSnapshot(options = {}) {
@@ -463,7 +552,7 @@ export class SvgLabelController {
       const now = Number.isFinite(options.timestamp) ? Number(options.timestamp) : performance.now();
       const network = this._getRenderNetwork();
       if (!network) return null;
-      const run = () => this._runFullUpdateUnsafe(uniforms, now, { render: false });
+      const run = () => this._runFullUpdateUnsafe(uniforms, now, { render: false, progressive: false });
       if (typeof network.withBufferAccess === 'function') {
         try {
           network.withBufferAccess(run, { nodeIndices: this._needsNodeIndicesForFullUpdate() });
@@ -532,6 +621,53 @@ export class SvgLabelController {
     return this._config.selectionMode === 'selected-only';
   }
 
+  _getSelectionSelectedNodes() {
+    const selection = this.helios?.behaviors?.get?.('selection') ?? this.helios?.behavior?.selection ?? null;
+    const selectedNodes = selection?.state?.selectedNodes ?? null;
+    if (!selectedNodes || typeof selectedNodes[Symbol.iterator] !== 'function') return null;
+    return selectedNodes;
+  }
+
+  _hasSparseSelectedNodeSource() {
+    return this._getSelectionSelectedNodes() != null;
+  }
+
+  _filterSparseNodeIdsForRenderNetwork(network, ids) {
+    if (!ids.length) return ids;
+    if (typeof network?.hasNodeIndices === 'function') {
+      const visible = this._safe(() => network.hasNodeIndices(ids), null);
+      if (Array.isArray(visible) || ArrayBuffer.isView(visible)) {
+        return ids.filter((id, index) => visible[index] === true);
+      }
+    }
+    if (typeof network?.hasNodeIndex === 'function') {
+      return ids.filter((id) => this._safe(() => network.hasNodeIndex(id), false) === true);
+    }
+    return ids;
+  }
+
+  _collectSparseSelectedNodeIds(network, pinnedNodes) {
+    const selectedNodes = this._getSelectionSelectedNodes();
+    if (!selectedNodes) return null;
+    const ids = [];
+    const seen = new Set();
+    const selectedSet = new Set();
+    const add = (raw, selected = false) => {
+      const id = Number(raw);
+      if (!Number.isInteger(id) || id < 0) return;
+      if (selected) selectedSet.add(id);
+      if (seen.has(id)) return;
+      seen.add(id);
+      ids.push(id);
+    };
+    for (const id of selectedNodes) add(id, true);
+    for (const id of pinnedNodes) add(id, false);
+    return {
+      ids: this._filterSparseNodeIdsForRenderNetwork(network, ids),
+      selectedSet,
+    };
+  }
+
   _usesHoveredNodeOverlay() {
     return this._config.hoveredNodeEnabled === true;
   }
@@ -576,7 +712,8 @@ export class SvgLabelController {
   }
 
   _needsNodeIndicesForFullUpdate() {
-    return this._usesBaseLabels() && !this._usesHoveredNodeSelectionMode();
+    if (!this._usesBaseLabels() || this._usesHoveredNodeSelectionMode()) return false;
+    return !(this._usesSelectedOnlySelectionMode() && this._hasSparseSelectedNodeSource());
   }
 
   _runHoveredNodeUpdate(uniforms, now, options = {}) {
@@ -622,7 +759,8 @@ export class SvgLabelController {
 
     const context = this.helios?._buildPositionDelegateContext?.() ?? {};
     const positions = this._resolvePositionAccessor(context, now, [hoveredNode], { allowFullSnapshot: false });
-    const point = positions?.get?.(hoveredNode) ?? null;
+    const scratchPoint = [0, 0, 0];
+    const point = readPositionInto(positions, hoveredNode, scratchPoint);
     if (!point) return null;
     const x = point[0];
     const y = point[1];
@@ -641,7 +779,7 @@ export class SvgLabelController {
       ? (1 / Math.pow(Math.max(zoom, 1e-3), semanticZoomExponent))
       : 1;
 
-    const center = projectPoint(viewProjection, width, height, x, y, z);
+    const center = projectPointInto({}, viewProjection, width, height, x, y, z);
     if (!center) return null;
     if (projectionType !== 'orthographic' && center.w <= 1e-6) return null;
     if (center.ndcZ < -1.05 || center.ndcZ > 1.05) return null;
@@ -659,7 +797,8 @@ export class SvgLabelController {
     const fullSize = Math.max(1, (nodeSizeBase + nodeSizeScale * rawSize) + outlineWidth) * semanticScale;
     const worldRadius = Math.max(0.5, fullSize * 0.5);
 
-    const edgePoint = projectPoint(
+    const edgePoint = projectPointInto(
+      {},
       viewProjection,
       width,
       height,
@@ -711,8 +850,13 @@ export class SvgLabelController {
           source: this._config.source,
         });
       } else {
-        const nodeIndices = this._safe(() => network.nodeIndices, null);
-        if (nodeIndices?.length) {
+        const nodeIndices = this._needsNodeIndicesForFullUpdate()
+          ? this._safe(() => network.nodeIndices, null)
+          : null;
+        if (nodeIndices?.length || (this._usesSelectedOnlySelectionMode() && this._hasSparseSelectedNodeSource())) {
+          if (options.progressive !== false && this._maybeStartProgressiveRankJob(network, uniforms, now, nodeIndices)) {
+            return false;
+          }
           nextVisible = this._collectRankedEntriesUnsafe(network, uniforms, now, nodeIndices);
         }
       }
@@ -743,6 +887,285 @@ export class SvgLabelController {
     return this._delegateSnapshotPending === true || this._sparsePositionPending === true;
   }
 
+  _maybeStartProgressiveRankJob(network, uniforms, now, nodeIndices) {
+    if (!this._shouldUseProgressiveRankJob(network, nodeIndices)) return false;
+    const count = Number(nodeIndices?.length ?? 0);
+    const viewProjection = uniforms?.viewProjection ?? null;
+    if (!viewProjection || count <= 0) return false;
+
+    this._cancelProgressiveRankJob();
+    const width = Math.max(1, Math.floor(uniforms.viewport?.width ?? this.helios?.size?.width ?? 1));
+    const height = Math.max(1, Math.floor(uniforms.viewport?.height ?? this.helios?.size?.height ?? 1));
+    const cameraMode = uniforms.mode ?? '2d';
+    const zoom = toFinite(this.helios?.renderer?.camera?.zoom, 1);
+    const semanticZoomExponent = toFinite(this.helios?.semanticZoomExponent?.(), 0);
+    const serial = this._progressiveRankSerial + 1;
+    this._progressiveRankSerial = serial;
+    this._lastRankedCandidateCount = count;
+    this._progressiveRankJob = {
+      serial,
+      cancelled: false,
+      cursor: 0,
+      count,
+      viewSignature: composeViewSignature(uniforms),
+      dataSignature: this._composeDataSignature(),
+      viewProjection: Float32Array.from(viewProjection),
+      width,
+      height,
+      cameraMode,
+      projectionType: uniforms.projectionType ?? 'perspective',
+      right: Array.from(uniforms.right ?? [1, 0, 0]),
+      semanticScale: (cameraMode === '2d' && semanticZoomExponent > 0)
+        ? (1 / Math.pow(Math.max(zoom, 1e-3), semanticZoomExponent))
+        : 1,
+      nodeSizeBase: toFinite(this.helios?.nodeSizeBase?.(), 0),
+      nodeSizeScale: toFinite(this.helios?.nodeSizeScale?.(), 1),
+      nodeOutlineBase: toFinite(this.helios?.nodeOutlineWidthBase?.(), 0),
+      nodeOutlineScale: toFinite(this.helios?.nodeOutlineWidthScale?.(), 0),
+      selectedMask: toFinite(this.helios?.constructor?.STATES?.SELECTED, 1 << 1) >>> 0,
+      hoveredNode: this._hoveredNode,
+      pinnedNodes: new Set(this._config.pinnedNodes),
+      prevVisible: new Set(this._lastVisibleSet),
+      selectedBoost: this._config.selectedBoost,
+      hoveredBoost: this._config.hoveredBoost,
+      keepBoost: this._config.keepBoost,
+      minRadiusPx: Math.max(0, this._config.minScreenRadiusPx),
+      maxVisible: this._config.maxVisible,
+      heapCap: Math.max(this._config.maxVisible * 6, this._config.maxVisible + 24),
+      heap: [],
+      mustInclude: [],
+      source: this._config.source,
+      fontSizePx: 12 * this._config.fontSizeScale,
+      collisionCellPx: Math.max(4, this._config.collisionCellPx),
+      startedAt: now,
+    };
+    this._scheduleProgressiveRankStep(this._progressiveRankJob);
+    return true;
+  }
+
+  _shouldUseProgressiveRankJob(network, nodeIndices) {
+    if (!network || !nodeIndices?.length) return false;
+    if (!this._usesBaseLabels() || this._usesHoveredNodeSelectionMode()) return false;
+    if (this._usesSelectedOnlySelectionMode()) return false;
+    const source = this.helios?.positions?.() ?? { source: 'network', delegate: null };
+    if (source.source === 'delegate') return false;
+    return nodeIndices.length >= LARGE_GRAPH_LABEL_RANK_NODE_THRESHOLD;
+  }
+
+  _scheduleProgressiveRankStep(job) {
+    if (!job || job.cancelled || this._progressiveRankJob !== job) return;
+    this._progressiveRankTimer = setTimeout(() => {
+      this._progressiveRankTimer = null;
+      this._runProgressiveRankStep(job);
+    }, 0);
+    this._progressiveRankTimer?.unref?.();
+  }
+
+  _runProgressiveRankStep(job) {
+    if (!this._isProgressiveRankJobCurrent(job)) return;
+    const network = this._getRenderNetwork();
+    if (!network) {
+      this._cancelProgressiveRankJob();
+      return;
+    }
+    const currentDataSignature = this._composeDataSignature();
+    const currentUniforms = this.helios?.renderer?.camera?.getUniforms?.() ?? null;
+    const currentViewSignature = currentUniforms ? composeViewSignature(currentUniforms) : job.viewSignature;
+    if (currentDataSignature !== job.dataSignature || currentViewSignature !== job.viewSignature) {
+      this._cancelProgressiveRankJob();
+      this.requestFullReselect('progressive-rank-stale');
+      this.helios?.scheduler?.requestRender?.();
+      return;
+    }
+
+    const run = () => {
+      const nodeIndices = this._safe(() => network.nodeIndices, null);
+      if (!nodeIndices?.length || nodeIndices.length !== job.count) {
+        job.cancelled = true;
+        return;
+      }
+      const context = this.helios?._buildPositionDelegateContext?.() ?? {};
+      const positions = this._resolvePositionAccessor(context, performance.now(), null, { allowFullSnapshot: true });
+      if (!positions) {
+        job.cancelled = true;
+        return;
+      }
+      const nodeSizes = this._safe(() => network.getNodeAttributeBuffer(NODE_SIZE_ATTRIBUTE)?.view, null);
+      const nodeOutlines = this._safe(() => network.getNodeAttributeBuffer(NODE_OUTLINE_WIDTH_ATTRIBUTE)?.view, null);
+      const nodeStates = this._safe(() => network.getNodeAttributeBuffer(NODE_STATE_ATTRIBUTE)?.view, null);
+      const start = job.cursor;
+      const end = Math.min(job.count, start + LARGE_GRAPH_LABEL_PROGRESSIVE_CHUNK_SIZE);
+      this._processProgressiveRankRange(job, nodeIndices, positions, nodeSizes, nodeOutlines, nodeStates, start, end);
+      job.cursor = end;
+    };
+
+    if (typeof network.withBufferAccess === 'function') {
+      try {
+        network.withBufferAccess(run, { nodeIndices: true });
+      } catch {
+        run();
+      }
+    } else {
+      run();
+    }
+
+    if (this._progressiveRankJob !== job || job.serial !== this._progressiveRankSerial) return;
+    if (job.cancelled) {
+      this._cancelProgressiveRankJob();
+      this.requestFullReselect('progressive-rank-cancelled');
+      this.helios?.scheduler?.requestRender?.();
+      return;
+    }
+    if (job.cursor < job.count) {
+      this._scheduleProgressiveRankStep(job);
+      return;
+    }
+    this._finishProgressiveRankJob(job);
+  }
+
+  _isProgressiveRankJobCurrent(job) {
+    return !!job && !job.cancelled && this._progressiveRankJob === job && job.serial === this._progressiveRankSerial;
+  }
+
+  _processProgressiveRankRange(job, nodeIndices, positions, nodeSizes, nodeOutlines, nodeStates, start, end) {
+    const scratchPoint = [0, 0, 0];
+    const scratchCenter = {};
+    const scratchOffset = {};
+    const right = job.right;
+    for (let i = start; i < end; i += 1) {
+      const id = Number(nodeIndices[i]);
+      if (!Number.isInteger(id) || id < 0) continue;
+
+      const selected = maskHasSelected(nodeStates, id, job.selectedMask);
+      const pinned = job.pinnedNodes.has(id);
+      const point = readPositionInto(positions, id, scratchPoint);
+      if (!point) continue;
+      const x = point[0];
+      const y = point[1];
+      const z = point[2];
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+
+      const center = projectPointInto(scratchCenter, job.viewProjection, job.width, job.height, x, y, z);
+      if (!center) continue;
+      if (job.projectionType !== 'orthographic' && center.w <= 1e-6) continue;
+      if (center.ndcZ < -1.05 || center.ndcZ > 1.05) continue;
+      if (center.ndcX < -1.2 || center.ndcX > 1.2 || center.ndcY < -1.2 || center.ndcY > 1.2) continue;
+
+      const rawSize = toFinite(nodeSizes?.[id], DEFAULT_NODE_SIZE);
+      const rawOutline = toFinite(nodeOutlines?.[id], DEFAULT_NODE_OUTLINE_WIDTH);
+      const outlineWidth = Math.max(0, job.nodeOutlineBase + job.nodeOutlineScale * rawOutline);
+      const fullSize = Math.max(1, (job.nodeSizeBase + job.nodeSizeScale * rawSize) + outlineWidth) * job.semanticScale;
+      const worldRadius = Math.max(0.5, fullSize * 0.5);
+      const offset = projectPointInto(
+        scratchOffset,
+        job.viewProjection,
+        job.width,
+        job.height,
+        x + right[0] * worldRadius,
+        y + right[1] * worldRadius,
+        z + right[2] * worldRadius,
+      );
+      if (!offset) continue;
+      const radiusPx = Math.max(1, Math.hypot(offset.screenX - center.screenX, offset.screenY - center.screenY));
+      const hovered = job.hoveredNode === id;
+      if (!selected && !pinned && !hovered && radiusPx < job.minRadiusPx) continue;
+
+      let score = radiusPx * radiusPx;
+      if (selected) score *= job.selectedBoost;
+      if (hovered) score *= job.hoveredBoost;
+      if (job.prevVisible.has(id)) score *= job.keepBoost;
+      score = Math.round(score * 1000) / 1000;
+
+      const entry = {
+        id,
+        score,
+        x: center.screenX,
+        y: center.screenY,
+        radiusPx,
+        worldRadius,
+        text: null,
+        selected,
+        hovered,
+      };
+      if (selected || pinned || hovered) {
+        job.mustInclude.push(entry);
+        continue;
+      }
+      if (job.heap.length < job.heapCap) {
+        pushMinHeap(job.heap, entry);
+      } else if (
+        score > job.heap[0].score
+        || (score === job.heap[0].score && id < job.heap[0].id)
+      ) {
+        replaceHeapRoot(job.heap, entry);
+      }
+    }
+  }
+
+  _finishProgressiveRankJob(job) {
+    if (!this._isProgressiveRankJobCurrent(job)) return;
+    const network = this._getRenderNetwork();
+    if (!network) {
+      this._cancelProgressiveRankJob();
+      return;
+    }
+    const currentUniforms = this.helios?.renderer?.camera?.getUniforms?.() ?? null;
+    const currentViewSignature = currentUniforms ? composeViewSignature(currentUniforms) : job.viewSignature;
+    if (this._composeDataSignature() !== job.dataSignature || currentViewSignature !== job.viewSignature) {
+      this._cancelProgressiveRankJob();
+      this.requestFullReselect('progressive-rank-stale');
+      this.helios?.scheduler?.requestRender?.();
+      return;
+    }
+
+    job.mustInclude.sort((a, b) => (b.score - a.score) || (a.id - b.id));
+    job.heap.sort((a, b) => (b.score - a.score) || (a.id - b.id));
+    const ordered = job.mustInclude.concat(job.heap);
+    const sourceAccessors = this._buildLabelSourceAccessors(network, job.source);
+    const nextVisible = [];
+    const occupied = this._scratchCollision;
+    occupied.clear();
+
+    for (let i = 0; i < ordered.length && nextVisible.length < job.maxVisible; i += 1) {
+      const entry = ordered[i];
+      const text = this._resolveLabelText(sourceAccessors, entry.id);
+      if (!text) continue;
+      const formatted = this._formatLabelText(text, job.fontSizePx);
+      if (!formatted) continue;
+      const x = entry.x;
+      const y = this._computeLabelScreenY(entry.y, entry.radiusPx);
+      const labelW = formatted.widthPx;
+      const labelH = formatted.heightPx;
+      if (x + labelW * 0.5 < 0 || x - labelW * 0.5 > job.width || y + labelH * 0.5 < 0 || y - labelH * 0.5 > job.height) {
+        continue;
+      }
+      if (!entry.selected && !job.pinnedNodes.has(entry.id) && !entry.hovered) {
+        if (this._collides(occupied, x, y, labelW, labelH, job.collisionCellPx)) continue;
+      }
+      this._occupy(occupied, x, y, labelW, labelH, job.collisionCellPx);
+      nextVisible.push({
+        id: entry.id,
+        text: formatted.text,
+        lines: formatted.lines,
+        x,
+        y,
+        worldRadius: entry.worldRadius,
+        score: entry.score,
+      });
+    }
+
+    this._progressiveRankJob = null;
+    this._visibleEntries = nextVisible;
+    this._lastVisibleSet = new Set(nextVisible.map((entry) => entry.id));
+    this._lastFullUpdateAt = performance.now();
+    this._needsFullReselect = false;
+    if (nextVisible.length) {
+      this._renderVisible();
+    } else {
+      this._hideAll();
+    }
+  }
+
   _collectRankedEntriesUnsafe(network, uniforms, now, nodeIndices) {
     const context = this.helios?._buildPositionDelegateContext?.() ?? {};
     const viewProjection = uniforms.viewProjection;
@@ -767,18 +1190,27 @@ export class SvgLabelController {
     const prevVisible = this._lastVisibleSet;
     const selectedOnly = this._usesSelectedOnlySelectionMode();
     const selectedOnlySpaceAware = selectedOnly && this._config.selectedOnlySpaceAware === true;
+    const sparseSelectedOnly = selectedOnly && this._hasSparseSelectedNodeSource();
 
     const nodeSizes = this._safe(() => network.getNodeAttributeBuffer(NODE_SIZE_ATTRIBUTE)?.view, null);
     const nodeOutlines = this._safe(() => network.getNodeAttributeBuffer(NODE_OUTLINE_WIDTH_ATTRIBUTE)?.view, null);
-    const nodeStates = this._safe(() => network.getNodeAttributeBuffer(NODE_STATE_ATTRIBUTE)?.view, null);
+    const nodeStates = sparseSelectedOnly ? null : this._safe(() => network.getNodeAttributeBuffer(NODE_STATE_ATTRIBUTE)?.view, null);
     let iterationNodeIndices = nodeIndices;
     let positions = null;
+    let sparseSelectedSet = null;
     if (selectedOnly) {
+      const sparseSelected = this._collectSparseSelectedNodeIds(network, pinnedNodes);
       const selectedIds = [];
-      for (let i = 0; i < nodeIndices.length; i += 1) {
-        const id = Number(nodeIndices[i]);
-        if (!Number.isInteger(id) || id < 0) continue;
-        if (maskHasSelected(nodeStates, id, selectedMask) || pinnedNodes.has(id)) selectedIds.push(id);
+      if (sparseSelected) {
+        selectedIds.push(...sparseSelected.ids);
+        sparseSelectedSet = sparseSelected.selectedSet;
+      } else {
+        if (!nodeIndices?.length) return [];
+        for (let i = 0; i < nodeIndices.length; i += 1) {
+          const id = Number(nodeIndices[i]);
+          if (!Number.isInteger(id) || id < 0) continue;
+          if (maskHasSelected(nodeStates, id, selectedMask) || pinnedNodes.has(id)) selectedIds.push(id);
+        }
       }
       if (!selectedIds.length) return [];
       iterationNodeIndices = selectedIds;
@@ -786,6 +1218,7 @@ export class SvgLabelController {
     } else {
       positions = this._resolvePositionAccessor(context, now, null, { allowFullSnapshot: true });
     }
+    this._lastRankedCandidateCount = Number(iterationNodeIndices?.length ?? 0);
     if (!positions) return [];
 
     const fontSizePx = 12 * this._config.fontSizeScale;
@@ -796,23 +1229,26 @@ export class SvgLabelController {
     const sourceAccessors = this._buildLabelSourceAccessors(network, this._config.source);
     const collisionCellPx = Math.max(4, this._config.collisionCellPx);
     const minRadiusPx = Math.max(0, this._config.minScreenRadiusPx);
+    const scratchPoint = [0, 0, 0];
+    const scratchCenter = {};
+    const scratchOffset = {};
 
     for (let i = 0; i < iterationNodeIndices.length; i += 1) {
       const id = Number(iterationNodeIndices[i]);
       if (!Number.isInteger(id) || id < 0) continue;
 
-      const selected = maskHasSelected(nodeStates, id, selectedMask);
+      const selected = sparseSelectedSet ? sparseSelectedSet.has(id) : maskHasSelected(nodeStates, id, selectedMask);
       const pinned = pinnedNodes.has(id);
       if (selectedOnly && !selected && !pinned) continue;
 
-      const point = positions.get(id);
+      const point = readPositionInto(positions, id, scratchPoint);
       if (!point) continue;
       const x = point[0];
       const y = point[1];
       const z = point[2];
       if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
 
-      const center = projectPoint(viewProjection, width, height, x, y, z);
+      const center = projectPointInto(scratchCenter, viewProjection, width, height, x, y, z);
       if (!center) continue;
       if (projectionType !== 'orthographic' && center.w <= 1e-6) continue;
       if (center.ndcZ < -1.05 || center.ndcZ > 1.05) continue;
@@ -824,7 +1260,8 @@ export class SvgLabelController {
       const fullSize = Math.max(1, (nodeSizeBase + nodeSizeScale * rawSize) + outlineWidth) * semanticScale;
       const worldRadius = Math.max(0.5, fullSize * 0.5);
 
-      const offset = projectPoint(
+      const offset = projectPointInto(
+        scratchOffset,
         viewProjection,
         width,
         height,
@@ -962,20 +1399,24 @@ export class SvgLabelController {
     const projectionType = uniforms.projectionType ?? 'perspective';
 
     const next = [];
+    const scratchPoint = [0, 0, 0];
+    const scratchCenter = {};
+    const scratchOffset = {};
     for (let i = 0; i < this._visibleEntries.length; i += 1) {
       const entry = this._visibleEntries[i];
       const id = entry.id;
-      const point = positions.get(id);
+      const point = readPositionInto(positions, id, scratchPoint);
       if (!point) continue;
       const x = point[0];
       const y = point[1];
       const z = point[2];
       if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
-      const center = projectPoint(viewProjection, width, height, x, y, z);
+      const center = projectPointInto(scratchCenter, viewProjection, width, height, x, y, z);
       if (!center) continue;
       if (projectionType !== 'orthographic' && center.w <= 1e-6) continue;
       if (center.ndcZ < -1.05 || center.ndcZ > 1.05) continue;
-      const offset = projectPoint(
+      const offset = projectPointInto(
+        scratchOffset,
         viewProjection,
         width,
         height,
@@ -1035,10 +1476,16 @@ export class SvgLabelController {
       if (!view) return null;
       return {
         source: 'network',
-        get: (id) => {
+        getInto: (id, out) => {
           const offset = id * 3;
           if (offset + 2 >= view.length) return null;
-          return [view[offset], view[offset + 1], view[offset + 2]];
+          out[0] = view[offset];
+          out[1] = view[offset + 1];
+          out[2] = view[offset + 2];
+          return out;
+        },
+        get(id) {
+          return this.getInto(id, [0, 0, 0]);
         },
       };
     }
@@ -1054,10 +1501,16 @@ export class SvgLabelController {
     if (view && Number.isFinite(view.length) && view.length > 0) {
       return {
         source: 'delegate-view',
-        get: (id) => {
+        getInto: (id, out) => {
           const offset = id * 3;
           if (offset + 2 >= view.length) return null;
-          return [view[offset], view[offset + 1], view[offset + 2]];
+          out[0] = view[offset];
+          out[1] = view[offset + 1];
+          out[2] = view[offset + 2];
+          return out;
+        },
+        get(id) {
+          return this.getInto(id, [0, 0, 0]);
         },
       };
     }
@@ -1073,12 +1526,18 @@ export class SvgLabelController {
         const offsets = snapshot.offsets;
         return {
           source: 'delegate-sparse',
-          get: (id) => {
+          getInto: (id, out) => {
             const packedIndex = offsets.get(id);
             if (packedIndex == null) return null;
             const offset = packedIndex * 3;
             if (offset + 2 >= positions.length) return null;
-            return [positions[offset], positions[offset + 1], positions[offset + 2]];
+            out[0] = positions[offset];
+            out[1] = positions[offset + 1];
+            out[2] = positions[offset + 2];
+            return out;
+          },
+          get(id) {
+            return this.getInto(id, [0, 0, 0]);
           },
         };
       }
@@ -1091,10 +1550,16 @@ export class SvgLabelController {
       if (!fullView) return null;
       return {
         source: resolved.source,
-        get: (id) => {
+        getInto: (id, out) => {
           const offset = id * 3;
           if (offset + 2 >= fullView.length) return null;
-          return [fullView[offset], fullView[offset + 1], fullView[offset + 2]];
+          out[0] = fullView[offset];
+          out[1] = fullView[offset + 1];
+          out[2] = fullView[offset + 2];
+          return out;
+        },
+        get(id) {
+          return this.getInto(id, [0, 0, 0]);
         },
       };
     }

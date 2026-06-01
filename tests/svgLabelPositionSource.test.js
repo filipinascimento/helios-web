@@ -3,6 +3,12 @@ import assert from 'node:assert/strict';
 import { SvgLabelController } from '../src/labels/SvgLabelController.js';
 import { PositionDelegate } from '../src/delegates/PositionDelegate.js';
 
+async function waitForProgressiveLabels(controller, limit = 30) {
+  for (let i = 0; i < limit && controller._progressiveRankJob; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
 test('SvgLabelController resolves network position source when delegation is inactive', () => {
   const view = new Float32Array([0, 1, 0, 2, 3, 0]);
   const helios = {
@@ -16,6 +22,24 @@ test('SvgLabelController resolves network position source when delegation is ina
   const resolved = controller._resolvePositionView({}, performance.now());
   assert.equal(resolved.source, 'network');
   assert.equal(resolved.view, view);
+});
+
+test('SvgLabelController position accessor can reuse caller storage', () => {
+  const view = new Float32Array([0, 1, 0, 2, 3, 4]);
+  const helios = {
+    network: {
+      getNodeAttributeBuffer: () => ({ view }),
+    },
+    positions: () => ({ source: 'network', delegate: null }),
+  };
+  const controller = new SvgLabelController(helios, {});
+
+  const accessor = controller._resolvePositionAccessor({}, performance.now());
+  const out = [0, 0, 0];
+  const returned = accessor.getInto(1, out);
+
+  assert.equal(returned, out);
+  assert.deepEqual(out, [2, 3, 4]);
 });
 
 test('SvgLabelController prefers delegate CPU view when available', () => {
@@ -115,6 +139,278 @@ test('SvgLabelController full selection uses the filtered render network node se
 
   assert.equal(changed, true);
   assert.deepEqual(controller._visibleEntries.map((entry) => entry.id), [1]);
+});
+
+test('SvgLabelController selected-only mode uses sparse selection behavior ids', () => {
+  const positions = new Float32Array([
+    -0.8, -0.8, 0,
+    -0.3, -0.3, 0,
+    0.2, 0.2, 0,
+    0.3, -0.3, 0,
+  ]);
+  let requestedNodeIndices = false;
+  let requestedNodeState = false;
+  const network = {
+    get nodeIndices() {
+      throw new Error('selected-only sparse selection should not iterate nodeIndices');
+    },
+    withBufferAccess: (fn, options = {}) => {
+      requestedNodeIndices = requestedNodeIndices || options.nodeIndices === true;
+      return fn();
+    },
+    hasNodeIndices: (ids) => Array.from(ids, (id) => id !== 2),
+    getNodeAttributeBuffer: (name) => {
+      if (name === '_helios_visuals_position') return { view: positions };
+      if (name === '_helios_visuals_state') {
+        requestedNodeState = true;
+        throw new Error('selected-only sparse selection should not scan node state');
+      }
+      return null;
+    },
+  };
+  const helios = {
+    network,
+    _getRenderNetwork: () => network,
+    positions: () => ({ source: 'network', delegate: null }),
+    size: { width: 100, height: 100 },
+    renderer: { camera: { zoom: 1 } },
+    behaviors: {
+      get: (id) => (id === 'selection'
+        ? { state: { selectedNodes: new Set([1, 2, 3]) } }
+        : null),
+    },
+    nodeSizeBase: () => 0,
+    nodeSizeScale: () => 0,
+    nodeOutlineWidthBase: () => 0,
+    nodeOutlineWidthScale: () => 0,
+    semanticZoomExponent: () => 0,
+    _buildPositionDelegateContext: () => ({ network }),
+  };
+  const controller = new SvgLabelController(helios, {});
+  controller.setConfig({
+    enabled: true,
+    selectionMode: 'selected-only',
+    source: '$id',
+    maxVisible: 8,
+  });
+
+  const changed = controller._runFullUpdate({
+    viewProjection: new Float32Array([
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, 1, 0,
+      0, 0, 0, 1,
+    ]),
+    viewport: { width: 100, height: 100 },
+    mode: '2d',
+    projectionType: 'orthographic',
+    right: [1, 0, 0],
+  }, performance.now());
+
+  assert.equal(changed, true);
+  assert.equal(requestedNodeIndices, false);
+  assert.equal(requestedNodeState, false);
+  assert.deepEqual(controller._visibleEntries.map((entry) => entry.id), [1, 3]);
+});
+
+test('SvgLabelController throttles full ranked reselects while large graph view changes', () => {
+  const network = {
+    nodeCount: 200000,
+    getTopologyVersions: () => ({ node: 1, edge: 1 }),
+    getNodeAttributeVersion: () => 0,
+  };
+  const makeUniforms = (panX) => ({
+    viewProjection: new Float32Array([
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, 1, 0,
+      panX, 0, 0, 1,
+    ]),
+    viewport: { width: 100, height: 100 },
+    mode: '2d',
+    projectionType: 'orthographic',
+    right: [1, 0, 0],
+  });
+  let uniforms = makeUniforms(0);
+  let fullUpdates = 0;
+  let reprojects = 0;
+  let requestedRender = 0;
+  const helios = {
+    network,
+    _getRenderNetwork: () => network,
+    positions: () => ({ source: 'network', delegate: null }),
+    renderer: {
+      camera: {
+        getUniforms: () => uniforms,
+      },
+    },
+    scheduler: {
+      requestRender() {
+        requestedRender += 1;
+      },
+    },
+  };
+  const controller = new SvgLabelController(helios, {});
+  controller.setConfig({ enabled: true, source: '$id', maxVisible: 8, maxUpdateFps: 20 });
+  controller.group = { remove() {} };
+  controller._runFullUpdate = () => {
+    fullUpdates += 1;
+    controller._visibleEntries = [{ id: 1, text: '1', lines: ['1'], x: 50, y: 50, worldRadius: 1, score: 1 }];
+    controller._lastVisibleSet = new Set([1]);
+    return true;
+  };
+  controller._reprojectVisible = () => {
+    reprojects += 1;
+    return true;
+  };
+
+  assert.equal(controller.update({ timestamp: 0 }), true);
+  assert.equal(fullUpdates, 1);
+
+  uniforms = makeUniforms(0.01);
+  assert.equal(controller.update({ timestamp: 60 }), true);
+  assert.equal(fullUpdates, 1);
+  assert.equal(reprojects, 1);
+  assert.ok(controller._viewSettleTimer);
+
+  uniforms = makeUniforms(0.02);
+  assert.equal(controller.update({ timestamp: 520 }), true);
+  assert.equal(fullUpdates, 2);
+  assert.equal(reprojects, 1);
+  assert.equal(controller._viewSettleTimer, null);
+  assert.equal(requestedRender, 0);
+
+  controller.destroy();
+});
+
+test('SvgLabelController progressively ranks huge graphs in cancellable chunks', async () => {
+  const count = 100000;
+  const positions = new Float32Array(count * 3);
+  for (let i = 0; i < count; i += 1) {
+    positions[i * 3] = 2;
+    positions[i * 3 + 1] = 2;
+  }
+  positions[(count - 1) * 3] = 0;
+  positions[(count - 1) * 3 + 1] = 0;
+  const nodeIndices = new Uint32Array(count);
+  for (let i = 0; i < count; i += 1) nodeIndices[i] = i;
+  let bufferAccessCalls = 0;
+  const network = {
+    nodeCount: count,
+    nodeIndices,
+    withBufferAccess: (fn) => {
+      bufferAccessCalls += 1;
+      return fn();
+    },
+    getTopologyVersions: () => ({ node: 1, edge: 1 }),
+    getNodeAttributeVersion: () => 0,
+    getNodeAttributeBuffer: (name) => {
+      if (name === '_helios_visuals_position') return { view: positions };
+      return null;
+    },
+  };
+  const uniforms = {
+    viewProjection: new Float32Array([
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, 1, 0,
+      0, 0, 0, 1,
+    ]),
+    viewport: { width: 100, height: 100 },
+    mode: '2d',
+    projectionType: 'orthographic',
+    right: [1, 0, 0],
+  };
+  const helios = {
+    network,
+    _getRenderNetwork: () => network,
+    positions: () => ({ source: 'network', delegate: null }),
+    renderer: {
+      camera: {
+        zoom: 1,
+        getUniforms: () => uniforms,
+      },
+    },
+    nodeSizeBase: () => 0,
+    nodeSizeScale: () => 0,
+    nodeOutlineWidthBase: () => 0,
+    nodeOutlineWidthScale: () => 0,
+    semanticZoomExponent: () => 0,
+    _buildPositionDelegateContext: () => ({ network }),
+  };
+  const controller = new SvgLabelController(helios, {});
+  controller.setConfig({ enabled: true, source: '$id', maxVisible: 4 });
+
+  assert.equal(controller._runFullUpdate(uniforms, 0), false);
+  assert.ok(controller._progressiveRankJob);
+  assert.deepEqual(controller._visibleEntries, []);
+
+  await waitForProgressiveLabels(controller);
+
+  assert.equal(controller._progressiveRankJob, null);
+  assert.ok(bufferAccessCalls > 2);
+  assert.deepEqual(controller._visibleEntries.map((entry) => entry.id), [count - 1]);
+});
+
+test('SvgLabelController cancels progressive ranking when the view changes', async () => {
+  const count = 100000;
+  const positions = new Float32Array(count * 3);
+  const nodeIndices = new Uint32Array(count);
+  for (let i = 0; i < count; i += 1) nodeIndices[i] = i;
+  const network = {
+    nodeCount: count,
+    nodeIndices,
+    withBufferAccess: (fn) => fn(),
+    getTopologyVersions: () => ({ node: 1, edge: 1 }),
+    getNodeAttributeVersion: () => 0,
+    getNodeAttributeBuffer: (name) => {
+      if (name === '_helios_visuals_position') return { view: positions };
+      return null;
+    },
+  };
+  const makeUniforms = (panX) => ({
+    viewProjection: new Float32Array([
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, 1, 0,
+      panX, 0, 0, 1,
+    ]),
+    viewport: { width: 100, height: 100 },
+    mode: '2d',
+    projectionType: 'orthographic',
+    right: [1, 0, 0],
+  });
+  let uniforms = makeUniforms(0);
+  const helios = {
+    network,
+    _getRenderNetwork: () => network,
+    positions: () => ({ source: 'network', delegate: null }),
+    renderer: {
+      camera: {
+        zoom: 1,
+        getUniforms: () => uniforms,
+      },
+    },
+    scheduler: { requestRender() {} },
+    nodeSizeBase: () => 0,
+    nodeSizeScale: () => 0,
+    nodeOutlineWidthBase: () => 0,
+    nodeOutlineWidthScale: () => 0,
+    semanticZoomExponent: () => 0,
+    _buildPositionDelegateContext: () => ({ network }),
+  };
+  const controller = new SvgLabelController(helios, {});
+  controller.setConfig({ enabled: true, source: '$id', maxVisible: 4 });
+
+  assert.equal(controller._runFullUpdate(uniforms, 0), false);
+  assert.ok(controller._progressiveRankJob);
+  uniforms = makeUniforms(0.1);
+
+  await waitForProgressiveLabels(controller, 5);
+
+  assert.equal(controller._progressiveRankJob, null);
+  assert.equal(controller._needsFullReselect, true);
+  assert.deepEqual(controller._visibleEntries, []);
 });
 
 test('SvgLabelController hovered-node selection mode projects only the hovered node', () => {
