@@ -1,17 +1,20 @@
 # Basic Example
 
-This example mirrors the snippet in the main README and exercises the mapper +
-visuals flow that feeds indirect rendering directly from `helios-network` sparse/indexed buffers:
+This example mirrors the snippet in the main README and keeps the app setup
+minimal:
 
 1. Creates a `helios-network` instance.
 2. Defines float attributes on nodes and edges.
 3. Mutates buffers directly to assign random values.
 4. Boots a `Helios` renderer with the GPU force layout.
-5. Maps the attributes to node and edge colors via `Mapper` descriptors.
+5. Boots the standard Helios UI panels.
+6. Opts into browser persistence for the example session.
+7. Enables network file drag/drop on the visualization surface.
 
 The source lives in [`docs/examples/basic/main.js`](./main.js). Start the Vite dev server and visit `http://localhost:5173` to see it in action.
 
-For details on how the node colors and sizes are mapped (including the colormap used in this example), see [`docs/MAPPERS.md`](../MAPPERS.md).
+Mapper, appearance, and edge defaults come from Helios internals rather than
+example-specific setup.
 
 ### Layout controls
 
@@ -31,6 +34,27 @@ For details on how the node colors and sizes are mapped (including the colormap 
   - Delegate positions are automatic for GPU-force (no manual position-source toggle).
 - In DevTools, use `await window.__snapshotDelegatePositions()` for full delegate inspection, `await window.__helios.snapshotNodeCentroid([0, 1, 2])` for narrow readback, and `await window.__syncDelegatePositionsToNetwork()` to copy delegate positions into network buffers.
 - Pass `?mode=3d` to enable the depth axis; otherwise it runs in 2D.
+- The example opts into persistence explicitly; library use keeps durable
+  persistence off unless the developer enables it. Pass `?workspaceId=...` to
+  isolate browser persistence for a demo run.
+- Pass `?networkPersistence=0` or `?positionPersistence=0` to disable those
+  persistence paths independently.
+- Network and position autosave are enabled by default. Pass
+  `?networkAutosave=0` or `?positionAutosave=0` to disable either path.
+- Browser sessions are enabled by default. The example appends `sessionId` to
+  the URL, accepts either `?sessionId=<id>` or `?session=<id>` for direct
+  restore, and offers previous sessions from the resume prompt when no valid
+  session is provided. Pass `?session=0` to disable this. Session network
+  payloads default to `zxnet`; pass
+  `?networkFormat=xnet` or another supported format to override this.
+- Loading or dropping a network file starts a new session named after that
+  network, so the previously open network remains available from the resume
+  picker instead of being overwritten.
+- The Network tab can load `.xnet`, `.zxnet`, `.bxnet`, and `.gml` files.
+  GML export is available with a warning because GML cannot preserve every
+  Helios-private setting or every attribute representation.
+- The Filter panel uses funding-project-style categorical checklist controls
+  with counts and `All` / `None` actions for categorical attributes.
 - The example now requests weighted blended transparency for edges by default. Pass `?edgeTransparency=alpha` to compare against classic alpha blending, or use another supported mode explicitly. Weighted mode still falls back to alpha if unsupported.
 - Pass `?interpolationDurationMode=adaptive` (default) to average recent layout update intervals for interpolation timing.
 - Pass `?interpolationDurationMode=fixed&interpolationFixedDurationMs=160` to force a fixed interpolation interval.

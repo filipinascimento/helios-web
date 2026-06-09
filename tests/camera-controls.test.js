@@ -201,6 +201,39 @@ test('2D frameNetwork fit reserves room for rendered node radius', () => {
   }), 200, 200);
 });
 
+test('2D frameNetwork fit keeps an additional default margin', () => {
+  const helios = Object.create(Helios.prototype);
+  const camera = createCamera('2d', 220, 220);
+  camera.maxZoom = 10000;
+  helios.renderer = { camera };
+  helios.size = { width: 220, height: 220 };
+
+  const bounds = {
+    paddingPx: 0,
+    nodeRadiusWorld: 0,
+    fitMinX: -50,
+    fitMaxX: 50,
+    fitMinY: -50,
+    fitMaxY: 50,
+    fitMinZ: 0,
+    fitMaxZ: 0,
+    bboxCenter: [0, 0, 0],
+    centroid: [0, 0, 0],
+  };
+
+  const pose = helios._resolveCameraFitPose(bounds, { resetOrientation: false });
+
+  assert.equal(pose.zoom, 2);
+  applyCameraPose(camera, pose);
+  assertFitsViewport(projectBounds(camera, {
+    ...bounds,
+    fitMinX: -55,
+    fitMaxX: 55,
+    fitMinY: -55,
+    fitMaxY: 55,
+  }), 220, 220);
+});
+
 test('3D frameNetwork fit reserves room for billboard node radius', () => {
   const helios = Object.create(Helios.prototype);
   const camera = createCamera('3d', 240, 240);
@@ -380,7 +413,7 @@ test('frameNetwork uses delegate snapshots when positions come from a GPU layout
   const fitted = helios.frameNetwork({ coverage: 1, paddingRatio: 0, animate: false });
 
   assert.equal(fitted, true);
-  assert.ok(camera.zoom > 7, `expected frameNetwork to fit delegate snapshot bounds, got ${camera.zoom}`);
+  assert.ok(camera.zoom > 6, `expected frameNetwork to fit delegate snapshot bounds with margin, got ${camera.zoom}`);
 });
 
 test('cameraTargetNodes uses delegate centroid readback for GPU-only target nodes', async () => {
@@ -773,8 +806,8 @@ test('camera follow keeps a moving node centroid centered in 2D', () => {
   helios._readNodePositionViewUnsafe = () => positions;
 
   helios._stepCameraControlRenderPump(100);
-  assert.equal(camera.pan2D[0], -5);
-  assert.equal(camera.pan2D[1], -10);
+  assert.equal(camera.pan2D[0], -15);
+  assert.equal(camera.pan2D[1], -30);
 
   positions[0] = 20;
   positions[1] = 30;
@@ -782,8 +815,8 @@ test('camera follow keeps a moving node centroid centered in 2D', () => {
   positions[4] = 50;
   helios._stepCameraControlRenderPump(116);
 
-  assert.equal(camera.pan2D[0], -30);
-  assert.equal(camera.pan2D[1], -40);
+  assert.equal(camera.pan2D[0], -90);
+  assert.equal(camera.pan2D[1], -120);
 });
 
 test('3d figure export camera matches the preview-frame sub-frustum', () => {
@@ -885,7 +918,7 @@ test('frameNetwork reads active node indices only inside buffer access', () => {
   const fitted = helios.frameNetwork({ coverage: 1, paddingRatio: 0, animate: false });
 
   assert.equal(fitted, true);
-  assert.ok(camera.zoom > 7);
+  assert.ok(camera.zoom > 6);
 });
 
 test('initial camera fit requests a non-animated frame before first render', () => {

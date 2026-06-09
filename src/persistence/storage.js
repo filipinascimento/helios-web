@@ -22,6 +22,11 @@ export class LocalStoragePreferenceStore {
     this.unfinishedSessionKey = options.unfinishedSessionKey ?? 'helios-web:persistence:unfinished-session';
   }
 
+  unfinishedSessionKeyFor(workspaceId = null) {
+    if (workspaceId == null || workspaceId === '') return this.unfinishedSessionKey;
+    return `${this.unfinishedSessionKey}:${encodeURIComponent(String(workspaceId))}`;
+  }
+
   async read() {
     if (!this.storage) return null;
     const raw = this.storage.getItem(this.key);
@@ -38,15 +43,22 @@ export class LocalStoragePreferenceStore {
     this.storage?.removeItem?.(this.key);
   }
 
-  async getUnfinishedSessionId() {
+  async getUnfinishedSessionId(workspaceId = null, options = {}) {
     if (!this.storage) return null;
-    return this.storage.getItem(this.unfinishedSessionKey);
+    const key = this.unfinishedSessionKeyFor(workspaceId);
+    const value = this.storage.getItem(key);
+    if (value != null) return value;
+    if (options.includeLegacy === true && key !== this.unfinishedSessionKey) {
+      return this.storage.getItem(this.unfinishedSessionKey);
+    }
+    return null;
   }
 
-  async setUnfinishedSessionId(id) {
+  async setUnfinishedSessionId(id, workspaceId = null) {
     if (!this.storage) return null;
-    if (id == null || id === '') this.storage.removeItem(this.unfinishedSessionKey);
-    else this.storage.setItem(this.unfinishedSessionKey, String(id));
+    const key = this.unfinishedSessionKeyFor(workspaceId);
+    if (id == null || id === '') this.storage.removeItem(key);
+    else this.storage.setItem(key, String(id));
     return id ?? null;
   }
 }
@@ -55,6 +67,15 @@ function requestToPromise(request) {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error ?? new Error('IndexedDB request failed'));
+  });
+}
+
+function transactionToPromise(tx) {
+  if (tx?._complete === true) return Promise.resolve(true);
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error ?? new Error('IndexedDB transaction failed'));
+    tx.onabort = () => reject(tx.error ?? new Error('IndexedDB transaction aborted'));
   });
 }
 
@@ -102,6 +123,7 @@ export class IndexedDBSessionStore {
     const store = tx.objectStore(this.storeName);
     const request = store.put(record);
     await requestToPromise(request);
+    await transactionToPromise(tx);
     return record;
   }
 
@@ -142,6 +164,7 @@ export class IndexedDBSessionStore {
     const tx = db.transaction(this.storeName, 'readwrite');
     const store = tx.objectStore(this.storeName);
     await requestToPromise(store.delete(id));
+    await transactionToPromise(tx);
     return true;
   }
 }
@@ -283,7 +306,11 @@ export function createMemoryIndexedDBFactory() {
       this.oncomplete = null;
       this.onerror = null;
       this.onabort = null;
-      queueTask(() => this.oncomplete?.({ target: this }));
+      this._complete = false;
+      queueTask(() => {
+        this._complete = true;
+        this.oncomplete?.({ target: this });
+      });
     }
 
     objectStore() {

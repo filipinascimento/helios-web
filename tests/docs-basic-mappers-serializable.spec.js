@@ -1,8 +1,12 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('docs basic demo mappers', () => {
+  test.describe.configure({ mode: 'serial', timeout: 90000 });
+
+  const demoUrl = '/?nodes=500&mode=3d&edgeTransparency=weighted&renderer=webgl&session=0';
+
   test('node color starts as a serializable colormap mapper', async ({ page }) => {
-    await page.goto('/?nodes=2000&mode=3d&edgeTransparency=weighted&renderer=webgl');
+    await page.goto(demoUrl);
 
     await page.waitForFunction(() => Boolean(window.__helios && window.__helios.ready));
     await page.waitForFunction(() => Boolean(window.__heliosUI));
@@ -24,7 +28,7 @@ test.describe('docs basic demo mappers', () => {
   });
 
   test('node color mapper shows a numeric domain histogram', async ({ page }) => {
-    await page.goto('/?nodes=2000&mode=3d&edgeTransparency=weighted&renderer=webgl');
+    await page.goto(demoUrl);
 
     await page.waitForFunction(() => Boolean(window.__helios && window.__helios.ready));
     await page.waitForFunction(() => Boolean(window.__heliosUI));
@@ -40,5 +44,26 @@ test.describe('docs basic demo mappers', () => {
     await attributeSelect.selectOption('weight');
 
     await expect(panel.locator('.helios-ui-range2__histogram:visible').first()).toBeVisible();
+  });
+
+  test('basic demo does not override Helios internal mapper defaults', async ({ page }) => {
+    await page.goto(demoUrl);
+
+    await page.waitForFunction(() => Boolean(window.__helios && window.__helios.ready));
+    await page.waitForFunction(() => Boolean(window.__heliosUI));
+
+    const defaults = await page.evaluate(() => {
+      const mappers = window.__helios?.behavior?.mappers;
+      return {
+        nodeSize: mappers?.getSerializedChannelConfig?.('node', 'size') ?? null,
+        edgeWidth: mappers?.getSerializedChannelConfig?.('edge', 'width') ?? null,
+        edgeOpacity: mappers?.getSerializedChannelConfig?.('edge', 'opacity') ?? null,
+      };
+    });
+
+    expect(defaults.nodeSize).toMatchObject({ type: 'constant', value: 8 });
+    expect(defaults.nodeSize.attributes ?? null).not.toBe('weight');
+    expect(defaults.edgeWidth).toMatchObject({ type: 'constant', value: 1 });
+    expect(defaults.edgeOpacity).toMatchObject({ type: 'constant', value: 1 });
   });
 });

@@ -43,6 +43,20 @@ test('2D camera uses the same positive-up Y convention as 3D', () => {
   assert.ok(below[1] < 0);
 });
 
+test('2D camera defaults to a closer initial zoom', () => {
+  const camera = new Camera({
+    addEventListener() {},
+    removeEventListener() {},
+  }, {
+    mode: '2d',
+    projection: 'orthographic',
+    disableControls: true,
+    viewport: { width: 200, height: 100, devicePixelRatio: 1 },
+  });
+
+  assert.equal(camera.zoom, 3);
+});
+
 test('camera emits interaction detail for wheel zoom changes', () => {
   const events = [];
   const canvas = {

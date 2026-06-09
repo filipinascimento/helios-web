@@ -856,8 +856,10 @@ test('WebGLAttributeRenderer resolves integer tracked attributes for shader-side
   assert.equal(index, null);
 });
 
-test('WebGLAttributeRenderer uses quad geometry for edge tracking in quad mode', () => {
+test('WebGLAttributeRenderer uses quad geometry for node occlusion and edge tracking in quad mode', () => {
   const drawModes = [];
+  const uniformInts = new Map();
+  const uniformFloats = new Map();
   const gl = {
     TEXTURE0: 0,
     TEXTURE_2D: 3553,
@@ -891,8 +893,12 @@ test('WebGLAttributeRenderer uses quad geometry for edge tracking in quad mode',
     pixelStorei() {},
     useProgram() {},
     uniformMatrix4fv() {},
-    uniform1i() {},
-    uniform1f() {},
+    uniform1i(location, value) {
+      if (typeof location === 'string') uniformInts.set(location, value);
+    },
+    uniform1f(location, value) {
+      if (typeof location === 'string') uniformFloats.set(location, value);
+    },
     uniform2f() {},
     uniform3f() {},
     bindVertexArray() {},
@@ -938,9 +944,9 @@ test('WebGLAttributeRenderer uses quad geometry for edge tracking in quad mode',
     withSparseGraph(_network, _versions, _indices, _edgeSources, fn) {
       return fn({
         nodes: {
-          positions: new Float32Array(0),
-          sizes: new Float32Array(0),
-          indices: new Uint32Array(0),
+          positions: new Float32Array([0, 0, 0, 1, 0, 0]),
+          sizes: new Float32Array([1, 1]),
+          indices: new Uint32Array([0, 1]),
           versions: { positions: 1, sizes: 1, indices: 1 },
         },
         edges: {
@@ -982,8 +988,9 @@ test('WebGLAttributeRenderer uses quad geometry for edge tracking in quad mode',
     u_nodeSizes: 0,
     u_nodeEncoded: 0,
     u_useNodeIdBuffer: 0,
-    u_useNodeSize: 0,
+    u_useNodeSize: 'useNodeSize',
     u_useEncodedTexture: 0,
+    u_nodeSizeRaw: 'nodeSizeRaw',
     u_nodeSizeBase: 0,
     u_nodeSizeScale: 0,
   };
@@ -1044,6 +1051,16 @@ test('WebGLAttributeRenderer uses quad geometry for edge tracking in quad mode',
   const network = {
     nodeIndices: new Uint32Array(0),
     edgeIndices: new Uint32Array([0]),
+    __heliosVisualConfig: {
+      node: {
+        size: { mode: 'uniform', value: 14 },
+        outline: { mode: 'uniform', value: 0 },
+      },
+      edge: {
+        width: { mode: 'buffer' },
+        endpointSize: { mode: 'buffer' },
+      },
+    },
     getTopologyVersions() {
       return { node: 1, edge: 1 };
     },
@@ -1057,7 +1074,10 @@ test('WebGLAttributeRenderer uses quad geometry for edge tracking in quad mode',
 
   assert.ok(result);
   assert.equal(drawModes.includes(gl.TRIANGLE_STRIP), true);
+  assert.equal(drawModes.includes(gl.POINTS), false);
   assert.equal(drawModes.includes(gl.LINES), false);
+  assert.equal(uniformInts.get('useNodeSize'), 0);
+  assert.equal(uniformFloats.get('nodeSizeRaw'), 14);
 });
 
 test('WebGLAttributeRenderer reuses shared sparse graph textures when metadata matches', () => {

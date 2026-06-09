@@ -177,6 +177,24 @@ function resetMapper(mapper) {
   mapper.channels.clear();
 }
 
+function snapshotExistingChannels(collection) {
+  const existing = new Map();
+  for (const [id, mapper] of collection?.mappers?.entries?.() ?? []) {
+    const channels = new Map();
+    for (const [channelName, config] of mapper?.channels?.entries?.() ?? []) {
+      const snapshot = serializeChannelConfig(config);
+      if (snapshot && snapshot.unsupported !== true) channels.set(channelName, snapshot);
+    }
+    existing.set(id, channels);
+  }
+  return existing;
+}
+
+function restoreChannelSnapshot(channelSnapshot, fallbackSnapshot = null) {
+  return restoreChannelConfig(channelSnapshot)
+    ?? restoreChannelConfig(fallbackSnapshot);
+}
+
 export function serializeMapperCollection(collection) {
   const mappers = {};
   for (const [id, mapper] of collection?.mappers?.entries?.() ?? []) {
@@ -202,6 +220,7 @@ export function serializeMapperCollection(collection) {
 
 export function restoreMapperCollection(collection, snapshot) {
   if (!collection || !snapshot || typeof snapshot !== 'object') return collection;
+  const existingChannels = snapshotExistingChannels(collection);
   for (const mapper of collection.mappers?.values?.() ?? []) {
     resetMapper(mapper);
   }
@@ -209,8 +228,10 @@ export function restoreMapperCollection(collection, snapshot) {
   const restored = [];
   for (const [id, mapperSnapshot] of Object.entries(snapshot.mappers ?? {})) {
     const mapper = new Mapper({ mode: collection.mode, network: collection.network });
+    const fallbackChannels = existingChannels.get(id) ?? (id === 'default' ? existingChannels.get(snapshot.defaultId) : null);
     for (const [channelName, channelSnapshot] of Object.entries(mapperSnapshot?.channels ?? {})) {
-      const config = restoreChannelConfig(channelSnapshot);
+      const fallbackSnapshot = fallbackChannels?.get?.(channelName) ?? null;
+      const config = restoreChannelSnapshot(channelSnapshot, fallbackSnapshot);
       if (!config) continue;
       mapper.setChannel(channelName, config);
     }

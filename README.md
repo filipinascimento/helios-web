@@ -41,6 +41,15 @@ physical force balance. Pass
 `layout.options.tuningModel = false` to restore the hand defaults, or pass a
 custom model function/object to override the bundled coefficients.
 
+Centralized persistence is available through `helios.persistence`, but durable
+storage is off by default for library consumers. Pass `persistence: true` plus a
+stable `workspaceId`, or configure browser, remote, custom, network, and
+position persistence options explicitly. See
+[`docs/persistence.md`](./docs/persistence.md) for the public API, sessions, and
+server contract. Autosync waits for camera interaction to settle before heavier
+network/session writes, and saved sessions can carry a tiny capped PNG thumbnail
+for resume lists.
+
 ## Using as a Library
 
 The build artifact targets WebGPU first with WebGL2 as a fallback. After running
@@ -53,8 +62,21 @@ import { Helios } from 'helios-web-next';
 const network = await HeliosNetwork.create();
 network.addNodes(5);
 
-const helios = new Helios(network, { container: '#app' });
+const helios = new Helios(network, {
+  container: '#app',
+  fileDrop: true,
+});
 await helios.ready;
+
+// Optional persistence.
+const persistentHelios = new Helios(network, {
+  container: '#app',
+  persistence: true,
+  workspaceId: 'demo-workspace',
+  networkPersistence: { enabled: true },
+  positionPersistence: { enabled: true },
+  session: { url: true, restoreNetwork: true, thumbnail: true },
+});
 
 // Optional SVG labels overlay (regular labels stay off until enabled directly or by the Selection panel).
 helios.labels({
@@ -170,6 +192,14 @@ helios.cameraTargetNodes([0, 1, 2]);
 helios.cameraFollowNodes([0, 1, 2], { animate: true }); // keeps the centroid centered while positions move
 helios.frameNetwork({ animate: true, resetOrientation: false });
 
+// Compact overlay controls are enabled by default:
+// auto-fit toggle, layout pause/run, zoom in, and zoom out.
+// Disable all or selected groups at construction time:
+const noQuickControls = new Helios(network, { quickControls: false });
+const customQuickControls = new Helios(network, {
+  quickControls: { autoFit: true, layout: true, zoom: false },
+});
+
 // Narrow delegate readback helpers:
 await helios.snapshotNodePosition(7);
 await helios.snapshotNodePositions([7, 11, 13]);
@@ -246,6 +276,11 @@ helios.activateHeliosFilter(exploratory);
 // later…
 helios.activateHeliosFilter(strict);
 ```
+
+In the built-in UI, categorical filters use compact checklist rows with
+per-category counts plus `All` and `None` actions. This is the same rule editor
+used by the Selection panel selector rules and it stays on the normal debounced
+filter update path.
 
 Position delegation now uses an abstract `PositionDelegate` contract, so delegates
 can safely synchronize against topology/index version changes before handing

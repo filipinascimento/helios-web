@@ -146,12 +146,25 @@ test.describe('filter panel', () => {
 
     await nodeAttr.selectOption('category');
     const categoryList = filterPanel.locator('[data-testid=\"controls-filter-node-categorical-list\"]').first();
-    await categoryList.selectOption('category1');
+    const checklist = filterPanel.locator('[data-testid=\"controls-filter-node-categorical-list-checklist\"]').first();
+    const checklistHeader = filterPanel.locator('.helios-ui-categorical-checklist__header').first();
+    await expect(checklist).toBeVisible();
+    await expect.poll(async () => checklist.locator('.helios-ui-categorical-checklist__item').count()).toBeGreaterThan(1);
+    await expect(checklist.locator('.helios-ui-categorical-checklist__count').first()).toBeVisible();
+    await checklistHeader.getByRole('button', { name: 'None' }).click();
+    await expect(checklistHeader.locator('.helios-ui-categorical-checklist__summary')).toHaveText(/0 of \d+ selected/);
+    await checklist.locator('.helios-ui-categorical-checklist__item', { hasText: 'category1' }).first().click();
+    await expect.poll(async () => categoryList.evaluate((select) => (
+      Array.from(select.selectedOptions, (option) => option.value)
+    ))).toContain('category1');
 
     await page.waitForFunction(() => {
       const filter = window.__helios?.getGraphFilter?.();
       return Boolean(filter && filter.enabled === true && String(filter.options?.nodeQuery ?? '').includes('category'));
     });
+
+    await checklistHeader.getByRole('button', { name: 'All' }).click();
+    await expect(checklistHeader.locator('.helios-ui-categorical-checklist__summary')).toHaveText(/All \d+ selected/);
 
     await nodeAttr.selectOption('__query__');
     await filterPanel.locator('[data-testid=\"controls-filter-node-query\"]').first().fill('weight >= 0.2');

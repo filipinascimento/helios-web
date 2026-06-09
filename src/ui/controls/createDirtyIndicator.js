@@ -13,6 +13,15 @@ function stateForPath(dirtyState, path, scope = path, mode = 'control') {
   return 'default';
 }
 
+function resolvePersistenceState(helios, path, scope, mode) {
+  const persistence = helios?.persistence ?? null;
+  if (typeof persistence?.keyStatus === 'function') {
+    return persistence.keyStatus(path, { scope, mode })?.state ?? 'default';
+  }
+  const dirtyState = persistence?.getDirtyState?.() ?? { controls: {}, sections: {}, panels: {} };
+  return stateForPath(dirtyState, path, scope, mode);
+}
+
 function closeOpenMenus(root = document) {
   for (const menu of root.querySelectorAll?.('.helios-ui-dirty-menu') ?? []) {
     menu.remove();
@@ -36,6 +45,11 @@ export function createDirtyIndicator({
   indicator.setAttribute('aria-label', 'Persistence status');
   const hasPath = Boolean(normalizePath(path));
   if (hasPath) {
+    indicator.dataset.path = normalizePath(path);
+    indicator.dataset.scope = normalizePath(scope || path);
+    indicator.dataset.mode = mode === 'scope' ? 'scope' : 'control';
+  }
+  if (hasPath) {
     indicator.setAttribute('role', 'button');
     indicator.setAttribute('tabindex', '0');
     indicator.setAttribute('aria-haspopup', 'menu');
@@ -46,8 +60,7 @@ export function createDirtyIndicator({
   }
 
   const update = () => {
-    const dirtyState = helios?.persistence?.getDirtyState?.() ?? { controls: {}, sections: {}, panels: {} };
-    indicator.dataset.state = stateForPath(dirtyState, path, scope, mode);
+    indicator.dataset.state = resolvePersistenceState(helios, path, scope, mode);
   };
 
   const buildMenu = () => {
@@ -111,12 +124,17 @@ export function createDirtyIndicator({
   });
 
   const controller = helios?.persistence?.sessionController ?? null;
+  const persistence = helios?.persistence ?? null;
   const onChange = () => update();
   controller?.addEventListener?.('change', onChange);
   controller?.addEventListener?.('config', onChange);
+  persistence?.addEventListener?.('change', onChange);
+  persistence?.addEventListener?.('config', onChange);
   indicator.destroy = () => {
     controller?.removeEventListener?.('change', onChange);
     controller?.removeEventListener?.('config', onChange);
+    persistence?.removeEventListener?.('change', onChange);
+    persistence?.removeEventListener?.('config', onChange);
     closeOpenMenus(indicator.ownerDocument);
   };
   if (hasPath) attachTooltip?.(indicator, 'Shows whether this setting is tracked as a session override.');

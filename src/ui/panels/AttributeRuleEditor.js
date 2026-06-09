@@ -47,6 +47,14 @@ function parseCsvValues(text) {
   return out;
 }
 
+function formatCompactCount(value) {
+  const count = Number(value);
+  if (!Number.isFinite(count) || count < 0) return '';
+  if (count >= 1000000) return `${Number((count / 1000000).toPrecision(3))}M`;
+  if (count >= 1000) return `${Number((count / 1000).toPrecision(3))}k`;
+  return String(Math.floor(count));
+}
+
 function suggestHistogramBins(count) {
   if (!Number.isFinite(count) || count <= 1) return 1;
   return Math.max(8, Math.min(40, Math.round(Math.sqrt(count))));
@@ -227,7 +235,7 @@ export function createAttributeRuleEditor(options = {}) {
     return out;
   };
 
-  const getCategoryLabels = (attributeName) => {
+  const getCategoryEntries = (attributeName) => {
     const network = getNetwork();
     if (!network || typeof attributeName !== 'string' || !attributeName) return [];
     const getter = scope === 'edge'
@@ -236,20 +244,46 @@ export function createAttributeRuleEditor(options = {}) {
     if (typeof getter !== 'function') return [];
     try {
       const dictionary = getter.call(network, attributeName, { sortById: false }) ?? {};
-      const labels = Array.isArray(dictionary.labels)
-        ? dictionary.labels
-        : Array.isArray(dictionary.entries)
-          ? dictionary.entries.map((entry) => entry?.label)
+      const sourceEntries = Array.isArray(dictionary.entries)
+        ? dictionary.entries
+        : Array.isArray(dictionary.labels)
+          ? dictionary.labels.map((label, index) => ({ id: dictionary.ids?.[index], label }))
           : [];
+      const countsById = new Map();
+      try {
+        const countValues = () => {
+          const buffer = scope === 'edge'
+            ? network.getEdgeAttributeBuffer?.(attributeName)
+            : network.getNodeAttributeBuffer?.(attributeName);
+          const indices = scope === 'edge' ? network.edgeIndices : network.nodeIndices;
+          const view = buffer?.view ?? null;
+          if (!view || !indices || !indices.length) return;
+          for (let i = 0; i < indices.length; i += 1) {
+            const id = Number(view[indices[i]]);
+            if (!Number.isFinite(id)) continue;
+            countsById.set(id, (countsById.get(id) ?? 0) + 1);
+          }
+        };
+        if (typeof network.withBufferAccess === 'function') network.withBufferAccess(countValues);
+        else countValues();
+      } catch (error) {
+        warnUiDerivationFailure('Categorical count computation failed', { scope, attributeName, error });
+      }
+
       const seen = new Set();
       const out = [];
-      for (const raw of labels) {
-        const label = String(raw ?? '').trim();
+      for (const raw of sourceEntries) {
+        const label = String(raw?.label ?? raw ?? '').trim();
         if (!label || seen.has(label)) continue;
         seen.add(label);
-        out.push(label);
+        const id = Number(raw?.id);
+        out.push({
+          label,
+          id: Number.isFinite(id) ? id : null,
+          count: Number.isFinite(id) ? (countsById.get(id) ?? 0) : null,
+        });
       }
-      out.sort((a, b) => a.localeCompare(b));
+      out.sort((a, b) => a.label.localeCompare(b.label));
       return out;
     } catch (_) {
       return [];
@@ -496,19 +530,71 @@ export function createAttributeRuleEditor(options = {}) {
   };
 
   const refreshCategoricalRuleValues = (rule) => {
-    const labels = getCategoryLabels(rule.attribute);
+    const entries = getCategoryEntries(rule.attribute);
     const selected = new Set(Array.from(rule.listSelect?.selectedOptions ?? []).map((option) => option.value));
     rule.listSelect?.replaceChildren();
-    for (const label of labels) {
+    rule.checklist?.replaceChildren();
+    for (const entry of entries) {
+      const label = entry.label;
       const option = document.createElement('option');
       option.value = label;
       option.textContent = label;
       if (selected.has(label)) option.selected = true;
       rule.listSelect?.appendChild(option);
+
+      if (rule.checklist) {
+        const item = document.createElement('label');
+        item.className = 'helios-ui-categorical-checklist__item';
+        item.dataset.value = label;
+
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.value = label;
+        input.checked = selected.has(label);
+        input.addEventListener('change', () => {
+          const matching = Array.from(rule.listSelect?.options ?? []).find((candidate) => candidate.value === label);
+          if (matching) matching.selected = input.checked;
+          syncCategoricalChecklist(rule);
+          markDirty();
+        });
+        item.appendChild(input);
+
+        const text = document.createElement('span');
+        text.className = 'helios-ui-categorical-checklist__label';
+        text.textContent = label;
+        item.appendChild(text);
+
+        const count = document.createElement('span');
+        count.className = 'helios-ui-categorical-checklist__count';
+        count.textContent = formatCompactCount(entry.count);
+        item.appendChild(count);
+
+        rule.checklist.appendChild(item);
+      }
     }
     if (rule.listSelect) {
-      rule.listSelect.disabled = labels.length === 0;
-      rule.listSelect.size = Math.max(2, Math.min(6, labels.length || 2));
+      rule.listSelect.disabled = entries.length === 0;
+      rule.listSelect.size = Math.max(2, Math.min(6, entries.length || 2));
+    }
+    syncCategoricalChecklist(rule);
+  };
+
+  const syncCategoricalChecklist = (rule) => {
+    const selected = new Set(Array.from(rule.listSelect?.selectedOptions ?? []).map((option) => option.value));
+    const options = Array.from(rule.listSelect?.options ?? []);
+    const total = options.length;
+    if (rule.summary) {
+      rule.summary.textContent = !total
+        ? 'No categories'
+        : selected.size === total
+          ? `All ${total} selected`
+          : `${selected.size} of ${total} selected`;
+    }
+    for (const item of rule.checklist?.querySelectorAll?.('.helios-ui-categorical-checklist__item') ?? []) {
+      const checked = selected.has(item.dataset.value);
+      item.dataset.checked = checked ? 'true' : 'false';
+      const input = item.querySelector('input[type="checkbox"]');
+      if (input) input.checked = checked;
     }
   };
 
@@ -648,6 +734,8 @@ export function createAttributeRuleEditor(options = {}) {
       modeSelect: null,
       listSelect: null,
       textInput: null,
+      checklist: null,
+      summary: null,
     };
 
     const mode = document.createElement('select');
@@ -666,10 +754,33 @@ export function createAttributeRuleEditor(options = {}) {
     mode.appendChild(textOption);
 
     const listSelect = document.createElement('select');
-    listSelect.className = 'helios-ui-select';
-    listSelect.style.maxWidth = 'none';
+    listSelect.className = 'helios-ui-select helios-ui-categorical-select-bridge';
     listSelect.multiple = true;
     if (testIds.categoricalList) listSelect.dataset.testid = testIds.categoricalList;
+
+    const checklistHeader = document.createElement('div');
+    checklistHeader.className = 'helios-ui-categorical-checklist__header';
+    const summary = document.createElement('div');
+    summary.className = 'helios-ui-categorical-checklist__summary';
+    checklistHeader.appendChild(summary);
+
+    const actions = document.createElement('div');
+    actions.className = 'helios-ui-categorical-checklist__actions';
+    const selectAll = document.createElement('button');
+    selectAll.type = 'button';
+    selectAll.className = 'helios-ui-button helios-ui-button--link';
+    selectAll.textContent = 'All';
+    const clearAll = document.createElement('button');
+    clearAll.type = 'button';
+    clearAll.className = 'helios-ui-button helios-ui-button--link';
+    clearAll.textContent = 'None';
+    actions.appendChild(selectAll);
+    actions.appendChild(clearAll);
+    checklistHeader.appendChild(actions);
+
+    const checklist = document.createElement('div');
+    checklist.className = 'helios-ui-categorical-checklist';
+    if (testIds.categoricalList) checklist.dataset.testid = `${testIds.categoricalList}-checklist`;
 
     const textInput = document.createElement('input');
     textInput.type = 'text';
@@ -680,7 +791,8 @@ export function createAttributeRuleEditor(options = {}) {
 
     const syncMode = () => {
       const isText = mode.value === 'text';
-      listSelect.hidden = isText;
+      checklistHeader.hidden = isText;
+      checklist.hidden = isText;
       textInput.hidden = !isText;
     };
 
@@ -688,17 +800,34 @@ export function createAttributeRuleEditor(options = {}) {
       syncMode();
       markDirty();
     });
-    listSelect.addEventListener('change', markDirty);
+    listSelect.addEventListener('change', () => {
+      syncCategoricalChecklist(rule);
+      markDirty();
+    });
     textInput.addEventListener('input', markDirty);
+    selectAll.addEventListener('click', () => {
+      for (const option of Array.from(listSelect.options)) option.selected = true;
+      syncCategoricalChecklist(rule);
+      markDirty();
+    });
+    clearAll.addEventListener('click', () => {
+      for (const option of Array.from(listSelect.options)) option.selected = false;
+      syncCategoricalChecklist(rule);
+      markDirty();
+    });
 
     rule.modeSelect = mode;
     rule.listSelect = listSelect;
     rule.textInput = textInput;
+    rule.checklist = checklist;
+    rule.summary = summary;
 
     syncMode();
     refreshCategoricalRuleValues(rule);
 
     shell.body.appendChild(mode);
+    shell.body.appendChild(checklistHeader);
+    shell.body.appendChild(checklist);
     shell.body.appendChild(listSelect);
     shell.body.appendChild(textInput);
 

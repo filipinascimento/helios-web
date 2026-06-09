@@ -1071,11 +1071,13 @@ export class SelectionPanel {
         onCommit: (value) => patch({ opacityMul: normalizeNonNegativeNumber(value, getter().opacityMul) }),
       });
       sliderControls.push(opacityControls);
-      createRow(container, {
+      const opacityRow = createRow(container, {
         title: 'Opacity Gain',
         hint: 'Gain applied to node opacity for this state. The slider suggests a typical range, but typed values can be any non-negative number.',
         controls: opacityControls.element,
       });
+      opacityRow.row.dataset.heliosSelectionStyleTarget = 'node';
+      opacityRow.row.dataset.heliosSelectionStyleProperty = 'opacityMul';
 
       const outlineControls = new SuggestedSliderControls({
         value: getter().outlineMul,
@@ -1217,11 +1219,13 @@ export class SelectionPanel {
         onCommit: (value) => patch({ opacityMul: normalizeNonNegativeNumber(value, getter().opacityMul) }),
       });
       sliderControls.push(opacityControls);
-      createRow(container, {
+      const opacityRow = createRow(container, {
         title: 'Opacity Gain',
         hint: 'Gain applied to edge opacity for this state. The slider suggests a typical range, but typed values can be any non-negative number.',
         controls: opacityControls.element,
       });
+      opacityRow.row.dataset.heliosSelectionStyleTarget = 'edge';
+      opacityRow.row.dataset.heliosSelectionStyleProperty = 'opacityMul';
 
       const discardToggle = createToggleControl({
         checked: getter().discard,

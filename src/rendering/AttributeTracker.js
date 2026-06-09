@@ -147,7 +147,8 @@ precision highp usampler2D;
 ${PACK_UINT_GLSL}
 ${INDIRECT_TEXTURE_INDEX_GLSL}
 
-layout(location = 0) in uint a_nodeId;
+layout(location = 0) in vec2 a_corner;
+layout(location = 1) in uint a_nodeId;
 
 uniform mat4 u_viewProjection;
 uniform sampler2D u_nodePositions;
@@ -164,7 +165,6 @@ uniform vec3 u_cameraRight;
 uniform int u_is2D;
 uniform float u_zoom2D;
 uniform float u_semanticZoomExponent;
-uniform vec2 u_viewport;
 uniform int u_useNodeIdBuffer;
 uniform int u_useNodeSize;
 uniform int u_useNodeOutline;
@@ -175,6 +175,7 @@ uniform uint u_hoverNodeIndex;
 uniform uint u_hoverNodeState;
 uniform uint u_hoverNodeIsVirtual;
 uniform int u_stateSlotCount;
+uniform float u_nodeSizeRaw;
 uniform float u_nodeSizeBase;
 uniform float u_nodeSizeScale;
 uniform float u_nodeOutline;
@@ -184,6 +185,7 @@ uniform vec4 u_nodeNoStateScale;
 uniform vec4 u_nodeStateScale[${TRACK_STATE_SLOTS}];
 
 out vec4 v_encoded;
+out vec2 v_local;
 
 uvec4 encodeTrackedNode(uint nodeId) {
   if (u_trackedNodeValueMode == 1) {
@@ -228,7 +230,7 @@ void main() {
   }
   float rawSize = (u_useNodeSize == 1)
     ? texelFetch(u_nodeSizes, textureCoord(u_nodeSizes, nodeId), 0).x
-    : 1.0;
+    : u_nodeSizeRaw;
   float rawOutline = (u_useNodeOutline == 1)
     ? texelFetch(u_nodeOutlineWidths, textureCoord(u_nodeOutlineWidths, nodeId), 0).x
     : u_nodeOutline;
@@ -239,8 +241,9 @@ void main() {
   float fullSize = ((u_nodeSizeBase + u_nodeSizeScale * rawSize) * sizeMul + outlineWidth) * semanticScale;
   float radius = max(1.0, fullSize) * 0.5;
   vec3 right = u_cameraRight;
+  vec3 viewDir = vec3(0.0, 0.0, 1.0);
   if (u_is2D == 0) {
-    vec3 viewDir = u_cameraPosition - position;
+    viewDir = u_cameraPosition - position;
     float viewLen = length(viewDir);
     viewDir = viewLen > 1e-5 ? viewDir / viewLen : vec3(0.0, 0.0, 1.0);
     right = u_cameraRight - viewDir * dot(u_cameraRight, viewDir);
@@ -249,38 +252,39 @@ void main() {
   } else {
     right = normalize(right);
   }
-  vec4 clipCenter = u_viewProjection * vec4(position, 1.0);
-  vec4 clipOffset = u_viewProjection * vec4(position + right * radius, 1.0);
-  vec2 ndcCenter = clipCenter.xy / clipCenter.w;
-  vec2 ndcOffset = clipOffset.xy / clipOffset.w;
-  vec2 pixelScale = vec2(max(u_viewport.x, 1.0), max(u_viewport.y, 1.0)) * 0.5;
-  float radiusPx = length((ndcOffset - ndcCenter) * pixelScale);
-  gl_Position = clipCenter;
-  gl_PointSize = max(1.0, radiusPx * 2.0);
+  vec3 up = u_cameraUp;
+  if (u_is2D == 0) {
+    up = normalize(cross(viewDir, right));
+  } else {
+    up = normalize(up);
+  }
+  vec3 world = position + (right * a_corner.x + up * a_corner.y) * radius;
+  gl_Position = u_viewProjection * vec4(world, 1.0);
   uvec4 encoded = encodeTrackedNode(nodeId);
   v_encoded = vec4(encoded) / 255.0;
+  v_local = a_corner;
 }`;
 
 const WEBGL_INDIRECT_TRACK_NODE_FRAGMENT = /* glsl */ `#version 300 es
 precision highp float;
 
 in vec4 v_encoded;
+in vec2 v_local;
 out vec4 fragColor;
 
 void main() {
-  vec2 local = gl_PointCoord * 2.0 - 1.0;
-  if (dot(local, local) > 1.0) discard;
+  if (dot(v_local, v_local) > 1.0) discard;
   fragColor = v_encoded;
 }`;
 
 const WEBGL_INDIRECT_TRACK_NODE_OCCLUSION_FRAGMENT = /* glsl */ `#version 300 es
 precision highp float;
 
+in vec2 v_local;
 out vec4 fragColor;
 
 void main() {
-  vec2 local = gl_PointCoord * 2.0 - 1.0;
-  if (dot(local, local) > 1.0) discard;
+  if (dot(v_local, v_local) > 1.0) discard;
   fragColor = vec4(0.0);
 }`;
 
@@ -288,11 +292,11 @@ const WEBGL_INDIRECT_TRACK_NODE_DEPTH_FRAGMENT = /* glsl */ `#version 300 es
 precision highp float;
 ${PACK_DEPTH_GLSL}
 
+in vec2 v_local;
 out vec4 fragColor;
 
 void main() {
-  vec2 local = gl_PointCoord * 2.0 - 1.0;
-  if (dot(local, local) > 1.0) discard;
+  if (dot(v_local, v_local) > 1.0) discard;
   fragColor = packDepthToRGBA(gl_FragCoord.z);
 }`;
 
@@ -1018,6 +1022,7 @@ export class WebGLAttributeRenderer {
     this.edgeVao = null;
     this.edgeQuadVao = null;
     this.edgeQuadBuffer = null;
+    this.nodeQuadBuffer = null;
     this.nodeIdBuffer = null;
     this.edgeIdBuffer = null;
     this.bufferMeta = {
@@ -1134,7 +1139,6 @@ export class WebGLAttributeRenderer {
       'u_is2D',
       'u_zoom2D',
       'u_semanticZoomExponent',
-      'u_viewport',
       'u_useNodeIdBuffer',
       'u_useNodeSize',
       'u_useNodeOutline',
@@ -1145,6 +1149,7 @@ export class WebGLAttributeRenderer {
       'u_hoverNodeState',
       'u_hoverNodeIsVirtual',
       'u_stateSlotCount',
+      'u_nodeSizeRaw',
       'u_nodeSizeBase',
       'u_nodeSizeScale',
       'u_nodeOutline',
@@ -1239,14 +1244,28 @@ export class WebGLAttributeRenderer {
     const { gl } = this;
     this.nodeIdBuffer = gl.createBuffer();
     this.edgeIdBuffer = gl.createBuffer();
+    this.nodeQuadBuffer = gl.createBuffer();
     this.edgeQuadBuffer = gl.createBuffer();
+
+    const nodeQuadCorners = new Float32Array([
+      -1, -1,
+      1, -1,
+      -1, 1,
+      1, 1,
+    ]);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeQuadBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, nodeQuadCorners, gl.STATIC_DRAW);
 
     this.nodeVao = gl.createVertexArray();
     gl.bindVertexArray(this.nodeVao);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeIdBuffer);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeQuadBuffer);
     gl.enableVertexAttribArray(0);
-    gl.vertexAttribIPointer(0, 1, gl.UNSIGNED_INT, 4, 0);
-    gl.vertexAttribDivisor(0, 1);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 8, 0);
+    gl.vertexAttribDivisor(0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeIdBuffer);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribIPointer(1, 1, gl.UNSIGNED_INT, 4, 0);
+    gl.vertexAttribDivisor(1, 1);
 
     this.edgeVao = gl.createVertexArray();
     gl.bindVertexArray(this.edgeVao);
@@ -1383,6 +1402,7 @@ export class WebGLAttributeRenderer {
     if (this.nodeVao) gl.deleteVertexArray(this.nodeVao);
     if (this.edgeVao) gl.deleteVertexArray(this.edgeVao);
     if (this.edgeQuadVao) gl.deleteVertexArray(this.edgeQuadVao);
+    if (this.nodeQuadBuffer) gl.deleteBuffer(this.nodeQuadBuffer);
     if (this.nodeIdBuffer) gl.deleteBuffer(this.nodeIdBuffer);
     if (this.edgeIdBuffer) gl.deleteBuffer(this.edgeIdBuffer);
     if (this.edgeQuadBuffer) gl.deleteBuffer(this.edgeQuadBuffer);
@@ -1819,7 +1839,6 @@ export class WebGLAttributeRenderer {
     gl.uniform1i(uniforms.u_is2D, cameraUniforms.mode === '2d' ? 1 : 0);
     gl.uniform1f(uniforms.u_zoom2D, zoom2D);
     gl.uniform1f(uniforms.u_semanticZoomExponent, semanticZoomExponent);
-    gl.uniform2f(uniforms.u_viewport, this.size.width, this.size.height);
     gl.uniform1i(uniforms.u_useNodeIdBuffer, options.useNodeIdBuffer ? 1 : 0);
     gl.uniform1i(uniforms.u_useNodeSize, options.useNodeSize ? 1 : 0);
     gl.uniform1i(uniforms.u_useNodeOutline, options.useNodeOutline ? 1 : 0);
@@ -1830,6 +1849,7 @@ export class WebGLAttributeRenderer {
     set1ui(uniforms.u_hoverNodeState, this.graphLayer.hoveredNodeState >>> 0);
     set1ui(uniforms.u_hoverNodeIsVirtual, this.graphLayer.hoveredNodeIsVirtual ? 1 : 0);
     gl.uniform1i(uniforms.u_stateSlotCount, this.graphLayer.stateSlotCount ?? 0);
+    gl.uniform1f(uniforms.u_nodeSizeRaw, options.nodeSizeValue ?? 1);
     gl.uniform1f(uniforms.u_nodeSizeBase, this.graphLayer.nodeSizeBase ?? 0);
     gl.uniform1f(uniforms.u_nodeSizeScale, this.graphLayer.nodeSizeScale ?? 1);
     gl.uniform1f(uniforms.u_nodeOutline, options.nodeOutlineValue ?? 0);
@@ -1995,6 +2015,10 @@ export class WebGLAttributeRenderer {
     const edgeConfig = visualConfig?.edge ?? null;
     const edgeVariant = this.resolveEdgeVariant(visualConfig);
     const useQuads = (this.graphLayer?.getEffectiveEdgeRenderingMode?.() ?? this.graphLayer?.edgeRenderingMode) === 'quad';
+    const nodeSizeUniform = nodeVariant ? (nodeVariant.sizeBuffer === false) : false;
+    const nodeSizeValue = nodeSizeUniform
+      ? Number(nodeConfig?.size?.value ?? 0)
+      : 1;
     const nodeOutlineUniform = nodeVariant ? (nodeVariant.outlineWidthBuffer === false) : true;
     const nodeOutlineValue = nodeConfig?.outline?.mode === 'uniform'
       ? Number(nodeConfig?.outline?.value ?? 0)
@@ -2425,7 +2449,8 @@ export class WebGLAttributeRenderer {
 
         const drawNodeArgs = {
           useNodeIdBuffer,
-          useNodeSize: Boolean(nodeSizes),
+          useNodeSize: !nodeSizeUniform && Boolean(nodeSizes),
+          nodeSizeValue,
           useNodeOutline: !nodeOutlineUniform && Boolean(nodeOutlineWidths),
           nodeOutlineValue: nodeOutlineValue,
           useEncodedTexture: trackedNodeValueMode === TRACKED_VALUE_MODE.ENCODED_TEXTURE,
@@ -2467,7 +2492,7 @@ export class WebGLAttributeRenderer {
           this.bindTexture(11, drawTextures.nodeTrackedInt);
           this.bindTexture(12, drawTextures.nodeTrackedUint);
           gl.bindVertexArray(this.nodeVao);
-          gl.drawArraysInstanced(gl.POINTS, 0, 1, drawNodeCount);
+          gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, drawNodeCount);
         };
 
         const setupEdgeDraw = (program, uniforms) => {

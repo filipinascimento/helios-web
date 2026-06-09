@@ -29,6 +29,7 @@ import { HeliosFilter } from './filters/HeliosFilter.js';
 import { DensityLayer } from './rendering/engine/DensityLayer.js';
 import { HeliosUI } from './ui/HeliosUI.js';
 import { BEHAVIOR_IDS, Behavior, BehaviorManager, createDefaultBehaviorRegistry } from './behaviors/index.js';
+import { serializeMapperCollection as serializeMapperCollectionSnapshot } from './behaviors/mapperBehaviorShared.js';
 import {
   HeliosPersistenceService,
   PERSISTENCE_KINDS,
@@ -274,6 +275,17 @@ function cloneColorInput(value, fallback) {
   return normalized ? [...normalized] : [...fallback];
 }
 
+function cloneSerializable(value) {
+  if (Array.isArray(value)) return value.map((entry) => cloneSerializable(entry));
+  if (ArrayBuffer.isView(value)) return Array.from(value, (entry) => cloneSerializable(entry));
+  if (value && typeof value === 'object') {
+    const next = {};
+    for (const [key, entry] of Object.entries(value)) next[key] = cloneSerializable(entry);
+    return next;
+  }
+  return value;
+}
+
 function normalizeInsets(insets) {
   if (!insets || typeof insets !== 'object') {
     return { top: 0, right: 0, bottom: 0, left: 0 };
@@ -288,6 +300,18 @@ function normalizeInsets(insets) {
     bottom: coerce(insets.bottom),
     left: coerce(insets.left),
   };
+}
+
+function mergeOverlayInsets(...entries) {
+  const next = { top: 0, right: 0, bottom: 0, left: 0 };
+  for (const entry of entries) {
+    const insets = normalizeInsets(entry);
+    next.top = Math.max(next.top, insets.top);
+    next.right = Math.max(next.right, insets.right);
+    next.bottom = Math.max(next.bottom, insets.bottom);
+    next.left = Math.max(next.left, insets.left);
+  }
+  return next;
 }
 
 function createDetailEvent(type, detail) {
@@ -324,27 +348,7 @@ function cloneMapperCollection(previous, network, onChange, debug) {
 }
 
 function serializeMapperCollectionState(collection) {
-  const describeMapper = (mapper) => {
-    const channels = {};
-    for (const [channelName, config] of mapper?.channels?.entries?.() ?? []) {
-      channels[channelName] = {
-        type: config?.type ?? config?.mode ?? null,
-        meta: config?.meta && typeof config.meta === 'object' ? { ...config.meta } : config?.meta ?? null,
-      };
-    }
-    return { channels };
-  };
-  const mappers = {};
-  let defaultId = null;
-  for (const [id, mapper] of collection?.mappers?.entries?.() ?? []) {
-    mappers[id] = describeMapper(mapper);
-    if (!defaultId && mapper === collection?.defaultMapper) defaultId = id;
-  }
-  return {
-    mode: collection?.mode ?? null,
-    defaultId,
-    mappers,
-  };
+  return serializeMapperCollectionSnapshot(collection);
 }
 
 function inferNetworkFormatFromName(name) {
@@ -353,7 +357,87 @@ function inferNetworkFormatFromName(name) {
   if (lower.endsWith('.bxnet')) return 'bxnet';
   if (lower.endsWith('.zxnet')) return 'zxnet';
   if (lower.endsWith('.xnet')) return 'xnet';
+  if (lower.endsWith('.gml')) return 'gml';
   return null;
+}
+
+function normalizeNetworkFileDropOptions(value) {
+  if (value === true) {
+    return {
+      enabled: true,
+      target: 'root',
+      supportedFormats: ['bxnet', 'zxnet', 'xnet', 'gml'],
+      replaceOptions: { disposeOld: true, recreateRenderer: true, keepCamera: false },
+    };
+  }
+  if (!value || typeof value !== 'object' || value.enabled === false) return { enabled: false };
+  const formats = Array.isArray(value.supportedFormats)
+    ? value.supportedFormats.map((entry) => String(entry).trim().toLowerCase()).filter(Boolean)
+    : ['bxnet', 'zxnet', 'xnet', 'gml'];
+  return {
+    enabled: true,
+    target: value.target ?? 'root',
+    supportedFormats: formats,
+    replaceOptions: {
+      disposeOld: true,
+      recreateRenderer: true,
+      keepCamera: false,
+      ...(value.replaceOptions && typeof value.replaceOptions === 'object' ? value.replaceOptions : {}),
+    },
+    overlayTitle: typeof value.overlayTitle === 'string' ? value.overlayTitle : 'Drop a network file here',
+    overlaySubtitle: typeof value.overlaySubtitle === 'string'
+      ? value.overlaySubtitle
+      : `Supported formats: ${formats.map((fmt) => `.${fmt}`).join(', ')}`,
+  };
+}
+
+function hasOwnOption(options, key) {
+  return Object.prototype.hasOwnProperty.call(options ?? {}, key);
+}
+
+function shouldEnablePersistence(options = {}) {
+  if (options.persistence === false) return false;
+  if (options.persistence === true) return true;
+  if (options.persistence && typeof options.persistence === 'object' && options.persistence.enabled === false) return false;
+  if (options.persistence && typeof options.persistence === 'object' && options.persistence.enabled !== false) return true;
+  return [
+    'workspaceId',
+    'backends',
+    'customBackend',
+    'remote',
+    'networkPersistence',
+    'positionPersistence',
+    'session',
+    'sessionId',
+  ].some((key) => hasOwnOption(options, key) && options[key] !== false && options[key] != null);
+}
+
+function normalizeSessionPersistenceOptions(options = {}) {
+  if (options.session === false) return false;
+  const topLevelSessionId = options.sessionId != null && String(options.sessionId).trim()
+    ? { sessionId: String(options.sessionId).trim() }
+    : {};
+  if (typeof options.session === 'string' && options.session.trim()) return { sessionId: options.session.trim() };
+  if (options.session === true) return { ...topLevelSessionId };
+  if (options.session && typeof options.session === 'object') {
+    return {
+      ...(options.persistence?.session && typeof options.persistence.session === 'object' ? options.persistence.session : {}),
+      ...options.session,
+      ...topLevelSessionId,
+    };
+  }
+  if (typeof options.persistence?.session === 'string' && options.persistence.session.trim()) {
+    return { sessionId: options.persistence.session.trim() };
+  }
+  if (options.persistence?.session && typeof options.persistence.session === 'object') {
+    return {
+      ...options.persistence.session,
+      ...topLevelSessionId,
+    };
+  }
+  if (topLevelSessionId.sessionId) return { ...topLevelSessionId };
+  if (options.persistence?.session === true) return { ...topLevelSessionId };
+  return false;
 }
 
 function isBehaviorLike(candidate) {
@@ -821,6 +905,51 @@ function computeGpuForceModeSwitchDepthJitter(layout) {
   return Math.max(1e-4, jitterBase * 0.005);
 }
 
+function hash32(value) {
+  let x = value >>> 0;
+  x ^= x >>> 16;
+  x = Math.imul(x, 0x7feb352d) >>> 0;
+  x ^= x >>> 15;
+  x = Math.imul(x, 0x846ca68b) >>> 0;
+  x ^= x >>> 16;
+  return x >>> 0;
+}
+
+function hasMeaningfulDepth(snapshot, amplitude = 0) {
+  if (!(snapshot instanceof Float32Array) || snapshot.length < 3) return false;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (let i = 2; i < snapshot.length; i += 3) {
+    const z = Number(snapshot[i]);
+    if (!Number.isFinite(z)) continue;
+    if (z < minZ) minZ = z;
+    if (z > maxZ) maxZ = z;
+  }
+  if (!Number.isFinite(minZ) || !Number.isFinite(maxZ)) return false;
+  const tolerance = Math.max(1e-6, Math.abs(Number(amplitude) || 0) * 0.05);
+  return (maxZ - minZ) > tolerance;
+}
+
+function applyPlanarDepthJitter(snapshot, amplitude = 0) {
+  if (!(snapshot instanceof Float32Array) || snapshot.length < 3) return false;
+  const safeAmplitude = Math.max(1e-4, Number(amplitude) || 0);
+  const count = Math.floor(snapshot.length / 3);
+  if (count <= 0 || hasMeaningfulDepth(snapshot, safeAmplitude)) return false;
+  let mean = 0;
+  for (let nodeId = 0; nodeId < count; nodeId += 1) {
+    mean += ((((hash32(nodeId + 1) + 0.5) / 4294967296) - 0.5) * safeAmplitude);
+  }
+  mean /= Math.max(1, count);
+  for (let nodeId = 0; nodeId < count; nodeId += 1) {
+    const offset = (nodeId * 3) + 2;
+    const currentZ = Number(snapshot[offset]);
+    const baseZ = Number.isFinite(currentZ) ? currentZ : 0;
+    const noise = ((((hash32(nodeId + 1) + 0.5) / 4294967296) - 0.5) * safeAmplitude) - mean;
+    snapshot[offset] = baseZ + noise;
+  }
+  return true;
+}
+
 function resolveSeedBoundsForLayout(layoutOption, size, mode) {
   const safeMode = mode === '3d' ? '3d' : '2d';
   const width = Math.max(1, size?.width ?? 1)*0.01;
@@ -964,6 +1093,19 @@ function estimate2DZoomFrom3DDistance(pose) {
 const DEFAULT_MODE_SWITCH_DURATION_MS = 360;
 const DEFAULT_MODE_SWITCH_3D_ROTATION = createYawPitchQuaternion(-0.55, 0.42);
 const CAMERA_FIT_DEFAULT_MAX_SAMPLES = 50000;
+const QUICK_CONTROL_DEFAULTS = Object.freeze({
+  enabled: true,
+  autoFit: true,
+  layout: true,
+  zoom: true,
+  reserveLegendSpace: true,
+  theme: 'dark',
+  buttonSize: 38,
+  gap: 6,
+  margin: 12,
+  zoomFactor: 1.25,
+});
+const BASELINE_REFRESH_IGNORED_OVERRIDES = new Set(['exporter.baseName', 'exporter.preset']);
 const CAMERA_CONTROL_DEFAULTS = Object.freeze({
   autoFit: true,
   autoFitCoverage: 0.95,
@@ -1261,6 +1403,33 @@ function normalizeCameraControlConfig(base = {}, patch = {}) {
   next.autoFitMinIntervalMs = Math.min(next.autoFitMinIntervalMs ?? 0, next.autoFitMaxIntervalMs ?? 0);
   next.autoFitMaxIntervalMs = Math.max(next.autoFitMaxIntervalMs ?? 0, next.autoFitMinIntervalMs ?? 0);
   return next;
+}
+
+function normalizeQuickControlsConfig(value, options = {}) {
+  if (value === false || value == null && options.defaultEnabled === false) {
+    return { ...QUICK_CONTROL_DEFAULTS, enabled: false };
+  }
+  const patch = value && typeof value === 'object' ? value : {};
+  const uiOptions = options.ui && typeof options.ui === 'object' ? options.ui : {};
+  const theme = typeof patch.theme === 'string' && patch.theme
+    ? patch.theme
+    : (typeof uiOptions.theme === 'string' && uiOptions.theme ? uiOptions.theme : QUICK_CONTROL_DEFAULTS.theme);
+  const config = {
+    ...QUICK_CONTROL_DEFAULTS,
+    ...patch,
+    theme,
+    enabled: patch.enabled !== false,
+    autoFit: patch.autoFit !== false && patch.fit !== false,
+    layout: patch.layout !== false,
+    zoom: patch.zoom !== false,
+    reserveLegendSpace: patch.reserveLegendSpace !== false,
+    buttonSize: normalizePositiveInteger(patch.buttonSize, QUICK_CONTROL_DEFAULTS.buttonSize, 28, 96),
+    gap: normalizeNonNegativeNumber(patch.gap, QUICK_CONTROL_DEFAULTS.gap, 0, 32),
+    margin: normalizeNonNegativeNumber(patch.margin, QUICK_CONTROL_DEFAULTS.margin, 0, 96),
+    zoomFactor: normalizeNonNegativeNumber(patch.zoomFactor, QUICK_CONTROL_DEFAULTS.zoomFactor, 1.01, 8),
+  };
+  if (!config.autoFit && !config.layout && !config.zoom) config.enabled = false;
+  return config;
 }
 
 function copyCameraControlConfig(config = {}) {
@@ -1684,6 +1853,9 @@ export const EVENTS = Object.freeze({
  * density layer options.
  * @param {object} [options.camera] - Camera framing, controls, and target
  * tracking options.
+ * @param {boolean|object} [options.quickControls=true] - Compact top-right
+ * auto-fit, layout pause/run, and zoom controls. Pass `false` to disable all
+ * controls, or disable individual groups with `autoFit`, `layout`, or `zoom`.
  * @param {boolean|object} [options.ui=false] - Optional HeliosUI creation.
  * Pass `true` to create the standard panel set, or an object with HeliosUI
  * options and `panels` set to a panel name, array of names, `true`, or `false`.
@@ -2317,7 +2489,22 @@ export class Helios extends EventTarget {
       };
     }
     this.network = network;
+    const initialNetworkSource = options.networkSource && typeof options.networkSource === 'object'
+      ? options.networkSource
+      : {};
+    const initialNetworkName = typeof initialNetworkSource.name === 'string' && initialNetworkSource.name.trim()
+      ? initialNetworkSource.name.trim()
+      : (typeof options.networkName === 'string' && options.networkName.trim() ? options.networkName.trim() : null);
+    const initialNetworkBase = typeof initialNetworkSource.baseName === 'string' && initialNetworkSource.baseName.trim()
+      ? initialNetworkSource.baseName.trim()
+      : (initialNetworkName ? getBaseFilename(initialNetworkName) : null);
+    this._lastLoadedNetworkName = initialNetworkName;
+    this._lastLoadedNetworkBase = initialNetworkBase;
+    this._lastLoadedNetworkFormat = typeof initialNetworkSource.format === 'string'
+      ? initialNetworkSource.format
+      : inferNetworkFormatFromName(initialNetworkName);
     this.options = options;
+    this._initialMode = options.mode === '3d' ? '3d' : '2d';
     this.debug = createDebugLogger(options.debug);
     this.debug.log('helios', 'Constructing Helios instance', { mode: options.mode ?? '2d' });
     this.prewarmPromise = null;
@@ -2339,7 +2526,14 @@ export class Helios extends EventTarget {
       supersamplingAutoFactor: options.supersamplingAutoFactor,
       supersamplingAutoThreshold: options.supersamplingAutoThreshold,
     });
+    this._networkFileDropOptions = normalizeNetworkFileDropOptions(
+      options.fileDrop ?? options.networkFileDrop ?? options.dragAndDropNetwork,
+    );
+    this._networkFileDropCleanup = null;
+    this._networkFileDropOverlay = null;
+    this._networkFileDropDepth = 0;
     this._setupAutoCleanup();
+    this._setupNetworkFileDrop();
     this.visuals = new VisualAttributes(network, this.debug);
     this.nodeMapper = new MapperCollection('node', network, this.markMappersDirty, this.debug);
     this.edgeMapper = new MapperCollection('edge', network, this.markMappersDirty, this.debug);
@@ -2698,7 +2892,13 @@ export class Helios extends EventTarget {
       performanceFallbackAlpha: NaN,
       forceHighQuality: false,
     };
+    this._baseOverlayInsets = { top: 0, right: 0, bottom: 0, left: 0 };
+    this._quickControlsOverlayInsets = { top: 0, right: 0, bottom: 0, left: 0 };
     this._overlayInsets = { top: 0, right: 0, bottom: 0, left: 0 };
+    this._quickControlsConfig = normalizeQuickControlsConfig(options.quickControls, { ui: options.ui });
+    this._quickControls = null;
+    this._quickControlCleanups = [];
+    this._setupQuickControls();
     this.densityMap = {
       setBandwidth: (value) => {
         this.densityBandwidth(value);
@@ -2724,16 +2924,41 @@ export class Helios extends EventTarget {
     this.size = { ...this.layers.size };
     this.removeResizeListener = null;
     this.firstGeometryUpdateComplete = false;
+    const persistenceEnabled = shouldEnablePersistence(options);
+    const rawPersistenceOptions = options.persistence && typeof options.persistence === 'object' ? options.persistence : {};
     this.persistence = new HeliosPersistenceService({
       helios: this,
-      ...(options.persistence && typeof options.persistence === 'object' ? options.persistence : {}),
+      workspaceId: options.workspaceId ?? rawPersistenceOptions.workspaceId,
+      network: this.network,
+      browser: persistenceEnabled ? rawPersistenceOptions.browser : false,
+      networkAttributes: persistenceEnabled ? rawPersistenceOptions.networkAttributes : false,
+      autosave: persistenceEnabled ? rawPersistenceOptions.autosave : false,
+      networkPersistence: persistenceEnabled
+        ? (options.networkPersistence ?? rawPersistenceOptions.networkPersistence)
+        : { enabled: false, autosave: false },
+      positionPersistence: persistenceEnabled
+        ? (options.positionPersistence ?? rawPersistenceOptions.positionPersistence)
+        : { enabled: false, autosave: false },
+      sessionThumbnail: persistenceEnabled
+        ? (options.sessionThumbnail ?? rawPersistenceOptions.sessionThumbnail)
+        : false,
+      autosyncInteractionIdleMs: persistenceEnabled
+        ? (options.autosyncInteractionIdleMs ?? rawPersistenceOptions.autosyncInteractionIdleMs ?? options.interactionIdleMs ?? rawPersistenceOptions.interactionIdleMs)
+        : 0,
+      remote: persistenceEnabled ? (options.remote ?? rawPersistenceOptions.remote) : null,
+      customBackend: persistenceEnabled ? (options.customBackend ?? rawPersistenceOptions.customBackend) : null,
+      backends: persistenceEnabled ? (options.backends ?? rawPersistenceOptions.backends) : [],
+      ...rawPersistenceOptions,
+      ...(persistenceEnabled ? {} : {
+        browser: false,
+        networkAttributes: false,
+        autosave: false,
+        remote: null,
+        customBackend: null,
+        backends: [],
+      }),
     });
-    this._sessionPersistenceOptions = options.session === false
-      ? false
-      : {
-        ...(options.persistence?.session && typeof options.persistence.session === 'object' ? options.persistence.session : {}),
-        ...(options.session && typeof options.session === 'object' ? options.session : {}),
-      };
+    this._sessionPersistenceOptions = persistenceEnabled ? normalizeSessionPersistenceOptions(options) : false;
     this._initializeDefaultBehaviors(options.behaviors);
     this._initializeBehaviors(options.behaviors);
     this.ui = null;
@@ -2773,6 +2998,129 @@ export class Helios extends EventTarget {
       observer.observe(container.parentNode, { childList: true });
     }
     this._autoCleanupObserver = observer;
+  }
+
+  _resolveNetworkFileDropTarget() {
+    const configured = this._networkFileDropOptions?.target;
+    if (configured && typeof configured === 'object' && typeof configured.addEventListener === 'function') {
+      return configured;
+    }
+    if (typeof configured === 'string' && configured && configured !== 'root') {
+      const found = document.querySelector(configured);
+      if (found) return found;
+    }
+    return this.layers?.root ?? null;
+  }
+
+  _dragEventHasFiles(event) {
+    const types = Array.from(event?.dataTransfer?.types ?? []);
+    return types.includes('Files');
+  }
+
+  _ensureNetworkFileDropOverlay() {
+    if (this._networkFileDropOverlay) return this._networkFileDropOverlay;
+    const doc = this.layers?.root?.ownerDocument ?? document;
+    const overlay = doc.createElement('div');
+    overlay.className = 'helios-network-drop-overlay';
+    overlay.setAttribute('aria-hidden', 'true');
+    overlay.style.position = 'absolute';
+    overlay.style.inset = '8%';
+    overlay.style.zIndex = '1500';
+    overlay.style.display = 'none';
+    overlay.style.alignItems = 'center';
+    overlay.style.justifyContent = 'center';
+    overlay.style.flexDirection = 'column';
+    overlay.style.gap = '8px';
+    overlay.style.pointerEvents = 'none';
+    overlay.style.border = '2px dashed currentColor';
+    overlay.style.borderRadius = '14px';
+    overlay.style.background = 'rgba(0, 0, 0, 0.62)';
+    overlay.style.color = '#fff';
+    overlay.style.textAlign = 'center';
+    overlay.style.font = '600 14px/1.35 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    overlay.style.padding = '18px';
+
+    const title = doc.createElement('div');
+    title.className = 'helios-network-drop-overlay__title';
+    title.textContent = this._networkFileDropOptions?.overlayTitle ?? 'Drop a network file here';
+    const subtitle = doc.createElement('div');
+    subtitle.className = 'helios-network-drop-overlay__subtitle';
+    subtitle.textContent = this._networkFileDropOptions?.overlaySubtitle ?? 'Supported formats: .bxnet, .zxnet, .xnet, .gml';
+    overlay.appendChild(title);
+    overlay.appendChild(subtitle);
+    this.layers?.root?.appendChild(overlay);
+    this._networkFileDropOverlay = overlay;
+    return overlay;
+  }
+
+  _setNetworkFileDropActive(active) {
+    const overlay = this._ensureNetworkFileDropOverlay();
+    overlay.style.display = active ? 'flex' : 'none';
+    this.layers?.root?.classList.toggle('helios-network-drop-active', active);
+  }
+
+  async _handleNetworkFileDrop(file) {
+    if (!file) return null;
+    const format = inferNetworkFormatFromName(file.name);
+    const supported = this._networkFileDropOptions?.supportedFormats ?? [];
+    if (!format || !supported.includes(format)) {
+      console.warn('Helios: dropped file ignored because its format is unsupported.', { name: file.name, format });
+      return null;
+    }
+    return this.loadNetwork(file, {
+      ...(this._networkFileDropOptions?.replaceOptions ?? {}),
+      format,
+    });
+  }
+
+  _setupNetworkFileDrop() {
+    if (this._networkFileDropOptions?.enabled !== true) return;
+    const target = this._resolveNetworkFileDropTarget();
+    if (!target) return;
+
+    const prevent = (event) => {
+      if (!this._dragEventHasFiles(event)) return false;
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+      return true;
+    };
+    const onDragEnter = (event) => {
+      if (!prevent(event)) return;
+      this._networkFileDropDepth += 1;
+      this._setNetworkFileDropActive(true);
+    };
+    const onDragOver = (event) => {
+      prevent(event);
+    };
+    const onDragLeave = (event) => {
+      if (!prevent(event)) return;
+      this._networkFileDropDepth = Math.max(0, this._networkFileDropDepth - 1);
+      if (this._networkFileDropDepth === 0) this._setNetworkFileDropActive(false);
+    };
+    const onDrop = (event) => {
+      if (!prevent(event)) return;
+      this._networkFileDropDepth = 0;
+      this._setNetworkFileDropActive(false);
+      const file = event.dataTransfer?.files?.[0] ?? null;
+      this._handleNetworkFileDrop(file).catch((error) => {
+        console.error('Helios: failed to load dropped network file.', error);
+      });
+    };
+
+    target.addEventListener('dragenter', onDragEnter);
+    target.addEventListener('dragover', onDragOver);
+    target.addEventListener('dragleave', onDragLeave);
+    target.addEventListener('drop', onDrop);
+    this._networkFileDropCleanup = () => {
+      target.removeEventListener('dragenter', onDragEnter);
+      target.removeEventListener('dragover', onDragOver);
+      target.removeEventListener('dragleave', onDragLeave);
+      target.removeEventListener('drop', onDrop);
+      this._networkFileDropOverlay?.remove?.();
+      this._networkFileDropOverlay = null;
+      this._networkFileDropDepth = 0;
+    };
   }
 
   _disconnectAutoCleanup() {
@@ -2967,7 +3315,10 @@ export class Helios extends EventTarget {
     const camera = this.renderer?.camera ?? null;
     const pose = state && options.restoreViewport !== true ? { ...state } : state;
     if (pose && options.restoreViewport !== true) delete pose.viewport;
+    this._cameraTransitionController?.stop?.();
+    this._stopCameraControlPoseInterpolation();
     applyCameraPose(camera, pose);
+    this.scheduler?.requestRender?.();
   }
 
   _snapshotCameraControlState() {
@@ -3593,13 +3944,14 @@ export class Helios extends EventTarget {
     const nodeRadiusWorld = Math.max(0, Number(bounds.nodeRadiusWorld ?? 0) || 0);
 
     if (camera.mode === '2d') {
+      const fitZoomMargin = Math.max(1, Number.isFinite(options.zoomMargin) ? Number(options.zoomMargin) : 1.1);
       const viewportW = Math.max(1, camera.viewport?.width ?? this.size?.width ?? 1);
       const viewportH = Math.max(1, camera.viewport?.height ?? this.size?.height ?? 1);
       const availW = Math.max(1, viewportW - bounds.paddingPx * 2);
       const availH = Math.max(1, viewportH - bounds.paddingPx * 2);
       const zoomX = availW / Math.max(1e-6, fitWidth + nodeRadiusWorld * 2);
       const zoomY = availH / Math.max(1e-6, fitHeight + nodeRadiusWorld * 2);
-      const nextZoom = Math.min(zoomX, zoomY);
+      const nextZoom = Math.min(zoomX, zoomY) / fitZoomMargin;
       const clampedZoom = Math.min(camera.maxZoom ?? nextZoom, Math.max(camera.minZoom ?? nextZoom, nextZoom));
       return mergeCameraPose(current, {
         mode: '2d',
@@ -5001,6 +5353,7 @@ export class Helios extends EventTarget {
    * @param {boolean} [options.disposeOld=true] - Dispose the previous network.
    * @param {boolean} [options.keepCamera=true] - Preserve the current camera.
    * @param {boolean} [options.keepMappers=true] - Preserve mapper settings.
+   * @param {boolean} [options.markNetworkDirty=true] - Mark persistence network data dirty after replacement.
    * @returns {Promise<Helios>} This Helios instance after the renderer and
    * layout are rebound to the new graph.
    * @example
@@ -5059,6 +5412,7 @@ export class Helios extends EventTarget {
 
     const prevNetwork = this.network;
     this.network = nextNetwork;
+    this.persistence?.configure?.({ network: nextNetwork });
     this._ensureGraphFilterState().renderNetwork = nextNetwork;
     this._ensureGraphFilterState().layoutNetwork = nextNetwork;
     this._refreshGraphFilterNetworks({ force: true, throwOnError: false });
@@ -5146,6 +5500,9 @@ export class Helios extends EventTarget {
       nodeCount: nextNetwork?.nodeCount ?? null,
       edgeCount: nextNetwork?.edgeCount ?? null,
     });
+    if (options.markNetworkDirty !== false) {
+      this.persistence?.markNetworkDirty?.('network-replaced');
+    }
     this._labels?.requestFullReselect?.('network-replaced-emitted');
 
     if (disposeOld && prevNetwork && typeof prevNetwork.dispose === 'function') {
@@ -5253,7 +5610,7 @@ export class Helios extends EventTarget {
    * @apiSection Network And Persistence
    * @param {Blob|ArrayBuffer|string|File} source - Network payload or file-like object.
    * @param {object} [options] - Load and replacement options.
-   * @param {'xnet'|'zxnet'|'bxnet'} [options.format] - Input format when it
+   * @param {'xnet'|'zxnet'|'bxnet'|'gml'} [options.format] - Input format when it
    * cannot be inferred from `source.name`.
    * @returns {Promise<HeliosNetwork>} Loaded network instance.
    * @example
@@ -5261,12 +5618,18 @@ export class Helios extends EventTarget {
    */
   async loadNetwork(source, options = {}) {
     const requestedFormat = options.format ?? null;
-    const formatFromName = source && typeof source === 'object' && typeof source.name === 'string'
-      ? inferNetworkFormatFromName(source.name)
+    const sourceNameOption = typeof options.name === 'string'
+      ? options.name
+      : (typeof options.filename === 'string' ? options.filename : null);
+    const sourceNameForMetadata = source && typeof source === 'object' && typeof source.name === 'string'
+      ? source.name
+      : sourceNameOption;
+    const formatFromName = typeof sourceNameForMetadata === 'string'
+      ? inferNetworkFormatFromName(sourceNameForMetadata)
       : null;
     const format = requestedFormat ?? formatFromName;
     if (!format) {
-      throw new Error('loadNetwork requires a format ("xnet", "zxnet", "bxnet") or a filename with a supported extension');
+      throw new Error('loadNetwork requires a format ("xnet", "zxnet", "bxnet", "gml") or a filename with a supported extension');
     }
     const { default: HeliosNetwork } = await import('helios-network');
     const normalized = format.toLowerCase();
@@ -5274,18 +5637,39 @@ export class Helios extends EventTarget {
     if (normalized === 'bxnet') next = await HeliosNetwork.fromBXNet(source);
     else if (normalized === 'zxnet') next = await HeliosNetwork.fromZXNet(source);
     else if (normalized === 'xnet') next = await HeliosNetwork.fromXNet(source);
+    else if (normalized === 'gml') next = await HeliosNetwork.fromGML(source);
     else throw new Error(`Unsupported network format: ${format}`);
-    await this.replaceNetwork(next, options);
-    if (typeof source?.name === 'string') {
-      this._lastLoadedNetworkName = source.name;
-      this._lastLoadedNetworkBase = getBaseFilename(source.name);
-      this._lastLoadedNetworkFormat = inferNetworkFormatFromName(source.name);
+    const sourceName = sourceNameForMetadata;
+    const sourceBase = sourceName ? getBaseFilename(sourceName) : null;
+    const shouldCreateSession = sourceName
+      && options.allowDuringInitialize !== true
+      && options.preserveSession !== true
+      && options.createSession !== false
+      && options.newSession !== false;
+    if (shouldCreateSession && typeof this.persistence?.startNewSession === 'function') {
+      await this.persistence.startNewSession({
+        nickname: options.sessionNickname ?? sourceBase ?? sourceName,
+        name: sourceName,
+        flushPrevious: options.flushPreviousSession !== false,
+        replaceUrlSession: options.replaceUrlSession !== false,
+      });
     }
+    if (sourceName) {
+      this._lastLoadedNetworkName = sourceName;
+      this._lastLoadedNetworkBase = sourceBase;
+      this._lastLoadedNetworkFormat = inferNetworkFormatFromName(sourceName);
+    }
+    await this.replaceNetwork(next, options);
     if (options.restoreVisualizationState !== false) {
       const attachedState = this.getAttachedVisualizationState(next);
       if (attachedState) {
         await this.importVisualizationState(attachedState, { reason: 'network-load' });
       }
+      await this.persistence?.restorePortableStateFromNetwork?.({ network: next });
+    }
+    if (shouldCreateSession) {
+      await this.persistence?.setSessionNickname?.(options.sessionNickname ?? sourceBase ?? sourceName);
+      this.persistence?.sessionController?.resetTrackingBaseline?.(null, { clearJournal: true });
     }
     return next;
   }
@@ -5295,7 +5679,7 @@ export class Helios extends EventTarget {
    *
    * @public
    * @apiSection Network And Persistence
-   * @param {'xnet'|'zxnet'|'bxnet'} [format='bxnet'] - Output format.
+   * @param {'xnet'|'zxnet'|'bxnet'|'gml'} [format='bxnet'] - Output format.
    * @param {object} [options] - Save options forwarded to the network serializer.
    * @returns {Promise<Blob|string|ArrayBuffer>} Serialized network payload.
    */
@@ -5318,6 +5702,10 @@ export class Helios extends EventTarget {
     if (normalized === 'xnet') {
       if (typeof this.network.saveXNet !== 'function') throw new Error('Network does not support saveXNet()');
       return this.network.saveXNet(saveOptions);
+    }
+    if (normalized === 'gml') {
+      if (typeof this.network.saveGML !== 'function') throw new Error('Network does not support saveGML()');
+      return this.network.saveGML(saveOptions);
     }
     throw new Error(`Unsupported network format: ${format}`);
   }
@@ -5372,7 +5760,7 @@ export class Helios extends EventTarget {
     const envelope = createPersistenceEnvelope(PERSISTENCE_KINDS.visualization, {
       preferences,
       responsivePreferences: preferences?.responsive ?? null,
-      uiState: this.behaviors?.ui?.serializeState?.() ?? {},
+      uiState: this.ui?.serializeState?.() ?? this.behaviors?.ui?.serializeState?.() ?? {},
       behaviorState: this.serializeBehaviorState(),
       cameraState: this._snapshotCameraState(options.camera ?? {}),
       cameraControlState: this._snapshotCameraControlState(),
@@ -5389,7 +5777,7 @@ export class Helios extends EventTarget {
     return createPersistenceEnvelope(PERSISTENCE_KINDS.visualization, {
       preferences,
       responsivePreferences: preferences?.responsive ?? null,
-      uiState: this.behaviors?.ui?.serializeState?.() ?? {},
+      uiState: this.ui?.serializeState?.() ?? this.behaviors?.ui?.serializeState?.() ?? {},
       behaviorState: this.serializeBehaviorState(),
       cameraState: this._snapshotCameraState(options.camera ?? {}),
       cameraControlState: this._snapshotCameraControlState(),
@@ -5417,26 +5805,53 @@ export class Helios extends EventTarget {
       payload = applyOverridesToVisualizationState(base, payload.overrides).payload;
       payload.layoutRuntimeState = envelope.payload.layoutRuntimeState ?? payload.layoutRuntimeState;
     }
-    const restoredMode = payload.cameraState?.mode;
-    if (
-      options.restoreMode !== false
-      && (restoredMode === '2d' || restoredMode === '3d')
-      && restoredMode !== this.mode()
-      && typeof this.setMode === 'function'
-    ) {
-      await this.setMode(restoredMode, {
-        animate: false,
-        syncDelegate: false,
-        ...(options.modeOptions ?? {}),
+    const applyVisualizationState = async () => {
+      const restoredMode = payload.cameraState?.mode;
+      if (
+        options.restoreMode !== false
+        && (restoredMode === '2d' || restoredMode === '3d')
+        && restoredMode !== this.mode()
+        && typeof this.setMode === 'function'
+      ) {
+        await this.setMode(restoredMode, {
+          animate: false,
+          syncDelegate: false,
+          ...(options.modeOptions ?? {}),
+        });
+      }
+      this.restoreBehaviorState(payload.behaviorState);
+      if (typeof this.behaviors?.ui?.restoreState === 'function') {
+        this.behaviors.ui.restoreState(payload.uiState, options);
+      } else if (payload.uiState && typeof payload.uiState === 'object') {
+        this._pendingVisualizationUiState = cloneSerializable(payload.uiState);
+        if (options.hydratePersistence === false) this._pendingPersistenceBaselineRefresh = true;
+      }
+      if (payload.cameraControlState) this._restoreCameraControlState(payload.cameraControlState);
+      if (payload.cameraState) this._restoreCameraState(payload.cameraState, { restoreViewport: options.restoreCameraViewport === true });
+      if (payload.layoutRuntimeState && options.restoreLayoutRuntime !== false) {
+        await this.restoreLayoutRuntimeState(payload.layoutRuntimeState, {
+          reason: options.reason ?? 'visualization-state-restore',
+          ...(Object.prototype.hasOwnProperty.call(options, 'restoreLayoutRunState')
+            ? { restoreRunState: options.restoreLayoutRunState === true }
+            : {}),
+        });
+      }
+    };
+    if (options.hydratePersistence === false && typeof this.persistence?.runWithPersistenceRestoreSuspended === 'function') {
+      await this.persistence.runWithPersistenceRestoreSuspended(applyVisualizationState);
+    } else {
+      await applyVisualizationState();
+    }
+    if (options.hydratePersistence !== false) {
+      this.persistence?.hydrateVisualizationState?.(createPersistenceEnvelope(PERSISTENCE_KINDS.visualization, payload, envelope.metadata), {
+        reason: options.reason ?? 'visualization-state-restore',
       });
     }
-    this.restoreBehaviorState(payload.behaviorState);
-    this.behaviors?.ui?.restoreState?.(payload.uiState, options);
-    if (payload.cameraState) this._restoreCameraState(payload.cameraState, { restoreViewport: options.restoreCameraViewport === true });
-    if (payload.cameraControlState) this._restoreCameraControlState(payload.cameraControlState);
-    if (payload.layoutRuntimeState && options.restoreLayoutRuntime !== false) {
-      await this.restoreLayoutRuntimeState(payload.layoutRuntimeState, {
+    if (options.refreshPersistence !== false) {
+      this.persistence?.refreshBoundKeys?.({
+        source: 'restore',
         reason: options.reason ?? 'visualization-state-restore',
+        autosave: false,
       });
     }
     return envelope;
@@ -5571,7 +5986,7 @@ export class Helios extends EventTarget {
    *
    * @public
    * @apiSection Network And Persistence
-   * @param {'xnet'|'zxnet'|'bxnet'} [format='bxnet'] - Output network format.
+   * @param {'xnet'|'zxnet'|'bxnet'|'gml'} [format='bxnet'] - Output network format.
    * @param {object} [options] - Portable save options.
    * @param {boolean} [options.includeVisualization=false] - Attach current
    * visualization state before saving.
@@ -5579,6 +5994,7 @@ export class Helios extends EventTarget {
    */
   async savePortableNetwork(format = 'bxnet', options = {}) {
     if (!this.network) throw new Error('savePortableNetwork requires an active network');
+    const normalizedFormat = String(format ?? 'bxnet').toLowerCase();
     const attributeName = options.attributeName ?? NETWORK_VISUALIZATION_STATE_ATTRIBUTE;
     const saveOptions = { ...(options.saveOptions ?? {}) };
     const ignoreAttributes = {
@@ -5588,15 +6004,57 @@ export class Helios extends EventTarget {
         : [],
     };
     const output = options.output ?? 'blob';
+    if (normalizedFormat === 'gml' && options.includeVisualization === true) {
+      console.warn('Helios: GML export is lossy and cannot preserve full Helios visualization state.');
+      return this.saveNetwork(format, { output, saveOptions });
+    }
     if (options.includeVisualization !== true) {
       if (!ignoreAttributes.network.includes(attributeName)) ignoreAttributes.network.push(attributeName);
-      return this.saveNetwork(format, {
-        output,
-        saveOptions: {
-          ...saveOptions,
-          ignoreAttributes,
-        },
-      });
+      let previousPositions = null;
+      let wroteCurrentPositionsForSave = false;
+      try {
+        if (options.includeCurrentPositions === true) {
+          const currentPositionOptions = {
+            ...options,
+            layoutRuntime: {
+              ...(options.layoutRuntime ?? {}),
+              preferDelegate: true,
+            },
+          };
+          const visualizationState = options.visualizationState
+            ?? await (options.trackedOnly === true
+              ? this.serializeTrackedVisualizationStateAsync(currentPositionOptions)
+              : this.serializeVisualizationStateAsync(currentPositionOptions));
+          const layoutPositions = visualizationState?.payload?.layoutRuntimeState?.positions ?? null;
+          if (layoutPositions?.encoding === 'float32-base64' && typeof layoutPositions.data === 'string') {
+            this.persistence?.set?.('positions.current', layoutPositions, {
+              scope: 'network',
+              source: 'system',
+              reason: 'portable-network-save',
+              autosave: false,
+            });
+            const currentPositions = decodeFloat32ArrayBase64(layoutPositions.data, layoutPositions.length);
+            if (currentPositions instanceof Float32Array && currentPositions.length > 0) {
+              this.visuals?.seedMissingPositions?.(this.layers?.size);
+              previousPositions = this._snapshotNodePositions();
+              if (previousPositions instanceof Float32Array && previousPositions.length === currentPositions.length) {
+                wroteCurrentPositionsForSave = this._writeNodePositions(currentPositions);
+              }
+            }
+          }
+        }
+        return await this.saveNetwork(format, {
+          output,
+          saveOptions: {
+            ...saveOptions,
+            ignoreAttributes,
+          },
+        });
+      } finally {
+        if (wroteCurrentPositionsForSave && previousPositions instanceof Float32Array) {
+          this._writeNodePositions(previousPositions);
+        }
+      }
     }
 
     const saveWithVisualizationAttribute = async () => {
@@ -5607,14 +6065,32 @@ export class Helios extends EventTarget {
       try {
         const visualizationState = options.visualizationState
           ?? await (options.trackedOnly === true
-            ? this.serializeTrackedVisualizationStateAsync(options)
-            : this.serializeVisualizationStateAsync(options));
+            ? this.serializeTrackedVisualizationStateAsync({
+              ...options,
+              layoutRuntime: {
+                ...(options.layoutRuntime ?? {}),
+                preferDelegate: true,
+              },
+            })
+            : this.serializeVisualizationStateAsync({
+              ...options,
+              layoutRuntime: {
+                ...(options.layoutRuntime ?? {}),
+                preferDelegate: true,
+              },
+            }));
         const layoutPositions = visualizationState?.payload?.layoutRuntimeState?.positions ?? null;
         if (
           options.includeCurrentPositions !== false
           && layoutPositions?.encoding === 'float32-base64'
           && typeof layoutPositions.data === 'string'
         ) {
+          this.persistence?.set?.('positions.current', layoutPositions, {
+            scope: 'network',
+            source: 'system',
+            reason: 'portable-network-save',
+            autosave: false,
+          });
           const currentPositions = decodeFloat32ArrayBase64(layoutPositions.data, layoutPositions.length);
           if (currentPositions instanceof Float32Array && currentPositions.length > 0) {
             this.visuals?.seedMissingPositions?.(this.layers?.size);
@@ -5624,6 +6100,10 @@ export class Helios extends EventTarget {
             }
           }
         }
+        await this.persistence?.savePortableStateToNetwork?.({
+          includeNetwork: true,
+          includePositions: options.includeCurrentPositions !== false,
+        });
         this.attachVisualizationStateToNetwork(visualizationState, {
           attributeName,
           pretty: options.pretty,
@@ -6521,13 +7001,22 @@ export class Helios extends EventTarget {
       await this._initializeOptionalUI();
     }
     if (sessionController) {
-      sessionController.captureBaseline?.();
       if (sessionOptions.restore !== false) {
-        this._sessionRestoreResult = await sessionController.restore?.(sessionController.sessionId, {
-          applyNetwork: sessionOptions.restoreNetwork === true,
+        this._sessionRestoreResult = await this.persistence.restoreActiveSession?.({
+          ...sessionOptions,
+          restoreNetwork: sessionOptions.restoreNetwork === true,
         });
       } else if (sessionOptions.saveInitialManifest !== false) {
         await sessionController.saveManifest?.();
+      }
+      const networkData = sessionController.status?.().networkData ?? {};
+      const shouldAutosaveInitialNetwork = sessionOptions.saveInitialNetwork !== false
+        && typeof this.persistence?._featureAutosaveEnabled === 'function'
+        && this.persistence._featureAutosaveEnabled('network')
+        && networkData.status !== 'saved'
+        && networkData.status !== 'skipped';
+      if (shouldAutosaveInitialNetwork) {
+        this.persistence.markNetworkDirty?.(networkData.reason ?? 'session-initial-network');
       }
     }
     if (!this._sessionRestoreResult) this._requestInitialCameraFit();
@@ -6628,9 +7117,12 @@ export class Helios extends EventTarget {
     const alpha = this._readLayoutAlpha(layout);
     const center = this._computePositionSnapshotCenter(snapshot, this.network);
     const layoutBehavior = this.behaviors?.get?.('layout') ?? this.behaviors?.layout ?? null;
-    const positionSource = this._positionsConfig?.source === 'delegate' ? 'delegate' : 'network';
+    const explicitPositionSource = options.positionSource === 'delegate'
+      ? 'delegate'
+      : (options.positionSource === 'network' ? 'network' : null);
+    const positionSource = explicitPositionSource ?? (this._positionsConfig?.source === 'delegate' ? 'delegate' : 'network');
     const delegate = positionSource === 'delegate'
-      ? (this._positionsConfig?.delegate ?? layout?.getPositionDelegate?.() ?? layout?.positionDelegate ?? null)
+      ? (options.delegate ?? this._positionsConfig?.delegate ?? this._activePositionDelegate ?? layout?.getPositionDelegate?.() ?? layout?.positionDelegate ?? null)
       : null;
     const state = {
       schema: 'helios-web.layout-runtime-state',
@@ -6639,6 +7131,7 @@ export class Helios extends EventTarget {
       layoutType: layoutBehavior?.type?.() ?? layout?.constructor?.name ?? null,
       positionSource,
       delegateType: delegate?.constructor?.name ?? null,
+      mode: this.mode?.() === '3d' ? '3d' : '2d',
       layoutState,
       layoutEnabled: scheduler?.layoutEnabled !== false,
       running: layoutState === 'running',
@@ -6674,14 +7167,27 @@ export class Helios extends EventTarget {
   async snapshotLayoutRuntimeStateAsync(options = {}) {
     if (options.includePositions === false) return this._buildLayoutRuntimeState(null, options);
     let snapshot = null;
+    let positionSource = 'network';
+    let snapshotDelegate = null;
     if (options.positions instanceof Float32Array) {
       snapshot = new Float32Array(options.positions);
+      positionSource = options.positionSource === 'delegate' ? 'delegate' : 'network';
+      snapshotDelegate = options.delegate ?? null;
     } else {
       const source = this._positionsConfig ?? { source: 'network', delegate: null };
-      const delegate = options.delegate ?? (source.source === 'delegate'
-        ? (source.delegate ?? this._activePositionDelegate ?? null)
-        : null);
-      if (delegate) {
+      const layout = this._layout ?? null;
+      const delegate = options.delegate
+        ?? source.delegate
+        ?? this._activePositionDelegate
+        ?? layout?.getPositionDelegate?.()
+        ?? layout?.positionDelegate
+        ?? null;
+      const shouldUseDelegate = delegate && (
+        source.source === 'delegate'
+        || options.preferDelegate === true
+        || this.mode?.() === '3d'
+      );
+      if (shouldUseDelegate) {
         try {
           snapshot = await this.snapshotDelegatePositions({
             ...options,
@@ -6689,15 +7195,25 @@ export class Helios extends EventTarget {
             scope: options.scope ?? 'layout-runtime',
             reason: options.reason ?? 'layout-runtime-snapshot',
           });
+          if (snapshot instanceof Float32Array && snapshot.length > 0) {
+            positionSource = 'delegate';
+            snapshotDelegate = delegate;
+          }
         } catch (error) {
           console.warn('Helios: failed to snapshot delegate positions for persistence; falling back to network positions.', error);
         }
       }
       if (!(snapshot instanceof Float32Array) || snapshot.length <= 0) {
         snapshot = this._snapshotNodePositions();
+        positionSource = 'network';
+        snapshotDelegate = null;
       }
     }
-    return this._buildLayoutRuntimeState(snapshot, options);
+    return this._buildLayoutRuntimeState(snapshot, {
+      ...options,
+      positionSource,
+      delegate: snapshotDelegate,
+    });
   }
 
   restoreLayoutRuntimeState(state = {}, options = {}) {
@@ -6714,6 +7230,10 @@ export class Helios extends EventTarget {
         && current instanceof Float32Array
         && snapshot.length === current.length
       ) {
+        const currentMode = this.mode?.() === '3d' ? '3d' : '2d';
+        if (currentMode === '3d') {
+          applyPlanarDepthJitter(snapshot, computeGpuForceModeSwitchDepthJitter(layout));
+        }
         const delegate = this._positionsConfig?.source === 'delegate'
           ? (this._positionsConfig?.delegate ?? layout?.getPositionDelegate?.() ?? layout?.positionDelegate ?? null)
           : (layout?.getPositionDelegate?.() ?? layout?.positionDelegate ?? null);
@@ -7061,6 +7581,7 @@ export class Helios extends EventTarget {
       this._interpolationRuntime = runtime;
       this._applyPositionPipelineToRenderer();
       this.visuals.markPositionsDirty();
+      this.persistence?.markPositionsDirty?.('layout-update');
       this.scheduler.requestGeometry();
       this._labels?.requestFullReselect?.('layout-update');
       this.debug.log('layout', 'Layout update adopted handoff baseline without interpolation');
@@ -7107,6 +7628,7 @@ export class Helios extends EventTarget {
     }
     this._applyPositionPipelineToRenderer();
     this.visuals.markPositionsDirty();
+    this.persistence?.markPositionsDirty?.('layout-update');
     this.scheduler.requestGeometry();
     this._labels?.requestFullReselect?.('layout-update');
     this.debug.log('layout', 'Layout requested geometry update');
@@ -9053,10 +9575,340 @@ export class Helios extends EventTarget {
     return this.legends({ enabled: value === true });
   }
 
+  _quickControlsStyleText() {
+    return `
+.helios-quick-controls {
+  --helios-quick-bg: rgba(12, 14, 18, 0.72);
+  --helios-quick-bg-solid: rgba(12, 14, 18, 0.94);
+  --helios-quick-fg: rgba(244, 246, 250, 0.92);
+  --helios-quick-border: color-mix(in srgb, var(--helios-quick-fg) 12%, transparent);
+  --helios-quick-accent: #38bdf8;
+  --helios-quick-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+  --helios-quick-blur: 14px;
+  position: absolute;
+  z-index: 40;
+  display: grid;
+  gap: var(--helios-quick-gap, 8px);
+  pointer-events: none;
+  font: 700 15px/1 var(--helios-ui-font, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+}
+.helios-quick-controls[data-theme="light"] {
+  --helios-quick-bg: rgba(250, 251, 252, 0.78);
+  --helios-quick-bg-solid: rgba(250, 251, 252, 0.97);
+  --helios-quick-fg: rgba(12, 14, 18, 0.92);
+  --helios-quick-border: color-mix(in srgb, var(--helios-quick-fg) 12%, transparent);
+  --helios-quick-accent: #0ea5e9;
+  --helios-quick-shadow: 0 12px 30px rgba(0, 0, 0, 0.12);
+}
+.helios-quick-controls__button {
+  width: var(--helios-quick-size, 44px);
+  height: var(--helios-quick-size, 44px);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--helios-quick-accent) 38%, var(--helios-quick-border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--helios-quick-accent) 16%, var(--helios-quick-bg-solid));
+  color: var(--helios-quick-fg);
+  box-shadow: var(--helios-quick-shadow);
+  backdrop-filter: blur(var(--helios-quick-blur));
+  -webkit-backdrop-filter: blur(var(--helios-quick-blur));
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.helios-quick-controls__button:hover,
+.helios-quick-controls__button:focus-visible,
+.helios-quick-controls__button.is-active {
+  border-color: color-mix(in srgb, var(--helios-quick-accent) 55%, var(--helios-quick-border));
+  background: color-mix(in srgb, var(--helios-quick-accent) 22%, var(--helios-quick-bg-solid));
+  color: var(--helios-quick-fg);
+  outline: none;
+}
+.helios-quick-controls__button:focus-visible {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--helios-quick-accent) 22%, transparent), var(--helios-quick-shadow);
+}
+.helios-quick-controls__button.is-active {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--helios-quick-accent) 28%, transparent), var(--helios-quick-shadow);
+}
+.helios-quick-controls__button svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.25;
+}
+.helios-quick-controls__button--layout svg {
+  fill: currentColor;
+  stroke: none;
+}
+.helios-quick-controls__button--zoom {
+  font-size: 21px;
+  font-weight: 700;
+}
+`;
+  }
+
+  _quickControlButton(doc, { name, label, className = '', html = '', text = '' }) {
+    const button = doc.createElement('button');
+    button.type = 'button';
+    button.className = `helios-quick-controls__button ${className}`.trim();
+    button.dataset.heliosQuickControl = name;
+    button.setAttribute('aria-label', label);
+    button.title = label;
+    if (html) button.innerHTML = html;
+    else button.textContent = text;
+    return button;
+  }
+
+  _setupQuickControls() {
+    const config = this._quickControlsConfig ?? QUICK_CONTROL_DEFAULTS;
+    if (config.enabled !== true || !this.layers?.root) {
+      this._setQuickControlsOverlayInsets({ top: 0, right: 0, bottom: 0, left: 0 });
+      return null;
+    }
+    const doc = this.layers.root.ownerDocument ?? (typeof document !== 'undefined' ? document : null);
+    if (!doc || typeof doc.createElement !== 'function') return null;
+
+    this._destroyQuickControls();
+
+    const root = doc.createElement('div');
+    root.className = 'helios-quick-controls';
+    root.dataset.theme = this._resolveQuickControlsTheme();
+    root.style.setProperty('--helios-quick-size', `${config.buttonSize}px`);
+    root.style.setProperty('--helios-quick-gap', `${config.gap}px`);
+
+    const style = doc.createElement('style');
+    style.textContent = this._quickControlsStyleText();
+    root.appendChild(style);
+
+    const buttons = {};
+    if (config.autoFit) {
+      buttons.autoFit = this._quickControlButton(doc, {
+        name: 'auto-fit',
+        label: 'Toggle automatic fit',
+        className: 'helios-quick-controls__button--fit',
+        html: `
+<svg viewBox="0 0 24 24" aria-hidden="true">
+  <path d="M8 4H4v4" />
+  <path d="M16 4h4v4" />
+  <path d="M20 16v4h-4" />
+  <path d="M4 16v4h4" />
+</svg>`,
+      });
+      root.appendChild(buttons.autoFit);
+    }
+    if (config.layout) {
+      buttons.layout = this._quickControlButton(doc, {
+        name: 'layout',
+        label: 'Pause layout',
+        className: 'helios-quick-controls__button--layout',
+      });
+      root.appendChild(buttons.layout);
+    }
+    if (config.zoom) {
+      buttons.zoomIn = this._quickControlButton(doc, {
+        name: 'zoom-in',
+        label: 'Zoom in',
+        className: 'helios-quick-controls__button--zoom',
+        text: '+',
+      });
+      buttons.zoomOut = this._quickControlButton(doc, {
+        name: 'zoom-out',
+        label: 'Zoom out',
+        className: 'helios-quick-controls__button--zoom',
+        text: '-',
+      });
+      root.appendChild(buttons.zoomIn);
+      root.appendChild(buttons.zoomOut);
+    }
+
+    const addCleanup = (cleanup) => {
+      if (typeof cleanup === 'function') this._quickControlCleanups.push(cleanup);
+    };
+    const listenButton = (button, type, handler) => {
+      if (!button || typeof button.addEventListener !== 'function') return;
+      button.addEventListener(type, handler);
+      addCleanup(() => button.removeEventListener?.(type, handler));
+    };
+
+    listenButton(buttons.autoFit, 'click', () => {
+      const next = this.cameraControls?.().autoFit !== true;
+      this.cameraControls?.({ autoFit: next, followTarget: false, targetNodeIndices: null });
+      this._syncQuickControls();
+      if (next) {
+        this.requestFrameNetwork?.({
+          animate: this._cameraControlConfig?.animation === true,
+          resetOrientation: this.mode?.() === '3d',
+        });
+      }
+    });
+    listenButton(buttons.layout, 'click', () => {
+      const running = this._quickControlsLayoutRunning();
+      if (running) this.stopLayout?.('quick-controls');
+      else this.startLayout?.();
+      this._syncQuickControls();
+    });
+    listenButton(buttons.zoomIn, 'click', () => this._applyQuickZoom(1));
+    listenButton(buttons.zoomOut, 'click', () => this._applyQuickZoom(-1));
+
+    addCleanup(this.on?.(EVENTS.CAMERA_CONTROL_CHANGE, () => this._syncQuickControls()));
+    addCleanup(this.on?.(EVENTS.LAYOUT_START, () => this._syncQuickControls()));
+    addCleanup(this.on?.(EVENTS.LAYOUT_STOP, () => this._syncQuickControls()));
+    addCleanup(this.on?.(EVENTS.LAYOUT_CHANGED, () => this._syncQuickControls()));
+
+    if (typeof this.layers.addLayer === 'function') this.layers.addLayer('quick-controls', root);
+    else this.layers.root.appendChild(root);
+    this._quickControls = { root, buttons };
+    this._updateQuickControlsPlacement();
+    this._updateQuickControlsOverlayInsets();
+    this._syncQuickControls();
+    return root;
+  }
+
+  _resolveQuickControlsTheme() {
+    const uiTheme = typeof this.ui?.theme === 'string' && this.ui.theme ? this.ui.theme : null;
+    return uiTheme ?? this._quickControlsConfig?.theme ?? QUICK_CONTROL_DEFAULTS.theme;
+  }
+
+  _syncQuickControlsTheme(theme = null) {
+    const root = this._quickControls?.root ?? null;
+    if (!root) return this;
+    root.dataset.theme = (typeof theme === 'string' && theme) ? theme : this._resolveQuickControlsTheme();
+    return this;
+  }
+
+  _destroyQuickControls() {
+    for (const cleanup of this._quickControlCleanups ?? []) cleanup?.();
+    this._quickControlCleanups = [];
+    if (this._quickControls?.root) {
+      if (typeof this.layers?.removeLayer === 'function') this.layers.removeLayer('quick-controls');
+      else this._quickControls.root.remove?.();
+    }
+    this._quickControls = null;
+    this._setQuickControlsOverlayInsets({ top: 0, right: 0, bottom: 0, left: 0 });
+  }
+
+  _quickControlsLayoutRunning() {
+    const scheduler = this.scheduler ?? null;
+    const state = typeof scheduler?.getLayoutState === 'function'
+      ? scheduler.getLayoutState()
+      : (scheduler?.layoutEnabled !== false ? 'running' : 'stopped');
+    return state !== 'stopped';
+  }
+
+  _syncQuickControls() {
+    const buttons = this._quickControls?.buttons ?? {};
+    if (buttons.autoFit) {
+      const active = this.cameraControls?.().autoFit === true;
+      buttons.autoFit.classList?.toggle?.('is-active', active);
+      buttons.autoFit.setAttribute?.('aria-pressed', String(active));
+      const label = active ? 'Auto fit is on' : 'Auto fit is off';
+      buttons.autoFit.title = label;
+      buttons.autoFit.setAttribute?.('aria-label', label);
+    }
+    if (buttons.layout) {
+      const running = this._quickControlsLayoutRunning();
+      buttons.layout.classList?.toggle?.('is-active', running);
+      buttons.layout.setAttribute?.('aria-pressed', String(running));
+      const label = running ? 'Pause layout' : 'Run layout';
+      buttons.layout.title = label;
+      buttons.layout.setAttribute?.('aria-label', label);
+      buttons.layout.innerHTML = running
+        ? `
+<svg viewBox="0 0 24 24" aria-hidden="true">
+  <rect x="7" y="5" width="3.6" height="14" rx="0.9" />
+  <rect x="13.4" y="5" width="3.6" height="14" rx="0.9" />
+</svg>`
+        : `
+<svg viewBox="0 0 24 24" aria-hidden="true">
+  <path d="M8 5.5v13l10-6.5Z" />
+</svg>`;
+    }
+    this._syncQuickControlsTheme();
+  }
+
+  _applyQuickZoom(direction) {
+    const camera = this.renderer?.camera ?? null;
+    if (!camera) return false;
+    const factor = this._quickControlsConfig?.zoomFactor ?? QUICK_CONTROL_DEFAULTS.zoomFactor;
+    const scale = direction >= 0 ? factor : (1 / factor);
+    const pose = this.cameraPose?.() ?? captureCameraPose(camera);
+    if (pose?.mode === '3d') {
+      const current = Number.isFinite(pose.distance) ? pose.distance : Number(camera.distance);
+      if (!Number.isFinite(current)) return false;
+      const min = Math.max(1e-6, Number(camera.minDistance ?? 1e-6));
+      const max = Math.max(min, Number(camera.maxDistance ?? Number.POSITIVE_INFINITY));
+      const nextDistance = clamp(current / scale, min, max);
+      if (Math.abs(nextDistance - current) <= 1e-9) return false;
+      this.setCameraPose?.({ distance: nextDistance }, { source: 'ui' });
+    } else {
+      const current = Number.isFinite(pose?.zoom) ? pose.zoom : Number(camera.zoom);
+      if (!Number.isFinite(current)) return false;
+      const min = Math.max(1e-6, Number(camera.minZoom ?? 1e-6));
+      const max = Math.max(min, Number(camera.maxZoom ?? Number.POSITIVE_INFINITY));
+      const nextZoom = clamp(current * scale, min, max);
+      if (Math.abs(nextZoom - current) <= 1e-9) return false;
+      this.setCameraPose?.({ zoom: nextZoom }, { source: 'ui' });
+    }
+    this._syncQuickControls();
+    return true;
+  }
+
+  _updateQuickControlsPlacement() {
+    const root = this._quickControls?.root ?? null;
+    if (!root?.style) return;
+    const config = this._quickControlsConfig ?? QUICK_CONTROL_DEFAULTS;
+    const base = normalizeInsets(this._baseOverlayInsets);
+    root.style.top = `${base.top + config.margin}px`;
+    root.style.right = `${base.right + config.margin}px`;
+  }
+
+  _updateQuickControlsOverlayInsets() {
+    const config = this._quickControlsConfig ?? QUICK_CONTROL_DEFAULTS;
+    if (config.enabled !== true || config.reserveLegendSpace !== true || !this._quickControls?.root) {
+      this._setQuickControlsOverlayInsets({ top: 0, right: 0, bottom: 0, left: 0 });
+      return;
+    }
+    this._setQuickControlsOverlayInsets({
+      top: 0,
+      right: config.margin + config.buttonSize + config.gap,
+      bottom: 0,
+      left: 0,
+    });
+  }
+
+  _setQuickControlsOverlayInsets(insets) {
+    this._quickControlsOverlayInsets = normalizeInsets(insets);
+    this._applyOverlayInsets();
+  }
+
+  _applyOverlayInsets() {
+    const next = mergeOverlayInsets(this._baseOverlayInsets, this._quickControlsOverlayInsets);
+    const prev = this._overlayInsets ?? { top: 0, right: 0, bottom: 0, left: 0 };
+    if (
+      prev.top === next.top
+      && prev.right === next.right
+      && prev.bottom === next.bottom
+      && prev.left === next.left
+    ) {
+      this._updateQuickControlsPlacement();
+      return this;
+    }
+    this._overlayInsets = next;
+    this._updateQuickControlsPlacement();
+    this.scheduler?.requestRender?.();
+    return this;
+  }
+
   overlayInsets(insets) {
     if (arguments.length === 0) return { ...this._overlayInsets };
     const next = normalizeInsets(insets);
-    const prev = this._overlayInsets ?? { top: 0, right: 0, bottom: 0, left: 0 };
+    const prev = this._baseOverlayInsets ?? { top: 0, right: 0, bottom: 0, left: 0 };
     if (
       prev.top === next.top
       && prev.right === next.right
@@ -9065,9 +9917,8 @@ export class Helios extends EventTarget {
     ) {
       return this;
     }
-    this._overlayInsets = next;
-    this.scheduler?.requestRender?.();
-    return this;
+    this._baseOverlayInsets = next;
+    return this._applyOverlayInsets();
   }
 
   labelsEnabled(value) {
@@ -9673,7 +10524,9 @@ export class Helios extends EventTarget {
     if (this._stateStyleCache) {
       this._stateStyleCache.nodeNoState = style;
     }
-    this.renderer?.graphLayer?.setNodeNoStateStyle?.(style);
+    const layer = this.renderer?.graphLayer;
+    layer?.setNodeNoStateStyle?.(style);
+    if (layer && style?.enabled !== false) layer.nodeNoStateStyleEnabled = true;
     this.scheduler.requestRender();
     return this;
   }
@@ -9728,7 +10581,9 @@ export class Helios extends EventTarget {
     if (this._stateStyleCache) {
       this._stateStyleCache.edgeNoState = style;
     }
-    this.renderer?.graphLayer?.setEdgeNoStateStyle?.(style);
+    const layer = this.renderer?.graphLayer;
+    layer?.setEdgeNoStateStyle?.(style);
+    if (layer && style?.enabled !== false) layer.edgeNoStateStyleEnabled = true;
     this.scheduler.requestRender();
     return this;
   }
@@ -11292,11 +12147,22 @@ export class Helios extends EventTarget {
       : (requested && typeof requested === 'object' ? requested : {});
     const ui = new HeliosUI({ helios: this, ...uiOptions });
     this.ui = ui;
+    this._syncQuickControlsTheme(ui.theme);
     const panels = Object.prototype.hasOwnProperty.call(uiOptions, 'panels')
       ? uiOptions.panels
       : (requested === true ? true : false);
     this._createOptionalUIPanels(ui, panels, uiOptions.panelOptions ?? uiOptions.panelsOptions ?? {});
+    this._refreshPersistenceBaselineAfterUiInit();
     return ui;
+  }
+
+  _refreshPersistenceBaselineAfterUiInit() {
+    const controller = this.persistence?.sessionController ?? null;
+    if (!controller || controller.initialPersistenceReady === false) return;
+    const overrides = controller.getOverrides?.() ?? {};
+    if (Object.keys(overrides).some((path) => !BASELINE_REFRESH_IGNORED_OVERRIDES.has(path))) return;
+    controller.captureBaseline?.();
+    this._pendingPersistenceBaselineRefresh = false;
   }
 
   _createOptionalUIPanels(ui, panels, panelOptions = {}) {
@@ -11330,6 +12196,8 @@ export class Helios extends EventTarget {
     if (this._destroyed) return;
     this._destroyed = true;
     this._disconnectAutoCleanup();
+    this._networkFileDropCleanup?.();
+    this._networkFileDropCleanup = null;
     this.scheduler.stop();
     this.behaviors?.destroy?.();
     this._clearEdgeAdaptiveTimer('cameraIdleTimer');
@@ -11349,9 +12217,11 @@ export class Helios extends EventTarget {
       this.removeResizeListener = null;
     }
     this._detachPickingListeners();
+    this._destroyQuickControls();
     this.attributeTracker?.destroy?.();
     this.indexPickingTracker?.destroy?.();
     this.indexPickingTracker = null;
+    this.persistence?.destroy?.();
     this.ui?.destroy?.();
     this.ui = null;
     this.renderer?.destroy?.();

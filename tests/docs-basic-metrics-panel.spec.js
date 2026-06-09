@@ -270,6 +270,11 @@ test.describe('docs basic demo metrics panel', () => {
     await expect(clusteringStatus).toHaveText(/Done|not available/i);
     await expect(eigenStatus).toHaveText(/Done|not available/i);
     await expect(betweennessStatus).toHaveText(/Done|not available/i);
+    await expect.poll(() => page.evaluate(() => (
+      window.__helios.persistence?.keyStatus?.('metrics', { mode: 'scope' })?.state ?? 'default'
+    )), { timeout: 10000 }).not.toBe('default');
+    await expect(panel.locator('.helios-ui-panel__persistence-indicator[data-path="metrics"]').first())
+      .not.toHaveAttribute('data-state', 'default');
 
     const snapshot = await page.evaluate(() => {
       const net = window.__helios?.network;
@@ -323,6 +328,10 @@ test.describe('docs basic demo metrics panel', () => {
           eigenvector: values.eigenvector,
           betweenness: values.betweenness,
         },
+        persistence: {
+          metricsStatus: window.__helios?.persistence?.keyStatus?.('metrics', { mode: 'scope' }) ?? null,
+          lastMetricOutput: window.__helios?.persistence?.get?.('metrics.lastOutput') ?? null,
+        },
       };
     });
 
@@ -351,5 +360,7 @@ test.describe('docs basic demo metrics panel', () => {
       expect(snapshot.attrs.betweenness).toBeTruthy();
       expect(Number.isFinite(snapshot.values.betweenness)).toBeTruthy();
     }
+    expect(snapshot.persistence.metricsStatus?.state).not.toBe('default');
+    expect(snapshot.persistence.lastMetricOutput?.attributes?.length ?? 0).toBeGreaterThan(0);
   });
 });

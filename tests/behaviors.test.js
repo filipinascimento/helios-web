@@ -415,8 +415,10 @@ function createHeliosBehaviorHarness() {
   helios.scheduler = {
     layoutEnabled: true,
     requestRender: () => {},
+    requestGeometry: () => {},
     getLayoutState: () => 'running',
   };
+  helios.debug = { log: () => {} };
   helios.renderer = { clearColor: [1, 1, 1, 1], graphLayer: {} };
   helios.options = {};
   helios._pendingRendererProps = new Map();
@@ -643,6 +645,27 @@ test('constructor-style behavior config object can be initialized through _initi
   assert.equal(helios.behavior.hover.state.hoverLabel, true);
   assert.equal(helios.behavior.labels.state.source, 'label');
   assert.equal(helios.behavior.legends.state.scale, 2);
+});
+
+test('Helios mapper change events include full serializable channel configs', () => {
+  const helios = createHeliosBehaviorHarness();
+  let detail = null;
+  helios.on('mappers:changed', (event) => {
+    detail = event.detail;
+  });
+
+  const nodeCollection = new MapperCollection('node', null);
+  nodeCollection.channel('color').from('$index').colormap('interpolateInferno', { domain: [0, 10], alpha: 0.75 }).done();
+
+  helios.mappers({ nodeMapper: nodeCollection.defaultMapper });
+
+  const color = detail?.node?.mappers?.default?.channels?.color;
+  assert.equal(color?.type, 'colormap');
+  assert.equal(color?.attributes, '$index');
+  assert.equal(color?.colormap, 'interpolateInferno');
+  assert.deepEqual(color?.domain, [0, 10]);
+  assert.equal(color?.alpha, 0.75);
+  assert.equal(color?.serializable, true);
 });
 
 test('behavior renderer bindings can be reapplied after renderer creation', () => {

@@ -56,6 +56,13 @@ Key entry points:
 - `Mapper` – flexible mapping utility for visual channels; mapped values land in
   sparse attributes
 - `HeliosUI` – optional HTML overlay UI (panel manager + attribute bindings)
+- `helios.persistence` – centralized settings, network, and position persistence
+  registry. Durable backends and sessions are off by default for library use and
+  can be enabled with `persistence: true` or explicit backend/session options.
+  Autosync waits for camera interaction to settle, and saved sessions can show a
+  tiny capped thumbnail in resume lists.
+- Network I/O supports `.xnet`, `.zxnet`, `.bxnet`, and lossy `.gml`; the main
+  example enables drag/drop loading through `fileDrop: true`
 
 By default, Helios uses the d3-force-3d worker layout.
 
@@ -106,6 +113,13 @@ See [`docs/UI.md`](./UI.md) for the optional `HeliosUI` overlay (panels, docking
 ## State docs
 
 See [`docs/states.md`](./states.md) for the bitmask-based node/edge state system (selected/highlighted/filtered/custom) and shader-applied styling.
+
+## Persistence docs
+
+See [`docs/persistence.md`](./persistence.md) for centralized key registration,
+backend setup, workspace/network precedence, sessions, server APIs, and
+network/position save behavior, including interaction-idle autosync and session
+thumbnails.
 
 ## Legends and Density Focus
 

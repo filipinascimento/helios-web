@@ -89,6 +89,15 @@ Layout parameter bindings can describe how a control should be rendered. Numeric
 
 The Mappers panel’s Density tab supports both the legacy `Difference` mode and the new `Log Ratio` mode. `Difference` preserves the existing normalized comparison path, while `Log Ratio` switches to a specialized dual-density comparison path with a real-valued numeric legend. In `Log Ratio` mode, the density panel exposes `Epsilon`, `Range`, `Z-score`, and `Support` controls and disables the legacy `Weight` / `Norm.` controls because those would break the interpretation of the numeric colorbar. `Z-score` switches the display from the raw log-ratio to a fast approximate local z-score derived from the same two density fields. `Support` enables or disables the automatic pooled-support correction that fades unstable sparse tails without changing the raw values in well-supported areas. The lower Density controls include `Focus`, which selects whether density uses auto focus, all active nodes, selected nodes, highlighted nodes, or selected-then-highlighted nodes. Density comparison colormap picking keeps the active search/filter state between openings, highlights the selected colormap, and includes a `Diverging` filter inside the picker.
 
+The Filter panel renders categorical attributes as compact checklist controls
+with per-category active-node counts, `All` and `None` actions, and a summary
+such as `All 12 selected` or `3 of 12 selected`. This matches the funding
+science project pattern while still keeping a hidden select bridge for existing
+rule collection and tests. Numeric ranges and raw query controls continue to use
+the shared debounced rule editor, so changing a categorical checklist does not
+force a network serialization; it only updates filter rules through the normal
+throttled filter path.
+
 Categorical node-color legend rows can be hovered to highlight matching nodes, clicked to keep a category highlighted, and Shift-clicked to add or remove categories from the persistent legend highlight. Set `legendClickAction: 'select'` to make clicks replace or extend the selection instead. Hovered rows show a gray outline; active categories keep a theme-aware gray outline without changing label size or style. Density defaults to `interactionFilter: 'auto'`, which focuses on selected nodes first, then real highlighted nodes, then all active nodes.
 
 ## Attaching / Placement

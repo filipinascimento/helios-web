@@ -16,6 +16,20 @@ export {
   createMemoryStorage,
 } from './storage.js';
 export {
+  BrowserPersistenceBackend,
+  CustomPersistenceBackend,
+  NetworkAttributePersistenceBackend,
+  PersistenceBackend,
+  PersistenceRegistry,
+  RemotePersistenceBackend,
+  NETWORK_ID_ATTRIBUTE,
+  NETWORK_PERSISTENCE_ATTRIBUTE,
+  PERSISTENCE_SCOPES,
+  createPersistenceBackend,
+  createPersistenceRecord,
+  normalizePersistenceRecord,
+} from './CentralizedPersistence.js';
+export {
   HeliosSessionController,
   applyOverridesToVisualizationState,
   diffOverrideMaps,

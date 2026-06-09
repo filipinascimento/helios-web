@@ -59,11 +59,16 @@ export class LegendsPanel {
       if (numeric == null) return;
       patch({ [key]: numeric });
     };
-    const createRow = ({ title, hint, controls }) => {
+    const createIndicator = (path) => this.ui.createPersistenceIndicator?.(path, 'legends', {
+      register: true,
+      metadata: { panel: 'legends' },
+    }) ?? null;
+    const createRow = ({ title, hint, controls, persistencePath = null }) => {
       const built = createAlignedRowEl({
         title,
         hint,
         controls,
+        dirtyIndicator: persistencePath ? createIndicator(persistencePath) : undefined,
         attachTooltip: tooltips.attachTooltip,
       });
       content.appendChild(built.row);
@@ -72,31 +77,31 @@ export class LegendsPanel {
 
     const overallToggle = createToggleControl({ ariaLabel: 'Legends enabled' });
     overallToggle.addEventListener('change', () => patch({ enabled: overallToggle.checked }));
-    createRow({ title: 'Visible', hint: 'Enable or disable the SVG legends overlay.', controls: overallToggle });
+    createRow({ title: 'Visible', hint: 'Enable or disable the SVG legends overlay.', controls: overallToggle, persistencePath: 'legends.enabled' });
 
     const dockToggle = createToggleControl({ ariaLabel: 'Respect docked UI' });
     dockToggle.addEventListener('change', () => patch({ respectDockInsets: dockToggle.checked }));
-    createRow({ title: 'Dock Aware', hint: 'Keep legends inside the usable viewport when side panels are docked.', controls: dockToggle });
+    createRow({ title: 'Dock Aware', hint: 'Keep legends inside the usable viewport when side panels are docked.', controls: dockToggle, persistencePath: 'legends.respectDockInsets' });
 
     const nodeColorToggle = createToggleControl({ ariaLabel: 'Node color legend' });
     nodeColorToggle.addEventListener('change', () => patch({ showNodeColor: nodeColorToggle.checked }));
-    createRow({ title: 'Node Colors', hint: 'Show node colormap or categorical color legends.', controls: nodeColorToggle });
+    createRow({ title: 'Node Colors', hint: 'Show node colormap or categorical color legends.', controls: nodeColorToggle, persistencePath: 'legends.showNodeColor' });
 
     const densityToggle = createToggleControl({ ariaLabel: 'Density legend' });
     densityToggle.addEventListener('change', () => patch({ showDensity: densityToggle.checked }));
-    createRow({ title: 'Density', hint: 'Show the density legend when density mode is active.', controls: densityToggle });
+    createRow({ title: 'Density', hint: 'Show the density legend when density mode is active.', controls: densityToggle, persistencePath: 'legends.showDensity' });
 
     const edgeColorToggle = createToggleControl({ ariaLabel: 'Edge color legend' });
     edgeColorToggle.addEventListener('change', () => patch({ showEdgeColor: edgeColorToggle.checked }));
-    createRow({ title: 'Edge Colors', hint: 'Show edge color legends when edges are not node-color passthrough.', controls: edgeColorToggle });
+    createRow({ title: 'Edge Colors', hint: 'Show edge color legends when edges are not node-color passthrough.', controls: edgeColorToggle, persistencePath: 'legends.showEdgeColor' });
 
     const nodeSizeToggle = createToggleControl({ ariaLabel: 'Node size legend' });
     nodeSizeToggle.addEventListener('change', () => patch({ showNodeSize: nodeSizeToggle.checked }));
-    createRow({ title: 'Node Sizes', hint: 'Show visual cues for legendable node size mappings.', controls: nodeSizeToggle });
+    createRow({ title: 'Node Sizes', hint: 'Show visual cues for legendable node size mappings.', controls: nodeSizeToggle, persistencePath: 'legends.showNodeSize' });
 
     const edgeWidthToggle = createToggleControl({ ariaLabel: 'Edge width legend' });
     edgeWidthToggle.addEventListener('change', () => patch({ showEdgeWidth: edgeWidthToggle.checked }));
-    createRow({ title: 'Edge Widths', hint: 'Show visual cues for legendable edge width mappings.', controls: edgeWidthToggle });
+    createRow({ title: 'Edge Widths', hint: 'Show visual cues for legendable edge width mappings.', controls: edgeWidthToggle, persistencePath: 'legends.showEdgeWidth' });
 
     const maxCharsControls = new SuggestedSliderControls({
       value: cfg().maxChars ?? 24,
@@ -106,7 +111,7 @@ export class LegendsPanel {
       inputMax: 512,
       onCommit: patchNumber('maxChars'),
     });
-    createRow({ title: 'Max Chars', hint: 'Maximum characters per categorical legend row. Zero disables truncation.', controls: maxCharsControls.element });
+    createRow({ title: 'Max Chars', hint: 'Maximum characters per categorical legend row. Zero disables truncation.', controls: maxCharsControls.element, persistencePath: 'legends.maxChars' });
 
     const maxRowsControls = new SuggestedSliderControls({
       value: cfg().maxRows ?? 2,
@@ -116,7 +121,7 @@ export class LegendsPanel {
       inputMax: 8,
       onCommit: patchNumber('maxRows'),
     });
-    createRow({ title: 'Max Rows', hint: 'Maximum wrapped rows for categorical legend text.', controls: maxRowsControls.element });
+    createRow({ title: 'Max Rows', hint: 'Maximum wrapped rows for categorical legend text.', controls: maxRowsControls.element, persistencePath: 'legends.maxRows' });
 
     const scaleControls = new SuggestedSliderControls({
       value: cfg().scale ?? 1,
@@ -126,7 +131,7 @@ export class LegendsPanel {
       inputMax: 3,
       onCommit: patchNumber('scale'),
     });
-    createRow({ title: 'Scale', hint: 'Scale the overall legend layout proportionally.', controls: scaleControls.element });
+    createRow({ title: 'Scale', hint: 'Scale the overall legend layout proportionally.', controls: scaleControls.element, persistencePath: 'legends.scale' });
 
     const barHeightControls = new SuggestedSliderControls({
       value: cfg().continuousHeight ?? 132,
@@ -136,7 +141,7 @@ export class LegendsPanel {
       inputMax: 320,
       onCommit: patchNumber('continuousHeight'),
     });
-    createRow({ title: 'Bar Height', hint: 'Height of continuous colormap legends.', controls: barHeightControls.element });
+    createRow({ title: 'Bar Height', hint: 'Height of continuous colormap legends.', controls: barHeightControls.element, persistencePath: 'legends.continuousHeight' });
 
     const refresh = () => {
       const state = cfg();

@@ -9,6 +9,7 @@ import {
 const SESSION_MANIFEST_PREFIX = 'helios-web:session-manifest:';
 const SESSION_MANIFEST_BACKUP_SUFFIX = ':previous-complete';
 const SESSION_MANIFEST_PENDING_SUFFIX = ':pending';
+const SESSION_MANIFEST_RECORD_PREFIX = 'helios-web:session-manifest-record:';
 const DEFAULT_AUTOSAVE_DELAY_MS = 750;
 const DEFAULT_MAX_JOURNAL_ENTRIES = 100;
 const DEFAULT_NETWORK_LIMIT_BYTES = 128 * 1024 * 1024;
@@ -73,6 +74,7 @@ const CAMERA_POSE_ESSENTIAL_PREFIXES = [
   'camera.target',
   'camera.zoom',
 ];
+const CANONICAL_BEHAVIOR_OVERRIDE_IDS = new Set(['layout', 'legends', 'filters', 'selection', 'mappers']);
 
 function cloneSerializable(value) {
   if (Array.isArray(value)) return value.map((entry) => cloneSerializable(entry));
@@ -214,7 +216,7 @@ function scopesForSnapshotChange({ behavior = null, reason = null, method = null
   if (behavior) return normalizeChangeScopes(behavior);
   const reasonKey = String(reason ?? '');
   if (reasonKey === 'camera' || reasonKey === 'camera-controls') return ['camera', 'cameraControls'];
-  if (reasonKey === 'mode') return ['camera', 'cameraControls'];
+  if (reasonKey === 'mode') return ['camera', 'cameraControls', 'scene'];
   if (method === 'camera.setPose' || method === 'camera.transition' || method === 'camera.frame' || method === 'camera.controls') {
     return ['camera', 'cameraControls'];
   }
@@ -229,13 +231,38 @@ export function flattenVisualizationOverrides(source) {
     ? payload.behaviorState
     : {};
   for (const [id, snapshot] of Object.entries(behaviors)) {
+    if (CANONICAL_BEHAVIOR_OVERRIDE_IDS.has(id) && snapshot && typeof snapshot === 'object') {
+      output[`behaviors.${id}.state`] = cloneSerializable(snapshot);
+    }
     const options = snapshot?.options && typeof snapshot.options === 'object'
       ? snapshot.options
       : {};
     flattenObject(options, id, output);
+    if (id === 'filters' && snapshot?.filter && typeof snapshot.filter === 'object') {
+      flattenObject(snapshot.filter, 'filters', output);
+    }
+    if (id === 'selection') {
+      if (Object.prototype.hasOwnProperty.call(snapshot ?? {}, 'selectedNodes')) {
+        output['selection.selectedNodes'] = cloneSerializable(snapshot.selectedNodes);
+      }
+      if (Object.prototype.hasOwnProperty.call(snapshot ?? {}, 'selectedEdges')) {
+        output['selection.selectedEdges'] = cloneSerializable(snapshot.selectedEdges);
+      }
+      if (Object.prototype.hasOwnProperty.call(snapshot ?? {}, 'savedSelectionAttribute')) {
+        output['selection.savedSelectionAttribute'] = snapshot.savedSelectionAttribute;
+      }
+      if (Object.prototype.hasOwnProperty.call(snapshot ?? {}, 'lastNamedSelectionAttribute')) {
+        output['selection.lastNamedSelectionAttribute'] = snapshot.lastNamedSelectionAttribute;
+      }
+    }
   }
   if (payload.uiState) flattenObject(payload.uiState, 'ui', output);
-  if (payload.cameraState) flattenObject(payload.cameraState, 'camera', output);
+  if (payload.cameraState) {
+    flattenObject(payload.cameraState, 'camera', output);
+    if (payload.cameraState.mode === '2d' || payload.cameraState.mode === '3d') {
+      output['scene.dimension'] = payload.cameraState.mode;
+    }
+  }
   if (payload.cameraControlState) flattenObject(payload.cameraControlState, 'cameraControls', output);
   return pruneVolatileOverrides(output);
 }
@@ -265,6 +292,14 @@ export function applyOverridesToVisualizationState(source, overrides = {}) {
       setAtPath(payload.uiState, segments.slice(1), value);
       continue;
     }
+    if (segments[0] === 'scene' && segments[1] === 'dimension') {
+      const mode = value === '3d' ? '3d' : (value === '2d' ? '2d' : null);
+      if (mode) {
+        if (!payload.cameraState) payload.cameraState = {};
+        payload.cameraState.mode = mode;
+      }
+      continue;
+    }
     if (segments[0] === 'camera') {
       if (!payload.cameraState) payload.cameraState = {};
       setAtPath(payload.cameraState, segments.slice(1), value);
@@ -273,6 +308,11 @@ export function applyOverridesToVisualizationState(source, overrides = {}) {
     if (segments[0] === 'cameraControls') {
       if (!payload.cameraControlState) payload.cameraControlState = {};
       setAtPath(payload.cameraControlState, segments.slice(1), value);
+      continue;
+    }
+    if (segments[0] === 'behaviors' && segments.length >= 3 && segments[2] === 'state') {
+      if (!payload.behaviorState) payload.behaviorState = {};
+      payload.behaviorState[segments[1]] = cloneSerializable(value);
       continue;
     }
     const behaviorId = segments[0];
@@ -292,9 +332,51 @@ function defaultSessionIdFactory() {
 function sessionIdFromUrl() {
   try {
     const query = new URLSearchParams(globalThis.location?.search ?? '');
-    return query.get('sessionId') || query.get('heliosSessionId') || null;
+    const explicit = query.get('sessionId') || query.get('heliosSessionId');
+    if (explicit) return explicit;
+    const session = query.get('session');
+    const normalized = String(session ?? '').trim().toLowerCase();
+    if (normalized && normalized !== '0' && normalized !== '1' && normalized !== 'true' && normalized !== 'false') {
+      return session;
+    }
+    return null;
   } catch (_) {
     return null;
+  }
+}
+
+function normalizeUrlSessionRouting(options = {}) {
+  const raw = options.url ?? options.urlRouting ?? options.appendToUrl ?? options.urlSession;
+  if (raw === true || raw === 'url' || raw === 'replace') {
+    return {
+      enabled: true,
+      param: options.urlSessionParam ?? options.sessionParam ?? 'sessionId',
+      replace: true,
+    };
+  }
+  if (!raw || typeof raw !== 'object' || raw.enabled === false) return { enabled: false };
+  return {
+    enabled: true,
+    param: raw.param ?? raw.name ?? options.urlSessionParam ?? 'sessionId',
+    replace: raw.replace !== false,
+  };
+}
+
+function ensureSessionIdInUrl(id, routing) {
+  if (!id || routing?.enabled !== true) return;
+  try {
+    const location = globalThis.location;
+    const history = globalThis.history;
+    if (!location || !history?.replaceState) return;
+    const url = new URL(location.href);
+    const param = String(routing.param || 'sessionId');
+    if (url.searchParams.get(param) === id) return;
+    if (!url.searchParams.has(param) || routing.replaceExisting === true) {
+      url.searchParams.set(param, id);
+      history.replaceState(history.state, '', url);
+    }
+  } catch (_) {
+    // URL routing is best-effort and should never block persistence setup.
   }
 }
 
@@ -304,7 +386,10 @@ function normalizeRemoteConfig(remote) {
   return {
     enabled: remote.enabled !== false,
     url: baseUrl,
-    key: typeof remote.key === 'string' ? remote.key : null,
+    key: typeof (remote.key ?? remote.apiKey ?? remote.token) === 'string'
+      ? (remote.key ?? remote.apiKey ?? remote.token)
+      : null,
+    headers: remote.headers && typeof remote.headers === 'object' ? { ...remote.headers } : {},
   };
 }
 
@@ -312,7 +397,7 @@ function normalizeNetworkPersistence(value = {}) {
   const source = value && typeof value === 'object' ? value : {};
   return {
     enabled: source.enabled !== false,
-    format: typeof source.format === 'string' ? source.format : 'bxnet',
+    format: typeof source.format === 'string' ? source.format : 'zxnet',
     maxBytes: Number.isFinite(source.maxBytes) ? Math.max(0, Number(source.maxBytes)) : null,
     includeVisualization: source.includeVisualization === true,
   };
@@ -329,6 +414,35 @@ function estimateByteLength(value) {
   if (typeof value.size === 'number') return value.size;
   if (typeof value.length === 'number') return value.length;
   return 0;
+}
+
+function createCommittedManifest(manifest, now = Date.now()) {
+  if (!manifest) return manifest;
+  if (manifest.complete === true && manifest.commit?.status === 'complete') return manifest;
+  const completedAt = now;
+  const commitId = `${completedAt}-${Math.random().toString(36).slice(2)}`;
+  return {
+    ...manifest,
+    complete: true,
+    commit: {
+      id: commitId,
+      status: 'complete',
+      completedAt,
+    },
+  };
+}
+
+function compactManifestForLocalStorage(manifest) {
+  if (!manifest || typeof manifest !== 'object') return manifest;
+  const next = cloneSerializable(manifest);
+  if (next.layoutRuntimeState?.positions) {
+    next.layoutRuntimeState = {
+      ...next.layoutRuntimeState,
+      positions: null,
+      positionsStoredExternally: true,
+    };
+  }
+  return next;
 }
 
 function createDetailEvent(type, detail) {
@@ -351,9 +465,14 @@ export class HeliosSessionController extends EventTarget {
     this.idFactory = options.idFactory ?? defaultSessionIdFactory;
     this.now = options.now ?? (() => Date.now());
     this.sessionId = null;
+    this.nickname = null;
+    this.requestedSessionId = null;
+    this.explicitSessionRequested = false;
+    this.explicitSessionInvalid = false;
     this.autosave = true;
     this.local = true;
     this.remote = null;
+    this.urlRouting = { enabled: false };
     this.networkPersistence = normalizeNetworkPersistence(options.networkPersistence);
     this.baseline = null;
     this.baselineMap = {};
@@ -366,10 +485,14 @@ export class HeliosSessionController extends EventTarget {
     this.networkData = { enabled: this.networkPersistence.enabled, status: 'idle' };
     this.layoutRuntimeState = null;
     this.pendingSave = null;
+    this.sessionSavedAt = null;
+    this.sessionSaveError = null;
+    this.saveInProgress = false;
     this.readyPromise = null;
     this.saveTimer = null;
     this.initialPersistenceReady = false;
     this.suspended = false;
+    this.restoring = false;
     this.restoreEventSuppressed = false;
     this.restoreEventTimer = null;
     this.activeSource = null;
@@ -377,7 +500,15 @@ export class HeliosSessionController extends EventTarget {
   }
 
   configure(options = {}) {
-    this.sessionId = String(options.id ?? options.sessionId ?? sessionIdFromUrl() ?? this.idFactory());
+    const urlSessionId = sessionIdFromUrl();
+    const explicitSessionId = options.id ?? options.sessionId ?? urlSessionId ?? null;
+    this.explicitSessionRequested = explicitSessionId != null && explicitSessionId !== '';
+    this.requestedSessionId = this.explicitSessionRequested ? String(explicitSessionId) : null;
+    this.explicitSessionInvalid = false;
+    this.sessionId = String(explicitSessionId ?? this.idFactory());
+    this.nickname = typeof options.nickname === 'string' && options.nickname.trim() ? options.nickname.trim() : null;
+    this.urlRouting = normalizeUrlSessionRouting(options);
+    ensureSessionIdInUrl(this.sessionId, this.urlRouting);
     this.autosave = options.autosave !== false;
     this.local = options.local !== false;
     this.remote = normalizeRemoteConfig(options.remote);
@@ -412,9 +543,25 @@ export class HeliosSessionController extends EventTarget {
       this.sessionId = String(nextId);
       this.captureBaseline();
     }
+    if (Object.prototype.hasOwnProperty.call(options, 'nickname')) {
+      this.nickname = typeof options.nickname === 'string' && options.nickname.trim() ? options.nickname.trim() : null;
+    }
     if (Object.prototype.hasOwnProperty.call(options, 'autosave')) this.autosave = options.autosave !== false;
     if (Object.prototype.hasOwnProperty.call(options, 'local')) this.local = options.local !== false;
     if (Object.prototype.hasOwnProperty.call(options, 'remote')) this.remote = normalizeRemoteConfig(options.remote);
+    if (
+      Object.prototype.hasOwnProperty.call(options, 'url')
+      || Object.prototype.hasOwnProperty.call(options, 'urlRouting')
+      || Object.prototype.hasOwnProperty.call(options, 'appendToUrl')
+      || Object.prototype.hasOwnProperty.call(options, 'urlSession')
+      || Object.prototype.hasOwnProperty.call(options, 'urlSessionParam')
+    ) {
+      this.urlRouting = normalizeUrlSessionRouting(options);
+    }
+    ensureSessionIdInUrl(this.sessionId, {
+      ...this.urlRouting,
+      replaceExisting: options.replaceUrlSession === true || options.replaceUrl === true,
+    });
     if (Object.prototype.hasOwnProperty.call(options, 'maxJournalEntries')) {
       this.maxJournalEntries = normalizeMaxJournalEntries(options.maxJournalEntries, this.maxJournalEntries);
       this.trimJournal();
@@ -437,6 +584,16 @@ export class HeliosSessionController extends EventTarget {
     }
     if (this.autosave) this.scheduleSave(0);
     return this.status();
+  }
+
+  hasStoredSessionManifest(id = this.sessionId) {
+    return Boolean(this.loadManifest(id));
+  }
+
+  shouldShowRestorePrompt() {
+    if (this.restoring === true) return false;
+    if (this.explicitSessionRequested && this.explicitSessionInvalid !== true) return false;
+    return true;
   }
 
   setOverride(path, value, detail = {}) {
@@ -481,6 +638,10 @@ export class HeliosSessionController extends EventTarget {
     return `${this.manifestKey(id)}${SESSION_MANIFEST_PENDING_SUFFIX}`;
   }
 
+  manifestRecordKey(id = this.sessionId) {
+    return `${SESSION_MANIFEST_RECORD_PREFIX}${encodeURIComponent(String(id ?? ''))}`;
+  }
+
   captureOverrideSnapshot(snapshot = null) {
     if (snapshot) return snapshot;
     return this.helios?.serializeVisualizationState?.({
@@ -513,7 +674,22 @@ export class HeliosSessionController extends EventTarget {
 
   appendJournalEntries(entries = []) {
     if (!entries?.length || this.maxJournalEntries === 0) return;
-    this.journal.push(...entries.map((entry) => cloneSerializable(entry)));
+    for (const sourceEntry of entries) {
+      const entry = cloneSerializable(sourceEntry);
+      const pendingIndex = this.journal.findIndex((item) => (
+        item?.status === 'pending'
+        && item.path === entry.path
+      ));
+      if (pendingIndex >= 0) {
+        this.journal[pendingIndex] = {
+          ...entry,
+          seq: this.journal[pendingIndex].seq ?? entry.seq,
+          oldValue: cloneSerializable(this.journal[pendingIndex].oldValue ?? entry.oldValue),
+        };
+      } else {
+        this.journal.push(entry);
+      }
+    }
     this.trimJournal();
   }
 
@@ -544,26 +720,52 @@ export class HeliosSessionController extends EventTarget {
     }
     if (this.helios?.on) {
       let cameraMoveTimer = null;
+      let cameraControlTimer = null;
+      const scheduleCameraSave = () => {
+        if (!this.autosave) return;
+        const interactionDelay = Math.max(0, Number(this.persistence?.interactionIdleRemainingMs?.()) || 0);
+        this.scheduleSave(Math.max(DEFAULT_AUTOSAVE_DELAY_MS, interactionDelay), {
+          snapshotLayoutRuntime: false,
+          emitSyncEvents: true,
+        });
+      };
       this.unsubscribers.push(this.helios.on('mode:changed', () => {
         if (!this.suspended) this.recordCurrentState({ source: this.activeSource ?? 'user', reason: 'mode' });
       }));
       this.unsubscribers.push(this.helios.on('camera:control-change', () => {
-        if (!this.suspended) this.recordCurrentState({ source: this.activeSource ?? 'user', reason: 'camera-controls' });
+        if (!this.suspended) {
+          const entries = this.recordCurrentState({ source: this.activeSource ?? 'user', reason: 'camera-controls' });
+          if (entries.length) scheduleCameraSave();
+          if (cameraControlTimer != null) clearTimeout(cameraControlTimer);
+          cameraControlTimer = setTimeout(() => {
+            cameraControlTimer = null;
+            if (this.isChangeSuppressed()) return;
+            const lateEntries = this.recordCurrentState({ source: this.activeSource ?? 'user', reason: 'camera' });
+            if (lateEntries.length) scheduleCameraSave();
+          }, 350);
+        }
       }));
       this.unsubscribers.push(this.helios.on('camera:move', (event) => {
         if (this.isChangeSuppressed()) return;
         const detail = event?.detail ?? event ?? {};
         const origin = detail.origin ?? detail.change?.origin ?? null;
         if (origin !== 'interaction' && origin !== 'ui') return;
+        const entries = this.recordCurrentState({ source: this.activeSource ?? 'user', reason: 'camera' });
+        if (entries.length) scheduleCameraSave();
         if (cameraMoveTimer != null) clearTimeout(cameraMoveTimer);
         cameraMoveTimer = setTimeout(() => {
           cameraMoveTimer = null;
-          if (!this.isChangeSuppressed()) this.recordCurrentState({ source: this.activeSource ?? 'user', reason: 'camera' });
+          if (!this.isChangeSuppressed()) {
+            const entries = this.recordCurrentState({ source: this.activeSource ?? 'user', reason: 'camera' });
+            if (entries.length) scheduleCameraSave();
+          }
         }, 250);
       }));
       this.unsubscribers.push(() => {
         if (cameraMoveTimer != null) clearTimeout(cameraMoveTimer);
         cameraMoveTimer = null;
+        if (cameraControlTimer != null) clearTimeout(cameraControlTimer);
+        cameraControlTimer = null;
       });
       this.unsubscribers.push(this.helios.on('network:replaced', () => {
         if (this.suspended) return;
@@ -593,6 +795,7 @@ export class HeliosSessionController extends EventTarget {
       }
     };
     const warnPendingNetwork = (event) => {
+      flushSmall();
       if (this.networkData?.dirty !== true) return;
       if (this.networkData?.status !== 'dirty') return;
       event.preventDefault?.();
@@ -631,6 +834,7 @@ export class HeliosSessionController extends EventTarget {
 
   isChangeSuppressed(detail = {}) {
     if (this.suspended) return true;
+    if (this.initialPersistenceReady === false && detail.source !== 'cli') return true;
     if (!this.restoreEventSuppressed) return false;
     const source = detail.source ?? this.activeSource ?? null;
     if (source === 'cli') return false;
@@ -731,7 +935,7 @@ export class HeliosSessionController extends EventTarget {
     this.appendJournalEntries(entries);
     this.recomputeDirtyState();
     this.dispatchEvent(createDetailEvent('change', { entries, overrides: this.getOverrides() }));
-    if (this.autosave) this.scheduleSave();
+    if (this.autosave && reason !== 'camera' && reason !== 'camera-controls') this.scheduleSave();
     return entries;
   }
 
@@ -861,6 +1065,19 @@ export class HeliosSessionController extends EventTarget {
       return true;
     }
     if (behaviorId === 'camera' || behaviorId === 'networkPersistence') return false;
+    if (behaviorId === 'behaviors' && segments.length >= 3 && segments[2] === 'state') {
+      const behavior = this.helios?.behaviors?.get?.(segments[1]) ?? this.helios?.behavior?.[segments[1]] ?? null;
+      if (!behavior) return false;
+      this.suspended = true;
+      try {
+        if (typeof behavior.restore === 'function') behavior.restore(value);
+        else if (typeof behavior.update === 'function') behavior.update(value);
+        else return false;
+      } finally {
+        this.suspended = false;
+      }
+      return true;
+    }
     const behavior = this.helios?.behaviors?.get?.(behaviorId) ?? this.helios?.behavior?.[behaviorId] ?? null;
     if (!behavior || typeof behavior.update !== 'function') return false;
     const patch = {};
@@ -875,69 +1092,139 @@ export class HeliosSessionController extends EventTarget {
   }
 
   scheduleSave(delay = DEFAULT_AUTOSAVE_DELAY_MS, options = {}) {
+    if (this.persistence?.scheduleAutosync) {
+      return this.persistence.scheduleAutosync({
+        includeSession: true,
+        debounceMs: delay,
+        reason: options.reason ?? 'session-autosave',
+        source: options.source ?? 'session',
+        snapshotLayoutRuntime: options.snapshotLayoutRuntime !== false,
+        emitSyncEvents: options.emitSyncEvents !== false,
+        deferForInteraction: options.deferForInteraction,
+      });
+    }
     if (this.saveTimer) clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
+      const lightweightManifestOnly = options.snapshotLayoutRuntime === false;
+      if (!lightweightManifestOnly && this.persistence?.shouldDeferSyncForInteraction?.(options) === true) {
+        const remaining = Math.max(0, Number(this.persistence?.interactionIdleRemainingMs?.()) || 0);
+        this.scheduleSave(remaining, options);
+        return;
+      }
       this.pendingSave = this.saveManifest({
         snapshotLayoutRuntime: options.snapshotLayoutRuntime === true,
+        emitSyncEvents: options.emitSyncEvents !== false,
       });
     }, Math.max(0, Number(delay) || 0));
     return this.pendingSave;
   }
 
   commitLocalManifest(manifest) {
-    if (!manifest) return manifest;
-    const completedAt = this.now();
-    const commitId = `${completedAt}-${Math.random().toString(36).slice(2)}`;
-    const completeManifest = {
-      ...manifest,
-      complete: true,
-      commit: {
-        id: commitId,
-        status: 'complete',
-        completedAt,
-      },
-    };
-    if (!this.local || !this.storage || !this.sessionId) return completeManifest;
+    const completeManifest = createCommittedManifest(manifest, this.now());
+    if (!completeManifest || !this.local || !this.storage || !this.sessionId) return completeManifest;
+    const localManifest = compactManifestForLocalStorage(completeManifest);
     const pendingManifest = {
-      ...completeManifest,
+      ...localManifest,
       complete: false,
       commit: {
-        ...completeManifest.commit,
+        ...localManifest.commit,
         status: 'pending',
       },
     };
     const currentKey = this.manifestKey();
     const backupKey = this.manifestBackupKey();
     const pendingKey = this.manifestPendingKey();
-    const previous = this.storage.getItem(currentKey);
-    this.storage.setItem(pendingKey, JSON.stringify(pendingManifest));
-    if (previous) this.storage.setItem(backupKey, previous);
-    this.storage.setItem(currentKey, JSON.stringify(completeManifest));
-    this.storage.removeItem(pendingKey);
+    try {
+      const previous = this.storage.getItem(currentKey);
+      this.storage.setItem(pendingKey, JSON.stringify(pendingManifest));
+      if (previous) {
+        try {
+          this.storage.setItem(backupKey, previous);
+        } catch (_) {
+          this.storage.removeItem?.(backupKey);
+        }
+      }
+      this.storage.setItem(currentKey, JSON.stringify(localManifest));
+      this.storage.removeItem(pendingKey);
+    } catch (error) {
+      this.storage.removeItem?.(pendingKey);
+      this.storage.removeItem?.(backupKey);
+      try {
+        this.storage.setItem(currentKey, JSON.stringify({
+          schema: localManifest.schema,
+          version: localManifest.version,
+          sessionId: localManifest.sessionId,
+          nickname: localManifest.nickname,
+          updatedAt: localManifest.updatedAt,
+          complete: true,
+          commit: localManifest.commit,
+          storage: { manifestStoredExternally: true },
+        }));
+      } catch (fallbackError) {
+        console.error('[HeliosPersistence] Failed to commit local session manifest fallback', fallbackError);
+        this.storage.removeItem?.(currentKey);
+      }
+      console.error('[HeliosPersistence] Failed to commit local session manifest', error);
+      this.dispatchEvent(createDetailEvent('sync', {
+        ...this.status(),
+        localManifestWarning: error?.message ?? String(error),
+      }));
+    }
+    return completeManifest;
+  }
+
+  async commitManifest(manifest) {
+    const completeManifest = createCommittedManifest(manifest, this.now());
+    this.commitLocalManifest(completeManifest);
+    if (completeManifest && this.sessionStore?.put && this.sessionId) {
+      await this.sessionStore.put({
+        id: this.manifestRecordKey(this.sessionId),
+        kind: 'session-manifest',
+        sessionId: this.sessionId,
+        updatedAt: completeManifest.updatedAt,
+        manifest: completeManifest,
+      }).catch((error) => {
+        this.sessionSaveError = error?.message ?? String(error);
+      });
+    }
     return completeManifest;
   }
 
   async saveManifest(options = {}) {
     if (!this.sessionId) return null;
-    for (const entry of this.journal) {
-      if (entry.status === 'pending') entry.status = 'saved';
+    const emitSyncEvents = options.emitSyncEvents !== false;
+    this.saveInProgress = true;
+    this.sessionSaveError = null;
+    if (emitSyncEvents) this.dispatchEvent(createDetailEvent('sync', this.status()));
+    try {
+      for (const entry of this.journal) {
+        if (entry.status === 'pending') entry.status = 'saved';
+      }
+      if (options.snapshotLayoutRuntime !== false) {
+        this.layoutRuntimeState = await (
+          this.helios?.snapshotLayoutRuntimeStateAsync?.({ reason: 'session-manifest-save' })
+            ?? this.helios?.snapshotLayoutRuntimeState?.()
+            ?? null
+        );
+      }
+      const manifest = this.toManifest();
+      const committed = await this.commitManifest(manifest);
+      if (this.remote?.enabled) {
+        await this.syncRemoteManifest(committed).catch((error) => {
+          this.networkData.remoteWarning = error?.message ?? String(error);
+          console.error('[HeliosPersistence] Remote session manifest sync failed', error);
+        });
+      }
+      this.sessionSavedAt = Number(committed?.commit?.completedAt) || Number(committed?.updatedAt) || this.now();
+      return committed;
+    } catch (error) {
+      this.sessionSaveError = error?.message ?? String(error);
+      throw error;
+    } finally {
+      this.saveInProgress = false;
+      if (emitSyncEvents) this.dispatchEvent(createDetailEvent('sync', this.status()));
     }
-    if (options.snapshotLayoutRuntime !== false) {
-      this.layoutRuntimeState = await (
-        this.helios?.snapshotLayoutRuntimeStateAsync?.({ reason: 'session-manifest-save' })
-          ?? this.helios?.snapshotLayoutRuntimeState?.()
-          ?? null
-      );
-    }
-    const manifest = this.toManifest();
-    const committed = this.commitLocalManifest(manifest);
-    if (this.remote?.enabled) {
-      await this.syncRemoteManifest(committed).catch((error) => {
-        this.networkData.remoteWarning = error?.message ?? String(error);
-      });
-    }
-    return committed;
   }
 
   toManifest() {
@@ -945,6 +1232,7 @@ export class HeliosSessionController extends EventTarget {
       schema: 'helios-web.session-manifest',
       version: 1,
       sessionId: this.sessionId,
+      nickname: this.nickname,
       updatedAt: this.now(),
       overrides: this.getOverrides(),
       dirtyState: this.getDirtyState(),
@@ -962,9 +1250,30 @@ export class HeliosSessionController extends EventTarget {
       ?? parseStoredManifest(this.storage.getItem(this.manifestBackupKey(id)));
   }
 
+  async loadManifestAsync(id = this.sessionId) {
+    if (this.sessionStore?.get && id) {
+      const stored = await this.sessionStore.get(this.manifestRecordKey(id)).catch(() => null);
+      if (stored?.manifest) return stored.manifest;
+    }
+    return this.loadManifest(id);
+  }
+
+  async deleteStoredManifest(id = this.sessionId) {
+    if (!id) return false;
+    if (this.sessionStore?.delete) {
+      await this.sessionStore.delete(this.manifestRecordKey(id)).catch(() => false);
+    }
+    if (this.storage) {
+      this.storage.removeItem?.(this.manifestKey(id));
+      this.storage.removeItem?.(this.manifestBackupKey(id));
+      this.storage.removeItem?.(this.manifestPendingKey(id));
+    }
+    return true;
+  }
+
   async fetchRemoteManifest(id = this.sessionId) {
     if (!this.remote?.enabled || !id) return null;
-    const headers = {};
+    const headers = { ...(this.remote.headers ?? {}) };
     if (this.remote.key) headers.Authorization = `Bearer ${this.remote.key}`;
     const response = await fetch(`${this.remote.url}/sessions/${encodeURIComponent(id)}/manifest`, { headers });
     if (response.status === 404) return null;
@@ -973,19 +1282,82 @@ export class HeliosSessionController extends EventTarget {
   }
 
   async restore(id = this.sessionId, options = {}) {
-    let manifest = this.loadManifest(id);
+    this.restoring = true;
+    this.dispatchEvent(createDetailEvent('sync', this.status()));
+    try {
+      return await this._restore(id, options);
+    } finally {
+      this.restoring = false;
+      this.dispatchEvent(createDetailEvent('sync', this.status()));
+    }
+  }
+
+  async _restore(id = this.sessionId, options = {}) {
+    let manifest = await this.loadManifestAsync(id);
     if (!manifest && this.remote?.enabled) {
       manifest = await this.fetchRemoteManifest(id).catch((error) => {
         this.networkData.remoteWarning = error?.message ?? String(error);
+        console.error('[HeliosPersistence] Remote session manifest restore failed', error);
         return null;
       });
     }
+    if (!manifest && options.applyNetwork === true && this.persistence?.getSession && this.persistence?.restoreSession) {
+      const stored = await this.persistence.getSession(id).catch((error) => {
+        this.sessionSaveError = error?.message ?? String(error);
+        console.error('[HeliosPersistence] Stored session lookup failed during restore', error);
+        return null;
+      });
+      if (stored?.payload?.session?.id) {
+        this.suspended = true;
+        try {
+          await this.persistence.restoreSession(stored, { ...options, restoreOverrides: false });
+        } finally {
+          this.suspended = false;
+        }
+        const payload = stored.payload;
+        this.sessionId = payload.session.id;
+        this.nickname = typeof payload.session.nickname === 'string' && payload.session.nickname.trim()
+          ? payload.session.nickname.trim()
+          : this.nickname;
+        this.sessionSavedAt = Number(payload.session.updatedAt) || this.sessionSavedAt || this.now();
+        this.sessionSaveError = null;
+        this.explicitSessionInvalid = false;
+        ensureSessionIdInUrl(this.sessionId, {
+          ...this.urlRouting,
+          replaceExisting: options.replaceUrlSession !== false,
+        });
+        this.networkData = {
+          ...(this.networkData ?? {}),
+          enabled: true,
+          status: 'saved',
+          dirty: false,
+          savedAt: this.sessionSavedAt,
+        };
+        this.initialPersistenceReady = true;
+        this.dispatchEvent(createDetailEvent('change', { entries: [], overrides: this.getOverrides() }));
+        return this.status();
+      }
+    }
     if (!manifest) {
+      if (this.explicitSessionRequested && (!id || String(id) === String(this.requestedSessionId ?? this.sessionId ?? ''))) {
+        this.explicitSessionInvalid = true;
+      }
       this.initialPersistenceReady = true;
       return null;
     }
+    this.explicitSessionInvalid = false;
     this.sessionId = manifest.sessionId ?? id;
-    this.overrides = normalizeOverrideMap(manifest.overrides && typeof manifest.overrides === 'object' ? cloneSerializable(manifest.overrides) : {});
+    this.nickname = typeof manifest.nickname === 'string' && manifest.nickname.trim() ? manifest.nickname.trim() : this.nickname;
+    this.sessionSavedAt = Number(manifest?.commit?.completedAt) || Number(manifest?.updatedAt) || this.sessionSavedAt;
+    this.sessionSaveError = null;
+    ensureSessionIdInUrl(this.sessionId, {
+      ...this.urlRouting,
+      replaceExisting: options.replaceUrlSession !== false,
+    });
+    const manifestOverrides = manifest.overrides && typeof manifest.overrides === 'object' ? cloneSerializable(manifest.overrides) : {};
+    const manifestOverrideCount = Object.keys(manifestOverrides).length;
+    this.overrides = normalizeOverrideMap(manifestOverrides);
+    this.persistence?.hydrateSessionOverrides?.(this.overrides, { group: 'overrides', reason: 'session-restore' });
     this.journal = Array.isArray(manifest.journal) ? cloneSerializable(manifest.journal) : [];
     this.trimJournal();
     this.checkpointSeq = Number.isFinite(manifest.checkpointSeq) ? Number(manifest.checkpointSeq) : 0;
@@ -1005,6 +1377,16 @@ export class HeliosSessionController extends EventTarget {
         } finally {
           this.suspended = false;
         }
+      } else if (this.networkPersistence.enabled && this.networkData?.status !== 'skipped') {
+        this.networkData = {
+          ...this.networkData,
+          enabled: true,
+          dirty: true,
+          status: 'dirty',
+          reason: 'missing-session-network-data',
+          updatedAt: this.now(),
+          savedAt: null,
+        };
       }
     }
     const base = this.captureOverrideSnapshot();
@@ -1013,16 +1395,36 @@ export class HeliosSessionController extends EventTarget {
       const restored = applyOverridesToVisualizationState(base, this.overrides);
       this.suspended = true;
       try {
-        await this.helios?.importVisualizationState?.(restored, { reason: 'session-overrides-restore' });
+        await this.helios?.importVisualizationState?.(restored, {
+          reason: 'session-overrides-restore',
+          hydratePersistence: false,
+          refreshPersistence: false,
+        });
         if (this.layoutRuntimeState) {
-          await this.helios?.restoreLayoutRuntimeState?.(this.layoutRuntimeState, { reason: 'session-layout-runtime-restore' });
+          await this.helios?.restoreLayoutRuntimeState?.(this.layoutRuntimeState, {
+            reason: 'session-layout-runtime-restore',
+            restoreRunState: options.restoreLayoutRunState === true,
+          });
         }
       } finally {
         this.suppressTransientRestoreEvents();
         this.suspended = false;
       }
     } else if (this.layoutRuntimeState) {
-      await this.helios?.restoreLayoutRuntimeState?.(this.layoutRuntimeState, { reason: 'session-layout-runtime-restore' });
+      await this.helios?.restoreLayoutRuntimeState?.(this.layoutRuntimeState, {
+        reason: 'session-layout-runtime-restore',
+        restoreRunState: options.restoreLayoutRunState === true,
+      });
+    }
+    if (manifestOverrideCount === 0 && options.applyNetwork === true) {
+      this.overrides = {};
+      this.dirtyState = { controls: {}, sections: {}, panels: {} };
+      this.journal = [];
+      this.checkpointSeq = 0;
+      this.nextSeq = 1;
+      this.persistence?.hydrateSessionOverrides?.({}, { group: 'overrides', reason: 'session-clean-restore' });
+      const cleanBaseline = this.captureOverrideSnapshot();
+      if (cleanBaseline) this.captureBaseline(cleanBaseline);
     }
     this.recomputeDirtyState();
     this.dispatchEvent(createDetailEvent('change', { entries: [], overrides: this.getOverrides() }));
@@ -1039,6 +1441,7 @@ export class HeliosSessionController extends EventTarget {
       status: 'dirty',
       updatedAt: this.now(),
     };
+    this.dispatchEvent(createDetailEvent('change', { entries: [], overrides: this.getOverrides(), reason }));
     if (this.autosave) this.scheduleSave();
   }
 
@@ -1066,9 +1469,10 @@ export class HeliosSessionController extends EventTarget {
       await this.saveManifest();
       return this.networkData;
     }
-    const format = options.format ?? this.networkPersistence.format ?? 'bxnet';
+    const format = options.format ?? this.networkPersistence.format ?? 'zxnet';
     const data = await this.helios.savePortableNetwork(format, {
       includeVisualization: this.networkPersistence.includeVisualization === true,
+      includeCurrentPositions: true,
       output: 'uint8array',
     });
     const bytes = estimateByteLength(data);
@@ -1087,17 +1491,21 @@ export class HeliosSessionController extends EventTarget {
     if (this.persistence?.saveSession) {
       await this.persistence.saveSession({
         id: this.sessionId,
+        nickname: this.nickname,
         networkFormat: format,
         networkData: data,
         unfinished: true,
         status: 'active',
-        visualizationState: this.helios.serializeVisualizationState?.(),
+        visualizationState: await (this.helios.serializeVisualizationStateAsync?.()
+          ?? this.helios.serializeVisualizationState?.()),
+        retention: options.retention,
       });
     }
     if (this.remote?.enabled) {
       const blobId = options.blobId ?? `network-${format}`;
       await this.syncRemoteBlob(blobId, data).catch((error) => {
         this.networkData.remoteWarning = error?.message ?? String(error);
+        console.error('[HeliosPersistence] Remote network blob sync failed', error);
       });
     }
     const remoteWarning = this.networkData.remoteWarning;
@@ -1121,7 +1529,12 @@ export class HeliosSessionController extends EventTarget {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
     }
-    if (options.includeNetwork === true) await this.persistNetworkNow(options.network ?? {});
+    if (options.includeNetwork === true) {
+      await this.persistNetworkNow({
+        ...(options.network ?? {}),
+        retention: options.retention,
+      });
+    }
     return this.saveManifest({
       snapshotLayoutRuntime: options.snapshotLayoutRuntime !== false,
     });
@@ -1129,7 +1542,7 @@ export class HeliosSessionController extends EventTarget {
 
   async syncRemoteManifest(manifest) {
     if (!this.remote?.enabled) return null;
-    const headers = { 'Content-Type': 'application/json' };
+    const headers = { ...(this.remote.headers ?? {}), 'Content-Type': 'application/json' };
     if (this.remote.key) headers.Authorization = `Bearer ${this.remote.key}`;
     const response = await fetch(`${this.remote.url}/sessions/${encodeURIComponent(this.sessionId)}/manifest`, {
       method: 'PUT',
@@ -1149,7 +1562,7 @@ export class HeliosSessionController extends EventTarget {
 
   async syncRemoteBlob(blobId, data) {
     if (!this.remote?.enabled) return null;
-    const headers = {};
+    const headers = { ...(this.remote.headers ?? {}) };
     if (this.remote.key) headers.Authorization = `Bearer ${this.remote.key}`;
     const response = await fetch(`${this.remote.url}/sessions/${encodeURIComponent(this.sessionId)}/blobs/${encodeURIComponent(blobId)}`, {
       method: 'PUT',
@@ -1163,6 +1576,7 @@ export class HeliosSessionController extends EventTarget {
   status() {
     return {
       sessionId: this.sessionId,
+      nickname: this.nickname,
       autosave: this.autosave,
       local: this.local,
       remote: this.remote ? { enabled: this.remote.enabled, url: this.remote.url, hasKey: Boolean(this.remote.key) } : null,
@@ -1173,7 +1587,18 @@ export class HeliosSessionController extends EventTarget {
       dirtyState: this.getDirtyState(),
       networkData: cloneSerializable(this.networkData),
       layoutRuntimeState: cloneSerializable(this.layoutRuntimeState),
-      pendingSave: Boolean(this.saveTimer),
+      pendingSave: Boolean(this.saveTimer || this.saveInProgress),
+      restoring: this.restoring === true,
+      explicitSessionRequested: this.explicitSessionRequested === true,
+      explicitSessionInvalid: this.explicitSessionInvalid === true,
+      requestedSessionId: this.requestedSessionId,
+      sessionSavedAt: this.sessionSavedAt,
+      sessionSync: {
+        status: this.saveInProgress ? 'syncing' : (this.sessionSaveError ? 'error' : (this.sessionSavedAt ? 'saved' : 'idle')),
+        savedAt: this.sessionSavedAt,
+        error: this.sessionSaveError,
+        pending: Boolean(this.saveTimer || this.saveInProgress),
+      },
     };
   }
 }

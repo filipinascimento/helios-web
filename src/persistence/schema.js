@@ -130,8 +130,11 @@ export function normalizeSessionPayload(value = {}) {
       id: typeof source.session?.id === 'string' ? source.session.id : (typeof source.id === 'string' ? source.id : null),
       createdAt: Number.isFinite(source.session?.createdAt) ? Number(source.session.createdAt) : (Number.isFinite(source.createdAt) ? Number(source.createdAt) : null),
       updatedAt: Number.isFinite(source.session?.updatedAt) ? Number(source.session.updatedAt) : (Number.isFinite(source.updatedAt) ? Number(source.updatedAt) : null),
+      workspaceId: typeof source.session?.workspaceId === 'string' ? source.session.workspaceId : (typeof source.workspaceId === 'string' ? source.workspaceId : null),
+      nickname: typeof source.session?.nickname === 'string' ? source.session.nickname : (typeof source.nickname === 'string' ? source.nickname : null),
       unfinished: source.session?.unfinished !== false && source.unfinished !== false,
       status: typeof source.session?.status === 'string' ? source.session.status : (typeof source.status === 'string' ? source.status : 'active'),
+      bytes: Number.isFinite(source.session?.bytes) ? Number(source.session.bytes) : (Number.isFinite(source.bytes) ? Number(source.bytes) : undefined),
     },
     preferences,
     responsivePreferences: normalizeResponsivePreferences(source.responsivePreferences ?? preferences.responsive),
@@ -149,6 +152,9 @@ export function normalizeSessionPayload(value = {}) {
         format: typeof source.networkFormat === 'string' ? source.networkFormat : 'bxnet',
         data: source.networkBytes ?? null,
       },
+    thumbnail: source.thumbnail && typeof source.thumbnail === 'object'
+      ? cloneSerializable(source.thumbnail)
+      : null,
     visualizationState,
   };
 }

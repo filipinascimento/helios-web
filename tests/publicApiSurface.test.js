@@ -11,6 +11,8 @@ test('package root exposes the stabilized public API and omits renderer internal
   assert.equal(typeof heliosWeb.BEHAVIOR_IDS, 'object');
   assert.equal(typeof heliosWeb.createDefaultBehaviorRegistry, 'function');
   assert.equal(typeof heliosWeb.HeliosPersistenceService, 'function');
+  assert.equal(typeof heliosWeb.CustomPersistenceBackend, 'function');
+  assert.equal(typeof heliosWeb.NetworkAttributePersistenceBackend, 'function');
   assert.equal(typeof heliosWeb.HeliosUI, 'function');
 
   assert.equal('LayeredRenderer' in heliosWeb, false);
@@ -53,6 +55,8 @@ test('public declaration file covers Phase 1 behavior, persistence, and camera s
     'webgpuAdapterOptions?:',
     'webgpuDeviceDescriptor?:',
     'webgpuCanvasConfiguration?:',
+    'export interface HeliosQuickControlsOptions',
+    'quickControls?:',
     'export interface CameraControlsOptions',
     'export interface HeliosVisualizationStatePayload',
     'export interface HeliosSessionPayload',
@@ -60,6 +64,23 @@ test('public declaration file covers Phase 1 behavior, persistence, and camera s
     'export interface BehaviorConfigObject',
     'export class InterfaceBehavior',
     'export class HeliosPersistenceService',
+    'export class PersistenceRegistry',
+    'export class CustomPersistenceBackend',
+    'workspaceId?:',
+    'positionPersistence?:',
+    "'gml'",
+    'fileDrop?:',
+    'getRestorableSessions',
+    'getResumeSessions',
+    'getResumePrompt',
+    'HeliosSessionSummary',
+    'nickname?:',
+    'startNewSession',
+    'setSessionNickname',
+    'resumeSession',
+    'restoreActiveSession',
+    'pauseAutosync',
+    'resumeAutosync',
   ]) {
     assert.ok(declarations.includes(token), `Expected declaration token: ${token}`);
   }

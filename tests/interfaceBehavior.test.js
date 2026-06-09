@@ -22,7 +22,9 @@ class MockPersistenceService {
       loadPreferences: 0,
       updatePreferences: [],
       getRestorableSession: 0,
+      getResumePrompt: 0,
       restoreSession: [],
+      resumeSession: [],
       markSessionFinished: [],
       deleteSession: [],
     };
@@ -53,6 +55,29 @@ class MockPersistenceService {
   async getRestorableSession() {
     this.calls.getRestorableSession += 1;
     return this.restorableSession;
+  }
+
+  async getResumePrompt() {
+    this.calls.getResumePrompt += 1;
+    const session = this.restorableSession;
+    if (!session?.payload?.session?.id) return null;
+    return {
+      visible: true,
+      sessionId: session.payload.session.id,
+      updatedAt: session.payload.session.updatedAt ?? null,
+      networkSource: session.payload.networkSource ?? null,
+      sessions: [{
+        id: session.payload.session.id,
+        updatedAt: session.payload.session.updatedAt ?? null,
+        networkSource: session.payload.networkSource ?? null,
+        label: session.payload.networkSource?.name ?? session.payload.session.id,
+      }],
+    };
+  }
+
+  async resumeSession(id, options = {}) {
+    this.calls.resumeSession.push({ id, options });
+    return { restored: id };
   }
 
   async restoreSession(id, options = {}) {
@@ -256,11 +281,71 @@ test('interface behavior surfaces unfinished-session resume prompts and can resu
 
   const restored = await behavior.resumeSession({ markFinished: false });
   assert.deepEqual(restored, { restored: 'session-42' });
-  assert.deepEqual(helios.persistence.calls.restoreSession, [{
+  assert.deepEqual(helios.persistence.calls.resumeSession, [{
     id: 'session-42',
     options: { markFinished: false },
   }]);
   assert.equal(behavior.resumePrompt(), null);
+});
+
+test('interface behavior does not serialize resume prompts as durable UI state', async () => {
+  const { behavior } = attachInterfaceBehavior({
+    restorableSession: {
+      payload: {
+        session: { id: 'session-ephemeral', updatedAt: 1234 },
+        networkSource: { name: 'ephemeral.xnet', format: 'xnet' },
+      },
+    },
+  });
+  await behavior.ensurePersistenceReady();
+
+  assert.equal(behavior.resumePrompt().sessionId, 'session-ephemeral');
+  assert.equal(behavior.serializeInterfaceState().resumePrompt, null);
+  assert.equal(behavior.serializeInterfaceState({ includeResumePrompt: true }).resumePrompt.sessionId, 'session-ephemeral');
+});
+
+test('interface behavior ignores stale serialized resume prompts for explicit URL sessions', async () => {
+  const { helios, behavior } = attachInterfaceBehavior();
+  helios.persistence.sessionController = {
+    restoring: true,
+    shouldShowRestorePrompt: () => false,
+  };
+
+  behavior.restoreInterfaceState({
+    resumePrompt: {
+      visible: true,
+      sessionId: 'stale-session',
+      status: 'prompt',
+      updatedAt: 1234,
+      networkSource: { name: 'old.xnet' },
+    },
+  });
+
+  assert.equal(behavior.resumePrompt(), null);
+  assert.equal(helios.ui.applied.at(-1).resumePrompt, null);
+});
+
+test('interface behavior does not ask for resume when an explicit session is valid', async () => {
+  const { helios, behavior } = attachInterfaceBehavior({
+    restorableSession: {
+      payload: {
+        session: { id: 'other-session', updatedAt: 1234 },
+        networkSource: { name: 'other.xnet' },
+      },
+    },
+  });
+  helios.persistence.sessionController = {
+    restoring: false,
+    explicitSessionRequested: true,
+    explicitSessionInvalid: false,
+    shouldShowRestorePrompt: () => false,
+  };
+
+  await behavior.ensurePersistenceReady();
+
+  assert.equal(behavior.resumePrompt(), null);
+  assert.equal(helios.persistence.calls.getResumePrompt, 0);
+  assert.equal(helios.ui.applied.at(-1).resumePrompt, null);
 });
 
 test('interface behavior can start fresh from a pending unfinished session prompt', async () => {
@@ -275,7 +360,23 @@ test('interface behavior can start fresh from a pending unfinished session promp
   await behavior.ensurePersistenceReady();
   await behavior.startFresh();
 
-  assert.deepEqual(helios.persistence.calls.markSessionFinished, ['session-9']);
+  assert.deepEqual(helios.persistence.calls.markSessionFinished, []);
+  assert.equal(behavior.resumePrompt(), null);
+});
+
+test('interface behavior can explicitly mark a pending session finished when starting fresh', async () => {
+  const { helios, behavior } = attachInterfaceBehavior({
+    restorableSession: {
+      payload: {
+        session: { id: 'session-finish', updatedAt: 9876 },
+        networkSource: { name: 'stale.xnet', format: 'xnet' },
+      },
+    },
+  });
+  await behavior.ensurePersistenceReady();
+  await behavior.startFresh({ markFinished: true });
+
+  assert.deepEqual(helios.persistence.calls.markSessionFinished, ['session-finish']);
   assert.equal(behavior.resumePrompt(), null);
 });
 

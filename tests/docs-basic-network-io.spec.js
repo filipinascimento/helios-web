@@ -194,7 +194,7 @@ test.describe('docs basic demo network io', () => {
   });
 
   test('frames loaded 2D network into view', async ({ page }, testInfo) => {
-    await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=800');
+    await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=800&session=0');
 
     await page.waitForFunction(() => Boolean(window.__helios && window.__helios.ready));
     await page.waitForFunction(async () => {
@@ -224,7 +224,11 @@ test.describe('docs basic demo network io', () => {
       helios.requestRender?.();
     });
 
-    await page.waitForTimeout(500);
+    await page.waitForFunction(() => {
+      const helios = window.__helios;
+      const camera = helios?.renderer?.camera;
+      return Boolean(camera && camera.zoom > 1 && !helios._pendingFrameNetwork);
+    }, null, { timeout: 5000 });
 
     const stats = await page.evaluate(() => {
       const helios = window.__helios;
@@ -286,7 +290,7 @@ test.describe('docs basic demo network io', () => {
   });
 
   test('keeps network centered after first 3D rotate interaction', async ({ page }, testInfo) => {
-    await page.goto('/?renderer=webgl&layout=none&mode=3d&nodes=800');
+    await page.goto('/?renderer=webgl&layout=none&mode=3d&nodes=800&session=0');
 
     await page.waitForFunction(() => Boolean(window.__helios && window.__helios.ready));
     await page.waitForFunction(async () => {
@@ -316,7 +320,17 @@ test.describe('docs basic demo network io', () => {
       helios.requestRender?.();
     });
 
-    await page.waitForTimeout(500);
+    await page.waitForFunction(() => {
+      const helios = window.__helios;
+      const camera = helios?.renderer?.camera;
+      const target = camera?.target ?? [];
+      return Boolean(
+        camera
+        && camera.mode === '3d'
+        && Math.hypot(Number(target[0]) || 0, Number(target[1]) || 0, Number(target[2]) || 0) > 100
+        && !helios._pendingFrameNetwork,
+      );
+    }, null, { timeout: 5000 });
 
     const centroid = await page.evaluate(() => {
       const helios = window.__helios;

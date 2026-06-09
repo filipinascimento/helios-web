@@ -16,10 +16,7 @@ async function computeFirstNodeHit(page) {
     const tracker = helios.indexPickingTracker;
     if (!tracker) throw new Error('Missing indexPickingTracker');
 
-    await tracker.render(
-      { network: helios.network, timestamp: performance.now(), camera: helios.renderer?.camera },
-      true,
-    );
+    await helios._ensureIndexPickingTargets?.();
     const targets = tracker.lastTargets;
     if (!targets?.node) throw new Error('Missing picking targets');
 
@@ -53,26 +50,17 @@ async function computeFirstNodeHit(page) {
     const isWebGL = helios.renderer?.device?.type === 'webgl2';
     const localX = hit.x / (pixelRatio * scale);
     const localY = (isWebGL ? (targets.node.height - 1 - hit.y) : hit.y) / (pixelRatio * scale);
+    const picked = await tracker.pick(localX, localY);
 
     return {
       expectedIndex: hit.value,
+      pickedIndex: picked?.node ?? -1,
       clientX: rect.left + localX,
       clientY: rect.top + localY,
       localX,
       localY,
     };
   });
-}
-
-async function expectPickedIndexAt(page, localX, localY, expectedIndex) {
-  const pickedIndex = await page.evaluate(async ({ x, y }) => {
-    const helios = window.__helios;
-    if (!helios?.indexPickingTracker) throw new Error('Missing indexPickingTracker');
-    await helios._ensureIndexPickingTargets?.();
-    const result = await helios.indexPickingTracker.pick(x, y);
-    return result?.node ?? -1;
-  }, { x: localX, y: localY });
-  expect(pickedIndex).toBe(expectedIndex);
 }
 
 test('node picking remains correct after resize', async ({ page }) => {
@@ -88,11 +76,11 @@ test('node picking remains correct after resize', async ({ page }) => {
   await waitForHelios(page);
 
   const before = await computeFirstNodeHit(page);
-  await expectPickedIndexAt(page, before.localX, before.localY, before.expectedIndex);
+  expect(before.pickedIndex).toBe(before.expectedIndex);
 
   await page.setViewportSize({ width: 1100, height: 720 });
   await page.waitForTimeout(100);
 
   const after = await computeFirstNodeHit(page);
-  await expectPickedIndexAt(page, after.localX, after.localY, after.expectedIndex);
+  expect(after.pickedIndex).toBe(after.expectedIndex);
 });

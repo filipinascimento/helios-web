@@ -12,6 +12,16 @@ function panelByTitle(page, title) {
   }).first();
 }
 
+function rowByTitle(scope, title) {
+  return scope.locator(
+    `xpath=.//*[contains(@class,"helios-ui-row")][.//*[contains(@class,"helios-ui-label__title") and normalize-space()="${title}"]]`,
+  ).first();
+}
+
+function indicatorByPath(scope, path) {
+  return scope.locator(`.helios-ui-dirty-indicator[data-path="${path}"]`).first();
+}
+
 async function enableToggle(locator) {
   const toggle = locator.first();
   await expect(toggle).toBeVisible();
@@ -60,6 +70,186 @@ async function countNonBackgroundPixels(page) {
 }
 
 test.describe('scene panel: tabs and appearance controls', () => {
+  test('persistence markers track exact setting defaults and reset without marking sibling rows', async ({ page }) => {
+    const workspaceId = `marker-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    await page.goto(`/?renderer=webgl&layout=none&mode=2d&nodes=120&session=0&workspaceId=${workspaceId}`);
+    await waitForHelios(page);
+
+    const scenePanel = panelByTitle(page, 'Scene');
+    await expect(scenePanel).toBeVisible();
+    const dimensionRow = rowByTitle(scenePanel, 'Dimension');
+    const dimensionIndicator = indicatorByPath(scenePanel, 'scene.dimension');
+    const themeIndicator = indicatorByPath(scenePanel, 'ui.theme');
+    const backgroundIndicator = indicatorByPath(scenePanel, 'appearance.background');
+
+    await expect(themeIndicator).toHaveAttribute('data-state', 'default');
+    await expect(dimensionIndicator).toHaveAttribute('data-state', 'default');
+    await expect(backgroundIndicator).toHaveAttribute('data-state', 'default');
+    await expect(indicatorByPath(scenePanel, 'appearance.edgeStyle.widthScale')).toHaveAttribute('data-state', 'default');
+    await expect(indicatorByPath(scenePanel, 'appearance.edgeStyle.opacityScale')).toHaveAttribute('data-state', 'default');
+
+    const mismatchedMarkers = await scenePanel.locator('.helios-ui-dirty-indicator[data-path]').evaluateAll((els) => (
+      els
+        .filter((el) => {
+          const rect = el.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        })
+        .map((el) => ({
+          path: el.dataset.path,
+          state: el.dataset.state,
+          expected: window.__helios?.persistence?.keyStatus?.(el.dataset.path, {
+            scope: el.dataset.scope,
+            mode: el.dataset.mode,
+          })?.state ?? 'default',
+        }))
+        .filter((entry) => entry.state !== entry.expected)
+    ));
+    expect(mismatchedMarkers).toEqual([]);
+
+    const dimensionControl = dimensionRow.locator('[role="radiogroup"][aria-label="Scene dimension"]').first();
+    await dimensionControl.getByRole('radio', { name: '3D' }).click();
+    await expect.poll(() => page.evaluate(() => window.__helios.mode())).toBe('3d');
+    await expect(dimensionIndicator).toHaveAttribute('data-state', 'changed');
+    await expect(backgroundIndicator).toHaveAttribute('data-state', 'default');
+
+    await dimensionControl.getByRole('radio', { name: '2D' }).click();
+    await expect.poll(() => page.evaluate(() => window.__helios.mode())).toBe('2d');
+    await expect(dimensionIndicator).toHaveAttribute('data-state', 'default');
+    await expect(backgroundIndicator).toHaveAttribute('data-state', 'default');
+
+    await dimensionControl.getByRole('radio', { name: '3D' }).click();
+    await expect.poll(() => page.evaluate(() => window.__helios.mode())).toBe('3d');
+    await expect(dimensionIndicator).toHaveAttribute('data-state', 'changed');
+    await expect(backgroundIndicator).toHaveAttribute('data-state', 'default');
+
+    const colors = await dimensionIndicator.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return {
+        backgroundColor: style.backgroundColor,
+        borderColor: style.borderColor,
+      };
+    });
+    expect(colors.backgroundColor).not.toContain('22, 163, 74');
+    expect(colors.borderColor).not.toContain('245, 158, 11');
+
+    await dimensionIndicator.click();
+    await page.getByRole('button', { name: 'Reset to default' }).click();
+    await expect.poll(() => page.evaluate(() => window.__helios.mode())).toBe('2d');
+    await expect(dimensionIndicator).toHaveAttribute('data-state', 'default');
+    await expect(backgroundIndicator).toHaveAttribute('data-state', 'default');
+
+    const dataPanel = panelByTitle(page, 'Data');
+    const nameBar = dataPanel.locator('.helios-ui-network__name').first();
+    const syncRow = dataPanel.locator('.helios-ui-network__sync-row').first();
+    await expect(syncRow.locator('.helios-ui-network-persistence__status')).toHaveCount(1);
+    await expect(syncRow.locator('.helios-ui-network-persistence__sync')).toBeVisible();
+    await expect(syncRow.locator('.helios-ui-network-persistence__status')).toHaveText(/^(|Synced|Local saved|Remote failed|Positions dirty|Network too large)/);
+    await expect(nameBar.locator('.helios-ui-network-persistence__status')).toHaveCount(0);
+    const nameOrder = await nameBar.evaluate((el) => Array.from(el.children).map((child) => ({
+      tag: child.tagName.toLowerCase(),
+      className: child.className,
+    })));
+    const syncOrder = await syncRow.evaluate((el) => Array.from(el.children).map((child) => ({
+      tag: child.tagName.toLowerCase(),
+      className: child.className,
+    })));
+    const inputIndex = nameOrder.findIndex((entry) => entry.tag === 'input');
+    expect(inputIndex).toBeGreaterThanOrEqual(0);
+    expect(syncOrder.some((entry) => String(entry.className).includes('helios-ui-network-persistence'))).toBe(true);
+    expect(syncOrder.at(-1)?.className).toContain('helios-ui-network-autosync');
+    const persistenceOrder = await syncRow.locator('.helios-ui-network-persistence').first().evaluate((el) => (
+      Array.from(el.children).map((child) => child.className)
+    ));
+    expect(String(persistenceOrder[0])).toContain('helios-ui-network-persistence__controls');
+    expect(String(persistenceOrder[1])).toContain('helios-ui-network-persistence__status');
+    const autoSyncToggle = syncRow.getByRole('switch', { name: 'Auto sync network persistence' });
+    await expect(autoSyncToggle).toHaveAttribute('aria-checked', 'true');
+    await autoSyncToggle.click();
+    await expect(autoSyncToggle).toHaveAttribute('aria-checked', 'false');
+    await expect.poll(() => page.evaluate(() => window.__helios.persistence.get('network.persistence.autosave'))).toBe(false);
+    await autoSyncToggle.click();
+    await expect(autoSyncToggle).toHaveAttribute('aria-checked', 'true');
+    await expect.poll(() => page.evaluate(() => window.__helios.persistence.get('network.persistence.autosave'))).toBe(true);
+  });
+
+  test('network autosync URL flag initializes the Data sync row toggle', async ({ page }) => {
+    const workspaceId = `autosync-off-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    await page.goto(`/?renderer=webgl&layout=none&mode=2d&nodes=120&session=0&workspaceId=${workspaceId}&networkAutosave=0`);
+    await waitForHelios(page);
+    const dataPanel = panelByTitle(page, 'Data');
+    const autoSyncToggle = dataPanel.locator('.helios-ui-network__sync-row').getByRole('switch', {
+      name: 'Auto sync network persistence',
+    });
+    await expect(autoSyncToggle).toHaveAttribute('aria-checked', 'false');
+    await expect.poll(() => page.evaluate(() => window.__helios.persistence.get('network.persistence.autosave'))).toBe(false);
+  });
+
+  test('restored persisted dimension remains marked as changed from defaults', async ({ page }) => {
+    const sessionId = `dimension-restore-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const workspaceId = `dimension-restore-workspace-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const url = `/?renderer=webgl&layout=none&mode=2d&nodes=120&session=1&sessionId=${sessionId}&restoreNetwork=1&workspaceId=${workspaceId}&maxSessionBytes=0`;
+    await page.goto(url);
+    await waitForHelios(page);
+
+    const scenePanel = panelByTitle(page, 'Scene');
+    const dimensionRow = rowByTitle(scenePanel, 'Dimension');
+    const dimensionIndicator = indicatorByPath(scenePanel, 'scene.dimension');
+    const dimensionControl = dimensionRow.locator('[role="radiogroup"][aria-label="Scene dimension"]').first();
+    await dimensionControl.getByRole('radio', { name: '3D' }).click();
+    await expect.poll(() => page.evaluate(() => window.__helios.mode())).toBe('3d');
+    await expect(dimensionIndicator).toHaveAttribute('data-state', 'changed');
+    await page.evaluate(async () => {
+      await window.__helios.persistence.flush({
+        includeNetwork: true,
+        network: { format: 'zxnet' },
+        snapshotLayoutRuntime: true,
+      });
+    });
+
+    await page.goto('/tests/fixtures/blank.html');
+    await page.goto(url);
+    await waitForHelios(page);
+
+    const restoredScenePanel = panelByTitle(page, 'Scene');
+    const restoredIndicator = indicatorByPath(restoredScenePanel, 'scene.dimension');
+    await expect.poll(() => page.evaluate(() => window.__helios.mode()), { timeout: 15000 }).toBe('3d');
+    await expect(restoredIndicator).toHaveAttribute('data-state', 'changed');
+    await expect.poll(() => page.evaluate(() => window.__helios.persistence.keyStatus('scene.dimension').state))
+      .toBe('changed');
+  });
+
+  test('layout parameter persistence markers are registry-driven', async ({ page }) => {
+    const workspaceId = `layout-marker-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    await page.goto(`/?renderer=webgl&layout=gpuforce&mode=2d&nodes=120&session=0&workspaceId=${workspaceId}`);
+    await waitForHelios(page);
+
+    const layoutPanel = panelByTitle(page, 'Layout');
+    await expect(layoutPanel).toBeVisible();
+    const gravityIndicator = indicatorByPath(layoutPanel, 'layout.parameters.kGravity');
+    await expect(gravityIndicator).toHaveAttribute('data-state', 'default');
+    await expect.poll(() => page.evaluate(() => (
+      window.__helios.persistence.keyStatus('layout.parameters.kGravity')?.defaultValue
+    ))).toBeGreaterThan(0);
+
+    const gravityRow = rowByTitle(layoutPanel, 'Gravity');
+    const gravityInput = gravityRow.locator('input[type="number"]').first();
+    await expect(gravityInput).toBeVisible();
+    await gravityInput.fill('0.002');
+    await gravityInput.dispatchEvent('change');
+
+    await expect.poll(() => page.evaluate(() => (
+      window.__helios.persistence.get('layout.parameters.kGravity')
+    ))).toBeCloseTo(0.002, 6);
+    await expect(gravityIndicator).toHaveAttribute('data-state', 'changed');
+    const markerMatchesRegistry = await gravityIndicator.evaluate((el) => (
+      el.dataset.state === window.__helios.persistence.keyStatus(el.dataset.path, {
+        scope: el.dataset.scope,
+        mode: el.dataset.mode,
+      })?.state
+    ));
+    expect(markerMatchesRegistry).toBe(true);
+  });
+
   test('groups controls into Scene tabs and keeps renderer bindings working', async ({ page }) => {
     await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=500');
     await waitForHelios(page);
@@ -70,8 +260,8 @@ test.describe('scene panel: tabs and appearance controls', () => {
     const dataPanel = panelByTitle(page, 'Data');
     await expect(dataPanel).toBeVisible();
     await expect(dataPanel.locator('.helios-ui-stat__label', { hasText: 'Nodes' })).toBeVisible();
-    await expect(dataPanel.locator('.helios-ui-button', { hasText: 'Load' })).toBeVisible();
-    await expect(dataPanel.locator('.helios-ui-button', { hasText: 'Save' })).toBeVisible();
+    await expect(dataPanel.getByRole('button', { name: /Load network/ })).toBeVisible();
+    await expect(dataPanel.getByRole('button', { name: 'Save network' })).toBeVisible();
 
     const metricsPanel = panelByTitle(page, 'Metrics');
     await expect(metricsPanel).toBeVisible();

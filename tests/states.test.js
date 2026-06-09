@@ -17,6 +17,23 @@ test('supports no-state style helpers', () => {
   assert.equal(typeof Helios.prototype.edgeNoStateStyle, 'function');
   assert.equal(typeof Helios.prototype.setNodeNoStateStyle, 'function');
   assert.equal(typeof Helios.prototype.setEdgeNoStateStyle, 'function');
+
+  const layer = new GraphLayer({ stateSlots: 3 });
+  layer.nodeNoStateStyleEnabled = false;
+  layer.edgeNoStateStyleEnabled = false;
+  const heliosLike = {
+    renderer: { graphLayer: layer },
+    scheduler: { requestRender() {} },
+    _stateStyleCache: {
+      nodeNoState: null,
+      edgeNoState: null,
+    },
+  };
+
+  Helios.prototype.nodeNoStateStyle.call(heliosLike, { colorAdd: [0, 1, 0, 0] });
+  Helios.prototype.edgeNoStateStyle.call(heliosLike, { discard: true });
+  assert.equal(layer.nodeNoStateStyleEnabled, true);
+  assert.equal(layer.edgeNoStateStyleEnabled, true);
 });
 
 test('state APIs accept built-in state names', () => {

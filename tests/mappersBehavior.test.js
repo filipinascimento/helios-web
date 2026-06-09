@@ -89,6 +89,69 @@ test('mappers behavior updates raw mapper collections and restores serializable 
   assert.equal(typeof restoredConfig.rules[0]?.when, 'function');
 });
 
+test('mappers behavior restores declarative transform configs after JSON round-trip', () => {
+  const helios = new MockHelios();
+  const behavior = new MappersBehavior();
+  const behaviors = new Map([['mappers', behavior]]);
+  behavior.attach(createContext(helios, behaviors));
+
+  behavior.setChannelConfig('node', 'size', {
+    type: 'linear',
+    attributes: 'weight',
+    transformType: 'power',
+    transformPower: 0.5,
+    domain: [0, 1],
+    range: [2, 10],
+  });
+
+  const snapshot = JSON.parse(JSON.stringify(behavior.serialize()));
+  const restoredHelios = new MockHelios();
+  const restored = new MappersBehavior();
+  restored.attach(createContext(restoredHelios, new Map([['mappers', restored]])));
+  restored.restore(snapshot);
+
+  const restoredConfig = restoredHelios.nodeMapper.defaultMapper.getChannel('size');
+  assert.equal(restoredConfig.type, 'linear');
+  assert.equal(restoredConfig.attributes, 'weight');
+  assert.equal(restoredConfig.transformType, 'power');
+  assert.equal(restoredConfig.transformPower, 0.5);
+  assert.deepEqual(restoredConfig.domain, [0, 1]);
+  assert.deepEqual(restoredConfig.range, [2, 10]);
+  assert.equal(typeof restoredConfig.transform, 'function');
+});
+
+test('mappers behavior marks custom function configs unsupported and restores existing channel fallback', () => {
+  const helios = new MockHelios();
+  const behavior = new MappersBehavior();
+  const behaviors = new Map([['mappers', behavior]]);
+  behavior.attach(createContext(helios, behaviors));
+
+  behavior.setChannelConfig('node', 'color', {
+    attributes: 'weight',
+    transform: (inputs) => (Number(inputs) > 0 ? '#ffffffff' : '#000000ff'),
+    meta: {
+      name: 'Custom color',
+      source: 'test/custom-mapper.js',
+    },
+  });
+
+  const snapshot = JSON.parse(JSON.stringify(behavior.serialize()));
+  const serializedColor = snapshot.options.node.mappers.default.channels.color;
+  assert.equal(serializedColor.unsupported, true);
+  assert.equal(serializedColor.serializable, false);
+  assert.equal(serializedColor.meta.name, 'Custom color');
+
+  const restoredHelios = new MockHelios();
+  const restored = new MappersBehavior();
+  restored.attach(createContext(restoredHelios, new Map([['mappers', restored]])));
+  restored.restore(snapshot);
+
+  const restoredConfig = restoredHelios.nodeMapper.defaultMapper.getChannel('color');
+  assert.equal(restoredConfig.type, 'constant');
+  assert.equal(restoredConfig.value, '#ff0000ff');
+  assert.equal(typeof restoredConfig.transform, 'undefined');
+});
+
 test('mappers behavior tracks direct raw mapper mutations without taking ownership away from raw helios', () => {
   const helios = new MockHelios();
   const behavior = new MappersBehavior();

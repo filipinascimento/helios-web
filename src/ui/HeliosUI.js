@@ -42,6 +42,7 @@ const FULLSCREEN_OVERLAY_LEFT_INSET_PX = 28;
 
 const PERSISTENCE_ACCESSOR_PATHS = Object.freeze({
   background: 'appearance.background',
+  clearColor: 'appearance.background',
   edgeTransparencyMode: 'appearance.edgeTransparencyMode',
   supersampling: 'appearance.supersampling',
   nodeSizeScale: 'appearance.nodeStyle.sizeScale',
@@ -92,7 +93,73 @@ const PERSISTENCE_ACCESSOR_PATHS = Object.freeze({
   ambientOcclusionIntensityScale: 'appearance.ambientOcclusion.intensityScale',
   ambientOcclusionIntensityShift: 'appearance.ambientOcclusion.intensityShift',
   ambientOcclusionQuality: 'appearance.ambientOcclusion.quality',
+  labelsMode: 'labels.mode',
+  labelsSelectedOnlySpaceAware: 'labels.selectedOnlySpaceAware',
+  labelsEnabled: 'labels.enabled',
+  labelsMaxVisible: 'labels.maxVisible',
+  labelsFontSizeScale: 'labels.fontSizeScale',
+  labelsMinScreenRadius: 'labels.minScreenRadius',
+  labelsOutlineWidth: 'labels.outlineWidth',
+  labelsOffsetRadiusFactor: 'labels.offsetRadiusFactor',
+  labelsOffsetPx: 'labels.offsetPx',
+  labelsMaxChars: 'labels.maxChars',
+  labelsMaxRows: 'labels.maxRows',
+  legendsEnabled: 'legends.enabled',
 });
+
+const PERSISTENCE_ACCESSOR_DEBOUNCE_MS = 180;
+const PERSISTENCE_BEHAVIOR_DEBOUNCE_MS = 400;
+const BASELINE_REFRESH_IGNORED_OVERRIDES = new Set(['exporter.baseName', 'exporter.preset']);
+
+function persistenceScopeForPath(path) {
+  const root = String(path ?? '').split('.')[0];
+  if (root === 'ui' || root === 'interface') return 'user';
+  if (root === 'network' || root === 'positions') return 'workspace';
+  return 'network';
+}
+
+function persistencePanelPathForId(id, title = '') {
+  const normalizedId = String(id ?? '').trim();
+  const normalizedTitle = String(title ?? '').trim().toLowerCase();
+  if (normalizedId === 'helios-ui-mappers' || normalizedTitle === 'mappers') return 'mappers';
+  if (normalizedId === 'helios-ui-filter' || normalizedTitle === 'filter' || normalizedTitle === 'filters') return 'filters';
+  if (normalizedId === 'helios-ui-layout' || normalizedTitle === 'layout') return 'layout';
+  if (normalizedId === 'helios-ui-legends' || normalizedTitle === 'legends') return 'legends';
+  if (normalizedId === 'helios-ui-camera' || normalizedTitle === 'camera') return 'camera';
+  if (normalizedId === 'helios-ui-selection' || normalizedTitle === 'selection') return 'selection';
+  if (normalizedId === 'helios-ui-metrics' || normalizedTitle === 'metrics') return 'metrics';
+  return null;
+}
+
+function persistenceDebounceForPath(path) {
+  const text = String(path ?? '');
+  if (text.startsWith('camera.')) return 500;
+  if (text.startsWith('layout.')) return 220;
+  if (text.startsWith('mappers.') || text.startsWith('filters.')) return 300;
+  return PERSISTENCE_ACCESSOR_DEBOUNCE_MS;
+}
+
+function clonePersistenceValue(value) {
+  if (value == null || typeof value !== 'object') return value;
+  try {
+    if (typeof structuredClone === 'function') return structuredClone(value);
+  } catch (_) {
+    // Fall back to JSON cloning below.
+  }
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (_) {
+    return value;
+  }
+}
+
+function persistenceValueSignature(value) {
+  try {
+    return JSON.stringify(value);
+  } catch (_) {
+    return String(value);
+  }
+}
 
 function scopeForPersistencePath(path) {
   const parts = String(path ?? '').split('.').filter(Boolean);
@@ -246,6 +313,7 @@ function createInterfaceIcon(doc, kind) {
 export class HeliosUI {
   constructor(options = {}) {
     this.helios = options.helios ?? null;
+    if (this.helios && !this.helios.ui) this.helios.ui = this;
     this.helios?.behaviors?.setUI?.(this);
     this.layerName = options.layerName ?? 'ui';
     this.theme = options.theme ?? 'dark';
@@ -274,6 +342,11 @@ export class HeliosUI {
     this._pendingPanelHeaderShine = null;
     this._persistenceIndicatorObserver = null;
     this._persistenceIndicatorFrame = null;
+    this._persistenceWriteTimers = new Map();
+    this._persistenceBaselineRefreshTimer = null;
+    this._persistenceAccessorBindings = new WeakSet();
+    this._behaviorPersistenceSubscriptions = new Map();
+    this._lastLoggedSyncFailure = null;
 
     this.panelManager = new PanelManager({
       container: this.container,
@@ -284,9 +357,41 @@ export class HeliosUI {
     this._interfaceResizeObserver = null;
     this._interfaceChrome = this._createInterfaceChrome();
     this.interfaceBehavior?.bindUI?.(this);
+    this._registerPersistenceKey('ui.theme', {
+      scope: 'user',
+      debounceMs: 0,
+      defaultValue: this.theme,
+      metadata: { control: 'theme' },
+    });
     this._installInterfaceViewportTracking();
     this._installInterfaceControlTracking();
+    this._installBehaviorPersistenceBindings();
     this._installPersistenceIndicatorFallback();
+    const pendingUiState = this.helios?._pendingVisualizationUiState;
+    if (pendingUiState && typeof pendingUiState === 'object') {
+      const applyPendingUiState = () => {
+        this.restoreState(pendingUiState);
+        this.helios._pendingVisualizationUiState = null;
+        this._writePersistenceValue('ui.theme', this.theme, {
+          scope: 'user',
+          source: 'restore',
+          reason: 'theme-restore',
+          debounceMs: 0,
+          autosave: false,
+        });
+      };
+      const persistence = this.helios?.persistence ?? null;
+      if (typeof persistence?.runWithPersistenceRestoreSuspended === 'function') {
+        persistence.runWithPersistenceRestoreSuspended(applyPendingUiState);
+      } else {
+        applyPendingUiState();
+      }
+      if (this.helios?._pendingPersistenceBaselineRefresh === true) {
+        this.helios._pendingPersistenceBaselineRefresh = false;
+        this.helios.persistence?.sessionController?.captureBaseline?.();
+      }
+      this.helios._pendingVisualizationUiState = null;
+    }
     this._syncInterfaceState();
     const dockMetricsUnsubscribe = this.panelManager.onDockMetricsChange?.((insets) => {
       this._latestDockInsets = { ...insets };
@@ -315,9 +420,197 @@ export class HeliosUI {
     if (this._heliosBindingUnsubscribe) this._controlCleanups.add(this._heliosBindingUnsubscribe);
   }
 
+  _schedulePersistenceBaselineRefresh() {
+    const controller = this.helios?.persistence?.sessionController ?? null;
+    if (!controller || controller.initialPersistenceReady === false) return;
+    const hasBlockingOverride = (overrides = {}) => Object.keys(overrides)
+      .some((path) => !BASELINE_REFRESH_IGNORED_OVERRIDES.has(path));
+    if (hasBlockingOverride(controller.getOverrides?.() ?? {})) return;
+    if (this._persistenceBaselineRefreshTimer != null) clearTimeout(this._persistenceBaselineRefreshTimer);
+    this._persistenceBaselineRefreshTimer = setTimeout(() => {
+      this._persistenceBaselineRefreshTimer = null;
+      const latestController = this.helios?.persistence?.sessionController ?? null;
+      if (!latestController || latestController.initialPersistenceReady === false) return;
+      if (hasBlockingOverride(latestController.getOverrides?.() ?? {})) return;
+      latestController.captureBaseline?.();
+      if (this.helios) this.helios._pendingPersistenceBaselineRefresh = false;
+    }, 0);
+  }
+
+  registerPersistenceControl(path, options = {}) {
+    const persistence = this.helios?.persistence ?? null;
+    if (!path || typeof persistence?.registerKey !== 'function') return null;
+    const baselineMap = persistence.sessionController?.baselineMap ?? null;
+    const hasBaselineDefault = baselineMap
+      && Object.prototype.hasOwnProperty.call(baselineMap, path);
+    const hasDefaultValue = Object.prototype.hasOwnProperty.call(options, 'defaultValue');
+    const hasOverride = persistence.keyStatus?.(path)?.hasOverride === true;
+    try {
+      return persistence.registerKey(path, {
+        scope: options.scope ?? persistenceScopeForPath(path),
+        debounceMs: options.debounceMs ?? persistenceDebounceForPath(path),
+        preserveOverrides: true,
+        ...(!hasOverride && (hasBaselineDefault || hasDefaultValue)
+          ? { defaultValue: clonePersistenceValue(hasDefaultValue ? options.defaultValue : baselineMap[path]) }
+          : {}),
+        metadata: {
+          source: 'ui',
+          ...(options.metadata ?? {}),
+        },
+      });
+    } catch (_) {
+      return null;
+    }
+  }
+
+  _registerPersistenceKey(path, options = {}) {
+    return this.registerPersistenceControl(path, options);
+  }
+
+  writePersistenceControl(path, value, options = {}) {
+    const persistence = this.helios?.persistence ?? null;
+    if (!path || typeof persistence?.set !== 'function') return null;
+    if (typeof persistence.isPersistenceRestoreSuspended === 'function' && persistence.isPersistenceRestoreSuspended()) return null;
+    const delay = Math.max(0, Number(options.debounceMs ?? persistenceDebounceForPath(path)) || 0);
+    const write = () => {
+      this._persistenceWriteTimers.delete(path);
+      try {
+        return persistence.set(path, clonePersistenceValue(value), {
+          scope: options.scope ?? persistenceScopeForPath(path),
+          source: options.source ?? 'ui',
+          reason: options.reason ?? 'control',
+          autosave: options.autosave,
+        });
+      } catch (_) {
+        return null;
+      }
+    };
+    const existing = this._persistenceWriteTimers.get(path);
+    if (existing) clearTimeout(existing);
+    if (delay <= 0) return write();
+    const timer = setTimeout(write, delay);
+    this._persistenceWriteTimers.set(path, timer);
+    return null;
+  }
+
+  _writePersistenceValue(path, value, options = {}) {
+    return this.writePersistenceControl(path, value, options);
+  }
+
+  createPersistenceIndicator(path = '', scope = null, options = {}) {
+    const target = String(path ?? '').trim();
+    if (target && options.register !== false) {
+      this.registerPersistenceControl(target, {
+        scope: options.persistenceScope ?? persistenceScopeForPath(target),
+        debounceMs: options.debounceMs ?? persistenceDebounceForPath(target),
+        ...(Object.prototype.hasOwnProperty.call(options, 'defaultValue')
+          ? { defaultValue: options.defaultValue }
+          : {}),
+        metadata: options.metadata,
+      });
+    }
+    return createDirtyIndicator({
+      helios: this.helios,
+      path: target,
+      scope: scope ?? options.indicatorScope ?? target,
+      mode: options.mode,
+      attachTooltip: options.attachTooltip,
+    });
+  }
+
+  _trackAttributePersistence(attribute, path, options = {}) {
+    if (!attribute || !path || this._persistenceAccessorBindings.has(attribute)) return;
+    this._persistenceAccessorBindings.add(attribute);
+    const debounceMs = options.debounceMs ?? persistenceDebounceForPath(path);
+    const scope = options.scope ?? persistenceScopeForPath(path);
+    const initialValue = typeof attribute.value === 'function' ? attribute.value() : options.defaultValue;
+    this._registerPersistenceKey(path, {
+      scope,
+      debounceMs,
+      defaultValue: options.defaultValue ?? initialValue,
+      metadata: { binding: attribute.id ?? null, ...(options.metadata ?? {}) },
+    });
+    let previousSignature = persistenceValueSignature(initialValue);
+    const unsubscribe = attribute.subscribe((value) => {
+      const nextSignature = persistenceValueSignature(value);
+      if (nextSignature === previousSignature) return;
+      previousSignature = nextSignature;
+      const persistence = this.helios?.persistence ?? null;
+      if (typeof persistence?.isPersistenceRestoreSuspended === 'function' && persistence.isPersistenceRestoreSuspended()) return;
+      this._writePersistenceValue(path, value, {
+        scope,
+        source: 'ui',
+        reason: options.reason ?? 'control',
+        debounceMs,
+      });
+    }, { immediate: false });
+    this._controlCleanups.add(() => unsubscribe());
+  }
+
+  _installBehaviorPersistenceBindings() {
+    const manager = this.helios?.behaviors ?? null;
+    if (!manager || typeof manager.entries !== 'function') return;
+    for (const [id, behavior] of manager.entries()) {
+      this._installBehaviorPersistenceBinding(id, behavior);
+    }
+  }
+
+  _installBehaviorPersistenceBinding(id, behavior) {
+    const behaviorId = String(id ?? behavior?.id ?? '').trim();
+    if (!behaviorId || !behavior || this._behaviorPersistenceSubscriptions.has(behaviorId)) return;
+    if (typeof this.helios?.persistence?.bindBehaviorState === 'function') {
+      this.helios.persistence.bindBehaviorState(behaviorId, behavior);
+      const cleanup = () => {};
+      this._behaviorPersistenceSubscriptions.set(behaviorId, cleanup);
+      this._controlCleanups.add(() => {
+        this._behaviorPersistenceSubscriptions.delete(behaviorId);
+      });
+      return;
+    }
+    if (typeof behavior.on !== 'function') return;
+    const path = behaviorId === 'interface' ? 'interface.state' : `behaviors.${behaviorId}.state`;
+    const scope = behaviorId === 'interface' || behaviorId === 'exporter' ? 'user' : 'network';
+    const debounceMs = behaviorId === 'layout' ? 300 : PERSISTENCE_BEHAVIOR_DEBOUNCE_MS;
+    const readState = () => {
+      if (behaviorId === 'interface' && typeof behavior.serializeInterfaceState === 'function') {
+        return behavior.serializeInterfaceState();
+      }
+      if (typeof behavior.serialize === 'function') return behavior.serialize();
+      if (typeof behavior.getPublicState === 'function') return behavior.getPublicState();
+      return behavior.state ?? null;
+    };
+    this._registerPersistenceKey(path, {
+      scope,
+      debounceMs,
+      defaultValue: readState(),
+      metadata: { behavior: behaviorId },
+    });
+    let previousSignature = persistenceValueSignature(readState());
+    const unsubscribe = behavior.on('change', (event) => {
+      const value = event?.detail?.state ?? readState();
+      const signature = persistenceValueSignature(value);
+      if (signature === previousSignature) return;
+      previousSignature = signature;
+      const persistence = this.helios?.persistence ?? null;
+      if (typeof persistence?.isPersistenceRestoreSuspended === 'function' && persistence.isPersistenceRestoreSuspended()) return;
+      this._writePersistenceValue(path, value, {
+        scope,
+        source: 'ui',
+        reason: `behavior:${event?.detail?.reason ?? 'change'}`,
+        debounceMs,
+      });
+    });
+    this._behaviorPersistenceSubscriptions.set(behaviorId, unsubscribe);
+    this._controlCleanups.add(() => {
+      this._behaviorPersistenceSubscriptions.delete(behaviorId);
+      unsubscribe();
+    });
+  }
+
   setTheme(theme) {
     this.theme = theme;
     if (this.container) this.container.dataset.theme = theme;
+    this.helios?._syncQuickControlsTheme?.(theme);
   }
 
   toggleTheme() {
@@ -416,7 +709,7 @@ export class HeliosUI {
   }
 
   _syncInterfaceState() {
-    this.applyInterfaceBehaviorState(this.interfaceBehavior?.serializeInterfaceState?.() ?? {
+    this.applyInterfaceBehaviorState(this.interfaceBehavior?.serializeInterfaceState?.({ includeResumePrompt: true }) ?? {
       dockSide: 'left',
       mode: 'desktop',
       interfaceVisible: true,
@@ -569,22 +862,69 @@ export class HeliosUI {
     resumeButton.type = 'button';
     resumeButton.className = 'helios-ui-button';
     resumeButton.textContent = 'Resume';
-    resumeButton.addEventListener('click', () => {
+    resumeButton.addEventListener('click', async () => {
+      const prompt = this.interfaceBehavior?.resumePrompt?.() ?? null;
+      let sessions = Array.isArray(prompt?.sessions) ? prompt.sessions.filter((entry) => entry?.id) : [];
+      if (sessions.length <= 1 && typeof this.helios?.persistence?.getResumeSessions === 'function') {
+        sessions = await this.helios.persistence.getResumeSessions({ limit: 8 });
+      }
+      if (sessions.length > 1) {
+        renderResumeMenu(sessions);
+        resumeMenu.hidden = false;
+        return;
+      }
       this.interfaceBehavior?.resumeSession?.();
     });
+
+    const resumeMenu = doc.createElement('div');
+    resumeMenu.className = 'helios-ui-resume-prompt__menu';
+    resumeMenu.hidden = true;
+
+    const renderResumeMenu = (sessions = []) => {
+      resumeMenu.replaceChildren();
+      for (let i = 0; i < sessions.length; i += 1) {
+        const session = sessions[i];
+        const item = doc.createElement('button');
+        item.type = 'button';
+        item.className = 'helios-ui-resume-prompt__menu-item';
+        item.dataset.sessionId = session.id;
+        item.textContent = this._formatResumeSessionLabel(session, i);
+        item.addEventListener('click', async () => {
+          resumeMenu.hidden = true;
+          resumePrompt.hidden = true;
+          item.disabled = true;
+          try {
+            await (this.interfaceBehavior?.resumeSession?.({ sessionId: session.id })
+              ?? this.helios?.persistence?.resumeSession?.(session.id));
+          } finally {
+            item.disabled = false;
+          }
+        });
+        resumeMenu.appendChild(item);
+      }
+    };
+    resumeMenu.__heliosRenderSessions = renderResumeMenu;
 
     const freshButton = doc.createElement('button');
     freshButton.type = 'button';
     freshButton.className = 'helios-ui-button';
     freshButton.textContent = 'Start Fresh';
-    freshButton.addEventListener('click', () => {
-      this.interfaceBehavior?.startFresh?.();
+    freshButton.addEventListener('click', async () => {
+      resumeMenu.hidden = true;
+      resumePrompt.hidden = true;
+      freshButton.disabled = true;
+      try {
+        await this.interfaceBehavior?.startFresh?.();
+      } finally {
+        freshButton.disabled = false;
+      }
     });
 
     resumeActions.appendChild(resumeButton);
     resumeActions.appendChild(freshButton);
     resumePrompt.appendChild(resumeText);
     resumePrompt.appendChild(resumeActions);
+    resumePrompt.appendChild(resumeMenu);
 
     surface.appendChild(compactDockToggle);
     surface.appendChild(fullscreenBar);
@@ -599,7 +939,23 @@ export class HeliosUI {
       fullscreenPanelNav,
       resumePrompt,
       resumeText,
+      resumeMenu,
     };
+  }
+
+  _formatResumeSessionLabel(session, index = 0) {
+    const timestamp = Number(session?.updatedAt);
+    const date = Number.isFinite(timestamp) && timestamp > 0
+      ? new Date(timestamp).toLocaleString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      })
+      : 'unknown date';
+    if (index === 0) return `Latest - ${date}`;
+    const label = String(session?.label ?? session?.id ?? `Session ${index + 1}`).trim() || `Session ${index + 1}`;
+    return `${label} - ${date}`;
   }
 
   _renderInterfaceChrome(state = {}) {
@@ -640,7 +996,17 @@ export class HeliosUI {
     chrome.resumePrompt.hidden = !prompt?.visible;
     if (prompt?.visible) {
       const sourceName = prompt.networkSource?.name ?? prompt.networkSource?.baseName ?? 'previous session';
-      chrome.resumeText.textContent = `Resume unfinished session from ${sourceName}?`;
+      const sessions = Array.isArray(prompt.sessions) ? prompt.sessions.filter((entry) => entry?.id) : [];
+      chrome.resumeText.textContent = sessions.length > 1
+        ? `Resume a previous session?`
+        : `Resume previous session from ${sourceName}?`;
+      if (chrome.resumeMenu) {
+        chrome.resumeMenu.hidden = true;
+        chrome.resumeMenu.__heliosRenderSessions?.(sessions);
+      }
+    } else if (chrome.resumeMenu) {
+      chrome.resumeMenu.hidden = true;
+      chrome.resumeMenu.replaceChildren();
     }
   }
 
@@ -938,6 +1304,15 @@ export class HeliosUI {
         ? makeAttribute(UIAttribute.string)
         : makeAttribute(UIAttribute.number);
     this._boundAttributesById.set(id, attribute);
+    const persistencePath = PERSISTENCE_ACCESSOR_PATHS[accessorName] ?? PERSISTENCE_ACCESSOR_PATHS[eventName] ?? null;
+    if (persistencePath) {
+      this._trackAttributePersistence(attribute, persistencePath, {
+        scope: merged.persistenceScope ?? persistenceScopeForPath(persistencePath),
+        debounceMs: merged.persistenceDebounceMs ?? persistenceDebounceForPath(persistencePath),
+        defaultValue,
+        metadata: { accessor: accessorName, eventName },
+      });
+    }
     this._ensureHeliosBindingListener();
     return attribute;
   }
@@ -975,16 +1350,39 @@ export class HeliosUI {
       : type === 'string'
         ? makeAttribute(UIAttribute.string)
         : makeAttribute(UIAttribute.number);
+    const behaviorId = String(behavior.id ?? 'behavior');
+    const mappedPersistencePath = PERSISTENCE_ACCESSOR_PATHS[accessorName] ?? null;
+    const persistencePath = merged.persistencePath ?? mappedPersistencePath ?? `behaviors.${behaviorId}.${accessorName}`;
+    this._trackAttributePersistence(attribute, persistencePath, {
+      scope: merged.persistenceScope ?? (behaviorId === 'interface' || behaviorId === 'exporter' ? 'user' : 'network'),
+      debounceMs: merged.persistenceDebounceMs ?? PERSISTENCE_ACCESSOR_DEBOUNCE_MS,
+      defaultValue,
+      metadata: { behavior: behaviorId, accessor: accessorName },
+    });
     const unsubscribe = behavior.on?.('change', () => attribute.notify()) ?? (() => {});
     this._controlCleanups.add(() => unsubscribe());
     return attribute;
   }
 
   createPanel(options) {
-    return this.panelManager.createPanel({
+    const panel = this.panelManager.createPanel({
       ...options,
       icon: options?.icon ?? resolvePanelIconKind({ id: options?.id, title: options?.title }),
     });
+    const persistencePath = options?.persistencePath === false
+      ? null
+      : (options?.persistencePath ?? persistencePanelPathForId(options?.id, options?.title));
+    if (persistencePath && panel?.actionsEl) {
+      const indicator = this.createPersistenceIndicator(persistencePath, persistencePath, {
+        mode: 'scope',
+        metadata: { panel: options?.id ?? null },
+      });
+      indicator.classList.add('helios-ui-panel__persistence-indicator');
+      panel.actionsEl.insertBefore(indicator, panel.collapseButton ?? null);
+      this._controlCleanups.add(() => indicator.destroy?.());
+    }
+    this._schedulePersistenceBaselineRefresh();
+    return panel;
   }
 
   createTabbedPanel(options = {}) {
@@ -1001,6 +1399,7 @@ export class HeliosUI {
       title: options.title,
       position: options.position,
       dock: options.dock,
+      persistencePath: options.persistencePath,
       content: tabs.element,
     });
   }
@@ -1054,6 +1453,12 @@ export class HeliosUI {
       const before = this.helios?.serializeVisualizationState?.();
       this.toggleTheme();
       themeToggle.checked = this.theme === 'dark';
+      this._writePersistenceValue('ui.theme', this.theme, {
+        scope: 'user',
+        source: 'ui',
+        reason: 'theme',
+        debounceMs: 0,
+      });
       this.helios?.persistence?.recordSessionChange?.({
         before,
         after: this.helios?.serializeVisualizationState?.(),
@@ -1079,17 +1484,36 @@ export class HeliosUI {
 
         const fileInput = document.createElement('input');
         fileInput.type = 'file';
-        fileInput.accept = '.xnet,.zxnet,.bxnet';
+        fileInput.accept = '.xnet,.zxnet,.bxnet,.gml';
         fileInput.style.display = 'none';
 
         const formatSelect = document.createElement('select');
         formatSelect.className = 'helios-ui-select helios-ui-select--compact';
-        for (const fmt of ['bxnet', 'zxnet', 'xnet']) {
+        for (const fmt of ['bxnet', 'zxnet', 'xnet', 'gml']) {
           const opt = document.createElement('option');
           opt.value = fmt;
           opt.textContent = fmt.toUpperCase();
           formatSelect.appendChild(opt);
         }
+
+        const formatWarning = document.createElement('span');
+        formatWarning.className = 'helios-ui-network__format-warning';
+        formatWarning.setAttribute('role', 'img');
+        formatWarning.setAttribute('aria-label', 'GML export warning');
+        formatWarning.hidden = true;
+        const warningIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        warningIcon.setAttribute('viewBox', '0 0 24 24');
+        warningIcon.setAttribute('aria-hidden', 'true');
+        warningIcon.classList.add('helios-ui-network__format-warning-icon');
+        const warningPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        warningPath.setAttribute('d', 'M10.3 4.4 2.5 18a2 2 0 0 0 1.7 3h15.6a2 2 0 0 0 1.7-3L13.7 4.4a2 2 0 0 0-3.4 0ZM12 9v5m0 3h.01');
+        warningPath.setAttribute('fill', 'none');
+        warningPath.setAttribute('stroke', 'currentColor');
+        warningPath.setAttribute('stroke-width', '2');
+        warningPath.setAttribute('stroke-linecap', 'round');
+        warningPath.setAttribute('stroke-linejoin', 'round');
+        warningIcon.appendChild(warningPath);
+        formatWarning.appendChild(warningIcon);
 
         const loadButton = document.createElement('button');
         loadButton.type = 'button';
@@ -1119,6 +1543,7 @@ export class HeliosUI {
         // Simple, readable icons (stroke, currentColor).
         const loadIcon = makeIcon('M12 3v10m0 0l-4-4m4 4l4-4M4 17v3h16v-3');
         const saveIcon = makeIcon('M12 21V11m0 0l-4 4m4-4l4 4M4 7V4h16v3');
+        const syncIcon = makeIcon('M21 12a9 9 0 0 1-15.5 6.2M3 12A9 9 0 0 1 18.5 5.8M18 3v4h-4M6 21v-4h4');
 
         const loadText = document.createElement('span');
         loadText.textContent = 'Load';
@@ -1129,9 +1554,43 @@ export class HeliosUI {
         saveButton.appendChild(saveIcon);
         saveButton.appendChild(saveText);
 
-        tooltips.attachTooltip(loadButton, 'Load a network file (.xnet/.zxnet/.bxnet)');
+        tooltips.attachTooltip(loadButton, 'Load a network file (.xnet/.zxnet/.bxnet/.gml)');
         tooltips.attachTooltip(saveButton, 'Save the current network as a file');
         tooltips.attachTooltip(formatSelect, 'Select export format');
+        tooltips.attachTooltip(formatWarning, 'GML export is lossy: private Helios state, some attribute types, and keys that cannot be represented by GML may be skipped or renamed.');
+
+        const syncContainer = document.createElement('div');
+        syncContainer.className = 'helios-ui-network-persistence';
+        const syncStatus = document.createElement('span');
+        syncStatus.className = 'helios-ui-network-persistence__status';
+        syncStatus.textContent = 'Not synced';
+        const syncControls = document.createElement('div');
+        syncControls.className = 'helios-ui-network-persistence__controls';
+        const syncButton = document.createElement('button');
+        syncButton.type = 'button';
+        syncButton.className = 'helios-ui-button helios-ui-button--icon helios-ui-network-persistence__sync';
+        syncButton.setAttribute('aria-label', 'Synchronize persistence');
+        syncButton.appendChild(syncIcon);
+        syncControls.appendChild(syncButton);
+        syncContainer.appendChild(syncControls);
+        syncContainer.appendChild(syncStatus);
+        tooltips.attachTooltip(syncButton, 'Synchronize settings, network metadata, and positions');
+
+        const autoSyncGroup = document.createElement('div');
+        autoSyncGroup.className = 'helios-ui-network-autosync';
+        const autoSyncLabel = document.createElement('span');
+        autoSyncLabel.className = 'helios-ui-network-autosync__label';
+        autoSyncLabel.textContent = 'Auto Sync';
+        const autoSyncToggle = createToggleControl({
+          checked: this.helios?.persistence?.get?.('network.persistence.autosave', true) !== false,
+          onLabel: 'On',
+          offLabel: 'Off',
+          ariaLabel: 'Auto sync network persistence',
+          className: 'helios-ui-toggle helios-ui-toggle--compact helios-ui-network-autosync__toggle',
+        });
+        autoSyncGroup.appendChild(autoSyncLabel);
+        autoSyncGroup.appendChild(autoSyncToggle);
+        tooltips.attachTooltip(autoSyncToggle, 'Automatically synchronize network state and positions when they change');
 
         const controls = document.createElement('div');
         controls.className = 'helios-ui-network__actions';
@@ -1140,11 +1599,138 @@ export class HeliosUI {
         controls.appendChild(loadButton);
         controls.appendChild(saveButton);
         controls.appendChild(formatSelect);
+        controls.appendChild(formatWarning);
         controls.appendChild(fileInput);
+
+        const formatRelativeSyncTime = (timestamp) => {
+          if (!Number.isFinite(timestamp)) return null;
+          const elapsed = Math.max(0, Date.now() - Number(timestamp));
+          if (elapsed < 5000) return 'just now';
+          if (elapsed < 60000) return `${Math.floor(elapsed / 1000)}s ago`;
+          if (elapsed < 3600000) return `${Math.floor(elapsed / 60000)}m ago`;
+          return `${Math.floor(elapsed / 3600000)}h ago`;
+        };
+
+        const syncPersistenceStatus = () => {
+          const persistence = this.helios?.persistence ?? null;
+          const status = persistence?.status?.() ?? persistence?.persistenceStatus?.() ?? null;
+          const networkData = status?.networkData ?? {};
+          const backendStatus = status?.backendStatus ?? [];
+          const failed = backendStatus.find((entry) => entry?.ok === false) ?? null;
+          const failureMessage = failed?.error ?? status?.lastError ?? networkData.remoteWarning ?? '';
+          const logSyncFailure = () => {
+            if (!failureMessage) return;
+            const key = JSON.stringify({
+              message: failureMessage,
+              backend: failed?.id ?? failed?.name ?? failed?.type ?? null,
+              sessionId: status?.sessionId ?? null,
+              status: networkData.status ?? null,
+            });
+            if (this._lastLoggedSyncFailure === key) return;
+            this._lastLoggedSyncFailure = key;
+            console.error('[HeliosPersistence] Sync failed', {
+              error: failureMessage,
+              backend: failed ?? null,
+              status,
+            });
+          };
+          const savedAtCandidates = [
+            networkData.savedAt,
+            status?.lastSyncedAt,
+            status?.sessionSync?.savedAt,
+            networkData.registrySavedAt,
+          ].map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0);
+          const savedAt = savedAtCandidates.length ? Math.max(...savedAtCandidates) : null;
+          const hasSavedAt = savedAt != null;
+          const networkPersistenceEnabled = this.helios?.persistence?.get?.('network.persistence.enabled', networkData.enabled !== false) !== false;
+          autoSyncToggle.checked = this.helios?.persistence?.get?.('network.persistence.autosave', true) !== false;
+          autoSyncToggle.disabled = !networkPersistenceEnabled;
+          syncButton.title = '';
+          if (status?.syncing || networkData.status === 'syncing') {
+            syncStatus.textContent = 'Syncing...';
+            syncButton.dataset.state = 'syncing';
+            syncButton.disabled = true;
+          } else if (networkData.status === 'skipped' && networkData.skipped?.reason === 'size-limit') {
+            syncStatus.textContent = 'Network too large';
+            syncButton.dataset.state = 'error';
+            syncButton.disabled = false;
+            syncButton.title = 'Network autosave was skipped because the payload is larger than the configured storage limit.';
+          } else if (failed || status?.lastError || networkData.remoteWarning) {
+            logSyncFailure();
+            syncStatus.textContent = 'Sync failed';
+            syncButton.dataset.state = 'error';
+            syncButton.disabled = false;
+            syncButton.title = failureMessage;
+          } else if (networkData.positionsDirty) {
+            syncStatus.textContent = 'Positions dirty';
+            syncButton.dataset.state = 'dirty';
+            syncButton.disabled = false;
+          } else if (networkData.dirty) {
+            syncStatus.textContent = 'Network dirty';
+            syncButton.dataset.state = 'dirty';
+            syncButton.disabled = false;
+          } else if (hasSavedAt) {
+            syncStatus.textContent = `Synced ${formatRelativeSyncTime(savedAt)}`;
+            syncButton.dataset.state = 'saved';
+            syncButton.disabled = false;
+          } else {
+            syncStatus.textContent = '';
+            syncButton.dataset.state = 'idle';
+            syncButton.disabled = false;
+          }
+        };
+
+        const syncPersistenceStatusForChange = (event) => {
+          const detail = event?.detail && typeof event.detail === 'object' ? event.detail : {};
+          const reason = String(detail.reason ?? '');
+          if (reason === 'load'
+            || reason.startsWith('network')
+            || reason.startsWith('positions')
+            || reason.includes('autosync')) {
+            syncPersistenceStatus();
+            return;
+          }
+          const entries = Array.isArray(detail.entries) ? detail.entries : [];
+          if (entries.some((entry) => {
+            const path = String(entry?.path ?? '');
+            return path.startsWith('network.persistence') || path.startsWith('positions.persistence');
+          })) {
+            syncPersistenceStatus();
+          }
+        };
+
+        syncButton.addEventListener('click', async () => {
+          syncButton.disabled = true;
+          syncButton.dataset.state = 'syncing';
+          syncStatus.textContent = 'Syncing...';
+          try {
+            await this.helios?.persistence?.sync?.({
+              includeNetwork: true,
+              includePositions: true,
+              retention: { enabled: false },
+            });
+          } catch (error) {
+            console.error('[HeliosPersistence] Manual sync failed', error);
+          } finally {
+            syncPersistenceStatus();
+          }
+        });
+
+        autoSyncToggle.addEventListener('change', () => {
+          this.helios?.persistence?.set?.('network.persistence.autosave', autoSyncToggle.checked, {
+            scope: 'workspace',
+            source: 'ui',
+            reason: 'network-autosync-toggle',
+          });
+          this.helios?.persistence?.configure?.({
+            networkPersistence: { autosave: autoSyncToggle.checked },
+          });
+          syncPersistenceStatus();
+        });
 
         let baseName = this.helios._lastLoadedNetworkBase ?? 'network';
         let loadedFormat = this.helios._lastLoadedNetworkFormat ?? null;
-        if (loadedFormat && ['bxnet', 'zxnet', 'xnet'].includes(loadedFormat)) {
+        if (loadedFormat && ['bxnet', 'zxnet', 'xnet', 'gml'].includes(loadedFormat)) {
           formatSelect.value = loadedFormat;
         }
 
@@ -1173,6 +1759,9 @@ export class HeliosUI {
         nameBar.className = 'helios-ui-network__name';
         nameBar.style.marginTop = '6px';
 
+        const syncRow = document.createElement('div');
+        syncRow.className = 'helios-ui-network__sync-row';
+
         const nameInput = document.createElement('input');
         nameInput.type = 'text';
         nameInput.className = 'helios-ui-text';
@@ -1188,6 +1777,7 @@ export class HeliosUI {
 
         const syncExtension = () => {
           extEl.textContent = `.${formatSelect.value}`;
+          formatWarning.hidden = formatSelect.value !== 'gml';
         };
         syncExtension();
 
@@ -1226,6 +1816,16 @@ export class HeliosUI {
           }
         };
 
+        const syncBaseNameFromHelios = () => {
+          const candidate = sanitizeBaseName(this.helios?._lastLoadedNetworkBase ?? '');
+          if (!candidate || candidate === lastValidBaseName) return;
+          baseName = candidate;
+          lastValidBaseName = candidate;
+          if (nameInput.value !== candidate) nameInput.value = candidate;
+          if (exportNameInput.value !== candidate) exportNameInput.value = candidate;
+          exporterBehavior?.baseName?.(candidate);
+        };
+
         nameInput.addEventListener('blur', () => commitBaseName(nameInput));
         nameInput.addEventListener('keydown', (e) => {
           if (e.key === 'Enter') {
@@ -1246,6 +1846,8 @@ export class HeliosUI {
 
         nameBar.appendChild(nameInput);
         nameBar.appendChild(extEl);
+        syncRow.appendChild(syncContainer);
+        syncRow.appendChild(autoSyncGroup);
 
         const stats = document.createElement('div');
         stats.className = 'helios-ui-stats helios-ui-network__stats';
@@ -1271,6 +1873,7 @@ export class HeliosUI {
           const directed = Boolean(network?.directed);
           const avgDegree = nodes ? (directed ? edges / nodes : (2 * edges) / nodes) : 0;
 
+          syncBaseNameFromHelios();
           syncExtension();
           nodesValue.textContent = String(nodes);
           edgesValue.textContent = String(edges);
@@ -1279,11 +1882,220 @@ export class HeliosUI {
         };
 
         refreshNetworkInfo();
+        syncPersistenceStatus();
 
         const networkTab = document.createElement('div');
         networkTab.appendChild(stats);
         networkTab.appendChild(controls);
         networkTab.appendChild(nameBar);
+        networkTab.appendChild(syncRow);
+
+        const sessionTab = document.createElement('div');
+        sessionTab.className = 'helios-ui-session-tab';
+        const sessionHeader = document.createElement('div');
+        sessionHeader.className = 'helios-ui-session-tab__header';
+        const currentSession = document.createElement('div');
+        currentSession.className = 'helios-ui-session-tab__current';
+        const currentSessionLabel = document.createElement('div');
+        currentSessionLabel.className = 'helios-ui-session-tab__current-label';
+        currentSessionLabel.textContent = 'Current';
+        const currentSessionId = document.createElement('div');
+        currentSessionId.className = 'helios-ui-session-tab__current-id';
+        currentSession.appendChild(currentSessionLabel);
+        currentSession.appendChild(currentSessionId);
+        const sessionActions = document.createElement('div');
+        sessionActions.className = 'helios-ui-session-tab__actions';
+        const newSessionButton = document.createElement('button');
+        newSessionButton.type = 'button';
+        newSessionButton.className = 'helios-ui-button';
+        newSessionButton.textContent = 'Save Session';
+        const refreshSessionsButton = document.createElement('button');
+        refreshSessionsButton.type = 'button';
+        refreshSessionsButton.className = 'helios-ui-button helios-ui-button--icon';
+        refreshSessionsButton.setAttribute('aria-label', 'Refresh sessions');
+        refreshSessionsButton.appendChild(makeIcon('M21 12a9 9 0 0 1-15.5 6.2M3 12A9 9 0 0 1 18.5 5.8M18 3v4h-4M6 21v-4h4'));
+        sessionActions.appendChild(newSessionButton);
+        sessionActions.appendChild(refreshSessionsButton);
+        sessionHeader.appendChild(currentSession);
+        sessionHeader.appendChild(sessionActions);
+        const sessionList = document.createElement('div');
+        sessionList.className = 'helios-ui-session-tab__list';
+        sessionTab.appendChild(sessionHeader);
+        sessionTab.appendChild(sessionList);
+        tooltips.attachTooltip(newSessionButton, 'Save the current network state as a restorable session');
+        tooltips.attachTooltip(refreshSessionsButton, 'Refresh saved sessions');
+
+        const refreshSessionTab = async () => {
+          const persistence = this.helios?.persistence ?? null;
+          const currentId = persistence?.sessionController?.sessionId ?? null;
+          currentSessionId.textContent = currentId || 'none';
+          sessionList.replaceChildren();
+          if (!persistence?.listSessionSummaries) {
+            const empty = document.createElement('div');
+            empty.className = 'helios-ui-label__hint';
+            empty.textContent = 'Session persistence is not enabled.';
+            sessionList.appendChild(empty);
+            return;
+          }
+          let sessions = [];
+          try {
+            sessions = await persistence.listSessionSummaries({
+              includeFinished: false,
+              includeAllWorkspaces: true,
+            });
+          } catch (error) {
+            const empty = document.createElement('div');
+            empty.className = 'helios-ui-label__hint';
+            empty.textContent = `Could not load sessions: ${error?.message ?? error}`;
+            sessionList.appendChild(empty);
+            return;
+          }
+          const visibleSessions = sessions.filter((entry) => entry?.id);
+          if (!visibleSessions.length) {
+            const empty = document.createElement('div');
+            empty.className = 'helios-ui-label__hint';
+            empty.textContent = 'No saved sessions.';
+            sessionList.appendChild(empty);
+            return;
+          }
+          for (let i = 0; i < visibleSessions.length; i += 1) {
+            const session = visibleSessions[i];
+            const isCurrent = currentId != null && String(session.id) === String(currentId);
+            const row = document.createElement('div');
+            row.className = 'helios-ui-session-tab__row';
+            row.dataset.current = isCurrent ? 'true' : 'false';
+            row.dataset.sessionId = session.id;
+            const thumbnail = session.thumbnail?.dataUrl
+              ? document.createElement('img')
+              : null;
+            if (thumbnail) {
+              row.classList.add('helios-ui-session-tab__row--with-thumbnail');
+              thumbnail.className = 'helios-ui-session-tab__thumbnail';
+              thumbnail.src = session.thumbnail.dataUrl;
+              thumbnail.alt = '';
+              thumbnail.loading = 'lazy';
+            }
+            const details = document.createElement('div');
+            details.className = 'helios-ui-session-tab__details';
+            const title = document.createElement('div');
+            title.className = 'helios-ui-session-tab__title';
+            const updatedAt = Number(session.updatedAt);
+            const compactUpdated = Number.isFinite(updatedAt) && updatedAt > 0
+              ? new Date(updatedAt).toLocaleString(undefined, {
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+              })
+              : 'unknown date';
+            const networkName = String(
+              session.networkSource?.baseName
+              ?? session.networkSource?.name
+              ?? this.helios?._lastLoadedNetworkBase
+              ?? 'network',
+            ).trim() || 'network';
+            const nickname = String(session.nickname ?? '').trim();
+            const primaryName = nickname || networkName || `Session ${i + 1}`;
+            title.textContent = `${primaryName} - ${compactUpdated}`;
+            const meta = document.createElement('div');
+            meta.className = 'helios-ui-session-tab__meta';
+            const updated = Number.isFinite(updatedAt) && updatedAt > 0
+              ? new Date(updatedAt).toLocaleString()
+              : 'unknown date';
+            const bytes = Number.isFinite(session.bytes) && session.bytes > 0
+              ? `${Math.max(1, Math.round(session.bytes / 1024))} KB`
+              : 'unknown size';
+            const idLine = document.createElement('div');
+            idLine.className = 'helios-ui-session-tab__meta-line helios-ui-session-tab__meta-line--id';
+            idLine.textContent = String(session.id);
+            const updatedLine = document.createElement('div');
+            updatedLine.className = 'helios-ui-session-tab__meta-line';
+            updatedLine.textContent = `latest ${updated} · ${bytes}`;
+            meta.appendChild(idLine);
+            meta.appendChild(updatedLine);
+            details.appendChild(meta);
+            const resume = document.createElement('button');
+            resume.type = 'button';
+            resume.className = 'helios-ui-button';
+            resume.textContent = isCurrent ? 'Current' : 'Resume';
+            resume.disabled = isCurrent;
+            resume.addEventListener('click', async () => {
+              if (isCurrent) return;
+              resume.disabled = true;
+              try {
+                await (this.interfaceBehavior?.resumeSession?.({ sessionId: session.id })
+                  ?? persistence.resumeSession?.(session.id)
+                  ?? persistence.restoreSession?.(session.id));
+                await persistence.sync?.({
+                  includeNetwork: true,
+                  includePositions: true,
+                  retention: { enabled: false },
+                });
+                refreshNetworkInfo();
+                syncPersistenceStatus();
+              } finally {
+                resume.disabled = false;
+              }
+            });
+            const deleteButton = document.createElement('button');
+            deleteButton.type = 'button';
+            deleteButton.className = 'helios-ui-button helios-ui-button--icon helios-ui-session-tab__delete';
+            deleteButton.setAttribute('aria-label', `Delete session ${primaryName}`);
+            deleteButton.appendChild(makeIcon('M3 6h18M8 6V4h8v2M6.5 6l1 14h9l1-14M10 10v6M14 10v6'));
+            tooltips.attachTooltip(deleteButton, 'Delete this saved session');
+            deleteButton.addEventListener('click', async () => {
+              const confirmed = globalThis.confirm?.(`Delete saved session "${primaryName}"? This cannot be undone.`) ?? false;
+              if (!confirmed) return;
+              deleteButton.disabled = true;
+              resume.disabled = true;
+              try {
+                await persistence.deleteSession?.(session.id);
+                await refreshSessionTab();
+              } finally {
+                deleteButton.disabled = false;
+                resume.disabled = isCurrent;
+              }
+            });
+            const rowActions = document.createElement('div');
+            rowActions.className = 'helios-ui-session-tab__row-actions';
+            rowActions.appendChild(resume);
+            rowActions.appendChild(deleteButton);
+            const body = document.createElement('div');
+            body.className = 'helios-ui-session-tab__body';
+            if (thumbnail) body.appendChild(thumbnail);
+            body.appendChild(details);
+            body.appendChild(rowActions);
+            row.appendChild(title);
+            row.appendChild(body);
+            sessionList.appendChild(row);
+          }
+        };
+
+        newSessionButton.addEventListener('click', async () => {
+          newSessionButton.disabled = true;
+          try {
+            const persistence = this.helios?.persistence ?? null;
+            const nickname = this.helios?._lastLoadedNetworkBase ?? this.helios?._lastLoadedNetworkName ?? 'network';
+            const visualizationState = await (
+              this.helios?.serializeVisualizationStateAsync?.({ reason: 'save-session' })
+              ?? this.helios?.serializeVisualizationState?.({ reason: 'save-session' })
+              ?? null
+            );
+            await persistence?.saveSession?.({
+              nickname,
+              networkFormat: persistence?.sessionController?.networkPersistence?.format ?? 'zxnet',
+              visualizationState,
+              retention: { enabled: false },
+            });
+            syncPersistenceStatus();
+            await refreshSessionTab();
+          } finally {
+            newSessionButton.disabled = false;
+          }
+        });
+        refreshSessionsButton.addEventListener('click', () => {
+          void refreshSessionTab();
+        });
 
         const attributesTab = document.createElement('div');
         const attributesHeader = document.createElement('div');
@@ -1896,8 +2708,9 @@ export class HeliosUI {
               exporterBehavior?.baseName?.(sanitized);
             }
             loadedFormat = this.helios._lastLoadedNetworkFormat ?? loadedFormat;
-            if (loadedFormat && ['bxnet', 'zxnet', 'xnet'].includes(loadedFormat)) {
+            if (loadedFormat && ['bxnet', 'zxnet', 'xnet', 'gml'].includes(loadedFormat)) {
               formatSelect.value = loadedFormat;
+              syncExtension();
             }
           } catch (error) {
             // eslint-disable-next-line no-console
@@ -1915,20 +2728,29 @@ export class HeliosUI {
           try {
             commitBaseName(nameInput);
             const fmt = formatSelect.value;
-            const blob = await this.helios.savePortableNetwork?.(fmt, {
-              output: 'blob',
-              includeVisualization: true,
-              trackedOnly: true,
-            }) ?? await this.helios.saveNetwork(fmt, { output: 'blob' });
+            let blob = null;
+            if (fmt === 'gml') {
+              await this.helios.syncDelegatePositionsToNetwork?.();
+              blob = await this.helios.saveNetwork(fmt, { output: 'blob' });
+            } else {
+              blob = await this.helios.savePortableNetwork?.(fmt, {
+                output: 'blob',
+                includeVisualization: true,
+                trackedOnly: true,
+                includeCurrentPositions: true,
+              }) ?? await this.helios.saveNetwork(fmt, { output: 'blob' });
+            }
             if (blob) {
               const filename = `${lastValidBaseName}.${fmt}`;
               downloadBlob(blob, filename);
             }
+            await this.helios.persistence?.sync?.({ includeNetwork: true, includePositions: true });
           } catch (error) {
             // eslint-disable-next-line no-console
             console.error('Failed to save network', error);
           } finally {
-              refreshNetworkInfo();
+            refreshNetworkInfo();
+            syncPersistenceStatus();
             saveButton.disabled = false;
             loadButton.disabled = false;
           }
@@ -1952,12 +2774,16 @@ export class HeliosUI {
           }
         });
 
-        formatSelect.addEventListener('change', () => refreshNetworkInfo());
+        formatSelect.addEventListener('change', () => {
+          syncExtension();
+          refreshNetworkInfo();
+        });
 
         // Update stats if the network is replaced externally.
         const onNetworkReplaced = () => {
           attachAttributeListeners();
           refreshNetworkInfo();
+          syncPersistenceStatus();
           renderAttributesTable();
           syncExportUi();
         };
@@ -1969,6 +2795,15 @@ export class HeliosUI {
           unsub = () => this.helios.removeEventListener('network:replaced', onNetworkReplaced);
         }
         if (unsub) this._controlCleanups.add(unsub);
+        const persistenceRegistry = this.helios?.persistence?.registry ?? null;
+        persistenceRegistry?.addEventListener?.('change', syncPersistenceStatusForChange);
+        persistenceRegistry?.addEventListener?.('sync', syncPersistenceStatus);
+        persistenceRegistry?.addEventListener?.('config', syncPersistenceStatus);
+        this._controlCleanups.add(() => {
+          persistenceRegistry?.removeEventListener?.('change', syncPersistenceStatusForChange);
+          persistenceRegistry?.removeEventListener?.('sync', syncPersistenceStatus);
+          persistenceRegistry?.removeEventListener?.('config', syncPersistenceStatus);
+        });
         if (exporterBehavior) {
           exporterBehavior.baseName?.(lastValidBaseName);
           applyExporterStateToControls();
@@ -2048,11 +2883,13 @@ export class HeliosUI {
             { id: 'network', title: 'Network', content: networkTab },
             { id: 'figure', title: 'Figure', content: exportTab },
             { id: 'attributes', title: 'Attributes', content: attributesTab },
+            { id: 'session', title: 'Session', content: sessionTab },
           ],
         });
         this._controlCleanups.add(() => tabs.destroy());
         container.appendChild(tabs.element);
         syncExportUi();
+        void refreshSessionTab();
         return container;
       })();
 
@@ -2379,6 +3216,27 @@ export class HeliosUI {
           : this.bindHeliosAccessor(accessorName, options)
       );
       const appearanceAccessorSource = appearanceBehavior ?? this.helios;
+      const registerAccessorPersistenceKey = (accessorName, read) => {
+        const path = persistencePathForAccessor(accessorName);
+        if (!path) return null;
+        this._registerPersistenceKey(path, {
+          scope: persistenceScopeForPath(path),
+          debounceMs: persistenceDebounceForPath(path),
+          defaultValue: read?.(),
+          metadata: { accessor: accessorName },
+        });
+        return path;
+      };
+      const writeAccessorPersistenceValue = (accessorName, value, reason = accessorName) => {
+        const path = persistencePathForAccessor(accessorName);
+        if (!path) return;
+        this._writePersistenceValue(path, value, {
+          scope: persistenceScopeForPath(path),
+          source: 'ui',
+          reason,
+          debounceMs: persistenceDebounceForPath(path),
+        });
+      };
 
       const createAppearanceContent = () => {
         const wrapper = document.createElement('div');
@@ -2391,11 +3249,32 @@ export class HeliosUI {
           ariaLabel: 'Scene dimension',
         });
         dimensionToggle.dataset.testid = 'controls-appearance-dimension';
+        const readSceneDimension = () => (
+          (this.helios?.mode?.() ?? this.helios?.options?.mode ?? '2d') === '3d' ? '3d' : '2d'
+        );
+        const defaultSceneDimension = this.helios?._initialMode === '3d' ? '3d' : '2d';
+        this._registerPersistenceKey('scene.dimension', {
+          scope: 'network',
+          debounceMs: 0,
+          defaultValue: defaultSceneDimension,
+          metadata: { control: 'dimension' },
+        });
+        const unbindSceneDimension = this.helios?.persistence?.bindKey?.('scene.dimension', {
+          scope: 'network',
+          defaultValue: defaultSceneDimension,
+          read: readSceneDimension,
+          apply: (value) => {
+            const nextMode = value === '3d' ? '3d' : '2d';
+            if (readSceneDimension() === nextMode) return;
+            this.helios?.setMode?.(nextMode);
+          },
+        });
+        if (typeof unbindSceneDimension === 'function') this._controlCleanups.add(unbindSceneDimension);
 
         const syncDimensionToggle = (mode = null) => {
           const nextMode = mode === '3d'
             ? '3d'
-            : (this.helios?.mode?.() ?? this.helios?.options?.mode ?? '2d') === '3d' ? '3d' : '2d';
+            : readSceneDimension();
           dimensionToggle.checked = nextMode === '3d';
           dimensionToggle.disabled = typeof this.helios?.setMode !== 'function';
         };
@@ -2403,6 +3282,19 @@ export class HeliosUI {
         dimensionToggle.addEventListener('change', () => {
           const targetMode = dimensionToggle.checked ? '3d' : '2d';
           Promise.resolve(this.helios?.setMode?.(targetMode))
+            .then(() => {
+              const currentMode = readSceneDimension();
+              if (currentMode !== targetMode) {
+                syncDimensionToggle(currentMode);
+                return;
+              }
+              this._writePersistenceValue('scene.dimension', currentMode, {
+                scope: 'network',
+                source: 'ui',
+                reason: 'dimension',
+                debounceMs: 0,
+              });
+            })
             .catch((error) => {
               // eslint-disable-next-line no-console
               console.error(error);
@@ -2421,11 +3313,12 @@ export class HeliosUI {
         if (unsubscribeMode) this._controlCleanups.add(unsubscribeMode);
         syncDimensionToggle();
 
+        registerAccessorPersistenceKey('background', () => appearanceBehavior?.background?.() ?? this.helios?.clearColor?.());
         wrapper.appendChild(createAlignedRow({
           title: 'Dimension',
           hint: 'Switch camera and active layout between 2D and 3D.',
           controls: dimensionToggle,
-          dirtyIndicator: createPersistenceIndicator('camera.mode', 'camera'),
+          dirtyIndicator: createPersistenceIndicator('scene.dimension', 'scene'),
         }).row);
 
         wrapper.appendChild(createAlignedRow({
@@ -2434,7 +3327,10 @@ export class HeliosUI {
           controls: createColorWithAlphaControls({
             ariaLabel: 'Background color',
             getValue: () => appearanceBehavior?.background?.() ?? this.helios?.clearColor?.(),
-            setValue: (value) => appearanceBehavior?.background?.(value) ?? this.helios?.clearColor?.(value),
+            setValue: (value) => {
+              appearanceBehavior?.background?.(value) ?? this.helios?.clearColor?.(value);
+              writeAccessorPersistenceValue('background', value, 'background');
+            },
           }),
           dirtyIndicator: createPersistenceIndicator(persistencePathForAccessor('background')),
         }).row);
@@ -2663,6 +3559,10 @@ export class HeliosUI {
       const nodeEdgeStack = new PanelStack();
       const createShadedAppearanceContent = () => {
         const container = document.createElement('div');
+        registerAccessorPersistenceKey('shadedLightColor', () => appearanceBehavior?.shadedLightColor?.() ?? this.helios?.shadedLightColor?.());
+        registerAccessorPersistenceKey('shadedAmbientTopColor', () => appearanceBehavior?.shadedAmbientTopColor?.() ?? this.helios?.shadedAmbientTopColor?.());
+        registerAccessorPersistenceKey('shadedAmbientBottomColor', () => appearanceBehavior?.shadedAmbientBottomColor?.() ?? this.helios?.shadedAmbientBottomColor?.());
+        registerAccessorPersistenceKey('shadedSpecularColor', () => appearanceBehavior?.shadedSpecularColor?.() ?? this.helios?.shadedSpecularColor?.());
         const nodesRow = createToggleRow('shadedNodes', {
           source: appearanceAccessorSource,
           bind: bindAppearanceAccessor,
@@ -2693,7 +3593,10 @@ export class HeliosUI {
           controls: createColorControls({
             ariaLabel: 'Shaded light color',
             getValue: () => appearanceBehavior?.shadedLightColor?.() ?? this.helios?.shadedLightColor?.(),
-            setValue: (value) => appearanceBehavior?.shadedLightColor?.(value) ?? this.helios?.shadedLightColor?.(value),
+            setValue: (value) => {
+              appearanceBehavior?.shadedLightColor?.(value) ?? this.helios?.shadedLightColor?.(value);
+              writeAccessorPersistenceValue('shadedLightColor', value, 'shaded-light-color');
+            },
           }),
           dirtyIndicator: createPersistenceIndicator(persistencePathForAccessor('shadedLightColor')),
         }).row);
@@ -2707,7 +3610,10 @@ export class HeliosUI {
           controls: createColorControls({
             ariaLabel: 'Shaded ambient top color',
             getValue: () => appearanceBehavior?.shadedAmbientTopColor?.() ?? this.helios?.shadedAmbientTopColor?.(),
-            setValue: (value) => appearanceBehavior?.shadedAmbientTopColor?.(value) ?? this.helios?.shadedAmbientTopColor?.(value),
+            setValue: (value) => {
+              appearanceBehavior?.shadedAmbientTopColor?.(value) ?? this.helios?.shadedAmbientTopColor?.(value);
+              writeAccessorPersistenceValue('shadedAmbientTopColor', value, 'shaded-ambient-top-color');
+            },
           }),
           dirtyIndicator: createPersistenceIndicator(persistencePathForAccessor('shadedAmbientTopColor')),
         }).row);
@@ -2717,7 +3623,10 @@ export class HeliosUI {
           controls: createColorControls({
             ariaLabel: 'Shaded ambient bottom color',
             getValue: () => appearanceBehavior?.shadedAmbientBottomColor?.() ?? this.helios?.shadedAmbientBottomColor?.(),
-            setValue: (value) => appearanceBehavior?.shadedAmbientBottomColor?.(value) ?? this.helios?.shadedAmbientBottomColor?.(value),
+            setValue: (value) => {
+              appearanceBehavior?.shadedAmbientBottomColor?.(value) ?? this.helios?.shadedAmbientBottomColor?.(value);
+              writeAccessorPersistenceValue('shadedAmbientBottomColor', value, 'shaded-ambient-bottom-color');
+            },
           }),
           dirtyIndicator: createPersistenceIndicator(persistencePathForAccessor('shadedAmbientBottomColor')),
         }).row);
@@ -2731,7 +3640,10 @@ export class HeliosUI {
           controls: createColorControls({
             ariaLabel: 'Shaded specular color',
             getValue: () => appearanceBehavior?.shadedSpecularColor?.() ?? this.helios?.shadedSpecularColor?.(),
-            setValue: (value) => appearanceBehavior?.shadedSpecularColor?.(value) ?? this.helios?.shadedSpecularColor?.(value),
+            setValue: (value) => {
+              appearanceBehavior?.shadedSpecularColor?.(value) ?? this.helios?.shadedSpecularColor?.(value);
+              writeAccessorPersistenceValue('shadedSpecularColor', value, 'shaded-specular-color');
+            },
           }),
           dirtyIndicator: createPersistenceIndicator(persistencePathForAccessor('shadedSpecularColor')),
         }).row);
@@ -3620,6 +4532,30 @@ export class HeliosUI {
 
       network.defineNodeAttribute(trimmed, AttributeType.Float, 1);
       return Boolean(writeBuffer());
+    };
+
+    const markMetricOutputDirty = (metricName, attributes = []) => {
+      const names = Array.from(new Set((Array.isArray(attributes) ? attributes : [attributes])
+        .map((name) => String(name ?? '').trim())
+        .filter(Boolean)));
+      if (!names.length) return;
+      this.registerPersistenceControl?.('metrics.lastOutput', {
+        scope: 'network',
+        debounceMs: 500,
+        defaultValue: null,
+        metadata: { panel: 'metrics' },
+      });
+      this.writePersistenceControl?.('metrics.lastOutput', {
+        metric: String(metricName ?? 'metric'),
+        attributes: names,
+        updatedAt: Date.now(),
+      }, {
+        scope: 'network',
+        source: 'ui',
+        reason: `metrics:${metricName ?? 'metric'}`,
+        debounceMs: 500,
+      });
+      this.helios?.persistence?.markNetworkDirty?.(`metrics:${metricName ?? 'metric'}`);
     };
 
     const styleStatusHint = (el) => {
@@ -4979,6 +5915,7 @@ export class HeliosUI {
         degreeElapsedValue.textContent = `${Math.round(Math.max(0, ended - started))} ms`;
         setDegreeStatus(wrote ? `Done • wrote "${outNodeAttribute}"` : 'Done');
         setMetricSectionState('metrics-degree', 'success');
+        if (wrote) markMetricOutputDirty('degree', outNodeAttribute);
         refreshAll();
         this.helios?.requestRender?.();
       } catch (error) {
@@ -5024,6 +5961,7 @@ export class HeliosUI {
         strengthElapsedValue.textContent = `${Math.round(Math.max(0, ended - started))} ms`;
         setStrengthStatus(wrote ? `Done • wrote "${outNodeAttribute}"` : 'Done');
         setMetricSectionState('metrics-strength', 'success');
+        if (wrote) markMetricOutputDirty('strength', outNodeAttribute);
         refreshAll();
         this.helios?.requestRender?.();
       } catch (error) {
@@ -5074,6 +6012,7 @@ export class HeliosUI {
         clusteringElapsedValue.textContent = `${Math.round(Math.max(0, ended - started))} ms`;
         setClusteringStatus(wrote ? `Done • wrote "${outNodeAttribute}"` : 'Done');
         setMetricSectionState('metrics-clustering', 'success');
+        if (wrote) markMetricOutputDirty('local-clustering', outNodeAttribute);
         refreshAll();
         this.helios?.requestRender?.();
       } catch (error) {
@@ -5154,6 +6093,7 @@ export class HeliosUI {
         const writeMsg = wrote ? ` • wrote "${outNodeAttribute}"` : '';
         setEigenvectorStatus(`Done • ${converged} in ${iterations} iterations${writeMsg}`);
         setMetricSectionState('metrics-eigen', 'success');
+        if (wrote) markMetricOutputDirty('eigenvector-centrality', outNodeAttribute);
         refreshAll();
         this.helios?.requestRender?.();
       } catch (error) {
@@ -5242,6 +6182,7 @@ export class HeliosUI {
         const writeMsg = wrote ? ` • wrote "${outNodeAttribute}"` : '';
         setBetweennessStatus(`Done${writeMsg}`);
         setMetricSectionState('metrics-betweenness', 'success');
+        if (wrote) markMetricOutputDirty('betweenness-centrality', outNodeAttribute);
         refreshAll();
         this.helios?.requestRender?.();
       } catch (error) {
@@ -5332,6 +6273,7 @@ export class HeliosUI {
         modularityValue.textContent = formatNumber(result?.modularity ?? NaN, 6);
         communityValue.textContent = String(result?.communityCount ?? '—');
         elapsedValue.textContent = `${Math.round(elapsedMs)} ms`;
+        markMetricOutputDirty('leiden-communities', outNodeCommunityAttribute);
         refreshAll();
         this.helios?.requestRender?.();
       } catch (error) {
@@ -5436,6 +6378,7 @@ export class HeliosUI {
         dimensionGlobalMaxValue.textContent = formatNumber(dmax, 4);
         dimensionSelectedCountValue.textContent = String(result?.selectedCount ?? '—');
         dimensionElapsedValue.textContent = `${Math.round(elapsedMs)} ms`;
+        if (writes.length) markMetricOutputDirty('dimension', [outNodeMaxDimensionAttribute, outNodeDimensionLevelsAttribute]);
         refreshAll();
         this.helios?.requestRender?.();
       } catch (error) {
@@ -5641,12 +6584,18 @@ export class HeliosUI {
   }
 
   destroy() {
+    for (const timer of this._persistenceWriteTimers?.values?.() ?? []) clearTimeout(timer);
+    this._persistenceWriteTimers?.clear?.();
+    if (this._persistenceBaselineRefreshTimer != null) clearTimeout(this._persistenceBaselineRefreshTimer);
+    this._persistenceBaselineRefreshTimer = null;
     for (const cleanup of this._controlCleanups) cleanup();
     this._controlCleanups.clear();
     this._boundAttributesById.clear();
+    this._behaviorPersistenceSubscriptions?.clear?.();
     this._heliosBindingUnsubscribe = null;
     this.helios?.overlayInsets?.({ top: 0, right: 0, bottom: 0, left: 0 });
     this.panelManager?.destroy();
+    if (this.helios?.ui === this) this.helios.ui = null;
     if (this.helios?.layers && typeof this.helios.layers.removeLayer === 'function') {
       this.helios.layers.removeLayer(this.layerName);
       return;

@@ -68,6 +68,7 @@ export class BehaviorManager {
     const key = String(id ?? '').trim();
     const existing = this._attached.get(key);
     if (!existing) return false;
+    this.helios?.persistence?.unbindBehaviorState?.(key, existing);
     existing.detach?.();
     this._attached.delete(key);
     return true;
@@ -76,6 +77,7 @@ export class BehaviorManager {
   detachAll() {
     for (const [id, behavior] of this._attached.entries()) {
       try {
+        this.helios?.persistence?.unbindBehaviorState?.(id, behavior);
         behavior.detach?.();
       } finally {
         this._attached.delete(id);
@@ -113,6 +115,7 @@ export class BehaviorManager {
     if (!id) throw new Error('Attached behaviors must expose an id');
     const existing = this._attached.get(id);
     if (existing && existing !== behavior) {
+      this.helios?.persistence?.unbindBehaviorState?.(id, existing);
       existing.detach?.();
     }
     behavior.id = id;
@@ -123,6 +126,8 @@ export class BehaviorManager {
       this._attached.delete(id);
       throw error;
     }
+    this.helios?.persistence?.bindBehaviorState?.(id, behavior);
+    this.ui?._installBehaviorPersistenceBinding?.(id, behavior);
     return behavior;
   }
 }

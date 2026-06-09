@@ -639,3 +639,125 @@ test('layout panel keeps slider controls stable across non-structural behavior c
     globalThis.window = originalWindow;
   }
 });
+
+test('layout panel registers parameter persistence defaults before writing changes', () => {
+  const { document, window } = createFakeDomEnvironment();
+  const originalDocument = globalThis.document;
+  const originalWindow = globalThis.window;
+  globalThis.document = document;
+  globalThis.window = window;
+
+  try {
+    let strength = 1.5;
+    const registered = [];
+    const writes = [];
+    const layoutBehavior = {
+      descriptor() {
+        return {
+          key: 'gpu-force',
+          label: 'Force (GPU)',
+          dynamic: true,
+          bindings: [
+            {
+              key: 'strength',
+              label: 'Strength',
+              type: 'number',
+              min: 0,
+              max: 10,
+              sliderMin: 0,
+              sliderMax: 10,
+              step: 0.1,
+              get: () => strength,
+              set(value) {
+                strength = Number(value);
+              },
+            },
+          ],
+        };
+      },
+      choices() {
+        return [{ value: 'gpu-force', label: 'Force (GPU)' }];
+      },
+      runState() {
+        return 'idle';
+      },
+      positionAttribute() {
+        return '_helios_visuals_position';
+      },
+      positionAttributeChoices() {
+        return [{ value: '_helios_visuals_position', label: 'Current positions', dimension: 3 }];
+      },
+      parameter(key, value) {
+        if (key === 'strength' && arguments.length > 1) strength = Number(value);
+        return strength;
+      },
+      emitChange() {},
+      on() {
+        return () => {};
+      },
+    };
+
+    const ui = {
+      helios: {
+        behavior: { layout: layoutBehavior },
+        on() {
+          return () => {};
+        },
+      },
+      _controlCleanups: new Set(),
+      persistenceIndicators: true,
+      registerPersistenceControl(path, options) {
+        registered.push({ path, options });
+      },
+      writePersistenceControl(path, value, options) {
+        writes.push({ path, value, options });
+      },
+      createPersistenceIndicator(path, scope) {
+        const indicator = document.createElement('span');
+        indicator.dataset.path = path;
+        indicator.dataset.scope = scope;
+        return indicator;
+      },
+      createPanel(config) {
+        return {
+          ...config,
+          destroy() {},
+        };
+      },
+    };
+
+    const panel = new LayoutPanel(ui, {}).create();
+    try {
+      const strengthRegistration = registered.find((entry) => entry.path === 'layout.parameters.strength');
+      assert.ok(strengthRegistration);
+      assert.equal(strengthRegistration.options.defaultValue, 1.5);
+
+      const strengthInput = findFirst(
+        panel.content,
+        (element) => element.tagName === 'INPUT' && element.type === 'number',
+      );
+      assert.ok(strengthInput);
+      strengthInput.value = '2.5';
+      strengthInput.dispatchEvent(new Event('change'));
+
+      assert.equal(strength, 2.5);
+      assert.deepEqual(writes.at(-1), {
+        path: 'layout.parameters.strength',
+        value: 2.5,
+        options: {
+          scope: 'network',
+          source: 'ui',
+          reason: 'layout-parameter',
+          debounceMs: 220,
+        },
+      });
+      const strengthRegistrations = registered.filter((entry) => entry.path === 'layout.parameters.strength');
+      assert.equal(strengthRegistrations.at(-1).options.defaultValue, undefined);
+    } finally {
+      panel.destroy();
+    }
+  } finally {
+    globalThis.document = originalDocument;
+    globalThis.window = originalWindow;
+  }
+});

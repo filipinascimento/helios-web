@@ -241,6 +241,7 @@ export async function bootstrapDemoFixture() {
     const mappersUi = resolveMappersUi(params);
     const dataset = resolveDataset(params);
     const rendererPreference = resolveRendererPreference(params);
+    const fileDrop = params.get('fileDrop') === '1';
 
     const container = document.getElementById('app');
     const network = await HeliosNetwork.create({ directed: false, initialNodes: 0 });
@@ -298,6 +299,7 @@ export async function bootstrapDemoFixture() {
       mode,
       clearColor: [0, 0, 0, 1],
       projection: 'perspective',
+      fileDrop,
       layout: layoutType === 'none'
         ? { type: 'static', options: { bounds: [-500, -500, 500, 500] } }
         : layoutType === 'gpuforce'

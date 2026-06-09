@@ -1,9 +1,9 @@
 import HeliosNetwork, { AttributeType } from 'helios-network';
 // When consuming the published package use `import { Helios } from 'helios-web-next';`
-import { DEFAULT_NODE_COLORMAP, Helios, EVENTS, HeliosUI } from '../../../src/index.js';
+import { Helios, EVENTS, HeliosUI } from '../../../src/index.js';
 
 // Set this to an object like { helios: true, mapper: true, scheduler: true } to re-enable debug logs.
-const DEFAULT_NODE_COUNT = 2_000;
+const DEFAULT_NODE_COUNT = 10_000;
 const DEBUG_CONFIG = null;
 const DEFAULT_ADAPTIVE_DURATION_SAMPLES = 5;
 const DEFAULT_ADAPTIVE_DURATION_WINDOW_MS = 5000;
@@ -24,16 +24,54 @@ function resolveRendererPreference() {
 function resolveSessionOptions() {
   const params = new URLSearchParams(window.location.search);
   if (params.get('session') === '0') return false;
-  if (!params.has('sessionId') && params.get('session') !== '1') return undefined;
+  const sessionAlias = params.get('session');
+  const normalizedSessionAlias = String(sessionAlias ?? '').trim().toLowerCase();
+  const sessionId = params.get('sessionId')
+    || params.get('heliosSessionId')
+    || (
+      normalizedSessionAlias
+      && normalizedSessionAlias !== '1'
+      && normalizedSessionAlias !== 'true'
+      && normalizedSessionAlias !== 'false'
+        ? sessionAlias
+        : undefined
+    );
+  const maxSessions = params.has('maxSessions') ? Number(params.get('maxSessions')) : NaN;
+  const maxSessionBytes = params.has('maxSessionBytes') ? Number(params.get('maxSessionBytes')) : NaN;
   return {
-    id: params.get('sessionId') || undefined,
+    id: sessionId || undefined,
+    url: true,
     autosave: params.get('autosave') !== '0',
     restore: params.get('restore') !== '0',
-    restoreNetwork: params.get('restoreNetwork') === '1',
+    restoreNetwork: params.get('restoreNetwork') !== '0',
     maxJournalEntries: 200,
+    retention: {
+      maxSessions: Number.isFinite(maxSessions)
+        ? Math.max(1, Math.floor(maxSessions))
+        : 20,
+      maxBytes: Number.isFinite(maxSessionBytes)
+        ? Math.max(0, Math.floor(maxSessionBytes))
+        : undefined,
+    },
     networkPersistence: {
       enabled: params.get('networkPersistence') !== '0',
-      format: params.get('networkFormat') || 'xnet',
+      format: params.get('networkFormat') || 'zxnet',
+    },
+  };
+}
+
+function resolvePersistenceOptions(defaultWorkspaceId = 'network') {
+  const params = new URLSearchParams(window.location.search);
+  const workspaceId = params.get('workspaceId') || defaultWorkspaceId;
+  return {
+    workspaceId,
+    networkPersistence: {
+      enabled: params.get('networkPersistence') !== '0',
+      autosave: params.get('networkAutosave') !== '0',
+    },
+    positionPersistence: {
+      enabled: params.get('positionPersistence') !== '0',
+      autosave: params.get('positionAutosave') !== '0',
     },
   };
 }
@@ -164,7 +202,26 @@ function resolveDataset() {
   const dataset = params.get('dataset')?.trim().toLowerCase();
   if (dataset === 'umap') return 'umap-export';
   if (dataset === 'umap-export' || dataset === 'umap-real' || dataset === 'umap-exported') return 'umap-export';
-  return 'grid';
+  return 'small-world';
+}
+
+function resolveSmallWorldOptions() {
+  const params = new URLSearchParams(window.location.search);
+  const readNumberParam = (...names) => {
+    for (const name of names) {
+      const value = params.get(name);
+      if (value != null) return Number(value);
+    }
+    return NaN;
+  };
+  const rewiring = readNumberParam('rewiringProbability', 'rewiring', 'wsRewire');
+  const neighborLevel = readNumberParam('neighborLevel', 'wsLevel');
+  const seed = readNumberParam('seed', 'networkSeed');
+  return {
+    neighborLevel: Number.isFinite(neighborLevel) && neighborLevel > 0 ? Math.floor(neighborLevel) : 2,
+    rewiringProbability: Number.isFinite(rewiring) && rewiring >= 0 ? Math.min(1, rewiring) : 0.01,
+    seed: Number.isFinite(seed) && seed >= 0 ? Math.floor(seed) : 1,
+  };
 }
 
 function resolveExportedUmapCase(requestedNodeCount) {
@@ -179,6 +236,37 @@ function resolveExportedUmapCase(requestedNodeCount) {
     }
   }
   return bestCase;
+}
+
+function summarizeWattsStrogatzNetwork(network, options = {}) {
+  if (!network || typeof network.withBufferAccess !== 'function') return null;
+  const nodeCount = network.nodeCount ?? 0;
+  const edgeCount = network.edgeCount ?? 0;
+  const neighborLevel = Math.max(0, Math.floor(Number(options.neighborLevel) || 0));
+  return network.withBufferAccess(() => {
+    const edges = network.edgesView;
+    let localEdges = 0;
+    let shortcutEdges = 0;
+    for (let edge = 0; edge < edgeCount; edge += 1) {
+      const from = edges[edge * 2] >>> 0;
+      const to = edges[edge * 2 + 1] >>> 0;
+      const forward = (to - from + nodeCount) % nodeCount;
+      const backward = (from - to + nodeCount) % nodeCount;
+      const ringDistance = Math.min(forward, backward);
+      if (ringDistance > neighborLevel) shortcutEdges += 1;
+      else localEdges += 1;
+    }
+    return {
+      nodeCount,
+      edgeCount,
+      neighborLevel,
+      localEdges,
+      shortcutEdges,
+      rewiringProbability: options.rewiringProbability,
+      expectedShortcutEdges: Math.round(edgeCount * Number(options.rewiringProbability ?? 0)),
+      seed: options.seed,
+    };
+  }, { edgesView: true });
 }
 
 async function fetchExportedUmapNetwork(requestedNodeCount) {
@@ -206,18 +294,30 @@ async function bootstrap() {
   const usingExportedUmapDataset = dataset === 'umap-export';
   let exportedUmapCase = null;
   console.log("Creating Helios network...");
+  const smallWorldOptions = resolveSmallWorldOptions();
   const network = usingExportedUmapDataset
     ? (({ network: loadedNetwork, selectedCase }) => {
         exportedUmapCase = selectedCase;
         return loadedNetwork;
       })(await fetchExportedUmapNetwork(nodeCount))
-    : await HeliosNetwork.create({ directed: false, initialNodes: 0 });
+    : await HeliosNetwork.generateWattsStrogatz({
+        nodeCount,
+        neighborLevel: smallWorldOptions.neighborLevel,
+        rewiringProbability: smallWorldOptions.rewiringProbability,
+        seed: smallWorldOptions.seed,
+        directed: false,
+      });
 
   const nodeAttribute = 'weight';
   const edgeAttribute = 'intensity';
   const categoryAttribute = 'category';
   const labelAttribute = 'label';
-  const nodes = usingExportedUmapDataset ? [] : network.addNodes(nodeCount);
+  let nodes = [];
+  if (!usingExportedUmapDataset) {
+    network.withBufferAccess(() => {
+      nodes = Uint32Array.from(network.nodeIndices);
+    });
+  }
 
   if (!usingExportedUmapDataset) {
     console.log("Defining attributes...");
@@ -316,59 +416,39 @@ async function bootstrap() {
   //   }
   // }
 
-  // connect with the next 2 or 3 nodes to ensure connectivity
-  // if 2d or 3d (try to follow the grid
   const is3D = resolveMode() === '3d';
   let edgeIds = [];
+  if (!usingExportedUmapDataset) {
+    network.withBufferAccess(() => {
+      edgeIds = Uint32Array.from(network.edgeIndices);
+    });
+  }
   let datasetInfo = {
     name: dataset,
     requestedNodeCount: nodeCount,
     resolvedNodeCount: usingExportedUmapDataset ? (exportedUmapCase?.nodeCount ?? 0) : nodeCount,
-    source: usingExportedUmapDataset ? 'exported' : 'synthetic',
+    source: usingExportedUmapDataset ? 'exported' : 'generated',
     path: usingExportedUmapDataset ? (exportedUmapCase?.path ?? null) : null,
-    label: usingExportedUmapDataset ? (exportedUmapCase?.label ?? null) : null,
+    label: usingExportedUmapDataset ? (exportedUmapCase?.label ?? null) : `WS ${nodeCount}`,
   };
   let syntheticDataset = null;
 
   if (!usingExportedUmapDataset) {
-    console.log("Adding edges...");
-    syntheticDataset = { name: dataset };
-    if (dataset !== 'umap-export') {
-      const edges = [];
-      if (nodeCount > 1) {
-        if (is3D) {
-          const side = Math.ceil(Math.cbrt(nodeCount));
-          for (let i = 0; i < nodeCount; i += 1) {
-            const z = Math.floor(i / (side * side));
-            const rem = i - z * side * side;
-            const y = Math.floor(rem / side);
-            const x = rem - y * side;
-
-            const neighborX = x + 1 < side ? i + 1 : -1;
-            const neighborY = y + 1 < side ? i + side : -1;
-            const neighborZ = z + 1 < side ? i + side * side : -1;
-
-            if (neighborX >= 0 && neighborX < nodeCount) edges.push([nodes[i], nodes[neighborX]]);
-            if (neighborY >= 0 && neighborY < nodeCount) edges.push([nodes[i], nodes[neighborY]]);
-            if (neighborZ >= 0 && neighborZ < nodeCount) edges.push([nodes[i], nodes[neighborZ]]);
-          }
-        } else {
-          const side = Math.ceil(Math.sqrt(nodeCount));
-          for (let i = 0; i < nodeCount; i += 1) {
-            const row = Math.floor(i / side);
-            const col = i - row * side;
-            const neighborRight = col + 1 < side ? i + 1 : -1;
-            const neighborDown = row + 1 < side ? i + side : -1;
-
-            if (neighborRight >= 0 && neighborRight < nodeCount) edges.push([nodes[i], nodes[neighborRight]]);
-            if (neighborDown >= 0 && neighborDown < nodeCount) edges.push([nodes[i], nodes[neighborDown]]);
-          }
-        }
-      }
-      edgeIds = network.addEdges(edges);
-    }
+    syntheticDataset = {
+      name: dataset,
+      model: 'watts-strogatz',
+      ...smallWorldOptions,
+      summary: summarizeWattsStrogatzNetwork(network, smallWorldOptions),
+    };
     window.__HELIOS_SYNTHETIC_DATASET__ = syntheticDataset;
-    console.log("Created a network with nodes:", network.nodeCount, "edges:", network.edgeCount);
+    console.log(
+      "Created a network with nodes:",
+      network.nodeCount,
+      "edges:",
+      network.edgeCount,
+      "shortcut edges:",
+      syntheticDataset.summary?.shortcutEdges ?? null,
+    );
 
     console.log("Filling edge attribute...");
     if (edgeIds.length) {
@@ -473,9 +553,16 @@ async function bootstrap() {
       minDisplacementRatio: 0.0005,
     },
     debug: DEBUG_CONFIG,
+    fileDrop: true,
+    networkSource: {
+      name: datasetInfo?.label ?? datasetInfo?.name ?? 'network',
+      baseName: datasetInfo?.label ?? datasetInfo?.name ?? 'network',
+      format: usingExportedUmapDataset ? 'zxnet' : null,
+    },
     // Warm up mapper application so first render is quick on large graphs.
     // prewarm: true,
   };
+  Object.assign(heliosOptions, resolvePersistenceOptions(datasetInfo?.label ?? datasetInfo?.name ?? 'network'));
   const rendererPreference = resolveRendererPreference();
   if (rendererPreference) {
     heliosOptions.renderer = rendererPreference;
@@ -507,36 +594,6 @@ async function bootstrap() {
   heliosUI.createMetricsPanel();
   window.__heliosUI = heliosUI;
 
-  const configureDemoMappers = () => {
-    const net = helios.network;
-    const hasWeight = Boolean(net?.hasNodeAttribute?.(nodeAttribute));
-    console.log("Setting up mappers...", { hasWeight });
-
-    // Start with a serializable mapper so the UI doesn't show this as a custom preset.
-    // Color nodes by index across the full domain.
-    const maxIndex = Math.max(1, (net?.nodeCount ?? 1) - 1);
-    console.log(`  Node colors ($index/${DEFAULT_NODE_COLORMAP})...`);
-    helios.nodeMapper.channel('color').from('$index').colormap(DEFAULT_NODE_COLORMAP, { domain: [0, maxIndex], alpha: 1 }).done();
-
-    if (hasWeight) {
-      console.log("  Node sizes (weight)...");
-      helios.nodeMapper.channel('size').from(nodeAttribute).linear([0, 1], [1, 4]).done();
-    } else {
-      console.log("  Node sizes (constant)...");
-      helios.nodeMapper.channel('size').constant(2.5).done();
-    }
-
-    // Keep edges visible by deriving endpoint colors from node colors.
-    helios.edgeMapper.channel('color').from('@node.color').nodeToEdge().done();
-    console.log("  Edge width mapper...");
-    helios.edgeMapper.channel('width').constant(1.5).done();
-    helios.edgeMapper.channel('opacity').constant(1).done();
-    helios.requestRender();
-  };
-
-  configureDemoMappers();
-  // Create the Mappers panel after configuring demo mappers so it doesn't
-  // initialize from the non-serializable default mapper.
   heliosUI.createMappersPanel({ dock: 'top-right', position: { x: 16, y: 16 } });
   heliosUI.createLayoutPanel({ dock: 'top-right', position: { x: 16, y: 360 } });
   heliosUI.createLegendsPanel({ dock: 'top-right', position: { x: 16, y: 560 } });
@@ -548,14 +605,8 @@ async function bootstrap() {
   window.__heliosSelectionPanel = selectionPanel;
 
   helios.on(EVENTS.NETWORK_REPLACED, () => {
-    configureDemoMappers();
     helios.requestFrameNetwork?.({ paddingPx: 24 });
   });
-
-  console.log("Changing edge scaling...");
-  // Make edges visibly thicker for the demo.
-  helios.edgeWidthScale(1.0).edgeWidthBase(0);
-  helios.edgeOpacityScale(0.5);
   
 
   console.log("Misc diagnostics...");

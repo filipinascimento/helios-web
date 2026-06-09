@@ -391,7 +391,7 @@ export class Camera {
     this.distance = options.distance ?? 800;
     this.minDistance = options.minDistance ?? 10;
     this.maxDistance = options.maxDistance ?? 25000;
-    this.zoom = options.zoom ?? 1;
+    this.zoom = options.zoom ?? 3;
     this.minZoom = options.minZoom ?? 0.001;
     this.maxZoom = options.maxZoom ?? 10;
     this.rotation = quatIdentity(new Float32Array(4));

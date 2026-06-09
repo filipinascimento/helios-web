@@ -43,7 +43,7 @@ Tips:
 
 If you’re using `HeliosUI`, the Mappers panel includes a searchable colormap picker with thumbnail previews to make it easier to browse ramps.
 
-Note: mapper configs that rely on arbitrary JavaScript functions (e.g. `.transform((v) => …)` or `.scale((v) => …)`) aren’t safely serializable. The UI focuses on declarative mappings (constant/passthrough/linear/colormap) plus “Default” and simple “Overrides” (rules like “-1 → gray”).
+Note: mapper configs that rely on arbitrary JavaScript functions (for example `.transform((v) => ...)` or `.scale((v) => ...)`) are not safely serializable. Persistence stores declarative mappings (`constant`, `passthrough`, `linear`, `categorical`, `colormap`, `nodeAttribute`, and `nodeToEdge`) plus built-in transforms through `transformType`/`transformPower`. Fully custom function channels are marked as unsupported in the serialized snapshot and restore to the existing/default channel instead of being replayed as a partial mapper.
 
 ## Categorical mapping
 
@@ -89,7 +89,7 @@ Mapper channels support `transformType` for common pre-transforms (`log`, `log1p
 
 ## Example: Basic demo node colors
 
-The bundled basic example (`docs/examples/basic/main.js`) starts with a serializable node color mapper (`$index` → `CET_L08-NeonBurst` across the full index domain), so the UI doesn’t treat it as a custom preset. Toggle the renderer via `?renderer=webgl` and compare edge transparency modes via `?edgeTransparency=alpha` or another explicit mode to see how visuals react.
+The bundled basic example (`docs/examples/basic/main.js`) uses Helios internal mapper defaults unless you explicitly change mapper settings through the API or UI. Toggle the renderer via `?renderer=webgl` and compare edge transparency modes via `?edgeTransparency=alpha` or another explicit mode to see how visuals react.
 
 ## When things look flat
 
