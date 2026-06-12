@@ -13,6 +13,7 @@ export function resolvePanelIconKind(source = {}) {
   const token = id || title;
 
   if (token.includes('data')) return 'data';
+  if (token.includes('debug')) return 'debug';
   if (token.includes('scene') || token.includes('demo')) return 'scene';
   if (token.includes('metrics')) return 'metrics';
   if (token.includes('mapper')) return 'mappers';
@@ -46,6 +47,13 @@ export function createPanelIcon(doc, source = {}, options = {}) {
     addPath('M5 7.5C5 6.12 8.13 5 12 5s7 1.12 7 2.5S15.87 10 12 10 5 8.88 5 7.5Z');
     addPath('M5 7.5v4C5 12.88 8.13 14 12 14s7-1.12 7-2.5v-4');
     addPath('M5 11.5v5C5 17.88 8.13 19 12 19s7-1.12 7-2.5v-5');
+  } else if (iconKind === 'debug') {
+    addPath('M5 6.5h14');
+    addPath('M5 12h14');
+    addPath('M5 17.5h14');
+    addPath('M8 4.5v4');
+    addPath('M16 10v4');
+    addPath('M11 15.5v4');
   } else if (iconKind === 'scene') {
     addPath('M12 4v4');
     addPath('M12 16v4');

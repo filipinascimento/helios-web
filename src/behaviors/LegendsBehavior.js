@@ -141,7 +141,7 @@ export class LegendsBehavior extends Behavior {
     return this;
   }
 
-  update(options = {}) {
+  update(options = {}, changeOptions = {}) {
     super.update(options);
     const patch = normalizeConfigPatch(options);
     if (!Object.keys(patch).length) return this;
@@ -156,7 +156,10 @@ export class LegendsBehavior extends Behavior {
         : clonePlacements(this.state.placements),
     };
     this.applyConfig({ silent: true, reason: 'options' });
-    this.emitChange('options');
+    this.emitChange('options', {
+      trackOverride: changeOptions.trackOverride !== false,
+      storageKeys: Object.keys(patch).map((key) => `legends.${key}`),
+    });
     return this;
   }
 
@@ -166,10 +169,100 @@ export class LegendsBehavior extends Behavior {
     };
   }
 
+  stateEntries() {
+    const subscribe = (notify) => this.on('change', (event) => notify(undefined, event?.detail ?? event));
+    const defaultOn = new Set([
+      'enabled',
+      'respectDockInsets',
+      'showNodeColor',
+      'showDensity',
+      'showEdgeColor',
+    ]);
+    const readBoolean = (key) => (defaultOn.has(key)
+      ? this.state[key] !== false
+      : this.state[key] === true);
+    const numberDefaults = {
+      maxChars: 24,
+      maxRows: 2,
+      scale: 1,
+      continuousHeight: 132,
+    };
+    const readNumber = (key) => {
+      const numeric = Number(this.state[key]);
+      if (Number.isFinite(numeric)) return numeric;
+      return numberDefaults[key] ?? this.state[key];
+    };
+    const booleanEntry = (key, label) => ({
+      description: `Legend ${label.toLowerCase()} setting.`,
+      default: readBoolean(key),
+      type: 'boolean',
+      scope: 'workspace',
+      aliases: [`legends.${key}`],
+      ui: { label, controller: 'toggle' },
+      getter: () => readBoolean(key),
+      setter: (value) => this.update({ [key]: value === true }, { trackOverride: false }),
+      subscribe,
+    });
+    const numberEntry = (key, label, ui = {}) => ({
+      description: `Legend ${label.toLowerCase()} setting.`,
+      default: readNumber(key),
+      type: 'number',
+      scope: 'workspace',
+      aliases: [`legends.${key}`],
+      ui: { label, controller: 'slider', ...ui },
+      getter: () => readNumber(key),
+      setter: (value) => this.update({ [key]: value }, { trackOverride: false }),
+      subscribe,
+    });
+    return {
+      state: {
+        description: 'Serializable legend behavior state.',
+        default: this.serialize(),
+        type: 'object',
+        scope: 'workspace',
+        aliases: ['legends.state'],
+        getter: () => this.serialize(),
+        setter: (value) => this.restore(value),
+        subscribe,
+      },
+      enabled: booleanEntry('enabled', 'Visible'),
+      respectDockInsets: booleanEntry('respectDockInsets', 'Dock Aware'),
+      showNodeColor: booleanEntry('showNodeColor', 'Node Colors'),
+      showDensity: booleanEntry('showDensity', 'Density'),
+      showEdgeColor: booleanEntry('showEdgeColor', 'Edge Colors'),
+      showNodeSize: booleanEntry('showNodeSize', 'Node Sizes'),
+      showEdgeWidth: booleanEntry('showEdgeWidth', 'Edge Widths'),
+      maxChars: numberEntry('maxChars', 'Max Chars', { min: 0, max: 80, step: 1 }),
+      maxRows: numberEntry('maxRows', 'Max Rows', { min: 1, max: 8, step: 1 }),
+      scale: numberEntry('scale', 'Scale', { min: 0.25, max: 4, step: 0.05 }),
+      continuousHeight: numberEntry('continuousHeight', 'Bar Height', { min: 24, max: 260, step: 1 }),
+      titles: {
+        description: 'Custom legend titles.',
+        default: cloneTitles(this.state.titles),
+        type: 'object',
+        scope: 'workspace',
+        aliases: ['legends.titles'],
+        getter: () => cloneTitles(this.state.titles),
+        setter: (value) => this.update({ titles: value }, { trackOverride: false }),
+        subscribe,
+      },
+      placements: {
+        description: 'Custom legend placements.',
+        default: clonePlacements(this.state.placements),
+        type: 'object',
+        scope: 'workspace',
+        aliases: ['legends.placements'],
+        getter: () => clonePlacements(this.state.placements),
+        setter: (value) => this.update({ placements: value }, { trackOverride: false }),
+        subscribe,
+      },
+    };
+  }
+
   restore(snapshot = {}) {
     const options = snapshot?.options && typeof snapshot.options === 'object' ? snapshot.options : {};
-    this.update(options);
-    this.emitChange('restore');
+    this.update(options, { trackOverride: false });
+    this.emitChange('restore', { trackOverride: false });
     return this;
   }
 

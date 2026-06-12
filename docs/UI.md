@@ -87,6 +87,14 @@ The Data panel now includes an `Attributes` tab with a live table of node, edge,
 
 Layout parameter bindings can describe how a control should be rendered. Numeric bindings may opt into `scale: 'log'` and `notation: 'scientific'`, which makes the Layout panel render a log slider with scientific-notation input while keeping the binding contract layout-agnostic.
 
+Storage-backed panel controls resolve display labels from panel item labels first,
+then storage `ui.label` metadata, then a humanized fallback. Internal accessor
+names such as `edgeAdaptiveQualitySlowFrameThresholdMs` are not shown directly
+in the Scene, Appearance, Labels, Legends, Mappers, Filters, Selection, or
+Layout controls. Complex panel markers use declarative schemas and stable
+storage prefixes, so mapper channel, filter rule, selected-item, selector-rule,
+and label-style restores mark the same panels as UI edits.
+
 The Mappers panel’s Density tab supports both the legacy `Difference` mode and the new `Log Ratio` mode. `Difference` preserves the existing normalized comparison path, while `Log Ratio` switches to a specialized dual-density comparison path with a real-valued numeric legend. In `Log Ratio` mode, the density panel exposes `Epsilon`, `Range`, `Z-score`, and `Support` controls and disables the legacy `Weight` / `Norm.` controls because those would break the interpretation of the numeric colorbar. `Z-score` switches the display from the raw log-ratio to a fast approximate local z-score derived from the same two density fields. `Support` enables or disables the automatic pooled-support correction that fades unstable sparse tails without changing the raw values in well-supported areas. The lower Density controls include `Focus`, which selects whether density uses auto focus, all active nodes, selected nodes, highlighted nodes, or selected-then-highlighted nodes. Density comparison colormap picking keeps the active search/filter state between openings, highlights the selected colormap, and includes a `Diverging` filter inside the picker.
 
 The Filter panel renders categorical attributes as compact checklist controls

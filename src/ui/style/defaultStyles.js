@@ -656,8 +656,12 @@ export const defaultStylesText = `
 }
 
 .helios-ui-button:disabled {
-  opacity: 0.55;
+  border-color: color-mix(in srgb, var(--helios-ui-border) 72%, transparent);
+  background: color-mix(in srgb, var(--helios-ui-bg-solid) 82%, transparent);
+  color: color-mix(in srgb, var(--helios-ui-muted) 78%, var(--helios-ui-bg-solid));
+  opacity: 0.72;
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 @keyframes helios-ui-spin {
@@ -1016,7 +1020,7 @@ export const defaultStylesText = `
 .helios-ui-network-persistence {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
   justify-content: flex-start;
   min-width: 0;
   flex: 1 1 auto;
@@ -1025,7 +1029,7 @@ export const defaultStylesText = `
 .helios-ui-network-persistence__controls {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex: 0 0 auto;
 }
 
@@ -1053,6 +1057,10 @@ export const defaultStylesText = `
   font-size: 11px;
   line-height: 1.25;
   white-space: nowrap;
+}
+
+.helios-ui-network-autosync[data-state="disabled"] .helios-ui-toggle {
+  pointer-events: none;
 }
 
 .helios-ui-toggle--compact {
@@ -1287,36 +1295,33 @@ export const defaultStylesText = `
 
 .helios-ui-select:disabled {
   cursor: not-allowed;
-  color: color-mix(in srgb, var(--helios-ui-muted) 98%, transparent);
-  border-color: color-mix(in srgb, var(--helios-ui-border) 72%, black 28%);
+  color: color-mix(in srgb, var(--helios-ui-muted) 78%, var(--helios-ui-bg-solid));
+  border-color: color-mix(in srgb, var(--helios-ui-border) 72%, transparent);
   background:
-    linear-gradient(45deg, transparent 50%, color-mix(in srgb, var(--helios-ui-muted) 35%, transparent) 50%) right 12px center/6px 6px no-repeat,
-    linear-gradient(135deg, color-mix(in srgb, var(--helios-ui-muted) 35%, transparent) 50%, transparent 50%) right 8px center/6px 6px no-repeat,
-    repeating-linear-gradient(
-      -45deg,
-      color-mix(in srgb, var(--helios-ui-bg-solid) 90%, black 10%) 0 6px,
-      color-mix(in srgb, var(--helios-ui-bg-solid) 80%, black 20%) 6px 12px
-    );
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, black 24%, transparent);
+    linear-gradient(45deg, transparent 50%, color-mix(in srgb, var(--helios-ui-muted) 25%, transparent) 50%) right 12px center/6px 6px no-repeat,
+    linear-gradient(135deg, color-mix(in srgb, var(--helios-ui-muted) 25%, transparent) 50%, transparent 50%) right 8px center/6px 6px no-repeat,
+    color-mix(in srgb, var(--helios-ui-bg-solid) 82%, transparent);
+  box-shadow: none;
+  opacity: 0.72;
 }
 
 .helios-ui-select:disabled:hover {
-  border-color: color-mix(in srgb, var(--helios-ui-border) 72%, black 28%);
+  border-color: color-mix(in srgb, var(--helios-ui-border) 72%, transparent);
 }
 
-.helios-ui-button:hover {
+.helios-ui-button:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--helios-ui-accent) 55%, var(--helios-ui-border));
   background: color-mix(in srgb, var(--helios-ui-accent) 22%, var(--helios-ui-bg-solid));
 }
 
-.helios-ui-button--link:hover {
+.helios-ui-button--link:hover:not(:disabled) {
   border-color: transparent;
   background: transparent;
   color: color-mix(in srgb, var(--helios-ui-accent) 92%, var(--helios-ui-fg));
   text-decoration: underline;
 }
 
-.helios-ui-button:active {
+.helios-ui-button:active:not(:disabled) {
   transform: translateY(0.5px);
 }
 
@@ -1389,6 +1394,15 @@ export const defaultStylesText = `
   cursor: pointer;
 }
 
+.helios-ui-dirty-indicator[data-state="default"] {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.helios-ui--storage-disabled .helios-ui-dirty-indicator {
+  display: none;
+}
+
 .helios-ui-dirty-indicator--static,
 .helios-ui-dirty-indicator:disabled {
   cursor: default;
@@ -1396,11 +1410,15 @@ export const defaultStylesText = `
 }
 
 .helios-ui-dirty-indicator[data-state="changed"] {
+  visibility: visible;
+  pointer-events: auto;
   border-color: color-mix(in srgb, var(--helios-ui-fg) 72%, var(--helios-ui-border));
   background: color-mix(in srgb, var(--helios-ui-fg) 82%, transparent);
 }
 
 .helios-ui-dirty-indicator[data-state="partial"] {
+  visibility: visible;
+  pointer-events: auto;
   border-color: color-mix(in srgb, var(--helios-ui-fg) 72%, var(--helios-ui-border));
   background:
     linear-gradient(90deg, color-mix(in srgb, var(--helios-ui-fg) 82%, transparent) 50%, transparent 50%);
@@ -1624,6 +1642,24 @@ export const defaultStylesText = `
 .helios-ui-toggle[aria-checked="true"] .helios-ui-toggle__thumb::after {
   background: color-mix(in srgb, var(--helios-ui-accent) 92%, transparent);
   transform: translateX(8px);
+}
+
+.helios-ui-toggle:disabled {
+  border-color: color-mix(in srgb, var(--helios-ui-border) 72%, transparent);
+  background: color-mix(in srgb, var(--helios-ui-bg-solid) 82%, transparent);
+  color: color-mix(in srgb, var(--helios-ui-muted) 78%, var(--helios-ui-bg-solid));
+  opacity: 0.72;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.helios-ui-toggle:disabled .helios-ui-toggle__thumb {
+  background: color-mix(in srgb, var(--helios-ui-muted) 8%, transparent);
+  border-color: color-mix(in srgb, var(--helios-ui-border) 72%, transparent);
+}
+
+.helios-ui-toggle:disabled .helios-ui-toggle__thumb::after {
+  background: color-mix(in srgb, var(--helios-ui-muted) 42%, transparent);
 }
 
 .helios-ui-toggle:focus-visible {
@@ -2848,6 +2884,39 @@ export const defaultStylesText = `
   font-size: 11.5px;
   line-height: 1.45;
   text-align: right;
+}
+
+.helios-ui-debug-panel {
+  display: grid;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.helios-ui-debug-panel__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 12px;
+  min-height: 24px;
+  font-size: 12px;
+}
+
+.helios-ui-debug-panel__label {
+  min-width: 0;
+  color: var(--helios-ui-muted);
+}
+
+.helios-ui-debug-panel__value {
+  font-variant-numeric: tabular-nums;
+  color: var(--helios-ui-fg);
+}
+
+.helios-ui-debug-panel__meta {
+  padding-top: 4px;
+  border-top: 1px solid color-mix(in srgb, var(--helios-ui-border) 65%, transparent);
+  color: var(--helios-ui-muted);
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .helios-ui-subpanel[data-collapsed="true"] .helios-ui-subpanel__body { display: none; }

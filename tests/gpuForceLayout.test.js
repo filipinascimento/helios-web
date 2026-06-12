@@ -505,11 +505,15 @@ test('GpuForceLayout step requests render when GPU delegate advances', () => {
   const visuals = {};
   const helios = createStubHelios();
   const layout = new GpuForceLayout(network, visuals, { helios, mode: '2d' });
+  const updates = [];
 
   layout.positionDelegate.step = () => true;
+  layout.setUpdateListener((payload) => updates.push(payload));
 
   layout.step(16);
   assert.equal(helios.getRenderRequests(), 1);
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].delegateChanged, true);
 });
 
 test('GpuForceLayout with updateIntervalMs still steps every scheduler tick', () => {

@@ -169,6 +169,7 @@ export interface HeliosVisualizationStatePayload {
   behaviorState: HeliosBehaviorSnapshot;
   cameraState: CameraPose | null;
   networkSource: HeliosNetworkSource;
+  storageState?: Record<string, unknown> | null;
 }
 
 export interface HeliosSessionRecord {
@@ -222,31 +223,7 @@ export interface HeliosSessionPayload {
   visualizationState: PersistenceEnvelope<HeliosVisualizationStatePayload>;
 }
 
-export interface HeliosPersistenceServiceOptions {
-  helios?: Helios | null;
-  preferenceStore?: LocalStoragePreferenceStore;
-  sessionStore?: IndexedDBSessionStore;
-  preferences?: Record<string, unknown>;
-  sessions?: Record<string, unknown>;
-  defaults?: Partial<HeliosPreferencesState>;
-  idFactory?: () => string;
-  now?: () => number;
-  workspaceId?: string;
-  autosave?: boolean;
-  browser?: boolean | Record<string, unknown>;
-  remote?: RemotePersistenceBackendOptions;
-  customBackend?: CustomPersistenceBackendOptions | CustomPersistenceBackend;
-  backends?: Array<PersistenceBackend | Record<string, unknown>>;
-  networkPersistence?: Record<string, unknown>;
-  positionPersistence?: Record<string, unknown>;
-  sessionRetention?: Record<string, unknown>;
-  sessionThumbnail?: boolean | Record<string, unknown>;
-  autosyncInteractionIdleMs?: number | false;
-  interactionIdleMs?: number | false;
-  networkAttributes?: boolean | Record<string, unknown>;
-}
-
-export interface HeliosPersistenceSaveSessionOptions {
+export interface HeliosStorageSaveSessionOptions {
   id?: string;
   nickname?: string;
   createdAt?: number;
@@ -276,14 +253,14 @@ export interface HeliosStartNewSessionOptions {
   replaceUrlSession?: boolean;
 }
 
-export interface HeliosPersistenceListSessionsOptions {
+export interface HeliosStorageListSessionsOptions {
   includeFinished?: boolean;
   limit?: number;
   excludeCurrent?: boolean;
   currentSessionId?: string;
 }
 
-export interface HeliosPersistenceRestoreSessionOptions {
+export interface HeliosStorageRestoreSessionOptions {
   disposeOld?: boolean;
   recreateRenderer?: boolean;
   markFinished?: boolean;
@@ -881,7 +858,7 @@ export class InterfaceBehavior extends Behavior<InterfaceBehaviorOptions, Helios
   resumePrompt(): HeliosInterfaceResumePrompt | null;
   ensurePersistenceReady(): Promise<this>;
   restoreInterfaceState(snapshot?: Partial<HeliosInterfaceState>, options?: Record<string, unknown>): this;
-  resumeSession(options?: HeliosPersistenceRestoreSessionOptions & { markFinished?: boolean }): Promise<PersistenceEnvelope<HeliosSessionPayload> | null>;
+  resumeSession(options?: HeliosStorageRestoreSessionOptions & { markFinished?: boolean }): Promise<PersistenceEnvelope<HeliosSessionPayload> | null>;
   startFresh(options?: { markFinished?: boolean; deletePendingSession?: boolean; delete?: boolean }): Promise<boolean>;
 }
 
@@ -950,7 +927,7 @@ export class Helios extends EventTarget {
   static UI_BINDINGS: Readonly<Record<string, unknown>>;
   behavior: HeliosBehaviorNamespace;
   behaviors: BehaviorManager;
-  persistence: HeliosPersistenceService;
+  storage: HeliosStorageManager;
   network: HeliosNetwork | null;
   ui: HeliosUI | null;
   ready: Promise<this>;
@@ -1035,19 +1012,16 @@ export interface HeliosOptions extends Record<string, unknown> {
    * Built-in behaviors attach by default. Pass an object to tune individual
    * behaviors, custom behavior instances to attach extra behavior, or `false`
    * to opt out of default behavior attachment.
-   */
+  */
   behaviors?: false | string | Behavior | Array<string | Behavior> | BehaviorConfigObject;
-  persistence?: false | true | (Omit<HeliosPersistenceServiceOptions, 'helios'> & { enabled?: boolean });
+  storage?: false | true | HeliosStorageConfig | HeliosStorageManager;
   session?: false | true | Record<string, unknown>;
   workspaceId?: string;
-  backends?: Array<PersistenceBackend | Record<string, unknown>>;
   networkPersistence?: Record<string, unknown>;
   positionPersistence?: Record<string, unknown>;
   sessionThumbnail?: boolean | Record<string, unknown>;
   autosyncInteractionIdleMs?: number | false;
   interactionIdleMs?: number | false;
-  remote?: RemotePersistenceBackendOptions;
-  customBackend?: CustomPersistenceBackendOptions | CustomPersistenceBackend;
   fileDrop?: boolean | HeliosFileDropOptions;
   networkFileDrop?: boolean | HeliosFileDropOptions;
   dragAndDropNetwork?: boolean | HeliosFileDropOptions;
@@ -1211,7 +1185,7 @@ export class LocalStoragePreferenceStore {
   write(value: unknown): Promise<unknown>;
   clear(): Promise<void>;
   unfinishedSessionKeyFor(workspaceId?: string | null): string;
-  getUnfinishedSessionId(workspaceId?: string | null, options?: { includeLegacy?: boolean }): Promise<string | null>;
+  getUnfinishedSessionId(workspaceId?: string | null): Promise<string | null>;
   setUnfinishedSessionId(id: string | null, workspaceId?: string | null): Promise<string | null>;
 }
 
@@ -1226,154 +1200,165 @@ export class IndexedDBSessionStore {
 export function createMemoryStorage(): Storage;
 export function createMemoryIndexedDBFactory(): IDBFactory;
 
-export type PersistenceScope = 'defaults' | 'user' | 'workspace' | 'network' | 'session';
+export type StorageStateScope = 'user' | 'workspace' | 'network' | 'session';
 
-export interface CentralPersistenceRecord {
-  schema: string;
-  version: number;
-  workspaceId: string | null;
-  networkId: string | null;
-  updatedAt: number;
-  layers: Record<PersistenceScope, Record<string, unknown>>;
-  metadata: Record<string, unknown>;
+export interface StateEntryUI {
+  label?: string;
+  controller?: string;
+  min?: number;
+  max?: number;
+  step?: number;
+  domain?: unknown;
+  options?: unknown;
+  debounceMs?: number;
+  throttleMs?: number;
+  transform?: unknown;
 }
 
-export interface PersistenceBackendStatus {
-  id: string;
-  type: string;
-  ok: boolean;
-  state: string;
-  updatedAt: number | null;
-  error: string | null;
+export interface StateEntryDescriptor<T = unknown> {
+  description?: string;
+  default?: T;
+  defaultValue?: T;
+  type?: 'number' | 'boolean' | 'string' | 'enum' | 'object' | 'array';
+  scope?: StorageStateScope;
+  persist?: boolean;
+  aliases?: string[];
+  ui?: StateEntryUI;
+  getter?: () => T;
+  get?: () => T;
+  setter?: (value: T, options?: Record<string, unknown>) => void;
+  set?: (value: T, options?: Record<string, unknown>) => void;
+  subscribe?: (callback: (value: T, detail?: Record<string, unknown>) => void) => (() => void) | void;
+  binder?: (context: Record<string, unknown>) => (() => void) | void;
+  serialize?: (value: T, options?: Record<string, unknown>) => unknown;
+  deserialize?: (value: unknown, options?: Record<string, unknown>) => T;
+  equals?: (a: T, b: T) => boolean;
 }
 
-export interface CustomPersistenceBackendOptions {
+export interface StorageManagerCapabilities {
+  persistent: boolean;
+  sessions: boolean;
+  network: boolean;
+  remote: boolean;
+}
+
+export interface HeliosStorageConfig extends Record<string, unknown> {
+  type?: 'dummy' | 'memory' | 'browser' | 'remote' | string;
+  kind?: string;
+  sessionId?: string;
   id?: string;
-  scopes?: PersistenceScope[];
-  writable?: boolean;
-  storage?: Storage | null;
-  storageKey?: string;
-  value?: CentralPersistenceRecord | Record<string, unknown>;
-  read?: (context: Record<string, unknown>) => Promise<CentralPersistenceRecord | Record<string, unknown>> | CentralPersistenceRecord | Record<string, unknown>;
-  write?: (record: CentralPersistenceRecord, context: Record<string, unknown>) => Promise<unknown> | unknown;
+  workspaceId?: string;
+  persistNetwork?: boolean;
+  client?: Record<string, unknown>;
 }
 
-export interface RemotePersistenceBackendOptions {
-  id?: string;
-  url?: string;
-  key?: string;
-  apiKey?: string;
-  token?: string;
-  headers?: Record<string, string>;
-  enabled?: boolean;
-  writable?: boolean;
-  scopes?: PersistenceScope[];
-}
-
-export class PersistenceBackend {
-  id: string;
-  type: string;
-  scopes: PersistenceScope[];
-  writable: boolean;
+export class StateRegistry extends EventTarget {
   constructor(options?: Record<string, unknown>);
-  supportsScope(scope: PersistenceScope): boolean;
-  status(): PersistenceBackendStatus;
-  load(context?: Record<string, unknown>): Promise<CentralPersistenceRecord>;
-  save(record: CentralPersistenceRecord, context?: Record<string, unknown>): Promise<PersistenceBackendStatus>;
+  register(owner: unknown, prefix: string, entries: Record<string, StateEntryDescriptor>): () => void;
+  register(prefix: string, entries: Record<string, StateEntryDescriptor>): () => void;
+  entry(key: string): StateEntryDescriptor | null;
+  get(key: string, fallback?: unknown): unknown;
+  set(key: string, value: unknown, options?: Record<string, unknown>): Record<string, unknown> | null;
+  reset(keyOrPrefix: string, options?: Record<string, unknown>): { reset: boolean; entries: Array<Record<string, unknown>> };
+  status(keyOrPrefix: string, options?: Record<string, unknown>): Record<string, unknown>;
+  subscribe(keyOrPrefix: string, callback: (value: unknown, detail?: Record<string, unknown>) => void, options?: Record<string, unknown>): () => void;
+  restore(overrides?: Record<string, unknown>, options?: Record<string, unknown>): string[];
+  serialize(): Record<string, unknown>;
+  getOverrides(options?: Record<string, unknown>): Record<string, unknown>;
+  overrideKeys(): string[];
+  preferredKey(key: string): string;
 }
 
-export class CustomPersistenceBackend extends PersistenceBackend {
-  constructor(options?: CustomPersistenceBackendOptions);
-}
-
-export class BrowserPersistenceBackend extends CustomPersistenceBackend {
-  constructor(options?: CustomPersistenceBackendOptions & { workspaceId?: string });
-}
-
-export class RemotePersistenceBackend extends PersistenceBackend {
-  constructor(options?: RemotePersistenceBackendOptions);
-}
-
-export class NetworkAttributePersistenceBackend extends PersistenceBackend {
-  constructor(options?: Record<string, unknown>);
-  setNetwork(network: HeliosNetwork | null): void;
-  ensureNetworkId(network?: HeliosNetwork | null): string | null;
-}
-
-export class PersistenceRegistry extends EventTarget {
-  workspaceId: string;
-  constructor(options?: Record<string, unknown>);
-  configure(options?: Record<string, unknown>): this;
-  registerKey(path: string, options?: Record<string, unknown>): Record<string, unknown>;
-  bindKey(path: string, binding?: Record<string, unknown>): () => void;
-  get(path: string, fallback?: unknown): unknown;
-  set(path: string, value: unknown, options?: Record<string, unknown>): Record<string, unknown> | null;
-  reset(pathOrScope: string, options?: Record<string, unknown>): { reset: boolean; entries: Array<Record<string, unknown>> };
-  subscribe(path: string, callback: (value: unknown, detail?: Record<string, unknown>) => void, options?: Record<string, unknown>): () => void;
-  load(): Promise<Record<string, unknown>>;
-  flush(options?: Record<string, unknown>): Promise<Record<string, unknown>>;
-  sync(options?: Record<string, unknown>): Promise<Record<string, unknown>>;
-  backendStatus(): PersistenceBackendStatus[];
-  status(): Record<string, unknown>;
-  markNetworkDirty(reason?: string): void;
-  markPositionsDirty(reason?: string): void;
-}
-
-export class HeliosPersistenceService {
-  helios: Helios | null;
-  preferences: HeliosPreferencesState;
-  registry: PersistenceRegistry;
-  constructor(options?: HeliosPersistenceServiceOptions);
-  configure(options?: Record<string, unknown>): this;
-  load(): Promise<Record<string, unknown>>;
-  registerKey(path: string, options?: Record<string, unknown>): Record<string, unknown>;
-  bindKey(path: string, binding?: Record<string, unknown>): () => void;
-  bindBehaviorState(id: string, behavior: Behavior, options?: Record<string, unknown>): (() => void) | null;
-  unbindBehaviorState(id: string, behavior?: Behavior | null): boolean;
-  get(path: string, fallback?: unknown): unknown;
-  set(path: string, value: unknown, options?: Record<string, unknown>): Record<string, unknown> | null;
-  reset(pathOrScope: string, options?: Record<string, unknown>): { reset: boolean; entries: Array<Record<string, unknown>> };
-  subscribe(path: string, callback: (value: unknown, detail?: Record<string, unknown>) => void, options?: Record<string, unknown>): () => void;
-  flush(options?: Record<string, unknown>): Promise<Record<string, unknown>>;
-  sync(options?: Record<string, unknown>): Promise<Record<string, unknown>>;
-  autosyncStatus(): Record<string, unknown>;
-  pauseAutosync(reason?: string): Record<string, unknown>;
-  resumeAutosync(options?: Record<string, unknown>): Record<string, unknown>;
-  cancelAutosync(): Record<string, unknown>;
-  scheduleAutosync(options?: Record<string, unknown>): Record<string, unknown>;
-  flushAutosync(options?: Record<string, unknown>): Promise<Record<string, unknown>>;
-  status(): Record<string, unknown> | null;
-  backendStatus(): PersistenceBackendStatus[];
-  markNetworkDirty(reason?: string): Record<string, unknown> | null;
-  markPositionsDirty(reason?: string): Record<string, unknown> | null;
-  savePortableStateToNetwork(options?: Record<string, unknown>): Promise<Record<string, unknown>>;
-  restorePortableStateFromNetwork(options?: Record<string, unknown>): Promise<Record<string, unknown> | null>;
-  loadPreferences(): Promise<HeliosPreferencesState>;
-  savePreferences(nextPreferences?: HeliosPreferencesState): Promise<HeliosPreferencesState>;
-  getPreferences(): HeliosPreferencesState;
-  updatePreferences(patch?: Partial<HeliosPreferencesState>): Promise<HeliosPreferencesState>;
-  exportVisualizationState(options?: ExportVisualizationStateOptions): PersistenceEnvelope<HeliosVisualizationStatePayload> | string | Blob;
-  importVisualizationState(source: PersistenceEnvelope<HeliosVisualizationStatePayload> | string, options?: Record<string, unknown>): Promise<PersistenceEnvelope<HeliosVisualizationStatePayload>>;
-  saveSession(options?: HeliosPersistenceSaveSessionOptions): Promise<PersistenceEnvelope<HeliosSessionPayload>>;
-  getSession(id: string): Promise<PersistenceEnvelope<HeliosSessionPayload> | null>;
-  listSessions(options?: HeliosPersistenceListSessionsOptions): Promise<Array<PersistenceEnvelope<HeliosSessionPayload>>>;
-  listSessionSummaries(options?: HeliosPersistenceListSessionsOptions): Promise<HeliosSessionSummary[]>;
-  getRestorableSessions(options?: HeliosPersistenceListSessionsOptions): Promise<Array<PersistenceEnvelope<HeliosSessionPayload>>>;
-  getRestorableSession(options?: HeliosPersistenceListSessionsOptions): Promise<PersistenceEnvelope<HeliosSessionPayload> | null>;
-  getResumeSessions(options?: HeliosPersistenceListSessionsOptions): Promise<HeliosSessionSummary[]>;
-  getResumePrompt(options?: HeliosPersistenceListSessionsOptions): Promise<Record<string, unknown> | null>;
-  sessionSummary(envelope: PersistenceEnvelope<HeliosSessionPayload>, options?: { currentSessionId?: string }): HeliosSessionSummary;
-  startNewSession(options?: HeliosStartNewSessionOptions): Promise<{ id: string; previousId: string | null; nickname: string | null; status: Record<string, unknown> | null } | null>;
-  setSessionNickname(nickname?: string | null): Promise<string | null>;
-  resumeSession(sessionId: string, options?: HeliosPersistenceRestoreSessionOptions): Promise<PersistenceEnvelope<HeliosSessionPayload> | null>;
-  restoreActiveSession(options?: HeliosPersistenceRestoreSessionOptions & { restore?: boolean; restoreNetwork?: boolean; saveInitialManifest?: boolean }): Promise<Record<string, unknown> | null>;
-  restoreSession(idOrEnvelope: string | PersistenceEnvelope<HeliosSessionPayload>, options?: HeliosPersistenceRestoreSessionOptions): Promise<PersistenceEnvelope<HeliosSessionPayload> | null>;
-  restoreUnfinishedSession(options?: HeliosPersistenceRestoreSessionOptions): Promise<PersistenceEnvelope<HeliosSessionPayload> | null>;
-  markSessionFinished(id: string): Promise<PersistenceEnvelope<HeliosSessionPayload> | null>;
-  deleteSession(id: string): Promise<boolean>;
-  pruneSessions(options?: Record<string, unknown>): Promise<{ deleted: string[]; totalBytes: number }>;
+export class BindingController {
+  constructor(manager: HeliosStorageManager);
+  bind(key: string, entry: StateEntryDescriptor): () => void;
+  unbind(key: string): boolean;
   destroy(): void;
 }
+
+export class SessionStore {
+  constructor(options?: Record<string, unknown>);
+  put(record: Record<string, unknown>): Promise<Record<string, unknown>>;
+  get(id: string): Promise<Record<string, unknown> | null>;
+  getAll(): Promise<Array<Record<string, unknown>>>;
+  delete(id: string): Promise<boolean>;
+}
+
+export class HeliosStorageManager extends EventTarget {
+  capabilities: StorageManagerCapabilities;
+  type: string;
+  sessionId: string | null;
+  ready: Promise<unknown>;
+  constructor(options?: Record<string, unknown>);
+  register(owner: unknown, prefix: string, entries: Record<string, StateEntryDescriptor>): () => void;
+  register(prefix: string, entries: Record<string, StateEntryDescriptor>): () => void;
+  entry(key: string): StateEntryDescriptor | null;
+  get(key: string, fallback?: unknown): unknown;
+  set(key: string, value: unknown, options?: Record<string, unknown>): Record<string, unknown> | null;
+  reset(keyOrPrefix: string, options?: Record<string, unknown>): { reset: boolean; entries: Array<Record<string, unknown>> };
+  setOverrideTrackingReady(ready?: boolean): boolean;
+  status(keyOrPrefix: string, options?: Record<string, unknown>): Record<string, unknown>;
+  keyStatus(keyOrPrefix: string, options?: Record<string, unknown>): Record<string, unknown>;
+  persistenceStatus(): Record<string, unknown>;
+  getDirtyState(): Record<string, unknown>;
+  configure(options?: Record<string, unknown>): Record<string, unknown>;
+  getPreferences(): HeliosPreferencesState;
+  loadPreferences(): Promise<HeliosPreferencesState>;
+  updatePreferences(patch?: Partial<HeliosPreferencesState>): Promise<HeliosPreferencesState>;
+  markNetworkDirty(reason?: string): Record<string, unknown>;
+  markPositionsDirty(reason?: string): Record<string, unknown>;
+  setSessionNickname(nickname?: string | null, id?: string | null): Promise<unknown>;
+  subscribe(keyOrPrefix: string, callback: (value: unknown, detail?: Record<string, unknown>) => void, options?: Record<string, unknown>): () => void;
+  serializeSnapshot(options?: Record<string, unknown>): Record<string, unknown>;
+  restoreSnapshot(snapshot?: Record<string, unknown>, options?: Record<string, unknown>): string[];
+  serializeSessionSnapshot(options?: Record<string, unknown>): Promise<Record<string, unknown>>;
+  deserializeSessionSnapshot(snapshot?: Record<string, unknown>): Record<string, unknown>;
+  captureSessionThumbnail(options?: Record<string, unknown>): Promise<HeliosSessionThumbnail | null>;
+  saveSessionSnapshot(options?: Record<string, unknown>): Promise<unknown>;
+  restoreSessionSnapshot(snapshot?: Record<string, unknown>, options?: Record<string, unknown>): Promise<unknown>;
+  getOverrides(options?: Record<string, unknown>): Record<string, unknown>;
+  overrideKeys(): string[];
+  preferredKey(key: string): string;
+  loadSession(sessionId?: string | null): Promise<unknown>;
+  configureSession(options?: Record<string, unknown>): unknown;
+  restoreActiveSession(options?: Record<string, unknown>): Promise<unknown>;
+  saveSession(options?: Record<string, unknown>): Promise<unknown>;
+  getSession(id: string): Promise<unknown | null>;
+  listSessions(options?: Record<string, unknown>): Promise<Array<unknown>>;
+  listSessionSummaries(options?: Record<string, unknown>): Promise<Array<Record<string, unknown>>>;
+  getResumeSessions(options?: Record<string, unknown>): Promise<Array<Record<string, unknown>>>;
+  getResumePrompt(options?: Record<string, unknown>): Promise<Record<string, unknown> | null>;
+  startNewSession(options?: Record<string, unknown>): Promise<Record<string, unknown> | null>;
+  resumeSession(sessionId?: string | null, options?: Record<string, unknown>): Promise<unknown>;
+  restoreSession(sessionIdOrRecord?: string | Record<string, unknown> | null, options?: Record<string, unknown>): Promise<unknown>;
+  deleteSession(id: string): Promise<boolean>;
+  markSessionFinished(id?: string | null): Promise<unknown>;
+  restorePortableStateFromNetwork(options?: Record<string, unknown>): Promise<unknown>;
+  flush(options?: Record<string, unknown>): Promise<unknown>;
+  flushAutosync(options?: Record<string, unknown>): Promise<unknown>;
+  sync(options?: Record<string, unknown>): Promise<unknown>;
+  destroy(): void;
+}
+
+export class DummyStorageManager extends HeliosStorageManager {}
+export class BrowserStorageManager extends HeliosStorageManager {}
+export class RemoteStorageManager extends HeliosStorageManager {}
+export function createHeliosStorageManager(config?: false | true | HeliosStorageConfig | HeliosStorageManager, context?: Record<string, unknown>): HeliosStorageManager;
+export const SCENE_PANEL_SCHEMA: Record<string, unknown>;
+export const LABELS_PANEL_SCHEMA: Record<string, unknown>;
+export const LEGENDS_PANEL_SCHEMA: Record<string, unknown>;
+export const MAPPERS_PANEL_SCHEMA: Record<string, unknown>;
+export const FILTERS_PANEL_SCHEMA: Record<string, unknown>;
+export const LAYOUT_PANEL_SCHEMA: Record<string, unknown>;
+export const SELECTION_PANEL_SCHEMA: Record<string, unknown>;
+export function createPanelSchemaIndicator(options?: Record<string, unknown>): HTMLElement;
+export function humanizeControlLabel(value?: unknown): string;
+export function normalizePanelSchema(schema?: Record<string, unknown>): Record<string, unknown>;
+export function panelSchemaKeys(schema?: Record<string, unknown>): string[];
+export function panelSchemaSectionKeys(schema?: Record<string, unknown>, sectionId?: string): string[];
+export function panelSchemaSectionStatus(schema?: Record<string, unknown>, sectionId?: string, storage?: HeliosStorageManager | null): string;
+export function panelSchemaStatus(schema?: Record<string, unknown>, storage?: HeliosStorageManager | null): Record<string, unknown>;
+export function resolvePanelItemLabel(item?: unknown, storage?: HeliosStorageManager | null): string;
 
 export class HeliosUI {
   helios: Helios | null;

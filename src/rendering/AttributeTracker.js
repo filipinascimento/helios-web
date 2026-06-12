@@ -238,8 +238,8 @@ void main() {
   float semanticScale = (u_is2D == 1 && u_semanticZoomExponent > 0.0)
     ? (1.0 / pow(max(u_zoom2D, 1e-3), u_semanticZoomExponent))
     : 1.0;
-  float fullSize = ((u_nodeSizeBase + u_nodeSizeScale * rawSize) * sizeMul + outlineWidth) * semanticScale;
-  float radius = max(1.0, fullSize) * 0.5;
+  float fullSize = max(0.0, (u_nodeSizeBase + u_nodeSizeScale * rawSize) * sizeMul + outlineWidth) * semanticScale;
+  float radius = fullSize * 0.5;
   vec3 right = u_cameraRight;
   vec3 viewDir = vec3(0.0, 0.0, 1.0);
   if (u_is2D == 0) {

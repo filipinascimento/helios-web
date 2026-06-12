@@ -30,6 +30,44 @@ function getCollection(helios, mode) {
   return mode === 'edge' ? helios?.edgeMapper ?? null : helios?.nodeMapper ?? null;
 }
 
+const MAPPER_CHANNEL_ENTRIES = Object.freeze({
+  node: Object.freeze({
+    color: 'Node Color',
+    size: 'Node Size',
+    opacity: 'Node Opacity',
+    outline: 'Node Outline',
+    outlineColor: 'Node Outline Color',
+    position: 'Node Position',
+  }),
+  edge: Object.freeze({
+    color: 'Edge Color',
+    width: 'Edge Width',
+    opacity: 'Edge Opacity',
+  }),
+});
+
+function createSharedChangeSubscribe(behavior) {
+  const listeners = new Set();
+  let cleanup = null;
+  return (notify) => {
+    if (typeof notify !== 'function') return () => {};
+    listeners.add(notify);
+    if (!cleanup) {
+      cleanup = behavior.on('change', (event) => {
+        const detail = event?.detail ?? event ?? {};
+        for (const listener of listeners) listener(undefined, { ...detail, trackOverride: false });
+      });
+    }
+    return () => {
+      listeners.delete(notify);
+      if (listeners.size === 0) {
+        cleanup?.();
+        cleanup = null;
+      }
+    };
+  };
+}
+
 /**
  * Built-in behavior for node and edge visual mappers.
  *
@@ -92,10 +130,71 @@ export class MappersBehavior extends Behavior {
     };
   }
 
+  stateEntries() {
+    const subscribe = createSharedChangeSubscribe(this);
+    const entries = {
+      node: {
+        description: 'Node mapper collection snapshot.',
+        default: cloneCollectionSnapshot(this.state.node),
+        type: 'object',
+        scope: 'workspace',
+        aliases: ['mappers.node'],
+        ui: {
+          label: 'Node Mappers',
+          controller: 'custom',
+        },
+        getter: () => cloneCollectionSnapshot(this.state.node),
+        setter: (value) => this.setModeSnapshot('node', value, { reason: 'storage' }),
+        subscribe,
+      },
+      edge: {
+        description: 'Edge mapper collection snapshot.',
+        default: cloneCollectionSnapshot(this.state.edge),
+        type: 'object',
+        scope: 'workspace',
+        aliases: ['mappers.edge'],
+        ui: {
+          label: 'Edge Mappers',
+          controller: 'custom',
+        },
+        getter: () => cloneCollectionSnapshot(this.state.edge),
+        setter: (value) => this.setModeSnapshot('edge', value, { reason: 'storage' }),
+        subscribe,
+      },
+    };
+    for (const [mode, channels] of Object.entries(MAPPER_CHANNEL_ENTRIES)) {
+      for (const [channel, label] of Object.entries(channels)) {
+        entries[`${mode}.${channel}`] = {
+          description: `${label} mapper channel configuration.`,
+          default: this.getSerializedChannelConfig(mode, channel),
+          type: 'object',
+          scope: 'workspace',
+          aliases: [`mappers.${mode}.${channel}`],
+          ui: {
+            label,
+            controller: 'custom',
+          },
+          getter: () => this.getSerializedChannelConfig(mode, channel),
+          setter: (value) => {
+            if (!value || typeof value !== 'object') return;
+            this.setChannelConfig(mode, channel, value);
+          },
+          subscribe: (notify) => this.on('change', (event) => {
+            const detail = event?.detail ?? event ?? {};
+            const matchesChannel = detail.reason === 'channel' && detail.mode === mode && detail.channel === channel;
+            if (!matchesChannel) return;
+            notify(undefined, detail);
+          }),
+        };
+      }
+    }
+    return entries;
+  }
+
   restore(snapshot = {}) {
     const options = snapshot?.options && typeof snapshot.options === 'object' ? snapshot.options : {};
-    if (options.node) this.setModeSnapshot('node', options.node, { reason: 'restore' });
-    if (options.edge) this.setModeSnapshot('edge', options.edge, { reason: 'restore' });
+    if (options.node) this.setModeSnapshot('node', options.node, { reason: 'restore', trackOverride: false });
+    if (options.edge) this.setModeSnapshot('edge', options.edge, { reason: 'restore', trackOverride: false });
     this.syncFromHelios({ silent: true });
     this.emitChange('restore');
     return this;
@@ -155,7 +254,7 @@ export class MappersBehavior extends Behavior {
    *   domain: [0, 1],
    * });
    */
-  setChannelConfig(mode, channel, config) {
+  setChannelConfig(mode, channel, config, options = {}) {
     const collection = getCollection(this.context?.helios, mode);
     const mapper = collection?.defaultMapper ?? null;
     if (!collection || !mapper || typeof mapper.setChannel !== 'function') return false;
@@ -167,11 +266,16 @@ export class MappersBehavior extends Behavior {
       this._muteSourceEvents -= 1;
     }
     this.syncFromHelios({ silent: true });
-    this.emitChange('channel', { mode, channel });
+    this.emitChange('channel', {
+      mode,
+      channel,
+      trackOverride: options.trackOverride !== false,
+      storageKeys: [`mappers.${mode}.${channel}`],
+    });
     return true;
   }
 
-  replaceDefaultChannels(mode, channels = {}, { reason = 'channels' } = {}) {
+  replaceDefaultChannels(mode, channels = {}, { reason = 'channels', trackOverride = true } = {}) {
     const collection = getCollection(this.context?.helios, mode);
     const mapper = collection?.defaultMapper ?? null;
     if (!collection || !mapper) return this;
@@ -189,11 +293,11 @@ export class MappersBehavior extends Behavior {
       this._muteSourceEvents -= 1;
     }
     this.syncFromHelios({ silent: true });
-    this.emitChange(reason, { mode });
+    this.emitChange(reason, { mode, trackOverride: trackOverride !== false });
     return this;
   }
 
-  setModeSnapshot(mode, snapshot, { reason = 'mode' } = {}) {
+  setModeSnapshot(mode, snapshot, { reason = 'mode', trackOverride = true } = {}) {
     const collection = getCollection(this.context?.helios, mode);
     if (!collection) return this;
     this._muteSourceEvents += 1;
@@ -203,7 +307,7 @@ export class MappersBehavior extends Behavior {
       this._muteSourceEvents -= 1;
     }
     this.syncFromHelios({ silent: true });
-    this.emitChange(reason, { mode });
+    this.emitChange(reason, { mode, trackOverride: trackOverride !== false });
     return this;
   }
 

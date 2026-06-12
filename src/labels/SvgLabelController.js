@@ -794,8 +794,8 @@ export class SvgLabelController {
     const rawSize = toFinite(nodeSizes?.[hoveredNode], DEFAULT_NODE_SIZE);
     const rawOutline = toFinite(nodeOutlines?.[hoveredNode], DEFAULT_NODE_OUTLINE_WIDTH);
     const outlineWidth = Math.max(0, nodeOutlineBase + nodeOutlineScale * rawOutline);
-    const fullSize = Math.max(1, (nodeSizeBase + nodeSizeScale * rawSize) + outlineWidth) * semanticScale;
-    const worldRadius = Math.max(0.5, fullSize * 0.5);
+    const fullSize = Math.max(0, (nodeSizeBase + nodeSizeScale * rawSize) + outlineWidth) * semanticScale;
+    const worldRadius = Math.max(0, fullSize * 0.5);
 
     const edgePoint = projectPointInto(
       {},
@@ -807,7 +807,7 @@ export class SvgLabelController {
       z + right[2] * worldRadius,
     );
     if (!edgePoint) return null;
-    const radiusPx = Math.max(1, Math.hypot(edgePoint.screenX - center.screenX, edgePoint.screenY - center.screenY));
+    const radiusPx = Math.max(0, Math.hypot(edgePoint.screenX - center.screenX, edgePoint.screenY - center.screenY));
     const minRadiusPx = Math.max(0, this._config.minScreenRadiusPx);
     if (radiusPx < minRadiusPx) return null;
 
@@ -1054,8 +1054,8 @@ export class SvgLabelController {
       const rawSize = toFinite(nodeSizes?.[id], DEFAULT_NODE_SIZE);
       const rawOutline = toFinite(nodeOutlines?.[id], DEFAULT_NODE_OUTLINE_WIDTH);
       const outlineWidth = Math.max(0, job.nodeOutlineBase + job.nodeOutlineScale * rawOutline);
-      const fullSize = Math.max(1, (job.nodeSizeBase + job.nodeSizeScale * rawSize) + outlineWidth) * job.semanticScale;
-      const worldRadius = Math.max(0.5, fullSize * 0.5);
+      const fullSize = Math.max(0, (job.nodeSizeBase + job.nodeSizeScale * rawSize) + outlineWidth) * job.semanticScale;
+      const worldRadius = Math.max(0, fullSize * 0.5);
       const offset = projectPointInto(
         scratchOffset,
         job.viewProjection,
@@ -1066,7 +1066,7 @@ export class SvgLabelController {
         z + right[2] * worldRadius,
       );
       if (!offset) continue;
-      const radiusPx = Math.max(1, Math.hypot(offset.screenX - center.screenX, offset.screenY - center.screenY));
+      const radiusPx = Math.max(0, Math.hypot(offset.screenX - center.screenX, offset.screenY - center.screenY));
       const hovered = job.hoveredNode === id;
       if (!selected && !pinned && !hovered && radiusPx < job.minRadiusPx) continue;
 
@@ -1257,8 +1257,8 @@ export class SvgLabelController {
       const rawSize = toFinite(nodeSizes?.[id], DEFAULT_NODE_SIZE);
       const rawOutline = toFinite(nodeOutlines?.[id], DEFAULT_NODE_OUTLINE_WIDTH);
       const outlineWidth = Math.max(0, nodeOutlineBase + nodeOutlineScale * rawOutline);
-      const fullSize = Math.max(1, (nodeSizeBase + nodeSizeScale * rawSize) + outlineWidth) * semanticScale;
-      const worldRadius = Math.max(0.5, fullSize * 0.5);
+      const fullSize = Math.max(0, (nodeSizeBase + nodeSizeScale * rawSize) + outlineWidth) * semanticScale;
+      const worldRadius = Math.max(0, fullSize * 0.5);
 
       const offset = projectPointInto(
         scratchOffset,
@@ -1270,7 +1270,7 @@ export class SvgLabelController {
         z + right[2] * worldRadius,
       );
       if (!offset) continue;
-      const radiusPx = Math.max(1, Math.hypot(offset.screenX - center.screenX, offset.screenY - center.screenY));
+      const radiusPx = Math.max(0, Math.hypot(offset.screenX - center.screenX, offset.screenY - center.screenY));
 
       const hovered = hoveredNode === id;
       if (selectedOnlySpaceAware) {
@@ -1425,7 +1425,7 @@ export class SvgLabelController {
         z + right[2] * entry.worldRadius,
       );
       if (!offset) continue;
-      const radiusPx = Math.max(1, Math.hypot(offset.screenX - center.screenX, offset.screenY - center.screenY));
+      const radiusPx = Math.max(0, Math.hypot(offset.screenX - center.screenX, offset.screenY - center.screenY));
       next.push({
         ...entry,
         x: center.screenX,

@@ -9,6 +9,10 @@ import { clampNumber } from '../utils/numbers.js';
 import { toHex8 } from '../utils/colors.js';
 import { PanelStack } from './PanelStack.js';
 import { createAttributeRuleEditor } from './AttributeRuleEditor.js';
+import {
+  SELECTION_PANEL_SCHEMA,
+  createPanelSchemaIndicator,
+} from './panelSchema.js';
 
 const DEFAULT_NODE_SELECTED_STYLE = Object.freeze({
   sizeMul: 2,
@@ -566,6 +570,7 @@ export class SelectionPanel {
       addPlaceholder: 'Add selector...',
       onDirty: () => {
         const nextInterfaceCount = getSelectorInterfaceCount();
+        selectionBehavior.setSelectorRules?.(nodeSelectorEditor.collectRules());
         updateSelectorSectionAvailability(nextInterfaceCount);
         if (nextInterfaceCount > selectorInterfaceCount && selectorStackEntry?.item?.dataset?.collapsed === 'true') {
           setSelectorCollapsed(false);
@@ -721,7 +726,7 @@ export class SelectionPanel {
     };
 
     savedSelectionSelect.addEventListener('change', () => {
-      selectionState.savedSelectionAttribute = savedSelectionSelect.value || CURRENT_SELECTION_VALUE;
+      setSelectionBinding(savedSelectionSelect.value || CURRENT_SELECTION_VALUE);
       refreshSavedSelectionOptions();
       if (selectionState.savedSelectionAttribute !== CURRENT_SELECTION_VALUE) {
         restoreSelectionFromAttribute(selectionState.savedSelectionAttribute);
@@ -1524,7 +1529,15 @@ export class SelectionPanel {
       title: 'Selectors',
       collapsed: true,
       statusDot: false,
-      headerControls: nodeSelectorEditor.addSelect,
+      headerControls: [
+        createPanelSchemaIndicator({
+          helios,
+          schema: SELECTION_PANEL_SCHEMA,
+          sectionId: 'selectors',
+          attachTooltip: tooltips.attachTooltip,
+        }),
+        nodeSelectorEditor.addSelect,
+      ],
       content: selectorBody,
     });
     selectorStackEntry = stack._items.get('selection-selectors') ?? null;
@@ -1533,6 +1546,12 @@ export class SelectionPanel {
       title: 'Style',
       collapsed: true,
       statusDot: false,
+      headerControls: createPanelSchemaIndicator({
+        helios,
+        schema: SELECTION_PANEL_SCHEMA,
+        sectionId: 'style',
+        attachTooltip: tooltips.attachTooltip,
+      }),
       content: styleBody,
     });
     content.appendChild(stack.element);
@@ -1638,6 +1657,7 @@ export class SelectionPanel {
       title: this.options.title ?? 'Selection',
       position: this.options.position ?? { x: 16, y: 960 },
       dock: this.options.dock ?? 'top-right',
+      panelSchema: SELECTION_PANEL_SCHEMA,
       content,
     });
     panel.selectionState = selectionState;

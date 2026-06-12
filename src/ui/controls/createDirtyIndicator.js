@@ -14,11 +14,11 @@ function stateForPath(dirtyState, path, scope = path, mode = 'control') {
 }
 
 function resolvePersistenceState(helios, path, scope, mode) {
-  const persistence = helios?.persistence ?? null;
-  if (typeof persistence?.keyStatus === 'function') {
-    return persistence.keyStatus(path, { scope, mode })?.state ?? 'default';
+  const stateManager = helios?.states ?? null;
+  if (typeof stateManager?.status === 'function') {
+    return stateManager.status(mode === 'scope' ? (scope || path) : path, { scope, mode })?.state ?? 'default';
   }
-  const dirtyState = persistence?.getDirtyState?.() ?? { controls: {}, sections: {}, panels: {} };
+  const dirtyState = stateManager?.getDirtyState?.() ?? { controls: {}, sections: {}, panels: {} };
   return stateForPath(dirtyState, path, scope, mode);
 }
 
@@ -86,7 +86,9 @@ export function createDirtyIndicator({
     };
 
     const resetTarget = normalizePath(mode === 'scope' ? (scope || path) : path);
-    addItem('Reset to default', () => helios?.persistence?.resetOverride?.(resetTarget), {
+    addItem('Reset to default', () => (
+      helios?.states?.reset?.(resetTarget)
+    ), {
       disabled: !resetTarget || indicator.dataset.state === 'default',
     });
 
@@ -123,18 +125,18 @@ export function createDirtyIndicator({
     buildMenu();
   });
 
-  const controller = helios?.persistence?.sessionController ?? null;
-  const persistence = helios?.persistence ?? null;
+  const stateManager = helios?.states ?? null;
   const onChange = () => update();
-  controller?.addEventListener?.('change', onChange);
-  controller?.addEventListener?.('config', onChange);
-  persistence?.addEventListener?.('change', onChange);
-  persistence?.addEventListener?.('config', onChange);
+  const stateTarget = normalizePath(mode === 'scope' ? (scope || path) : path);
+  const unsubscribeState = hasPath && typeof stateManager?.subscribe === 'function'
+    ? stateManager.subscribe(stateTarget, onChange, { immediate: false })
+    : null;
+  if (!unsubscribeState) stateManager?.addEventListener?.('change', onChange);
+  stateManager?.addEventListener?.('config', onChange);
   indicator.destroy = () => {
-    controller?.removeEventListener?.('change', onChange);
-    controller?.removeEventListener?.('config', onChange);
-    persistence?.removeEventListener?.('change', onChange);
-    persistence?.removeEventListener?.('config', onChange);
+    unsubscribeState?.();
+    if (!unsubscribeState) stateManager?.removeEventListener?.('change', onChange);
+    stateManager?.removeEventListener?.('config', onChange);
     closeOpenMenus(indicator.ownerDocument);
   };
   if (hasPath) attachTooltip?.(indicator, 'Shows whether this setting is tracked as a session override.');

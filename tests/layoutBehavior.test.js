@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BehaviorManager, BehaviorRegistry } from '../src/behaviors/index.js';
 import { LayoutBehavior } from '../src/behaviors/LayoutBehavior.js';
+import { HeliosStateManager } from '../src/state/index.js';
 import { LayoutPanel } from '../src/ui/panels/LayoutPanel.js';
 
 class MockLayout {
@@ -73,6 +74,7 @@ class MockHelios extends EventTarget {
     this.network = { nodeCount: 32, nodeCapacity: 32 };
     this.options = { mode: '2d' };
     this.renderer = { device: { type: 'webgpu' } };
+    this.states = new HeliosStateManager();
     this.scheduler = {
       layoutEnabled: true,
       state: 'running',
@@ -195,10 +197,31 @@ test('layout behavior updates layout config through public behavior methods', ()
   layout.positionAttribute('embedding2d');
   layout.type('gpu-force');
 
-  assert.equal(layout.parameter('strength'), 1.5);
+  assert.equal(layout.parameter('strength'), 3.25);
   assert.equal(layout.positionAttribute(), 'embedding2d');
   assert.equal(layout.type(), 'gpu-force');
   assert.equal(helios.calls.layoutSet.at(-1), 'gpu-force');
+});
+
+test('layout behavior rebaselines heuristic parameter defaults after network changes', () => {
+  const { helios } = attachLayoutBehavior();
+
+  assert.equal(helios.states.get('layout.parameters.strength'), 1.5);
+  assert.equal(helios.states.status('layout.parameters.strength').state, 'default');
+
+  helios.layout().parameters.strength = 2.25;
+  helios.emit('network:replaced', { reason: 'network-size-heuristic' });
+
+  assert.equal(helios.states.get('layout.parameters.strength'), 2.25);
+  assert.equal(helios.states.status('layout.parameters.strength').state, 'default');
+  assert.deepEqual(helios.states.getOverrides(), {});
+
+  helios.states.set('layout.parameters.strength', 3, { source: 'ui' });
+  helios.layout().parameters.strength = 2.5;
+  helios.emit('network:replaced', { reason: 'network-size-heuristic' });
+
+  assert.equal(helios.states.get('layout.parameters.strength'), 3);
+  assert.equal(helios.states.status('layout.parameters.strength').state, 'changed');
 });
 
 test('layout behavior start stop reheat and reset delegate to lower layers without owning engines', () => {
@@ -706,13 +729,13 @@ test('layout panel registers parameter persistence defaults before writing chang
       },
       _controlCleanups: new Set(),
       persistenceIndicators: true,
-      registerPersistenceControl(path, options) {
+      registerStateControl(path, options) {
         registered.push({ path, options });
       },
-      writePersistenceControl(path, value, options) {
+      writeStateControl(path, value, options) {
         writes.push({ path, value, options });
       },
-      createPersistenceIndicator(path, scope) {
+      createStateIndicator(path, scope) {
         const indicator = document.createElement('span');
         indicator.dataset.path = path;
         indicator.dataset.scope = scope;

@@ -56,11 +56,20 @@ Key entry points:
 - `Mapper` – flexible mapping utility for visual channels; mapped values land in
   sparse attributes
 - `HeliosUI` – optional HTML overlay UI (panel manager + attribute bindings)
-- `helios.persistence` – centralized settings, network, and position persistence
-  registry. Durable backends and sessions are off by default for library use and
-  can be enabled with `persistence: true` or explicit backend/session options.
-  Autosync waits for camera interaction to settle, and saved sessions can show a
-  tiny capped thumbnail in resume lists.
+- `helios.states` – centralized live state, binding, default, override, and
+  dirty-marker manager.
+- `helios.storage` – optional durable/session sync layer over `helios.states`.
+  Plain library use gets dummy storage; browser, remote, and custom managers can
+  be passed through the `storage` constructor option. Browser storage owns native
+  session save/list/load/delete.
+- Built-in Scene, Labels, Legends, Mappers, Filters, Layout, and Selection
+  panel markers are driven by declarative panel schemas that reference state
+  keys rather than state-entry placement; custom editors aggregate stable
+  prefixes like `mappers.node.*`, `filters.*`, and `selection.*`.
+- Debug instrumentation is on by default for now: Helios exposes
+  `window.__helios`, and UI-enabled apps append a right-docked Debug panel with
+  recent tracked-state, state-change, UI-change, and persistence counters.
+  Pass `debug: false` to disable it.
 - Network I/O supports `.xnet`, `.zxnet`, `.bxnet`, and lossy `.gml`; the main
   example enables drag/drop loading through `fileDrop: true`
 
@@ -97,7 +106,7 @@ Some common renderer/graph-layer “global” knobs are available directly on `H
 - Enable screen-space ambient occlusion: `helios.ambientOcclusionEnabled(true)`, `helios.ambientOcclusionNodes(true)`, `helios.ambientOcclusionEdges(true)`
 - Tune ambient occlusion: `helios.ambientOcclusionMode('fast'|'smooth')`, `helios.ambientOcclusionQuality('low'|'medium'|'high'|'ultra')`, `helios.ambientOcclusionStrength(...)`, `helios.ambientOcclusionRadius(...)`, `helios.ambientOcclusionBias(...)`
 - Tune Fast SSAO response: `helios.ambientOcclusionIntensityScale(...)`, `helios.ambientOcclusionIntensityShift(...)` (WebGPU and WebGL)
-- Configure adaptive edge fallback: `helios.edgeAdaptiveQuality({...})` (enabled by default; switches after repeated slow high-quality render durations during camera or layout activity, returns to high-quality edges after activity stops, and export still forces high-quality edges)
+- Configure adaptive edge fallback: `helios.edgeAdaptiveQuality({...})` (disabled by default; when enabled, switches after repeated slow high-quality render durations during camera or layout activity, returns to high-quality edges after activity stops, and export still forces high-quality edges)
 - Configure pointer hover styling separately from real group highlight: `helios.nodeHoverStyle(...)`, `helios.edgeHoverStyle(...)`; opt into legacy parity with `helios.hoverStyleFromHighlight(true)`, and tune source-managed highlight edge propagation with `helios.highlightConnectedEdges(...)`
 - Interaction render ordering is enabled by default; use `interactionRenderOrder: false` or `helios.interactionRenderOrder(false)` to stop promoting hovered, highlighted, and selected active indices toward the end of the native draw order.
 
@@ -116,10 +125,8 @@ See [`docs/states.md`](./states.md) for the bitmask-based node/edge state system
 
 ## Persistence docs
 
-See [`docs/persistence.md`](./persistence.md) for centralized key registration,
-backend setup, workspace/network precedence, sessions, server APIs, and
-network/position save behavior, including interaction-idle autosync and session
-thumbnails.
+See [`docs/persistence.md`](./persistence.md) for storage manager setup, state
+entry registration, UI panel schemas, sessions, and portable network state.
 
 ## Legends and Density Focus
 

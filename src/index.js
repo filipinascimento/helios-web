@@ -64,44 +64,62 @@ export {
   createDefaultBehaviorRegistry,
 } from './behaviors/index.js';
 
-// Persistence/public session helpers.
+// Storage/session helpers.
 export {
-  HeliosPersistenceService,
   IndexedDBSessionStore,
   LocalStoragePreferenceStore,
-  HeliosSessionController,
-  BrowserPersistenceBackend,
-  CustomPersistenceBackend,
-  NetworkAttributePersistenceBackend,
-  PersistenceBackend,
-  PersistenceRegistry,
-  RemotePersistenceBackend,
-  NETWORK_ID_ATTRIBUTE,
-  NETWORK_PERSISTENCE_ATTRIBUTE,
-  PERSISTENCE_SCOPES,
   PERSISTENCE_KINDS,
   PERSISTENCE_SCHEMA_VERSION,
   applyOverridesToVisualizationState,
-  createPersistenceBackend,
   createDefaultNetworkSource,
   createDefaultPreferencesState,
   createDefaultUIState,
-  createPersistenceRecord,
   createMemoryIndexedDBFactory,
   createMemoryStorage,
   createPersistenceEnvelope,
   diffOverrideMaps,
   flattenVisualizationOverrides,
   migratePersistenceEnvelope,
-  normalizePersistenceRecord,
   parsePersistenceEnvelope,
   serializePersistenceEnvelope,
 } from './persistence/index.js';
+
+export {
+  BrowserStorageManager,
+  DummyStorageManager,
+  HeliosStorageManager,
+  RemoteStorageManager,
+  SessionStore,
+  createHeliosStorageManager,
+} from './storage/index.js';
+
+export {
+  HeliosStateManager,
+  StateBindingController,
+  StateTransaction,
+} from './state/index.js';
 
 // Optional UI layer.
 export { HeliosUI } from './ui/HeliosUI.js';
 export { UIAttribute } from './ui/state/UIAttribute.js';
 export { TabbedPanel } from './ui/panels/TabbedPanel.js';
 export { PanelStack } from './ui/panels/PanelStack.js';
+export {
+  FILTERS_PANEL_SCHEMA,
+  LABELS_PANEL_SCHEMA,
+  LAYOUT_PANEL_SCHEMA,
+  LEGENDS_PANEL_SCHEMA,
+  MAPPERS_PANEL_SCHEMA,
+  SCENE_PANEL_SCHEMA,
+  SELECTION_PANEL_SCHEMA,
+  createPanelSchemaIndicator,
+  humanizeControlLabel,
+  normalizePanelSchema,
+  panelSchemaKeys,
+  panelSchemaSectionKeys,
+  panelSchemaSectionStatus,
+  panelSchemaStatus,
+  resolvePanelItemLabel,
+} from './ui/panels/panelSchema.js';
 export { defineHeliosWebComponents } from './ui/web-components/defineHeliosWebComponents.js';
 export { ensureDefaultStyles } from './ui/style/defaultStyles.js';

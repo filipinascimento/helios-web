@@ -15,6 +15,7 @@
     "test:e2e:rendering-options": "playwright test --headed --project=chromium tests/rendering-options.spec.js",
     "test:e2e:layout-calibration": "playwright test tests/layout-calibration.spec.js --project=chromium",
     "perf:history": "node scripts/run-performance-history.mjs",
+    "perf:storage": "node scripts/run-storage-performance.mjs",
     "perf:profile:1m": "node scripts/profile-1m-webgpu.mjs",
     "calibration:generate": "node scripts/layout-calibration/generate-layout-calibration.mjs",
     "calibration:run": "node scripts/layout-calibration/run-layout-calibration.mjs",

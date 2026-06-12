@@ -22,6 +22,27 @@ function indicatorByPath(scope, path) {
   return scope.locator(`.helios-ui-dirty-indicator[data-path="${path}"]`).first();
 }
 
+async function visibleDirtyMarkers(scope) {
+  return scope.locator('.helios-ui-dirty-indicator').evaluateAll((els) => (
+    els
+      .filter((el) => {
+        const rect = el.getBoundingClientRect();
+        const style = getComputedStyle(el);
+        return rect.width > 0
+          && rect.height > 0
+          && style.display !== 'none'
+          && style.visibility !== 'hidden'
+          && Number(style.opacity) !== 0
+          && el.dataset.state !== 'default';
+      })
+      .map((el) => ({
+        path: el.dataset.path ?? null,
+        state: el.dataset.state ?? null,
+        row: el.closest('.helios-ui-row,.helios-ui-subpanel,.helios-ui-panel')?.textContent?.trim() ?? '',
+      }))
+  ));
+}
+
 async function enableToggle(locator) {
   const toggle = locator.first();
   await expect(toggle).toBeVisible();
@@ -69,24 +90,54 @@ async function countNonBackgroundPixels(page) {
   return nonBackground;
 }
 
+async function countCanvasBrightPixels(page, threshold = 20) {
+  const screenshot = await page.locator('canvas.helios-layer-canvas3d').first().screenshot();
+  const png = await parseScreenshot(screenshot);
+  let bright = 0;
+  for (let i = 0; i < png.data.length; i += 4) {
+    if (png.data[i + 3] > 0 && (png.data[i] > threshold || png.data[i + 1] > threshold || png.data[i + 2] > threshold)) {
+      bright += 1;
+    }
+  }
+  return bright;
+}
+
+async function hideOverlayChrome(page) {
+  await page.evaluate(() => {
+    document
+      .querySelectorAll('.helios-ui-root, .helios-ui-panel, .helios-quick-controls, .helios-quick-controls-root, .helios-quick-control')
+      .forEach((el) => {
+        el.style.display = 'none';
+      });
+  });
+}
+
 test.describe('scene panel: tabs and appearance controls', () => {
   test('persistence markers track exact setting defaults and reset without marking sibling rows', async ({ page }) => {
     const workspaceId = `marker-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    await page.goto(`/?renderer=webgl&layout=none&mode=2d&nodes=120&session=0&workspaceId=${workspaceId}`);
+    await page.goto(`/?renderer=webgl&layout=none&mode=2d&nodes=120&session=1&workspaceId=${workspaceId}`);
     await waitForHelios(page);
 
     const scenePanel = panelByTitle(page, 'Scene');
     await expect(scenePanel).toBeVisible();
+    await expect(scenePanel.locator('.helios-ui-tab .helios-ui-dirty-indicator')).toHaveCount(0);
     const dimensionRow = rowByTitle(scenePanel, 'Dimension');
     const dimensionIndicator = indicatorByPath(scenePanel, 'scene.dimension');
     const themeIndicator = indicatorByPath(scenePanel, 'ui.theme');
     const backgroundIndicator = indicatorByPath(scenePanel, 'appearance.background');
 
     await expect(themeIndicator).toHaveAttribute('data-state', 'default');
+    await expect(themeIndicator).toBeHidden();
     await expect(dimensionIndicator).toHaveAttribute('data-state', 'default');
+    await expect(dimensionIndicator).toBeHidden();
     await expect(backgroundIndicator).toHaveAttribute('data-state', 'default');
+    await expect(backgroundIndicator).toBeHidden();
     await expect(indicatorByPath(scenePanel, 'appearance.edgeStyle.widthScale')).toHaveAttribute('data-state', 'default');
     await expect(indicatorByPath(scenePanel, 'appearance.edgeStyle.opacityScale')).toHaveAttribute('data-state', 'default');
+
+    for (const title of ['Node Size Scale', 'Node Opacity Scale', 'Outline Width Scale', 'Edge Width Scale', 'Edge Opacity Scale']) {
+      await expect(rowByTitle(scenePanel, title).locator('input[type="number"]').first()).not.toHaveValue('');
+    }
 
     const mismatchedMarkers = await scenePanel.locator('.helios-ui-dirty-indicator[data-path]').evaluateAll((els) => (
       els
@@ -97,7 +148,7 @@ test.describe('scene panel: tabs and appearance controls', () => {
         .map((el) => ({
           path: el.dataset.path,
           state: el.dataset.state,
-          expected: window.__helios?.persistence?.keyStatus?.(el.dataset.path, {
+          expected: window.__helios?.states?.status?.(el.dataset.path, {
             scope: el.dataset.scope,
             mode: el.dataset.mode,
           })?.state ?? 'default',
@@ -110,11 +161,13 @@ test.describe('scene panel: tabs and appearance controls', () => {
     await dimensionControl.getByRole('radio', { name: '3D' }).click();
     await expect.poll(() => page.evaluate(() => window.__helios.mode())).toBe('3d');
     await expect(dimensionIndicator).toHaveAttribute('data-state', 'changed');
+    await expect(dimensionIndicator).toBeVisible();
     await expect(backgroundIndicator).toHaveAttribute('data-state', 'default');
 
     await dimensionControl.getByRole('radio', { name: '2D' }).click();
     await expect.poll(() => page.evaluate(() => window.__helios.mode())).toBe('2d');
-    await expect(dimensionIndicator).toHaveAttribute('data-state', 'default');
+    await expect(dimensionIndicator).toHaveAttribute('data-state', 'changed');
+    await expect(dimensionIndicator).toBeVisible();
     await expect(backgroundIndicator).toHaveAttribute('data-state', 'default');
 
     await dimensionControl.getByRole('radio', { name: '3D' }).click();
@@ -143,7 +196,7 @@ test.describe('scene panel: tabs and appearance controls', () => {
     const syncRow = dataPanel.locator('.helios-ui-network__sync-row').first();
     await expect(syncRow.locator('.helios-ui-network-persistence__status')).toHaveCount(1);
     await expect(syncRow.locator('.helios-ui-network-persistence__sync')).toBeVisible();
-    await expect(syncRow.locator('.helios-ui-network-persistence__status')).toHaveText(/^(|Synced|Local saved|Remote failed|Positions dirty|Network too large)/);
+    await expect(syncRow.locator('.helios-ui-network-persistence__status')).toHaveText(/^(|Synced|Sync pending|Local saved|Remote failed|Network too large)/);
     await expect(nameBar.locator('.helios-ui-network-persistence__status')).toHaveCount(0);
     const nameOrder = await nameBar.evaluate((el) => Array.from(el.children).map((child) => ({
       tag: child.tagName.toLowerCase(),
@@ -156,32 +209,117 @@ test.describe('scene panel: tabs and appearance controls', () => {
     const inputIndex = nameOrder.findIndex((entry) => entry.tag === 'input');
     expect(inputIndex).toBeGreaterThanOrEqual(0);
     expect(syncOrder.some((entry) => String(entry.className).includes('helios-ui-network-persistence'))).toBe(true);
-    expect(syncOrder.at(-1)?.className).toContain('helios-ui-network-autosync');
+    expect(syncOrder.some((entry) => String(entry.className).includes('helios-ui-network-autosync'))).toBe(false);
     const persistenceOrder = await syncRow.locator('.helios-ui-network-persistence').first().evaluate((el) => (
       Array.from(el.children).map((child) => child.className)
     ));
     expect(String(persistenceOrder[0])).toContain('helios-ui-network-persistence__controls');
     expect(String(persistenceOrder[1])).toContain('helios-ui-network-persistence__status');
+    await expect(syncRow.locator('.helios-ui-network-persistence__controls .helios-ui-network-autosync')).toHaveCount(1);
     const autoSyncToggle = syncRow.getByRole('switch', { name: 'Auto sync network persistence' });
     await expect(autoSyncToggle).toHaveAttribute('aria-checked', 'true');
     await autoSyncToggle.click();
     await expect(autoSyncToggle).toHaveAttribute('aria-checked', 'false');
-    await expect.poll(() => page.evaluate(() => window.__helios.persistence.get('network.persistence.autosave'))).toBe(false);
+    await expect.poll(() => page.evaluate(() => window.__helios.states.get('network.persistence.autosave'))).toBe(false);
     await autoSyncToggle.click();
     await expect(autoSyncToggle).toHaveAttribute('aria-checked', 'true');
-    await expect.poll(() => page.evaluate(() => window.__helios.persistence.get('network.persistence.autosave'))).toBe(true);
+    await expect.poll(() => page.evaluate(() => window.__helios.states.get('network.persistence.autosave'))).toBe(true);
   });
 
   test('network autosync URL flag initializes the Data sync row toggle', async ({ page }) => {
     const workspaceId = `autosync-off-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    await page.goto(`/?renderer=webgl&layout=none&mode=2d&nodes=120&session=0&workspaceId=${workspaceId}&networkAutosave=0`);
+    await page.goto(`/?renderer=webgl&layout=none&mode=2d&nodes=120&session=1&workspaceId=${workspaceId}&networkAutosave=0`);
     await waitForHelios(page);
     const dataPanel = panelByTitle(page, 'Data');
     const autoSyncToggle = dataPanel.locator('.helios-ui-network__sync-row').getByRole('switch', {
       name: 'Auto sync network persistence',
     });
     await expect(autoSyncToggle).toHaveAttribute('aria-checked', 'false');
-    await expect.poll(() => page.evaluate(() => window.__helios.persistence.get('network.persistence.autosave'))).toBe(false);
+    await expect.poll(() => page.evaluate(() => window.__helios.states.get('network.persistence.autosave'))).toBe(false);
+  });
+
+  test('oversized position autosync disables the Data auto sync toggle and keeps dirty age status', async ({ page }) => {
+    const workspaceId = `autosync-size-limit-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    await page.goto(`/?renderer=webgl&layout=none&mode=2d&nodes=120&session=1&workspaceId=${workspaceId}&restoreNetwork=0`);
+    await waitForHelios(page);
+    const dataPanel = panelByTitle(page, 'Data');
+    const syncRow = dataPanel.locator('.helios-ui-network__sync-row').first();
+    const status = syncRow.locator('.helios-ui-network-persistence__status');
+    const autoSyncToggle = syncRow.getByRole('switch', {
+      name: 'Auto sync network persistence',
+    });
+
+    await page.evaluate(async () => {
+      const helios = window.__helios;
+      await helios.storage.sync({
+        includeNetwork: true,
+        captureThumbnail: false,
+        retention: { enabled: false },
+      });
+      helios.storage.configureSession?.({
+        autosyncPayloadLimits: {
+          positionMaxBytes: 1,
+          networkMaxNodes: 1000,
+        },
+      });
+      helios.storage.markPositionsDirty('test-oversized-positions');
+    });
+
+    await expect(autoSyncToggle).toBeDisabled();
+    await expect(autoSyncToggle).toHaveAttribute('aria-checked', 'false');
+    await expect(autoSyncToggle).toHaveAttribute('title', /Position autosync is disabled/);
+    await expect(status).toHaveText(/^Synced \d+s ago$/);
+    await expect.poll(() => page.evaluate(() => ({
+      dirty: window.__helios.storage.status().networkData.dirty,
+      positionsDirty: window.__helios.storage.status().networkData.positionsDirty,
+      autosyncDisabled: window.__helios.storage.status().networkData.autosyncDisabled,
+      autosave: window.__helios.states.get('network.persistence.autosave'),
+    }))).toMatchObject({
+      dirty: true,
+      positionsDirty: true,
+      autosyncDisabled: true,
+      autosave: false,
+    });
+  });
+
+  test('node size scale zero renders nodes with zero radius instead of a hidden size floor', async ({ page }) => {
+    await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=120&session=0&restoreNetwork=0');
+    await waitForHelios(page);
+    await hideOverlayChrome(page);
+
+    await page.evaluate(async () => {
+      const helios = window.__helios;
+      helios.background?.([0, 0, 0, 1]);
+      helios.edgeOpacityScale?.(0);
+      helios.edgeWidthScale?.(0);
+      helios.nodeSizeBase?.(0);
+      helios.nodeOutlineWidthBase?.(0);
+      helios.nodeOutlineWidthScale?.(0);
+      helios.nodeOpacityScale?.(1);
+      helios.nodeSizeScale?.(4);
+      helios.requestRender?.('test-node-size-visible');
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    });
+    await expect.poll(() => page.evaluate(() => window.__helios.renderer?.graphLayer?.edgeWidthScale ?? null)).toBe(0);
+    await expect.poll(() => page.evaluate(() => window.__helios.renderer?.graphLayer?.edgeOpacityScale ?? null)).toBe(0);
+    const visiblePixels = await countCanvasBrightPixels(page);
+    expect(visiblePixels).toBeGreaterThan(100);
+
+    await page.evaluate(async () => {
+      const helios = window.__helios;
+      helios.states.set('appearance.nodeStyle.sizeScale', 0, {
+        source: 'ui',
+        reason: 'test-zero-node-size',
+        journal: false,
+      });
+      helios.requestRender?.('test-node-size-zero');
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    });
+    await expect.poll(() => page.evaluate(() => window.__helios.nodeSizeScale())).toBe(0);
+    await expect.poll(() => page.evaluate(() => window.__helios.renderer?.graphLayer?.nodeSizeScale ?? null)).toBe(0);
+    const zeroPixels = await countCanvasBrightPixels(page);
+    expect(zeroPixels).toBeLessThan(5000);
+    expect(zeroPixels).toBeLessThan(visiblePixels * 0.01);
   });
 
   test('restored persisted dimension remains marked as changed from defaults', async ({ page }) => {
@@ -199,7 +337,7 @@ test.describe('scene panel: tabs and appearance controls', () => {
     await expect.poll(() => page.evaluate(() => window.__helios.mode())).toBe('3d');
     await expect(dimensionIndicator).toHaveAttribute('data-state', 'changed');
     await page.evaluate(async () => {
-      await window.__helios.persistence.flush({
+      await window.__helios.storage.flush({
         includeNetwork: true,
         network: { format: 'zxnet' },
         snapshotLayoutRuntime: true,
@@ -214,13 +352,116 @@ test.describe('scene panel: tabs and appearance controls', () => {
     const restoredIndicator = indicatorByPath(restoredScenePanel, 'scene.dimension');
     await expect.poll(() => page.evaluate(() => window.__helios.mode()), { timeout: 15000 }).toBe('3d');
     await expect(restoredIndicator).toHaveAttribute('data-state', 'changed');
-    await expect.poll(() => page.evaluate(() => window.__helios.persistence.keyStatus('scene.dimension').state))
+    await expect.poll(() => page.evaluate(() => window.__helios.states.status('scene.dimension').state))
       .toBe('changed');
+  });
+
+  test('restoring node size does not create unrelated layout position markers', async ({ page }) => {
+    const sessionId = `node-size-layout-clean-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const workspaceId = `node-size-layout-clean-workspace-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const url = `/?renderer=webgl&layout=none&mode=2d&nodes=120&session=1&sessionId=${sessionId}&restoreNetwork=1&workspaceId=${workspaceId}&maxSessionBytes=0`;
+    await page.goto(url);
+    await waitForHelios(page);
+
+    await page.evaluate(() => {
+      window.__helios.nodeSizeScale(1.5);
+    });
+    await page.evaluate(async () => {
+      await window.__helios.storage.flush({
+        includeNetwork: true,
+        network: { format: 'zxnet' },
+        snapshotLayoutRuntime: true,
+      });
+    });
+
+    await page.goto('/tests/fixtures/blank.html');
+    await page.goto(url);
+    await waitForHelios(page);
+
+    const scenePanel = panelByTitle(page, 'Scene');
+    const layoutPanel = panelByTitle(page, 'Layout');
+    await expect(indicatorByPath(scenePanel, 'appearance.nodeStyle.sizeScale')).toHaveAttribute('data-state', 'changed');
+    await expect(indicatorByPath(layoutPanel, 'layout.positionAttribute')).toHaveAttribute('data-state', 'default');
+    await expect(indicatorByPath(layoutPanel, 'layout.positionAttribute')).toBeHidden();
+    await expect.poll(() => page.evaluate(() => window.__helios.states.status('layout.positionAttribute').state))
+      .toBe('default');
+  });
+
+  test('node size default-value override stays marked until explicit reset', async ({ page }) => {
+    const workspaceId = `node-size-default-reset-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    await page.goto(`/?renderer=webgl&layout=none&mode=2d&nodes=120&session=1&workspaceId=${workspaceId}&restoreNetwork=1&maxSessionBytes=0`);
+    await waitForHelios(page);
+
+    const scenePanel = panelByTitle(page, 'Scene');
+    const nodeSizeRow = rowByTitle(scenePanel, 'Node Size Scale');
+    const nodeSizeInput = nodeSizeRow.locator('input[type="number"]').first();
+    const nodeSizeIndicator = indicatorByPath(scenePanel, 'appearance.nodeStyle.sizeScale');
+    await expect(nodeSizeIndicator).toHaveAttribute('data-state', 'default');
+
+    await nodeSizeInput.fill('1');
+    await nodeSizeInput.press('Enter');
+
+    await expect(nodeSizeInput).toHaveValue('1.000');
+    await expect(nodeSizeIndicator).toHaveAttribute('data-state', 'changed');
+    await expect.poll(() => page.evaluate(() => (
+      window.__helios.states.status('appearance.nodeStyle.sizeScale').state
+    ))).toBe('changed');
+
+    await nodeSizeIndicator.click();
+    await page.locator('.helios-ui-dirty-menu .helios-ui-dirty-menu__item', { hasText: 'Reset to default' }).click();
+
+    await expect(nodeSizeInput).toHaveValue('1.000');
+    await expect(nodeSizeIndicator).toHaveAttribute('data-state', 'default');
+    await expect(nodeSizeIndicator).toBeHidden();
+    await expect.poll(() => page.evaluate(() => (
+      window.__helios.states.status('appearance.nodeStyle.sizeScale').state
+    ))).toBe('default');
+  });
+
+  test('fresh URL session starts without appearance markers', async ({ page }) => {
+    const workspaceId = `fresh-url-marker-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const sessionId = `fresh-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    await page.goto(`/?renderer=webgl&nodes=10000&workspaceId=${workspaceId}&sessionId=${encodeURIComponent(sessionId)}`);
+    await waitForHelios(page);
+    await page.waitForTimeout(1000);
+
+    const scenePanel = panelByTitle(page, 'Scene');
+    await expect(scenePanel).toBeVisible();
+    const visibleAppearanceMarkers = await visibleDirtyMarkers(scenePanel);
+    expect(visibleAppearanceMarkers).toEqual([]);
+    expect(await page.evaluate(() => window.__helios?.behavior?.interface?.resumePrompt?.() ?? null)).toBeNull();
+  });
+
+  test('debug panel is present by default and layout stop/start does not mark appearance', async ({ page }) => {
+    const workspaceId = `debug-layout-marker-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const sessionId = `debug-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    await page.goto(`/?renderer=webgl&nodes=1000&workspaceId=${workspaceId}&sessionId=${encodeURIComponent(sessionId)}`);
+    await waitForHelios(page);
+
+    const debugPanel = panelByTitle(page, 'Debug');
+    await expect(debugPanel).toBeVisible();
+
+    const scenePanel = panelByTitle(page, 'Scene');
+    await expect(scenePanel).toBeVisible();
+    await expect.poll(() => visibleDirtyMarkers(scenePanel)).toEqual([]);
+
+    await page.evaluate(() => {
+      window.__helios.stopLayout?.('test-layout-toggle');
+      window.__helios.startLayout?.('test-layout-toggle');
+    });
+
+    await expect.poll(() => visibleDirtyMarkers(scenePanel)).toEqual([]);
+    const appearanceOverrides = await page.evaluate(() => (
+      window.__helios.states
+        .overrideKeys()
+        .filter((key) => key === 'appearance' || key.startsWith('appearance.') || key.startsWith('behaviors.appearance.'))
+    ));
+    expect(appearanceOverrides).toEqual([]);
   });
 
   test('layout parameter persistence markers are registry-driven', async ({ page }) => {
     const workspaceId = `layout-marker-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    await page.goto(`/?renderer=webgl&layout=gpuforce&mode=2d&nodes=120&session=0&workspaceId=${workspaceId}`);
+    await page.goto(`/?renderer=webgl&layout=gpuforce&mode=2d&nodes=120&session=1&workspaceId=${workspaceId}`);
     await waitForHelios(page);
 
     const layoutPanel = panelByTitle(page, 'Layout');
@@ -228,7 +469,7 @@ test.describe('scene panel: tabs and appearance controls', () => {
     const gravityIndicator = indicatorByPath(layoutPanel, 'layout.parameters.kGravity');
     await expect(gravityIndicator).toHaveAttribute('data-state', 'default');
     await expect.poll(() => page.evaluate(() => (
-      window.__helios.persistence.keyStatus('layout.parameters.kGravity')?.defaultValue
+      window.__helios.states.status('layout.parameters.kGravity')?.defaultValue
     ))).toBeGreaterThan(0);
 
     const gravityRow = rowByTitle(layoutPanel, 'Gravity');
@@ -238,11 +479,11 @@ test.describe('scene panel: tabs and appearance controls', () => {
     await gravityInput.dispatchEvent('change');
 
     await expect.poll(() => page.evaluate(() => (
-      window.__helios.persistence.get('layout.parameters.kGravity')
+      window.__helios.states.get('layout.parameters.kGravity')
     ))).toBeCloseTo(0.002, 6);
     await expect(gravityIndicator).toHaveAttribute('data-state', 'changed');
     const markerMatchesRegistry = await gravityIndicator.evaluate((el) => (
-      el.dataset.state === window.__helios.persistence.keyStatus(el.dataset.path, {
+      el.dataset.state === window.__helios.states.status(el.dataset.path, {
         scope: el.dataset.scope,
         mode: el.dataset.mode,
       })?.state
@@ -514,8 +755,6 @@ test.describe('scene panel: tabs and appearance controls', () => {
 
     const adaptiveEnabled = scenePanel.locator('[role="switch"][aria-label="Adaptive Edges"]').first();
     await expect(adaptiveEnabled).toBeVisible();
-    await expect(adaptiveEnabled).toHaveAttribute('aria-checked', 'true');
-    await adaptiveEnabled.click();
     await expect(adaptiveEnabled).toHaveAttribute('aria-checked', 'false');
 
     const adaptiveThresholdRow = scenePanel
@@ -525,13 +764,13 @@ test.describe('scene panel: tabs and appearance controls', () => {
     await adaptiveThresholdRow.locator('input[type="number"]').dispatchEvent('change');
 
     const adaptiveFramesRow = scenePanel
-      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Avg Frames"))')
+      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Averaging Frames"))')
       .first();
     await adaptiveFramesRow.locator('input[type="number"]').fill('4');
     await adaptiveFramesRow.locator('input[type="number"]').dispatchEvent('change');
 
     const adaptiveRetryRow = scenePanel
-      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Hold Time"))')
+      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Probe Interval"))')
       .first();
     await adaptiveRetryRow.locator('input[type="number"]').fill('1400');
     await adaptiveRetryRow.locator('input[type="number"]').dispatchEvent('change');
@@ -587,7 +826,7 @@ test.describe('scene panel: tabs and appearance controls', () => {
     });
 
     const maxLabelsRow = scenePanel
-      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Max Labels"))')
+      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Max Visible"))')
       .first();
     const maxLabelsInput = maxLabelsRow.locator('input[type="number"]').first();
     await maxLabelsInput.fill('18');
@@ -596,7 +835,7 @@ test.describe('scene panel: tabs and appearance controls', () => {
     expect(maxLabels).toBe(18);
 
     const labelRadiusFactorRow = scenePanel
-      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Label Radius Factor"))')
+      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Offset Radius Factor"))')
       .first();
     await expect(labelRadiusFactorRow).toBeVisible();
     const labelRadiusFactorInput = labelRadiusFactorRow.locator('input[type="number"]').first();
@@ -605,9 +844,7 @@ test.describe('scene panel: tabs and appearance controls', () => {
     const labelRadiusFactor = await page.evaluate(() => window.__helios.labels()?.offsetRadiusFactor ?? null);
     expect(labelRadiusFactor).toBeCloseTo(-0.5, 3);
 
-    const labelPixelOffsetRow = scenePanel
-      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Label Pixel Offset"))')
-      .first();
+    const labelPixelOffsetRow = rowByTitle(scenePanel, 'Offset');
     await expect(labelPixelOffsetRow).toBeVisible();
     const labelPixelOffsetInput = labelPixelOffsetRow.locator('input[type="number"]').first();
     await labelPixelOffsetInput.fill('9');
@@ -616,7 +853,7 @@ test.describe('scene panel: tabs and appearance controls', () => {
     expect(labelPixelOffset).toBe(9);
 
     const labelMaxCharsRow = scenePanel
-      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Label Max Chars"))')
+      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Max Chars"))')
       .first();
     await expect(labelMaxCharsRow).toBeVisible();
     const labelMaxCharsInput = labelMaxCharsRow.locator('input[type="number"]').first();
@@ -626,7 +863,7 @@ test.describe('scene panel: tabs and appearance controls', () => {
     expect(labelMaxChars).toBe(12);
 
     const labelMaxRowsRow = scenePanel
-      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Label Max Rows"))')
+      .locator('.helios-ui-row:has(.helios-ui-label__title:has-text("Max Rows"))')
       .first();
     await expect(labelMaxRowsRow).toBeVisible();
     const labelMaxRowsInput = labelMaxRowsRow.locator('input[type="number"]').first();
@@ -757,8 +994,8 @@ test.describe('scene panel: tabs and appearance controls', () => {
     await page.evaluate(() => {
       window.__legendPatches = [];
       const behavior = window.__helios?.behavior?.legends;
-      const original = behavior.legends.bind(behavior);
-      behavior.legends = function legendsSpy(options) {
+      const original = behavior.update.bind(behavior);
+      behavior.update = function legendsUpdateSpy(options) {
         window.__legendPatches.push(JSON.parse(JSON.stringify(options)));
         return original(options);
       };

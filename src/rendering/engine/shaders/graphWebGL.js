@@ -695,9 +695,9 @@ void main() {
   float baseSize = (u_nodeSizeBase + u_nodeSizeScale * rawSize) * sizeMul;
   float rawOutline = fetchNodeOutlineWidth(a_nodeId);
   float outlineWidth = max(0.0, (u_outlineWidthBase + u_outlineWidthScale * rawOutline) * outlineMul);
-  float fullSize = (baseSize + outlineWidth) * semanticScale;
+  float fullSize = max(0.0, baseSize + outlineWidth) * semanticScale;
   float semanticOutlineWidth = outlineWidth * semanticScale;
-  float radius = max(1.0, fullSize) * 0.5;
+  float radius = fullSize * 0.5;
 
   vec3 right = u_cameraRight;
   vec3 up = u_cameraUp;

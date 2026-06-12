@@ -14,6 +14,7 @@ import { clampNumber } from '../utils/numbers.js';
 import { toHex8 } from '../utils/colors.js';
 import { isPublicAttributeName } from '../utils/attributes.js';
 import { shallowCloneChannelConfig } from '../utils/channelConfig.js';
+import { MAPPERS_PANEL_SCHEMA } from './panelSchema.js';
 
 const DIVERGING_D3_COLORMAPS = new Set([
   'interpolateBrBG',
@@ -5264,11 +5265,20 @@ export class MappersPanel {
         syncChannelSelect();
       },
       tabs: [
-        { id: 'nodes', title: 'Nodes', content: nodeTab.root },
-        { id: 'edges', title: 'Edges', content: edgeTab.root },
+        {
+          id: 'nodes',
+          title: 'Nodes',
+          content: nodeTab.root,
+        },
+        {
+          id: 'edges',
+          title: 'Edges',
+          content: edgeTab.root,
+        },
         { id: 'density', title: 'Density', content: densityTab.root },
       ],
       variant: 'panel',
+      panelSchema: MAPPERS_PANEL_SCHEMA,
     });
   }
 }

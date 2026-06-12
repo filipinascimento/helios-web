@@ -271,7 +271,7 @@ test.describe('docs basic demo metrics panel', () => {
     await expect(eigenStatus).toHaveText(/Done|not available/i);
     await expect(betweennessStatus).toHaveText(/Done|not available/i);
     await expect.poll(() => page.evaluate(() => (
-      window.__helios.persistence?.keyStatus?.('metrics', { mode: 'scope' })?.state ?? 'default'
+      window.__helios.states?.status?.('metrics', { mode: 'scope' })?.state ?? 'default'
     )), { timeout: 10000 }).not.toBe('default');
     await expect(panel.locator('.helios-ui-panel__persistence-indicator[data-path="metrics"]').first())
       .not.toHaveAttribute('data-state', 'default');
@@ -328,9 +328,9 @@ test.describe('docs basic demo metrics panel', () => {
           eigenvector: values.eigenvector,
           betweenness: values.betweenness,
         },
-        persistence: {
-          metricsStatus: window.__helios?.persistence?.keyStatus?.('metrics', { mode: 'scope' }) ?? null,
-          lastMetricOutput: window.__helios?.persistence?.get?.('metrics.lastOutput') ?? null,
+        storage: {
+          metricsStatus: window.__helios?.states?.status?.('metrics', { mode: 'scope' }) ?? null,
+          lastMetricOutput: window.__helios?.states?.get?.('metrics.lastOutput') ?? null,
         },
       };
     });

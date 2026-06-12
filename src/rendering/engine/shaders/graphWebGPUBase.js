@@ -343,7 +343,7 @@ fn nodeVertex(input : VertexInput) -> VertexOutput {
   }
 
   let semanticScale = semanticZoomScale();
-  let diameter = max(1.0, (globals.nodeSize.x + globals.nodeSize.y * rawSize) * sizeMul);
+  let diameter = max(0.0, (globals.nodeSize.x + globals.nodeSize.y * rawSize) * sizeMul);
   ${NODE_OUTLINE_RAW_EXPR}
   let outlineWidth = max(0.0, (globals.nodeOutline.x + globals.nodeOutline.y * outlineRaw) * outlineMul);
   let fullDiameter = (diameter + outlineWidth) * semanticScale;

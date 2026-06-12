@@ -62,6 +62,31 @@ function normalizeConfigPatch(options = {}) {
   return next;
 }
 
+function detailTargetsPath(detail = {}, path = '') {
+  const keys = [];
+  if (typeof detail.storageKey === 'string') keys.push(detail.storageKey);
+  if (typeof detail.stateKey === 'string') keys.push(detail.stateKey);
+  if (Array.isArray(detail.storageKeys)) {
+    for (const key of detail.storageKeys) if (typeof key === 'string') keys.push(key);
+  }
+  if (Array.isArray(detail.stateKeys)) {
+    for (const key of detail.stateKeys) if (typeof key === 'string') keys.push(key);
+  }
+  if (!keys.length) return false;
+  return keys.some((key) => key === path || key.startsWith(`${path}.`) || path.startsWith(`${key}.`));
+}
+
+function createEntrySubscribe(behavior, path) {
+  return (notify) => {
+    if (typeof notify !== 'function') return () => {};
+    return behavior.on('change', (event) => {
+      const detail = event?.detail ?? event ?? {};
+      if (!detailTargetsPath(detail, path)) return;
+      notify(undefined, detail);
+    });
+  };
+}
+
 /**
  * Built-in behavior for SVG label overlays.
  *
@@ -107,13 +132,21 @@ export class LabelsBehavior extends Behavior {
     return this;
   }
 
-  update(options = {}) {
+  update(options = {}, changeOptions = {}) {
     super.update(options);
     const patch = normalizeConfigPatch(options);
     if (Object.keys(patch).length === 0) return this;
     this.state = { ...this.state, ...patch };
     this.applyConfig({ silent: true, reason: 'options' });
-    this.emitChange('options');
+    const storageKeys = new Set(Object.keys(patch).map((key) => `labels.${key}`));
+    if (Object.prototype.hasOwnProperty.call(patch, 'enabled') || Object.prototype.hasOwnProperty.call(patch, 'selectionMode')) {
+      storageKeys.add('labels.enabled');
+      storageKeys.add('labels.mode');
+    }
+    this.emitChange('options', {
+      trackOverride: changeOptions.trackOverride !== false,
+      storageKeys: Array.from(storageKeys),
+    });
     return this;
   }
 
@@ -123,10 +156,195 @@ export class LabelsBehavior extends Behavior {
     };
   }
 
+  stateEntries() {
+    const subscribe = (key) => createEntrySubscribe(this, `labels.${key}`);
+    return {
+      state: {
+        description: 'Serializable label behavior state.',
+        default: this.serialize(),
+        type: 'object',
+        scope: 'workspace',
+        aliases: ['labels.state'],
+        getter: () => this.serialize(),
+        setter: (value) => this.restore(value),
+        subscribe: () => () => {},
+      },
+      enabled: {
+        description: 'Whether labels are visible.',
+        default: this.state.enabled === true,
+        type: 'boolean',
+        scope: 'workspace',
+        aliases: ['labels.enabled'],
+        ui: { label: 'Visible', controller: 'toggle' },
+        getter: () => this.state.enabled === true,
+        setter: (value) => this.enabled(value === true, { trackOverride: false }),
+        subscribe: subscribe('enabled'),
+      },
+      mode: {
+        description: 'Label selection mode.',
+        default: this.mode(),
+        type: 'string',
+        scope: 'workspace',
+        aliases: ['labels.mode'],
+        ui: {
+          label: 'Mode',
+          controller: 'select',
+          options: ['off', 'auto', 'selected-only'],
+        },
+        getter: () => this.mode(),
+        setter: (value) => this.mode(value, { trackOverride: false }),
+        subscribe: subscribe('mode'),
+      },
+      source: {
+        description: 'Node attribute or source used for labels.',
+        default: this.state.source ?? null,
+        type: 'string',
+        scope: 'workspace',
+        aliases: ['labels.source'],
+        ui: { label: 'Source', controller: 'text' },
+        getter: () => this.source(),
+        setter: (value) => this.source(value),
+        subscribe: subscribe('source'),
+      },
+      maxVisible: {
+        description: 'Maximum visible labels.',
+        default: this.maxVisible(),
+        type: 'number',
+        scope: 'workspace',
+        aliases: ['labels.maxVisible'],
+        ui: { label: 'Max Visible', controller: 'slider', min: 0, max: 1000, step: 1 },
+        getter: () => this.maxVisible(),
+        setter: (value) => this.maxVisible(value),
+        subscribe: subscribe('maxVisible'),
+      },
+      selectedOnlySpaceAware: {
+        description: 'Whether selected-only labels use regular collision and space-aware placement.',
+        default: this.selectedOnlySpaceAware(),
+        type: 'boolean',
+        scope: 'workspace',
+        aliases: ['labels.selectedOnlySpaceAware'],
+        ui: { label: 'Use Available Space', controller: 'toggle' },
+        getter: () => this.selectedOnlySpaceAware(),
+        setter: (value) => this.selectedOnlySpaceAware(value === true),
+        subscribe: subscribe('selectedOnlySpaceAware'),
+      },
+      fontSizeScale: {
+        description: 'Label font-size scale.',
+        default: this.fontSizeScale(),
+        type: 'number',
+        scope: 'workspace',
+        aliases: ['labels.fontSizeScale'],
+        ui: { label: 'Font Size Scale', controller: 'slider', min: 0.25, max: 4, step: 0.05 },
+        getter: () => this.fontSizeScale(),
+        setter: (value) => this.fontSizeScale(value),
+        subscribe: subscribe('fontSizeScale'),
+      },
+      minScreenRadiusPx: {
+        description: 'Minimum node screen radius for labels.',
+        default: this.minScreenRadius(),
+        type: 'number',
+        scope: 'workspace',
+        aliases: ['labels.minScreenRadius'],
+        ui: { label: 'Min Screen Radius', controller: 'slider', min: 0, max: 64, step: 0.5 },
+        getter: () => this.minScreenRadius(),
+        setter: (value) => this.minScreenRadius(value),
+        subscribe: subscribe('minScreenRadiusPx'),
+      },
+      outlineWidth: {
+        description: 'Label outline width in pixels.',
+        default: this.outlineWidth(),
+        type: 'number',
+        scope: 'workspace',
+        aliases: ['labels.outlineWidth'],
+        ui: { label: 'Outline Width', controller: 'slider', min: 0, max: 12, step: 0.25 },
+        getter: () => this.outlineWidth(),
+        setter: (value) => this.outlineWidth(value),
+        subscribe: subscribe('outlineWidth'),
+      },
+      offsetRadiusFactor: {
+        description: 'Label radial offset factor.',
+        default: this.offsetRadiusFactor(),
+        type: 'number',
+        scope: 'workspace',
+        aliases: ['labels.offsetRadiusFactor'],
+        ui: { label: 'Offset Radius Factor', controller: 'slider', min: -4, max: 8, step: 0.05 },
+        getter: () => this.offsetRadiusFactor(),
+        setter: (value) => this.offsetRadiusFactor(value),
+        subscribe: subscribe('offsetRadiusFactor'),
+      },
+      offsetPx: {
+        description: 'Label pixel offset.',
+        default: this.offsetPx(),
+        type: 'number',
+        scope: 'workspace',
+        aliases: ['labels.offsetPx'],
+        ui: { label: 'Offset', controller: 'slider', min: -64, max: 64, step: 0.5 },
+        getter: () => this.offsetPx(),
+        setter: (value) => this.offsetPx(value),
+        subscribe: subscribe('offsetPx'),
+      },
+      maxChars: {
+        description: 'Maximum characters per label row.',
+        default: this.maxChars(),
+        type: 'number',
+        scope: 'workspace',
+        aliases: ['labels.maxChars'],
+        ui: { label: 'Max Chars', controller: 'slider', min: 0, max: 256, step: 1 },
+        getter: () => this.maxChars(),
+        setter: (value) => this.maxChars(value),
+        subscribe: subscribe('maxChars'),
+      },
+      maxRows: {
+        description: 'Maximum label rows.',
+        default: this.maxRows(),
+        type: 'number',
+        scope: 'workspace',
+        aliases: ['labels.maxRows'],
+        ui: { label: 'Max Rows', controller: 'slider', min: 1, max: 8, step: 1 },
+        getter: () => this.maxRows(),
+        setter: (value) => this.maxRows(value),
+        subscribe: subscribe('maxRows'),
+      },
+      fill: {
+        description: 'Label fill color.',
+        default: this.fill(),
+        type: 'string',
+        scope: 'workspace',
+        aliases: ['labels.fill'],
+        ui: { label: 'Fill', controller: 'color' },
+        getter: () => this.fill(),
+        setter: (value) => this.fill(value),
+        subscribe: subscribe('fill'),
+      },
+      outlineColor: {
+        description: 'Label outline color.',
+        default: this.outlineColor(),
+        type: 'string',
+        scope: 'workspace',
+        aliases: ['labels.outlineColor'],
+        ui: { label: 'Outline', controller: 'color' },
+        getter: () => this.outlineColor(),
+        setter: (value) => this.outlineColor(value),
+        subscribe: subscribe('outlineColor'),
+      },
+      fontFamily: {
+        description: 'Label font family.',
+        default: this.fontFamily(),
+        type: 'string',
+        scope: 'workspace',
+        aliases: ['labels.fontFamily'],
+        ui: { label: 'Font Family', controller: 'text' },
+        getter: () => this.fontFamily(),
+        setter: (value) => this.fontFamily(value),
+        subscribe: subscribe('fontFamily'),
+      },
+    };
+  }
+
   restore(snapshot = {}) {
     const options = snapshot?.options && typeof snapshot.options === 'object' ? snapshot.options : {};
-    this.update(options);
-    this.emitChange('restore');
+    this.update(options, { trackOverride: false });
+    this.emitChange('restore', { trackOverride: false });
     return this;
   }
 
@@ -159,22 +377,22 @@ export class LabelsBehavior extends Behavior {
     return this.update(options);
   }
 
-  enabled(value) {
+  enabled(value, options = {}) {
     if (arguments.length === 0) return this.mode() !== 'off';
-    return this.mode(value === true ? 'auto' : 'off');
+    return this.mode(value === true ? 'auto' : 'off', options);
   }
 
-  mode(value) {
+  mode(value, options = {}) {
     if (arguments.length === 0) {
       if (this.state.enabled !== true) return 'off';
       return this.state.selectionMode === 'selected-only' ? 'selected-only' : 'auto';
     }
     const next = normalizeMode(value, this.mode());
-    if (next === 'off') return this.update({ enabled: false });
+    if (next === 'off') return this.update({ enabled: false }, options);
     return this.update({
       enabled: true,
       selectionMode: next === 'selected-only' ? 'selected-only' : 'ranked',
-    });
+    }, options);
   }
 
   selectedOnlySpaceAware(value) {
@@ -263,7 +481,7 @@ export class LabelsBehavior extends Behavior {
     const nextMode = this.state.enabled === true && this.state.selectionMode === 'ranked'
       ? 'auto'
       : 'selected-only';
-    return this.mode(nextMode);
+    return this.mode(nextMode, { trackOverride: false });
   }
 
   setHoverPolicy({ enabled = false, source = null } = {}) {

@@ -24,20 +24,149 @@ function parseScreenshot(buffer) {
 
 test.describe('network load/save', () => {
   test('keeps persistence storage and sessions off for library-style construction by default', async ({ page }) => {
-    await page.goto('/tests/fixtures/demo.html?layout=none&mode=2d&nodes=24');
+    await page.goto('/tests/fixtures/demo.html?layout=none&mode=2d&nodes=24&mappers=1');
     await waitForDiagnostics(page);
 
     const status = await page.evaluate(() => ({
-      backendCount: window.__helios.persistence?.backendStatus?.().length ?? -1,
-      hasSessionController: Boolean(window.__helios.persistence?.sessionController),
-      networkAutosave: window.__helios.persistence?.get?.('network.persistence.autosave', null),
-      positionAutosave: window.__helios.persistence?.get?.('positions.persistence.autosave', null),
+      hasPersistenceFacade: Object.prototype.hasOwnProperty.call(window.__helios, 'persistence'),
+      networkAutosave: window.__helios.states?.get?.('network.persistence.autosave', null),
+      positionAutosave: window.__helios.states?.get?.('positions.persistence.autosave', null),
+      storageType: window.__helios.storage?.type ?? null,
+      storageCapabilities: window.__helios.storage?.capabilities ?? null,
     }));
 
-    expect(status.backendCount).toBe(0);
-    expect(status.hasSessionController).toBe(false);
+    expect(status.hasPersistenceFacade).toBe(false);
     expect(status.networkAutosave).toBe(false);
     expect(status.positionAutosave).toBe(false);
+    expect(status.storageType).toBe('dummy');
+    expect(status.storageCapabilities?.persistent).toBe(false);
+    expect(status.storageCapabilities?.sessions).toBe(false);
+    await expect(page.locator('.helios-ui--storage-disabled')).toHaveCount(1);
+    const visibleDirtyIndicators = await page.locator('.helios-ui-dirty-indicator').evaluateAll((nodes) => (
+      nodes.filter((node) => {
+        const rect = node.getBoundingClientRect();
+        const style = getComputedStyle(node);
+        return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+      }).length
+    ));
+    expect(visibleDirtyIndicators).toBe(0);
+    await expect(page.locator('.helios-ui-resume-prompt').first()).toBeHidden();
+    await expect(page.locator('.helios-ui-network-persistence')).toHaveCount(0);
+  });
+
+  test('dummy storage state round-trips through exported snapshots without durable UI chrome', async ({ page }) => {
+    await page.goto('/tests/fixtures/demo.html?layout=none&mode=2d&nodes=48&mappers=1');
+    await waitForDiagnostics(page);
+
+    await expect(page.locator('.helios-ui--storage-disabled')).toHaveCount(1);
+    await expect(page.locator('.helios-ui-resume-prompt').first()).toBeHidden();
+    await expect(page.locator('.helios-ui-network-persistence')).toHaveCount(0);
+    const visibleDirtyIndicators = await page.locator('.helios-ui-dirty-indicator').evaluateAll((nodes) => (
+      nodes.filter((node) => {
+        const rect = node.getBoundingClientRect();
+        const style = getComputedStyle(node);
+        return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+      }).length
+    ));
+    expect(visibleDirtyIndicators).toBe(0);
+
+    const result = await page.evaluate(async () => {
+      const helios = window.__helios;
+      const writeEdgeWidth = (value, reason) => {
+        helios.states.set('appearance.edgeStyle.widthScale', value, {
+          scope: 'workspace',
+          source: 'ui',
+          reason,
+        });
+      };
+      const readState = () => ({
+        value: helios.edgeWidthScale(),
+        stored: helios.states.get('appearance.edgeStyle.widthScale'),
+        status: helios.states.status('appearance.edgeStyle.widthScale')?.state ?? null,
+      });
+
+      writeEdgeWidth(2.75, 'dummy-snapshot-initial');
+      const visualizationSnapshot = helios.exportVisualizationState({
+        layoutRuntime: { includePositions: false },
+      });
+      const sessionSnapshot = await helios.storage.serializeSessionSnapshot({
+        id: 'dummy-exported-session',
+        includeNetwork: false,
+        snapshotLayoutRuntime: false,
+        captureThumbnail: false,
+      });
+      const portableNetwork = await helios.savePortableNetwork('xnet', {
+        output: 'blob',
+        includeVisualization: true,
+        includeCurrentPositions: false,
+        layoutRuntime: { includePositions: false },
+      });
+
+      writeEdgeWidth(1.1, 'dummy-snapshot-reset-before-visualization');
+      await helios.importVisualizationState(visualizationSnapshot, {
+        restoreLayoutRuntime: false,
+        reason: 'dummy-visualization-import',
+      });
+      const afterVisualization = readState();
+
+      writeEdgeWidth(1.2, 'dummy-snapshot-reset-before-session');
+      await helios.storage.restoreSessionSnapshot(sessionSnapshot, {
+        restoreLayoutRuntime: false,
+        restoreVisualizationState: true,
+        markFinished: true,
+        reason: 'dummy-session-restore',
+      });
+      const afterSession = readState();
+
+      writeEdgeWidth(1.3, 'dummy-snapshot-reset-before-network');
+      await helios.loadNetwork(portableNetwork, {
+        format: 'xnet',
+        disposeOld: true,
+        recreateRenderer: true,
+        keepCamera: false,
+        restoreVisualizationState: true,
+      });
+      const afterNetwork = readState();
+
+      return {
+        storageType: helios.storage.type,
+        capabilities: helios.storage.capabilities,
+        visualizationStorageState: visualizationSnapshot.payload.storageState,
+        sessionStorageState: sessionSnapshot.payload.visualizationState.payload.storageState,
+        afterVisualization,
+        afterSession,
+        afterNetwork,
+      };
+    });
+
+    expect(result.storageType).toBe('dummy');
+    expect(result.capabilities.persistent).toBe(false);
+    expect(result.capabilities.sessions).toBe(false);
+    expect(result.visualizationStorageState.type).toBe('dummy');
+    expect(result.sessionStorageState.type).toBe('dummy');
+    const readExportedEdgeWidth = (snapshot) => (
+      snapshot.state.overrides['appearance.edgeStyle.widthScale']
+      ?? snapshot.state.overrides['behaviors.appearance.edgeWidthScale']
+    );
+    expect(readExportedEdgeWidth(result.visualizationStorageState)).toBeCloseTo(2.75, 3);
+    expect(readExportedEdgeWidth(result.sessionStorageState)).toBeCloseTo(2.75, 3);
+    expect(result.afterVisualization.value).toBeCloseTo(2.75, 3);
+    expect(result.afterVisualization.stored).toBeCloseTo(2.75, 3);
+    expect(result.afterVisualization.status).toBe('changed');
+    expect(result.afterSession.value).toBeCloseTo(2.75, 3);
+    expect(result.afterSession.stored).toBeCloseTo(2.75, 3);
+    expect(result.afterNetwork.value).toBeCloseTo(2.75, 3);
+    expect(result.afterNetwork.stored).toBeCloseTo(2.75, 3);
+    await expect(page.locator('.helios-ui-resume-prompt').first()).toBeHidden();
+    await expect(page.locator('.helios-ui-network-persistence')).toHaveCount(0);
+    const visibleDirtyIndicatorsAfterRestore = await page.locator('.helios-ui-dirty-indicator').evaluateAll((nodes) => (
+      nodes.filter((node) => {
+        const rect = node.getBoundingClientRect();
+        const style = getComputedStyle(node);
+        return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+      }).length
+    ));
+    expect(visibleDirtyIndicatorsAfterRestore).toBe(0);
   });
 
   test('round-trips via XNET and replaces the network in-place', async ({ page }) => {

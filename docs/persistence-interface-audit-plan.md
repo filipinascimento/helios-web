@@ -65,7 +65,7 @@ This is the working checklist for stabilizing Helios Web Next persistence across
 - Browser: Data > Session Save Session and Resume restore camera pose and camera controls.
 - Browser: Data > Session Save Session and URL reload after switching to 3D restore non-planar positions and mark `scene.dimension` as changed.
 - Browser: Data > Session session cards expose a delete icon, require confirmation, and remove the selected saved session only after confirmation.
-- Browser: session autosave after camera/settings interaction refreshes the visible Data > Network `Synced ... ago` timestamp after resume/session UI interactions.
+- Browser: session autosave after camera/settings interaction returns the visible Data > Network status to `Synced` after pending dirty changes have been written.
 - Browser: default browser session network format is compact and restorable.
 - Browser: categorical filter checklist renders counts, updates selected values,
   and All/None actions keep the active graph filter correct.
@@ -94,22 +94,22 @@ This is the working checklist for stabilizing Helios Web Next persistence across
 - Data > Session explicit resume must restore camera pan/zoom and camera controls from the selected session, not the current transient camera.
 - Reloading or resuming a 3D session must not restore a planar position buffer under 3D controls.
 - Data > Session delete must ask for confirmation, cancel cleanly when dismissed, remove the selected card when accepted, and clear any matching unfinished-session pointer.
-- Session-controller saves and central registry status must stay aligned so camera, mapper, and parameter autosaves update the visible sync timestamp even when no network payload is rewritten.
+- Storage session saves and central registry status must stay aligned so camera, mapper, and parameter autosaves update the visible sync timestamp even when no network payload is rewritten.
 - Session storage must use compressed/binary network payloads by default where supported, and avoid storing large position/network state twice as plain JSON.
 - Session manifests must not depend on large `localStorage` writes; full manifests and large layout/position state must survive through IndexedDB when localStorage is over quota.
 - Loading a network file must update the network basename/name used by the Data > Network field, Session nickname, and export defaults.
 - Categorical filtering must use the funding-style checklist interface without
   duplicating rule/default definitions or bypassing the centralized/debounced
   rule editor path.
-- CLI, desktop, and widget must stay source-compatible with centralized
-  persistence after web-next API changes.
+- CLI, desktop, and widget must stay source-compatible with centralized storage
+  after web-next API changes.
 
 ## Latest Verification
 
 - Fixed: default-layout session reload after manual pan now restores saved camera pose and disabled auto-fit instead of applying a queued frame-network fit.
 - Fixed: `importVisualizationState` restores camera controls before camera pose so persisted `autoFit=false` cannot overwrite the restored pose.
 - Fixed: session network restore no longer queues a fresh frame-network camera fit; ordinary user network loads still frame loaded networks.
-- Fixed: generated URL sessions (`session=1` with an appended `sessionId`) reload directly without a resume prompt; persisted UI state can no longer resurrect a prompt when the session controller marks the URL session explicit and valid.
+- Fixed: generated URL sessions (`session=1` with an appended `sessionId`) reload directly without a resume prompt; persisted UI state can no longer resurrect a prompt once storage marks the URL session explicit and valid.
 - Fixed: controls appearance browser test now targets `Save network` instead of any Data-panel button containing `Save`, so `Save Session` cannot collide.
 - Fixed: Layout panel controls now register persistence defaults before user edits and write through the centralized UI persistence helper, so layout parameter markers update from registry status instead of panel-local logic.
 - Passed: `npx playwright test tests/interface-persistence.spec.js --project=chromium --reporter=line --workers=1` (17/17).

@@ -407,7 +407,7 @@ float fetchNodeSize(uint id) {
 void main() {
   vec3 position = fetchNodePos(a_nodeId);
   float rawSize = fetchNodeSize(a_nodeId);
-  float fullSize = max(1.0, u_nodeSizeBase + u_nodeSizeScale * rawSize);
+  float fullSize = max(0.0, u_nodeSizeBase + u_nodeSizeScale * rawSize);
   float radius = fullSize * 0.5;
 
   vec3 right = u_cameraRight;
@@ -431,7 +431,7 @@ void main() {
   vec2 ndcOffset = clipOffset.xy / clipOffset.w;
   vec2 pixelScale = vec2(max(u_viewport.x, 1.0), max(u_viewport.y, 1.0)) * 0.5;
   float radiusPx = length((ndcOffset - ndcCenter) * pixelScale);
-  gl_PointSize = max(1.0, radiusPx * 2.0);
+  gl_PointSize = max(0.0, radiusPx * 2.0);
   gl_Position = clipCenter;
   v_color = fetchNodeColor(a_nodeId);
 }

@@ -25,8 +25,27 @@ function parseScreenshot(buffer) {
 }
 
 test.describe('basic example', () => {
-  test('uses a rewired Watts-Strogatz default network', async ({ page }) => {
+  test('uses a generated grid default network', async ({ page }) => {
     await page.goto('/?renderer=webgl');
+
+    const diagnostics = await waitForDiagnostics(page);
+    expect(diagnostics.error ?? null).toBeNull();
+
+    const syntheticDataset = await page.waitForFunction(() => {
+      const dataset = window.__HELIOS_SYNTHETIC_DATASET__;
+      return dataset?.model === 'grid' && dataset.summary ? dataset : null;
+    }, null, { timeout: 60000 }).then((handle) => handle.jsonValue());
+
+    expect(syntheticDataset.dimensions).toBe(2);
+    expect(syntheticDataset.summary.nodeCount).toBe(10000);
+    expect(syntheticDataset.summary.edgeCount).toBe(19800);
+    expect(syntheticDataset.summary.neighborLevel).toBe(1);
+    expect(syntheticDataset.summary.rows).toBe(100);
+    expect(syntheticDataset.summary.columns).toBe(100);
+  });
+
+  test('keeps the explicit Watts-Strogatz dataset path available', async ({ page }) => {
+    await page.goto('/?renderer=webgl&layout=none&nodes=256&dataset=ws');
 
     const diagnostics = await waitForDiagnostics(page);
     expect(diagnostics.error ?? null).toBeNull();
@@ -36,13 +55,10 @@ test.describe('basic example', () => {
       return dataset?.model === 'watts-strogatz' && dataset.summary ? dataset : null;
     }, null, { timeout: 60000 }).then((handle) => handle.jsonValue());
 
+    expect(syntheticDataset.name).toBe('small-world');
+    expect(syntheticDataset.summary.nodeCount).toBe(256);
+    expect(syntheticDataset.neighborLevel).toBe(2);
     expect(syntheticDataset.rewiringProbability).toBe(0.01);
-    expect(syntheticDataset.summary.nodeCount).toBe(10000);
-    expect(syntheticDataset.summary.edgeCount).toBe(20000);
-    expect(syntheticDataset.summary.neighborLevel).toBe(2);
-    expect(syntheticDataset.summary.shortcutEdges).toBe(200);
-    expect(syntheticDataset.summary.expectedShortcutEdges).toBe(200);
-    expect(syntheticDataset.summary.localEdges).toBe(19800);
   });
 
   test('renders nodes with non-empty pixels', async ({ page }) => {

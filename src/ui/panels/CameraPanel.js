@@ -171,13 +171,13 @@ export class CameraPanel {
       const current = helios.cameraControls?.() ?? {};
       for (const [key, value] of Object.entries(patch)) {
         const path = `camera.controls.${key}`;
-        this.ui._registerPersistenceKey?.(path, {
+        this.ui._registerStateKey?.(path, {
           scope: 'network',
           debounceMs: 500,
           defaultValue: current[key],
           metadata: { panel: 'camera', control: key },
         });
-        this.ui._writePersistenceValue?.(path, value, {
+        this.ui._writeStateValue?.(path, value, {
           scope: 'network',
           source: 'ui',
           reason: 'camera-control',
@@ -185,19 +185,24 @@ export class CameraPanel {
         });
       }
     };
-    const persistCameraPose = (pose = helios.cameraPose?.() ?? null) => {
+    const shouldTrackCameraPoseOverride = (detail = null) => {
+      const origin = String(detail?.origin ?? detail?.change?.origin ?? '').trim();
+      return origin === 'ui' || origin === 'interaction' || origin === 'cli' || origin === 'program';
+    };
+    const persistCameraPose = (pose = helios.cameraPose?.() ?? null, options = {}) => {
       if (!pose || typeof pose !== 'object') return;
-      this.ui._registerPersistenceKey?.('camera.pose', {
+      this.ui._registerStateKey?.('camera.pose', {
         scope: 'network',
         debounceMs: 750,
         defaultValue: pose,
         metadata: { panel: 'camera' },
       });
-      this.ui._writePersistenceValue?.('camera.pose', pose, {
+      this.ui._writeStateValue?.('camera.pose', pose, {
         scope: 'network',
         source: 'ui',
         reason: 'camera-pose',
         debounceMs: 750,
+        trackOverride: options.trackOverride === true,
       });
     };
 
@@ -215,7 +220,7 @@ export class CameraPanel {
         } else {
           helios.setCameraPose({ zoom: numeric }, { source: 'ui' });
         }
-        persistCameraPose();
+        persistCameraPose(null, { trackOverride: true });
       },
     });
     const distanceRow = appendTopRow({
@@ -457,16 +462,16 @@ export class CameraPanel {
     const syncDistanceControlThrottled = createTrailingThrottle((event) => {
       const detail = event?.detail ?? event ?? null;
       const state = detail?.state ?? null;
-	      const pose = state
-	        ? {
-	            mode: state.mode,
-	            distance: state.distance,
-	            zoom: state.zoom,
-	          }
-	        : null;
-	      syncDistanceControl(pose);
-	      persistCameraPose();
-	    }, CAMERA_MOVE_SYNC_INTERVAL_MS);
+      const pose = state
+        ? {
+          mode: state.mode,
+          distance: state.distance,
+          zoom: state.zoom,
+        }
+        : null;
+      syncDistanceControl(pose);
+      persistCameraPose(null, { trackOverride: shouldTrackCameraPoseOverride(detail) });
+    }, CAMERA_MOVE_SYNC_INTERVAL_MS);
 
     const sync = () => {
       const pose = helios.cameraPose?.() ?? null;

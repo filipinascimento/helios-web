@@ -31,15 +31,16 @@ import { HeliosUI } from './ui/HeliosUI.js';
 import { BEHAVIOR_IDS, Behavior, BehaviorManager, createDefaultBehaviorRegistry } from './behaviors/index.js';
 import { serializeMapperCollection as serializeMapperCollectionSnapshot } from './behaviors/mapperBehaviorShared.js';
 import {
-  HeliosPersistenceService,
   PERSISTENCE_KINDS,
-  applyOverridesToVisualizationState,
   createDefaultNetworkSource,
+  createDefaultPreferencesState,
   createPersistenceEnvelope,
   migratePersistenceEnvelope,
   parsePersistenceEnvelope,
   serializePersistenceEnvelope,
 } from './persistence/index.js';
+import { createHeliosStorageManager } from './storage/index.js';
+import { HeliosStateManager } from './state/index.js';
 import {
   AMBIENT_OCCLUSION_BIAS_DEFAULT,
   AMBIENT_OCCLUSION_INTENSITY_SCALE_DEFAULT,
@@ -396,15 +397,13 @@ function hasOwnOption(options, key) {
 }
 
 function shouldEnablePersistence(options = {}) {
-  if (options.persistence === false) return false;
-  if (options.persistence === true) return true;
-  if (options.persistence && typeof options.persistence === 'object' && options.persistence.enabled === false) return false;
-  if (options.persistence && typeof options.persistence === 'object' && options.persistence.enabled !== false) return true;
+  if (options.storage === true) return true;
+  if (options.storage && typeof options.storage === 'object') {
+    const type = String(options.storage.type ?? options.storage.kind ?? '').toLowerCase();
+    if (type !== 'dummy' && type !== 'memory') return true;
+  }
   return [
     'workspaceId',
-    'backends',
-    'customBackend',
-    'remote',
     'networkPersistence',
     'positionPersistence',
     'session',
@@ -421,23 +420,46 @@ function normalizeSessionPersistenceOptions(options = {}) {
   if (options.session === true) return { ...topLevelSessionId };
   if (options.session && typeof options.session === 'object') {
     return {
-      ...(options.persistence?.session && typeof options.persistence.session === 'object' ? options.persistence.session : {}),
       ...options.session,
       ...topLevelSessionId,
     };
   }
-  if (typeof options.persistence?.session === 'string' && options.persistence.session.trim()) {
-    return { sessionId: options.persistence.session.trim() };
-  }
-  if (options.persistence?.session && typeof options.persistence.session === 'object') {
-    return {
-      ...options.persistence.session,
-      ...topLevelSessionId,
-    };
-  }
   if (topLevelSessionId.sessionId) return { ...topLevelSessionId };
-  if (options.persistence?.session === true) return { ...topLevelSessionId };
   return false;
+}
+
+function normalizeStorageSessionId(options = {}) {
+  const storage = options.storage;
+  if (!storage || typeof storage !== 'object') return null;
+  const value = storage.sessionId ?? storage.id ?? null;
+  return value != null && String(value).trim() ? String(value).trim() : null;
+}
+
+const CAMERA_CONTROL_STATE_KEYS = Object.freeze([
+  'autoFit',
+  'autoFitCoverage',
+  'autoFitPaddingRatio',
+  'autoFitMaxSamples',
+  'autoFitIntervalMs',
+  'autoFitMinIntervalMs',
+  'autoFitMaxIntervalMs',
+  'autoFitLargeNetworkScale',
+  'autoFitIntervalNodeCountRef',
+  'animation',
+  'animationDurationMs',
+  'orbit',
+  'orbitSpeed',
+  'orbitDirection',
+  'orbitAxis',
+  'orbitAngle',
+  'followTarget',
+  'followUpdateIntervalMs',
+  'targetNodeIndices',
+]);
+
+function isExplicitCameraStateSource(source, options = {}) {
+  const value = String(source ?? '').trim();
+  return value === 'ui' || value === 'interaction' || value === 'cli' || value === 'program' || options.manual === true;
 }
 
 function isBehaviorLike(candidate) {
@@ -1208,7 +1230,7 @@ function resolveDensityActiveColormap(config, runtime) {
 }
 
 const EDGE_ADAPTIVE_QUALITY_DEFAULTS = Object.freeze({
-  enabled: true,
+  enabled: false,
   slowFrameThresholdMs: 66,
   averageWindowFrames: 12,
   probeIntervalMs: 900,
@@ -1609,7 +1631,7 @@ function normalizeEdgeAdaptiveQualityConfig(base = {}, patch = {}) {
     return { ...base };
   }
   const next = { ...base };
-  if (Object.prototype.hasOwnProperty.call(patch, 'enabled')) {
+  if (Object.prototype.hasOwnProperty.call(patch, 'enabled') && patch.enabled !== undefined) {
     next.enabled = patch.enabled !== false;
   }
   if (
@@ -2228,7 +2250,7 @@ export class Helios extends EventTarget {
       type: 'boolean',
       label: 'Adaptive Edges',
       description: 'Automatically switch to fast edge lines only after repeated slow high-quality frames.',
-      defaultValue: true,
+      defaultValue: EDGE_ADAPTIVE_QUALITY_DEFAULTS.enabled,
     },
     edgeAdaptiveQualitySlowFrameThresholdMs: {
       type: 'number',
@@ -2404,10 +2426,18 @@ export class Helios extends EventTarget {
     return this.constructor.UI_BINDINGS?.[name] ?? null;
   }
 
-  _emitUIBindingChange(name, value) {
+  _emitUIBindingChange(name, value, detail = {}) {
+    if (this._suppressStateBindingUiEvent > 0) return;
     if (typeof this.dispatchEvent !== 'function') return;
     try {
-      this.dispatchEvent(createDetailEvent('ui:binding-change', { id: `helios.${name}`, name, value }));
+      this.dispatchEvent(createDetailEvent('ui:binding-change', {
+        source: detail.source ?? 'program',
+        trackOverride: detail.trackOverride !== false,
+        ...detail,
+        id: `helios.${name}`,
+        name,
+        value,
+      }));
     } catch {
       // Avoid breaking tests that create Helios-shaped objects without EventTarget internals.
     }
@@ -2505,7 +2535,13 @@ export class Helios extends EventTarget {
       : inferNetworkFormatFromName(initialNetworkName);
     this.options = options;
     this._initialMode = options.mode === '3d' ? '3d' : '2d';
+    this.debugEnabled = options.debug === false
+      ? false
+      : !(options.debug && typeof options.debug === 'object' && options.debug.enabled === false);
     this.debug = createDebugLogger(options.debug);
+    if (this.debugEnabled && typeof window !== 'undefined') {
+      window.__helios = this;
+    }
     this.debug.log('helios', 'Constructing Helios instance', { mode: options.mode ?? '2d' });
     this.prewarmPromise = null;
     this.mappersDirty = false;
@@ -2924,41 +2960,30 @@ export class Helios extends EventTarget {
     this.size = { ...this.layers.size };
     this.removeResizeListener = null;
     this.firstGeometryUpdateComplete = false;
-    const persistenceEnabled = shouldEnablePersistence(options);
-    const rawPersistenceOptions = options.persistence && typeof options.persistence === 'object' ? options.persistence : {};
-    this.persistence = new HeliosPersistenceService({
-      helios: this,
-      workspaceId: options.workspaceId ?? rawPersistenceOptions.workspaceId,
-      network: this.network,
-      browser: persistenceEnabled ? rawPersistenceOptions.browser : false,
-      networkAttributes: persistenceEnabled ? rawPersistenceOptions.networkAttributes : false,
-      autosave: persistenceEnabled ? rawPersistenceOptions.autosave : false,
-      networkPersistence: persistenceEnabled
-        ? (options.networkPersistence ?? rawPersistenceOptions.networkPersistence)
-        : { enabled: false, autosave: false },
-      positionPersistence: persistenceEnabled
-        ? (options.positionPersistence ?? rawPersistenceOptions.positionPersistence)
-        : { enabled: false, autosave: false },
-      sessionThumbnail: persistenceEnabled
-        ? (options.sessionThumbnail ?? rawPersistenceOptions.sessionThumbnail)
-        : false,
-      autosyncInteractionIdleMs: persistenceEnabled
-        ? (options.autosyncInteractionIdleMs ?? rawPersistenceOptions.autosyncInteractionIdleMs ?? options.interactionIdleMs ?? rawPersistenceOptions.interactionIdleMs)
-        : 0,
-      remote: persistenceEnabled ? (options.remote ?? rawPersistenceOptions.remote) : null,
-      customBackend: persistenceEnabled ? (options.customBackend ?? rawPersistenceOptions.customBackend) : null,
-      backends: persistenceEnabled ? (options.backends ?? rawPersistenceOptions.backends) : [],
-      ...rawPersistenceOptions,
-      ...(persistenceEnabled ? {} : {
-        browser: false,
-        networkAttributes: false,
-        autosave: false,
-        remote: null,
-        customBackend: null,
-        backends: [],
-      }),
+    const storageEnabled = shouldEnablePersistence(options);
+    const storageConfig = hasOwnOption(options, 'storage')
+      ? options.storage
+      : (storageEnabled ? { type: 'browser' } : false);
+    const storageSessionId = normalizeStorageSessionId(options);
+    this.states = new HeliosStateManager({
+      now: options.now,
     });
-    this._sessionPersistenceOptions = persistenceEnabled ? normalizeSessionPersistenceOptions(options) : false;
+    this.storage = createHeliosStorageManager(storageConfig, {
+      helios: this,
+      states: this.states,
+      workspaceId: options.workspaceId ?? 'default',
+      sessionId: storageSessionId,
+      persistNetwork: options.persistNetwork === true,
+      networkPersistence: options.networkPersistence,
+      positionPersistence: options.positionPersistence,
+      sessionThumbnail: options.sessionThumbnail,
+      overrideTrackingReady: false,
+    });
+    this._beforeUnloadUnsavedChangesCleanup = null;
+    this._installUnsavedSessionBeforeUnloadWarning(options);
+    this._registerCoreStateEntries();
+    const sessionOptions = storageEnabled ? normalizeSessionPersistenceOptions(options) : false;
+    this._sessionPersistenceOptions = sessionOptions || (storageSessionId ? { sessionId: storageSessionId } : false);
     this._initializeDefaultBehaviors(options.behaviors);
     this._initializeBehaviors(options.behaviors);
     this.ui = null;
@@ -2998,6 +3023,27 @@ export class Helios extends EventTarget {
       observer.observe(container.parentNode, { childList: true });
     }
     this._autoCleanupObserver = observer;
+  }
+
+  _installUnsavedSessionBeforeUnloadWarning(options = {}) {
+    if (options.warnOnUnsavedSessionChanges === false || options.session?.warnOnUnsavedChanges === false) return;
+    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
+    const handler = (event) => {
+      const status = this.storage?.persistenceStatus?.() ?? null;
+      const networkData = status?.networkData ?? {};
+      const hasUnsavedChanges = networkData.dirty === true
+        || networkData.positionsDirty === true
+        || status?.sessionSync?.pending === true;
+      if (!hasUnsavedChanges) return undefined;
+      const message = 'This Helios session has unsaved changes. Use Sync or Save Session before closing.';
+      event.preventDefault?.();
+      event.returnValue = message;
+      return message;
+    };
+    window.addEventListener('beforeunload', handler);
+    this._beforeUnloadUnsavedChangesCleanup = () => {
+      window.removeEventListener('beforeunload', handler);
+    };
   }
 
   _resolveNetworkFileDropTarget() {
@@ -3302,6 +3348,153 @@ export class Helios extends EventTarget {
       behavior.applyOtherElementsState?.();
     }
     return this;
+  }
+
+  _registerCoreStateEntries() {
+    const states = this.states ?? null;
+    if (typeof states?.register !== 'function') return;
+    states.register(this, 'scene', {
+      dimension: {
+        description: 'Scene dimensionality.',
+        default: this._initialMode === '3d' ? '3d' : '2d',
+        type: 'enum',
+        scope: 'network',
+        ui: {
+          label: 'Dimension',
+          controller: 'segmented',
+          options: ['2d', '3d'],
+        },
+        getter: () => this.mode(),
+        setter: (value, detail = {}) => this.setMode(value === '3d' ? '3d' : '2d', {
+          animate: false,
+          syncDelegate: false,
+          source: detail.source ?? 'state',
+          applyState: false,
+        }),
+        subscribe: (notify) => this.on(EVENTS.MODE_CHANGED, (event) => {
+          const detail = event?.detail ?? event ?? {};
+          notify(detail.mode === '3d' ? '3d' : '2d', {
+            source: 'binding',
+            reason: 'mode-changed',
+            trackOverride: false,
+          });
+        }),
+      },
+    });
+    const cameraControlEntries = {};
+    const initialControls = this._snapshotCameraControlState();
+    const cameraControlSubscribe = (notify) => this.on(EVENTS.CAMERA_CONTROL_CHANGE, () => {
+      notify(undefined, {
+        source: 'binding',
+        reason: 'camera-control-change',
+        trackOverride: false,
+      });
+    });
+    for (const key of CAMERA_CONTROL_STATE_KEYS) {
+      const value = initialControls?.[key];
+      const isArrayValue = Array.isArray(value) || ArrayBuffer.isView(value);
+      const type = typeof value === 'boolean'
+        ? 'boolean'
+        : (typeof value === 'number' ? 'number' : (isArrayValue ? 'array' : 'object'));
+      cameraControlEntries[key] = {
+        description: `Camera control value: ${key}.`,
+        default: cloneSerializable(value),
+        type,
+        scope: 'session',
+        aliases: [`cameraControls.${key}`],
+        ui: {
+          label: key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/^./, (letter) => letter.toUpperCase()),
+          controller: type === 'boolean' ? 'toggle' : (type === 'number' ? 'number' : 'custom'),
+        },
+        getter: () => cloneSerializable(this._snapshotCameraControlState()?.[key]),
+        setter: (nextValue, detail = {}) => {
+          this.cameraControls({ [key]: nextValue }, {
+            source: detail.source ?? 'state',
+            reason: detail.reason ?? 'state-restore',
+            applyState: false,
+          });
+        },
+        subscribe: cameraControlSubscribe,
+      };
+    }
+    states.register(this, 'camera.controls', cameraControlEntries);
+    states.register(this, 'camera', {
+      pose: {
+        description: 'Current camera pose.',
+        default: this._snapshotCameraState({ includeViewport: false }),
+        type: 'object',
+        scope: 'session',
+        ui: {
+          label: 'Camera Pose',
+          controller: 'custom',
+          debounceMs: 240,
+        },
+        getter: () => this._snapshotCameraState({ includeViewport: false }),
+        setter: (pose, detail = {}) => this._restoreCameraState(pose, {
+          source: detail.source ?? 'state',
+          restoreViewport: detail.restoreViewport === true,
+        }),
+        subscribe: (notify) => {
+          let timer = null;
+          let pendingPose = null;
+          let pendingDetail = null;
+          const flush = () => {
+            timer = null;
+            if (!pendingPose) return;
+            const pose = pendingPose;
+            const detail = pendingDetail ?? {};
+            pendingPose = null;
+            pendingDetail = null;
+            notify(pose, {
+              source: isExplicitCameraStateSource(detail.origin, detail) ? (detail.origin ?? 'interaction') : 'binding',
+              reason: 'camera-pose',
+              trackOverride: isExplicitCameraStateSource(detail.origin, detail),
+              debounceMs: 500,
+            });
+          };
+          const unsubscribe = this.on(EVENTS.CAMERA_MOVE, (event) => {
+            const detail = event?.detail ?? event ?? {};
+            const pose = this._snapshotCameraState({ includeViewport: false });
+            if (!pose) return;
+            pendingPose = pose;
+            pendingDetail = detail;
+            if (timer != null) clearTimeout(timer);
+            timer = setTimeout(flush, 120);
+          });
+          return () => {
+            if (timer != null) clearTimeout(timer);
+            unsubscribe?.();
+          };
+        },
+      },
+    });
+    states.register(this, 'layout.runtime', {
+      state: {
+        description: 'Lightweight layout runtime metadata. Position buffers are not stored in state.',
+        default: this.snapshotLayoutRuntimeState({ includePositions: false }),
+        type: 'object',
+        scope: 'session',
+        persist: true,
+        getter: () => this.snapshotLayoutRuntimeState({ includePositions: false }),
+        setter: (value) => this.restoreLayoutRuntimeState(value, {
+          restoreRunState: true,
+          reason: 'state-restore',
+        }),
+        subscribe: (notify) => {
+          const handler = (event) => notify(undefined, {
+            ...(event?.detail ?? {}),
+            source: 'binding',
+            reason: 'layout-runtime-change',
+            trackOverride: false,
+          });
+          const cleanups = [
+            this.on(EVENTS.LAYOUT_CHANGED, handler),
+            this.on(EVENTS.MODE_CHANGED, handler),
+          ];
+          return () => cleanups.forEach((cleanup) => cleanup?.());
+        },
+      },
+    });
   }
 
   _snapshotCameraState(options = {}) {
@@ -3800,6 +3993,7 @@ export class Helios extends EventTarget {
     const config = this._cameraControlConfig ?? null;
     if (!config) return false;
     this._invalidateCameraOrbitReference();
+    const before = copyCameraControlConfig(config);
     let changed = false;
     const action = detail?.action ?? null;
     const actionTokens = new Set(String(action ?? '').split(/[^a-z0-9]+/i).filter(Boolean));
@@ -3829,6 +4023,20 @@ export class Helios extends EventTarget {
     if (changed) {
       this._markAutoFitDirty(false);
       this._emitCameraControlChange();
+      if (typeof this.states?.set === 'function') {
+        const detailSource = isExplicitCameraStateSource(detail?.origin, detail) ? (detail.origin ?? 'interaction') : 'interaction';
+        for (const key of ['autoFit', 'orbit', 'followTarget', 'targetNodeIndices']) {
+          if (JSON.stringify(before?.[key]) === JSON.stringify(this._snapshotCameraControlState()?.[key])) continue;
+          this.states.set(`camera.controls.${key}`, cloneSerializable(this._snapshotCameraControlState()?.[key]), {
+            source: detailSource === 'test' ? 'program' : detailSource,
+            reason: 'camera-interaction',
+            trackOverride: true,
+            applyBinding: false,
+            debounceMs: 500,
+            journal: false,
+          });
+        }
+      }
       this.scheduler?.requestRender?.();
     }
     return changed;
@@ -5412,7 +5620,6 @@ export class Helios extends EventTarget {
 
     const prevNetwork = this.network;
     this.network = nextNetwork;
-    this.persistence?.configure?.({ network: nextNetwork });
     this._ensureGraphFilterState().renderNetwork = nextNetwork;
     this._ensureGraphFilterState().layoutNetwork = nextNetwork;
     this._refreshGraphFilterNetworks({ force: true, throwOnError: false });
@@ -5501,7 +5708,7 @@ export class Helios extends EventTarget {
       edgeCount: nextNetwork?.edgeCount ?? null,
     });
     if (options.markNetworkDirty !== false) {
-      this.persistence?.markNetworkDirty?.('network-replaced');
+      this.storage?.markNetworkDirty?.('network-replaced');
     }
     this._labels?.requestFullReselect?.('network-replaced-emitted');
 
@@ -5646,8 +5853,8 @@ export class Helios extends EventTarget {
       && options.preserveSession !== true
       && options.createSession !== false
       && options.newSession !== false;
-    if (shouldCreateSession && typeof this.persistence?.startNewSession === 'function') {
-      await this.persistence.startNewSession({
+    if (shouldCreateSession && typeof this.storage?.startNewSession === 'function') {
+      await this.storage.startNewSession({
         nickname: options.sessionNickname ?? sourceBase ?? sourceName,
         name: sourceName,
         flushPrevious: options.flushPreviousSession !== false,
@@ -5665,11 +5872,10 @@ export class Helios extends EventTarget {
       if (attachedState) {
         await this.importVisualizationState(attachedState, { reason: 'network-load' });
       }
-      await this.persistence?.restorePortableStateFromNetwork?.({ network: next });
+      await this.storage?.restorePortableStateFromNetwork?.({ network: next });
     }
     if (shouldCreateSession) {
-      await this.persistence?.setSessionNickname?.(options.sessionNickname ?? sourceBase ?? sourceName);
-      this.persistence?.sessionController?.resetTrackingBaseline?.(null, { clearJournal: true });
+      await this.storage?.setSessionNickname?.(options.sessionNickname ?? sourceBase ?? sourceName);
     }
     return next;
   }
@@ -5746,6 +5952,29 @@ export class Helios extends EventTarget {
     });
   }
 
+  _snapshotStorageState(options = {}) {
+    if (typeof this.storage?.serializeSnapshot !== 'function') return null;
+    const snapshot = this.storage.serializeSnapshot({
+      includeNetwork: false,
+      ...(options ?? {}),
+    });
+    return snapshot ? cloneSerializable(snapshot) : null;
+  }
+
+  _trackedVisualizationOverrides() {
+    const storageOverrides = this.states?.getOverrides?.({ aliases: 'preferred' }) ?? {};
+    const overrides = {
+      ...cloneSerializable(storageOverrides),
+    };
+    const hasCameraControlOverride = this.states?.status?.('camera.controls')?.hasOverride === true
+      || this.states?.status?.('cameraControls')?.hasOverride === true;
+    if (hasCameraControlOverride && !Object.prototype.hasOwnProperty.call(overrides, 'camera.pose')) {
+      const pose = this._snapshotCameraState({ includeViewport: false });
+      if (pose) overrides['camera.pose'] = cloneSerializable(pose);
+    }
+    return overrides;
+  }
+
   /**
    * Build a portable visualization-state envelope.
    *
@@ -5756,7 +5985,7 @@ export class Helios extends EventTarget {
    * camera, and network-source state.
    */
   serializeVisualizationState(options = {}) {
-    const preferences = options.preferences ?? this.persistence?.getPreferences?.() ?? null;
+    const preferences = options.preferences ?? this.storage?.getPreferences?.() ?? createDefaultPreferencesState();
     const envelope = createPersistenceEnvelope(PERSISTENCE_KINDS.visualization, {
       preferences,
       responsivePreferences: preferences?.responsive ?? null,
@@ -5766,6 +5995,7 @@ export class Helios extends EventTarget {
       cameraControlState: this._snapshotCameraControlState(),
       networkSource: this._capturePersistenceNetworkSource(),
       layoutRuntimeState: this.snapshotLayoutRuntimeState(options.layoutRuntime ?? {}),
+      storageState: this._snapshotStorageState(options.storage ?? {}),
     }, {
       source: 'helios',
     });
@@ -5773,7 +6003,7 @@ export class Helios extends EventTarget {
   }
 
   async serializeVisualizationStateAsync(options = {}) {
-    const preferences = options.preferences ?? this.persistence?.getPreferences?.() ?? null;
+    const preferences = options.preferences ?? this.storage?.getPreferences?.() ?? createDefaultPreferencesState();
     return createPersistenceEnvelope(PERSISTENCE_KINDS.visualization, {
       preferences,
       responsivePreferences: preferences?.responsive ?? null,
@@ -5783,6 +6013,7 @@ export class Helios extends EventTarget {
       cameraControlState: this._snapshotCameraControlState(),
       networkSource: this._capturePersistenceNetworkSource(),
       layoutRuntimeState: await this.snapshotLayoutRuntimeStateAsync(options.layoutRuntime ?? {}),
+      storageState: this._snapshotStorageState(options.storage ?? {}),
     }, {
       source: 'helios',
     });
@@ -5799,12 +6030,10 @@ export class Helios extends EventTarget {
    */
   async importVisualizationState(source, options = {}) {
     const envelope = parsePersistenceEnvelope(source, PERSISTENCE_KINDS.visualization);
-    let payload = envelope.payload;
-    if (payload.overrides && typeof payload.overrides === 'object') {
-      const base = this.serializeVisualizationState({ layoutRuntime: { includePositions: false } });
-      payload = applyOverridesToVisualizationState(base, payload.overrides).payload;
-      payload.layoutRuntimeState = envelope.payload.layoutRuntimeState ?? payload.layoutRuntimeState;
-    }
+    const payload = envelope.payload;
+    const sparseOverrides = payload?.storageState?.state?.overrides && typeof payload.storageState.state.overrides === 'object'
+      ? payload.storageState.state.overrides
+      : (payload?.overrides && typeof payload.overrides === 'object' ? payload.overrides : null);
     const applyVisualizationState = async () => {
       const restoredMode = payload.cameraState?.mode;
       if (
@@ -5819,7 +6048,26 @@ export class Helios extends EventTarget {
           ...(options.modeOptions ?? {}),
         });
       }
-      this.restoreBehaviorState(payload.behaviorState);
+      let restoredStorageState = false;
+      if (sparseOverrides && options.restoreStorage !== false) {
+        if (payload.storageState && typeof this.storage?.restoreSnapshot === 'function') {
+          this.storage.restoreSnapshot(payload.storageState, {
+            source: options.source ?? 'restore',
+            reason: options.reason ?? 'visualization-state-restore',
+            trackOverride: options.trackOverride,
+          });
+          restoredStorageState = true;
+        } else if (typeof this.states?.restore === 'function') {
+          this.states.restore(sparseOverrides, {
+            source: options.source ?? 'restore',
+            reason: options.reason ?? 'visualization-state-restore',
+            trackOverride: options.trackOverride,
+          });
+        }
+      }
+      if (payload.behaviorState && typeof payload.behaviorState === 'object') {
+        this.restoreBehaviorState(payload.behaviorState);
+      }
       if (typeof this.behaviors?.ui?.restoreState === 'function') {
         this.behaviors.ui.restoreState(payload.uiState, options);
       } else if (payload.uiState && typeof payload.uiState === 'object') {
@@ -5836,24 +6084,15 @@ export class Helios extends EventTarget {
             : {}),
         });
       }
+      if (!restoredStorageState && !sparseOverrides && payload.storageState && options.restoreStorage !== false && typeof this.storage?.restoreSnapshot === 'function') {
+        this.storage.restoreSnapshot(payload.storageState, {
+          source: 'restore',
+          reason: options.reason ?? 'visualization-state-restore',
+          trackOverride: options.trackOverride,
+        });
+      }
     };
-    if (options.hydratePersistence === false && typeof this.persistence?.runWithPersistenceRestoreSuspended === 'function') {
-      await this.persistence.runWithPersistenceRestoreSuspended(applyVisualizationState);
-    } else {
-      await applyVisualizationState();
-    }
-    if (options.hydratePersistence !== false) {
-      this.persistence?.hydrateVisualizationState?.(createPersistenceEnvelope(PERSISTENCE_KINDS.visualization, payload, envelope.metadata), {
-        reason: options.reason ?? 'visualization-state-restore',
-      });
-    }
-    if (options.refreshPersistence !== false) {
-      this.persistence?.refreshBoundKeys?.({
-        source: 'restore',
-        reason: options.reason ?? 'visualization-state-restore',
-        autosave: false,
-      });
-    }
+    await applyVisualizationState();
     return envelope;
   }
 
@@ -5890,16 +6129,19 @@ export class Helios extends EventTarget {
   }
 
   serializeTrackedVisualizationState(options = {}) {
-    const preferences = options.preferences ?? this.persistence?.getPreferences?.() ?? null;
+    const preferences = options.preferences ?? this.storage?.getPreferences?.() ?? createDefaultPreferencesState();
+    const includeLayoutRuntime = options.includeLayoutRuntime !== false;
     return createPersistenceEnvelope(PERSISTENCE_KINDS.visualization, {
       preferences,
       responsivePreferences: preferences?.responsive ?? null,
       uiState: {},
       behaviorState: {},
-      cameraState: null,
+      cameraState: this._snapshotCameraState(options.camera ?? {}),
+      cameraControlState: this._snapshotCameraControlState(),
       networkSource: this._capturePersistenceNetworkSource(),
-      overrides: this.persistence?.getOverrides?.() ?? {},
-      layoutRuntimeState: this.snapshotLayoutRuntimeState(options.layoutRuntime ?? {}),
+      overrides: this._trackedVisualizationOverrides(),
+      layoutRuntimeState: includeLayoutRuntime ? this.snapshotLayoutRuntimeState(options.layoutRuntime ?? {}) : null,
+      storageState: this._snapshotStorageState(options.storage ?? {}),
     }, {
       source: 'helios',
       sparse: true,
@@ -5907,16 +6149,19 @@ export class Helios extends EventTarget {
   }
 
   async serializeTrackedVisualizationStateAsync(options = {}) {
-    const preferences = options.preferences ?? this.persistence?.getPreferences?.() ?? null;
+    const preferences = options.preferences ?? this.storage?.getPreferences?.() ?? createDefaultPreferencesState();
+    const includeLayoutRuntime = options.includeLayoutRuntime !== false;
     return createPersistenceEnvelope(PERSISTENCE_KINDS.visualization, {
       preferences,
       responsivePreferences: preferences?.responsive ?? null,
       uiState: {},
       behaviorState: {},
-      cameraState: null,
+      cameraState: this._snapshotCameraState(options.camera ?? {}),
+      cameraControlState: this._snapshotCameraControlState(),
       networkSource: this._capturePersistenceNetworkSource(),
-      overrides: this.persistence?.getOverrides?.() ?? {},
-      layoutRuntimeState: await this.snapshotLayoutRuntimeStateAsync(options.layoutRuntime ?? {}),
+      overrides: this._trackedVisualizationOverrides(),
+      layoutRuntimeState: includeLayoutRuntime ? await this.snapshotLayoutRuntimeStateAsync(options.layoutRuntime ?? {}) : null,
+      storageState: this._snapshotStorageState(options.storage ?? {}),
     }, {
       source: 'helios',
       sparse: true,
@@ -6021,13 +6266,15 @@ export class Helios extends EventTarget {
               preferDelegate: true,
             },
           };
+          const useTrackedVisualization = options.fullVisualizationState !== true && options.trackedOnly !== false;
           const visualizationState = options.visualizationState
-            ?? await (options.trackedOnly === true
+            ?? await (useTrackedVisualization
               ? this.serializeTrackedVisualizationStateAsync(currentPositionOptions)
               : this.serializeVisualizationStateAsync(currentPositionOptions));
           const layoutPositions = visualizationState?.payload?.layoutRuntimeState?.positions ?? null;
           if (layoutPositions?.encoding === 'float32-base64' && typeof layoutPositions.data === 'string') {
-            this.persistence?.set?.('positions.current', layoutPositions, {
+            const stateWriter = this.storage;
+            (stateWriter?.recordPortableState ?? stateWriter?.set)?.call(stateWriter, 'positions.current', layoutPositions, {
               scope: 'network',
               source: 'system',
               reason: 'portable-network-save',
@@ -6063,8 +6310,9 @@ export class Helios extends EventTarget {
       let previousPositions = null;
       let wroteCurrentPositionsForSave = false;
       try {
+        const useTrackedVisualization = options.fullVisualizationState !== true && options.trackedOnly !== false;
         const visualizationState = options.visualizationState
-          ?? await (options.trackedOnly === true
+          ?? await (useTrackedVisualization
             ? this.serializeTrackedVisualizationStateAsync({
               ...options,
               layoutRuntime: {
@@ -6085,7 +6333,8 @@ export class Helios extends EventTarget {
           && layoutPositions?.encoding === 'float32-base64'
           && typeof layoutPositions.data === 'string'
         ) {
-          this.persistence?.set?.('positions.current', layoutPositions, {
+          const stateWriter = this.storage;
+          (stateWriter?.recordPortableState ?? stateWriter?.set)?.call(stateWriter, 'positions.current', layoutPositions, {
             scope: 'network',
             source: 'system',
             reason: 'portable-network-save',
@@ -6100,14 +6349,18 @@ export class Helios extends EventTarget {
             }
           }
         }
-        await this.persistence?.savePortableStateToNetwork?.({
+        const portableVisualizationState = await (this.storage?.serializeNetworkSnapshot?.({
+          ...options,
           includeNetwork: true,
-          includePositions: options.includeCurrentPositions !== false,
-        });
-        this.attachVisualizationStateToNetwork(visualizationState, {
+          includeCurrentPositions: options.includeCurrentPositions !== false,
+        }) ?? visualizationState);
+        await (this.storage?.attachVisualizationStateToNetwork?.(portableVisualizationState, {
           attributeName,
           pretty: options.pretty,
-        });
+        }) ?? this.attachVisualizationStateToNetwork(portableVisualizationState, {
+          attributeName,
+          pretty: options.pretty,
+        }));
         return await this.saveNetwork(format, { output, saveOptions });
       } finally {
         if (wroteCurrentPositionsForSave && previousPositions instanceof Float32Array) {
@@ -6120,10 +6373,6 @@ export class Helios extends EventTarget {
         }
       }
     };
-    const sessionController = this.persistence?.sessionController ?? null;
-    if (typeof sessionController?.suspendDuring === 'function') {
-      return await sessionController.suspendDuring(saveWithVisualizationAttribute);
-    }
     return await saveWithVisualizationAttribute();
   }
 
@@ -6984,39 +7233,45 @@ export class Helios extends EventTarget {
         this.emit(EVENTS.AFTER_RENDER, { frameId: this._frameId, dt, frame, size: { ...this.size } });
       }
     });
-    let sessionController = null;
+    let storageSessionsActive = false;
+    if (this.storage?.ready && typeof this.storage.ready.then === 'function') {
+      await this.storage.ready.catch((error) => {
+        console.warn('[HeliosStorage] Initial storage restore failed', error);
+        return null;
+      });
+    }
     const sessionOptions = this._sessionPersistenceOptions && typeof this._sessionPersistenceOptions === 'object'
       ? this._sessionPersistenceOptions
       : {};
     if (this._sessionPersistenceOptions !== false) {
-      this.persistence?.configureSession?.({
+      const configured = this.storage?.configureSession?.({
         ...sessionOptions,
         deferRestore: true,
       });
-      sessionController = this.persistence?.sessionController ?? null;
+      storageSessionsActive = configured != null && this.storage?.capabilities?.sessions === true;
     }
-    if (sessionController?.suspendDuring) {
-      await sessionController.suspendDuring(() => this._initializeOptionalUI());
-    } else {
-      await this._initializeOptionalUI();
-    }
-    if (sessionController) {
+    await this._initializeOptionalUI();
+    if (storageSessionsActive) {
       if (sessionOptions.restore !== false) {
-        this._sessionRestoreResult = await this.persistence.restoreActiveSession?.({
+        this._sessionRestoreResult = await this.storage?.restoreActiveSession?.({
           ...sessionOptions,
           restoreNetwork: sessionOptions.restoreNetwork === true,
         });
       } else if (sessionOptions.saveInitialManifest !== false) {
-        await sessionController.saveManifest?.();
+        await this.storage?.saveSession?.({
+          ...sessionOptions,
+          id: sessionOptions.id ?? sessionOptions.sessionId ?? this.storage?.sessionId ?? undefined,
+          networkFormat: sessionOptions.networkFormat ?? sessionOptions.networkPersistence?.format,
+        });
       }
-      const networkData = sessionController.status?.().networkData ?? {};
+      const sessionStatus = this.storage?.persistenceStatus?.() ?? {};
+      const networkData = sessionStatus.networkData ?? {};
       const shouldAutosaveInitialNetwork = sessionOptions.saveInitialNetwork !== false
-        && typeof this.persistence?._featureAutosaveEnabled === 'function'
-        && this.persistence._featureAutosaveEnabled('network')
+        && this.storage?.get?.('network.persistence.autosave', true) === true
         && networkData.status !== 'saved'
         && networkData.status !== 'skipped';
       if (shouldAutosaveInitialNetwork) {
-        this.persistence.markNetworkDirty?.(networkData.reason ?? 'session-initial-network');
+        this.storage?.markNetworkDirty?.(networkData.reason ?? 'session-initial-network');
       }
     }
     if (!this._sessionRestoreResult) this._requestInitialCameraFit();
@@ -7035,8 +7290,9 @@ export class Helios extends EventTarget {
       this.firstGeometryUpdateComplete = true;
       this.debug.log('helios', 'Manual rendering enabled, initial geometry applied');
     }
-    this.debug.log('helios', 'Initialization complete');
     this._applyPickingConfig();
+    this._scheduleStorageOverrideTrackingReady();
+    this.debug.log('helios', 'Initialization complete');
     return this;
   }
 
@@ -7296,6 +7552,40 @@ export class Helios extends EventTarget {
       }
     }
     return restoredPositions;
+  }
+
+  _adoptNetworkPositionsAsLayoutBaseline(options = {}) {
+    const snapshot = this._snapshotNodePositions();
+    if (!(snapshot instanceof Float32Array) || snapshot.length <= 0) return false;
+    const layout = this._layout ?? null;
+    const runtimeState = options.layoutRuntimeState && typeof options.layoutRuntimeState === 'object'
+      ? options.layoutRuntimeState
+      : {};
+    let adopted = false;
+    const delegate = layout?.getPositionDelegate?.() ?? layout?.positionDelegate ?? null;
+    if (delegate && typeof delegate.writePositionSnapshot === 'function') {
+      adopted = delegate.writePositionSnapshot(snapshot, {
+        ...this._buildPositionDelegateContext({
+          scope: 'session-restore',
+          reason: options.reason ?? 'session-network-restore',
+        }),
+        center: Array.isArray(runtimeState.center) ? runtimeState.center : undefined,
+        outputScale: layout?.options?.outputScale ?? delegate?.options?.outputScale,
+      }) === true || adopted;
+    }
+    adopted = layout?.seedFromPositionSnapshot?.(snapshot, {
+      emitUpdate: false,
+      requestUpdate: false,
+    }) === true || adopted;
+    if (!adopted) return false;
+    const runtime = this._resetInterpolationRuntime({ keepLastRendered: false, keepIntervalHistory: true });
+    runtime.lastRenderedPositions = new Float32Array(snapshot);
+    this._interpolationRuntime = runtime;
+    this._applyPositionPipelineToRenderer();
+    this.scheduler?.requestGeometry?.();
+    this.scheduler?.requestRender?.();
+    this._labels?.requestFullReselect?.(options.reason ?? 'session-network-restore');
+    return true;
   }
 
   _writeNodePositions(values) {
@@ -7581,7 +7871,7 @@ export class Helios extends EventTarget {
       this._interpolationRuntime = runtime;
       this._applyPositionPipelineToRenderer();
       this.visuals.markPositionsDirty();
-      this.persistence?.markPositionsDirty?.('layout-update');
+      this.storage?.markPositionsDirty?.('layout-update');
       this.scheduler.requestGeometry();
       this._labels?.requestFullReselect?.('layout-update');
       this.debug.log('layout', 'Layout update adopted handoff baseline without interpolation');
@@ -7628,7 +7918,7 @@ export class Helios extends EventTarget {
     }
     this._applyPositionPipelineToRenderer();
     this.visuals.markPositionsDirty();
-    this.persistence?.markPositionsDirty?.('layout-update');
+    this.storage?.markPositionsDirty?.('layout-update');
     this.scheduler.requestGeometry();
     this._labels?.requestFullReselect?.('layout-update');
     this.debug.log('layout', 'Layout requested geometry update');
@@ -8012,7 +8302,7 @@ export class Helios extends EventTarget {
     for (const name of Object.keys(bindings)) {
       if (typeof this[name] !== 'function') continue;
       const value = this[name]();
-      this._emitUIBindingChange(name, value);
+      this._emitUIBindingChange(name, value, { source: 'refresh', trackOverride: false });
     }
   }
 
@@ -8475,16 +8765,35 @@ export class Helios extends EventTarget {
     return this._pendingGraphLayerProps.get(name);
   }
 
+  _requestGraphPropLabelReselect(reason) {
+    if (this._suppressStateBindingUiEvent > 0) {
+      this._pendingStateBindingLabelReselectReason = reason;
+      if (this._pendingStateBindingLabelReselect) return;
+      this._pendingStateBindingLabelReselect = true;
+      const schedule = typeof requestAnimationFrame === 'function'
+        ? requestAnimationFrame
+        : (callback) => setTimeout(callback, 16);
+      schedule(() => {
+        this._pendingStateBindingLabelReselect = false;
+        const nextReason = this._pendingStateBindingLabelReselectReason ?? reason;
+        this._pendingStateBindingLabelReselectReason = null;
+        this._labels?.requestFullReselect?.(nextReason);
+      });
+      return;
+    }
+    this._labels?.requestFullReselect?.(reason);
+  }
+
   _setGraphLayerProp(name, value) {
     if (this.renderer?.graphLayer && name in this.renderer.graphLayer) {
       this.renderer.graphLayer[name] = value;
       this.scheduler.requestRender();
-      this._labels?.requestFullReselect?.(`graph-prop:${name}`);
+      this._requestGraphPropLabelReselect(`graph-prop:${name}`);
       this._emitUIBindingChange(name, value);
       return this;
     }
     this._pendingGraphLayerProps.set(name, value);
-    this._labels?.requestFullReselect?.(`graph-prop-pending:${name}`);
+    this._requestGraphPropLabelReselect(`graph-prop-pending:${name}`);
     this._emitUIBindingChange(name, value);
     return this;
   }
@@ -8954,7 +9263,7 @@ export class Helios extends EventTarget {
     return captureCameraPose(this.renderer?.camera ?? null);
   }
 
-  cameraControls(options) {
+  cameraControls(options, stateOptions = {}) {
     if (arguments.length === 0) {
       return this._cameraControlsSnapshot();
     }
@@ -8978,6 +9287,22 @@ export class Helios extends EventTarget {
     const next = this._cameraControlsSnapshot();
     if (JSON.stringify(next) !== previous) {
       this._emitCameraControlChange();
+      if (stateOptions.applyState !== false && typeof this.states?.set === 'function') {
+        const source = stateOptions.source ?? 'program';
+        const trackOverride = stateOptions.trackOverride ?? isExplicitCameraStateSource(source, stateOptions);
+        for (const key of CAMERA_CONTROL_STATE_KEYS) {
+          if (!Object.prototype.hasOwnProperty.call(options, key)) continue;
+          if (JSON.stringify(previousSnapshot?.[key]) === JSON.stringify(next?.[key])) continue;
+          this.states.set(`camera.controls.${key}`, cloneSerializable(next[key]), {
+            source,
+            reason: stateOptions.reason ?? 'camera-controls',
+            trackOverride,
+            applyBinding: false,
+            debounceMs: stateOptions.debounceMs ?? 500,
+            journal: stateOptions.journal ?? false,
+          });
+        }
+      }
     }
     if (this._cameraControlConfig.autoFit === true) {
       this.scheduler?.requestRender?.();
@@ -9096,6 +9421,20 @@ export class Helios extends EventTarget {
       };
     }
     applyCameraPose(camera, nextPose, { update: options.update !== false });
+    if (
+      options.applyState !== false
+      && typeof this.states?.set === 'function'
+      && isExplicitCameraStateSource(options.source, options)
+    ) {
+      this.states.set('camera.pose', this._snapshotCameraState({ includeViewport: false }), {
+        source: options.source === 'test' ? 'program' : (options.source ?? 'program'),
+        reason: options.reason ?? 'camera-pose',
+        trackOverride: true,
+        applyBinding: false,
+        debounceMs: options.debounceMs ?? 500,
+        journal: options.journal ?? false,
+      });
+    }
     if (options.source === 'ui' || options.source === 'interaction' || options.source === 'cli' || options.manual === true) {
       this._disableAutomaticCameraControlFromInteraction({
         origin: options.source ?? 'interaction',
@@ -9269,6 +9608,16 @@ export class Helios extends EventTarget {
         previousMode,
         projection: nextProjection,
       });
+      if (options.applyState !== false && typeof this.states?.set === 'function') {
+        this.states.set('scene.dimension', nextMode, {
+          source: options.source === 'test' ? 'program' : (options.source ?? 'program'),
+          reason: options.reason ?? 'mode',
+          trackOverride: options.trackOverride ?? true,
+          applyBinding: false,
+          debounceMs: options.debounceMs ?? 0,
+          journal: options.journal ?? false,
+        });
+      }
       return this;
     } finally {
       if (this._cameraControlRuntime) {
@@ -12139,7 +12488,7 @@ export class Helios extends EventTarget {
   }
 
   async _initializeOptionalUI() {
-    const requested = this.options?.ui ?? false;
+    const requested = this.options?.ui ?? (this.debugEnabled ? true : false);
     if (requested === false || requested == null) return null;
     if (this.ui) return this.ui;
     const uiOptions = requested === true
@@ -12157,20 +12506,24 @@ export class Helios extends EventTarget {
   }
 
   _refreshPersistenceBaselineAfterUiInit() {
-    const controller = this.persistence?.sessionController ?? null;
-    if (!controller || controller.initialPersistenceReady === false) return;
-    const overrides = controller.getOverrides?.() ?? {};
-    if (Object.keys(overrides).some((path) => !BASELINE_REFRESH_IGNORED_OVERRIDES.has(path))) return;
-    controller.captureBaseline?.();
     this._pendingPersistenceBaselineRefresh = false;
+  }
+
+  _scheduleStorageOverrideTrackingReady() {
+    if (typeof this.storage?.setOverrideTrackingReady !== 'function') return;
+    this.storage.setOverrideTrackingReady(true);
   }
 
   _createOptionalUIPanels(ui, panels, panelOptions = {}) {
     if (!ui || panels === false || panels == null) return;
     const fullPanelList = ['demo', 'metrics', 'mappers', 'layout', 'legends', 'filter', 'camera', 'selection'];
-    const normalized = panels === true || panels === 'default' || panels === 'all'
+    const normalizedBase = panels === true || panels === 'default' || panels === 'all'
       ? fullPanelList
       : (Array.isArray(panels) ? panels : [panels]);
+    const normalized = normalizedBase.slice();
+    if (this.debugEnabled && !normalized.some((entry) => String(entry ?? '').trim().toLowerCase() === 'debug')) {
+      normalized.push('debug');
+    }
     const creators = {
       demo: 'createDemoPanel',
       scene: 'createDemoPanel',
@@ -12183,6 +12536,7 @@ export class Helios extends EventTarget {
       camera: 'createCameraPanel',
       selection: 'createSelectionPanel',
       metrics: 'createMetricsPanel',
+      debug: 'createDebugPanel',
     };
     for (const entry of normalized) {
       const key = String(entry ?? '').trim().toLowerCase();
@@ -12216,14 +12570,19 @@ export class Helios extends EventTarget {
       this.removeResizeListener();
       this.removeResizeListener = null;
     }
+    this._beforeUnloadUnsavedChangesCleanup?.();
+    this._beforeUnloadUnsavedChangesCleanup = null;
     this._detachPickingListeners();
     this._destroyQuickControls();
     this.attributeTracker?.destroy?.();
     this.indexPickingTracker?.destroy?.();
     this.indexPickingTracker = null;
-    this.persistence?.destroy?.();
+    this.storage?.destroy?.();
     this.ui?.destroy?.();
     this.ui = null;
+    if (this.debugEnabled && typeof window !== 'undefined' && window.__helios === this) {
+      delete window.__helios;
+    }
     this.renderer?.destroy?.();
     this._densityLayer = null;
     this._labels?.destroy?.();

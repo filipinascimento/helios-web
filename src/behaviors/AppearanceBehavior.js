@@ -62,6 +62,159 @@ const SOURCE_EVENT_NAMES = new Set([
   ...ACCESSOR_NAMES,
 ]);
 
+const LEGACY_APPEARANCE_PATHS = Object.freeze({
+  background: 'appearance.background',
+  clearColor: 'appearance.background',
+  edgeTransparencyMode: 'appearance.edgeTransparencyMode',
+  supersampling: 'appearance.supersampling',
+  nodeSizeScale: 'appearance.nodeStyle.sizeScale',
+  nodeSizeBase: 'appearance.nodeStyle.sizeBase',
+  nodeOpacityScale: 'appearance.nodeStyle.opacityScale',
+  nodeOpacityBase: 'appearance.nodeStyle.opacityBase',
+  nodeOutlineWidthScale: 'appearance.nodeStyle.outlineWidthScale',
+  nodeOutlineWidthBase: 'appearance.nodeStyle.outlineWidthBase',
+  semanticZoomExponent: 'appearance.nodeStyle.semanticZoomExponent',
+  nodeBlendWithEdges: 'appearance.nodeStyle.blendWithEdges',
+  edgeWidthScale: 'appearance.edgeStyle.widthScale',
+  edgeWidthBase: 'appearance.edgeStyle.widthBase',
+  edgeOpacityScale: 'appearance.edgeStyle.opacityScale',
+  edgeOpacityBase: 'appearance.edgeStyle.opacityBase',
+  edgeEndpointTrim: 'appearance.edgeStyle.endpointTrim',
+  edgeDepthWrite: 'appearance.edgeStyle.depthWrite',
+  edgeFastRendering: 'appearance.edgeStyle.fastRendering',
+  edgeWidthClampToNodeDiameter: 'appearance.edgeStyle.clampToNodeDiameter',
+  edgeAdaptiveQualityEnabled: 'appearance.edgeStyle.adaptiveQuality.enabled',
+  edgeAdaptiveQualitySlowFrameThresholdMs: 'appearance.edgeStyle.adaptiveQuality.slowFrameThresholdMs',
+  edgeAdaptiveQualitySlowFrameConsecutiveFrames: 'appearance.edgeStyle.adaptiveQuality.slowFrameConsecutiveFrames',
+  edgeAdaptiveQualityProbeIntervalMs: 'appearance.edgeStyle.adaptiveQuality.probeIntervalMs',
+  edgeAdaptiveQualityInteractionHoldMs: 'appearance.edgeStyle.adaptiveQuality.interactionHoldMs',
+  edgeAdaptiveQualityFastDuringCamera: 'appearance.edgeStyle.adaptiveQuality.fastDuringCamera',
+  edgeAdaptiveQualityFastDuringLayout: 'appearance.edgeStyle.adaptiveQuality.fastDuringLayout',
+  shadedEnabled: 'appearance.shaded.enabled',
+  shadedNodes: 'appearance.shaded.nodes',
+  shadedEdges: 'appearance.shaded.edges',
+  shadedLightDirection: 'appearance.shaded.lightDirection',
+  shadedLightDirectionX: 'appearance.shaded.lightDirection.0',
+  shadedLightDirectionY: 'appearance.shaded.lightDirection.1',
+  shadedLightDirectionZ: 'appearance.shaded.lightDirection.2',
+  shadedLightColor: 'appearance.shaded.lightColor',
+  shadedAmbientTopColor: 'appearance.shaded.ambientTopColor',
+  shadedAmbientBottomColor: 'appearance.shaded.ambientBottomColor',
+  shadedDiffuseStrength: 'appearance.shaded.diffuseStrength',
+  shadedAmbientStrength: 'appearance.shaded.ambientStrength',
+  shadedSpecularColor: 'appearance.shaded.specularColor',
+  shadedSpecularStrength: 'appearance.shaded.specularStrength',
+  shadedShininess: 'appearance.shaded.shininess',
+  ambientOcclusionEnabled: 'appearance.ambientOcclusion.enabled',
+  ambientOcclusionNodes: 'appearance.ambientOcclusion.nodes',
+  ambientOcclusionEdges: 'appearance.ambientOcclusion.edges',
+  ambientOcclusionStrength: 'appearance.ambientOcclusion.strength',
+  ambientOcclusionRadius: 'appearance.ambientOcclusion.radius',
+  ambientOcclusionBias: 'appearance.ambientOcclusion.bias',
+  ambientOcclusionMode: 'appearance.ambientOcclusion.mode',
+  ambientOcclusionIntensityScale: 'appearance.ambientOcclusion.intensityScale',
+  ambientOcclusionIntensityShift: 'appearance.ambientOcclusion.intensityShift',
+  ambientOcclusionQuality: 'appearance.ambientOcclusion.quality',
+});
+
+function collectStateKeys(detail = {}) {
+  const keys = [];
+  if (typeof detail.storageKey === 'string') keys.push(detail.storageKey);
+  if (typeof detail.stateKey === 'string') keys.push(detail.stateKey);
+  if (Array.isArray(detail.storageKeys)) {
+    for (const key of detail.storageKeys) if (typeof key === 'string') keys.push(key);
+  }
+  if (Array.isArray(detail.stateKeys)) {
+    for (const key of detail.stateKeys) if (typeof key === 'string') keys.push(key);
+  }
+  return keys;
+}
+
+function keyMatchesTarget(key, target) {
+  if (!key || !target) return false;
+  return key === target || key.startsWith(`${target}.`) || target.startsWith(`${key}.`);
+}
+
+function appearanceEventTargetsEntry(detail = {}, entryKey = '', storagePath = '') {
+  const eventName = typeof detail.name === 'string' ? detail.name : '';
+  const eventPath = LEGACY_APPEARANCE_PATHS[eventName] ?? '';
+  const targetPath = storagePath || LEGACY_APPEARANCE_PATHS[entryKey] || '';
+  if (eventName && (eventName === entryKey || (eventPath && keyMatchesTarget(eventPath, targetPath)))) return true;
+  const keys = collectStateKeys(detail);
+  if (!keys.length) return false;
+  const behaviorPath = entryKey ? `behaviors.appearance.${entryKey}` : '';
+  return keys.some((key) => (
+    keyMatchesTarget(key, targetPath)
+    || keyMatchesTarget(key, behaviorPath)
+  ));
+}
+
+const APPEARANCE_CONTROL_LABELS = Object.freeze({
+  edgeAdaptiveQuality: 'Adaptive Edge Quality',
+  edgeAdaptiveQualityEnabled: 'Adaptive Edges',
+  edgeAdaptiveQualitySlowFrameThresholdMs: 'Slow Frame Threshold',
+  edgeAdaptiveQualitySlowFrameConsecutiveFrames: 'Averaging Frames',
+  edgeAdaptiveQualityProbeIntervalMs: 'Probe Interval',
+  edgeAdaptiveQualityInteractionHoldMs: 'Interaction Hold',
+  edgeAdaptiveQualityFastDuringCamera: 'Fast During Camera',
+  edgeAdaptiveQualityFastDuringLayout: 'Fast During Layout',
+  shadedEnabled: 'Shaded',
+  shadedNodes: 'Nodes',
+  shadedEdges: 'Edges',
+  shadedLightDirection: 'Light Direction',
+  shadedLightDirectionX: 'Light X',
+  shadedLightDirectionY: 'Light Y',
+  shadedLightDirectionZ: 'Light Z',
+  shadedLightColor: 'Light Color',
+  shadedAmbientTopColor: 'Ambient Top',
+  shadedAmbientBottomColor: 'Ambient Bottom',
+  shadedDiffuseStrength: 'Diffuse',
+  shadedAmbientStrength: 'Ambient',
+  shadedSpecularColor: 'Specular Color',
+  shadedSpecularStrength: 'Specular',
+  shadedShininess: 'Shininess',
+  ambientOcclusionEnabled: 'Ambient Occlusion',
+  ambientOcclusionNodes: 'Nodes',
+  ambientOcclusionEdges: 'Edges',
+  ambientOcclusionStrength: 'Strength',
+  ambientOcclusionRadius: 'Radius',
+  ambientOcclusionBias: 'Bias',
+  ambientOcclusionMode: 'Mode',
+  ambientOcclusionIntensityScale: 'Fast Scale',
+  ambientOcclusionIntensityShift: 'Fast Shift',
+  ambientOcclusionQuality: 'Quality',
+  nodeSizeScale: 'Node Size Scale',
+  nodeSizeBase: 'Node Size Base',
+  nodeOpacityScale: 'Node Opacity Scale',
+  nodeOpacityBase: 'Node Opacity Base',
+  nodeOutlineWidthScale: 'Outline Width Scale',
+  nodeOutlineWidthBase: 'Outline Width Base',
+  semanticZoomExponent: 'Semantic Zoom Exp.',
+  nodeBlendWithEdges: 'Blend Nodes',
+  edgeWidthScale: 'Edge Width Scale',
+  edgeWidthBase: 'Edge Width Base',
+  edgeOpacityScale: 'Edge Opacity Scale',
+  edgeOpacityBase: 'Edge Opacity Base',
+  edgeEndpointTrim: 'Edge Endpoint Trim',
+  edgeDepthWrite: 'Edge Depth Write',
+  edgeFastRendering: 'Fast Edge Lines',
+  edgeWidthClampToNodeDiameter: 'Clamp Edge Widths',
+});
+
+function fallbackControlLabel(value) {
+  return String(value ?? '')
+    .replace(/[_-]+/gu, ' ')
+    .replace(/([a-z0-9])([A-Z])/gu, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/gu, '$1 $2')
+    .replace(/\s+/gu, ' ')
+    .trim()
+    .replace(/\b\w/gu, (match) => match.toUpperCase());
+}
+
+function appearanceControlLabel(key) {
+  return APPEARANCE_CONTROL_LABELS[key] ?? fallbackControlLabel(key);
+}
+
 function cloneSerializable(value) {
   if (Array.isArray(value)) return value.map((entry) => cloneSerializable(entry));
   if (ArrayBuffer.isView(value)) return Array.from(value, (entry) => cloneSerializable(entry));
@@ -72,6 +225,70 @@ function cloneSerializable(value) {
     next[key] = cloneSerializable(entry);
   }
   return next;
+}
+
+function appearanceValueFromState(key, state = {}) {
+  const nodeStyle = state.nodeStyle ?? {};
+  const edgeStyle = state.edgeStyle ?? {};
+  const adaptiveQuality = edgeStyle.adaptiveQuality ?? {};
+  const shaded = state.shaded ?? {};
+  const ambientOcclusion = state.ambientOcclusion ?? {};
+  const values = {
+    background: state.background,
+    clearColor: state.background,
+    edgeTransparencyMode: state.edgeTransparencyMode,
+    supersampling: state.supersampling,
+    nodeSizeScale: nodeStyle.sizeScale,
+    nodeSizeBase: nodeStyle.sizeBase,
+    nodeOpacityScale: nodeStyle.opacityScale,
+    nodeOpacityBase: nodeStyle.opacityBase,
+    nodeOutlineWidthScale: nodeStyle.outlineWidthScale,
+    nodeOutlineWidthBase: nodeStyle.outlineWidthBase,
+    semanticZoomExponent: nodeStyle.semanticZoomExponent,
+    nodeBlendWithEdges: nodeStyle.blendWithEdges,
+    edgeWidthScale: edgeStyle.widthScale,
+    edgeWidthBase: edgeStyle.widthBase,
+    edgeOpacityScale: edgeStyle.opacityScale,
+    edgeOpacityBase: edgeStyle.opacityBase,
+    edgeEndpointTrim: edgeStyle.endpointTrim,
+    edgeWidthClampToNodeDiameter: edgeStyle.clampToNodeDiameter,
+    edgeDepthWrite: edgeStyle.depthWrite,
+    edgeFastRendering: edgeStyle.fastRendering,
+    edgeAdaptiveQuality: edgeStyle.adaptiveQuality,
+    edgeAdaptiveQualityEnabled: adaptiveQuality.enabled,
+    edgeAdaptiveQualitySlowFrameThresholdMs: adaptiveQuality.slowFrameThresholdMs,
+    edgeAdaptiveQualitySlowFrameConsecutiveFrames: adaptiveQuality.slowFrameConsecutiveFrames,
+    edgeAdaptiveQualityProbeIntervalMs: adaptiveQuality.probeIntervalMs,
+    edgeAdaptiveQualityInteractionHoldMs: adaptiveQuality.interactionHoldMs,
+    edgeAdaptiveQualityFastDuringCamera: adaptiveQuality.fastDuringCamera,
+    edgeAdaptiveQualityFastDuringLayout: adaptiveQuality.fastDuringLayout,
+    shadedEnabled: shaded.enabled,
+    shadedNodes: shaded.nodes,
+    shadedEdges: shaded.edges,
+    shadedLightDirection: shaded.lightDirection,
+    shadedLightDirectionX: Array.isArray(shaded.lightDirection) ? shaded.lightDirection[0] : undefined,
+    shadedLightDirectionY: Array.isArray(shaded.lightDirection) ? shaded.lightDirection[1] : undefined,
+    shadedLightDirectionZ: Array.isArray(shaded.lightDirection) ? shaded.lightDirection[2] : undefined,
+    shadedLightColor: shaded.lightColor,
+    shadedAmbientTopColor: shaded.ambientTopColor,
+    shadedAmbientBottomColor: shaded.ambientBottomColor,
+    shadedDiffuseStrength: shaded.diffuseStrength,
+    shadedAmbientStrength: shaded.ambientStrength,
+    shadedSpecularColor: shaded.specularColor,
+    shadedSpecularStrength: shaded.specularStrength,
+    shadedShininess: shaded.shininess,
+    ambientOcclusionEnabled: ambientOcclusion.enabled,
+    ambientOcclusionNodes: ambientOcclusion.nodes,
+    ambientOcclusionEdges: ambientOcclusion.edges,
+    ambientOcclusionStrength: ambientOcclusion.strength,
+    ambientOcclusionRadius: ambientOcclusion.radius,
+    ambientOcclusionBias: ambientOcclusion.bias,
+    ambientOcclusionMode: ambientOcclusion.mode,
+    ambientOcclusionIntensityScale: ambientOcclusion.intensityScale,
+    ambientOcclusionIntensityShift: ambientOcclusion.intensityShift,
+    ambientOcclusionQuality: ambientOcclusion.quality,
+  };
+  return values[key];
 }
 
 function supportsAmbientOcclusion(helios) {
@@ -161,10 +378,16 @@ function normalizeAppearancePatch(options = {}) {
 function buildAppearanceSnapshot(helios, fallback = {}) {
   const read = (name, defaultValue = undefined) => {
     if (typeof helios?.[name] === 'function') {
-      return cloneSerializable(helios[name]());
+      const value = helios[name]();
+      if (value !== undefined && (value !== null || defaultValue == null)) {
+        return cloneSerializable(value);
+      }
     }
     if (Object.prototype.hasOwnProperty.call(fallback, name)) {
-      return cloneSerializable(fallback[name]);
+      const value = fallback[name];
+      if (value !== undefined && (value !== null || defaultValue == null)) {
+        return cloneSerializable(value);
+      }
     }
     return defaultValue;
   };
@@ -251,15 +474,19 @@ export class AppearanceBehavior extends Behavior {
     this.addCleanup(this.context.subscribe(this.context?.helios, 'ui:binding-change', (event) => {
       const name = String(event?.detail?.name ?? '');
       if (this._muteSourceEvents > 0 || !SOURCE_EVENT_NAMES.has(name)) return;
+      const storageKey = LEGACY_APPEARANCE_PATHS[name] ?? null;
       this.emitChange('binding-change', {
         name,
         value: cloneSerializable(event?.detail?.value),
+        source: event?.detail?.source,
+        trackOverride: event?.detail?.trackOverride === true,
+        storageKeys: storageKey ? [storageKey] : [],
       });
     }));
     if (Object.keys(this._pendingPatch).length > 0) {
       this._applyPatch(this._pendingPatch, { silent: true });
     }
-    this.emitChange('attach');
+    this.emitChange('attach', { source: 'default', trackOverride: false });
     return this;
   }
 
@@ -269,7 +496,7 @@ export class AppearanceBehavior extends Behavior {
     if (!Object.keys(patch).length) return this;
     this._pendingPatch = { ...this._pendingPatch, ...patch };
     this._applyPatch(patch, { silent: true });
-    this.emitChange('options');
+    this.emitChange('options', { source: 'default', trackOverride: false });
     return this;
   }
 
@@ -279,10 +506,118 @@ export class AppearanceBehavior extends Behavior {
     };
   }
 
+  stateEntries() {
+    const subscribeForEntry = (entryKey, storagePath) => (notify) => this.on('change', (event) => {
+      const detail = event?.detail ?? event ?? {};
+      if (!appearanceEventTargetsEntry(detail, entryKey, storagePath)) return;
+      notify(undefined, detail);
+    });
+    const state = this.getPublicState();
+    const inferType = (value) => {
+      if (Array.isArray(value)) return 'array';
+      if (typeof value === 'boolean') return 'boolean';
+      if (typeof value === 'number') return 'number';
+      if (typeof value === 'string') return 'string';
+      return 'object';
+    };
+    const accessorEntry = (key) => {
+      const publicState = this.getPublicState();
+      const fallbackValue = appearanceValueFromState(key, publicState);
+      const rawValue = typeof this[key] === 'function'
+        ? this[key]()
+        : fallbackValue;
+      const value = rawValue !== undefined && rawValue !== null ? rawValue : fallbackValue;
+      return {
+        description: `Appearance ${key} setting.`,
+        default: cloneSerializable(value),
+        type: inferType(value),
+        scope: 'workspace',
+        aliases: LEGACY_APPEARANCE_PATHS[key] ? [LEGACY_APPEARANCE_PATHS[key]] : [],
+        ui: { label: appearanceControlLabel(key), controller: inferType(value) === 'boolean' ? 'toggle' : 'auto' },
+        getter: () => (typeof this[key] === 'function'
+          ? cloneSerializable(this[key]() ?? appearanceValueFromState(key, this.getPublicState()))
+          : cloneSerializable(appearanceValueFromState(key, this.getPublicState()))),
+        setter: (nextValue) => this._applyStateEntryValue(key, nextValue),
+        subscribe: subscribeForEntry(key, LEGACY_APPEARANCE_PATHS[key]),
+      };
+    };
+    const groupedEntry = (key, label) => ({
+      description: `Appearance ${label.toLowerCase()} settings.`,
+      default: cloneSerializable(state[key]),
+      type: 'object',
+      scope: 'workspace',
+      aliases: [`appearance.${key}`],
+      ui: { label, controller: 'object' },
+      getter: () => cloneSerializable(this.getPublicState()[key]),
+      setter: (value) => this.update({ [key]: value }),
+      subscribe: subscribeForEntry(key, `appearance.${key}`),
+    });
+    return {
+      state: {
+        description: 'Serializable appearance behavior state.',
+        default: this.serialize(),
+        type: 'object',
+        scope: 'workspace',
+        aliases: ['appearance.state'],
+        getter: () => this.serialize(),
+        setter: (value) => this.restore(value),
+        subscribe: () => () => {},
+      },
+      background: {
+        description: 'Scene background color.',
+        default: cloneSerializable(state.background),
+        type: 'array',
+        scope: 'workspace',
+        aliases: ['appearance.background'],
+        ui: { label: 'Background', controller: 'color' },
+        getter: () => cloneSerializable(this.getPublicState().background),
+        setter: (value) => this._applyStateEntryValue('background', value),
+        subscribe: subscribeForEntry('background', 'appearance.background'),
+      },
+      edgeTransparencyMode: {
+        description: 'Edge transparency mode.',
+        default: state.edgeTransparencyMode,
+        type: 'string',
+        scope: 'workspace',
+        aliases: ['appearance.edgeTransparencyMode'],
+        ui: {
+          label: 'Edge Transparency',
+          controller: 'select',
+          options: ['weighted', 'alpha', 'max'],
+        },
+        getter: () => this.getPublicState().edgeTransparencyMode,
+        setter: (value) => this._applyStateEntryValue('edgeTransparencyMode', value),
+        subscribe: subscribeForEntry('edgeTransparencyMode', 'appearance.edgeTransparencyMode'),
+      },
+      supersampling: {
+        description: 'Supersampling quality setting.',
+        default: state.supersampling,
+        type: 'string',
+        scope: 'workspace',
+        aliases: ['appearance.supersampling'],
+        ui: {
+          label: 'Supersampling',
+          controller: 'select',
+          options: ['auto', 'off', 'on'],
+        },
+        getter: () => this.getPublicState().supersampling,
+        setter: (value) => this._applyStateEntryValue('supersampling', value),
+        subscribe: subscribeForEntry('supersampling', 'appearance.supersampling'),
+      },
+      nodeStyle: groupedEntry('nodeStyle', 'Node Style'),
+      edgeStyle: groupedEntry('edgeStyle', 'Edge Style'),
+      shaded: groupedEntry('shaded', 'Shading'),
+      ambientOcclusion: groupedEntry('ambientOcclusion', 'Ambient Occlusion'),
+      ...Object.fromEntries(ACCESSOR_NAMES
+        .filter((key) => !['background', 'edgeTransparencyMode', 'supersampling'].includes(key))
+        .map((key) => [key, accessorEntry(key)])),
+    };
+  }
+
   restore(snapshot = {}) {
     const options = snapshot?.options && typeof snapshot.options === 'object' ? snapshot.options : {};
     this.update(options);
-    this.emitChange('restore');
+    this.emitChange('restore', { source: 'restore', trackOverride: false });
     return this;
   }
 
@@ -326,6 +661,31 @@ export class AppearanceBehavior extends Behavior {
     if (!silent) this.emitChange('apply');
     return this;
   }
+
+  _applyStateEntryValue(key, value) {
+    const patch = normalizeAppearancePatch({ [key]: value });
+    if (!Object.keys(patch).length) return this;
+    this._pendingPatch = { ...this._pendingPatch, ...patch };
+    const helios = this.context?.helios ?? null;
+    if (!helios) {
+      this.state = buildAppearanceSnapshot(null, this._pendingPatch);
+      return this;
+    }
+    this._muteSourceEvents += 1;
+    helios._suppressStateBindingUiEvent = (helios._suppressStateBindingUiEvent ?? 0) + 1;
+    try {
+      for (const [name, nextValue] of Object.entries(patch)) {
+        const accessor = name === 'background' ? 'background' : name;
+        if (!ACCESSOR_NAME_SET.has(accessor) && accessor !== 'background') continue;
+        if (typeof helios?.[accessor] !== 'function') continue;
+        helios[accessor](nextValue);
+      }
+    } finally {
+      helios._suppressStateBindingUiEvent = Math.max(0, (helios._suppressStateBindingUiEvent ?? 1) - 1);
+      this._muteSourceEvents = Math.max(0, this._muteSourceEvents - 1);
+    }
+    return this;
+  }
 }
 
 for (const accessorName of ACCESSOR_NAMES) {
@@ -340,7 +700,12 @@ for (const accessorName of ACCESSOR_NAMES) {
 
     if (!helios || typeof helios?.[accessorName] !== 'function') {
       this._pendingPatch[accessorName] = cloneSerializable(value);
-      this.emitChange('local-update', { name: accessorName });
+      this.emitChange('local-update', {
+        name: accessorName,
+        source: 'program',
+        trackOverride: true,
+        storageKeys: [LEGACY_APPEARANCE_PATHS[accessorName]].filter(Boolean),
+      });
       return this;
     }
 
@@ -350,7 +715,12 @@ for (const accessorName of ACCESSOR_NAMES) {
     } finally {
       this._muteSourceEvents = Math.max(0, this._muteSourceEvents - 1);
     }
-    this.emitChange('command', { name: accessorName });
+    this.emitChange('command', {
+      name: accessorName,
+      source: 'program',
+      trackOverride: true,
+      storageKeys: [LEGACY_APPEARANCE_PATHS[accessorName]].filter(Boolean),
+    });
     return this;
   };
 }

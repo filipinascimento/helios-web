@@ -41,14 +41,23 @@ physical force balance. Pass
 `layout.options.tuningModel = false` to restore the hand defaults, or pass a
 custom model function/object to override the bundled coefficients.
 
-Centralized persistence is available through `helios.persistence`, but durable
-storage is off by default for library consumers. Pass `persistence: true` plus a
-stable `workspaceId`, or configure browser, remote, custom, network, and
-position persistence options explicitly. See
-[`docs/persistence.md`](./docs/persistence.md) for the public API, sessions, and
-server contract. Autosync waits for camera interaction to settle before heavier
-network/session writes, and saved sessions can carry a tiny capped PNG thumbnail
-for resume lists.
+State and bindings are exposed through `helios.states`; sessions and durable
+sync are exposed through `helios.storage`. Plain library construction creates
+`helios.states` for live state and dummy storage for export/import snapshots.
+Dummy storage does not show persistent UI chrome.
+Pass `storage: { type: 'browser', workspaceId, sessionId }` or a custom manager
+when an app wants durable browser, remote, or host-managed sessions; browser
+storage owns session save/list/load/delete through `helios.storage`.
+Ordinary UI controls bind to `helios.states` and update live visuals
+immediately; storage observes state changes and delays only durable sync work.
+Debug instrumentation is on by default for now: Helios exposes
+`window.__helios`, and UI-enabled apps append a right-docked Debug panel with
+recent state/UI/persistence counters. Pass `debug: false` to disable it.
+Portable network visualization snapshots are available through
+`helios.storage.serializeNetworkSnapshot()` and related helpers. See
+[`docs/persistence.md`](./docs/persistence.md) for the state/storage split,
+state-entry protocol, built-in panel schemas, marker aggregation, and storage
+migration notes.
 
 ## Using as a Library
 
@@ -68,14 +77,15 @@ const helios = new Helios(network, {
 });
 await helios.ready;
 
-// Optional persistence.
+// Optional durable storage. Live controls still bind through helios.states.
 const persistentHelios = new Helios(network, {
   container: '#app',
-  persistence: true,
-  workspaceId: 'demo-workspace',
-  networkPersistence: { enabled: true },
-  positionPersistence: { enabled: true },
-  session: { url: true, restoreNetwork: true, thumbnail: true },
+  storage: {
+    type: 'browser',
+    workspaceId: 'demo-workspace',
+    sessionId: 'demo-session',
+    persistNetwork: false,
+  },
 });
 
 // Optional SVG labels overlay (regular labels stay off until enabled directly or by the Selection panel).
@@ -159,9 +169,10 @@ await helios.exportFigure('figure.png', {
 // - antialias defaults to WebGL on / WebGPU off unless you opt in.
 // - WebGL/WebGPU initialization defaults to powerPreference: "high-performance";
 //   pass backend-specific option objects when an embed needs stricter control.
-// - edgeAdaptiveQuality is enabled by default and averages recent active-frame
-//   times while the camera/layout is moving; if that average gets too high it
-//   temporarily uses cheap line edges, then returns to high quality once static.
+// - edgeAdaptiveQuality is disabled by default. When explicitly enabled, it
+//   averages recent active-frame times while the camera/layout is moving; if
+//   that average gets too high it temporarily uses cheap line edges, then
+//   returns to high quality once static.
 const crispHelios = new Helios(network, {
   container: '#app',
   antialias: true,     // WebGL context AA, or 4x MSAA on the WebGPU canvas pass
@@ -171,7 +182,7 @@ const crispHelios = new Helios(network, {
   webgpuCanvasConfiguration: { alphaMode: 'premultiplied' },
   supersampling: 'auto', // false | true | number | 'auto'
   edgeAdaptiveQuality: {
-    enabled: true,
+    enabled: false,
     slowFrameThresholdMs: 66,
     averageWindowFrames: 12,
     probeIntervalMs: 900,

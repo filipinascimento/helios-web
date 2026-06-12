@@ -18,6 +18,30 @@ function cloneSerializable(value) {
   return next;
 }
 
+function collectStateKeys(detail = {}) {
+  const keys = [];
+  if (typeof detail.storageKey === 'string') keys.push(detail.storageKey);
+  if (typeof detail.stateKey === 'string') keys.push(detail.stateKey);
+  if (Array.isArray(detail.storageKeys)) {
+    for (const key of detail.storageKeys) if (typeof key === 'string') keys.push(key);
+  }
+  if (Array.isArray(detail.stateKeys)) {
+    for (const key of detail.stateKeys) if (typeof key === 'string') keys.push(key);
+  }
+  return keys;
+}
+
+function keyMatchesTarget(key, target) {
+  if (!key || !target) return false;
+  return key === target || key.startsWith(`${target}.`) || target.startsWith(`${key}.`);
+}
+
+function layoutEventTargetsPath(detail = {}, path = '') {
+  const keys = collectStateKeys(detail);
+  if (!keys.length) return false;
+  return keys.some((key) => keyMatchesTarget(key, path) || keyMatchesTarget(key, `behaviors.${path}`));
+}
+
 function getLayoutDescriptor(layout) {
   const descriptor = typeof layout?.getParameterBindings === 'function'
     ? (layout.getParameterBindings() ?? null)
@@ -139,6 +163,102 @@ function snapshotLayoutBindingValues(layout) {
   return parameters;
 }
 
+function bindingStateEntryType(binding) {
+  const type = String(binding?.type ?? '').trim();
+  if (type === 'boolean') return 'boolean';
+  if (type === 'select') return 'string';
+  if (type === 'number') return 'number';
+  if (type === 'string') return 'string';
+  return 'object';
+}
+
+const LAYOUT_PARAMETER_LABELS = Object.freeze({
+  jitter: 'Jitter',
+  kRepulsion: 'Repulsion',
+  kAttraction: 'Attraction',
+  kGravity: 'Gravity',
+  eta: 'Step Rate',
+  damping: 'Velocity Retention',
+  maxStep: 'Max Step',
+  theta: 'Theta',
+  repulsionStrategy: 'Repulsion',
+  negativeSampling: 'Extra Negatives',
+  negativesPerNode: 'Negatives / Node',
+  negativeSampleRate: 'Negative Sample Rate',
+  negativeSampleChurn: 'Negative Sample Churn',
+  maxNeighborsPerNode: 'Neighbors / Node',
+  outputScale: 'Output Scale',
+  rotationDamping: 'Rotation Damping',
+  minDistance: 'Min Distance',
+  maxForce: 'Max Force',
+  leafSize: 'Leaf Size',
+});
+
+function fallbackControlLabel(value) {
+  return String(value ?? '')
+    .replace(/[_-]+/gu, ' ')
+    .replace(/([a-z0-9])([A-Z])/gu, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/gu, '$1 $2')
+    .replace(/\s+/gu, ' ')
+    .trim()
+    .replace(/\b\w/gu, (match) => match.toUpperCase());
+}
+
+function layoutParameterLabel(binding) {
+  const explicit = typeof binding?.label === 'string' ? binding.label.trim() : '';
+  if (explicit) return explicit;
+  const key = typeof binding?.key === 'string' ? binding.key.trim() : '';
+  return LAYOUT_PARAMETER_LABELS[key] ?? fallbackControlLabel(key);
+}
+
+function bindingStateEntryUi(binding) {
+  const controller = binding?.type === 'select'
+    ? 'select'
+    : (binding?.type === 'boolean' ? 'toggle' : (binding?.type === 'number' ? 'slider' : 'auto'));
+  return {
+    label: layoutParameterLabel(binding),
+    controller,
+    min: binding?.min ?? binding?.sliderMin ?? null,
+    max: binding?.max ?? binding?.sliderMax ?? null,
+    step: binding?.step ?? binding?.inputStep ?? null,
+    inputMin: binding?.inputMin ?? null,
+    inputMax: Object.prototype.hasOwnProperty.call(binding ?? {}, 'inputMax') ? binding.inputMax : null,
+    sliderMin: binding?.sliderMin ?? null,
+    sliderMax: binding?.sliderMax ?? null,
+    scale: binding?.scale ?? null,
+    options: binding?.options ?? null,
+    debounceMs: 220,
+  };
+}
+
+function layoutParameterStateEntries(layoutBehavior) {
+  const entries = {};
+  for (const binding of layoutBehavior.bindings() ?? []) {
+    const key = typeof binding?.key === 'string' ? binding.key.trim() : '';
+    if (!key || binding.type === 'display' || typeof binding.get !== 'function') continue;
+    entries[`parameters.${key}`] = {
+      description: binding.hint ?? `Layout parameter ${key}.`,
+      default: cloneSerializable(binding.get()),
+      type: bindingStateEntryType(binding),
+      scope: 'workspace',
+      aliases: [`layout.parameters.${key}`],
+      ui: bindingStateEntryUi(binding),
+      getter: () => cloneSerializable(layoutBehavior.parameter(key)),
+      setter: (value) => layoutBehavior.parameter(key, value, { silent: true }),
+      subscribe: (notify) => layoutBehavior.on('change', (event) => {
+          const detail = event?.detail ?? event ?? {};
+          const changedKey = detail.key ?? null;
+          const changedKeys = Array.isArray(detail.keys) ? detail.keys : [];
+          if (changedKey && changedKey !== key) return;
+          if (changedKeys.length && !changedKeys.includes(key)) return;
+          if (!changedKey && !changedKeys.length && !layoutEventTargetsPath(detail, `layout.parameters.${key}`)) return;
+          notify(undefined, detail);
+        }),
+    };
+  }
+  return entries;
+}
+
 function snapshotLowLevelLayoutConfig(layout) {
   if (!layout) return null;
   if (layout instanceof GpuForceLayout) {
@@ -188,11 +308,14 @@ export class LayoutBehavior extends Behavior {
   attach(context) {
     super.attach(context);
     const helios = this.context?.helios ?? null;
-    this.addCleanup(this.context.subscribe(helios, 'layout:changed', () => this.emitChange('layout-changed')));
-    this.addCleanup(this.context.subscribe(helios, 'layout:start', () => this.emitChange('layout-start')));
-    this.addCleanup(this.context.subscribe(helios, 'layout:stop', () => this.emitChange('layout-stop')));
-    this.addCleanup(this.context.subscribe(helios, 'network:replaced', () => this.emitChange('network-replaced')));
-    this.emitChange('attach');
+    this.addCleanup(this.context.subscribe(helios, 'layout:changed', () => this.emitChange('layout-changed', { source: 'refresh', trackOverride: false })));
+    this.addCleanup(this.context.subscribe(helios, 'layout:start', () => this.emitChange('layout-start', { source: 'refresh', trackOverride: false })));
+    this.addCleanup(this.context.subscribe(helios, 'layout:stop', () => this.emitChange('layout-stop', { source: 'refresh', trackOverride: false })));
+    this.addCleanup(this.context.subscribe(helios, 'network:replaced', () => {
+      this.refreshParameterStateEntries();
+      this.emitChange('network-replaced', { trackOverride: false });
+    }));
+    this.emitChange('attach', { source: 'default', trackOverride: false });
     return this;
   }
 
@@ -231,10 +354,116 @@ export class LayoutBehavior extends Behavior {
     };
   }
 
+  stateEntries() {
+    return {
+      state: {
+        description: 'Serializable layout behavior state.',
+        default: this.serialize(),
+        type: 'object',
+        scope: 'workspace',
+        aliases: ['layout.state'],
+        getter: () => this.serialize(),
+        setter: (value) => this.restore(value),
+        subscribe: (notify) => this.on('change', (event) => {
+          const detail = event?.detail ?? event ?? {};
+          const reason = detail.reason ?? null;
+          if (reason === 'parameter' || reason === 'parameters') return;
+          if (!layoutEventTargetsPath(detail, 'layout.state')) return;
+          notify(undefined, detail);
+        }),
+      },
+      layoutType: {
+        description: 'Active layout implementation.',
+        default: this.type(),
+        type: 'string',
+        scope: 'workspace',
+        aliases: ['layout.layoutType'],
+        ui: {
+          label: 'Layout',
+          controller: 'select',
+          options: () => this.choices(),
+        },
+        getter: () => this.type(),
+        setter: (value) => this.type(value, { preserveRunState: false }),
+        subscribe: (notify) => this.on('change', (event) => {
+          const detail = event?.detail ?? event ?? {};
+          if (!layoutEventTargetsPath(detail, 'layout.layoutType')) return;
+          notify(undefined, detail);
+        }),
+      },
+      running: {
+        description: 'Whether the active dynamic layout is running.',
+        default: this.runState() !== 'stopped',
+        type: 'boolean',
+        scope: 'session',
+        aliases: ['layout.running'],
+        ui: {
+          label: 'Running',
+          controller: 'toggle',
+        },
+        getter: () => this.runState() !== 'stopped',
+        setter: (value) => {
+          if (value === true) this.start();
+          else this.stop('storage');
+        },
+        subscribe: (notify) => this.on('change', (event) => {
+          const detail = event?.detail ?? event ?? {};
+          if (!layoutEventTargetsPath(detail, 'layout.running')) return;
+          notify(undefined, detail);
+        }),
+      },
+      positionAttribute: {
+        description: 'Node attribute used as the layout position source.',
+        default: this.state.positionAttribute,
+        type: 'string',
+        scope: 'workspace',
+        aliases: ['layout.positionAttribute'],
+        ui: {
+          label: 'Position Source',
+          controller: 'select',
+          options: () => this.positionAttributeChoices(),
+        },
+        getter: () => this.positionAttribute(),
+        setter: (value) => this.positionAttribute(value),
+        subscribe: (notify) => this.on('change', (event) => {
+          const detail = event?.detail ?? event ?? {};
+          if (!layoutEventTargetsPath(detail, 'layout.positionAttribute')) return;
+          notify(undefined, detail);
+        }),
+      },
+      parameters: {
+        description: 'Active layout parameter values.',
+        default: this.parameters(),
+        type: 'object',
+        scope: 'workspace',
+        aliases: ['layout.parameters'],
+        ui: {
+          label: 'Parameters',
+          controller: 'object',
+          debounceMs: 220,
+        },
+        getter: () => this.parameters(),
+        setter: (value) => this.parameters(value, { silent: false }),
+        subscribe: () => () => {},
+      },
+      ...layoutParameterStateEntries(this),
+    };
+  }
+
+  refreshParameterStateEntries() {
+    const stateManager = this.context?.helios?.states ?? this.context?.helios?.storage ?? null;
+    if (typeof stateManager?.register !== 'function') return this;
+    const entries = layoutParameterStateEntries(this);
+    if (Object.keys(entries).length > 0) {
+      stateManager.register(this, 'behaviors.layout', entries);
+    }
+    return this;
+  }
+
   restore(snapshot = {}) {
     const options = snapshot?.options && typeof snapshot.options === 'object' ? snapshot.options : {};
     if (options.positionAttribute != null) {
-      this.positionAttribute(options.positionAttribute);
+      this.positionAttribute(options.positionAttribute, { trackOverride: false });
     }
     if (options.layoutType) {
       this.type(options.layoutType, { preserveRunState: false, emitChange: false });
@@ -247,7 +476,7 @@ export class LayoutBehavior extends Behavior {
     } else if (options.running === false || !this.isDynamic()) {
       this.stop('restore');
     }
-    this.emitChange('restore');
+    this.emitChange('restore', { source: 'restore', trackOverride: false });
     return this;
   }
 
@@ -302,13 +531,17 @@ export class LayoutBehavior extends Behavior {
     const previousRunState = this.runState();
     const nextLayout = buildLayoutInstance(helios, String(value ?? '').trim() || 'static');
     helios.layout(nextLayout);
+    this.refreshParameterStateEntries();
     if (this.type() === 'static') {
       helios.stopLayout?.(options.reason ?? 'behavior:layout-type');
     } else if (options.preserveRunState !== false && previousRunState !== 'stopped') {
       nextLayout?.reheat?.(options.reason ?? 'behavior:layout-type');
       helios.startLayout?.();
     }
-    if (options.emitChange !== false) this.emitChange('type');
+    if (options.emitChange !== false) this.emitChange('type', {
+      trackOverride: options.trackOverride !== false,
+      storageKeys: ['layout.layoutType'],
+    });
     return this;
   }
 
@@ -320,24 +553,38 @@ export class LayoutBehavior extends Behavior {
     const binding = this.bindings().find((entry) => entry?.key === key);
     if (typeof binding?.set !== 'function') return this;
     binding.set(value);
-    if (options.silent !== true) this.emitChange('parameter', { key, value });
+    if (options.silent !== true) this.emitChange('parameter', {
+      key,
+      value,
+      trackOverride: options.trackOverride !== false,
+      storageKeys: [`layout.parameters.${key}`],
+    });
     return this;
   }
 
   parameters(patch = {}, options = {}) {
     if (arguments.length === 0) return snapshotLayoutBindingValues(this.context?.helios?.layout?.() ?? null);
+    const keys = [];
     for (const [key, value] of Object.entries(patch ?? {})) {
+      keys.push(key);
       this.parameter(key, value, { silent: true });
     }
-    if (options.silent !== true) this.emitChange('parameters');
+    if (options.silent !== true) this.emitChange('parameters', {
+      keys,
+      trackOverride: options.trackOverride !== false,
+      storageKeys: keys.map((key) => `layout.parameters.${key}`),
+    });
     return this;
   }
 
-  positionAttribute(value) {
+  positionAttribute(value, options = {}) {
     if (arguments.length === 0) return this.state.positionAttribute;
     const next = typeof value === 'string' && value.trim() ? value.trim() : CURRENT_POSITION_ATTRIBUTE;
     this.state.positionAttribute = next;
-    this.emitChange('position-attribute');
+    this.emitChange('position-attribute', {
+      trackOverride: options.trackOverride !== false,
+      storageKeys: ['layout.positionAttribute'],
+    });
     return this;
   }
 

@@ -37,6 +37,60 @@ function collectUniqueIndices(indices) {
   return next;
 }
 
+function cloneRules(rules = []) {
+  return Array.isArray(rules)
+    ? rules.map((rule) => ({
+      ...rule,
+      values: Array.isArray(rule?.values) ? [...rule.values] : rule?.values,
+    }))
+    : [];
+}
+
+function selectionOptionStorageKeys(options = {}) {
+  const keys = new Set();
+  if (Object.prototype.hasOwnProperty.call(options, 'enableNodeSelection') || Object.prototype.hasOwnProperty.call(options, 'nodeClick')) {
+    keys.add('selection.nodeClick');
+  }
+  if (Object.prototype.hasOwnProperty.call(options, 'enableEdgeSelection') || Object.prototype.hasOwnProperty.call(options, 'edgeClick')) {
+    keys.add('selection.edgeClick');
+  }
+  for (const key of [
+    'selectedConnectedEdges',
+    'otherSelectedNodeStyle',
+    'otherSelectedEdgeStyle',
+    'otherSelectedNodeTone',
+    'otherSelectedEdgeTone',
+  ]) {
+    if (Object.prototype.hasOwnProperty.call(options, key)) keys.add(`selection.${key}`);
+  }
+  return Array.from(keys);
+}
+
+function detailTargetsPath(detail = {}, path = '') {
+  const keys = [];
+  if (typeof detail.storageKey === 'string') keys.push(detail.storageKey);
+  if (typeof detail.stateKey === 'string') keys.push(detail.stateKey);
+  if (Array.isArray(detail.storageKeys)) {
+    for (const key of detail.storageKeys) if (typeof key === 'string') keys.push(key);
+  }
+  if (Array.isArray(detail.stateKeys)) {
+    for (const key of detail.stateKeys) if (typeof key === 'string') keys.push(key);
+  }
+  if (!keys.length) return false;
+  return keys.some((key) => key === path || key.startsWith(`${path}.`) || path.startsWith(`${key}.`));
+}
+
+function createEntrySubscribe(behavior, path) {
+  return (notify) => {
+    if (typeof notify !== 'function') return () => {};
+    return behavior.on('change', (event) => {
+      const detail = event?.detail ?? event ?? {};
+      if (!detailTargetsPath(detail, path)) return;
+      notify(undefined, detail);
+    });
+  };
+}
+
 /**
  * Built-in behavior for node and edge selection state.
  *
@@ -64,6 +118,7 @@ export class SelectionBehavior extends Behavior {
       selectedEdges: new Set(),
       savedSelectionAttribute: CURRENT_SELECTION_VALUE,
       lastNamedSelectionAttribute: '',
+      selectorRules: [],
       otherSelectedNodeStyle: normalizeNodeStyle(DEFAULT_OTHER_SELECTED_NODE_STYLE, DEFAULT_OTHER_SELECTED_NODE_STYLE),
       otherSelectedEdgeStyle: normalizeEdgeStyle(DEFAULT_OTHER_SELECTED_EDGE_STYLE, DEFAULT_OTHER_SELECTED_EDGE_STYLE),
       otherSelectedNodeTone: normalizeAutoBackgroundTone(DEFAULT_AUTO_BACKGROUND_TONE_SELECTED, DEFAULT_AUTO_BACKGROUND_TONE_SELECTED),
@@ -131,7 +186,10 @@ export class SelectionBehavior extends Behavior {
       this.syncPicking();
       this.applyOtherElementsState();
     }
-    this.emitChange('options');
+    this.emitChange('options', {
+      storageKeys: selectionOptionStorageKeys(options),
+      trackOverride: true,
+    });
     return this;
   }
 
@@ -150,6 +208,149 @@ export class SelectionBehavior extends Behavior {
       selectedEdges: sortedArray(this.state.selectedEdges),
       savedSelectionAttribute: this.state.savedSelectionAttribute,
       lastNamedSelectionAttribute: this.state.lastNamedSelectionAttribute,
+      selectorRules: cloneRules(this.state.selectorRules),
+    };
+  }
+
+  stateEntries() {
+    const subscribe = (key) => createEntrySubscribe(this, `selection.${key}`);
+    return {
+      selectedNodes: {
+        description: 'Selected node indices.',
+        default: sortedArray(this.state.selectedNodes),
+        type: 'array',
+        scope: 'session',
+        aliases: ['selection.selectedNodes'],
+        ui: {
+          label: 'Selected Nodes',
+          controller: 'custom',
+        },
+        getter: () => sortedArray(this.state.selectedNodes),
+        setter: (value) => this.applyNodeSelectionSet(value ?? [], 'replace', { preserveBinding: true }),
+        subscribe: subscribe('selectedNodes'),
+      },
+      selectedEdges: {
+        description: 'Selected edge indices.',
+        default: sortedArray(this.state.selectedEdges),
+        type: 'array',
+        scope: 'session',
+        aliases: ['selection.selectedEdges'],
+        ui: {
+          label: 'Selected Edges',
+          controller: 'custom',
+        },
+        getter: () => sortedArray(this.state.selectedEdges),
+        setter: (value) => this.applyEdgeSelectionSet(value ?? [], 'replace', { preserveBinding: true }),
+        subscribe: subscribe('selectedEdges'),
+      },
+      selectedConnectedEdges: {
+        description: 'Highlight edges connected to selected nodes.',
+        default: this.state.selectedConnectedEdges === true,
+        type: 'boolean',
+        scope: 'workspace',
+        aliases: ['selection.selectedConnectedEdges'],
+        ui: {
+          label: 'Connected Edges',
+          controller: 'toggle',
+        },
+        getter: () => this.state.selectedConnectedEdges === true,
+        setter: (value) => this.update({ selectedConnectedEdges: value === true }),
+        subscribe: subscribe('selectedConnectedEdges'),
+      },
+      savedSelectionAttribute: {
+        description: 'Attribute used for saved selection state.',
+        default: this.state.savedSelectionAttribute,
+        type: 'string',
+        scope: 'workspace',
+        aliases: ['selection.savedSelectionAttribute'],
+        ui: {
+          label: 'Saved Selection Attribute',
+          controller: 'text',
+        },
+        getter: () => this.state.savedSelectionAttribute,
+        setter: (value) => this.setSelectionBinding(value),
+        subscribe: subscribe('savedSelectionAttribute'),
+      },
+      nodeClick: {
+        description: 'Whether node clicks update the current selection.',
+        default: this.state.nodeClick === true,
+        type: 'boolean',
+        scope: 'workspace',
+        aliases: ['selection.nodeClick'],
+        ui: { label: 'Node Click Selection', controller: 'toggle' },
+        getter: () => this.state.nodeClick === true,
+        setter: (value) => this.update({ nodeClick: value === true }),
+        subscribe: subscribe('nodeClick'),
+      },
+      edgeClick: {
+        description: 'Whether edge clicks update the current selection.',
+        default: this.state.edgeClick === true,
+        type: 'boolean',
+        scope: 'workspace',
+        aliases: ['selection.edgeClick'],
+        ui: { label: 'Edge Click Selection', controller: 'toggle' },
+        getter: () => this.state.edgeClick === true,
+        setter: (value) => this.update({ edgeClick: value === true }),
+        subscribe: subscribe('edgeClick'),
+      },
+      'selectors.node.rules': {
+        description: 'Node selector rules used by the selection panel.',
+        default: cloneRules(this.state.selectorRules),
+        type: 'array',
+        scope: 'session',
+        aliases: ['selection.selectors.node.rules'],
+        ui: {
+          label: 'Node Selector Rules',
+          controller: 'custom',
+        },
+        getter: () => cloneRules(this.state.selectorRules),
+        setter: (value) => this.setSelectorRules(value, { silent: true }),
+        subscribe: subscribe('selectors.node.rules'),
+      },
+      otherSelectedNodeStyle: {
+        description: 'Style applied to non-selected nodes while nodes are selected.',
+        default: { ...this.state.otherSelectedNodeStyle },
+        type: 'object',
+        scope: 'workspace',
+        aliases: ['selection.otherSelectedNodeStyle'],
+        ui: { label: 'Other Selected Node Style', controller: 'custom' },
+        getter: () => ({ ...this.state.otherSelectedNodeStyle }),
+        setter: (value) => this.update({ otherSelectedNodeStyle: value }),
+        subscribe: subscribe('otherSelectedNodeStyle'),
+      },
+      otherSelectedEdgeStyle: {
+        description: 'Style applied to non-selected edges while nodes or edges are selected.',
+        default: { ...this.state.otherSelectedEdgeStyle },
+        type: 'object',
+        scope: 'workspace',
+        aliases: ['selection.otherSelectedEdgeStyle'],
+        ui: { label: 'Other Selected Edge Style', controller: 'custom' },
+        getter: () => ({ ...this.state.otherSelectedEdgeStyle }),
+        setter: (value) => this.update({ otherSelectedEdgeStyle: value }),
+        subscribe: subscribe('otherSelectedEdgeStyle'),
+      },
+      otherSelectedNodeTone: {
+        description: 'Automatic background tone mix for non-selected nodes.',
+        default: { ...this.state.otherSelectedNodeTone },
+        type: 'object',
+        scope: 'workspace',
+        aliases: ['selection.otherSelectedNodeTone'],
+        ui: { label: 'Other Selected Node Tone', controller: 'custom' },
+        getter: () => ({ ...this.state.otherSelectedNodeTone }),
+        setter: (value) => this.update({ otherSelectedNodeTone: value }),
+        subscribe: subscribe('otherSelectedNodeTone'),
+      },
+      otherSelectedEdgeTone: {
+        description: 'Automatic background tone mix for non-selected edges.',
+        default: { ...this.state.otherSelectedEdgeTone },
+        type: 'object',
+        scope: 'workspace',
+        aliases: ['selection.otherSelectedEdgeTone'],
+        ui: { label: 'Other Selected Edge Tone', controller: 'custom' },
+        getter: () => ({ ...this.state.otherSelectedEdgeTone }),
+        setter: (value) => this.update({ otherSelectedEdgeTone: value }),
+        subscribe: subscribe('otherSelectedEdgeTone'),
+      },
     };
   }
 
@@ -161,6 +362,7 @@ export class SelectionBehavior extends Behavior {
     this.applyEdgeSelectionSet(snapshot?.selectedEdges ?? [], 'replace', { preserveBinding: true, silent: true });
     this.state.savedSelectionAttribute = snapshot?.savedSelectionAttribute || CURRENT_SELECTION_VALUE;
     this.state.lastNamedSelectionAttribute = snapshot?.lastNamedSelectionAttribute || '';
+    this.state.selectorRules = cloneRules(snapshot?.selectorRules ?? []);
     this.applyOtherElementsState();
     this.emitChange('restore');
     return this;
@@ -196,7 +398,19 @@ export class SelectionBehavior extends Behavior {
 
   setSelectionBinding(value = CURRENT_SELECTION_VALUE) {
     this.state.savedSelectionAttribute = value || CURRENT_SELECTION_VALUE;
-    this.emitChange('binding');
+    this.emitChange('binding', {
+      storageKeys: ['selection.savedSelectionAttribute'],
+      trackOverride: true,
+    });
+  }
+
+  setSelectorRules(rules = [], options = {}) {
+    this.state.selectorRules = cloneRules(rules);
+    if (options.silent !== true) this.emitChange('selector-rules', {
+      trackOverride: options.trackOverride !== false,
+      storageKeys: ['selection.selectors.node.rules'],
+    });
+    return this;
   }
 
   applySelectionLabelDefaults() {
@@ -230,7 +444,10 @@ export class SelectionBehavior extends Behavior {
     }
     this.applyOtherElementsState();
     if (options.preserveBinding !== true) this.setSelectionBinding(CURRENT_SELECTION_VALUE);
-    if (options.silent !== true) this.emitChange('node-selection');
+    if (options.silent !== true) this.emitChange('node-selection', {
+      trackOverride: options.trackOverride !== false,
+      storageKeys: ['selection.selectedNodes'],
+    });
   }
 
   setEdgeSelected(index, selected, options = {}) {
@@ -246,7 +463,10 @@ export class SelectionBehavior extends Behavior {
     helios.edgeState?.([index], 'SELECTED', { mode: selected ? 'add' : 'remove' });
     this.applyOtherElementsState();
     if (options.preserveBinding !== true) this.setSelectionBinding(CURRENT_SELECTION_VALUE);
-    if (options.silent !== true) this.emitChange('edge-selection');
+    if (options.silent !== true) this.emitChange('edge-selection', {
+      trackOverride: options.trackOverride !== false,
+      storageKeys: ['selection.selectedEdges'],
+    });
   }
 
   clearSelection(options = {}) {
@@ -265,7 +485,10 @@ export class SelectionBehavior extends Behavior {
     if (options.preserveCameraFollow !== true) {
       helios.cameraFollowNodes?.([], { frame: false });
     }
-    if (options.silent !== true) this.emitChange('clear');
+    if (options.silent !== true) this.emitChange('clear', {
+      trackOverride: options.trackOverride !== false,
+      storageKeys: ['selection.selectedNodes', 'selection.selectedEdges'],
+    });
   }
 
   selectOnly(kind, index, options = {}) {
@@ -317,7 +540,10 @@ export class SelectionBehavior extends Behavior {
     }
     this.applyOtherElementsState();
     if (options.preserveBinding !== true) this.setSelectionBinding(CURRENT_SELECTION_VALUE);
-    if (options.silent !== true) this.emitChange('node-selection-set');
+    if (options.silent !== true) this.emitChange('node-selection-set', {
+      trackOverride: options.trackOverride !== false,
+      storageKeys: ['selection.selectedNodes'],
+    });
     return { added: toAdd.length, removed: toRemove.length, total: this.state.selectedNodes.size };
   }
 
@@ -352,7 +578,10 @@ export class SelectionBehavior extends Behavior {
     }
     this.applyOtherElementsState();
     if (options.preserveBinding !== true) this.setSelectionBinding(CURRENT_SELECTION_VALUE);
-    if (options.silent !== true) this.emitChange('edge-selection-set');
+    if (options.silent !== true) this.emitChange('edge-selection-set', {
+      trackOverride: options.trackOverride !== false,
+      storageKeys: ['selection.selectedEdges'],
+    });
     return { added: toAdd.length, removed: toRemove.length, total: this.state.selectedEdges.size };
   }
 
@@ -374,6 +603,7 @@ export class SelectionBehavior extends Behavior {
   }
 
   applyNodeSelectionQuery(rules, mode = 'add') {
+    this.setSelectorRules(rules, { silent: true });
     const query = this.buildNodeSelectionQuery(rules);
     if (!query) return { added: 0, removed: 0, total: this.state.selectedNodes.size };
     const matches = this.context?.network?.selectNodes?.(query) ?? new Uint32Array();

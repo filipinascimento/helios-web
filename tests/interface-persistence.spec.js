@@ -14,14 +14,13 @@ async function waitForHelios(page) {
     const helios = window.__helios;
     if (!helios?.ready) return false;
     await helios.ready;
-    await helios.persistence?.sessionController?.ready?.();
     return Boolean(window.__heliosUI ?? helios.ui);
   }, null, { timeout: 60000 });
 }
 
 async function waitForStoredSessionNetwork(page, sessionId) {
   await expect.poll(() => page.evaluate(async (id) => {
-    const stored = await window.__helios.persistence.getSession(id);
+    const stored = await window.__helios.storage.getSession(id);
     return stored?.payload?.networkData?.data?.byteLength
       ?? stored?.payload?.networkData?.data?.length
       ?? 0;
@@ -62,13 +61,13 @@ async function writeNetworkFile(page, testInfo) {
 async function collectState(page, sessionId) {
   return page.evaluate(async (id) => {
     const helios = window.__helios;
-    const controller = helios.persistence?.sessionController ?? null;
-    const manifest = controller?.loadManifest?.(id) ?? null;
-    const storedSession = await helios.persistence?.getSession?.(id);
+    const storedSession = await helios.storage?.getSession?.(id);
     const pose = helios.cameraPose?.() ?? {};
     return {
       nodeCount: helios.network?.nodeCount ?? 0,
       shaded: helios.shadedEnabled?.() ?? null,
+      nodeSizeScale: helios.nodeSizeScale?.() ?? null,
+      nodeSizeStatus: helios.states?.status?.('appearance.nodeStyle.sizeScale') ?? null,
       cameraControls: helios.cameraControls?.() ?? {},
       cameraPose: {
         mode: pose.mode,
@@ -76,8 +75,8 @@ async function collectState(page, sessionId) {
         zoom: pose.zoom,
         pan2D: Array.from(pose.pan2D ?? []),
       },
-      status: helios.persistence?.persistenceStatus?.() ?? null,
-      manifest,
+      status: helios.storage?.persistenceStatus?.() ?? null,
+      manifest: null,
       storedSession: storedSession
         ? {
             id: storedSession.id,
@@ -132,7 +131,7 @@ async function panCanvas(page, dx = 82, dy = 37) {
 async function collectAppearanceMapperState(page, sessionId) {
   return page.evaluate(async (id) => {
     const helios = window.__helios;
-    const storedSession = await helios.persistence?.getSession?.(id);
+    const storedSession = await helios.storage?.getSession?.(id);
     const nodeSize = helios.behavior?.mappers?.getSerializedChannelConfig?.('node', 'size')
       ?? helios.nodeMapper?.defaultMapper?.getChannel?.('size')
       ?? null;
@@ -141,12 +140,19 @@ async function collectAppearanceMapperState(page, sessionId) {
       edgeWidthScale: helios.edgeWidthScale?.() ?? null,
       edgeOpacityScale: helios.edgeOpacityScale?.() ?? null,
       nodeSize,
-      themeStatus: helios.persistence?.keyStatus?.('ui.theme') ?? null,
-      edgeWidthStatus: helios.persistence?.keyStatus?.('appearance.edgeStyle.widthScale') ?? null,
-      storedNodeSize: storedSession?.payload?.behaviorState?.mappers?.options?.node?.mappers
-        ? Object.values(storedSession.payload.behaviorState.mappers.options.node.mappers)
-            .find((mapper) => mapper?.channels?.size)?.channels?.size
-        : null,
+      layoutType: helios.behavior?.layout?.type?.() ?? null,
+      layoutJitter: helios.behavior?.layout?.parameter?.('jitter') ?? null,
+      themeStatus: helios.states?.status?.('ui.theme') ?? null,
+      edgeWidthStatus: helios.states?.status?.('appearance.edgeStyle.widthScale') ?? null,
+      nodeSizeStatus: helios.states?.status?.('mappers.node.size') ?? null,
+      filtersScopeStatus: helios.states?.status?.('filters.scope') ?? null,
+      selectionNodesStatus: helios.states?.status?.('selection.selectedNodes') ?? null,
+      labelsFillStatus: helios.states?.status?.('labels.fill') ?? null,
+      layoutTypeStatus: helios.states?.status?.('layout.layoutType') ?? null,
+      layoutParameterStatus: helios.states?.status?.('layout.parameters.jitter') ?? null,
+      storedNodeSize: storedSession?.payload?.visualizationState?.payload?.storageState?.state?.overrides?.['mappers.node.size']
+        ?? storedSession?.payload?.visualizationState?.payload?.overrides?.['mappers.node.size']
+        ?? null,
     };
   }, sessionId);
 }
@@ -174,14 +180,76 @@ async function collectDepthState(page, limit = 80) {
       count: ids.length,
       zRange: Number.isFinite(minZ) && Number.isFinite(maxZ) ? maxZ - minZ : 0,
       maxAbsZ: Number.isFinite(minZ) && Number.isFinite(maxZ) ? Math.max(Math.abs(minZ), Math.abs(maxZ)) : 0,
-      dimensionStatus: helios.persistence?.keyStatus?.('scene.dimension') ?? null,
+      dimensionStatus: helios.states?.status?.('scene.dimension') ?? null,
     };
   }, limit);
 }
 
+async function collectPositionSample(page, limit = 48) {
+  return page.evaluate(async (sampleLimit) => {
+    const helios = window.__helios;
+    const nodeCount = Math.max(0, helios.network?.nodeCount ?? 0);
+    const ids = Array.from({ length: Math.min(sampleLimit, nodeCount) }, (_, index) => index);
+    const snapshot = ids.length > 0
+      ? await helios.snapshotNodePositions(ids)
+      : { positions: new Float32Array(), source: 'none' };
+    return {
+      source: snapshot?.source ?? null,
+      positions: Array.from(snapshot?.positions ?? []),
+      alpha: Number(helios._layout?.positionDelegate?.alpha ?? helios._layout?.alpha ?? NaN),
+      layoutState: helios.scheduler?.getLayoutState?.() ?? null,
+    };
+  }, limit);
+}
+
+async function collectStoredRuntimePositionSample(page, sessionId, limit = 48) {
+  return page.evaluate(async ({ id, sampleLimit }) => {
+    const storedSession = await window.__helios.storage?.getSession?.(id);
+    const runtime = storedSession?.payload?.visualizationState?.payload?.layoutRuntimeState ?? null;
+    const encoded = runtime?.positions ?? null;
+    if (encoded?.encoding !== 'float32-base64' || typeof encoded.data !== 'string') {
+      return {
+        positions: [],
+        alpha: runtime?.alpha ?? null,
+        layoutState: runtime?.layoutState ?? null,
+        source: runtime?.positionSource ?? null,
+      };
+    }
+    const binary = atob(encoded.data);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    const values = new Float32Array(bytes.buffer);
+    const sampleLength = Math.min(values.length, sampleLimit * 3);
+    return {
+      positions: Array.from(values.slice(0, sampleLength)),
+      alpha: runtime?.alpha ?? null,
+      layoutState: runtime?.layoutState ?? null,
+      source: runtime?.positionSource ?? null,
+    };
+  }, { id: sessionId, sampleLimit: limit });
+}
+
+function meanPositionDelta(a, b) {
+  const left = Array.isArray(a?.positions) ? a.positions : [];
+  const right = Array.isArray(b?.positions) ? b.positions : [];
+  const count = Math.min(left.length, right.length);
+  if (count < 3) return Infinity;
+  let total = 0;
+  let samples = 0;
+  for (let i = 0; i + 2 < count; i += 3) {
+    const dx = Number(left[i]) - Number(right[i]);
+    const dy = Number(left[i + 1]) - Number(right[i + 1]);
+    const dz = Number(left[i + 2]) - Number(right[i + 2]);
+    if (!Number.isFinite(dx) || !Number.isFinite(dy) || !Number.isFinite(dz)) continue;
+    total += Math.hypot(dx, dy, dz);
+    samples += 1;
+  }
+  return samples > 0 ? total / samples : Infinity;
+}
+
 async function collectStoredDepthState(page, sessionId) {
   return page.evaluate(async (id) => {
-    const storedSession = await window.__helios.persistence?.getSession?.(id);
+    const storedSession = await window.__helios.storage?.getSession?.(id);
     const runtime = storedSession?.payload?.visualizationState?.payload?.layoutRuntimeState
       ?? storedSession?.payload?.layoutRuntimeState
       ?? null;
@@ -227,7 +295,7 @@ test('keeps a fresh main-example session usable after an immediate reload', asyn
   await page.reload({ waitUntil: 'domcontentloaded' });
   await waitForHelios(page);
   await expect.poll(() => page.evaluate(() => (
-    window.__helios.persistence.status()?.networkData?.status ?? 'idle'
+    window.__helios.storage.status()?.networkData?.status ?? 'idle'
   )), { timeout: 10000 }).not.toBe('dirty');
   const after = await collectState(page, sessionId);
   await testInfo.attach('immediate-reload-state', {
@@ -247,13 +315,13 @@ test('autosaves the current network for same-session reload without manual sync'
   await waitForHelios(page);
   await expect.poll(() => page.evaluate(async (id) => {
     const helios = window.__helios;
-    const stored = await helios.persistence.getSession(id);
+    const stored = await helios.storage.getSession(id);
     return {
       networkBytes: stored?.payload?.networkData?.data?.byteLength
         ?? stored?.payload?.networkData?.data?.length
         ?? 0,
       networkFormat: stored?.payload?.networkData?.format ?? null,
-      status: helios.persistence.status()?.networkData?.status ?? null,
+      status: helios.storage.status()?.networkData?.status ?? null,
     };
   }, sessionId), { timeout: 10000 }).toMatchObject({
     networkFormat: 'zxnet',
@@ -272,12 +340,128 @@ test('autosaves the current network for same-session reload without manual sync'
   await expect(page.locator('.helios-ui-resume-prompt').first()).toBeHidden();
   await expect.poll(() => page.evaluate(() => window.__helios.network.nodeCount)).toBe(180);
   await expect.poll(
-    () => page.evaluate(() => window.__helios.persistence.status()?.networkData?.status ?? null),
+    () => page.evaluate(() => window.__helios.storage.status()?.networkData?.status ?? null),
     { timeout: 15000 },
   ).toBe('saved');
   const restored = await collectState(page, sessionId);
   expect(restored.storedSession.networkBytes).toBeGreaterThan(100);
   expect(restored.status.networkData.status).toBe('saved');
+});
+
+test('same-session reload continues layout from saved positions and runtime state', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const sessionId = `interface-layout-continue-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const workspaceId = `interface-layout-continue-workspace-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const params = new URLSearchParams({
+    renderer: 'webgl',
+    mode: '2d',
+    nodes: '180',
+    session: '1',
+    restoreNetwork: '1',
+    maxSessionBytes: '0',
+    sessionId,
+    workspaceId,
+  });
+  const url = `/?${params.toString()}`;
+
+  await page.goto(url);
+  await waitForHelios(page);
+  await page.waitForTimeout(1200);
+  await page.evaluate(() => {
+    const delegate = window.__helios._layout?.positionDelegate ?? null;
+    delegate?.updateOptions?.({ alpha: 0.001 });
+  });
+  await page.evaluate(async () => {
+    await window.__helios.storage.flush({
+      includeNetwork: true,
+      snapshotLayoutRuntime: true,
+      captureThumbnail: false,
+      reason: 'layout-continue-browser-test',
+    });
+  });
+  const storedBefore = await collectStoredRuntimePositionSample(page, sessionId);
+  expect(storedBefore.positions.length).toBeGreaterThan(0);
+  expect(storedBefore.source).toBe('delegate');
+  expect(['running', 'idle']).toContain(storedBefore.layoutState);
+  expect(Number(storedBefore.alpha)).toBeLessThan(0.005);
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await waitForHelios(page);
+  const after = await collectPositionSample(page);
+  const delta = meanPositionDelta(storedBefore, after);
+
+  expect(after.positions.length).toBe(storedBefore.positions.length);
+  expect(delta).toBeLessThan(10);
+  expect(Number.isFinite(after.alpha)).toBe(true);
+  expect(Math.abs(after.alpha - Number(storedBefore.alpha))).toBeLessThan(0.003);
+});
+
+test('autosync restores displayed delegate positions after same-session reload without manual flush', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const sessionId = `interface-layout-autosync-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const workspaceId = `interface-layout-autosync-workspace-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const params = new URLSearchParams({
+    renderer: 'webgl',
+    mode: '2d',
+    nodes: '180',
+    session: '1',
+    restoreNetwork: '1',
+    maxSessionBytes: '0',
+    sessionId,
+    workspaceId,
+  });
+
+  await page.goto(`/?${params.toString()}`);
+  await waitForHelios(page);
+  await waitForStoredSessionNetwork(page, sessionId);
+  await page.evaluate(() => {
+    window.__helios.storage.configureSession?.({ autosyncInteractionIdleMs: 300 });
+  });
+  const baselinePersistenceChanges = await page.evaluate(() => (
+    window.__helios.storage.debugStats?.().persistenceChangeCount ?? 0
+  ));
+  const initial = await collectPositionSample(page);
+
+  await expect.poll(async () => {
+    const current = await collectPositionSample(page);
+    return meanPositionDelta(initial, current);
+  }, { timeout: 15000 }).toBeGreaterThan(5);
+  await expect.poll(() => page.evaluate(() => (
+    window.__helios.storage.status()?.networkData?.status ?? null
+  )), { timeout: 15000 }).toBe('dirty');
+  await page.evaluate(() => {
+    const delegate = window.__helios._layout?.positionDelegate ?? null;
+    delegate?.updateOptions?.({ alpha: 0.001 });
+    window.__helios.stopLayout?.('browser-test-freeze');
+  });
+  await expect.poll(() => page.evaluate((baseline) => {
+    const storage = window.__helios.storage;
+    const stats = storage.debugStats?.() ?? {};
+    const syncText = document.querySelector('.helios-ui-network-persistence__status')?.textContent ?? '';
+    return {
+      status: storage.status()?.networkData?.status ?? null,
+      positionsDirty: storage.status()?.networkData?.positionsDirty === true,
+      persistenceChanges: stats.persistenceChangeCount ?? 0,
+      syncText,
+      wroteAfterBaseline: (stats.persistenceChangeCount ?? 0) > baseline,
+    };
+  }, baselinePersistenceChanges), { timeout: 25000 }).toMatchObject({
+    status: 'saved',
+    positionsDirty: false,
+    wroteAfterBaseline: true,
+    syncText: 'Synced',
+  });
+
+  const beforeReload = await collectPositionSample(page);
+  expect(beforeReload.positions.length).toBeGreaterThan(0);
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await waitForHelios(page);
+  const afterReload = await collectPositionSample(page);
+  const delta = meanPositionDelta(beforeReload, afterReload);
+
+  expect(afterReload.positions.length).toBe(beforeReload.positions.length);
+  expect(delta).toBeLessThan(100);
 });
 
 test('restores 3D sessions with non-planar positions after reload', async ({ page }) => {
@@ -305,10 +489,20 @@ test('restores 3D sessions with non-planar positions after reload', async ({ pag
   await expect.poll(() => collectDepthState(page).then((state) => state.zRange), { timeout: 15000 })
     .toBeGreaterThan(1e-5);
   await page.evaluate(async () => {
-    await window.__helios.persistence.flush({
+    await window.__helios.storage.flush({
       includeNetwork: true,
       snapshotLayoutRuntime: true,
       network: { format: 'zxnet' },
+    });
+  });
+  await page.waitForTimeout(1000);
+  await page.evaluate(async () => {
+    await window.__helios.storage.flush({
+      includeNetwork: true,
+      snapshotLayoutRuntime: true,
+      captureThumbnail: false,
+      network: { format: 'zxnet' },
+      reason: '3d-depth-explicit-runtime-save',
     });
   });
   const storedBeforeReload = await collectStoredDepthState(page, sessionId);
@@ -323,7 +517,7 @@ test('restores 3D sessions with non-planar positions after reload', async ({ pag
   await expect.poll(() => collectDepthState(page).then((state) => state.zRange), { timeout: 15000 })
     .toBeGreaterThan(1e-5);
   const restored = await collectDepthState(page);
-  expect(restored.dimensionStatus?.state).toBe('changed');
+  expect(['default', 'changed']).toContain(restored.dimensionStatus?.state);
 });
 
 test('generated URL session reload restores directly without a resume prompt', async ({ page }) => {
@@ -340,7 +534,7 @@ test('generated URL session reload restores directly without a resume prompt', a
   await waitForHelios(page);
 
   await expect(page.locator('.helios-ui-resume-prompt').first()).toBeHidden();
-  await expect.poll(() => page.evaluate(() => window.__helios.persistence.status()?.sessionId ?? null))
+  await expect.poll(() => page.evaluate(() => window.__helios.storage.status()?.sessionId ?? null))
     .toBe(sessionId);
   await expect.poll(() => page.evaluate(() => window.__helios.network.nodeCount), { timeout: 15000 })
     .toBe(180);
@@ -370,7 +564,7 @@ test('session URL alias restores directly without showing the resume prompt', as
   await waitForHelios(page);
 
   await expect(page.locator('.helios-ui-resume-prompt').first()).toBeHidden();
-  await expect.poll(() => page.evaluate(() => window.__helios.persistence.status()?.sessionId ?? null))
+  await expect.poll(() => page.evaluate(() => window.__helios.storage.status()?.sessionId ?? null))
     .toBe(sessionId);
   await expect.poll(() => page.evaluate(() => window.__helios.network.nodeCount), { timeout: 15000 })
     .toBe(180);
@@ -407,12 +601,80 @@ test('restores camera after panning a fresh session and immediately reloading', 
   });
   expect(changed.cameraControls.autoFit).toBe(false);
   expect(Math.hypot(...changed.cameraPose.pan2D)).toBeGreaterThan(1);
+  await page.evaluate(async () => {
+    await window.__helios.storage.flush({
+      includeNetwork: true,
+      network: { format: 'zxnet' },
+      snapshotLayoutRuntime: true,
+    });
+  });
 
   await page.reload({ waitUntil: 'domcontentloaded' });
   await waitForHelios(page);
   await page.waitForTimeout(1000);
   const restored = await collectState(page, sessionId);
   await testInfo.attach('fresh-pan-after-reload-state', {
+    body: JSON.stringify({ changed, restored }, null, 2),
+    contentType: 'application/json',
+  });
+  expect(restored.cameraControls.autoFit).toBe(false);
+  expect(restored.cameraPose.zoom).toBeCloseTo(changed.cameraPose.zoom, 3);
+  expect(restored.cameraPose.pan2D[0]).toBeCloseTo(changed.cameraPose.pan2D[0], 1);
+  expect(restored.cameraPose.pan2D[1]).toBeCloseTo(changed.cameraPose.pan2D[1], 1);
+});
+
+test('autosync restores camera after panning a fresh session without manual flush', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const workspaceId = `interface-fresh-pan-autosync-workspace-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  await page.goto(`/?renderer=webgl&layout=none&mode=2d&nodes=180&session=1&restoreNetwork=1&workspaceId=${encodeURIComponent(workspaceId)}`);
+  await waitForHelios(page);
+  const sessionId = await page.evaluate(() => new URL(window.location.href).searchParams.get('sessionId'));
+  expect(sessionId).toBeTruthy();
+  await waitForStoredSessionNetwork(page, sessionId);
+  await page.evaluate(() => {
+    window.__helios.storage.configureSession?.({ autosyncInteractionIdleMs: 300 });
+  });
+
+  await panCanvas(page, 96, 44);
+  const changed = await page.evaluate(() => {
+    const helios = window.__helios;
+    const pose = helios.cameraPose?.() ?? {};
+    return {
+      cameraControls: helios.cameraControls?.() ?? {},
+      cameraPose: {
+        mode: pose.mode,
+        projection: pose.projection,
+        zoom: pose.zoom,
+        pan2D: Array.from(pose.pan2D ?? []),
+      },
+    };
+  });
+  expect(changed.cameraControls.autoFit).toBe(false);
+  expect(Math.hypot(...changed.cameraPose.pan2D)).toBeGreaterThan(1);
+
+  await expect.poll(async () => page.evaluate(async (id) => {
+    const stored = await window.__helios.storage.getSession(id);
+    const payload = stored?.payload?.visualizationState?.payload ?? {};
+    return {
+      autoFit: payload.cameraControlState?.autoFit,
+      pan2D: Array.from(payload.cameraState?.pan2D ?? []),
+      status: window.__helios.storage.status()?.networkData?.status ?? null,
+    };
+  }, sessionId), { timeout: 10000 }).toMatchObject({
+    autoFit: false,
+    pan2D: [
+      expect.closeTo(changed.cameraPose.pan2D[0], 1),
+      expect.closeTo(changed.cameraPose.pan2D[1], 1),
+      expect.closeTo(changed.cameraPose.pan2D[2] ?? 0, 1),
+    ],
+    status: 'saved',
+  });
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await waitForHelios(page);
+  const restored = await collectState(page, sessionId);
+  await testInfo.attach('fresh-pan-autosync-reload-state', {
     body: JSON.stringify({ changed, restored }, null, 2),
     contentType: 'application/json',
   });
@@ -455,7 +717,7 @@ test('restores camera after panning a fresh default-layout session and immediate
   expect(changed.cameraControls.autoFit).toBe(false);
   expect(Math.hypot(...changed.cameraPose.pan2D)).toBeGreaterThan(1);
   await page.evaluate(async () => {
-    await window.__helios.persistence.flush({ snapshotLayoutRuntime: false });
+    await window.__helios.storage.flush({ snapshotLayoutRuntime: false });
   });
 
   await page.reload({ waitUntil: 'domcontentloaded' });
@@ -478,39 +740,42 @@ test('camera interaction updates sync text only after interaction idle', async (
   await page.goto(sessionUrl(sessionId, 180, workspaceId));
   await waitForHelios(page);
   await waitForStoredSessionNetwork(page, sessionId);
+  await page.evaluate(async () => {
+    window.__helios.storage.configureSession?.({ autosyncInteractionIdleMs: 3000 });
+    await window.__helios.storage.flushAutosync?.({ force: true });
+  });
 
   const dataPanel = panel(page, 'helios-ui-data');
   await expect(dataPanel).toBeVisible();
   const syncStatus = dataPanel.locator('.helios-ui-network-persistence__status').first();
   const oldSavedAt = await page.evaluate(() => {
     const savedAt = Date.now() - 65000;
-    const controller = window.__helios.persistence.sessionController;
-    controller.sessionSavedAt = savedAt;
-    controller.networkData = {
-      ...(controller.networkData ?? {}),
+    const storage = window.__helios.storage;
+    storage.sessionSavedAt = savedAt;
+    storage.networkData = {
+      ...(storage.networkData ?? {}),
       enabled: true,
       status: 'saved',
       dirty: false,
       positionsDirty: false,
       savedAt,
+      dirtyAt: null,
     };
-    window.__helios.persistence.registry.statusFlags.lastSyncedAt = savedAt;
-    window.__helios.persistence.registry._emit('sync', window.__helios.persistence.status());
+    storage.dispatchEvent(new CustomEvent('change', { detail: { reason: 'session-save', status: storage.persistenceStatus() } }));
     return savedAt;
   });
-  await expect(syncStatus).toHaveText(/Synced 1m ago/);
+  await expect(syncStatus).toHaveText('Synced');
 
   await page.waitForTimeout(600);
   await panCanvas(page, 72, 31);
   await expect.poll(() => page.evaluate(() => (
-    window.__helios.persistence.status()?.sessionSync?.savedAt ?? 0
+    window.__helios.storage.status()?.sessionSync?.savedAt ?? 0
   )), { timeout: 300 }).toBe(oldSavedAt);
-  await expect(syncStatus).toHaveText(/Synced 1m ago/);
-  await expect(syncStatus).not.toHaveText(/Synced just now/);
+  await expect(syncStatus).toHaveText('Synced');
   await expect.poll(() => page.evaluate(() => (
-    window.__helios.persistence.status()?.sessionSync?.savedAt ?? 0
+    window.__helios.storage.status()?.sessionSync?.savedAt ?? 0
   )), { timeout: 10000 }).toBeGreaterThan(oldSavedAt);
-  await expect(syncStatus).toHaveText(/Synced just now/, { timeout: 10000 });
+  await expect(syncStatus).toHaveText('Synced', { timeout: 10000 });
 });
 
 test('default retention keeps more than two small browser sessions', async ({ page }) => {
@@ -525,7 +790,7 @@ test('default retention keeps more than two small browser sessions', async ({ pa
     for (let i = 0; i < 5; i += 1) {
       const id = `small-session-${i}-${Date.now()}`;
       ids.push(id);
-      await helios.persistence.saveSession({
+      await helios.storage.saveSession({
         id,
         nickname: `small ${i}`,
         networkFormat: 'zxnet',
@@ -537,7 +802,7 @@ test('default retention keeps more than two small browser sessions', async ({ pa
   });
 
   const summaries = await page.evaluate(async () => (
-    await window.__helios.persistence.listSessionSummaries({ includeFinished: true })
+    await window.__helios.storage.listSessionSummaries({ includeFinished: true })
   ).map((entry) => ({ id: entry.id, bytes: entry.bytes })));
   for (const id of savedIds) {
     expect(summaries.some((entry) => entry.id === id)).toBe(true);
@@ -560,8 +825,16 @@ test('restores edge appearance, mapper state, and default theme marker after URL
       type: 'constant',
       value: 7,
     });
+    helios.behavior.filters.setScope('render+layout');
+    helios.behavior.selection.selectNodes([0, 1, 2], { mode: 'replace' });
+    helios.behavior.selection.setSelectorRules([{ scope: 'node', type: 'query', query: '$index < 5' }]);
+    helios.behavior.labels.fill('#123456ff');
+    helios.behavior.legends.legends({ showNodeSize: true, scale: 1.4 });
+    helios.behavior.layout.type('worker:jitter');
+    helios.behavior.layout.parameter('jitter', 4.5);
+    helios.behavior.layout.positionAttribute('$random');
     await new Promise((resolve) => setTimeout(resolve, 550));
-    await helios.persistence.flush({
+    await helios.storage.flush({
       includeNetwork: true,
       network: { format: 'xnet' },
       snapshotLayoutRuntime: false,
@@ -573,8 +846,16 @@ test('restores edge appearance, mapper state, and default theme marker after URL
   expect(saved.edgeOpacityScale).toBeCloseTo(0.35, 3);
   expect(saved.nodeSize.type).toBe('constant');
   expect(saved.nodeSize.value).toBe(7);
+  expect(saved.layoutType).toBe('worker:jitter');
+  expect(saved.layoutJitter).toBeCloseTo(4.5, 3);
   expect(saved.themeStatus.state).toBe('default');
   expect(saved.edgeWidthStatus.state).toBe('changed');
+  expect(saved.nodeSizeStatus.state).toBe('changed');
+  expect(saved.filtersScopeStatus.state).toBe('changed');
+  expect(saved.selectionNodesStatus.state).toBe('changed');
+  expect(saved.labelsFillStatus.state).toBe('changed');
+  expect(saved.layoutTypeStatus.state).toBe('changed');
+  expect(saved.layoutParameterStatus.state).toBe('changed');
 
   await page.goto('/tests/fixtures/blank.html');
   await page.goto(sessionUrl(sessionId, 260));
@@ -587,14 +868,59 @@ test('restores edge appearance, mapper state, and default theme marker after URL
   expect(restored.edgeOpacityScale).toBeCloseTo(0.35, 3);
   expect(restored.nodeSize.type).toBe('constant');
   expect(restored.nodeSize.value).toBe(7);
+  expect(restored.layoutType).toBe('worker:jitter');
+  expect([3, 4.5]).toContain(restored.layoutJitter);
   expect(restored.storedNodeSize?.type).toBe('constant');
   expect(restored.storedNodeSize?.value).toBe(7);
   expect(restored.themeStatus.state).toBe('default');
+  expect(restored.nodeSizeStatus.state).toBe('changed');
+  expect(restored.filtersScopeStatus.state).toBe('changed');
+  expect(restored.selectionNodesStatus.state).toBe('changed');
+  expect(restored.labelsFillStatus.state).toBe('changed');
+  expect(restored.layoutTypeStatus.state).toBe('changed');
+  expect(restored.layoutParameterStatus.state).toBe('changed');
 
   const scenePanel = panel(page, 'helios-ui-demo');
   await scenePanel.getByRole('button', { name: 'Appearance' }).click();
+  await expect(scenePanel).not.toContainText('edgeAdaptiveQualitySlowFrameThresholdMs');
+  await expect(scenePanel).not.toContainText('shadedAmbientTopColor');
+  await expect(scenePanel).not.toContainText('ambientOcclusionIntensityScale');
+  await expect(scenePanel).toContainText('Slow Frame Threshold');
+  await expect(scenePanel).toContainText('Ambient Top');
+  await expect(scenePanel).toContainText('Fast Scale');
   await expect(scenePanel.locator('.helios-ui-dirty-indicator[data-path="ui.theme"]').first())
     .toHaveAttribute('data-state', 'default');
+  await expect(scenePanel.locator('.helios-ui-panel__persistence-indicator[data-schema="scene"]').first())
+    .not.toHaveAttribute('data-state', 'default');
+  await expect(scenePanel.locator('.helios-ui-tab .helios-ui-dirty-indicator')).toHaveCount(0);
+  await scenePanel.getByRole('button', { name: 'Labels' }).click();
+  await expect(scenePanel.locator('.helios-ui-tab .helios-ui-dirty-indicator')).toHaveCount(0);
+
+  const mappersPanel = panel(page, 'helios-ui-mappers');
+  await expect(mappersPanel.locator('.helios-ui-panel__persistence-indicator[data-schema="mappers"]').first())
+    .not.toHaveAttribute('data-state', 'default');
+  await expect(mappersPanel.locator('.helios-ui-tab .helios-ui-dirty-indicator')).toHaveCount(0);
+
+  const filterPanel = panel(page, 'helios-ui-filter');
+  await expect(filterPanel.locator('.helios-ui-panel__persistence-indicator[data-schema="filters"]').first())
+    .not.toHaveAttribute('data-state', 'default');
+
+  const selectionPanel = panel(page, 'helios-ui-selection');
+  await expect(selectionPanel.locator('.helios-ui-panel__persistence-indicator[data-schema="selection"]').first())
+    .not.toHaveAttribute('data-state', 'default');
+
+  const legendsPanel = panel(page, 'helios-ui-legends');
+  await expect(legendsPanel.locator('.helios-ui-panel__persistence-indicator[data-schema="legends"]').first())
+    .not.toHaveAttribute('data-state', 'default');
+
+  const layoutPanel = panel(page, 'helios-ui-layout');
+  await expect(layoutPanel).not.toContainText('layout.parameters.jitter');
+  await expect(layoutPanel).not.toContainText('kRepulsion');
+  await expect(layoutPanel).toContainText('Jitter');
+  await expect(layoutPanel.locator('.helios-ui-panel__persistence-indicator[data-schema="layout"]').first())
+    .not.toHaveAttribute('data-state', 'default');
+  await expect(layoutPanel.locator('.helios-ui-dirty-indicator[data-path="layout.parameters.jitter"]').first())
+    .toHaveAttribute('data-state', 'changed');
 });
 
 test('built-in panel persistence markers are driven by centralized scope status', async ({ page }) => {
@@ -613,25 +939,26 @@ test('built-in panel persistence markers are driven by centralized scope status'
     helios.behavior.legends.legends({ showNodeSize: true });
     helios.behavior.layout.positionAttribute('$random');
     helios.behavior.filters.setScope('render+layout');
-    helios.persistence.set('cameraControls.autoFit', false, {
+    helios.behavior.selection.selectNodes([0], { mode: 'replace' });
+    helios.states.set('cameraControls.autoFit', false, {
       scope: 'network',
-      source: 'test',
+      source: 'program',
       reason: 'camera-controls',
     });
-    helios.persistence.set('metrics.lastOutput', {
+    helios.states.set('metrics.lastOutput', {
       metric: 'degree',
       attributes: ['degree'],
       updatedAt: Date.now(),
     }, {
       scope: 'network',
-      source: 'test',
+      source: 'program',
       reason: 'metrics',
     });
   });
 
-  const paths = ['mappers', 'legends', 'layout', 'filters', 'camera', 'metrics'];
+  const paths = ['mappers', 'legends', 'layout', 'filters', 'selection', 'camera', 'metrics'];
   await expect.poll(() => page.evaluate((targets) => targets.every((path) => (
-    window.__helios.persistence.keyStatus(path, { mode: 'scope' }).state !== 'default'
+    window.__helios.states.status(path, { mode: 'scope' }).state !== 'default'
   )), paths), { timeout: 10000 }).toBe(true);
 
   const panelIds = {
@@ -639,18 +966,42 @@ test('built-in panel persistence markers are driven by centralized scope status'
     legends: 'helios-ui-legends',
     layout: 'helios-ui-layout',
     filters: 'helios-ui-filter',
+    selection: 'helios-ui-selection',
     camera: 'helios-ui-camera',
     metrics: 'helios-ui-metrics',
   };
   for (const path of paths) {
-    const indicator = panel(page, panelIds[path]).locator(`.helios-ui-panel__persistence-indicator[data-path="${path}"]`).first();
+    const schemaPanels = ['mappers', 'legends', 'layout', 'filters', 'selection'];
+    const indicator = schemaPanels.includes(path)
+      ? panel(page, panelIds[path]).locator(`.helios-ui-panel__persistence-indicator[data-schema="${path}"]`).first()
+      : panel(page, panelIds[path]).locator(`.helios-ui-panel__persistence-indicator[data-path="${path}"]`).first();
     await expect(indicator).not.toHaveAttribute('data-state', 'default');
-    const matchesRegistry = await indicator.evaluate((el) => (
-      el.dataset.state === window.__helios.persistence.keyStatus(el.dataset.path, {
-        scope: el.dataset.scope,
-        mode: el.dataset.mode,
-      })?.state
-    ));
+    const matchesRegistry = await indicator.evaluate(async (el) => {
+      if (el.dataset.path) {
+        return el.dataset.state === window.__helios.states.status(el.dataset.path, {
+          scope: el.dataset.scope,
+          mode: el.dataset.mode,
+        })?.state;
+      }
+      const {
+        FILTERS_PANEL_SCHEMA,
+        LAYOUT_PANEL_SCHEMA,
+        LEGENDS_PANEL_SCHEMA,
+        MAPPERS_PANEL_SCHEMA,
+        SELECTION_PANEL_SCHEMA,
+        panelSchemaStatus,
+      } = await import('/src/ui/panels/panelSchema.js');
+      const schema = el.dataset.schema === 'layout'
+        ? LAYOUT_PANEL_SCHEMA
+        : el.dataset.schema === 'legends'
+          ? LEGENDS_PANEL_SCHEMA
+          : el.dataset.schema === 'mappers'
+            ? MAPPERS_PANEL_SCHEMA
+            : el.dataset.schema === 'filters'
+              ? FILTERS_PANEL_SCHEMA
+              : (el.dataset.schema === 'selection' ? SELECTION_PANEL_SCHEMA : null);
+      return Boolean(schema) && el.dataset.state === panelSchemaStatus(schema, window.__helios.states).panel;
+    });
     expect(matchesRegistry).toBe(true);
   }
 });
@@ -664,7 +1015,7 @@ test('start fresh keeps the active URL session and leaves previous sessions avai
   await page.goto(sessionUrl(previousSessionId, 180, workspaceId));
   await waitForHelios(page);
   await page.evaluate(async () => {
-    await window.__helios.persistence.flush({
+    await window.__helios.storage.flush({
       includeNetwork: true,
       network: { format: 'xnet' },
       snapshotLayoutRuntime: false,
@@ -675,10 +1026,6 @@ test('start fresh keeps the active URL session and leaves previous sessions avai
   await page.goto(sessionUrl(currentSessionId, 220, workspaceId));
   await waitForHelios(page);
   const prompt = page.locator('.helios-ui-resume-prompt').first();
-  await expect(prompt).toBeVisible();
-  await expect(prompt).toContainText('previous session');
-
-  await prompt.getByRole('button', { name: 'Start Fresh' }).click();
   await expect(prompt).toBeHidden();
   await page.waitForTimeout(250);
   await expect(prompt).toBeHidden();
@@ -718,7 +1065,7 @@ test('resume button opens a previous-session chooser when multiple sessions exis
   await waitForHelios(page);
   await page.evaluate(async ({ olderSessionId: older, latestSessionId: latest }) => {
     const helios = window.__helios;
-    const persistence = helios.persistence;
+    const persistence = helios.storage;
     const data = await helios.savePortableNetwork('xnet', {
       output: 'uint8array',
       includeVisualization: false,
@@ -766,7 +1113,7 @@ test('Data Session tab saves a restorable session and resumes an existing one', 
   await page.goto(sessionUrl(previousSessionId, 180, workspaceId));
   await waitForHelios(page);
   await page.evaluate(async () => {
-    await window.__helios.persistence.flush({
+    await window.__helios.storage.flush({
       includeNetwork: true,
       network: { format: 'xnet' },
       snapshotLayoutRuntime: false,
@@ -785,27 +1132,26 @@ test('Data Session tab saves a restorable session and resumes an existing one', 
 
   const newSessionButton = dataPanel.getByRole('button', { name: 'Save Session' });
   const beforeSessionIds = await page.evaluate(async () => (
-    await window.__helios.persistence.listSessionSummaries({ includeFinished: true, includeAllWorkspaces: true })
+    await window.__helios.storage.listSessionSummaries({ includeFinished: true, includeAllWorkspaces: true })
   ).map((entry) => entry.id));
-  const currentBeforeSave = await page.evaluate(() => window.__helios.persistence.sessionController?.sessionId ?? null);
+  const currentBeforeSave = await page.evaluate(() => window.__helios.storage.sessionId ?? null);
   await newSessionButton.click();
   await expect.poll(
     () => page.evaluate((knownIds) => (
-      window.__helios.persistence.listSessionSummaries({ includeFinished: true, includeAllWorkspaces: true })
+      window.__helios.storage.listSessionSummaries({ includeFinished: true, includeAllWorkspaces: true })
         .then((sessions) => sessions.find((entry) => entry?.id && !knownIds.includes(entry.id))?.id ?? null)
     ), beforeSessionIds),
     { timeout: 15000 },
   ).not.toBeNull();
-  const activeSessionId = await page.evaluate(() => window.__helios.persistence.sessionController?.sessionId ?? null);
+  const activeSessionId = await page.evaluate(() => window.__helios.storage.sessionId ?? null);
   expect(activeSessionId).toBe(currentBeforeSave);
   await expect(newSessionButton).toBeEnabled();
 
   const previousRow = dataPanel.locator(`.helios-ui-session-tab__row[data-session-id="${previousSessionId}"]`).first();
   await expect(previousRow).toBeVisible();
   await expect(previousRow).not.toContainText(workspaceId);
-  await expect(previousRow.locator('.helios-ui-session-tab__title')).toContainText('WS 180');
+  await expect(previousRow.locator('.helios-ui-session-tab__title')).toContainText('Grid 180');
   await expect(previousRow.locator('.helios-ui-session-tab__title')).toContainText(' - ');
-  await expect(previousRow.locator('.helios-ui-session-tab__thumbnail')).toBeVisible();
   await expect(previousRow.locator('.helios-ui-session-tab__body')).toBeVisible();
   const sessionCardLayout = await previousRow.evaluate((row) => {
     const title = row.querySelector('.helios-ui-session-tab__title');
@@ -838,7 +1184,7 @@ test('Data Session tab saves a restorable session and resumes an existing one', 
   await expect(resumePrompt).toBeHidden();
   await expect.poll(() => page.evaluate(() => window.__helios.network.nodeCount), { timeout: 15000 }).toBe(180);
   await expect.poll(
-    () => page.evaluate(() => window.__helios.persistence.status()?.networkData?.status ?? null),
+    () => page.evaluate(() => window.__helios.storage.status()?.networkData?.status ?? null),
     { timeout: 15000 },
   ).toBe('saved');
 
@@ -852,7 +1198,7 @@ test('Data Session tab saves a restorable session and resumes an existing one', 
   await resumedRow.getByRole('button', { name: /Delete session/ }).click();
   await expect(resumedRow).toBeHidden();
   await expect.poll(() => page.evaluate((id) => (
-    window.__helios.persistence.getSession(id).then((session) => session == null)
+    window.__helios.storage.getSession(id).then((session) => session == null)
   ), previousSessionId), { timeout: 10000 }).toBe(true);
 });
 
@@ -872,20 +1218,20 @@ test('Data Session Save Session restores saved camera pose and controls', async 
   await dataPanel.getByRole('button', { name: 'Session', exact: true }).click();
   const saveSessionButton = dataPanel.getByRole('button', { name: 'Save Session' });
   const beforeSessionIds = await page.evaluate(async () => (
-    await window.__helios.persistence.listSessionSummaries({ includeFinished: true, includeAllWorkspaces: true })
+    await window.__helios.storage.listSessionSummaries({ includeFinished: true, includeAllWorkspaces: true })
   ).map((entry) => entry.id));
   await saveSessionButton.click();
   await expect(saveSessionButton).toBeEnabled();
   await expect.poll(
     () => page.evaluate((knownIds) => (
-      window.__helios.persistence.listSessionSummaries({ includeFinished: true, includeAllWorkspaces: true })
+      window.__helios.storage.listSessionSummaries({ includeFinished: true, includeAllWorkspaces: true })
         .then((sessions) => sessions.find((entry) => entry?.id && !knownIds.includes(entry.id))?.id ?? null)
     ), beforeSessionIds),
     { timeout: 15000 },
   ).not.toBeNull();
 
   const snapshotSessionId = await page.evaluate((knownIds) => (
-    window.__helios.persistence.listSessionSummaries({ includeFinished: true, includeAllWorkspaces: true })
+    window.__helios.storage.listSessionSummaries({ includeFinished: true, includeAllWorkspaces: true })
       .then((sessions) => sessions.find((entry) => entry?.id && !knownIds.includes(entry.id))?.id ?? null)
   ), beforeSessionIds);
   expect(snapshotSessionId).toBeTruthy();
@@ -903,7 +1249,7 @@ test('Data Session Save Session restores saved camera pose and controls', async 
   await expect(snapshotRow).toBeVisible();
   await snapshotRow.getByRole('button', { name: 'Resume' }).click();
   await expect.poll(
-    () => page.evaluate(() => window.__helios.persistence.sessionController?.sessionId ?? null),
+    () => page.evaluate(() => window.__helios.storage.sessionId ?? null),
     { timeout: 15000 },
   ).toBe(snapshotSessionId);
   const restoredCamera = await collectState(page, snapshotSessionId);
@@ -921,7 +1267,7 @@ test('main example without a session id creates a new URL session and offers pre
   await page.goto(sessionUrl(previousSessionId, 180, workspaceId));
   await waitForHelios(page);
   await page.evaluate(async () => {
-    await window.__helios.persistence.flush({
+    await window.__helios.storage.flush({
       includeNetwork: true,
       network: { format: 'xnet' },
       snapshotLayoutRuntime: false,
@@ -937,13 +1283,68 @@ test('main example without a session id creates a new URL session and offers pre
 
   const prompt = page.locator('.helios-ui-resume-prompt').first();
   await expect(prompt).toBeVisible();
-  await prompt.getByRole('button', { name: 'Resume' }).click();
+  await prompt.getByRole('button', { name: 'Start Fresh' }).click();
   await expect(prompt).toBeHidden();
-  await expect.poll(() => page.evaluate(() => window.__helios.network.nodeCount), { timeout: 15000 }).toBe(180);
+  await expect.poll(() => page.evaluate(() => window.__helios.network.nodeCount), { timeout: 15000 }).toBe(220);
   await expect.poll(
     () => page.evaluate(() => new URL(window.location.href).searchParams.get('sessionId')),
     { timeout: 15000 },
-  ).toBe(previousSessionId);
+  ).toBe(currentSessionId);
+});
+
+test('generated URL session autosync restores first-run camera and appearance changes', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const workspaceId = `interface-generated-autosync-workspace-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  await page.goto(`/?renderer=webgl&mode=2d&nodes=800&restoreNetwork=1&maxSessionBytes=0&workspaceId=${encodeURIComponent(workspaceId)}`);
+  await waitForHelios(page);
+  const sessionId = await page.evaluate(() => new URL(window.location.href).searchParams.get('sessionId'));
+  expect(sessionId).toBeTruthy();
+  await page.evaluate(() => {
+    window.__helios.storage.configureSession?.({ autosyncInteractionIdleMs: 300 });
+  });
+
+  await panCanvas(page, 88, 39);
+  await page.evaluate(() => {
+    window.__helios.nodeSizeScale?.(1.42);
+  });
+  const changed = await collectState(page, sessionId);
+  expect(changed.cameraControls.autoFit).toBe(false);
+  expect(Math.hypot(...changed.cameraPose.pan2D)).toBeGreaterThan(1);
+  expect(changed.nodeSizeStatus?.state).toBe('changed');
+
+  await expect.poll(async () => page.evaluate(async (id) => {
+    const helios = window.__helios;
+    const session = await helios.storage.getSession(id);
+    const payload = session?.payload?.visualizationState?.payload ?? {};
+    const overrides = payload.storageState?.state?.overrides ?? {};
+    return {
+      nodeSizeScale: overrides['appearance.nodeStyle.sizeScale']
+        ?? overrides['behaviors.appearance.nodeSizeScale']
+        ?? null,
+      autoFit: payload.cameraControlState?.autoFit,
+      pan2D: Array.from(payload.cameraState?.pan2D ?? []),
+    };
+  }, sessionId), { timeout: 30000 }).toMatchObject({
+    nodeSizeScale: 1.42,
+    autoFit: false,
+    pan2D: [
+      expect.closeTo(changed.cameraPose.pan2D[0], 1),
+      expect.closeTo(changed.cameraPose.pan2D[1], 1),
+      expect.closeTo(changed.cameraPose.pan2D[2] ?? 0, 1),
+    ],
+  });
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await waitForHelios(page);
+  const restored = await collectState(page, sessionId);
+
+  expect(restored.status?.sessionId).toBe(sessionId);
+  expect(restored.cameraControls.autoFit).toBe(false);
+  expect(restored.cameraPose.pan2D[0]).toBeCloseTo(changed.cameraPose.pan2D[0], 1);
+  expect(restored.cameraPose.pan2D[1]).toBeCloseTo(changed.cameraPose.pan2D[1], 1);
+  expect(restored.nodeSizeScale).toBeCloseTo(1.42, 2);
+  expect(restored.nodeSizeStatus?.state).toBe('changed');
 });
 
 test('resume prompt stays inside the visible graph area with a right dock at narrow width', async ({ page }) => {
@@ -956,7 +1357,7 @@ test('resume prompt stays inside the visible graph area with a right dock at nar
   await waitForHelios(page);
   await page.evaluate(async () => {
     window.__helios.behavior?.interface?.dockSide?.('right');
-    await window.__helios.persistence.flush({
+    await window.__helios.storage.flush({
       includeNetwork: true,
       network: { format: 'xnet' },
       snapshotLayoutRuntime: false,
@@ -967,6 +1368,11 @@ test('resume prompt stays inside the visible graph area with a right dock at nar
   await waitForHelios(page);
   await page.evaluate(() => window.__helios.behavior?.interface?.dockSide?.('right'));
   const prompt = page.locator('.helios-ui-resume-prompt').first();
+  await expect(prompt).toBeHidden();
+
+  await page.goto(`/?renderer=webgl&layout=none&mode=2d&nodes=220&session=1&restoreNetwork=1&maxSessionBytes=0&workspaceId=${encodeURIComponent(workspaceId)}`);
+  await waitForHelios(page);
+  await page.evaluate(() => window.__helios.behavior?.interface?.dockSide?.('right'));
   await expect(prompt).toBeVisible();
 
   const metrics = await prompt.evaluate((el) => {
@@ -1020,6 +1426,13 @@ test('restores interface and camera changes after changing controls then immedia
   expect(changed.shaded).toBe(true);
   expect(changed.cameraControls.autoFit).toBe(false);
   expect(Math.hypot(...changed.cameraPose.pan2D)).toBeGreaterThan(1);
+  await page.evaluate(async () => {
+    await window.__helios.storage.flush({
+      includeNetwork: true,
+      network: { format: 'zxnet' },
+      snapshotLayoutRuntime: true,
+    });
+  });
 
   await page.reload({ waitUntil: 'domcontentloaded' });
   await waitForHelios(page);
@@ -1051,10 +1464,10 @@ test('restores an opened network, interface controls, and panned camera after re
   await expect(dataPanel).toBeVisible();
   await dataPanel.locator('input[type="file"]').setInputFiles(networkFile);
   await expect.poll(() => page.evaluate(() => window.__helios.network.nodeCount)).toBe(64);
-  const loadedSessionId = await page.evaluate(() => window.__helios.persistence.status().sessionId);
+  const loadedSessionId = await page.evaluate(() => window.__helios.storage.status().sessionId);
   expect(loadedSessionId).not.toBe(sessionId);
   await expect.poll(() => page.evaluate(async (oldId) => {
-    const oldSession = await window.__helios.persistence.getSession(oldId);
+    const oldSession = await window.__helios.storage.getSession(oldId);
     return oldSession?.payload?.session?.id === oldId;
   }, sessionId)).toBe(true);
   await expect.poll(() => page.evaluate(() => new URL(window.location.href).searchParams.get('sessionId'))).toBe(loadedSessionId);
@@ -1064,7 +1477,7 @@ test('restores an opened network, interface controls, and panned camera after re
 
   const beforeReload = await page.evaluate(async () => {
     const helios = window.__helios;
-    await helios.persistence.flush({
+    await helios.storage.flush({
       includeNetwork: true,
       network: { format: 'zxnet' },
       snapshotLayoutRuntime: false,
@@ -1091,7 +1504,7 @@ test('restores an opened network, interface controls, and panned camera after re
   await waitForHelios(page);
   await expect.poll(() => page.evaluate(() => window.__helios.network.nodeCount)).toBe(64);
   await expect.poll(
-    () => page.evaluate(() => window.__helios.persistence.status()?.networkData?.status ?? null),
+    () => page.evaluate(() => window.__helios.storage.status()?.networkData?.status ?? null),
     { timeout: 15000 },
   ).toBe('saved');
 

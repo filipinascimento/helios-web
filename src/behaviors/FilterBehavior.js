@@ -102,6 +102,62 @@ export class FilterBehavior extends Behavior {
     };
   }
 
+  stateEntries() {
+    const subscribe = (notify) => this.on('change', (event) => notify(undefined, event?.detail ?? event));
+    return {
+      enabled: {
+        description: 'Whether graph filters are active.',
+        default: this.state.enabled === true,
+        type: 'boolean',
+        scope: 'workspace',
+        aliases: ['filters.enabled'],
+        ui: {
+          label: 'Enabled',
+          controller: 'toggle',
+        },
+        getter: () => this.state.enabled === true,
+        setter: (value) => {
+          if (value === false) this.clear();
+          else if (this.filterModel?.hasCriteria?.()) this.setFilterModel(this.filterModel, { reason: 'enabled' });
+        },
+        subscribe,
+      },
+      scope: {
+        description: 'Filter scope.',
+        default: this.filterModel?.getScope?.() ?? 'render',
+        type: 'string',
+        scope: 'workspace',
+        aliases: ['filters.scope'],
+        ui: {
+          label: 'Scope',
+          controller: 'select',
+          options: ['render', 'render+layout'],
+        },
+        getter: () => this.filterModel?.getScope?.() ?? 'render',
+        setter: (value) => this.setScope(value),
+        subscribe,
+      },
+      rules: {
+        description: 'Active graph filter rules.',
+        default: cloneRules(this.filterModel?.getRules?.() ?? []),
+        type: 'array',
+        scope: 'workspace',
+        aliases: ['filters.rules'],
+        ui: {
+          label: 'Rules',
+          controller: 'custom',
+        },
+        getter: () => cloneRules(this.filterModel?.getRules?.() ?? []),
+        setter: (value) => this.replaceRules({
+          nodeRules: cloneRules(value).filter((rule) => rule?.scope !== 'edge'),
+          edgeRules: cloneRules(value).filter((rule) => rule?.scope === 'edge'),
+          scope: this.filterModel?.getScope?.() ?? 'render',
+        }),
+        subscribe,
+      },
+    };
+  }
+
   restore(snapshot = {}) {
     const filter = snapshot?.filter && typeof snapshot.filter === 'object' ? snapshot.filter : {};
     const options = snapshot?.options && typeof snapshot.options === 'object' ? snapshot.options : {};
@@ -111,7 +167,7 @@ export class FilterBehavior extends Behavior {
       scope: filter.scope ?? this.filterModel?.getScope?.(),
       rules: filter.rules ?? [],
     });
-    this.setFilterModel(restored, { reason: 'restore' });
+    this.setFilterModel(restored, { reason: 'restore', trackOverride: false });
     this.emitChange('restore');
     return this;
   }
@@ -196,7 +252,7 @@ export class FilterBehavior extends Behavior {
     return this;
   }
 
-  setFilterModel(model, { reason = 'model' } = {}) {
+  setFilterModel(model, { reason = 'model', trackOverride = true } = {}) {
     this.filterModel = createFilterModel(model);
     const helios = this.context?.helios ?? null;
     if (helios?.activateHeliosFilter) {
@@ -209,7 +265,10 @@ export class FilterBehavior extends Behavior {
       }
     }
     this.state = summarizeFilter(helios, this.filterModel);
-    this.emitChange(reason);
+    this.emitChange(reason, {
+      trackOverride: trackOverride !== false,
+      storageKeys: ['filters.enabled', 'filters.scope', 'filters.rules'],
+    });
     return this;
   }
 

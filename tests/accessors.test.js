@@ -203,7 +203,7 @@ test('ambient occlusion UI bindings expose the intended defaults and slider rang
   assert.deepEqual(Helios.UI_BINDINGS.ambientOcclusionRadius.recommendedRange, { min: 4, max: 100 });
 });
 
-test('adaptive edge quality is enabled by default and exposes configurable thresholds', () => {
+test('adaptive edge quality is disabled by default and exposes configurable thresholds', () => {
   const bindingEvents = [];
   const helios = Object.create(Helios.prototype);
   helios.options = {};
@@ -227,7 +227,7 @@ test('adaptive edge quality is enabled by default and exposes configurable thres
   };
 
   const defaults = helios.edgeAdaptiveQuality();
-  assert.equal(defaults.enabled, true);
+  assert.equal(defaults.enabled, false);
   assert.equal(defaults.slowFrameThresholdMs, 66);
   assert.equal(defaults.averageWindowFrames, 12);
   assert.equal(defaults.slowFrameConsecutiveFrames, 12);

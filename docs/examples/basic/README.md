@@ -16,6 +16,21 @@ The source lives in [`docs/examples/basic/main.js`](./main.js). Start the Vite d
 Mapper, appearance, and edge defaults come from Helios internals rather than
 example-specific setup.
 
+### Synthetic network
+
+- The example temporarily defaults to an exact-node-count generated 2D grid
+  (`?dataset=grid`) so very large startup and rendering experiments do not pay
+  the Watts-Strogatz generation cost.
+- Pass `?dataset=grid3d&mode=3d` to generate an exact-node-count 3D grid.
+- Large autosave responsiveness coverage uses
+  `/?renderer=webgl&layout=none&mode=2d&nodes=100000&dataset=grid&session=1&restoreNetwork=0`
+  to verify hot controls and camera interaction do not immediately serialize
+  the full network, capture thumbnails, or repeatedly snapshot session state.
+- Pass `?dataset=ws`, `?dataset=small-world`, or `?dataset=watts-strogatz` to
+  use the previous Watts-Strogatz demo network.
+- For generated networks above 50k nodes, the example skips expensive string
+  category/label population and keeps numeric attributes only.
+
 ### Layout controls
 
 - The example now defaults to the GPU force layout.
@@ -85,3 +100,16 @@ HELIOS_PERF_NODE_COUNTS=10000,100000 npm run perf:history
 HELIOS_PERF_HISTORY_FILE=/tmp/helios-perf.jsonl npm run perf:history
 HELIOS_PERF_SAMPLE_MS=10000 npm run perf:history
 ```
+
+### Storage autosave performance
+
+Run the optional headed WebGPU storage/autosave correlation check with:
+
+```bash
+HELIOS_PERF_NODE_COUNTS=100000,1000000 npm run perf:storage
+```
+
+This loads `dataset=grid` and `dataset=grid3d&mode=3d`, instruments
+`helios.storage` autosave/session methods and portable network serialization,
+and writes JSONL results to
+`artifacts/performance-history/helios-storage-autosave.jsonl`.

@@ -1,5 +1,3 @@
-import { createFpsThrottle } from './createFpsThrottle.js';
-
 function createDefaultPersistenceIndicator() {
   const indicator = document.createElement('span');
   indicator.className = 'helios-ui-dirty-indicator helios-ui-dirty-indicator--static';
@@ -218,11 +216,11 @@ export function createSliderRow(attribute, options = {}) {
   };
 
   const unsub = attribute.subscribe(updateFromAttribute);
-  const writeSliderValue = createFpsThrottle((nextValue) => {
+  const writeSliderValue = (nextValue) => {
     const v = Number(nextValue);
     if (!Number.isFinite(v)) return;
     attribute.write(v, { source: 'ui', event: 'input' });
-  });
+  };
 
   slider.addEventListener('input', () => {
     const v = Number(slider.value);
@@ -235,7 +233,6 @@ export function createSliderRow(attribute, options = {}) {
     if (!Number.isFinite(v)) return;
     updateSliderVisual();
     writeSliderValue(v);
-    writeSliderValue.flush();
   });
 
   const commitTypedValue = (eventName) => {

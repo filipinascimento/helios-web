@@ -291,6 +291,11 @@ export class GpuForceLayout extends Layout {
       this.helios?.stopLayout?.('alpha-min');
     }
     if (changed) {
+      this.emitUpdate({
+        timestamp: performance.now(),
+        layoutElapsedMs: deltaMs,
+        delegateChanged: true,
+      });
       this.helios?.scheduler?.requestRender?.();
     }
     return changed;

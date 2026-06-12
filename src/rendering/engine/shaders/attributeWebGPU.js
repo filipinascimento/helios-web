@@ -158,8 +158,8 @@ fn nodeVertex(input : VertexInput) -> VertexOutput {
   let semanticScale = semanticZoomScale(camera, globals);
   let baseSize = globals.nodeSize.x + globals.nodeSize.y * ${NODE_SIZE_RAW_EXPR};
   let outlineWidth = max(0.0, globals.nodeOutline.x + globals.nodeOutline.y * ${NODE_OUTLINE_RAW_EXPR});
-  let fullSize = (baseSize + outlineWidth) * semanticScale;
-  let radius = max(1.0, fullSize) * 0.5;
+  let fullSize = max(0.0, baseSize + outlineWidth) * semanticScale;
+  let radius = fullSize * 0.5;
   var right = camera.right.xyz;
   var up = camera.up.xyz;
   var viewDir = vec3<f32>(0.0, 0.0, 1.0);
@@ -597,7 +597,7 @@ fn nodeVertex(input : NodeVertexInput) -> NodeVertexOutput {
   let rawOutline = ${NODE_OUTLINE_EXPR};
   let semanticScale = semanticZoomScale(camera, globals);
   let outlineWidth = max(0.0, (globals.nodeOutline.x + globals.nodeOutline.y * rawOutline) * outlineMul);
-  let fullSize = max(1.0, (globals.nodeSize.x + globals.nodeSize.y * rawSize) * sizeMul + outlineWidth) * semanticScale;
+  let fullSize = max(0.0, (globals.nodeSize.x + globals.nodeSize.y * rawSize) * sizeMul + outlineWidth) * semanticScale;
   let radius = fullSize * 0.5;
 
   var right = camera.right.xyz;

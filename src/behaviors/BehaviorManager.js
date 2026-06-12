@@ -20,6 +20,7 @@ export class BehaviorManager {
     this.registry = registry;
     this.ui = null;
     this._attached = new Map();
+    this._storageBindings = new Map();
   }
 
   setUI(ui) {
@@ -68,7 +69,8 @@ export class BehaviorManager {
     const key = String(id ?? '').trim();
     const existing = this._attached.get(key);
     if (!existing) return false;
-    this.helios?.persistence?.unbindBehaviorState?.(key, existing);
+    this._storageBindings.get(key)?.();
+    this._storageBindings.delete(key);
     existing.detach?.();
     this._attached.delete(key);
     return true;
@@ -77,7 +79,8 @@ export class BehaviorManager {
   detachAll() {
     for (const [id, behavior] of this._attached.entries()) {
       try {
-        this.helios?.persistence?.unbindBehaviorState?.(id, behavior);
+        this._storageBindings.get(id)?.();
+        this._storageBindings.delete(id);
         behavior.detach?.();
       } finally {
         this._attached.delete(id);
@@ -115,7 +118,8 @@ export class BehaviorManager {
     if (!id) throw new Error('Attached behaviors must expose an id');
     const existing = this._attached.get(id);
     if (existing && existing !== behavior) {
-      this.helios?.persistence?.unbindBehaviorState?.(id, existing);
+      this._storageBindings.get(id)?.();
+      this._storageBindings.delete(id);
       existing.detach?.();
     }
     behavior.id = id;
@@ -126,8 +130,14 @@ export class BehaviorManager {
       this._attached.delete(id);
       throw error;
     }
-    this.helios?.persistence?.bindBehaviorState?.(id, behavior);
-    this.ui?._installBehaviorPersistenceBinding?.(id, behavior);
+    const stateManager = this.helios?.states ?? this.helios?.storage;
+    if (typeof behavior.stateEntries === 'function' && typeof stateManager?.register === 'function') {
+      const entries = behavior.stateEntries();
+      if (entries && typeof entries === 'object') {
+        const cleanup = stateManager.register(behavior, `behaviors.${id}`, entries);
+        if (typeof cleanup === 'function') this._storageBindings.set(id, cleanup);
+      }
+    }
     return behavior;
   }
 }

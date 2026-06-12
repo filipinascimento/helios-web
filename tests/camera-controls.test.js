@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Helios } from '../src/index.js';
+import { Helios, HeliosStateManager } from '../src/index.js';
 import { resolveFigurePreviewRect } from '../src/export/figureExport.js';
 import { Camera } from '../src/rendering/Camera.js';
 import { applyCameraPose, captureCameraPose } from '../src/rendering/CameraTransitionController.js';
@@ -299,6 +299,54 @@ test('constructor UI panel option expands default panel presets', () => {
   assert.deepEqual(calls, ['demo', 'metrics', 'mappers', 'layout', 'legends', 'filter', 'camera', 'selection']);
 });
 
+test('constructor debug option appends the debug panel last', () => {
+  const helios = Object.create(Helios.prototype);
+  helios.debugEnabled = true;
+  const calls = [];
+  const ui = {
+    createDemoPanel() { calls.push('demo'); },
+    createMetricsPanel() { calls.push('metrics'); },
+    createMappersPanel() { calls.push('mappers'); },
+    createLayoutPanel() { calls.push('layout'); },
+    createLegendsPanel() { calls.push('legends'); },
+    createFilterPanel() { calls.push('filter'); },
+    createCameraPanel() { calls.push('camera'); },
+    createSelectionPanel() { calls.push('selection'); },
+    createDebugPanel(options) { calls.push(['debug', options]); },
+  };
+
+  helios._createOptionalUIPanels(ui, true, {
+    debug: { dock: 'right', refreshMs: 2000 },
+  });
+
+  assert.deepEqual(calls, [
+    'demo',
+    'metrics',
+    'mappers',
+    'layout',
+    'legends',
+    'filter',
+    'camera',
+    'selection',
+    ['debug', { dock: 'right', refreshMs: 2000 }],
+  ]);
+});
+
+test('constructor debug option does not duplicate an explicitly requested debug panel', () => {
+  const helios = Object.create(Helios.prototype);
+  helios.debugEnabled = true;
+  const calls = [];
+  const ui = {
+    createDebugPanel(options) { calls.push(['debug', options]); },
+  };
+
+  helios._createOptionalUIPanels(ui, ['debug'], {
+    debug: { dock: 'right' },
+  });
+
+  assert.deepEqual(calls, [['debug', { dock: 'right' }]]);
+});
+
 test('manual camera pose changes disable automatic camera fitting', () => {
   const emitted = [];
   const helios = Object.create(Helios.prototype);
@@ -337,6 +385,51 @@ test('manual camera pose changes disable automatic camera fitting', () => {
 
   assert.equal(helios._cameraControlConfig.autoFit, false);
   assert.ok(emitted.some((entry) => entry.type === Helios.EVENTS?.CAMERA_CONTROL_CHANGE || entry.type === 'camera:control-change'));
+});
+
+test('camera controls and pose write sparse state overrides through core state entries', () => {
+  const helios = Object.create(Helios.prototype);
+  helios.renderer = { camera: createCamera('2d') };
+  helios.scheduler = { requestRender() {} };
+  helios.states = new HeliosStateManager();
+  helios.on = () => () => {};
+  helios.emit = () => {};
+  helios._cameraControlConfig = {
+    autoFit: true,
+    autoFitCoverage: 0.95,
+    autoFitPaddingRatio: 0.08,
+    autoFitMaxSamples: 20000,
+    autoFitIntervalMs: 900,
+    autoFitMinIntervalMs: 100,
+    autoFitMaxIntervalMs: 5000,
+    autoFitLargeNetworkScale: 1,
+    autoFitIntervalNodeCountRef: 100000,
+    animation: true,
+    animationDurationMs: 280,
+    orbit: false,
+    orbitAngle: 0,
+    orbitAxis: [0, 1, 0],
+    orbitSpeed: 0.08,
+    orbitDirection: 1,
+    followTarget: false,
+    followUpdateIntervalMs: 200,
+    targetNodeIndices: null,
+  };
+  helios._cameraControlRuntime = {
+    lastAutoFitAt: Number.NEGATIVE_INFINITY,
+    lastOrbitAt: 0,
+    lastFitSignature: '',
+    lastEffectiveIntervalMs: 0,
+  };
+  helios._registerCoreStateEntries();
+
+  helios.cameraControls({ autoFit: false });
+  assert.equal(helios.states.status('camera.controls.autoFit').state, 'changed');
+  assert.equal(helios.states.getOverrides({ aliases: 'preferred' })['cameraControls.autoFit'], false);
+
+  helios.setCameraPose({ zoom: 2, pan2D: [4, 5, 0] }, { source: 'ui' });
+  assert.equal(helios.states.status('camera.pose').state, 'changed');
+  assert.equal(helios.states.getOverrides({ aliases: 'preferred' })['camera.pose'].zoom, 2);
 });
 
 test('frameNetwork uses delegate snapshots when positions come from a GPU layout delegate', async () => {

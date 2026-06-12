@@ -52,4 +52,5 @@ Helios Web Next is a Vite-built library + demo that wires `helios-network` (WASM
 
 - This repo is ESM (`"type": "module"`). Keep new files ESM and avoid CommonJS-only patterns.
 - No lint/format script is configured; follow the local style of the file you touch and avoid drive-by reformatting.
-- If you change the public surface area, update `src/index.js` exports and any `.d.ts` files under `src/`.
+- If you change the public surface area, update `src/index.js` exports.
+- Do **not** hand-edit `src/index.d.ts`. It is a generated declaration surface derived from source annotations/JSDoc/type metadata. Update source annotations first and run the declaration-generation workflow; if that workflow is missing or broken, document the tooling gap instead of manually patching `src/index.d.ts`.

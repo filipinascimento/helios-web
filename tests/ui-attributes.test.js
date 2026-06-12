@@ -58,12 +58,21 @@ test('HeliosUI accessor bindings write explicit persistence keys without an init
     on() {
       return () => {};
     },
-    persistence: {
-      registerKey(path, options) {
-        registered.push({ path, options });
+    states: {
+      register(owner, prefix, entries) {
+        for (const [path, entry] of Object.entries(entries)) {
+          registered.push({ owner, prefix, path, entry });
+        }
+        return () => {};
       },
       set(path, value, options) {
         writes.push({ path, value, options });
+      },
+      status() {
+        return { hasOverride: false };
+      },
+      entry() {
+        return null;
       },
     },
   };
@@ -72,13 +81,12 @@ test('HeliosUI accessor bindings write explicit persistence keys without an init
   ui._boundAttributesById = new Map();
   ui._controlCleanups = new Set();
   ui._heliosBindingUnsubscribe = null;
-  ui._persistenceWriteTimers = new Map();
-  ui._persistenceAccessorBindings = new WeakSet();
+  ui._stateAccessorBindings = new WeakSet();
 
   const attribute = ui.bindHeliosAccessor('nodeSizeScale', { persistenceDebounceMs: 0 });
 
   assert.equal(registered.at(-1).path, 'appearance.nodeStyle.sizeScale');
-  assert.equal(registered.at(-1).options.scope, 'network');
+  assert.equal(registered.at(-1).entry.scope, 'network');
   assert.deepEqual(writes, []);
 
   attribute.write(2);
@@ -91,6 +99,9 @@ test('HeliosUI accessor bindings write explicit persistence keys without an init
       source: 'ui',
       reason: 'control',
       autosave: undefined,
+      applyBinding: false,
+      debounceMs: 0,
+      journal: false,
     },
   }]);
 });
@@ -98,25 +109,34 @@ test('HeliosUI accessor bindings write explicit persistence keys without an init
 test('HeliosUI control registration does not rebaseline restored overrides', () => {
   const registered = [];
   const helios = {
-    persistence: {
-      keyStatus(path) {
+    states: {
+      status(path) {
         assert.equal(path, 'layout.layoutType');
         return { hasOverride: true };
       },
-      registerKey(path, options) {
-        registered.push({ path, options });
+      get() {
+        return 'restored-layout';
+      },
+      entry() {
+        return null;
+      },
+      register(owner, prefix, entries) {
+        for (const [path, entry] of Object.entries(entries)) {
+          registered.push({ owner, prefix, path, entry });
+        }
+        return () => {};
       },
     },
   };
   const ui = Object.create(HeliosUI.prototype);
   ui.helios = helios;
 
-  ui.registerPersistenceControl('layout.layoutType', {
+  ui.registerStateControl('layout.layoutType', {
     scope: 'network',
     defaultValue: 'gpu-force',
   });
 
   assert.equal(registered.at(-1).path, 'layout.layoutType');
-  assert.equal(Object.prototype.hasOwnProperty.call(registered.at(-1).options, 'defaultValue'), false);
-  assert.equal(registered.at(-1).options.preserveOverrides, true);
+  assert.equal(registered.at(-1).entry.default, 'restored-layout');
+  assert.equal(registered.at(-1).entry.scope, 'network');
 });

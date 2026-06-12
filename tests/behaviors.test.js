@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Helios } from '../src/index.js';
+import { DummyStorageManager, Helios, HeliosStateManager } from '../src/index.js';
 import {
   AppearanceBehavior,
   BEHAVIOR_IDS,
@@ -25,6 +25,7 @@ class MockHelios extends EventTarget {
   constructor() {
     super();
     this.network = null;
+    this.states = new HeliosStateManager({ helios: this });
     this.nodeMapper = new MapperCollection('node', null, () => this.emit('mappers:changed', {}));
     this.edgeMapper = new MapperCollection('edge', null, () => this.emit('mappers:changed', {}));
     this._activeHeliosFilter = null;
@@ -119,6 +120,30 @@ class ProbeBehavior extends Behavior {
   detach() {
     this.detachCount += 1;
     return super.detach();
+  }
+}
+
+class PersistentProbeBehavior extends ProbeBehavior {
+  static id = 'persistent-probe';
+
+  constructor(options = {}) {
+    super(options);
+    this.value = options.value ?? 1;
+  }
+
+  stateEntries() {
+    return {
+      value: {
+        default: 1,
+        type: 'number',
+        getter: () => this.value,
+        setter: (value) => {
+          this.value = Number(value);
+          this.emit('change', { reason: 'storage-set' });
+        },
+        subscribe: (notify) => this.on('change', () => notify()),
+      },
+    };
   }
 }
 
@@ -220,6 +245,228 @@ test('behavior manager destroy detaches active behavior cleanups', () => {
   assert.equal(manager.get('probe'), null);
   assert.equal(manager.helios, null);
   assert.equal(manager.ui, null);
+});
+
+test('behavior manager registers behavior stateEntries with helios.states', () => {
+  const helios = new MockHelios();
+  helios.storage = new DummyStorageManager({ helios, states: helios.states });
+  const registry = new BehaviorRegistry().register('persistent-probe', PersistentProbeBehavior);
+  const manager = new BehaviorManager(helios, registry);
+
+  const probe = manager.use('persistent-probe', { value: 3 });
+  assert.equal(helios.states.get('behaviors.persistent-probe.value'), 3);
+
+  helios.states.set('behaviors.persistent-probe.value', 7);
+  assert.equal(probe.value, 7);
+  assert.equal(helios.states.status('behaviors.persistent-probe.value').state, 'changed');
+
+  manager.detach('persistent-probe');
+  assert.equal(helios.states.entry('behaviors.persistent-probe.value'), null);
+});
+
+test('built-in behaviors expose state entries for durable state', () => {
+  const entries = {
+    appearance: new AppearanceBehavior().stateEntries(),
+    filters: new FilterBehavior().stateEntries(),
+    layout: new LayoutBehavior().stateEntries(),
+    legends: new LegendsBehavior().stateEntries(),
+    labels: new LabelsBehavior().stateEntries(),
+    mappers: new MappersBehavior().stateEntries(),
+    selection: new SelectionBehavior().stateEntries(),
+  };
+
+  assert.ok(entries.appearance.state);
+  assert.ok(entries.appearance.nodeStyle);
+  assert.ok(entries.filters.rules);
+  assert.ok(entries.layout.parameters);
+  assert.ok(entries.legends.enabled);
+  assert.ok(entries.labels.mode);
+  assert.ok(entries.labels.fontFamily);
+  assert.ok(entries.labels.fill);
+  assert.ok(entries.mappers.node);
+  assert.ok(entries.mappers['node.color']);
+  assert.ok(entries.mappers['edge.width']);
+  assert.ok(entries.selection.selectedNodes);
+  assert.ok(entries.selection.selectedEdges);
+  assert.ok(entries.selection.nodeClick);
+  assert.ok(entries.selection['selectors.node.rules']);
+  assert.deepEqual(entries.layout.parameters.aliases, ['layout.parameters']);
+  assert.deepEqual(entries.legends.enabled.aliases, ['legends.enabled']);
+  assert.deepEqual(entries.filters.rules.aliases, ['filters.rules']);
+  assert.deepEqual(entries.labels.enabled.aliases, ['labels.enabled']);
+  assert.deepEqual(entries.labels.fontFamily.aliases, ['labels.fontFamily']);
+  assert.deepEqual(entries.mappers.node.aliases, ['mappers.node']);
+  assert.deepEqual(entries.mappers['node.color'].aliases, ['mappers.node.color']);
+  assert.deepEqual(entries.selection.selectedNodes.aliases, ['selection.selectedNodes']);
+  assert.deepEqual(entries.selection['selectors.node.rules'].aliases, ['selection.selectors.node.rules']);
+  assert.equal(Object.prototype.hasOwnProperty.call(entries.filters, 'state'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(entries.mappers, 'state'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(entries.selection, 'state'), false);
+  assert.deepEqual(entries.appearance.nodeSizeScale.aliases, ['appearance.nodeStyle.sizeScale']);
+  assert.deepEqual(entries.appearance.shadedEnabled.aliases, ['appearance.shaded.enabled']);
+  assert.equal(entries.appearance.edgeAdaptiveQualitySlowFrameThresholdMs.ui.label, 'Slow Frame Threshold');
+  assert.equal(entries.appearance.edgeAdaptiveQualityProbeIntervalMs.ui.label, 'Probe Interval');
+  assert.equal(entries.appearance.shadedAmbientTopColor.ui.label, 'Ambient Top');
+  assert.equal(entries.appearance.ambientOcclusionIntensityScale.ui.label, 'Fast Scale');
+
+  for (const [id, stateEntries] of Object.entries(entries)) {
+    for (const [key, entry] of Object.entries(stateEntries)) {
+      assert.equal(Object.prototype.hasOwnProperty.call(entry, 'panel'), false, `${id}.${key} should not define panel`);
+      assert.equal(Object.prototype.hasOwnProperty.call(entry, 'section'), false, `${id}.${key} should not define section`);
+      assert.equal(Object.prototype.hasOwnProperty.call(entry.ui ?? {}, 'panel'), false, `${id}.${key}.ui should not define panel`);
+      assert.equal(Object.prototype.hasOwnProperty.call(entry.ui ?? {}, 'section'), false, `${id}.${key}.ui should not define section`);
+    }
+  }
+});
+
+test('complex behavior state entries dirty stable keys across programmatic, UI-style, and restore writes', () => {
+  const helios = new MockHelios();
+  helios.storage = new DummyStorageManager({ helios, states: helios.states });
+  const registry = new BehaviorRegistry()
+    .register('mappers', MappersBehavior)
+    .register('filters', FilterBehavior)
+    .register('labels', LabelsBehavior)
+    .register('selection', SelectionBehavior);
+  const manager = new BehaviorManager(helios, registry);
+  helios.behaviors = manager;
+
+  const mappers = manager.use('mappers');
+  const filters = manager.use('filters');
+  const labels = manager.use('labels');
+  const selection = manager.use('selection');
+
+  mappers.setChannelConfig('node', 'color', {
+    type: 'constant',
+    value: '#ff0000ff',
+  });
+  assert.equal(helios.states.status('mappers.node.color').state, 'changed');
+  assert.equal(helios.states.getOverrides({ aliases: 'preferred' })['mappers.node.color'].type, 'constant');
+  assert.equal(helios.states.getOverrides({ aliases: 'preferred' })['mappers.node.color'].value, '#ff0000ff');
+
+  helios.states.reset('mappers.node.color');
+  helios.states.set('mappers.node.color', {
+    type: 'constant',
+    value: '#00ff00ff',
+  }, { source: 'ui' });
+  assert.equal(mappers.getSerializedChannelConfig('node', 'color').value, '#00ff00ff');
+  assert.equal(helios.states.status('mappers.node.color').state, 'changed');
+
+  filters.replaceRules({
+    nodeRules: [{ scope: 'node', type: 'query', query: 'degree > 3' }],
+  });
+  assert.equal(helios.states.status('filters.rules').state, 'changed');
+  helios.states.set('filters.scope', 'render+layout', { source: 'ui' });
+  assert.equal(filters.state.scope, 'render+layout');
+  assert.equal(helios.states.status('filters.scope').state, 'changed');
+
+  selection.selectNodes([1, 2], { mode: 'replace' });
+  assert.deepEqual(helios.states.get('selection.selectedNodes'), [1, 2]);
+  assert.equal(helios.states.status('selection.selectedNodes').state, 'changed');
+  selection.setSelectorRules([{ scope: 'node', type: 'query', query: 'score > 0' }]);
+  assert.equal(helios.states.status('selection.selectors.node.rules').state, 'changed');
+
+  labels.fontFamily('Menlo, monospace');
+  assert.equal(helios.states.status('labels.fontFamily').state, 'changed');
+  helios.states.set('labels.fill', '#123456ff', { source: 'ui' });
+  assert.equal(labels.fill(), '#123456ff');
+  assert.equal(helios.states.status('labels.fill').state, 'changed');
+
+  helios.storage.restoreSnapshot({
+    state: {
+      overrides: {
+        'mappers.edge.width': { type: 'constant', value: 4 },
+        'filters.rules': [{ scope: 'edge', type: 'query', query: 'weight > 1' }],
+        'selection.selectedEdges': [0],
+        'labels.outlineColor': '#abcdefcc',
+      },
+    },
+  });
+  assert.equal(mappers.getSerializedChannelConfig('edge', 'width').value, 4);
+  assert.equal(filters.state.rules[0].scope, 'edge');
+  assert.deepEqual(helios.states.get('selection.selectedEdges'), [0]);
+  assert.equal(labels.outlineColor(), '#abcdefcc');
+  assert.equal(helios.states.status('mappers.edge.width').state, 'changed');
+  assert.equal(helios.states.status('filters.rules').state, 'changed');
+  assert.equal(helios.states.status('selection.selectedEdges').state, 'changed');
+  assert.equal(helios.states.status('labels.outlineColor').state, 'changed');
+});
+
+test('layout parameter state entries keep programmatic, UI-style, and restore writes on the same key', () => {
+  let gravity = 0.5;
+  let eta = 0.04;
+  const fakeLayout = {
+    getParameterBindings() {
+      return {
+        key: 'worker:force3d',
+        label: 'Force (worker)',
+        dynamic: true,
+        bindings: [
+          {
+            key: 'gravity',
+            label: 'Gravity',
+            type: 'number',
+            min: 0,
+            max: 1,
+            step: 0.01,
+            get: () => gravity,
+            set: (value) => { gravity = Number(value); },
+          },
+          {
+            key: 'eta',
+            type: 'number',
+            min: 0.001,
+            max: 1,
+            step: 0.001,
+            get: () => eta,
+            set: (value) => { eta = Number(value); },
+          },
+        ],
+      };
+    },
+  };
+  const helios = new MockHelios();
+  helios.layout = () => fakeLayout;
+  helios.scheduler = { getLayoutState: () => 'stopped' };
+  helios.storage = new DummyStorageManager({ helios, states: helios.states });
+  const layout = new LayoutBehavior();
+  layout.attach({
+    helios,
+    manager: { helios },
+    subscribe: () => () => {},
+  });
+  helios.states.register(layout, 'behaviors.layout', layout.stateEntries());
+
+  assert.equal(helios.states.entry('layout.parameters.gravity').key, 'behaviors.layout.parameters.gravity');
+  assert.equal(helios.states.entry('layout.parameters.gravity').ui.label, 'Gravity');
+  assert.equal(helios.states.entry('layout.parameters.eta').ui.label, 'Step Rate');
+
+  layout.parameter('gravity', 0.7);
+  assert.equal(helios.states.status('layout.parameters.gravity').state, 'changed');
+  assert.deepEqual(helios.states.getOverrides({ aliases: 'preferred' }), {
+    'layout.parameters.gravity': 0.7,
+  });
+
+  helios.states.reset('layout.parameters.gravity');
+  assert.equal(gravity, 0.5);
+  helios.states.set('layout.parameters.gravity', 0.8, { source: 'ui' });
+  assert.equal(gravity, 0.8);
+  assert.deepEqual(helios.states.getOverrides({ aliases: 'preferred' }), {
+    'layout.parameters.gravity': 0.8,
+  });
+
+  helios.states.reset('layout.parameters.gravity');
+  helios.storage.restoreSnapshot({
+    state: {
+      overrides: {
+        'layout.parameters.gravity': 0.65,
+      },
+    },
+  });
+  assert.equal(gravity, 0.65);
+  assert.equal(helios.states.status('layout.parameters').state, 'partial');
+  assert.deepEqual(helios.states.getOverrides({ aliases: 'preferred' }), {
+    'layout.parameters.gravity': 0.65,
+  });
 });
 
 function makeDestroyHarness(options = {}) {

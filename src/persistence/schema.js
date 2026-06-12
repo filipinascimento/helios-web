@@ -20,12 +20,100 @@ export const PERSISTENCE_KINDS = Object.freeze({
 
 function cloneSerializable(value) {
   if (Array.isArray(value)) return value.map((entry) => cloneSerializable(entry));
+  if (ArrayBuffer.isView(value)) return Array.from(value);
   if (value && typeof value === 'object') {
     const next = {};
     for (const [key, entry] of Object.entries(value)) next[key] = cloneSerializable(entry);
     return next;
   }
   return value;
+}
+
+function isPlainObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function setAtPath(root, segments, value) {
+  let target = root;
+  for (let i = 0; i < segments.length - 1; i += 1) {
+    const key = segments[i];
+    if (!isPlainObject(target[key])) target[key] = {};
+    target = target[key];
+  }
+  target[segments.at(-1)] = cloneSerializable(value);
+}
+
+function flattenObject(value, prefix, output) {
+  if (Array.isArray(value) || !isPlainObject(value)) {
+    output[prefix] = cloneSerializable(value);
+    return;
+  }
+  const entries = Object.entries(value);
+  if (!entries.length && prefix) {
+    output[prefix] = {};
+    return;
+  }
+  for (const [key, entry] of entries) {
+    flattenObject(entry, prefix ? `${prefix}.${key}` : key, output);
+  }
+}
+
+const VOLATILE_OVERRIDE_PATHS = new Set([
+  'appearance.edgeStyle.adaptiveQuality.active',
+  'appearance.edgeStyle.adaptiveQuality.manualFastRendering',
+  'appearance.edgeStyle.adaptiveQuality.reason',
+  'appearance.edgeStyle.adaptiveQuality.lastRenderMs',
+  'appearance.edgeStyle.adaptiveQuality.qualityFrameAverageMs',
+  'appearance.edgeStyle.adaptiveQuality.qualityFrameSampleCount',
+]);
+
+const VOLATILE_OVERRIDE_PREFIXES = [
+  'camera.viewport',
+];
+
+const CAMERA_POSE_OVERRIDE_PREFIXES = [
+  'camera.mode',
+  'camera.projection',
+  'camera.distance',
+  'camera.far',
+  'camera.fov',
+  'camera.near',
+  'camera.near2D',
+  'camera.far2D',
+  'camera.pan2D',
+  'camera.pan3D',
+  'camera.rotation',
+  'camera.target',
+  'camera.zoom',
+];
+
+const CANONICAL_BEHAVIOR_OVERRIDE_IDS = new Set(['layout', 'legends', 'filters', 'selection', 'mappers']);
+
+function isPathWithinPrefixes(path, prefixes) {
+  const target = String(path ?? '');
+  return prefixes.some((prefix) => target === prefix || target.startsWith(`${prefix}.`));
+}
+
+function isVolatileOverridePath(path) {
+  const target = String(path ?? '');
+  return VOLATILE_OVERRIDE_PATHS.has(target)
+    || VOLATILE_OVERRIDE_PREFIXES.some((prefix) => target === prefix || target.startsWith(`${prefix}.`));
+}
+
+function pruneVolatileOverrides(map = {}) {
+  for (const path of Object.keys(map)) {
+    if (isVolatileOverridePath(path)) delete map[path];
+  }
+  return map;
+}
+
+function normalizeOverrideMap(map = {}) {
+  const next = pruneVolatileOverrides(map);
+  const hasCameraPoseOverride = Object.keys(next).some((path) => isPathWithinPrefixes(path, CAMERA_POSE_OVERRIDE_PREFIXES));
+  if (hasCameraPoseOverride && !Object.prototype.hasOwnProperty.call(next, 'cameraControls.autoFit')) {
+    next['cameraControls.autoFit'] = false;
+  }
+  return next;
 }
 
 function normalizeResponsivePreferences(value = {}) {
@@ -115,6 +203,9 @@ export function normalizeVisualizationPayload(value = {}) {
     layoutRuntimeState: source.layoutRuntimeState && typeof source.layoutRuntimeState === 'object'
       ? cloneSerializable(source.layoutRuntimeState)
       : null,
+    storageState: source.storageState && typeof source.storageState === 'object'
+      ? cloneSerializable(source.storageState)
+      : null,
   };
 }
 
@@ -147,11 +238,34 @@ export function normalizeSessionPayload(value = {}) {
       ? {
         format: typeof source.networkData.format === 'string' ? source.networkData.format : 'bxnet',
         data: source.networkData.data ?? null,
+        dataRef: typeof source.networkData.dataRef === 'string' ? source.networkData.dataRef : null,
+        byteLength: Number.isFinite(source.networkData.byteLength) ? Number(source.networkData.byteLength) : null,
       }
       : {
         format: typeof source.networkFormat === 'string' ? source.networkFormat : 'bxnet',
         data: source.networkBytes ?? null,
+        dataRef: null,
+        byteLength: null,
       },
+    positionData: source.positionData && typeof source.positionData === 'object'
+      ? {
+        schema: typeof source.positionData.schema === 'string' ? source.positionData.schema : 'helios-web.session-position-data',
+        version: Number.isFinite(source.positionData.version) ? Number(source.positionData.version) : 1,
+        encoding: typeof source.positionData.encoding === 'string' ? source.positionData.encoding : 'float32',
+        compression: typeof source.positionData.compression === 'string' ? source.positionData.compression : 'none',
+        data: source.positionData.data ?? null,
+        dataRef: typeof source.positionData.dataRef === 'string' ? source.positionData.dataRef : null,
+        length: Number.isFinite(source.positionData.length) ? Number(source.positionData.length) : null,
+        byteLength: Number.isFinite(source.positionData.byteLength) ? Number(source.positionData.byteLength) : null,
+        storedByteLength: Number.isFinite(source.positionData.storedByteLength) ? Number(source.positionData.storedByteLength) : null,
+        dimension: Number.isFinite(source.positionData.dimension) ? Number(source.positionData.dimension) : 3,
+        nodeCount: Number.isFinite(source.positionData.nodeCount) ? Number(source.positionData.nodeCount) : null,
+        capturedAt: Number.isFinite(source.positionData.capturedAt) ? Number(source.positionData.capturedAt) : null,
+        runtimeState: source.positionData.runtimeState && typeof source.positionData.runtimeState === 'object'
+          ? cloneSerializable(source.positionData.runtimeState)
+          : null,
+      }
+      : null,
     thumbnail: source.thumbnail && typeof source.thumbnail === 'object'
       ? cloneSerializable(source.thumbnail)
       : null,
@@ -168,8 +282,8 @@ export function normalizeSessionPayload(value = {}) {
  * @param {object} [metadata] - Caller-owned metadata copied into the envelope.
  * @returns {object} Current-schema persistence envelope.
  * @remarks Envelopes are the boundary used by Helios persistence APIs and by
- * portable network visualization attachments. Unknown or legacy payload fields
- * are normalized rather than passed through blindly.
+ * portable network visualization attachments. Unknown payload fields are
+ * normalized rather than passed through blindly.
  */
 export function createPersistenceEnvelope(kind, payload, metadata = {}) {
   return {
@@ -198,10 +312,10 @@ function migrateSessionPayloadV0(value) {
 }
 
 /**
- * Migrate a legacy or partial persistence object into the current envelope.
+ * Normalize a partial persistence object into the current envelope.
  *
  * @public
- * @param {object} input - Existing envelope or legacy payload.
+ * @param {object} input - Existing envelope or partial payload.
  * @param {string|null} [expectedKind] - Kind to enforce during migration.
  * @returns {object} Current-schema envelope.
  */
@@ -228,11 +342,112 @@ export function migratePersistenceEnvelope(input, expectedKind = null) {
   return createPersistenceEnvelope(kind, payload, source.metadata);
 }
 
+export function flattenVisualizationOverrides(source) {
+  const envelope = migratePersistenceEnvelope(source, PERSISTENCE_KINDS.visualization);
+  const payload = envelope.payload ?? {};
+  const output = {};
+  const behaviors = payload.behaviorState && typeof payload.behaviorState === 'object'
+    ? payload.behaviorState
+    : {};
+  for (const [id, snapshot] of Object.entries(behaviors)) {
+    if (CANONICAL_BEHAVIOR_OVERRIDE_IDS.has(id) && snapshot && typeof snapshot === 'object') {
+      output[`behaviors.${id}.state`] = cloneSerializable(snapshot);
+    }
+    const options = snapshot?.options && typeof snapshot.options === 'object'
+      ? snapshot.options
+      : {};
+    flattenObject(options, id, output);
+    if (id === 'filters' && snapshot?.filter && typeof snapshot.filter === 'object') {
+      flattenObject(snapshot.filter, 'filters', output);
+    }
+    if (id === 'selection') {
+      if (Object.prototype.hasOwnProperty.call(snapshot ?? {}, 'selectedNodes')) {
+        output['selection.selectedNodes'] = cloneSerializable(snapshot.selectedNodes);
+      }
+      if (Object.prototype.hasOwnProperty.call(snapshot ?? {}, 'selectedEdges')) {
+        output['selection.selectedEdges'] = cloneSerializable(snapshot.selectedEdges);
+      }
+      if (Object.prototype.hasOwnProperty.call(snapshot ?? {}, 'savedSelectionAttribute')) {
+        output['selection.savedSelectionAttribute'] = snapshot.savedSelectionAttribute;
+      }
+      if (Object.prototype.hasOwnProperty.call(snapshot ?? {}, 'lastNamedSelectionAttribute')) {
+        output['selection.lastNamedSelectionAttribute'] = snapshot.lastNamedSelectionAttribute;
+      }
+    }
+  }
+  if (payload.uiState) flattenObject(payload.uiState, 'ui', output);
+  if (payload.cameraState) {
+    flattenObject(payload.cameraState, 'camera', output);
+    if (payload.cameraState.mode === '2d' || payload.cameraState.mode === '3d') {
+      output['scene.dimension'] = payload.cameraState.mode;
+    }
+  }
+  if (payload.cameraControlState) flattenObject(payload.cameraControlState, 'cameraControls', output);
+  return pruneVolatileOverrides(output);
+}
+
+export function diffOverrideMaps(base = {}, current = {}) {
+  const paths = new Set([...Object.keys(base), ...Object.keys(current)]);
+  const diff = {};
+  for (const path of paths) {
+    if (JSON.stringify(base[path]) === JSON.stringify(current[path])) continue;
+    if (Object.prototype.hasOwnProperty.call(current, path)) {
+      diff[path] = cloneSerializable(current[path]);
+    }
+  }
+  return diff;
+}
+
+export function applyOverridesToVisualizationState(source, overrides = {}) {
+  const envelope = migratePersistenceEnvelope(source, PERSISTENCE_KINDS.visualization);
+  const payload = cloneSerializable(envelope.payload ?? {});
+  const normalizedOverrides = normalizeOverrideMap(cloneSerializable(overrides ?? {}));
+  for (const [path, value] of Object.entries(normalizedOverrides)) {
+    if (isVolatileOverridePath(path)) continue;
+    const segments = String(path).split('.').filter(Boolean);
+    if (!segments.length) continue;
+    if (segments[0] === 'ui') {
+      if (!payload.uiState) payload.uiState = {};
+      setAtPath(payload.uiState, segments.slice(1), value);
+      continue;
+    }
+    if (segments[0] === 'scene' && segments[1] === 'dimension') {
+      const mode = value === '3d' ? '3d' : (value === '2d' ? '2d' : null);
+      if (mode) {
+        if (!payload.cameraState) payload.cameraState = {};
+        payload.cameraState.mode = mode;
+      }
+      continue;
+    }
+    if (segments[0] === 'camera') {
+      if (!payload.cameraState) payload.cameraState = {};
+      setAtPath(payload.cameraState, segments.slice(1), value);
+      continue;
+    }
+    if (segments[0] === 'cameraControls') {
+      if (!payload.cameraControlState) payload.cameraControlState = {};
+      setAtPath(payload.cameraControlState, segments.slice(1), value);
+      continue;
+    }
+    if (segments[0] === 'behaviors' && segments.length >= 3 && segments[2] === 'state') {
+      if (!payload.behaviorState) payload.behaviorState = {};
+      payload.behaviorState[segments[1]] = cloneSerializable(value);
+      continue;
+    }
+    const behaviorId = segments[0];
+    if (!payload.behaviorState) payload.behaviorState = {};
+    if (!payload.behaviorState[behaviorId]) payload.behaviorState[behaviorId] = { options: {} };
+    if (!payload.behaviorState[behaviorId].options) payload.behaviorState[behaviorId].options = {};
+    setAtPath(payload.behaviorState[behaviorId].options, segments.slice(1), value);
+  }
+  return createPersistenceEnvelope(PERSISTENCE_KINDS.visualization, payload, envelope.metadata);
+}
+
 /**
  * Serialize a persistence envelope to JSON.
  *
  * @public
- * @param {object} envelope - Envelope or legacy payload to migrate first.
+ * @param {object} envelope - Envelope or partial payload to normalize first.
  * @param {boolean} [pretty=true] - Whether to emit indented JSON.
  * @returns {string} Stable JSON string.
  */
@@ -244,7 +459,7 @@ export function serializePersistenceEnvelope(envelope, pretty = true) {
  * Parse and migrate persistence input.
  *
  * @public
- * @param {string|object} source - JSON string, current envelope, or legacy
+ * @param {string|object} source - JSON string, current envelope, or partial
  * payload object.
  * @param {string|null} [expectedKind] - Optional kind to validate/migrate to.
  * @returns {object} Current-schema envelope.
