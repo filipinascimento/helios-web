@@ -94,6 +94,19 @@ test('Helios beforeunload warning reflects dirty storage status', () => {
     assert.equal(event.defaultPrevented, true);
     assert.match(message, /unsaved changes/i);
     assert.equal(event.returnValue, message);
+
+    window.__HELIOS_DESKTOP_ALLOW_UNLOAD__ = true;
+    const desktopCloseEvent = {
+      defaultPrevented: false,
+      returnValue: undefined,
+      preventDefault() {
+        this.defaultPrevented = true;
+      },
+    };
+    assert.equal(beforeUnloadHandler(desktopCloseEvent), undefined);
+    assert.equal(desktopCloseEvent.defaultPrevented, false);
+    assert.equal(desktopCloseEvent.returnValue, undefined);
+
     host._beforeUnloadUnsavedChangesCleanup();
     assert.equal(beforeUnloadHandler, null);
   } finally {

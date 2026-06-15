@@ -3029,6 +3029,7 @@ export class Helios extends EventTarget {
     if (options.warnOnUnsavedSessionChanges === false || options.session?.warnOnUnsavedChanges === false) return;
     if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
     const handler = (event) => {
+      if (window.__HELIOS_DESKTOP_ALLOW_UNLOAD__ === true) return undefined;
       const status = this.storage?.persistenceStatus?.() ?? null;
       const networkData = status?.networkData ?? {};
       const hasUnsavedChanges = networkData.dirty === true

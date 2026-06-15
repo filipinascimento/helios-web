@@ -238,7 +238,7 @@ test.describe('scene panel: tabs and appearance controls', () => {
     await expect.poll(() => page.evaluate(() => window.__helios.states.get('network.persistence.autosave'))).toBe(false);
   });
 
-  test('oversized position autosync disables the Data auto sync toggle and keeps dirty age status', async ({ page }) => {
+  test('oversized position autosync disables the Data auto sync toggle and reports unsynced positions', async ({ page }) => {
     const workspaceId = `autosync-size-limit-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     await page.goto(`/?renderer=webgl&layout=none&mode=2d&nodes=120&session=1&workspaceId=${workspaceId}&restoreNetwork=0`);
     await waitForHelios(page);
@@ -268,7 +268,7 @@ test.describe('scene panel: tabs and appearance controls', () => {
     await expect(autoSyncToggle).toBeDisabled();
     await expect(autoSyncToggle).toHaveAttribute('aria-checked', 'false');
     await expect(autoSyncToggle).toHaveAttribute('title', /Position autosync is disabled/);
-    await expect(status).toHaveText(/^Synced \d+s ago$/);
+    await expect(status).toHaveText('Unsynced positions');
     await expect.poll(() => page.evaluate(() => ({
       dirty: window.__helios.storage.status().networkData.dirty,
       positionsDirty: window.__helios.storage.status().networkData.positionsDirty,

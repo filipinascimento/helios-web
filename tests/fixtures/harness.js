@@ -357,8 +357,10 @@ export async function bootstrapDemoFixture() {
     await helios.ready;
 
     if (mappersUi) {
-      const heliosUI = new HeliosUI({ helios, theme: 'dark', allowDrag: false });
-      heliosUI.createMappersPanel({ dock: 'top-left', position: { x: 8, y: 8 } });
+      const heliosUI = helios.ui ?? new HeliosUI({ helios, theme: 'dark', allowDrag: false, layerName: 'mappers-ui' });
+      if (!document.querySelector('.helios-ui-panel[data-panel-id="helios-ui-mappers"]')) {
+        heliosUI.createMappersPanel({ dock: 'top-left', position: { x: 8, y: 8 } });
+      }
       window.__heliosUI = heliosUI;
     }
 

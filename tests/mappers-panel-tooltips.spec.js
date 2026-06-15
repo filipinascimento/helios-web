@@ -34,6 +34,6 @@ test.describe('mappers panel', () => {
 
     const tooltips = page.locator('.helios-ui-tooltip[data-open="true"]');
     await expect(tooltips.first()).toBeVisible();
-    await expect(tooltips.first()).toContainText('Select how this channel is driven');
+    await expect(tooltips.first()).toContainText('Select the compatible mapper type');
   });
 });

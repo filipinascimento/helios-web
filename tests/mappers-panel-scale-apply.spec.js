@@ -57,15 +57,15 @@ test.describe('mappers panel', () => {
     const channelSelect = panel.locator('select').first();
     await channelSelect.selectOption({ label: 'Size' });
 
-    const typeSelect = panel.locator('.helios-ui-row', {
-      has: page.locator('.helios-ui-label__title', { hasText: 'Type' }),
-    }).locator('select').first();
-    await typeSelect.selectOption({ label: 'Scale' });
-
     const attributeSelect = panel.locator('.helios-ui-row', {
       has: page.locator('.helios-ui-label__title', { hasText: 'Attribute' }),
     }).locator('select').first();
     await attributeSelect.selectOption('$index');
+
+    const typeSelect = panel.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'Type' }),
+    }).locator('select').first();
+    await expect(typeSelect).toHaveValue('linear');
 
     const rangeInputs = panel.locator('.helios-ui-row', {
       has: page.locator('.helios-ui-label__title', { hasText: 'Range' }),

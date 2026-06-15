@@ -62,6 +62,9 @@ Key entry points:
   Plain library use gets dummy storage; browser, remote, and custom managers can
   be passed through the `storage` constructor option. Browser storage owns native
   session save/list/load/delete.
+- [`persistence-propagation-summary.md`](./persistence-propagation-summary.md)
+  summarizes the current state/storage/session contract for `helios-cli` and
+  Helios desktop integrations.
 - Built-in Scene, Labels, Legends, Mappers, Filters, Layout, and Selection
   panel markers are driven by declarative panel schemas that reference state
   keys rather than state-entry placement; custom editors aggregate stable

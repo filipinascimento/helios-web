@@ -73,19 +73,21 @@ test.describe('mappers panel', () => {
     await expect(domainInputsAfter).toHaveCount(2);
     await expect(domainInputsAfter.nth(1)).toHaveValue('31');
 
-    const typeSelectIndex = await panel.locator('select').evaluateAll((selects) => {
-      const isTypeSelect = (sel) => {
-        const options = Array.from(sel.options ?? []);
-        const labels = new Set(options.map((opt) => (opt.textContent ?? '').trim()));
-        return labels.has('Passthrough') && labels.has('Colormap') && labels.has('Constant');
-      };
-      return selects.findIndex(isTypeSelect);
-    });
-    expect(typeSelectIndex).toBeGreaterThanOrEqual(0);
+    const sourceSelect = panel.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'Attribute' }),
+    }).locator('select').first();
+    const typeSelect = panel.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'Type' }),
+    }).locator('select').first();
 
-    const typeSelectLocator = panel.locator('select').nth(typeSelectIndex);
-    await typeSelectLocator.selectOption('passthrough');
-    await typeSelectLocator.selectOption('colormap');
+    await sourceSelect.selectOption('$constant');
+    await expect(typeSelect).toHaveValue('constant');
+
+    await sourceSelect.selectOption('color');
+    await expect(typeSelect).toHaveValue('passthrough');
+
+    await sourceSelect.selectOption('$index');
+    await expect(typeSelect).toHaveValue('colormap');
 
     if (errors.length) {
       await testInfo.attach('browser-errors', {

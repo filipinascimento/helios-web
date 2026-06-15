@@ -1655,8 +1655,9 @@ export class HeliosUI {
           return `${Math.floor(elapsed / 3600000)}h ago`;
         };
 
-        const showPersistenceSync = storageSupportsPersistentUI(this.helios);
-        const showSessionTab = storageSupportsSessions(this.helios);
+        const showNetworkFileActions = options.showNetworkFileActions !== false;
+        const showPersistenceSync = options.showPersistenceSync !== false && storageSupportsPersistentUI(this.helios);
+        const showSessionTab = options.showSessionTab !== false && storageSupportsSessions(this.helios);
 
         const syncPersistenceStatus = () => {
           if (!showPersistenceSync) return;
@@ -1690,8 +1691,8 @@ export class HeliosUI {
           ].map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0);
           const savedAt = savedAtCandidates.length ? Math.max(...savedAtCandidates) : null;
           const hasSavedAt = savedAt != null;
-          const dirtySyncedText = hasSavedAt ? `Synced ${formatRelativeSyncTime(savedAt)}` : null;
           const cleanSyncedText = hasSavedAt ? 'Synced' : null;
+          const lastSyncedText = hasSavedAt ? `Last synced ${formatRelativeSyncTime(savedAt)}.` : '';
           const networkPersistenceEnabled = this.helios?.states?.get?.('network.persistence.enabled', networkData.enabled !== false) !== false;
           const autosyncDisabledReason = networkData.autosyncDisabledReason?.message
             ?? (networkData.autosyncDisabled === true
@@ -1722,19 +1723,15 @@ export class HeliosUI {
             syncButton.disabled = false;
             syncButton.title = failureMessage;
           } else if (networkData.positionsDirty) {
-            syncStatus.textContent = dirtySyncedText ?? 'Unsynced';
+            syncStatus.textContent = 'Unsynced positions';
             syncButton.dataset.state = 'dirty';
             syncButton.disabled = false;
-            syncButton.title = dirtySyncedText
-              ? 'Position changes will sync after interaction idle and the autosync debounce.'
-              : 'Position changes have not been synced yet.';
+            syncButton.title = `${lastSyncedText} Position changes will sync after interaction idle and the autosync debounce.`.trim();
           } else if (networkData.dirty) {
-            syncStatus.textContent = dirtySyncedText ?? 'Unsynced';
+            syncStatus.textContent = 'Unsynced changes';
             syncButton.dataset.state = 'dirty';
             syncButton.disabled = false;
-            syncButton.title = dirtySyncedText
-              ? 'Session changes will sync after interaction idle and the autosync debounce.'
-              : 'Session changes have not been synced yet.';
+            syncButton.title = `${lastSyncedText} Session changes will sync after interaction idle and the autosync debounce.`.trim();
           } else if (hasSavedAt) {
             syncStatus.textContent = cleanSyncedText;
             syncButton.dataset.state = 'saved';
@@ -1968,8 +1965,10 @@ export class HeliosUI {
 
         const networkTab = document.createElement('div');
         networkTab.appendChild(stats);
-        networkTab.appendChild(controls);
-        networkTab.appendChild(nameBar);
+        if (showNetworkFileActions) {
+          networkTab.appendChild(controls);
+          networkTab.appendChild(nameBar);
+        }
         if (showPersistenceSync) networkTab.appendChild(syncRow);
 
         const sessionTab = document.createElement('div');

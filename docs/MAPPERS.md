@@ -78,6 +78,8 @@ mapper.setChannel('color', {
 
 In `HeliosUI`, the Mappers panel provides:
 
+- Source-first mapper editing: choose the attribute/source first, then choose from compatible mapper types for that source and visual channel.
+- A `Special sources` group for fixed values, generated indices, and layout positions without exposing internal source tokens.
 - Attribute selection for categorical fields (including string attributes that can be converted to categorical).
 - Sorting by frequency, alphabetical, natural, or manual order.
 - Palette selection (with scheme preference) and optional max category limits.
