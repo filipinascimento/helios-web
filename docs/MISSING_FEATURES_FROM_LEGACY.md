@@ -1,6 +1,6 @@
 # Missing Features from Legacy Helios Web
 
-This document tracks features present in `for_reference/helios-web-older-for-reference` that are not present in the current `helios-web-next` implementation as-is.
+This document tracks features present in `for_reference/helios-web-older-for-reference` that are not present in the current `helios-web` implementation as-is.
 
 Scope:
 - Legacy source: `for_reference/helios-web-older-for-reference/`

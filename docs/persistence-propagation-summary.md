@@ -1,6 +1,6 @@
 # Persistence And State Propagation Summary
 
-This note summarizes the current `helios-web-next` state, persistence, and
+This note summarizes the current `helios-web` state, persistence, and
 session contract so the same behavior can be propagated to `helios-cli` and
 Helios desktop.
 

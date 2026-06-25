@@ -1,6 +1,6 @@
 # GPU Force Layout (WebGPU + WebGL2) - Implementation Notes
 
-This document describes the current `gpu-force` layout implementation in Helios Web Next:
+This document describes the current `gpu-force` layout implementation in Helios Web:
 
 - algorithm and equations
 - parameter semantics

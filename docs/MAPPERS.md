@@ -11,7 +11,7 @@ import {
   createColormapScale,
   colormaps,
   colormapToScheme,
-} from 'helios-web-next';
+} from 'helios-web';
 
 // Continuous values → RGBA via a perceptual colormap
 const nodeColor = createColormapScale(DEFAULT_NODE_COLORMAP, { domain: [0, 1], alpha: 1 });
@@ -49,7 +49,7 @@ Note: mapper configs that rely on arbitrary JavaScript functions (for example `.
 
 Categorical channels map discrete attribute values to a fixed palette.
 
-`helios-web-next` also includes a built-in `category18` categorical palette for
+`helios-web` also includes a built-in `category18` categorical palette for
 community- or cluster-style labeling.
 
 ```js

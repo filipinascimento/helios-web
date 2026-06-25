@@ -1,6 +1,6 @@
 # WebGPU Storage Buffers And Texture Data Buffers
 
-This file tracks the current WebGPU storage-buffer usage and WebGL texture-backed data-buffer usage in `helios-web-next`.
+This file tracks the current WebGPU storage-buffer usage and WebGL texture-backed data-buffer usage in `helios-web`.
 
 `Core` means the storage is always present for that section's current specialized layout. Non-core rows are only present when the stated condition is true.
 

@@ -262,7 +262,7 @@ Example with host-provided remote storage:
 ```js
 import {
   Helios,
-} from 'helios-web-next';
+} from 'helios-web';
 
 const helios = new Helios(network, {
   container: '#app',

@@ -1,12 +1,19 @@
-# Helios Web Next
+<p align="center">
+  <img src="./media/helios-web-logo.svg" alt="Helios" width="320">
+</p>
 
-A fresh boilerplate for the next-generation Helios web renderer. It wires the
+# Helios Web
+
+The browser visualization package for Helios. It wires the
 [`helios-network`](https://www.npmjs.com/package/helios-network) WASM graph core
 into a layered rendering stack that targets WebGPU first with a WebGL2 fallback.
 
 ## Getting Started
 
 ```bash
+npm install helios-network helios-web
+
+# source checkout development
 npm install
 npm run dev    # serves the example under docs/examples/basic via Vite
 npm run build  # produces the library bundle in dist/
@@ -19,7 +26,8 @@ npm run test    # runs the node colormap unit test
 ```
 
 Point your browser at `http://localhost:5173` to interact with the bundled
-example (located in `docs/examples/basic`). It creates a sample graph, applies
+example (located in `docs/examples/basic`). It creates a 10k-node Watts-Strogatz
+sample graph by default, applies
 worker layout updates, and renders it through the indirect pipelines backed by
 `helios-network` sparse/indexed buffers so you can verify the stack end-to-end.
 
@@ -72,7 +80,7 @@ The build artifact targets WebGPU first with WebGL2 as a fallback. After running
 
 ```js
 import HeliosNetwork from 'helios-network';
-import { Helios } from 'helios-web-next';
+import { Helios } from 'helios-web';
 
 const network = await HeliosNetwork.create();
 network.addNodes(5);
@@ -310,7 +318,7 @@ await helios.transitionCamera({
 For reusable filter presets, use `HeliosFilter` and activate whichever one you need:
 
 ```js
-import { HeliosFilter } from 'helios-web-next';
+import { HeliosFilter } from 'helios-web';
 
 const exploratory = new HeliosFilter({ scope: 'render+layout' });
 exploratory.addRule({ scope: 'node', type: 'numeric', attribute: 'weight', min: 0.4, max: 1.0, extentMin: 0, extentMax: 1 });

@@ -1,5 +1,5 @@
 import HeliosNetwork, { AttributeType } from 'helios-network';
-// When consuming the published package use `import { Helios } from 'helios-web-next';`
+// When consuming the published package use `import { Helios } from 'helios-web';`
 import { Helios, EVENTS, HeliosUI } from '../../../src/index.js';
 
 // Set this to an object like { helios: true, mapper: true, scheduler: true } to re-enable debug logs.
@@ -320,13 +320,13 @@ function resolveCameraOptions() {
 function resolveDataset() {
   const params = new URLSearchParams(window.location.search);
   const dataset = params.get('dataset')?.trim().toLowerCase();
-  if (!dataset) return 'grid';
+  if (!dataset) return 'small-world';
   if (dataset === 'ws' || dataset === 'small-world' || dataset === 'watts-strogatz') return 'small-world';
   if (dataset === 'grid' || dataset === 'lattice' || dataset === 'lattice2d' || dataset === 'grid2d') return 'grid';
   if (dataset === 'grid3d' || dataset === 'lattice3d') return 'grid3d';
   if (dataset === 'umap') return 'umap-export';
   if (dataset === 'umap-export' || dataset === 'umap-real' || dataset === 'umap-exported') return 'umap-export';
-  return 'grid';
+  return 'small-world';
 }
 
 function resolveSmallWorldOptions() {

@@ -1,11 +1,11 @@
-# Helios Web Next Documentation
+# Helios Web Documentation
 
-Helios Web Next wraps the [`helios-network`](https://www.npmjs.com/package/helios-network) core in a renderer that prefers WebGPU and gracefully falls back to WebGL2. This directory collects library-focused documentation so the package can be consumed without digging through the source tree.
+Helios Web wraps the [`helios-network`](https://www.npmjs.com/package/helios-network) core in a renderer that prefers WebGPU and gracefully falls back to WebGL2. This directory collects library-focused documentation so the package can be consumed without digging through the source tree.
 
 ## Installation
 
 ```bash
-npm install helios-network helios-web-next
+npm install helios-network helios-web
 ```
 
 The renderer expects an initialized `helios-network` instance. In many cases that network already lives elsewhere in your application, but the example below shows how to set one up from scratch.
@@ -14,7 +14,7 @@ The renderer expects an initialized `helios-network` instance. In many cases tha
 
 ```js
 import HeliosNetwork from 'helios-network';
-import { Helios, Mapper } from 'helios-web-next';
+import { Helios, Mapper } from 'helios-web';
 
 const network = await HeliosNetwork.create();
 network.addNodes(5);
@@ -177,7 +177,7 @@ For a prose-first deep dive with full equation listing and pseudo algorithms, se
 
 ## Comparing with legacy Helios Web
 
-See [`docs/HELIOS_WEB_NEXT_VS_LEGACY.md`](./HELIOS_WEB_NEXT_VS_LEGACY.md) for a high-level summary of the biggest architectural differences and what Helios Web Next enables.
+See [`docs/HELIOS_WEB_NEXT_VS_LEGACY.md`](./HELIOS_WEB_NEXT_VS_LEGACY.md) for a high-level summary of the biggest architectural differences and what Helios Web enables.
 
 ## Example Catalog
 

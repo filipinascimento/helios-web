@@ -1,6 +1,6 @@
 # Persistence Interface Audit Plan
 
-This is the working checklist for stabilizing Helios Web Next persistence across the UI, sessions, sync status, and registered keys.
+This is the working checklist for stabilizing Helios Web persistence across the UI, sessions, sync status, and registered keys.
 
 ## Rules
 
@@ -84,7 +84,7 @@ This is the working checklist for stabilizing Helios Web Next persistence across
 - Mapper settings and edge appearance settings must persist and restore across reload/resume.
 - Data > Session must keep previous sessions after creating a new one.
 - Session resume/sync flow must restore the selected network and return to saved status.
-- Data > Session must not expose `helios-web-next-basic-demo` or workspace ids as visible session naming.
+- Data > Session must not expose `helios-web-basic-demo` or workspace ids as visible session naming.
 - Data > Session current session, session id, actions, and session list must use separate rows.
 - Start Fresh must dismiss the prompt with one click.
 - Basic demo must not apply custom mapper or edge defaults; it should use Helios internal defaults.

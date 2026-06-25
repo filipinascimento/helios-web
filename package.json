@@ -1,7 +1,6 @@
 {
-  "name": "helios-web-next",
-  "version": "0.0.1",
-  "private": true,
+  "name": "helios-web",
+  "version": "0.10.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -25,7 +24,7 @@
   "dependencies": {
     "d3-force-3d": "github:filipinascimento/d3-force-3d",
     "d3-scale-chromatic": "^3.1.0",
-    "helios-network": "^0.6.0"
+    "helios-network": "^0.10.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.1",
@@ -48,5 +47,11 @@
     "src",
     "docs",
     "README.md"
-  ]
+  ],
+  "description": "WebGPU/WebGL graph visualization renderer for Helios.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/filipinascimento/helios-web.git"
+  },
+  "license": "MIT"
 }

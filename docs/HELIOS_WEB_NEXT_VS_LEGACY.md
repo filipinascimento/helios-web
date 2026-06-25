@@ -1,8 +1,8 @@
-# Helios Web Next vs “Legacy” Helios Web (for_reference)
+# Helios Web vs “Legacy” Helios Web (for_reference)
 
-This document summarizes the biggest changes between **Helios Web Next** (this repo) and the previous **Helios Web** implementation kept under `for_reference/helios-web-older-for-reference/`.
+This document summarizes the biggest changes between **Helios Web** (this repo) and the previous **Helios Web** implementation kept under `for_reference/helios-web-older-for-reference/`.
 
-The goal of Helios Web Next is not “the same code, updated” — it’s a cleaner, more modular renderer scaffold that:
+The goal of Helios Web is not “the same code, updated” — it’s a cleaner, more modular renderer scaffold that:
 
 - Wraps the **`helios-network` WASM core** (graph + typed attributes + serialization)
 - Uses a **layered rendering stack** that targets **WebGPU first** and falls back to **WebGL2**
@@ -15,7 +15,7 @@ The goal of Helios Web Next is not “the same code, updated” — it’s a cle
 
 **Legacy Helios Web** ships its own JS-side `Network` implementation (see `for_reference/.../src/core/Network.js`) and a large WebGL-driven core class (see `for_reference/.../src/core/HeliosCore.js`).
 
-**Helios Web Next** instead expects an initialized `helios-network` instance:
+**Helios Web** instead expects an initialized `helios-network` instance:
 
 - Graph structure + attributes live in WASM-managed memory.
 - Visual attributes are treated as **typed, dimensioned attributes**.
@@ -31,7 +31,7 @@ The goal of Helios Web Next is not “the same code, updated” — it’s a cle
 
 Legacy Helios Web is primarily a **WebGL** renderer embedded directly into the main Helios class (manual shader programs, WebGL context management, plus specialized features like density rendering).
 
-Helios Web Next uses a **LayerManager + LayeredRenderer** approach:
+Helios Web uses a **LayerManager + LayeredRenderer** approach:
 
 - A stack of DOM layers (canvas + HTML overlay + optional SVG/other overlays)
 - A renderer backend that prefers **WebGPU** when available and automatically falls back to **WebGL2**
@@ -51,7 +51,7 @@ Helios Web Next uses a **LayerManager + LayeredRenderer** approach:
 
 Legacy Helios Web computes/updates many visual properties inside the renderer-driven core and maintains a mixture of buffers and per-feature logic.
 
-Helios Web Next formalizes this via the pipeline in `src/pipeline/`:
+Helios Web formalizes this via the pipeline in `src/pipeline/`:
 
 - **`Mapper`** utilities convert arbitrary node/edge attributes into visual channels (color, size, width, etc.).
 - Mapped values are written into **sparse visual attributes** on the `helios-network`.
@@ -67,7 +67,7 @@ Helios Web Next formalizes this via the pipeline in `src/pipeline/`:
 
 Legacy Helios Web includes interaction/picking infrastructure and feature flags, but state-driven styling is typically expressed by updating buffers/values.
 
-Helios Web Next introduces a fast **bitmask state system** (`docs/states.md`):
+Helios Web introduces a fast **bitmask state system** (`docs/states.md`):
 
 - One `u32` per node/edge encodes multiple states (selected/highlighted/filtered/custom).
 - Styles are applied in shaders via “slots”.
@@ -83,7 +83,7 @@ Helios Web Next introduces a fast **bitmask state system** (`docs/states.md`):
 
 Legacy Helios Web uses worker-based layout support (e.g., `d3force3dLayoutWorker.js`) but it is tightly integrated into the core.
 
-Helios Web Next provides a clearer layout abstraction:
+Helios Web provides a clearer layout abstraction:
 
 - `StaticLayout` fallback
 - `WorkerLayout` that proxies work to a layout worker
@@ -98,7 +98,7 @@ Helios Web Next provides a clearer layout abstraction:
 
 Legacy Helios Web shipped UI elements and demo tooling, but the UI was not designed as a reusable, framework-agnostic overlay layer.
 
-Helios Web Next includes an optional **HeliosUI** overlay (`docs/UI.md`):
+Helios Web includes an optional **HeliosUI** overlay (`docs/UI.md`):
 
 - Dockable, resizable panels (panel manager)
 - `UIAttribute` binding model (read/write/subscribe)
@@ -114,7 +114,7 @@ Helios Web Next includes an optional **HeliosUI** overlay (`docs/UI.md`):
 
 ### 7) Testing & stability: limited coverage → Playwright E2E matrix
 
-Helios Web Next has a much more explicit testing posture:
+Helios Web has a much more explicit testing posture:
 
 - Node unit tests (`node --test`)
 - Extensive Playwright coverage for real rendering behavior (picking, resizing, UI, rendering options, weighted transparency, etc.)
@@ -124,7 +124,7 @@ Helios Web Next has a much more explicit testing posture:
 - Helps prevent regressions in GPU backends, interactions, and docs examples.
 - Encourages building features “with an assertion”, not just “works on my machine”.
 
-## Feature-level highlights in Helios Web Next
+## Feature-level highlights in Helios Web
 
 Concrete capabilities visible in `docs/` and `tests/` include:
 
@@ -144,11 +144,11 @@ A few notable legacy capabilities visible in the `for_reference` snapshot:
 - A larger collection of demos/examples and a published docs site focused on those demos
 - Additional experimental renderer modes/flags (e.g. hyperbolic/topographic options in the core constructor)
 
-Helios Web Next intentionally focuses on a smaller, more maintainable core and pushes format support + specialized rendering modes toward clearer, modular integration points.
+Helios Web intentionally focuses on a smaller, more maintainable core and pushes format support + specialized rendering modes toward clearer, modular integration points.
 
 ## Practical “why you’d choose Next”
 
-If you’re building a product/tool around Helios (not just running a demo), Helios Web Next is geared toward:
+If you’re building a product/tool around Helios (not just running a demo), Helios Web is geared toward:
 
 - **Better integration**: apps can own the graph core (`helios-network`) and plug in rendering.
 - **Backend flexibility**: WebGPU where available, without dropping WebGL2 users.

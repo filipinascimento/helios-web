@@ -1,4 +1,4 @@
-# Methodology: GPU Force Layout in Helios Web Next
+# Methodology: GPU Force Layout in Helios Web
 
 This document presents the GPU force layout as a methodology section, aligned with the current implementation in `src/layouts/GpuForceLayout.js` and `src/delegates/GpuForcePositionDelegate.js`. The layout is implemented as a position-delegate system in which simulation state is advanced on GPU resources and consumed directly by the renderer, thereby minimizing CPU-GPU transfer in the steady state. WebGPU uses compute buffers; WebGL2 uses float-texture fragment passes when `EXT_color_buffer_float` is available, and otherwise falls back to CPU simulation plus texture upload.
 

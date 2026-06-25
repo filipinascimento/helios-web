@@ -1,6 +1,6 @@
 # Rendering Mode Requirements (Indirect-Only)
 
-Helios Web Next now runs in indirect mode only.
+Helios Web now runs in indirect mode only.
 
 ## Active renderer paths
 

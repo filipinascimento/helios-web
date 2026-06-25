@@ -1,6 +1,6 @@
 # HeliosUI (Optional Interface System)
 
-HeliosUI is an optional, framework-agnostic HTML overlay for `helios-web-next`. It provides:
+HeliosUI is an optional, framework-agnostic HTML overlay for `helios-web`. It provides:
 
 - A panel manager (floating panels + docking)
 - A simple “tracked attribute” model for controls (`UIAttribute`)
@@ -13,7 +13,7 @@ The core renderer stays UI-free; HeliosUI is just another DOM layer on top of He
 
 ```js
 import HeliosNetwork from 'helios-network';
-import { Helios, HeliosUI } from 'helios-web-next';
+import { Helios, HeliosUI } from 'helios-web';
 
 const network = await HeliosNetwork.create();
 const helios = new Helios(network, { container: document.querySelector('#app') });
@@ -187,7 +187,7 @@ HeliosUI is built from plain DOM + CSS, but it now also exposes a small set of W
 ### Register elements
 
 ```js
-import { defineHeliosWebComponents } from 'helios-web-next';
+import { defineHeliosWebComponents } from 'helios-web';
 
 defineHeliosWebComponents(document);
 ```
@@ -206,7 +206,7 @@ This defines (at least) the custom element:
 Example:
 
 ```js
-import { defineHeliosWebComponents, ensureDefaultStyles } from 'helios-web-next';
+import { defineHeliosWebComponents, ensureDefaultStyles } from 'helios-web';
 
 defineHeliosWebComponents(document);
 ensureDefaultStyles(document);
@@ -253,7 +253,7 @@ const nodeSizeScale = ui.bindHeliosAccessor('nodeSizeScale', {
 Controllers are just DOM that read/write a `UIAttribute`. Here is a minimal checkbox row:
 
 ```js
-import { UIAttribute } from 'helios-web-next';
+import { UIAttribute } from 'helios-web';
 
 function createCheckboxRow(attribute, { title = attribute.label } = {}) {
   const row = document.createElement('div');
@@ -320,7 +320,7 @@ If you want to group multiple “sub-panels” inside a single panel, you can us
 ### Tabs
 
 ```js
-import { TabbedPanel } from 'helios-web-next';
+import { TabbedPanel } from 'helios-web';
 
 const tabs = new TabbedPanel({
   tabs: [
@@ -335,7 +335,7 @@ ui.createPanel({ id: 'controls', title: 'Controls', content: tabs.element });
 ### Stack (collapsible sections)
 
 ```js
-import { PanelStack } from 'helios-web-next';
+import { PanelStack } from 'helios-web';
 
 const stack = new PanelStack();
 stack.add({ id: 'globals', title: 'Globals', content: document.createElement('div') });

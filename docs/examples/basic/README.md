@@ -18,16 +18,17 @@ example-specific setup.
 
 ### Synthetic network
 
-- The example temporarily defaults to an exact-node-count generated 2D grid
-  (`?dataset=grid`) so very large startup and rendering experiments do not pay
-  the Watts-Strogatz generation cost.
+- The example defaults to a 10k-node Watts-Strogatz small-world network
+  (`?dataset=small-world`).
+- Pass `?dataset=grid` to use an exact-node-count generated 2D grid for very
+  large startup and rendering experiments.
 - Pass `?dataset=grid3d&mode=3d` to generate an exact-node-count 3D grid.
 - Large autosave responsiveness coverage uses
   `/?renderer=webgl&layout=none&mode=2d&nodes=100000&dataset=grid&session=1&restoreNetwork=0`
   to verify hot controls and camera interaction do not immediately serialize
   the full network, capture thumbnails, or repeatedly snapshot session state.
 - Pass `?dataset=ws`, `?dataset=small-world`, or `?dataset=watts-strogatz` to
-  use the previous Watts-Strogatz demo network.
+  request the default Watts-Strogatz demo network explicitly.
 - For generated networks above 50k nodes, the example skips expensive string
   category/label population and keeps numeric attributes only.
 
