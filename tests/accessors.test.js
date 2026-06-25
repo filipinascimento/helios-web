@@ -172,11 +172,21 @@ test('density() exposes an explicit approximate log-ratio z-score toggle', () =>
 test('edge width scale UI binding exposes zero in the recommended slider range', () => {
   assert.equal(Helios.UI_BINDINGS.edgeWidthScale.domain.min, 0);
   assert.equal(Helios.UI_BINDINGS.edgeWidthScale.recommendedRange.min, 0);
+  assert.equal(Helios.UI_BINDINGS.edgeWidthScale.domain.max, 10);
+  assert.equal(Helios.UI_BINDINGS.edgeWidthScale.recommendedRange.max, 10);
 });
 
 test('node size scale UI binding exposes zero in the recommended slider range', () => {
   assert.equal(Helios.UI_BINDINGS.nodeSizeScale.domain.min, 0);
   assert.equal(Helios.UI_BINDINGS.nodeSizeScale.recommendedRange.min, 0);
+  assert.equal(Helios.UI_BINDINGS.nodeSizeScale.recommendedRange.max, 10);
+});
+
+test('outline width scale UI binding exposes the full suggested slider range', () => {
+  assert.equal(Helios.UI_BINDINGS.nodeOutlineWidthScale.domain.min, 0);
+  assert.equal(Helios.UI_BINDINGS.nodeOutlineWidthScale.domain.max, 20);
+  assert.equal(Helios.UI_BINDINGS.nodeOutlineWidthScale.recommendedRange.min, 0);
+  assert.equal(Helios.UI_BINDINGS.nodeOutlineWidthScale.recommendedRange.max, 20);
 });
 
 test('fast edge rendering UI binding is exposed as a boolean toggle', () => {

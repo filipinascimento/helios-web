@@ -2134,7 +2134,7 @@ export class Helios extends EventTarget {
       description: 'Scales mapped edge widths',
       defaultValue: 1,
       domain: { min: 0, max: 10 },
-      recommendedRange: { min: 0.0, max: 4.0 },
+      recommendedRange: { min: 0.0, max: 10.0 },
       step: 0.01,
     },
     edgeWidthBase: {
@@ -2190,7 +2190,7 @@ export class Helios extends EventTarget {
       description: 'Scales mapped node sizes',
       defaultValue: 1,
       domain: { min: 0, max: 100 },
-      recommendedRange: { min: 0.0, max: 3.0 },
+      recommendedRange: { min: 0.0, max: 10.0 },
       step: 0.01,
     },
     nodeSizeBase: {
@@ -2216,8 +2216,8 @@ export class Helios extends EventTarget {
       label: 'Outline Width Scale',
       description: 'Scales mapped outline widths',
       defaultValue: 0,
-      domain: { min: 0, max: 10 },
-      recommendedRange: { min: 0.0, max: 10.0 },
+      domain: { min: 0, max: 20 },
+      recommendedRange: { min: 0.0, max: 20.0 },
       step: 0.01,
     },
     nodeOutlineWidthBase: {
