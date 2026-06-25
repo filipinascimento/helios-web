@@ -1,0 +1,145 @@
+import { test, expect } from '@playwright/test';
+
+async function waitForDiagnostics(page) {
+  await page.waitForFunction(() => {
+    const diag = window.__HELIOS_DIAGNOSTICS__;
+    return diag && diag.ready;
+  });
+  return page.evaluate(() => window.__HELIOS_DIAGNOSTICS__);
+}
+
+async function ensureMappersPanelVisible(page) {
+  const panel = page.locator('.helios-ui-panel[data-panel-id="helios-ui-mappers"]').first();
+  if (await panel.isVisible()) return panel;
+  await page.evaluate(() => {
+    const behavior = window.__helios?.behavior?.interface;
+    behavior?.openControlsSurface?.();
+    behavior?.activateControl?.('helios-ui-mappers');
+  });
+  await expect(panel).toBeVisible();
+  return panel;
+}
+
+function subpanelForHeader(header) {
+  return header.locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " helios-ui-subpanel ")][1]');
+}
+
+function rowByTitle(page, panel, title) {
+  return panel.locator('.helios-ui-row', {
+    has: page.locator('.helios-ui-label__title', { hasText: new RegExp(`^${title}$`) }),
+  }).first();
+}
+
+test.describe('mappers panel colormap picker', () => {
+  test('shows searchable list with thumbnails', async ({ page }) => {
+    await page.goto('/tests/fixtures/demo.html?renderer=webgl&nodes=50&mappers=1');
+    const diagnostics = await waitForDiagnostics(page);
+    expect(diagnostics.ready).toBe(true);
+    await ensureMappersPanelVisible(page);
+
+    const typeRow = page.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'Type' }),
+    }).first();
+    await expect(typeRow).toBeVisible();
+
+    const typeSelect = typeRow.locator('select.helios-ui-select').first();
+    await typeSelect.selectOption('colormap');
+
+    const display = page.locator('button.helios-ui-colormap-picker__display').first();
+    await expect(display).toBeVisible();
+    await display.click();
+
+    const popover = page.locator('.helios-ui-colormap-popover:visible').first();
+    await expect(popover).toBeVisible();
+
+    const search = popover.locator('input.helios-ui-colormap-popover__search').first();
+    await expect(search).toBeVisible();
+    await search.fill('CET');
+
+    const items = popover.locator('.helios-ui-colormap-picker__item');
+    await expect(items.first()).toBeVisible();
+
+    const thumb = items.first().locator('.helios-ui-colormap-thumb--small');
+    await expect(thumb).toBeVisible();
+    await expect(thumb).toHaveCSS('background-image', /gradient/);
+
+    const dataKey = await items.first().getAttribute('data-key');
+    expect(dataKey).toBeTruthy();
+
+    await items.first().click();
+    await expect(display).toHaveAttribute('data-colormap-key', dataKey);
+  });
+
+  test('keeps search, size, selected row, and top layer after selecting', async ({ page }) => {
+    await page.goto('/tests/fixtures/demo.html?renderer=webgl&nodes=50&mappers=1');
+    const diagnostics = await waitForDiagnostics(page);
+    expect(diagnostics.ready).toBe(true);
+    await ensureMappersPanelVisible(page);
+
+    const typeRow = page.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'Type' }),
+    }).first();
+    await expect(typeRow).toBeVisible();
+    await typeRow.locator('select.helios-ui-select').first().selectOption('colormap');
+
+    const display = page.locator('button.helios-ui-colormap-picker__display').first();
+    await expect(display).toBeVisible();
+    await display.click();
+
+    let popover = page.locator('.helios-ui-colormap-popover:visible').first();
+    await expect(popover).toBeVisible();
+    const initialBox = await popover.locator('.helios-ui-colormap-popover__panel').first().boundingBox();
+    expect(initialBox?.height ?? 0).toBeGreaterThan(170);
+
+    const layering = await popover.evaluate((el) => {
+      const popoverZ = Number.parseInt(getComputedStyle(el).zIndex, 10);
+      const panelZ = Array.from(document.querySelectorAll('.helios-ui-panel'))
+        .map((panel) => Number.parseInt(getComputedStyle(panel).zIndex, 10))
+        .filter(Number.isFinite);
+      return { popoverZ, maxPanelZ: Math.max(0, ...panelZ) };
+    });
+    expect(layering.popoverZ).toBeGreaterThan(layering.maxPanelZ);
+
+    const search = popover.locator('input.helios-ui-colormap-popover__search').first();
+    await search.fill('viridis');
+    const filteredBox = await popover.locator('.helios-ui-colormap-popover__panel').first().boundingBox();
+    expect(filteredBox?.height ?? 0).toBeGreaterThanOrEqual((initialBox?.height ?? 0) - 2);
+
+    const viridis = popover.locator('.helios-ui-colormap-picker__item', {
+      has: page.locator('.helios-ui-colormap-picker__item-title', { hasText: 'Viridis' }),
+    }).first();
+    await viridis.click();
+    await expect(display).toHaveAttribute('data-colormap-key', 'interpolateViridis');
+
+    await display.click();
+    popover = page.locator('.helios-ui-colormap-popover:visible').first();
+    await expect(popover.locator('input.helios-ui-colormap-popover__search').first()).toHaveValue('viridis');
+    const selected = popover.locator('.helios-ui-colormap-picker__item[data-selected="true"]').first();
+    await expect(selected).toBeVisible();
+    await expect(selected).toHaveAttribute('data-key', 'interpolateViridis');
+  });
+
+  test('uses compact advanced switches for divergent and clamp controls', async ({ page }) => {
+    await page.goto('/tests/fixtures/demo.html?renderer=webgl&nodes=50&mappers=1');
+    const diagnostics = await waitForDiagnostics(page);
+    expect(diagnostics.ready).toBe(true);
+    const panel = await ensureMappersPanelVisible(page);
+
+    const typeRow = rowByTitle(page, panel, 'Type');
+    await expect(typeRow).toBeVisible();
+    await typeRow.locator('select.helios-ui-select').first().selectOption('colormap');
+
+    const advancedHeader = panel.locator('button.helios-ui-subpanel__header', { hasText: 'Advanced' }).first();
+    const advancedItem = subpanelForHeader(advancedHeader);
+    if ((await advancedItem.getAttribute('data-collapsed')) === 'true') {
+      await advancedHeader.click();
+    }
+
+    for (const title of ['Divergent', 'Clamp Min', 'Clamp Max']) {
+      const row = rowByTitle(page, panel, title);
+      await expect(row).toBeVisible();
+      await expect(row.locator('[role="switch"]')).toHaveCount(1);
+      await expect(row.locator('.helios-ui-segmented-toggle')).toHaveCount(0);
+    }
+  });
+});

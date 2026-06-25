@@ -1,0 +1,66 @@
+{
+  "fill" : {
+    "automatic-gradient" : "extended-srgb:0.00000,0.53333,1.00000,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "glass" : false,
+          "image-name" : "6.app icon shape.svg",
+          "name" : "6.app icon shape"
+        },
+        {
+          "glass" : false,
+          "image-name" : "5.4 – layer.svg",
+          "name" : "5.4 – layer"
+        },
+        {
+          "glass" : false,
+          "image-name" : "4.3 – layer.svg",
+          "name" : "4.3 – layer"
+        },
+        {
+          "glass" : false,
+          "image-name" : "3.2 – layer.svg",
+          "name" : "3.2 – layer"
+        },
+        {
+          "glass" : false,
+          "image-name" : "2.1 – layer.svg",
+          "name" : "2.1 – layer"
+        },
+        {
+          "fill-specializations" : [
+            {
+              "value" : {
+                "solid" : "extended-gray:1.00000,1.00000"
+              }
+            },
+            {
+              "appearance" : "dark",
+              "value" : {
+                "solid" : "display-p3:0.08713,0.07596,0.06288,1.00000"
+              }
+            }
+          ],
+          "glass" : false,
+          "image-name" : "1.background.svg",
+          "name" : "1.background"
+        }
+      ],
+      "name" : "Helios_web_icon",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : "shared"
+  }
+}

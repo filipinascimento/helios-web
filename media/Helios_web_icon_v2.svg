@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 1024 1024">
+  <!-- Generator: Adobe Illustrator 30.4.0, SVG Export Plug-In . SVG Version: 2.1.4 Build 226)  -->
+  <g id="Background">
+    <rect width="1024" height="1024" style="fill: #fff;"/>
+  </g>
+  <g id="_x31___x2013__Layer">
+    <circle cx="175.84" cy="771.024" r="38.325" style="fill: #f27b21;"/>
+    <line x1="175.84" y1="776.733" x2="441.099" y2="557.253" style="fill: none; stroke: #f27b21; stroke-miterlimit: 10; stroke-width: 23.803px;"/>
+  </g>
+  <g id="_x32___x2013__Layer">
+    <path d="M175.84,833.497c34.503,0,62.473-27.97,62.473-62.473,0-34.503-27.97-62.473-62.473-62.473-34.503,0-62.473,27.97-62.473,62.473,0,34.503,27.97,62.473,62.473,62.473ZM175.84,819.803c-26.94,0-48.779-21.839-48.779-48.779,0-26.94,21.839-48.779,48.779-48.779,26.94,0,48.779,21.839,48.779,48.779,0,26.94-21.839,48.779-48.779,48.779Z" style="fill: #f27b21;"/>
+    <path d="M617.762,557.253c0,97.568-79.095,176.663-176.663,176.663s-176.663-79.095-176.663-176.663,79.095-176.663,176.663-176.663v-49.599c-124.961,0-226.261,101.301-226.261,226.262s101.301,226.261,226.261,226.261,226.261-101.301,226.261-226.261h-49.598Z" style="fill: #c65628;"/>
+    <line x1="441.099" y1="557.253" x2="265.495" y2="226.93" style="fill: none; stroke: #fcb748; stroke-miterlimit: 10; stroke-width: 40.805px;"/>
+    <circle cx="265.495" cy="226.93" r="84.012" style="fill: #fcb748;"/>
+  </g>
+  <g id="_x33___x2013__Layer">
+    <path d="M265.495,351.387c68.736,0,124.457-55.721,124.457-124.457,0-68.736-55.721-124.457-124.457-124.457-68.736,0-124.457,55.721-124.457,124.457s55.721,124.457,124.457,124.457ZM265.495,324.105c-53.668,0-97.175-43.507-97.175-97.175,0-53.668,43.507-97.175,97.175-97.175,53.668,0,97.175,43.507,97.175,97.175,0,53.668-43.507,97.175-97.175,97.175Z" style="fill: #fcb748;"/>
+    <circle cx="781.669" cy="792.562" r="84.012" style="fill: #da6b69;"/>
+    <line x1="489.466" y1="596.885" x2="784.164" y2="794.606" style="fill: none; stroke: #da6b69; stroke-linecap: round; stroke-miterlimit: 10; stroke-width: 37.405px;"/>
+    <circle cx="441.099" cy="557.253" r="151.086" style="fill: #c65628;"/>
+  </g>
+  <g id="_x34___x2013__Layer">
+    <path d="M781.669,921.527c71.225,0,128.964-57.739,128.964-128.964,0-71.225-57.739-128.964-128.964-128.964-71.225,0-128.964,57.739-128.964,128.964,0,71.225,57.739,128.964,128.964,128.964ZM781.669,893.257c-55.612,0-100.694-45.082-100.694-100.694,0-55.612,45.082-100.694,100.694-100.694,55.612,0,100.694,45.082,100.694,100.694,0,55.612-45.082,100.694-100.694,100.694Z" style="fill: #da6b69;"/>
+    <g>
+      <rect x="858.253" y="156.466" width="52.182" height="402.924" style="fill: #844e21;"/>
+      <rect x="675.999" y="147.97" width="49.599" height="415.64" transform="translate(345.0083 1056.5888) rotate(-90)" style="fill: #844e21;"/>
+      <rect x="617.762" y="156.466" width="49.599" height="348.907" transform="translate(1285.1222 661.8388) rotate(-180)" style="fill: #844e21;"/>
+    </g>
+    <circle cx="441.099" cy="557.253" r="226.262" style="fill: none;"/>
+    <circle cx="441.099" cy="557.253" r="176.663" style="fill: none;"/>
+    <line x1="667.36" y1="508.356" x2="617.762" y2="508.356" style="fill: none;"/>
+  </g>
+  <g id="App_Icon_Shape">
+    <path d="M0,0v1024h1024V0H0ZM1024,651c0,14.243.006,28.483-.084,42.726-.069,11.996-.207,23.99-.532,35.983-.708,26.134-2.246,52.494-6.892,78.338-4.713,26.217-12.404,50.618-24.529,74.438-11.917,23.412-27.489,44.837-46.065,63.413s-40.001,34.148-63.413,46.065c-23.82,12.125-48.221,19.816-74.438,24.529-25.843,4.646-52.204,6.184-78.338,6.892-11.993.325-23.987.463-35.983.532-14.243.09-28.483.084-42.726.084h-278c-14.243,0-28.483.006-42.726-.084-11.996-.069-23.99-.207-35.983-.532-26.134-.708-52.494-2.246-78.338-6.892-26.217-4.713-50.618-12.404-74.438-24.529-23.412-11.917-44.837-27.489-63.413-46.065s-34.148-40.001-46.065-63.413c-12.125-23.82-19.816-48.221-24.529-74.438-4.646-25.844-6.184-52.204-6.892-78.338-.325-11.993-.463-23.987-.532-35.983C-.006,679.483,0,665.243,0,651v-278C0,358.757-.006,344.517.084,330.274c.069-11.996.207-23.99.532-35.983.708-26.134,2.246-52.494,6.892-78.338,4.713-26.217,12.404-50.618,24.529-74.438,11.917-23.412,27.489-44.837,46.065-63.413s40.001-34.148,63.413-46.065c23.82-12.125,48.221-19.816,74.438-24.529,25.843-4.646,52.204-6.184,78.338-6.892,11.993-.325,23.987-.463,35.983-.532C344.517-.006,358.757,0,373,0h278c14.243,0,28.483-.006,42.726.084,11.996.069,23.99.207,35.983.532,26.134.708,52.494,2.246,78.338,6.892,26.217,4.713,50.618,12.404,74.438,24.529,23.412,11.917,44.837,27.489,63.413,46.065s34.148,40.001,46.065,63.413c12.125,23.82,19.816,48.221,24.529,74.438,4.646,25.843,6.184,52.204,6.892,78.338.325,11.993.463,23.987.532,35.983.09,14.243.084,28.483.084,42.726v278Z" style="fill: #606060;"/>
+  </g>
+  <g id="Grid">
+    <g id="SUBDIVISIONS">
+      <line x1="1024" y1="0" x2="0" y2="1024" style="fill: none; stroke: #5db3f9; stroke-miterlimit: 10; stroke-width: 1.5px;"/>
+      <line x1="1024" y1="1024" x2="0" y2="0" style="fill: none; stroke: #5db3f9; stroke-miterlimit: 10; stroke-width: 1.5px;"/>
+      <line x1="512" y1="0" x2="512" y2="1024" style="fill: none; stroke: #5db3f9; stroke-miterlimit: 10; stroke-width: 1.5px;"/>
+      <line x1="1024" y1="512" x2="0" y2="512" style="fill: none; stroke: #5db3f9; stroke-miterlimit: 10; stroke-width: 1.5px;"/>
+      <line x1="512" y1="0" x2="512" y2="1024" style="fill: none; stroke: #5db3f9; stroke-miterlimit: 10; stroke-width: 1.5px;"/>
+      <line x1="1024" y1="512" x2="0" y2="512" style="fill: none; stroke: #5db3f9; stroke-miterlimit: 10; stroke-width: 1.5px;"/>
+      <line x1="1024" y1="640" x2="0" y2="640" style="fill: none; stroke: #5db3f9; stroke-miterlimit: 10; stroke-width: 1.5px;"/>
+      <line x1="1024" y1="768" x2="0" y2="768" style="fill: none; stroke: #5db3f9; stroke-miterlimit: 10; stroke-width: 1.5px;"/>
+      <line x1="1024" y1="896" x2="0" y2="896" style="fill: none; stroke: #5db3f9; stroke-miterlimit: 10; stroke-width: 1.5px;"/>
+      <line x1="1024" y1="384" x2="0" y2="384" style="fill: none; stroke: #5db3f9; stroke-miterlimit: 10; stroke-width: 1.5px;"/>
+      <line x1="1024" y1="256" x2="0" y2="256" style="fill: none; stroke: #5db3f9; stroke-miterlimit: 10; stroke-width: 1.5px;"/>
+      <line x1="1024" y1="128" x2="0" y2="128" style="fill: none; stroke: #5db3f9; stroke-miterlimit: 10; stroke-width: 1.5px;"/>
+      <line x1="512" y1="1024" x2="512" y2="0" style="fill: none; stroke: #5db3f9; stroke-miterlimit: 10; stroke-width: 1.5px;"/>
+      <line x1="512" y1="1024" x2="512" y2="0" style="fill: none; stroke: #5db3f9; stroke-miterlimit: 10; stroke-width: 1.5px;"/>
+      <line x1="384" y1="1024" x2="384" y2="0" style="fill: none; stroke: #5db3f9; stroke-miterlimit: 10; stroke-width: 1.5px;"/>
+      <line x1="256" y1="1024" x2="256" y2="0" style="fill: none; stroke: #5db3f9; stroke-miterlimit: 10; stroke-width: 1.5px;"/>
+      <line x1="128" y1="1024" x2="128" y2="0" style="fill: none; stroke: #5db3f9; stroke-miterlimit: 10; stroke-width: 1.5px;"/>
+      <line x1="640" y1="1024" x2="640" y2="0" style="fill: none; stroke: #5db3f9; stroke-miterlimit: 10; stroke-width: 1.5px;"/>
+      <line x1="768" y1="1024" x2="768" y2="0" style="fill: none; stroke: #5db3f9; stroke-miterlimit: 10; stroke-width: 1.5px;"/>
+      <line x1="896" y1="1024" x2="896" y2="0" style="fill: none; stroke: #5db3f9; stroke-miterlimit: 10; stroke-width: 1.5px;"/>
+    </g>
+    <g id="CIRCLES">
+      <circle cx="512" cy="512" r="410" style="fill: none; stroke: #5db3f9; stroke-miterlimit: 10; stroke-width: 1.5px;"/>
+      <circle cx="512" cy="512" r="256" style="fill: none; stroke: #5db3f9; stroke-miterlimit: 10; stroke-width: 1.5px;"/>
+      <circle cx="512" cy="512" r="102" style="fill: none; stroke: #5db3f9; stroke-miterlimit: 10; stroke-width: 1.5px;"/>
+    </g>
+  </g>
+</svg>

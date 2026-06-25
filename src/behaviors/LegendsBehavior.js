@@ -1,0 +1,321 @@
+import { Behavior } from './Behavior.js';
+
+const LEGEND_KINDS = new Set(['nodeColor', 'density', 'edgeColor', 'nodeSize', 'edgeWidth']);
+
+function cloneTitles(titles = {}) {
+  const next = {};
+  if (!titles || typeof titles !== 'object') return next;
+  for (const [key, value] of Object.entries(titles)) {
+    if (!LEGEND_KINDS.has(key)) continue;
+    next[key] = value == null ? null : String(value);
+  }
+  return next;
+}
+
+function clonePlacements(placements = {}) {
+  const next = {};
+  if (!placements || typeof placements !== 'object') return next;
+  for (const [key, value] of Object.entries(placements)) {
+    if (!LEGEND_KINDS.has(key)) continue;
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      next[key] = {
+        x: Number(value.x ?? 0),
+        y: Number(value.y ?? 0),
+      };
+      continue;
+    }
+    next[key] = value == null ? 'auto' : String(value).trim();
+  }
+  return next;
+}
+
+function cloneState(state = {}) {
+  return {
+    ...state,
+    titles: cloneTitles(state.titles),
+    placements: clonePlacements(state.placements),
+  };
+}
+
+function normalizeConfigPatch(options = {}) {
+  const next = {};
+  if (!options || typeof options !== 'object') return next;
+
+  const booleanKeys = [
+    'enabled',
+    'respectDockInsets',
+    'illustratorCompatible',
+    'zoomAwareSizeIn2D',
+    'showPanel',
+    'textOutline',
+    'showNodeColor',
+    'showDensity',
+    'showEdgeColor',
+    'showNodeSize',
+    'showEdgeWidth',
+    'scalePreviewLegends',
+    'interactiveCategorical',
+    'legendHoverHighlight',
+    'legendClickSelect',
+  ];
+  for (const key of booleanKeys) {
+    if (Object.prototype.hasOwnProperty.call(options, key)) next[key] = options[key] === true;
+  }
+
+  const scalarKeys = [
+    'margin',
+    'gap',
+    'maxChars',
+    'maxRows',
+    'fontSize',
+    'scale',
+    'continuousHeight',
+    'panelOpacity',
+    'textOutlineWidth',
+    'maxScale',
+  ];
+  for (const key of scalarKeys) {
+    if (Object.prototype.hasOwnProperty.call(options, key)) next[key] = options[key];
+  }
+
+  if (Object.prototype.hasOwnProperty.call(options, 'fontFamily')) {
+    next.fontFamily = typeof options.fontFamily === 'string' ? options.fontFamily.trim() : options.fontFamily;
+  }
+  if (Object.prototype.hasOwnProperty.call(options, 'legendClickAction')) {
+    const action = String(options.legendClickAction ?? '').trim().toLowerCase();
+    if (action === 'highlight' || action === 'select') next.legendClickAction = action;
+  }
+  if (Object.prototype.hasOwnProperty.call(options, 'titles')) {
+    next.titles = cloneTitles(options.titles);
+  }
+  if (Object.prototype.hasOwnProperty.call(options, 'placements')) {
+    next.placements = clonePlacements(options.placements);
+  }
+
+  return next;
+}
+
+/**
+ * Built-in behavior for legend overlays.
+ *
+ * @public
+ * @param {object} [options] - Legend visibility, placement, typography, scale,
+ * title, and export compatibility options.
+ * @returns {LegendsBehavior} Behavior controlling SVG legends for mapper and
+ * density channels.
+ * @remarks Legends read mapper and density configuration from the live Helios
+ * instance and preserve serializable placement, title, and visibility state.
+ */
+export class LegendsBehavior extends Behavior {
+  static id = 'legends';
+
+  constructor(options = {}) {
+    super(options);
+    this.state = {
+      enabled: true,
+      titles: {},
+      placements: {},
+      ...normalizeConfigPatch(options),
+    };
+  }
+
+  attach(context) {
+    super.attach(context);
+    const current = this.context?.helios?._getLegendsControllerConfig?.() ?? { enabled: true };
+    this.state = {
+      ...cloneState(current),
+      ...cloneState(this.state),
+      titles: {
+        ...cloneTitles(current?.titles),
+        ...cloneTitles(this.state?.titles),
+      },
+      placements: {
+        ...clonePlacements(current?.placements),
+        ...clonePlacements(this.state?.placements),
+      },
+    };
+    this.applyConfig({ silent: true, reason: 'attach' });
+    this.addCleanup(this.context.subscribe(this.context?.helios, 'network:replaced', () => {
+      this.emitChange('network-replaced', { source: 'refresh', trackOverride: false });
+    }));
+    return this;
+  }
+
+  update(options = {}, changeOptions = {}) {
+    super.update(options);
+    const patch = normalizeConfigPatch(options);
+    if (!Object.keys(patch).length) return this;
+    this.state = {
+      ...this.state,
+      ...patch,
+      titles: Object.prototype.hasOwnProperty.call(patch, 'titles')
+        ? { ...cloneTitles(this.state.titles), ...cloneTitles(patch.titles) }
+        : cloneTitles(this.state.titles),
+      placements: Object.prototype.hasOwnProperty.call(patch, 'placements')
+        ? { ...clonePlacements(this.state.placements), ...clonePlacements(patch.placements) }
+        : clonePlacements(this.state.placements),
+    };
+    this.applyConfig({ silent: true, reason: 'options' });
+    this.emitChange('options', {
+      trackOverride: changeOptions.trackOverride !== false,
+      storageKeys: Object.keys(patch).map((key) => `legends.${key}`),
+    });
+    return this;
+  }
+
+  serialize() {
+    return {
+      options: cloneState(this.state),
+    };
+  }
+
+  stateEntries() {
+    const subscribe = (notify) => this.on('change', (event) => notify(undefined, event?.detail ?? event));
+    const defaultOn = new Set([
+      'enabled',
+      'respectDockInsets',
+      'showNodeColor',
+      'showDensity',
+      'showEdgeColor',
+    ]);
+    const readBoolean = (key) => (defaultOn.has(key)
+      ? this.state[key] !== false
+      : this.state[key] === true);
+    const numberDefaults = {
+      maxChars: 24,
+      maxRows: 2,
+      scale: 1,
+      continuousHeight: 132,
+    };
+    const readNumber = (key) => {
+      const numeric = Number(this.state[key]);
+      if (Number.isFinite(numeric)) return numeric;
+      return numberDefaults[key] ?? this.state[key];
+    };
+    const booleanEntry = (key, label) => ({
+      description: `Legend ${label.toLowerCase()} setting.`,
+      default: readBoolean(key),
+      type: 'boolean',
+      scope: 'workspace',
+      aliases: [`legends.${key}`],
+      ui: { label, controller: 'toggle' },
+      getter: () => readBoolean(key),
+      setter: (value) => this.update({ [key]: value === true }, { trackOverride: false }),
+      subscribe,
+    });
+    const numberEntry = (key, label, ui = {}) => ({
+      description: `Legend ${label.toLowerCase()} setting.`,
+      default: readNumber(key),
+      type: 'number',
+      scope: 'workspace',
+      aliases: [`legends.${key}`],
+      ui: { label, controller: 'slider', ...ui },
+      getter: () => readNumber(key),
+      setter: (value) => this.update({ [key]: value }, { trackOverride: false }),
+      subscribe,
+    });
+    return {
+      state: {
+        description: 'Serializable legend behavior state.',
+        default: this.serialize(),
+        type: 'object',
+        scope: 'workspace',
+        aliases: ['legends.state'],
+        getter: () => this.serialize(),
+        setter: (value) => this.restore(value),
+        subscribe,
+      },
+      enabled: booleanEntry('enabled', 'Visible'),
+      respectDockInsets: booleanEntry('respectDockInsets', 'Dock Aware'),
+      showNodeColor: booleanEntry('showNodeColor', 'Node Colors'),
+      showDensity: booleanEntry('showDensity', 'Density'),
+      showEdgeColor: booleanEntry('showEdgeColor', 'Edge Colors'),
+      showNodeSize: booleanEntry('showNodeSize', 'Node Sizes'),
+      showEdgeWidth: booleanEntry('showEdgeWidth', 'Edge Widths'),
+      maxChars: numberEntry('maxChars', 'Max Chars', { min: 0, max: 80, step: 1 }),
+      maxRows: numberEntry('maxRows', 'Max Rows', { min: 1, max: 8, step: 1 }),
+      scale: numberEntry('scale', 'Scale', { min: 0.25, max: 4, step: 0.05 }),
+      continuousHeight: numberEntry('continuousHeight', 'Bar Height', { min: 24, max: 260, step: 1 }),
+      titles: {
+        description: 'Custom legend titles.',
+        default: cloneTitles(this.state.titles),
+        type: 'object',
+        scope: 'workspace',
+        aliases: ['legends.titles'],
+        getter: () => cloneTitles(this.state.titles),
+        setter: (value) => this.update({ titles: value }, { trackOverride: false }),
+        subscribe,
+      },
+      placements: {
+        description: 'Custom legend placements.',
+        default: clonePlacements(this.state.placements),
+        type: 'object',
+        scope: 'workspace',
+        aliases: ['legends.placements'],
+        getter: () => clonePlacements(this.state.placements),
+        setter: (value) => this.update({ placements: value }, { trackOverride: false }),
+        subscribe,
+      },
+    };
+  }
+
+  restore(snapshot = {}) {
+    const options = snapshot?.options && typeof snapshot.options === 'object' ? snapshot.options : {};
+    this.update(options, { trackOverride: false });
+    this.emitChange('restore', { trackOverride: false });
+    return this;
+  }
+
+  getPublicState() {
+    return cloneState(this.state);
+  }
+
+  emitChange(reason, detail = {}) {
+    this.emit('change', { reason, state: this.getPublicState(), ...detail });
+  }
+
+  legends(options) {
+    if (arguments.length === 0) return this.getPublicState();
+    if (options === false || options == null) return this.update({ enabled: false });
+    return this.update(options);
+  }
+
+  enabled(value) {
+    if (arguments.length === 0) return this.state.enabled === true;
+    return this.update({ enabled: value === true });
+  }
+
+  titles(value) {
+    if (arguments.length === 0) return cloneTitles(this.state.titles);
+    return this.update({ titles: value });
+  }
+
+  placements(value) {
+    if (arguments.length === 0) return clonePlacements(this.state.placements);
+    return this.update({ placements: value });
+  }
+
+  getLegendItems(options = {}) {
+    return this.context?.helios?._getLegendItems?.({
+      config: {
+        ...cloneState(this.state),
+        ...(options?.config && typeof options.config === 'object' ? cloneState(options.config) : {}),
+      },
+      size: options?.size,
+      viewportHeight: options?.viewportHeight,
+      projection: options?.projection,
+      zoom: options?.zoom,
+      distance: options?.distance,
+    }) ?? [];
+  }
+
+  applyConfig({ silent = false } = {}) {
+    const helios = this.context?.helios ?? null;
+    helios?._applyLegendsControllerConfig?.(cloneState(this.state), { silent });
+    const applied = helios?._getLegendsControllerConfig?.() ?? null;
+    if (applied) this.state = cloneState(applied);
+    return this;
+  }
+}
+
+export default LegendsBehavior;

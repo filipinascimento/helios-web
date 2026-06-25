@@ -1,0 +1,112 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Helios Standalone Pick</title>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background: #111;
+      }
+      #app {
+        width: 320px;
+        height: 240px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module">
+      import HeliosNetwork, { AttributeType } from 'helios-network';
+      import { Helios } from '/src/index.js';
+
+      async function main() {
+        try {
+          const params = new URLSearchParams(window.location.search);
+          const renderer = params.get('renderer');
+          const mode = params.get('mode') === '3d' ? '3d' : '2d';
+          const suppressBrowserGestures = params.get('suppress') !== '0';
+          const container = document.getElementById('app');
+          const network = await HeliosNetwork.create({ directed: false, initialNodes: 0 });
+          network.defineNodeAttribute('_helios_visuals_position', AttributeType.Float, 3);
+          network.defineNodeAttribute('_helios_visuals_size', AttributeType.Float, 1);
+          network.defineNodeAttribute('weight', AttributeType.Float);
+          network.defineEdgeAttribute('intensity', AttributeType.Float);
+          const nodes = network.addNodes(2);
+          network.withBufferAccess(() => {
+            const pos = network.getNodeAttributeBuffer('_helios_visuals_position').view;
+            const size = network.getNodeAttributeBuffer('_helios_visuals_size').view;
+            const w = network.getNodeAttributeBuffer('weight').view;
+            const positions = [
+              [-40, 0, 0],
+              [40, 0, 0],
+            ];
+            nodes.forEach((id, i) => {
+              const offset = id * 3;
+              pos[offset] = positions[i][0];
+              pos[offset + 1] = positions[i][1];
+              pos[offset + 2] = positions[i][2];
+              size[id] = 32;
+              w[id] = i === 0 ? 0.2 : 0.8;
+            });
+          });
+          network.addEdges([[nodes[0], nodes[1]]]);
+
+          const helios = new Helios(network, {
+            container,
+            layout: { type: 'static', options: { bounds: [-100, -100, 100, 100] } },
+            mode,
+            renderer,
+            suppressBrowserGestures,
+          });
+          await helios.ready;
+          helios.renderer?.camera?.setTarget?.([0, 0, 0]);
+          helios.renderer?.camera?.setMode?.(mode);
+          if (helios.renderer?.camera) {
+            if (mode === '2d') {
+              helios.renderer.camera.zoom = 1;
+              if (helios.renderer.camera.pan2D?.length >= 2) {
+                helios.renderer.camera.pan2D[0] = 0;
+                helios.renderer.camera.pan2D[1] = 0;
+              }
+            } else {
+              helios.renderer.camera.distance = 500;
+              if (helios.renderer.camera.pan3D?.length >= 3) {
+                helios.renderer.camera.pan3D[0] = 0;
+                helios.renderer.camera.pan3D[1] = 0;
+                helios.renderer.camera.pan3D[2] = 0;
+              }
+            }
+            helios.renderer.camera.updateMatrices?.();
+          }
+          const size = { width: 320, height: 240, devicePixelRatio: 1 };
+          helios.renderer?.resize?.(size);
+          helios.attributeTracker?.resize?.(size);
+          helios.size = size;
+          helios.enableAttributeTracking('$index', '$index', {
+            resolutionScale: 1,
+            autoUpdate: true,
+            trackDepth: true,
+          });
+          helios.visuals?.bumpNodeAttributes?.('_helios_visuals_position', '_helios_visuals_size');
+          await helios.renderAttributeTracking();
+          window.__helios = helios;
+          window.__HELIOS_DIAGNOSTICS__ = {
+            ready: true,
+            renderer: helios.renderer?.device?.type ?? helios.renderer?.constructor?.name ?? null,
+            suppressBrowserGestures,
+            mode,
+          };
+        } catch (error) {
+          console.error('helios init failed', error);
+          window.__heliosError = error?.stack ?? error?.message ?? String(error);
+          window.__HELIOS_DIAGNOSTICS__ = { ready: false, error: window.__heliosError };
+        }
+      }
+
+      main();
+    </script>
+  </body>
+</html>

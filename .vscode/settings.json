@@ -1,9 +1,0 @@
-{
-    "npm.exclude": [
-        "**/build"
-    ],
-    "testing.automaticallyOpenPeekView": "never",
-    "files.watcherExclude": {
-        "**/networks/extra": true
-    },
-}

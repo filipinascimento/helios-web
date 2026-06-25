@@ -1,0 +1,40 @@
+{
+  "datasets": [
+    {
+      "name": "gaussian-200",
+      "node_count": 200,
+      "cluster_count": 8,
+      "feature_dims": 16,
+      "seed": 213,
+      "format": "zxnet",
+      "path": "gaussian-200.zxnet",
+      "n_neighbors": 15,
+      "min_dist": 0.08,
+      "negative_sample_rate": 5.0
+    },
+    {
+      "name": "gaussian-2000",
+      "node_count": 2000,
+      "cluster_count": 8,
+      "feature_dims": 16,
+      "seed": 2013,
+      "format": "zxnet",
+      "path": "gaussian-2000.zxnet",
+      "n_neighbors": 15,
+      "min_dist": 0.08,
+      "negative_sample_rate": 5.0
+    },
+    {
+      "name": "gaussian-20000",
+      "node_count": 20000,
+      "cluster_count": 8,
+      "feature_dims": 16,
+      "seed": 20013,
+      "format": "zxnet",
+      "path": "gaussian-20000.zxnet",
+      "n_neighbors": 15,
+      "min_dist": 0.08,
+      "negative_sample_rate": 5.0
+    }
+  ]
+}

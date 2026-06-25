@@ -168,3 +168,14 @@ coverage/
 docs/api/
 dist_example/
 dist*/
+/for_reference
+/test-results
+/utilities/downloads/
+/artifacts/
+.tmp*
+/output/
+/paper_downloads
+/.playwright
+/.get-paper-pdf
+/scripts/layout-calibration/data/
+/scripts/layout-calibration/results/

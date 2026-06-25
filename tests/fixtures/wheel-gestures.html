@@ -1,0 +1,102 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Helios Wheel Gesture Fixture</title>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: #111;
+        color: #eee;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      }
+      .spacer {
+        height: 120vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0.7;
+      }
+      #app {
+        width: 640px;
+        height: 480px;
+        margin: 16px auto;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="spacer">scrollable page (top)</div>
+    <div id="app"></div>
+    <div class="spacer">scrollable page (bottom)</div>
+
+    <script type="module">
+      import HeliosNetwork, { AttributeType } from 'helios-network';
+      import { Helios } from '/src/index.js';
+
+      window.__wheelBubbled = 0;
+      window.addEventListener('wheel', () => {
+        window.__wheelBubbled += 1;
+      });
+
+      const params = new URLSearchParams(window.location.search);
+      const suppressBrowserGestures = params.get('suppress') !== '0';
+      const renderer = params.get('renderer');
+
+      try {
+        const network = await HeliosNetwork.create({ directed: false, initialNodes: 0 });
+        network.defineNodeAttribute('_helios_visuals_position', AttributeType.Float, 3);
+        network.defineNodeAttribute('_helios_visuals_size', AttributeType.Float, 1);
+        network.defineNodeAttribute('_helios_visuals_color', AttributeType.Float, 4);
+        network.defineEdgeAttribute('_helios_visuals_edge_color', AttributeType.Float, 8);
+        network.defineEdgeAttribute('_helios_visuals_edge_opacity', AttributeType.Float, 2);
+        network.defineEdgeAttribute('_helios_visuals_edge_width', AttributeType.Float, 2);
+
+        const nodes = network.addNodes(32);
+        const edges = [];
+        for (let i = 0; i < nodes.length; i += 1) {
+          edges.push([nodes[i], nodes[(i + 1) % nodes.length]]);
+        }
+        network.addEdges(edges);
+        network.withBufferAccess(() => {
+          const pos = network.getNodeAttributeBuffer('_helios_visuals_position').view;
+          const size = network.getNodeAttributeBuffer('_helios_visuals_size').view;
+          const color = network.getNodeAttributeBuffer('_helios_visuals_color').view;
+          for (let i = 0; i < nodes.length; i += 1) {
+            const id = nodes[i];
+            const offset = id * 3;
+            pos[offset] = (Math.random() - 0.5) * 400;
+            pos[offset + 1] = (Math.random() - 0.5) * 300;
+            pos[offset + 2] = 0;
+            size[id] = 8;
+            const cOffset = id * 4;
+            color[cOffset] = 0.2;
+            color[cOffset + 1] = 0.8;
+            color[cOffset + 2] = 0.9;
+            color[cOffset + 3] = 1;
+          }
+        });
+
+        const options = {
+          container: document.getElementById('app'),
+          mode: '2d',
+          layout: { type: 'static', options: { bounds: [-500, -500, 500, 500] } },
+          clearColor: [0, 0, 0, 1],
+          suppressBrowserGestures,
+        };
+        if (renderer === 'webgl' || renderer === 'webgpu') {
+          options.renderer = renderer;
+        }
+
+        const helios = new Helios(network, options);
+        window.__helios = helios;
+        await helios.ready;
+        window.__HELIOS_DIAGNOSTICS__ = { ready: true };
+      } catch (error) {
+        console.error('Failed to bootstrap wheel fixture', error);
+        window.__HELIOS_DIAGNOSTICS__ = { ready: false, error: error?.message ?? String(error) };
+      }
+    </script>
+  </body>
+</html>
