@@ -136,7 +136,7 @@ export class LegendsBehavior extends Behavior {
     };
     this.applyConfig({ silent: true, reason: 'attach' });
     this.addCleanup(this.context.subscribe(this.context?.helios, 'network:replaced', () => {
-      this.emitChange('network-replaced');
+      this.emitChange('network-replaced', { source: 'refresh', trackOverride: false });
     }));
     return this;
   }

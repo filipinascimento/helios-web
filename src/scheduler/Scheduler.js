@@ -356,13 +356,17 @@ export class Scheduler {
 
     if (this.renderCallback && this.currentFrame && this._needsRender) {
       const renderStart = perf?.enabled ? performance.now() : 0;
-      this.renderCallback(this.currentFrame);
+      const rendered = this.renderCallback(this.currentFrame);
       if (renderStart) {
         perf.record('render', performance.now() - renderStart);
       }
-      this._needsRender = false;
-      this._renderCount += 1;
-      this._maybeRunAttributeUpdate('render');
+      if (rendered === false) {
+        this._needsRender = true;
+      } else {
+        this._needsRender = false;
+        this._renderCount += 1;
+        this._maybeRunAttributeUpdate('render');
+      }
     }
 
     perf?.logIfDue();

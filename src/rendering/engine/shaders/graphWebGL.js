@@ -285,7 +285,7 @@ uint fetchEdgeState(uint id) {
   const edgeLineStateBlock = edgeStateEnabled
     ? `
   uint state = fetchEdgeState(a_edgeId);
-  uvec2 endpointStatePair = ${edgeEndpointStateEnabled ? 'fetchEdgeEndpointStatePair(a_edgeId)' : 'uvec2(0u, 0u)'};
+  uvec2 endpointStatePair = ${edgeEndpointStateEnabled ? 'fetchEdgeEndpointStatePair(sourceId, targetId)' : 'uvec2(0u, 0u)'};
   if (u_hoverEdgeIndex != 4294967295u && a_edgeId == u_hoverEdgeIndex) {
     if (u_hoverEdgeIsVirtual == 0u) state |= u_hoverEdgeState;
   }
@@ -341,7 +341,7 @@ uint fetchEdgeState(uint id) {
   const edgeQuadStateBlock = edgeStateEnabled
     ? `
   uint state = fetchEdgeState(a_edgeId);
-  uvec2 endpointStatePair = ${edgeEndpointStateEnabled ? 'fetchEdgeEndpointStatePair(a_edgeId)' : 'uvec2(0u, 0u)'};
+  uvec2 endpointStatePair = ${edgeEndpointStateEnabled ? 'fetchEdgeEndpointStatePair(sourceId, targetId)' : 'uvec2(0u, 0u)'};
   if (u_hoverEdgeIndex != 4294967295u && a_edgeId == u_hoverEdgeIndex) {
     if (u_hoverEdgeIsVirtual == 0u) state |= u_hoverEdgeState;
   }
@@ -401,23 +401,24 @@ uint fetchEdgeState(uint id) {
 
   const edgeEndpointStateUniformDecl = edgeEndpointStateEnabled
     ? `
-uniform usampler2D u_edgeEndpointStates;
-uniform int u_hasEdgeEndpointStates;
-uniform vec4 u_nodeNoStateScale;
-uniform vec4 u_nodeStateScale[${stateSlots}];`
+	uniform usampler2D u_nodeStates;
+	uniform int u_hasNodeStates;
+	uniform vec4 u_nodeNoStateScale;
+	uniform vec4 u_nodeStateScale[${stateSlots}];`
     : '';
 
   const edgeEndpointStateFetch = edgeEndpointStateEnabled
     ? `
-uvec2 fetchEdgeEndpointStatePair(uint edgeId) {
-  if (u_hasEdgeEndpointStates == 0) return uvec2(0u, 0u);
-  return texelFetch(u_edgeEndpointStates, textureCoord(u_edgeEndpointStates, edgeId), 0).xy;
-}`
+	${nodeFetchState}
+
+	uvec2 fetchEdgeEndpointStatePair(uint sourceId, uint targetId) {
+	  return uvec2(fetchNodeState(sourceId), fetchNodeState(targetId));
+	}`
     : '';
 
   const edgeEndpointGeometryBlock = edgeEndpointGeometryEnabled
     ? `
-  uvec2 trimEndpointStatePair = ${edgeEndpointStateEnabled ? 'fetchEdgeEndpointStatePair(a_edgeId)' : 'uvec2(0u, 0u)'};
+	  uvec2 trimEndpointStatePair = ${edgeEndpointStateEnabled ? 'fetchEdgeEndpointStatePair(sourceId, targetId)' : 'uvec2(0u, 0u)'};
   float startSizeMul = 1.0;
   float endSizeMul = 1.0;
   ${edgeEndpointStateEnabled

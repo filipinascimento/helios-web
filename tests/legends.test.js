@@ -283,7 +283,40 @@ test('deriveLegendItems allows legend titles to be overridden or removed', () =>
   assert.equal(nodeLegend.title, '');
 });
 
-test('deriveLegendItems makes node size legends zoom-aware in 2D orthographic mode', () => {
+test('deriveLegendItems keeps node size legends semantic by default', () => {
+  const items = deriveLegendItems({
+    nodeChannels: new Map([
+      ['size', {
+        type: 'linear',
+        attributes: 'weight',
+        domain: [0, 10],
+        range: [2, 8],
+      }],
+    ]),
+    edgeChannels: new Map(),
+    densityConfig: null,
+    densityRuntime: null,
+    visualConfig: null,
+    config: { showNodeSize: true },
+    legendRuntime: {
+      enabled: true,
+      mode: '2d',
+      projection: 'orthographic',
+      zoom: 2,
+      distance: 100,
+      viewportHeight: 600,
+      nodeSizeBase: 1,
+      nodeSizeScale: 1.5,
+      semanticZoomExponent: 0,
+    },
+  });
+
+  const sizeLegend = items.find((item) => item.kind === 'nodeSize');
+  assert.ok(sizeLegend);
+  assert.equal(sizeLegend.preview, null);
+});
+
+test('deriveLegendItems supports opt-in zoom-aware node size legends in 2D orthographic mode', () => {
   const items = deriveLegendItems({
     nodeChannels: new Map([
       ['size', {
@@ -660,4 +693,73 @@ test('layoutLegendItems keeps auto-placed legends inside the safe rect', () => {
   assert.ok(density);
   assert.ok(nodeColor.x >= 292);
   assert.ok(density.x + density.box.width <= 1000 - 12);
+});
+
+test('layoutLegendItems offsets right-side continuous legends away from controls', () => {
+  const item = {
+    kind: 'edgeColor',
+    legendType: 'continuous',
+    title: 'intensity',
+    colormap: 'interpolateInferno',
+    domain: [0, 1],
+    ticks: [0, 0.4, 1],
+    tickLabels: ['0', '0.4', '1'],
+  };
+  const safeRect = {
+    x: 0,
+    y: 0,
+    width: 260,
+    height: 420,
+  };
+  const baseConfig = {
+    margin: 12,
+    gap: 12,
+    maxChars: 24,
+    maxRows: 2,
+    fontSize: 12,
+  };
+  const left = layoutLegendItems([item], safeRect, {
+    ...baseConfig,
+    placements: { edgeColor: 'top-left' },
+  }).find((legend) => legend.kind === 'edgeColor');
+  const right = layoutLegendItems([item], safeRect, {
+    ...baseConfig,
+    placements: { edgeColor: 'top-right' },
+  }).find((legend) => legend.kind === 'edgeColor');
+
+  assert.ok(left);
+  assert.ok(right);
+  assert.ok(right.box.width >= left.box.width + 28);
+  assert.ok(right.x + left.box.width <= safeRect.x + safeRect.width - baseConfig.margin - 28);
+});
+
+test('layoutLegendItems gives node size legends enough width for nested samples and labels', () => {
+  const positioned = layoutLegendItems([
+    {
+      kind: 'nodeSize',
+      legendType: 'scalar',
+      shape: 'circle',
+      title: 'index',
+      domain: [0, 9999],
+      range: [0, 9999],
+    },
+  ], {
+    x: 0,
+    y: 0,
+    width: 320,
+    height: 240,
+  }, {
+    margin: 12,
+    gap: 12,
+    maxChars: 24,
+    maxRows: 2,
+    fontSize: 12,
+    placements: {
+      nodeSize: 'bottom-left',
+    },
+  });
+
+  const nodeSize = positioned.find((item) => item.kind === 'nodeSize');
+  assert.ok(nodeSize);
+  assert.ok(nodeSize.box.width >= 132, `expected node size legend to be wide enough for nested samples and labels, got ${nodeSize.box.width}`);
 });

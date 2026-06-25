@@ -5,6 +5,8 @@ import { DEFAULT_LAYOUT_TUNING_MODEL, predictLayoutTuningOptions } from './layou
 const DEFAULT_OPTIONS = {
   mode: '2d',
   forceModel: 'linear',
+  layoutScheduling: 'auto',
+  layoutChunkCount: 2,
   updateIntervalMs: 0,
   center: [0, 0, 0],
   radius: 220,
@@ -33,7 +35,7 @@ const DEFAULT_OPTIONS = {
   maxStep: 2.5,
   minDistance: 0.15,
   alpha: 1,
-  alphaDecay: 0.005,
+  alphaDecay: 0.001,
   alphaTarget: 0,
   alphaMin: 0.001,
   autoStopAtAlphaMin: true,
@@ -106,6 +108,25 @@ function normalizeForceNormalizationType(value) {
   if (normalized === 'strength' || normalized === 'weighted-strength') return 'strength';
   if (normalized === 'none' || normalized === 'off' || normalized === 'disabled') return 'none';
   return 'local-degree';
+}
+
+function normalizeLayoutScheduling(value) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'chunk' || normalized === 'chunked') return 'chunked';
+  if (normalized === 'full' || normalized === 'legacy' || normalized === 'off') return 'full';
+  return 'auto';
+}
+
+function resolveLayoutChunkNodeCount(value) {
+  const numeric = Math.floor(Number(value));
+  if (!Number.isFinite(numeric) || numeric <= 0) return 65_536;
+  return Math.max(1, numeric);
+}
+
+function resolveLayoutChunkCount(value) {
+  const numeric = Math.floor(Number(value));
+  if (!Number.isFinite(numeric)) return DEFAULT_OPTIONS.layoutChunkCount;
+  return Math.max(2, Math.min(10, numeric));
 }
 
 function clamp01(value) {
@@ -248,6 +269,11 @@ export class GpuForceLayout extends Layout {
       ...options,
       mode: normalizedMode,
       center: normalizeCenter(options.center ?? DEFAULT_OPTIONS.center),
+      layoutScheduling: normalizeLayoutScheduling(options.layoutScheduling ?? DEFAULT_OPTIONS.layoutScheduling),
+      layoutChunkCount: resolveLayoutChunkCount(options.layoutChunkCount),
+      layoutChunkNodeCount: options.layoutChunkNodeCount == null
+        ? null
+        : resolveLayoutChunkNodeCount(options.layoutChunkNodeCount),
     };
     if (isUmapForceModel(normalized.forceModel)) {
       if (options.outputScale == null) normalized.outputScale = DEFAULT_UMAP_OUTPUT_SCALE;
@@ -374,6 +400,11 @@ export class GpuForceLayout extends Layout {
       ...next,
       center: normalizeCenter(next.center ?? this.options.center),
       mode: (next.mode ?? this.options.mode) === '3d' ? '3d' : '2d',
+      layoutScheduling: normalizeLayoutScheduling(next.layoutScheduling ?? this.options.layoutScheduling),
+      layoutChunkCount: resolveLayoutChunkCount(next.layoutChunkCount ?? this.options.layoutChunkCount),
+      layoutChunkNodeCount: next.layoutChunkNodeCount == null
+        ? (hasOwn(next, 'layoutChunkCount') ? null : this.options.layoutChunkNodeCount)
+        : resolveLayoutChunkNodeCount(next.layoutChunkNodeCount),
     };
     if (isUmapForceModel(this.options.forceModel) && !isUmapForceModel(prevForceModel)) {
       if (next.outputScale == null) this.options.outputScale = DEFAULT_UMAP_OUTPUT_SCALE;
@@ -476,6 +507,34 @@ export class GpuForceLayout extends Layout {
         sliderMax: 1,
         get: () => Number(this.options.rotationDamping ?? DEFAULT_OPTIONS.rotationDamping),
         set: (value) => this.setSettings({ rotationDamping: value }),
+      },
+      {
+        key: 'layoutScheduling',
+        label: 'Scheduling',
+        hint: 'Auto uses chunked WebGPU layout above 500k active nodes. Full keeps the legacy one-step dispatch. Chunked reduces render queue stalls but converges more slowly.',
+        type: 'select',
+        options: [
+          { value: 'auto', label: 'Auto' },
+          { value: 'full', label: 'Full' },
+          { value: 'chunked', label: 'Chunked' },
+        ],
+        get: () => normalizeLayoutScheduling(this.options.layoutScheduling ?? DEFAULT_OPTIONS.layoutScheduling),
+        set: (value) => this.setSettings({ layoutScheduling: normalizeLayoutScheduling(value) }),
+      },
+      {
+        key: 'layoutChunkCount',
+        label: 'Chunks',
+        hint: 'Number of WebGPU layout chunks per full sweep when chunked scheduling is active.',
+        type: 'number',
+        min: 2,
+        max: 10,
+        inputMin: 2,
+        inputMax: 10,
+        sliderMin: 2,
+        sliderMax: 10,
+        step: 1,
+        get: () => resolveLayoutChunkCount(this.options.layoutChunkCount),
+        set: (value) => this.setSettings({ layoutChunkCount: resolveLayoutChunkCount(value) }),
       },
     ];
 
@@ -752,6 +811,8 @@ export class GpuForceLayout extends Layout {
   _buildDelegateContext(deltaMs = 16) {
     const renderer = this.helios?.renderer ?? null;
     const rendererDevice = renderer?.device ?? null;
+    const forceFullStartupLayout = this.helios?._isStartupLayoutWarmupActive?.() === true
+      && normalizeLayoutScheduling(this.options.layoutScheduling ?? DEFAULT_OPTIONS.layoutScheduling) === 'auto';
     return {
       helios: this.helios,
       network: this.network,
@@ -763,6 +824,7 @@ export class GpuForceLayout extends Layout {
       gl: rendererDevice?.gl ?? null,
       deltaMs,
       reason: 'layout-step',
+      layoutSchedulingOverride: forceFullStartupLayout ? 'full' : null,
     };
   }
 }

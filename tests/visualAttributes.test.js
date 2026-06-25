@@ -14,9 +14,7 @@ import {
   EDGE_OPACITY_ATTRIBUTE,
   EDGE_WIDTH_ATTRIBUTE,
   EDGE_STATE_ATTRIBUTE,
-  EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
   EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
-  EDGE_ENDPOINTS_STATE_ATTRIBUTE,
 } from '../src/pipeline/constants.js';
 
 test('creates required visual attributes with expected shapes', async () => {
@@ -35,13 +33,9 @@ test('creates required visual attributes with expected shapes', async () => {
   assert.equal(edgeState?.dimension, 1);
   assert.equal(edgeState?.type, AttributeType.UnsignedInteger);
 
-  const endpointsPos = network.getEdgeAttributeInfo(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
-  assert.equal(endpointsPos?.dimension, 6);
-  assert.equal(endpointsPos?.type, AttributeType.Float);
+  assert.equal(network.hasEdgeAttribute('_helios_visuals_edge_endpoints_position', true), false);
 
-  const endpointsState = network.getEdgeAttributeInfo(EDGE_ENDPOINTS_STATE_ATTRIBUTE);
-  assert.equal(endpointsState?.dimension, 2);
-  assert.equal(endpointsState?.type, AttributeType.UnsignedInteger);
+  assert.equal(network.hasEdgeAttribute('_helios_visuals_edge_endpoints_state', true), false);
 
   assert.equal(network.hasNodeAttribute(NODE_COLOR_ATTRIBUTE), false);
   assert.equal(network.hasNodeAttribute(NODE_SIZE_ATTRIBUTE), false);
@@ -293,6 +287,30 @@ test('visual config records node-sourced edge channels with custom node attribut
   assert.equal(widthCfg?.nodeAttribute, 'weight');
   assert.equal(widthCfg?.endpoints, 'source');
   assert.equal(widthCfg?.doubleWidth, true);
+});
+
+test('explicit edge-sourced endpoint sizes keep the edge endpoint-size buffer', async () => {
+  const network = await HeliosNetwork.create({ directed: false, initialNodes: 0, initialEdges: 0 });
+  const nodes = network.addNodes(3);
+  network.addEdges([
+    { from: nodes[0], to: nodes[1] },
+    { from: nodes[1], to: nodes[2] },
+  ]);
+
+  const visuals = new VisualAttributes(network);
+  const edgeMapper = new Mapper({ mode: 'edge', network });
+  edgeMapper.channel('endpointSize').from('$index').linear([0, 1], [2, 4]).done();
+
+  visuals.applyMappers({ edgeMapper });
+
+  const endpointSizeCfg = network.__heliosVisualConfig?.edge?.endpointSize;
+  assert.equal(endpointSizeCfg?.mode, 'buffer');
+  assert.equal(endpointSizeCfg?.source, 'edge');
+  assert.equal(network.hasEdgeAttribute(EDGE_ENDPOINTS_SIZE_ATTRIBUTE, true), true);
+
+  const info = network.getEdgeAttributeInfo(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+  assert.equal(info?.dimension, 2);
+  assert.equal(info?.type, AttributeType.Float);
 });
 
 test('default mappers do not require a real $index attribute buffer', async () => {

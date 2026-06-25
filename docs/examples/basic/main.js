@@ -197,6 +197,126 @@ function resolveNodeCount() {
   return DEFAULT_NODE_COUNT;
 }
 
+function isStartupDisabledByQuery() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('startup') === '0' || params.get('startupLoading') === '0';
+}
+
+function ensureStartupSpinnerStyle() {
+  if (document.getElementById('helios-demo-startup-spinner-style')) return;
+  const style = document.createElement('style');
+  style.id = 'helios-demo-startup-spinner-style';
+  style.textContent = `
+    @keyframes helios-demo-startup-spin { to { transform: rotate(360deg); } }
+    .helios-demo-startup-overlay {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      z-index: 2147483647;
+    }
+    .helios-demo-startup-spinner {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      border: 3px solid rgba(255, 255, 255, 0.28);
+      border-top-color: rgba(255, 255, 255, 0.94);
+      box-shadow: 0 0 14px rgba(0, 0, 0, 0.18);
+      animation: helios-demo-startup-spin 0.82s linear infinite;
+    }
+  `;
+  document.head?.appendChild(style);
+}
+
+function showDemoStartupOverlay() {
+  if (isStartupDisabledByQuery()) return null;
+  ensureStartupSpinnerStyle();
+  const overlay = document.createElement('div');
+  overlay.className = 'helios-demo-startup-overlay';
+  const spinner = document.createElement('div');
+  spinner.className = 'helios-demo-startup-spinner';
+  spinner.setAttribute('aria-hidden', 'true');
+  overlay.appendChild(spinner);
+  document.body?.appendChild(overlay);
+  return overlay;
+}
+
+function resolveStartupOptions() {
+  const params = new URLSearchParams(window.location.search);
+  const startupDisabled = isStartupDisabledByQuery();
+  if (startupDisabled) {
+    return false;
+  }
+  const hasStartupOverride = [
+    'startupLayoutIterations',
+    'startupIterations',
+    'layoutStartupIterations',
+    'startupLayoutDurationMs',
+    'startupDurationMs',
+    'layoutStartupDurationMs',
+    'startupSpinner',
+    'loadingOverlay',
+    'hideCanvasUntilFirstFrame',
+  ].some((name) => params.has(name));
+  if (!hasStartupOverride) return undefined;
+  const readNumberParam = (...names) => {
+    for (const name of names) {
+      const value = params.get(name);
+      if (value != null) return Number(value);
+    }
+    return NaN;
+  };
+  const requestedIterations = readNumberParam('startupLayoutIterations', 'startupIterations', 'layoutStartupIterations');
+  const requestedDurationMs = readNumberParam('startupLayoutDurationMs', 'startupDurationMs', 'layoutStartupDurationMs');
+  const loadingOverlay = params.get('startupSpinner') !== '0' && params.get('loadingOverlay') !== '0';
+  const hideCanvas = params.get('hideCanvasUntilFirstFrame') !== '0';
+  const startup = {
+    loadingOverlay,
+    hideCanvasUntilFirstFrame: hideCanvas,
+  };
+  if (Number.isFinite(requestedIterations) && requestedIterations >= 0) {
+    startup.layoutIterations = Math.floor(requestedIterations);
+  }
+  if (Number.isFinite(requestedDurationMs) && requestedDurationMs >= 0) {
+    startup.layoutDurationMs = Math.floor(requestedDurationMs);
+  }
+  return startup;
+}
+
+function resolveCameraOptions() {
+  const params = new URLSearchParams(window.location.search);
+  const camera = {};
+  const readNumberParam = (...names) => {
+    for (const name of names) {
+      const value = params.get(name);
+      if (value != null) return Number(value);
+    }
+    return NaN;
+  };
+  if (params.get('largeNetworkStartupFit') === '0') {
+    camera.largeNetworkStartupFit = false;
+  }
+  const nodeThreshold = readNumberParam('largeNetworkStartupNodeThreshold', 'startupNodeThreshold');
+  const edgeThreshold = readNumberParam('largeNetworkStartupEdgeThreshold', 'startupEdgeThreshold');
+  const scale = readNumberParam('largeNetworkStartupScale', 'startupCameraScale');
+  const durationMs = readNumberParam('largeNetworkStartupDurationMs', 'startupCameraDurationMs');
+  if (Number.isFinite(nodeThreshold) && nodeThreshold > 0) {
+    camera.largeNetworkStartupNodeThreshold = Math.floor(nodeThreshold);
+  }
+  if (Number.isFinite(edgeThreshold) && edgeThreshold > 0) {
+    camera.largeNetworkStartupEdgeThreshold = Math.floor(edgeThreshold);
+  }
+  if (Number.isFinite(scale) && scale >= 1) {
+    camera.largeNetworkStartupScale = scale;
+  }
+  if (Number.isFinite(durationMs) && durationMs >= 0) {
+    camera.largeNetworkStartupDurationMs = Math.floor(durationMs);
+  }
+  return Object.keys(camera).length ? camera : undefined;
+}
+
 function resolveDataset() {
   const params = new URLSearchParams(window.location.search);
   const dataset = params.get('dataset')?.trim().toLowerCase();
@@ -421,6 +541,7 @@ async function fetchExportedUmapNetwork(requestedNodeCount) {
 }
 
 async function bootstrap() {
+  const demoStartupOverlay = showDemoStartupOverlay();
   const diagnostics = {
     ready: false,
     renderer: 'pending',
@@ -620,6 +741,8 @@ async function bootstrap() {
   const mode = resolveMode();
   const layoutType = resolveLayoutType();
   const usingUmapDataset = usingExportedUmapDataset;
+  const startupOptions = resolveStartupOptions();
+  const cameraOptions = resolveCameraOptions();
   let interpolationEnabled = resolveInterpolationEnabled();
   let interpolationDurationMs = resolveInterpolationDurationMs();
   let interpolationDurationMode = resolveInterpolationDurationMode();
@@ -717,6 +840,12 @@ async function bootstrap() {
     // Warm up mapper application so first render is quick on large graphs.
     // prewarm: true,
   };
+  if (startupOptions !== undefined) {
+    heliosOptions.startup = startupOptions;
+  }
+  if (cameraOptions !== undefined) {
+    heliosOptions.camera = cameraOptions;
+  }
   const sessionOptions = resolveSessionOptions();
   if (sessionOptions === false) {
     heliosOptions.storage = false;
@@ -739,6 +868,7 @@ async function bootstrap() {
   console.log("Creating helios-web instance...");
   const helios = new Helios(network, heliosOptions);
   window.__helios = helios;
+  demoStartupOverlay?.remove?.();
 
   console.log("Waiting for helios to be ready...");
   await helios.ready;

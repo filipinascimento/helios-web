@@ -895,8 +895,8 @@ export class DensityLayer extends Layer {
       if (current.ptr && typeof current.module?._free === 'function') {
         current.module._free(current.ptr);
       }
-    } catch (_) {
-      // ignore allocator teardown errors
+    } catch (error) {
+      console.warn(`DensityLayer: failed to release ${scope} active-index scratch buffer.`, error);
     }
     this._activeIndexScratch[scope] = null;
   }
@@ -928,8 +928,8 @@ export class DensityLayer extends Layer {
     if (current?.ptr) {
       try {
         current.module?._free?.(current.ptr);
-      } catch (_) {
-        // ignore allocator teardown errors
+      } catch (error) {
+        console.warn(`DensityLayer: failed to release old ${scope} active-index scratch buffer.`, error);
       }
     }
     const next = {
@@ -1271,7 +1271,8 @@ export class DensityLayer extends Layer {
     const usesOverride = edgeIndicesOverride instanceof Uint32Array;
     try {
       edgeVersion = toFiniteNumber(network?.getTopologyVersions?.()?.edge, 0);
-    } catch (_) {
+    } catch (error) {
+      console.warn('DensityLayer: failed to read edge topology version; using conservative degree-cache fallback.', error);
       edgeVersion = toFiniteNumber(edgeIndicesOverride?.length ?? network?.edgeCount, 0);
     }
 

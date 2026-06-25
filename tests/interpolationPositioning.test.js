@@ -623,7 +623,7 @@ test('gpu interpolation keeps target positions untouched and propagates shader s
 });
 
 test('layout updates skip CPU position snapshots when delegate source is active', () => {
-  const { helios, graphLayerState } = createPositionHarness([
+  const { helios, graphLayerState, getDirtyCalls, getGeometryCalls } = createPositionHarness([
     10, 10, 0,
     20, 20, 0,
   ]);
@@ -651,9 +651,13 @@ test('layout updates skip CPU position snapshots when delegate source is active'
   helios._snapshotNodePositions = () => {
     throw new Error('Layout update should not snapshot CPU positions while delegate source is active.');
   };
+  const dirtyBefore = getDirtyCalls();
+  const geometryBefore = getGeometryCalls();
 
   helios._handleLayoutUpdate({ timestamp: 100 });
   assert.equal(helios._interpolationRuntime.active, false);
   assert.equal(helios._interpolationRuntime.lastRenderedPositions, null);
   assert.equal(graphLayerState.interpolation.enabled, false);
+  assert.equal(getDirtyCalls(), dirtyBefore);
+  assert.equal(getGeometryCalls(), geometryBefore + 1);
 });

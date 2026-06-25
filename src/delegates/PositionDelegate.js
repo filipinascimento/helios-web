@@ -345,8 +345,8 @@ export class PositionDelegate {
     if (typeof this._unsubscribeNetworkReplaced === 'function') {
       try {
         this._unsubscribeNetworkReplaced();
-      } catch (_) {
-        // ignore
+      } catch (error) {
+        console.warn('PositionDelegate: failed to unsubscribe network-replaced listener.', error);
       }
     }
     this._unsubscribeNetworkReplaced = null;

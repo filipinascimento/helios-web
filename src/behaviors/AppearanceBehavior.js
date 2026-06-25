@@ -83,6 +83,7 @@ const LEGACY_APPEARANCE_PATHS = Object.freeze({
   edgeDepthWrite: 'appearance.edgeStyle.depthWrite',
   edgeFastRendering: 'appearance.edgeStyle.fastRendering',
   edgeWidthClampToNodeDiameter: 'appearance.edgeStyle.clampToNodeDiameter',
+  edgeAdaptiveQuality: 'appearance.edgeStyle.adaptiveQuality',
   edgeAdaptiveQualityEnabled: 'appearance.edgeStyle.adaptiveQuality.enabled',
   edgeAdaptiveQualitySlowFrameThresholdMs: 'appearance.edgeStyle.adaptiveQuality.slowFrameThresholdMs',
   edgeAdaptiveQualitySlowFrameConsecutiveFrames: 'appearance.edgeStyle.adaptiveQuality.slowFrameConsecutiveFrames',

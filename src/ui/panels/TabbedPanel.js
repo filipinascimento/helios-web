@@ -87,8 +87,8 @@ export class TabbedPanel {
     if (this._onActiveChanged) {
       try {
         this._onActiveChanged(id);
-      } catch (_) {
-        // ignore callback failures
+      } catch (error) {
+        console.warn('[HeliosUI][TabbedPanel] Active tab callback failed.', error);
       }
     }
   }

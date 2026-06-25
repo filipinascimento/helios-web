@@ -73,6 +73,33 @@ function scopeForStatePath(path) {
   return parts[0] ?? '';
 }
 
+function collectStateKeys(detail = {}) {
+  const keys = [];
+  if (typeof detail.storageKey === 'string') keys.push(detail.storageKey);
+  if (typeof detail.stateKey === 'string') keys.push(detail.stateKey);
+  if (Array.isArray(detail.storageKeys)) {
+    for (const key of detail.storageKeys) if (typeof key === 'string') keys.push(key);
+  }
+  if (Array.isArray(detail.stateKeys)) {
+    for (const key of detail.stateKeys) if (typeof key === 'string') keys.push(key);
+  }
+  return keys;
+}
+
+function stateKeyMatchesTarget(key, target) {
+  if (!key || !target) return false;
+  return key === target || key.startsWith(`${target}.`) || target.startsWith(`${key}.`);
+}
+
+function layoutEventTargetsPath(detail = {}, path = '') {
+  const keys = collectStateKeys(detail);
+  if (!keys.length) return false;
+  return keys.some((key) => (
+    stateKeyMatchesTarget(key, path)
+    || stateKeyMatchesTarget(key, `behaviors.${path}`)
+  ));
+}
+
 function formatInputNumber(value, binding) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return '';
@@ -401,7 +428,8 @@ export class LayoutPanel {
             const changedKeys = Array.isArray(detail.keys) ? detail.keys : [];
             if (changedKey && changedKey !== key) return;
             if (changedKeys.length && !changedKeys.includes(key)) return;
-            notify();
+            if (!changedKey && !changedKeys.length && !layoutEventTargetsPath(detail, path)) return;
+            notify(undefined, detail);
           }),
         },
       });
@@ -438,9 +466,7 @@ export class LayoutPanel {
       title: 'Set from',
       hint: 'Copies a numeric 2D/3D node attribute into the current layout positions.',
       controls: positionAttributeSelect,
-      dirtyIndicator: trackStaticIndicator(createStateIndicator('layout.positionAttribute', 'layout', {
-        defaultValue: storageEntryForKey('layout.positionAttribute')?.default ?? selectedPositionAttribute,
-      })),
+      dirtyIndicator: null,
     });
     content.appendChild(sourceRow.row);
 
@@ -916,9 +942,6 @@ export class LayoutPanel {
     positionAttributeSelect.addEventListener('change', () => {
       selectedPositionAttribute = positionAttributeSelect.value || CURRENT_POSITION_ATTRIBUTE;
       applySelectedPositionAttribute();
-      persistLayoutValue('layout.positionAttribute', selectedPositionAttribute, {
-        reason: 'layout-position-attribute',
-      });
     });
 
     runButton.addEventListener('pointerup', (event) => {

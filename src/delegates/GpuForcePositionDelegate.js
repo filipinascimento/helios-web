@@ -8,10 +8,19 @@ const COPY_DST_FLAG = 0x08;
 const UNIFORM_FLAG = 0x40;
 const MAP_READ_FLAG = 0x01;
 const PARTIAL_CENTROID_CPU_THRESHOLD = 256;
+const LAYOUT_CHUNK_AUTO_NODE_THRESHOLD = 500_000;
+const DEFAULT_LAYOUT_CHUNK_NODE_COUNT = 65_536;
+const DEFAULT_LAYOUT_CHUNK_COUNT = 2;
+const MIN_LAYOUT_CHUNK_COUNT = 2;
+const MAX_LAYOUT_CHUNK_COUNT = 10;
+const WARNING_KEYS_BY_OWNER = new WeakMap();
+let FALLBACK_VERSION_COUNTER = 1;
 
 const DEFAULT_OPTIONS = {
   mode: '2d',
   forceModel: 'linear',
+  layoutScheduling: 'auto',
+  layoutChunkCount: DEFAULT_LAYOUT_CHUNK_COUNT,
   center: [0, 0, 0],
   radius: 220,
   depth: 140,
@@ -41,7 +50,7 @@ const DEFAULT_OPTIONS = {
   maxStep: 2.5,
   minDistance: 0.15,
   alpha: 1,
-  alphaDecay: 0.005,
+  alphaDecay: 0.001,
   alphaTarget: 0,
   alphaMin: 0.001,
   recenter: true,
@@ -50,6 +59,25 @@ const DEFAULT_OPTIONS = {
   seed: 0,
   umapHasInitialPositions: false,
 };
+
+function warnOnce(owner, key, message, detail = undefined) {
+  if (typeof console === 'undefined' || typeof console.warn !== 'function') return;
+  const target = owner && (typeof owner === 'object' || typeof owner === 'function') ? owner : warnOnce;
+  let keys = WARNING_KEYS_BY_OWNER.get(target);
+  if (!keys) {
+    keys = new Set();
+    WARNING_KEYS_BY_OWNER.set(target, keys);
+  }
+  if (keys.has(key)) return;
+  keys.add(key);
+  if (detail === undefined) console.warn(message);
+  else console.warn(message, detail);
+}
+
+function nextFallbackVersion() {
+  FALLBACK_VERSION_COUNTER += 1;
+  return FALLBACK_VERSION_COUNTER;
+}
 
 const DEFAULT_UMAP_EPOCHS_SMALL = 500;
 const DEFAULT_UMAP_EPOCHS_LARGE = 200;
@@ -66,6 +94,7 @@ struct Params {
   constantsB : vec4<f32>,
   center : vec4<f32>,
   constantsC : vec4<f32>,
+  chunk : vec4<u32>,
 };
 
 @group(0) @binding(0) var<storage, read> positionsIn : array<f32>;
@@ -183,7 +212,11 @@ fn storeVelocity(nodeId : u32, value : vec3<f32>) {
 
 @compute @workgroup_size(${WORKGROUP_SIZE}u)
 fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
-  let nodeId = gid.x + (gid.y * params.dispatch.x) + (gid.z * params.dispatch.y);
+  let localNodeId = gid.x + (gid.y * params.dispatch.x) + (gid.z * params.dispatch.y);
+  let nodeId = localNodeId + params.chunk.x;
+  if (localNodeId >= params.chunk.y) {
+    return;
+  }
   let nodeCapacity = params.counts.y;
   if (nodeId >= nodeCapacity) {
     return;
@@ -519,6 +552,7 @@ struct OutputScaleParams {
   dispatch : vec4<u32>,
   center : vec4<f32>,
   scale : vec4<f32>,
+  chunk : vec4<u32>,
 };
 
 @group(0) @binding(0) var<storage, read> positionsIn : array<f32>;
@@ -527,7 +561,11 @@ struct OutputScaleParams {
 
 @compute @workgroup_size(${WORKGROUP_SIZE}u)
 fn main(@builtin(global_invocation_id) gid : vec3<u32>) {
-  let nodeId = gid.x + (gid.y * params.dispatch.x) + (gid.z * params.dispatch.y);
+  let localNodeId = gid.x + (gid.y * params.dispatch.x) + (gid.z * params.dispatch.y);
+  let nodeId = localNodeId + params.chunk.x;
+  if (localNodeId >= params.chunk.y) {
+    return;
+  }
   if (nodeId >= params.counts.x) {
     return;
   }
@@ -854,6 +892,32 @@ function normalizeForceNormalizationType(value) {
   if (normalized === 'strength' || normalized === 'weighted-strength') return 'strength';
   if (normalized === 'none' || normalized === 'off' || normalized === 'disabled') return 'none';
   return 'local-degree';
+}
+
+function normalizeLayoutScheduling(value) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'chunk' || normalized === 'chunked') return 'chunked';
+  if (normalized === 'full' || normalized === 'legacy' || normalized === 'off') return 'full';
+  return 'auto';
+}
+
+function resolveLayoutChunkNodeCount(value) {
+  const numeric = Math.floor(Number(value));
+  if (!Number.isFinite(numeric) || numeric <= 0) return DEFAULT_LAYOUT_CHUNK_NODE_COUNT;
+  return Math.max(1, numeric);
+}
+
+function resolveLayoutChunkCount(value) {
+  const numeric = Math.floor(Number(value));
+  if (!Number.isFinite(numeric)) return DEFAULT_LAYOUT_CHUNK_COUNT;
+  return Math.max(MIN_LAYOUT_CHUNK_COUNT, Math.min(MAX_LAYOUT_CHUNK_COUNT, numeric));
+}
+
+function shouldUseChunkedLayoutScheduling(value, activeCount) {
+  const scheduling = normalizeLayoutScheduling(value);
+  if (scheduling === 'chunked') return true;
+  if (scheduling === 'full') return false;
+  return Math.max(0, Math.floor(Number(activeCount) || 0)) > LAYOUT_CHUNK_AUTO_NODE_THRESHOLD;
 }
 
 function forceNormalizationMode(value) {
@@ -3551,6 +3615,7 @@ class WebGPUForceComputeBackend {
     this.outputScalePipeline = null;
     this.outputScaleBindGroupLayout = null;
     this.outputScaleBindGroup = null;
+    this.outputScaleScratchBindGroup = null;
     this.recenterBasePipeline = null;
     this.recenterBaseBindGroupLayout = null;
     this.recenterBaseBindGroup = null;
@@ -3584,6 +3649,7 @@ class WebGPUForceComputeBackend {
     this.umapEnabled = false;
     this.seed = (Math.random() * 0xffffffff) >>> 0;
     this.sampleFrame = 0;
+    this.layoutChunkOffset = 0;
     this.zeroVelocities = createEmptyFloatArray();
     this.scalarWeightsUpload = createEmptyFloatArray();
     this._readbackChain = Promise.resolve();
@@ -3764,17 +3830,22 @@ class WebGPUForceComputeBackend {
     else this.linearBindGroup = bindGroup;
   }
 
-  _rebuildOutputScaleBindGroup() {
+  _rebuildOutputScaleBindGroup(sourceBuffer = this.positionBuffer, field = 'outputScaleBindGroup') {
     if (!this.outputScaleBindGroupLayout) return;
-    if (!this.positionBuffer || !this.outputPositionBuffer || !this.outputScaleParamsBuffer) return;
-    this.outputScaleBindGroup = this.device.createBindGroup({
+    if (!sourceBuffer || !this.outputPositionBuffer || !this.outputScaleParamsBuffer) return;
+    this[field] = this.device.createBindGroup({
       layout: this.outputScaleBindGroupLayout,
       entries: [
-        { binding: 0, resource: { buffer: this.positionBuffer } },
+        { binding: 0, resource: { buffer: sourceBuffer } },
         { binding: 1, resource: { buffer: this.outputPositionBuffer } },
         { binding: 2, resource: { buffer: this.outputScaleParamsBuffer } },
       ],
     });
+  }
+
+  _rebuildOutputScaleBindGroups() {
+    this._rebuildOutputScaleBindGroup(this.positionBuffer, 'outputScaleBindGroup');
+    this._rebuildOutputScaleBindGroup(this.scratchPositionBuffer, 'outputScaleScratchBindGroup');
   }
 
   _rebuildRecenterBindGroup(useRotation = false) {
@@ -3799,6 +3870,24 @@ class WebGPUForceComputeBackend {
     });
     if (useRotation) this.recenterRotationBindGroup = bindGroup;
     else this.recenterBaseBindGroup = bindGroup;
+  }
+
+  _swapSimulationBuffers() {
+    const positionBuffer = this.positionBuffer;
+    this.positionBuffer = this.scratchPositionBuffer;
+    this.scratchPositionBuffer = positionBuffer;
+
+    const velocityBuffer = this.velocityBuffer;
+    this.velocityBuffer = this.scratchVelocityBuffer;
+    this.scratchVelocityBuffer = velocityBuffer;
+
+    this.linearBindGroup = null;
+    this.linearScalarBindGroup = null;
+    this.umapBindGroup = null;
+    this.outputScaleBindGroup = null;
+    this.outputScaleScratchBindGroup = null;
+    this.recenterBaseBindGroup = null;
+    this.recenterRotationBindGroup = null;
   }
 
   syncTopology(payload, options = {}) {
@@ -3871,7 +3960,7 @@ class WebGPUForceComputeBackend {
       this._releaseUmapBuffer();
     }
     this._ensureBuffer('paramsBuffer', 256, this.uniformUsage, 'layout:gpu-force:params');
-    this._ensureBuffer('outputScaleParamsBuffer', 64, this.uniformUsage, 'layout:gpu-force:output-scale-params');
+    this._ensureBuffer('outputScaleParamsBuffer', 80, this.uniformUsage, 'layout:gpu-force:output-scale-params');
     this._ensureBuffer('recenterParamsBuffer', 64, this.uniformUsage, 'layout:gpu-force:recenter-params');
 
     const queue = this.device.queue;
@@ -3900,6 +3989,7 @@ class WebGPUForceComputeBackend {
       queue.writeBuffer(this.velocityBuffer, 0, this.zeroVelocities.buffer, this.zeroVelocities.byteOffset, zeroBytes);
       queue.writeBuffer(this.scratchVelocityBuffer, 0, this.zeroVelocities.buffer, this.zeroVelocities.byteOffset, zeroBytes);
       this.sampleFrame = 0;
+      this.layoutChunkOffset = 0;
     }
 
     if (activeCount > 0) {
@@ -3960,9 +4050,116 @@ class WebGPUForceComputeBackend {
     }
 
     this._rebuildBindGroup(useUmap, useLinearScalar);
-    this._rebuildOutputScaleBindGroup();
+    this._rebuildOutputScaleBindGroups();
     this._rebuildRecenterBindGroup(false);
     this._rebuildRecenterBindGroup(true);
+    return true;
+  }
+
+  _resolveChunkState(stepOptions = {}) {
+    const useChunked = shouldUseChunkedLayoutScheduling(
+      stepOptions.layoutScheduling,
+      this.activeCount,
+    );
+    if (!useChunked || this.nodeCapacity <= 0) {
+      return {
+        enabled: false,
+        start: 0,
+        count: Math.max(0, this.nodeCapacity),
+        completesSweep: true,
+        sweepStart: true,
+      };
+    }
+    const legacyNodeCount = stepOptions.layoutChunkCount == null && stepOptions.layoutChunkNodeCount != null
+      ? resolveLayoutChunkNodeCount(stepOptions.layoutChunkNodeCount)
+      : null;
+    const chunkNodeCount = legacyNodeCount == null
+      ? Math.ceil(Math.max(1, this.nodeCapacity) / resolveLayoutChunkCount(stepOptions.layoutChunkCount))
+      : legacyNodeCount;
+    const currentOffset = Math.max(
+      0,
+      Math.min(Math.floor(Number(this.layoutChunkOffset) || 0), Math.max(0, this.nodeCapacity - 1)),
+    );
+    const count = Math.max(1, Math.min(chunkNodeCount, this.nodeCapacity - currentOffset));
+    return {
+      enabled: true,
+      start: currentOffset,
+      count,
+      completesSweep: currentOffset + count >= this.nodeCapacity,
+      sweepStart: currentOffset === 0,
+    };
+  }
+
+  peekChunkState(stepOptions = {}) {
+    return this._resolveChunkState(stepOptions);
+  }
+
+  _writeOutputScaleParams({
+    dispatchShape,
+    center,
+    outputScale,
+    chunkStart = 0,
+    chunkCount = this.nodeCapacity,
+    mode = '2d',
+  } = {}) {
+    const scaleParamsBuffer = new ArrayBuffer(20 * 4);
+    const scaleParamsU32 = new Uint32Array(scaleParamsBuffer);
+    const scaleParamsF32 = new Float32Array(scaleParamsBuffer);
+    scaleParamsU32[0] = this.nodeCapacity >>> 0;
+    scaleParamsU32[1] = mode === '3d' ? 1 : 0;
+    scaleParamsU32[4] = dispatchShape.rowStride >>> 0;
+    scaleParamsU32[5] = dispatchShape.layerStride >>> 0;
+    scaleParamsF32[8] = center[0];
+    scaleParamsF32[9] = center[1];
+    scaleParamsF32[10] = center[2];
+    scaleParamsF32[12] = outputScale;
+    scaleParamsU32[16] = Math.max(0, Math.floor(chunkStart || 0)) >>> 0;
+    scaleParamsU32[17] = Math.max(0, Math.floor(chunkCount || 0)) >>> 0;
+    this.device.queue.writeBuffer(this.outputScaleParamsBuffer, 0, scaleParamsBuffer);
+  }
+
+  _encodeOutputUpdate({
+    encoder,
+    sourceBuffer = this.positionBuffer,
+    bindGroup = this.outputScaleBindGroup,
+    dispatchShape,
+    center,
+    outputScale,
+    chunkStart = 0,
+    chunkCount = this.nodeCapacity,
+    mode = '2d',
+  } = {}) {
+    const safeChunkStart = Math.max(0, Math.floor(chunkStart || 0));
+    const safeChunkCount = Math.max(0, Math.floor(chunkCount || 0));
+    if (!encoder || !sourceBuffer || !this.outputPositionBuffer || safeChunkCount <= 0) return false;
+    const offset = safeChunkStart * 12;
+    const bytes = safeChunkCount * 12;
+    if (Math.abs(outputScale - 1.0) <= 1e-6) {
+      encoder.copyBufferToBuffer(sourceBuffer, offset, this.outputPositionBuffer, offset, bytes);
+      return true;
+    }
+    this._ensureOutputScalePipeline();
+    if (sourceBuffer === this.scratchPositionBuffer) {
+      this._rebuildOutputScaleBindGroup(this.scratchPositionBuffer, 'outputScaleScratchBindGroup');
+      bindGroup = this.outputScaleScratchBindGroup;
+    } else {
+      this._rebuildOutputScaleBindGroup(this.positionBuffer, 'outputScaleBindGroup');
+      bindGroup = this.outputScaleBindGroup;
+    }
+    if (!this.outputScalePipeline || !bindGroup || !this.outputScaleParamsBuffer) return false;
+    this._writeOutputScaleParams({
+      dispatchShape,
+      center,
+      outputScale,
+      chunkStart: safeChunkStart,
+      chunkCount: safeChunkCount,
+      mode,
+    });
+    const outputScalePass = encoder.beginComputePass({ label: 'layout:gpu-force:output-scale' });
+    outputScalePass.setPipeline(this.outputScalePipeline);
+    outputScalePass.setBindGroup(0, bindGroup);
+    outputScalePass.dispatchWorkgroups(dispatchShape.x, dispatchShape.y, dispatchShape.z);
+    outputScalePass.end();
     return true;
   }
 
@@ -3992,12 +4189,14 @@ class WebGPUForceComputeBackend {
     const bindGroup = useUmap ? this.umapBindGroup : useLinearScalar ? this.linearScalarBindGroup : this.linearBindGroup;
     if (!pipeline || !bindGroup) return false;
 
+    const chunkState = this._resolveChunkState(stepOptions);
+    const dispatchCount = chunkState.enabled ? chunkState.count : this.nodeCapacity;
     const dispatchShape = resolveComputeDispatchShape(
-      this.nodeCapacity,
+      dispatchCount,
       WORKGROUP_SIZE,
       this.maxComputeWorkgroupsPerDimension,
     );
-    const paramsBuffer = new ArrayBuffer(28 * 4);
+    const paramsBuffer = new ArrayBuffer(32 * 4);
     const paramsU32 = new Uint32Array(paramsBuffer);
     const paramsF32 = new Float32Array(paramsBuffer);
 
@@ -4047,6 +4246,8 @@ class WebGPUForceComputeBackend {
       0,
       toFinite(stepOptions.umapNegativeSampleRate, DEFAULT_OPTIONS.umapNegativeSampleRate),
     );
+    paramsU32[28] = chunkState.start >>> 0;
+    paramsU32[29] = chunkState.count >>> 0;
 
     const outputScale = Math.max(0.0001, toFinite(stepOptions.outputScale, DEFAULT_OPTIONS.outputScale));
     const rotationDamping = clamp(stepOptions.rotationDamping, 0, 1, DEFAULT_OPTIONS.rotationDamping);
@@ -4062,67 +4263,134 @@ class WebGPUForceComputeBackend {
     pass.end();
 
     const bytes = Math.max(1, this.nodeCapacity) * 12;
-    encoder.copyBufferToBuffer(this.scratchPositionBuffer, 0, this.positionBuffer, 0, bytes);
-    encoder.copyBufferToBuffer(this.scratchVelocityBuffer, 0, this.velocityBuffer, 0, bytes);
+    if (!chunkState.enabled) {
+      encoder.copyBufferToBuffer(this.scratchPositionBuffer, 0, this.positionBuffer, 0, bytes);
+      encoder.copyBufferToBuffer(this.scratchVelocityBuffer, 0, this.velocityBuffer, 0, bytes);
 
-    if (stepOptions.recenter === true) {
-      this._ensureRecenterPipeline(useRotationDamping);
-      this._rebuildRecenterBindGroup(useRotationDamping);
-      const recenterPipeline = useRotationDamping ? this.recenterRotationPipeline : this.recenterBasePipeline;
-      const recenterBindGroup = useRotationDamping ? this.recenterRotationBindGroup : this.recenterBaseBindGroup;
-      if (!recenterPipeline || !recenterBindGroup || !this.recenterParamsBuffer) {
+      if (stepOptions.recenter === true) {
+        this._ensureRecenterPipeline(useRotationDamping);
+        this._rebuildRecenterBindGroup(useRotationDamping);
+        const recenterPipeline = useRotationDamping ? this.recenterRotationPipeline : this.recenterBasePipeline;
+        const recenterBindGroup = useRotationDamping ? this.recenterRotationBindGroup : this.recenterBaseBindGroup;
+        if (!recenterPipeline || !recenterBindGroup || !this.recenterParamsBuffer) {
+          return false;
+        }
+        const recenterParamsBuffer = new ArrayBuffer(useRotationDamping ? (12 * 4) : (8 * 4));
+        const recenterParamsU32 = new Uint32Array(recenterParamsBuffer);
+        const recenterParamsF32 = new Float32Array(recenterParamsBuffer);
+        recenterParamsU32[0] = this.activeCount >>> 0;
+        recenterParamsU32[1] = stepOptions.mode === '3d' ? 1 : 0;
+        recenterParamsF32[4] = center[0];
+        recenterParamsF32[5] = center[1];
+        recenterParamsF32[6] = center[2];
+        if (useRotationDamping) {
+          recenterParamsF32[8] = rotationDamping;
+        }
+        this.device.queue.writeBuffer(this.recenterParamsBuffer, 0, recenterParamsBuffer);
+
+        const recenterPass = encoder.beginComputePass({ label: 'layout:gpu-force:recenter' });
+        recenterPass.setPipeline(recenterPipeline);
+        recenterPass.setBindGroup(0, recenterBindGroup);
+        recenterPass.dispatchWorkgroups(1);
+        recenterPass.end();
+      }
+
+      const fullOutputDispatchShape = chunkState.enabled
+        ? resolveComputeDispatchShape(
+            this.nodeCapacity,
+            WORKGROUP_SIZE,
+            this.maxComputeWorkgroupsPerDimension,
+          )
+        : dispatchShape;
+      if (!this._encodeOutputUpdate({
+        encoder,
+        sourceBuffer: this.positionBuffer,
+        bindGroup: this.outputScaleBindGroup,
+        dispatchShape: fullOutputDispatchShape,
+        center,
+        outputScale,
+        chunkStart: 0,
+        chunkCount: this.nodeCapacity,
+        mode: stepOptions.mode,
+      })) {
         return false;
       }
-      const recenterParamsBuffer = new ArrayBuffer(useRotationDamping ? (12 * 4) : (8 * 4));
-      const recenterParamsU32 = new Uint32Array(recenterParamsBuffer);
-      const recenterParamsF32 = new Float32Array(recenterParamsBuffer);
-      recenterParamsU32[0] = this.activeCount >>> 0;
-      recenterParamsU32[1] = stepOptions.mode === '3d' ? 1 : 0;
-      recenterParamsF32[4] = center[0];
-      recenterParamsF32[5] = center[1];
-      recenterParamsF32[6] = center[2];
-      if (useRotationDamping) {
-        recenterParamsF32[8] = rotationDamping;
+    } else if (chunkState.completesSweep) {
+      this._swapSimulationBuffers();
+      this._rebuildBindGroup(useUmap, useLinearScalar);
+      this._rebuildOutputScaleBindGroups();
+
+      if (stepOptions.recenter === true) {
+        this._ensureRecenterPipeline(useRotationDamping);
+        this._rebuildRecenterBindGroup(useRotationDamping);
+        const recenterPipeline = useRotationDamping ? this.recenterRotationPipeline : this.recenterBasePipeline;
+        const recenterBindGroup = useRotationDamping ? this.recenterRotationBindGroup : this.recenterBaseBindGroup;
+        if (!recenterPipeline || !recenterBindGroup || !this.recenterParamsBuffer) {
+          return false;
+        }
+        const recenterParamsBuffer = new ArrayBuffer(useRotationDamping ? (12 * 4) : (8 * 4));
+        const recenterParamsU32 = new Uint32Array(recenterParamsBuffer);
+        const recenterParamsF32 = new Float32Array(recenterParamsBuffer);
+        recenterParamsU32[0] = this.activeCount >>> 0;
+        recenterParamsU32[1] = stepOptions.mode === '3d' ? 1 : 0;
+        recenterParamsF32[4] = center[0];
+        recenterParamsF32[5] = center[1];
+        recenterParamsF32[6] = center[2];
+        if (useRotationDamping) {
+          recenterParamsF32[8] = rotationDamping;
+        }
+        this.device.queue.writeBuffer(this.recenterParamsBuffer, 0, recenterParamsBuffer);
+
+        const recenterPass = encoder.beginComputePass({ label: 'layout:gpu-force:recenter' });
+        recenterPass.setPipeline(recenterPipeline);
+        recenterPass.setBindGroup(0, recenterBindGroup);
+        recenterPass.dispatchWorkgroups(1);
+        recenterPass.end();
       }
-      this.device.queue.writeBuffer(this.recenterParamsBuffer, 0, recenterParamsBuffer);
 
-      const recenterPass = encoder.beginComputePass({ label: 'layout:gpu-force:recenter' });
-      recenterPass.setPipeline(recenterPipeline);
-      recenterPass.setBindGroup(0, recenterBindGroup);
-      recenterPass.dispatchWorkgroups(1);
-      recenterPass.end();
-    }
-
-    if (Math.abs(outputScale - 1.0) <= 1e-6) {
-      encoder.copyBufferToBuffer(this.positionBuffer, 0, this.outputPositionBuffer, 0, bytes);
-    } else {
-      this._ensureOutputScalePipeline();
-      this._rebuildOutputScaleBindGroup();
-      if (!this.outputScalePipeline || !this.outputScaleBindGroup || !this.outputScaleParamsBuffer) {
+      const outputStart = stepOptions.recenter === true ? 0 : chunkState.start;
+      const outputCount = stepOptions.recenter === true ? this.nodeCapacity : chunkState.count;
+      const outputDispatchShape = stepOptions.recenter === true
+        ? resolveComputeDispatchShape(
+            this.nodeCapacity,
+            WORKGROUP_SIZE,
+            this.maxComputeWorkgroupsPerDimension,
+          )
+        : dispatchShape;
+      if (!this._encodeOutputUpdate({
+        encoder,
+        sourceBuffer: this.positionBuffer,
+        bindGroup: this.outputScaleBindGroup,
+        dispatchShape: outputDispatchShape,
+        center,
+        outputScale,
+        chunkStart: outputStart,
+        chunkCount: outputCount,
+        mode: stepOptions.mode,
+      })) {
         return false;
       }
-      const scaleParamsBuffer = new ArrayBuffer(16 * 4);
-      const scaleParamsU32 = new Uint32Array(scaleParamsBuffer);
-      const scaleParamsF32 = new Float32Array(scaleParamsBuffer);
-      scaleParamsU32[0] = this.nodeCapacity >>> 0;
-      scaleParamsU32[1] = stepOptions.mode === '3d' ? 1 : 0;
-      scaleParamsU32[4] = dispatchShape.rowStride >>> 0;
-      scaleParamsU32[5] = dispatchShape.layerStride >>> 0;
-      scaleParamsF32[8] = center[0];
-      scaleParamsF32[9] = center[1];
-      scaleParamsF32[10] = center[2];
-      scaleParamsF32[12] = outputScale;
-      this.device.queue.writeBuffer(this.outputScaleParamsBuffer, 0, scaleParamsBuffer);
-
-      const outputScalePass = encoder.beginComputePass({ label: 'layout:gpu-force:output-scale' });
-      outputScalePass.setPipeline(this.outputScalePipeline);
-      outputScalePass.setBindGroup(0, this.outputScaleBindGroup);
-      outputScalePass.dispatchWorkgroups(dispatchShape.x, dispatchShape.y, dispatchShape.z);
-      outputScalePass.end();
+    } else if (!this._encodeOutputUpdate({
+      encoder,
+      sourceBuffer: this.scratchPositionBuffer,
+      bindGroup: this.outputScaleScratchBindGroup,
+      dispatchShape,
+      center,
+      outputScale,
+      chunkStart: chunkState.start,
+      chunkCount: chunkState.count,
+      mode: stepOptions.mode,
+    })) {
+      return false;
     }
 
     this.device.queue.submit([encoder.finish()]);
-    this.sampleFrame = (sampleFrame + 1) >>> 0;
+    if (!chunkState.enabled || chunkState.completesSweep) {
+      this.sampleFrame = (sampleFrame + 1) >>> 0;
+      this.layoutChunkOffset = 0;
+    } else {
+      this.layoutChunkOffset = (chunkState.start + chunkState.count) >>> 0;
+    }
     return true;
   }
 
@@ -4354,6 +4622,7 @@ class WebGPUForceComputeBackend {
     this.device.queue.writeBuffer(this.positionBuffer, 0, positions.buffer, positions.byteOffset, byteLength);
     this.device.queue.writeBuffer(this.outputPositionBuffer, 0, outputPositions.buffer, outputPositions.byteOffset, byteLength);
     this.device.queue.writeBuffer(this.scratchPositionBuffer, 0, positions.buffer, positions.byteOffset, byteLength);
+    this.layoutChunkOffset = 0;
     return true;
   }
 
@@ -4400,6 +4669,7 @@ class WebGPUForceComputeBackend {
     this.linearBindGroup = null;
     this.umapBindGroup = null;
     this.outputScaleBindGroup = null;
+    this.outputScaleScratchBindGroup = null;
     this.recenterBaseBindGroup = null;
     this.recenterRotationBindGroup = null;
     this.linearPipeline = null;
@@ -4417,6 +4687,7 @@ class WebGPUForceComputeBackend {
     this.nodeCapacity = 0;
     this.activeCount = 0;
     this.sampleFrame = 0;
+    this.layoutChunkOffset = 0;
     this.zeroVelocities = createEmptyFloatArray();
     this.scalarWeightsUpload = createEmptyFloatArray();
     this._readbackChain = Promise.resolve();
@@ -4442,6 +4713,11 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       ...options,
       center: normalizeCenter(options.center ?? DEFAULT_OPTIONS.center),
       mode: options.mode === '3d' ? '3d' : '2d',
+      layoutScheduling: normalizeLayoutScheduling(options.layoutScheduling ?? DEFAULT_OPTIONS.layoutScheduling),
+      layoutChunkCount: resolveLayoutChunkCount(options.layoutChunkCount),
+      layoutChunkNodeCount: options.layoutChunkNodeCount == null
+        ? null
+        : resolveLayoutChunkNodeCount(options.layoutChunkNodeCount),
     };
     if (isUmapForceModel(normalizedOptions.forceModel)) {
       if (options.kRepulsion == null) normalizedOptions.kRepulsion = 1;
@@ -4489,11 +4765,19 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     const prevEdgeWeightAttribute = this.options.edgeWeightAttribute;
     const prevNodeMassAttribute = this.options.nodeMassAttribute;
     const prevForceNormalizationType = this.options.forceNormalizationType;
+    const prevLayoutScheduling = this.options.layoutScheduling;
+    const prevLayoutChunkCount = this.options.layoutChunkCount;
+    const prevLayoutChunkNodeCount = this.options.layoutChunkNodeCount;
     this.options = {
       ...this.options,
       ...next,
       center: normalizeCenter(next.center ?? this.options.center),
       mode: (next.mode ?? this.options.mode) === '3d' ? '3d' : '2d',
+      layoutScheduling: normalizeLayoutScheduling(next.layoutScheduling ?? this.options.layoutScheduling),
+      layoutChunkCount: resolveLayoutChunkCount(next.layoutChunkCount ?? this.options.layoutChunkCount),
+      layoutChunkNodeCount: next.layoutChunkNodeCount == null
+        ? (Object.prototype.hasOwnProperty.call(next, 'layoutChunkCount') ? null : this.options.layoutChunkNodeCount)
+        : resolveLayoutChunkNodeCount(next.layoutChunkNodeCount),
     };
     if (isUmapForceModel(this.options.forceModel) && !isUmapForceModel(prevForceModel)) {
       if (next.kRepulsion == null) this.options.kRepulsion = 1;
@@ -4517,6 +4801,13 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     const forceNormalizationChanged = prevForceNormalizationType !== this.options.forceNormalizationType;
     if (prevMode !== this.options.mode || centerChanged || modelChanged || edgeWeightChanged || nodeMassChanged || forceNormalizationChanged) {
       this.markTopologyDirty('options');
+    }
+    if (
+      prevLayoutScheduling !== this.options.layoutScheduling
+      || prevLayoutChunkCount !== this.options.layoutChunkCount
+      || prevLayoutChunkNodeCount !== this.options.layoutChunkNodeCount
+    ) {
+      if (this._webgpu) this._webgpu.layoutChunkOffset = 0;
     }
     return this;
   }
@@ -4558,6 +4849,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
   resetAnnealing() {
     if (this._webgpu) {
       this._webgpu.sampleFrame = 0;
+      this._webgpu.layoutChunkOffset = 0;
     }
     if (this._webgl) {
       this._webgl.sampleFrame = 0;
@@ -4627,18 +4919,34 @@ export class GpuForcePositionDelegate extends PositionDelegate {
           network.__heliosResolveLayoutStrengthAttribute(edgeWeightAttribute)?.version,
           0,
         );
-      } catch (_) {
-        nodeStrengthAttributeVersion = 0;
+      } catch (error) {
+        warnOnce(
+          this,
+          'layout-strength-attribute-version',
+          'GpuForcePositionDelegate: failed to resolve layout strength attribute version; forcing topology synchronization.',
+          { error },
+        );
+        nodeStrengthAttributeVersion = nextFallbackVersion();
       }
     }
+    const readVersion = (kind, attr, getter) => {
+      if (!attr || typeof getter !== 'function') return 0;
+      try {
+        return toFinite(getter.call(network, attr), 0);
+      } catch (error) {
+        warnOnce(
+          this,
+          `${kind}-attribute-version:${attr}`,
+          `GpuForcePositionDelegate: failed to read ${kind} attribute version for "${attr}"; forcing topology synchronization.`,
+          { error },
+        );
+        return nextFallbackVersion();
+      }
+    };
     return {
       ...snapshot,
-      edgeWeightAttributeVersion: edgeWeightAttribute && typeof network?.getEdgeAttributeVersion === 'function'
-        ? toFinite(network.getEdgeAttributeVersion(edgeWeightAttribute), 0)
-        : 0,
-      nodeMassAttributeVersion: nodeMassAttribute && typeof network?.getNodeAttributeVersion === 'function'
-        ? toFinite(network.getNodeAttributeVersion(nodeMassAttribute), 0)
-        : 0,
+      edgeWeightAttributeVersion: readVersion('edge weight', edgeWeightAttribute, network?.getEdgeAttributeVersion),
+      nodeMassAttributeVersion: readVersion('node mass', nodeMassAttribute, network?.getNodeAttributeVersion),
       nodeStrengthAttributeVersion,
     };
   }
@@ -4810,14 +5118,24 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     const linearNormalizedInputs = !umapForceModel
       && !linearScalarInputs
       && forceNormalizationType !== 'local-degree';
+    const effectiveLayoutScheduling = normalizeLayoutScheduling(
+      context.layoutSchedulingOverride ?? this.options.layoutScheduling,
+    );
+    const chunkState = this._webgpu?.peekChunkState?.({
+      layoutScheduling: effectiveLayoutScheduling,
+      layoutChunkCount: this.options.layoutChunkNodeCount == null ? this.options.layoutChunkCount : undefined,
+      layoutChunkNodeCount: this.options.layoutChunkNodeCount,
+    }) ?? { enabled: false, sweepStart: true };
     const alphaTarget = clamp(this.options.alphaTarget, 0, 1, DEFAULT_OPTIONS.alphaTarget);
     const alphaDecay = clamp(this.options.alphaDecay, 0, 1, DEFAULT_OPTIONS.alphaDecay);
     const alphaMin = clamp(this.options.alphaMin, 0, 1, DEFAULT_OPTIONS.alphaMin);
     const umapEpochs = umapForceModel
       ? resolveUmapEpochCount(this.options.umapEpochs, this._activeCount)
       : 0;
-    this.alpha += (alphaTarget - this.alpha) * alphaDecay;
-    if (this.alpha < alphaMin) this.alpha = alphaMin;
+    if (!chunkState.enabled || chunkState.sweepStart) {
+      this.alpha += (alphaTarget - this.alpha) * alphaDecay;
+      if (this.alpha < alphaMin) this.alpha = alphaMin;
+    }
 
     const maxNeighborsPerNode = Math.max(1, Math.floor(toFinite(this.options.maxNeighborsPerNode, DEFAULT_OPTIONS.maxNeighborsPerNode)));
     const explicitSampleCountValue = this.options.sampleCount;
@@ -4859,6 +5177,9 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     const stepPayload = {
       mode: this.options.mode,
       forceModel: umapForceModel ? 'umap' : 'linear',
+      layoutScheduling: effectiveLayoutScheduling,
+      layoutChunkCount: this.options.layoutChunkNodeCount == null ? this.options.layoutChunkCount : undefined,
+      layoutChunkNodeCount: this.options.layoutChunkNodeCount,
       forceNormalizationType,
       linearScalarInputs,
       linearNormalizedInputs,

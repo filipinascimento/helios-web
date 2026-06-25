@@ -31,6 +31,14 @@ function panel(page, id) {
   return page.locator(`.helios-ui-panel[data-panel-id="${id}"]`).first();
 }
 
+async function expandPanel(panelLocator) {
+  await expect(panelLocator).toBeVisible();
+  if ((await panelLocator.getAttribute('data-collapsed')) === 'true') {
+    await panelLocator.locator('.helios-ui-panel__actions .helios-ui-button').first().click();
+  }
+  await expect(panelLocator).toHaveAttribute('data-collapsed', 'false');
+}
+
 function sessionUrl(sessionId, nodes = 180, workspaceId = sessionId) {
   const params = new URLSearchParams({
     renderer: 'webgl',
@@ -100,7 +108,7 @@ async function performInterfaceChanges(page) {
   if ((await shadedToggle.getAttribute('aria-checked')) !== 'true') await shadedToggle.click();
 
   const cameraPanel = panel(page, 'helios-ui-camera');
-  await expect(cameraPanel).toBeVisible();
+  await expandPanel(cameraPanel);
   const autoFitToggle = cameraPanel.locator('[role="switch"][aria-label="Auto fit"]').first();
   await expect(autoFitToggle).toBeVisible();
   if ((await autoFitToggle.getAttribute('aria-checked')) !== 'false') await autoFitToggle.click();
@@ -118,6 +126,14 @@ async function performInterfaceChanges(page) {
 
 async function panCanvas(page, dx = 82, dy = 37) {
   const canvas = page.locator('canvas').first();
+  await page.waitForFunction(() => {
+    const helios = window.__helios;
+    const startup = helios?._startupGate;
+    const canvasEl = document.querySelector('canvas');
+    return Boolean(canvasEl)
+      && getComputedStyle(canvasEl).visibility !== 'hidden'
+      && (!startup || startup.active !== true || startup.firstVisibleFrameDrawn === true);
+  }, null, { timeout: 15000 });
   const box = await canvas.boundingBox();
   expect(box).not.toBeNull();
   const startX = box.x + box.width * 0.42;
@@ -937,7 +953,7 @@ test('built-in panel persistence markers are driven by centralized scope status'
       value: 6,
     });
     helios.behavior.legends.legends({ showNodeSize: true });
-    helios.behavior.layout.positionAttribute('$random');
+    helios.behavior.layout.type('worker:jitter');
     helios.behavior.filters.setScope('render+layout');
     helios.behavior.selection.selectNodes([0], { mode: 'replace' });
     helios.states.set('cameraControls.autoFit', false, {
@@ -1411,6 +1427,149 @@ test('resume prompt stays inside the visible graph area with a right dock at nar
     expect(button.top).toBeGreaterThanOrEqual(metrics.prompt.top - 1);
     expect(button.bottom).toBeLessThanOrEqual(metrics.prompt.bottom + 1);
   }
+});
+
+test('quick controls stay inside the visible graph area with a right dock at narrow width', async ({ page }) => {
+  await page.setViewportSize({ width: 980, height: 900 });
+  const sessionId = `interface-quick-controls-right-dock-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const workspaceId = `interface-quick-controls-right-dock-workspace-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  await page.goto(sessionUrl(sessionId, 220, workspaceId));
+  await waitForHelios(page);
+  await page.evaluate(() => window.__helios.behavior?.interface?.dockSide?.('right'));
+
+  const controls = page.locator('.helios-quick-controls').first();
+  await expect(controls).toBeVisible();
+
+  const metrics = await controls.evaluate((el) => {
+    const controlsRect = el.getBoundingClientRect();
+    const ui = document.querySelector('.helios-ui') ?? document.body;
+    const uiRect = ui.getBoundingClientRect();
+    const style = getComputedStyle(ui);
+    const rightDockWidth = Number.parseFloat(style.getPropertyValue('--helios-ui-right-dock-width')) || 0;
+    const dockLeft = uiRect.right - rightDockWidth;
+    const buttonRects = Array.from(el.querySelectorAll('button')).flatMap((button) => {
+      const rect = button.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return [];
+      return {
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        bottom: rect.bottom,
+      };
+    });
+    return {
+      controls: {
+        left: controlsRect.left,
+        right: controlsRect.right,
+        top: controlsRect.top,
+        bottom: controlsRect.bottom,
+      },
+      dockLeft,
+      buttonRects,
+    };
+  });
+
+  expect(metrics.controls.right).toBeLessThanOrEqual(metrics.dockLeft + 1);
+  for (const button of metrics.buttonRects) {
+    expect(button.left).toBeGreaterThanOrEqual(metrics.controls.left - 1);
+    expect(button.right).toBeLessThanOrEqual(metrics.controls.right + 1);
+    expect(button.top).toBeGreaterThanOrEqual(metrics.controls.top - 1);
+    expect(button.bottom).toBeLessThanOrEqual(metrics.controls.bottom + 1);
+  }
+});
+
+test('compact dock resize keeps graph viewport aligned with the resized panel', async ({ page }) => {
+  await page.setViewportSize({ width: 980, height: 900 });
+  const sessionId = `interface-compact-dock-resize-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const workspaceId = `interface-compact-dock-resize-workspace-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  await page.goto(sessionUrl(sessionId, 220, workspaceId));
+  await waitForHelios(page);
+  await page.evaluate(() => window.__helios.behavior?.interface?.dockSide?.('left'));
+
+  const dataPanel = panel(page, 'helios-ui-data');
+  await expect(dataPanel).toBeVisible();
+  const resizeHandle = dataPanel.locator('.helios-ui-resize-handle[data-edge="right"]').first();
+  await expect(resizeHandle).toBeVisible();
+  const handleBox = await resizeHandle.boundingBox();
+  expect(handleBox).not.toBeNull();
+
+  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(handleBox.x + handleBox.width / 2 + 220, handleBox.y + handleBox.height / 2, { steps: 12 });
+  await page.mouse.up();
+
+  const metrics = await page.evaluate(() => {
+    const panelEl = document.querySelector('.helios-ui-panel[data-panel-id="helios-ui-data"]');
+    const dock = document.querySelector('.helios-ui-dock--left');
+    const viewport = document.querySelector('.helios-layer-viewport');
+    const rect = (el) => {
+      const value = el?.getBoundingClientRect?.();
+      return value ? {
+        left: value.left,
+        right: value.right,
+        width: value.width,
+      } : null;
+    };
+    return {
+      panel: rect(panelEl),
+      dock: rect(dock),
+      viewport: rect(viewport),
+      layersSize: window.__helios.layers.size,
+      viewportInsets: window.__helios.layers.viewportInsets,
+    };
+  });
+
+  expect(metrics.panel.width).toBeGreaterThan(430);
+  expect(Math.abs(metrics.dock.right - metrics.panel.right)).toBeLessThanOrEqual(1.5);
+  expect(Math.abs(metrics.viewport.left - metrics.panel.right)).toBeLessThanOrEqual(1.5);
+  expect(metrics.viewport.width).toBeGreaterThanOrEqual(179);
+  expect(metrics.layersSize.width).toBeGreaterThanOrEqual(179);
+  expect(metrics.viewportInsets.left).toBeCloseTo(metrics.panel.width, 0);
+
+  const expandedHandleBox = await resizeHandle.boundingBox();
+  expect(expandedHandleBox).not.toBeNull();
+  await page.mouse.move(
+    expandedHandleBox.x + expandedHandleBox.width / 2,
+    expandedHandleBox.y + expandedHandleBox.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    expandedHandleBox.x + expandedHandleBox.width / 2 - 260,
+    expandedHandleBox.y + expandedHandleBox.height / 2,
+    { steps: 12 },
+  );
+  await page.mouse.up();
+
+  const shrunkenMetrics = await page.evaluate(() => {
+    const panelEls = Array.from(document.querySelectorAll('.helios-ui-dock--left .helios-ui-panel'));
+    const dock = document.querySelector('.helios-ui-dock--left');
+    const viewport = document.querySelector('.helios-layer-viewport');
+    const rect = (el) => {
+      const value = el?.getBoundingClientRect?.();
+      return value ? {
+        left: value.left,
+        right: value.right,
+        width: value.width,
+      } : null;
+    };
+    return {
+      panels: panelEls.map((el) => rect(el)),
+      dock: rect(dock),
+      viewport: rect(viewport),
+      layersSize: window.__helios.layers.size,
+      viewportInsets: window.__helios.layers.viewportInsets,
+    };
+  });
+
+  for (const panelRect of shrunkenMetrics.panels) {
+    expect(Math.abs(panelRect.right - shrunkenMetrics.dock.right)).toBeLessThanOrEqual(1.5);
+  }
+  expect(Math.abs(shrunkenMetrics.viewport.left - shrunkenMetrics.dock.right)).toBeLessThanOrEqual(1.5);
+  expect(shrunkenMetrics.viewport.width).toBeGreaterThanOrEqual(179);
+  expect(shrunkenMetrics.layersSize.width).toBeGreaterThanOrEqual(179);
+  expect(shrunkenMetrics.viewportInsets.left).toBeCloseTo(shrunkenMetrics.dock.width, 0);
 });
 
 test('restores interface and camera changes after changing controls then immediately reloading', async ({ page }, testInfo) => {

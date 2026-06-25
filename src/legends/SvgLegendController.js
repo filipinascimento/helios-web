@@ -17,7 +17,7 @@ const DEFAULT_CONFIG = Object.freeze({
   scalePreviewLegends: false,
   illustratorCompatible: false,
   continuousHeight: 132,
-  zoomAwareSizeIn2D: true,
+  zoomAwareSizeIn2D: false,
   showPanel: false,
   panelOpacity: 0.14,
   textOutline: true,
@@ -532,6 +532,7 @@ function legendMetrics(config, options = {}) {
     tickGap: 3 * scale,
     labelGap: 4 * scale,
     continuousTitleGap: 8 * scale,
+    continuousRightClearance: 36 * scale,
     scalarWidth: 84 * scale,
     scalarGap: 8 * scale,
     scalarBaselineOffset: 8 * scale,
@@ -679,7 +680,7 @@ export function deriveLegendItems({ nodeChannels, edgeChannels, densityConfig, d
       title: resolveLegendTitle(config, kind, inferLabelFromAttributes(channel.attributes, fallbackTitle)),
       domain,
       range,
-      preview: kind === 'nodeSize' && shape === 'circle'
+      preview: kind === 'nodeSize' && shape === 'circle' && config?.zoomAwareSizeIn2D === true
         ? computeNodeSizeLegendPreview(range, legendRuntime)
         : null,
     });
@@ -742,6 +743,7 @@ export function deriveLegendItems({ nodeChannels, edgeChannels, densityConfig, d
 }
 
 export function layoutLegendItems(items, safeRect, config) {
+  const placements = normalizePlacements(config?.placements);
   const measured = items.map((item) => {
     const metrics = legendMetrics(config, {
       ignoreScale: item.legendType === 'scalar' && Boolean(item.preview) && config?.scalePreviewLegends !== true,
@@ -781,7 +783,8 @@ export function layoutLegendItems(items, safeRect, config) {
     if (item.legendType === 'scalar') {
       const titleLines = wrapTextLines(item.title, config?.maxChars, config?.maxRows);
       const titleWidth = Math.max(0, ...titleLines.map((line) => estimateTextWidthPx(line, fontSize)));
-      const sampleLabels = scalarSampleValues(item.domain, metrics.scalarWidth >= 116 ? 3 : 2, {
+      const scalarSampleCount = item.shape === 'circle' ? 3 : (metrics.scalarWidth >= 116 ? 3 : 2);
+      const sampleLabels = scalarSampleValues(item.domain, scalarSampleCount, {
         omitZeroMin: item.shape === 'line',
         readableMinRatio: item.shape === 'line' ? 0.2 : 0,
       }).map((sample) => formatNumber(sample));
@@ -791,10 +794,10 @@ export function layoutLegendItems(items, safeRect, config) {
       );
       const visualWidth = item.shape === 'line'
         ? Math.max(metrics.scalarWidth, labelWidth + 28)
-        : Math.max(metrics.scalarWidth, labelWidth * 2 + metrics.scalarGap + 26);
+        : Math.max(metrics.scalarWidth + 28, labelWidth + 92);
       const height = item.shape === 'line'
         ? Math.ceil((metrics.paddingY * 2) + 26 + sampleLabels.length * ((fontSize - 1) + 14) + metrics.fontSize)
-        : Math.ceil((metrics.paddingY * 2) + 58 + (fontSize - 1) * 2.2);
+        : Math.ceil((metrics.paddingY * 2) + 78 + (fontSize - 1) * 2.2);
       return {
         ...item,
         titleLines,
@@ -810,7 +813,24 @@ export function layoutLegendItems(items, safeRect, config) {
     const tickLabels = Array.isArray(item.tickLabels) ? item.tickLabels : [];
     const tickWidth = Math.max(0, ...tickLabels.map((line) => estimateTextWidthPx(line, fontSize - 1)));
     const titleColumn = titleLines.length ? fontSize + metrics.continuousTitleGap : 0;
-    const width = Math.ceil(metrics.paddingX * 2 + titleColumn + metrics.barWidth + metrics.tickGap + metrics.tickLength + metrics.labelGap + tickWidth);
+    const placement = placements[item.kind] ?? 'auto';
+    const slot = placement === 'auto' ? LEGEND_SLOT_DEFAULTS[item.kind] : placement;
+    const rightClearance = typeof slot === 'string' && slot.endsWith('right')
+      ? metrics.continuousRightClearance
+      : 0;
+    const strokeOverflow = Math.ceil(Math.max(2 * metrics.scale, resolveTextOutlineStrokeWidth(config, fontSize - 1) * 0.5));
+    const width = Math.ceil(
+      metrics.paddingX * 2
+      + titleColumn
+      + strokeOverflow
+      + metrics.barWidth
+      + metrics.tickGap
+      + metrics.tickLength
+      + metrics.labelGap
+      + tickWidth
+      + strokeOverflow
+      + rightClearance,
+    );
     const height = Math.ceil((metrics.paddingY * 2) + Math.max(metrics.barHeight, titleSpan));
     return {
       ...item,
@@ -893,7 +913,7 @@ export class SvgLegendController {
     if (Object.prototype.hasOwnProperty.call(options, 'scale')) next.scale = clamp(options.scale, 0.6, 3);
     if (Object.prototype.hasOwnProperty.call(options, 'illustratorCompatible')) next.illustratorCompatible = options.illustratorCompatible === true;
     if (Object.prototype.hasOwnProperty.call(options, 'continuousHeight')) next.continuousHeight = clamp(options.continuousHeight, 72, 320);
-    if (Object.prototype.hasOwnProperty.call(options, 'zoomAwareSizeIn2D')) next.zoomAwareSizeIn2D = options.zoomAwareSizeIn2D !== false;
+    if (Object.prototype.hasOwnProperty.call(options, 'zoomAwareSizeIn2D')) next.zoomAwareSizeIn2D = options.zoomAwareSizeIn2D === true;
     if (Object.prototype.hasOwnProperty.call(options, 'showPanel')) next.showPanel = options.showPanel === true;
     if (Object.prototype.hasOwnProperty.call(options, 'panelOpacity')) next.panelOpacity = clamp(options.panelOpacity, 0, 1);
     if (Object.prototype.hasOwnProperty.call(options, 'textOutline')) next.textOutline = options.textOutline !== false;
@@ -942,7 +962,7 @@ export class SvgLegendController {
   _createLegendRuntime(config, options = {}) {
     const size = options.size ?? this.helios?.size ?? this.helios?.layers?.size ?? { width: 1, height: 1 };
     return {
-      enabled: config.zoomAwareSizeIn2D !== false,
+      enabled: config.zoomAwareSizeIn2D === true,
       mode: typeof this.helios?.mode === 'function' ? this.helios.mode() : this.helios?.options?.mode,
       projection: options.projection ?? this.helios?.renderer?.camera?.projection ?? null,
       zoom: options.zoom ?? this.helios?.renderer?.camera?.zoom ?? 1,
@@ -1472,8 +1492,8 @@ export class SvgLegendController {
     this._pendingLegendHover = null;
     try {
       pending?.cancel?.();
-    } catch (_) {
-      // ignore cancellation failures
+    } catch (error) {
+      console.warn('SvgLegendController: failed to cancel pending legend hover.', error);
     }
   }
 
@@ -1744,7 +1764,7 @@ export class SvgLegendController {
     const previewScale = Number(item.preview?.scale ?? 1);
     const domainMin = Number(item.domain?.[0] ?? 0);
     const domainMax = Number(item.domain?.[1] ?? 1);
-    const sampleCount = item.box.width >= 116 ? 3 : 2;
+    const sampleCount = item.shape === 'circle' ? 3 : (item.box.width >= 116 ? 3 : 2);
     const samples = scalarSampleValues(item.domain, sampleCount, {
       omitZeroMin: item.shape === 'line',
       readableMinRatio: item.shape === 'line' ? 0.2 : 0,
@@ -1752,56 +1772,87 @@ export class SvgLegendController {
     const rangeSpan = Math.max(1e-9, maxRange - minRange);
     const maxRadius = Math.min(26, (item.box.width - (metrics.paddingX * 2)) * 0.48);
     const minRadius = Math.max(6, maxRadius * 0.28);
-    const radii = samples.map((sample) => {
-      if (samples.length === 1) return maxRadius;
+    const sizeSources = samples.map((sample) => {
       const t = (sample - domainMin) / Math.max(1e-9, domainMax - domainMin || 1);
       const source = minRange + (rangeSpan * t);
-      const apparentDiameter = item.preview
+      return item.preview
         ? Math.max(1, previewBase + previewScale * Math.max(0, source))
-        : null;
-      if (apparentDiameter != null) return clamp(apparentDiameter * 0.5, minRadius, maxRadius);
-      return clamp(minRadius + ((source - minRange) / rangeSpan) * (maxRadius - minRadius), minRadius, maxRadius);
+        : source;
     });
-    const cx = item.box.width * 0.5;
-
+    const sourceMin = Math.min(...sizeSources);
+    const sourceMax = Math.max(...sizeSources);
+    const sourceSpan = Math.max(1e-9, sourceMax - sourceMin);
+    const radii = sizeSources.map((source) => {
+      if (samples.length === 1) return maxRadius;
+      return clamp(minRadius + ((source - sourceMin) / sourceSpan) * (maxRadius - minRadius), minRadius, maxRadius);
+    });
     if (item.shape === 'circle') {
-      const labelMaxY = metrics.paddingY + metrics.scalarBaselineOffset + 8;
-      const visualY = labelMaxY + 16;
-      const baselineY = visualY + Math.max(...radii) + 2;
-      samples
-        .map((sample, index) => ({ sample, radius: radii[index] }))
-        .sort((a, b) => b.radius - a.radius)
-        .forEach(({ radius }) => {
-          const circle = document.createElementNS(SVG_NS, 'circle');
-          circle.setAttribute('cx', `${cx}`);
-          circle.setAttribute('cy', `${baselineY - radius}`);
-          circle.setAttribute('r', `${radius}`);
-          setSvgPaintAttributes(circle, 'fill', 'rgba(24, 28, 36, 0.26)', '#181c24');
-          setSvgPaintAttributes(circle, 'stroke', withAlpha(theme.accentOuter, 0.85), '#ffffff');
-          circle.setAttribute('stroke-width', `${2 * strokeScale}`);
-          group.appendChild(circle);
+      const maxCircleRadius = Math.max(...radii);
+      const availableWidth = Math.max(1, item.box.width - metrics.paddingX * 2);
+      const labelWidth = Math.max(
+        28,
+        ...samples.map((sample) => estimateTextWidthPx(formatNumber(sample), labelFontSize)),
+      );
+      const radiusLimitByWidth = Math.max(8, (availableWidth - labelWidth - 18) * 0.5);
+      const radiusLimitByHeight = Math.max(8, (item.box.height - (metrics.paddingY * 2) - metrics.fontSize - 22) * 0.5);
+      const radiusScale = Math.min(1, radiusLimitByWidth / maxCircleRadius, radiusLimitByHeight / maxCircleRadius);
+      const scaledRadii = radii.map((radius) => Math.max(5, radius * radiusScale));
+      const scaledMaxRadius = Math.max(...scaledRadii);
+      const visualTop = metrics.paddingY + 3;
+      const baselineY = visualTop + (scaledMaxRadius * 2);
+      const circleCx = metrics.paddingX + scaledMaxRadius + 2;
+      const labelX = circleCx + scaledMaxRadius + 14;
+      const entries = samples.map((sample, index) => ({
+        sample,
+        radius: scaledRadii[index],
+        cy: baselineY - scaledRadii[index],
+      }));
+      const drawEntries = [...entries].sort((a, b) => b.radius - a.radius);
+      const labelEntries = [...entries].sort((a, b) => b.radius - a.radius);
+      const labelSlots = entries.length <= 1
+        ? [baselineY - scaledMaxRadius]
+        : entries.map((_, index) => visualTop + labelFontSize * 0.5 + (index * ((scaledMaxRadius * 2 - labelFontSize) / Math.max(1, entries.length - 1))));
+
+      drawEntries.forEach(({ radius, cy }) => {
+        const circle = document.createElementNS(SVG_NS, 'circle');
+        circle.setAttribute('cx', `${circleCx}`);
+        circle.setAttribute('cy', `${cy}`);
+        circle.setAttribute('r', `${radius}`);
+        setSvgPaintAttributes(circle, 'fill', 'rgba(24, 28, 36, 0.26)', '#181c24');
+        setSvgPaintAttributes(circle, 'stroke', withAlpha(theme.accentOuter, 0.85), '#ffffff');
+        circle.setAttribute('stroke-width', `${2 * strokeScale}`);
+        group.appendChild(circle);
+      });
+
+      labelEntries.forEach(({ sample, radius, cy }, index) => {
+        const labelY = labelSlots[index] ?? cy;
+        const connector = document.createElementNS(SVG_NS, 'line');
+        connector.setAttribute('x1', `${circleCx + radius + 3}`);
+        connector.setAttribute('x2', `${labelX - 4}`);
+        connector.setAttribute('y1', `${cy}`);
+        connector.setAttribute('y2', `${labelY}`);
+        setSvgPaintAttributes(connector, 'stroke', withAlpha(theme.text, 0.58), '#ffffff');
+        connector.setAttribute('stroke-width', `${1 * strokeScale}`);
+        connector.setAttribute('stroke-linecap', 'round');
+        group.appendChild(connector);
+
+        this._appendText(group, {
+          x: labelX,
+          y: labelY,
+          lines: [formatNumber(sample)],
+          config,
+          fill: theme.text,
+          outline: theme.textOutline,
+          fontSize: labelFontSize,
+          anchor: 'start',
+          baseline: 'middle',
         });
-      samples
-        .map((sample, index) => ({ sample, radius: radii[index] }))
-        .sort((a, b) => b.radius - a.radius)
-        .forEach(({ sample, radius }) => {
-          this._appendText(group, {
-            x: cx,
-            y: baselineY - (radius * 2) - 8,
-            lines: [formatNumber(sample)],
-            config,
-            fill: theme.text,
-            outline: theme.textOutline,
-            fontSize: labelFontSize,
-            anchor: 'middle',
-            baseline: 'middle',
-          });
-        });
+      });
 
       if (titleText) {
         this._appendText(group, {
-          x: cx,
-          y: baselineY + 18,
+          x: item.box.width * 0.5,
+          y: baselineY + 17,
           lines: [titleText],
           config,
           fill: theme.text,
@@ -1814,6 +1865,7 @@ export class SvgLegendController {
       }
       return;
     }
+    const cx = item.box.width * 0.5;
 
     const lineLength = Math.max(32, Math.min(item.box.width - (metrics.paddingX * 2), metrics.scalarWidth * 0.56));
     const topY = metrics.paddingY + labelFontSize;

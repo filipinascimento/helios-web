@@ -170,6 +170,12 @@ function detailHasStateKeys(detail = {}) {
     || (Array.isArray(detail.stateKeys) && detail.stateKeys.some((key) => typeof key === 'string'));
 }
 
+/**
+ * Central live state graph for Helios defaults, bindings, overrides, and reset status.
+ *
+ * @public
+ * @apiSection Persistence
+ */
 export class HeliosStateManager extends EventTarget {
   constructor(options = {}) {
     super();
@@ -784,6 +790,12 @@ export class HeliosStateManager extends EventTarget {
   }
 }
 
+/**
+ * Helper passed to `HeliosStateManager.transaction()` for grouped state writes.
+ *
+ * @public
+ * @apiSection Persistence
+ */
 export class StateTransaction {
   constructor(manager, options = {}) {
     this.manager = manager;
@@ -810,6 +822,12 @@ export class StateTransaction {
   }
 }
 
+/**
+ * Binding controller that keeps registered state entries synchronized with runtime owners.
+ *
+ * @public
+ * @apiSection Persistence
+ */
 export class StateBindingController {
   constructor(manager) {
     this.manager = manager;

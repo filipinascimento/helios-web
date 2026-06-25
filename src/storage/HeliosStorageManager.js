@@ -247,12 +247,13 @@ function ensureSessionIdInUrl(id, routing) {
     url.searchParams.set(param, id);
     const mode = routing.replace === false ? 'pushState' : 'replaceState';
     history[mode]?.call(history, history.state, '', url);
-  } catch (_) {
-    // URL routing is best-effort in browser hosts.
+  } catch (error) {
+    console.warn('[HeliosStorage] Failed to update session id in the URL.', error);
   }
 }
 
 const DEFAULT_UI_PERSISTENCE_FORWARD_DEBOUNCE_MS = 180;
+const DEFAULT_SESSION_SAVE_WARNING_MS = 10000;
 const DEFAULT_SESSION_THUMBNAIL_MAX_WIDTH = 320;
 const DEFAULT_SESSION_THUMBNAIL_MAX_HEIGHT = 180;
 const DEFAULT_SESSION_THUMBNAIL_MAX_BYTES = 256 * 1024;
@@ -263,6 +264,22 @@ const DEFAULT_AUTOSYNC_POSITION_MAX_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MANUAL_POSITION_MAX_BYTES = Number.MAX_SAFE_INTEGER;
 const SESSION_ID_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
 const DEFAULT_SESSION_ID_LENGTH = 10;
+const WARNING_KEYS_BY_OWNER = new WeakMap();
+
+function warnOnce(owner, key, message, detail = undefined) {
+  if (typeof console === 'undefined' || typeof console.warn !== 'function') return;
+  const target = owner && (typeof owner === 'object' || typeof owner === 'function') ? owner : warnOnce;
+  let keys = WARNING_KEYS_BY_OWNER.get(target);
+  if (!keys) {
+    keys = new Set();
+    WARNING_KEYS_BY_OWNER.set(target, keys);
+  }
+  const normalizedKey = String(key ?? message);
+  if (keys.has(normalizedKey)) return;
+  keys.add(normalizedKey);
+  if (detail === undefined) console.warn(message);
+  else console.warn(message, detail);
+}
 
 function createRandomSessionId(length = DEFAULT_SESSION_ID_LENGTH) {
   const size = Math.max(6, Math.min(32, Math.floor(Number(length) || DEFAULT_SESSION_ID_LENGTH)));
@@ -454,6 +471,12 @@ function mergeCaptureThumbnailMode(previous, next) {
   return next === false || previous === false ? false : undefined;
 }
 
+/**
+ * Low-level session record store used by Helios storage managers.
+ *
+ * @public
+ * @apiSection Persistence
+ */
 export class SessionStore {
   constructor(options = {}) {
     this.store = options.store ?? null;
@@ -485,7 +508,8 @@ export class SessionStore {
     try {
       const parsed = JSON.parse(this.storage.getItem(this.indexKey) || '[]');
       return Array.isArray(parsed) ? parsed.map((id) => String(id)).filter(Boolean) : [];
-    } catch (_) {
+    } catch (error) {
+      console.warn('[HeliosStorage] Failed to read session index; ignoring corrupt index data.', error);
       return [];
     }
   }
@@ -696,6 +720,12 @@ export class SessionStore {
   }
 }
 
+/**
+ * Base storage facade for Helios state snapshots, sessions, and portable network state.
+ *
+ * @public
+ * @apiSection Persistence
+ */
 export class HeliosStorageManager extends EventTarget {
   constructor(options = {}) {
     super();
@@ -709,6 +739,8 @@ export class HeliosStorageManager extends EventTarget {
     this.urlRouting = { enabled: false };
     this.sessionSavedAt = null;
     this.sessionSaveError = null;
+    this.sessionRestoreError = null;
+    this.sessionSaveWarning = null;
     this.networkData = { enabled: this.persistNetwork, status: 'idle', dirty: false, positionsDirty: false, savedAt: null, dirtyAt: null };
     this.capabilities = {
       persistent: options.persistent === true,
@@ -747,6 +779,13 @@ export class HeliosStorageManager extends EventTarget {
     this._interactionAutosaveTimer = null;
     this._pendingInteractionAutosaveOptions = null;
     this._pendingStateOverrideDeltas = new Map();
+    this._sessionSaveInFlight = new Map();
+    this._sessionSaveSequence = 0;
+    this._sessionSaveWarningMs = normalizeNonNegativeMs(
+      options.sessionSaveWarningMs ?? options.session?.saveWarningMs,
+      DEFAULT_SESSION_SAVE_WARNING_MS,
+    );
+    this._lastLoggedSessionSaveError = null;
     this._heliosSessionAutosaveCleanups = [];
     this._sessionThumbnailDirtySinceCapture = false;
     this._lastSessionThumbnailCapturedAt = null;
@@ -1153,8 +1192,43 @@ export class HeliosStorageManager extends EventTarget {
     return reason;
   }
 
+  _blockAutosyncForInvalidExplicitSession(reason = 'session-autosync-blocked') {
+    if (!this.explicitSessionInvalid) return false;
+    const errorMessage = this.sessionRestoreError
+      ?? (this.requestedSessionId
+        ? `Explicit session id "${this.requestedSessionId}" was not found.`
+        : 'Explicit session id was not found.');
+    if (this._sessionAutosaveTimer) {
+      clearTimeout(this._sessionAutosaveTimer);
+      this._sessionAutosaveTimer = null;
+    }
+    this._sessionAutosaveOptions = null;
+    const alreadyBlocked = this.networkData?.status === 'error'
+      && this.networkData?.remoteWarning === errorMessage
+      && this.networkData?.dirty === true;
+    this.networkData = {
+      ...this.networkData,
+      enabled: true,
+      status: 'error',
+      dirty: true,
+      dirtyAt: this.networkData?.dirtyAt ?? this._now(),
+      remoteWarning: errorMessage,
+      restoreError: errorMessage,
+    };
+    if (!alreadyBlocked) {
+      this._emit('change', {
+        reason,
+        sessionId: this.sessionId,
+        error: errorMessage,
+        status: this.persistenceStatus(),
+      });
+    }
+    return true;
+  }
+
   _scheduleSessionAutosave(options = {}) {
     if (!this.capabilities.sessions || !this.sessionId || !this.sessionStore) return;
+    if (options.autosync !== false && this._blockAutosyncForInvalidExplicitSession()) return;
     this._markSessionThumbnailDirty();
     const pending = this._sessionAutosaveOptions ?? {};
     const nextOptions = {
@@ -1289,6 +1363,168 @@ export class HeliosStorageManager extends EventTarget {
     for (const [key, delta] of deltas ?? []) {
       this._pendingStateOverrideDeltas.set(key, delta);
     }
+  }
+
+  _sessionErrorMessage(error) {
+    if (error == null) return 'Unknown storage error';
+    if (typeof error === 'string') return error;
+    return error.message ?? String(error);
+  }
+
+  _recordSessionRestoreFailure(message, detail = {}) {
+    const errorMessage = this._sessionErrorMessage(message);
+    this.sessionRestoreError = errorMessage;
+    this.networkData = {
+      ...this.networkData,
+      status: 'error',
+      remoteWarning: errorMessage,
+      restoreError: errorMessage,
+    };
+    this._emit('change', {
+      reason: detail.reason ?? 'session-restore-error',
+      sessionId: detail.sessionId ?? this.sessionId ?? null,
+      error: errorMessage,
+      status: this.persistenceStatus(),
+    });
+    console.error('[HeliosStorage] Session restore failed', {
+      error: errorMessage,
+      sessionId: detail.sessionId ?? this.sessionId ?? null,
+    });
+    return errorMessage;
+  }
+
+  _beginSessionSave(options = {}) {
+    const id = ++this._sessionSaveSequence;
+    const startedAt = this._now();
+    const entry = {
+      id,
+      startedAt,
+      reason: options.reason ?? null,
+      autosync: options.autosync === true,
+      includeNetwork: options.includeNetwork === true,
+      includePositions: options.includePositions === true,
+      warningTimer: null,
+    };
+    this._sessionSaveInFlight.set(id, entry);
+    this.sessionSaveWarning = null;
+    this.networkData = {
+      ...this.networkData,
+      enabled: true,
+      status: 'syncing',
+      syncing: true,
+      syncStartedAt: startedAt,
+      remoteWarning: null,
+    };
+    this._emit('change', {
+      reason: 'session-save-start',
+      sessionId: this.sessionId,
+      save: { ...entry, warningTimer: undefined },
+      status: this.persistenceStatus(),
+    });
+    if (this._sessionSaveWarningMs > 0) {
+      entry.warningTimer = setTimeout(() => {
+        if (!this._sessionSaveInFlight.has(id)) return;
+        const elapsedMs = Math.max(0, this._now() - startedAt);
+        this.sessionSaveWarning = `Session sync is still running after ${Math.round(elapsedMs / 1000)}s.`;
+        console.warn('[HeliosStorage] Session sync is taking longer than expected', {
+          sessionId: this.sessionId,
+          reason: entry.reason,
+          autosync: entry.autosync,
+          elapsedMs,
+        });
+        this._emit('change', {
+          reason: 'session-save-warning',
+          sessionId: this.sessionId,
+          warning: this.sessionSaveWarning,
+          elapsedMs,
+          status: this.persistenceStatus(),
+        });
+      }, this._sessionSaveWarningMs);
+    }
+    return id;
+  }
+
+  _finishSessionSave(id, error = null) {
+    const entry = this._sessionSaveInFlight.get(id) ?? null;
+    if (entry?.warningTimer) clearTimeout(entry.warningTimer);
+    this._sessionSaveInFlight.delete(id);
+    const errorMessage = error ? this._sessionErrorMessage(error) : null;
+    if (errorMessage) {
+      this.sessionSaveError = errorMessage;
+      this.sessionSaveWarning = null;
+      this.networkData = {
+        ...this.networkData,
+        status: 'error',
+        syncing: false,
+        remoteWarning: errorMessage,
+      };
+      const logKey = `${this.sessionId ?? ''}:${errorMessage}`;
+      if (this._lastLoggedSessionSaveError !== logKey) {
+        this._lastLoggedSessionSaveError = logKey;
+        console.error('[HeliosStorage] Session sync failed', {
+          error,
+          sessionId: this.sessionId,
+          reason: entry?.reason ?? null,
+          autosync: entry?.autosync === true,
+        });
+      }
+      this._emit('change', {
+        reason: 'session-save-error',
+        sessionId: this.sessionId,
+        error: errorMessage,
+        status: this.persistenceStatus(),
+      });
+      return;
+    }
+    if (this._sessionSaveInFlight.size === 0) {
+      this.sessionSaveWarning = null;
+      this.networkData = {
+        ...this.networkData,
+        syncing: false,
+      };
+    }
+  }
+
+  async _withSessionSaveTracking(operation, options = {}) {
+    const id = this._beginSessionSave(options);
+    try {
+      const result = await operation();
+      this._finishSessionSave(id);
+      return result;
+    } catch (error) {
+      this._finishSessionSave(id, error);
+      throw error;
+    }
+  }
+
+  pendingStateChangeCount() {
+    return this._pendingStateOverrideDeltas?.size ?? 0;
+  }
+
+  hasPendingStateChanges() {
+    return this.pendingStateChangeCount() > 0;
+  }
+
+  acknowledgeSavedSnapshot(reason = 'save-acknowledged', options = {}) {
+    if (options.state !== false) this._pendingStateOverrideDeltas.clear();
+    const now = this._now();
+    const clearNetwork = options.network !== false;
+    const clearPositions = options.positions !== false;
+    const positionsDirty = clearPositions ? false : this.networkData?.positionsDirty === true;
+    const dirty = clearNetwork && clearPositions
+      ? false
+      : (this.networkData?.dirty === true || positionsDirty === true);
+    this.networkData = {
+      ...this.networkData,
+      status: dirty ? 'dirty' : 'saved',
+      dirty,
+      positionsDirty,
+      savedAt: now,
+      dirtyAt: dirty ? (this.networkData?.dirtyAt ?? now) : null,
+      reason,
+    };
+    this._emit('change', { reason, status: this.persistenceStatus() });
+    return this.persistenceStatus();
   }
 
   _snapshotLiveSessionRuntime(options = {}) {
@@ -1444,15 +1680,21 @@ export class HeliosStorageManager extends EventTarget {
     });
     this.sessionSavedAt = envelopeUpdatedAt(next) ?? now;
     this.sessionSaveError = null;
+    this.sessionRestoreError = null;
+    this.sessionSaveWarning = null;
     const positionsStillDirty = this.networkData?.positionsDirty === true;
+    const previousNetworkSavedAt = this.networkData?.savedAt ?? null;
     this.networkData = {
       ...this.networkData,
       enabled: true,
       status: positionsStillDirty ? 'dirty' : 'saved',
       dirty: positionsStillDirty,
       dirtyAt: positionsStillDirty ? (this.networkData?.dirtyAt ?? now) : null,
-      savedAt: this.sessionSavedAt,
+      savedAt: positionsStillDirty ? previousNetworkSavedAt : this.sessionSavedAt,
       format: payload.networkData?.format ?? this.networkData.format ?? null,
+      remoteWarning: null,
+      restoreError: null,
+      syncing: false,
     };
     await this.setUnfinishedSessionId(next.payload?.session?.unfinished === false ? null : id);
     this._emit('change', { reason: 'session-state-delta-save', sessionId: id, status: this.persistenceStatus() });
@@ -1463,6 +1705,7 @@ export class HeliosStorageManager extends EventTarget {
     this._sessionAutosaveTimer = null;
     const flushOptions = this._sessionAutosaveOptions ?? options;
     this._sessionAutosaveOptions = null;
+    if (flushOptions.autosync !== false && this._blockAutosyncForInvalidExplicitSession()) return;
     const deferDelay = this._sessionAutosaveDeferDelay(flushOptions);
     if (deferDelay > 0) {
       this._sessionAutosaveOptions = flushOptions;
@@ -1480,13 +1723,13 @@ export class HeliosStorageManager extends EventTarget {
       && flushOptions.includePositions !== true
       && flushOptions.snapshotLayoutRuntime !== true;
     const savePromise = canWriteIncrementalState
-      ? this._saveIncrementalSessionState({
+      ? this._withSessionSaveTracking(() => this._saveIncrementalSessionState({
         id: this.sessionId,
         reason: flushOptions.reason ?? 'storage-autosave',
         captureThumbnail: flushOptions.captureThumbnail === true
           ? true
           : (flushOptions.captureThumbnail === 'auto' ? 'auto' : false),
-      }, stateDeltas)
+      }, stateDeltas), flushOptions)
       : this.saveSession({
       id: this.sessionId,
       reason: flushOptions.reason ?? 'storage-autosave',
@@ -1503,9 +1746,8 @@ export class HeliosStorageManager extends EventTarget {
     });
     savePromise.catch((error) => {
       if (canWriteIncrementalState) this._restorePendingStateOverrideDeltas(stateDeltas);
-      this.sessionSaveError = error?.message ?? String(error);
-      this.networkData = { ...this.networkData, status: 'error', remoteWarning: this.sessionSaveError };
-      this._emit('change', { reason: 'session-autosave-error', error: this.sessionSaveError });
+      const errorMessage = this._sessionErrorMessage(error);
+      this._emit('change', { reason: 'session-autosave-error', error: errorMessage, status: this.persistenceStatus() });
     });
   }
 
@@ -1559,16 +1801,26 @@ export class HeliosStorageManager extends EventTarget {
           const unsubscribe = helios.on(type, schedule);
           if (typeof unsubscribe === 'function') this._heliosSessionAutosaveCleanups.push(unsubscribe);
           continue;
-        } catch {
-          // Unit-test doubles may inherit Helios.prototype without EventTarget initialization.
+        } catch (error) {
+          warnOnce(
+            this,
+            `autosave-listener:on:${type}`,
+            `[HeliosStorage] Failed to subscribe to "${type}" through helios.on; trying addEventListener fallback.`,
+            { error },
+          );
         }
       }
       if (typeof helios.addEventListener === 'function') {
         try {
           helios.addEventListener(type, schedule);
           this._heliosSessionAutosaveCleanups.push(() => helios.removeEventListener(type, schedule));
-        } catch {
-          // Ignore non-live EventTarget test doubles.
+        } catch (error) {
+          warnOnce(
+            this,
+            `autosave-listener:addEventListener:${type}`,
+            `[HeliosStorage] Failed to subscribe to "${type}" autosave events.`,
+            { error },
+          );
         }
       }
     }
@@ -1588,6 +1840,11 @@ export class HeliosStorageManager extends EventTarget {
   }
 
   persistenceStatus() {
+    const syncing = this._sessionSaveInFlight.size > 0;
+    const oldestSave = syncing
+      ? Array.from(this._sessionSaveInFlight.values()).sort((a, b) => a.startedAt - b.startedAt)[0]
+      : null;
+    const lastError = this.sessionSaveError ?? this.sessionRestoreError ?? null;
     return {
       type: this.type,
       capabilities: { ...this.capabilities },
@@ -1597,12 +1854,23 @@ export class HeliosStorageManager extends EventTarget {
       explicitSessionInvalid: this.explicitSessionInvalid,
       overrideCount: this.states.overrideKeys().length,
       dirtyState: this.states.dirtyState(),
-      networkData: cloneSerializable(this.networkData),
+      syncing,
+      lastError,
+      lastWarning: this.sessionSaveWarning,
+      networkData: cloneSerializable({
+        ...this.networkData,
+        status: syncing ? 'syncing' : this.networkData.status,
+        syncing,
+        syncWarning: this.sessionSaveWarning,
+      }),
       sessionSync: {
-        status: this.sessionSaveError ? 'error' : (this.sessionSavedAt ? 'saved' : 'idle'),
+        status: syncing ? 'syncing' : (lastError ? 'error' : (this.sessionSavedAt ? 'saved' : 'idle')),
         savedAt: this.sessionSavedAt,
-        error: this.sessionSaveError,
-        pending: false,
+        error: lastError,
+        warning: this.sessionSaveWarning,
+        pending: syncing,
+        startedAt: oldestSave?.startedAt ?? null,
+        reason: oldestSave?.reason ?? null,
       },
     };
   }
@@ -1660,8 +1928,13 @@ export class HeliosStorageManager extends EventTarget {
       if (typeof helios[method] === 'function') {
         try {
           if (helios[method]() === true) return true;
-        } catch (_) {
-          // Ignore optional host probes that are not available in test doubles.
+        } catch (error) {
+          warnOnce(
+            this,
+            `interaction-probe:${method}`,
+            `[HeliosStorage] Interaction probe "${method}" failed; treating it as inactive.`,
+            { error },
+          );
         }
       }
     }
@@ -1996,19 +2269,29 @@ export class HeliosStorageManager extends EventTarget {
     await this.sessionStore?.put?.(envelope);
     this.sessionSavedAt = envelopeUpdatedAt(envelope) ?? Date.now();
     this.sessionSaveError = null;
+    this.sessionRestoreError = null;
+    this.sessionSaveWarning = null;
     const savedPositions = envelope._heliosSavedPositionData === true
       || (Object.prototype.hasOwnProperty.call(options, 'positionData') && options.positionData != null)
       || (options.includeNetwork !== false && options.includeCurrentPositions !== false);
     const positionsStillDirty = this.networkData?.positionsDirty === true && !savedPositions;
+    const networkStillDirty = this.networkData?.dirty === true
+      && this.networkData?.positionsDirty !== true
+      && options.includeNetwork === false;
+    const dirtyAfterSave = networkStillDirty || positionsStillDirty;
+    const previousNetworkSavedAt = this.networkData?.savedAt ?? null;
     this.networkData = {
       ...this.networkData,
       enabled: true,
-      status: positionsStillDirty ? 'dirty' : 'saved',
-      dirty: positionsStillDirty,
+      status: dirtyAfterSave ? 'dirty' : 'saved',
+      dirty: dirtyAfterSave,
       positionsDirty: positionsStillDirty,
-      dirtyAt: positionsStillDirty ? (this.networkData?.dirtyAt ?? this._now()) : null,
-      savedAt: this.sessionSavedAt,
+      dirtyAt: dirtyAfterSave ? (this.networkData?.dirtyAt ?? this._now()) : null,
+      savedAt: dirtyAfterSave ? previousNetworkSavedAt : this.sessionSavedAt,
       format: envelope.payload?.networkData?.format ?? this.networkData.format ?? null,
+      remoteWarning: null,
+      restoreError: null,
+      syncing: false,
     };
     const shouldActivate = options.activate === true || (this.sessionId != null && String(id) === String(this.sessionId));
     if (shouldActivate) {
@@ -2072,6 +2355,8 @@ export class HeliosStorageManager extends EventTarget {
     this.explicitSessionInvalid = false;
     this.sessionSavedAt = Number(payload.session.updatedAt) || Date.now();
     this.sessionSaveError = null;
+    this.sessionRestoreError = null;
+    this.sessionSaveWarning = null;
     this.networkData = {
       ...this.networkData,
       enabled: true,
@@ -2081,6 +2366,9 @@ export class HeliosStorageManager extends EventTarget {
       dirtyAt: null,
       savedAt: this.sessionSavedAt,
       format: payload.networkData?.format ?? this.networkData.format ?? null,
+      remoteWarning: null,
+      restoreError: null,
+      syncing: false,
     };
     const restoredAutosyncSkip = this._autosyncSizeLimitSkip({
       autosync: true,
@@ -2206,17 +2494,26 @@ export class HeliosStorageManager extends EventTarget {
     });
   }
 
-  async loadSession(sessionId = this.sessionId) {
+  async loadSession(sessionId = this.sessionId, options = {}) {
     if (!this.capabilities.sessions || !sessionId) return null;
     const record = await this.sessionStore?.get?.(sessionId);
     if (!record) {
-      if (this.requestedSessionId != null && String(sessionId) === String(this.requestedSessionId)) {
+      const requested = this.requestedSessionId != null && String(sessionId) === String(this.requestedSessionId);
+      const missingIsError = options.missingIsError !== false;
+      if (requested && missingIsError) {
         this.explicitSessionInvalid = true;
-        console.warn(`[HeliosStorage] Explicit session id "${sessionId}" was not found.`);
+        this._recordSessionRestoreFailure(`Explicit session id "${sessionId}" was not found.`, {
+          sessionId,
+          reason: 'explicit-session-missing',
+        });
+      } else if (requested) {
+        this.explicitSessionInvalid = false;
+        this.sessionRestoreError = null;
       }
       return null;
     }
     this.explicitSessionInvalid = false;
+    this.sessionRestoreError = null;
     this.sessionId = String(sessionId);
     const restored = await this.restoreSessionSnapshot(record, { replaceUrlSession: true });
     if (this.requestedSessionId != null && String(sessionId) === String(this.requestedSessionId)) {
@@ -2279,8 +2576,12 @@ export class HeliosStorageManager extends EventTarget {
       return null;
     }
     if (this.requestedSessionId && this.sessionStore) {
-      const restored = await this.loadSession(this.requestedSessionId);
+      const canCreateInitialSession = options.saveInitialManifest !== false;
+      const restored = await this.loadSession(this.requestedSessionId, {
+        missingIsError: !canCreateInitialSession,
+      });
       if (restored) return restored;
+      if (this.explicitSessionInvalid) return null;
       if (options.saveInitialManifest !== false) {
         return this.saveSession({
           ...options,
@@ -2308,11 +2609,9 @@ export class HeliosStorageManager extends EventTarget {
     if (!this.capabilities.sessions) return null;
     const previousId = this.sessionId ?? null;
     if (options.flushPrevious !== false && previousId) {
-      await this.flush({
-        includeNetwork: options.includePreviousNetwork !== false,
-        retention: options.preservePreviousRetention === false ? undefined : { enabled: false },
-      }).catch((error) => {
-        console.warn('Helios: failed to flush previous storage session before starting a new session.', error);
+      await this.flushPreviousSessionForSwitch({
+        ...options,
+        reason: options.previousFlushReason ?? options.reason ?? 'session-switch',
       });
     }
     const id = typeof options.id === 'string' && options.id.trim() ? options.id.trim() : String(this.idFactory());
@@ -2325,13 +2624,15 @@ export class HeliosStorageManager extends EventTarget {
       replace: options.replaceUrlSession !== false,
     });
     await this.setUnfinishedSessionId(id);
-    await this.saveSession({
-      ...options,
-      id,
-      nickname,
-      activate: true,
-      networkFormat: options.networkFormat ?? options.networkPersistence?.format,
-    });
+    if (options.saveInitialSession !== false) {
+      await this.saveSession({
+        ...options,
+        id,
+        nickname,
+        activate: true,
+        networkFormat: options.networkFormat ?? options.networkPersistence?.format,
+      });
+    }
     return {
       id,
       previousId,
@@ -2340,13 +2641,63 @@ export class HeliosStorageManager extends EventTarget {
     };
   }
 
+  async flushPreviousSessionForSwitch(options = {}) {
+    if (!this.capabilities.sessions || !this.sessionId) {
+      return { flushed: false, skipped: true, reason: 'no-active-session' };
+    }
+    const previousId = this.sessionId;
+    try {
+      const result = await this.flush({
+        ...options,
+        id: previousId,
+        reason: options.reason ?? 'session-switch',
+        includeNetwork: options.includePreviousNetwork !== false,
+        includePositions: options.includePreviousPositions !== false,
+        snapshotLayoutRuntime: options.snapshotPreviousLayoutRuntime !== false,
+        captureThumbnail: Object.prototype.hasOwnProperty.call(options, 'capturePreviousThumbnail')
+          ? options.capturePreviousThumbnail
+          : 'auto',
+        retention: options.preservePreviousRetention === false ? undefined : { enabled: false },
+        usePendingAutosaveOptions: true,
+      });
+      return { flushed: true, previousId, result };
+    } catch (error) {
+      const detail = {
+        error,
+        previousId,
+        status: this.persistenceStatus(),
+        reason: options.reason ?? 'session-switch',
+      };
+      let confirmed = options.continueOnFlushError === true
+        || options.discardPreviousUnsynced === true
+        || options.confirmedDiscardPrevious === true;
+      if (!confirmed && typeof options.confirmUnsyncedSession === 'function') {
+        confirmed = await options.confirmUnsyncedSession(detail) === true;
+      }
+      if (confirmed) {
+        console.warn('Helios: continuing with new session after previous session failed to sync.', {
+          previousId,
+          error,
+        });
+        return { flushed: false, discarded: true, previousId, error };
+      }
+      const wrapped = new Error(
+        `Cannot start a new Helios session because the current session "${previousId}" could not be synced.`,
+        { cause: error },
+      );
+      wrapped.code = 'HELIOS_SESSION_SWITCH_SYNC_FAILED';
+      wrapped.previousSessionId = previousId;
+      throw wrapped;
+    }
+  }
+
   async saveSession(options = {}) {
     if (!this.capabilities.sessions) return null;
     const saveOptions = {
       ...options,
       fullVisualizationState: options.fullVisualizationState === true,
     };
-    const saved = await this.saveSessionSnapshot(saveOptions);
+    const saved = await this._withSessionSaveTracking(() => this.saveSessionSnapshot(saveOptions), saveOptions);
     if (saved) {
       this._recordPersistenceChange('session-save', {
         id: envelopeSessionId(saved) ?? options.id ?? this.sessionId ?? null,
@@ -2508,10 +2859,10 @@ export class HeliosStorageManager extends EventTarget {
       && saveOptions.snapshotLayoutRuntime !== true
     ) {
       try {
-        return await this._saveIncrementalSessionState({
+        return await this._withSessionSaveTracking(() => this._saveIncrementalSessionState({
           ...saveOptions,
           id: saveOptions.id ?? this.sessionId ?? undefined,
-        }, stateDeltas);
+        }, stateDeltas), saveOptions);
       } catch (error) {
         this._restorePendingStateOverrideDeltas(stateDeltas);
         throw error;
@@ -2567,6 +2918,12 @@ export class HeliosStorageManager extends EventTarget {
   }
 }
 
+/**
+ * In-memory storage facade used when durable persistence is disabled.
+ *
+ * @public
+ * @apiSection Persistence
+ */
 export class DummyStorageManager extends HeliosStorageManager {
   constructor(options = {}) {
     super({
@@ -2580,6 +2937,12 @@ export class DummyStorageManager extends HeliosStorageManager {
   }
 }
 
+/**
+ * Browser storage manager backed by IndexedDB and Web Storage fallbacks.
+ *
+ * @public
+ * @apiSection Persistence
+ */
 export class BrowserStorageManager extends HeliosStorageManager {
   constructor(options = {}) {
     const indexedDBFactory = options.sessions?.indexedDB ?? options.indexedDB ?? globalThis.indexedDB ?? null;
@@ -2601,6 +2964,12 @@ export class BrowserStorageManager extends HeliosStorageManager {
   }
 }
 
+/**
+ * Storage manager that delegates session records to a host-provided client.
+ *
+ * @public
+ * @apiSection Persistence
+ */
 export class RemoteStorageManager extends HeliosStorageManager {
   constructor(options = {}) {
     const client = options.client ?? {};
@@ -2627,6 +2996,12 @@ export class RemoteStorageManager extends HeliosStorageManager {
   }
 }
 
+/**
+ * Create the storage manager selected by a Helios `storage` constructor option.
+ *
+ * @public
+ * @apiSection Persistence
+ */
 export function createHeliosStorageManager(config = undefined, context = {}) {
   if (
     config

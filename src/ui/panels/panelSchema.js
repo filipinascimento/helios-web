@@ -24,6 +24,13 @@ const LABEL_ACRONYMS = Object.freeze({
   webgpu: 'WebGPU',
 });
 
+/**
+ * Convert a state key or control identifier into a display label.
+ *
+ * @public
+ * @param {string} value - State key, control id, or raw label value.
+ * @returns {string} Human-readable control label.
+ */
 export function humanizeControlLabel(value) {
   const raw = String(value ?? '').trim();
   if (!raw) return '';
@@ -74,6 +81,14 @@ function collectItemKeys(item, keys = []) {
   return keys;
 }
 
+/**
+ * Resolve the display label for a panel schema item.
+ *
+ * @public
+ * @param {string|object} item - Panel schema item descriptor.
+ * @param {HeliosStateManager|null} [stateManager] - Optional state manager for state entry labels.
+ * @returns {string} Display label for the item.
+ */
 export function resolvePanelItemLabel(item, stateManager = null) {
   const itemLabel = normalizeLabel(typeof item === 'object' && item ? item.label : null);
   if (itemLabel) return itemLabel;
@@ -87,6 +102,13 @@ export function resolvePanelItemLabel(item, stateManager = null) {
   return humanizeControlLabel(fallback);
 }
 
+/**
+ * Normalize a panel schema into the canonical shape used by Helios UI panels.
+ *
+ * @public
+ * @param {object} [schema] - Partial panel schema.
+ * @returns {object} Normalized panel schema.
+ */
 export function normalizePanelSchema(schema = {}) {
   const sections = Array.isArray(schema.sections) ? schema.sections : [];
   return {
@@ -101,6 +123,13 @@ export function normalizePanelSchema(schema = {}) {
   };
 }
 
+/**
+ * Return all state keys referenced by a panel schema.
+ *
+ * @public
+ * @param {object} [schema] - Panel schema to inspect.
+ * @returns {string[]} Unique state keys referenced by the schema.
+ */
 export function panelSchemaKeys(schema = {}) {
   const normalized = normalizePanelSchema(schema);
   const keys = [];
@@ -110,6 +139,14 @@ export function panelSchemaKeys(schema = {}) {
   return Array.from(new Set(keys));
 }
 
+/**
+ * Compute the dirty status for a full panel schema.
+ *
+ * @public
+ * @param {object} [schema] - Panel schema to inspect.
+ * @param {HeliosStateManager|null} [stateManager] - State manager that tracks override status.
+ * @returns {object} Panel-level and section-level status values.
+ */
 export function panelSchemaStatus(schema = {}, stateManager = null) {
   const normalized = normalizePanelSchema(schema);
   const sectionStatuses = {};
@@ -139,6 +176,14 @@ export function panelSchemaStatus(schema = {}, stateManager = null) {
   };
 }
 
+/**
+ * Return all state keys referenced by one panel schema section.
+ *
+ * @public
+ * @param {object} [schema] - Panel schema to inspect.
+ * @param {string} [sectionId] - Section id to inspect.
+ * @returns {string[]} Unique state keys referenced by the section.
+ */
 export function panelSchemaSectionKeys(schema = {}, sectionId = '') {
   const normalized = normalizePanelSchema(schema);
   const id = normalizeKey(sectionId);
@@ -149,12 +194,32 @@ export function panelSchemaSectionKeys(schema = {}, sectionId = '') {
   return Array.from(new Set(keys));
 }
 
+/**
+ * Compute the dirty status for one panel schema section.
+ *
+ * @public
+ * @param {object} [schema] - Panel schema to inspect.
+ * @param {string} [sectionId] - Section id to inspect.
+ * @param {HeliosStateManager|null} [stateManager] - State manager that tracks override status.
+ * @returns {string} Section status: `default`, `partial`, or `changed`.
+ */
 export function panelSchemaSectionStatus(schema = {}, sectionId = '', stateManager = null) {
   const statuses = panelSchemaStatus(schema, stateManager);
   const id = normalizeKey(sectionId);
   return statuses.sections[id] ?? 'default';
 }
 
+/**
+ * Create a DOM indicator that reflects dirty status for a panel schema.
+ *
+ * @public
+ * @param {object} [options] - Indicator options.
+ * @param {Helios} [options.helios] - Helios instance whose state manager is observed.
+ * @param {object} [options.schema] - Panel schema to observe.
+ * @param {string|null} [options.sectionId] - Optional section id to observe.
+ * @param {Function|null} [options.attachTooltip] - Optional tooltip hook.
+ * @returns {HTMLElement} Indicator element with a `destroy()` cleanup method.
+ */
 export function createPanelSchemaIndicator({
   helios,
   schema,
@@ -197,6 +262,11 @@ export function createPanelSchemaIndicator({
   return indicator;
 }
 
+/**
+ * Built-in state schema for the Scene panel.
+ *
+ * @public
+ */
 export const SCENE_PANEL_SCHEMA = Object.freeze({
   id: 'scene',
   title: 'Scene',
@@ -290,6 +360,11 @@ export const SCENE_PANEL_SCHEMA = Object.freeze({
   ],
 });
 
+/**
+ * Built-in state schema for the Labels panel.
+ *
+ * @public
+ */
 export const LABELS_PANEL_SCHEMA = Object.freeze({
   id: 'labels',
   title: 'Labels',
@@ -331,6 +406,11 @@ export const LABELS_PANEL_SCHEMA = Object.freeze({
   ],
 });
 
+/**
+ * Built-in state schema for the Legends panel.
+ *
+ * @public
+ */
 export const LEGENDS_PANEL_SCHEMA = Object.freeze({
   id: 'legends',
   title: 'Legends',
@@ -370,6 +450,11 @@ export const LEGENDS_PANEL_SCHEMA = Object.freeze({
   ],
 });
 
+/**
+ * Built-in state schema for the Mappers panel.
+ *
+ * @public
+ */
 export const MAPPERS_PANEL_SCHEMA = Object.freeze({
   id: 'mappers',
   title: 'Mappers',
@@ -401,6 +486,11 @@ export const MAPPERS_PANEL_SCHEMA = Object.freeze({
   ],
 });
 
+/**
+ * Built-in state schema for the Filters panel.
+ *
+ * @public
+ */
 export const FILTERS_PANEL_SCHEMA = Object.freeze({
   id: 'filters',
   title: 'Filters',
@@ -432,6 +522,11 @@ export const FILTERS_PANEL_SCHEMA = Object.freeze({
   ],
 });
 
+/**
+ * Built-in state schema for the Layout panel.
+ *
+ * @public
+ */
 export const LAYOUT_PANEL_SCHEMA = Object.freeze({
   id: 'layout',
   title: 'Layout',
@@ -442,7 +537,6 @@ export const LAYOUT_PANEL_SCHEMA = Object.freeze({
       title: 'Runtime',
       items: [
         'layout.layoutType',
-        'layout.positionAttribute',
         'layout.running',
       ],
     },
@@ -456,6 +550,11 @@ export const LAYOUT_PANEL_SCHEMA = Object.freeze({
   ],
 });
 
+/**
+ * Built-in state schema for the Selection panel.
+ *
+ * @public
+ */
 export const SELECTION_PANEL_SCHEMA = Object.freeze({
   id: 'selection',
   title: 'Selection',

@@ -311,7 +311,7 @@ Table 1 lists current defaults from the implementation.
 | `maxStep` | `2.5` | Velocity magnitude cap before `dtScale`. |
 | `minDistance` | `0.15` | Distance floor preventing singular forces. |
 | `alpha` | `1` | Initial cooling multiplier. |
-| `alphaDecay` | `0.005` | Per-tick decay toward `alphaTarget`. |
+| `alphaDecay` | `0.001` | Per-tick decay toward `alphaTarget`. |
 | `alphaTarget` | `0` | Cooling asymptote. |
 | `alphaMin` | `0.001` | Lower bound on cooling factor. |
 | `resetAlphaOnTopologyChange` | `true` | Resets alpha to initial value after topology rebuild. |

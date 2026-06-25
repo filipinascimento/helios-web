@@ -409,7 +409,8 @@ export class InterfaceBehavior extends Behavior {
     }
     try {
       return await storage.updatePreferences(patch);
-    } catch {
+    } catch (error) {
+      console.warn('Helios interface preferences failed to persist.', error);
       return null;
     }
   }

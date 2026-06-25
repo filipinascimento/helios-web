@@ -14,17 +14,17 @@ test.describe('docs basic demo mappers', () => {
     const panel = page.locator('.helios-ui-panel[data-panel-id="helios-ui-mappers"]').first();
     await expect(panel).toBeVisible();
 
-    const typeValue = await panel.locator('select').evaluateAll((selects) => {
-      const isTypeSelect = (sel) => {
-        const options = Array.from(sel.options ?? []);
-        const hasPassthrough = options.some((opt) => opt.textContent === 'Passthrough');
-        const hasColormap = options.some((opt) => opt.textContent === 'Colormap');
-        return hasPassthrough && hasColormap;
-      };
-      const typeSelect = selects.find(isTypeSelect) ?? null;
-      return typeSelect ? typeSelect.value : null;
+    const typeRow = panel.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: /^Type$/ }),
+    }).first();
+    const typeSelect = typeRow.locator('select.helios-ui-select').first();
+    await expect(typeSelect).toBeVisible();
+    await expect(typeSelect).toHaveValue('colormap');
+
+    const typeOptions = await typeSelect.evaluate((sel) => {
+      return Array.from(sel.options ?? []).map((opt) => (opt.textContent ?? '').trim());
     });
-    expect(typeValue).toBe('colormap');
+    expect(typeOptions).toEqual(['Colormap']);
   });
 
   test('node color mapper shows a numeric domain histogram', async ({ page }) => {

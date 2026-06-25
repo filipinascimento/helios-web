@@ -67,7 +67,7 @@ export class FilterBehavior extends Behavior {
     }));
     this.addCleanup(this.context.subscribe(this.context?.helios, 'network:replaced', () => {
       this.syncFromHelios({ preferActiveModel: true, silent: true });
-      this.emitChange('network-replaced');
+      this.emitChange('network-replaced', { source: 'refresh', trackOverride: false });
     }));
     return this;
   }
@@ -168,7 +168,7 @@ export class FilterBehavior extends Behavior {
       rules: filter.rules ?? [],
     });
     this.setFilterModel(restored, { reason: 'restore', trackOverride: false });
-    this.emitChange('restore');
+    this.emitChange('restore', { source: 'restore', trackOverride: false });
     return this;
   }
 

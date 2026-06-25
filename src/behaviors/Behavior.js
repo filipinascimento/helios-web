@@ -50,8 +50,8 @@ export class Behavior extends EventTarget {
     for (const cleanup of this._cleanups) {
       try {
         cleanup?.();
-      } catch (_) {
-        // Ignore cleanup failures so detach remains best-effort.
+      } catch (error) {
+        console.warn(`Helios behavior "${this.id ?? this.constructor.name}" cleanup failed during detach.`, error);
       }
     }
     this._cleanups.clear();

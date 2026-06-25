@@ -741,7 +741,7 @@ test('BrowserStorageManager can save and silently load a valid explicit session 
   }
 });
 
-test('BrowserStorageManager warns for an invalid explicit session id and still exposes resumable sessions', async () => {
+test('BrowserStorageManager reports invalid explicit session ids as sync errors and still exposes resumable sessions', async () => {
   const backing = createMemoryStorage();
   const saved = new BrowserStorageManager({
     indexedDB: false,
@@ -753,9 +753,9 @@ test('BrowserStorageManager warns for an invalid explicit session id and still e
     nickname: 'Available',
   });
 
-  const warnings = [];
-  const originalWarn = console.warn;
-  console.warn = (...args) => warnings.push(args.join(' '));
+  const errors = [];
+  const originalError = console.error;
+  console.error = (...args) => errors.push(args);
   try {
     const storage = new BrowserStorageManager({
       indexedDB: false,
@@ -764,14 +764,251 @@ test('BrowserStorageManager warns for an invalid explicit session id and still e
     });
     await storage.ready;
     assert.equal(storage.explicitSessionInvalid, true);
-    assert.match(warnings.join('\n'), /missing-session/);
+    const status = storage.status();
+    assert.equal(status.networkData.status, 'error');
+    assert.equal(status.sessionSync.status, 'error');
+    assert.match(status.lastError, /missing-session/);
+    assert.match(status.sessionSync.error, /missing-session/);
+    assert.match(JSON.stringify(errors), /missing-session/);
     assert.deepEqual(
       (await storage.getResumeSessions()).map((entry) => entry.id),
       ['available-session'],
     );
+    storage.markNetworkDirty('test-network-change');
+    await wait(800);
+    assert.equal(await storage.getSession('missing-session'), null);
+    assert.equal(storage.status().networkData.status, 'error');
+    assert.match(storage.status().lastError, /missing-session/);
   } finally {
+    console.error = originalError;
+  }
+});
+
+test('BrowserStorageManager exposes pending session sync state until store writes finish', async () => {
+  const records = new Map();
+  let resolvePut = null;
+  let putStarted = false;
+  const store = {
+    async put(record) {
+      putStarted = true;
+      await new Promise((resolve) => {
+        resolvePut = resolve;
+      });
+      records.set(record.id, structuredClone(record));
+      return record;
+    },
+    async get(id) {
+      return records.has(id) ? structuredClone(records.get(id)) : null;
+    },
+    async getAll() {
+      return Array.from(records.values()).map((entry) => structuredClone(entry));
+    },
+  };
+  const storage = new BrowserStorageManager({
+    sessionId: 'pending-session',
+    sessionStore: new SessionStore({ store }),
+    session: { saveWarningMs: 0 },
+    restore: false,
+  });
+
+  const pending = storage.sync({ includeNetwork: false, captureThumbnail: false });
+  await wait(0);
+  assert.equal(putStarted, true);
+  let status = storage.status();
+  assert.equal(status.syncing, true);
+  assert.equal(status.networkData.status, 'syncing');
+  assert.equal(status.sessionSync.status, 'syncing');
+  assert.equal(status.sessionSync.pending, true);
+
+  resolvePut();
+  const saved = await pending;
+  assert.equal(saved.payload.session.id, 'pending-session');
+  status = storage.status();
+  assert.equal(status.syncing, false);
+  assert.equal(status.networkData.status, 'saved');
+  assert.equal(status.sessionSync.status, 'saved');
+  assert.equal(status.sessionSync.pending, false);
+});
+
+test('BrowserStorageManager logs session sync failures and exposes error status', async () => {
+  const failure = new Error('store write failed');
+  const store = {
+    async put() {
+      throw failure;
+    },
+    async get() {
+      return null;
+    },
+    async getAll() {
+      return [];
+    },
+  };
+  const storage = new BrowserStorageManager({
+    sessionId: 'failing-session',
+    sessionStore: new SessionStore({ store }),
+    restore: false,
+  });
+  const errors = [];
+  const originalError = console.error;
+  console.error = (...args) => errors.push(args);
+  try {
+    await assert.rejects(
+      () => storage.sync({ includeNetwork: false, captureThumbnail: false }),
+      /store write failed/,
+    );
+    const status = storage.status();
+    assert.equal(status.syncing, false);
+    assert.equal(status.networkData.status, 'error');
+    assert.equal(status.sessionSync.status, 'error');
+    assert.match(status.lastError, /store write failed/);
+    assert.match(status.sessionSync.error, /store write failed/);
+    assert.match(errors.flat().map(String).join('\n'), /Session sync failed|store write failed/);
+  } finally {
+    console.error = originalError;
+  }
+});
+
+test('BrowserStorageManager blocks new sessions when the previous session cannot sync', async () => {
+  const failure = new Error('previous session write failed');
+  const store = {
+    async put() {
+      throw failure;
+    },
+    async get() {
+      return null;
+    },
+    async getAll() {
+      return [];
+    },
+    async setUnfinishedSessionId(id) {
+      return id ?? null;
+    },
+  };
+  const storage = new BrowserStorageManager({
+    sessionId: 'old-session',
+    sessionStore: new SessionStore({ store }),
+    restore: false,
+  });
+  const errors = [];
+  const originalError = console.error;
+  console.error = (...args) => errors.push(args);
+  try {
+    await assert.rejects(
+      () => storage.startNewSession({ id: 'new-session', saveInitialSession: false }),
+      (error) => {
+        assert.equal(error.code, 'HELIOS_SESSION_SWITCH_SYNC_FAILED');
+        assert.equal(error.previousSessionId, 'old-session');
+        assert.equal(error.cause, failure);
+        assert.match(error.message, /old-session/);
+        return true;
+      },
+    );
+    assert.equal(storage.sessionId, 'old-session');
+    const status = storage.status();
+    assert.equal(status.sessionSync.status, 'error');
+    assert.match(status.sessionSync.error, /previous session write failed/);
+    assert.match(errors.flat().map(String).join('\n'), /Session sync failed|previous session write failed/);
+  } finally {
+    console.error = originalError;
+  }
+});
+
+test('BrowserStorageManager can confirm and continue after previous session sync fails', async () => {
+  const failure = new Error('previous session write failed');
+  const puts = [];
+  let unfinishedSessionId = null;
+  const store = {
+    async put(record) {
+      puts.push(record.id);
+      throw failure;
+    },
+    async get() {
+      return null;
+    },
+    async getAll() {
+      return [];
+    },
+    async setUnfinishedSessionId(id) {
+      unfinishedSessionId = id ?? null;
+      return unfinishedSessionId;
+    },
+  };
+  const storage = new BrowserStorageManager({
+    sessionId: 'old-session',
+    sessionStore: new SessionStore({ store }),
+    restore: false,
+  });
+  let confirmation = null;
+  const errors = [];
+  const warnings = [];
+  const originalError = console.error;
+  const originalWarn = console.warn;
+  console.error = (...args) => errors.push(args);
+  console.warn = (...args) => warnings.push(args);
+  try {
+    const result = await storage.startNewSession({
+      id: 'new-session',
+      saveInitialSession: false,
+      confirmUnsyncedSession: async (detail) => {
+        confirmation = detail;
+        return true;
+      },
+    });
+    assert.equal(result.id, 'new-session');
+    assert.equal(result.previousId, 'old-session');
+    assert.equal(storage.sessionId, 'new-session');
+    assert.equal(unfinishedSessionId, 'new-session');
+    assert.equal(confirmation.previousId, 'old-session');
+    assert.equal(confirmation.error, failure);
+    assert.deepEqual(puts, ['old-session']);
+    assert.match(warnings.flat().map(String).join('\n'), /continuing with new session/);
+    assert.match(errors.flat().map(String).join('\n'), /Session sync failed|previous session write failed/);
+  } finally {
+    console.error = originalError;
     console.warn = originalWarn;
   }
+});
+
+test('BrowserStorageManager keeps payload sync timestamp when only session metadata saves while positions are dirty', async () => {
+  const storageBacking = createMemoryStorage();
+  let storage = null;
+  const helios = {
+    serializeTrackedVisualizationStateAsync: async () => createPersistenceEnvelope(PERSISTENCE_KINDS.visualization, {
+      storageState: storage.serializeSnapshot(),
+    }, { sparse: true }),
+    savePortableNetwork: async () => new Uint8Array([1, 2, 3]),
+  };
+  storage = new BrowserStorageManager({
+    helios,
+    sessionId: 'payload-sync-timestamp-session',
+    sessionStore: new SessionStore({ storage: storageBacking }),
+    restore: false,
+  });
+
+  await storage.saveSession({
+    id: 'payload-sync-timestamp-session',
+    includeNetwork: true,
+    captureThumbnail: false,
+  });
+  const payloadSavedAt = storage.status().networkData.savedAt;
+  assert.equal(Number.isFinite(payloadSavedAt), true);
+
+  storage.markPositionsDirty('unit-positions-dirty');
+  if (storage._sessionAutosaveTimer) clearTimeout(storage._sessionAutosaveTimer);
+  storage._sessionAutosaveTimer = null;
+  storage._sessionAutosaveOptions = null;
+
+  await storage.saveSession({
+    id: 'payload-sync-timestamp-session',
+    includeNetwork: false,
+    includePositions: false,
+    captureThumbnail: false,
+  });
+
+  const status = storage.status().networkData;
+  assert.equal(status.dirty, true);
+  assert.equal(status.positionsDirty, true);
+  assert.equal(status.savedAt, payloadSavedAt);
 });
 
 test('BrowserStorageManager owns browser session save, list, get, and delete paths', async () => {
@@ -2265,15 +2502,25 @@ test('BrowserStorageManager returns null for absent native sessions', async () =
     requestedSessionId: 'other-session',
     explicitSessionInvalid: false,
   });
-  assert.deepEqual(await storage.restoreActiveSession({ restoreNetwork: true, saveInitialManifest: false }), null);
-  assert.equal(storage.explicitSessionInvalid, true);
-  assert.deepEqual(await storage.getSession('other-session'), null);
-  assert.deepEqual(await storage.listSessionSummaries({ includeAllWorkspaces: true }), []);
-  assert.deepEqual(await storage.getResumeSessions({ limit: 4 }), []);
-  assert.deepEqual(await storage.resumeSession('other-session'), null);
-  assert.equal((await storage.saveSession({ id: 'saved-session', nickname: 'Saved' })).payload.session.id, 'saved-session');
-  assert.equal(await storage.deleteSession('old-session'), false);
-  assert.equal((await storage.sync({ includeNetwork: true })).payload.session.id, 'other-session');
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    assert.deepEqual(await storage.restoreActiveSession({ restoreNetwork: true, saveInitialManifest: false }), null);
+    assert.equal(storage.explicitSessionInvalid, true);
+    assert.equal(storage.status().networkData.status, 'error');
+    assert.match(storage.status().lastError, /other-session/);
+    assert.deepEqual(await storage.getSession('other-session'), null);
+    assert.deepEqual(await storage.listSessionSummaries({ includeAllWorkspaces: true }), []);
+    assert.deepEqual(await storage.getResumeSessions({ limit: 4 }), []);
+    assert.deepEqual(await storage.resumeSession('other-session'), null);
+    assert.equal((await storage.saveSession({ id: 'saved-session', nickname: 'Saved' })).payload.session.id, 'saved-session');
+    assert.equal(await storage.deleteSession('old-session'), false);
+    assert.equal((await storage.sync({ includeNetwork: true })).payload.session.id, 'other-session');
+    assert.equal(storage.status().lastError, null);
+    assert.equal(storage.status().networkData.status, 'saved');
+  } finally {
+    console.error = originalError;
+  }
 });
 
 test('storage session snapshot round-trips state overrides without persistent sessions', async () => {
@@ -2401,6 +2648,41 @@ test('DummyStorageManager network export snapshots include storage state without
   assert.equal(snapshot.payload.storageState.state.overrides['helios.theme.value'], 'light');
 });
 
+test('storage exposes and acknowledges document save dirtiness', () => {
+  const storage = new DummyStorageManager({
+    networkPersistence: { enabled: true, autosave: false, format: 'zxnet' },
+    positionPersistence: { enabled: true, autosave: false },
+  });
+  storage.states.register(null, 'camera', {
+    pose: { default: null, type: 'object' },
+  });
+
+  assert.equal(storage.pendingStateChangeCount(), 0);
+  assert.equal(storage.hasPendingStateChanges(), false);
+
+  storage.states.set('camera.pose', { target: [0, 0, 0], distance: 2 }, { source: 'ui' });
+  assert.equal(storage.pendingStateChangeCount(), 1);
+  assert.equal(storage.hasPendingStateChanges(), true);
+
+  storage.markNetworkDirty('unit-network-change');
+  storage.markPositionsDirty('unit-positions-change');
+  assert.equal(storage.persistenceStatus().networkData.dirty, true);
+  assert.equal(storage.persistenceStatus().networkData.positionsDirty, true);
+
+  const status = storage.acknowledgeSavedSnapshot('unit-save');
+  assert.equal(storage.pendingStateChangeCount(), 0);
+  assert.equal(storage.hasPendingStateChanges(), false);
+  assert.equal(status.networkData.dirty, false);
+  assert.equal(status.networkData.positionsDirty, false);
+  assert.equal(status.networkData.status, 'saved');
+  assert.equal(status.networkData.reason, 'unit-save');
+  assert.equal(Number.isFinite(status.networkData.savedAt), true);
+
+  storage.states.set('camera.pose', { target: [1, 0, 0], distance: 2 }, { source: 'ui' });
+  assert.equal(storage.pendingStateChangeCount(), 1);
+  assert.equal(storage.hasPendingStateChanges(), true);
+});
+
 test('panel schema grouping is independent from state entries', () => {
   const storage = new DummyStorageManager();
   storage.states.register(null, 'helios.scene', {
@@ -2483,7 +2765,6 @@ test('built-in panel schemas aggregate key and prefix marker status from state',
   });
   storage.states.register(null, 'layout', {
     layoutType: { default: 'static', type: 'string' },
-    parameters: { default: { gravity: 0.5 }, type: 'object' },
     'parameters.gravity': { default: 0.5, type: 'number' },
   });
   storage.states.register(null, 'mappers', {
@@ -2504,10 +2785,9 @@ test('built-in panel schemas aggregate key and prefix marker status from state',
   assert.equal(panelSchemaStatus(LEGENDS_PANEL_SCHEMA, storage.states).sections.layout, 'partial');
   assert.equal(panelSchemaStatus(LEGENDS_PANEL_SCHEMA, storage.states).panel, 'partial');
 
-  storage.states.set('layout.parameters', { gravity: 0.75 });
-  assert.equal(panelSchemaStatus(LAYOUT_PANEL_SCHEMA, storage.states).sections.parameters, 'changed');
+  storage.states.set('layout.layoutType', 'gpu-force');
+  assert.equal(panelSchemaStatus(LAYOUT_PANEL_SCHEMA, storage.states).sections.runtime, 'partial');
   assert.equal(panelSchemaStatus(LAYOUT_PANEL_SCHEMA, storage.states).panel, 'partial');
-  storage.states.reset('layout.parameters');
   storage.states.set('layout.parameters.gravity', 0.8);
   assert.equal(panelSchemaStatus(LAYOUT_PANEL_SCHEMA, storage.states).sections.parameters, 'changed');
 

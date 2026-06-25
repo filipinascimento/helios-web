@@ -8,9 +8,10 @@ import {
   shouldShowCategoricalPaletteEntry,
 } from '../src/ui/panels/MappersPanel.js';
 
-test('categorical palette catalog keeps category18 under a Helios-specific group', () => {
-  assert.equal(resolveCategoricalPaletteCatalogGroup('category18', true), 'Helios category');
-  assert.equal(resolveCategoricalPaletteCatalogGroup('interpolateInferno', false), 'helios ramps');
+test('categorical palette catalog groups entries by source only', () => {
+  assert.equal(resolveCategoricalPaletteCatalogGroup('helios'), 'helios');
+  assert.equal(resolveCategoricalPaletteCatalogGroup('d3'), 'd3');
+  assert.equal(resolveCategoricalPaletteCatalogGroup(''), 'other');
 });
 
 test('categorical palette default prefers category18 when it is available', () => {

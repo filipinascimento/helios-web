@@ -866,7 +866,8 @@ export class GraphLayerWebGPUBase extends GraphLayer {
           format: weightFormat,
           usage,
         });
-      } catch (_) {
+      } catch (error) {
+        console.warn('GraphLayerWebGPUBase: r16float weighted transparency target allocation failed; falling back to rgba16float.', error);
         weightFormat = 'rgba16float';
         weight = device.createTexture({
           size: { width: targetWidth, height: targetHeight, depthOrArrayLayers: 1 },

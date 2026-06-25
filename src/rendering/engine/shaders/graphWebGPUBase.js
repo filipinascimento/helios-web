@@ -52,7 +52,6 @@ export function createGraphWebGPUSources(stateSlots = 4, options = {}) {
     edgeEndpointSizes: 5,
     edgeOpacities: 6,
     edgeStates: 7,
-    edgeEndpointStates: 8,
   };
   const bindingMap = bindings ?? defaultBindings;
   const hasBinding = (name) => {
@@ -508,11 +507,7 @@ struct EdgeStates {
   data: array<u32>,
 };
 
-	struct EdgeEndpointStates {
-	  data: array<vec2<u32>>,
-	};
-
-	struct Hover {
+		struct Hover {
 	  nodeIndex: u32,
 	  nodeState: u32,
 	  edgeIndex: u32,
@@ -535,9 +530,8 @@ struct EdgeStates {
 	@group(0) @binding(3) var<storage, read> edgeColors : EdgeColors;
 	@group(0) @binding(4) var<storage, read> edgeWidths : EdgeWidths;
 @group(0) @binding(5) var<storage, read> edgeEndpointSizes : EdgeEndpointSizes;
-	@group(0) @binding(6) var<storage, read> edgeOpacities : EdgeOpacities;
-	@group(0) @binding(7) var<storage, read> edgeStates : EdgeStates;
-	@group(0) @binding(8) var<storage, read> edgeEndpointStates : EdgeEndpointStates;
+		@group(0) @binding(6) var<storage, read> edgeOpacities : EdgeOpacities;
+		@group(0) @binding(7) var<storage, read> edgeStates : EdgeStates;
   ${EDGE_TARGET_BINDING}
 	@group(0) @binding(9) var<uniform> globals : Globals;
 		@group(0) @binding(10) var<uniform> hover : Hover;
@@ -631,7 +625,7 @@ fn edgeVertex(@builtin(vertex_index) vertexIndex : u32) -> EdgeVertexOutput {
   }
 
   let endpointSize = select(globals.edgeEndpointSizeRaw, edgeEndpointSizes.data[edgeId], USE_EDGE_ENDPOINT_SIZE_BUFFER);
-  let endpointState = edgeEndpointStates.data[edgeId];
+  let endpointState = vec2<u32>(0u, 0u);
   var startSizeMul = 1.0;
   var endSizeMul = 1.0;
   if (endpointState.x == 0u) {
@@ -765,7 +759,7 @@ fn edgeQuadVertex(input : EdgeQuadInput) -> EdgeVertexOutput {
   let endpointSize = select(globals.edgeEndpointSizeRaw, edgeEndpointSizes.data[edgeId], USE_EDGE_ENDPOINT_SIZE_BUFFER);
   let endpointWidth = select(globals.edgeWidthRaw, edgeWidths.data[edgeId], USE_EDGE_WIDTH_BUFFER);
   let opacityPair = select(globals.edgeOpacityRaw, edgeOpacities.data[edgeId], USE_EDGE_OPACITY_BUFFER);
-  let endpointState = edgeEndpointStates.data[edgeId];
+  let endpointState = vec2<u32>(0u, 0u);
   var startSizeMul = 1.0;
   var endSizeMul = 1.0;
   if (endpointState.x == 0u) {

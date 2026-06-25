@@ -330,12 +330,12 @@ export function createAttributeRuleEditor(options = {}) {
         try {
           return network.withBufferAccess(read);
         } catch (error) {
-          warnUiDerivationFailure('Numeric extent fallback outside buffer access', {
+          warnUiDerivationFailure('Numeric extent computation failed inside buffer access', {
             scope,
             attributeName,
             error,
           });
-          return read();
+          return null;
         }
       }
       return read();
@@ -366,12 +366,12 @@ export function createAttributeRuleEditor(options = {}) {
         try {
           data = network.withBufferAccess(compute);
         } catch (error) {
-          warnUiDerivationFailure('Numeric histogram fallback outside buffer access', {
+          warnUiDerivationFailure('Numeric histogram computation failed inside buffer access', {
             scope,
             attributeName,
             error,
           });
-          data = compute();
+          data = null;
         }
       } else {
         data = compute();

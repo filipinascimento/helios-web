@@ -1,4 +1,24 @@
-# Visual States
+# State Systems
+
+Helios has two similarly named but separate systems:
+
+- `helios.states` is the live application state manager. It stores registered
+  dot-path entries, defaults, bound runtime values, sparse overrides, reset
+  status, and persistence metadata. UI controls, sessions, portable
+  visualization state, CLI commands, and host integrations should use this API.
+- Visual node/edge states are `u32` bitmasks stored on the graph and consumed by
+  shaders. They are for fast selected/highlighted/filtered styling on graph
+  items.
+
+Use `helios.states.set('appearance.nodeStyle.sizeScale', 1.4, { source: 'ui' })`
+for persistent UI/application settings. Use
+`helios.nodeState([nodeId], 'HIGHLIGHTED', { mode: 'add' })` when the graph item
+itself should render with a visual state style.
+
+For storage/session behavior and the full `helios.states` API, see
+[`persistence.md`](./persistence.md).
+
+## Visual States
 
 Helios supports ultra-fast node/edge “states” by storing a single `u32` bitmask per node/edge and applying visual transforms in the shaders. This lets you toggle states (selected/highlighted/filtered/custom) without rewriting full visual attribute buffers.
 
@@ -8,9 +28,8 @@ Helios ensures the following visual attributes exist on the underlying `helios-n
 
 - Nodes: `_helios_visuals_state` (`UnsignedInteger`, dimension `1`)
 - Edges: `_helios_visuals_edge_state` (`UnsignedInteger`, dimension `1`)
-- Edge endpoint node states: `_helios_visuals_edge_endpoints_state` (`UnsignedInteger`, dimension `2`) via node→edge mapping
 
-The endpoint-state mapping is used so edge rendering can incorporate node-driven transforms (e.g. node size multiplier affecting edge endpoint trimming) without any extra per-edge CPU work.
+Edge shaders use `edgeEndpoints` to read the source and target node states directly from `_helios_visuals_state` when endpoint-aware edge styling is active. No expanded edge endpoint-state attribute is created.
 
 ## Built-in Bits
 

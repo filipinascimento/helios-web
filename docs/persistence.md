@@ -15,19 +15,47 @@ autosave, and thumbnail policy must never delay live visual feedback.
 ```js
 const helios = new Helios(network, {
   container: '#app',
-  storage: {
-    type: 'browser',
-    sessionId: 'project-session',
-    workspaceId: 'project:demo',
-    persistNetwork: false,
+  storage: { type: 'browser' },
+  workspaceId: 'project:demo',
+  session: {
+    id: 'project-session',
+    url: true,
+    restore: true,
   },
+  networkPersistence: { enabled: true, autosave: false },
+  positionPersistence: { enabled: true, autosave: true },
 });
 ```
 
-If `storage` is omitted, Helios creates a `DummyStorageManager`. Dummy storage
-participates in exported snapshots, but reports no persistent/session
-capability, so the built-in UI hides resume, sync, and persistent dirty-marker
-chrome.
+If `storage` is omitted and no storage-related top-level option is provided,
+Helios creates a `DummyStorageManager`. Dummy storage participates in exported
+snapshots, but reports no persistent/session capability, so the built-in UI
+hides resume, sync, and persistent dirty-marker chrome. Passing `storage: true`,
+`storage: { type: 'browser' }`, `workspaceId`, `session`, `sessionId`,
+`networkPersistence`, or `positionPersistence` opts into browser storage when
+`storage` is otherwise omitted.
+
+Native document shells can keep durable persistence outside the browser while
+still using the same dirty-state contract:
+
+```js
+const helios = new Helios(network, {
+  container,
+  storage: { type: 'memory' },
+  session: false,
+  persistence: false,
+  networkPersistence: { enabled: true, autosave: false, format: 'zxnet' },
+  positionPersistence: { enabled: true, autosave: false },
+});
+```
+
+In this mode `helios.storage` reports pending tracked-state changes through
+`pendingStateChangeCount()`, graph payload changes through `networkData.dirty`,
+and layout/position changes through `networkData.positionsDirty`. The host
+performs explicit Save/Save As by calling `saveNetworkSnapshot()` or
+`savePortableNetwork()`, writing the returned bytes to disk, then calling
+`acknowledgeSavedSnapshot()` only after the file write succeeds. No
+localStorage, IndexedDB, or session registry is required.
 
 Visualization-state exports include sparse state overrides from `helios.states`
 inside `storageState`. `storageState.state` does not include the full live
@@ -94,16 +122,18 @@ schemas are exported as `SCENE_PANEL_SCHEMA`, `LABELS_PANEL_SCHEMA`,
 `LAYOUT_PANEL_SCHEMA`, and `SELECTION_PANEL_SCHEMA`; their panel and tab markers
 are computed from those declared keys and custom `keyPrefix` items.
 Scene/Appearance controls resolve state entry metadata where available, the
-Layout panel writes layout type, running state, position source, and active
-layout parameter subkeys through `helios.states`, and complex Mappers,
-Filters, Selection, and Labels panels aggregate stable state prefixes such as
+Layout panel writes layout type, running state, and active layout parameter
+subkeys through `helios.states`. Its `Set from` position-source control is an
+action that copies coordinates into layout positions, so the source selector is
+not tracked as durable state. Complex Mappers, Filters, Selection, and Labels
+panels aggregate stable state prefixes such as
 `mappers.node.*`, `filters.*`, `selection.*`, and `labels.*`.
 Panel item labels are resolved as UI metadata: an item-level `label` in the
 panel schema wins, then `helios.states.entry(key).ui.label`, and only then a
 humanized fallback is generated from the key. State entries may define labels
 and control hints, but they still must not define panel or section placement.
 
-# State And Storage Facades
+## State And Storage Facades
 
 Helios exposes live parameter state at `helios.states` and durable session or
 network synchronization at `helios.storage`. Durable storage is off by default
@@ -126,22 +156,27 @@ await helios.ready;
 The bundled demo opts in so persistence, sessions, and resume UI can be tested
 there without surprising library consumers.
 
-## Model
+## State Model
 
-The state manager stores explicit dot keys and resolves them with VSCode-style
-precedence:
+The state manager stores explicit dot keys. Each registered entry has a default,
+an optional binding to a runtime getter/setter, optional aliases, persistence
+metadata, and UI metadata. The live value map is separate from the sparse
+override map:
 
-```text
-defaults < user < workspace < network < session
-```
+- `values` is the current live value used by UI controls and bound runtime
+  objects.
+- `overrides` is the small persisted map of intentional user/program/CLI
+  changes.
+- `scope` (`user`, `workspace`, `network`, or `session`) is metadata that tells
+  storage where a persisted override belongs; it is not a separate in-memory
+  precedence stack.
 
-Values are stored sparsely by override record, not by value comparison. A user,
-programmatic, or CLI write creates an override even when the written value equals
-the lower-precedence/default value. Restore of an already sparse override
-snapshot carries explicit override intent; default, binding-refresh, heuristic
-default selection, and aggregate current-state syncs do not. Dirty markers mean
-“this key has an override at the active layer”, not “current value differs from
-the default.” Use `helios.states.reset(key)`, `helios.states.resetToDefault(key)`,
+A user, programmatic, or CLI write creates an override even when the written
+value equals the default. Restore of an already sparse override snapshot carries
+explicit override intent; default writes, binding refreshes, heuristic defaults,
+and aggregate current-state syncs do not. Dirty markers mean “this key or one
+of its descendants has an override”, not “current value differs from the
+default.” Use `helios.states.reset(key)`, `helios.states.resetToDefault(key)`,
 or the UI “Reset to default” action to remove the override.
 
 Use stable hierarchical names:
@@ -296,7 +331,9 @@ Debugging state and storage:
 
 ```js
 const helios = new Helios(network, {
-  storage: { type: 'browser', sessionId: 'debug-session' },
+  storage: { type: 'browser' },
+  workspaceId: 'debug-workspace',
+  session: { id: 'debug-session', url: true },
 });
 
 // Exposed while debug is enabled, which is the current default:
@@ -314,24 +351,45 @@ State methods:
 
 - `register(owner, prefix, entries)`
 - `entry(path)`
+- `entriesFor(prefix)`
 - `get(path, fallback)`
 - `set(path, value, { scope, source, reason })`
+- `setDefault(path, value, options)`
 - `reset(pathOrPrefix)`
 - `status(pathOrPrefix, options)`
 - `subscribe(path, callback)`
+- `transaction(options, callback)`
+- `restore(snapshot, options)`
+- `snapshot(options)`
+- `getOverrides(options)`
+- `overrideKeys()`
+- `preferredKey(path)`
+- `debugStats(options)`
 
 Storage methods:
 
+- `configure(options)`
+- `status()` / `persistenceStatus()`
 - `flush(options)` / `sync(options)`
+- `flushAutosync(options)`
+- `markNetworkDirty(reason)`
+- `markPositionsDirty(reason)`
+- `pendingStateChangeCount()` / `hasPendingStateChanges()`
+- `acknowledgeSavedSnapshot(reason, options)`
+- `recordPortableState(path, value, options)`
+- `getPreferences()` / `loadPreferences()` / `updatePreferences(patch)`
 - `serializeNetworkSnapshot(options)`
 - `attachVisualizationStateToNetwork(snapshot, options)`
 - `saveNetworkSnapshot(format, options)`
 - `restoreNetworkSnapshot(source, options)`
 - `restorePortableStateFromNetwork(options)`
+- `debugStats(options)`
 
 ## Sessions
 
-Sessions are also opt-in. Local browser sessions can use URL routing:
+Sessions are also opt-in and are controlled through the top-level `session`
+constructor option plus `helios.storage` at runtime. There is no separate
+`helios.session` API. Local browser sessions can use URL routing:
 
 ```js
 const helios = new Helios(network, {
@@ -425,13 +483,16 @@ await helios.loadNetwork(file, {
 Useful session APIs:
 
 ```js
+helios.storage.configureSession({ url: true });
 await helios.storage.flush({ includeNetwork: true });
 const summaries = await helios.storage.listSessionSummaries();
 const resumeSessions = await helios.storage.getResumeSessions();
 const prompt = await helios.storage.getResumePrompt();
 await helios.storage.resumeSession(sessionId);
 await helios.storage.saveSession({ nickname: 'experiment A' });
+await helios.storage.startNewSession({ nickname: 'experiment B' });
 await helios.storage.deleteSession(sessionId);
+await helios.storage.markSessionFinished(sessionId);
 
 const snapshot = await helios.storage.serializeSessionSnapshot();
 await helios.storage.restoreSessionSnapshot(snapshot);
@@ -482,8 +543,9 @@ const helios = new Helios(network, {
 });
 ```
 
-With persistence enabled, network and position autosave default on. Apps can
-disable either one independently:
+Browser storage enables the session/persistence backend, but apps should set
+network and position autosave policy explicitly. The basic example enables both
+autosave paths by default and lets query parameters disable either one:
 
 ```js
 networkPersistence: { enabled: true, autosave: false }
@@ -623,9 +685,17 @@ and record portable network-scoped state. Browser and remote storage keep
 durable network/blob persistence opt-in through `persistNetwork: true`; dummy
 storage only contributes the export snapshot state.
 
-Network I/O supports `.xnet`, `.zxnet`, `.bxnet`, and `.gml`. GML export is
-lossy: it is useful for topology and portable public attributes, but cannot
-preserve all Helios private state, credentials, or every attribute shape.
+The built-in Data panel Save action uses `helios.storage.saveNetworkSnapshot()`
+for `.xnet`, `.zxnet`, and `.bxnet` files. It writes a full visualization
+envelope plus the current layout/delegate positions, matching the native macOS
+document-save path. Use plain `helios.saveNetwork()` only when an application
+intentionally wants a raw graph export without attached Helios state.
+
+Network I/O supports `.xnet`, `.zxnet`, `.bxnet`, `.gml`, graph-tool `.gt`,
+and zstd-compressed graph-tool `.gt.zst` input.
+GML and GT exports are lossy interoperability formats: they are useful for
+topology and portable public attributes, but cannot preserve all Helios private
+state, credentials, or every attribute shape.
 
 ## Remote Session API
 
@@ -725,7 +795,7 @@ const helios = new Helios(network, {
 });
 ```
 
-## Remote Session API
+## Session Record Shape
 
 Remote storage uses full storage session records. The required client methods
 are `putSession(record)`, `getSession(id)`, `listSessions(options)`, and
@@ -827,6 +897,12 @@ wrap storage status, flush, change journal, reset, and save operations.
 uses storage status, including active syncing, dirty positions, dirty network
 payloads, and skipped too-large network saves.
 
+`helios-mac` embeds Helios in a native document window and uses in-memory
+storage as a document dirtiness adapter. Native Open/Save owns disk I/O;
+`helios.storage` owns tracked state deltas, network dirty flags, position dirty
+flags, and the full portable snapshot used for `xnet`, `zxnet`, and `bxnet`
+document saves.
+
 `helios-widget` passes a traitlet-backed storage client through widget state.
 Settings state is deduplicated before writing back to Python so notebook
 traitlets are not spammed, while network mutations continue to flow through the
@@ -843,8 +919,9 @@ their RPC layer by forwarding to `helios.storage`.
 
 ## Troubleshooting
 
-- No data is saved: confirm `persistence` or a persistence-related option was
-  provided. Default library construction is storage-free.
+- No data is saved: confirm `storage`, `session`, `workspaceId`,
+  `networkPersistence`, or `positionPersistence` was provided. Default library
+  construction uses dummy storage.
 - URL reload does not restore: sessions require `session: { url: true }` and a
   `sessionId` in the URL or an auto-generated one.
 - Resume prompt is missing: only older unfinished sessions excluding the current
@@ -852,5 +929,5 @@ their RPC layer by forwarding to `helios.storage`.
 - Layout reruns after restore: default session restore does not restart layouts;
   check whether the app passed `restoreLayoutRunState: true` or starts layout
   separately after `helios.ready`.
-- GML lost settings: use `xnet`, `zxnet`, or `bxnet` for full Helios portable
-  state. GML is intentionally lossy.
+- GML/GT lost settings: use `xnet`, `zxnet`, or `bxnet` for full Helios
+  portable state. GML and GT are intentionally lossy interoperability formats.

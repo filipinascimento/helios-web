@@ -34,7 +34,10 @@ export class Panel {
     this.element.dataset.panelId = this.id;
     this.element.setAttribute('panel-id', this.id);
     if (options.icon) this.element.setAttribute('panel-icon', options.icon);
-    this.element.dataset.collapsed = 'false';
+    if (options.collapsed === true) {
+      this.element.setAttribute('collapsed', '');
+    }
+    this.element.dataset.collapsed = options.collapsed === true ? 'true' : 'false';
     this.element.setAttribute('heading', this.title);
     this.element.setAttribute('dock', this.dock);
     this.element.ensureBuilt?.();

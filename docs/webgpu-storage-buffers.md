@@ -144,6 +144,10 @@ These tables describe the storage-buffer inputs used by the GPU-force layout com
 
 Total storages: min `9`, max `11`.
 
+Chunked WebGPU layout scheduling reuses the same main-compute storage buffers.
+It only changes the dispatched node-id range and delays the full
+scratch-to-position swap until the current sweep completes.
+
 ### Output Scale Pass
 
 | Storage | What | Core | Activates When |
@@ -152,6 +156,14 @@ Total storages: min `9`, max `11`.
 | `outputPositionBuffer` | Scaled output positions. | Yes | Always. |
 
 Total storages: min `2`, max `2`.
+
+In intermediate chunked frames, the output-scale pass may read
+`scratchPositionBuffer` for the processed chunk so rendering can show partial
+progress before the full sweep is committed. This does not add a new storage
+buffer. On sweep completion, chunked mode swaps the simulation position buffers
+instead of copying the full scratch buffer back into the main position buffer.
+If recentering is enabled, the sweep-completion frame still refreshes the full
+output buffer after the global recenter correction.
 
 ### Recenter Pass
 
@@ -232,7 +244,7 @@ Total textures: min `1`, max `7`.
 | `edgeEndpointSizes` | Per-edge endpoint-size pairs. | No | Endpoint size comes from edges instead of `edgeEndpointSizeSource`. |
 | `edgeEndpointSizeSource` | Node-backed endpoint-size source. | No | Endpoint size comes from nodes instead of `edgeEndpointSizes`. |
 | `edgeStates` | Per-edge state bitmasks. | No | Edge state styling is texture-backed. |
-| `edgeEndpointStates` | Per-endpoint node state pairs. | No | Endpoint-state edge specialization is texture-backed. |
+| `nodeStates` | Per-node state bitmasks for endpoint-aware edge styling. | No | Endpoint-state edge specialization is active. |
 
 Total textures: min `2`, max `8`.
 
@@ -264,7 +276,7 @@ Current edge picking uses at most one tracked-value texture. It does not current
 | `edgeEndpointSizes` | Per-edge endpoint-size pairs. | No | Trim sizes come from edges instead of `nodeEndpointSizeSource`. |
 | `nodeEndpointSizeSource` | Node-backed endpoint-size source. | No | Trim sizes come from nodes instead of `edgeEndpointSizes`. |
 | `edgeStates` | Per-edge state bitmasks. | No | State-aware edge picking is active. |
-| `edgeEndpointStates` | Per-endpoint node state pairs. | No | Endpoint-state edge picking is active. |
+| `nodeStates` | Per-node state bitmasks for endpoint-aware edge picking. | No | Endpoint-state edge picking is active. |
 | `edgeTrackedInt` | Integer tracked values. | No | Tracked edge attribute mode is `int`. |
 | `edgeTrackedUint` | Unsigned tracked values. | No | Tracked edge attribute mode is `uint`. |
 

@@ -18,8 +18,6 @@ export async function createDeterministicHelios(container, renderer = 'webgl') {
   network.defineEdgeAttribute('_helios_visuals_edge_color', AttributeType.Float, 8);
   network.defineEdgeAttribute('_helios_visuals_edge_opacity', AttributeType.Float, 2);
   network.defineEdgeAttribute('_helios_visuals_edge_width', AttributeType.Float, 2);
-  network.defineNodeToEdgeAttribute('_helios_visuals_position', '_helios_visuals_edge_endpoints_position', 'both');
-  network.defineNodeToEdgeAttribute('_helios_visuals_size', '_helios_visuals_edge_endpoints_size', 'both');
 
   // Keep nodes centered around the origin so any renderer/camera starts with all four visible.
   const positions = [

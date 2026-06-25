@@ -20,40 +20,71 @@ class MockLayout {
   }
 
   getParameterBindings() {
+    const bindings = [
+      {
+        key: 'alphaCurrent',
+        label: 'Temp.',
+        type: 'display',
+        get: () => 0.25,
+        history: { length: 4, sampleMs: 1000, scale: 'log', min: 0.001, max: 1 },
+      },
+      {
+        key: 'strength',
+        label: 'Strength',
+        type: 'number',
+        min: 0,
+        max: 10,
+        step: 0.1,
+        get: () => this.parameters.strength,
+        set: (value) => {
+          this.parameters.strength = Number(value);
+        },
+      },
+      {
+        key: 'recenter',
+        label: 'Recenter',
+        type: 'boolean',
+        get: () => this.parameters.recenter === true,
+        set: (value) => {
+          this.parameters.recenter = value === true;
+        },
+      },
+    ];
+    if (Object.prototype.hasOwnProperty.call(this.parameters, 'layoutScheduling')) {
+      bindings.push({
+        key: 'layoutScheduling',
+        label: 'Scheduling',
+        type: 'select',
+        options: [
+          { value: 'auto', label: 'Auto' },
+          { value: 'full', label: 'Full' },
+          { value: 'chunked', label: 'Chunked' },
+        ],
+        get: () => this.parameters.layoutScheduling,
+        set: (value) => {
+          this.parameters.layoutScheduling = value;
+        },
+      });
+    }
+    if (Object.prototype.hasOwnProperty.call(this.parameters, 'layoutChunkCount')) {
+      bindings.push({
+        key: 'layoutChunkCount',
+        label: 'Chunks',
+        type: 'number',
+        min: 2,
+        max: 10,
+        step: 1,
+        get: () => this.parameters.layoutChunkCount,
+        set: (value) => {
+          this.parameters.layoutChunkCount = Number(value);
+        },
+      });
+    }
     return {
       key: this.key,
       label: this.label,
       dynamic: this.dynamic,
-      bindings: this.dynamic ? [
-        {
-          key: 'alphaCurrent',
-          label: 'Temp.',
-          type: 'display',
-          get: () => 0.25,
-          history: { length: 4, sampleMs: 1000, scale: 'log', min: 0.001, max: 1 },
-        },
-        {
-          key: 'strength',
-          label: 'Strength',
-          type: 'number',
-          min: 0,
-          max: 10,
-          step: 0.1,
-          get: () => this.parameters.strength,
-          set: (value) => {
-            this.parameters.strength = Number(value);
-          },
-        },
-        {
-          key: 'recenter',
-          label: 'Recenter',
-          type: 'boolean',
-          get: () => this.parameters.recenter === true,
-          set: (value) => {
-            this.parameters.recenter = value === true;
-          },
-        },
-      ] : [],
+      bindings: this.dynamic ? bindings : [],
     };
   }
 
@@ -224,6 +255,33 @@ test('layout behavior rebaselines heuristic parameter defaults after network cha
   assert.equal(helios.states.status('layout.parameters.strength').state, 'changed');
 });
 
+test('layout behavior registers gpu-force chunk scheduling parameters as state entries', () => {
+  const helios = new MockHelios();
+  helios._layout = new MockLayout('gpu-force', {
+    label: 'Force (GPU)',
+    parameters: {
+      strength: 1.5,
+      recenter: true,
+      layoutScheduling: 'auto',
+      layoutChunkCount: 2,
+    },
+  });
+  const { layout } = attachLayoutBehavior(helios);
+
+  assert.equal(helios.states.get('layout.parameters.layoutScheduling'), 'auto');
+  assert.equal(helios.states.status('layout.parameters.layoutScheduling').state, 'default');
+  assert.equal(helios.states.get('layout.parameters.layoutChunkCount'), 2);
+  assert.equal(helios.states.status('layout.parameters.layoutChunkCount').state, 'default');
+
+  helios.states.set('layout.parameters.layoutScheduling', 'chunked', { source: 'ui' });
+  helios.states.set('layout.parameters.layoutChunkCount', 6, { source: 'ui' });
+
+  assert.equal(layout.parameter('layoutScheduling'), 'chunked');
+  assert.equal(layout.parameter('layoutChunkCount'), 6);
+  assert.equal(helios.states.status('layout.parameters.layoutScheduling').state, 'changed');
+  assert.equal(helios.states.status('layout.parameters.layoutChunkCount').state, 'changed');
+});
+
 test('layout behavior start stop reheat and reset delegate to lower layers without owning engines', () => {
   const { helios, layout } = attachLayoutBehavior();
 
@@ -254,11 +312,23 @@ test('layout behavior serializes and restores public layout config', () => {
   restored.restore(snapshot);
 
   assert.equal(restored.type(), 'gpu-force');
-  assert.equal(restored.positionAttribute(), 'embedding2d');
+  assert.equal(restored.positionAttribute(), '_helios_visuals_position');
   assert.equal(restored.parameter('strength'), 4.5);
   assert.equal(restored.parameter('recenter'), false);
   assert.equal(restored.runState(), 'stopped');
   assert.deepEqual(restoredHelios.calls.stop, ['restore']);
+});
+
+test('layout position source is an action input, not a tracked state entry', () => {
+  const { helios, layout } = attachLayoutBehavior();
+
+  assert.equal(helios.states.entry('layout.positionAttribute'), null);
+  layout.positionAttribute('embedding2d');
+
+  assert.equal(layout.positionAttribute(), 'embedding2d');
+  assert.equal(helios.states.entry('layout.positionAttribute'), null);
+  assert.equal(helios.states.status('layout.positionAttribute').state, 'default');
+  assert.equal(Object.hasOwn(helios.states.getOverrides({ aliases: 'preferred' }), 'layout.positionAttribute'), false);
 });
 
 function createFakeDomEnvironment() {
@@ -780,6 +850,126 @@ test('layout panel registers parameter persistence defaults before writing chang
       panel.destroy();
     }
   } finally {
+    globalThis.document = originalDocument;
+    globalThis.window = originalWindow;
+  }
+});
+
+test('layout panel parameter state entries ignore broad runtime layout refresh events', () => {
+  const { document, window } = createFakeDomEnvironment();
+  const originalDocument = globalThis.document;
+  const originalWindow = globalThis.window;
+  const originalWarn = console.warn;
+  globalThis.document = document;
+  globalThis.window = window;
+
+  try {
+    let sampleCount3D = 96;
+    let onChange = null;
+    const warnings = [];
+    console.warn = (...args) => {
+      warnings.push(args.map((entry) => String(entry)).join(' '));
+    };
+    const stateManager = new HeliosStateManager();
+    const layoutBehavior = {
+      descriptor() {
+        return {
+          key: 'gpu-force',
+          label: 'Force (GPU)',
+          dynamic: true,
+          bindings: [
+            {
+              key: 'sampleCount3D',
+              label: 'Samples (3D)',
+              type: 'number',
+              min: 1,
+              max: 512,
+              get: () => sampleCount3D,
+              set(value) {
+                sampleCount3D = Number(value);
+              },
+            },
+          ],
+        };
+      },
+      choices() {
+        return [{ value: 'gpu-force', label: 'Force (GPU)' }];
+      },
+      runState() {
+        return 'running';
+      },
+      positionAttribute() {
+        return '_helios_visuals_position';
+      },
+      positionAttributeChoices() {
+        return [{ value: '_helios_visuals_position', label: 'Current positions', dimension: 3 }];
+      },
+      parameter(key, value) {
+        if (key === 'sampleCount3D' && arguments.length > 1) sampleCount3D = Number(value);
+        return sampleCount3D;
+      },
+      on(type, handler) {
+        if (type === 'change') onChange = handler;
+        return () => {};
+      },
+    };
+
+    const ui = {
+      helios: {
+        behavior: { layout: layoutBehavior },
+        states: stateManager,
+        on() {
+          return () => {};
+        },
+      },
+      _controlCleanups: new Set(),
+      persistenceIndicators: true,
+      createStateIndicator(path, scope) {
+        const indicator = document.createElement('span');
+        indicator.dataset.path = path;
+        indicator.dataset.scope = scope;
+        return indicator;
+      },
+      createPanel(config) {
+        return {
+          ...config,
+          destroy() {},
+        };
+      },
+    };
+
+    const panel = new LayoutPanel(ui, {}).create();
+    try {
+      assert.ok(stateManager.entry('layout.parameters.sampleCount3D'));
+
+      onChange?.({
+        detail: {
+          reason: 'layout-start',
+          source: 'refresh',
+          trackOverride: false,
+        },
+      });
+      onChange?.({
+        detail: {
+          reason: 'layout-stop',
+          source: 'refresh',
+          trackOverride: false,
+        },
+      });
+
+      assert.equal(
+        warnings.some((warning) => warning.includes('Ignoring broad explicit binding notification')),
+        false,
+      );
+      assert.equal(
+        stateManager.status('layout.parameters.sampleCount3D', { ignorePersistence: true })?.hasOverride,
+        false,
+      );
+    } finally {
+      panel.destroy();
+    }
+  } finally {
+    console.warn = originalWarn;
     globalThis.document = originalDocument;
     globalThis.window = originalWindow;
   }

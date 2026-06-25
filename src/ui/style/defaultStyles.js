@@ -1270,6 +1270,7 @@ export const defaultStylesText = `
   background: var(--helios-ui-bg-solid);
   color: inherit;
   box-shadow: var(--helios-ui-shadow);
+  pointer-events: auto;
 }
 
 .helios-ui-dialog::backdrop {
@@ -1280,6 +1281,19 @@ export const defaultStylesText = `
   margin: 0 0 8px;
   font-size: 13px;
   font-weight: 700;
+}
+
+.helios-ui-dialog__body {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--helios-ui-fg);
+}
+
+.helios-ui-dialog__meta {
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--helios-ui-muted);
 }
 
 .helios-ui-dialog__actions {
@@ -2491,7 +2505,7 @@ export const defaultStylesText = `
 
 .helios-ui[data-interface-mode="compact"] .helios-ui-dock--side {
   width: auto;
-  max-width: min(60vw, 420px);
+  max-width: none;
   padding-top: 0;
   background: var(--helios-ui-dock-fill);
   scrollbar-gutter: stable;

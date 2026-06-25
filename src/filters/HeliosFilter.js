@@ -225,6 +225,15 @@ function cloneRule(rule) {
  *   .addRule({ type: 'numeric', scope: 'node', attribute: 'score', min: 0.5, max: 1 });
  */
 export class HeliosFilter {
+  /**
+   * Create a filter model from an id, graph scope, and initial rules.
+   *
+   * @param {object} [options] - Filter options.
+   * @param {string} [options.id] - Stable filter id.
+   * @param {string} [options.name] - Human-readable filter name.
+   * @param {'render'|'render+layout'} [options.scope='render'] - Whether the filter affects rendering only or rendering plus layout.
+   * @param {Array<object>} [options.rules] - Initial rule descriptors.
+   */
   constructor(options = {}) {
     this.id = typeof options.id === 'string' && options.id.trim()
       ? options.id.trim()
@@ -238,6 +247,11 @@ export class HeliosFilter {
     }
   }
 
+  /**
+   * Return a deep copy of this filter model.
+   *
+   * @returns {HeliosFilter} Independent filter with copied rule descriptors.
+   */
   clone() {
     return new HeliosFilter({
       id: this.id,
@@ -247,15 +261,32 @@ export class HeliosFilter {
     });
   }
 
+  /**
+   * Set the graph filter scope.
+   *
+   * @param {'render'|'render+layout'} scope - Graph filter scope.
+   * @returns {HeliosFilter} This filter.
+   */
   setScope(scope) {
     this.scope = normalizeGraphFilterScope(scope, this.scope);
     return this;
   }
 
+  /**
+   * Return the graph filter scope.
+   *
+   * @returns {'render'|'render+layout'} Current graph filter scope.
+   */
   getScope() {
     return this.scope;
   }
 
+  /**
+   * Return copied rules, optionally limited to node or edge rules.
+   *
+   * @param {'node'|'edge'} [scope] - Optional rule scope.
+   * @returns {Array<object>} Copied rule descriptors.
+   */
   getRules(scope = null) {
     if (scope == null) {
       return this.rules.map((rule) => cloneRule(rule));
@@ -280,6 +311,12 @@ export class HeliosFilter {
     }
   }
 
+  /**
+   * Add a filter rule.
+   *
+   * @param {object} rule - Rule descriptor.
+   * @returns {object} Normalized copied rule descriptor.
+   */
   addRule(rule) {
     const normalized = normalizeRule(rule);
     this._assertUniqueRule(normalized, null);
@@ -287,6 +324,13 @@ export class HeliosFilter {
     return cloneRule(normalized);
   }
 
+  /**
+   * Update an existing rule by id.
+   *
+   * @param {string} ruleId - Rule id to update.
+   * @param {object} [patch] - Rule fields to replace.
+   * @returns {object} Normalized copied rule descriptor.
+   */
   updateRule(ruleId, patch = {}) {
     const index = this.rules.findIndex((rule) => rule.id === ruleId);
     if (index < 0) {
@@ -299,6 +343,12 @@ export class HeliosFilter {
     return cloneRule(normalized);
   }
 
+  /**
+   * Update a rule by id when it exists, otherwise add it.
+   *
+   * @param {object} rule - Rule descriptor.
+   * @returns {object} Normalized copied rule descriptor.
+   */
   upsertRule(rule) {
     const id = typeof rule?.id === 'string' ? rule.id : null;
     if (id && this.rules.some((entry) => entry.id === id)) {
@@ -307,6 +357,12 @@ export class HeliosFilter {
     return this.addRule(rule);
   }
 
+  /**
+   * Remove a rule by id.
+   *
+   * @param {string} ruleId - Rule id to remove.
+   * @returns {boolean} True when a rule was removed.
+   */
   removeRule(ruleId) {
     const index = this.rules.findIndex((rule) => rule.id === ruleId);
     if (index < 0) return false;
@@ -314,6 +370,12 @@ export class HeliosFilter {
     return true;
   }
 
+  /**
+   * Remove all rules, or all rules for one node/edge scope.
+   *
+   * @param {'node'|'edge'} [scope] - Optional rule scope to clear.
+   * @returns {HeliosFilter} This filter.
+   */
   clear(scope = null) {
     if (scope == null) {
       this.rules.length = 0;
@@ -326,6 +388,12 @@ export class HeliosFilter {
     return this;
   }
 
+  /**
+   * Compile active rules for one node/edge scope into a query string.
+   *
+   * @param {'node'|'edge'} scope - Rule scope to compile.
+   * @returns {string|null} Query expression, or `null` when no active criteria apply.
+   */
   compileScopeQuery(scope) {
     if (!isFilterScope(scope)) {
       throw new Error(`Unknown HeliosFilter scope "${scope}"`);
@@ -342,10 +410,20 @@ export class HeliosFilter {
     return queries.map((query) => `(${query})`).join(' AND ');
   }
 
+  /**
+   * Test whether this filter has any active criteria.
+   *
+   * @returns {boolean} True when at least one rule compiles to a query.
+   */
   hasCriteria() {
     return Boolean(this.compileScopeQuery(FILTER_SCOPE_NODE) || this.compileScopeQuery(FILTER_SCOPE_EDGE));
   }
 
+  /**
+   * Convert this model to the graph-filter options consumed by `Helios`.
+   *
+   * @returns {object} Graph-filter options with node and edge query strings.
+   */
   toGraphFilterOptions() {
     const out = {
       scope: this.scope,

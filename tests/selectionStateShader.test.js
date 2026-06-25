@@ -202,7 +202,8 @@ test('edge shader sources only include selected-node endpoint propagation when e
   });
   assert.equal(/endpointStatePair\.x \| endpointStatePair\.y/.test(webglOff.EDGE_QUAD_VERTEX_SOURCE), false);
   assert.match(webglOn.EDGE_QUAD_VERTEX_SOURCE, /endpointStatePair\.x \| endpointStatePair\.y/);
-  assert.match(webglOn.EDGE_VERTEX_SOURCE, /uvec2 fetchEdgeEndpointStatePair\(uint edgeId\)/);
+  assert.match(webglOn.EDGE_VERTEX_SOURCE, /uvec2 fetchEdgeEndpointStatePair\(uint sourceId, uint targetId\)/);
+  assert.match(webglOn.EDGE_VERTEX_SOURCE, /fetchEdgeEndpointStatePair\(sourceId, targetId\)/);
   assert.match(webglOn.EDGE_VERTEX_SOURCE, /endpointStatePair\.x \| endpointStatePair\.y/);
   assert.match(webglOn.EDGE_QUAD_VERTEX_SOURCE, /state \|= 2u;/);
 

@@ -76,8 +76,6 @@ const {
   NODE_STATE_ATTRIBUTE,
   NODE_OUTLINE_WIDTH_ATTRIBUTE,
   EDGE_STATE_ATTRIBUTE,
-  EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
-  EDGE_ENDPOINTS_STATE_ATTRIBUTE,
 } = VISUAL_ATTRIBUTE_NAMES;
 const DEFAULT_CAMERA_FIT_NODE_RADIUS_WORLD = 0;
 const DEFAULT_LAYOUT_RUNTIME_POSITION_LIMIT_BYTES = 2 * 1024 * 1024;
@@ -359,6 +357,8 @@ function inferNetworkFormatFromName(name) {
   if (lower.endsWith('.zxnet')) return 'zxnet';
   if (lower.endsWith('.xnet')) return 'xnet';
   if (lower.endsWith('.gml')) return 'gml';
+  if (lower.endsWith('.gt.zst')) return 'gt';
+  if (lower.endsWith('.gt')) return 'gt';
   return null;
 }
 
@@ -367,14 +367,14 @@ function normalizeNetworkFileDropOptions(value) {
     return {
       enabled: true,
       target: 'root',
-      supportedFormats: ['bxnet', 'zxnet', 'xnet', 'gml'],
+      supportedFormats: ['bxnet', 'zxnet', 'xnet', 'gml', 'gt'],
       replaceOptions: { disposeOld: true, recreateRenderer: true, keepCamera: false },
     };
   }
   if (!value || typeof value !== 'object' || value.enabled === false) return { enabled: false };
   const formats = Array.isArray(value.supportedFormats)
     ? value.supportedFormats.map((entry) => String(entry).trim().toLowerCase()).filter(Boolean)
-    : ['bxnet', 'zxnet', 'xnet', 'gml'];
+    : ['bxnet', 'zxnet', 'xnet', 'gml', 'gt'];
   return {
     enabled: true,
     target: value.target ?? 'root',
@@ -445,6 +445,11 @@ const CAMERA_CONTROL_STATE_KEYS = Object.freeze([
   'autoFitMaxIntervalMs',
   'autoFitLargeNetworkScale',
   'autoFitIntervalNodeCountRef',
+  'largeNetworkStartupFit',
+  'largeNetworkStartupNodeThreshold',
+  'largeNetworkStartupEdgeThreshold',
+  'largeNetworkStartupScale',
+  'largeNetworkStartupDurationMs',
   'animation',
   'animationDurationMs',
   'orbit',
@@ -1059,7 +1064,9 @@ function getBaseFilename(name) {
   if (typeof name !== 'string') return 'network';
   const trimmed = name.trim();
   if (!trimmed) return 'network';
-  const withoutKnown = trimmed.replace(/\.(bxnet|zxnet|xnet)$/i, '');
+  const withoutGtZst = trimmed.replace(/\.gt\.zst$/i, '');
+  if (withoutGtZst !== trimmed) return withoutGtZst;
+  const withoutKnown = trimmed.replace(/\.(bxnet|zxnet|xnet|gml|gt)$/i, '');
   if (withoutKnown !== trimmed) return withoutKnown;
   return trimmed.replace(/\.[^/.]+$/, '') || trimmed;
 }
@@ -1115,6 +1122,19 @@ function estimate2DZoomFrom3DDistance(pose) {
 const DEFAULT_MODE_SWITCH_DURATION_MS = 360;
 const DEFAULT_MODE_SWITCH_3D_ROTATION = createYawPitchQuaternion(-0.55, 0.42);
 const CAMERA_FIT_DEFAULT_MAX_SAMPLES = 50000;
+const CAMERA_FIT_DEFAULT_2D_ZOOM_MARGIN = 1.35;
+const DEFAULT_CAMERA_ANIMATION_DURATION_MS = 520;
+const LARGE_NETWORK_STARTUP_NODE_THRESHOLD = 1000000;
+const LARGE_NETWORK_STARTUP_EDGE_THRESHOLD = 1000000;
+const LARGE_NETWORK_STARTUP_SCALE = 4;
+const LARGE_NETWORK_STARTUP_DURATION_MS = 2200;
+const LARGE_NETWORK_STARTUP_LAYOUT_DURATION_MS = 5000;
+const STARTUP_DEFAULTS = Object.freeze({
+  loadingOverlay: true,
+  hideCanvasUntilFirstFrame: true,
+  layoutIterations: 100,
+  layoutDurationMs: 1000,
+});
 const QUICK_CONTROL_DEFAULTS = Object.freeze({
   enabled: true,
   autoFit: true,
@@ -1122,12 +1142,32 @@ const QUICK_CONTROL_DEFAULTS = Object.freeze({
   zoom: true,
   reserveLegendSpace: true,
   theme: 'dark',
-  buttonSize: 38,
+  buttonSize: 34,
   gap: 6,
   margin: 12,
+  legendOffset: 64,
   zoomFactor: 1.25,
 });
+const QUICK_CONTROL_HELIOS_URL = 'https://heliosweb.io/';
+const QUICK_CONTROL_ISSUE_URL = 'https://github.com/filipinascimento/helios-web/issues/new';
 const BASELINE_REFRESH_IGNORED_OVERRIDES = new Set(['exporter.baseName', 'exporter.preset']);
+const WARNING_KEYS_BY_OWNER = new WeakMap();
+
+function warnOnce(owner, key, message, detail = undefined) {
+  if (typeof console === 'undefined' || typeof console.warn !== 'function') return;
+  const target = owner && (typeof owner === 'object' || typeof owner === 'function') ? owner : warnOnce;
+  let keys = WARNING_KEYS_BY_OWNER.get(target);
+  if (!keys) {
+    keys = new Set();
+    WARNING_KEYS_BY_OWNER.set(target, keys);
+  }
+  const normalizedKey = String(key ?? message);
+  if (keys.has(normalizedKey)) return;
+  keys.add(normalizedKey);
+  if (detail === undefined) console.warn(message);
+  else console.warn(message, detail);
+}
+
 const CAMERA_CONTROL_DEFAULTS = Object.freeze({
   autoFit: true,
   autoFitCoverage: 0.95,
@@ -1138,8 +1178,13 @@ const CAMERA_CONTROL_DEFAULTS = Object.freeze({
   autoFitLargeNetworkScale: 1,
   autoFitIntervalNodeCountRef: 5000,
   autoFitMaxSamples: CAMERA_FIT_DEFAULT_MAX_SAMPLES,
+  largeNetworkStartupFit: true,
+  largeNetworkStartupNodeThreshold: LARGE_NETWORK_STARTUP_NODE_THRESHOLD,
+  largeNetworkStartupEdgeThreshold: LARGE_NETWORK_STARTUP_EDGE_THRESHOLD,
+  largeNetworkStartupScale: LARGE_NETWORK_STARTUP_SCALE,
+  largeNetworkStartupDurationMs: LARGE_NETWORK_STARTUP_DURATION_MS,
   animation: true,
-  animationDurationMs: 280,
+  animationDurationMs: DEFAULT_CAMERA_ANIMATION_DURATION_MS,
   orbit: false,
   orbitAngle: 0,
   orbitAxis: Object.freeze([0, 1, 0]),
@@ -1380,6 +1425,41 @@ function normalizeCameraControlConfig(base = {}, patch = {}) {
       1000000,
     );
   }
+  if (Object.prototype.hasOwnProperty.call(patch, 'largeNetworkStartupFit')) {
+    next.largeNetworkStartupFit = patch.largeNetworkStartupFit !== false;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'largeNetworkStartupNodeThreshold')) {
+    next.largeNetworkStartupNodeThreshold = normalizePositiveInteger(
+      patch.largeNetworkStartupNodeThreshold,
+      next.largeNetworkStartupNodeThreshold ?? LARGE_NETWORK_STARTUP_NODE_THRESHOLD,
+      1,
+      Number.MAX_SAFE_INTEGER,
+    );
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'largeNetworkStartupEdgeThreshold')) {
+    next.largeNetworkStartupEdgeThreshold = normalizePositiveInteger(
+      patch.largeNetworkStartupEdgeThreshold,
+      next.largeNetworkStartupEdgeThreshold ?? LARGE_NETWORK_STARTUP_EDGE_THRESHOLD,
+      1,
+      Number.MAX_SAFE_INTEGER,
+    );
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'largeNetworkStartupScale')) {
+    next.largeNetworkStartupScale = normalizeNonNegativeNumber(
+      patch.largeNetworkStartupScale,
+      next.largeNetworkStartupScale ?? LARGE_NETWORK_STARTUP_SCALE,
+      1,
+      64,
+    );
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'largeNetworkStartupDurationMs')) {
+    next.largeNetworkStartupDurationMs = normalizeNonNegativeNumber(
+      patch.largeNetworkStartupDurationMs,
+      next.largeNetworkStartupDurationMs ?? LARGE_NETWORK_STARTUP_DURATION_MS,
+      0,
+      60000,
+    );
+  }
   if (Object.prototype.hasOwnProperty.call(patch, 'animation')) {
     next.animation = patch.animation === true;
   }
@@ -1427,6 +1507,49 @@ function normalizeCameraControlConfig(base = {}, patch = {}) {
   return next;
 }
 
+function normalizeStartupConfig(value = {}, options = {}) {
+  if (value === false || options.startupLoading === false) {
+    return {
+      ...STARTUP_DEFAULTS,
+      loadingOverlay: false,
+      hideCanvasUntilFirstFrame: false,
+      layoutIterations: 0,
+      layoutDurationMs: 0,
+    };
+  }
+  const patch = value && typeof value === 'object' ? value : {};
+  const read = (key, fallback) => (
+    Object.prototype.hasOwnProperty.call(patch, key)
+      ? patch[key]
+      : (Object.prototype.hasOwnProperty.call(options, key) ? options[key] : fallback)
+  );
+  const has = (key) => (
+    Object.prototype.hasOwnProperty.call(patch, key)
+    || Object.prototype.hasOwnProperty.call(options, key)
+  );
+  return {
+    loadingOverlay: read('loadingOverlay', STARTUP_DEFAULTS.loadingOverlay) !== false,
+    hideCanvasUntilFirstFrame: read(
+      'hideCanvasUntilFirstFrame',
+      STARTUP_DEFAULTS.hideCanvasUntilFirstFrame,
+    ) !== false,
+    layoutIterations: normalizePositiveInteger(
+      read('layoutIterations', read('startupLayoutIterations', STARTUP_DEFAULTS.layoutIterations)),
+      STARTUP_DEFAULTS.layoutIterations,
+      0,
+      Number.MAX_SAFE_INTEGER,
+    ),
+    layoutDurationMs: normalizeNonNegativeNumber(
+      read('layoutDurationMs', read('startupLayoutDurationMs', STARTUP_DEFAULTS.layoutDurationMs)),
+      STARTUP_DEFAULTS.layoutDurationMs,
+      0,
+      60000,
+    ),
+    _layoutIterationsExplicit: has('layoutIterations') || has('startupLayoutIterations'),
+    _layoutDurationMsExplicit: has('layoutDurationMs') || has('startupLayoutDurationMs'),
+  };
+}
+
 function normalizeQuickControlsConfig(value, options = {}) {
   if (value === false || value == null && options.defaultEnabled === false) {
     return { ...QUICK_CONTROL_DEFAULTS, enabled: false };
@@ -1448,6 +1571,7 @@ function normalizeQuickControlsConfig(value, options = {}) {
     buttonSize: normalizePositiveInteger(patch.buttonSize, QUICK_CONTROL_DEFAULTS.buttonSize, 28, 96),
     gap: normalizeNonNegativeNumber(patch.gap, QUICK_CONTROL_DEFAULTS.gap, 0, 32),
     margin: normalizeNonNegativeNumber(patch.margin, QUICK_CONTROL_DEFAULTS.margin, 0, 96),
+    legendOffset: normalizeNonNegativeNumber(patch.legendOffset, QUICK_CONTROL_DEFAULTS.legendOffset, 0, 160),
     zoomFactor: normalizeNonNegativeNumber(patch.zoomFactor, QUICK_CONTROL_DEFAULTS.zoomFactor, 1.01, 8),
   };
   if (!config.autoFit && !config.layout && !config.zoom) config.enabled = false;
@@ -1863,24 +1987,72 @@ export const EVENTS = Object.freeze({
  * when `options.layout` is a configuration object.
  * @param {object} [options.layout.options] - Layout-specific options passed to
  * the selected layout implementation.
+ * @param {object|false} [options.startup] - First-frame startup behavior, or
+ * `false` to disable the loading overlay, canvas hiding, and layout warmup.
+ * @param {boolean} [options.startup.loadingOverlay=true] - Show a centered
+ * loading spinner while Helios is preparing the first visible frame.
+ * @param {boolean} [options.startup.hideCanvasUntilFirstFrame=true] - Keep the
+ * canvas hidden until the first intended graph frame is rendered.
+ * @param {number} [options.startup.layoutIterations=100] - Optional number of
+ * layout updates to wait before the first visible graph frame.
+ * @param {number} [options.startup.layoutDurationMs=1000] - Optional layout warmup
+ * time to wait before the first visible graph frame. When both layout warmup
+ * limits are set, the first one reached releases the frame. Large initial
+ * networks use a 5000 ms default duration unless this option is set.
  * @param {object|false} [options.behaviors] - Built-in behavior options, custom
  * behavior instances, or `false` to disable default behaviors.
  * @param {object|null} [options.mappers] - Initial node and edge mapper
  * configuration. Pass `null` to skip default mapper setup.
+ * @param {object|false} [options.interpolation] - Position interpolation
+ * controls used when switching layouts or applying saved positions.
  * @param {object} [options.labels] - Initial label overlay options handled by
  * `LabelsBehavior`.
  * @param {object} [options.legends] - Initial legend overlay options handled by
  * `LegendsBehavior`.
  * @param {boolean|object} [options.density=false] - Density layer enablement or
  * density layer options.
+ * @param {string} [options.transparencyModeEdges='weighted'] - Edge
+ * transparency mode. The default weighted mode accumulates overlapping edges
+ * without forcing every edge through the same alpha curve.
  * @param {object} [options.camera] - Camera framing, controls, and target
  * tracking options.
+ * @param {boolean} [options.camera.largeNetworkStartupFit=true] - Start large
+ * initial networks from a wider fit and settle toward the normal fit while
+ * automatic fitting remains enabled.
+ * @param {number} [options.camera.largeNetworkStartupNodeThreshold=1000000] -
+ * Node count threshold for wide startup fitting.
+ * @param {number} [options.camera.largeNetworkStartupEdgeThreshold=1000000] -
+ * Edge count threshold for wide startup fitting.
+ * @param {number} [options.camera.largeNetworkStartupScale=4] - Multiplier used
+ * to move the startup fit farther from the graph before settling.
+ * @param {number} [options.camera.largeNetworkStartupDurationMs=2200] -
+ * Duration of the automatic startup settle animation.
  * @param {boolean|object} [options.quickControls=true] - Compact top-right
  * auto-fit, layout pause/run, and zoom controls. Pass `false` to disable all
  * controls, or disable individual groups with `autoFit`, `layout`, or `zoom`.
  * @param {boolean|object} [options.ui=false] - Optional HeliosUI creation.
  * Pass `true` to create the standard panel set, or an object with HeliosUI
  * options and `panels` set to a panel name, array of names, `true`, or `false`.
+ * @param {object} [options.networkSource] - Metadata for the active network,
+ * such as `name`, `baseName`, `format`, and provenance fields used by
+ * persistence and file actions.
+ * @param {boolean|object} [options.fileDrop=true] - File-drop behavior for
+ * loading supported network files into the active view.
+ * @param {boolean|object} [options.storage] - Storage backend configuration.
+ * Pass `false` to disable persistent sessions, `true` for browser storage, or
+ * an object accepted by `createHeliosStorageManager`.
+ * @param {boolean|object|string} [options.session] - Session persistence
+ * controls or explicit session id used by browser/native storage backends.
+ * @param {string} [options.workspaceId='default'] - Workspace namespace for
+ * persisted preferences and sessions.
+ * @param {boolean} [options.persistNetwork=false] - Persist the network payload
+ * as part of browser/native session saves.
+ * @param {object} [options.networkPersistence] - Network payload persistence
+ * policy, size limits, and backend-specific options.
+ * @param {object} [options.positionPersistence] - Separate layout-position
+ * persistence policy for storage backends that support split payloads.
+ * @param {boolean|object} [options.sessionThumbnail] - Thumbnail capture policy
+ * for saved sessions.
  * @param {boolean} [options.suppressBrowserGestures=true] - Prevent native
  * browser pan, zoom, and selection gestures over the visualization.
  * @param {boolean} [options.autoCleanup=true] - Destroy this Helios instance when
@@ -2438,8 +2610,15 @@ export class Helios extends EventTarget {
         name,
         value,
       }));
-    } catch {
-      // Avoid breaking tests that create Helios-shaped objects without EventTarget internals.
+    } catch (error) {
+      if (
+        this.dispatchEvent === EventTarget.prototype.dispatchEvent
+        && error instanceof TypeError
+        && /undefined \(reading 'get'\)/.test(String(error.message ?? ''))
+      ) {
+        return;
+      }
+      console.warn(`Helios: failed to emit UI binding change for "${name}".`, error);
     }
   }
 
@@ -2751,6 +2930,12 @@ export class Helios extends EventTarget {
       delegateTargetBoundsDelegate: null,
       delegateTargetBoundsSignature: '',
       delegateTargetBoundsRequestId: 0,
+      cameraBoundsSnapshot: null,
+      cameraBoundsSignature: '',
+      cameraBoundsKind: '',
+      cameraBoundsDirty: false,
+      cameraBoundsPending: false,
+      cameraBoundsPreparedAt: Number.NEGATIVE_INFINITY,
       orbitBaseRotation: null,
       appliedOrbitAngle: this._cameraControlConfig.orbitAngle ?? 0,
       suspended: false,
@@ -2760,6 +2945,9 @@ export class Helios extends EventTarget {
       controlPoseStartedAt: 0,
       controlPoseDurationMs: 0,
       controlPoseSignature: '',
+      largeNetworkStartupActive: false,
+      pendingLargeNetworkStartupSettle: null,
+      largeNetworkStartupRefreshIteration: -1,
       lastFollowUpdateAt: Number.NEGATIVE_INFINITY,
     };
     this._picking = {
@@ -2960,6 +3148,11 @@ export class Helios extends EventTarget {
     this.size = { ...this.layers.size };
     this.removeResizeListener = null;
     this.firstGeometryUpdateComplete = false;
+    this._startupConfig = normalizeStartupConfig(options.startup, options);
+    this._startupGate = this._createStartupGate(this._startupConfig);
+    this._startupOverlay = this._createStartupOverlay(this._startupConfig);
+    this._startupCanvasPreviousVisibility = null;
+    this._applyStartupCanvasVisibility();
     const storageEnabled = shouldEnablePersistence(options);
     const storageConfig = hasOwnOption(options, 'storage')
       ? options.storage
@@ -2988,6 +3181,165 @@ export class Helios extends EventTarget {
     this._initializeBehaviors(options.behaviors);
     this.ui = null;
     this.ready = this.initialize();
+  }
+
+  _createStartupGate(config = STARTUP_DEFAULTS) {
+    let layoutIterations = normalizePositiveInteger(
+      config.layoutIterations,
+      STARTUP_DEFAULTS.layoutIterations,
+      0,
+      Number.MAX_SAFE_INTEGER,
+    );
+    let layoutDurationMs = normalizeNonNegativeNumber(
+      config.layoutDurationMs,
+      STARTUP_DEFAULTS.layoutDurationMs,
+      0,
+      60000,
+    );
+    if (this._isLargeNetworkStartupGraph()) {
+      if (config._layoutIterationsExplicit !== true) {
+        layoutIterations = STARTUP_DEFAULTS.layoutIterations;
+      }
+      if (config._layoutDurationMsExplicit !== true) {
+        layoutDurationMs = LARGE_NETWORK_STARTUP_LAYOUT_DURATION_MS;
+      }
+    }
+    return {
+      active: config.hideCanvasUntilFirstFrame !== false || config.loadingOverlay !== false || layoutIterations > 0 || layoutDurationMs > 0,
+      firstVisibleFrameDrawn: false,
+      startedAt: 0,
+      layoutIterations: 0,
+      targetLayoutIterations: layoutIterations,
+      targetLayoutDurationMs: layoutDurationMs,
+    };
+  }
+
+  _isLargeNetworkStartupGraph() {
+    const config = this._cameraControlConfig ?? CAMERA_CONTROL_DEFAULTS;
+    const { nodeCount, edgeCount } = this._getLargeNetworkStartupCounts?.() ?? {
+      nodeCount: Math.max(0, Math.floor(Number(this.network?.nodeCount) || 0)),
+      edgeCount: Math.max(0, Math.floor(Number(this.network?.edgeCount) || 0)),
+    };
+    const nodeThreshold = normalizePositiveInteger(
+      config.largeNetworkStartupNodeThreshold,
+      LARGE_NETWORK_STARTUP_NODE_THRESHOLD,
+      1,
+      Number.MAX_SAFE_INTEGER,
+    );
+    const edgeThreshold = normalizePositiveInteger(
+      config.largeNetworkStartupEdgeThreshold,
+      LARGE_NETWORK_STARTUP_EDGE_THRESHOLD,
+      1,
+      Number.MAX_SAFE_INTEGER,
+    );
+    return nodeCount >= nodeThreshold || edgeCount >= edgeThreshold;
+  }
+
+  _createStartupOverlay(config = STARTUP_DEFAULTS) {
+    if (config.loadingOverlay === false || typeof document === 'undefined') return null;
+    const parent = this.layers?.overlay ?? this.layers?.root ?? null;
+    if (!parent) return null;
+    const overlay = document.createElement('div');
+    overlay.className = 'helios-startup-overlay';
+    Object.assign(overlay.style, {
+      position: 'absolute',
+      inset: '0',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      pointerEvents: 'none',
+      zIndex: '20',
+    });
+    const spinner = document.createElement('div');
+    spinner.className = 'helios-startup-spinner';
+    spinner.setAttribute('aria-hidden', 'true');
+    Object.assign(spinner.style, {
+      width: '38px',
+      height: '38px',
+      borderRadius: '50%',
+      border: '3px solid rgba(255, 255, 255, 0.28)',
+      borderTopColor: 'rgba(255, 255, 255, 0.94)',
+      boxShadow: '0 0 14px rgba(0, 0, 0, 0.18)',
+      animation: 'helios-startup-spin 0.82s linear infinite',
+    });
+    overlay.appendChild(spinner);
+    parent.appendChild(overlay);
+    this._ensureStartupSpinnerStyles();
+    return overlay;
+  }
+
+  _ensureStartupSpinnerStyles() {
+    if (typeof document === 'undefined') return;
+    if (document.getElementById('helios-startup-spinner-style')) return;
+    const style = document.createElement('style');
+    style.id = 'helios-startup-spinner-style';
+    style.textContent = '@keyframes helios-startup-spin { to { transform: rotate(360deg); } }';
+    document.head?.appendChild(style);
+  }
+
+  _applyStartupCanvasVisibility() {
+    if (this._startupConfig?.hideCanvasUntilFirstFrame === false) return;
+    const canvas = this.layers?.canvas ?? null;
+    const gate = this._startupGate ?? null;
+    if (!canvas || !gate?.active) return;
+    this._startupCanvasPreviousVisibility = canvas.style.visibility;
+    canvas.style.visibility = 'hidden';
+  }
+
+  _recordStartupLayoutUpdate() {
+    const gate = this._startupGate ?? null;
+    if (!gate || gate.firstVisibleFrameDrawn === true) return;
+    gate.layoutIterations += 1;
+  }
+
+  _shouldSuppressStartupRender(now = performance.now()) {
+    const gate = this._startupGate ?? null;
+    if (!gate || gate.active !== true || gate.firstVisibleFrameDrawn === true) return false;
+    const timestamp = Number.isFinite(now) ? now : performance.now();
+    if (!Number.isFinite(gate.startedAt) || gate.startedAt <= 0) {
+      gate.startedAt = timestamp;
+    }
+    const hasIterationTarget = gate.targetLayoutIterations > 0;
+    const hasTimeTarget = gate.targetLayoutDurationMs > 0;
+    if (!hasIterationTarget && !hasTimeTarget) {
+      return false;
+    }
+    if (!this._shouldRunStartupLayoutWarmup()) {
+      return false;
+    }
+    const iterationsReached = hasIterationTarget && gate.layoutIterations >= gate.targetLayoutIterations;
+    const timeReached = hasTimeTarget && (timestamp - gate.startedAt) >= gate.targetLayoutDurationMs;
+    return !(iterationsReached || timeReached);
+  }
+
+  _shouldRunStartupLayoutWarmup() {
+    const layout = this._layout ?? null;
+    if (!layout || layout instanceof StaticLayout) return false;
+    if (this.scheduler?.layoutEnabled === false) return false;
+    return true;
+  }
+
+  _isStartupLayoutWarmupActive() {
+    const gate = this._startupGate ?? null;
+    if (!gate || gate.active !== true || gate.firstVisibleFrameDrawn === true) return false;
+    const hasIterationTarget = gate.targetLayoutIterations > 0;
+    const hasTimeTarget = gate.targetLayoutDurationMs > 0;
+    if (!hasIterationTarget && !hasTimeTarget) return false;
+    return this._shouldRunStartupLayoutWarmup();
+  }
+
+  _finishStartupFirstVisibleFrame() {
+    const gate = this._startupGate ?? null;
+    if (!gate || gate.firstVisibleFrameDrawn === true) return;
+    gate.firstVisibleFrameDrawn = true;
+    gate.active = false;
+    const canvas = this.layers?.canvas ?? null;
+    if (canvas && this._startupConfig?.hideCanvasUntilFirstFrame !== false) {
+      canvas.style.visibility = this._startupCanvasPreviousVisibility ?? '';
+    }
+    this._startupOverlay?.remove?.();
+    this._startupOverlay = null;
+    this._queuePendingLargeNetworkStartupSettle();
   }
 
   _setupAutoCleanup() {
@@ -3092,7 +3444,7 @@ export class Helios extends EventTarget {
     title.textContent = this._networkFileDropOptions?.overlayTitle ?? 'Drop a network file here';
     const subtitle = doc.createElement('div');
     subtitle.className = 'helios-network-drop-overlay__subtitle';
-    subtitle.textContent = this._networkFileDropOptions?.overlaySubtitle ?? 'Supported formats: .bxnet, .zxnet, .xnet, .gml';
+    subtitle.textContent = this._networkFileDropOptions?.overlaySubtitle ?? 'Supported formats: .bxnet, .zxnet, .xnet, .gml, .gt, .gt.zst';
     overlay.appendChild(title);
     overlay.appendChild(subtitle);
     this.layers?.root?.appendChild(overlay);
@@ -3114,9 +3466,31 @@ export class Helios extends EventTarget {
       console.warn('Helios: dropped file ignored because its format is unsupported.', { name: file.name, format });
       return null;
     }
+    const replaceOptions = this._networkFileDropOptions?.replaceOptions ?? {};
+    const confirmNetworkLoad = replaceOptions.confirmNetworkLoad ?? this._confirmNetworkLoadFromUi;
+    if (typeof confirmNetworkLoad === 'function') {
+      const confirmed = await confirmNetworkLoad({
+        source: file,
+        sourceName: file.name,
+        format,
+        trigger: 'drop',
+      });
+      if (confirmed !== true) return null;
+    }
+    const existingUnsyncedConfirmation = replaceOptions.confirmUnsyncedSession;
+    const confirmUnsyncedSession = typeof existingUnsyncedConfirmation === 'function'
+      ? existingUnsyncedConfirmation
+      : (typeof this._confirmUnsyncedSessionFromUi === 'function'
+        ? (detail) => this._confirmUnsyncedSessionFromUi({
+            ...detail,
+            sourceName: file.name,
+            trigger: 'drop',
+          })
+        : undefined);
     return this.loadNetwork(file, {
-      ...(this._networkFileDropOptions?.replaceOptions ?? {}),
+      ...replaceOptions,
       format,
+      confirmUnsyncedSession,
     });
   }
 
@@ -3561,9 +3935,29 @@ export class Helios extends EventTarget {
     if (!this._cameraControlRuntime) return;
     this._cameraControlRuntime.autoFitDirty = true;
     this._cameraControlRuntime.lastAutoFitAt = Number.NEGATIVE_INFINITY;
+    this._invalidateCameraBoundsSnapshot();
+    const network = this._getRenderNetwork?.() ?? null;
+    if (this._renderNetworkBufferAccessActive(network)) {
+      const config = this._cameraControlConfig ?? CAMERA_CONTROL_DEFAULTS;
+      const request = config.followTarget === true
+        ? this._buildCameraFollowBoundsRequest(this._resolveActiveCameraTargetNodeIndices(), config)
+        : this._buildCameraAutoFitBoundsRequest(this._resolveActiveCameraTargetNodeIndices(), config);
+      if (request) this._scheduleCameraBoundsPreparation(request, { force: true, reason: 'dirty' });
+    } else {
+      this._prepareCameraControlBoundsSnapshot({ force: true, reason: 'dirty' });
+    }
     if (requestRender !== false) {
       this.scheduler?.requestRender?.();
     }
+  }
+
+  _invalidateCameraBoundsSnapshot() {
+    const runtime = this._cameraControlRuntime ?? null;
+    if (!runtime) return;
+    runtime.cameraBoundsSnapshot = null;
+    runtime.cameraBoundsSignature = '';
+    runtime.cameraBoundsKind = '';
+    runtime.cameraBoundsDirty = true;
   }
 
   _handleResizeAutoFit() {
@@ -3588,6 +3982,18 @@ export class Helios extends EventTarget {
     runtime.delegateTargetBoundsDelegate = null;
     runtime.delegateTargetBoundsSignature = '';
     runtime.delegateTargetBoundsRequestId = (runtime.delegateTargetBoundsRequestId ?? 0) + 1;
+  }
+
+  _markRestoredPositionsForCamera() {
+    const runtime = this._cameraControlRuntime ?? null;
+    if (!runtime) return;
+    this._resetCameraDelegateSnapshot();
+    const config = this._cameraControlConfig ?? CAMERA_CONTROL_DEFAULTS;
+    if (config.autoFit === true || config.followTarget === true) {
+      this._markAutoFitDirty(false);
+    } else {
+      this._invalidateCameraBoundsSnapshot();
+    }
   }
 
   _invalidateCameraOrbitReference() {
@@ -3639,7 +4045,13 @@ export class Helios extends EventTarget {
       } else if (typeof delegate.getPositionView === 'function') {
         view = delegate.getPositionView(context);
       }
-    } catch (_) {
+    } catch (error) {
+      warnOnce(
+        this,
+        'delegate-position-view',
+        'Helios: failed to read delegate position view; falling back to network positions.',
+        { error, delegate },
+      );
       view = null;
     }
     if (view && Number.isFinite(view.length) && view.length > 0) {
@@ -3689,7 +4101,14 @@ export class Helios extends EventTarget {
           this._tryPendingFrameNetwork?.();
         }
       })
-      .catch(() => {})
+      .catch((error) => {
+        warnOnce(
+          this,
+          'camera-delegate-snapshot',
+          'Helios: failed to snapshot delegate positions for camera controls.',
+          { error, delegate },
+        );
+      })
       .finally(() => {
         if (runtime.delegateSnapshotRequestId === requestId && runtime.delegateSnapshotDelegate === delegate) {
           runtime.delegateSnapshotPending = false;
@@ -3818,7 +4237,14 @@ export class Helios extends EventTarget {
         this._markAutoFitDirty(false);
         this.scheduler?.requestRender?.();
       })
-      .catch(() => {})
+      .catch((error) => {
+        warnOnce(
+          this,
+          'camera-delegate-target-bounds',
+          'Helios: failed to resolve delegate target bounds for camera controls.',
+          { error, delegate, signature },
+        );
+      })
       .finally(() => {
         if (
           runtime.delegateTargetBoundsRequestId === requestId
@@ -3828,6 +4254,54 @@ export class Helios extends EventTarget {
           runtime.delegateTargetBoundsPending = false;
         }
       });
+  }
+
+  _prepareRenderBoundsNodeAttributeAccess(network) {
+    const readable = new Map();
+    if (this._renderNetworkBufferAccessActive(network)) {
+      for (const name of [NODE_SIZE_ATTRIBUTE, NODE_OUTLINE_WIDTH_ATTRIBUTE]) readable.set(name, false);
+      return readable;
+    }
+    for (const name of [NODE_SIZE_ATTRIBUTE, NODE_OUTLINE_WIDTH_ATTRIBUTE]) {
+      if (!network || typeof name !== 'string' || !name) {
+        readable.set(name, false);
+        continue;
+      }
+      if (network._nodeAttributes?.has?.(name)) {
+        if (typeof network.getNodeAttributeInfo === 'function') {
+          try {
+            readable.set(name, Boolean(network.getNodeAttributeInfo(name)));
+          } catch {
+            readable.set(name, false);
+          }
+        } else {
+          readable.set(name, true);
+        }
+        continue;
+      }
+      if (typeof network.getNodeAttributeInfo === 'function') {
+        try {
+          readable.set(name, Boolean(network.getNodeAttributeInfo(name)));
+        } catch {
+          readable.set(name, false);
+        }
+        continue;
+      }
+      if (typeof network.hasNodeAttribute === 'function') {
+        try {
+          readable.set(name, Boolean(network.hasNodeAttribute(name)));
+        } catch {
+          readable.set(name, false);
+        }
+        continue;
+      }
+      readable.set(name, true);
+    }
+    return readable;
+  }
+
+  _renderNetworkBufferAccessActive(network = this._getRenderNetwork?.() ?? null) {
+    return Math.max(0, Number(network?._bufferSessionDepth ?? 0) || 0) > 0;
   }
 
   _sampleRenderBoundsFromPositions(positions, nodeIndices, options = {}) {
@@ -3855,12 +4329,10 @@ export class Helios extends EventTarget {
     const sampleZ = coverage < 0.999999 ? [] : null;
     const graphLayer = this.renderer?.graphLayer ?? null;
     const network = this._getRenderNetwork?.() ?? null;
+    const nodeAttributeAccess = options.nodeAttributeAccess instanceof Map ? options.nodeAttributeAccess : null;
     const readNodeAttributeView = (name) => {
-      try {
-        return network?.getNodeAttributeBuffer?.(name)?.view ?? null;
-      } catch {
-        return null;
-      }
+      if (nodeAttributeAccess?.get(name) === false) return null;
+      return network?.getNodeAttributeBuffer?.(name)?.view ?? null;
     };
     const nodeSizeBase = Math.max(0, Number(graphLayer?.nodeSizeBase ?? 0) || 0);
     const nodeSizeScale = Math.max(0, Number(graphLayer?.nodeSizeScale ?? 1) || 0);
@@ -4008,7 +4480,7 @@ export class Helios extends EventTarget {
     if (isPan || isRotate || isZoom || isDolly || is2DMovementWithoutAction) {
       this._stopCameraControlPoseInterpolation();
     }
-    if (config.autoFit === true && (isPan || isZoom || isDolly || is2DMovementWithoutAction)) {
+    if (config.autoFit === true && (isPan || isRotate || isZoom || isDolly || is2DMovementWithoutAction)) {
       config.autoFit = false;
       changed = true;
     }
@@ -4046,17 +4518,19 @@ export class Helios extends EventTarget {
   _sampleRenderBounds(options = {}) {
     const network = this._getRenderNetwork();
     const requestedNodeIndices = normalizeNodeIndexList(options.nodeIndices);
+    const nodeAttributeAccess = this._prepareRenderBoundsNodeAttributeAccess(network);
+    const sampleOptions = { ...options, nodeAttributeAccess };
     if (requestedNodeIndices?.length) {
-      const resolved = this._resolveCameraPositionView({ ...options, skipDelegateSnapshot: true });
+      const resolved = this._resolveCameraPositionView({ ...sampleOptions, skipDelegateSnapshot: true });
       if (resolved?.source === 'network') {
-        return this._withPositionBufferAccess(() => {
+        return this._withRenderNetworkBufferAccess(network, () => {
           const positions = this._readNodePositionViewUnsafe();
-          return this._sampleRenderBoundsFromPositions(positions, requestedNodeIndices, options);
+          return this._sampleRenderBoundsFromPositions(positions, requestedNodeIndices, sampleOptions);
         });
       }
       if (!resolved?.view) {
         const delegate = this._positionsConfig?.delegate ?? this._activePositionDelegate ?? null;
-        this._scheduleCameraDelegateTargetBounds(delegate, requestedNodeIndices, options);
+        this._scheduleCameraDelegateTargetBounds(delegate, requestedNodeIndices, sampleOptions);
         const runtime = this._cameraControlRuntime ?? null;
         const signature = this._cameraNodeIndexSignature(requestedNodeIndices);
         if (
@@ -4068,15 +4542,17 @@ export class Helios extends EventTarget {
         }
         return null;
       }
-      return this._sampleRenderBoundsFromPositions(resolved.view, requestedNodeIndices, options);
+      return this._withRenderNetworkBufferAccess(network, () => (
+        this._sampleRenderBoundsFromPositions(resolved.view, requestedNodeIndices, sampleOptions)
+      ));
     }
 
-    const resolved = this._resolveCameraPositionView(options);
+    const resolved = this._resolveCameraPositionView(sampleOptions);
     if (resolved?.source === 'network') {
-      return this._withPositionBufferAccess(() => {
+      return this._withRenderNetworkBufferAccess(network, () => {
         const positions = this._readNodePositionViewUnsafe();
         const nodeIndices = network?.nodeIndices ?? null;
-        return this._sampleRenderBoundsFromPositions(positions, nodeIndices, options);
+        return this._sampleRenderBoundsFromPositions(positions, nodeIndices, sampleOptions);
       });
     }
     let nodeIndices = null;
@@ -4088,7 +4564,131 @@ export class Helios extends EventTarget {
         : Array.from(active);
     });
     if (!nodeIndices?.length || !resolved?.view) return null;
-    return this._sampleRenderBoundsFromPositions(resolved.view, nodeIndices, options);
+    return this._withRenderNetworkBufferAccess(network, () => (
+      this._sampleRenderBoundsFromPositions(resolved.view, nodeIndices, sampleOptions)
+    ));
+  }
+
+  _cameraBoundsRequestSignature(request = {}) {
+    const options = request.options ?? {};
+    const nodeIndices = normalizeNodeIndexList(request.nodeIndices);
+    const graphLayer = this.renderer?.graphLayer ?? null;
+    const viewport = this.renderer?.camera?.viewport ?? this.size ?? {};
+    return JSON.stringify({
+      kind: request.kind ?? 'bounds',
+      nodeIndices: nodeIndices?.length ? this._cameraNodeIndexSignature(nodeIndices) : '',
+      coverage: Number.isFinite(options.coverage) ? Number(options.coverage) : null,
+      paddingRatio: Number.isFinite(options.paddingRatio) ? Number(options.paddingRatio) : null,
+      paddingPx: Number.isFinite(options.paddingPx) ? Number(options.paddingPx) : null,
+      maxSamples: Number.isFinite(options.maxSamples) ? Math.floor(Number(options.maxSamples)) : null,
+      nodeRadiusWorld: Number.isFinite(options.nodeRadiusWorld) ? Number(options.nodeRadiusWorld) : null,
+      viewportWidth: Number(viewport.width ?? this.size?.width ?? 0) || 0,
+      viewportHeight: Number(viewport.height ?? this.size?.height ?? 0) || 0,
+      nodeSizeBase: Number(graphLayer?.nodeSizeBase ?? 0) || 0,
+      nodeSizeScale: Number(graphLayer?.nodeSizeScale ?? 1) || 0,
+      nodeOutlineWidthBase: Number(graphLayer?.nodeOutlineWidthBase ?? 0) || 0,
+      nodeOutlineWidthScale: Number(graphLayer?.nodeOutlineWidthScale ?? 0) || 0,
+    });
+  }
+
+  _prepareCameraBoundsSnapshot(request, options = {}) {
+    const runtime = this._cameraControlRuntime ?? null;
+    if (!runtime || !request) return null;
+    const signature = this._cameraBoundsRequestSignature(request);
+    if (
+      options.force !== true
+      && runtime.cameraBoundsDirty !== true
+      && runtime.cameraBoundsSignature === signature
+      && runtime.cameraBoundsSnapshot
+    ) {
+      return runtime.cameraBoundsSnapshot;
+    }
+    if (this._renderNetworkBufferAccessActive()) {
+      this._scheduleCameraBoundsPreparation(request, { ...options, force: true });
+      return runtime.cameraBoundsSnapshot ?? null;
+    }
+    const bounds = this._sampleRenderBounds({
+      ...(request.options ?? {}),
+      nodeIndices: request.nodeIndices ?? undefined,
+    });
+    runtime.cameraBoundsPreparedAt = Number.isFinite(options.now) ? Number(options.now) : performance.now();
+    runtime.cameraBoundsPending = false;
+    runtime.cameraBoundsKind = request.kind ?? 'bounds';
+    runtime.cameraBoundsSignature = signature;
+    runtime.cameraBoundsSnapshot = bounds ?? null;
+    runtime.cameraBoundsDirty = bounds ? false : true;
+    return bounds ?? null;
+  }
+
+  _scheduleCameraBoundsPreparation(request, options = {}) {
+    const runtime = this._cameraControlRuntime ?? null;
+    if (!runtime || !request || runtime.cameraBoundsPending === true) return false;
+    runtime.cameraBoundsPending = true;
+    const run = () => {
+      const current = this._cameraControlRuntime ?? null;
+      if (!current) return;
+      try {
+        this._prepareCameraBoundsSnapshot(request, { ...options, force: true });
+      } finally {
+        current.cameraBoundsPending = false;
+      }
+      this.scheduler?.requestRender?.();
+    };
+    if (typeof queueMicrotask === 'function') queueMicrotask(run);
+    else Promise.resolve().then(run);
+    return true;
+  }
+
+  _getPreparedCameraBoundsSnapshot(request) {
+    const runtime = this._cameraControlRuntime ?? null;
+    if (!runtime || !request) return null;
+    const signature = this._cameraBoundsRequestSignature(request);
+    if (runtime.cameraBoundsSignature !== signature) return null;
+    return runtime.cameraBoundsSnapshot ?? null;
+  }
+
+  _buildCameraFollowBoundsRequest(nodeIndices, config = this._cameraControlConfig ?? CAMERA_CONTROL_DEFAULTS) {
+    const normalized = normalizeNodeIndexList(nodeIndices);
+    if (!normalized?.length) return null;
+    return {
+      kind: 'follow',
+      nodeIndices: normalized,
+      options: {
+        coverage: 1,
+        paddingRatio: 0,
+        maxSamples: config.autoFitMaxSamples,
+      },
+    };
+  }
+
+  _buildCameraAutoFitBoundsRequest(nodeIndices = null, config = this._cameraControlConfig ?? CAMERA_CONTROL_DEFAULTS) {
+    const normalized = normalizeNodeIndexList(nodeIndices);
+    return {
+      kind: 'autoFit',
+      nodeIndices: normalized?.length ? normalized : null,
+      options: {
+        coverage: config.autoFitCoverage,
+        paddingRatio: config.autoFitPaddingRatio,
+        maxSamples: config.autoFitMaxSamples,
+      },
+    };
+  }
+
+  _prepareCameraControlBoundsSnapshot(options = {}) {
+    const runtime = this._cameraControlRuntime ?? null;
+    const config = this._cameraControlConfig ?? CAMERA_CONTROL_DEFAULTS;
+    if (!runtime || runtime.suspended === true) return null;
+    if (config.followTarget === true) {
+      const targetNodeIndices = this._resolveActiveCameraTargetNodeIndices();
+      const request = this._buildCameraFollowBoundsRequest(targetNodeIndices, config);
+      return request ? this._prepareCameraBoundsSnapshot(request, options) : null;
+    }
+    if (config.autoFit !== true || runtime.autoFitDirty !== true || runtime.largeNetworkStartupActive === true) {
+      return null;
+    }
+    const targetNodeIndices = this._resolveActiveCameraTargetNodeIndices();
+    const request = this._buildCameraAutoFitBoundsRequest(targetNodeIndices, config);
+    return this._prepareCameraBoundsSnapshot(request, options);
   }
 
   _resolveCameraFocusPose(bounds, options = {}) {
@@ -4153,7 +4753,12 @@ export class Helios extends EventTarget {
     const nodeRadiusWorld = Math.max(0, Number(bounds.nodeRadiusWorld ?? 0) || 0);
 
     if (camera.mode === '2d') {
-      const fitZoomMargin = Math.max(1, Number.isFinite(options.zoomMargin) ? Number(options.zoomMargin) : 1.1);
+      const fitZoomMargin = Math.max(
+        1,
+        Number.isFinite(options.zoomMargin)
+          ? Number(options.zoomMargin)
+          : CAMERA_FIT_DEFAULT_2D_ZOOM_MARGIN,
+      );
       const viewportW = Math.max(1, camera.viewport?.width ?? this.size?.width ?? 1);
       const viewportH = Math.max(1, camera.viewport?.height ?? this.size?.height ?? 1);
       const availW = Math.max(1, viewportW - bounds.paddingPx * 2);
@@ -4253,6 +4858,151 @@ export class Helios extends EventTarget {
     return true;
   }
 
+  _getLargeNetworkStartupCounts(targetNodeIndices = null) {
+    const network = this._getRenderNetwork?.() ?? this.network ?? null;
+    const nodeCount = targetNodeIndices?.length ?? Math.max(0, Math.floor(Number(network?.nodeCount) || 0));
+    const edgeCount = targetNodeIndices?.length ? 0 : Math.max(0, Math.floor(Number(network?.edgeCount) || 0));
+    return { nodeCount, edgeCount };
+  }
+
+  _shouldUseLargeNetworkStartupFit(options = {}, targetNodeIndices = null) {
+    if (targetNodeIndices?.length) return false;
+    const config = this._cameraControlConfig ?? CAMERA_CONTROL_DEFAULTS;
+    if (options.largeNetworkStartupFit !== true || config.largeNetworkStartupFit === false) return false;
+    if (config.autoFit !== true) return false;
+    const { nodeCount, edgeCount } = this._getLargeNetworkStartupCounts(targetNodeIndices);
+    const nodeThreshold = normalizePositiveInteger(
+      config.largeNetworkStartupNodeThreshold,
+      LARGE_NETWORK_STARTUP_NODE_THRESHOLD,
+      1,
+      Number.MAX_SAFE_INTEGER,
+    );
+    const edgeThreshold = normalizePositiveInteger(
+      config.largeNetworkStartupEdgeThreshold,
+      LARGE_NETWORK_STARTUP_EDGE_THRESHOLD,
+      1,
+      Number.MAX_SAFE_INTEGER,
+    );
+    return nodeCount >= nodeThreshold || edgeCount >= edgeThreshold;
+  }
+
+  _resolveLargeNetworkStartupPose(fitPose, options = {}) {
+    const camera = this.renderer?.camera ?? null;
+    if (!camera || !fitPose) return null;
+    const config = this._cameraControlConfig ?? CAMERA_CONTROL_DEFAULTS;
+    const scale = normalizeNonNegativeNumber(
+      options.largeNetworkStartupScale ?? config.largeNetworkStartupScale,
+      LARGE_NETWORK_STARTUP_SCALE,
+      1,
+      64,
+    );
+    if (scale <= 1) return null;
+    if (fitPose.mode === '2d') {
+      const zoom = Math.max(camera.minZoom ?? 1e-6, Number(fitPose.zoom ?? camera.zoom ?? 1) / scale);
+      const sourceZoom = Math.max(1e-6, Number(fitPose.zoom ?? 1) || 1);
+      const panScale = zoom / sourceZoom;
+      return mergeCameraPose(fitPose, {
+        zoom,
+        pan2D: new Float32Array([
+          (Number(fitPose.pan2D?.[0]) || 0) * panScale,
+          (Number(fitPose.pan2D?.[1]) || 0) * panScale,
+          (Number(fitPose.pan2D?.[2]) || 0) * panScale,
+        ]),
+      });
+    }
+    const distance = Math.min(
+      camera.maxDistance ?? Number.POSITIVE_INFINITY,
+      Math.max(camera.minDistance ?? 1e-6, Number(fitPose.distance ?? camera.distance ?? 800) * scale),
+    );
+    return mergeCameraPose(fitPose, { distance });
+  }
+
+  _applyLargeNetworkStartupFit(fitPose, options = {}) {
+    const camera = this.renderer?.camera ?? null;
+    const runtime = this._cameraControlRuntime ?? null;
+    if (!camera || !fitPose) return false;
+    const startPose = this._resolveLargeNetworkStartupPose(fitPose, options);
+    if (!startPose) return false;
+    const durationMs = normalizeNonNegativeNumber(
+      options.largeNetworkStartupDurationMs ?? this._cameraControlConfig?.largeNetworkStartupDurationMs,
+      LARGE_NETWORK_STARTUP_DURATION_MS,
+      0,
+      60000,
+    );
+    this._stopCameraControlPoseInterpolation();
+    applyCameraPose(camera, startPose);
+    const gate = this._startupGate ?? null;
+    const delaySettleUntilFirstVisibleFrame = gate?.active === true && gate.firstVisibleFrameDrawn !== true;
+    if (delaySettleUntilFirstVisibleFrame && runtime) {
+      runtime.pendingLargeNetworkStartupSettle = { pose: fitPose, durationMs };
+    } else {
+      this._queueCameraControlPose(fitPose, {
+        animate: durationMs > 0,
+        durationMs,
+      });
+    }
+    if (runtime) {
+      runtime.largeNetworkStartupActive = durationMs > 0
+        && (runtime.controlPoseActive === true || runtime.pendingLargeNetworkStartupSettle != null);
+      runtime.autoFitDirty = false;
+      runtime.lastAutoFitAt = performance.now();
+      runtime.lastFitSignature = this._cameraFitSignature(fitPose);
+    }
+    this.scheduler?.requestRender?.();
+    return true;
+  }
+
+  _refreshLargeNetworkStartupFit(options = {}) {
+    const gate = this._startupGate ?? null;
+    const runtime = this._cameraControlRuntime ?? null;
+    const config = this._cameraControlConfig ?? CAMERA_CONTROL_DEFAULTS;
+    const camera = this.renderer?.camera ?? null;
+    if (!gate || gate.active !== true || gate.firstVisibleFrameDrawn === true) return false;
+    if (!runtime || !camera || config.largeNetworkStartupFit === false || config.autoFit !== true) return false;
+    if (!this._shouldUseLargeNetworkStartupFit({ largeNetworkStartupFit: true }, null)) return false;
+    const layoutIteration = Math.max(0, Math.floor(Number(gate.layoutIterations) || 0));
+    if (
+      options.force !== true
+      && runtime.largeNetworkStartupRefreshIteration === layoutIteration
+      && runtime.pendingLargeNetworkStartupSettle
+    ) {
+      return false;
+    }
+    const sampledBounds = this._sampleRenderBounds({
+      coverage: config.autoFitCoverage,
+      paddingRatio: config.autoFitPaddingRatio,
+      maxSamples: config.autoFitMaxSamples,
+    });
+    if (!sampledBounds) return false;
+    const fitPose = this._resolveCameraFitPose(sampledBounds, {
+      resetOrientation: false,
+      focusMode: 'bbox',
+    });
+    if (!fitPose) return false;
+    const refreshed = this._applyLargeNetworkStartupFit(fitPose, {
+      largeNetworkStartupFit: true,
+      largeNetworkStartupScale: config.largeNetworkStartupScale,
+      largeNetworkStartupDurationMs: config.largeNetworkStartupDurationMs,
+    });
+    if (refreshed) {
+      runtime.largeNetworkStartupRefreshIteration = layoutIteration;
+    }
+    return refreshed;
+  }
+
+  _queuePendingLargeNetworkStartupSettle() {
+    const runtime = this._cameraControlRuntime ?? null;
+    const pending = runtime?.pendingLargeNetworkStartupSettle ?? null;
+    if (!runtime || !pending?.pose) return false;
+    runtime.pendingLargeNetworkStartupSettle = null;
+    const queued = this._queueCameraControlPose(pending.pose, {
+      animate: pending.durationMs > 0,
+      durationMs: pending.durationMs,
+    });
+    runtime.largeNetworkStartupActive = queued && pending.durationMs > 0 && runtime.controlPoseActive === true;
+    return queued;
+  }
+
   _cameraPoseSignature(pose) {
     if (!pose) return '';
     return JSON.stringify([
@@ -4289,6 +5039,9 @@ export class Helios extends EventTarget {
     runtime.controlPoseStartedAt = 0;
     runtime.controlPoseDurationMs = 0;
     runtime.controlPoseSignature = '';
+    runtime.largeNetworkStartupActive = false;
+    runtime.pendingLargeNetworkStartupSettle = null;
+    runtime.largeNetworkStartupRefreshIteration = -1;
   }
 
   _resolveCameraControlPoseInterpolation(timestamp = performance.now()) {
@@ -4302,6 +5055,7 @@ export class Helios extends EventTarget {
       runtime.controlPoseActive = false;
       runtime.controlPoseFrom = null;
       runtime.controlPoseTo = null;
+      runtime.largeNetworkStartupActive = false;
       return { pose, active: false, changed: true };
     }
     const now = Number.isFinite(timestamp) ? timestamp : performance.now();
@@ -4312,6 +5066,7 @@ export class Helios extends EventTarget {
       runtime.controlPoseActive = false;
       runtime.controlPoseFrom = null;
       runtime.controlPoseTo = null;
+      runtime.largeNetworkStartupActive = false;
       return { pose: completedPose ?? pose, active: false, changed: true };
     }
     return { pose, active: true, changed: true };
@@ -4339,10 +5094,14 @@ export class Helios extends EventTarget {
       this.scheduler?.requestRender?.();
       return true;
     }
+    const now = performance.now();
+    const currentPose = runtime.controlPoseActive === true
+      ? (this._resolveCameraControlPoseInterpolation(now).pose ?? captureCameraPose(camera))
+      : captureCameraPose(camera);
     runtime.controlPoseActive = true;
-    runtime.controlPoseFrom = captureCameraPose(camera);
+    runtime.controlPoseFrom = currentPose;
     runtime.controlPoseTo = nextPose;
-    runtime.controlPoseStartedAt = performance.now();
+    runtime.controlPoseStartedAt = now;
     runtime.controlPoseDurationMs = durationMs;
     runtime.controlPoseSignature = signature;
     this.scheduler?.requestRender?.();
@@ -4382,12 +5141,11 @@ export class Helios extends EventTarget {
           || (now - runtime.lastFollowUpdateAt) >= followIntervalMs
         ) {
           runtime.lastFollowUpdateAt = now;
-          const sampledBounds = this._sampleRenderBounds({
-            nodeIndices: activeTargetNodeIndices,
-            coverage: 1,
-            paddingRatio: 0,
-            maxSamples: config.autoFitMaxSamples,
-          });
+          const boundsRequest = this._buildCameraFollowBoundsRequest(activeTargetNodeIndices, config);
+          const sampledBounds = this._getPreparedCameraBoundsSnapshot(boundsRequest);
+          if (!sampledBounds) {
+            this._scheduleCameraBoundsPreparation(boundsRequest, { now, reason: 'follow' });
+          }
           const followPose = this._resolveCameraFocusPose(sampledBounds, {
             focusMode: 'centroid',
             basePose: runtime.controlPoseTo ?? null,
@@ -4405,20 +5163,21 @@ export class Helios extends EventTarget {
           }
         }
       }
-    } else if (config.autoFit === true && runtime.autoFitDirty === true) {
+    } else if (
+      config.autoFit === true
+      && runtime.autoFitDirty === true
+      && runtime.largeNetworkStartupActive !== true
+    ) {
       const activeTargetNodeIndices = this._resolveActiveCameraTargetNodeIndices();
       const nodeCount = activeTargetNodeIndices?.length ?? this._getRenderNetwork()?.nodeCount ?? 0;
       const effectiveIntervalMs = this._resolveCameraAutoFitIntervalMs(nodeCount);
       if (!Number.isFinite(runtime.lastAutoFitAt) || (now - runtime.lastAutoFitAt) >= effectiveIntervalMs) {
         runtime.lastAutoFitAt = now;
-        const sampledBounds = this._sampleRenderBounds({
-          nodeIndices: activeTargetNodeIndices,
-          coverage: config.autoFitCoverage,
-          paddingRatio: config.autoFitPaddingRatio,
-          maxSamples: config.autoFitMaxSamples,
-        });
+        const boundsRequest = this._buildCameraAutoFitBoundsRequest(activeTargetNodeIndices, config);
+        const sampledBounds = this._getPreparedCameraBoundsSnapshot(boundsRequest);
         if (!sampledBounds) {
           runtime.autoFitDirty = nodeCount > 0;
+          this._scheduleCameraBoundsPreparation(boundsRequest, { now, reason: 'auto-fit' });
         } else {
           const fitPose = this._resolveCameraFitPose(sampledBounds, {
             resetOrientation: false,
@@ -4641,7 +5400,7 @@ export class Helios extends EventTarget {
         const availW = Math.max(1, viewportW - 48);
         const availH = Math.max(1, viewportH - 48);
         return clamp(
-          Math.min(availW / w, availH / h),
+          Math.min(availW / w, availH / h) / CAMERA_FIT_DEFAULT_2D_ZOOM_MARGIN,
           camera.minZoom ?? 0.001,
           camera.maxZoom ?? 10,
         );
@@ -4887,8 +5646,13 @@ export class Helios extends EventTarget {
     if (!selector || typeof selector !== 'object') return;
     try {
       selector.dispose?.();
-    } catch (_) {
-      // ignore selector cleanup failures
+    } catch (error) {
+      warnOnce(
+        this,
+        'graph-filter-selector-dispose',
+        'Helios: failed to dispose graph filter selector.',
+        { error },
+      );
     }
   }
 
@@ -4909,7 +5673,13 @@ export class Helios extends EventTarget {
         const versions = network.getTopologyVersions() ?? {};
         topologyNode = safeNumber(versions.node, 0);
         topologyEdge = safeNumber(versions.edge, 0);
-      } catch (_) {
+      } catch (error) {
+        warnOnce(
+          this,
+          'graph-filter-topology-versions',
+          'Helios: failed to read graph-filter topology versions; using zero versions.',
+          { error },
+        );
         topologyNode = 0;
         topologyEdge = 0;
       }
@@ -5168,7 +5938,13 @@ export class Helios extends EventTarget {
             if (typeof target.getTopologyVersions === 'function') {
               try {
                 raw = target.getTopologyVersions() ?? raw;
-              } catch (_) {
+              } catch (error) {
+                warnOnce(
+                  this,
+                  'filtered-network-topology-versions',
+                  'Helios: filtered network proxy failed to read topology versions; using zero versions.',
+                  { error },
+                );
                 raw = { node: 0, edge: 0 };
               }
             }
@@ -5318,6 +6094,12 @@ export class Helios extends EventTarget {
         this._requestLayoutReheat('filter-sync');
         this.scheduler?.requestLayout?.('filter-sync');
       }
+      warnOnce(
+        this,
+        'graph-filter-refresh',
+        'Helios: graph filter refresh failed; falling back to the base network.',
+        { error },
+      );
       this.debug?.log?.('helios', 'Graph filter refresh failed; falling back to base network', { error });
       return state;
     }
@@ -5716,8 +6498,13 @@ export class Helios extends EventTarget {
     if (disposeOld && prevNetwork && typeof prevNetwork.dispose === 'function') {
       try {
         prevNetwork.dispose();
-      } catch (_) {
-        // ignore disposal failures
+      } catch (error) {
+        warnOnce(
+          this,
+          'previous-network-dispose',
+          'Helios: previous network disposal failed after network replacement.',
+          { error },
+        );
       }
     }
   }
@@ -5766,6 +6553,7 @@ export class Helios extends EventTarget {
     this.requestFrameNetwork({
       animate: false,
       resetOrientation: this.mode() === '3d',
+      largeNetworkStartupFit: true,
       maxAttempts: 60,
     });
   }
@@ -5805,6 +6593,10 @@ export class Helios extends EventTarget {
       resetOrientation: options.resetOrientation ?? (camera.mode === '3d'),
       focusMode: options.focusMode ?? (targetNodeIndices?.length ? 'centroid' : 'bbox'),
     });
+    if (this._shouldUseLargeNetworkStartupFit(options, targetNodeIndices)) {
+      const applied = this._applyLargeNetworkStartupFit(nextPose, options);
+      if (applied) return true;
+    }
     return this._applyCameraPoseWithOptionalAnimation(nextPose, {
       animate: options.animate === true,
       durationMs: options.durationMs,
@@ -5818,7 +6610,7 @@ export class Helios extends EventTarget {
    * @apiSection Network And Persistence
    * @param {Blob|ArrayBuffer|string|File} source - Network payload or file-like object.
    * @param {object} [options] - Load and replacement options.
-   * @param {'xnet'|'zxnet'|'bxnet'|'gml'} [options.format] - Input format when it
+   * @param {'xnet'|'zxnet'|'bxnet'|'gml'|'gt'} [options.format] - Input format when it
    * cannot be inferred from `source.name`.
    * @returns {Promise<HeliosNetwork>} Loaded network instance.
    * @example
@@ -5837,7 +6629,7 @@ export class Helios extends EventTarget {
       : null;
     const format = requestedFormat ?? formatFromName;
     if (!format) {
-      throw new Error('loadNetwork requires a format ("xnet", "zxnet", "bxnet", "gml") or a filename with a supported extension');
+      throw new Error('loadNetwork requires a format ("xnet", "zxnet", "bxnet", "gml", "gt") or a filename with a supported extension such as ".gt.zst"');
     }
     const { default: HeliosNetwork } = await import('helios-network');
     const normalized = format.toLowerCase();
@@ -5846,26 +6638,37 @@ export class Helios extends EventTarget {
     else if (normalized === 'zxnet') next = await HeliosNetwork.fromZXNet(source);
     else if (normalized === 'xnet') next = await HeliosNetwork.fromXNet(source);
     else if (normalized === 'gml') next = await HeliosNetwork.fromGML(source);
+    else if (normalized === 'gt') next = await HeliosNetwork.fromGT(source);
     else throw new Error(`Unsupported network format: ${format}`);
     const sourceName = sourceNameForMetadata;
     const sourceBase = sourceName ? getBaseFilename(sourceName) : null;
-    const shouldCreateSession = sourceName
-      && options.allowDuringInitialize !== true
+    const sessionNickname = options.sessionNickname ?? sourceBase ?? sourceName ?? `${normalized.toUpperCase()} network`;
+    const shouldCreateSession = options.allowDuringInitialize !== true
       && options.preserveSession !== true
       && options.createSession !== false
       && options.newSession !== false;
     if (shouldCreateSession && typeof this.storage?.startNewSession === 'function') {
       await this.storage.startNewSession({
-        nickname: options.sessionNickname ?? sourceBase ?? sourceName,
+        nickname: sessionNickname,
         name: sourceName,
         flushPrevious: options.flushPreviousSession !== false,
+        saveInitialSession: false,
         replaceUrlSession: options.replaceUrlSession !== false,
+        confirmUnsyncedSession: options.confirmUnsyncedSession,
+        continueOnFlushError: options.continueOnFlushError,
+        discardPreviousUnsynced: options.discardPreviousUnsynced,
+        confirmedDiscardPrevious: options.confirmedDiscardPrevious,
+        previousFlushReason: options.previousFlushReason ?? 'network-load-session-switch',
       });
     }
     if (sourceName) {
       this._lastLoadedNetworkName = sourceName;
       this._lastLoadedNetworkBase = sourceBase;
       this._lastLoadedNetworkFormat = inferNetworkFormatFromName(sourceName);
+    } else {
+      this._lastLoadedNetworkName = null;
+      this._lastLoadedNetworkBase = null;
+      this._lastLoadedNetworkFormat = normalized;
     }
     await this.replaceNetwork(next, options);
     if (options.restoreVisualizationState !== false) {
@@ -5876,7 +6679,7 @@ export class Helios extends EventTarget {
       await this.storage?.restorePortableStateFromNetwork?.({ network: next });
     }
     if (shouldCreateSession) {
-      await this.storage?.setSessionNickname?.(options.sessionNickname ?? sourceBase ?? sourceName);
+      await this.storage?.setSessionNickname?.(sessionNickname);
     }
     return next;
   }
@@ -5886,7 +6689,7 @@ export class Helios extends EventTarget {
    *
    * @public
    * @apiSection Network And Persistence
-   * @param {'xnet'|'zxnet'|'bxnet'|'gml'} [format='bxnet'] - Output format.
+   * @param {'xnet'|'zxnet'|'bxnet'|'gml'|'gt'} [format='bxnet'] - Output format.
    * @param {object} [options] - Save options forwarded to the network serializer.
    * @returns {Promise<Blob|string|ArrayBuffer>} Serialized network payload.
    */
@@ -5913,6 +6716,10 @@ export class Helios extends EventTarget {
     if (normalized === 'gml') {
       if (typeof this.network.saveGML !== 'function') throw new Error('Network does not support saveGML()');
       return this.network.saveGML(saveOptions);
+    }
+    if (normalized === 'gt') {
+      if (typeof this.network.saveGT !== 'function') throw new Error('Network does not support saveGT()');
+      return this.network.saveGT(saveOptions);
     }
     throw new Error(`Unsupported network format: ${format}`);
   }
@@ -6003,6 +6810,15 @@ export class Helios extends EventTarget {
     return envelope;
   }
 
+  /**
+   * Build a portable visualization-state envelope and await async layout snapshots.
+   *
+   * @public
+   * @apiSection Network And Persistence
+   * @param {object} [options] - Serialization options.
+   * @returns {Promise<object>} Visualization-state envelope containing UI,
+   * behavior, camera, network-source, storage, and async layout runtime state.
+   */
   async serializeVisualizationStateAsync(options = {}) {
     const preferences = options.preferences ?? this.storage?.getPreferences?.() ?? createDefaultPreferencesState();
     return createPersistenceEnvelope(PERSISTENCE_KINDS.visualization, {
@@ -6129,6 +6945,15 @@ export class Helios extends EventTarget {
     return envelope;
   }
 
+  /**
+   * Build a sparse visualization-state envelope from tracked state overrides.
+   *
+   * @public
+   * @apiSection Network And Persistence
+   * @param {object} [options] - Serialization options.
+   * @param {boolean} [options.includeLayoutRuntime=true] - Include layout runtime state.
+   * @returns {object} Sparse visualization-state envelope suitable for portable state attachment.
+   */
   serializeTrackedVisualizationState(options = {}) {
     const preferences = options.preferences ?? this.storage?.getPreferences?.() ?? createDefaultPreferencesState();
     const includeLayoutRuntime = options.includeLayoutRuntime !== false;
@@ -6149,6 +6974,15 @@ export class Helios extends EventTarget {
     });
   }
 
+  /**
+   * Build a sparse visualization-state envelope and await async layout snapshots.
+   *
+   * @public
+   * @apiSection Network And Persistence
+   * @param {object} [options] - Serialization options.
+   * @param {boolean} [options.includeLayoutRuntime=true] - Include layout runtime state.
+   * @returns {Promise<object>} Sparse visualization-state envelope suitable for portable state attachment.
+   */
   async serializeTrackedVisualizationStateAsync(options = {}) {
     const preferences = options.preferences ?? this.storage?.getPreferences?.() ?? createDefaultPreferencesState();
     const includeLayoutRuntime = options.includeLayoutRuntime !== false;
@@ -6232,7 +7066,7 @@ export class Helios extends EventTarget {
    *
    * @public
    * @apiSection Network And Persistence
-   * @param {'xnet'|'zxnet'|'bxnet'|'gml'} [format='bxnet'] - Output network format.
+   * @param {'xnet'|'zxnet'|'bxnet'|'gml'|'gt'} [format='bxnet'] - Output network format.
    * @param {object} [options] - Portable save options.
    * @param {boolean} [options.includeVisualization=false] - Attach current
    * visualization state before saving.
@@ -6250,8 +7084,8 @@ export class Helios extends EventTarget {
         : [],
     };
     const output = options.output ?? 'blob';
-    if (normalizedFormat === 'gml' && options.includeVisualization === true) {
-      console.warn('Helios: GML export is lossy and cannot preserve full Helios visualization state.');
+    if ((normalizedFormat === 'gml' || normalizedFormat === 'gt') && options.includeVisualization === true) {
+      console.warn(`Helios: ${normalizedFormat.toUpperCase()} export is lossy and cannot preserve full Helios visualization state.`);
       return this.saveNetwork(format, { output, saveOptions });
     }
     if (options.includeVisualization !== true) {
@@ -6300,7 +7134,16 @@ export class Helios extends EventTarget {
         });
       } finally {
         if (wroteCurrentPositionsForSave && previousPositions instanceof Float32Array) {
-          this._writeNodePositions(previousPositions);
+          try {
+            this._writeNodePositions(previousPositions);
+          } catch (error) {
+            warnOnce(
+              this,
+              'portable-save-position-restore',
+              'Helios: failed to restore node positions after portable network save.',
+              { error },
+            );
+          }
         }
       }
     }
@@ -6365,12 +7208,39 @@ export class Helios extends EventTarget {
         return await this.saveNetwork(format, { output, saveOptions });
       } finally {
         if (wroteCurrentPositionsForSave && previousPositions instanceof Float32Array) {
-          this._writeNodePositions(previousPositions);
+          try {
+            this._writeNodePositions(previousPositions);
+          } catch (error) {
+            warnOnce(
+              this,
+              'portable-save-visualization-position-restore',
+              'Helios: failed to restore node positions after visualization network save.',
+              { error },
+            );
+          }
         }
         if (hadExisting) {
-          this.network.setNetworkStringAttribute(attributeName, previousValue);
+          try {
+            this.network.setNetworkStringAttribute(attributeName, previousValue);
+          } catch (error) {
+            warnOnce(
+              this,
+              'portable-save-visualization-attribute-restore',
+              'Helios: failed to restore previous attached visualization state after network save.',
+              { error, attributeName },
+            );
+          }
         } else if (this.network.hasNetworkAttribute?.(attributeName)) {
-          this.network.removeNetworkAttribute(attributeName);
+          try {
+            this.network.removeNetworkAttribute(attributeName);
+          } catch (error) {
+            warnOnce(
+              this,
+              'portable-save-visualization-attribute-remove',
+              'Helios: failed to remove temporary attached visualization state after network save.',
+              { error, attributeName },
+            );
+          }
         }
       }
     };
@@ -6593,32 +7463,49 @@ export class Helios extends EventTarget {
         },
       );
     } finally {
-      if (graphLayer) {
-        graphLayer.setEdgeFastRendering?.(previousManualFastEdges);
-        graphLayer.setAdaptiveEdgeFastRendering?.(previousAdaptiveFastEdges);
-      }
-      if (this._edgeAdaptiveRuntime) {
-        this._edgeAdaptiveRuntime.forceHighQuality = previousForceHighQuality;
-      }
+      const cleanup = (key, message, fn) => {
+        try {
+          fn();
+        } catch (error) {
+          warnOnce(this, key, message, { error });
+        }
+      };
+      cleanup('figure-export-edge-quality-restore', 'Helios: failed to restore edge quality settings after figure export.', () => {
+        if (graphLayer) {
+          graphLayer.setEdgeFastRendering?.(previousManualFastEdges);
+          graphLayer.setAdaptiveEdgeFastRendering?.(previousAdaptiveFastEdges);
+        }
+        if (this._edgeAdaptiveRuntime) {
+          this._edgeAdaptiveRuntime.forceHighQuality = previousForceHighQuality;
+        }
+      });
       if (previousClearColor) {
-        renderer.clearColor = previousClearColor;
+        cleanup('figure-export-clear-color-restore', 'Helios: failed to restore renderer clear color after figure export.', () => {
+          renderer.clearColor = previousClearColor;
+        });
       }
       if (exportCamera === sourceCamera && previousCameraViewport && typeof sourceCamera?.setViewport === 'function') {
-        sourceCamera.setViewport(previousCameraViewport);
+        cleanup('figure-export-camera-viewport-restore', 'Helios: failed to restore camera viewport after figure export.', () => {
+          sourceCamera.setViewport(previousCameraViewport);
+        });
       }
-      renderer.setRenderTarget(null);
-      const device = renderer.device ?? null;
-      if (framebuffer?.type === 'webgl2') {
-        const gl = device?.gl ?? null;
-        if (gl) {
-          if (framebuffer.handle) gl.deleteFramebuffer?.(framebuffer.handle);
-          if (framebuffer.texture) gl.deleteTexture?.(framebuffer.texture);
-          if (framebuffer.depth) gl.deleteRenderbuffer?.(framebuffer.depth);
+      cleanup('figure-export-render-target-reset', 'Helios: failed to reset render target after figure export.', () => {
+        renderer.setRenderTarget(null);
+      });
+      cleanup('figure-export-framebuffer-destroy', 'Helios: failed to destroy figure export framebuffer resources.', () => {
+        const device = renderer.device ?? null;
+        if (framebuffer?.type === 'webgl2') {
+          const gl = device?.gl ?? null;
+          if (gl) {
+            if (framebuffer.handle) gl.deleteFramebuffer?.(framebuffer.handle);
+            if (framebuffer.texture) gl.deleteTexture?.(framebuffer.texture);
+            if (framebuffer.depth) gl.deleteRenderbuffer?.(framebuffer.depth);
+          }
+        } else if (framebuffer?.type === 'webgpu') {
+          framebuffer.texture?.destroy?.();
+          framebuffer.depthTexture?.destroy?.();
         }
-      } else if (framebuffer?.type === 'webgpu') {
-        framebuffer.texture?.destroy?.();
-        framebuffer.depthTexture?.destroy?.();
-      }
+      });
     }
   }
 
@@ -6678,7 +7565,16 @@ export class Helios extends EventTarget {
         if (labelGroup) svg.appendChild(labelGroup);
       } finally {
         if (previousCameraViewport && typeof renderer.camera?.setViewport === 'function') {
-          renderer.camera.setViewport(previousCameraViewport);
+          try {
+            renderer.camera.setViewport(previousCameraViewport);
+          } catch (error) {
+            warnOnce(
+              this,
+              'figure-overlay-camera-viewport-restore',
+              'Helios: failed to restore camera viewport after overlay capture.',
+              { error },
+            );
+          }
         }
       }
     }
@@ -7210,13 +8106,19 @@ export class Helios extends EventTarget {
       return frame;
     });
     this.scheduler.setRenderCallback((frame) => {
+      const now = performance.now();
+      if (this._shouldSuppressStartupRender(now)) {
+        this._refreshLargeNetworkStartupFit();
+        return false;
+      }
+      this._refreshLargeNetworkStartupFit({ force: true });
+      this._finishStartupFirstVisibleFrame();
       this.debug.log('scheduler', 'Rendering frame', {
         renderer: this.renderer?.constructor?.name,
         size: this.size,
       });
       if (this.firstGeometryUpdateComplete && this.renderer && typeof this.renderer.render === 'function') {
         this.counters.renderFrames = bumpCounter(this.counters.renderFrames);
-        const now = performance.now();
         const dt = now - this._lastRenderTime;
         this._lastRenderTime = now;
         this._frameId += 1;
@@ -7269,8 +8171,10 @@ export class Helios extends EventTarget {
       const networkData = sessionStatus.networkData ?? {};
       const shouldAutosaveInitialNetwork = sessionOptions.saveInitialNetwork !== false
         && this.storage?.get?.('network.persistence.autosave', true) === true
+        && sessionStatus.explicitSessionInvalid !== true
         && networkData.status !== 'saved'
-        && networkData.status !== 'skipped';
+        && networkData.status !== 'skipped'
+        && networkData.status !== 'error';
       if (shouldAutosaveInitialNetwork) {
         this.storage?.markNetworkDirty?.(networkData.reason ?? 'session-initial-network');
       }
@@ -7337,10 +8241,23 @@ export class Helios extends EventTarget {
     return fn();
   }
 
+  _withRenderNetworkBufferAccess(network, fn) {
+    if (typeof network?.withBufferAccess === 'function') {
+      return network.withBufferAccess(fn);
+    }
+    return this._withPositionBufferAccess(fn);
+  }
+
   _readNodePositionViewUnsafe() {
     try {
       return this.network?.getNodeAttributeBuffer?.(NODE_POSITION_ATTRIBUTE)?.view ?? null;
-    } catch (_) {
+    } catch (error) {
+      warnOnce(
+        this,
+        'node-position-view',
+        'Helios: failed to read node position view.',
+        { error },
+      );
       return null;
     }
   }
@@ -7416,11 +8333,31 @@ export class Helios extends EventTarget {
     return state;
   }
 
+  /**
+   * Capture scheduler, layout, and optional node-position runtime state for persistence.
+   *
+   * @public
+   * @apiSection State And Persistence
+   * @param {object} [options] - Snapshot controls.
+   * @param {boolean} [options.includePositions=true] - Include packed node positions when they fit within `maxPositionBytes`.
+   * @param {number} [options.maxPositionBytes] - Maximum encoded position payload size.
+   * @returns {object} Serializable layout runtime snapshot.
+   */
   snapshotLayoutRuntimeState(options = {}) {
     const snapshot = options.includePositions === false ? null : this._snapshotNodePositions();
     return this._buildLayoutRuntimeState(snapshot, options);
   }
 
+  /**
+   * Capture layout runtime state, preferring async delegate readback when active.
+   *
+   * @public
+   * @apiSection State And Persistence
+   * @param {object} [options] - Snapshot controls and optional delegate override.
+   * @param {boolean} [options.preferDelegate] - Read positions from the active delegate even when network positions are available.
+   * @param {Float32Array} [options.positions] - Pre-captured packed `x,y,z` positions to encode.
+   * @returns {Promise<object>} Serializable layout runtime snapshot.
+   */
   async snapshotLayoutRuntimeStateAsync(options = {}) {
     if (options.includePositions === false) return this._buildLayoutRuntimeState(null, options);
     let snapshot = null;
@@ -7473,6 +8410,16 @@ export class Helios extends EventTarget {
     });
   }
 
+  /**
+   * Restore scheduler, layout, and encoded position state from a previous snapshot.
+   *
+   * @public
+   * @apiSection State And Persistence
+   * @param {object} [state={}] - Snapshot returned by `snapshotLayoutRuntimeState*`.
+   * @param {object} [options] - Restore controls.
+   * @param {string} [options.reason] - Diagnostic reason passed to position delegates.
+   * @returns {boolean} `true` when any runtime state or positions were restored.
+   */
   restoreLayoutRuntimeState(state = {}, options = {}) {
     if (!state || typeof state !== 'object') return false;
     const layout = this._layout ?? null;
@@ -7525,6 +8472,7 @@ export class Helios extends EventTarget {
           this.visuals?.markPositionsDirty?.();
           this.visuals?.bumpNodeAttributes?.(NODE_POSITION_ATTRIBUTE);
           this._applyPositionPipelineToRenderer();
+          this._markRestoredPositionsForCamera();
           this.scheduler?.requestGeometry?.();
           this.scheduler?.requestRender?.();
           this._labels?.requestFullReselect?.(options.reason ?? 'layout-runtime-restore');
@@ -7583,6 +8531,7 @@ export class Helios extends EventTarget {
     runtime.lastRenderedPositions = new Float32Array(snapshot);
     this._interpolationRuntime = runtime;
     this._applyPositionPipelineToRenderer();
+    this._markRestoredPositionsForCamera();
     this.scheduler?.requestGeometry?.();
     this.scheduler?.requestRender?.();
     this._labels?.requestFullReselect?.(options.reason ?? 'session-network-restore');
@@ -7839,6 +8788,7 @@ export class Helios extends EventTarget {
     if (pendingHandoff && pendingHandoff.nextLayout === this._layout) {
       return;
     }
+    this._recordStartupLayoutUpdate();
     this._enforcePositionSourcePolicy(this._layout, { resetInterpolation: true });
     const now = Number.isFinite(payload?.timestamp) ? Number(payload.timestamp) : performance.now();
     const previousTargetAt = Number.isFinite(this._interpolationRuntime?.lastTargetUpdateAt)
@@ -7918,7 +8868,9 @@ export class Helios extends EventTarget {
       this._interpolationRuntime = runtime;
     }
     this._applyPositionPipelineToRenderer();
-    this.visuals.markPositionsDirty();
+    if (!delegateSourceActive) {
+      this.visuals.markPositionsDirty();
+    }
     this.storage?.markPositionsDirty?.('layout-update');
     this.scheduler.requestGeometry();
     this._labels?.requestFullReselect?.('layout-update');
@@ -7950,6 +8902,12 @@ export class Helios extends EventTarget {
       try {
         delegate[hookName](context);
       } catch (error) {
+        warnOnce(
+          this,
+          `position-delegate-hook:${hookName}`,
+          `Helios: position delegate hook "${hookName}" failed.`,
+          { error },
+        );
         this.debug.log('layout', `Position delegate ${hookName} failed`, { error });
       }
       return;
@@ -8139,7 +9097,9 @@ export class Helios extends EventTarget {
       .then((snapshot) => {
         this._finishLayoutPositionHandoff(token, snapshot);
       })
-      .catch(() => {});
+      .catch((error) => {
+        warnOnce(this, 'layout-position-handoff-finish', 'Helios.layout(): failed to finish delegate position handoff.', { error });
+      });
 
     return true;
   }
@@ -8318,8 +9278,13 @@ export class Helios extends EventTarget {
     if (existing) {
       try {
         renderer.removeLayer(existing);
-      } catch (_) {
-        // ignore: layer may belong to a previous renderer instance
+      } catch (error) {
+        warnOnce(
+          this,
+          'density-layer-remove',
+          'Helios: failed to remove the previous density layer before attaching a new one.',
+          { error },
+        );
       }
       this._densityLayer = null;
     }
@@ -8331,7 +9296,13 @@ export class Helios extends EventTarget {
         if (!network) return null;
         try {
           return network.getNodeAttributeBuffer?.(NODE_POSITION_ATTRIBUTE)?.view ?? null;
-        } catch (_) {
+        } catch (error) {
+          warnOnce(
+            this,
+            'density-node-position-view',
+            'Helios density layer: failed to read node position view.',
+            { error },
+          );
           return null;
         }
       },
@@ -8343,7 +9314,13 @@ export class Helios extends EventTarget {
           const count = view && Number.isFinite(view.length) ? Math.floor(view.length / 3) : 0;
           const version = Number.isFinite(buffer?.version) ? Number(buffer.version) : null;
           return { view, version, count };
-        } catch (_) {
+        } catch (error) {
+          warnOnce(
+            this,
+            'density-node-position-info',
+            'Helios density layer: failed to read node position metadata.',
+            { error },
+          );
           return { view: null, version: null, count: 0 };
         }
       },
@@ -8420,7 +9397,13 @@ export class Helios extends EventTarget {
     if (!graphLayer || typeof graphLayer.shouldRenderEdges !== 'function') return false;
     try {
       return graphLayer.shouldRenderEdges() === true;
-    } catch (_) {
+    } catch (error) {
+      warnOnce(
+        this,
+        'edge-visibility-probe',
+        'Helios: failed to evaluate edge visibility; treating edges as hidden.',
+        { error },
+      );
       return false;
     }
   }
@@ -8568,7 +9551,10 @@ export class Helios extends EventTarget {
   }
 
   _emitEdgeAdaptiveQualityChange() {
-    this._emitUIBindingChange('edgeAdaptiveQuality', this.edgeAdaptiveQuality());
+    this._emitUIBindingChange('edgeAdaptiveQuality', this.edgeAdaptiveQuality(), {
+      source: 'runtime',
+      trackOverride: false,
+    });
   }
 
   _emitEdgeAdaptiveQualityConfigBindings() {
@@ -8818,46 +9804,118 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Read or set the multiplier applied to edge width attributes.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Edge width scale multiplier.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   edgeWidthScale(value) {
     if (arguments.length === 0) return this._getGraphLayerProp('edgeWidthScale');
     return this._setGraphLayerProp('edgeWidthScale', Number(value));
   }
 
+  /**
+   * Read or set the constant edge width added before scaling.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Base edge width in render units.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   edgeWidthBase(value) {
     if (arguments.length === 0) return this._getGraphLayerProp('edgeWidthBase');
     return this._setGraphLayerProp('edgeWidthBase', Number(value));
   }
 
+  /**
+   * Read or set the multiplier applied to edge opacity attributes.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Edge opacity scale multiplier.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   edgeOpacityScale(value) {
     if (arguments.length === 0) return this._getGraphLayerProp('edgeOpacityScale');
     return this._setGraphLayerProp('edgeOpacityScale', Number(value));
   }
 
+  /**
+   * Read or set the constant edge opacity added before scaling.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Base edge opacity.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   edgeOpacityBase(value) {
     if (arguments.length === 0) return this._getGraphLayerProp('edgeOpacityBase');
     return this._setGraphLayerProp('edgeOpacityBase', Number(value));
   }
 
+  /**
+   * Read or set the multiplier applied to node opacity attributes.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Node opacity scale multiplier.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   nodeOpacityScale(value) {
     if (arguments.length === 0) return this._getGraphLayerProp('nodeOpacityScale');
     return this._setGraphLayerProp('nodeOpacityScale', Number(value));
   }
 
+  /**
+   * Read or set the constant node opacity added before scaling.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Base node opacity.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   nodeOpacityBase(value) {
     if (arguments.length === 0) return this._getGraphLayerProp('nodeOpacityBase');
     return this._setGraphLayerProp('nodeOpacityBase', Number(value));
   }
 
+  /**
+   * Read or set the multiplier applied to node size attributes.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Node size scale multiplier.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   nodeSizeScale(value) {
     if (arguments.length === 0) return this._getGraphLayerProp('nodeSizeScale');
     return this._setGraphLayerProp('nodeSizeScale', Number(value));
   }
 
+  /**
+   * Read or set the constant node radius added before scaling.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Base node radius in render units.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   nodeSizeBase(value) {
     if (arguments.length === 0) return this._getGraphLayerProp('nodeSizeBase');
     return this._setGraphLayerProp('nodeSizeBase', Number(value));
   }
 
+  /**
+   * Read or set semantic zoom compensation for node and label sizing.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Exponent controlling how strongly zoom affects apparent size.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   semanticZoomExponent(value) {
     if (arguments.length === 0) return this._getGraphLayerProp('semanticZoomExponent');
     const numeric = Number(value);
@@ -8865,16 +9923,40 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('semanticZoomExponent', numeric);
   }
 
+  /**
+   * Read or set the multiplier applied to node outline width attributes.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Node outline width scale multiplier.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   nodeOutlineWidthScale(value) {
     if (arguments.length === 0) return this._getGraphLayerProp('nodeOutlineWidthScale');
     return this._setGraphLayerProp('nodeOutlineWidthScale', Number(value));
   }
 
+  /**
+   * Read or set the constant node outline width added before scaling.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Base node outline width in render units.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   nodeOutlineWidthBase(value) {
     if (arguments.length === 0) return this._getGraphLayerProp('nodeOutlineWidthBase');
     return this._setGraphLayerProp('nodeOutlineWidthBase', Number(value));
   }
 
+  /**
+   * Read or set the default node outline color.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {string|Array<number>} [color] - CSS hex color or normalized RGBA tuple.
+   * @returns {Array<number>|Helios} Current RGBA color when omitted; otherwise this Helios instance.
+   */
   nodeOutlineColor(color) {
     if (arguments.length === 0) return this._getGraphLayerProp('nodeOutlineColor');
     const normalized = normalizeColorInput(color);
@@ -8884,16 +9966,40 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('nodeOutlineColor', normalized);
   }
 
+  /**
+   * Read or set whether outline attributes participate in node styling.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {boolean} [value] - Enable outline attribute mapping.
+   * @returns {boolean|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   nodeOutlineUseAttributes(value) {
     if (arguments.length === 0) return this._getGraphLayerProp('nodeOutlineUseAttributes');
     return this._setGraphLayerProp('nodeOutlineUseAttributes', Boolean(value));
   }
 
+  /**
+   * Read or set how far edge geometry is trimmed away from node centers.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Trim amount in node-radius units.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   edgeEndpointTrim(value) {
     if (arguments.length === 0) return this._getGraphLayerProp('edgeEndpointTrim');
     return this._setGraphLayerProp('edgeEndpointTrim', Number(value));
   }
 
+  /**
+   * Read or set whether rendered edge width is clamped by endpoint node diameter.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {boolean} [value] - Clamp thick edges to avoid overpowering small nodes.
+   * @returns {boolean|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   edgeWidthClampToNodeDiameter(value) {
     if (arguments.length === 0) {
       const current = this._getGraphLayerProp('edgeWidthClampToNodeDiameter');
@@ -8902,21 +10008,53 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('edgeWidthClampToNodeDiameter', value !== false);
   }
 
+  /**
+   * Read or set whether node rendering blends visually with adjacent edges.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {boolean} [value] - Enable node/edge blending.
+   * @returns {boolean|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   nodeBlendWithEdges(value) {
     if (arguments.length === 0) return this._getGraphLayerProp('nodeBlendWithEdges');
     return this._setGraphLayerProp('nodeBlendWithEdges', Boolean(value));
   }
 
+  /**
+   * Read or set whether edge fragments write to the depth buffer.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {boolean} [value] - Enable depth writes for edges.
+   * @returns {boolean|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   edgeDepthWrite(value) {
     if (arguments.length === 0) return this._getGraphLayerProp('edgeDepthWrite');
     return this._setGraphLayerProp('edgeDepthWrite', Boolean(value));
   }
 
+  /**
+   * Read or set the manual fast edge-rendering override.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {boolean} [value] - Enable the fast edge rendering path.
+   * @returns {boolean|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   edgeFastRendering(value) {
     if (arguments.length === 0) return this._getGraphLayerProp('edgeFastRendering');
     return this._setGraphLayerProp('edgeFastRendering', Boolean(value));
   }
 
+  /**
+   * Read or set whether shaded rendering is enabled.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {boolean} [value] - Enable lighting-based shading.
+   * @returns {boolean|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   shadedEnabled(value) {
     if (arguments.length === 0) {
       const current = this._getGraphLayerProp('shadedEnabled');
@@ -8925,6 +10063,14 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('shadedEnabled', Boolean(value));
   }
 
+  /**
+   * Read or set whether node geometry receives shaded lighting.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {boolean} [value] - Enable shading for nodes.
+   * @returns {boolean|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   shadedNodes(value) {
     if (arguments.length === 0) {
       const current = this._getGraphLayerProp('shadedNodes');
@@ -8933,6 +10079,14 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('shadedNodes', value !== false);
   }
 
+  /**
+   * Read or set whether edge geometry receives shaded lighting.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {boolean} [value] - Enable shading for edges.
+   * @returns {boolean|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   shadedEdges(value) {
     if (arguments.length === 0) {
       const current = this._getGraphLayerProp('shadedEdges');
@@ -8941,6 +10095,14 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('shadedEdges', value === true);
   }
 
+  /**
+   * Read or set the directional light vector used by shaded rendering.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {Array<number>|object} [value] - Light direction as `[x,y,z]` or direction-like object.
+   * @returns {Array<number>|Helios} Current direction when omitted; otherwise this Helios instance.
+   */
   shadedLightDirection(value) {
     if (arguments.length === 0) {
       return normalizeDirectionInput(this._getGraphLayerProp('shadedLightDirection'), SHADED_LIGHT_DIRECTION_DEFAULT);
@@ -8948,6 +10110,14 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('shadedLightDirection', normalizeDirectionInput(value, SHADED_LIGHT_DIRECTION_DEFAULT));
   }
 
+  /**
+   * Read or set the x component of the shaded light direction.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - X component.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   shadedLightDirectionX(value) {
     if (arguments.length === 0) return this.shadedLightDirection()[0];
     const next = this.shadedLightDirection();
@@ -8955,6 +10125,14 @@ export class Helios extends EventTarget {
     return this.shadedLightDirection(next);
   }
 
+  /**
+   * Read or set the y component of the shaded light direction.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Y component.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   shadedLightDirectionY(value) {
     if (arguments.length === 0) return this.shadedLightDirection()[1];
     const next = this.shadedLightDirection();
@@ -8962,6 +10140,14 @@ export class Helios extends EventTarget {
     return this.shadedLightDirection(next);
   }
 
+  /**
+   * Read or set the z component of the shaded light direction.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Z component.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   shadedLightDirectionZ(value) {
     if (arguments.length === 0) return this.shadedLightDirection()[2];
     const next = this.shadedLightDirection();
@@ -8969,6 +10155,14 @@ export class Helios extends EventTarget {
     return this.shadedLightDirection(next);
   }
 
+  /**
+   * Read or set the direct light color used by shaded rendering.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {string|Array<number>} [color] - CSS hex color or normalized RGBA tuple.
+   * @returns {Array<number>|Helios} Current RGBA color when omitted; otherwise this Helios instance.
+   */
   shadedLightColor(color) {
     if (arguments.length === 0) {
       return cloneColorInput(this._getGraphLayerProp('shadedLightColor'), SHADED_LIGHT_COLOR_DEFAULT);
@@ -8980,6 +10174,14 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('shadedLightColor', normalized);
   }
 
+  /**
+   * Read or set the upper hemisphere ambient color for shaded rendering.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {string|Array<number>} [color] - CSS hex color or normalized RGBA tuple.
+   * @returns {Array<number>|Helios} Current RGBA color when omitted; otherwise this Helios instance.
+   */
   shadedAmbientTopColor(color) {
     if (arguments.length === 0) {
       return cloneColorInput(this._getGraphLayerProp('shadedAmbientTopColor'), SHADED_AMBIENT_TOP_COLOR_DEFAULT);
@@ -8991,6 +10193,14 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('shadedAmbientTopColor', normalized);
   }
 
+  /**
+   * Read or set the lower hemisphere ambient color for shaded rendering.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {string|Array<number>} [color] - CSS hex color or normalized RGBA tuple.
+   * @returns {Array<number>|Helios} Current RGBA color when omitted; otherwise this Helios instance.
+   */
   shadedAmbientBottomColor(color) {
     if (arguments.length === 0) {
       return cloneColorInput(this._getGraphLayerProp('shadedAmbientBottomColor'), SHADED_AMBIENT_BOTTOM_COLOR_DEFAULT);
@@ -9002,6 +10212,14 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('shadedAmbientBottomColor', normalized);
   }
 
+  /**
+   * Read or set diffuse lighting strength for shaded rendering.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Non-negative diffuse strength.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   shadedDiffuseStrength(value) {
     if (arguments.length === 0) {
       const current = Number(this._getGraphLayerProp('shadedDiffuseStrength'));
@@ -9012,6 +10230,14 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('shadedDiffuseStrength', Math.max(0, numeric));
   }
 
+  /**
+   * Read or set ambient lighting strength for shaded rendering.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Non-negative ambient strength.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   shadedAmbientStrength(value) {
     if (arguments.length === 0) {
       const current = Number(this._getGraphLayerProp('shadedAmbientStrength'));
@@ -9022,6 +10248,14 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('shadedAmbientStrength', Math.max(0, numeric));
   }
 
+  /**
+   * Read or set the specular highlight color for shaded rendering.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {string|Array<number>} [color] - CSS hex color or normalized RGBA tuple.
+   * @returns {Array<number>|Helios} Current RGBA color when omitted; otherwise this Helios instance.
+   */
   shadedSpecularColor(color) {
     if (arguments.length === 0) {
       return cloneColorInput(this._getGraphLayerProp('shadedSpecularColor'), SHADED_SPECULAR_COLOR_DEFAULT);
@@ -9033,6 +10267,14 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('shadedSpecularColor', normalized);
   }
 
+  /**
+   * Read or set specular highlight strength for shaded rendering.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Non-negative specular strength.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   shadedSpecularStrength(value) {
     if (arguments.length === 0) {
       const current = Number(this._getGraphLayerProp('shadedSpecularStrength'));
@@ -9043,6 +10285,14 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('shadedSpecularStrength', Math.max(0, numeric));
   }
 
+  /**
+   * Read or set specular shininess for shaded rendering.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Shininess exponent.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   shadedShininess(value) {
     if (arguments.length === 0) {
       const current = Number(this._getGraphLayerProp('shadedShininess'));
@@ -9053,6 +10303,14 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('shadedShininess', Math.max(1, numeric));
   }
 
+  /**
+   * Read or set whether screen-space ambient occlusion is enabled.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {boolean} [value] - Enable ambient occlusion when the renderer supports it.
+   * @returns {boolean|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   ambientOcclusionEnabled(value) {
     if (arguments.length === 0) {
       const current = this._getGraphLayerProp('ambientOcclusionEnabled');
@@ -9061,6 +10319,14 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('ambientOcclusionEnabled', Boolean(value));
   }
 
+  /**
+   * Read or set whether ambient occlusion is applied to nodes.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {boolean} [value] - Enable node occlusion.
+   * @returns {boolean|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   ambientOcclusionNodes(value) {
     if (arguments.length === 0) {
       const current = this._getGraphLayerProp('ambientOcclusionNodes');
@@ -9069,6 +10335,14 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('ambientOcclusionNodes', value !== false);
   }
 
+  /**
+   * Read or set whether ambient occlusion is applied to edges.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {boolean} [value] - Enable edge occlusion.
+   * @returns {boolean|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   ambientOcclusionEdges(value) {
     if (arguments.length === 0) {
       const current = this._getGraphLayerProp('ambientOcclusionEdges');
@@ -9077,6 +10351,14 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('ambientOcclusionEdges', value === true);
   }
 
+  /**
+   * Read or set ambient occlusion strength.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Non-negative occlusion strength.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   ambientOcclusionStrength(value) {
     if (arguments.length === 0) {
       const current = Number(this._getGraphLayerProp('ambientOcclusionStrength'));
@@ -9087,6 +10369,14 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('ambientOcclusionStrength', Math.max(0, numeric));
   }
 
+  /**
+   * Read or set ambient occlusion sampling radius.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Radius in screen-space sample units.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   ambientOcclusionRadius(value) {
     if (arguments.length === 0) {
       const current = Number(this._getGraphLayerProp('ambientOcclusionRadius'));
@@ -9097,6 +10387,14 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('ambientOcclusionRadius', Math.max(1, numeric));
   }
 
+  /**
+   * Read or set ambient occlusion depth bias.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Non-negative depth bias.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   ambientOcclusionBias(value) {
     if (arguments.length === 0) {
       const current = Number(this._getGraphLayerProp('ambientOcclusionBias'));
@@ -9107,6 +10405,14 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('ambientOcclusionBias', Math.max(0, numeric));
   }
 
+  /**
+   * Read or set ambient occlusion compositing mode.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {string} [value] - Ambient occlusion mode identifier.
+   * @returns {string|Helios} Current mode when omitted; otherwise this Helios instance.
+   */
   ambientOcclusionMode(value) {
     if (arguments.length === 0) {
       return normalizeAmbientOcclusionMode(
@@ -9119,6 +10425,14 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('ambientOcclusionMode', normalized);
   }
 
+  /**
+   * Read or set ambient occlusion intensity scaling.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Non-negative intensity multiplier.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   ambientOcclusionIntensityScale(value) {
     if (arguments.length === 0) {
       const current = Number(this._getGraphLayerProp('ambientOcclusionIntensityScale'));
@@ -9129,6 +10443,14 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('ambientOcclusionIntensityScale', Math.max(0, numeric));
   }
 
+  /**
+   * Read or set ambient occlusion intensity offset.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Non-negative intensity offset.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   ambientOcclusionIntensityShift(value) {
     if (arguments.length === 0) {
       const current = Number(this._getGraphLayerProp('ambientOcclusionIntensityShift'));
@@ -9139,6 +10461,14 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('ambientOcclusionIntensityShift', Math.max(0, numeric));
   }
 
+  /**
+   * Read or set ambient occlusion quality preset.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {string} [value] - Ambient occlusion quality preset.
+   * @returns {string|Helios} Current quality when omitted; otherwise this Helios instance.
+   */
   ambientOcclusionQuality(value) {
     if (arguments.length === 0) {
       return normalizeAmbientOcclusionQuality(
@@ -9151,6 +10481,14 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('ambientOcclusionQuality', normalized);
   }
 
+  /**
+   * Read or update the adaptive edge-quality policy used to switch fast edge rendering on slow frames.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {object} [options] - Adaptive quality configuration. Omit to read the current configuration and runtime status.
+   * @returns {object|Helios} Current policy snapshot when omitted; otherwise this Helios instance.
+   */
   edgeAdaptiveQuality(options) {
     if (arguments.length === 0) {
       const config = { ...(this._edgeAdaptiveQualityConfig ?? EDGE_ADAPTIVE_QUALITY_DEFAULTS) };
@@ -9186,48 +10524,112 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Read or set whether adaptive edge quality is enabled.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {boolean} [value] - Enable adaptive edge quality.
+   * @returns {boolean|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   edgeAdaptiveQualityEnabled(value) {
     if (arguments.length === 0) return this.edgeAdaptiveQuality().enabled;
     this.edgeAdaptiveQuality({ enabled: Boolean(value) });
     return this;
   }
 
+  /**
+   * Read or set the frame-time threshold that counts as slow for adaptive edge quality.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Slow-frame threshold in milliseconds.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   edgeAdaptiveQualitySlowFrameThresholdMs(value) {
     if (arguments.length === 0) return this.edgeAdaptiveQuality().slowFrameThresholdMs;
     this.edgeAdaptiveQuality({ slowFrameThresholdMs: Number(value) });
     return this;
   }
 
+  /**
+   * Read or set how many recent frames are averaged before adaptive quality changes.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Frame sample window size.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   edgeAdaptiveQualitySlowFrameConsecutiveFrames(value) {
     if (arguments.length === 0) return this.edgeAdaptiveQuality().averageWindowFrames;
     this.edgeAdaptiveQuality({ averageWindowFrames: Number(value) });
     return this;
   }
 
+  /**
+   * Read or set how often adaptive quality probes full-quality edge rendering.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Probe interval in milliseconds.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   edgeAdaptiveQualityProbeIntervalMs(value) {
     if (arguments.length === 0) return this.edgeAdaptiveQuality().probeIntervalMs;
     this.edgeAdaptiveQuality({ probeIntervalMs: Number(value) });
     return this;
   }
 
+  /**
+   * Read or set how long adaptive quality stays fast after interaction.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {number} [value] - Hold duration in milliseconds.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   edgeAdaptiveQualityInteractionHoldMs(value) {
     if (arguments.length === 0) return this.edgeAdaptiveQuality().interactionHoldMs;
     this.edgeAdaptiveQuality({ interactionHoldMs: Number(value) });
     return this;
   }
 
+  /**
+   * Read or set whether camera interaction forces fast edge rendering.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {boolean} [value] - Use fast edges while the camera is moving.
+   * @returns {boolean|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   edgeAdaptiveQualityFastDuringCamera(value) {
     if (arguments.length === 0) return this.edgeAdaptiveQuality().fastDuringCamera;
     this.edgeAdaptiveQuality({ fastDuringCamera: Boolean(value) });
     return this;
   }
 
+  /**
+   * Read or set whether active layout ticks force fast edge rendering.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {boolean} [value] - Use fast edges while layout is running.
+   * @returns {boolean|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   edgeAdaptiveQualityFastDuringLayout(value) {
     if (arguments.length === 0) return this.edgeAdaptiveQuality().fastDuringLayout;
     this.edgeAdaptiveQuality({ fastDuringLayout: Boolean(value) });
     return this;
   }
 
+  /**
+   * Read or set the renderer background color.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {string|Array<number>} [color] - CSS hex color or normalized RGBA tuple.
+   * @returns {Array<number>|Helios} Current RGBA color when omitted; otherwise this Helios instance.
+   */
   background(color) {
     if (arguments.length === 0) return this._getRendererProp('clearColor');
     const normalized = normalizeColorInput(color);
@@ -9237,11 +10639,27 @@ export class Helios extends EventTarget {
     return this._setRendererProp('clearColor', normalized);
   }
 
+  /**
+   * Alias for `background(color)`.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {string|Array<number>} [color] - CSS hex color or normalized RGBA tuple.
+   * @returns {Array<number>|Helios} Current RGBA color when omitted; otherwise this Helios instance.
+   */
   clearColor(color) {
     if (arguments.length === 0) return this.background();
     return this.background(color);
   }
 
+  /**
+   * Read or set the renderer supersampling preset.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {'auto'|'on'|'off'|boolean} [value] - Supersampling preset or legacy boolean.
+   * @returns {string|Helios} Current preset when omitted; otherwise this Helios instance.
+   */
   supersampling(value) {
     if (arguments.length === 0) {
       return resolveSupersamplingPreset(this.options?.supersampling, {
@@ -9260,10 +10678,26 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Capture the current camera pose.
+   *
+   * @public
+   * @apiSection Camera And View
+   * @returns {object|null} Serializable camera pose, or `null` before a renderer is available.
+   */
   cameraPose() {
     return captureCameraPose(this.renderer?.camera ?? null);
   }
 
+  /**
+   * Read or update automatic camera-control policy.
+   *
+   * @public
+   * @apiSection Camera And View
+   * @param {object} [options] - Camera-control fields to update. Omit to read the current snapshot.
+   * @param {object} [stateOptions] - State tracking options for persistence-aware writes.
+   * @returns {object|Helios} Current camera-control snapshot when called without arguments; otherwise this Helios instance.
+   */
   cameraControls(options, stateOptions = {}) {
     if (arguments.length === 0) {
       return this._cameraControlsSnapshot();
@@ -9317,6 +10751,15 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Focus the camera on a set of node indices.
+   *
+   * @public
+   * @apiSection Camera And View
+   * @param {Array<number>|TypedArray} [nodeIndices] - Node indices to target. Omit to read the current target list.
+   * @param {object} [options] - Focus, zoom, animation, and follow options.
+   * @returns {Array<number>|Helios} Current target list when called without arguments; otherwise this Helios instance.
+   */
   cameraTargetNodes(nodeIndices, options = {}) {
     if (arguments.length === 0) {
       return [...(this._cameraControlConfig?.targetNodeIndices ?? [])];
@@ -9363,6 +10806,15 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Keep the camera centered on moving node indices.
+   *
+   * @public
+   * @apiSection Camera And View
+   * @param {Array<number>|TypedArray} [nodeIndices] - Node indices to follow. Pass an empty list to disable following.
+   * @param {object} [options] - Follow interval, framing, zoom, and animation options.
+   * @returns {Array<number>|Helios} Current followed node list when called without arguments; otherwise this Helios instance.
+   */
   cameraFollowNodes(nodeIndices, options = {}) {
     if (arguments.length === 0) {
       return this._cameraControlConfig?.followTarget === true
@@ -9395,6 +10847,15 @@ export class Helios extends EventTarget {
     });
   }
 
+  /**
+   * Apply a camera pose immediately.
+   *
+   * @public
+   * @apiSection Camera And View
+   * @param {object} pose - Camera pose fields to merge into the current pose.
+   * @param {object} [options] - Render, state tracking, and manual-interaction options.
+   * @returns {Helios} This Helios instance.
+   */
   setCameraPose(pose, options = {}) {
     const camera = this.renderer?.camera ?? null;
     if (!camera || !pose || typeof pose !== 'object') return this;
@@ -9448,6 +10909,15 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Animate the camera from its current pose to a target pose.
+   *
+   * @public
+   * @apiSection Camera And View
+   * @param {object} pose - Target camera pose fields.
+   * @param {object} [options] - Transition duration, starting pose, render, and interaction options.
+   * @returns {Promise<Helios>} This Helios instance after the transition completes.
+   */
   async transitionCamera(pose, options = {}) {
     const camera = this.renderer?.camera ?? null;
     if (!camera || !pose || typeof pose !== 'object') return this;
@@ -9471,15 +10941,38 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Stop any active camera transition.
+   *
+   * @public
+   * @apiSection Camera And View
+   * @returns {Helios} This Helios instance.
+   */
   stopCameraTransition() {
     this._cameraTransitionController?.stop?.();
     return this;
   }
 
+  /**
+   * Return the active dimensional rendering mode.
+   *
+   * @public
+   * @apiSection Camera And View
+   * @returns {'2d'|'3d'} Current camera/rendering mode.
+   */
   mode() {
     return this.options?.mode === '3d' ? '3d' : '2d';
   }
 
+  /**
+   * Switch between 2D and 3D rendering modes.
+   *
+   * @public
+   * @apiSection Camera And View
+   * @param {'2d'|'3d'} mode - Target dimensional mode.
+   * @param {object} [options] - Animation, delegate-sync, and camera framing options.
+   * @returns {Promise<Helios>} This Helios instance after the mode switch completes.
+   */
   async setMode(mode, options = {}) {
     const nextMode = mode === '3d' ? '3d' : '2d';
     const previousMode = this.mode();
@@ -9629,6 +11122,20 @@ export class Helios extends EventTarget {
     }
   }
 
+  /**
+   * Read or update the screen-space density overlay configuration.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {object|false|null} [options] - Density configuration, or `false`/`null` to disable the overlay.
+   * @param {boolean} [options.enabled] - Enable density rendering.
+   * @param {number} [options.qualityScale] - Density texture scale relative to the viewport.
+   * @param {string} [options.property] - Node attribute used as the primary density weight.
+   * @param {string} [options.compareProperty] - Optional comparison attribute for diverging/log-ratio density.
+   * @param {string} [options.colormap] - Sequential colormap name.
+   * @param {string} [options.divergingColormap] - Diverging colormap name.
+   * @returns {object|Helios} Current density snapshot when omitted; otherwise this Helios instance.
+   */
   density(options) {
     if (arguments.length === 0) {
       const config = this._densityConfig ?? DENSITY_DEFAULTS;
@@ -9782,71 +11289,181 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Read or set whether the density overlay is enabled.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {boolean} [value] - Enable density rendering.
+   * @returns {boolean|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   densityEnabled(value) {
     if (arguments.length === 0) return this.density().enabled === true;
     return this.density({ enabled: value === true });
   }
 
+  /**
+   * Read or set the density overlay quality scale.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {number} [value] - Texture scale relative to the viewport.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   densityScale(value) {
     if (arguments.length === 0) return this.density().qualityScale;
     return this.density({ qualityScale: value });
   }
 
+  /**
+   * Read or set whether density is rendered with topographic contours.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {boolean} [value] - Enable contour-style rendering.
+   * @returns {boolean|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   densityTopographic(value) {
     if (arguments.length === 0) return this.density().topographic === true;
     return this.density({ topographic: value === true });
   }
 
+  /**
+   * Read or set whether density bandwidth scales with camera zoom.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {boolean} [value] - Scale density evaluation with zoom.
+   * @returns {boolean|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   densityScaleWithZoom(value) {
     if (arguments.length === 0) return this.density().scaleWithZoom === true;
     return this.density({ scaleWithZoom: value === true });
   }
 
+  /**
+   * Read or set the density kernel bandwidth.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {number} [value] - Positive kernel bandwidth.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   densityBandwidth(value) {
     if (arguments.length === 0) return this.density().bandwidth;
     return this.density({ bandwidth: value });
   }
 
+  /**
+   * Read or set the scalar multiplier applied to density weights.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {number} [value] - Density weight multiplier.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   densityWeight(value) {
     if (arguments.length === 0) return this.density().weightScale;
     return this.density({ weightScale: value });
   }
 
+  /**
+   * Read or set the node attribute used as the primary density property.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {string} [value] - Node attribute name.
+   * @returns {string|Helios} Current attribute name when omitted; otherwise this Helios instance.
+   */
   densityProperty(value) {
     if (arguments.length === 0) return this.density().property;
     return this.density({ property: value });
   }
 
+  /**
+   * Read or set the comparison property used for diverging density views.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {string} [value] - Node attribute name to compare against the primary property.
+   * @returns {string|Helios} Current comparison attribute when omitted; otherwise this Helios instance.
+   */
   densityVsProperty(value) {
     if (arguments.length === 0) return this.density().compareProperty;
     return this.density({ compareProperty: value });
   }
 
+  /**
+   * Read or set whether comparison density values are normalized before differencing.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {boolean} [value] - Normalize comparison density.
+   * @returns {boolean|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   densityNormalizeVs(value) {
     if (arguments.length === 0) return this.density().normalizeVs === true;
     return this.density({ normalizeVs: value === true });
   }
 
+  /**
+   * Read or set the sequential colormap used by the density overlay.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {string} [value] - Colormap name.
+   * @returns {string|Helios} Current colormap when omitted; otherwise this Helios instance.
+   */
   densityColormap(value) {
     if (arguments.length === 0) return this.density().colormap;
     return this.density({ colormap: value });
   }
 
+  /**
+   * Read or set the diverging colormap used by comparison density overlays.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {string} [value] - Diverging colormap name.
+   * @returns {string|Helios} Current colormap when omitted; otherwise this Helios instance.
+   */
   densityDivergingColormap(value) {
     if (arguments.length === 0) return this.density().divergingColormap;
     return this.density({ divergingColormap: value });
   }
 
+  /**
+   * Request a density overlay update on the next render frame.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @returns {Helios} This Helios instance.
+   */
   updateDensityMap() {
     this.scheduler?.requestRender?.();
     return this;
   }
 
+  /**
+   * Alias for `updateDensityMap()`.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @returns {Helios} This Helios instance.
+   */
   redrawDensityMap() {
     this.scheduler?.requestRender?.();
     return this;
   }
 
+  /**
+   * Read or set the edge transparency compositing mode.
+   *
+   * @public
+   * @apiSection Appearance
+   * @param {string} [mode] - Transparency mode supported by the active renderer.
+   * @returns {string|Helios} Current mode when omitted; otherwise this Helios instance.
+   */
   edgeTransparencyMode(mode) {
     if (arguments.length === 0) return this._getGraphLayerProp('edgeTransparencyMode');
     const next = String(mode ?? '');
@@ -9857,6 +11474,18 @@ export class Helios extends EventTarget {
     return this._setGraphLayerProp('edgeTransparencyMode', next);
   }
 
+  /**
+   * Read or update label rendering options.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {object|null} [options] - Label options, or `null` to disable labels.
+   * @param {boolean} [options.enabled] - Enable ranked or selected labels.
+   * @param {'ranked'|'selected-only'} [options.selectionMode] - Label selection policy.
+   * @param {number} [options.maxVisible] - Maximum number of labels to render.
+   * @param {string|Function} [options.source] - Attribute name or callback used for label text.
+   * @returns {object|Helios} Current label configuration when omitted; otherwise this Helios instance.
+   */
   labels(options) {
     const labelsBehavior = this.behavior?.labels ?? null;
     if (arguments.length === 0) {
@@ -9908,6 +11537,15 @@ export class Helios extends EventTarget {
     return this._legends?.deriveItems?.(options) ?? [];
   }
 
+  /**
+   * Read or update legend rendering options.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {object|false|null} [options] - Legend configuration, or `false`/`null` to disable legends.
+   * @param {boolean} [options.enabled] - Enable legend rendering.
+   * @returns {object|Helios} Current legend configuration when omitted; otherwise this Helios instance.
+   */
   legends(options) {
     const legendsBehavior = this.behavior?.legends ?? null;
     if (arguments.length === 0) {
@@ -9920,6 +11558,14 @@ export class Helios extends EventTarget {
     return this._applyLegendsControllerConfig(options);
   }
 
+  /**
+   * Read or set whether legends are enabled.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {boolean} [value] - Enable legends.
+   * @returns {boolean|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   legendsEnabled(value) {
     if (arguments.length === 0) return this.legends()?.enabled === true;
     return this.legends({ enabled: value === true });
@@ -10000,6 +11646,50 @@ export class Helios extends EventTarget {
   font-size: 21px;
   font-weight: 700;
 }
+.helios-quick-controls__button--helios svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+  stroke: currentColor;
+}
+.helios-quick-controls__menu {
+  position: absolute;
+  top: 0;
+  right: calc(var(--helios-quick-size, 44px) + var(--helios-quick-gap, 8px) + 4px);
+  min-width: 172px;
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--helios-quick-accent) 32%, var(--helios-quick-border));
+  border-radius: 10px;
+  background: var(--helios-quick-bg-solid);
+  box-shadow: var(--helios-quick-shadow);
+  backdrop-filter: blur(var(--helios-quick-blur));
+  -webkit-backdrop-filter: blur(var(--helios-quick-blur));
+  pointer-events: auto;
+}
+.helios-quick-controls__menu[hidden] {
+  display: none;
+}
+.helios-quick-controls__menu-button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--helios-quick-fg);
+  font: 600 12px/1.1 var(--helios-ui-font, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  text-align: left;
+  cursor: pointer;
+}
+.helios-quick-controls__menu-button:hover,
+.helios-quick-controls__menu-button:focus-visible {
+  background: color-mix(in srgb, var(--helios-quick-accent) 18%, transparent);
+  outline: none;
+}
 `;
   }
 
@@ -10013,6 +11703,40 @@ export class Helios extends EventTarget {
     if (html) button.innerHTML = html;
     else button.textContent = text;
     return button;
+  }
+
+  _quickControlsHeliosIconMarkup() {
+    return `
+<svg viewBox="0 0 600 600" aria-hidden="true">
+  <path d="M245 331 124 103" fill="none" stroke-width="32" />
+  <path d="M245 331 62 482" fill="none" stroke-width="22" />
+  <path d="M279 358 482 495" fill="none" stroke-width="30" />
+  <circle cx="245" cy="331" r="104" stroke="none" />
+  <circle cx="124" cy="103" r="58" stroke="none" />
+  <circle cx="480" cy="493" r="58" stroke="none" />
+  <circle cx="62" cy="478" r="27" stroke="none" />
+  <path d="M367 331a122 122 0 1 1-122-122v-34a156 156 0 1 0 156 156h-34Z" stroke="none" />
+  <path d="M533 54h36v278h-36zM281 175h287v34H281zM367 54h34v241h-34z" stroke="none" />
+</svg>`;
+  }
+
+  _quickControlsMenuButton(doc, { label, url }) {
+    const button = doc.createElement('button');
+    button.type = 'button';
+    button.className = 'helios-quick-controls__menu-button';
+    button.dataset.url = url;
+    button.setAttribute('role', 'menuitem');
+    button.textContent = label;
+    return button;
+  }
+
+  _openQuickControlUrl(url) {
+    const win = this.layers?.root?.ownerDocument?.defaultView ?? globalThis.window ?? globalThis;
+    const opened = typeof win?.open === 'function'
+      ? win.open(url, '_blank', 'noopener,noreferrer')
+      : null;
+    if (opened && typeof opened === 'object') opened.opener = null;
+    return opened;
   }
 
   _setupQuickControls() {
@@ -10037,6 +11761,31 @@ export class Helios extends EventTarget {
     root.appendChild(style);
 
     const buttons = {};
+    let heliosMenu = null;
+    buttons.helios = this._quickControlButton(doc, {
+      name: 'helios',
+      label: 'Helios links',
+      className: 'helios-quick-controls__button--helios',
+      html: this._quickControlsHeliosIconMarkup(),
+    });
+    buttons.helios.setAttribute('aria-haspopup', 'menu');
+    buttons.helios.setAttribute('aria-expanded', 'false');
+    root.appendChild(buttons.helios);
+    heliosMenu = doc.createElement('div');
+    heliosMenu.className = 'helios-quick-controls__menu';
+    heliosMenu.setAttribute('role', 'menu');
+    heliosMenu.hidden = true;
+    const websiteButton = this._quickControlsMenuButton(doc, {
+      label: 'Go to heliosweb.io',
+      url: QUICK_CONTROL_HELIOS_URL,
+    });
+    const issueButton = this._quickControlsMenuButton(doc, {
+      label: 'Report a problem',
+      url: QUICK_CONTROL_ISSUE_URL,
+    });
+    heliosMenu.appendChild(websiteButton);
+    heliosMenu.appendChild(issueButton);
+    root.appendChild(heliosMenu);
     if (config.autoFit) {
       buttons.autoFit = this._quickControlButton(doc, {
         name: 'auto-fit',
@@ -10086,6 +11835,24 @@ export class Helios extends EventTarget {
       addCleanup(() => button.removeEventListener?.(type, handler));
     };
 
+    const setHeliosMenuOpen = (open) => {
+      if (!heliosMenu || !buttons.helios) return;
+      heliosMenu.hidden = open !== true;
+      buttons.helios.setAttribute('aria-expanded', open === true ? 'true' : 'false');
+      buttons.helios.classList?.toggle?.('is-active', open === true);
+    };
+    const openMenuUrl = (url) => {
+      setHeliosMenuOpen(false);
+      this._openQuickControlUrl(url);
+    };
+
+    listenButton(buttons.helios, 'click', (event) => {
+      event?.preventDefault?.();
+      event?.stopPropagation?.();
+      setHeliosMenuOpen(heliosMenu?.hidden === true);
+    });
+    listenButton(websiteButton, 'click', () => openMenuUrl(QUICK_CONTROL_HELIOS_URL));
+    listenButton(issueButton, 'click', () => openMenuUrl(QUICK_CONTROL_ISSUE_URL));
     listenButton(buttons.autoFit, 'click', () => {
       const next = this.cameraControls?.().autoFit !== true;
       this.cameraControls?.({ autoFit: next, followTarget: false, targetNodeIndices: null });
@@ -10110,6 +11877,16 @@ export class Helios extends EventTarget {
     addCleanup(this.on?.(EVENTS.LAYOUT_START, () => this._syncQuickControls()));
     addCleanup(this.on?.(EVENTS.LAYOUT_STOP, () => this._syncQuickControls()));
     addCleanup(this.on?.(EVENTS.LAYOUT_CHANGED, () => this._syncQuickControls()));
+    if (typeof doc.addEventListener === 'function') {
+      const closeHeliosMenu = (event) => {
+        if (heliosMenu?.hidden === true) return;
+        const target = event?.target ?? null;
+        if (target && typeof root.contains === 'function' && root.contains(target)) return;
+        setHeliosMenuOpen(false);
+      };
+      doc.addEventListener('pointerdown', closeHeliosMenu);
+      addCleanup(() => doc.removeEventListener?.('pointerdown', closeHeliosMenu));
+    }
 
     if (typeof this.layers.addLayer === 'function') this.layers.addLayer('quick-controls', root);
     else this.layers.root.appendChild(root);
@@ -10213,9 +11990,16 @@ export class Helios extends EventTarget {
     const root = this._quickControls?.root ?? null;
     if (!root?.style) return;
     const config = this._quickControlsConfig ?? QUICK_CONTROL_DEFAULTS;
-    const base = normalizeInsets(this._baseOverlayInsets);
-    root.style.top = `${base.top + config.margin}px`;
-    root.style.right = `${base.right + config.margin}px`;
+    const overlay = normalizeInsets(this._baseOverlayInsets);
+    const viewport = normalizeInsets(this.layers?.viewportInsets);
+    const placement = {
+      top: Math.max(overlay.top, viewport.top),
+      right: Math.max(overlay.right, viewport.right),
+      bottom: Math.max(overlay.bottom, viewport.bottom),
+      left: Math.max(overlay.left, viewport.left),
+    };
+    root.style.top = `${placement.top + config.margin}px`;
+    root.style.right = `${placement.right + config.margin}px`;
   }
 
   _updateQuickControlsOverlayInsets() {
@@ -10226,7 +12010,7 @@ export class Helios extends EventTarget {
     }
     this._setQuickControlsOverlayInsets({
       top: 0,
-      right: config.margin + config.buttonSize + config.gap,
+      right: config.margin + config.buttonSize + config.gap + config.legendOffset,
       bottom: 0,
       left: 0,
     });
@@ -10255,6 +12039,18 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Read or set reserved viewport insets for overlays such as labels and legends.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {object} [insets] - Insets in CSS pixels.
+   * @param {number} [insets.top] - Top inset.
+   * @param {number} [insets.right] - Right inset.
+   * @param {number} [insets.bottom] - Bottom inset.
+   * @param {number} [insets.left] - Left inset.
+   * @returns {object|Helios} Current inset object when omitted; otherwise this Helios instance.
+   */
   overlayInsets(insets) {
     if (arguments.length === 0) return { ...this._overlayInsets };
     const next = normalizeInsets(insets);
@@ -10271,6 +12067,14 @@ export class Helios extends EventTarget {
     return this._applyOverlayInsets();
   }
 
+  /**
+   * Read or set whether labels are enabled.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {boolean} [value] - Enable labels.
+   * @returns {boolean|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   labelsEnabled(value) {
     const labelsBehavior = this.behavior?.labels ?? null;
     if (arguments.length === 0) return labelsBehavior?.enabled?.() ?? (this.labelsMode() !== 'off');
@@ -10279,6 +12083,14 @@ export class Helios extends EventTarget {
     return this.labelsMode(value === true ? 'auto' : 'off');
   }
 
+  /**
+   * Read or set the label selection mode.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {'auto'|'selected-only'|'off'} [value] - Label mode.
+   * @returns {string|Helios} Current mode when omitted; otherwise this Helios instance.
+   */
   labelsMode(value) {
     const labelsBehavior = this.behavior?.labels ?? null;
     if (arguments.length === 0) {
@@ -10301,6 +12113,14 @@ export class Helios extends EventTarget {
     return this.labels({ enabled: true, selectionMode: 'ranked' });
   }
 
+  /**
+   * Read or set the maximum number of visible labels.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {number} [value] - Maximum label count.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   labelsMaxVisible(value) {
     if (arguments.length === 0) return Number(this.labels()?.maxVisible ?? 0);
     const numeric = Number(value);
@@ -10308,11 +12128,27 @@ export class Helios extends EventTarget {
     return this.labels({ maxVisible: Math.max(0, Math.floor(numeric)) });
   }
 
+  /**
+   * Read or set whether selected-only labels still avoid spatial collisions.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {boolean} [value] - Enable collision-aware selected labels.
+   * @returns {boolean|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   labelsSelectedOnlySpaceAware(value) {
     if (arguments.length === 0) return this.labels()?.selectedOnlySpaceAware === true;
     return this.labels({ selectedOnlySpaceAware: value === true });
   }
 
+  /**
+   * Read or set the label font-size multiplier.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {number} [value] - Font-size scale.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   labelsFontSizeScale(value) {
     if (arguments.length === 0) return Number(this.labels()?.fontSizeScale ?? 1);
     const numeric = Number(value);
@@ -10320,6 +12156,14 @@ export class Helios extends EventTarget {
     return this.labels({ fontSizeScale: Math.max(0.25, numeric) });
   }
 
+  /**
+   * Read or set the minimum on-screen node radius required for label candidates.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {number} [value] - Minimum radius in CSS pixels.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   labelsMinScreenRadius(value) {
     if (arguments.length === 0) return Number(this.labels()?.minScreenRadiusPx ?? 0);
     const numeric = Number(value);
@@ -10327,6 +12171,14 @@ export class Helios extends EventTarget {
     return this.labels({ minScreenRadiusPx: Math.max(0, numeric) });
   }
 
+  /**
+   * Read or set label outline width.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {number} [value] - Outline width in CSS pixels.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   labelsOutlineWidth(value) {
     if (arguments.length === 0) return Number(this.labels()?.outlineWidth ?? 0);
     const numeric = Number(value);
@@ -10334,6 +12186,14 @@ export class Helios extends EventTarget {
     return this.labels({ outlineWidth: Math.max(0, numeric) });
   }
 
+  /**
+   * Read or set the radial node-size multiplier used to offset labels.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {number} [value] - Offset radius multiplier.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   labelsOffsetRadiusFactor(value) {
     if (arguments.length === 0) return Number(this.labels()?.offsetRadiusFactor ?? 1);
     const numeric = Number(value);
@@ -10341,6 +12201,14 @@ export class Helios extends EventTarget {
     return this.labels({ offsetRadiusFactor: numeric });
   }
 
+  /**
+   * Read or set the fixed pixel offset added to label placement.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {number} [value] - Offset in CSS pixels.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   labelsOffsetPx(value) {
     if (arguments.length === 0) return Number(this.labels()?.offsetPx ?? 4);
     const numeric = Number(value);
@@ -10348,6 +12216,14 @@ export class Helios extends EventTarget {
     return this.labels({ offsetPx: numeric });
   }
 
+  /**
+   * Read or set the maximum number of characters per label row.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {number} [value] - Maximum characters, or zero for no truncation.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   labelsMaxChars(value) {
     if (arguments.length === 0) return Number(this.labels()?.maxChars ?? 0);
     const numeric = Number(value);
@@ -10355,6 +12231,14 @@ export class Helios extends EventTarget {
     return this.labels({ maxChars: Math.max(0, Math.floor(numeric)) });
   }
 
+  /**
+   * Read or set the maximum number of rows per wrapped label.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {number} [value] - Maximum rows.
+   * @returns {number|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   labelsMaxRows(value) {
     if (arguments.length === 0) return Number(this.labels()?.maxRows ?? 1);
     const numeric = Number(value);
@@ -10362,6 +12246,14 @@ export class Helios extends EventTarget {
     return this.labels({ maxRows: Math.max(1, Math.floor(numeric)) });
   }
 
+  /**
+   * Read or set label fill color.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {string|Array<number>} [color] - CSS color string or normalized RGBA tuple.
+   * @returns {string|Array<number>|Helios|null} Current color when omitted; otherwise this Helios instance.
+   */
   labelFill(color) {
     if (arguments.length === 0) return this.labels()?.fill ?? null;
     if (typeof color === 'string' && color.trim()) return this.labels({ fill: color.trim() });
@@ -10370,6 +12262,14 @@ export class Helios extends EventTarget {
     throw new Error('labelFill(color) expects a CSS color string or [r,g,b(,a)]');
   }
 
+  /**
+   * Read or set label outline color.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {string|Array<number>} [color] - CSS color string or normalized RGBA tuple.
+   * @returns {string|Array<number>|Helios|null} Current color when omitted; otherwise this Helios instance.
+   */
   labelOutlineColor(color) {
     if (arguments.length === 0) return this.labels()?.outlineColor ?? null;
     if (typeof color === 'string' && color.trim()) return this.labels({ outlineColor: color.trim() });
@@ -10378,12 +12278,28 @@ export class Helios extends EventTarget {
     throw new Error('labelOutlineColor(color) expects a CSS color string or [r,g,b(,a)]');
   }
 
+  /**
+   * Read or set the CSS font-family used by labels.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {string} [value] - Font family string.
+   * @returns {string|Helios} Current font family when omitted; otherwise this Helios instance.
+   */
   labelFontFamily(value) {
     if (arguments.length === 0) return this.labels()?.fontFamily ?? '';
     const next = String(value ?? '').trim();
     return this.labels({ fontFamily: next });
   }
 
+  /**
+   * Read or set the label text source.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {string|Function|null} [value] - Attribute name, callback, or `null` for default labels.
+   * @returns {string|Function|null|Helios} Current source when omitted; otherwise this Helios instance.
+   */
   labelSource(value) {
     if (arguments.length === 0) return this.labels()?.source ?? null;
     if (typeof value === 'function') return this.labels({ source: value });
@@ -10395,6 +12311,11 @@ export class Helios extends EventTarget {
    * Pre-runs mapper application before first render. Useful for large graphs
    * where the first geometry pass is expensive.
    * Can be awaited before `helios.ready` to shorten time to first render.
+   *
+   * @public
+   * @apiSection Lifecycle
+   * @param {object} [options] - Reserved for future prewarm controls.
+   * @returns {Promise<void>} Resolves when mapper prewarm work has completed.
    */
   async prewarm(options = {}) {
     if (this.prewarmPromise) return this.prewarmPromise;
@@ -10420,6 +12341,14 @@ export class Helios extends EventTarget {
     return this.prewarmPromise;
   }
 
+  /**
+   * Create a layout instance from a layout option object or return an existing layout.
+   *
+   * @public
+   * @apiSection Layout And Positions
+   * @param {object|Layout} layoutOption - Layout instance or descriptor such as `{ type: 'gpu-force' }`.
+   * @returns {Layout} Layout instance bound to the current render network.
+   */
   createLayout(layoutOption) {
     const layoutNetwork = this._getLayoutNetwork();
     if (isLayoutInstance(layoutOption)) {
@@ -10456,6 +12385,15 @@ export class Helios extends EventTarget {
     });
   }
 
+  /**
+   * Add nodes to the backing network and initialize their visual state.
+   *
+   * @public
+   * @apiSection Network And Persistence
+   * @param {number} count - Number of nodes to add.
+   * @param {Function} [initializer] - Optional callback receiving created node ids and the visual attribute manager.
+   * @returns {Uint32Array} Created node indices.
+   */
   addNodes(count, initializer) {
     const nodes = this.network.addNodes(count);
     this.debug.log('helios', 'Adding nodes', { count });
@@ -10465,6 +12403,7 @@ export class Helios extends EventTarget {
       initializer(nodes, this.visuals);
     }
     this.visuals.markPositionsDirty();
+    this.storage?.markNetworkDirty?.('add-nodes');
     this._markAutoFitDirty(false);
     this._layout?.syncAutoSettingsForNetwork?.();
     this.mappersDirty = true;
@@ -10475,6 +12414,15 @@ export class Helios extends EventTarget {
     return nodes;
   }
 
+  /**
+   * Add edges to the backing network and initialize their visual state.
+   *
+   * @public
+   * @apiSection Network And Persistence
+   * @param {Array<Array<number>>|TypedArray} edges - Edge pairs to insert.
+   * @param {Function} [initializer] - Optional callback receiving created edge ids and the visual attribute manager.
+   * @returns {Uint32Array} Created edge indices.
+   */
   addEdges(edges, initializer) {
     const edgeIndices = this.network.addEdges(edges);
     this.debug.log('helios', 'Adding edges', { count: edgeIndices?.length ?? 0 });
@@ -10483,6 +12431,7 @@ export class Helios extends EventTarget {
       initializer(edgeIndices, this.visuals);
     }
     this.visuals.markPositionsDirty();
+    this.storage?.markNetworkDirty?.('add-edges');
     this._markAutoFitDirty(false);
     this.mappersDirty = true;
     this._requestLayoutReheat('data');
@@ -10517,6 +12466,9 @@ export class Helios extends EventTarget {
       if (edgeDefaults) this.visuals.applyEdgeDefaults(edgeDefaults);
     }
     this.visuals.markPositionsDirty();
+    if (hasNodeChange || hasEdgeChange || topology || attributes || categories) {
+      this.storage?.markNetworkDirty?.(reason);
+    }
     this._markAutoFitDirty(false);
     if (hasNodeChange || topology) {
       this._layout?.syncAutoSettingsForNetwork?.();
@@ -10543,6 +12495,14 @@ export class Helios extends EventTarget {
     });
   }
 
+  /**
+   * Read or set whether selected and highlighted items are promoted later in render order.
+   *
+   * @public
+   * @apiSection Interaction
+   * @param {boolean} [value] - Enable interaction-aware render-order promotion.
+   * @returns {boolean|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   interactionRenderOrder(value) {
     if (arguments.length === 0) return this._interactionRenderOrder?.enabled === true;
     this._interactionRenderOrder ??= {};
@@ -10603,6 +12563,17 @@ export class Helios extends EventTarget {
     if (selection?.selectedEdges?.size) this._promoteInteractionEdges(Array.from(selection.selectedEdges));
   }
 
+  /**
+   * Apply a state bitmask to node indices.
+   *
+   * @public
+   * @apiSection Interaction
+   * @param {Array<number>|TypedArray|number} indices - Node indices to update.
+   * @param {number|string|Array<string>} mask - State bitmask or named state such as `SELECTED` or `HIGHLIGHTED`.
+   * @param {object} [options] - State update options.
+   * @param {'replace'|'add'|'remove'|'toggle'} [options.mode='replace'] - How to combine the mask with the existing state.
+   * @returns {Helios} This Helios instance.
+   */
   nodeState(indices, mask, options = {}) {
     const mode = options.mode ?? 'replace';
     const value = (Number(resolveStateMask(mask, this.constructor.STATES)) >>> 0);
@@ -10631,8 +12602,6 @@ export class Helios extends EventTarget {
         }
       });
       this.visuals.bumpNodeAttributes(NODE_STATE_ATTRIBUTE);
-      // Endpoint states are derived via node-to-edge mapping; bump versions so edge state consumers notice.
-      this.visuals.bumpEdgeAttributes(EDGE_ENDPOINTS_STATE_ATTRIBUTE);
     });
     if (mode !== 'remove' && (value & this.constructor.STATES.HIGHLIGHTED) !== 0) {
       this._promoteInteractionNodes?.(indices, {
@@ -10651,6 +12620,17 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Apply a state bitmask to edge indices.
+   *
+   * @public
+   * @apiSection Interaction
+   * @param {Array<number>|TypedArray|number} indices - Edge indices to update.
+   * @param {number|string|Array<string>} mask - State bitmask or named state such as `SELECTED` or `HIGHLIGHTED`.
+   * @param {object} [options] - State update options.
+   * @param {'replace'|'add'|'remove'|'toggle'} [options.mode='replace'] - How to combine the mask with the existing state.
+   * @returns {Helios} This Helios instance.
+   */
   edgeState(indices, mask, options = {}) {
     const mode = options.mode ?? 'replace';
     const value = (Number(resolveStateMask(mask, this.constructor.STATES)) >>> 0);
@@ -10688,6 +12668,15 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Set transient hover state for a node.
+   *
+   * @public
+   * @apiSection Interaction
+   * @param {number|null} index - Hovered node index, or `null` to clear.
+   * @param {number|string|Array<string>} [mask='HOVERED'] - State mask applied while hovered.
+   * @returns {Helios} This Helios instance.
+   */
   hoverNodeState(index, mask) {
     const resolvedIndex = index == null || Number(index) < 0 ? 0xffffffff : (Number(index) >>> 0);
     const isVirtual = mask === 'HOVER';
@@ -10717,6 +12706,15 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Set transient hover state for an edge.
+   *
+   * @public
+   * @apiSection Interaction
+   * @param {number|null} index - Hovered edge index, or `null` to clear.
+   * @param {number|string|Array<string>} [mask='HOVERED'] - State mask applied while hovered.
+   * @returns {Helios} This Helios instance.
+   */
   hoverEdgeState(index, mask) {
     const resolvedIndex = index == null || Number(index) < 0 ? 0xffffffff : (Number(index) >>> 0);
     const isVirtual = mask === 'HOVER';
@@ -10811,6 +12809,14 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Read or set whether highlighted nodes also highlight their connected edges.
+   *
+   * @public
+   * @apiSection Interaction
+   * @param {boolean} [value] - Enable connected-edge highlighting.
+   * @returns {boolean|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   highlightConnectedEdges(value) {
     if (arguments.length === 0) return this._highlightConnectedEdges === true;
     this._highlightConnectedEdges = value === true;
@@ -10822,6 +12828,15 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Read or set styling for nodes carrying a state bit.
+   *
+   * @public
+   * @apiSection Interaction
+   * @param {number|string} slot - State slot index or name.
+   * @param {object} [style] - Node state style with scale, opacity, outline, discard, and color fields.
+   * @returns {object|null|Helios} Current style when `style` is omitted; otherwise this Helios instance.
+   */
   nodeStateStyle(slot, style) {
     if (arguments.length < 2) {
       const layer = this.renderer?.graphLayer;
@@ -10858,6 +12873,14 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Read or set styling for nodes with no active state bits.
+   *
+   * @public
+   * @apiSection Interaction
+   * @param {object} [style] - Node style applied to unselected/unhighlighted nodes.
+   * @returns {object|null|Helios} Current style when omitted; otherwise this Helios instance.
+   */
   nodeNoStateStyle(style) {
     if (arguments.length === 0) {
       const layer = this.renderer?.graphLayer;
@@ -10881,6 +12904,15 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Read or set styling for edges carrying a state bit.
+   *
+   * @public
+   * @apiSection Interaction
+   * @param {number|string} slot - State slot index or name.
+   * @param {object} [style] - Edge state style with width, opacity, discard, and color fields.
+   * @returns {object|null|Helios} Current style when `style` is omitted; otherwise this Helios instance.
+   */
   edgeStateStyle(slot, style) {
     if (arguments.length < 2) {
       const layer = this.renderer?.graphLayer;
@@ -10916,6 +12948,14 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Read or set styling for edges with no active state bits.
+   *
+   * @public
+   * @apiSection Interaction
+   * @param {object} [style] - Edge style applied to unselected/unhighlighted edges.
+   * @returns {object|null|Helios} Current style when omitted; otherwise this Helios instance.
+   */
   edgeNoStateStyle(style) {
     if (arguments.length === 0) {
       const layer = this.renderer?.graphLayer;
@@ -10938,6 +12978,14 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Read or set the transient hover style for nodes.
+   *
+   * @public
+   * @apiSection Interaction
+   * @param {object} [style] - Node hover style.
+   * @returns {object|null|Helios} Current style when omitted; otherwise this Helios instance.
+   */
   nodeHoverStyle(style) {
     if (arguments.length === 0) {
       const layer = this.renderer?.graphLayer;
@@ -10959,6 +13007,14 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Read or set the transient hover style for edges.
+   *
+   * @public
+   * @apiSection Interaction
+   * @param {object} [style] - Edge hover style.
+   * @returns {object|null|Helios} Current style when omitted; otherwise this Helios instance.
+   */
   edgeHoverStyle(style) {
     if (arguments.length === 0) {
       const layer = this.renderer?.graphLayer;
@@ -10987,6 +13043,14 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Read or set whether hover style follows the highlighted-state style.
+   *
+   * @public
+   * @apiSection Interaction
+   * @param {boolean} [value] - Copy highlighted styles into hover styles.
+   * @returns {boolean|Helios} Current value when omitted; otherwise this Helios instance.
+   */
   hoverStyleFromHighlight(value) {
     if (arguments.length === 0) return this._hoverStyleFromHighlight === true;
     this._hoverStyleFromHighlight = value === true;
@@ -10998,6 +13062,13 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Reset all node and edge state styles to renderer defaults.
+   *
+   * @public
+   * @apiSection Interaction
+   * @returns {Helios} This Helios instance.
+   */
   resetStateStyles() {
     if (this._stateStyleCache) {
       this._stateStyleCache.nodeSlots.clear();
@@ -11012,6 +13083,16 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Read, replace, or reset the default node and edge mapper collections.
+   *
+   * @public
+   * @apiSection Mappers
+   * @param {object} [mappers] - Mapper replacements. Omit to read active mapper collections.
+   * @param {Mapper} [mappers.nodeMapper] - Replacement default node mapper.
+   * @param {Mapper} [mappers.edgeMapper] - Replacement default edge mapper.
+   * @returns {object|Helios} Current mapper collections when omitted; otherwise this Helios instance.
+   */
   mappers({ nodeMapper, edgeMapper } = {}) {
     if (arguments.length === 0) {
       return { nodeMapper: this.nodeMapper, edgeMapper: this.edgeMapper };
@@ -11050,6 +13131,14 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Read or replace the active layout instance.
+   *
+   * @public
+   * @apiSection Layout And Positions
+   * @param {Layout} [layout] - Layout instance extending the Helios layout base class.
+   * @returns {Layout|Helios} Current layout when omitted; otherwise this Helios instance.
+   */
   layout(layout) {
     if (arguments.length === 0) {
       return this._layout;
@@ -11098,6 +13187,16 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * List node attributes that can seed layout positions.
+   *
+   * @public
+   * @apiSection Layout And Positions
+   * @param {object} [options] - Choice discovery options.
+   * @param {HeliosNetwork} [options.network] - Network to inspect. Defaults to the active network.
+   * @param {'2d'|'3d'} [options.mode] - Mode used to label random seed choices.
+   * @returns {Array<object>} Position choices with `value`, `label`, and `dimension` fields.
+   */
   getLayoutPositionAttributeChoices(options = {}) {
     const network = options.network ?? this.network ?? null;
     const mode = (options.mode ?? this.options?.mode) === '3d' ? '3d' : '2d';
@@ -11143,6 +13242,16 @@ export class Helios extends EventTarget {
     return choices.length ? choices : [currentChoice, randomChoice];
   }
 
+  /**
+   * Copy a numeric node attribute into the canonical layout-position attribute.
+   *
+   * @public
+   * @apiSection Layout And Positions
+   * @param {string} name - Source node attribute name, or the random seed choice value.
+   * @param {object} [options] - Position-copy options.
+   * @param {HeliosNetwork} [options.network] - Network to update. Defaults to the active network.
+   * @returns {boolean} `true` when positions were written.
+   */
   setLayoutPositionsFromNodeAttribute(name, options = {}) {
     const network = options.network ?? this.network ?? null;
     const visuals = this.visuals ?? null;
@@ -11200,9 +13309,9 @@ export class Helios extends EventTarget {
 
       if (!wrote) return false;
 
+      this._resetInterpolationRuntime({ keepLastRendered: false, keepIntervalHistory: true });
       visuals?.markPositionsDirty?.();
       visuals?.bumpNodeAttributes?.(NODE_POSITION_ATTRIBUTE);
-      visuals?.bumpEdgeAttributes?.(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
       this._markAutoFitDirty(false);
       this._layout?.seedFromNetworkPositions?.();
       this.scheduler?.requestGeometry?.();
@@ -11257,9 +13366,9 @@ export class Helios extends EventTarget {
 
     if (!wrote) return false;
 
+    this._resetInterpolationRuntime({ keepLastRendered: false, keepIntervalHistory: true });
     visuals?.markPositionsDirty?.();
     visuals?.bumpNodeAttributes?.(NODE_POSITION_ATTRIBUTE);
-    visuals?.bumpEdgeAttributes?.(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
     this._markAutoFitDirty(false);
     this._layout?.seedFromNetworkPositions?.();
     this.scheduler?.requestGeometry?.();
@@ -11268,6 +13377,16 @@ export class Helios extends EventTarget {
     return true;
   }
 
+  /**
+   * Read or update the active position source used for rendering and layout handoff.
+   *
+   * @public
+   * @apiSection Layout And Positions
+   * @param {object|null} [options] - Position pipeline options, or `null` to reset to network-backed positions.
+   * @param {'network'|'delegate'} [options.source] - Source for current positions.
+   * @param {PositionDelegate} [options.delegate] - Delegate used when `source` is `delegate`.
+   * @returns {object|Helios} Current position source when omitted; otherwise this Helios instance.
+   */
   positions(options) {
     if (arguments.length === 0) {
       return {
@@ -11290,6 +13409,15 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Snapshot all node positions from the active or supplied position delegate.
+   *
+   * @public
+   * @apiSection Layout And Positions
+   * @param {object} [options] - Delegate readback options.
+   * @param {PositionDelegate} [options.delegate] - Delegate to read. Defaults to the active delegate.
+   * @returns {Promise<Float32Array|null>} Packed `x,y,z` positions, or `null` when no delegate is available.
+   */
   async snapshotDelegatePositions(options = {}) {
     const delegate = options?.delegate ?? this._positionsConfig?.delegate ?? this._activePositionDelegate ?? null;
     if (!delegate) return null;
@@ -11307,6 +13435,17 @@ export class Helios extends EventTarget {
     return new Float32Array(view);
   }
 
+  /**
+   * Snapshot selected node positions from the active position source.
+   *
+   * @public
+   * @apiSection Layout And Positions
+   * @param {Array<number>|TypedArray|number} nodeIds - Node indices to read.
+   * @param {object} [options] - Readback options.
+   * @param {Float32Array} [options.out] - Optional output buffer.
+   * @param {PositionDelegate} [options.delegate] - Delegate override.
+   * @returns {Promise<object>} Readback result with ids, packed positions, count, version, and source.
+   */
   async snapshotNodePositions(nodeIds, options = {}) {
     const ids = normalizeReadbackNodeIndexList(nodeIds);
     const count = ids.length;
@@ -11374,6 +13513,16 @@ export class Helios extends EventTarget {
     };
   }
 
+  /**
+   * Snapshot one node position from the active position source.
+   *
+   * @public
+   * @apiSection Layout And Positions
+   * @param {number} nodeId - Node index to read.
+   * @param {object} [options] - Readback options.
+   * @param {Float32Array} [options.out] - Optional output buffer with length at least three.
+   * @returns {Promise<object>} Readback result with id, position, version, and source.
+   */
   async snapshotNodePosition(nodeId, options = {}) {
     const id = Math.floor(Number(nodeId));
     const safeId = Number.isFinite(id) && id >= 0 ? id : -1;
@@ -11396,6 +13545,16 @@ export class Helios extends EventTarget {
     };
   }
 
+  /**
+   * Compute the centroid of selected nodes from the active position source.
+   *
+   * @public
+   * @apiSection Layout And Positions
+   * @param {Array<number>|TypedArray|number} nodeIds - Node indices to include.
+   * @param {object} [options] - Readback options.
+   * @param {Float32Array} [options.out] - Optional output buffer with length at least three.
+   * @returns {Promise<object>} Centroid result with centroid, count, version, and source.
+   */
   async snapshotNodeCentroid(nodeIds, options = {}) {
     const ids = normalizeReadbackNodeIndexList(nodeIds);
     const count = ids.length;
@@ -11424,6 +13583,15 @@ export class Helios extends EventTarget {
     };
   }
 
+  /**
+   * Write the active delegate position snapshot back into the network position attribute.
+   *
+   * @public
+   * @apiSection Layout And Positions
+   * @param {object} [options] - Delegate synchronization options.
+   * @param {PositionDelegate} [options.delegate] - Delegate to synchronize. Defaults to the active delegate.
+   * @returns {Promise<boolean>} `true` when network positions were updated.
+   */
   async syncDelegatePositionsToNetwork(options = {}) {
     const delegate = options?.delegate ?? this._positionsConfig?.delegate ?? this._activePositionDelegate ?? null;
     if (!delegate) return false;
@@ -11443,6 +13611,17 @@ export class Helios extends EventTarget {
     return true;
   }
 
+  /**
+   * Read or update GPU position interpolation settings.
+   *
+   * @public
+   * @apiSection Layout And Positions
+   * @param {object|string|null} [options] - Interpolation options, mode string, or `null` to disable interpolation.
+   * @param {boolean} [options.enabled] - Enable position interpolation.
+   * @param {'adaptive'|'fixed'} [options.durationMode] - Duration strategy.
+   * @param {number} [options.durationMs] - Fixed interpolation duration in milliseconds.
+   * @returns {object|Helios} Current interpolation snapshot when omitted; otherwise this Helios instance.
+   */
   interpolation(options) {
     if (arguments.length === 0) {
       const config = this._interpolationConfig ?? POSITION_INTERPOLATION_DEFAULTS;
@@ -11585,24 +13764,175 @@ export class Helios extends EventTarget {
   }
 
   // Backwards-compatible aliases.
+  /**
+   * Alias for `layout(layout)`.
+   *
+   * @public
+   * @apiSection Layout And Positions
+   * @param {Layout} layout - Replacement layout.
+   * @returns {Layout|Helios} Result of `layout(layout)`.
+   */
   setLayout(layout) { return this.layout(layout); }
+  /**
+   * Alias for `positions(options)`.
+   *
+   * @public
+   * @apiSection Layout And Positions
+   * @param {object|null} options - Position pipeline options.
+   * @returns {object|Helios} Result of `positions(options)`.
+   */
   setPositions(options) { return this.positions(options); }
+  /**
+   * Alias for `interpolation(options)`.
+   *
+   * @public
+   * @apiSection Layout And Positions
+   * @param {object|string|null} options - Interpolation options.
+   * @returns {object|Helios} Result of `interpolation(options)`.
+   */
   setInterpolation(options) { return this.interpolation(options); }
+  /**
+   * Alias for `density(options)`.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {object|false|null} options - Density options.
+   * @returns {object|Helios} Result of `density(options)`.
+   */
   setDensity(options) { return this.density(options); }
+  /**
+   * Alias for `labels(options)`.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {object|null} options - Label options.
+   * @returns {object|Helios} Result of `labels(options)`.
+   */
   setLabels(options) { return this.labels(options); }
+  /**
+   * Alias for `legends(options)`.
+   *
+   * @public
+   * @apiSection Density And Labels
+   * @param {object|false|null} options - Legend options.
+   * @returns {object|Helios} Result of `legends(options)`.
+   */
   setLegends(options) { return this.legends(options); }
+  /**
+   * Alias for `mappers(mappers)`.
+   *
+   * @public
+   * @apiSection Mappers
+   * @param {object} mappers - Mapper replacements.
+   * @returns {object|Helios} Result of `mappers(mappers)`.
+   */
   setMappers(mappers) { return this.mappers(mappers); }
+  /**
+   * Alias for `nodeState(indices, mask, options)`.
+   *
+   * @public
+   * @apiSection Interaction
+   * @param {Array<number>|TypedArray|number} indices - Node indices.
+   * @param {number|string|Array<string>} mask - State mask.
+   * @param {object} [options] - State options.
+   * @returns {Helios} This Helios instance.
+   */
   setNodeState(indices, mask, options) { return this.nodeState(indices, mask, options); }
+  /**
+   * Alias for `edgeState(indices, mask, options)`.
+   *
+   * @public
+   * @apiSection Interaction
+   * @param {Array<number>|TypedArray|number} indices - Edge indices.
+   * @param {number|string|Array<string>} mask - State mask.
+   * @param {object} [options] - State options.
+   * @returns {Helios} This Helios instance.
+   */
   setEdgeState(indices, mask, options) { return this.edgeState(indices, mask, options); }
+  /**
+   * Alias for `nodeStateStyle(slot, style)`.
+   *
+   * @public
+   * @apiSection Interaction
+   * @param {number|string} slot - State slot.
+   * @param {object} style - Node style.
+   * @returns {object|null|Helios} Result of `nodeStateStyle(slot, style)`.
+   */
   setNodeStateStyle(slot, style) { return this.nodeStateStyle(slot, style); }
+  /**
+   * Alias for `edgeStateStyle(slot, style)`.
+   *
+   * @public
+   * @apiSection Interaction
+   * @param {number|string} slot - State slot.
+   * @param {object} style - Edge style.
+   * @returns {object|null|Helios} Result of `edgeStateStyle(slot, style)`.
+   */
   setEdgeStateStyle(slot, style) { return this.edgeStateStyle(slot, style); }
+  /**
+   * Alias for `nodeNoStateStyle(style)`.
+   *
+   * @public
+   * @apiSection Interaction
+   * @param {object} style - Node style.
+   * @returns {object|null|Helios} Result of `nodeNoStateStyle(style)`.
+   */
   setNodeNoStateStyle(style) { return this.nodeNoStateStyle(style); }
+  /**
+   * Alias for `edgeNoStateStyle(style)`.
+   *
+   * @public
+   * @apiSection Interaction
+   * @param {object} style - Edge style.
+   * @returns {object|null|Helios} Result of `edgeNoStateStyle(style)`.
+   */
   setEdgeNoStateStyle(style) { return this.edgeNoStateStyle(style); }
+  /**
+   * Alias for `nodeHoverStyle(style)`.
+   *
+   * @public
+   * @apiSection Interaction
+   * @param {object} style - Node hover style.
+   * @returns {object|null|Helios} Result of `nodeHoverStyle(style)`.
+   */
   setNodeHoverStyle(style) { return this.nodeHoverStyle(style); }
+  /**
+   * Alias for `edgeHoverStyle(style)`.
+   *
+   * @public
+   * @apiSection Interaction
+   * @param {object} style - Edge hover style.
+   * @returns {object|null|Helios} Result of `edgeHoverStyle(style)`.
+   */
   setEdgeHoverStyle(style) { return this.edgeHoverStyle(style); }
+  /**
+   * Alias for `hoverStyleFromHighlight(value)`.
+   *
+   * @public
+   * @apiSection Interaction
+   * @param {boolean} value - Enable hover style from highlight.
+   * @returns {boolean|Helios} Result of `hoverStyleFromHighlight(value)`.
+   */
   setHoverStyleFromHighlight(value) { return this.hoverStyleFromHighlight(value); }
+  /**
+   * Alias for `highlightConnectedEdges(value)`.
+   *
+   * @public
+   * @apiSection Interaction
+   * @param {boolean} value - Enable connected-edge highlighting.
+   * @returns {boolean|Helios} Result of `highlightConnectedEdges(value)`.
+   */
   setHighlightConnectedEdges(value) { return this.highlightConnectedEdges(value); }
 
+  /**
+   * Enable layout execution and optionally request a layout algorithm or parameters.
+   *
+   * @public
+   * @apiSection Layout And Positions
+   * @param {string|object|null} [algo=null] - Optional layout type or parameter object.
+   * @param {object|null} [params=null] - Optional parameters when `algo` is a string.
+   * @returns {Helios} This Helios instance.
+   */
   startLayout(algo = null, params = null) {
     const requestedAlgo = typeof algo === 'string' ? algo : null;
     const requestedParams = params ?? (requestedAlgo ? null : algo);
@@ -11615,16 +13945,38 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Disable layout execution.
+   *
+   * @public
+   * @apiSection Layout And Positions
+   * @param {string} [reason='user'] - Reason recorded for the scheduler state change.
+   * @returns {Helios} This Helios instance.
+   */
   stopLayout(reason = 'user') {
     this.scheduler.setLayoutEnabled(false, reason);
     return this;
   }
 
+  /**
+   * Schedule a render frame.
+   *
+   * @public
+   * @apiSection Rendering And Picking
+   * @returns {Helios} This Helios instance.
+   */
   requestRender() {
     this.scheduler.requestRender();
     return this;
   }
 
+  /**
+   * Render one frame immediately when manual rendering is enabled.
+   *
+   * @public
+   * @apiSection Rendering And Picking
+   * @returns {void}
+   */
   performRendering() {
     if (!this.manualRendering) {
       console.warn('performRendering() should only be called when manualRendering option is enabled');
@@ -11643,7 +13995,13 @@ export class Helios extends EventTarget {
     //   this.mappersDirty = false;
     // }
     const timestamp = performance.now();
+    if (this._shouldSuppressStartupRender(timestamp)) {
+      this._refreshLargeNetworkStartupFit();
+      return;
+    }
+    this._refreshLargeNetworkStartupFit({ force: true });
     this._runInterpolationRenderPump(timestamp);
+    this._finishStartupFirstVisibleFrame();
     const renderNetwork = this._getRenderNetwork();
     // Create frame and render
     const frame = {
@@ -11658,6 +14016,16 @@ export class Helios extends EventTarget {
     }
   }
 
+  /**
+   * Enable offscreen attribute tracking for picking.
+   *
+   * @public
+   * @apiSection Rendering And Picking
+   * @param {string} [nodeAttribute='$index'] - Node attribute to encode into the tracking target.
+   * @param {string|null} [edgeAttribute=null] - Edge attribute to encode into the tracking target.
+   * @param {object} [options] - Tracking resolution and auto-update options.
+   * @returns {AttributeTracker|null} Attribute tracker instance, or `null` before renderer initialization.
+   */
   enableAttributeTracking(nodeAttribute = '$index', edgeAttribute = null, options = {}) {
     if (!this.attributeTracker && this.renderer) {
       this.attributeTracker = new AttributeTracker(this.renderer);
@@ -11673,10 +14041,25 @@ export class Helios extends EventTarget {
     return this.attributeTracker;
   }
 
+  /**
+   * Disable attribute tracking for a scope or for all scopes.
+   *
+   * @public
+   * @apiSection Rendering And Picking
+   * @param {'node'|'edge'|string} [scope] - Scope to disable. Omit to disable all configured tracking.
+   * @returns {void}
+   */
   disableAttributeTracking(scope) {
     this.attributeTracker?.disable(scope);
   }
 
+  /**
+   * Render the attribute-tracking target for the current frame.
+   *
+   * @public
+   * @apiSection Rendering And Picking
+   * @returns {Promise<object|null>} Tracking render result, or `null` when tracking is disabled.
+   */
   async renderAttributeTracking() {
     if (!this.attributeTracker) return null;
     const renderNetwork = this._getRenderNetwork();
@@ -11688,6 +14071,15 @@ export class Helios extends EventTarget {
     return this.attributeTracker.render(frame, true);
   }
 
+  /**
+   * Pick encoded node and edge attributes at viewport coordinates.
+   *
+   * @public
+   * @apiSection Rendering And Picking
+   * @param {number} clientX - Viewport x coordinate.
+   * @param {number} clientY - Viewport y coordinate.
+   * @returns {Promise<{node:number, edge:number}>} Picked node and edge ids, or `-1` for misses.
+   */
   async pickAttributesAt(clientX, clientY) {
     if (!this.attributeTracker) return { node: -1, edge: -1 };
     await this.renderAttributeTracking();
@@ -11934,10 +14326,25 @@ export class Helios extends EventTarget {
   }
 
   // Backwards-compatible alias: use getFramebufferInformation() for string-keyed details.
+  /**
+   * Return framebuffer resource versions keyed by reference for renderer diagnostics.
+   *
+   * @public
+   * @apiSection Rendering And Picking
+   * @returns {object} Plain object mapping framebuffer references to version numbers.
+   */
   getFramebufferVersionsByRef() {
     return this.getFramebufferInformation();
   }
 
+  /**
+   * Enable pointer picking for nodes.
+   *
+   * @public
+   * @apiSection Rendering And Picking
+   * @param {object} [options] - Picking behavior options.
+   * @returns {Helios} This Helios instance.
+   */
   enableNodePicking(options = {}) {
     this._picking.node.enabled = true;
     this._picking.node.hoverEnabled = options.hoverEnabled !== false && options.trackHover !== false;
@@ -11946,6 +14353,14 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Enable pointer picking for edges.
+   *
+   * @public
+   * @apiSection Rendering And Picking
+   * @param {object} [options] - Picking behavior options.
+   * @returns {Helios} This Helios instance.
+   */
   enableEdgePicking(options = {}) {
     this._picking.edge.enabled = true;
     this._picking.edge.hoverEnabled = options.hoverEnabled !== false && options.trackHover !== false;
@@ -11954,12 +14369,26 @@ export class Helios extends EventTarget {
     return this;
   }
 
+  /**
+   * Disable node pointer picking.
+   *
+   * @public
+   * @apiSection Rendering And Picking
+   * @returns {Helios} This Helios instance.
+   */
   disableNodePicking() {
     this._picking.node.enabled = false;
     this._applyPickingConfig();
     return this;
   }
 
+  /**
+   * Disable edge pointer picking.
+   *
+   * @public
+   * @apiSection Rendering And Picking
+   * @returns {Helios} This Helios instance.
+   */
   disableEdgePicking() {
     this._picking.edge.enabled = false;
     this._applyPickingConfig();
@@ -12547,6 +14976,13 @@ export class Helios extends EventTarget {
     }
   }
 
+  /**
+   * Dispose renderer resources, UI bindings, workers, timers, and event listeners owned by this instance.
+   *
+   * @public
+   * @apiSection Lifecycle
+   * @returns {void}
+   */
   destroy() {
     if (this._destroyed) return;
     this._destroyed = true;
@@ -12575,6 +15011,8 @@ export class Helios extends EventTarget {
     this._beforeUnloadUnsavedChangesCleanup = null;
     this._detachPickingListeners();
     this._destroyQuickControls();
+    this._startupOverlay?.remove?.();
+    this._startupOverlay = null;
     this.attributeTracker?.destroy?.();
     this.indexPickingTracker?.destroy?.();
     this.indexPickingTracker = null;
@@ -12593,8 +15031,13 @@ export class Helios extends EventTarget {
     if (this.options?.disposeNetworkOnDestroy !== false && this.network && typeof this.network.dispose === 'function') {
       try {
         this.network.dispose();
-      } catch (_) {
-        // ignore disposal failures during teardown
+      } catch (error) {
+        warnOnce(
+          this,
+          'destroy-network-dispose',
+          'Helios: network disposal failed during destroy.',
+          { error },
+        );
       }
     }
     this.network = null;

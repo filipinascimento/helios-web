@@ -58,6 +58,25 @@ test('geometry updates flag rendering on next tick', () => {
   assert.equal(renders, 2, 'render should follow geometry update');
 });
 
+test('render callback can keep a frame pending by returning false', () => {
+  const scheduler = createScheduler();
+  let attempts = 0;
+  scheduler.setRenderCallback(() => {
+    attempts += 1;
+    return attempts > 1;
+  });
+
+  scheduler.tick(0);
+  assert.equal(attempts, 1);
+  assert.equal(scheduler._needsRender, true, 'suppressed render should remain pending');
+  assert.equal(scheduler._renderCount, 0, 'suppressed render should not count as drawn');
+
+  scheduler.tick(16);
+  assert.equal(attempts, 2);
+  assert.equal(scheduler._needsRender, false);
+  assert.equal(scheduler._renderCount, 1);
+});
+
 test('maxFps throttles renders but preserves pending render requests', () => {
   const scheduler = createScheduler({ maxFps: 1 });
   let renders = 0;

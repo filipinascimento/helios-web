@@ -26,6 +26,99 @@ async function countNonBackground(page) {
 }
 
 test.describe('docs basic demo network io', () => {
+  test('load button confirms before replacing an unsynced session', async ({ page }) => {
+    await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=600');
+
+    await page.waitForFunction(() => Boolean(window.__helios && window.__helios.ready));
+    await page.waitForFunction(async () => {
+      const helios = window.__helios;
+      await helios.ready;
+      return true;
+    });
+
+    await page.evaluate(async () => {
+      const helios = window.__helios;
+      await helios.storage.startNewSession?.({
+        id: 'load-confirm-unsynced-session',
+        flushPrevious: false,
+        saveInitialSession: false,
+      });
+      helios.storage.markNetworkDirty('test-load-confirmation');
+      if (helios.storage._sessionAutosaveTimer) clearTimeout(helios.storage._sessionAutosaveTimer);
+      helios.storage._sessionAutosaveTimer = null;
+      helios.storage._sessionAutosaveOptions = null;
+      helios.storage.sessionSavedAt = Date.now() - 6 * 60 * 1000;
+      helios.storage.networkData.savedAt = null;
+    });
+
+    const dataPanel = page.locator('.helios-ui-panel[data-panel-id="helios-ui-data"]').first();
+    const loadButton = dataPanel.getByRole('button', { name: /Load network/ });
+    await expect(loadButton).toBeVisible();
+    await loadButton.click();
+
+    const dialog = page.locator('.helios-ui-dialog', { hasText: 'Open Network' }).last();
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText('Not synced yet.');
+    await expect(dialog).toContainText('unsynced changes');
+    await expect(dialog.getByRole('button', { name: 'Open Network' })).toBeVisible();
+
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+  });
+
+  test('dropped network confirms before replacing an unsynced session', async ({ page }) => {
+    await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=600&fileDrop=1');
+
+    await page.waitForFunction(() => Boolean(window.__helios && window.__helios.ready));
+    await page.waitForFunction(async () => {
+      const helios = window.__helios;
+      await helios.ready;
+      return true;
+    });
+
+    await page.evaluate(async () => {
+      const helios = window.__helios;
+      await helios.storage.startNewSession?.({
+        id: 'drop-confirm-unsynced-session',
+        flushPrevious: false,
+        saveInitialSession: false,
+      });
+      helios.storage.markNetworkDirty('test-drop-confirmation');
+      if (helios.storage._sessionAutosaveTimer) clearTimeout(helios.storage._sessionAutosaveTimer);
+      helios.storage._sessionAutosaveTimer = null;
+      helios.storage._sessionAutosaveOptions = null;
+      helios.storage.sessionSavedAt = Date.now() - 4 * 60 * 1000;
+      helios.storage.networkData.savedAt = null;
+    });
+
+    await page.evaluate(async () => {
+      const helios = window.__helios;
+      const HeliosNetwork = helios.network.constructor;
+      const next = await HeliosNetwork.create({ directed: false, initialNodes: 0 });
+      next.addNodes(5);
+      next.addEdges([[0, 1], [1, 2], [2, 3], [3, 4]]);
+      const blob = await next.saveGML({ format: 'blob' });
+      next.dispose?.();
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(new File([blob], 'dropped-confirm-network.gml', { type: 'text/plain' }));
+      document.querySelector('.helios-root').dispatchEvent(new DragEvent('drop', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer,
+      }));
+    });
+
+    const dialog = page.locator('.helios-ui-dialog', { hasText: 'Open Network' }).last();
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText('dropped-confirm-network.gml');
+    await expect(dialog).toContainText('Not synced yet.');
+    await expect.poll(() => page.evaluate(() => window.__helios.network.nodeCount)).toBe(600);
+
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+    await expect.poll(() => page.evaluate(() => window.__helios.network.nodeCount)).toBe(600);
+  });
+
   test('shows a live attributes table with a hidden-attribute toggle', async ({ page }) => {
     await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=600');
 
@@ -227,7 +320,13 @@ test.describe('docs basic demo network io', () => {
     await page.waitForFunction(() => {
       const helios = window.__helios;
       const camera = helios?.renderer?.camera;
-      return Boolean(camera && camera.zoom > 1 && !helios._pendingFrameNetwork);
+      return Boolean(
+        camera
+        && Number.isFinite(camera.zoom)
+        && camera.zoom > 0
+        && !helios._pendingFrameNetwork
+        && helios.firstGeometryUpdateComplete,
+      );
     }, null, { timeout: 5000 });
 
     const stats = await page.evaluate(() => {

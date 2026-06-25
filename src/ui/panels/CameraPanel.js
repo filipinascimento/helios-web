@@ -161,6 +161,7 @@ export class CameraPanel {
         title: this.options.title ?? 'Camera',
         position: this.options.position ?? { x: 16, y: 760 },
         dock: this.options.dock ?? 'top-right',
+        collapsed: this.options.collapsed ?? true,
         content,
       });
     }
@@ -318,7 +319,7 @@ export class CameraPanel {
         inputMin: 0,
         inputMax: 60000,
         onCommit: (value) => {
-          const patch = { animationDurationMs: clampNumber(value, 0, 60000, 280) };
+          const patch = { animationDurationMs: clampNumber(value, 0, 60000, 520) };
           helios.cameraControls?.(patch);
           persistCameraControl(patch);
         },
@@ -488,7 +489,7 @@ export class CameraPanel {
       intervalControls.set(intervalMsToFrequency(controls.autoFitIntervalMs ?? 900));
 
       animationToggle.checked = controls.animation === true;
-      durationControls.set(controls.animationDurationMs ?? 280);
+      durationControls.set(controls.animationDurationMs ?? 520);
 
       const orbitEnabled = controls.orbit === true;
       if (orbitEnabled && !lastOrbitEnabled) {
@@ -522,6 +523,7 @@ export class CameraPanel {
       title: this.options.title ?? 'Camera',
       position: this.options.position ?? { x: 16, y: 760 },
       dock: this.options.dock ?? 'top-right',
+      collapsed: this.options.collapsed ?? true,
       content,
     });
 

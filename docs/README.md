@@ -21,7 +21,14 @@ network.addNodes(5);
 
 const helios = new Helios(network, {
   container: document.querySelector('#app'),
-  layout: { type: 'gpu-force', options: { mode: '2d' } },
+  layout: {
+    type: 'gpu-force',
+    options: {
+      mode: '2d',
+      // 'auto' switches WebGPU layout to chunked dispatch above 500k active nodes.
+      layoutScheduling: 'auto',
+    },
+  },
 });
 await helios.ready;
 
@@ -53,6 +60,8 @@ Key entry points:
 
 - `Helios` – prepares layers, connects the scheduler, kick-starts rendering
 - `StaticLayout`, `WorkerLayout`, `D3Force3DLayout`, `GpuForceLayout` – ready-to-use layout implementations
+- `GpuForceLayout` accepts `layoutScheduling: 'auto' | 'full' | 'chunked'`
+  and `layoutChunkCount` for large-network WebGPU layout scheduling.
 - `Mapper` – flexible mapping utility for visual channels; mapped values land in
   sparse attributes
 - `HeliosUI` – optional HTML overlay UI (panel manager + attribute bindings)
@@ -61,7 +70,7 @@ Key entry points:
 - `helios.storage` – optional durable/session sync layer over `helios.states`.
   Plain library use gets dummy storage; browser, remote, and custom managers can
   be passed through the `storage` constructor option. Browser storage owns native
-  session save/list/load/delete.
+  session save/list/load/delete; there is no separate `helios.session` facade.
 - [`persistence-propagation-summary.md`](./persistence-propagation-summary.md)
   summarizes the current state/storage/session contract for `helios-cli` and
   Helios desktop integrations.
@@ -73,8 +82,12 @@ Key entry points:
   `window.__helios`, and UI-enabled apps append a right-docked Debug panel with
   recent tracked-state, state-change, UI-change, and persistence counters.
   Pass `debug: false` to disable it.
-- Network I/O supports `.xnet`, `.zxnet`, `.bxnet`, and lossy `.gml`; the main
-  example enables drag/drop loading through `fileDrop: true`
+- Network I/O supports `.xnet`, `.zxnet`, `.bxnet`, lossy `.gml`, and
+  graph-tool `.gt`/`.gt.zst` input; the main example enables drag/drop loading through
+  `fileDrop: true`
+- Type declaration note: the source JSDoc has been updated for `.gt`, but this
+  package currently has no declaration-generation script, so
+  `src/index.d.ts` was not hand-edited.
 
 By default, Helios uses the d3-force-3d worker layout.
 
@@ -124,7 +137,9 @@ See [`docs/UI.md`](./UI.md) for the optional `HeliosUI` overlay (panels, docking
 
 ## State docs
 
-See [`docs/states.md`](./states.md) for the bitmask-based node/edge state system (selected/highlighted/filtered/custom) and shader-applied styling.
+See [`docs/states.md`](./states.md) for the difference between the
+`helios.states` state manager and the bitmask-based node/edge visual state
+system (selected/highlighted/filtered/custom).
 
 ## Persistence docs
 

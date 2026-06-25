@@ -29,8 +29,7 @@ test.describe('docs basic demo mappers', () => {
     const nodeAttrSelectIndex = await selectLocator.evaluateAll((selects) => {
       const isNodeAttributeSelect = (sel) => {
         const optionLabels = Array.from(sel.options ?? []).map((opt) => (opt.textContent ?? '').trim());
-        const blank = optionLabels[0] ?? '';
-        return blank.toLowerCase().includes('select node attribute');
+        return optionLabels.includes('Node: color') && optionLabels.includes('Node: weight');
       };
       return selects.findIndex(isNodeAttributeSelect);
     });
@@ -38,21 +37,20 @@ test.describe('docs basic demo mappers', () => {
     const nodeAttrOptions = await selectLocator.nth(nodeAttrSelectIndex).evaluate((sel) => {
       return Array.from(sel.options ?? []).map((opt) => (opt.textContent ?? '').trim());
     });
-    expect(nodeAttrOptions).not.toContain('position');
+    expect(nodeAttrOptions).not.toContain('Node: position');
 
-    const endpointsSelectIndex = await selectLocator.evaluateAll((selects) => {
+    const findEndpointsSelectIndex = async () => selectLocator.evaluateAll((selects) => {
       const isEndpointsSelect = (sel) => {
         const labels = new Set(Array.from(sel.options ?? []).map((opt) => (opt.textContent ?? '').trim()));
         return labels.has('Both') && labels.has('Source') && labels.has('Target');
       };
       return selects.findIndex(isEndpointsSelect);
     });
+    let endpointsSelectIndex = await findEndpointsSelectIndex();
     expect(endpointsSelectIndex).toBeGreaterThanOrEqual(0);
 
     const applyButton = panel.getByRole('button', { name: 'Apply' }).first();
     await expect(applyButton).toBeVisible();
-
-    const endpointsSelect = selectLocator.nth(endpointsSelectIndex);
 
     const readColorChannel = async () => page.evaluate(() => {
       const helios = window.__helios;
@@ -68,6 +66,10 @@ test.describe('docs basic demo mappers', () => {
       };
     });
 
+    const nodeAttrSelect = selectLocator.nth(nodeAttrSelectIndex);
+    await expect(nodeAttrSelect).toHaveValue('@node.color');
+
+    let endpointsSelect = selectLocator.nth(endpointsSelectIndex);
     await endpointsSelect.selectOption({ label: 'Both' });
     await applyButton.click();
     const both = await readColorChannel();
@@ -75,6 +77,9 @@ test.describe('docs basic demo mappers', () => {
     expect(both.nodeAttribute).toBeTruthy();
     expect(both.endpoints).toBe('both');
 
+    endpointsSelectIndex = await findEndpointsSelectIndex();
+    expect(endpointsSelectIndex).toBeGreaterThanOrEqual(0);
+    endpointsSelect = selectLocator.nth(endpointsSelectIndex);
     await endpointsSelect.selectOption({ label: 'Target' });
     await applyButton.click();
     const target = await readColorChannel();

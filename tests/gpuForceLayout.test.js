@@ -783,8 +783,10 @@ test('GpuForceLayout exposes shared parameter bindings and can reheat alpha', ()
   assert.equal(layout.options.eta, 0.4);
   assert.equal(layout.options.damping, 0.82);
   assert.equal(layout.options.kGravity, 0.001);
-  assert.equal(layout.options.alphaDecay, 0.005);
+  assert.equal(layout.options.alphaDecay, 0.001);
   assert.equal(layout.options.rotationDamping, 0.6);
+  assert.equal(layout.options.layoutScheduling, 'auto');
+  assert.equal(layout.options.layoutChunkCount, 2);
   const descriptor = layout.getParameterBindings();
   assert.equal(descriptor.key, 'gpu-force');
   assert.ok(descriptor.bindings.some((binding) => binding.key === 'alphaCurrent'));
@@ -821,6 +823,21 @@ test('GpuForceLayout exposes shared parameter bindings and can reheat alpha', ()
   assert.equal(layout.options.sampleChurn, 0.25);
   assert.equal(layout.positionDelegate.alpha, 0.75);
 
+  const schedulingBinding = descriptor.bindings.find((binding) => binding.key === 'layoutScheduling');
+  assert.equal(schedulingBinding.type, 'select');
+  assert.deepEqual(schedulingBinding.options.map((entry) => entry.value), ['auto', 'full', 'chunked']);
+  schedulingBinding.set('chunked');
+  assert.equal(layout.options.layoutScheduling, 'chunked');
+  assert.equal(layout.positionDelegate.options.layoutScheduling, 'chunked');
+
+  const chunkBinding = descriptor.bindings.find((binding) => binding.key === 'layoutChunkCount');
+  assert.equal(chunkBinding.type, 'number');
+  assert.equal(chunkBinding.min, 2);
+  assert.equal(chunkBinding.max, 10);
+  chunkBinding.set(6);
+  assert.equal(layout.options.layoutChunkCount, 6);
+  assert.equal(layout.positionDelegate.options.layoutChunkCount, 6);
+
   const outputScaleBinding = descriptor.bindings.find((binding) => binding.key === 'outputScale');
   assert.equal(outputScaleBinding.scale, 'log');
   assert.equal(outputScaleBinding.notation, 'scientific');
@@ -856,6 +873,31 @@ test('GpuForceLayout exposes shared parameter bindings and can reheat alpha', ()
   layout.positionDelegate.alpha = 0.1;
   layout.reheat();
   assert.equal(layout.positionDelegate.alpha, 0.75);
+});
+
+test('GpuForceLayout requests full scheduling only during auto startup warmup', () => {
+  const network = createStubNetwork();
+  const visuals = {};
+  const helios = {
+    ...createStubHelios(),
+    renderer: { device: { type: 'webgpu', device: {} } },
+    _isStartupLayoutWarmupActive: () => true,
+  };
+  const layout = new GpuForceLayout(network, visuals, {
+    helios,
+    mode: '2d',
+    layoutScheduling: 'auto',
+    tuningModel: false,
+  });
+
+  assert.equal(layout._buildDelegateContext(16).layoutSchedulingOverride, 'full');
+
+  layout.setSettings({ layoutScheduling: 'chunked' });
+  assert.equal(layout._buildDelegateContext(16).layoutSchedulingOverride, null);
+
+  helios._isStartupLayoutWarmupActive = () => false;
+  layout.setSettings({ layoutScheduling: 'auto' });
+  assert.equal(layout._buildDelegateContext(16).layoutSchedulingOverride, null);
 });
 
 test('GpuForceLayout seedFromNetworkPositions forwards explicit initial-position intent', () => {
@@ -957,7 +999,7 @@ test('Helios.createLayout resolves gpu-force into GpuForceLayout', () => {
   assert.equal(layout.options.mode, '3d');
   assert.equal(layout.options.eta, 0.4);
   assert.equal(layout.options.kGravity, 0.001);
-  assert.equal(layout.options.alphaDecay, 0.005);
+  assert.equal(layout.options.alphaDecay, 0.001);
 });
 
 test('resolveGpuForceAutoTuning scales GPU force defaults by log-sized node count', () => {
@@ -1331,6 +1373,7 @@ test('Helios lists numeric 2D/3D node attributes for layout seeding and copies t
   ]);
   const degree = new Float32Array([1, 2, 3]);
   const network = {
+    nodeIndices: new Uint32Array([0, 1, 2]),
     getNodeAttributeNames: () => ['embedding2d', 'embedding3d', 'degree', '_helios_visuals_position'],
     getNodeAttributeInfo: (name) => {
       switch (name) {
@@ -1366,6 +1409,8 @@ test('Helios lists numeric 2D/3D node attributes for layout seeding and copies t
   let geometryRequests = 0;
   let renderRequests = 0;
   let labelRefreshes = 0;
+  let resetInterpolationCalls = 0;
+  const seedInterpolationBaselines = [];
   const helios = Object.create(Helios.prototype);
   helios.network = network;
   helios.visuals = {
@@ -1381,9 +1426,22 @@ test('Helios lists numeric 2D/3D node attributes for layout seeding and copies t
   helios._labels = {
     requestFullReselect: () => { labelRefreshes += 1; },
   };
+  helios._interpolationRuntime = {
+    lastRenderedPositions: null,
+    layoutIntervalsMs: [{ dt: 16, ts: 100 }],
+  };
+  helios._resetInterpolationRuntime = (options = {}) => {
+    resetInterpolationCalls += 1;
+    assert.deepEqual(options, { keepLastRendered: false, keepIntervalHistory: true });
+    helios._interpolationRuntime.lastRenderedPositions = null;
+    return helios._interpolationRuntime;
+  };
   let seedFromNetworkPositionsCalls = 0;
   helios._layout = {
-    seedFromNetworkPositions: () => { seedFromNetworkPositionsCalls += 1; },
+    seedFromNetworkPositions: () => {
+      seedFromNetworkPositionsCalls += 1;
+      seedInterpolationBaselines.push(helios._interpolationRuntime.lastRenderedPositions);
+    },
   };
 
   const choices = helios.getLayoutPositionAttributeChoices();
@@ -1392,6 +1450,11 @@ test('Helios lists numeric 2D/3D node attributes for layout seeding and copies t
     ['_helios_visuals_position', '$random', 'embedding2d', 'embedding3d'],
   );
 
+  helios._interpolationRuntime.lastRenderedPositions = new Float32Array([
+    99, 99, 99,
+    88, 88, 88,
+    77, 77, 77,
+  ]);
   const wrotePlanar = helios.setLayoutPositionsFromNodeAttribute('embedding2d');
   assert.equal(wrotePlanar, true);
   assert.deepEqual(Array.from(positions), [
@@ -1400,6 +1463,11 @@ test('Helios lists numeric 2D/3D node attributes for layout seeding and copies t
     50, 60, 0,
   ]);
 
+  helios._interpolationRuntime.lastRenderedPositions = new Float32Array([
+    66, 66, 66,
+    55, 55, 55,
+    44, 44, 44,
+  ]);
   const wroteDepth = helios.setLayoutPositionsFromNodeAttribute('embedding3d');
   assert.equal(wroteDepth, true);
   assert.deepEqual(Array.from(positions), [
@@ -1408,13 +1476,34 @@ test('Helios lists numeric 2D/3D node attributes for layout seeding and copies t
     -7, -8, -9,
   ]);
 
-  assert.equal(positionsDirty, 2);
-  assert.equal(nodeBumps, 2);
-  assert.equal(edgeBumps, 2);
-  assert.equal(geometryRequests, 2);
-  assert.equal(renderRequests, 2);
-  assert.equal(labelRefreshes, 2);
-  assert.equal(seedFromNetworkPositionsCalls, 2);
+  helios._interpolationRuntime.lastRenderedPositions = new Float32Array([
+    33, 33, 33,
+    22, 22, 22,
+    11, 11, 11,
+  ]);
+  const originalRandom = Math.random;
+  Math.random = () => 0.5;
+  try {
+    const wroteRandom = helios.setLayoutPositionsFromNodeAttribute('$random');
+    assert.equal(wroteRandom, true);
+  } finally {
+    Math.random = originalRandom;
+  }
+  assert.deepEqual(Array.from(positions), [
+    0, 0, 0,
+    0, 0, 0,
+    0, 0, 0,
+  ]);
+
+  assert.equal(positionsDirty, 3);
+  assert.equal(nodeBumps, 3);
+  assert.equal(edgeBumps, 0);
+  assert.equal(geometryRequests, 3);
+  assert.equal(renderRequests, 3);
+  assert.equal(labelRefreshes, 3);
+  assert.equal(resetInterpolationCalls, 3);
+  assert.deepEqual(seedInterpolationBaselines, [null, null, null]);
+  assert.equal(seedFromNetworkPositionsCalls, 3);
 });
 
 test('buildSparklinePath stays blank until a second history sample arrives', () => {
@@ -2104,6 +2193,86 @@ test('GpuForcePositionDelegate uses the regular alpha decay path for UMAP coolin
   assert.equal(delegate.getCompletedEpochs(), 13);
 });
 
+test('GpuForcePositionDelegate cools once per chunked WebGPU sweep', () => {
+  const delegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    alpha: 1,
+    alphaDecay: 0.1,
+    alphaTarget: 0,
+    alphaMin: 0.001,
+    layoutScheduling: 'chunked',
+    layoutChunkCount: 4,
+  });
+  const payloads = [];
+  const chunkStates = [
+    { enabled: true, sweepStart: true },
+    { enabled: true, sweepStart: false },
+    { enabled: true, sweepStart: false },
+  ];
+  delegate._markDirtyForBackend = () => {};
+  delegate.ensureSynchronized = () => {};
+  delegate._activeCount = 600_001;
+  delegate._nodeCapacity = 10;
+  delegate._webgpu = {
+    sampleFrame: 0,
+    peekChunkState() {
+      return chunkStates[Math.min(payloads.length, chunkStates.length - 1)];
+    },
+    step(payload) {
+      payloads.push(payload);
+      return true;
+    },
+  };
+
+  delegate.step({ deltaMs: 16 });
+  delegate.step({ deltaMs: 16 });
+  delegate.step({ deltaMs: 16 });
+
+  assert.equal(payloads.length, 3);
+  assert.ok(Math.abs(delegate.alpha - 0.9) < 1e-9);
+  assert.ok(payloads.every((payload) => Math.abs(payload.kRepulsion - 0.9) < 1e-9));
+  assert.ok(payloads.every((payload) => payload.layoutScheduling === 'chunked'));
+  assert.ok(payloads.every((payload) => payload.layoutChunkCount === 4));
+});
+
+test('GpuForcePositionDelegate startup scheduling override forces full auto layout steps', () => {
+  const delegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    alpha: 1,
+    alphaDecay: 0.1,
+    alphaTarget: 0,
+    alphaMin: 0.001,
+    layoutScheduling: 'auto',
+    layoutChunkCount: 4,
+  });
+  const chunkStateCalls = [];
+  const payloads = [];
+  delegate._markDirtyForBackend = () => {};
+  delegate.ensureSynchronized = () => {};
+  delegate._activeCount = 600_001;
+  delegate._nodeCapacity = 10;
+  delegate._webgpu = {
+    sampleFrame: 0,
+    peekChunkState(options) {
+      chunkStateCalls.push(options);
+      return { enabled: false, sweepStart: true };
+    },
+    step(payload) {
+      payloads.push(payload);
+      return true;
+    },
+  };
+
+  delegate.step({ deltaMs: 16, layoutSchedulingOverride: 'full' });
+
+  assert.equal(delegate.options.layoutScheduling, 'auto');
+  assert.equal(chunkStateCalls.length, 1);
+  assert.equal(chunkStateCalls[0].layoutScheduling, 'full');
+  assert.equal(payloads.length, 1);
+  assert.equal(payloads[0].layoutScheduling, 'full');
+  assert.equal(payloads[0].layoutChunkCount, 4);
+});
+
 test('GpuForcePositionDelegate does not fall back to CPU when WebGL texture compute is unavailable', () => {
   const network = createTopologyNetwork([
     0, 0, 0,
@@ -2342,6 +2511,123 @@ test('GpuForcePositionDelegate tiles large WebGPU dispatches across dimensions',
   assert.ok(dispatchCalls.length >= 1);
   assert.ok(dispatchCalls[0].x <= 65535);
   assert.ok(dispatchCalls[0].y >= 2);
+});
+
+test('GpuForcePositionDelegate resolves WebGPU chunk scheduling by option and threshold', () => {
+  const network = createTopologyNetwork([
+    0, 0, 0,
+    10, 0, 0,
+  ]);
+  const { device } = createFakeWebGPUDevice();
+  const delegate = new GpuForcePositionDelegate({ mode: '2d', outputScale: 1 });
+
+  delegate.onAttach({ network, backend: 'webgpu', device });
+  const backend = delegate._webgpu;
+  assert.ok(backend);
+  backend.nodeCapacity = 600_000;
+
+  backend.activeCount = 500_000;
+  assert.equal(backend.peekChunkState({ layoutScheduling: 'auto', layoutChunkCount: 4 }).enabled, false);
+
+  backend.activeCount = 500_001;
+  const autoChunk = backend.peekChunkState({ layoutScheduling: 'auto', layoutChunkCount: 4 });
+  assert.equal(autoChunk.enabled, true);
+  assert.equal(autoChunk.count, 150_000);
+
+  const explicitFull = backend.peekChunkState({ layoutScheduling: 'full', layoutChunkCount: 4 });
+  assert.equal(explicitFull.enabled, false);
+
+  backend.activeCount = 10;
+  const explicitChunked = backend.peekChunkState({ layoutScheduling: 'chunked', layoutChunkCount: 6 });
+  assert.equal(explicitChunked.enabled, true);
+  assert.equal(explicitChunked.count, 100_000);
+});
+
+test('GpuForcePositionDelegate WebGPU chunked layout dispatches partial ranges and advances epoch per sweep', () => {
+  const network = createTopologyNetwork([
+    0, 0, 0,
+    10, 0, 0,
+  ]);
+  const { device, dispatchCalls, copyCalls, writes } = createFakeWebGPUDevice();
+  const delegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    outputScale: 1,
+    layoutScheduling: 'chunked',
+    layoutChunkCount: 3,
+    recenter: false,
+  });
+
+  delegate.onAttach({ network, backend: 'webgpu', device });
+  const backend = delegate._webgpu;
+  assert.ok(backend);
+  assert.ok(backend.outputScaleParamsBuffer.size >= 80);
+  backend.nodeCapacity = 10;
+  backend.activeCount = 600_001;
+
+  const stepOptions = {
+    mode: '2d',
+    center: [0, 0, 0],
+    recenter: false,
+    sampleCount: 1,
+    exactRepulsionThreshold: 1,
+    maxNeighborsPerNode: 1,
+    outputScale: 1,
+    linkDistance: 1,
+    kRepulsion: 0.01,
+    kAttraction: 0.01,
+    kGravity: 0.001,
+    eta: 0.01,
+    damping: 0.9,
+    maxStep: 1,
+    minDistance: 0.1,
+    dt: 1 / 60,
+    layoutScheduling: 'chunked',
+    layoutChunkCount: 3,
+  };
+
+  assert.equal(backend.step(stepOptions), true);
+  assert.equal(backend.sampleFrame, 0);
+  assert.equal(backend.layoutChunkOffset, 4);
+  assert.equal(dispatchCalls.at(-1).x, 1);
+  let paramsWrite = writes.filter((entry) => entry.label === 'layout:gpu-force:params').at(-1);
+  let params = new Uint32Array(paramsWrite.data.buffer, paramsWrite.data.byteOffset, paramsWrite.data.byteLength / 4);
+  assert.equal(params[28], 0);
+  assert.equal(params[29], 4);
+  assert.ok(!copyCalls.some((entry) => entry.destinationLabel === 'layout:gpu-force:positions'));
+  assert.deepEqual(copyCalls.at(-1), {
+    sourceLabel: 'layout:gpu-force:scratch-positions',
+    sourceOffset: 0,
+    destinationLabel: 'layout:gpu-force:positions-output',
+    destinationOffset: 0,
+    size: 48,
+  });
+
+  assert.equal(backend.step(stepOptions), true);
+  assert.equal(backend.sampleFrame, 0);
+  assert.equal(backend.layoutChunkOffset, 8);
+  paramsWrite = writes.filter((entry) => entry.label === 'layout:gpu-force:params').at(-1);
+  params = new Uint32Array(paramsWrite.data.buffer, paramsWrite.data.byteOffset, paramsWrite.data.byteLength / 4);
+  assert.equal(params[28], 4);
+  assert.equal(params[29], 4);
+
+  assert.equal(backend.step(stepOptions), true);
+  assert.equal(backend.sampleFrame, 1);
+  assert.equal(backend.layoutChunkOffset, 0);
+  paramsWrite = writes.filter((entry) => entry.label === 'layout:gpu-force:params').at(-1);
+  params = new Uint32Array(paramsWrite.data.buffer, paramsWrite.data.byteOffset, paramsWrite.data.byteLength / 4);
+  assert.equal(params[28], 8);
+  assert.equal(params[29], 2);
+  assert.ok(!copyCalls.some((entry) => (
+    entry.sourceLabel === 'layout:gpu-force:scratch-positions'
+    && entry.destinationLabel === 'layout:gpu-force:positions'
+  )));
+  assert.deepEqual(copyCalls.at(-1), {
+    sourceLabel: 'layout:gpu-force:scratch-positions',
+    sourceOffset: 96,
+    destinationLabel: 'layout:gpu-force:positions-output',
+    destinationOffset: 96,
+    size: 24,
+  });
 });
 
 test('GpuForcePositionDelegate WebGPU narrow position readback copies only requested nodes', async () => {

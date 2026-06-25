@@ -19,6 +19,27 @@ const {
   NODE_SIZE_ATTRIBUTE,
 } = VISUAL_ATTRIBUTE_NAMES;
 const TRACK_STATE_SLOTS = 32;
+const WARNING_KEYS_BY_OWNER = new WeakMap();
+let FALLBACK_VERSION_COUNTER = 1;
+
+function warnOnce(owner, key, message, detail = undefined) {
+  if (typeof console === 'undefined' || typeof console.warn !== 'function') return;
+  const target = owner && (typeof owner === 'object' || typeof owner === 'function') ? owner : warnOnce;
+  let keys = WARNING_KEYS_BY_OWNER.get(target);
+  if (!keys) {
+    keys = new Set();
+    WARNING_KEYS_BY_OWNER.set(target, keys);
+  }
+  if (keys.has(key)) return;
+  keys.add(key);
+  if (detail === undefined) console.warn(message);
+  else console.warn(message, detail);
+}
+
+function nextFallbackVersion() {
+  FALLBACK_VERSION_COUNTER += 1;
+  return FALLBACK_VERSION_COUNTER;
+}
 
 const PACK_DEPTH_GLSL = /* glsl */ `
 vec4 packDepthToRGBA(const in float v) {
@@ -375,7 +396,7 @@ uniform usampler2D u_edgeTrackedUint;
 uniform sampler2D u_edgeWidths;
 uniform sampler2D u_edgeEndpointSizes;
 uniform usampler2D u_edgeStates;
-uniform usampler2D u_edgeEndpointStates;
+uniform usampler2D u_nodeStates;
 uniform sampler2D u_nodeWidthSource;
 uniform sampler2D u_nodeEndpointSizeSource;
 uniform int u_useEdgeIdBuffer;
@@ -388,7 +409,7 @@ uniform int u_edgeEndpointSizeEndpoints;
 uniform int u_hasEdgeWidths;
 uniform int u_hasEdgeEndpointSizes;
 uniform int u_hasEdgeStates;
-uniform int u_hasEdgeEndpointStates;
+uniform int u_hasNodeStates;
 uniform int u_hasNodeWidthSource;
 uniform int u_hasNodeEndpointSizeSource;
 uniform int u_propagateHoveredNodeToEdges;
@@ -468,9 +489,13 @@ vec2 fetchEdgeEndpointSizePair(uint edgeId, uint sourceId, uint targetId) {
   return texelFetch(u_edgeEndpointSizes, textureCoord(u_edgeEndpointSizes, edgeId), 0).xy;
 }
 
-uvec2 fetchEdgeEndpointStatePair(uint edgeId) {
-  if (u_hasEdgeEndpointStates == 0) return uvec2(0u, 0u);
-  return texelFetch(u_edgeEndpointStates, textureCoord(u_edgeEndpointStates, edgeId), 0).xy;
+uint fetchNodeState(uint nodeId) {
+  if (u_hasNodeStates == 0) return 0u;
+  return texelFetch(u_nodeStates, textureCoord(u_nodeStates, nodeId), 0).x;
+}
+
+uvec2 fetchEdgeEndpointStatePair(uint sourceId, uint targetId) {
+  return uvec2(fetchNodeState(sourceId), fetchNodeState(targetId));
 }
 
 uint fetchEdgeState(uint edgeId) {
@@ -510,7 +535,7 @@ void main() {
   float dirLenWorld = max(length(dir), 1e-5);
   vec3 dirN = dir / dirLenWorld;
 
-  uvec2 endpointStatePair = fetchEdgeEndpointStatePair(edgeId);
+  uvec2 endpointStatePair = fetchEdgeEndpointStatePair(sourceId, targetId);
   if (u_hoverNodeIsVirtual == 0u && u_hoverNodeIndex != 4294967295u) {
     if (sourceId == u_hoverNodeIndex) endpointStatePair.x |= u_hoverNodeState;
     if (targetId == u_hoverNodeIndex) endpointStatePair.y |= u_hoverNodeState;
@@ -708,7 +733,7 @@ function ensureSparseEncodedReady(network, scope, attrName) {
   }
 }
 
-function getAttributeVersionSafe(network, scope, attrName) {
+function getAttributeVersionSafe(network, scope, attrName, owner = null) {
   if (!network || !attrName) return null;
   if (attrName === INDEX_SENTINEL || attrName === 'index' || attrName === '$index') return 0;
   const getter = scope === 'node' ? network.getNodeAttributeVersion : network.getEdgeAttributeVersion;
@@ -716,8 +741,14 @@ function getAttributeVersionSafe(network, scope, attrName) {
   try {
     const value = getter.call(network, attrName);
     return Number.isFinite(value) ? Number(value) : null;
-  } catch (_) {
-    return null;
+  } catch (error) {
+    warnOnce(
+      owner ?? network,
+      `attribute-version:${scope}:${attrName}`,
+      `AttributeTracker: failed to read ${scope} attribute version for "${attrName}"; forcing sparse encoded refresh.`,
+      { error },
+    );
+    return nextFallbackVersion();
   }
 }
 
@@ -726,7 +757,7 @@ function ensureSparseEncodedReadyCached(cache, network, scope, attrName, topolog
   const source = attrName === 'index' ? INDEX_SENTINEL : attrName;
   const slot = scope === 'node' ? 'node' : 'edge';
   const topo = Number.isFinite(topologyVersion) ? Number(topologyVersion) : 0;
-  const attrVersion = getAttributeVersionSafe(network, scope, source);
+  const attrVersion = getAttributeVersionSafe(network, scope, source, cache ?? network);
   const previous = cache?.[slot] ?? null;
   if (
     previous
@@ -1041,7 +1072,6 @@ export class WebGLAttributeRenderer {
       nodeTrackedUint: null,
       edgeEndpoints: null,
       edgeStates: null,
-      edgeEndpointStates: null,
       edgeWidths: null,
       edgeEndpointSizes: null,
       nodeWidthSource: null,
@@ -1062,7 +1092,6 @@ export class WebGLAttributeRenderer {
       nodeTrackedUint: null,
       edgeEndpoints: null,
       edgeStates: null,
-      edgeEndpointStates: null,
       edgeWidths: null,
       edgeEndpointSizes: null,
       nodeWidthSource: null,
@@ -1197,7 +1226,7 @@ export class WebGLAttributeRenderer {
       'u_edgeWidths',
       'u_edgeEndpointSizes',
       'u_edgeStates',
-      'u_edgeEndpointStates',
+      'u_nodeStates',
       'u_nodeWidthSource',
       'u_nodeEndpointSizeSource',
       'u_useEdgeIdBuffer',
@@ -1210,7 +1239,7 @@ export class WebGLAttributeRenderer {
       'u_hasEdgeWidths',
       'u_hasEdgeEndpointSizes',
       'u_hasEdgeStates',
-      'u_hasEdgeEndpointStates',
+      'u_hasNodeStates',
       'u_hasNodeWidthSource',
       'u_hasNodeEndpointSizeSource',
       'u_propagateHoveredNodeToEdges',
@@ -1322,7 +1351,6 @@ export class WebGLAttributeRenderer {
     this.textures.nodeTrackedUint = this.createTexture();
     this.textures.edgeEndpoints = this.createTexture();
     this.textures.edgeStates = this.createTexture();
-    this.textures.edgeEndpointStates = this.createTexture();
     this.textures.edgeWidths = this.createTexture();
     this.textures.edgeEndpointSizes = this.createTexture();
     this.textures.nodeWidthSource = this.createTexture();
@@ -1363,9 +1391,6 @@ export class WebGLAttributeRenderer {
 
     gl.bindTexture(gl.TEXTURE_2D, this.textures.edgeStates);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32UI, 1, 1, 0, gl.RED_INTEGER, gl.UNSIGNED_INT, null);
-
-    gl.bindTexture(gl.TEXTURE_2D, this.textures.edgeEndpointStates);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG32UI, 1, 1, 0, gl.RG_INTEGER, gl.UNSIGNED_INT, null);
 
     gl.bindTexture(gl.TEXTURE_2D, this.textures.edgeWidths);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG32F, 1, 1, 0, gl.RG, gl.FLOAT, new Float32Array([1, 1]));
@@ -1714,7 +1739,13 @@ export class WebGLAttributeRenderer {
     if (typeof provider !== 'function') return null;
     try {
       return provider.call(this.graphLayer);
-    } catch (_) {
+    } catch (error) {
+      warnOnce(
+        this,
+        'shared-sparse-resources:webgl',
+        'AttributeTracker: shared sparse-resource provider failed for WebGL tracking; using local fallback resources.',
+        { error },
+      );
       return null;
     }
   }
@@ -1922,7 +1953,7 @@ export class WebGLAttributeRenderer {
     gl.uniform1i(uniforms.u_edgeWidths, 5);
     gl.uniform1i(uniforms.u_edgeEndpointSizes, 6);
     gl.uniform1i(uniforms.u_edgeStates, 13);
-    gl.uniform1i(uniforms.u_edgeEndpointStates, 14);
+    gl.uniform1i(uniforms.u_nodeStates, 14);
     gl.uniform1i(uniforms.u_nodeWidthSource, 7);
     gl.uniform1i(uniforms.u_nodeEndpointSizeSource, 8);
     gl.uniform1i(uniforms.u_useEdgeIdBuffer, options.useEdgeIdBuffer ? 1 : 0);
@@ -1938,7 +1969,7 @@ export class WebGLAttributeRenderer {
     gl.uniform1i(uniforms.u_hasEdgeWidths, options.hasEdgeWidths ? 1 : 0);
     gl.uniform1i(uniforms.u_hasEdgeEndpointSizes, options.hasEdgeEndpointSizes ? 1 : 0);
     gl.uniform1i(uniforms.u_hasEdgeStates, options.hasEdgeStates ? 1 : 0);
-    gl.uniform1i(uniforms.u_hasEdgeEndpointStates, options.hasEdgeEndpointStates ? 1 : 0);
+    gl.uniform1i(uniforms.u_hasNodeStates, options.hasNodeStates ? 1 : 0);
     gl.uniform1i(uniforms.u_hasNodeWidthSource, options.hasNodeWidthSource ? 1 : 0);
     gl.uniform1i(
       uniforms.u_hasNodeEndpointSizeSource,
@@ -2057,8 +2088,15 @@ export class WebGLAttributeRenderer {
     if (typeof network.getTopologyVersions === 'function') {
       try {
         topologyVersions = network.getTopologyVersions() ?? topologyVersions;
-      } catch (_) {
-        topologyVersions = { node: 0, edge: 0 };
+      } catch (error) {
+        const fallbackVersion = nextFallbackVersion();
+        warnOnce(
+          this,
+          'webgl-topology-versions',
+          'AttributeTracker: failed to read topology versions for WebGL tracking; forcing cache refresh.',
+          { error },
+        );
+        topologyVersions = { node: fallbackVersion, edge: fallbackVersion };
       }
     }
 
@@ -2088,7 +2126,6 @@ export class WebGLAttributeRenderer {
           ?? (usesDefaultNodeSize ? nodeSizes : null);
         const edgeEndpoints = edges.endpoints ?? null;
         const edgeStates = edges.states ?? null;
-        const edgeEndpointStates = edges.endpointStates ?? null;
 
         const totalNodeCount = delegateNodePositionTextureCount || Math.floor((nodePositions?.length ?? 0) / 3);
         const totalEdgeCount = Math.floor((edgeEndpoints?.length ?? 0) / 2);
@@ -2114,7 +2151,6 @@ export class WebGLAttributeRenderer {
           nodeTrackedUint: this.textures.nodeTrackedUint,
           edgeEndpoints: this.textures.edgeEndpoints,
           edgeStates: this.textures.edgeStates,
-          edgeEndpointStates: this.textures.edgeEndpointStates,
           edgeWidths: this.textures.edgeWidths,
           edgeEndpointSizes: this.textures.edgeEndpointSizes,
           nodeWidthSource: this.textures.nodeWidthSource,
@@ -2133,7 +2169,6 @@ export class WebGLAttributeRenderer {
         const nodeEndpointSizeSourceVersion = sparse.nodeEdgeSources?.endpointSize?.version ?? nodeSizeVersion;
         const edgeEndpointsVersion = edges.versions?.endpoints ?? 0;
         const edgeStateVersion = edges.versions?.states ?? 0;
-        const edgeEndpointStateVersion = edges.versions?.endpointStates ?? 0;
         const edgeWidthVersion = edges.versions?.widths ?? 0;
         const edgeEndpointSizeVersion = edges.versions?.endpointSizes ?? 0;
 
@@ -2308,27 +2343,6 @@ export class WebGLAttributeRenderer {
             ),
           });
         }
-        if (totalEdgeCount > 0 && edgeEndpointStates) {
-          const edgeEndpointStateCount = Math.floor((edgeEndpointStates.length ?? 0) / 2);
-          drawTextures.edgeEndpointStates = this.resolveSharedTexture({
-            slot: 'edgeEndpointStates',
-            localTexture: this.textures.edgeEndpointStates,
-            sharedResources,
-            sharedTextureKey: 'edgeEndpointStates',
-            sharedMetaKey: 'edgeEndpointStates',
-            view: edgeEndpointStates,
-            version: edgeEndpointStateVersion,
-            count: edgeEndpointStateCount,
-            upload: () => this.uploadUintTexture(
-              'edgeEndpointStates',
-              this.textures.edgeEndpointStates,
-              edgeEndpointStates,
-              2,
-              edgeEndpointStateCount,
-              edgeEndpointStateVersion,
-            ),
-          });
-        }
         if (totalEdgeCount > 0 && edges.widths) {
           const edgeWidthCount = Math.floor((edges.widths.length ?? 0) / 2);
           drawTextures.edgeWidths = this.resolveSharedTexture({
@@ -2473,7 +2487,7 @@ export class WebGLAttributeRenderer {
             && edges.endpointSizes,
           ),
           hasEdgeStates: Boolean(edgeStates),
-          hasEdgeEndpointStates: Boolean(edgeEndpointStates),
+          hasNodeStates: Boolean(nodeStates),
           hasNodeWidthSource: Boolean(nodeWidthSource),
           hasNodeEndpointSizeSource: Boolean(nodeEndpointSizeSource),
           defaultEdgeWidth,
@@ -2514,7 +2528,7 @@ export class WebGLAttributeRenderer {
             this.bindTexture(7, drawTextures.nodeWidthSource);
             this.bindTexture(8, drawTextures.nodeEndpointSizeSource);
             this.bindTexture(13, drawTextures.edgeStates);
-            this.bindTexture(14, drawTextures.edgeEndpointStates);
+            this.bindTexture(14, drawTextures.nodeStates);
             gl.bindVertexArray(this.edgeQuadVao);
             gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, drawEdgeCount);
           } else {
@@ -3548,7 +3562,13 @@ export class WebGPUAttributeRenderer {
     if (typeof provider !== 'function') return null;
     try {
       return provider.call(this.graphLayer);
-    } catch (_) {
+    } catch (error) {
+      warnOnce(
+        this,
+        'shared-sparse-resources:webgpu',
+        'AttributeTracker: shared sparse-resource provider failed for WebGPU tracking; using local fallback resources.',
+        { error },
+      );
       return null;
     }
   }
@@ -5037,8 +5057,15 @@ export class WebGPUAttributeRenderer {
     if (typeof network.getTopologyVersions === 'function') {
       try {
         topologyVersions = network.getTopologyVersions() ?? topologyVersions;
-      } catch (_) {
-        topologyVersions = { node: 0, edge: 0 };
+      } catch (error) {
+        const fallbackVersion = nextFallbackVersion();
+        warnOnce(
+          this,
+          'webgpu-topology-versions',
+          'AttributeTracker: failed to read topology versions for WebGPU tracking; forcing cache refresh.',
+          { error },
+        );
+        topologyVersions = { node: fallbackVersion, edge: fallbackVersion };
       }
     }
     // Only prepare sparse encoded attributes for the legacy prepared-geometry fallback path.
@@ -5143,27 +5170,33 @@ export class AttributeTracker {
     return hash >>> 0;
   }
 
-  _safeVersion(fn) {
+  _safeVersion(fn, key = 'version') {
     try {
       const v = fn();
       return Number.isFinite(v) ? v : 0;
-    } catch (_) {
-      return 0;
+    } catch (error) {
+      warnOnce(
+        this,
+        `signature-version:${key}`,
+        `AttributeTracker: failed to read ${key}; forcing signature refresh.`,
+        { error },
+      );
+      return nextFallbackVersion();
     }
   }
 
   _attributeVersionIfPresent(network, scope, name) {
     if (!network || !name) return 0;
     if (name === '$index') {
-      return this._safeVersion(() => network.getTopologyVersions?.()?.[scope] ?? 0);
+      return this._safeVersion(() => network.getTopologyVersions?.()?.[scope] ?? 0, `${scope}:index-topology`);
     }
     const present = scope === 'node'
       ? (network._nodeAttributes?.has?.(name) ?? false)
       : (network._edgeAttributes?.has?.(name) ?? false);
     if (!present) return 0;
     return scope === 'node'
-      ? this._safeVersion(() => network.getNodeAttributeVersion?.(name))
-      : this._safeVersion(() => network.getEdgeAttributeVersion?.(name));
+      ? this._safeVersion(() => network.getNodeAttributeVersion?.(name), `${scope}:${name}`)
+      : this._safeVersion(() => network.getEdgeAttributeVersion?.(name), `${scope}:${name}`);
   }
 
   _computeSignature(frame, size, options) {
@@ -5179,17 +5212,15 @@ export class AttributeTracker {
     const topology = this._safeVersion(() => {
       const t = network.getTopologyVersions?.();
       return t ? ((t.node ?? 0) * 1315423911) ^ (t.edge ?? 0) : 0;
-    });
+    }, 'topology-signature');
 
     const visuals = VISUAL_ATTRIBUTE_NAMES;
     const nodePos = this._attributeVersionIfPresent(network, 'node', visuals.NODE_POSITION_ATTRIBUTE);
     const nodeSize = this._attributeVersionIfPresent(network, 'node', visuals.NODE_SIZE_ATTRIBUTE);
     const nodeState = this._attributeVersionIfPresent(network, 'node', visuals.NODE_STATE_ATTRIBUTE);
     const nodeOutline = this._attributeVersionIfPresent(network, 'node', visuals.NODE_OUTLINE_WIDTH_ATTRIBUTE);
-    const edgeSeg = this._attributeVersionIfPresent(network, 'edge', visuals.EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
     const edgeWidth = this._attributeVersionIfPresent(network, 'edge', visuals.EDGE_WIDTH_ATTRIBUTE);
     const edgeEndSize = this._attributeVersionIfPresent(network, 'edge', visuals.EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
-    const edgeEndState = this._attributeVersionIfPresent(network, 'edge', visuals.EDGE_ENDPOINTS_STATE_ATTRIBUTE);
     const edgeState = this._attributeVersionIfPresent(network, 'edge', visuals.EDGE_STATE_ATTRIBUTE);
 
     const nodeAttr = this.nodeAttribute ?? '';
@@ -5215,7 +5246,7 @@ export class AttributeTracker {
     const interpolationFactor = Number.isFinite(interpolation?.factor)
       ? Math.round(Math.max(0, Math.min(1, Number(interpolation.factor))) * 1e6)
       : 1000000;
-    const delegateVersion = this._safeVersion(() => this.graphLayer?.positionDelegate?.version ?? 0);
+    const delegateVersion = this._safeVersion(() => this.graphLayer?.positionDelegate?.version ?? 0, 'delegate-version');
     const nodeStateScaleHash = this._hashArray(graphLayer?.nodeStateScale);
     const edgeStateScaleHash = this._hashArray(graphLayer?.edgeStateScale);
     const nodeNoStateScaleHash = graphLayer
@@ -5268,10 +5299,8 @@ export class AttributeTracker {
       nodeSize,
       nodeState,
       nodeOutline,
-      edgeSeg,
       edgeWidth,
       edgeEndSize,
-      edgeEndState,
       edgeState,
       // Tracked attributes drive encoded buffers.
       nodeAttr,

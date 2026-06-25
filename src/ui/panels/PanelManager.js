@@ -3,6 +3,7 @@ import { resolveDockTarget } from './docking.js';
 
 const STACK_DRAG_EDGE_SCROLL_PX = 36;
 const STACK_DRAG_SCROLL_STEP_PX = 20;
+const COMPACT_MIN_GRAPH_VIEWPORT_PX = 180;
 
 export class PanelManager {
   constructor(options) {
@@ -142,7 +143,10 @@ export class PanelManager {
 
     const rect = this.container.getBoundingClientRect();
     for (const panel of this.panels.values()) {
-      const resizedWidth = panel.handleResizeMove(event, { containerRect: rect });
+      const resizedWidth = panel.handleResizeMove(event, {
+        containerRect: rect,
+        maxWidth: this._getPanelResizeMaxWidth(panel, rect),
+      });
       if (resizedWidth != null) {
         this._syncDockedWidths(panel, resizedWidth);
       }
@@ -209,7 +213,9 @@ export class PanelManager {
 
     const numeric = Number(width);
     if (!Number.isFinite(numeric)) return;
-    const nextWidth = Math.max(sourcePanel?.minWidth ?? 240, numeric);
+    const maxWidth = this._getPanelResizeMaxWidth(sourcePanel, this.container.getBoundingClientRect());
+    const minWidth = this._getSideDockMinWidth(side, sourcePanel?.minWidth ?? 240);
+    const nextWidth = Math.max(minWidth, Math.min(maxWidth, numeric));
     for (const panel of this.panels.values()) {
       const panelTarget = this._resolveEffectiveSideDockTarget(panel);
       if (panelTarget !== side) continue;
@@ -227,12 +233,47 @@ export class PanelManager {
       if (this._resolveEffectiveSideDockTarget(candidate) !== side) continue;
       const candidateWidth = Number(candidate.width ?? candidate.element?.getBoundingClientRect?.().width);
       if (!Number.isFinite(candidateWidth) || candidateWidth <= 0) continue;
-      width = Math.max(candidate.minWidth ?? panel.minWidth ?? 240, candidateWidth);
+      const maxWidth = this._getPanelResizeMaxWidth(panel, this.container.getBoundingClientRect());
+      const minWidth = this._getSideDockMinWidth(side, candidate.minWidth ?? panel.minWidth ?? 240);
+      width = Math.max(minWidth, Math.min(maxWidth, candidateWidth));
       break;
     }
+    if (!Number.isFinite(width) || width <= 0) {
+      width = Number(panel.width ?? panel.element?.getBoundingClientRect?.().width);
+    }
     if (!Number.isFinite(width) || width <= 0) return;
+    const maxWidth = this._getPanelResizeMaxWidth(panel, this.container.getBoundingClientRect());
+    const minWidth = this._getSideDockMinWidth(side, panel.minWidth ?? 240);
+    width = Math.max(minWidth, Math.min(maxWidth, width));
     panel.width = width;
     panel.element.style.width = `${width}px`;
+  }
+
+  _getSideDockMinWidth(side, fallback = 240) {
+    let minWidth = Number(fallback);
+    if (!Number.isFinite(minWidth) || minWidth <= 0) minWidth = 240;
+    for (const panel of this.panels.values()) {
+      if (this._resolveEffectiveSideDockTarget(panel) !== side) continue;
+      const panelMinWidth = Number(panel?.minWidth);
+      if (Number.isFinite(panelMinWidth) && panelMinWidth > minWidth) {
+        minWidth = panelMinWidth;
+      }
+    }
+    return minWidth;
+  }
+
+  _getPanelResizeMaxWidth(panel, containerRect = null) {
+    const minWidth = panel?.minWidth ?? 240;
+    const containerWidth = Number(containerRect?.width ?? this.container?.getBoundingClientRect?.().width);
+    if (!Number.isFinite(containerWidth) || containerWidth <= 0) return Infinity;
+    if (
+      this._responsivePresentation?.mode === 'compact'
+      && (this._resolveEffectiveSideDockTarget(panel) === 'left'
+        || this._resolveEffectiveSideDockTarget(panel) === 'right')
+    ) {
+      return Math.max(minWidth, containerWidth - COMPACT_MIN_GRAPH_VIEWPORT_PX);
+    }
+    return Math.max(minWidth, containerWidth);
   }
 
   _resolveEffectiveSideDockTarget(panel) {
@@ -368,7 +409,9 @@ export class PanelManager {
     for (const listener of this._dockMetricsListeners) {
       try {
         listener({ ...insets });
-      } catch {}
+      } catch (error) {
+        console.warn('[HeliosUI][PanelManager] Dock metrics listener failed.', error);
+      }
     }
   }
 
@@ -607,7 +650,9 @@ export class PanelManager {
     if (pointerId == null) return;
     try {
       element?.setPointerCapture?.(pointerId);
-    } catch {}
+    } catch (error) {
+      console.warn('[HeliosUI][PanelManager] Failed to capture pointer for panel drag.', error);
+    }
   }
 
   _releasePointerCapture(element, pointerId) {
@@ -616,7 +661,9 @@ export class PanelManager {
       if (element?.hasPointerCapture?.(pointerId)) {
         element.releasePointerCapture(pointerId);
       }
-    } catch {}
+    } catch (error) {
+      console.warn('[HeliosUI][PanelManager] Failed to release pointer capture for panel drag.', error);
+    }
   }
 
   _isPointerInsideRect(event, rect) {

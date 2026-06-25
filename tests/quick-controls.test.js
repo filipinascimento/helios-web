@@ -80,6 +80,11 @@ class FakeElement {
     return this.attributes[name] ?? null;
   }
 
+  contains(node) {
+    if (node === this) return true;
+    return this.children.some((child) => child === node || child.contains?.(node));
+  }
+
   addEventListener(type, handler) {
     if (!this.listeners.has(type)) this.listeners.set(type, new Set());
     this.listeners.get(type).add(handler);
@@ -96,9 +101,19 @@ class FakeElement {
   }
 
   querySelector(selector) {
-    const match = selector.match(/^\[data-helios-quick-control="([^"]+)"\]$/);
-    if (!match) return null;
-    return this._find((node) => node.dataset?.heliosQuickControl === match[1]);
+    const quickControlMatch = selector.match(/^\[data-helios-quick-control="([^"]+)"\]$/);
+    if (quickControlMatch) {
+      return this._find((node) => node.dataset?.heliosQuickControl === quickControlMatch[1]);
+    }
+    const urlMatch = selector.match(/^\[data-url="([^"]+)"\]$/);
+    if (urlMatch) {
+      return this._find((node) => node.dataset?.url === urlMatch[1]);
+    }
+    const classMatch = selector.match(/^\.([A-Za-z0-9_-]+)$/);
+    if (classMatch) {
+      return this._find((node) => node.classList?.contains?.(classMatch[1]));
+    }
+    return null;
   }
 
   _find(predicate) {
@@ -112,6 +127,17 @@ class FakeElement {
 }
 
 class FakeDocument {
+  constructor() {
+    this.openedUrls = [];
+    this.defaultView = {
+      open: (url, target, features) => {
+        const record = { url, target, features, opener: {} };
+        this.openedUrls.push(record);
+        return record;
+      },
+    };
+  }
+
   createElement(tagName) {
     return new FakeElement(tagName, this);
   }
@@ -136,15 +162,17 @@ function createHarness() {
     zoom: true,
     reserveLegendSpace: true,
     theme: 'dark',
-    buttonSize: 38,
+    buttonSize: 34,
     gap: 6,
     margin: 12,
+    legendOffset: 64,
     zoomFactor: 1.25,
   };
   helios._cameraControlConfig = { autoFit: true, animation: true };
   helios.layers = {
     root,
     canvas,
+    viewportInsets: { top: 0, right: 0, bottom: 0, left: 0 },
     addLayer(_name, element) {
       root.appendChild(element);
     },
@@ -200,7 +228,7 @@ function createHarness() {
     layoutState = 'stopped';
     return helios;
   };
-  return { helios, root };
+  return { helios, root, document };
 }
 
 test('quick controls render by default and reserve right-side legend space', () => {
@@ -214,13 +242,53 @@ test('quick controls render by default and reserve right-side legend space', () 
   assert.ok(controls.querySelector('[data-helios-quick-control="layout"]'));
   assert.ok(controls.querySelector('[data-helios-quick-control="zoom-in"]'));
   assert.ok(controls.querySelector('[data-helios-quick-control="zoom-out"]'));
-  assert.equal(helios.overlayInsets().right, 56);
+  assert.ok(controls.querySelector('[data-helios-quick-control="helios"]'));
+  assert.equal(helios.overlayInsets().right, 116);
 
   helios.overlayInsets({ top: 12, right: 100 });
 
-  assert.deepEqual(helios.overlayInsets(), { top: 12, right: 100, bottom: 0, left: 0 });
+  assert.deepEqual(helios.overlayInsets(), { top: 12, right: 116, bottom: 0, left: 0 });
   assert.equal(controls.style.top, '24px');
   assert.equal(controls.style.right, '112px');
+});
+
+test('quick controls stay inside the graph viewport when a right dock is active', () => {
+  const { helios } = createHarness();
+
+  const controls = helios._setupQuickControls();
+  helios.layers.viewportInsets = { top: 0, right: 320, bottom: 0, left: 0 };
+  helios.overlayInsets({ top: 0, right: 0, bottom: 0, left: 0 });
+  helios._updateQuickControlsPlacement();
+
+  assert.equal(controls.style.right, '332px');
+});
+
+test('quick controls expose Helios links menu', () => {
+  const { helios, document } = createHarness();
+  const controls = helios._setupQuickControls();
+  const heliosButton = controls.querySelector('[data-helios-quick-control="helios"]');
+  const menu = controls.querySelector('.helios-quick-controls__menu');
+  const website = controls.querySelector('[data-url="https://heliosweb.io/"]');
+  const issue = controls.querySelector('[data-url="https://github.com/filipinascimento/helios-web/issues/new"]');
+
+  assert.ok(heliosButton);
+  assert.ok(menu);
+  assert.ok(website);
+  assert.ok(issue);
+  assert.equal(menu.hidden, true);
+
+  heliosButton.click();
+  assert.equal(menu.hidden, false);
+  assert.equal(heliosButton.getAttribute('aria-expanded'), 'true');
+
+  website.click();
+  assert.equal(menu.hidden, true);
+  assert.equal(document.openedUrls.at(-1)?.url, 'https://heliosweb.io/');
+  assert.equal(document.openedUrls.at(-1)?.target, '_blank');
+
+  heliosButton.click();
+  issue.click();
+  assert.equal(document.openedUrls.at(-1)?.url, 'https://github.com/filipinascimento/helios-web/issues/new');
 });
 
 test('quick control buttons toggle fit, layout, and zoom', () => {

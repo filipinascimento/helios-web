@@ -346,7 +346,6 @@ export class LayoutBehavior extends Behavior {
     const layout = this.context?.helios?.layout?.() ?? null;
     return {
       options: {
-        positionAttribute: this.state.positionAttribute,
         layoutType: this.type(),
         parameters: snapshotLayoutBindingValues(layout),
         running: this.runState() !== 'stopped',
@@ -412,25 +411,6 @@ export class LayoutBehavior extends Behavior {
           notify(undefined, detail);
         }),
       },
-      positionAttribute: {
-        description: 'Node attribute used as the layout position source.',
-        default: this.state.positionAttribute,
-        type: 'string',
-        scope: 'workspace',
-        aliases: ['layout.positionAttribute'],
-        ui: {
-          label: 'Position Source',
-          controller: 'select',
-          options: () => this.positionAttributeChoices(),
-        },
-        getter: () => this.positionAttribute(),
-        setter: (value) => this.positionAttribute(value),
-        subscribe: (notify) => this.on('change', (event) => {
-          const detail = event?.detail ?? event ?? {};
-          if (!layoutEventTargetsPath(detail, 'layout.positionAttribute')) return;
-          notify(undefined, detail);
-        }),
-      },
       parameters: {
         description: 'Active layout parameter values.',
         default: this.parameters(),
@@ -462,9 +442,6 @@ export class LayoutBehavior extends Behavior {
 
   restore(snapshot = {}) {
     const options = snapshot?.options && typeof snapshot.options === 'object' ? snapshot.options : {};
-    if (options.positionAttribute != null) {
-      this.positionAttribute(options.positionAttribute, { trackOverride: false });
-    }
     if (options.layoutType) {
       this.type(options.layoutType, { preserveRunState: false, emitChange: false });
     }
@@ -583,7 +560,6 @@ export class LayoutBehavior extends Behavior {
     this.state.positionAttribute = next;
     this.emitChange('position-attribute', {
       trackOverride: options.trackOverride !== false,
-      storageKeys: ['layout.positionAttribute'],
     });
     return this;
   }

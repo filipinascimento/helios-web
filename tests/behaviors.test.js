@@ -627,6 +627,44 @@ test('behavior manager serializes and restores attached behavior state', () => {
   assert.equal(restoredFilters.state.scope, 'render+layout');
 });
 
+test('behavior restore and network refresh do not emit broad explicit state warnings', () => {
+  const helios = new MockHelios();
+  const registry = new BehaviorRegistry()
+    .register('filters', FilterBehavior)
+    .register('legends', LegendsBehavior);
+  const manager = new BehaviorManager(helios, registry);
+  manager.use('filters');
+  manager.use('legends');
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args.join(' '));
+  try {
+    manager.restore({
+      filters: {
+        filter: {
+          scope: 'render+layout',
+          rules: [{ id: 'node-weight', scope: 'node', type: 'numeric', attribute: 'weight', min: 0.2 }],
+        },
+      },
+      legends: {
+        options: {
+          showNodeSize: true,
+          showEdgeColor: true,
+        },
+      },
+    });
+    helios.emit('network:replaced', { nodeCount: 4, edgeCount: 3 });
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(
+    warnings.some((warning) => warning.includes('Ignoring broad explicit binding notification')),
+    false,
+    warnings.join('\n'),
+  );
+});
+
 test('default behavior registry exposes appearance, mappers, filters, layout, legends, labels, hover, and selection behaviors', () => {
   const registry = createDefaultBehaviorRegistry();
   assert.equal(registry.has('appearance'), true);

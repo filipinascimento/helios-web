@@ -40,14 +40,20 @@ This gives tiny and dense graphs more visual separation without changing the
 physical force balance. Pass
 `layout.options.tuningModel = false` to restore the hand defaults, or pass a
 custom model function/object to override the bundled coefficients.
+For very large WebGPU layouts, `layout.options.layoutScheduling = 'auto'`
+switches to chunked layout dispatch above 500k active nodes. Chunked dispatch
+splits the node range across a bounded number of frames to reduce render queue stalls; use
+`'full'` to force the legacy one-step dispatch, or set
+`layoutChunkCount` to tune the number of chunks per full sweep.
 
 State and bindings are exposed through `helios.states`; sessions and durable
 sync are exposed through `helios.storage`. Plain library construction creates
 `helios.states` for live state and dummy storage for export/import snapshots.
 Dummy storage does not show persistent UI chrome.
-Pass `storage: { type: 'browser', workspaceId, sessionId }` or a custom manager
-when an app wants durable browser, remote, or host-managed sessions; browser
-storage owns session save/list/load/delete through `helios.storage`.
+Pass `storage: { type: 'browser' }` with top-level `workspaceId` and `session`
+options, or pass a custom manager, when an app wants durable browser, remote,
+or host-managed sessions. Browser storage owns session save/list/load/delete
+through `helios.storage`; there is no separate `helios.session` facade.
 Ordinary UI controls bind to `helios.states` and update live visuals
 immediately; storage observes state changes and delays only durable sync work.
 Debug instrumentation is on by default for now: Helios exposes
@@ -80,12 +86,15 @@ await helios.ready;
 // Optional durable storage. Live controls still bind through helios.states.
 const persistentHelios = new Helios(network, {
   container: '#app',
-  storage: {
-    type: 'browser',
-    workspaceId: 'demo-workspace',
-    sessionId: 'demo-session',
-    persistNetwork: false,
+  storage: { type: 'browser' },
+  workspaceId: 'demo-workspace',
+  session: {
+    id: 'demo-session',
+    url: true,
+    restore: true,
   },
+  networkPersistence: { enabled: true, autosave: false },
+  positionPersistence: { enabled: true, autosave: true },
 });
 
 // Optional SVG labels overlay (regular labels stay off until enabled directly or by the Selection panel).
@@ -109,7 +118,7 @@ helios.legends({
   legendClickAction: 'highlight', // default; use 'select' for selection clicks
   scale: 1.1, // scales legend geometry
   continuousHeight: 160, // taller continuous colorbars
-  zoomAwareSizeIn2D: true, // node size legends track 2D orthographic zoom by default
+  zoomAwareSizeIn2D: true, // optional: make node size legends track 2D orthographic zoom
   titles: {
     nodeColor: null, // remove a title
     density: 'Density difference', // or override one
@@ -191,10 +200,32 @@ const crispHelios = new Helios(network, {
   // forceSupersample: true, // legacy alias for always applying the auto factor
 });
 
+// Startup loading controls:
+const startupHelios = new Helios(network, {
+  container: '#app',
+  startup: {
+    loadingOverlay: true,
+    hideCanvasUntilFirstFrame: true,
+    layoutIterations: 100,
+    layoutDurationMs: 1000,
+  },
+});
+
+// When both startup layout limits are set, the first one reached releases the
+// first visible render. Initial graphs with at least 1M nodes or 1M edges use
+// a 5000 ms default startup layout duration unless explicitly overridden.
+// The spinner is removed as the first visible frame is drawn.
+// Pass startup: false to disable the startup overlay and first-frame gate.
+
 // Camera helpers:
 helios.cameraControls({
   autoFit: true,
   animation: true,
+  largeNetworkStartupFit: true,
+  largeNetworkStartupNodeThreshold: 1_000_000,
+  largeNetworkStartupEdgeThreshold: 1_000_000,
+  largeNetworkStartupScale: 4,
+  largeNetworkStartupDurationMs: 2200,
   orbit: false,
   orbitAxis: [0, 1, 0],
   orbitAngle: 0,
@@ -203,12 +234,15 @@ helios.cameraTargetNodes([0, 1, 2]);
 helios.cameraFollowNodes([0, 1, 2], { animate: true }); // keeps the centroid centered while positions move
 helios.frameNetwork({ animate: true, resetOrientation: false });
 
+// Initial networks with at least 1M nodes or 1M edges start wider by default
+// and settle toward the normal auto-fit unless the user moves the camera.
+
 // Compact overlay controls are enabled by default:
 // auto-fit toggle, layout pause/run, zoom in, and zoom out.
 // Disable all or selected groups at construction time:
 const noQuickControls = new Helios(network, { quickControls: false });
 const customQuickControls = new Helios(network, {
-  quickControls: { autoFit: true, layout: true, zoom: false },
+  quickControls: { autoFit: true, layout: true, zoom: false, legendOffset: 64 },
 });
 
 // Narrow delegate readback helpers:
@@ -231,6 +265,8 @@ helios.interpolation({ durationMode: 'adaptive' }); // switch back
 
 For layout-driven positions:
 - GPU-force layout automatically uses a position delegate and keeps it attached.
+- GPU-force WebGPU layout uses chunked scheduling automatically above 500k
+  active nodes unless `layoutScheduling: 'full'` is set.
 - Non-delegate layouts automatically use network position buffers.
 - Built-in layouts now run at scheduler cadence (no `updateIntervalMs` throttling).
 

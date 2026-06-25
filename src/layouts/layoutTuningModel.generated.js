@@ -2,6 +2,11 @@ const DEFAULT_BASE_OPTIONS = Object.freeze({
   "outputScale": 6.5
 });
 
+/**
+ * Default model used to tune GPU force layout options from graph statistics.
+ *
+ * @public
+ */
 export const DEFAULT_LAYOUT_TUNING_MODEL = Object.freeze({
   "version": 1,
   "featureNames": [
@@ -129,6 +134,14 @@ function estimateDegreeStats(snapshot) {
     componentProxy: isolateFraction,
   };
 }
+/**
+ * Extract graph features used by the layout tuning model.
+ *
+ * @public
+ * @param {object} network - Helios network or network-like object.
+ * @param {object} [hints] - Optional feature overrides such as nodeCount or edgeCount.
+ * @returns {object} Feature record and model input vector.
+ */
 export function extractLayoutTuningFeatures(network, hints = {}) {
   const snapshot = readNetworkSnapshot(network);
   const nodeCount = Math.max(0, resolveCount(hints.nodeCount ?? snapshot.nodeCount, snapshot.nodeCount));
@@ -172,6 +185,17 @@ function resolveModel(model) {
   return DEFAULT_LAYOUT_TUNING_MODEL;
 }
 
+/**
+ * Predict layout option overrides for a network using the layout tuning model.
+ *
+ * @public
+ * @param {object} network - Helios network or network-like object.
+ * @param {object} [options] - Prediction options.
+ * @param {object|Function|false|null} [options.model] - Model descriptor, custom predictor, or false to disable.
+ * @param {object} [options.baseOptions] - Base layout options multiplied by model outputs.
+ * @param {object} [options.hints] - Optional feature overrides.
+ * @returns {object} Predicted layout options.
+ */
 export function predictLayoutTuningOptions(network, {
   model = DEFAULT_LAYOUT_TUNING_MODEL,
   baseOptions = DEFAULT_BASE_OPTIONS,

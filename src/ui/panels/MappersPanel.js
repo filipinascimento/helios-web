@@ -128,9 +128,9 @@ function buildColormapCatalog() {
   return { entries, byGroup, byKey };
 }
 
-export function resolveCategoricalPaletteCatalogGroup(key, isScheme) {
-  if (key === 'category18') return 'Helios category';
-  return isScheme ? 'helios schemes' : 'helios ramps';
+export function resolveCategoricalPaletteCatalogGroup(source) {
+  const normalized = String(source ?? '').trim();
+  return normalized || 'other';
 }
 
 export function shouldShowCategoricalPaletteEntry(entry, preferScheme) {
@@ -145,28 +145,37 @@ export function resolveCategoricalDefaultPalette(entries = []) {
 
 function buildCategoricalPaletteCatalog() {
   const entries = [];
-  const pushEntry = ({ key, label, group, isScheme }) => {
+  const pushEntry = ({ key, label, source, isScheme }) => {
     if (!key) return;
-    entries.push({ key, label: String(label ?? key), group: String(group ?? 'other'), isScheme: Boolean(isScheme) });
+    const scheme = Boolean(isScheme);
+    const group = resolveCategoricalPaletteCatalogGroup(source);
+    entries.push({
+      key,
+      label: String(label ?? key),
+      group,
+      source: group,
+      isScheme: scheme,
+      kind: scheme ? 'scheme' : 'ramp',
+    });
   };
 
   for (const [key, desc] of Object.entries(colormaps?.d3 ?? {})) {
     const isScheme = Boolean(desc?.isScheme);
     const label = key.startsWith('scheme') ? key.slice('scheme'.length) : key;
-    pushEntry({ key, label, group: isScheme ? 'd3 schemes' : 'd3 ramps', isScheme });
+    pushEntry({ key, label, source: 'd3', isScheme });
   }
 
   for (const [key, desc] of Object.entries(colormaps?.cmasher ?? {})) {
     const isScheme = Boolean(desc?.isScheme);
     const label = key.startsWith('cmasher_') ? key.slice('cmasher_'.length) : key;
     const alias = key.startsWith('cmasher_') ? `cmasher:${label}` : key;
-    pushEntry({ key: alias, label, group: isScheme ? 'cmasher schemes' : 'cmasher ramps', isScheme });
+    pushEntry({ key: alias, label, source: 'cmasher', isScheme });
   }
 
   for (const [key, desc] of Object.entries(colormaps?.CET ?? {})) {
     const isScheme = Boolean(desc?.isScheme);
     const label = key.startsWith('CET_') ? key.slice('CET_'.length) : key;
-    pushEntry({ key, label, group: isScheme ? 'CET schemes' : 'CET ramps', isScheme });
+    pushEntry({ key, label, source: 'CET', isScheme });
   }
 
   for (const [key, desc] of Object.entries(colormaps?.helios ?? {})) {
@@ -174,7 +183,7 @@ function buildCategoricalPaletteCatalog() {
     pushEntry({
       key,
       label: key,
-      group: resolveCategoricalPaletteCatalogGroup(key, isScheme),
+      source: 'helios',
       isScheme,
     });
   }
@@ -370,7 +379,6 @@ export class MappersPanel {
       position: 'Position',
       width: 'Width',
       opacity: 'Opacity',
-      endpointPosition: 'Endpoint Position',
       endpointSize: 'Endpoint Size',
     };
 
@@ -546,7 +554,6 @@ export class MappersPanel {
         channel === 'width' ||
         channel === 'opacity' ||
         channel === 'endpointSize';
-      const isEdgeEndpointPosition = channel === 'endpointPosition';
 
       if (mapperType === 'colormap') {
         return dim === 1;
@@ -573,9 +580,6 @@ export class MappersPanel {
           if (isEdge && typeof name === 'string' && /^@nodes?\./.test(name)) return false;
           if (isEdge) return dim === 4 || dim === 8;
           return dim === 3 || dim === 4;
-        }
-        if (isEdgeEndpointPosition) {
-          return isEdge && dim === 6;
         }
         if (isScalarChannel) {
           if (isEdge) return dim === 1 || dim === 2;
@@ -1401,8 +1405,8 @@ export class MappersPanel {
 	        for (const control of localControls) {
 	          try {
 	            control.destroy?.();
-	          } catch (_) {
-	            // ignore
+	          } catch (error) {
+	            console.warn('[HeliosUI][MappersPanel] Control cleanup failed.', error);
 	          }
 	        }
 	        localControls.clear();
@@ -1874,8 +1878,8 @@ export class MappersPanel {
                     endpoints: endpointsSelect.value,
                   });
                 }
-              } catch (_) {
-                // ignore
+              } catch (error) {
+                console.warn('[HeliosUI][MappersPanel] Debug logging failed.', error);
               }
               setDirty(true);
             });
@@ -3060,7 +3064,7 @@ export class MappersPanel {
               const paletteSearch = document.createElement('input');
               paletteSearch.type = 'text';
               paletteSearch.className = 'helios-ui-text helios-ui-colormap-popover__search';
-              paletteSearch.placeholder = 'Search palettes (e.g. tableau, scheme)…';
+              paletteSearch.placeholder = 'Search palettes…';
               paletteHeader.appendChild(paletteSearch);
               let palettePreferScheme = preferScheme;
               const paletteFilterBar = document.createElement('div');
@@ -3202,7 +3206,7 @@ export class MappersPanel {
                   return;
                 }
 
-                const groupOrder = ['d3 schemes', 'd3 ramps', 'cmasher schemes', 'cmasher ramps', 'CET schemes', 'CET ramps', 'Helios category', 'helios schemes', 'helios ramps', 'other'];
+                const groupOrder = ['d3', 'cmasher', 'CET', 'helios', 'other'];
                 const matchesByGroup = new Map();
                 for (const entry of matches) {
                   const list = matchesByGroup.get(entry.group) ?? [];
@@ -3242,6 +3246,9 @@ export class MappersPanel {
                     item.type = 'button';
                     item.className = 'helios-ui-colormap-picker__item';
                     item.dataset.key = entry.key;
+                    item.dataset.colormapSource = entry.source ?? entry.group ?? '';
+                    item.dataset.colormapKind = entry.kind ?? (entry.isScheme === true ? 'scheme' : 'ramp');
+                    item.dataset.colormapScheme = entry.isScheme === true ? 'true' : 'false';
 
                     const itemTitle = document.createElement('div');
                     itemTitle.className = 'helios-ui-colormap-picker__item-title helios-ui-ellipsis';
@@ -3480,8 +3487,8 @@ export class MappersPanel {
                   for (const cleanup of paletteCleanups.splice(0)) {
                     try {
                       cleanup();
-                    } catch (_) {
-                      // ignore
+                    } catch (error) {
+                      console.warn('[HeliosUI][MappersPanel] Palette cleanup failed.', error);
                     }
                   }
                 },
@@ -4072,31 +4079,27 @@ export class MappersPanel {
           }).row);
 
           const advanced = document.createElement('div');
-          const divergentInput = createSegmentedToggleControl({
+          const divergentInput = createToggleControl({
             checked: Boolean(state.pending.divergent) && allowDivergent,
             disabled: !allowDivergent,
-            onLabel: 'Divergent',
-            offLabel: 'Sequential',
+            onLabel: 'On',
+            offLabel: 'Off',
+            ariaLabel: 'Use divergent colormap domain',
           });
 
-          const clampWrap = document.createElement('div');
-          clampWrap.style.display = 'inline-flex';
-          clampWrap.style.alignItems = 'center';
-          clampWrap.style.gap = '10px';
           const clampState = normalizeClampSetting(state.pending.clamp);
-          const clampMinInput = createSegmentedToggleControl({
+          const clampMinInput = createToggleControl({
             checked: clampState.min,
-            onLabel: 'Min Clamp',
-            offLabel: 'Min Free',
+            onLabel: 'On',
+            offLabel: 'Off',
+            ariaLabel: 'Clamp values below the colormap domain',
           });
-          const clampMaxInput = createSegmentedToggleControl({
+          const clampMaxInput = createToggleControl({
             checked: clampState.max,
-            onLabel: 'Max Clamp',
-            offLabel: 'Max Free',
+            onLabel: 'On',
+            offLabel: 'Off',
+            ariaLabel: 'Clamp values above the colormap domain',
           });
-
-          clampWrap.appendChild(clampMinInput);
-          clampWrap.appendChild(clampMaxInput);
 
           const alphaSeed = clampNumber(state.pending.alpha ?? 1, { min: 0, max: 1 }) ?? 1;
           const alphaControls = new SuggestedSliderControls({
@@ -4143,9 +4146,14 @@ export class MappersPanel {
           }).row);
 
           advanced.appendChild(createAlignedRow({
-            title: 'Clamp',
-            hint: 'Clamp values outside the domain to the nearest end of the colormap.',
-            controls: clampWrap,
+            title: 'Clamp Min',
+            hint: 'Clamp values below the domain to the lowest colormap color.',
+            controls: clampMinInput,
+          }).row);
+          advanced.appendChild(createAlignedRow({
+            title: 'Clamp Max',
+            hint: 'Clamp values above the domain to the highest colormap color.',
+            controls: clampMaxInput,
           }).row);
 	          advanced.appendChild(createAlignedRow({
 	            title: 'Alpha',
@@ -4444,8 +4452,8 @@ export class MappersPanel {
               live: resolveLiveConfig(mode, state.channel),
             });
           }
-        } catch (_) {
-          // ignore
+        } catch (error) {
+          console.warn('[HeliosUI][MappersPanel] Debug logging failed before applying mapper config.', error);
         }
 
         if (mode === 'node' && state.channel === 'position') {
@@ -4469,8 +4477,8 @@ export class MappersPanel {
                 nodeToEdgeEdgeColor: entry ?? null,
               });
             }
-          } catch (_) {
-            // ignore
+          } catch (error) {
+            console.warn('[HeliosUI][MappersPanel] Debug logging failed after applying mapper config.', error);
           }
 
           // Ensure visuals update immediately even if the scheduler is currently idle.
@@ -4617,8 +4625,8 @@ export class MappersPanel {
         for (const control of localControls) {
           try {
             control.destroy?.();
-          } catch (_) {
-            // ignore
+          } catch (error) {
+            console.warn('[HeliosUI][MappersPanel] Density control cleanup failed.', error);
           }
         }
         localControls.clear();
@@ -4651,7 +4659,8 @@ export class MappersPanel {
         let raw = [];
         try {
           raw = network.getNodeAttributeNames() ?? [];
-        } catch (_) {
+        } catch (error) {
+          console.warn('[HeliosUI][MappersPanel] Failed to list node attributes for density controls.', error);
           raw = [];
         }
         for (const name of raw) {
@@ -4660,7 +4669,8 @@ export class MappersPanel {
           let info = null;
           try {
             info = network.getNodeAttributeInfo?.(name) ?? null;
-          } catch (_) {
+          } catch (error) {
+            console.warn(`[HeliosUI][MappersPanel] Failed to inspect node attribute "${name}" for density controls.`, error);
             info = null;
           }
           if (!info || (info.dimension ?? 1) !== 1) continue;
@@ -4792,8 +4802,8 @@ export class MappersPanel {
         if (!manualBackgroundColor) return;
         try {
           helios.clearColor?.(manualBackgroundColor);
-        } catch (_) {
-          // ignore invalid background restoration
+        } catch (error) {
+          console.warn('[HeliosUI][MappersPanel] Failed to restore density background color.', error);
         }
       };
 
@@ -4806,8 +4816,8 @@ export class MappersPanel {
         try {
           helios.clearColor?.(getDensityZeroColor(state));
           densityBackgroundApplied = true;
-        } catch (_) {
-          // ignore invalid background conversion
+        } catch (error) {
+          console.warn('[HeliosUI][MappersPanel] Failed to apply density background color.', error);
         }
       };
 

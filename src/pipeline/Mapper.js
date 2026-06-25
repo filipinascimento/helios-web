@@ -4,7 +4,6 @@ import { VISUAL_ATTRIBUTE_NAMES, DEFAULT_VISUALS, VISUAL_ATTRIBUTE_MAP } from '.
 
 const {
   EDGE_COLOR_ATTRIBUTE,
-  EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
   EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
   EDGE_OPACITY_ATTRIBUTE,
   EDGE_WIDTH_ATTRIBUTE,
@@ -18,6 +17,36 @@ const {
 const { DEFAULT_NODE_OUTLINE_COLOR, DEFAULT_NODE_OUTLINE_WIDTH, DEFAULT_NODE_SIZE } = DEFAULT_VISUALS;
 const INDEX_ATTRIBUTE = '$index';
 const DEFAULT_CATEGORICAL_COLOR = '#888888ff';
+const WARNING_KEYS_BY_OWNER = new WeakMap();
+
+function warnOnce(owner, key, message, detail = undefined) {
+  if (typeof console === 'undefined' || typeof console.warn !== 'function') return;
+  const target = owner && (typeof owner === 'object' || typeof owner === 'function') ? owner : warnOnce;
+  let keys = WARNING_KEYS_BY_OWNER.get(target);
+  if (!keys) {
+    keys = new Set();
+    WARNING_KEYS_BY_OWNER.set(target, keys);
+  }
+  if (keys.has(key)) return;
+  keys.add(key);
+  if (detail === undefined) console.warn(message);
+  else console.warn(message, detail);
+}
+
+function isMissingAttributeError(error, scope = null) {
+  const msg = error instanceof Error ? error.message : String(error ?? '');
+  if (/does not exist/i.test(msg) || /not defined/i.test(msg)) return true;
+  if (/missing (node|edge) attr/i.test(msg)) return true;
+  if (/unknown (node|edge) attribute/i.test(msg)) return true;
+  if (scope === 'node' && /unknown node attribute/i.test(msg)) return true;
+  if (scope === 'edge' && /unknown edge attribute/i.test(msg)) return true;
+  return false;
+}
+
+function isExpectedMetadataLookupError(error) {
+  const msg = error instanceof Error ? error.message : String(error ?? '');
+  return /outside buffer access/i.test(msg) || /wrap it in withBufferAccess/i.test(msg);
+}
 
 function validateAttribute(buffer, name, expectedType, expectedDimension) {
   if (!buffer) {
@@ -44,7 +73,15 @@ function resolveAttributeMetadata(network, scope, name) {
   const bufferGetter = scope === 'node' ? 'getNodeAttributeBuffer' : 'getEdgeAttributeBuffer';
   try {
     return network[bufferGetter]?.(name) ?? null;
-  } catch (_) {
+  } catch (error) {
+    if (!isMissingAttributeError(error, scope) && !isExpectedMetadataLookupError(error)) {
+      warnOnce(
+        network,
+        `metadata:${scope}:${name}`,
+        `Mapper: failed to resolve ${scope} attribute metadata for "${name}".`,
+        { error },
+      );
+    }
     return null;
   }
 }
@@ -591,11 +628,11 @@ function removeEdgeAttributeSafe(network, name, debug) {
   try {
     network.removeEdgeAttribute(name);
   } catch (error) {
-    const msg = error instanceof Error ? error.message : '';
-    if (/unknown edge attribute/i.test(msg) || /does not exist/i.test(msg) || /not defined/i.test(msg)) {
+    if (isMissingAttributeError(error, 'edge')) {
       return;
     }
     debug?.log?.('mapper', 'Failed to remove edge attribute', { name, error });
+    console.warn(`Mapper: failed to remove edge attribute "${name}".`, error);
   }
 }
 
@@ -604,7 +641,9 @@ function removeNodeToEdgeAttributeSafe(network, name, debug) {
   try {
     network.removeNodeToEdgeAttribute(name);
   } catch (error) {
+    if (isMissingAttributeError(error, 'edge')) return;
     debug?.log?.('mapper', 'Failed to remove node-to-edge attribute', { name, error });
+    console.warn(`Mapper: failed to remove node-to-edge attribute "${name}".`, error);
   }
 }
 
@@ -613,7 +652,7 @@ function resolveEdgeChannelEntriesForNodeConstants(channelEntries, nodeMapper, n
   let changed = false;
   for (const [name, config] of channelEntries.entries()) {
     const def = CHANNEL_DEFS.edge?.[name];
-    if (!def || def.attribute === EDGE_ENDPOINTS_POSITION_ATTRIBUTE) continue;
+    if (!def) continue;
     if (!isEdgeNodePassthrough(config, def)) continue;
     const nodeChannelName = resolveNodeChannelNameFromConfig(config, def);
     if (!nodeChannelName) continue;
@@ -775,15 +814,6 @@ const CHANNEL_DEFS = {
     },
     opacity: { attribute: EDGE_OPACITY_ATTRIBUTE, type: AttributeType.Float, dimension: 2 },
     width: { attribute: EDGE_WIDTH_ATTRIBUTE, type: AttributeType.Float, dimension: 2 },
-    endpointPosition: {
-      attribute: EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
-      type: AttributeType.Float,
-      dimension: 6,
-      nodeSource: NODE_POSITION_ATTRIBUTE,
-      nodeSourceDimension: 3,
-      nodePassthroughEndpoints: 'both',
-      nodePassthroughDoubleWidth: true,
-    },
     endpointSize: {
       attribute: EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
       type: AttributeType.Float,
@@ -792,6 +822,7 @@ const CHANNEL_DEFS = {
       nodeSourceDimension: 1,
       nodePassthroughEndpoints: 'both',
       nodePassthroughDoubleWidth: true,
+      nodeSourceIndirect: true,
     },
   },
 };
@@ -873,6 +904,11 @@ export class Mapper {
         return;
       }
       const sourceDimension = this.resolveNodeSourceDimension(sourceAttribute, def);
+      if (def.nodeSourceIndirect === true) {
+        this.ensureNodeSourceAttribute(sourceAttribute, def.type, sourceDimension, config.name);
+        this.nodeToEdgeRegistrations.delete(attribute);
+        return;
+      }
       const passthrough = this.resolvePassthroughConfig(config, def, sourceDimension, dimension);
       this.configureNodeToEdgeAttribute({
         attribute,
@@ -906,10 +942,7 @@ export class Mapper {
   shouldEnsureChannelBuffer(config, def) {
     if (!def) return false;
     if (config.type === 'constant' && (!config.rules || config.rules.length === 0)) {
-      return (
-        def.attribute === NODE_POSITION_ATTRIBUTE ||
-        def.attribute === EDGE_ENDPOINTS_POSITION_ATTRIBUTE
-      );
+      return def.attribute === NODE_POSITION_ATTRIBUTE;
     }
     return true;
   }
@@ -988,6 +1021,20 @@ export class Mapper {
     return { endpoints, doubleWidth, targetDimension };
   }
 
+  ensureNodeSourceAttribute(sourceAttribute, type, sourceDimension, channelName) {
+    const sourceInfo = resolveAttributeMetadata(this.network, 'node', sourceAttribute);
+    if (!sourceInfo) {
+      this.network.defineNodeAttribute(sourceAttribute, type, sourceDimension);
+      return;
+    }
+    try {
+      validateAttribute(sourceInfo, sourceAttribute, type, sourceDimension);
+    } catch (error) {
+      console.warn(`Mapper found incompatible node attribute ${sourceAttribute} for ${channelName}:`, error);
+      throw error;
+    }
+  }
+
   configureNodeToEdgeAttribute({
     attribute,
     sourceAttribute,
@@ -1003,7 +1050,8 @@ export class Mapper {
     if (resolveAttributeMetadata(this.network, 'edge', attribute)) {
       try {
         this.removeEdgeAttribute(attribute);
-      } catch (_) {
+      } catch (error) {
+        console.warn(`Mapper: failed to remove existing edge attribute "${attribute}" before node-to-edge registration; retry path will verify registration.`, error);
         // The registration path below retries removal if the edge attribute still exists.
       }
     }
@@ -1040,8 +1088,9 @@ export class Mapper {
     if (passthroughOk && typeof this.network?.hasNodeToEdgeAttribute === 'function') {
       try {
         passthroughOk = Boolean(this.network.hasNodeToEdgeAttribute(attribute));
-      } catch (_) {
-        // ignore
+      } catch (error) {
+        console.warn(`Mapper: failed to verify node-to-edge attribute "${attribute}" after registration.`, error);
+        passthroughOk = false;
       }
     }
     const resolvedSourceInfo = resolveAttributeMetadata(this.network, 'node', sourceAttribute);
@@ -1077,8 +1126,11 @@ export class Mapper {
     if (!this.network?.removeNodeToEdgeAttribute || !attribute) return;
     try {
       this.network.removeNodeToEdgeAttribute(attribute);
-    } catch (_) {
-      // ignore unregistration failures
+    } catch (error) {
+      if (!isMissingAttributeError(error, 'edge')) {
+        console.warn(`Mapper: failed to unregister node-to-edge attribute "${attribute}".`, error);
+        throw error;
+      }
     }
     this.nodeToEdgeRegistrations.delete(attribute);
   }
@@ -1089,6 +1141,10 @@ export class Mapper {
     const def = defs[config.name];
     if (!def?.attribute || !def?.nodeSource) return;
     if (config.type === 'passthrough' || config.type === 'nodeToEdge' || config.type === 'nodeAttribute') {
+      if (def.nodeSourceIndirect === true) {
+        this.nodeToEdgeRegistrations.delete(def.attribute);
+        return;
+      }
       this.unregisterNodeToEdge(def.attribute);
     }
   }

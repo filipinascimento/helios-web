@@ -8,9 +8,7 @@ export const EDGE_COLOR_ATTRIBUTE = '_helios_visuals_edge_color';
 export const EDGE_WIDTH_ATTRIBUTE = '_helios_visuals_edge_width';
 export const EDGE_OPACITY_ATTRIBUTE = '_helios_visuals_edge_opacity';
 export const EDGE_STATE_ATTRIBUTE = '_helios_visuals_edge_state';
-export const EDGE_ENDPOINTS_POSITION_ATTRIBUTE = '_helios_visuals_edge_endpoints_position';
 export const EDGE_ENDPOINTS_SIZE_ATTRIBUTE = '_helios_visuals_edge_endpoints_size';
-export const EDGE_ENDPOINTS_STATE_ATTRIBUTE = '_helios_visuals_edge_endpoints_state';
 
 // Aggregate export so callers can grab all visual attribute names from a single import.
 export const VISUAL_ATTRIBUTE_NAMES = {
@@ -24,9 +22,7 @@ export const VISUAL_ATTRIBUTE_NAMES = {
   EDGE_WIDTH_ATTRIBUTE,
   EDGE_OPACITY_ATTRIBUTE,
   EDGE_STATE_ATTRIBUTE,
-  EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
   EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
-  EDGE_ENDPOINTS_STATE_ATTRIBUTE,
 };
 
 export const DEFAULT_NODE_COLOR = [0.9, 0.2, 1, 1];
@@ -59,7 +55,5 @@ export const VISUAL_ATTRIBUTE_MAP = {
   edgeWidth: EDGE_WIDTH_ATTRIBUTE,
   edgeOpacity: EDGE_OPACITY_ATTRIBUTE,
   edgeState: EDGE_STATE_ATTRIBUTE,
-  edgeEndpointPosition: EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
   edgeEndpointSize: EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
-  edgeEndpointState: EDGE_ENDPOINTS_STATE_ATTRIBUTE,
 };

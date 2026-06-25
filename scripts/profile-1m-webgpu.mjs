@@ -612,7 +612,9 @@ async function main() {
       })),
     }, null, 2));
   } finally {
-    await browser?.close().catch(() => {});
+    await browser?.close().catch((error) => {
+      console.warn('Failed to close profiling browser cleanly.', error);
+    });
     server.kill('SIGTERM');
   }
 }

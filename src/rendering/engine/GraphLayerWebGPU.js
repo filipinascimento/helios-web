@@ -24,8 +24,8 @@ const {
   EDGE_WIDTH_ATTRIBUTE,
   EDGE_STATE_ATTRIBUTE,
   EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
-  EDGE_ENDPOINTS_STATE_ATTRIBUTE,
 } = VISUAL_ATTRIBUTE_NAMES;
+let FALLBACK_TOPOLOGY_VERSION_COUNTER = 1;
 
 function normalizeEndpoints(value) {
   if (value === 'source' || value === 'from') return 'source';
@@ -1311,7 +1311,6 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
       const edgeOpacities = safeGet('edge', EDGE_OPACITY_ATTRIBUTE);
       const edgeEndpointSizes = safeGet('edge', EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
       const edgeStates = safeGet('edge', EDGE_STATE_ATTRIBUTE);
-      const edgeEndpointStates = safeGet('edge', EDGE_ENDPOINTS_STATE_ATTRIBUTE);
       const positionOverride = this.resolvePositionSourceOverride(network, {
         backend: 'webgpu',
         device: this.device?.device ?? null,
@@ -1361,7 +1360,6 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
         opacities: edgeOpacities?.view ?? null,
         endpointSizes: edgeEndpointSizes?.view ?? null,
         states: edgeStates?.view ?? null,
-        endpointStates: edgeEndpointStates?.view ?? null,
         indices: edgeIndices,
         indexDirtyRange: edgeIndexDirtyRange,
         count: edgeIndices?.length ?? 0,
@@ -1372,7 +1370,6 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
           opacities: edgeOpacities?.version ?? 0,
           endpointSizes: edgeEndpointSizes?.version ?? 0,
           states: edgeStates?.version ?? 0,
-          endpointStates: edgeEndpointStates?.version ?? 0,
           indices: edgeIndices?.version ?? topologyVersions?.edge ?? 0,
           topology: topologyVersions?.edge ?? 0,
         },
@@ -1421,8 +1418,18 @@ export class GraphLayerWebGPU extends GraphLayerWebGPUBase {
     if (typeof network.getTopologyVersions === 'function') {
       try {
         topologyVersions = network.getTopologyVersions();
-      } catch (_) {
-        topologyVersions = { node: 0, edge: 0 };
+      } catch (error) {
+        FALLBACK_TOPOLOGY_VERSION_COUNTER += 1;
+        warnOnce(
+          this,
+          'topology-versions',
+          'GraphLayerWebGPU: failed to read topology versions; forcing buffer refresh for this frame.',
+          { error },
+        );
+        topologyVersions = {
+          node: FALLBACK_TOPOLOGY_VERSION_COUNTER,
+          edge: FALLBACK_TOPOLOGY_VERSION_COUNTER,
+        };
       }
     }
 

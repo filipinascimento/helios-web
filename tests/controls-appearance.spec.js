@@ -381,10 +381,9 @@ test.describe('scene panel: tabs and appearance controls', () => {
     const scenePanel = panelByTitle(page, 'Scene');
     const layoutPanel = panelByTitle(page, 'Layout');
     await expect(indicatorByPath(scenePanel, 'appearance.nodeStyle.sizeScale')).toHaveAttribute('data-state', 'changed');
-    await expect(indicatorByPath(layoutPanel, 'layout.positionAttribute')).toHaveAttribute('data-state', 'default');
-    await expect(indicatorByPath(layoutPanel, 'layout.positionAttribute')).toBeHidden();
-    await expect.poll(() => page.evaluate(() => window.__helios.states.status('layout.positionAttribute').state))
-      .toBe('default');
+    await expect(layoutPanel.locator('.helios-ui-dirty-indicator[data-path="layout.positionAttribute"]')).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => window.__helios.states.entry('layout.positionAttribute') == null))
+      .toBe(true);
   });
 
   test('node size default-value override stays marked until explicit reset', async ({ page }) => {

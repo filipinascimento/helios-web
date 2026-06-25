@@ -52,6 +52,22 @@ const LARGE_GRAPH_LABEL_RANK_NODE_THRESHOLD = 100_000;
 const LARGE_GRAPH_LABEL_INTERACTION_FULL_FPS = 2;
 const LARGE_GRAPH_LABEL_VIEW_SETTLE_MS = 160;
 const LARGE_GRAPH_LABEL_PROGRESSIVE_CHUNK_SIZE = 20_000;
+const WARNING_KEYS_BY_OWNER = new WeakMap();
+
+function warnOnce(owner, key, message, detail = undefined) {
+  if (typeof console === 'undefined' || typeof console.warn !== 'function') return;
+  const target = owner && (typeof owner === 'object' || typeof owner === 'function') ? owner : warnOnce;
+  let keys = WARNING_KEYS_BY_OWNER.get(target);
+  if (!keys) {
+    keys = new Set();
+    WARNING_KEYS_BY_OWNER.set(target, keys);
+  }
+  const normalizedKey = String(key ?? message);
+  if (keys.has(normalizedKey)) return;
+  keys.add(normalizedKey);
+  if (detail === undefined) console.warn(message);
+  else console.warn(message, detail);
+}
 
 function clamp(value, min, max) {
   const v = Number(value);
@@ -556,8 +572,14 @@ export class SvgLabelController {
       if (typeof network.withBufferAccess === 'function') {
         try {
           network.withBufferAccess(run, { nodeIndices: this._needsNodeIndicesForFullUpdate() });
-        } catch {
-          run();
+        } catch (error) {
+          warnOnce(
+            this,
+            'snapshot-buffer-access',
+            'SvgLabelController: failed to create label snapshot inside buffer access; skipping snapshot.',
+            { error },
+          );
+          return null;
         }
       } else {
         run();
@@ -704,8 +726,15 @@ export class SvgLabelController {
     if (typeof network.withBufferAccess === 'function') {
       try {
         return Boolean(network.withBufferAccess(run, { nodeIndices: this._needsNodeIndicesForFullUpdate() }));
-      } catch {
-        return Boolean(run());
+      } catch (error) {
+        warnOnce(
+          this,
+          'full-update-buffer-access',
+          'SvgLabelController: full label update failed inside buffer access; hiding labels until the next valid update.',
+          { error },
+        );
+        this._hideAll();
+        return false;
       }
     }
     return Boolean(run());
@@ -727,8 +756,14 @@ export class SvgLabelController {
     if (typeof network.withBufferAccess === 'function') {
       try {
         return Boolean(network.withBufferAccess(run));
-      } catch {
-        return Boolean(run());
+      } catch (error) {
+        warnOnce(
+          this,
+          'hovered-update-buffer-access',
+          'SvgLabelController: hovered-label update failed inside buffer access.',
+          { error },
+        );
+        return false;
       }
     }
     return Boolean(run());
@@ -1002,8 +1037,14 @@ export class SvgLabelController {
     if (typeof network.withBufferAccess === 'function') {
       try {
         network.withBufferAccess(run, { nodeIndices: true });
-      } catch {
-        run();
+      } catch (error) {
+        warnOnce(
+          this,
+          'progressive-rank-buffer-access',
+          'SvgLabelController: progressive label ranking failed inside buffer access; canceling the current rank job.',
+          { error },
+        );
+        job.cancelled = true;
       }
     } else {
       run();
@@ -1378,8 +1419,14 @@ export class SvgLabelController {
     if (typeof network.withBufferAccess === 'function') {
       try {
         return Boolean(network.withBufferAccess(run));
-      } catch {
-        return Boolean(run());
+      } catch (error) {
+        warnOnce(
+          this,
+          'reproject-buffer-access',
+          'SvgLabelController: label reprojection failed inside buffer access.',
+          { error },
+        );
+        return false;
       }
     }
     return Boolean(run());
@@ -1598,7 +1645,14 @@ export class SvgLabelController {
         this.requestFullReselect('delegate-sparse-position');
         this.helios?.scheduler?.requestRender?.();
       })
-      .catch(() => {})
+      .catch((error) => {
+        warnOnce(
+          this,
+          `delegate-sparse-position:${signature}`,
+          'SvgLabelController: failed to resolve sparse delegate label positions.',
+          { error },
+        );
+      })
       .finally(() => {
         this._sparsePositionPendingSignatures.delete(signature);
         this._sparsePositionPending = this._sparsePositionPendingSignatures.size > 0;
@@ -1633,7 +1687,14 @@ export class SvgLabelController {
           this.helios?.scheduler?.requestRender?.();
         }
       })
-      .catch(() => {})
+      .catch((error) => {
+        warnOnce(
+          this,
+          'delegate-position-snapshot',
+          'SvgLabelController: failed to snapshot delegate label positions.',
+          { error },
+        );
+      })
       .finally(() => {
         this._delegateSnapshotPending = false;
       });

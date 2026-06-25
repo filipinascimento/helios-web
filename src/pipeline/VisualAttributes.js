@@ -13,9 +13,7 @@ const {
   EDGE_OPACITY_ATTRIBUTE,
   EDGE_WIDTH_ATTRIBUTE,
   EDGE_STATE_ATTRIBUTE,
-  EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
   EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
-  EDGE_ENDPOINTS_STATE_ATTRIBUTE,
 } = VISUAL_ATTRIBUTE_NAMES;
 const INDEX_ATTRIBUTE = '$index';
 
@@ -34,8 +32,6 @@ const EDGE_CHANNEL_TO_ATTRIBUTE = {
   width: EDGE_WIDTH_ATTRIBUTE,
   opacity: EDGE_OPACITY_ATTRIBUTE,
   endpointSize: EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
-  endpointPosition: EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
-  endpointState: EDGE_ENDPOINTS_STATE_ATTRIBUTE,
 };
 
 const EDGE_CHANNEL_DEFAULT_NODE_ATTRIBUTE = {
@@ -43,14 +39,27 @@ const EDGE_CHANNEL_DEFAULT_NODE_ATTRIBUTE = {
   width: NODE_SIZE_ATTRIBUTE,
   opacity: NODE_SIZE_ATTRIBUTE,
   endpointSize: NODE_SIZE_ATTRIBUTE,
-  endpointPosition: NODE_POSITION_ATTRIBUTE,
-  endpointState: NODE_STATE_ATTRIBUTE,
 };
 
 const LOW_DISCREPANCY_X = 0.7548776662466927;
 const LOW_DISCREPANCY_Y = 0.5698402909980532;
 const LOW_DISCREPANCY_Z = 0.4389596329181167;
 const DEFAULT_SEED_SPREAD = 0.7;
+const WARNING_KEYS_BY_OWNER = new WeakMap();
+
+function warnOnce(owner, key, message, detail = undefined) {
+  if (typeof console === 'undefined' || typeof console.warn !== 'function') return;
+  const target = owner && (typeof owner === 'object' || typeof owner === 'function') ? owner : warnOnce;
+  let keys = WARNING_KEYS_BY_OWNER.get(target);
+  if (!keys) {
+    keys = new Set();
+    WARNING_KEYS_BY_OWNER.set(target, keys);
+  }
+  if (keys.has(key)) return;
+  keys.add(key);
+  if (detail === undefined) console.warn(message);
+  else console.warn(message, detail);
+}
 
 function fract(value) {
   return value - Math.floor(value);
@@ -389,6 +398,7 @@ export class VisualAttributes {
     const nodeSizeFallback = nodeConfig?.size?.mode === 'uniform'
       ? normalizePair(nodeConfig?.size?.value)
       : undefined;
+    const nodeSizeBufferFallback = Boolean(nodeConfig?.size && nodeConfig.size.mode !== 'uniform');
 
     const config = {
       color: color?.type === 'constant' ? { mode: 'uniform', value: normalizeColorPair(color.value) } : { mode: 'buffer' },
@@ -402,7 +412,9 @@ export class VisualAttributes {
         ? { mode: 'uniform', value: normalizePair(endpointSize.value) }
         : (endpointSize == null && nodeSizeFallback
           ? { mode: 'uniform', value: nodeSizeFallback }
-          : { mode: 'buffer' }),
+          : (endpointSize == null && nodeSizeBufferFallback
+            ? { mode: 'buffer', source: 'node', nodeAttribute: NODE_SIZE_ATTRIBUTE, endpoints: 'both', doubleWidth: true }
+            : { mode: 'buffer' })),
     };
     return this.augmentEdgeSourceConfig(config, mapper);
   }
@@ -537,10 +549,6 @@ export class VisualAttributes {
       if (visuals.outline) bumpNode.push(NODE_OUTLINE_WIDTH_ATTRIBUTE);
       if (visuals.outlineColor) bumpNode.push(NODE_OUTLINE_COLOR_ATTRIBUTE);
       this.bumpNodeAttributes(...bumpNode);
-
-      const bumpEdge = [EDGE_ENDPOINTS_POSITION_ATTRIBUTE];
-      if (visuals.size) bumpEdge.push(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
-      this.bumpEdgeAttributes(...bumpEdge);
     });
     for (const channel of nodeChannels) {
       this.debug?.log('mapper', 'Applying node channel finish', {
@@ -559,7 +567,8 @@ export class VisualAttributes {
     const nodeToEdgeRegistrations = mapper?.nodeToEdgeRegistrations ?? new Set();
     const skipColor = nodeToEdgeRegistrations.has(EDGE_COLOR_ATTRIBUTE);
     const skipOpacity = nodeToEdgeRegistrations.has(EDGE_OPACITY_ATTRIBUTE);
-    const skipEndpointSize = nodeToEdgeRegistrations.has(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+    const skipEndpointSize = nodeToEdgeRegistrations.has(EDGE_ENDPOINTS_SIZE_ATTRIBUTE)
+      || visualConfig?.edge?.endpointSize?.source === 'node';
     const preparedEdgeBuffers = this.prepareEdgeAttributeLookups(attributes.edge, { allowMissing: true });
     const preparedNodeBuffers = this.prepareNodeAttributeLookups(attributes.node, { allowMissing: true });
     const preparedEdgeVisualBuffers = this.prepareEdgeAttributeLookups([
@@ -628,6 +637,7 @@ export class VisualAttributes {
     const edgeCfg = visualConfig?.edge ?? null;
     const nodeSizeBuffer = nodeCfg?.size?.mode !== 'uniform';
     const edgeEndpointSizeBuffer = edgeCfg?.endpointSize?.mode !== 'uniform';
+    const edgeEndpointSizeFromEdge = edgeEndpointSizeBuffer && edgeCfg?.endpointSize?.source !== 'node';
     const endpointSizeChannel = edgeMapper?.channels?.get?.('endpointSize') ?? null;
     const nodeToEdgeRegistrations = edgeMapper?.nodeToEdgeRegistrations ?? new Set();
 
@@ -665,16 +675,8 @@ export class VisualAttributes {
       this.ensureEdgeAttribute(EDGE_WIDTH_ATTRIBUTE, AttributeType.Float, 2);
     }
 
-    if (edgeEndpointSizeBuffer) {
-      if (nodeToEdgeRegistrations.has(EDGE_ENDPOINTS_SIZE_ATTRIBUTE)) {
-        if (nodeSizeBuffer) {
-          this.ensureNodeToEdgeAttribute(NODE_SIZE_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE, 1);
-        }
-      } else if (!endpointSizeChannel && nodeSizeBuffer) {
-        this.ensureNodeToEdgeAttribute(NODE_SIZE_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE, 1);
-      } else if (endpointSizeChannel) {
-        this.ensureEdgeAttribute(EDGE_ENDPOINTS_SIZE_ATTRIBUTE, AttributeType.Float, 2);
-      }
+    if (edgeEndpointSizeFromEdge && endpointSizeChannel) {
+      this.ensureEdgeAttribute(EDGE_ENDPOINTS_SIZE_ATTRIBUTE, AttributeType.Float, 2);
     }
   }
 
@@ -682,8 +684,6 @@ export class VisualAttributes {
     this.ensureNodeAttribute(NODE_POSITION_ATTRIBUTE, AttributeType.Float, 3);
     this.ensureNodeAttribute(NODE_STATE_ATTRIBUTE, AttributeType.UnsignedInteger, 1);
     this.ensureEdgeAttribute(EDGE_STATE_ATTRIBUTE, AttributeType.UnsignedInteger, 1);
-    this.ensureNodeToEdgeAttribute(NODE_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_POSITION_ATTRIBUTE, 3);
-    this.ensureNodeToEdgeAttributeTyped(NODE_STATE_ATTRIBUTE, EDGE_ENDPOINTS_STATE_ATTRIBUTE, 1, AttributeType.UnsignedInteger);
   }
 
   bumpNodeAttributes(...names) {
@@ -721,10 +721,8 @@ export class VisualAttributes {
             EDGE_OPACITY_ATTRIBUTE,
             EDGE_WIDTH_ATTRIBUTE,
             EDGE_STATE_ATTRIBUTE,
-            EDGE_ENDPOINTS_POSITION_ATTRIBUTE,
             EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
-          EDGE_ENDPOINTS_STATE_ATTRIBUTE,
-        ];
+          ];
     for (const name of targets) {
       const hasAttribute = this.network?._edgeAttributes?.has?.(name)
         ?? Boolean(this.network?.getEdgeAttributeInfo?.(name));
@@ -741,7 +739,6 @@ export class VisualAttributes {
 
   markPositionsDirty() {
     this.bumpNodeAttributes(NODE_POSITION_ATTRIBUTE, NODE_SIZE_ATTRIBUTE);
-    this.bumpEdgeAttributes(EDGE_ENDPOINTS_POSITION_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
   }
 
   /**
@@ -798,12 +795,6 @@ export class VisualAttributes {
       if (outlineWidthView) bumpNode.push(NODE_OUTLINE_WIDTH_ATTRIBUTE);
       if (outlineColorView) bumpNode.push(NODE_OUTLINE_COLOR_ATTRIBUTE);
       if (bumpNode.length) this.bumpNodeAttributes(...bumpNode);
-
-      const bumpEdge = [];
-      if (positionView) bumpEdge.push(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
-      if (sizeView) bumpEdge.push(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
-      if (stateView) bumpEdge.push(EDGE_ENDPOINTS_STATE_ATTRIBUTE);
-      if (bumpEdge.length) this.bumpEdgeAttributes(...bumpEdge);
     });
   }
 
@@ -953,7 +944,6 @@ export class VisualAttributes {
       this.maxInitializedNodeId = Math.max(maxNodeId, this.maxInitializedNodeId ?? -1);
       if (touched) {
         this.bumpNodeAttributes(NODE_POSITION_ATTRIBUTE);
-        this.bumpEdgeAttributes(EDGE_ENDPOINTS_POSITION_ATTRIBUTE);
       }
     });
   }
@@ -973,22 +963,25 @@ export class VisualAttributes {
     } else if (attributeInfoMismatched(info, expected)) {
       const currentDim = info?.dimension ?? dimension;
       const shouldExpand = currentDim > 0 && currentDim < dimension;
+      const hasExistingRows = (this.network.nodeCapacity ?? this.network.nodeCount ?? 0) > 0;
       let preserved = null;
-      if (shouldExpand) {
-        preserved = this.withBufferAccess(() => {
-          try {
-            const buffer = this.network.getNodeAttributeBuffer(name);
-            const count = buffer?.view ? Math.floor(buffer.view.length / currentDim) : 0;
+      if (shouldExpand && hasExistingRows) {
+        try {
+          const buffer = this.network.getNodeAttributeBuffer(name);
+          const view = buffer?.view ?? null;
+          const count = view ? Math.floor(view.length / currentDim) : 0;
+          preserved = this.withBufferAccess(() => {
             return expandAttributeData({
-              view: buffer?.view,
+              view,
               count,
               fromDimension: currentDim,
               toDimension: dimension,
             });
-          } catch (_) {
-            return null;
-          }
-        });
+          });
+        } catch (error) {
+          warnOnce(this, `node-preserve:${name}`, `VisualAttributes: failed to preserve node attribute "${name}" while expanding metadata; aborting redefinition.`, { error });
+          throw error;
+        }
       }
       console.warn(
         `Attribute ${name} metadata mismatch: redefining with dimension ${dimension} type ${type} (saw dimension ${info?.dimension ?? 'unknown'}, type ${info?.type ?? 'unknown'}).` +
@@ -1032,22 +1025,25 @@ export class VisualAttributes {
     } else if (attributeInfoMismatched(info, expected)) {
       const currentDim = info?.dimension ?? dimension;
       const shouldExpand = currentDim > 0 && currentDim < dimension;
+      const hasExistingRows = (this.network.edgeCapacity ?? this.network.edgeCount ?? 0) > 0;
       let preserved = null;
-      if (shouldExpand) {
-        preserved = this.withBufferAccess(() => {
-          try {
-            const buffer = this.network.getEdgeAttributeBuffer(name);
-            const count = buffer?.view ? Math.floor(buffer.view.length / currentDim) : 0;
+      if (shouldExpand && hasExistingRows) {
+        try {
+          const buffer = this.network.getEdgeAttributeBuffer(name);
+          const view = buffer?.view ?? null;
+          const count = view ? Math.floor(view.length / currentDim) : 0;
+          preserved = this.withBufferAccess(() => {
             return expandAttributeData({
-              view: buffer?.view,
+              view,
               count,
               fromDimension: currentDim,
               toDimension: dimension,
             });
-          } catch (_) {
-            return null;
-          }
-        });
+          });
+        } catch (error) {
+          warnOnce(this, `edge-preserve:${name}`, `VisualAttributes: failed to preserve edge attribute "${name}" while expanding metadata; aborting redefinition.`, { error });
+          throw error;
+        }
       }
       console.warn(
         `Edge attribute ${name} metadata mismatch: redefining with dimension ${dimension} type ${type} (saw dimension ${info?.dimension ?? 'unknown'}, type ${info?.type ?? 'unknown'}).` +
@@ -1087,22 +1083,25 @@ export class VisualAttributes {
     } else if (attributeInfoMismatched(info, expected)) {
       const currentDim = info?.dimension ?? targetDimension;
       const shouldExpand = currentDim > 0 && currentDim < targetDimension;
+      const hasExistingRows = (this.network.edgeCapacity ?? this.network.edgeCount ?? 0) > 0;
       let preserved = null;
-      if (shouldExpand) {
-        preserved = this.withBufferAccess(() => {
-          try {
-            const buffer = this.network.getEdgeAttributeBuffer(edgeName);
-            const count = buffer?.view ? Math.floor(buffer.view.length / currentDim) : 0;
+      if (shouldExpand && hasExistingRows) {
+        try {
+          const buffer = this.network.getEdgeAttributeBuffer(edgeName);
+          const view = buffer?.view ?? null;
+          const count = view ? Math.floor(view.length / currentDim) : 0;
+          preserved = this.withBufferAccess(() => {
             return expandAttributeData({
-              view: buffer?.view,
+              view,
               count,
               fromDimension: currentDim,
               toDimension: targetDimension,
             });
-          } catch (_) {
-            return null;
-          }
-        });
+          });
+        } catch (error) {
+          warnOnce(this, `node-to-edge-preserve:${edgeName}`, `VisualAttributes: failed to preserve edge attribute "${edgeName}" while expanding node-to-edge metadata; aborting redefinition.`, { error });
+          throw error;
+        }
       }
       console.warn(
         `Edge attribute ${edgeName} metadata mismatch: redefining with dimension ${targetDimension} type ${AttributeType.Float} (saw dimension ${info?.dimension ?? 'unknown'}, type ${info?.type ?? 'unknown'})` +
@@ -1127,32 +1126,6 @@ export class VisualAttributes {
       });
     } catch (error) {
       // If no edge capacity is allocated yet, buffer pointers may be unavailable; defer validation.
-      if (this.network.edgeCapacity > 0) throw error;
-    }
-  }
-
-  ensureNodeToEdgeAttributeTyped(sourceName, edgeName, sourceDimension, type) {
-    const targetDimension = sourceDimension * 2;
-    const expected = { dimension: targetDimension, type };
-    const info = this.network.getEdgeAttributeInfo(edgeName);
-    const hasAttribute = this.network.hasEdgeAttribute(edgeName);
-
-    if (!hasAttribute) {
-      this.network.defineNodeToEdgeAttribute(sourceName, edgeName, 'both');
-    } else if (attributeInfoMismatched(info, expected)) {
-      console.warn(
-        `Edge attribute ${edgeName} metadata mismatch: redefining with dimension ${targetDimension} type ${type} (saw dimension ${info?.dimension ?? 'unknown'}, type ${info?.type ?? 'unknown'}).`,
-      );
-      this.network.removeEdgeAttribute(edgeName);
-      this.network.defineNodeToEdgeAttribute(sourceName, edgeName, 'both');
-    }
-
-    try {
-      this.withBufferAccess(() => {
-        const buffer = this.network.getEdgeAttributeBuffer(edgeName);
-        validateAttribute(buffer, edgeName, expected);
-      });
-    } catch (error) {
       if (this.network.edgeCapacity > 0) throw error;
     }
   }
@@ -1507,14 +1480,19 @@ export class VisualAttributes {
 
   withBufferAccess(fn) {
     this._bufferAccessDepth += 1;
+    let result;
+    let completed = false;
     try {
       if (typeof this.network?.withBufferAccess === 'function') {
-        return this.network.withBufferAccess(fn);
+        result = this.network.withBufferAccess(fn);
+      } else {
+        result = fn();
       }
-      return fn();
+      completed = true;
+      return result;
     } finally {
       this._bufferAccessDepth = Math.max(0, this._bufferAccessDepth - 1);
-      if (this._bufferAccessDepth === 0) {
+      if (completed && this._bufferAccessDepth === 0) {
         this.flushPendingAttributeBumps();
       }
     }
@@ -1524,13 +1502,13 @@ export class VisualAttributes {
     if (!this.network) return;
     const nodeNames = Array.from(this._pendingNodeAttributeBumps);
     const edgeNames = Array.from(this._pendingEdgeAttributeBumps);
-    this._pendingNodeAttributeBumps.clear();
-    this._pendingEdgeAttributeBumps.clear();
     for (const name of nodeNames) {
       this.network.bumpNodeAttributeVersion?.(name);
+      this._pendingNodeAttributeBumps.delete(name);
     }
     for (const name of edgeNames) {
       this.network.bumpEdgeAttributeVersion?.(name);
+      this._pendingEdgeAttributeBumps.delete(name);
     }
   }
 }

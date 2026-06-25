@@ -169,6 +169,82 @@ test.describe('network load/save', () => {
     expect(visibleDirtyIndicatorsAfterRestore).toBe(0);
   });
 
+  test('storage network snapshots save full state and current positions for reload', async ({ page }) => {
+    await page.goto('/tests/fixtures/demo.html?layout=none&mode=2d&nodes=48&mappers=1');
+    await waitForDiagnostics(page);
+
+    const result = await page.evaluate(async () => {
+      const helios = window.__helios;
+      const originalPositions = helios._snapshotNodePositions();
+      const savedPositions = new Float32Array(originalPositions);
+      for (let i = 0; i < Math.min(savedPositions.length, 18); i += 1) {
+        savedPositions[i] = (i + 1) * 11.25;
+      }
+      helios._writeNodePositions(savedPositions);
+      helios.states.set('appearance.edgeStyle.widthScale', 2.625, {
+        scope: 'workspace',
+        source: 'ui',
+        reason: 'network-snapshot-full-state-save',
+      });
+
+      const blob = await helios.storage.saveNetworkSnapshot('xnet', {
+        output: 'blob',
+        includeVisualization: true,
+        includeCurrentPositions: true,
+        fullVisualizationState: true,
+        layoutRuntime: { preferDelegate: true },
+        storage: { includeJournal: false },
+      });
+      const loadedForInspection = await helios.network.constructor.fromXNet(blob);
+      const attached = helios.getAttachedVisualizationState(loadedForInspection);
+      loadedForInspection.dispose?.();
+
+      const mutatedPositions = new Float32Array(savedPositions);
+      for (let i = 0; i < Math.min(mutatedPositions.length, 18); i += 1) {
+        mutatedPositions[i] = -1000 - i;
+      }
+      helios._writeNodePositions(mutatedPositions);
+      helios.states.set('appearance.edgeStyle.widthScale', 1.125, {
+        scope: 'workspace',
+        source: 'ui',
+        reason: 'network-snapshot-reset-before-load',
+      });
+
+      await helios.loadNetwork(blob, {
+        format: 'xnet',
+        disposeOld: true,
+        recreateRenderer: true,
+        keepCamera: false,
+        restoreVisualizationState: true,
+      });
+
+      return {
+        blobSize: blob.size,
+        attachedSparse: attached?.metadata?.sparse === true,
+        behaviorStateKeys: Object.keys(attached?.payload?.behaviorState ?? {}),
+        hasUiState: attached?.payload?.uiState && typeof attached.payload.uiState === 'object',
+        positionEncoding: attached?.payload?.layoutRuntimeState?.positions?.encoding ?? null,
+        savedHead: Array.from(savedPositions.slice(0, 18)),
+        restoredHead: Array.from(helios._snapshotNodePositions().slice(0, 18)),
+        edgeWidth: helios.edgeWidthScale(),
+        storedEdgeWidth: helios.states.get('appearance.edgeStyle.widthScale'),
+        edgeWidthStatus: helios.states.status('appearance.edgeStyle.widthScale')?.state ?? null,
+      };
+    });
+
+    expect(result.blobSize).toBeGreaterThan(16);
+    expect(result.attachedSparse).toBe(false);
+    expect(result.behaviorStateKeys.length).toBeGreaterThan(0);
+    expect(result.hasUiState).toBe(true);
+    expect(result.positionEncoding).toBe('float32-base64');
+    expect(result.edgeWidth).toBeCloseTo(2.625, 3);
+    expect(result.storedEdgeWidth).toBeCloseTo(2.625, 3);
+    expect(result.edgeWidthStatus).toBe('changed');
+    for (let i = 0; i < result.savedHead.length; i += 1) {
+      expect(result.restoredHead[i]).toBeCloseTo(result.savedHead[i], 4);
+    }
+  });
+
   test('round-trips via XNET and replaces the network in-place', async ({ page }) => {
     await page.goto('/tests/fixtures/demo.html?layout=none&mode=2d&nodes=64');
     const diagnostics = await waitForDiagnostics(page);
@@ -309,7 +385,75 @@ test.describe('network load/save', () => {
     expect(result.after.edges).toBe(result.before.edges);
   });
 
-  test('shows the GML lossy-export warning only as an icon when GML is selected', async ({ page }) => {
+  test('imports and exports GT through the public network API', async ({ page }) => {
+    await page.goto('/tests/fixtures/demo.html?layout=none&mode=2d&nodes=48');
+    await waitForDiagnostics(page);
+
+    const result = await page.evaluate(async () => {
+      const helios = window.__helios;
+      const before = { nodes: helios.network.nodeCount, edges: helios.network.edgeCount };
+      const gtBlob = await helios.saveNetwork('gt', { output: 'blob' });
+      await helios.loadNetwork(gtBlob, {
+        format: 'gt',
+        disposeOld: true,
+        recreateRenderer: true,
+        keepCamera: false,
+      });
+      return {
+        before,
+        after: { nodes: helios.network.nodeCount, edges: helios.network.edgeCount },
+        size: gtBlob.size,
+      };
+    });
+
+    expect(result.size).toBeGreaterThan(16);
+    expect(result.after.nodes).toBe(result.before.nodes);
+    expect(result.after.edges).toBe(result.before.edges);
+  });
+
+  test('loads GT zstd files through filename inference', async ({ page }) => {
+    await page.goto('/tests/fixtures/demo.html?layout=none&mode=2d&nodes=48');
+    await waitForDiagnostics(page);
+
+    const result = await page.evaluate(async () => {
+      const helios = window.__helios;
+      const bytes = Uint8Array.from(
+        atob('KLUv/QBofQgA8o0wKpA7B1i1qLvdL2f13wJtPJEw+fNDUqIkCXbKP8LgElq9YTmfa+fwBGokSdroQ/1Gq2OqCR4MBSiAWkiaBnnie2X1IAFSmsjxlflFjouS+B6h4tZZSGV9Eu27nM/r8+b6QeX26wek6QHeIuNW7i7uuhdtTX/puE46vRttZZf1G53lj5870VZ/5bgrEe14YIy23JqxX1oz6ekfsVucdsInNh3jlYwpFFnW/W+IdlsprcHRUidt7/1r6yKmUkd6T9vDAQUiKJBG7G4DEBjjKA0KhQ6LjBNmuZEQhxihLRcUFGMcSzSeYBXpsPASACW2lNDPtcZQMM2WsZzQcVhNbKbFsH2uEglJCwBi2OMXCQ=='),
+        (char) => char.charCodeAt(0),
+      );
+      const file = new File([bytes], 'netzschleuder-sample.gt.zst', { type: 'application/zstd' });
+      await helios.loadNetwork(file, {
+        disposeOld: true,
+        recreateRenderer: true,
+        keepCamera: false,
+      });
+      return {
+        nodes: helios.network.nodeCount,
+        edges: helios.network.edgeCount,
+        format: helios._lastLoadedNetworkFormat,
+        base: helios._lastLoadedNetworkBase,
+        title: helios.network.getNetworkStringAttribute('title'),
+        label: helios.network.getNodeStringAttribute('label', 1),
+        ...helios.network.withBufferAccess(() => ({
+          score: helios.network.getNodeAttributeBuffer('score').view[2],
+          coords: Array.from(helios.network.getNodeAttributeBuffer('coords').view.slice(4, 6)),
+          weights: Array.from(helios.network.getEdgeAttributeBuffer('weight').view.slice(0, 3)),
+        })),
+      };
+    });
+
+    expect(result.nodes).toBe(3);
+    expect(result.edges).toBe(3);
+    expect(result.format).toBe('gt');
+    expect(result.base).toBe('netzschleuder-sample');
+    expect(result.title).toBe('gt-zst-demo');
+    expect(result.label).toBe('Beta');
+    expect(result.score).toBeCloseTo(3.75);
+    expect(result.coords).toEqual([5, 6]);
+    expect(result.weights).toEqual([0.5, 1.5, 2.5]);
+  });
+
+  test('shows the lossy-export warning only as an icon when interoperability formats are selected', async ({ page }) => {
     await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=48&session=0');
     await page.waitForFunction(() => window.__helios?.network?.nodeCount > 0);
     const networkControls = page.locator('.helios-ui-network').first();
@@ -322,8 +466,44 @@ test.describe('network load/save', () => {
     await expect(warning).toBeVisible();
     await expect(warning.locator('svg')).toHaveCount(1);
     await expect(warning).toHaveText('');
+    await formatSelect.selectOption('gt');
+    await expect(warning).toBeVisible();
     await formatSelect.selectOption('bxnet');
     await expect(warning).toBeHidden();
+  });
+
+  test('Data panel save uses full storage network snapshot options', async ({ page }) => {
+    await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=32&session=0');
+    await page.waitForFunction(() => window.__helios?.network?.nodeCount > 0);
+
+    await page.evaluate(() => {
+      const helios = window.__helios;
+      const calls = [];
+      const original = helios.storage.saveNetworkSnapshot.bind(helios.storage);
+      helios.storage.saveNetworkSnapshot = async (format, options = {}) => {
+        calls.push({ format, options: structuredClone(options) });
+        return new Blob(['stub-network'], { type: 'application/octet-stream' });
+      };
+      window.__saveNetworkSnapshotCalls = calls;
+      window.__restoreSaveNetworkSnapshot = () => {
+        helios.storage.saveNetworkSnapshot = original;
+      };
+    });
+
+    const networkControls = page.locator('.helios-ui-network').first();
+    await networkControls.locator('.helios-ui-network__actions select').selectOption('xnet');
+    await networkControls.getByRole('button', { name: 'Save network' }).click();
+    await expect.poll(() => page.evaluate(() => window.__saveNetworkSnapshotCalls?.length ?? 0)).toBe(1);
+    const [call] = await page.evaluate(() => window.__saveNetworkSnapshotCalls);
+    await page.evaluate(() => window.__restoreSaveNetworkSnapshot?.());
+
+    expect(call.format).toBe('xnet');
+    expect(call.options.output).toBe('blob');
+    expect(call.options.includeVisualization).toBe(true);
+    expect(call.options.includeCurrentPositions).toBe(true);
+    expect(call.options.fullVisualizationState).toBe(true);
+    expect(call.options.layoutRuntime).toEqual({ preferDelegate: true });
+    expect(call.options.storage).toEqual({ includeJournal: false });
   });
 
   test('loads a dropped GML file when fileDrop is enabled', async ({ page }) => {

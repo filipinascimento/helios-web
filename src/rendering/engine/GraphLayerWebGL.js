@@ -38,7 +38,6 @@ const {
   EDGE_OPACITY_ATTRIBUTE,
   EDGE_STATE_ATTRIBUTE,
   EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
-  EDGE_ENDPOINTS_STATE_ATTRIBUTE,
 } = VISUAL_ATTRIBUTE_NAMES;
 
 function normalizeEndpoints(value) {
@@ -202,12 +201,14 @@ const EDGE_UNIFORM_NAMES = [
   'u_nodePositionsFrom',
   'u_nodeInterpolationFactor',
   'u_nodeInterpolationEnabled',
+  'u_nodeStates',
   'u_nodeEdgeColors',
   'u_edgeColors',
   'u_edgeStates',
   'u_edgeOpacities',
   'u_nodeOpacitySource',
   'u_edgeEndpoints',
+  'u_hasNodeStates',
   'u_hasEdgeStates',
   'u_hoverNodeIndex',
   'u_hoverNodeIsVirtual',
@@ -258,11 +259,11 @@ const EDGE_QUAD_UNIFORM_NAMES = [
   'u_nodePositionsFrom',
   'u_nodeInterpolationFactor',
   'u_nodeInterpolationEnabled',
+  'u_nodeStates',
   'u_nodeEdgeColors',
   'u_edgeColors',
   'u_edgeEndpoints',
   'u_edgeStates',
-  'u_edgeEndpointStates',
   'u_edgeWidths',
   'u_edgeOpacities',
   'u_edgeEndpointSizes',
@@ -280,7 +281,7 @@ const EDGE_QUAD_UNIFORM_NAMES = [
   'u_hasEdgeColors',
   'u_hasNodeColors',
   'u_hasEdgeStates',
-  'u_hasEdgeEndpointStates',
+  'u_hasNodeStates',
   'u_hasEdgeWidths',
   'u_hasEdgeOpacities',
   'u_hasEdgeEndpointSizes',
@@ -795,7 +796,6 @@ export class GraphLayerWebGL extends GraphLayer {
       opacities: null,
       endpointSizes: null,
       states: null,
-      endpointStates: null,
     };
     this.textureMeta = {
       nodePositions: null,
@@ -815,7 +815,6 @@ export class GraphLayerWebGL extends GraphLayer {
       edgeOpacities: null,
       edgeEndpointSizes: null,
       edgeStates: null,
-      edgeEndpointStates: null,
     };
     this.bufferMeta = {
       nodeIds: null,
@@ -1369,7 +1368,6 @@ export class GraphLayerWebGL extends GraphLayer {
     this.edgeTextures.opacities = this.createTexture();
     this.edgeTextures.endpointSizes = this.createTexture();
     this.edgeTextures.states = this.createTexture();
-    this.edgeTextures.endpointStates = this.createTexture();
   }
 
   resolveEdgeVariant(visualConfig, options = {}) {
@@ -1510,7 +1508,6 @@ export class GraphLayerWebGL extends GraphLayer {
       const edgeOpacities = safeGet('edge', EDGE_OPACITY_ATTRIBUTE);
       const edgeEndpointSizes = safeGet('edge', EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
       const edgeStates = safeGet('edge', EDGE_STATE_ATTRIBUTE);
-      const edgeEndpointStates = safeGet('edge', EDGE_ENDPOINTS_STATE_ATTRIBUTE);
 
       const edgeNodeColor = edgeNodeAttributes?.color ? safeGet('node', edgeNodeAttributes.color) : null;
       const edgeNodeWidth = edgeNodeAttributes?.width ? safeGet('node', edgeNodeAttributes.width) : null;
@@ -1569,7 +1566,6 @@ export class GraphLayerWebGL extends GraphLayer {
         opacities: edgeOpacities?.view ?? null,
         endpointSizes: edgeEndpointSizes?.view ?? null,
         states: edgeStates?.view ?? null,
-        endpointStates: edgeEndpointStates?.view ?? null,
         indices: edgeIndices,
         indexDirtyRange: edgeIndexDirtyRange,
         count: edgeIndices?.length ?? 0,
@@ -1580,7 +1576,6 @@ export class GraphLayerWebGL extends GraphLayer {
           opacities: edgeOpacities?.version ?? 0,
           endpointSizes: edgeEndpointSizes?.version ?? 0,
           states: edgeStates?.version ?? 0,
-          endpointStates: edgeEndpointStates?.version ?? 0,
           indices: edgeIndices?.version ?? topologyVersions?.edge ?? 0,
           topology: topologyVersions?.edge ?? 0,
         },
@@ -2252,17 +2247,6 @@ export class GraphLayerWebGL extends GraphLayer {
               edges.versions?.states ?? 0,
             );
           }
-          if (edges.endpointStates) {
-            const edgeEndpointStateCount = Math.floor((edges.endpointStates.length ?? 0) / 2);
-            this.uploadUintTexture(
-              'edgeEndpointStates',
-              this.edgeTextures.endpointStates,
-              edges.endpointStates,
-              2,
-              edgeEndpointStateCount,
-              edges.versions?.endpointStates ?? 0,
-            );
-          }
         }
 
         const viewport = context.viewport;
@@ -2403,7 +2387,7 @@ export class GraphLayerWebGL extends GraphLayer {
             && edges.opacities,
           );
           const hasEdgeStates = Boolean(edges.states);
-          const hasEdgeEndpointStates = Boolean(edges.endpointStates);
+          const hasNodeStatesForEdgeEndpoint = Boolean(nodes.states);
           const hasEdgeEndpointSizes = Boolean(
             edgeVariant?.endpointSizeBuffer
             && edgeVariant?.endpointSizeSource !== 'node'
@@ -2450,11 +2434,11 @@ export class GraphLayerWebGL extends GraphLayer {
             set1i(uniforms, 'u_nodePositionsFrom', 12);
             set1f(uniforms, 'u_nodeInterpolationFactor', interpolationFactor);
             set1i(uniforms, 'u_nodeInterpolationEnabled', interpolationEnabled ? 1 : 0);
+            set1i(uniforms, 'u_nodeStates', 16);
             set1i(uniforms, 'u_nodeEdgeColors', 5);
             set1i(uniforms, 'u_edgeColors', 2);
             set1i(uniforms, 'u_edgeEndpoints', 3);
             set1i(uniforms, 'u_edgeStates', 15);
-            set1i(uniforms, 'u_edgeEndpointStates', 16);
             set1i(uniforms, 'u_edgeWidths', 6);
             set1i(uniforms, 'u_edgeOpacities', 10);
             set1i(uniforms, 'u_edgeEndpointSizes', 7);
@@ -2472,7 +2456,7 @@ export class GraphLayerWebGL extends GraphLayer {
             set1i(uniforms, 'u_hasEdgeColors', hasEdgeColors ? 1 : 0);
             set1i(uniforms, 'u_hasNodeColors', hasNodeColorsForEdgeChannel ? 1 : 0);
             set1i(uniforms, 'u_hasEdgeStates', hasEdgeStates ? 1 : 0);
-            set1i(uniforms, 'u_hasEdgeEndpointStates', hasEdgeEndpointStates ? 1 : 0);
+            set1i(uniforms, 'u_hasNodeStates', hasNodeStatesForEdgeEndpoint ? 1 : 0);
             set1i(uniforms, 'u_hasEdgeWidths', hasEdgeWidths ? 1 : 0);
             set1i(uniforms, 'u_hasEdgeOpacities', hasEdgeOpacities ? 1 : 0);
             set1i(uniforms, 'u_hasEdgeEndpointSizes', hasEdgeEndpointSizes ? 1 : 0);
@@ -2594,7 +2578,7 @@ export class GraphLayerWebGL extends GraphLayer {
             this.bindTexture(11, this.nodeTextures.edgeOpacitySource);
             this.bindTexture(9, this.nodeTextures.edgeEndpointSizeSource);
             this.bindTexture(15, this.edgeTextures.states);
-            this.bindTexture(16, this.edgeTextures.endpointStates);
+            this.bindTexture(16, this.nodeTextures.states);
             gl.bindVertexArray(this.edgeQuadVao);
             gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.edgeCount);
             return;
@@ -2611,6 +2595,7 @@ export class GraphLayerWebGL extends GraphLayer {
           set1i(uniforms, 'u_nodePositionsFrom', 12);
           set1f(uniforms, 'u_nodeInterpolationFactor', interpolationFactor);
           set1i(uniforms, 'u_nodeInterpolationEnabled', interpolationEnabled ? 1 : 0);
+          set1i(uniforms, 'u_nodeStates', 16);
           set1i(uniforms, 'u_nodeEdgeColors', 5);
           set1i(uniforms, 'u_edgeColors', 2);
           set1i(uniforms, 'u_edgeStates', 15);
@@ -2623,6 +2608,7 @@ export class GraphLayerWebGL extends GraphLayer {
           set1i(uniforms, 'u_edgeOpacityEndpoints', opacityEndpointMode);
           set1i(uniforms, 'u_hasEdgeColors', hasEdgeColors ? 1 : 0);
           set1i(uniforms, 'u_hasNodeColors', hasNodeColorsForEdgeChannel ? 1 : 0);
+          set1i(uniforms, 'u_hasNodeStates', hasNodeStatesForEdgeEndpoint ? 1 : 0);
           set1i(uniforms, 'u_hasEdgeStates', hasEdgeStates ? 1 : 0);
           set1i(uniforms, 'u_hasEdgeOpacities', hasEdgeOpacities ? 1 : 0);
           set1i(uniforms, 'u_hasNodeOpacitySource', hasNodeOpacitySource ? 1 : 0);
@@ -2702,6 +2688,7 @@ export class GraphLayerWebGL extends GraphLayer {
           this.bindTexture(10, this.edgeTextures.opacities);
           this.bindTexture(11, this.nodeTextures.edgeOpacitySource);
           this.bindTexture(3, this.edgeTextures.endpoints);
+          this.bindTexture(16, this.nodeTextures.states);
           gl.bindVertexArray(this.edgeVao);
           gl.drawArraysInstanced(gl.LINES, 0, 2, this.edgeCount);
         };

@@ -20,6 +20,16 @@ async function ensureMappersPanelVisible(page) {
   return panel;
 }
 
+function subpanelForHeader(header) {
+  return header.locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " helios-ui-subpanel ")][1]');
+}
+
+function rowByTitle(page, panel, title) {
+  return panel.locator('.helios-ui-row', {
+    has: page.locator('.helios-ui-label__title', { hasText: new RegExp(`^${title}$`) }),
+  }).first();
+}
+
 test.describe('mappers panel colormap picker', () => {
   test('shows searchable list with thumbnails', async ({ page }) => {
     await page.goto('/tests/fixtures/demo.html?renderer=webgl&nodes=50&mappers=1');
@@ -107,5 +117,29 @@ test.describe('mappers panel colormap picker', () => {
     const selected = popover.locator('.helios-ui-colormap-picker__item[data-selected="true"]').first();
     await expect(selected).toBeVisible();
     await expect(selected).toHaveAttribute('data-key', 'interpolateViridis');
+  });
+
+  test('uses compact advanced switches for divergent and clamp controls', async ({ page }) => {
+    await page.goto('/tests/fixtures/demo.html?renderer=webgl&nodes=50&mappers=1');
+    const diagnostics = await waitForDiagnostics(page);
+    expect(diagnostics.ready).toBe(true);
+    const panel = await ensureMappersPanelVisible(page);
+
+    const typeRow = rowByTitle(page, panel, 'Type');
+    await expect(typeRow).toBeVisible();
+    await typeRow.locator('select.helios-ui-select').first().selectOption('colormap');
+
+    const advancedHeader = panel.locator('button.helios-ui-subpanel__header', { hasText: 'Advanced' }).first();
+    const advancedItem = subpanelForHeader(advancedHeader);
+    if ((await advancedItem.getAttribute('data-collapsed')) === 'true') {
+      await advancedHeader.click();
+    }
+
+    for (const title of ['Divergent', 'Clamp Min', 'Clamp Max']) {
+      const row = rowByTitle(page, panel, title);
+      await expect(row).toBeVisible();
+      await expect(row.locator('[role="switch"]')).toHaveCount(1);
+      await expect(row.locator('.helios-ui-segmented-toggle')).toHaveCount(0);
+    }
   });
 });

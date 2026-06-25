@@ -180,6 +180,13 @@ export function createDefaultNetworkSource(value = {}) {
   };
 }
 
+/**
+ * Normalize a visualization-state payload into the current persistence shape.
+ *
+ * @public
+ * @param {object} [value] - Partial visualization payload or legacy snapshot.
+ * @returns {object} Normalized visualization state.
+ */
 export function normalizeVisualizationPayload(value = {}) {
   const source = value && typeof value === 'object' ? value : {};
   const preferences = createDefaultPreferencesState(source.preferences);
@@ -209,6 +216,13 @@ export function normalizeVisualizationPayload(value = {}) {
   };
 }
 
+/**
+ * Normalize a session payload into the current persisted session shape.
+ *
+ * @public
+ * @param {object} [value] - Partial session payload or legacy session record.
+ * @returns {object} Normalized session state with network and position records.
+ */
 export function normalizeSessionPayload(value = {}) {
   const source = value && typeof value === 'object' ? value : {};
   const preferences = createDefaultPreferencesState(source.preferences);
@@ -342,6 +356,13 @@ export function migratePersistenceEnvelope(input, expectedKind = null) {
   return createPersistenceEnvelope(kind, payload, source.metadata);
 }
 
+/**
+ * Flatten visualization state into sparse dotted override paths.
+ *
+ * @public
+ * @param {object} source - Visualization state to flatten.
+ * @returns {object} Dotted-path override map.
+ */
 export function flattenVisualizationOverrides(source) {
   const envelope = migratePersistenceEnvelope(source, PERSISTENCE_KINDS.visualization);
   const payload = envelope.payload ?? {};
@@ -386,6 +407,14 @@ export function flattenVisualizationOverrides(source) {
   return pruneVolatileOverrides(output);
 }
 
+/**
+ * Compute sparse override differences between two flattened override maps.
+ *
+ * @public
+ * @param {object} [base] - Baseline dotted-path values.
+ * @param {object} [current] - Current dotted-path values.
+ * @returns {object} Dotted paths whose values differ from the baseline.
+ */
 export function diffOverrideMaps(base = {}, current = {}) {
   const paths = new Set([...Object.keys(base), ...Object.keys(current)]);
   const diff = {};
@@ -398,6 +427,14 @@ export function diffOverrideMaps(base = {}, current = {}) {
   return diff;
 }
 
+/**
+ * Apply sparse dotted-path overrides to a visualization state object.
+ *
+ * @public
+ * @param {object} source - Base visualization state.
+ * @param {object} [overrides] - Dotted-path override map.
+ * @returns {object} Visualization state with overrides applied.
+ */
 export function applyOverridesToVisualizationState(source, overrides = {}) {
   const envelope = migratePersistenceEnvelope(source, PERSISTENCE_KINDS.visualization);
   const payload = cloneSerializable(envelope.payload ?? {});

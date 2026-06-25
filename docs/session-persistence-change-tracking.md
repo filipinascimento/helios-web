@@ -43,11 +43,11 @@ call a separate persistence or session service.
 - Hot UI inputs update the live target immediately and keep session autosync
   debounced off the interaction path.
 - Interaction/UI/camera autosaves write state-only manifests when only sparse
-  state overrides changed. Position autosaves rewrite the session network
-  payload because current node positions are stored in the portable network
-  bytes. Autosave thumbnail refresh is allowed only through the centralized
-  dirty, idle, active-interaction, and minimum-interval policy; skipped captures
-  preserve the existing thumbnail.
+  state overrides changed. Position autosaves write the compressed `positionData`
+  side record and keep the existing network side-record reference. Autosave
+  thumbnail refresh is allowed only through the centralized dirty, idle,
+  active-interaction, and minimum-interval policy; skipped captures preserve the
+  existing thumbnail.
 - Network replacement and initial-network dirty events can request a full
   network save; manual Save Session / Sync remains the explicit full-save path.
 - Camera and position changes use the session interaction-idle window before

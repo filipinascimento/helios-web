@@ -8,7 +8,7 @@ minimal:
 3. Mutates buffers directly to assign random values.
 4. Boots a `Helios` renderer with the GPU force layout.
 5. Boots the standard Helios UI panels.
-6. Opts into browser persistence for the example session.
+6. Opts into browser storage and URL-routed sessions for the example run.
 7. Enables network file drag/drop on the visualization surface.
 
 The source lives in [`docs/examples/basic/main.js`](./main.js). Start the Vite dev server and visit `http://localhost:5173` to see it in action.
@@ -44,14 +44,17 @@ example-specific setup.
   - Very small exact-repulsion runs now soften repulsion automatically, so tiny lattices do not blow apart as aggressively as large sampled runs.
   - GPU-force recenters active nodes around the configured layout center by default.
   - GPU-force also exposes a `Rotation damping` slider that removes fitted whole-graph spin without increasing global viscosity.
+  - GPU-force exposes `Scheduling` and `Chunks` controls. `Auto` keeps the full WebGPU dispatch through 500k active nodes and switches to chunked dispatch above that size to reduce render queue stalls.
   - Pass `?forceNormalizationType=degree`, `strength`, `local-degree`, or `none` to exercise GPU-force normalization variants. The synthetic demo uses the `intensity` edge attribute for `strength`.
   - Missing startup positions are seeded deterministically around the center instead of randomly, which reduces the “spinning knot” startup on small graphs.
   - Delegate positions are automatic for GPU-force (no manual position-source toggle).
 - In DevTools, use `await window.__snapshotDelegatePositions()` for full delegate inspection, `await window.__helios.snapshotNodeCentroid([0, 1, 2])` for narrow readback, and `await window.__syncDelegatePositionsToNetwork()` to copy delegate positions into network buffers.
 - Pass `?mode=3d` to enable the depth axis; otherwise it runs in 2D.
-- The example opts into persistence explicitly; library use keeps durable
-  persistence off unless the developer enables it. Pass `?workspaceId=...` to
-  isolate browser persistence for a demo run.
+- The example opts into browser storage explicitly by passing top-level
+  `workspaceId`, `session`, `networkPersistence`, and `positionPersistence`
+  options. Plain library use keeps durable storage off unless the developer
+  enables it. Pass `?workspaceId=...` to isolate browser persistence for a demo
+  run.
 - Pass `?networkPersistence=0` or `?positionPersistence=0` to disable those
   persistence paths independently.
 - Network and position autosave are enabled by default. Pass
@@ -65,9 +68,9 @@ example-specific setup.
 - Loading or dropping a network file starts a new session named after that
   network, so the previously open network remains available from the resume
   picker instead of being overwritten.
-- The Network tab can load `.xnet`, `.zxnet`, `.bxnet`, and `.gml` files.
-  GML export is available with a warning because GML cannot preserve every
-  Helios-private setting or every attribute representation.
+- The Network tab can load `.xnet`, `.zxnet`, `.bxnet`, `.gml`, `.gt`, and `.gt.zst`
+  files. GML and GT export are available with a warning because they cannot
+  preserve every Helios-private setting or every attribute representation.
 - The Filter panel uses funding-project-style categorical checklist controls
   with counts and `All` / `None` actions for categorical attributes.
 - The example now requests weighted blended transparency for edges by default. Pass `?edgeTransparency=alpha` to compare against classic alpha blending, or use another supported mode explicitly. Weighted mode still falls back to alpha if unsupported.

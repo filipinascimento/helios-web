@@ -5,7 +5,7 @@ import {
 } from '../src/pipeline/Mapper.js';
 import { DEFAULT_NODE_COLORMAP } from '../src/colors/colormaps.js';
 import { AttributeType } from 'helios-network';
-import { EDGE_ENDPOINTS_SIZE_ATTRIBUTE } from '../src/pipeline/constants.js';
+import { EDGE_COLOR_ATTRIBUTE, EDGE_ENDPOINTS_SIZE_ATTRIBUTE } from '../src/pipeline/constants.js';
 import { DEFAULT_NODE_SIZE } from '../src/pipeline/constants.js';
 
 test('maps linear channel with rule override', () => {
@@ -103,7 +103,7 @@ test('nodeAttribute mapping duplicates endpoints when requested', () => {
   expect(mappedBoth.endpointSize).toEqual({ source: 3, target: 5 });
 });
 
-test('nodeAttribute mapping registers node-to-edge passthrough and replaces prior mapping', () => {
+test('endpointSize nodeAttribute mapping stays node-backed without an edge passthrough', () => {
   class FakeBuffer {
     constructor(dimension, type) {
       this.dimension = dimension;
@@ -150,21 +150,15 @@ test('nodeAttribute mapping registers node-to-edge passthrough and replaces prio
   const mapper = new Mapper({ mode: 'edge', network });
 
   mapper.channel('endpointSize').nodeAttribute('customSize', 'destination').done();
-  expect(network.nodeToEdgeCalls[0]).toMatchObject({
-    source: 'customSize',
-    edge: EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
-    endpoints: 'destination',
-    doubleWidth: true,
-  });
+  expect(network.nodeAttributes.has('customSize')).toBe(true);
+  expect(network.edgeAttributes.has(EDGE_ENDPOINTS_SIZE_ATTRIBUTE)).toBe(false);
+  expect(network.nodeToEdgeCalls).toHaveLength(0);
 
   mapper.channel('endpointSize').nodeAttribute('otherSize', 'source').done();
-  expect(network.removed).toContain(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
-  expect(network.nodeToEdgeCalls.at(-1)).toMatchObject({
-    source: 'otherSize',
-    edge: EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
-    endpoints: 'source',
-    doubleWidth: true,
-  });
+  expect(network.nodeAttributes.has('otherSize')).toBe(true);
+  expect(network.edgeAttributes.has(EDGE_ENDPOINTS_SIZE_ATTRIBUTE)).toBe(false);
+  expect(network.removed).not.toContain(EDGE_ENDPOINTS_SIZE_ATTRIBUTE);
+  expect(network.nodeToEdgeCalls).toHaveLength(0);
 });
 
 test('nodeAttribute mapping retries node-to-edge registration when edge attribute removal fails once', () => {
@@ -235,17 +229,17 @@ test('nodeAttribute mapping retries node-to-edge registration when edge attribut
 
   // Ensure the target edge attribute already exists so the first defineNodeToEdgeAttribute will
   // throw if removal fails.
-  network.defineEdgeAttribute(EDGE_ENDPOINTS_SIZE_ATTRIBUTE, AttributeType.Float, 2);
+  network.defineEdgeAttribute(EDGE_COLOR_ATTRIBUTE, AttributeType.Float, 8);
 
-  mapper.channel('endpointSize').nodeAttribute('size', 'source').done();
+  mapper.channel('color').nodeAttribute('color', 'source').done();
 
   expect(network.nodeToEdgeCalls.at(-1)).toMatchObject({
-    edge: EDGE_ENDPOINTS_SIZE_ATTRIBUTE,
+    edge: EDGE_COLOR_ATTRIBUTE,
     endpoints: 'source',
     doubleWidth: true,
   });
   expect(network.removeEdgeCalls).toBeGreaterThanOrEqual(2);
-  expect(network.hasNodeToEdgeAttribute(EDGE_ENDPOINTS_SIZE_ATTRIBUTE)).toBe(true);
+  expect(network.hasNodeToEdgeAttribute(EDGE_COLOR_ATTRIBUTE)).toBe(true);
 });
 
 test('default mappers expose sensible defaults', () => {

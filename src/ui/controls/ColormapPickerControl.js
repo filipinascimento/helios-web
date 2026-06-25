@@ -372,6 +372,9 @@ export class ColormapPickerControl {
         item.className = 'helios-ui-colormap-picker__item';
         item.dataset.interfaceFocusControl = 'true';
         item.dataset.key = entry.key;
+        item.dataset.colormapSource = entry.source ?? entry.group ?? '';
+        item.dataset.colormapKind = entry.kind ?? (entry.isScheme === true ? 'scheme' : 'ramp');
+        item.dataset.colormapScheme = entry.isScheme === true ? 'true' : 'false';
         const selected = entry.key === this.value;
         item.dataset.selected = selected ? 'true' : 'false';
         item.setAttribute('aria-selected', selected ? 'true' : 'false');
@@ -527,8 +530,8 @@ export class ColormapPickerControl {
     for (const cleanup of this.cleanups.splice(0)) {
       try {
         cleanup();
-      } catch (_) {
-        // ignore
+      } catch (error) {
+        console.warn('[HeliosUI][ColormapPicker] Cleanup failed.', error);
       }
     }
     this.element.remove();

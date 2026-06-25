@@ -31,6 +31,9 @@ test.describe('ui boot', () => {
     // Sanity check that at least one UI panel exists.
     const panelCount = await page.locator('.helios-ui-panel').count();
     expect(panelCount).toBeGreaterThan(0);
+    await expect(page.locator('.helios-ui-panel[data-panel-id="helios-ui-debug"]').first()).toHaveAttribute('data-collapsed', 'true');
+    await expect(page.locator('.helios-ui-panel[data-panel-id="helios-ui-metrics"]').first()).toHaveAttribute('data-collapsed', 'true');
+    await expect(page.locator('.helios-ui-panel[data-panel-id="helios-ui-camera"]').first()).toHaveAttribute('data-collapsed', 'true');
 
     if (errors.length) {
       await testInfo.attach('browser-errors', {

@@ -76,9 +76,44 @@ test('adaptive edge quality emits ui:binding-change events', () => {
 
   helios.edgeAdaptiveQuality({ slowFrameThresholdMs: 28, probeIntervalMs: 1400 });
 
-  const adaptiveEvent = events.find((event) => event.detail?.id === 'helios.edgeAdaptiveQuality');
+  const adaptiveEvent = events.find((event) => event.detail?.id === 'helios.edgeAdaptiveQuality' && event.detail?.source !== 'runtime');
   assert.ok(adaptiveEvent);
   assert.equal(adaptiveEvent.type, 'ui:binding-change');
   assert.equal(adaptiveEvent.detail.value.slowFrameThresholdMs, 28);
   assert.equal(adaptiveEvent.detail.value.probeIntervalMs, 1400);
+  assert.equal(adaptiveEvent.detail.trackOverride, true);
+});
+
+test('adaptive edge quality runtime events are non-persistent binding changes', () => {
+  const helios = Object.create(Helios.prototype);
+  helios.renderer = {
+    graphLayer: {
+      edgeAdaptiveFastRendering: false,
+      edgeFastRendering: false,
+      setAdaptiveEdgeFastRendering(value) {
+        this.edgeAdaptiveFastRendering = value;
+      },
+    },
+  };
+  helios._pendingGraphLayerProps = new Map();
+  helios._edgeAdaptiveQualityConfig = undefined;
+  helios._edgeAdaptiveRuntime = {
+    reason: 'quality',
+    lastRenderMs: null,
+    qualityFrameSamples: [],
+    qualityFrameAverageMs: null,
+  };
+
+  const events = [];
+  helios.dispatchEvent = (event) => {
+    events.push(event);
+    return true;
+  };
+
+  helios._setAdaptiveEdgeFastRendering(true, 'performance');
+
+  const adaptiveEvent = events.find((event) => event.detail?.id === 'helios.edgeAdaptiveQuality');
+  assert.ok(adaptiveEvent);
+  assert.equal(adaptiveEvent.detail.source, 'runtime');
+  assert.equal(adaptiveEvent.detail.trackOverride, false);
 });

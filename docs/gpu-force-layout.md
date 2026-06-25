@@ -26,6 +26,7 @@ At runtime, the delegate:
 3. Runs a GPU simulation step each layout tick:
    - WebGPU: compute shader passes over storage buffers.
    - WebGL2: fragment-shader passes over float textures with MRT ping-pong.
+   - WebGPU can optionally use chunked scheduling for very large active sets.
 4. Exposes a GPU position resource directly to the renderer:
    - WebGPU position buffer, or
    - WebGL2 position texture.
@@ -59,8 +60,29 @@ Each step executes GPU force integration and produces render-space positions:
   simulation positions, velocities, and render-space positions.
 - When `recenter` is enabled, a follow-up correction pass recenters the active
   set and can optionally damp fitted rigid-body rotation via `rotationDamping`.
+- With WebGPU chunked scheduling, each animation-frame layout tick processes a
+  bounded node-id range, updates render-space positions for that range, and
+  waits to swap simulation buffers until the full sweep completes. If
+  `recenter` is enabled, the sweep-end frame still runs a full active-set
+  recenter and output refresh, so a smaller periodic queue spike is expected.
 
 No per-node force math is done on CPU.
+
+### 2.2.1 Large-network WebGPU scheduling
+
+`layoutScheduling` selects how WebGPU layout work is submitted:
+
+- `auto` (default): use the normal full dispatch up to 500k active nodes, then
+  switch to chunked dispatch.
+- `full`: always use the legacy one-step dispatch.
+- `chunked`: use chunked dispatch regardless of graph size.
+
+`layoutChunkCount` controls how many chunks a full node-capacity sweep is split
+into. It defaults to `2` and is clamped to the UI range `2..10`. Chunked
+scheduling is intentionally slower to converge because one full layout sweep
+takes multiple render frames, but each frame submits less layout work ahead of
+rendering on the WebGPU queue. WebGL2 keeps the normal full-step behavior for v1
+even when the option is set.
 
 ### 2.3 Rendering (GPU -> GPU)
 
@@ -342,6 +364,8 @@ This avoids first-frame jumps while keeping internal solver scale consistent.
 From `GpuForceLayout` / `GpuForcePositionDelegate`:
 
 - `mode`: `'2d'` or `'3d'` (default `'2d'`)
+- `layoutScheduling`: `'auto'` (uses chunked WebGPU dispatch above 500k active nodes)
+- `layoutChunkCount`: `2`
 - `center`: `[0, 0, 0]`
 - `radius`: `220` (seed spread)
 - `depth`: `140` (3D seed spread)
@@ -362,7 +386,7 @@ From `GpuForceLayout` / `GpuForcePositionDelegate`:
 - `maxStep`: `2.5`
 - `minDistance`: `0.15`
 - `alpha`: `1`
-- `alphaDecay`: `0.005`
+- `alphaDecay`: `0.001`
 - `alphaTarget`: `0`
 - `alphaMin`: `0.001`
 - `umapA`: `1.5769434601962196`
@@ -391,7 +415,8 @@ CPU responsibilities:
 
 - topology extraction from network buffers
 - adjacency list build (`neighborStarts/counts/neighbors`)
-- parameter/command encoding and queue submission each tick
+- parameter/command encoding and queue submission each tick, including WebGPU
+  chunk range selection when chunked scheduling is active
 - optional readback/sync methods
 
 ### CPU readback/transfer policy
