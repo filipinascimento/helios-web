@@ -91,7 +91,7 @@ Mapper channels support `transformType` for common pre-transforms (`log`, `log1p
 
 ## Example: Basic demo node colors
 
-The bundled basic example (`docs/examples/basic/main.js`) uses Helios internal mapper defaults unless you explicitly change mapper settings through the API or UI. Toggle the renderer via `?renderer=webgl` and compare edge transparency modes via `?edgeTransparency=alpha` or another explicit mode to see how visuals react.
+The bundled main app (`docs/app/main.js`) uses Helios internal mapper defaults unless you explicitly change mapper settings through the API or UI. Toggle the renderer via `?renderer=webgl` and compare edge transparency modes via `?edgeTransparency=alpha` or another explicit mode to see how visuals react.
 
 ## When things look flat
 
@@ -99,4 +99,4 @@ The bundled basic example (`docs/examples/basic/main.js`) uses Helios internal m
 - Try a diverging map (e.g., `d3:interpolatePiYG`) when you have values centered around zero.
 - Increase size/width ranges if colors alone aren’t perceptible.
 
-For more end-to-end context, see the example README in `docs/examples/basic/README.md`.
+For more end-to-end context, see the example README in `docs/app/README.md`.

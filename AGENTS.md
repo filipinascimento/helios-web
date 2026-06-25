@@ -1,13 +1,13 @@
-# AGENTS.md — helios-web-next
+# AGENTS.md — helios-web
 
 ## Repo overview
 
-Helios Web Next is a Vite-built library + demo that wires `helios-network` (WASM graph core) into a layered renderer that prefers WebGPU and falls back to WebGL2.
+Helios Web is a Vite-built library + app that wires `helios-network` (WASM graph core) into a layered renderer that prefers WebGPU and falls back to WebGL2.
 
 ## Layout / “where things live”
 
 - `src/` — library source (public entry: `src/Helios.js`, exports: `src/index.js`)
-- `docs/` — canonical package docs and examples (`docs/examples/basic/` is served by `index.html`)
+- `docs/` — canonical package docs and examples (`docs/app/` is served by `index.html`)
 - `tests/` — Playwright E2E tests + Node unit tests, plus browser fixtures under `tests/fixtures/`
 - `dist/` — built artifacts from `npm run build` (don’t hand-edit)
 - `for_reference/` — older/reference material; treat as read-only unless explicitly doing archaeology
@@ -17,7 +17,7 @@ Helios Web Next is a Vite-built library + demo that wires `helios-network` (WASM
 
 - Node requirement: Node.js 18+ (uses `node --test`).
 - Install: `npm install` (Playwright browsers once: `npx playwright install`)
-- Dev server (serves `index.html` + `docs/examples/basic`): `npm run dev`
+- Dev server (serves `index.html` + `docs/app`): `npm run dev`
 - Build library bundle: `npm run build`
 - Unit tests (Node test runner): `npm test`
 - E2E tests (Playwright):
@@ -31,7 +31,7 @@ Helios Web Next is a Vite-built library + demo that wires `helios-network` (WASM
 - New feature / behavior change:
   - Add/extend tests (`tests/*.test.js` for pure logic; `tests/*.spec.js` for browser/rendering behavior).
   - Update documentation (`docs/` first, plus `README.md` when it affects onboarding/public API).
-  - Keep the demo stable (`docs/examples/basic`) because tests and docs reference it.
+  - Keep the demo stable (`docs/app`) because tests and docs reference it.
 - Major renderer/layout/picking updates: run the full matrix locally before handing off:
   - `npm test`
   - `npm run test:e2e` (headless; covers WebGL path)

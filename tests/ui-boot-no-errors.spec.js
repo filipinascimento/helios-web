@@ -10,7 +10,7 @@ function formatBrowserErrors(errors) {
 }
 
 test.describe('ui boot', () => {
-  test('docs basic demo boots without errors', async ({ page }, testInfo) => {
+  test('docs main app boots without errors', async ({ page }, testInfo) => {
     const errors = [];
 
     page.on('pageerror', (error) => {

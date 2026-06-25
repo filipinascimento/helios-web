@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('docs basic demo mappers', () => {
+test.describe('docs main app mappers', () => {
   test.describe.configure({ mode: 'serial', timeout: 90000 });
 
   const demoUrl = '/?nodes=500&mode=3d&edgeTransparency=weighted&renderer=webgl&session=0';
@@ -46,7 +46,7 @@ test.describe('docs basic demo mappers', () => {
     await expect(panel.locator('.helios-ui-range2__histogram:visible').first()).toBeVisible();
   });
 
-  test('basic demo does not override Helios internal mapper defaults', async ({ page }) => {
+  test('main app does not override Helios internal mapper defaults', async ({ page }) => {
     await page.goto(demoUrl);
 
     await page.waitForFunction(() => Boolean(window.__helios && window.__helios.ready));

@@ -227,7 +227,7 @@ the strength buffer sums those same weights for each endpoint. Layout metrics
 ignore self-loops and treat directed edges as contributing to both endpoints,
 matching the current d3-force-3d convention used by the layout.
 
-For the real exported demo fixtures in `docs/examples/basic`, use:
+For the real exported demo fixtures in `docs/app`, use:
 
 - `/?nodes=200&mode=2d&renderer=webgpu&layout=gpuforce&dataset=umap-export`
 - `/?nodes=2000&mode=2d&renderer=webgpu&layout=gpuforce&dataset=umap-export`

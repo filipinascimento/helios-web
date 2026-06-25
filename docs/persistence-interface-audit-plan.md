@@ -59,7 +59,7 @@ This is the working checklist for stabilizing Helios Web persistence across the 
 - Browser: Session tab uses separate rows for current label/id/actions and has a bounded scrollable list.
 - Browser: Session rows lead with nickname/network name and compact date, and do not show workspace ids.
 - Browser: Start Fresh dismisses the prompt on the first click and does not rebuild it.
-- Browser: basic demo does not apply demo-specific mapper or edge-width/opacity defaults.
+- Browser: main app does not apply demo-specific mapper or edge-width/opacity defaults.
 - Browser: small sessions keep more than two entries in the history list.
 - Browser: Data > Session resume clears the resume prompt.
 - Browser: Data > Session Save Session and Resume restore camera pose and camera controls.

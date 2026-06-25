@@ -15,7 +15,7 @@ npm install helios-network helios-web
 
 # source checkout development
 npm install
-npm run dev    # serves the example under docs/examples/basic via Vite
+npm run dev    # serves the main app under docs/app via Vite
 npm run build  # produces the library bundle in dist/
 npm run test:e2e  # launches a headless smoke test (run `npx playwright install` once)
 npm run test:e2e:headed  # headed run of the full Playwright suite
@@ -26,7 +26,7 @@ npm run test    # runs the node colormap unit test
 ```
 
 Point your browser at `http://localhost:5173` to interact with the bundled
-example (located in `docs/examples/basic`). It creates a 10k-node Watts-Strogatz
+main app (located in `docs/app`). It creates a 10k-node Watts-Strogatz
 sample graph by default, applies
 worker layout updates, and renders it through the indirect pipelines backed by
 `helios-network` sparse/indexed buffers so you can verify the stack end-to-end.
@@ -259,7 +259,7 @@ await helios.snapshotNodePositions([7, 11, 13]);
 await helios.snapshotNodeCentroid([7, 11, 13]);
 ```
 
-The same API powers the example under `docs/examples/basic/main.js`, making it
+The same API powers the main app under `docs/app/main.js`, making it
 easy to copy-paste a working setup into your own application.
 
 Interpolation is GPU shader based. Timing can run in adaptive mode (average
@@ -343,7 +343,7 @@ buffers to the renderer.
 
 ## Headless Smoke Test
 
-Run `npm run test:e2e` to boot the basic example in a headless Chromium session
+Run `npm run test:e2e` to boot the main app in a headless Chromium session
 via Playwright. The test forces the WebGL renderer, waits for Helios to finish
 bootstrapping, and samples pixels from the canvas to ensure the output isn't
 stuck at the background color. This provides a quick automated sanity check that
@@ -386,7 +386,7 @@ Development docs and test commands live in `DEVELOPING.md`.
   node/edge attributes into colors or sizes; mapped values are written into
   sparse visual attributes.
 
-The demo in `docs/examples/basic/main.js` showcases how to instantiate a
+The main app in `docs/app/main.js` showcases how to instantiate a
 network, define visual attributes, and kick off Helios with a worker-driven
 layout.
 

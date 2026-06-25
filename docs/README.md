@@ -129,7 +129,7 @@ Some common renderer/graph-layer “global” knobs are available directly on `H
 ## Mapper docs
 
 See [`docs/MAPPERS.md`](./MAPPERS.md) for channel mapping patterns, colormap helpers, and
-the node-color ramp used in the Basic example.
+the node-color ramp used in the main app.
 
 ## UI docs
 
@@ -181,7 +181,8 @@ See [`docs/HELIOS_WEB_NEXT_VS_LEGACY.md`](./HELIOS_WEB_NEXT_VS_LEGACY.md) for a 
 
 ## Example Catalog
 
-- [`docs/examples/basic`](./examples/basic/README.md) – creates a handful of nodes, randomizes attributes, and maps them to colors so you can see both node and edge styling.
+- [`docs/app`](./app/README.md) – full browser app with the standard panels, storage/session flows, and generated 10k-node Watts-Strogatz default network.
+- [`docs/examples/basic`](./examples/basic/README.md) – smallest browser example for embedding a graph without the app UI.
 
 To run the bundled example locally:
 
@@ -191,7 +192,7 @@ npm run dev
 # open http://localhost:5173
 ```
 
-The Vite dev server serves `index.html`, which bootstraps the Basic example under `docs/examples/basic`.
+The Vite dev server serves `index.html`, which bootstraps the main app under `docs/app`.
 
 ## Development Notes
 

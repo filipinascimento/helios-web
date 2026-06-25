@@ -81,7 +81,7 @@ function summarizeCpuProfile(profile) {
       hitCount: node.hitCount ?? 0,
     };
   });
-  const appRows = rows.filter((row) => row.url.includes('/src/') || row.url.includes('/docs/examples/basic/'));
+  const appRows = rows.filter((row) => row.url.includes('/src/') || row.url.includes('/docs/app/'));
   const bySelf = (a, b) => b.selfMs - a.selfMs;
   const byTotal = (a, b) => b.totalMs - a.totalMs;
   return {

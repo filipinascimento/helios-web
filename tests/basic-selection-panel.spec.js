@@ -223,7 +223,7 @@ async function ensureSectionExpanded(panel, title) {
   await expect(subpanel).toHaveAttribute('data-collapsed', 'false');
 }
 
-test.describe('basic example selection panel', () => {
+test.describe('main app selection panel', () => {
   test('selection panel binds to SelectionBehavior instead of owning selection logic', async ({ page }) => {
     await waitForExample(page);
 

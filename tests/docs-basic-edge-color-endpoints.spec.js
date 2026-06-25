@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('docs basic demo mappers', () => {
+test.describe('docs main app mappers', () => {
   test('edge color node passthrough endpoints update mapper config', async ({ page }) => {
     await page.goto('/?nodes=200&mode=2d&renderer=webgl');
 

@@ -31,7 +31,7 @@ async function expandPanel(panel) {
   await expect(panel).toHaveAttribute('data-collapsed', 'false');
 }
 
-test.describe('docs basic demo metrics panel', () => {
+test.describe('docs main app metrics panel', () => {
   test('can start and cancel worker metrics run', async ({ page }, testInfo) => {
     await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=6000');
 

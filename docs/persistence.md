@@ -544,7 +544,7 @@ const helios = new Helios(network, {
 ```
 
 Browser storage enables the session/persistence backend, but apps should set
-network and position autosave policy explicitly. The basic example enables both
+network and position autosave policy explicitly. The main app enables both
 autosave paths by default and lets query parameters disable either one:
 
 ```js

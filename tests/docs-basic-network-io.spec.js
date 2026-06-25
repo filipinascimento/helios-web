@@ -25,7 +25,7 @@ async function countNonBackground(page) {
   return nonBackground;
 }
 
-test.describe('docs basic demo network io', () => {
+test.describe('docs main app network io', () => {
   test('load button confirms before replacing an unsynced session', async ({ page }) => {
     await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=600');
 

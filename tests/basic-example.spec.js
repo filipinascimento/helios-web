@@ -24,8 +24,8 @@ function parseScreenshot(buffer) {
   });
 }
 
-test.describe('basic example', () => {
-  test('uses a generated grid default network', async ({ page }) => {
+test.describe('main app', () => {
+  test('uses a generated Watts-Strogatz default network', async ({ page }) => {
     await page.goto('/?renderer=webgl');
 
     const diagnostics = await waitForDiagnostics(page);
@@ -33,15 +33,13 @@ test.describe('basic example', () => {
 
     const syntheticDataset = await page.waitForFunction(() => {
       const dataset = window.__HELIOS_SYNTHETIC_DATASET__;
-      return dataset?.model === 'grid' && dataset.summary ? dataset : null;
+      return dataset?.model === 'watts-strogatz' && dataset.summary ? dataset : null;
     }, null, { timeout: 60000 }).then((handle) => handle.jsonValue());
 
-    expect(syntheticDataset.dimensions).toBe(2);
+    expect(syntheticDataset.name).toBe('small-world');
     expect(syntheticDataset.summary.nodeCount).toBe(10000);
-    expect(syntheticDataset.summary.edgeCount).toBe(19800);
-    expect(syntheticDataset.summary.neighborLevel).toBe(1);
-    expect(syntheticDataset.summary.rows).toBe(100);
-    expect(syntheticDataset.summary.columns).toBe(100);
+    expect(syntheticDataset.neighborLevel).toBe(2);
+    expect(syntheticDataset.rewiringProbability).toBe(0.006);
   });
 
   test('keeps the explicit Watts-Strogatz dataset path available', async ({ page }) => {
@@ -58,7 +56,7 @@ test.describe('basic example', () => {
     expect(syntheticDataset.name).toBe('small-world');
     expect(syntheticDataset.summary.nodeCount).toBe(256);
     expect(syntheticDataset.neighborLevel).toBe(2);
-    expect(syntheticDataset.rewiringProbability).toBe(0.01);
+    expect(syntheticDataset.rewiringProbability).toBe(0.006);
   });
 
   test('renders nodes with non-empty pixels', async ({ page }) => {
