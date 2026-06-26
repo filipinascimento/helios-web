@@ -42,6 +42,9 @@ call a separate persistence or session service.
 - Dirty indicators subscribe to the exact key or schema scope they display.
 - Hot UI inputs update the live target immediately and keep session autosync
   debounced off the interaction path.
+- Autosync is serialized and rate-limited. Changes that arrive while a sync is
+  running or inside the minimum sync interval stay accumulated in the pending
+  delta map; the next autosync writes the latest value for each changed key.
 - Interaction/UI/camera autosaves write state-only manifests when only sparse
   state overrides changed. Position autosaves write the compressed `positionData`
   side record and keep the existing network side-record reference. Autosave

@@ -259,6 +259,7 @@ const DEFAULT_SESSION_THUMBNAIL_MAX_HEIGHT = 180;
 const DEFAULT_SESSION_THUMBNAIL_MAX_BYTES = 256 * 1024;
 const DEFAULT_SESSION_THUMBNAIL_AUTOSAVE_MIN_INTERVAL_MS = 30000;
 const DEFAULT_AUTOSYNC_INTERACTION_IDLE_MS = 1000;
+const DEFAULT_SESSION_AUTOSYNC_MIN_INTERVAL_MS = 1500;
 const DEFAULT_POSITION_AUTOSAVE_DEBOUNCE_MS = 2000;
 const DEFAULT_AUTOSYNC_POSITION_MAX_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MANUAL_POSITION_MAX_BYTES = Number.MAX_SAFE_INTEGER;
@@ -469,6 +470,19 @@ function mergeCaptureThumbnailMode(previous, next) {
   if (previous === true || next === true) return true;
   if (previous === 'auto' || next === 'auto') return 'auto';
   return next === false || previous === false ? false : undefined;
+}
+
+function mergeSessionAutosaveOptions(previous = {}, next = {}) {
+  const pending = previous && typeof previous === 'object' ? previous : {};
+  const options = next && typeof next === 'object' ? next : {};
+  return {
+    ...pending,
+    ...options,
+    includeNetwork: pending.includeNetwork === true || options.includeNetwork === true,
+    includePositions: pending.includePositions === true || options.includePositions === true,
+    captureThumbnail: mergeCaptureThumbnailMode(pending.captureThumbnail, options.captureThumbnail),
+    snapshotLayoutRuntime: pending.snapshotLayoutRuntime === true || options.snapshotLayoutRuntime === true,
+  };
 }
 
 /**
@@ -764,6 +778,10 @@ export class HeliosStorageManager extends EventTarget {
       options.autosyncInteractionIdleMs ?? options.session?.autosyncInteractionIdleMs,
       DEFAULT_AUTOSYNC_INTERACTION_IDLE_MS,
     );
+    this.autosyncMinIntervalMs = normalizeNonNegativeMs(
+      options.autosyncMinIntervalMs ?? options.session?.autosyncMinIntervalMs,
+      DEFAULT_SESSION_AUTOSYNC_MIN_INTERVAL_MS,
+    );
     this.autosyncDisabled = false;
     this.autosyncDisabledReason = null;
     this.ready = Promise.resolve(null);
@@ -780,6 +798,9 @@ export class HeliosStorageManager extends EventTarget {
     this._pendingInteractionAutosaveOptions = null;
     this._pendingStateOverrideDeltas = new Map();
     this._sessionSaveInFlight = new Map();
+    this._sessionSaveQueue = Promise.resolve();
+    this._sessionSaveQueuedCount = 0;
+    this._sessionAutosaveAfterSaveQueued = false;
     this._sessionSaveSequence = 0;
     this._sessionSaveWarningMs = normalizeNonNegativeMs(
       options.sessionSaveWarningMs ?? options.session?.saveWarningMs,
@@ -791,6 +812,7 @@ export class HeliosStorageManager extends EventTarget {
     this._lastSessionThumbnailCapturedAt = null;
     this._lastAutosaveThumbnailAttemptAt = null;
     this._lastUserInteractionAt = null;
+    this._lastSessionAutosyncAt = null;
     this._recentPersistenceChanges = [];
     this._registerDefaultStateEntries();
     this.configure({
@@ -1231,14 +1253,7 @@ export class HeliosStorageManager extends EventTarget {
     if (options.autosync !== false && this._blockAutosyncForInvalidExplicitSession()) return;
     this._markSessionThumbnailDirty();
     const pending = this._sessionAutosaveOptions ?? {};
-    const nextOptions = {
-      ...pending,
-      ...options,
-      includeNetwork: pending.includeNetwork === true || options.includeNetwork === true,
-      includePositions: pending.includePositions === true || options.includePositions === true,
-      captureThumbnail: mergeCaptureThumbnailMode(pending.captureThumbnail, options.captureThumbnail),
-      snapshotLayoutRuntime: pending.snapshotLayoutRuntime === true || options.snapshotLayoutRuntime === true,
-    };
+    const nextOptions = mergeSessionAutosaveOptions(pending, options);
     this._sessionAutosaveOptions = nextOptions;
     const baseDelay = normalizeNonNegativeMs(options.sessionDebounceMs ?? options.debounceMs, 750);
     const interactionAutosave = isUserInteractionDetail(options) && options.interactionAlreadyIdle !== true;
@@ -1281,6 +1296,22 @@ export class HeliosStorageManager extends EventTarget {
     if (!keepExistingPayloadTimer) {
       this._sessionAutosaveTimer = setTimeout(() => this._runScheduledSessionAutosave(nextOptions), delay);
     }
+  }
+
+  _isSessionSaveBusy() {
+    return this._sessionSaveInFlight.size > 0 || this._sessionSaveQueuedCount > 0;
+  }
+
+  _deferAutosaveUntilSessionSaveIdle(options = {}) {
+    this._sessionAutosaveOptions = mergeSessionAutosaveOptions(this._sessionAutosaveOptions ?? {}, options);
+    if (this._sessionAutosaveAfterSaveQueued) return;
+    this._sessionAutosaveAfterSaveQueued = true;
+    this._sessionSaveQueue.finally(() => {
+      this._sessionAutosaveAfterSaveQueued = false;
+      if (!this._sessionAutosaveOptions || this._sessionAutosaveTimer) return;
+      const flushOptions = this._sessionAutosaveOptions;
+      this._sessionAutosaveTimer = setTimeout(() => this._runScheduledSessionAutosave(flushOptions), 0);
+    });
   }
 
   _scheduleInteractionSessionAutosave(event) {
@@ -1330,6 +1361,13 @@ export class HeliosStorageManager extends EventTarget {
   _sessionAutosaveDeferDelay(options = {}) {
     const now = this._now();
     const idleMs = this.autosyncInteractionIdleMs ?? 0;
+    const rateDelay = () => {
+      if (options.autosync === false) return 0;
+      const minIntervalMs = this.autosyncMinIntervalMs ?? 0;
+      if (minIntervalMs <= 0 || !Number.isFinite(this._lastSessionAutosyncAt)) return 0;
+      const remaining = minIntervalMs - (now - this._lastSessionAutosyncAt);
+      return remaining > 0 ? remaining : 0;
+    };
     const payloadPersistence = options.includeNetwork === true || options.includePositions === true;
     if (payloadPersistence) {
       if (this._isSessionUserInteractionActive(options)) {
@@ -1340,7 +1378,7 @@ export class HeliosStorageManager extends EventTarget {
         const remaining = idleMs - (now - this._lastUserInteractionAt);
         if (remaining > 0) return remaining;
       }
-      return 0;
+      return rateDelay();
     }
     if (this._isSessionThumbnailInteractionActive(options)) {
       this._lastUserInteractionAt = now;
@@ -1350,7 +1388,7 @@ export class HeliosStorageManager extends EventTarget {
       const remaining = idleMs - (now - this._lastUserInteractionAt);
       if (remaining > 0) return remaining;
     }
-    return 0;
+    return rateDelay();
   }
 
   _consumePendingStateOverrideDeltas() {
@@ -1483,6 +1521,7 @@ export class HeliosStorageManager extends EventTarget {
         syncing: false,
       };
     }
+    if (entry?.autosync === true) this._lastSessionAutosyncAt = this._now();
   }
 
   async _withSessionSaveTracking(operation, options = {}) {
@@ -1495,6 +1534,17 @@ export class HeliosStorageManager extends EventTarget {
       this._finishSessionSave(id, error);
       throw error;
     }
+  }
+
+  _enqueueSessionSave(operation, options = {}) {
+    this._sessionSaveQueuedCount += 1;
+    const run = async () => {
+      this._sessionSaveQueuedCount = Math.max(0, this._sessionSaveQueuedCount - 1);
+      return this._withSessionSaveTracking(operation, options);
+    };
+    const queued = this._sessionSaveQueue.catch(() => null).then(run);
+    this._sessionSaveQueue = queued.catch(() => null);
+    return queued;
   }
 
   pendingStateChangeCount() {
@@ -1604,7 +1654,7 @@ export class HeliosStorageManager extends EventTarget {
     const id = String(options.id ?? this.sessionId);
     const existingRecord = await this.sessionStore.get?.(id, { hydrateNetworkData: false });
     if (!existingRecord) {
-      return this.saveSession({
+      return this._saveSessionOperation({
         ...options,
         id,
         includeNetwork: false,
@@ -1717,13 +1767,17 @@ export class HeliosStorageManager extends EventTarget {
       this._setAutosyncDisabled(autosyncSkip, { markDirty: true });
       return;
     }
+    if (this._isSessionSaveBusy()) {
+      this._deferAutosaveUntilSessionSaveIdle(flushOptions);
+      return;
+    }
     const stateDeltas = this._consumePendingStateOverrideDeltas();
     const canWriteIncrementalState = stateDeltas.size > 0
       && flushOptions.includeNetwork !== true
       && flushOptions.includePositions !== true
       && flushOptions.snapshotLayoutRuntime !== true;
     const savePromise = canWriteIncrementalState
-      ? this._withSessionSaveTracking(() => this._saveIncrementalSessionState({
+      ? this._enqueueSessionSave(() => this._saveIncrementalSessionState({
         id: this.sessionId,
         reason: flushOptions.reason ?? 'storage-autosave',
         captureThumbnail: flushOptions.captureThumbnail === true
@@ -1731,19 +1785,19 @@ export class HeliosStorageManager extends EventTarget {
           : (flushOptions.captureThumbnail === 'auto' ? 'auto' : false),
       }, stateDeltas), flushOptions)
       : this.saveSession({
-      id: this.sessionId,
-      reason: flushOptions.reason ?? 'storage-autosave',
-      autosync: flushOptions.autosync === true,
-      includeNetwork: flushOptions.includeNetwork === true,
-      includePositions: flushOptions.includePositions === true,
-      captureThumbnail: flushOptions.captureThumbnail === true
-        ? true
-        : (flushOptions.captureThumbnail === 'auto' ? 'auto' : false),
-      snapshotLayoutRuntime: flushOptions.snapshotLayoutRuntime === true,
-      layoutRuntime: flushOptions.layoutRuntime,
-      networkFormat: flushOptions.networkFormat ?? flushOptions.network?.format ?? flushOptions.networkPersistence?.format,
-      fullVisualizationState: flushOptions.fullVisualizationState === true,
-    });
+        id: this.sessionId,
+        reason: flushOptions.reason ?? 'storage-autosave',
+        autosync: flushOptions.autosync === true,
+        includeNetwork: flushOptions.includeNetwork === true,
+        includePositions: flushOptions.includePositions === true,
+        captureThumbnail: flushOptions.captureThumbnail === true
+          ? true
+          : (flushOptions.captureThumbnail === 'auto' ? 'auto' : false),
+        snapshotLayoutRuntime: flushOptions.snapshotLayoutRuntime === true,
+        layoutRuntime: flushOptions.layoutRuntime,
+        networkFormat: flushOptions.networkFormat ?? flushOptions.network?.format ?? flushOptions.networkPersistence?.format,
+        fullVisualizationState: flushOptions.fullVisualizationState === true,
+      });
     savePromise.catch((error) => {
       if (canWriteIncrementalState) this._restorePendingStateOverrideDeltas(stateDeltas);
       const errorMessage = this._sessionErrorMessage(error);
@@ -2541,6 +2595,12 @@ export class HeliosStorageManager extends EventTarget {
         DEFAULT_AUTOSYNC_INTERACTION_IDLE_MS,
       );
     }
+    if (Object.prototype.hasOwnProperty.call(options, 'autosyncMinIntervalMs')) {
+      this.autosyncMinIntervalMs = normalizeNonNegativeMs(
+        options.autosyncMinIntervalMs,
+        DEFAULT_SESSION_AUTOSYNC_MIN_INTERVAL_MS,
+      );
+    }
     if (
       Object.prototype.hasOwnProperty.call(options, 'sessionThumbnail')
       || Object.prototype.hasOwnProperty.call(options, 'thumbnail')
@@ -2691,13 +2751,12 @@ export class HeliosStorageManager extends EventTarget {
     }
   }
 
-  async saveSession(options = {}) {
-    if (!this.capabilities.sessions) return null;
+  async _saveSessionOperation(options = {}) {
     const saveOptions = {
       ...options,
       fullVisualizationState: options.fullVisualizationState === true,
     };
-    const saved = await this._withSessionSaveTracking(() => this.saveSessionSnapshot(saveOptions), saveOptions);
+    const saved = await this.saveSessionSnapshot(saveOptions);
     if (saved) {
       this._recordPersistenceChange('session-save', {
         id: envelopeSessionId(saved) ?? options.id ?? this.sessionId ?? null,
@@ -2707,6 +2766,15 @@ export class HeliosStorageManager extends EventTarget {
       });
     }
     return saved;
+  }
+
+  async saveSession(options = {}) {
+    if (!this.capabilities.sessions) return null;
+    const saveOptions = {
+      ...options,
+      fullVisualizationState: options.fullVisualizationState === true,
+    };
+    return this._enqueueSessionSave(() => this._saveSessionOperation(saveOptions), saveOptions);
   }
 
   async getSession(id) {
@@ -2859,7 +2927,7 @@ export class HeliosStorageManager extends EventTarget {
       && saveOptions.snapshotLayoutRuntime !== true
     ) {
       try {
-        return await this._withSessionSaveTracking(() => this._saveIncrementalSessionState({
+        return await this._enqueueSessionSave(() => this._saveIncrementalSessionState({
           ...saveOptions,
           id: saveOptions.id ?? this.sessionId ?? undefined,
         }, stateDeltas), saveOptions);

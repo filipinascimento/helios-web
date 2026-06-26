@@ -67,7 +67,10 @@ test('node size slider updates live state without synchronous storage snapshot f
       slider.dispatchEvent(new InputEvent('input', { bubbles: true }));
     }
     slider.dispatchEvent(new Event('change', { bubbles: true }));
-    await new Promise((resolve) => requestAnimationFrame(resolve));
+    for (let i = 0; i < 10; i += 1) {
+      if (Math.abs((window.__helios.behavior?.appearance?.nodeSizeScale?.() ?? 0) - 1.6) < 1e-6) break;
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
     return {
       liveValue: window.__helios.behavior?.appearance?.nodeSizeScale?.(),
       storageValue: window.__helios.states.get('appearance.nodeStyle.sizeScale'),
@@ -284,6 +287,7 @@ test('browser autosave thumbnail policy respects interaction, idle, and throttle
     const storage = window.__helios.storage;
     storage.configureSession({
       autosyncInteractionIdleMs: 500,
+      autosyncMinIntervalMs: 0,
       sessionThumbnail: {
         enabled: true,
         autosaveMinIntervalMs: 0,
@@ -336,6 +340,7 @@ test('browser autosave thumbnail policy respects interaction, idle, and throttle
   await page.evaluate(() => {
     window.__helios.storage.configureSession({
       autosyncInteractionIdleMs: 250,
+      autosyncMinIntervalMs: 0,
       sessionThumbnail: {
         enabled: true,
         autosaveMinIntervalMs: 500,
@@ -364,6 +369,7 @@ test('browser autosave thumbnail policy respects interaction, idle, and throttle
   await page.evaluate(() => {
     window.__helios.storage.configureSession({
       autosyncInteractionIdleMs: 250,
+      autosyncMinIntervalMs: 0,
       sessionThumbnail: {
         enabled: true,
         autosaveMinIntervalMs: 30000,

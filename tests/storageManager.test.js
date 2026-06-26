@@ -830,6 +830,161 @@ test('BrowserStorageManager exposes pending session sync state until store write
   assert.equal(status.sessionSync.pending, false);
 });
 
+test('BrowserStorageManager serializes slow saves and coalesces autosaves while a save is active', async () => {
+  const records = new Map();
+  const putLog = [];
+  let activePuts = 0;
+  let maxConcurrentPuts = 0;
+  let resolveFirstPut = null;
+  const store = {
+    async put(record) {
+      activePuts += 1;
+      maxConcurrentPuts = Math.max(maxConcurrentPuts, activePuts);
+      putLog.push(record.id);
+      try {
+        if (putLog.length === 1) {
+          await new Promise((resolve) => {
+            resolveFirstPut = resolve;
+          });
+        }
+        records.set(record.id, structuredClone(record));
+        return record;
+      } finally {
+        activePuts -= 1;
+      }
+    },
+    async get(id) {
+      return records.has(id) ? structuredClone(records.get(id)) : null;
+    },
+    async getAll() {
+      return Array.from(records.values()).map((entry) => structuredClone(entry));
+    },
+  };
+  class FakeHelios extends EventTarget {
+    on(type, handler) {
+      this.addEventListener(type, handler);
+      return () => this.removeEventListener(type, handler);
+    }
+  }
+  let storage = null;
+  let visualizationSerializes = 0;
+  const helios = new FakeHelios();
+  helios.serializeVisualizationStateAsync = async () => {
+    visualizationSerializes += 1;
+    return createPersistenceEnvelope(PERSISTENCE_KINDS.visualization, {
+      storageState: storage.serializeSnapshot(),
+      cameraState: { mode: '2d', zoom: visualizationSerializes },
+    });
+  };
+  storage = new BrowserStorageManager({
+    helios,
+    sessionId: 'coalesced-active-save-session',
+    sessionStore: new SessionStore({ store }),
+    autosyncInteractionIdleMs: 20,
+    sessionThumbnail: { enabled: false },
+    restore: false,
+  });
+
+  try {
+    const firstSave = storage.sync({ includeNetwork: false, captureThumbnail: false });
+    await wait(0);
+    assert.equal(putLog.length, 1);
+    assert.equal(storage.status().syncing, true);
+
+    for (let i = 0; i < 12; i += 1) {
+      helios.dispatchEvent(new CustomEvent('camera:move', {
+        detail: { origin: 'interaction', action: 'pan' },
+      }));
+    }
+    await wait(80);
+    assert.equal(putLog.length, 1);
+    assert.equal(maxConcurrentPuts, 1);
+
+    resolveFirstPut();
+    await firstSave;
+    await wait(80);
+
+    assert.equal(putLog.filter((id) => id === 'coalesced-active-save-session').length, 2);
+    assert.equal(maxConcurrentPuts, 1);
+    assert.equal(visualizationSerializes, 2);
+  } finally {
+    storage.destroy();
+  }
+});
+
+test('BrowserStorageManager rate-limits autosync while accumulating latest state deltas', async () => {
+  const records = new Map();
+  const putLog = [];
+  const store = {
+    async put(record) {
+      putLog.push({ id: record.id, at: Date.now() });
+      records.set(record.id, structuredClone(record));
+      return record;
+    },
+    async get(id) {
+      return records.has(id) ? structuredClone(records.get(id)) : null;
+    },
+    async getAll() {
+      return Array.from(records.values()).map((entry) => structuredClone(entry));
+    },
+  };
+  let storage = null;
+  const helios = {
+    serializeVisualizationStateAsync: async () => createPersistenceEnvelope(PERSISTENCE_KINDS.visualization, {
+      storageState: storage.serializeSnapshot(),
+      cameraState: { mode: '2d', zoom: 1 },
+    }),
+  };
+  storage = new BrowserStorageManager({
+    helios,
+    sessionId: 'autosync-rate-session',
+    sessionStore: new SessionStore({ store }),
+    autosyncMinIntervalMs: 100,
+    sessionThumbnail: { enabled: false },
+    restore: false,
+  });
+  storage.states.register(null, 'appearance', {
+    size: { default: 1, type: 'number' },
+  });
+
+  try {
+    await storage.saveSession({
+      id: 'autosync-rate-session',
+      includeNetwork: false,
+      captureThumbnail: false,
+    });
+    putLog.length = 0;
+
+    storage.states.set('appearance.size', 2, {
+      source: 'ui',
+      reason: 'size-control',
+      debounceMs: 0,
+    });
+    await wait(30);
+    assert.equal(putLog.length, 1);
+
+    storage.states.set('appearance.size', 3, {
+      source: 'ui',
+      reason: 'size-control',
+      debounceMs: 0,
+    });
+    storage.states.set('appearance.size', 4, {
+      source: 'ui',
+      reason: 'size-control',
+      debounceMs: 0,
+    });
+    await wait(50);
+    assert.equal(putLog.length, 1);
+
+    await wait(90);
+    assert.equal(putLog.length, 2);
+    const restored = await storage.getSession('autosync-rate-session');
+    assert.equal(restored.payload.visualizationState.payload.storageState.state.overrides['appearance.size'], 4);
+  } finally {
+    storage.destroy();
+  }
+});
+
 test('BrowserStorageManager logs session sync failures and exposes error status', async () => {
   const failure = new Error('store write failed');
   const store = {
@@ -1129,6 +1284,7 @@ test('BrowserStorageManager state-only autosave does not rewrite network side re
     helios,
     sessionId: 'incremental-session',
     sessionStore: new SessionStore({ store }),
+    autosyncMinIntervalMs: 0,
     sessionThumbnail: {
       autosaveMinIntervalMs: false,
     },
@@ -2212,6 +2368,7 @@ test('BrowserStorageManager coalesces repeated state autosaves to the latest val
     helios,
     sessionId: 'coalesced-autosave-session',
     sessionStore: new SessionStore({ store }),
+    autosyncMinIntervalMs: 0,
     sessionThumbnail: {
       autosaveMinIntervalMs: false,
     },

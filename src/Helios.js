@@ -3823,6 +3823,8 @@ export class Helios extends EventTarget {
             notify(pose, {
               source: isExplicitCameraStateSource(detail.origin, detail) ? (detail.origin ?? 'interaction') : 'binding',
               reason: 'camera-pose',
+              stateKey: 'camera.pose',
+              storageKey: 'camera.pose',
               trackOverride: isExplicitCameraStateSource(detail.origin, detail),
               debounceMs: 500,
             });
