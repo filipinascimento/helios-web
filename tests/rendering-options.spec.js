@@ -175,6 +175,53 @@ test.describe('renderer helpers', () => {
   });
 });
 
+test.describe('theme defaults', () => {
+  async function createThemeProbe(page, options = {}) {
+    await page.goto('/tests/fixtures/blank.html');
+    return page.evaluate(async (heliosOptions) => {
+      window.__helios?.destroy?.();
+      document.body.innerHTML = '<div id="app" style="width:320px;height:240px"></div>';
+      const { createThemeProbeHelios } = await import('/src/tests/themeProbe.js');
+      const helios = await createThemeProbeHelios(document.getElementById('app'), heliosOptions);
+      window.__helios = helios;
+      return {
+        clearColor: helios.clearColor(),
+        uiTheme: helios.ui?.theme ?? null,
+        quickControlsTheme: document.querySelector('.helios-quick-controls')?.dataset?.theme ?? null,
+      };
+    }, options);
+  }
+
+  test('uses light renderer and control defaults for light browser theme', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    const result = await createThemeProbe(page);
+    expect(result.clearColor).toEqual([1, 1, 1, 1]);
+    expect(result.uiTheme).toBe('light');
+    expect(result.quickControlsTheme).toBe('light');
+  });
+
+  test('keeps dark renderer and control defaults for dark browser theme', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'dark' });
+    const result = await createThemeProbe(page);
+    expect(result.clearColor[0]).toBeCloseTo(0.01, 4);
+    expect(result.clearColor[1]).toBeCloseTo(0.01, 4);
+    expect(result.clearColor[2]).toBeCloseTo(0.02, 4);
+    expect(result.clearColor[3]).toBe(1);
+    expect(result.uiTheme).toBe('dark');
+    expect(result.quickControlsTheme).toBe('dark');
+  });
+
+  test('preserves explicit background over browser theme defaults', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    const result = await createThemeProbe(page, { background: '#123456' });
+    expect(result.clearColor[0]).toBeCloseTo(0x12 / 255, 4);
+    expect(result.clearColor[1]).toBeCloseTo(0x34 / 255, 4);
+    expect(result.clearColor[2]).toBeCloseTo(0x56 / 255, 4);
+    expect(result.clearColor[3]).toBe(1);
+    expect(result.uiTheme).toBe('light');
+  });
+});
+
 test.describe('webgpu visual (headed)', () => {
   test('renders deterministic node colors with WebGPU when available @webgpu', async ({ page, browser }, testInfo) => {
     // Attempt to spin a headed context; skip if not possible.

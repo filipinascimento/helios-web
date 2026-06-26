@@ -21,6 +21,30 @@ function resolveRendererPreference() {
   return null;
 }
 
+function normalizeThemeName(value) {
+  const theme = String(value ?? '').trim().toLowerCase();
+  if (theme === 'light' || theme === 'default') return 'light';
+  if (theme === 'dark' || theme === 'slate') return 'dark';
+  return null;
+}
+
+function resolveAppTheme() {
+  const params = new URLSearchParams(window.location.search);
+  const queryTheme = normalizeThemeName(params.get('theme'));
+  if (queryTheme) return queryTheme;
+  const rootTheme = normalizeThemeName(
+    document.documentElement?.getAttribute?.('data-helios-theme')
+    ?? document.documentElement?.getAttribute?.('data-theme')
+    ?? document.documentElement?.getAttribute?.('data-md-color-scheme')
+    ?? document.body?.getAttribute?.('data-helios-theme')
+    ?? document.body?.getAttribute?.('data-theme')
+    ?? document.body?.getAttribute?.('data-md-color-scheme'),
+  );
+  if (rootTheme) return rootTheme;
+  if (window.matchMedia?.('(prefers-color-scheme: light)').matches) return 'light';
+  return 'dark';
+}
+
 function resolveSessionOptions() {
   const params = new URLSearchParams(window.location.search);
   if (params.get('session') === '0') return false;
@@ -830,6 +854,7 @@ async function bootstrap() {
       minDisplacementRatio: 0.0005,
     },
     debug: DEBUG_CONFIG,
+    theme: resolveAppTheme(),
     ui: false,
     fileDrop: true,
     networkSource: {
@@ -878,7 +903,7 @@ async function bootstrap() {
   console.log("Helios is ready!");
 
   // Optional UI overlay demo (panels, theming, attribute bindings).
-  const heliosUI = new HeliosUI({ helios, theme: 'dark', allowDrag: true });
+  const heliosUI = new HeliosUI({ helios, theme: resolveAppTheme(), allowDrag: true });
   heliosUI.createDemoPanel();
   heliosUI.createMetricsPanel();
   window.__heliosUI = heliosUI;

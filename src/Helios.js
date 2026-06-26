@@ -396,6 +396,102 @@ function hasOwnOption(options, key) {
   return Object.prototype.hasOwnProperty.call(options ?? {}, key);
 }
 
+const DEFAULT_DARK_CLEAR_COLOR = Object.freeze([0.01, 0.01, 0.02, 1]);
+const DEFAULT_LIGHT_CLEAR_COLOR = Object.freeze([1, 1, 1, 1]);
+
+function normalizeThemeName(value) {
+  if (typeof value !== 'string') return null;
+  const theme = value.trim().toLowerCase();
+  if (!theme) return null;
+  if (theme === 'light' || theme === 'default') return 'light';
+  if (theme === 'dark' || theme === 'slate') return 'dark';
+  return null;
+}
+
+function resolveThemeValueFromElement(element) {
+  if (!element || typeof element.closest !== 'function') return null;
+  const source = element.closest('[data-helios-theme], [data-theme], [data-md-color-scheme]');
+  if (!source || typeof source.getAttribute !== 'function') return null;
+  return normalizeThemeName(
+    source.getAttribute('data-helios-theme')
+    ?? source.getAttribute('data-theme')
+    ?? source.getAttribute('data-md-color-scheme'),
+  );
+}
+
+function resolveThemeValueFromDocument() {
+  if (typeof document === 'undefined') return null;
+  const roots = [document.documentElement, document.body].filter(Boolean);
+  for (const root of roots) {
+    const theme = normalizeThemeName(
+      root.getAttribute?.('data-helios-theme')
+      ?? root.getAttribute?.('data-theme')
+      ?? root.getAttribute?.('data-md-color-scheme'),
+    );
+    if (theme) return theme;
+  }
+  return null;
+}
+
+function resolveContainerElement(container) {
+  if (typeof document === 'undefined') return null;
+  if (typeof container === 'string') {
+    try {
+      return document.querySelector(container);
+    } catch (_) {
+      return null;
+    }
+  }
+  return container && typeof container === 'object' && container.nodeType === 1 ? container : null;
+}
+
+function resolveBrowserTheme() {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return null;
+  try {
+    if (window.matchMedia('(prefers-color-scheme: light)').matches) return 'light';
+    if (window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
+  } catch (_) {
+    return null;
+  }
+  return null;
+}
+
+function resolveInitialTheme(options = {}, container = null) {
+  const uiOptions = options.ui && typeof options.ui === 'object' ? options.ui : {};
+  const quickOptions = options.quickControls && typeof options.quickControls === 'object'
+    ? options.quickControls
+    : {};
+  const explicitTheme = normalizeThemeName(options.theme)
+    ?? normalizeThemeName(uiOptions.theme)
+    ?? normalizeThemeName(quickOptions.theme);
+  if (explicitTheme) return explicitTheme;
+  const containerElement = resolveContainerElement(container);
+  return resolveThemeValueFromElement(containerElement)
+    ?? resolveThemeValueFromDocument()
+    ?? resolveBrowserTheme()
+    ?? 'dark';
+}
+
+function copyDefaultClearColorForTheme(theme) {
+  return [...(theme === 'light' ? DEFAULT_LIGHT_CLEAR_COLOR : DEFAULT_DARK_CLEAR_COLOR)];
+}
+
+function normalizeInitialClearColorOptions(options = {}, theme = 'dark') {
+  const hasClearColor = hasOwnOption(options, 'clearColor');
+  const hasBackground = hasOwnOption(options, 'background');
+  if (hasClearColor || hasBackground) {
+    const color = hasClearColor ? options.clearColor : options.background;
+    const normalized = normalizeColorInput(color);
+    if (!normalized) {
+      throw new Error('Helios options.clearColor/background expects #rgb/#rgba/#rrggbb/#rrggbbaa or [r,g,b(,a)]');
+    }
+    options.clearColor = normalized;
+    return normalized;
+  }
+  options.clearColor = copyDefaultClearColorForTheme(theme);
+  return options.clearColor;
+}
+
 function shouldEnablePersistence(options = {}) {
   if (options.storage === true) return true;
   if (options.storage && typeof options.storage === 'object') {
@@ -1552,13 +1648,18 @@ function normalizeStartupConfig(value = {}, options = {}) {
 
 function normalizeQuickControlsConfig(value, options = {}) {
   if (value === false || value == null && options.defaultEnabled === false) {
-    return { ...QUICK_CONTROL_DEFAULTS, enabled: false };
+    return {
+      ...QUICK_CONTROL_DEFAULTS,
+      theme: normalizeThemeName(options.defaultTheme) ?? QUICK_CONTROL_DEFAULTS.theme,
+      enabled: false,
+    };
   }
   const patch = value && typeof value === 'object' ? value : {};
   const uiOptions = options.ui && typeof options.ui === 'object' ? options.ui : {};
+  const fallbackTheme = normalizeThemeName(options.defaultTheme) ?? QUICK_CONTROL_DEFAULTS.theme;
   const theme = typeof patch.theme === 'string' && patch.theme
     ? patch.theme
-    : (typeof uiOptions.theme === 'string' && uiOptions.theme ? uiOptions.theme : QUICK_CONTROL_DEFAULTS.theme);
+    : (typeof uiOptions.theme === 'string' && uiOptions.theme ? uiOptions.theme : fallbackTheme);
   const config = {
     ...QUICK_CONTROL_DEFAULTS,
     ...patch,
@@ -2075,7 +2176,13 @@ export const EVENTS = Object.freeze({
  * Extra WebGPU canvas configuration values merged over Helios defaults.
  * @param {boolean|string|number} [options.supersampling] - Canvas
  * supersampling mode or scale factor.
+ * @param {'dark'|'light'|string} [options.theme] - Initial renderer/UI theme.
+ * When omitted, Helios follows `data-helios-theme`, `data-theme`,
+ * `data-md-color-scheme`, or the browser color-scheme preference.
+ * @param {string|Array<number>} [options.background] - Renderer background
+ * color. Takes precedence over theme-derived defaults.
  * @param {string|Array<number>} [options.clearColor] - Renderer clear color.
+ * Takes precedence over theme-derived defaults.
  * @returns {Helios} Visualization controller with a `ready` promise that
  * resolves after renderer, scheduler, layers, behaviors, and initial geometry
  * are initialized.
@@ -2697,6 +2804,9 @@ export class Helios extends EventTarget {
         },
       };
     }
+    const container = options.container ?? document.getElementById('app') ?? document.body;
+    this._initialTheme = resolveInitialTheme(options, container);
+    normalizeInitialClearColorOptions(options, this._initialTheme);
     this.network = network;
     const initialNetworkSource = options.networkSource && typeof options.networkSource === 'object'
       ? options.networkSource
@@ -2733,7 +2843,6 @@ export class Helios extends EventTarget {
         edge: serializeMapperCollectionState(this.edgeMapper),
       });
     };
-    const container = options.container ?? document.getElementById('app') ?? document.body;
     this.layers = new LayerManager(container, {
       suppressBrowserGestures: options.suppressBrowserGestures !== false,
       supersampling: options.supersampling,
@@ -3119,7 +3228,10 @@ export class Helios extends EventTarget {
     this._baseOverlayInsets = { top: 0, right: 0, bottom: 0, left: 0 };
     this._quickControlsOverlayInsets = { top: 0, right: 0, bottom: 0, left: 0 };
     this._overlayInsets = { top: 0, right: 0, bottom: 0, left: 0 };
-    this._quickControlsConfig = normalizeQuickControlsConfig(options.quickControls, { ui: options.ui });
+    this._quickControlsConfig = normalizeQuickControlsConfig(options.quickControls, {
+      ui: options.ui,
+      defaultTheme: this._initialTheme,
+    });
     this._quickControls = null;
     this._quickControlCleanups = [];
     this._setupQuickControls();
@@ -14927,7 +15039,7 @@ export class Helios extends EventTarget {
     const uiOptions = requested === true
       ? {}
       : (requested && typeof requested === 'object' ? requested : {});
-    const ui = new HeliosUI({ helios: this, ...uiOptions });
+    const ui = new HeliosUI({ helios: this, theme: this._initialTheme ?? 'dark', ...uiOptions });
     this.ui = ui;
     this._syncQuickControlsTheme(ui.theme);
     const panels = Object.prototype.hasOwnProperty.call(uiOptions, 'panels')
