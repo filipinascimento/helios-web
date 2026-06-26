@@ -10826,6 +10826,7 @@ export class Helios extends EventTarget {
     const normalized = normalizeNodeIndexList(nodeIndices);
     if (!normalized?.length) {
       this.cameraControls({ targetNodeIndices: null, followTarget: false });
+      this._stopCameraControlPoseInterpolation();
       if (options.frame !== false) {
         this.frameNetwork({
           animate: options.animate ?? this._cameraControlConfig?.animation === true,

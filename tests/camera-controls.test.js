@@ -650,6 +650,29 @@ test('default camera animation retargets from the in-flight pose', () => {
   assert.equal(helios._cameraControlRuntime.controlPoseTo.zoom, 8);
 });
 
+test('clearing followed nodes stops in-flight camera control pose before framing', () => {
+  const { helios, camera } = createFrameNetworkHarness({
+    config: { animationDurationMs: 520 },
+  });
+  const target = captureCameraPose(camera);
+  target.zoom = 6;
+  assert.equal(helios._queueCameraControlPose(target, { animate: true, durationMs: 520 }), true);
+  assert.equal(helios._cameraControlRuntime.controlPoseActive, true);
+
+  let activeDuringFrame = null;
+  const originalFrameNetwork = helios.frameNetwork.bind(helios);
+  helios.frameNetwork = (options) => {
+    activeDuringFrame = helios._cameraControlRuntime.controlPoseActive;
+    return originalFrameNetwork(options);
+  };
+
+  helios.cameraFollowNodes([], { animate: true });
+
+  assert.equal(activeDuringFrame, false);
+  assert.equal(helios._cameraControlRuntime.controlPoseActive, false);
+  assert.equal(helios._cameraControlRuntime.controlPoseTo, null);
+});
+
 test('restored layout positions invalidate prepared auto-fit bounds', () => {
   const currentPositions = new Float32Array([
     0, 0, 0,
