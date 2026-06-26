@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:e2e": "playwright test",
-    "test:e2e:ci": "playwright test tests/basic-example.spec.js tests/ui-boot-no-errors.spec.js tests/docs-basic-network-io.spec.js --project=chromium --reporter=line",
+    "test:e2e:ci": "playwright test tests/basic-example.spec.js tests/ui-boot-no-errors.spec.js tests/docs-basic-network-io.spec.js --project=chrome-ci --reporter=line",
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:webgpu": "playwright test --headed --project=chromium-webgpu-headed",
     "test:e2e:weighted": "playwright test --headed tests/edge-transparency.spec.js",

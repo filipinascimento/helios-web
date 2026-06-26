@@ -14,6 +14,14 @@ export default defineConfig({
       use: { browserName: 'chromium' },
     },
     {
+      name: 'chrome-ci',
+      grepInvert: /@webgpu/,
+      use: {
+        browserName: 'chromium',
+        channel: 'chrome',
+      },
+    },
+    {
       name: 'chromium-webgpu-headed',
       grep: /@webgpu/,
       use: {

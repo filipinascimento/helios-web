@@ -31,8 +31,8 @@ jobs:
       - name: Audit runtime dependencies
         run: npm audit --omit=dev
 
-      - name: Install Playwright browser
-        run: npx playwright install chromium
+      - name: Set up Chrome
+        uses: browser-actions/setup-chrome@v1
 
       - name: Build package
         run: npm run build
