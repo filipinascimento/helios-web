@@ -1,6 +1,6 @@
 {
   "name": "helios-web",
-  "version": "0.10.0",
+  "version": "0.10.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:e2e": "playwright test",
+    "test:e2e:ci": "playwright test tests/basic-example.spec.js tests/ui-boot-no-errors.spec.js tests/docs-basic-network-io.spec.js --project=chromium --reporter=line",
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:webgpu": "playwright test --headed --project=chromium-webgpu-headed",
     "test:e2e:weighted": "playwright test --headed tests/edge-transparency.spec.js",
@@ -24,7 +25,7 @@
   "dependencies": {
     "d3-force-3d": "github:filipinascimento/d3-force-3d",
     "d3-scale-chromatic": "^3.1.0",
-    "helios-network": "^0.10.0"
+    "helios-network": "^0.10.2"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.1",
