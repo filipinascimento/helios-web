@@ -220,6 +220,94 @@ test.describe('theme defaults', () => {
     expect(result.clearColor[3]).toBe(1);
     expect(result.uiTheme).toBe('light');
   });
+
+  test('updates default background and controls when the host theme changes', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    await createThemeProbe(page);
+    await page.evaluate(() => {
+      document.documentElement.setAttribute('data-md-color-scheme', 'slate');
+    });
+    await page.waitForFunction(() => {
+      const color = window.__helios?.clearColor?.() ?? [];
+      return color[0] < 0.05
+        && color[1] < 0.05
+        && color[2] < 0.05
+        && window.__helios?.ui?.theme === 'dark'
+        && document.querySelector('.helios-quick-controls')?.dataset?.theme === 'dark';
+    });
+    const result = await page.evaluate(() => ({
+      clearColor: window.__helios.clearColor(),
+      uiTheme: window.__helios.ui.theme,
+      quickControlsTheme: document.querySelector('.helios-quick-controls')?.dataset?.theme ?? null,
+    }));
+    expect(result.clearColor[0]).toBeCloseTo(0.01, 4);
+    expect(result.clearColor[1]).toBeCloseTo(0.01, 4);
+    expect(result.clearColor[2]).toBeCloseTo(0.02, 4);
+    expect(result.uiTheme).toBe('dark');
+    expect(result.quickControlsTheme).toBe('dark');
+  });
+
+  test('keeps an explicit background while controls continue following host theme', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    await createThemeProbe(page, { background: '#123456' });
+    await page.evaluate(() => {
+      document.documentElement.setAttribute('data-md-color-scheme', 'slate');
+    });
+    await page.waitForFunction(() => window.__helios?.ui?.theme === 'dark');
+    const result = await page.evaluate(() => ({
+      clearColor: window.__helios.clearColor(),
+      uiTheme: window.__helios.ui.theme,
+      quickControlsTheme: document.querySelector('.helios-quick-controls')?.dataset?.theme ?? null,
+    }));
+    expect(result.clearColor[0]).toBeCloseTo(0x12 / 255, 4);
+    expect(result.clearColor[1]).toBeCloseTo(0x34 / 255, 4);
+    expect(result.clearColor[2]).toBeCloseTo(0x56 / 255, 4);
+    expect(result.uiTheme).toBe('dark');
+    expect(result.quickControlsTheme).toBe('dark');
+  });
+
+  test('does not replace a restored background default on host theme changes', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    await createThemeProbe(page);
+    await page.evaluate(() => {
+      const key = window.__helios.states.resolveKey('appearance.background');
+      window.__helios.states.set(key, [0.2, 0.3, 0.4, 1], {
+        source: 'restore',
+        reason: 'test-restore',
+        trackOverride: false,
+      });
+      document.documentElement.setAttribute('data-md-color-scheme', 'slate');
+    });
+    await page.waitForFunction(() => window.__helios?.ui?.theme === 'dark');
+    const result = await page.evaluate(() => window.__helios.clearColor());
+    expect(result[0]).toBeCloseTo(0.2, 4);
+    expect(result[1]).toBeCloseTo(0.3, 4);
+    expect(result[2]).toBeCloseTo(0.4, 4);
+    expect(result[3]).toBe(1);
+  });
+
+  test('does not replace a restored UI theme on host theme changes', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    await createThemeProbe(page);
+    await page.evaluate(() => {
+      window.__helios.ui.restoreState({ theme: 'light' });
+      document.documentElement.setAttribute('data-md-color-scheme', 'slate');
+    });
+    await page.waitForFunction(() => {
+      const color = window.__helios?.clearColor?.() ?? [];
+      return color[0] < 0.05 && color[1] < 0.05 && color[2] < 0.05;
+    });
+    const result = await page.evaluate(() => ({
+      clearColor: window.__helios.clearColor(),
+      uiTheme: window.__helios.ui.theme,
+      quickControlsTheme: document.querySelector('.helios-quick-controls')?.dataset?.theme ?? null,
+    }));
+    expect(result.clearColor[0]).toBeCloseTo(0.01, 4);
+    expect(result.clearColor[1]).toBeCloseTo(0.01, 4);
+    expect(result.clearColor[2]).toBeCloseTo(0.02, 4);
+    expect(result.uiTheme).toBe('light');
+    expect(result.quickControlsTheme).toBe('light');
+  });
 });
 
 test.describe('webgpu visual (headed)', () => {

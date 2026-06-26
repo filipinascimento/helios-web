@@ -396,6 +396,10 @@ function hasOwnOption(options, key) {
   return Object.prototype.hasOwnProperty.call(options ?? {}, key);
 }
 
+function hasOwnStringOption(options, key) {
+  return hasOwnOption(options, key) && typeof options?.[key] === 'string' && options[key].trim().length > 0;
+}
+
 const DEFAULT_DARK_CLEAR_COLOR = Object.freeze([0.01, 0.01, 0.02, 1]);
 const DEFAULT_LIGHT_CLEAR_COLOR = Object.freeze([1, 1, 1, 1]);
 
@@ -472,6 +476,16 @@ function resolveInitialTheme(options = {}, container = null) {
     ?? 'dark';
 }
 
+function hasExplicitThemeOption(options = {}) {
+  const uiOptions = options.ui && typeof options.ui === 'object' ? options.ui : {};
+  const quickOptions = options.quickControls && typeof options.quickControls === 'object'
+    ? options.quickControls
+    : {};
+  return hasOwnStringOption(options, 'theme')
+    || hasOwnStringOption(uiOptions, 'theme')
+    || hasOwnStringOption(quickOptions, 'theme');
+}
+
 function copyDefaultClearColorForTheme(theme) {
   return [...(theme === 'light' ? DEFAULT_LIGHT_CLEAR_COLOR : DEFAULT_DARK_CLEAR_COLOR)];
 }
@@ -490,6 +504,21 @@ function normalizeInitialClearColorOptions(options = {}, theme = 'dark') {
   }
   options.clearColor = copyDefaultClearColorForTheme(theme);
   return options.clearColor;
+}
+
+function shouldDisableAutoThemeDefault(detail = {}) {
+  const source = String(detail.source ?? '').trim();
+  const reason = String(detail.reason ?? '').trim();
+  if (source === 'default' || source === 'binding' || source === 'refresh') return false;
+  if (reason === 'auto-theme' || reason.startsWith('auto-theme:')) return false;
+  return source === 'restore'
+    || source === 'ui'
+    || source === 'program'
+    || source === 'cli'
+    || source === 'state'
+    || detail.explicit === true
+    || detail.trackOverride === true
+    || detail.overrideChanged === true;
 }
 
 function shouldEnablePersistence(options = {}) {
@@ -2709,14 +2738,16 @@ export class Helios extends EventTarget {
     if (this._suppressStateBindingUiEvent > 0) return;
     if (typeof this.dispatchEvent !== 'function') return;
     try {
-      this.dispatchEvent(createDetailEvent('ui:binding-change', {
+      const payload = {
         source: detail.source ?? 'program',
         trackOverride: detail.trackOverride !== false,
         ...detail,
         id: `helios.${name}`,
         name,
         value,
-      }));
+      };
+      this._handleAutoThemeBindingChange(name, payload);
+      this.dispatchEvent(createDetailEvent('ui:binding-change', payload));
     } catch (error) {
       if (
         this.dispatchEvent === EventTarget.prototype.dispatchEvent
@@ -2805,7 +2836,17 @@ export class Helios extends EventTarget {
       };
     }
     const container = options.container ?? document.getElementById('app') ?? document.body;
+    const hasExplicitTheme = hasExplicitThemeOption(options);
+    const hasExplicitBackground = hasOwnOption(options, 'clearColor') || hasOwnOption(options, 'background');
     this._initialTheme = resolveInitialTheme(options, container);
+    this._hasExplicitThemeOption = hasExplicitTheme;
+    this._autoThemeDefaults = {
+      background: !hasExplicitBackground && !hasExplicitTheme,
+      controls: !hasExplicitTheme,
+      currentTheme: this._initialTheme,
+      cleanup: null,
+      stateCleanup: null,
+    };
     normalizeInitialClearColorOptions(options, this._initialTheme);
     this.network = network;
     const initialNetworkSource = options.networkSource && typeof options.networkSource === 'object'
@@ -3273,6 +3314,7 @@ export class Helios extends EventTarget {
     this.states = new HeliosStateManager({
       now: options.now,
     });
+    this._autoThemeDefaults.stateCleanup = this._installAutoThemeStateTracking();
     this.storage = createHeliosStorageManager(storageConfig, {
       helios: this,
       states: this.states,
@@ -3291,6 +3333,7 @@ export class Helios extends EventTarget {
     this._sessionPersistenceOptions = sessionOptions || (storageSessionId ? { sessionId: storageSessionId } : false);
     this._initializeDefaultBehaviors(options.behaviors);
     this._initializeBehaviors(options.behaviors);
+    this._setupAutoThemeDefaults();
     this.ui = null;
     this.ready = this.initialize();
   }
@@ -3452,6 +3495,138 @@ export class Helios extends EventTarget {
     this._startupOverlay?.remove?.();
     this._startupOverlay = null;
     this._queuePendingLargeNetworkStartupSettle();
+  }
+
+  _installAutoThemeStateTracking() {
+    const states = this.states ?? null;
+    if (!states || typeof states.addEventListener !== 'function') return null;
+    const handler = (event) => {
+      const detail = event?.detail ?? {};
+      const key = this.states?.resolveKey?.(detail.key ?? detail.path ?? '') ?? String(detail.key ?? detail.path ?? '');
+      const backgroundKey = this.states?.resolveKey?.('appearance.background') ?? 'appearance.background';
+      const themeKey = this.states?.resolveKey?.('ui.theme') ?? 'ui.theme';
+      if (key === backgroundKey && shouldDisableAutoThemeDefault(detail)) {
+        this._autoThemeDefaults.background = false;
+      }
+      if (key === themeKey && shouldDisableAutoThemeDefault(detail)) {
+        this._autoThemeDefaults.controls = false;
+      }
+    };
+    states.addEventListener('change', handler);
+    return () => states.removeEventListener?.('change', handler);
+  }
+
+  _resolveCurrentAutoTheme() {
+    return resolveInitialTheme(this.options ?? {}, this.layers?.root ?? this.layers?.container ?? this.options?.container ?? null);
+  }
+
+  _setupAutoThemeDefaults() {
+    const state = this._autoThemeDefaults ?? null;
+    if (!state || (!state.background && !state.controls)) return null;
+    this._applyAutoThemeDefaults(state.currentTheme ?? this._resolveCurrentAutoTheme(), { reason: 'auto-theme:init' });
+    if (state.cleanup) return state.cleanup;
+    if (typeof document === 'undefined' || typeof window === 'undefined') return null;
+
+    const scheduleUpdate = () => {
+      if (this._destroyed) return;
+      if (!state.background && !state.controls) return;
+      const nextTheme = this._resolveCurrentAutoTheme();
+      if (nextTheme === state.currentTheme) return;
+      this._applyAutoThemeDefaults(nextTheme);
+    };
+    const cleanups = [];
+    const observerTarget = document.documentElement ?? document.body ?? null;
+    if (typeof MutationObserver === 'function' && observerTarget) {
+      const observer = new MutationObserver((records) => {
+        if (!records.some((record) => ['data-helios-theme', 'data-theme', 'data-md-color-scheme', 'class'].includes(record.attributeName))) {
+          return;
+        }
+        scheduleUpdate();
+      });
+      observer.observe(observerTarget, {
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['data-helios-theme', 'data-theme', 'data-md-color-scheme', 'class'],
+      });
+      cleanups.push(() => observer.disconnect());
+    }
+    const addMediaListener = (query) => {
+      if (!query) return;
+      if (typeof query.addEventListener === 'function') {
+        query.addEventListener('change', scheduleUpdate);
+        cleanups.push(() => query.removeEventListener?.('change', scheduleUpdate));
+      } else if (typeof query.addListener === 'function') {
+        query.addListener(scheduleUpdate);
+        cleanups.push(() => query.removeListener?.(scheduleUpdate));
+      }
+    };
+    try {
+      addMediaListener(window.matchMedia?.('(prefers-color-scheme: dark)'));
+      addMediaListener(window.matchMedia?.('(prefers-color-scheme: light)'));
+    } catch (_) {
+      // Ignore environments with partial matchMedia support.
+    }
+    state.cleanup = () => {
+      for (const cleanup of cleanups.splice(0)) cleanup?.();
+      state.cleanup = null;
+    };
+    return state.cleanup;
+  }
+
+  _applyAutoThemeDefaults(theme = 'dark', options = {}) {
+    const state = this._autoThemeDefaults ?? null;
+    if (!state) return this;
+    const nextTheme = theme === 'light' ? 'light' : 'dark';
+    state.currentTheme = nextTheme;
+    if (state.background) {
+      const background = copyDefaultClearColorForTheme(nextTheme);
+      const backgroundKey = this.states?.resolveKey?.('appearance.background') ?? 'appearance.background';
+      if (typeof this.states?.entry === 'function' && this.states.entry(backgroundKey)) {
+        this.states.setDefault?.(backgroundKey, background, {
+          source: 'default',
+          reason: options.reason ?? 'auto-theme',
+          applyBinding: true,
+        });
+      } else {
+        this._setRendererProp('clearColor', background, {
+          source: 'default',
+          reason: options.reason ?? 'auto-theme',
+          trackOverride: false,
+        });
+      }
+    }
+    if (state.controls) {
+      if (this._quickControlsConfig) this._quickControlsConfig.theme = nextTheme;
+      const uiStatus = this.states?.status?.('ui.theme') ?? null;
+      const uiHasOverride = uiStatus?.hasOverride === true;
+      const themeKey = this.states?.resolveKey?.('ui.theme') ?? 'ui.theme';
+      if (typeof this.states?.entry === 'function' && this.states.entry(themeKey)) {
+        this.states.setDefault?.(themeKey, nextTheme, {
+          source: 'default',
+          reason: options.reason ?? 'auto-theme',
+          applyBinding: false,
+        });
+      }
+      if (this.ui && !uiHasOverride) {
+        this.ui.setTheme?.(nextTheme, {
+          source: 'default',
+          reason: options.reason ?? 'auto-theme',
+          trackOverride: false,
+        });
+      }
+      if (!this.ui || !uiHasOverride) this._syncQuickControlsTheme(nextTheme);
+    }
+    return this;
+  }
+
+  _handleAutoThemeBindingChange(name, detail = {}) {
+    const state = this._autoThemeDefaults ?? null;
+    if (!state) return;
+    const key = name === 'background' || name === 'clearColor'
+      ? 'background'
+      : (name === 'theme' || name === 'ui.theme' ? 'controls' : null);
+    if (!key || !shouldDisableAutoThemeDefault(detail)) return;
+    state[key] = false;
   }
 
   _setupAutoCleanup() {
@@ -9906,15 +10081,15 @@ export class Helios extends EventTarget {
     return this._pendingRendererProps.get(name);
   }
 
-  _setRendererProp(name, value) {
+  _setRendererProp(name, value, detail = {}) {
     if (this.renderer && name in this.renderer) {
       this.renderer[name] = value;
       this.scheduler.requestRender();
-      this._emitUIBindingChange(name, value);
+      this._emitUIBindingChange(name, value, detail);
       return this;
     }
     this._pendingRendererProps.set(name, value);
-    this._emitUIBindingChange(name, value);
+    this._emitUIBindingChange(name, value, detail);
     return this;
   }
 
@@ -15039,8 +15214,13 @@ export class Helios extends EventTarget {
     const uiOptions = requested === true
       ? {}
       : (requested && typeof requested === 'object' ? requested : {});
-    const ui = new HeliosUI({ helios: this, theme: this._initialTheme ?? 'dark', ...uiOptions });
+    const hasUiTheme = hasOwnStringOption(uiOptions, 'theme');
+    const themeOption = this._hasExplicitThemeOption && !hasUiTheme
+      ? { theme: this._initialTheme ?? 'dark' }
+      : {};
+    const ui = new HeliosUI({ helios: this, ...themeOption, ...uiOptions });
     this.ui = ui;
+    this._applyAutoThemeDefaults(this._autoThemeDefaults?.currentTheme ?? this._initialTheme ?? 'dark');
     this._syncQuickControlsTheme(ui.theme);
     const panels = Object.prototype.hasOwnProperty.call(uiOptions, 'panels')
       ? uiOptions.panels
@@ -15104,6 +15284,12 @@ export class Helios extends EventTarget {
     this._disconnectAutoCleanup();
     this._networkFileDropCleanup?.();
     this._networkFileDropCleanup = null;
+    this._autoThemeDefaults?.cleanup?.();
+    this._autoThemeDefaults?.stateCleanup?.();
+    if (this._autoThemeDefaults) {
+      this._autoThemeDefaults.cleanup = null;
+      this._autoThemeDefaults.stateCleanup = null;
+    }
     this.scheduler.stop();
     this.behaviors?.destroy?.();
     this._clearEdgeAdaptiveTimer('cameraIdleTimer');

@@ -344,7 +344,18 @@ export class HeliosUI {
     if (this.helios && !this.helios.ui) this.helios.ui = this;
     this.helios?.behaviors?.setUI?.(this);
     this.layerName = options.layerName ?? 'ui';
-    this.theme = options.theme ?? 'dark';
+    const hasExplicitTheme = Object.prototype.hasOwnProperty.call(options, 'theme');
+    const autoTheme = this.helios?._autoThemeDefaults?.controls !== false
+      ? this.helios?._autoThemeDefaults?.currentTheme
+      : null;
+    this.theme = options.theme ?? autoTheme ?? 'dark';
+    if (hasExplicitTheme) {
+      this.helios?._handleAutoThemeBindingChange?.('ui.theme', {
+        source: 'program',
+        reason: 'ui-constructor-theme',
+        trackOverride: true,
+      });
+    }
     this.styles = options.styles ?? 'default';
     this.persistenceIndicators = options.persistenceIndicators !== false && storageSupportsPersistentUI(this.helios);
 
@@ -390,6 +401,7 @@ export class HeliosUI {
       defaultValue: this.theme,
       metadata: { control: 'theme' },
     });
+    this.helios?._applyAutoThemeDefaults?.(this.helios?._autoThemeDefaults?.currentTheme ?? this.theme);
     this._installInterfaceViewportTracking();
     this._installInterfaceControlTracking();
     this._installPersistenceIndicatorFallback();
@@ -606,9 +618,10 @@ export class HeliosUI {
    * @param {'dark'|'light'|string} theme - Theme name stored on the UI container.
    * @returns {void}
    */
-  setTheme(theme) {
+  setTheme(theme, options = {}) {
     this.theme = theme;
     if (this.container) this.container.dataset.theme = theme;
+    this.helios?._handleAutoThemeBindingChange?.('ui.theme', options);
     this.helios?._syncQuickControlsTheme?.(theme);
   }
 
@@ -619,8 +632,12 @@ export class HeliosUI {
    * @apiSection User Interface
    * @returns {void}
    */
-  toggleTheme() {
-    this.setTheme(this.theme === 'dark' ? 'light' : 'dark');
+  toggleTheme(options = {}) {
+    this.setTheme(this.theme === 'dark' ? 'light' : 'dark', {
+      source: options.source ?? 'program',
+      reason: options.reason ?? 'theme',
+      trackOverride: options.trackOverride,
+    });
   }
 
   /**
@@ -652,7 +669,7 @@ export class HeliosUI {
   restoreState(state = {}) {
     if (!state || typeof state !== 'object') return this;
     if (typeof state.theme === 'string' && state.theme) {
-      this.setTheme(state.theme);
+      this.setTheme(state.theme, { source: 'restore', reason: 'theme-restore' });
     }
     this.panelManager?.restoreState?.(state);
     this.interfaceBehavior?.restoreInterfaceState?.(state.interface ?? {});
@@ -1633,7 +1650,7 @@ export class HeliosUI {
     });
     themeToggle.dataset.interfaceFocusIgnore = 'true';
     themeToggle.addEventListener('change', () => {
-      this.toggleTheme();
+      this.toggleTheme({ source: 'ui', reason: 'theme' });
       themeToggle.checked = this.theme === 'dark';
       this._writeStateValue('ui.theme', this.theme, {
         scope: 'user',
