@@ -713,15 +713,27 @@ export class HeliosStateManager extends EventTarget {
   debugStats(options = {}) {
     const windowMs = Number.isFinite(options.windowMs) ? Math.max(0, Number(options.windowMs)) : 5 * 60 * 1000;
     const cutoff = this.now() - windowMs;
-    const recent = this.recentChanges.filter((entry) => entry.timestamp >= cutoff);
-    return {
+    const includeRecent = options.includeRecent !== false;
+    const includeKeys = options.includeKeys !== false;
+    let stateChangeCount = 0;
+    let uiChangeCount = 0;
+    const recent = includeRecent ? [] : null;
+    for (const entry of this.recentChanges) {
+      if (entry.timestamp < cutoff) continue;
+      stateChangeCount += 1;
+      if (entry.source === 'ui' || entry.origin === 'ui') uiChangeCount += 1;
+      if (recent) recent.push(entry);
+    }
+    const stats = {
       windowMs,
       trackedStateCount: this.overrides.size,
-      trackedKeys: Array.from(this.overrides.keys()),
-      stateChangeCount: recent.length,
-      uiChangeCount: recent.filter((entry) => entry.source === 'ui' || entry.origin === 'ui').length,
-      recentChanges: recent.map((entry) => cloneStateValue(entry)),
+      trackedKeys: includeKeys ? Array.from(this.overrides.keys()) : [],
+      stateChangeCount,
+      uiChangeCount,
     };
+    if (includeRecent) stats.recentChanges = recent.map((entry) => cloneStateValue(entry));
+    else stats.recentChanges = [];
+    return stats;
   }
 
   _subscriptionTargetsForKey(key) {

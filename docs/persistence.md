@@ -609,12 +609,25 @@ Storage managers may expose richer host-specific autosync controls, but most UI
 code should prefer writing persistence keys or calling `markNetworkDirty()` /
 `markPositionsDirty()` and let the service choose the timing.
 
+Session sync keeps the network payload in the session, but it does not need to
+rewrite that payload for every position or UI change. `markNetworkDirty()` marks
+the graph/network payload dirty for structural changes such as loaded/replaced
+networks or attribute/schema changes. `markPositionsDirty()` only marks the
+separate position payload dirty. A bare `sync()` writes the network payload only
+when it is dirty or missing, and otherwise writes the current position payload
+when positions are dirty.
+
 Delegate/GPU layouts snapshot positions asynchronously. Non-delegate layouts read
 the active/network position buffers. Position payloads are stored as Float32
-binary bytes and gzip-compressed when the runtime exposes compression streams;
-otherwise Helios stores the raw Float32 bytes. Autosync uses the payload-size
-guard before taking large position snapshots; manual Sync and Save Session use
-the same storage format without the autosync cap.
+binary bytes. Larger payloads are gzip-compressed when the runtime exposes
+compression streams; smaller payloads stay raw to avoid spending more time on
+compression than the storage write saves. Autosync uses the payload-size guard
+before taking large position snapshots; manual Sync and Save Session use the
+same storage format without the autosync cap.
+
+Session thumbnails prefer a fast thumbnail capture from the current canvas and
+fall back to the full figure-export preview path only when the fast path is not
+available.
 
 ## Large-Network Autosave Verification
 
@@ -649,7 +662,7 @@ durations, and whether frames over 50 ms overlap storage events:
 HELIOS_PERF_NODE_COUNTS=100000,1000000 npm run perf:storage
 ```
 
-The optional path exercises both `dataset=grid` and `dataset=grid3d&mode=3d`.
+The optional path exercises both `dataset=grid` and `dataset=grid3d`.
 It writes JSONL history to
 `artifacts/performance-history/helios-storage-autosave.jsonl` unless
 `HELIOS_STORAGE_PERF_HISTORY_FILE` overrides the location.

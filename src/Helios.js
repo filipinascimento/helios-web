@@ -696,6 +696,27 @@ function canvasToBlob(canvas, type) {
   });
 }
 
+function scaledCanvasThumbnailBlob(sourceCanvas, options = {}) {
+  if (!sourceCanvas || typeof document === 'undefined') return null;
+  const sourceWidth = Math.floor(Number(sourceCanvas.width) || 0);
+  const sourceHeight = Math.floor(Number(sourceCanvas.height) || 0);
+  if (sourceWidth <= 0 || sourceHeight <= 0) return null;
+  const maxWidth = Math.max(1, Math.floor(Number(options.maxWidth ?? options.width) || 320));
+  const maxHeight = Math.max(1, Math.floor(Number(options.maxHeight ?? options.height) || 180));
+  const scale = Math.min(maxWidth / sourceWidth, maxHeight / sourceHeight);
+  const width = Math.max(1, Math.round(sourceWidth * scale));
+  const height = Math.max(1, Math.round(sourceHeight * scale));
+  const outputCanvas = document.createElement('canvas');
+  outputCanvas.width = width;
+  outputCanvas.height = height;
+  const ctx = outputCanvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.imageSmoothingEnabled = true;
+  if (typeof ctx.imageSmoothingQuality !== 'undefined') ctx.imageSmoothingQuality = 'medium';
+  ctx.drawImage(sourceCanvas, 0, 0, width, height);
+  return canvasToBlob(outputCanvas, 'image/png');
+}
+
 function loadSvgImage(svgText) {
   return new Promise((resolve, reject) => {
     const blob = new Blob([svgText], { type: 'image/svg+xml' });
@@ -1103,22 +1124,29 @@ function applyPlanarDepthJitter(snapshot, amplitude = 0) {
 }
 
 function resolveSeedBoundsForLayout(layoutOption, size, mode) {
-  const safeMode = mode === '3d' ? '3d' : '2d';
+  const safeMode = mode === '2d' ? '2d' : '3d';
   const width = Math.max(1, size?.width ?? 1)*0.01;
   const height = Math.max(1, size?.height ?? 1)*0.01;
   const minSide = Math.max(1, Math.min(width, height));
-  const base = { width: minSide, height: minSide, depth: 0, mode: safeMode, center: [0, 0, 0] };
+  const base = {
+    width: minSide,
+    height: minSide,
+    depth: safeMode === '3d' ? minSide : 0,
+    mode: safeMode,
+    center: [0, 0, 0],
+  };
 
   if (!layoutOption || isLayoutInstance(layoutOption)) return base;
   if (layoutOption?.type === 'worker') {
     const opts = layoutOption.options ?? {};
     const radius = Number.isFinite(opts.radius) ? Math.max(1, opts.radius) : 150;
-    const depth = Number.isFinite(opts.depth) ? Math.max(0, opts.depth) : 0;
+    const depth = Number.isFinite(opts.depth) ? Math.max(0, opts.depth) : radius;
     const center = Array.isArray(opts.center) ? opts.center : [0, 0, 0];
+    const side = safeMode === '3d' ? Math.max(radius, depth, 1) : radius;
     return {
-      width: radius,
-      height: radius,
-      depth: safeMode === '3d' ? depth : 0,
+      width: side,
+      height: side,
+      depth: safeMode === '3d' ? side : 0,
       mode: safeMode,
       center,
     };
@@ -1126,12 +1154,13 @@ function resolveSeedBoundsForLayout(layoutOption, size, mode) {
   if (layoutOption?.type === 'gpu-force' || layoutOption?.type === 'gpuforce') {
     const opts = layoutOption.options ?? {};
     const radius = Number.isFinite(opts.radius) ? Math.max(1, opts.radius) : 150;
-    const depth = Number.isFinite(opts.depth) ? Math.max(0, opts.depth) : 0;
+    const depth = Number.isFinite(opts.depth) ? Math.max(0, opts.depth) : radius;
     const center = Array.isArray(opts.center) ? opts.center : [0, 0, 0];
+    const side = safeMode === '3d' ? Math.max(radius, depth, 1) : radius;
     return {
-      width: radius,
-      height: radius,
-      depth: safeMode === '3d' ? depth : 0,
+      width: side,
+      height: side,
+      depth: safeMode === '3d' ? side : 0,
       mode: safeMode,
       center,
     };
@@ -1259,6 +1288,7 @@ const STARTUP_DEFAULTS = Object.freeze({
   hideCanvasUntilFirstFrame: true,
   layoutIterations: 100,
   layoutDurationMs: 1000,
+  initialCameraFit: true,
 });
 const QUICK_CONTROL_DEFAULTS = Object.freeze({
   enabled: true,
@@ -1640,6 +1670,7 @@ function normalizeStartupConfig(value = {}, options = {}) {
       hideCanvasUntilFirstFrame: false,
       layoutIterations: 0,
       layoutDurationMs: 0,
+      initialCameraFit: STARTUP_DEFAULTS.initialCameraFit,
     };
   }
   const patch = value && typeof value === 'object' ? value : {};
@@ -1670,6 +1701,7 @@ function normalizeStartupConfig(value = {}, options = {}) {
       0,
       60000,
     ),
+    initialCameraFit: read('initialCameraFit', STARTUP_DEFAULTS.initialCameraFit) !== false,
     _layoutIterationsExplicit: has('layoutIterations') || has('startupLayoutIterations'),
     _layoutDurationMsExplicit: has('layoutDurationMs') || has('startupLayoutDurationMs'),
   };
@@ -2129,6 +2161,9 @@ export const EVENTS = Object.freeze({
  * time to wait before the first visible graph frame. When both layout warmup
  * limits are set, the first one reached releases the frame. Large initial
  * networks use a 5000 ms default duration unless this option is set.
+ * @param {boolean} [options.startup.initialCameraFit=true] - Queue the default
+ * initial camera fit after initialization. Set to `false` when applying an
+ * explicit startup camera pose.
  * @param {object|false} [options.behaviors] - Built-in behavior options, custom
  * behavior instances, or `false` to disable default behaviors.
  * @param {object|null} [options.mappers] - Initial node and edge mapper
@@ -2228,7 +2263,7 @@ export const EVENTS = Object.freeze({
  * @example
  * const helios = new Helios(network, {
  *   container: document.querySelector('#app'),
- *   layout: { type: 'gpu-force', options: { mode: '2d' } },
+ *   layout: { type: 'gpu-force', options: { mode: '3d' } },
  *   behaviors: { labels: { enabled: true, source: 'label' } },
  * });
  * await helios.ready;
@@ -2826,8 +2861,9 @@ export class Helios extends EventTarget {
     if (!Object.prototype.hasOwnProperty.call(options, 'transparencyModeEdges')) {
       options.transparencyModeEdges = 'weighted';
     }
+    options.mode = options.mode === '2d' ? '2d' : '3d';
     if (!Object.prototype.hasOwnProperty.call(options, 'layout')) {
-      const mode = options.mode ?? '2d';
+      const mode = options.mode;
       options.layout = {
         type: 'gpu-force',
         options: {
@@ -2864,7 +2900,7 @@ export class Helios extends EventTarget {
       ? initialNetworkSource.format
       : inferNetworkFormatFromName(initialNetworkName);
     this.options = options;
-    this._initialMode = options.mode === '3d' ? '3d' : '2d';
+    this._initialMode = options.mode === '2d' ? '2d' : '3d';
     this.debugEnabled = options.debug === false
       ? false
       : !(options.debug && typeof options.debug === 'object' && options.debug.enabled === false);
@@ -2872,11 +2908,13 @@ export class Helios extends EventTarget {
     if (this.debugEnabled && typeof window !== 'undefined') {
       window.__helios = this;
     }
-    this.debug.log('helios', 'Constructing Helios instance', { mode: options.mode ?? '2d' });
+    this.debug.log('helios', 'Constructing Helios instance', { mode: this._initialMode });
     this.prewarmPromise = null;
     this.mappersDirty = false;
+    this._legendContentVersion = 0;
     this.markMappersDirty = () => {
       this.mappersDirty = true;
+      this._legendContentVersion += 1;
       this.prewarmPromise = null;
       this.scheduler?.requestGeometry?.();
       this.emit?.(EVENTS.MAPPERS_CHANGED, {
@@ -3412,9 +3450,11 @@ export class Helios extends EventTarget {
       width: '38px',
       height: '38px',
       borderRadius: '50%',
-      border: '3px solid rgba(255, 255, 255, 0.28)',
-      borderTopColor: 'rgba(255, 255, 255, 0.94)',
-      boxShadow: '0 0 14px rgba(0, 0, 0, 0.18)',
+      boxSizing: 'border-box',
+      background: 'transparent',
+      border: '3px solid var(--helios-startup-spinner-track, rgba(94, 124, 185, 0.24))',
+      borderTopColor: 'var(--helios-startup-spinner-accent, #5e7cb9)',
+      boxShadow: '0 0 14px var(--helios-startup-spinner-shadow, rgba(31, 35, 40, 0.12))',
       animation: 'helios-startup-spin 0.82s linear infinite',
     });
     overlay.appendChild(spinner);
@@ -4606,6 +4646,8 @@ export class Helios extends EventTarget {
     const maxSamples = normalizePositiveInteger(options.maxSamples, CAMERA_FIT_DEFAULT_MAX_SAMPLES, 32, 1000000);
     const stride = 3;
     const step = Math.max(1, Math.ceil(nodeIndices.length / Math.max(1, maxSamples)));
+    const sampledPointCapacity = Math.ceil(nodeIndices.length / step);
+    const sampledPoints = new Float32Array(Math.max(1, sampledPointCapacity) * 3);
 
     let minX = Infinity; let minY = Infinity; let minZ = Infinity;
     let maxX = -Infinity; let maxY = -Infinity; let maxZ = -Infinity;
@@ -4643,6 +4685,10 @@ export class Helios extends EventTarget {
       const fullDiameter = Math.max(1, (nodeSizeBase + nodeSizeScale * rawSize) + Math.max(0, nodeOutlineBase + nodeOutlineScale * rawOutline));
       nodeRadiusWorld = Math.max(nodeRadiusWorld, fullDiameter * 0.5);
       found = true;
+      const pointOffset = count * 3;
+      sampledPoints[pointOffset] = x;
+      sampledPoints[pointOffset + 1] = y;
+      sampledPoints[pointOffset + 2] = z;
       sumX += x; sumY += y; sumZ += z;
       count += 1;
       if (x < minX) minX = x; if (x > maxX) maxX = x;
@@ -4699,6 +4745,7 @@ export class Helios extends EventTarget {
       fitMaxX,
       fitMaxY,
       fitMaxZ,
+      fitPoints: sampledPoints.subarray(0, count * 3),
       sumX,
       sumY,
       sumZ,
@@ -5087,20 +5134,45 @@ export class Helios extends EventTarget {
     const tanHalfX = Math.max(1e-3, tanHalfY * aspect);
     const effectiveTanX = Math.max(1e-3, tanHalfX * (availW / viewportW));
     const effectiveTanY = Math.max(1e-3, tanHalfY * (availH / viewportH));
-    for (const x of [bounds.fitMinX, bounds.fitMaxX]) {
-      for (const y of [bounds.fitMinY, bounds.fitMaxY]) {
-        for (const z of [bounds.fitMinZ, bounds.fitMaxZ]) {
-          const delta = [x - center[0], y - center[1], z - center[2]];
-          const viewX = dotVec3Array(delta, basis.right);
-          const viewY = dotVec3Array(delta, basis.up);
-          const viewForward = dotVec3Array(delta, basis.forward);
-          maxAbsX = Math.max(maxAbsX, Math.abs(viewX) + nodeRadiusWorld);
-          maxAbsY = Math.max(maxAbsY, Math.abs(viewY) + nodeRadiusWorld);
-          requiredPerspectiveDistance = Math.max(
-            requiredPerspectiveDistance,
-            ((Math.abs(viewX) + nodeRadiusWorld) / effectiveTanX) - viewForward,
-            ((Math.abs(viewY) + nodeRadiusWorld) / effectiveTanY) - viewForward,
-          );
+    const includeFitPoint = (x, y, z) => {
+      const delta = [x - center[0], y - center[1], z - center[2]];
+      const viewX = dotVec3Array(delta, basis.right);
+      const viewY = dotVec3Array(delta, basis.up);
+      const viewForward = dotVec3Array(delta, basis.forward);
+      maxAbsX = Math.max(maxAbsX, Math.abs(viewX) + nodeRadiusWorld);
+      maxAbsY = Math.max(maxAbsY, Math.abs(viewY) + nodeRadiusWorld);
+      requiredPerspectiveDistance = Math.max(
+        requiredPerspectiveDistance,
+        ((Math.abs(viewX) + nodeRadiusWorld) / effectiveTanX) - viewForward,
+        ((Math.abs(viewY) + nodeRadiusWorld) / effectiveTanY) - viewForward,
+      );
+    };
+    let includedFitPoints = 0;
+    const fitPoints = bounds.fitPoints;
+    if (fitPoints && Number.isFinite(fitPoints.length) && fitPoints.length >= 3) {
+      const epsilon = 1e-6;
+      for (let i = 0; (i + 2) < fitPoints.length; i += 3) {
+        const x = fitPoints[i];
+        const y = fitPoints[i + 1];
+        const z = fitPoints[i + 2];
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+        if (
+          x < (bounds.fitMinX - epsilon) || x > (bounds.fitMaxX + epsilon)
+          || y < (bounds.fitMinY - epsilon) || y > (bounds.fitMaxY + epsilon)
+          || z < (bounds.fitMinZ - epsilon) || z > (bounds.fitMaxZ + epsilon)
+        ) {
+          continue;
+        }
+        includeFitPoint(x, y, z);
+        includedFitPoints += 1;
+      }
+    }
+    if (includedFitPoints <= 0) {
+      for (const x of [bounds.fitMinX, bounds.fitMaxX]) {
+        for (const y of [bounds.fitMinY, bounds.fitMaxY]) {
+          for (const z of [bounds.fitMinZ, bounds.fitMaxZ]) {
+            includeFitPoint(x, y, z);
+          }
         }
       }
     }
@@ -5328,9 +5400,18 @@ export class Helios extends EventTarget {
     runtime.controlPoseStartedAt = 0;
     runtime.controlPoseDurationMs = 0;
     runtime.controlPoseSignature = '';
+    runtime.controlPosePreserveRotation = false;
     runtime.largeNetworkStartupActive = false;
     runtime.pendingLargeNetworkStartupSettle = null;
     runtime.largeNetworkStartupRefreshIteration = -1;
+  }
+
+  _preserveCurrentCameraRotation(pose) {
+    const camera = this.renderer?.camera ?? null;
+    if (!pose || camera?.mode !== '3d') return pose;
+    const current = captureCameraPose(camera);
+    if (!current?.rotation) return pose;
+    return mergeCameraPose(pose, { rotation: current.rotation });
   }
 
   _resolveCameraControlPoseInterpolation(timestamp = performance.now()) {
@@ -5340,21 +5421,30 @@ export class Helios extends EventTarget {
     }
     const durationMs = Math.max(0, Number(runtime.controlPoseDurationMs) || 0);
     if (durationMs <= 0) {
-      const pose = runtime.controlPoseTo;
+      const pose = runtime.controlPosePreserveRotation === true
+        ? this._preserveCurrentCameraRotation(runtime.controlPoseTo)
+        : runtime.controlPoseTo;
       runtime.controlPoseActive = false;
       runtime.controlPoseFrom = null;
       runtime.controlPoseTo = null;
+      runtime.controlPosePreserveRotation = false;
       runtime.largeNetworkStartupActive = false;
       return { pose, active: false, changed: true };
     }
     const now = Number.isFinite(timestamp) ? timestamp : performance.now();
     const t = clamp((now - runtime.controlPoseStartedAt) / durationMs, 0, 1);
-    const pose = interpolateCameraPose(runtime.controlPoseFrom, runtime.controlPoseTo, t);
+    let pose = interpolateCameraPose(runtime.controlPoseFrom, runtime.controlPoseTo, t);
+    if (runtime.controlPosePreserveRotation === true) {
+      pose = this._preserveCurrentCameraRotation(pose);
+    }
     if (t >= 1) {
-      const completedPose = runtime.controlPoseTo;
+      const completedPose = runtime.controlPosePreserveRotation === true
+        ? this._preserveCurrentCameraRotation(runtime.controlPoseTo)
+        : runtime.controlPoseTo;
       runtime.controlPoseActive = false;
       runtime.controlPoseFrom = null;
       runtime.controlPoseTo = null;
+      runtime.controlPosePreserveRotation = false;
       runtime.largeNetworkStartupActive = false;
       return { pose: completedPose ?? pose, active: false, changed: true };
     }
@@ -5365,7 +5455,10 @@ export class Helios extends EventTarget {
     const camera = this.renderer?.camera ?? null;
     const runtime = this._cameraControlRuntime ?? null;
     if (!camera || !runtime || !nextPose) return false;
-    const signature = this._cameraPoseSignature(nextPose);
+    const preserveRotation = options.preserveRotation === true && camera.mode === '3d';
+    const signature = preserveRotation
+      ? `${this._cameraFitSignature(nextPose)}|preserve-rotation`
+      : this._cameraPoseSignature(nextPose);
     const animate = options.animate === true;
     const durationMs = normalizeNonNegativeNumber(
       options.durationMs,
@@ -5379,7 +5472,7 @@ export class Helios extends EventTarget {
     if (!(animate && durationMs > 0)) {
       this._stopCameraControlPoseInterpolation();
       runtime.controlPoseSignature = signature;
-      applyCameraPose(camera, nextPose);
+      applyCameraPose(camera, preserveRotation ? this._preserveCurrentCameraRotation(nextPose) : nextPose);
       this.scheduler?.requestRender?.();
       return true;
     }
@@ -5393,6 +5486,7 @@ export class Helios extends EventTarget {
     runtime.controlPoseStartedAt = now;
     runtime.controlPoseDurationMs = durationMs;
     runtime.controlPoseSignature = signature;
+    runtime.controlPosePreserveRotation = preserveRotation;
     this.scheduler?.requestRender?.();
     return true;
   }
@@ -5446,6 +5540,7 @@ export class Helios extends EventTarget {
               const queued = this._queueCameraControlPose(followPose, {
                 animate: config.animation,
                 durationMs: config.animationDurationMs,
+                preserveRotation: camera.mode === '3d',
               });
               wantsRender ||= queued;
             }
@@ -5482,6 +5577,7 @@ export class Helios extends EventTarget {
             this._queueCameraControlPose(fitPose, {
               animate: config.animation,
               durationMs: config.animationDurationMs,
+              preserveRotation: camera.mode === '3d',
             });
           }
         }
@@ -5605,11 +5701,11 @@ export class Helios extends EventTarget {
       ? resolve3DCenterFromPose(current)
       : resolve2DCenterFromPose(current, centerZ);
     const startDistance = current.mode === '3d'
-      ? Math.max(camera.minDistance ?? 10, current.distance)
+      ? Math.max(camera.minDistance ?? (10 / 3), current.distance)
       : clamp(
         estimate3DDistanceFrom2DZoom(current),
-        camera.minDistance ?? 10,
-        camera.maxDistance ?? 25000,
+        camera.minDistance ?? (10 / 3),
+        camera.maxDistance ?? 75000,
       );
 
     const startPose = {
@@ -5690,14 +5786,14 @@ export class Helios extends EventTarget {
         const availH = Math.max(1, viewportH - 48);
         return clamp(
           Math.min(availW / w, availH / h) / CAMERA_FIT_DEFAULT_2D_ZOOM_MARGIN,
-          camera.minZoom ?? 0.001,
-          camera.maxZoom ?? 10,
+          camera.minZoom ?? (0.001 / 3),
+          camera.maxZoom ?? 30,
         );
       })()
       : clamp(
         estimate2DZoomFrom3DDistance(source3D),
-        camera.minZoom ?? 0.001,
-        camera.maxZoom ?? 10,
+        camera.minZoom ?? (0.001 / 3),
+        camera.maxZoom ?? 30,
       );
 
     const matchedPerspectiveDistance = clamp(
@@ -5705,8 +5801,8 @@ export class Helios extends EventTarget {
         ...current,
         zoom,
       }),
-      camera.minDistance ?? 10,
-      camera.maxDistance ?? 25000,
+      camera.minDistance ?? (10 / 3),
+      camera.maxDistance ?? 75000,
     );
 
     const pre2D3D = {
@@ -5802,7 +5898,7 @@ export class Helios extends EventTarget {
       clearColor: this.options.clearColor,
       forceWebGL: this.options.renderer === 'webgl',
       forceWebGPU: this.options.renderer === 'webgpu',
-      mode: this.options.mode ?? '2d',
+      mode: this.options.mode ?? '3d',
       projection: this.options.projection ?? 'perspective',
       suppressBrowserGestures: this.options.suppressBrowserGestures !== false,
       antialias: this.options.antialias,
@@ -6845,6 +6941,11 @@ export class Helios extends EventTarget {
       largeNetworkStartupFit: true,
       maxAttempts: 60,
     });
+  }
+
+  _requestStartupInitialCameraFit() {
+    if (this._sessionRestoreResult || this._startupConfig?.initialCameraFit === false) return;
+    this._requestInitialCameraFit();
   }
 
   /**
@@ -8049,6 +8150,15 @@ export class Helios extends EventTarget {
     return await this._composeFigurePng(bitmapCanvas, overlaySvg, previewExportOptions);
   }
 
+  async captureSessionThumbnailBlob(options = {}) {
+    try {
+      const blob = await scaledCanvasThumbnailBlob(this._getInteractionCanvas?.(), options);
+      return blob ?? null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /**
    * Capture and download the current visualization.
    *
@@ -8267,7 +8377,7 @@ export class Helios extends EventTarget {
     this.debug.log('layout', 'Layout resized to initial viewport', this.layers.size);
 
     this.debug.log('helios', 'Creating renderer', {
-      mode: this.options.mode ?? '2d',
+      mode: this.options.mode ?? '3d',
       projection: this.options.projection ?? 'perspective',
       renderer: this.options.renderer ?? 'auto',
     });
@@ -8278,7 +8388,7 @@ export class Helios extends EventTarget {
       clearColor: this.options.clearColor,
       forceWebGL: this.options.renderer === 'webgl',
       forceWebGPU: this.options.renderer === 'webgpu',
-      mode: this.options.mode ?? '2d',
+      mode: this.options.mode ?? '3d',
       projection: this.options.projection ?? 'perspective',
       suppressBrowserGestures: this.options.suppressBrowserGestures !== false,
       antialias: this.options.antialias,
@@ -8468,7 +8578,7 @@ export class Helios extends EventTarget {
         this.storage?.markNetworkDirty?.(networkData.reason ?? 'session-initial-network');
       }
     }
-    if (!this._sessionRestoreResult) this._requestInitialCameraFit();
+    this._requestStartupInitialCameraFit();
     if (!this.manualRendering) {
       this.scheduler.start();
       this.scheduler.requestGeometry();
@@ -9615,7 +9725,19 @@ export class Helios extends EventTarget {
       },
       onRuntimeState: (state) => {
         if (!state || typeof state !== 'object') return;
+        const previousDiverging = this._densityRuntime?.diverging === true;
+        const previousDomain = Array.isArray(this._densityRuntime?.valueDomain)
+          ? this._densityRuntime.valueDomain
+          : null;
         this._densityRuntime = { ...this._densityRuntime, ...state };
+        const nextDomain = Array.isArray(this._densityRuntime?.valueDomain)
+          ? this._densityRuntime.valueDomain
+          : null;
+        const domainChanged = previousDomain?.length !== nextDomain?.length
+          || (previousDomain ?? []).some((value, index) => value !== nextDomain?.[index]);
+        if ((this._densityRuntime?.diverging === true) !== previousDiverging || domainChanged) {
+          this._legendContentVersion += 1;
+        }
       },
     });
     renderer.addLayer(densityLayer, { before: renderer.graphLayer ?? 'graph-layer' });
@@ -11251,7 +11373,7 @@ export class Helios extends EventTarget {
    * @returns {'2d'|'3d'} Current camera/rendering mode.
    */
   mode() {
-    return this.options?.mode === '3d' ? '3d' : '2d';
+    return this.options?.mode === '2d' ? '2d' : '3d';
   }
 
   /**
@@ -11446,6 +11568,7 @@ export class Helios extends EventTarget {
     if (options == null || options === false) {
       this._densityConfig = { ...this._densityConfig, enabled: false };
       this._densityRuntime = { ...this._densityRuntime, valueDomain: null };
+      this._legendContentVersion += 1;
       this._applyDensityConfigToLayer();
       this.scheduler?.requestRender?.();
       return this;
@@ -11574,6 +11697,7 @@ export class Helios extends EventTarget {
     if (next.comparisonMode !== 'logRatio') {
       this._densityRuntime = { ...this._densityRuntime, diverging: false, valueDomain: null };
     }
+    this._legendContentVersion += 1;
     this._applyDensityConfigToLayer();
     this.scheduler?.requestRender?.();
     return this;
@@ -11879,12 +12003,12 @@ export class Helios extends EventTarget {
   font: 700 15px/1 var(--helios-ui-font, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
 }
 .helios-quick-controls[data-theme="light"] {
-  --helios-quick-bg: rgba(250, 251, 252, 0.78);
-  --helios-quick-bg-solid: rgba(250, 251, 252, 0.97);
-  --helios-quick-fg: rgba(12, 14, 18, 0.92);
-  --helios-quick-border: color-mix(in srgb, var(--helios-quick-fg) 12%, transparent);
-  --helios-quick-accent: #0ea5e9;
-  --helios-quick-shadow: 0 12px 30px rgba(0, 0, 0, 0.12);
+  --helios-quick-bg: rgba(247, 247, 249, 0.78);
+  --helios-quick-bg-solid: rgba(247, 247, 249, 0.97);
+  --helios-quick-fg: #1f2328;
+  --helios-quick-border: #e6e6ea;
+  --helios-quick-accent: #5e7cb9;
+  --helios-quick-shadow: 0 12px 30px rgba(31, 35, 40, 0.12);
 }
 .helios-quick-controls__button {
   width: var(--helios-quick-size, 44px);
@@ -12650,7 +12774,7 @@ export class Helios extends EventTarget {
     if (layoutOption?.type === 'gpu-force' || layoutOption?.type === 'gpuforce') {
       const requestedOptions = {
         ...(layoutOption.options ?? {}),
-        mode: this.options.mode ?? '2d',
+        mode: this.options.mode ?? '3d',
         helios: this,
       };
       const gpuOptions = resolveGpuForceLayoutOptionsFromNetwork(layoutNetwork, requestedOptions);
@@ -12658,12 +12782,12 @@ export class Helios extends EventTarget {
       return new GpuForceLayout(layoutNetwork, this.visuals, gpuOptions);
     }
     if (layoutOption?.type === 'worker') {
-      const workerOptions = { ...(layoutOption.options ?? {}), mode: this.options.mode ?? '2d' };
+      const workerOptions = { ...(layoutOption.options ?? {}), mode: this.options.mode ?? '3d' };
       this.debug.log('layout', 'Using worker layout', workerOptions);
       return new WorkerLayout(layoutNetwork, this.visuals, workerOptions);
     }
     if (layoutOption?.type === 'd3force3d' || layoutOption?.type === 'd3-force-3d') {
-      const workerOptions = { ...(layoutOption.options ?? {}), mode: this.options.mode ?? '2d', helios: this };
+      const workerOptions = { ...(layoutOption.options ?? {}), mode: this.options.mode ?? '3d', helios: this };
       this.debug.log('layout', 'Using d3-force-3d layout', workerOptions);
       return new D3Force3DLayout(layoutNetwork, this.visuals, workerOptions);
     }
@@ -13568,24 +13692,26 @@ export class Helios extends EventTarget {
         const cy = Number.isFinite(center[1]) ? center[1] : 0;
         const cz = Number.isFinite(center[2]) ? center[2] : 0;
         const safeMode = seedBounds.mode === '3d' ? '3d' : '2d';
-        const squareSide = Math.max(1, Math.min(
-          Number(seedBounds.width) || 1,
-          Number(seedBounds.height) || 1,
-        ));
-        const cubeSide = Math.max(
-          squareSide,
-          Number(seedBounds.depth) || 0,
-        );
-        const halfSquare = squareSide * 0.5;
-        const halfCube = cubeSide * 0.5;
+        const side = safeMode === '3d'
+          ? Math.max(
+              1,
+              Number(seedBounds.width) || 1,
+              Number(seedBounds.height) || 1,
+              Number(seedBounds.depth) || 0,
+            )
+          : Math.max(1, Math.min(
+              Number(seedBounds.width) || 1,
+              Number(seedBounds.height) || 1,
+            ));
+        const halfSide = side * 0.5;
 
         for (let i = 0; i < nodeIndices.length; i += 1) {
           const nodeId = nodeIndices[i];
           const offset = nodeId * 3;
-          targetView[offset] = cx + ((Math.random() * 2 - 1) * halfSquare);
-          targetView[offset + 1] = cy + ((Math.random() * 2 - 1) * halfSquare);
+          targetView[offset] = cx + ((Math.random() * 2 - 1) * halfSide);
+          targetView[offset + 1] = cy + ((Math.random() * 2 - 1) * halfSide);
           targetView[offset + 2] = safeMode === '3d'
-            ? cz + ((Math.random() * 2 - 1) * halfCube)
+            ? cz + ((Math.random() * 2 - 1) * halfSide)
             : 0;
           wrote = true;
         }
@@ -14979,7 +15105,7 @@ export class Helios extends EventTarget {
     if (!synthetic && Number.isFinite(g.suppressNativeClickUntil) && now <= g.suppressNativeClickUntil) {
       return;
     }
-    if (clickRequiresStationary) {
+    if (clickRequiresStationary && !isDouble) {
       const suppressWheelMs = this._picking.options.suppressClickAfterWheelMs ?? 200;
       const wheelRecently = Number.isFinite(g.lastWheelAt) && now - g.lastWheelAt <= suppressWheelMs;
       if (g.cameraMoved || g.moved || wheelRecently) {

@@ -91,7 +91,7 @@ Mapper channels support `transformType` for common pre-transforms (`log`, `log1p
 
 ## Example: Basic demo node colors
 
-The bundled main app (`docs/app/main.js`) uses Helios internal mapper defaults unless you explicitly change mapper settings through the API or UI. Toggle the renderer via `?renderer=webgl` and compare edge transparency modes via `?edgeTransparency=alpha` or another explicit mode to see how visuals react.
+The bundled main app (`docs/app/main.js`) uses Helios internal mapper defaults unless you explicitly change mapper settings through the API or UI. Keep the default renderer path unless you are intentionally comparing backends; for fallback-specific checks, pass `?renderer=webgl`. Compare edge transparency modes with `?edgeTransparency=alpha` or another explicit mode only when you need to isolate that behavior.
 
 ## When things look flat
 

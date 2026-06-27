@@ -1920,6 +1920,9 @@ export class HeliosUI {
             || Boolean(detail.warning)
             || detail.status?.sessionSync?.status === 'error';
           const syncEvent = reason === 'session-save-start'
+            || reason === 'session-save'
+            || reason === 'session-save-finish'
+            || reason === 'session-state-delta-save'
             || reason === 'session-save-warning'
             || reason === 'session-save-error'
             || reason === 'session-restore-error'
@@ -1971,6 +1974,19 @@ export class HeliosUI {
             status,
             reason,
             syncSummary: savedAt == null ? 'Not synced yet.' : `Last synced ${formatRelativeSyncTime(savedAt)}.`,
+          };
+        };
+
+        const currentSessionSyncPayloadOptions = () => {
+          const storage = this.helios?.storage ?? null;
+          const status = storage?.persistenceStatus?.() ?? storage?.status?.() ?? null;
+          const networkData = status?.networkData ?? {};
+          const hasSavedNetworkPayload = networkData.savedAt != null;
+          const includeNetwork = networkData.networkDirty === true || !hasSavedNetworkPayload;
+          return {
+            includeNetwork,
+            includePositions: networkData.positionsDirty === true,
+            captureThumbnail: includeNetwork ? 'auto' : false,
           };
         };
 
@@ -2105,8 +2121,7 @@ export class HeliosUI {
           syncStatus.textContent = 'Syncing...';
           try {
             await this.helios?.storage?.sync?.({
-              includeNetwork: true,
-              includePositions: true,
+              ...currentSessionSyncPayloadOptions(),
               retention: { enabled: false },
             });
           } catch (error) {
@@ -2438,8 +2453,7 @@ export class HeliosUI {
                   ?? sessionSource?.resumeSession?.(session.id)
                   ?? sessionSource?.restoreSession?.(session.id));
                 await storage?.sync?.({
-                  includeNetwork: true,
-                  includePositions: true,
+                  ...currentSessionSyncPayloadOptions(),
                   retention: { enabled: false },
                 });
                 refreshNetworkInfo();
@@ -3166,7 +3180,7 @@ export class HeliosUI {
               const filename = `${lastValidBaseName}.${fmt}`;
               downloadBlob(blob, filename);
             }
-            await this.helios.storage?.sync?.({ includeNetwork: true, includePositions: true });
+            await this.helios.storage?.sync?.(currentSessionSyncPayloadOptions());
           } catch (error) {
             // eslint-disable-next-line no-console
             console.error('Failed to save network', error);
@@ -7134,26 +7148,52 @@ export class HeliosUI {
     meta.className = 'helios-ui-debug-panel__meta';
     content.appendChild(meta);
 
+    let updateFrame = 0;
     const update = () => {
-      const stats = this.helios?.storage?.debugStats?.({ windowMs })
-        ?? this.helios?.states?.debugStats?.({ windowMs })
+      updateFrame = 0;
+      const stats = this.helios?.storage?.debugStats?.({
+        windowMs,
+        includeRecent: false,
+        includeKeys: false,
+        includeNetworkData: false,
+      })
+        ?? this.helios?.states?.debugStats?.({ windowMs, includeRecent: false, includeKeys: false })
         ?? {};
       for (const row of rows) {
         const value = Number(stats[row.key] ?? 0);
-        row.valueEl.textContent = Number.isFinite(value) ? String(value) : '0';
+        const nextText = Number.isFinite(value) ? String(value) : '0';
+        if (row.valueEl.textContent !== nextText) row.valueEl.textContent = nextText;
       }
       const minutes = Math.max(1, Math.round(windowMs / 60000));
       const sessionId = stats.sessionId ? String(stats.sessionId) : 'none';
-      const networkStatus = stats.networkData?.status ? String(stats.networkData.status) : 'unknown';
-      meta.textContent = `${minutes} min window | ${networkStatus} | ${sessionId}`;
+      const networkStatus = stats.networkStatus
+        ? String(stats.networkStatus)
+        : (stats.networkData?.status ? String(stats.networkData.status) : 'unknown');
+      const nextMeta = `${minutes} min window | ${networkStatus} | ${sessionId}`;
+      if (meta.textContent !== nextMeta) meta.textContent = nextMeta;
+    };
+    const scheduleUpdate = () => {
+      if (updateFrame) return;
+      if (typeof window.requestAnimationFrame === 'function') {
+        updateFrame = window.requestAnimationFrame(update);
+      } else {
+        updateFrame = window.setTimeout(update, 16);
+      }
     };
     update();
-    const interval = window.setInterval(update, refreshMs);
-    this._controlCleanups.add(() => window.clearInterval(interval));
-    const unsubscribeState = this.helios?.states?.subscribe?.('', update, { immediate: false });
+    const interval = window.setInterval(scheduleUpdate, refreshMs);
+    this._controlCleanups.add(() => {
+      window.clearInterval(interval);
+      if (updateFrame) {
+        if (typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(updateFrame);
+        else window.clearTimeout(updateFrame);
+        updateFrame = 0;
+      }
+    });
+    const unsubscribeState = this.helios?.states?.subscribe?.('', scheduleUpdate, { immediate: false });
     if (typeof unsubscribeState === 'function') this._controlCleanups.add(unsubscribeState);
     if (typeof this.helios?.storage?.addEventListener === 'function') {
-      const onStorageChange = () => update();
+      const onStorageChange = () => scheduleUpdate();
       this.helios.storage.addEventListener('change', onStorageChange);
       this._controlCleanups.add(() => this.helios?.storage?.removeEventListener?.('change', onStorageChange));
     }

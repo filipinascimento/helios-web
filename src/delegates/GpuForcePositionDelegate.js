@@ -17,7 +17,7 @@ const WARNING_KEYS_BY_OWNER = new WeakMap();
 let FALLBACK_VERSION_COUNTER = 1;
 
 const DEFAULT_OPTIONS = {
-  mode: '2d',
+  mode: '3d',
   forceModel: 'linear',
   layoutScheduling: 'auto',
   layoutChunkCount: DEFAULT_LAYOUT_CHUNK_COUNT,
@@ -4712,7 +4712,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       ...DEFAULT_OPTIONS,
       ...options,
       center: normalizeCenter(options.center ?? DEFAULT_OPTIONS.center),
-      mode: options.mode === '3d' ? '3d' : '2d',
+      mode: options.mode === '2d' ? '2d' : '3d',
       layoutScheduling: normalizeLayoutScheduling(options.layoutScheduling ?? DEFAULT_OPTIONS.layoutScheduling),
       layoutChunkCount: resolveLayoutChunkCount(options.layoutChunkCount),
       layoutChunkNodeCount: options.layoutChunkNodeCount == null

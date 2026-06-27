@@ -17,6 +17,22 @@ function transformPoint(matrix, x, y, z = 0, w = 1) {
   ];
 }
 
+test('camera defaults to 3D with expanded zoom and distance limits', () => {
+  const camera = new Camera({
+    addEventListener() {},
+    removeEventListener() {},
+  }, {
+    disableControls: true,
+    viewport: { width: 200, height: 100, devicePixelRatio: 1 },
+  });
+
+  assert.equal(camera.mode, '3d');
+  assert.equal(camera.minDistance, 10 / 3);
+  assert.equal(camera.maxDistance, 75000);
+  assert.equal(camera.minZoom, 0.001 / 3);
+  assert.equal(camera.maxZoom, 30);
+});
+
 test('2D camera uses the same positive-up Y convention as 3D', () => {
   const canvas = {
     addEventListener() {},

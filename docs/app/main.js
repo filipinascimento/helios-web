@@ -21,6 +21,14 @@ function resolveRendererPreference() {
   return null;
 }
 
+function resolveDebugPanelEnabled() {
+  const params = new URLSearchParams(window.location.search);
+  const raw = params.get('debugPanel') ?? params.get('debugStats');
+  if (raw == null) return false;
+  const normalized = raw.trim().toLowerCase();
+  return normalized !== '0' && normalized !== 'false' && normalized !== 'off';
+}
+
 function resolveSessionOptions() {
   const params = new URLSearchParams(window.location.search);
   if (params.get('session') === '0') return false;
@@ -79,8 +87,8 @@ function resolvePersistenceOptions(defaultWorkspaceId = 'network') {
 function resolveMode() {
   const params = new URLSearchParams(window.location.search);
   const mode = params.get('mode');
-  if (mode && mode.toLowerCase() === '3d') return '3d';
-  return '2d';
+  if (mode && mode.toLowerCase() === '2d') return '2d';
+  return '3d';
 }
 
 function resolveLayoutType() {
@@ -217,24 +225,69 @@ function ensureStartupSpinnerStyle() {
       pointer-events: none;
       z-index: 2147483647;
     }
+    .helios-demo-startup-overlay--light {
+      background: #ffffff;
+      color: #111827;
+      --helios-demo-startup-spinner-track: rgba(94, 124, 185, 0.22);
+      --helios-demo-startup-spinner-accent: #5e7cb9;
+      --helios-demo-startup-spinner-shadow: rgba(31, 35, 40, 0.12);
+    }
+    .helios-demo-startup-overlay--dark {
+      background: #050505;
+      color: #fefefe;
+      --helios-demo-startup-spinner-track: rgba(255, 255, 255, 0.24);
+      --helios-demo-startup-spinner-accent: rgba(255, 255, 255, 0.94);
+      --helios-demo-startup-spinner-shadow: rgba(0, 0, 0, 0.18);
+    }
     .helios-demo-startup-spinner {
       width: 38px;
       height: 38px;
       border-radius: 50%;
-      border: 3px solid rgba(255, 255, 255, 0.28);
-      border-top-color: rgba(255, 255, 255, 0.94);
-      box-shadow: 0 0 14px rgba(0, 0, 0, 0.18);
+      box-sizing: border-box;
+      background: transparent;
+      border: 3px solid var(--helios-demo-startup-spinner-track);
+      border-top-color: var(--helios-demo-startup-spinner-accent);
+      box-shadow: 0 0 14px var(--helios-demo-startup-spinner-shadow);
       animation: helios-demo-startup-spin 0.82s linear infinite;
     }
   `;
   document.head?.appendChild(style);
 }
 
+function normalizeDemoStartupTheme(value) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'light' || normalized === 'default') return 'light';
+  if (normalized === 'dark' || normalized === 'slate') return 'dark';
+  return null;
+}
+
+function resolveDemoStartupTheme() {
+  const roots = [document.documentElement, document.body].filter(Boolean);
+  for (const root of roots) {
+    const theme = normalizeDemoStartupTheme(
+      root.getAttribute?.('data-helios-theme')
+        ?? root.getAttribute?.('data-theme')
+        ?? root.getAttribute?.('data-md-color-scheme'),
+    );
+    if (theme) return theme;
+  }
+  try {
+    if (window.matchMedia?.('(prefers-color-scheme: light)')?.matches) return 'light';
+    if (window.matchMedia?.('(prefers-color-scheme: dark)')?.matches) return 'dark';
+  } catch (_) {
+    return 'dark';
+  }
+  return 'dark';
+}
+
 function showDemoStartupOverlay() {
   if (isStartupDisabledByQuery()) return null;
   ensureStartupSpinnerStyle();
   const overlay = document.createElement('div');
-  overlay.className = 'helios-demo-startup-overlay';
+  const theme = resolveDemoStartupTheme();
+  overlay.className = `helios-demo-startup-overlay helios-demo-startup-overlay--${theme}`;
+  overlay.dataset.theme = theme;
   const spinner = document.createElement('div');
   spinner.className = 'helios-demo-startup-spinner';
   spinner.setAttribute('aria-hidden', 'true');
@@ -892,7 +945,7 @@ async function bootstrap() {
     dock: 'top-right',
   });
   window.__heliosSelectionPanel = selectionPanel;
-  if (helios.debugEnabled !== false) {
+  if (resolveDebugPanelEnabled()) {
     heliosUI.createDebugPanel({ dock: 'right' });
   }
 

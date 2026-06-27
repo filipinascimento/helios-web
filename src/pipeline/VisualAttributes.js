@@ -125,6 +125,7 @@ function computeSeedPosition(nodeId, nodeCount, bounds = {}) {
   const width = Math.max(1, Number(bounds.width) || 1);
   const height = Math.max(1, Number(bounds.height) || 1);
   const depth = Math.max(0, Number(bounds.depth) || 0);
+  const side3D = mode === '3d' ? Math.max(width, height, depth, 1) : 1;
   const center = Array.isArray(bounds.center) ? bounds.center : [0, 0, 0];
   const cx = Number.isFinite(center[0]) ? center[0] : 0;
   const cy = Number.isFinite(center[1]) ? center[1] : 0;
@@ -140,15 +141,16 @@ function computeSeedPosition(nodeId, nodeCount, bounds = {}) {
   const countOffset = fract(count * 0.1031);
   const xNorm = fract((index * LOW_DISCREPANCY_X) + countOffset);
   const yNorm = fract((index * LOW_DISCREPANCY_Y) + (countOffset * 0.5) + 0.33);
-  const spreadX = width * DEFAULT_SEED_SPREAD;
-  const spreadY = height * DEFAULT_SEED_SPREAD;
+  const spreadX = (mode === '3d' ? side3D : width) * DEFAULT_SEED_SPREAD;
+  const spreadY = (mode === '3d' ? side3D : height) * DEFAULT_SEED_SPREAD;
 
   if (mode === '3d') {
+    const spreadZ = side3D * DEFAULT_SEED_SPREAD;
     const zNorm = fract((index * LOW_DISCREPANCY_Z) + (countOffset * 0.25) + 0.67);
     return [
       cx + ((xNorm - 0.5) * spreadX),
       cy + ((yNorm - 0.5) * spreadY),
-      cz + ((zNorm - 0.5) * depth * DEFAULT_SEED_SPREAD),
+      cz + ((zNorm - 0.5) * spreadZ),
     ];
   }
 

@@ -223,6 +223,17 @@ test('selection behavior handles click, shift multi-select, and double-click foc
   assert.deepEqual(helios._cameraFollowCalls.at(-1).indices, [3]);
 });
 
+test('selection behavior clears selection and reframes on empty double-click', () => {
+  const { helios, behavior } = attachSelection();
+
+  behavior.selectNodes([1, 3], { mode: 'replace' });
+  helios.emit('graph:dblclick', { kind: null, index: -1, modifiers: { shiftKey: false } });
+
+  assert.deepEqual(Array.from(behavior.state.selectedNodes), []);
+  assert.deepEqual(helios._cameraFollowCalls.at(-1).indices, []);
+  assert.equal(helios._cameraFollowCalls.at(-1).options.frame, undefined);
+});
+
 test('selection behavior commands support direct selection and neighbor expansion', () => {
   const { behavior } = attachSelection();
 

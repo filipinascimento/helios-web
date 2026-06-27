@@ -24,10 +24,17 @@ export const defaultStylesText = `
   --helios-ui-z: 50;
   --helios-ui-label-col: 140px;
   --helios-ui-rule-keyword-width: 56px;
-  --helios-ui-danger: #dc2626;
-  --helios-ui-status-success: #16a34a;
+  --helios-ui-danger: #ef4444;
+  --helios-ui-status-success: #22c55e;
   --helios-ui-status-running: #f59e0b;
-  --helios-ui-status-error: #dc2626;
+  --helios-ui-status-error: #ef4444;
+  --helios-ui-status-info: #06b6d4;
+  --helios-ui-accent-hover: color-mix(in srgb, var(--helios-ui-accent) 88%, black 12%);
+  --helios-ui-accent-active: color-mix(in srgb, var(--helios-ui-accent) 78%, black 22%);
+  --helios-ui-focus-ring: color-mix(in srgb, var(--helios-ui-accent) 22%, transparent);
+  --helios-ui-control-bg: color-mix(in srgb, var(--helios-ui-bg-solid) 88%, transparent);
+  --helios-ui-control-bg-hover: color-mix(in srgb, var(--helios-ui-accent) 12%, var(--helios-ui-bg-solid));
+  --helios-ui-control-border: color-mix(in srgb, var(--helios-ui-accent) 28%, var(--helios-ui-border));
 
   position: absolute;
   inset: 0;
@@ -57,14 +64,21 @@ export const defaultStylesText = `
 }
 
 .helios-ui[data-theme="light"] {
-  --helios-ui-bg: rgba(250, 251, 252, 0.78);
-  --helios-ui-bg-solid: rgba(250, 251, 252, 0.97);
-  --helios-ui-dock-fill: color-mix(in srgb, var(--helios-ui-bg-solid) 94%, black 6%);
-  --helios-ui-fg: rgba(12, 14, 18, 0.92);
-  --helios-ui-muted: rgba(12, 14, 18, 0.62);
-  --helios-ui-accent: #0ea5e9;
+  --helios-ui-bg: rgba(247, 247, 249, 0.94);
+  --helios-ui-bg-solid: #f7f7f9;
+  --helios-ui-dock-fill: #f7f7f9;
+  --helios-ui-border: #e6e6ea;
+  --helios-ui-fg: #1f2328;
+  --helios-ui-muted: #6b7280;
+  --helios-ui-accent: #5e7cb9;
+  --helios-ui-accent-hover: #4c6aa8;
+  --helios-ui-accent-active: #3c5a93;
   --helios-ui-accent-contrast: #ffffff;
-  --helios-ui-shadow: 0 12px 30px rgba(0, 0, 0, 0.12);
+  --helios-ui-focus-ring: #c7d4e8;
+  --helios-ui-control-bg: #ffffff;
+  --helios-ui-control-bg-hover: #f1f3f6;
+  --helios-ui-control-border: #d8dce3;
+  --helios-ui-shadow: 0 12px 30px rgba(31, 35, 40, 0.12);
   --helios-ui-text-outline: rgba(255, 255, 255, 0.88);
 }
 
@@ -592,10 +606,10 @@ export const defaultStylesText = `
   justify-content: center;
   flex: none;
   white-space: nowrap;
-  border: 1px solid color-mix(in srgb, var(--helios-ui-accent) 38%, var(--helios-ui-border));
+  border: 1px solid var(--helios-ui-control-border);
   border-radius: 10px;
   padding: 4px 6px;
-  background: color-mix(in srgb, var(--helios-ui-accent) 16%, var(--helios-ui-bg-solid));
+  background: var(--helios-ui-control-bg);
   color: inherit;
   font: inherit;
   font-weight: 600;
@@ -692,7 +706,7 @@ export const defaultStylesText = `
   background:
     linear-gradient(45deg, transparent 50%, color-mix(in srgb, var(--helios-ui-muted) 90%, transparent) 50%) right 12px center/6px 6px no-repeat,
     linear-gradient(135deg, color-mix(in srgb, var(--helios-ui-muted) 90%, transparent) 50%, transparent 50%) right 8px center/6px 6px no-repeat,
-    color-mix(in srgb, var(--helios-ui-bg-solid) 85%, transparent);
+    var(--helios-ui-control-bg);
   color: inherit;
   font: inherit;
   line-height: 1;
@@ -724,7 +738,7 @@ export const defaultStylesText = `
   border: 1px solid var(--helios-ui-border);
   border-radius: 14px;
   overflow: hidden;
-  background: color-mix(in srgb, var(--helios-ui-bg-solid) 78%, transparent);
+  background: var(--helios-ui-control-bg);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--helios-ui-fg) 2%, transparent);
 }
 
@@ -735,25 +749,25 @@ export const defaultStylesText = `
   padding: 3px 7px 4px;
   background:
     linear-gradient(to top, color-mix(in srgb, var(--helios-ui-fg) 2%, transparent), transparent 55%),
-    color-mix(in srgb, var(--helios-ui-bg-solid) 78%, transparent);
+    var(--helios-ui-control-bg);
 }
 
 .helios-ui-layout__status-visual[data-state="running"] {
   background:
     linear-gradient(to top, color-mix(in srgb, var(--helios-ui-status-success) 4%, transparent), transparent 55%),
-    color-mix(in srgb, var(--helios-ui-bg-solid) 78%, transparent);
+    var(--helios-ui-control-bg);
 }
 
 .helios-ui-layout__status-visual[data-state="stopped"] {
   background:
     linear-gradient(to top, color-mix(in srgb, var(--helios-ui-status-running) 4%, transparent), transparent 55%),
-    color-mix(in srgb, var(--helios-ui-bg-solid) 78%, transparent);
+    var(--helios-ui-control-bg);
 }
 
 .helios-ui-layout__status-visual[data-state="idle"] {
   background:
     linear-gradient(to top, color-mix(in srgb, var(--helios-ui-status-running) 10%, transparent), transparent 55%),
-    color-mix(in srgb, var(--helios-ui-bg-solid) 78%, transparent);
+    var(--helios-ui-control-bg);
 }
 
 .helios-ui-layout__status-badge {
@@ -797,7 +811,7 @@ export const defaultStylesText = `
   padding: 0;
   border: 0;
   border-left: 1px solid var(--helios-ui-border);
-  background: color-mix(in srgb, var(--helios-ui-bg-solid) 78%, transparent);
+  background: var(--helios-ui-control-bg);
   color: color-mix(in srgb, var(--helios-ui-fg) 90%, white 10%);
   cursor: pointer;
   touch-action: manipulation;
@@ -826,7 +840,7 @@ export const defaultStylesText = `
 
 .helios-ui-layout__status-button:focus-visible {
   outline: none;
-  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--helios-ui-accent) 32%, transparent);
+  box-shadow: inset 0 0 0 2px var(--helios-ui-focus-ring);
 }
 
 .helios-ui-layout__status-button-icon {
@@ -857,7 +871,7 @@ export const defaultStylesText = `
   padding: 0 10px;
   border-radius: 10px;
   border: 1px solid var(--helios-ui-border);
-  background: color-mix(in srgb, var(--helios-ui-bg-solid) 82%, transparent);
+  background: var(--helios-ui-control-bg);
   color: inherit;
 }
 
@@ -1304,7 +1318,11 @@ export const defaultStylesText = `
 }
 
 .helios-ui-select:hover {
-  border-color: color-mix(in srgb, var(--helios-ui-fg) 18%, transparent);
+  border-color: var(--helios-ui-control-border);
+  background:
+    linear-gradient(45deg, transparent 50%, color-mix(in srgb, var(--helios-ui-muted) 90%, transparent) 50%) right 12px center/6px 6px no-repeat,
+    linear-gradient(135deg, color-mix(in srgb, var(--helios-ui-muted) 90%, transparent) 50%, transparent 50%) right 8px center/6px 6px no-repeat,
+    var(--helios-ui-control-bg-hover);
 }
 
 .helios-ui-select:disabled {
@@ -1324,8 +1342,8 @@ export const defaultStylesText = `
 }
 
 .helios-ui-button:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--helios-ui-accent) 55%, var(--helios-ui-border));
-  background: color-mix(in srgb, var(--helios-ui-accent) 22%, var(--helios-ui-bg-solid));
+  border-color: color-mix(in srgb, var(--helios-ui-accent-hover) 40%, var(--helios-ui-control-border));
+  background: var(--helios-ui-control-bg-hover);
 }
 
 .helios-ui-button--link:hover:not(:disabled) {
@@ -1342,7 +1360,7 @@ export const defaultStylesText = `
 .helios-ui-button:focus-visible,
 .helios-ui-select:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--helios-ui-accent) 22%, transparent);
+  box-shadow: 0 0 0 4px var(--helios-ui-focus-ring);
 }
 
 .helios-ui-panel__body {
@@ -1597,7 +1615,7 @@ export const defaultStylesText = `
   padding: 4px 6px;
   border-radius: 10px;
   border: 1px solid var(--helios-ui-border);
-  background: color-mix(in srgb, var(--helios-ui-bg-solid) 85%, transparent);
+  background: var(--helios-ui-control-bg);
   color: inherit;
   font: inherit;
   font-variant-numeric: tabular-nums;
@@ -1607,10 +1625,10 @@ export const defaultStylesText = `
 
 .helios-ui-toggle {
   appearance: none;
-  border: 1px solid color-mix(in srgb, var(--helios-ui-accent) 38%, var(--helios-ui-border));
+  border: 1px solid var(--helios-ui-control-border);
   border-radius: 999px;
   padding: 3px 10px 3px 6px;
-  background: color-mix(in srgb, var(--helios-ui-bg-solid) 85%, transparent);
+  background: var(--helios-ui-control-bg);
   color: inherit;
   font: inherit;
   font-weight: 600;
@@ -1654,7 +1672,7 @@ export const defaultStylesText = `
 }
 
 .helios-ui-toggle[aria-checked="true"] .helios-ui-toggle__thumb::after {
-  background: color-mix(in srgb, var(--helios-ui-accent) 92%, transparent);
+  background: var(--helios-ui-accent);
   transform: translateX(8px);
 }
 
@@ -1678,7 +1696,7 @@ export const defaultStylesText = `
 
 .helios-ui-toggle:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--helios-ui-accent) 22%, transparent);
+  box-shadow: 0 0 0 4px var(--helios-ui-focus-ring);
 }
 
 .helios-ui-segmented-toggle {
@@ -1690,7 +1708,7 @@ export const defaultStylesText = `
   padding: 2px;
   border-radius: 999px;
   border: 1px solid var(--helios-ui-border);
-  background: color-mix(in srgb, var(--helios-ui-bg-solid) 84%, transparent);
+  background: color-mix(in srgb, var(--helios-ui-control-bg) 84%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--helios-ui-fg) 3%, transparent);
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
@@ -1724,7 +1742,7 @@ export const defaultStylesText = `
 }
 
 .helios-ui-segmented-toggle__option[data-selected="true"] {
-  background: color-mix(in srgb, var(--helios-ui-accent) 22%, var(--helios-ui-bg-solid));
+  background: color-mix(in srgb, var(--helios-ui-accent) 18%, var(--helios-ui-bg-solid));
   color: var(--helios-ui-fg);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--helios-ui-accent) 28%, transparent);
 }
@@ -1733,7 +1751,7 @@ export const defaultStylesText = `
   outline: none;
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, var(--helios-ui-accent) 28%, transparent),
-    0 0 0 2px color-mix(in srgb, var(--helios-ui-accent) 28%, transparent);
+    0 0 0 2px var(--helios-ui-focus-ring);
 }
 
 .helios-ui-number::-webkit-outer-spin-button,
@@ -1753,7 +1771,8 @@ export const defaultStylesText = `
 
 .helios-ui-number:focus {
   outline: none;
-  border-color: color-mix(in srgb, var(--helios-ui-accent) 55%, var(--helios-ui-border));
+  border-color: color-mix(in srgb, var(--helios-ui-accent) 45%, var(--helios-ui-border));
+  box-shadow: 0 0 0 3px var(--helios-ui-focus-ring);
 }
 
 .helios-ui-number:disabled {
@@ -1766,14 +1785,15 @@ export const defaultStylesText = `
   padding: 4px 8px;
   border-radius: 10px;
   border: 1px solid var(--helios-ui-border);
-  background: color-mix(in srgb, var(--helios-ui-bg-solid) 85%, transparent);
+  background: var(--helios-ui-control-bg);
   color: inherit;
   font: inherit;
 }
 
 .helios-ui-text:focus {
   outline: none;
-  border-color: color-mix(in srgb, var(--helios-ui-accent) 55%, var(--helios-ui-border));
+  border-color: color-mix(in srgb, var(--helios-ui-accent) 45%, var(--helios-ui-border));
+  box-shadow: 0 0 0 3px var(--helios-ui-focus-ring);
 }
 
 .helios-ui-text:disabled {

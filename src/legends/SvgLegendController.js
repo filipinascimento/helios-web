@@ -57,6 +57,7 @@ const GUIDE_VALUES = new Set([
   'bottom-left',
   'bottom-right',
 ]);
+const NUMBER_FORMATTERS = new Map();
 
 function clamp(value, min, max) {
   const numeric = Number(value);
@@ -231,10 +232,30 @@ function formatNumber(value, stepHint = null) {
   const decimals = safeStep >= 1
     ? 0
     : clampInt(Math.ceil(-Math.log10(Math.max(safeStep, Number.EPSILON))) + (safeStep < 0.1 ? 1 : 0), 0, 6);
-  return new Intl.NumberFormat('en-US', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: isNearlyInteger(safeStep) && isNearlyInteger(numeric) ? 0 : decimals,
-  }).format(numeric);
+  const maximumFractionDigits = isNearlyInteger(safeStep) && isNearlyInteger(numeric) ? 0 : decimals;
+  let formatter = NUMBER_FORMATTERS.get(maximumFractionDigits);
+  if (!formatter) {
+    formatter = new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits,
+    });
+    NUMBER_FORMATTERS.set(maximumFractionDigits, formatter);
+  }
+  return formatter.format(numeric);
+}
+
+function stableLegendJson(value) {
+  if (value == null) return null;
+  if (Array.isArray(value)) return value.map((entry) => stableLegendJson(entry));
+  if (ArrayBuffer.isView(value)) return Array.from(value);
+  if (typeof value !== 'object') return value;
+  const output = {};
+  for (const key of Object.keys(value).sort()) {
+    const entry = value[key];
+    if (typeof entry === 'function') continue;
+    output[key] = stableLegendJson(entry);
+  }
+  return output;
 }
 
 function approximatelyEqual(a, b, epsilon = 1e-9) {
@@ -852,6 +873,7 @@ export class SvgLegendController {
       placements: normalizePlacements(DEFAULT_CONFIG.placements),
     };
     this._lastSignature = '';
+    this._lastUpdateInputSignature = '';
     this._activeLegendHover = null;
     this._pendingLegendHover = null;
     this._pendingLegendHoverClear = null;
@@ -936,6 +958,7 @@ export class SvgLegendController {
       next.placements = normalizePlacements({ ...next.placements, ...options.placements });
     }
     this._config = next;
+    this._lastUpdateInputSignature = '';
     if (
       previousClickAction === 'highlight'
       && (next.legendClickAction !== 'highlight' || next.legendClickSelect === false || next.interactiveCategorical === false)
@@ -957,6 +980,47 @@ export class SvgLegendController {
         ...(options.config?.titles ?? {}),
       },
     };
+  }
+
+  _networkSignature(network) {
+    if (!network) return null;
+    return {
+      nodeCount: Number(network.nodeCount ?? network.nodesCount ?? network.numNodes ?? 0),
+      edgeCount: Number(network.edgeCount ?? network.edgesCount ?? network.numEdges ?? 0),
+      visualConfig: stableLegendJson(network.__heliosVisualConfig ?? null),
+    };
+  }
+
+  _densitySignature() {
+    const helios = this.helios ?? null;
+    return {
+      config: stableLegendJson(helios?._densityConfig ?? null),
+      runtime: stableLegendJson(helios?._densityRuntime ?? null),
+    };
+  }
+
+  _updateInputSignature(config, size, safeRect, options = {}) {
+    const helios = this.helios ?? null;
+    const includeRuntimeCamera = config?.zoomAwareSizeIn2D === true;
+    return JSON.stringify({
+      size: {
+        width: Number(size?.width ?? 1),
+        height: Number(size?.height ?? 1),
+      },
+      safeRect,
+      background: helios?.background?.() ?? null,
+      config: stableLegendJson(config),
+      mapperVersion: helios?._legendContentVersion ?? 0,
+      density: this._densitySignature(),
+      network: this._networkSignature(helios?.network),
+      runtime: includeRuntimeCamera ? this._createLegendRuntime(config, { ...options, size }) : null,
+      interaction: {
+        hover: this._activeLegendHover
+          ? this._categoryEntryKey(this._activeLegendHover.item, this._activeLegendHover.entry)
+          : '',
+        highlights: Array.from(this._legendClickHighlightEntries?.keys?.() ?? []).sort(),
+      },
+    });
   }
 
   _createLegendRuntime(config, options = {}) {
@@ -992,6 +1056,7 @@ export class SvgLegendController {
   update() {
     if (!this.group || !this.helios) return false;
     if (this._config.enabled !== true) {
+      this._lastUpdateInputSignature = '';
       this._clear();
       return false;
     }
@@ -1001,7 +1066,12 @@ export class SvgLegendController {
       typeof this.helios.overlayInsets === 'function' ? this.helios.overlayInsets() : null,
       this._config,
     );
+    const updateInputSignature = this._updateInputSignature(this._config, size, safeRect);
+    if (updateInputSignature === this._lastUpdateInputSignature && this._lastSignature) {
+      return false;
+    }
     const items = this.deriveItems({ size });
+    this._lastUpdateInputSignature = updateInputSignature;
     if (!items.length) {
       this._clearLegendClickHighlights();
       this._clear();

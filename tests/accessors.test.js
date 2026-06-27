@@ -3,6 +3,16 @@ import assert from 'node:assert/strict';
 import { Helios } from '../src/index.js';
 import { GpuForceLayout } from '../src/layouts/GpuForceLayout.js';
 
+test('mode defaults to 3D when no explicit mode is configured', () => {
+  const helios = Object.create(Helios.prototype);
+  helios.options = {};
+
+  assert.equal(helios.mode(), '3d');
+
+  helios.options.mode = '2d';
+  assert.equal(helios.mode(), '2d');
+});
+
 test('graph-layer accessors are chainable setters and return values as getters', () => {
   const calls = { render: 0 };
   const helios = Object.create(Helios.prototype);

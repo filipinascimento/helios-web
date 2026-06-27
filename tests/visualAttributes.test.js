@@ -171,6 +171,36 @@ test('seedMissingPositions is deterministic and centered for missing positions',
   assert.ok(Math.abs(sumY / 20) < 1e-6);
 });
 
+test('seedMissingPositions uses equal 3D seed extents', async () => {
+  const network = await HeliosNetwork.create({ directed: false, initialNodes: 0, initialEdges: 0 });
+  network.defineNodeAttribute(NODE_POSITION_ATTRIBUTE, AttributeType.Float, 3);
+  const nodeCount = 48;
+  network.addNodes(nodeCount);
+
+  const visuals = new VisualAttributes(network);
+  visuals.seedMissingPositions({ mode: '3d', width: 80, height: 40, depth: 20, center: [0, 0, 0] });
+
+  let maxAbsX = 0;
+  let maxAbsY = 0;
+  let maxAbsZ = 0;
+  network.withBufferAccess(() => {
+    const pos = network.getNodeAttributeBuffer(NODE_POSITION_ATTRIBUTE).view;
+    for (let i = 0; i < nodeCount; i += 1) {
+      const offset = i * 3;
+      maxAbsX = Math.max(maxAbsX, Math.abs(pos[offset]));
+      maxAbsY = Math.max(maxAbsY, Math.abs(pos[offset + 1]));
+      maxAbsZ = Math.max(maxAbsZ, Math.abs(pos[offset + 2]));
+      assert.ok(pos[offset] >= -28 && pos[offset] <= 28);
+      assert.ok(pos[offset + 1] >= -28 && pos[offset + 1] <= 28);
+      assert.ok(pos[offset + 2] >= -28 && pos[offset + 2] <= 28);
+    }
+  });
+
+  assert.ok(maxAbsX > 14);
+  assert.ok(maxAbsY > 14);
+  assert.ok(maxAbsZ > 14);
+});
+
 test('parses hex colors with alpha in toRgba', async () => {
   const network = await HeliosNetwork.create({ directed: false, initialNodes: 0, initialEdges: 0 });
   const visuals = new VisualAttributes(network);

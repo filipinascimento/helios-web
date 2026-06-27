@@ -31,8 +31,14 @@ export function createToggleControl({
   let suppressClick = false;
 
   const sync = () => {
-    button.setAttribute('aria-checked', currentChecked ? 'true' : 'false');
-    text.textContent = currentChecked ? labels.on : labels.off;
+    const nextAriaChecked = currentChecked ? 'true' : 'false';
+    if (button.getAttribute('aria-checked') !== nextAriaChecked) {
+      button.setAttribute('aria-checked', nextAriaChecked);
+    }
+    const nextText = currentChecked ? labels.on : labels.off;
+    if (text.textContent !== nextText) {
+      text.textContent = nextText;
+    }
   };
 
   const commitToggle = () => {
@@ -48,15 +54,18 @@ export function createToggleControl({
       return currentChecked;
     },
     set(value) {
-      currentChecked = Boolean(value);
+      const nextChecked = Boolean(value);
+      if (nextChecked === currentChecked) return;
+      currentChecked = nextChecked;
       sync();
     },
   });
 
   button.setLabels = ({ on, off } = {}) => {
+    const previousText = currentChecked ? labels.on : labels.off;
     if (on != null) labels.on = String(on);
     if (off != null) labels.off = String(off);
-    sync();
+    if ((currentChecked ? labels.on : labels.off) !== previousText) sync();
   };
 
   button.addEventListener('pointerup', (event) => {

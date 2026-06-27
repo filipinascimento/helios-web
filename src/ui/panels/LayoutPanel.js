@@ -267,6 +267,23 @@ export class LayoutPanel {
       dynamic: false,
       bindings: [],
     };
+    const setText = (element, value) => {
+      const next = String(value ?? '');
+      if (element && element.textContent !== next) element.textContent = next;
+    };
+    const setAttributeIfChanged = (element, name, value) => {
+      if (!element) return;
+      const next = String(value ?? '');
+      if (element.getAttribute(name) !== next) element.setAttribute(name, next);
+    };
+    const setDatasetIfChanged = (element, key, value) => {
+      if (!element?.dataset) return;
+      const next = String(value ?? '');
+      if (element.dataset[key] !== next) element.dataset[key] = next;
+    };
+    const setDisplayIfChanged = (element, value) => {
+      if (element && element.style.display !== value) element.style.display = value;
+    };
 
     const layoutSelect = document.createElement('select');
     layoutSelect.className = 'helios-ui-select';
@@ -546,8 +563,8 @@ export class LayoutPanel {
         }
       }
 
-      selectedPositionAttribute = nextSelected;
-      positionAttributeSelect.value = nextSelected;
+      if (selectedPositionAttribute !== nextSelected) selectedPositionAttribute = nextSelected;
+      if (positionAttributeSelect.value !== nextSelected) positionAttributeSelect.value = nextSelected;
     };
 
     const refreshRunState = () => {
@@ -558,21 +575,24 @@ export class LayoutPanel {
       const stoppable = state === 'running' || state === 'idle';
       const label = state === 'idle' ? 'idle' : (running ? 'running' : 'stopped');
 
-      runRow.row.style.display = dynamic ? '' : 'none';
-      statusControls.dataset.state = state;
-      statusVisual.dataset.state = state;
-      statusBadge.dataset.state = state;
-      statusText.textContent = label;
-      statusText.dataset.state = state;
-      statusSpinner.style.display = running ? '' : 'none';
-      runButton.replaceChildren();
-      runButton.dataset.state = state;
+      setDisplayIfChanged(runRow.row, dynamic ? '' : 'none');
+      setDatasetIfChanged(statusControls, 'state', state);
+      setDatasetIfChanged(statusVisual, 'state', state);
+      setDatasetIfChanged(statusBadge, 'state', state);
+      setText(statusText, label);
+      setDatasetIfChanged(statusText, 'state', state);
+      setDisplayIfChanged(statusSpinner, running ? '' : 'none');
+      setDatasetIfChanged(runButton, 'state', state);
       const nextActionLabel = stoppable ? 'Stop layout' : 'Start layout';
-      runButton.title = nextActionLabel;
-      runButton.setAttribute('aria-label', nextActionLabel);
-      runButtonIconWrap.replaceChildren(stoppable ? createPauseIcon() : createPlayIcon());
-      runButton.appendChild(runButtonIconWrap);
-      runButton.setAttribute('aria-busy', running ? 'true' : 'false');
+      if (runButton.title !== nextActionLabel) runButton.title = nextActionLabel;
+      setAttributeIfChanged(runButton, 'aria-label', nextActionLabel);
+      const iconKind = stoppable ? 'pause' : 'play';
+      if (runButtonIconWrap.dataset.iconKind !== iconKind) {
+        runButtonIconWrap.dataset.iconKind = iconKind;
+        runButtonIconWrap.replaceChildren(stoppable ? createPauseIcon() : createPlayIcon());
+      }
+      if (runButtonIconWrap.parentElement !== runButton) runButton.appendChild(runButtonIconWrap);
+      setAttributeIfChanged(runButton, 'aria-busy', running ? 'true' : 'false');
     };
 
     const resetStatusHistory = () => {
@@ -627,8 +647,8 @@ export class LayoutPanel {
     };
 
     const refreshStatusBinding = () => {
-      statusTempLabel.textContent = statusBinding?.label ?? 'Temp.';
-      statusVisual.style.display = statusBinding ? '' : 'none';
+      setText(statusTempLabel, statusBinding?.label ?? 'Temp.');
+      setDisplayIfChanged(statusVisual, statusBinding ? '' : 'none');
       resetStatusHistory();
     };
 
@@ -713,7 +733,7 @@ export class LayoutPanel {
           wrap.appendChild(display);
           controls = wrap;
           refresh = () => {
-            display.textContent = formatBindingValue(binding, binding.get?.());
+            setText(display, formatBindingValue(binding, binding.get?.()));
           };
         }
       } else if (binding.type === 'boolean') {

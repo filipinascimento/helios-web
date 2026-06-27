@@ -792,6 +792,27 @@ test('camera interaction updates sync text only after interaction idle', async (
     window.__helios.storage.status()?.sessionSync?.savedAt ?? 0
   )), { timeout: 10000 }).toBeGreaterThan(oldSavedAt);
   await expect(syncStatus).toHaveText('Synced', { timeout: 10000 });
+
+  await page.evaluate(() => {
+    const storage = window.__helios.storage;
+    const statusEl = document.querySelector('.helios-ui-network-persistence__status');
+    if (statusEl) statusEl.textContent = 'Syncing...';
+    storage.networkData = {
+      ...(storage.networkData ?? {}),
+      enabled: true,
+      status: 'dirty',
+      dirty: true,
+      networkDirty: false,
+      positionsDirty: true,
+      dirtyAt: Date.now(),
+      reason: 'layout-update',
+      syncing: false,
+    };
+    storage.dispatchEvent(new CustomEvent('change', {
+      detail: { reason: 'session-save-finish', status: storage.persistenceStatus() },
+    }));
+  });
+  await expect(syncStatus).toHaveText('Unsynced positions');
 });
 
 test('default retention keeps more than two small browser sessions', async ({ page }) => {

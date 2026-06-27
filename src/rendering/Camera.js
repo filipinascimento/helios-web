@@ -380,7 +380,7 @@ function mat4Scale(out, a, v) {
 export class Camera {
   constructor(canvas, options = {}) {
     this.canvas = canvas;
-    this.mode = options.mode === '3d' ? '3d' : '2d';
+    this.mode = options.mode === '2d' ? '2d' : '3d';
     this.projection = options.projection === 'orthographic' ? 'orthographic' : 'perspective';
     this.suppressBrowserGestures = options.suppressBrowserGestures !== false;
     this.fov = options.fov ?? 60;
@@ -389,11 +389,11 @@ export class Camera {
     this.near2D = options.near2D ?? -1;
     this.far2D = options.far2D ?? 1;
     this.distance = options.distance ?? 800;
-    this.minDistance = options.minDistance ?? 10;
-    this.maxDistance = options.maxDistance ?? 25000;
+    this.minDistance = options.minDistance ?? (10 / 3);
+    this.maxDistance = options.maxDistance ?? 75000;
     this.zoom = options.zoom ?? 3;
-    this.minZoom = options.minZoom ?? 0.001;
-    this.maxZoom = options.maxZoom ?? 10;
+    this.minZoom = options.minZoom ?? (0.001 / 3);
+    this.maxZoom = options.maxZoom ?? 30;
     this.rotation = quatIdentity(new Float32Array(4));
     this.target = createVec3(0, 0, 0);
     this.pan2D = createVec3();

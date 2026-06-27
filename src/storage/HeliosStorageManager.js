@@ -90,12 +90,32 @@ function encodeFloat32PositionPayload(values) {
   };
 }
 
-async function compressPositionBytes(bytes) {
+const STALE_POSITION_AUTOSAVE_CODE = 'HELIOS_STALE_POSITION_AUTOSAVE';
+const DEFAULT_POSITION_COMPRESSION_MIN_BYTES = 256 * 1024;
+
+function createStalePositionAutosaveAbort(detail = {}) {
+  const error = new Error('Skipping stale queued Helios position autosave because newer positions are pending.');
+  error.code = STALE_POSITION_AUTOSAVE_CODE;
+  error.detail = detail;
+  return error;
+}
+
+function isStalePositionAutosaveAbort(error) {
+  return error?.code === STALE_POSITION_AUTOSAVE_CODE;
+}
+
+async function compressPositionBytes(bytes, options = {}) {
   if (!(bytes instanceof Uint8Array) || bytes.byteLength <= 0) return null;
   const raw = new Uint8Array(bytes.byteLength);
   raw.set(bytes);
+  const compressionMinBytes = Number.isFinite(Number(options.compressionMinBytes))
+    ? Math.max(0, Math.floor(Number(options.compressionMinBytes)))
+    : DEFAULT_POSITION_COMPRESSION_MIN_BYTES;
+  if (raw.byteLength < compressionMinBytes) {
+    return { data: raw, compression: 'none', skippedCompression: 'below-threshold' };
+  }
   if (typeof CompressionStream !== 'function' || typeof Response !== 'function' || typeof Blob !== 'function') {
-    return { data: raw, compression: 'none' };
+    return { data: raw, compression: 'none', skippedCompression: 'unavailable' };
   }
   try {
     const compressed = new Uint8Array(await new Response(
@@ -263,6 +283,7 @@ const DEFAULT_SESSION_AUTOSYNC_MIN_INTERVAL_MS = 1500;
 const DEFAULT_POSITION_AUTOSAVE_DEBOUNCE_MS = 2000;
 const DEFAULT_AUTOSYNC_POSITION_MAX_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MANUAL_POSITION_MAX_BYTES = Number.MAX_SAFE_INTEGER;
+const DEFAULT_SESSION_SYNC_TIMING_LOG_MS = 25;
 const SESSION_ID_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
 const DEFAULT_SESSION_ID_LENGTH = 10;
 const WARNING_KEYS_BY_OWNER = new WeakMap();
@@ -423,6 +444,16 @@ function normalizeNonNegativeMs(value, fallback = 0) {
   return Number.isFinite(number) ? Math.max(0, number) : fallback;
 }
 
+function syncTimingNowMs() {
+  const performanceNow = globalThis.performance?.now?.();
+  return Number.isFinite(performanceNow) ? performanceNow : Date.now();
+}
+
+function roundTimingMs(value) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value * 10) / 10;
+}
+
 function normalizePositiveByteLimit(value, fallback = 0) {
   if (value === false || value == null) return fallback;
   const number = Number(value);
@@ -475,6 +506,8 @@ function mergeCaptureThumbnailMode(previous, next) {
 function mergeSessionAutosaveOptions(previous = {}, next = {}) {
   const pending = previous && typeof previous === 'object' ? previous : {};
   const options = next && typeof next === 'object' ? next : {};
+  const nextPositionDirtyVersion = Number(options.positionDirtyVersion);
+  const pendingPositionDirtyVersion = Number(pending.positionDirtyVersion);
   return {
     ...pending,
     ...options,
@@ -482,6 +515,9 @@ function mergeSessionAutosaveOptions(previous = {}, next = {}) {
     includePositions: pending.includePositions === true || options.includePositions === true,
     captureThumbnail: mergeCaptureThumbnailMode(pending.captureThumbnail, options.captureThumbnail),
     snapshotLayoutRuntime: pending.snapshotLayoutRuntime === true || options.snapshotLayoutRuntime === true,
+    positionDirtyVersion: options.includePositions === true && Number.isFinite(nextPositionDirtyVersion)
+      ? nextPositionDirtyVersion
+      : (Number.isFinite(pendingPositionDirtyVersion) ? pendingPositionDirtyVersion : undefined),
   };
 }
 
@@ -755,7 +791,15 @@ export class HeliosStorageManager extends EventTarget {
     this.sessionSaveError = null;
     this.sessionRestoreError = null;
     this.sessionSaveWarning = null;
-    this.networkData = { enabled: this.persistNetwork, status: 'idle', dirty: false, positionsDirty: false, savedAt: null, dirtyAt: null };
+    this.networkData = {
+      enabled: this.persistNetwork,
+      status: 'idle',
+      dirty: false,
+      networkDirty: false,
+      positionsDirty: false,
+      savedAt: null,
+      dirtyAt: null,
+    };
     this.capabilities = {
       persistent: options.persistent === true,
       sessions: options.sessions === true,
@@ -802,9 +846,20 @@ export class HeliosStorageManager extends EventTarget {
     this._sessionSaveQueuedCount = 0;
     this._sessionAutosaveAfterSaveQueued = false;
     this._sessionSaveSequence = 0;
+    this._sessionSyncTimingSequence = 0;
     this._sessionSaveWarningMs = normalizeNonNegativeMs(
       options.sessionSaveWarningMs ?? options.session?.saveWarningMs,
       DEFAULT_SESSION_SAVE_WARNING_MS,
+    );
+    this.sessionSyncTimingLog = options.sessionSyncTimingLog
+      ?? options.session?.syncTimingLog
+      ?? options.session?.timingLog
+      ?? true;
+    this.sessionSyncTimingLogThresholdMs = normalizeNonNegativeMs(
+      options.sessionSyncTimingLogThresholdMs
+        ?? options.session?.syncTimingLogThresholdMs
+        ?? options.session?.timingLogThresholdMs,
+      DEFAULT_SESSION_SYNC_TIMING_LOG_MS,
     );
     this._lastLoggedSessionSaveError = null;
     this._heliosSessionAutosaveCleanups = [];
@@ -813,6 +868,7 @@ export class HeliosStorageManager extends EventTarget {
     this._lastAutosaveThumbnailAttemptAt = null;
     this._lastUserInteractionAt = null;
     this._lastSessionAutosyncAt = null;
+    this._positionDirtyVersion = 0;
     this._recentPersistenceChanges = [];
     this._registerDefaultStateEntries();
     this.configure({
@@ -1049,6 +1105,7 @@ export class HeliosStorageManager extends EventTarget {
       enabled: true,
       status: 'dirty',
       dirty: true,
+      networkDirty: true,
       dirtyAt,
       reason,
     };
@@ -1065,6 +1122,9 @@ export class HeliosStorageManager extends EventTarget {
   }
 
   markPositionsDirty(reason = 'positions-change') {
+    this._positionDirtyVersion = (this._positionDirtyVersion + 1) % Number.MAX_SAFE_INTEGER;
+    if (this._positionDirtyVersion <= 0) this._positionDirtyVersion = 1;
+    const positionDirtyVersion = this._positionDirtyVersion;
     const dirtyAt = this.networkData?.dirty === true && Number.isFinite(Number(this.networkData?.dirtyAt))
       ? Number(this.networkData.dirtyAt)
       : this._now();
@@ -1083,6 +1143,7 @@ export class HeliosStorageManager extends EventTarget {
       source: 'positions',
       includeNetwork: false,
       includePositions: true,
+      positionDirtyVersion,
       autosync: true,
       captureThumbnail: 'auto',
       snapshotLayoutRuntime: true,
@@ -1431,6 +1492,53 @@ export class HeliosStorageManager extends EventTarget {
     return errorMessage;
   }
 
+  _isStalePositionAutosave(options = {}) {
+    if (options.autosync !== true || options.includePositions !== true) return false;
+    const requestedVersion = Number(options.positionDirtyVersion);
+    return Number.isFinite(requestedVersion)
+      && requestedVersion > 0
+      && requestedVersion < this._positionDirtyVersion;
+  }
+
+  _skipStalePositionAutosave(options = {}) {
+    const requestedVersion = Number(options.positionDirtyVersion);
+    const currentVersion = this._positionDirtyVersion;
+    this._recordPersistenceChange('session-position-save-coalesced', {
+      id: options.id ?? this.sessionId ?? null,
+      reason: options.reason ?? null,
+      requestedVersion: Number.isFinite(requestedVersion) ? requestedVersion : null,
+      currentVersion,
+    });
+    if (this._sessionSaveQueuedCount <= 0 && !this._sessionAutosaveOptions && !this._sessionAutosaveTimer) {
+      const nextOptions = mergeSessionAutosaveOptions({}, {
+        ...options,
+        reason: 'position-autosave-coalesced',
+        includePositions: true,
+        autosync: true,
+        positionDirtyVersion: currentVersion,
+        captureThumbnail: options.captureThumbnail ?? 'auto',
+      });
+      this._sessionAutosaveOptions = nextOptions;
+      this._sessionAutosaveTimer = setTimeout(() => this._runScheduledSessionAutosave(nextOptions), 0);
+    }
+    return null;
+  }
+
+  _refreshStalePositionAutosave(options = {}) {
+    const requestedVersion = Number(options.positionDirtyVersion);
+    const currentVersion = this._positionDirtyVersion;
+    this._recordPersistenceChange('session-position-save-refreshed', {
+      id: options.id ?? this.sessionId ?? null,
+      reason: options.reason ?? null,
+      requestedVersion: Number.isFinite(requestedVersion) ? requestedVersion : null,
+      currentVersion,
+    });
+    return {
+      ...options,
+      positionDirtyVersion: currentVersion,
+    };
+  }
+
   _beginSessionSave(options = {}) {
     const id = ++this._sessionSaveSequence;
     const startedAt = this._now();
@@ -1520,6 +1628,11 @@ export class HeliosStorageManager extends EventTarget {
         ...this.networkData,
         syncing: false,
       };
+      this._emit('change', {
+        reason: 'session-save-finish',
+        sessionId: this.sessionId,
+        status: this.persistenceStatus(),
+      });
     }
     if (entry?.autosync === true) this._lastSessionAutosyncAt = this._now();
   }
@@ -1538,6 +1651,7 @@ export class HeliosStorageManager extends EventTarget {
 
   _enqueueSessionSave(operation, options = {}) {
     this._sessionSaveQueuedCount += 1;
+    if (!Number.isFinite(options._queuedAtMs)) options._queuedAtMs = syncTimingNowMs();
     const run = async () => {
       this._sessionSaveQueuedCount = Math.max(0, this._sessionSaveQueuedCount - 1);
       return this._withSessionSaveTracking(operation, options);
@@ -1560,14 +1674,14 @@ export class HeliosStorageManager extends EventTarget {
     const now = this._now();
     const clearNetwork = options.network !== false;
     const clearPositions = options.positions !== false;
+    const networkDirty = clearNetwork ? false : this.networkData?.networkDirty === true;
     const positionsDirty = clearPositions ? false : this.networkData?.positionsDirty === true;
-    const dirty = clearNetwork && clearPositions
-      ? false
-      : (this.networkData?.dirty === true || positionsDirty === true);
+    const dirty = networkDirty || positionsDirty;
     this.networkData = {
       ...this.networkData,
       status: dirty ? 'dirty' : 'saved',
       dirty,
+      networkDirty,
       positionsDirty,
       savedAt: now,
       dirtyAt: dirty ? (this.networkData?.dirtyAt ?? now) : null,
@@ -1732,15 +1846,22 @@ export class HeliosStorageManager extends EventTarget {
     this.sessionSaveError = null;
     this.sessionRestoreError = null;
     this.sessionSaveWarning = null;
+    const legacyNetworkDirty = this.networkData?.networkDirty == null
+      && this.networkData?.dirty === true
+      && this.networkData?.positionsDirty !== true;
+    const networkStillDirty = this.networkData?.networkDirty === true || legacyNetworkDirty;
     const positionsStillDirty = this.networkData?.positionsDirty === true;
+    const dirtyAfterSave = networkStillDirty || positionsStillDirty;
     const previousNetworkSavedAt = this.networkData?.savedAt ?? null;
     this.networkData = {
       ...this.networkData,
       enabled: true,
-      status: positionsStillDirty ? 'dirty' : 'saved',
-      dirty: positionsStillDirty,
-      dirtyAt: positionsStillDirty ? (this.networkData?.dirtyAt ?? now) : null,
-      savedAt: positionsStillDirty ? previousNetworkSavedAt : this.sessionSavedAt,
+      status: dirtyAfterSave ? 'dirty' : 'saved',
+      dirty: dirtyAfterSave,
+      networkDirty: networkStillDirty,
+      positionsDirty: positionsStillDirty,
+      dirtyAt: dirtyAfterSave ? (this.networkData?.dirtyAt ?? now) : null,
+      savedAt: dirtyAfterSave ? previousNetworkSavedAt : this.sessionSavedAt,
       format: payload.networkData?.format ?? this.networkData.format ?? null,
       remoteWarning: null,
       restoreError: null,
@@ -1790,6 +1911,7 @@ export class HeliosStorageManager extends EventTarget {
         autosync: flushOptions.autosync === true,
         includeNetwork: flushOptions.includeNetwork === true,
         includePositions: flushOptions.includePositions === true,
+        positionDirtyVersion: flushOptions.positionDirtyVersion,
         captureThumbnail: flushOptions.captureThumbnail === true
           ? true
           : (flushOptions.captureThumbnail === 'auto' ? 'auto' : false),
@@ -1803,6 +1925,111 @@ export class HeliosStorageManager extends EventTarget {
       const errorMessage = this._sessionErrorMessage(error);
       this._emit('change', { reason: 'session-autosave-error', error: errorMessage, status: this.persistenceStatus() });
     });
+  }
+
+  _createSessionSyncTiming(options = {}) {
+    if (options.collectTiming === false || options.syncTiming === false) return null;
+    return {
+      id: ++this._sessionSyncTimingSequence,
+      startedAtMs: syncTimingNowMs(),
+      queuedAtMs: Number.isFinite(options._queuedAtMs) ? Number(options._queuedAtMs) : null,
+      reason: options.reason ?? null,
+      autosync: options.autosync === true,
+      includeNetwork: options.includeNetwork !== false,
+      includePositions: options.includePositions === true,
+      positionDirtyVersion: Number.isFinite(Number(options.positionDirtyVersion))
+        ? Number(options.positionDirtyVersion)
+        : null,
+      steps: [],
+      finished: false,
+    };
+  }
+
+  _recordSessionSyncStep(timing, name, startedAtMs, detail = {}) {
+    if (!timing || timing.finished) return null;
+    const step = {
+      name,
+      ms: roundTimingMs(syncTimingNowMs() - startedAtMs),
+      ...cloneSerializable(detail),
+    };
+    timing.steps.push(step);
+    return step;
+  }
+
+  _timeSessionSync(timing, name, detail, operation) {
+    if (typeof operation !== 'function') return operation;
+    if (!timing) return operation();
+    const startedAtMs = syncTimingNowMs();
+    try {
+      const result = operation();
+      this._recordSessionSyncStep(timing, name, startedAtMs, detail);
+      return result;
+    } catch (error) {
+      this._recordSessionSyncStep(timing, name, startedAtMs, {
+        ...detail,
+        error: this._sessionErrorMessage(error),
+      });
+      throw error;
+    }
+  }
+
+  async _timeSessionSyncAsync(timing, name, detail, operation) {
+    if (typeof operation !== 'function') return operation;
+    if (!timing) return await operation();
+    const startedAtMs = syncTimingNowMs();
+    try {
+      const result = await operation();
+      this._recordSessionSyncStep(timing, name, startedAtMs, detail);
+      return result;
+    } catch (error) {
+      this._recordSessionSyncStep(timing, name, startedAtMs, {
+        ...detail,
+        error: this._sessionErrorMessage(error),
+      });
+      throw error;
+    }
+  }
+
+  _finishSessionSyncTiming(timing, options = {}, detail = {}) {
+    if (!timing || timing.finished) return null;
+    timing.finished = true;
+    const totalMs = roundTimingMs(syncTimingNowMs() - timing.startedAtMs);
+    const queueWaitMs = Number.isFinite(timing.queuedAtMs)
+      ? roundTimingMs(timing.startedAtMs - timing.queuedAtMs)
+      : null;
+    const summary = {
+      syncId: timing.id,
+      id: options.id ?? this.sessionId ?? null,
+      reason: options.reason ?? timing.reason,
+      autosync: options.autosync === true,
+      includeNetwork: options.includeNetwork !== false,
+      includePositions: options.includePositions === true,
+      positionDirtyVersion: timing.positionDirtyVersion,
+      currentPositionDirtyVersion: this._positionDirtyVersion,
+      totalMs,
+      queueWaitMs,
+      result: detail.result ?? 'saved',
+      steps: timing.steps.map((step) => cloneSerializable(step)),
+    };
+    if (detail.error) summary.error = this._sessionErrorMessage(detail.error);
+    this._recordPersistenceChange('session-sync-timing', summary);
+    const thresholdMs = normalizeNonNegativeMs(
+      options.syncTimingLogThresholdMs ?? this.sessionSyncTimingLogThresholdMs,
+      DEFAULT_SESSION_SYNC_TIMING_LOG_MS,
+    );
+    const shouldLog = this.sessionSyncTimingLog !== false
+      && options.logTiming !== false
+      && totalMs >= thresholdMs
+      && (
+        options.logTiming === true
+        || summary.includeNetwork
+        || summary.includePositions
+        || summary.result !== 'saved'
+      );
+    if (shouldLog && typeof console !== 'undefined' && typeof console.info === 'function') {
+      console.info('[HeliosStorage] Session sync timing', summary);
+    }
+    return summary;
   }
 
   _recordPersistenceChange(type, detail = {}) {
@@ -1825,22 +2052,36 @@ export class HeliosStorageManager extends EventTarget {
   debugStats(options = {}) {
     const windowMs = Number.isFinite(options.windowMs) ? Math.max(0, Number(options.windowMs)) : 5 * 60 * 1000;
     const cutoff = this._now() - windowMs;
-    const persistenceChanges = this._recentPersistenceChanges.filter((entry) => entry.timestamp >= cutoff);
-    const stateStats = this.states?.debugStats?.({ windowMs }) ?? {
+    const includeRecent = options.includeRecent !== false;
+    const includeKeys = options.includeKeys !== false;
+    const includeNetworkData = options.includeNetworkData !== false;
+    let persistenceChangeCount = 0;
+    const persistenceChanges = includeRecent ? [] : null;
+    for (const entry of this._recentPersistenceChanges) {
+      if (entry.timestamp < cutoff) continue;
+      persistenceChangeCount += 1;
+      if (persistenceChanges) persistenceChanges.push(entry);
+    }
+    const stateStats = this.states?.debugStats?.({ windowMs, includeRecent, includeKeys }) ?? {
       windowMs,
       trackedStateCount: this.states?.overrideKeys?.().length ?? 0,
-      trackedKeys: this.states?.overrideKeys?.() ?? [],
+      trackedKeys: includeKeys ? (this.states?.overrideKeys?.() ?? []) : [],
       stateChangeCount: 0,
       uiChangeCount: 0,
+      recentChanges: [],
     };
-    return {
+    const stats = {
       ...stateStats,
       windowMs,
-      persistenceChangeCount: persistenceChanges.length,
-      recentPersistenceChanges: persistenceChanges.map((entry) => cloneSerializable(entry)),
+      persistenceChangeCount,
+      recentPersistenceChanges: includeRecent
+        ? persistenceChanges.map((entry) => cloneSerializable(entry))
+        : [],
       sessionId: this.sessionId ?? null,
-      networkData: cloneSerializable(this.networkData),
+      networkStatus: this.networkData?.status ?? null,
     };
+    if (includeNetworkData) stats.networkData = cloneSerializable(this.networkData);
+    return stats;
   }
 
   _installHeliosSessionAutosaveListeners() {
@@ -2065,12 +2306,14 @@ export class HeliosStorageManager extends EventTarget {
 
   async _serializeSessionPositionData(options = {}) {
     if (!this.helios?.snapshotLayoutRuntimeStateAsync && !this.helios?.snapshotLayoutRuntimeState) return null;
+    const timing = options._timing ?? null;
     const explicitMaxPositionBytes = options.maxPositionBytes ?? options.layoutRuntime?.maxPositionBytes;
     const maxPositionBytes = Number.isFinite(Number(explicitMaxPositionBytes))
       ? Math.max(0, Number(explicitMaxPositionBytes))
       : (options.autosync === true
         ? this.autosyncPayloadLimits?.positionMaxBytes ?? DEFAULT_AUTOSYNC_POSITION_MAX_BYTES
         : DEFAULT_MANUAL_POSITION_MAX_BYTES);
+    const snapshotStartedAtMs = syncTimingNowMs();
     const runtimeState = await (this.helios.snapshotLayoutRuntimeStateAsync?.({
       reason: options.reason ?? 'session-position-save',
       ...(options.layoutRuntime ?? {}),
@@ -2084,14 +2327,60 @@ export class HeliosStorageManager extends EventTarget {
       includePositions: true,
       preferDelegate: true,
     }));
+    this._recordSessionSyncStep(timing, 'position.snapshot-layout-runtime', snapshotStartedAtMs, {
+      nodeCount: Number.isFinite(runtimeState?.nodeCount) ? Number(runtimeState.nodeCount) : null,
+      hasPositions: runtimeState?.positions != null,
+      positionsSkipped: runtimeState?.positionsSkipped === true,
+      positionSource: runtimeState?.positionSource ?? null,
+      maxPositionBytes,
+    });
+    if (this._isStalePositionAutosave(options) && this._sessionSaveQueuedCount > 0) {
+      const requestedVersion = Number(options.positionDirtyVersion);
+      const currentVersion = this._positionDirtyVersion;
+      this._recordSessionSyncStep(timing, 'position.abort-stale-after-snapshot', syncTimingNowMs(), {
+        requestedVersion: Number.isFinite(requestedVersion) ? requestedVersion : null,
+        currentVersion,
+        queuedCount: this._sessionSaveQueuedCount,
+      });
+      throw createStalePositionAutosaveAbort({
+        stage: 'after-snapshot',
+        requestedVersion: Number.isFinite(requestedVersion) ? requestedVersion : null,
+        currentVersion,
+      });
+    }
+    const decodeStartedAtMs = syncTimingNowMs();
     const positions = decodeFloat32PositionPayload(runtimeState?.positions);
+    this._recordSessionSyncStep(timing, 'position.decode-float32-payload', decodeStartedAtMs, {
+      floatCount: positions instanceof Float32Array ? positions.length : 0,
+      byteLength: positions instanceof Float32Array ? positions.byteLength : 0,
+    });
     if (!(positions instanceof Float32Array) || positions.length <= 0) return null;
+    const byteViewStartedAtMs = syncTimingNowMs();
     const positionBytes = new Uint8Array(positions.buffer, positions.byteOffset, positions.byteLength);
-    const compressed = await compressPositionBytes(positionBytes);
+    this._recordSessionSyncStep(timing, 'position.create-byte-view', byteViewStartedAtMs, {
+      byteLength: positionBytes.byteLength,
+    });
+    const compressStartedAtMs = syncTimingNowMs();
+    const compressionMinBytes = options.positionCompressionMinBytes
+      ?? options.layoutRuntime?.positionCompressionMinBytes
+      ?? options.compressionMinBytes;
+    const compressed = await compressPositionBytes(positionBytes, { compressionMinBytes });
+    this._recordSessionSyncStep(timing, 'position.compress-bytes', compressStartedAtMs, {
+      compression: compressed?.compression ?? null,
+      skippedCompression: compressed?.skippedCompression ?? null,
+      inputByteLength: positionBytes.byteLength,
+      storedByteLength: compressed?.data?.byteLength ?? 0,
+    });
     if (!compressed?.data) return null;
+    const metadataStartedAtMs = syncTimingNowMs();
     const runtimeMetadata = cloneSerializable(runtimeState ?? {});
     delete runtimeMetadata.positions;
     delete runtimeMetadata.positionsSkipped;
+    this._recordSessionSyncStep(timing, 'position.clone-runtime-metadata', metadataStartedAtMs, {
+      nodeCount: Number.isFinite(runtimeState?.nodeCount)
+        ? Number(runtimeState.nodeCount)
+        : Math.floor(positions.length / 3),
+    });
     return {
       schema: 'helios-web.session-position-data',
       version: 1,
@@ -2134,11 +2423,30 @@ export class HeliosStorageManager extends EventTarget {
   }
 
   async serializeSessionSnapshot(options = {}) {
+    const timing = options._timing ?? null;
     const id = String(options.id ?? this.idFactory());
     const existingRecord = options.preserveExisting === false || !this.sessionStore?.get
       ? null
-      : await this.sessionStore.get(id, { hydrateNetworkData: false });
-    const existingEnvelope = existingRecord ? this.deserializeSessionSnapshot(existingRecord) : null;
+      : await this._timeSessionSyncAsync(timing, 'session-store-get-existing', { id }, () => (
+        this.sessionStore.get(id, { hydrateNetworkData: false })
+      ));
+    const existingEnvelope = existingRecord
+      ? this._timeSessionSync(timing, 'deserialize-existing-session', { id }, () => this.deserializeSessionSnapshot(existingRecord))
+      : null;
+    if (this._isStalePositionAutosave(options) && this._sessionSaveQueuedCount > 0) {
+      const requestedVersion = Number(options.positionDirtyVersion);
+      const currentVersion = this._positionDirtyVersion;
+      this._recordSessionSyncStep(timing, 'abort-stale-after-existing-session', syncTimingNowMs(), {
+        requestedVersion: Number.isFinite(requestedVersion) ? requestedVersion : null,
+        currentVersion,
+        queuedCount: this._sessionSaveQueuedCount,
+      });
+      throw createStalePositionAutosaveAbort({
+        stage: 'after-existing-session',
+        requestedVersion: Number.isFinite(requestedVersion) ? requestedVersion : null,
+        currentVersion,
+      });
+    }
     if (!this.helios) {
       return createPersistenceEnvelope(PERSISTENCE_KINDS.session, {
         session: {
@@ -2159,7 +2467,9 @@ export class HeliosStorageManager extends EventTarget {
           }),
         networkData: existingEnvelope?.payload?.networkData ?? null,
         positionData: existingEnvelope?.payload?.positionData ?? null,
-        thumbnail: await this._resolveSessionSnapshotThumbnail(options, existingEnvelope),
+        thumbnail: await this._timeSessionSyncAsync(timing, 'resolve-session-thumbnail', {
+          mode: options.captureThumbnail ?? null,
+        }, () => this._resolveSessionSnapshotThumbnail(options, existingEnvelope)),
       });
     }
     const createdAt = Number.isFinite(options.createdAt)
@@ -2189,12 +2499,17 @@ export class HeliosStorageManager extends EventTarget {
         };
     const useTrackedVisualization = options.fullVisualizationState !== true && options.trackedOnly !== false;
     const visualizationState = options.visualizationState
-      ?? await (useTrackedVisualization
+      ?? await this._timeSessionSyncAsync(timing, 'serialize-visualization-state', {
+        trackedOnly: useTrackedVisualization,
+        snapshotLayoutRuntime,
+      }, () => (
+        useTrackedVisualization
         && (this.helios.serializeTrackedVisualizationStateAsync || this.helios.serializeTrackedVisualizationState)
-        ? (this.helios.serializeTrackedVisualizationStateAsync?.(visualizationOptions)
-          ?? this.helios.serializeTrackedVisualizationState?.(visualizationOptions))
-        : (this.helios.serializeVisualizationStateAsync?.(visualizationOptions)
-          ?? this.helios.serializeVisualizationState?.(visualizationOptions)));
+          ? (this.helios.serializeTrackedVisualizationStateAsync?.(visualizationOptions)
+            ?? this.helios.serializeTrackedVisualizationState?.(visualizationOptions))
+          : (this.helios.serializeVisualizationStateAsync?.(visualizationOptions)
+            ?? this.helios.serializeVisualizationState?.(visualizationOptions))
+      ));
     const visualizationPayload = visualizationState?.payload ?? {};
     const networkSource = options.networkSource ?? visualizationPayload.networkSource ?? null;
     const nickname = normalizeSessionNickname(options.nickname ?? options.name ?? options.label)
@@ -2206,37 +2521,56 @@ export class HeliosStorageManager extends EventTarget {
     const networkData = Object.prototype.hasOwnProperty.call(options, 'networkData')
       ? options.networkData
       : includeNetwork
-        ? await this.helios.savePortableNetwork?.(networkFormat, {
-            includeVisualization: false,
+        ? await this._timeSessionSyncAsync(timing, 'save-portable-network', {
+            format: networkFormat,
             includeCurrentPositions: includePositions ? false : options.includeCurrentPositions !== false,
-            output: 'uint8array',
-          })
+          }, () => this.helios.savePortableNetwork?.(networkFormat, {
+              includeVisualization: false,
+              includeCurrentPositions: includePositions ? false : options.includeCurrentPositions !== false,
+              output: 'uint8array',
+            }))
         : null;
-    const resolvedNetworkData = networkData != null
-      ? {
-          format: networkFormat,
-          data: networkData,
-        }
-      : cloneSerializable(existingEnvelope?.payload?.networkData ?? {
-          format: networkFormat,
-          data: null,
-        });
+    const resolvedNetworkData = this._timeSessionSync(timing, 'resolve-network-data', {
+      reusedExisting: networkData == null,
+      byteLength: payloadDataByteLength(networkData),
+    }, () => (networkData != null
+        ? {
+            format: networkFormat,
+            data: networkData,
+          }
+        : cloneSerializable(existingEnvelope?.payload?.networkData ?? {
+            format: networkFormat,
+            data: null,
+          })));
     const positionData = Object.prototype.hasOwnProperty.call(options, 'positionData')
       ? options.positionData
       : includePositions
-        ? await this._serializeSessionPositionData({
+        ? await this._timeSessionSyncAsync(timing, 'serialize-session-position-data', {
+            requestedVersion: Number.isFinite(Number(options.positionDirtyVersion))
+              ? Number(options.positionDirtyVersion)
+              : null,
+          }, () => this._serializeSessionPositionData({
             ...options,
+            _timing: timing,
             reason: options.reason ?? 'save-session',
-          })
+          }))
         : null;
-    const resolvedPositionData = positionData != null
-      ? positionData
-      : cloneSerializable(existingEnvelope?.payload?.positionData ?? null);
-    const thumbnail = await this._resolveSessionSnapshotThumbnail({
+    const resolvedPositionData = this._timeSessionSync(timing, 'resolve-position-data', {
+      savedPositionData: positionData != null,
+      storedByteLength: Number(positionData?.storedByteLength ?? 0) || 0,
+    }, () => (positionData != null
+        ? positionData
+        : cloneSerializable(existingEnvelope?.payload?.positionData ?? null)));
+    const thumbnail = await this._timeSessionSyncAsync(timing, 'resolve-session-thumbnail', {
+      mode: options.captureThumbnail ?? null,
+    }, () => this._resolveSessionSnapshotThumbnail({
       ...options,
       invalidateExistingThumbnail: options.invalidateExistingThumbnail === true || networkData != null,
-    }, existingEnvelope);
-    const payload = {
+    }, existingEnvelope));
+    const payload = this._timeSessionSync(timing, 'build-session-payload', {
+      includeNetwork,
+      includePositions,
+    }, () => ({
       session: {
         id,
         createdAt,
@@ -2255,12 +2589,20 @@ export class HeliosStorageManager extends EventTarget {
       positionData: resolvedPositionData,
       thumbnail,
       visualizationState,
-    };
-    const envelope = createPersistenceEnvelope(PERSISTENCE_KINDS.session, payload, {
+    }));
+    const envelope = this._timeSessionSync(timing, 'create-session-envelope', {}, () => createPersistenceEnvelope(PERSISTENCE_KINDS.session, payload, {
       source: 'helios.storage',
-    });
+    }));
     envelope.id = id;
-    envelope.payload.session.bytes = sessionStoredByteStats(envelope).bytes;
+    envelope.payload.session.bytes = this._timeSessionSync(timing, 'compute-session-byte-stats', {
+      networkBytes: payloadDataByteLength(resolvedNetworkData?.data),
+      positionBytes: payloadDataByteLength(resolvedPositionData?.data),
+    }, () => sessionStoredByteStats(envelope).bytes);
+    Object.defineProperty(envelope, '_heliosSavedNetworkData', {
+      value: networkData != null,
+      enumerable: false,
+      configurable: true,
+    });
     Object.defineProperty(envelope, '_heliosSavedPositionData', {
       value: positionData != null,
       enumerable: false,
@@ -2276,23 +2618,35 @@ export class HeliosStorageManager extends EventTarget {
   async captureSessionThumbnail(options = {}) {
     const config = normalizeSessionThumbnailOptions(options.thumbnail ?? options.sessionThumbnail ?? this.sessionThumbnail);
     if (config.enabled === false || options.captureThumbnail === false) return null;
-    if (!this.helios || typeof this.helios.exportFigurePreviewBlob !== 'function') return null;
+    if (!this.helios) return null;
     try {
-      const blob = await this.helios.exportFigurePreviewBlob({
-        format: 'png',
-        preset: 'custom',
+      const thumbnailOptions = {
+        maxWidth: config.maxWidth,
+        maxHeight: config.maxHeight,
         width: config.maxWidth,
         height: config.maxHeight,
         includeLabels: config.includeLabels,
         includeLegends: config.includeLegends,
         includeInterface: config.includeInterface,
-        transparentBackground: false,
         supersampling: 1,
-      }, {
-        maxWidth: config.maxWidth,
-        maxHeight: config.maxHeight,
-        supersampling: 1,
-      });
+      };
+      const blob = await this.helios.captureSessionThumbnailBlob?.(thumbnailOptions)
+        ?? await this.helios.exportFigurePreviewBlob?.({
+          format: 'png',
+          preset: 'custom',
+          width: config.maxWidth,
+          height: config.maxHeight,
+          includeLabels: config.includeLabels,
+          includeLegends: config.includeLegends,
+          includeInterface: config.includeInterface,
+          transparentBackground: false,
+          supersampling: 1,
+        }, {
+          maxWidth: config.maxWidth,
+          maxHeight: config.maxHeight,
+          supersampling: 1,
+        });
+      if (!blob) return null;
       const bytes = estimateStoredByteLength(blob);
       if (config.maxBytes > 0 && bytes > config.maxBytes) return null;
       const dataUrl = await blobToDataUrl(blob);
@@ -2316,11 +2670,20 @@ export class HeliosStorageManager extends EventTarget {
 
   async saveSessionSnapshot(options = {}) {
     if (!this.capabilities.sessions) return null;
-    const envelope = await this.serializeSessionSnapshot(options);
+    const timing = options._timing ?? null;
+    const envelope = await this._timeSessionSyncAsync(timing, 'serialize-session-snapshot', {
+      includeNetwork: options.includeNetwork !== false,
+      includePositions: options.includePositions === true,
+    }, () => this.serializeSessionSnapshot(options));
     const id = envelopeSessionId(envelope);
     if (!id) return null;
     envelope.id = id;
-    await this.sessionStore?.put?.(envelope);
+    await this._timeSessionSyncAsync(timing, 'session-store-put', {
+      id,
+      bytes: envelope.payload?.session?.bytes ?? null,
+      networkBytes: payloadDataByteLength(envelope.payload?.networkData?.data),
+      positionBytes: payloadDataByteLength(envelope.payload?.positionData?.data),
+    }, () => this.sessionStore?.put?.(envelope));
     this.sessionSavedAt = envelopeUpdatedAt(envelope) ?? Date.now();
     this.sessionSaveError = null;
     this.sessionRestoreError = null;
@@ -2328,10 +2691,19 @@ export class HeliosStorageManager extends EventTarget {
     const savedPositions = envelope._heliosSavedPositionData === true
       || (Object.prototype.hasOwnProperty.call(options, 'positionData') && options.positionData != null)
       || (options.includeNetwork !== false && options.includeCurrentPositions !== false);
-    const positionsStillDirty = this.networkData?.positionsDirty === true && !savedPositions;
-    const networkStillDirty = this.networkData?.dirty === true
-      && this.networkData?.positionsDirty !== true
-      && options.includeNetwork === false;
+    const savedNetwork = envelope._heliosSavedNetworkData === true
+      || (Object.prototype.hasOwnProperty.call(options, 'networkData') && options.networkData != null);
+    const requestedPositionDirtyVersion = Number(options.positionDirtyVersion);
+    const savedCurrentPositionVersion = !savedPositions
+      || !Number.isFinite(requestedPositionDirtyVersion)
+      || requestedPositionDirtyVersion >= this._positionDirtyVersion;
+    const positionsStillDirty = this.networkData?.positionsDirty === true
+      && (!savedPositions || !savedCurrentPositionVersion);
+    const legacyNetworkDirty = this.networkData?.networkDirty == null
+      && this.networkData?.dirty === true
+      && this.networkData?.positionsDirty !== true;
+    const networkWasDirty = this.networkData?.networkDirty === true || legacyNetworkDirty;
+    const networkStillDirty = networkWasDirty && !savedNetwork;
     const dirtyAfterSave = networkStillDirty || positionsStillDirty;
     const previousNetworkSavedAt = this.networkData?.savedAt ?? null;
     this.networkData = {
@@ -2339,6 +2711,7 @@ export class HeliosStorageManager extends EventTarget {
       enabled: true,
       status: dirtyAfterSave ? 'dirty' : 'saved',
       dirty: dirtyAfterSave,
+      networkDirty: networkStillDirty,
       positionsDirty: positionsStillDirty,
       dirtyAt: dirtyAfterSave ? (this.networkData?.dirtyAt ?? this._now()) : null,
       savedAt: dirtyAfterSave ? previousNetworkSavedAt : this.sessionSavedAt,
@@ -2352,7 +2725,9 @@ export class HeliosStorageManager extends EventTarget {
       this.sessionId = String(id);
       this.explicitSessionInvalid = false;
     }
-    await this.setUnfinishedSessionId(envelope.payload?.session?.unfinished === false ? null : String(id));
+    await this._timeSessionSyncAsync(timing, 'set-unfinished-session-id', {
+      id: envelope.payload?.session?.unfinished === false ? null : String(id),
+    }, () => this.setUnfinishedSessionId(envelope.payload?.session?.unfinished === false ? null : String(id)));
     this._emit('change', { reason: 'session-save', sessionId: id, status: this.persistenceStatus() });
     return envelope;
   }
@@ -2416,6 +2791,7 @@ export class HeliosStorageManager extends EventTarget {
       enabled: true,
       status: 'saved',
       dirty: false,
+      networkDirty: false,
       positionsDirty: false,
       dirtyAt: null,
       savedAt: this.sessionSavedAt,
@@ -2756,16 +3132,57 @@ export class HeliosStorageManager extends EventTarget {
       ...options,
       fullVisualizationState: options.fullVisualizationState === true,
     };
-    const saved = await this.saveSessionSnapshot(saveOptions);
-    if (saved) {
-      this._recordPersistenceChange('session-save', {
-        id: envelopeSessionId(saved) ?? options.id ?? this.sessionId ?? null,
-        reason: options.reason ?? null,
-        includeNetwork: options.includeNetwork !== false,
-        includePositions: options.includePositions === true,
-      });
+    if (saveOptions.includePositions === true && !Number.isFinite(Number(saveOptions.positionDirtyVersion))) {
+      saveOptions.positionDirtyVersion = this._positionDirtyVersion;
     }
-    return saved;
+    const timing = saveOptions._timing ?? this._createSessionSyncTiming(saveOptions);
+    saveOptions._timing = timing;
+    try {
+      if (this._isStalePositionAutosave(saveOptions) && this._sessionSaveQueuedCount > 0) {
+        this._recordSessionSyncStep(timing, 'stale-position-coalesce', syncTimingNowMs(), {
+          requestedVersion: Number(saveOptions.positionDirtyVersion) || null,
+          currentVersion: this._positionDirtyVersion,
+          queuedCount: this._sessionSaveQueuedCount,
+        });
+        const result = this._skipStalePositionAutosave(saveOptions);
+        this._finishSessionSyncTiming(timing, saveOptions, { result: 'coalesced' });
+        return result;
+      }
+      if (this._isStalePositionAutosave(saveOptions)) {
+        this._recordSessionSyncStep(timing, 'stale-position-refresh', syncTimingNowMs(), {
+          requestedVersion: Number(saveOptions.positionDirtyVersion) || null,
+          currentVersion: this._positionDirtyVersion,
+        });
+        Object.assign(saveOptions, this._refreshStalePositionAutosave(saveOptions));
+        if (timing) timing.positionDirtyVersion = Number.isFinite(Number(saveOptions.positionDirtyVersion))
+          ? Number(saveOptions.positionDirtyVersion)
+          : timing.positionDirtyVersion;
+      }
+      const saved = await this._timeSessionSyncAsync(timing, 'save-session-snapshot', {
+        includeNetwork: saveOptions.includeNetwork !== false,
+        includePositions: saveOptions.includePositions === true,
+      }, () => this.saveSessionSnapshot(saveOptions));
+      if (saved) {
+        this._recordPersistenceChange('session-save', {
+          id: envelopeSessionId(saved) ?? options.id ?? this.sessionId ?? null,
+          reason: options.reason ?? null,
+          includeNetwork: options.includeNetwork !== false,
+          includePositions: options.includePositions === true,
+        });
+      }
+      this._finishSessionSyncTiming(timing, saveOptions, { result: saved ? 'saved' : 'skipped' });
+      return saved;
+    } catch (error) {
+      if (isStalePositionAutosaveAbort(error)) {
+        this._skipStalePositionAutosave(saveOptions);
+        this._finishSessionSyncTiming(timing, saveOptions, {
+          result: error.detail?.stage ? `coalesced-${error.detail.stage}` : 'coalesced',
+        });
+        return null;
+      }
+      this._finishSessionSyncTiming(timing, saveOptions, { result: 'error', error });
+      throw error;
+    }
   }
 
   async saveSession(options = {}) {
@@ -2946,7 +3363,23 @@ export class HeliosStorageManager extends EventTarget {
   }
 
   async sync(options = {}) {
-    return this.flush(options);
+    const hasIncludeNetwork = Object.prototype.hasOwnProperty.call(options, 'includeNetwork');
+    const hasIncludePositions = Object.prototype.hasOwnProperty.call(options, 'includePositions');
+    const hasCaptureThumbnail = Object.prototype.hasOwnProperty.call(options, 'captureThumbnail');
+    const includeNetwork = hasIncludeNetwork
+      ? options.includeNetwork === true
+      : (this.networkData?.networkDirty === true || this.networkData?.savedAt == null);
+    const includePositions = hasIncludePositions
+      ? options.includePositions === true
+      : this.networkData?.positionsDirty === true;
+    return this.flush({
+      ...options,
+      includeNetwork,
+      includePositions,
+      captureThumbnail: hasCaptureThumbnail
+        ? options.captureThumbnail
+        : (includeNetwork ? 'auto' : false),
+    });
   }
 
   async flushAutosync(options = {}) {

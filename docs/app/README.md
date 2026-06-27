@@ -23,9 +23,10 @@ app-specific setup.
   (`?dataset=small-world`).
 - Pass `?dataset=grid` to use an exact-node-count generated 2D grid for very
   large startup and rendering experiments.
-- Pass `?dataset=grid3d&mode=3d` to generate an exact-node-count 3D grid.
-- Large autosave responsiveness coverage uses
-  `/?renderer=webgl&layout=none&mode=2d&nodes=100000&dataset=grid&session=1&restoreNetwork=0`
+- Pass `?dataset=grid3d` to generate an exact-node-count 3D grid.
+- Large autosave responsiveness coverage starts from the default renderer and
+  layout path, for example
+  `/?mode=2d&nodes=100000&dataset=grid&session=1&restoreNetwork=0`
   to verify hot controls and camera interaction do not immediately serialize
   the full network, capture thumbnails, or repeatedly snapshot session state.
 - Pass `?dataset=ws`, `?dataset=small-world`, or `?dataset=watts-strogatz` to
@@ -37,8 +38,9 @@ app-specific setup.
 
 - The app defaults to the GPU force layout.
 - Pass `?layout=jitter` to switch back to the legacy jitter layout.
-- Pass `?layout=d3force3d` to use the d3-force-3d worker layout.
-- Pass `?layout=gpuforce` to run the GPU-force layout via a position delegate.
+- Pass `?layout=d3force3d` only when intentionally testing the d3-force-3d
+  worker layout instead of the default.
+- Pass `?layout=gpuforce` to request the default GPU-force layout explicitly.
   - On WebGPU renderer, it uses the WebGPU backend.
   - On WebGL renderer, it uses the WebGL2 backend.
   - Small active sets now switch to exact all-pairs repulsion before the sample budget would otherwise kick in, which makes small lattices and grids much less noisy.
@@ -48,10 +50,10 @@ app-specific setup.
   - GPU-force also exposes a `Rotation damping` slider that removes fitted whole-graph spin without increasing global viscosity.
   - GPU-force exposes `Scheduling` and `Chunks` controls. `Auto` keeps the full WebGPU dispatch through 500k active nodes and switches to chunked dispatch above that size to reduce render queue stalls.
   - Pass `?forceNormalizationType=degree`, `strength`, `local-degree`, or `none` to exercise GPU-force normalization variants. The synthetic demo uses the `intensity` edge attribute for `strength`.
-  - Missing startup positions are seeded deterministically around the center instead of randomly, which reduces the “spinning knot” startup on small graphs.
+  - Missing startup positions are seeded deterministically around the center instead of randomly, which reduces the “spinning knot” startup on small graphs. In 3D, startup seeds use the same extent on X, Y, and Z.
   - Delegate positions are automatic for GPU-force (no manual position-source toggle).
 - In DevTools, use `await window.__snapshotDelegatePositions()` for full delegate inspection, `await window.__helios.snapshotNodeCentroid([0, 1, 2])` for narrow readback, and `await window.__syncDelegatePositionsToNetwork()` to copy delegate positions into network buffers.
-- Pass `?mode=3d` to enable the depth axis; otherwise it runs in 2D.
+- The app runs in 3D by default. Pass `?mode=2d` to use the 2D view.
 - The app opts into browser storage explicitly by passing top-level
   `workspaceId`, `session`, `networkPersistence`, and `positionPersistence`
   options. Plain library use keeps durable storage off unless the developer
@@ -114,7 +116,7 @@ Run the optional headed WebGPU storage/autosave correlation check with:
 HELIOS_PERF_NODE_COUNTS=100000,1000000 npm run perf:storage
 ```
 
-This loads `dataset=grid` and `dataset=grid3d&mode=3d`, instruments
+This loads `dataset=grid` and `dataset=grid3d`, instruments
 `helios.storage` autosave/session methods and portable network serialization,
 and writes JSONL results to
 `artifacts/performance-history/helios-storage-autosave.jsonl`.

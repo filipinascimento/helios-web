@@ -157,8 +157,14 @@ want resume prompts across app restarts.
   restored temperature.
 - Position payloads are stored separately from graph/network payloads because
   positions change much more frequently than the graph.
-- Current positions are stored as Float32 binary bytes and compressed when the
-  runtime exposes compression streams.
+- Session sync writes the graph/network payload when the network is dirty or
+  missing; position-only sync writes the separate position payload without
+  rewriting the graph/network payload.
+- Current positions are stored as Float32 binary bytes; larger payloads are
+  compressed when the runtime exposes compression streams, while smaller
+  autosync payloads stay raw to avoid compression overhead.
+- Session thumbnails prefer a fast current-canvas capture before falling back to
+  the full figure-export preview pipeline.
 
 ## UI And Debug Behavior
 

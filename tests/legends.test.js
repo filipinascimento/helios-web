@@ -439,6 +439,82 @@ test('SvgLegendController reads cached selected state for immediate row hover fe
   assert.equal(controller._isCategoryRowSelected(null), false);
 });
 
+test('SvgLegendController skips repeated frame updates when legend inputs are unchanged', () => {
+  const controller = Object.create(SvgLegendController.prototype);
+  controller.group = {};
+  controller.helios = {
+    size: { width: 800, height: 600 },
+    layers: { size: { width: 800, height: 600 } },
+    overlayInsets() {
+      return { top: 0, right: 0, bottom: 0, left: 0 };
+    },
+    background() {
+      return '#101820';
+    },
+    _legendContentVersion: 0,
+    nodeMapper: { mappers: new Map() },
+    edgeMapper: { mappers: new Map() },
+    network: { nodeCount: 2, edgeCount: 0 },
+  };
+  controller._config = {
+    enabled: true,
+    respectDockInsets: true,
+    margin: 12,
+    gap: 12,
+    maxChars: 24,
+    maxRows: 2,
+    fontSize: 12,
+    fontFamily: 'system-ui',
+    scale: 1,
+    continuousHeight: 132,
+    showPanel: false,
+    panelOpacity: 0.14,
+    textOutline: true,
+    textOutlineWidth: 1.35,
+    placements: {
+      nodeColor: 'auto',
+      density: 'auto',
+      edgeColor: 'auto',
+      nodeSize: 'auto',
+      edgeWidth: 'auto',
+    },
+    zoomAwareSizeIn2D: false,
+  };
+  controller._lastSignature = '';
+  controller._lastUpdateInputSignature = '';
+  controller._legendClickHighlightEntries = new Map();
+  controller._activeLegendHover = null;
+  let deriveCount = 0;
+  let renderCount = 0;
+  controller.deriveItems = () => {
+    deriveCount += 1;
+    return [{
+      kind: 'nodeColor',
+      legendType: 'continuous',
+      title: 'Node color',
+      colormap: 'interpolateInferno',
+      domain: [0, 1],
+      ticks: [0, 1],
+      tickLabels: ['0', '1'],
+    }];
+  };
+  controller._syncLegendClickHighlights = () => {};
+  controller._legendInteractionSignature = () => [];
+  controller._render = () => {
+    renderCount += 1;
+  };
+
+  assert.equal(controller.update(), true);
+  assert.equal(controller.update(), false);
+  assert.equal(deriveCount, 1);
+  assert.equal(renderCount, 1);
+
+  controller.helios._legendContentVersion += 1;
+  assert.equal(controller.update(), false);
+  assert.equal(deriveCount, 2);
+  assert.equal(renderCount, 1);
+});
+
 test('SvgLegendController preserves active hover category across legend redraws', () => {
   const controller = Object.create(SvgLegendController.prototype);
   const item = { kind: 'nodeColor' };

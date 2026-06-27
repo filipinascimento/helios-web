@@ -431,10 +431,10 @@ test.describe('scene panel: tabs and appearance controls', () => {
     expect(await page.evaluate(() => window.__helios?.behavior?.interface?.resumePrompt?.() ?? null)).toBeNull();
   });
 
-  test('debug panel is present by default and layout stop/start does not mark appearance', async ({ page }) => {
+  test('debug panel is available on request and layout stop/start does not mark appearance', async ({ page }) => {
     const workspaceId = `debug-layout-marker-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const sessionId = `debug-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    await page.goto(`/?renderer=webgl&nodes=1000&workspaceId=${workspaceId}&sessionId=${encodeURIComponent(sessionId)}`);
+    await page.goto(`/app/?renderer=webgl&nodes=1000&debugPanel=1&workspaceId=${workspaceId}&sessionId=${encodeURIComponent(sessionId)}`);
     await waitForHelios(page);
 
     const debugPanel = panelByTitle(page, 'Debug');

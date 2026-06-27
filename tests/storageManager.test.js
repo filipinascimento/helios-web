@@ -31,6 +31,16 @@ function wait(ms) {
   });
 }
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 function positionRuntimeState(values, extra = {}) {
   const positions = values instanceof Float32Array ? values : new Float32Array(values);
   return {
@@ -1166,6 +1176,140 @@ test('BrowserStorageManager keeps payload sync timestamp when only session metad
   assert.equal(status.savedAt, payloadSavedAt);
 });
 
+test('markPositionsDirty only marks dirty state without reading positions', () => {
+  let positionReadCount = 0;
+  const storage = new DummyStorageManager({
+    helios: {
+      snapshotLayoutRuntimeState() {
+        positionReadCount += 1;
+        throw new Error('positions must not be read from dirty notification');
+      },
+      snapshotLayoutRuntimeStateAsync() {
+        positionReadCount += 1;
+        throw new Error('positions must not be read from dirty notification');
+      },
+    },
+  });
+
+  try {
+    const status = storage.markPositionsDirty('layout-update');
+    assert.equal(positionReadCount, 0);
+    assert.equal(status.networkData.dirty, true);
+    assert.equal(status.networkData.positionsDirty, true);
+  } finally {
+    storage.destroy();
+  }
+});
+
+test('BrowserStorageManager position-only sync does not rewrite a clean network payload', async () => {
+  const records = new Map();
+  const store = {
+    async put(record) {
+      records.set(record.id, structuredClone(record));
+      return record;
+    },
+    async get(id) {
+      return records.has(id) ? structuredClone(records.get(id)) : null;
+    },
+    async getAll() {
+      return Array.from(records.values()).map((entry) => structuredClone(entry));
+    },
+  };
+  let storage = null;
+  let networkSaves = 0;
+  const positions = new Float32Array([1, 2, 0, 3, 4, 0]);
+  const helios = {
+    snapshotLayoutRuntimeStateAsync: async () => positionRuntimeState(positions),
+    serializeTrackedVisualizationStateAsync: async () => createPersistenceEnvelope(PERSISTENCE_KINDS.visualization, {
+      storageState: storage.serializeSnapshot(),
+    }, { sparse: true }),
+    savePortableNetwork: async () => {
+      networkSaves += 1;
+      return Uint8Array.from([networkSaves]);
+    },
+  };
+  storage = new BrowserStorageManager({
+    helios,
+    sessionId: 'position-only-sync-session',
+    sessionStore: new SessionStore({ store }),
+    restore: false,
+  });
+
+  try {
+    await storage.saveSession({
+      id: 'position-only-sync-session',
+      includeNetwork: true,
+      captureThumbnail: false,
+    });
+    assert.equal(networkSaves, 1);
+    assert.equal(storage.status().networkData.networkDirty, false);
+
+    storage.markPositionsDirty('layout-update');
+    await storage.sync({
+      id: 'position-only-sync-session',
+    });
+    assert.equal(networkSaves, 1);
+    assert.equal(storage.status().networkData.dirty, false);
+    assert.equal(storage.status().networkData.networkDirty, false);
+    assert.equal(storage.status().networkData.positionsDirty, false);
+
+    const savedAt = storage.status().networkData.savedAt;
+    storage.networkData = {
+      ...storage.networkData,
+      status: 'dirty',
+      dirty: true,
+      networkDirty: false,
+      positionsDirty: false,
+      dirtyAt: Date.now(),
+      savedAt,
+      reason: 'camera-pose',
+    };
+    await storage._saveIncrementalSessionState({
+      id: 'position-only-sync-session',
+      reason: 'camera-pose',
+      captureThumbnail: false,
+    }, new Map([
+      ['camera.pose', { value: { mode: '2d', zoom: 2, pan2D: [1, 2, 0] } }],
+    ]));
+    assert.equal(networkSaves, 1);
+    assert.equal(storage.status().networkData.dirty, false);
+    assert.equal(storage.status().networkData.networkDirty, false);
+    assert.equal(storage.status().networkData.positionsDirty, false);
+
+    await storage.sync({
+      id: 'position-only-sync-session',
+      captureThumbnail: false,
+    });
+    assert.equal(networkSaves, 1);
+    assert.equal(storage.status().networkData.networkDirty, false);
+
+    storage.markNetworkDirty('attribute-added');
+    storage.markPositionsDirty('layout-update');
+    await storage.sync({
+      id: 'position-only-sync-session',
+      includeNetwork: false,
+      includePositions: true,
+      captureThumbnail: false,
+    });
+    assert.equal(networkSaves, 1);
+    assert.equal(storage.status().networkData.dirty, true);
+    assert.equal(storage.status().networkData.networkDirty, true);
+    assert.equal(storage.status().networkData.positionsDirty, false);
+
+    await storage.sync({
+      id: 'position-only-sync-session',
+      includeNetwork: true,
+      includePositions: false,
+      captureThumbnail: false,
+    });
+    assert.equal(networkSaves, 2);
+    assert.equal(storage.status().networkData.dirty, false);
+    assert.equal(storage.status().networkData.networkDirty, false);
+  } finally {
+    storage.destroy();
+  }
+});
+
 test('BrowserStorageManager owns browser session save, list, get, and delete paths', async () => {
   const storage = new BrowserStorageManager({
     indexedDB: false,
@@ -1584,6 +1728,124 @@ test('BrowserStorageManager position autosave is not starved by merged UI state 
   assert.equal(restored.payload.visualizationState.payload.storageState.state.overrides['ui.responsive.lastViewportClass'], 'desktop');
   assert.equal(storage.status().networkData.positionsDirty, false);
   assert.equal(storage.status().networkData.status, 'saved');
+});
+
+test('BrowserStorageManager coalesces stale queued position autosync to the latest dirty snapshot', async () => {
+  const records = new Map();
+  const blocker = deferred();
+  const blockerStarted = deferred();
+  let blockNextPut = false;
+  const store = {
+    async put(record) {
+      if (blockNextPut) {
+        blockNextPut = false;
+        blockerStarted.resolve();
+        await blocker.promise;
+      }
+      records.set(record.id, structuredClone(record));
+      return record;
+    },
+    async get(id) {
+      return records.has(id) ? structuredClone(records.get(id)) : null;
+    },
+    async getAll() {
+      return Array.from(records.values()).map((entry) => structuredClone(entry));
+    },
+    async delete(id) {
+      records.delete(id);
+      return true;
+    },
+  };
+  let storage = null;
+  let networkPayloadByte = 60;
+  let currentPositions = new Float32Array([1, 1, 0, 2, 2, 0]);
+  const positionSnapshots = [];
+  const helios = {
+    snapshotLayoutRuntimeStateAsync: async () => {
+      positionSnapshots.push(Array.from(currentPositions));
+      return positionRuntimeState(currentPositions);
+    },
+    serializeTrackedVisualizationStateAsync: async () => createPersistenceEnvelope(PERSISTENCE_KINDS.visualization, {
+      behaviorState: {},
+      cameraState: null,
+      layoutRuntimeState: null,
+      overrides: storage.states.getOverrides({ aliases: 'preferred' }),
+      storageState: storage.serializeSnapshot(),
+    }, { sparse: true }),
+    savePortableNetwork: async () => {
+      networkPayloadByte += 1;
+      return Uint8Array.from([networkPayloadByte]);
+    },
+  };
+  storage = new BrowserStorageManager({
+    helios,
+    sessionId: 'position-autosave-coalesce-session',
+    sessionStore: new SessionStore({ store }),
+    autosyncInteractionIdleMs: 0,
+    autosyncMinIntervalMs: 0,
+    restore: false,
+  });
+
+  try {
+    await storage.saveSession({
+      id: 'position-autosave-coalesce-session',
+      captureThumbnail: false,
+    });
+    blockNextPut = true;
+    const blockingSave = storage.saveSession({
+      id: 'position-autosave-coalesce-session',
+      includeNetwork: false,
+      captureThumbnail: false,
+      reason: 'blocking-save',
+    });
+    await blockerStarted.promise;
+
+    currentPositions = new Float32Array([3, 3, 0, 4, 4, 0]);
+    storage.markPositionsDirty('layout-update-a');
+    const staleFlush = storage.flushAutosync({
+      force: true,
+      captureThumbnail: false,
+      reason: 'stale-position-flush',
+    });
+
+    await wait(0);
+    currentPositions = new Float32Array([7, 7, 0, 8, 8, 0]);
+    storage.markPositionsDirty('layout-update-b');
+    const latestFlush = storage.flushAutosync({
+      force: true,
+      captureThumbnail: false,
+      reason: 'latest-position-flush',
+    });
+
+    blocker.resolve();
+    await blockingSave;
+    await Promise.all([staleFlush, latestFlush]);
+
+    const restored = await storage.getSession('position-autosave-coalesce-session');
+    assert.equal(positionSnapshots.length, 1);
+    assert.deepEqual(positionSnapshots[0], Array.from(currentPositions));
+    assert.equal(restored.payload.positionData.length, currentPositions.length);
+    assert.equal(storage.status().networkData.positionsDirty, false);
+    assert.equal(storage.status().networkData.status, 'saved');
+    assert.equal(
+      storage.debugStats().recentPersistenceChanges.some((entry) => entry.type === 'session-position-save-coalesced'),
+      true,
+    );
+    const timingEntries = storage.debugStats().recentPersistenceChanges
+      .filter((entry) => entry.type === 'session-sync-timing');
+    assert.equal(
+      timingEntries.some((entry) => entry.result === 'coalesced'
+        && !entry.steps.some((step) => step.name === 'position.snapshot-layout-runtime')),
+      true,
+    );
+    assert.equal(
+      timingEntries.some((entry) => entry.result === 'saved'
+        && entry.steps.some((step) => step.name === 'position.snapshot-layout-runtime')),
+      true,
+    );
+  } finally {
+    storage.destroy();
+  }
 });
 
 test('BrowserStorageManager position autosave is not starved by camera notifications after interaction idle', async () => {
@@ -2333,6 +2595,60 @@ test('BrowserStorageManager explicit Save Session captures a thumbnail immediate
   assert.equal(saved.payload.thumbnail.capturedAt, now);
 });
 
+test('BrowserStorageManager session thumbnail prefers fast canvas capture before export fallback', async () => {
+  const records = new Map();
+  const store = {
+    async put(record) {
+      records.set(record.id, structuredClone(record));
+      return record;
+    },
+    async get(id) {
+      return records.has(id) ? structuredClone(records.get(id)) : null;
+    },
+    async getAll() {
+      return Array.from(records.values()).map((entry) => structuredClone(entry));
+    },
+  };
+  let storage = null;
+  let fastCaptures = 0;
+  let exportCaptures = 0;
+  const helios = {
+    serializeTrackedVisualizationStateAsync: async () => createPersistenceEnvelope(PERSISTENCE_KINDS.visualization, {
+      storageState: storage.serializeSnapshot(),
+    }, { sparse: true }),
+    captureSessionThumbnailBlob: async () => {
+      fastCaptures += 1;
+      return new Blob(['fast'], { type: 'image/png' });
+    },
+    exportFigurePreviewBlob: async () => {
+      exportCaptures += 1;
+      return new Blob(['export'], { type: 'image/png' });
+    },
+  };
+  storage = new BrowserStorageManager({
+    helios,
+    sessionId: 'fast-thumbnail-session',
+    sessionStore: new SessionStore({ store }),
+    restore: false,
+  });
+
+  try {
+    await storage.saveSession({
+      id: 'fast-thumbnail-session',
+      includeNetwork: false,
+      captureThumbnail: true,
+    });
+
+    const restored = await storage.getSession('fast-thumbnail-session');
+    assert.equal(fastCaptures, 1);
+    assert.equal(exportCaptures, 0);
+    assert.equal(restored.payload.thumbnail.byteLength, 4);
+    assert.match(restored.payload.thumbnail.dataUrl, /^data:image\/png;base64,/);
+  } finally {
+    storage.destroy();
+  }
+});
+
 test('BrowserStorageManager coalesces repeated state autosaves to the latest value', async () => {
   const records = new Map();
   const putLog = [];
@@ -2589,6 +2905,9 @@ test('BrowserStorageManager coalesces camera autosave notifications before persi
   putLog.length = 0;
   visualizationSerializes = 0;
   const baselinePersistenceChanges = storage.debugStats().persistenceChangeCount;
+  const baselineSessionSaves = storage.debugStats().recentPersistenceChanges
+    .filter((entry) => entry.type === 'session-save')
+    .length;
 
   for (let i = 0; i < 20; i += 1) {
     helios.dispatchEvent(new CustomEvent('camera:move', {
@@ -2610,7 +2929,10 @@ test('BrowserStorageManager coalesces camera autosave notifications before persi
   await wait(80);
   assert.equal(putLog.filter((id) => id === 'camera-coalesced-autosave-session').length, 1);
   assert.equal(visualizationSerializes, 1);
-  assert.equal(storage.debugStats().persistenceChangeCount, baselinePersistenceChanges + 1);
+  assert.equal(
+    storage.debugStats().recentPersistenceChanges.filter((entry) => entry.type === 'session-save').length,
+    baselineSessionSaves + 1,
+  );
 });
 
 test('BrowserStorageManager keeps unfinished-session pointers in storage-native session store', async () => {

@@ -3,7 +3,7 @@ import { GpuForcePositionDelegate } from '../delegates/GpuForcePositionDelegate.
 import { DEFAULT_LAYOUT_TUNING_MODEL, predictLayoutTuningOptions } from './layoutTuningModel.generated.js';
 
 const DEFAULT_OPTIONS = {
-  mode: '2d',
+  mode: '3d',
   forceModel: 'linear',
   layoutScheduling: 'auto',
   layoutChunkCount: 2,
@@ -263,7 +263,7 @@ function createAutoTuneBaseOptions(options = {}) {
 export class GpuForceLayout extends Layout {
   constructor(network, visuals, options = {}) {
     super(network, visuals);
-    const normalizedMode = options.mode === '3d' ? '3d' : '2d';
+    const normalizedMode = options.mode === '2d' ? '2d' : '3d';
     const normalized = {
       ...DEFAULT_OPTIONS,
       ...options,

@@ -318,6 +318,31 @@ test('quick control buttons toggle fit, layout, and zoom', () => {
   assert.ok(helios.scheduler.renderRequests > 0);
 });
 
+test('core startup spinner remains visible on light backgrounds', () => {
+  const previousDocument = globalThis.document;
+  const document = new FakeDocument();
+  document.head = document.createElement('head');
+  document.getElementById = () => null;
+  globalThis.document = document;
+
+  try {
+    const overlayRoot = document.createElement('div');
+    const helios = Object.create(Helios.prototype);
+    helios.layers = { overlay: overlayRoot };
+
+    const overlay = helios._createStartupOverlay({ loadingOverlay: true });
+    const spinner = overlay.querySelector('.helios-startup-spinner');
+
+    assert.ok(spinner);
+    assert.equal(spinner.style.background, 'transparent');
+    assert.equal(spinner.style.boxSizing, 'border-box');
+    assert.match(spinner.style.border, /rgba\(94, 124, 185, 0\.24\)/);
+    assert.equal(spinner.style.borderTopColor, 'var(--helios-startup-spinner-accent, #5e7cb9)');
+  } finally {
+    globalThis.document = previousDocument;
+  }
+});
+
 test('quick controls follow the active UI theme', () => {
   const { helios } = createHarness();
   helios.ui = { theme: 'light' };
@@ -334,6 +359,17 @@ test('quick controls follow the active UI theme', () => {
   helios._syncQuickControlsTheme('light');
 
   assert.equal(controls.dataset.theme, 'light');
+});
+
+test('quick controls light theme uses the restrained blue accent', () => {
+  const { helios } = createHarness();
+  const css = helios._quickControlsStyleText();
+
+  assert.match(
+    css,
+    /\.helios-quick-controls\[data-theme="light"\]\s*\{[\s\S]*--helios-quick-bg-solid:\s*rgba\(247, 247, 249, 0\.97\);[\s\S]*--helios-quick-fg:\s*#1f2328;[\s\S]*--helios-quick-border:\s*#e6e6ea;[\s\S]*--helios-quick-accent:\s*#5e7cb9;/,
+  );
+  assert.doesNotMatch(css, /\.helios-quick-controls\[data-theme="light"\]\s*\{[\s\S]*#0ea5e9/);
 });
 
 test('quick controls can be disabled before setup', () => {

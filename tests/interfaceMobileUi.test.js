@@ -783,12 +783,20 @@ test('compact dock background uses a theme-aware fill instead of staying transpa
   );
   assert.match(
     defaultStylesText,
-    /\.helios-ui\[data-theme="light"\]\s*\{[\s\S]*--helios-ui-dock-fill:\s*color-mix\(in srgb, var\(--helios-ui-bg-solid\) 94%, black 6%\);/,
+    /\.helios-ui\[data-theme="light"\]\s*\{[\s\S]*--helios-ui-dock-fill:\s*#f7f7f9;/,
   );
   assert.match(
     defaultStylesText,
     /\.helios-ui\[data-interface-mode="compact"\] \.helios-ui-dock--side\s*\{[\s\S]*background:\s*var\(--helios-ui-dock-fill\);/,
   );
+});
+
+test('light theme uses neutral controls and a restrained blue accent ramp', () => {
+  assert.match(
+    defaultStylesText,
+    /\.helios-ui\[data-theme="light"\]\s*\{[\s\S]*--helios-ui-bg-solid:\s*#f7f7f9;[\s\S]*--helios-ui-border:\s*#e6e6ea;[\s\S]*--helios-ui-fg:\s*#1f2328;[\s\S]*--helios-ui-muted:\s*#6b7280;[\s\S]*--helios-ui-accent:\s*#5e7cb9;[\s\S]*--helios-ui-accent-hover:\s*#4c6aa8;[\s\S]*--helios-ui-accent-active:\s*#3c5a93;[\s\S]*--helios-ui-focus-ring:\s*#c7d4e8;/,
+  );
+  assert.doesNotMatch(defaultStylesText, /\.helios-ui\[data-theme="light"\]\s*\{[\s\S]*#0ea5e9/);
 });
 
 test('compact side dock opts into iOS touch scrolling behavior', () => {

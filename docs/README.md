@@ -24,7 +24,7 @@ const helios = new Helios(network, {
   layout: {
     type: 'gpu-force',
     options: {
-      mode: '2d',
+      mode: '3d',
       // 'auto' switches WebGPU layout to chunked dispatch above 500k active nodes.
       layoutScheduling: 'auto',
     },
@@ -78,10 +78,9 @@ Key entry points:
   panel markers are driven by declarative panel schemas that reference state
   keys rather than state-entry placement; custom editors aggregate stable
   prefixes like `mappers.node.*`, `filters.*`, and `selection.*`.
-- Debug instrumentation is on by default for now: Helios exposes
-  `window.__helios`, and UI-enabled apps append a right-docked Debug panel with
-  recent tracked-state, state-change, UI-change, and persistence counters.
-  Pass `debug: false` to disable it.
+- Debug instrumentation is available for profiling: Helios exposes
+  `window.__helios` when `debug` is enabled, and the demo app can append a
+  right-docked Debug panel with `?debugPanel=1`.
 - Network I/O supports `.xnet`, `.zxnet`, `.bxnet`, lossy `.gml`, and
   graph-tool `.gt`/`.gt.zst` input; the main example enables drag/drop loading through
   `fileDrop: true`
@@ -89,7 +88,8 @@ Key entry points:
   package currently has no declaration-generation script, so
   `src/index.d.ts` was not hand-edited.
 
-By default, Helios uses the d3-force-3d worker layout.
+By default, Helios uses the GPU force layout. The renderer default is `auto`,
+which prefers WebGPU when available and falls back to WebGL2.
 
 ## Events
 

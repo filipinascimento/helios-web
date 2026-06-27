@@ -446,11 +446,11 @@ export class CameraPanel {
       const is3D = pose?.mode === '3d';
 
       const minValue = is3D
-        ? Math.max(0.001, Number(camera?.minDistance ?? 10))
-        : Math.max(0.0001, Number(camera?.minZoom ?? 0.001));
+        ? Math.max(0.001, Number(camera?.minDistance ?? (10 / 3)))
+        : Math.max(0.0001, Number(camera?.minZoom ?? (0.001 / 3)));
       const maxValue = is3D
-        ? Math.max(minValue, Number(camera?.maxDistance ?? 25000))
-        : Math.max(minValue, Number(camera?.maxZoom ?? 10));
+        ? Math.max(minValue, Number(camera?.maxDistance ?? 75000))
+        : Math.max(minValue, Number(camera?.maxZoom ?? 30));
       updateSliderBounds(
         distanceControls,
         minValue,

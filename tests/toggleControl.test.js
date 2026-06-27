@@ -11,10 +11,12 @@ class FakeElement {
     this.className = '';
     this.disabled = false;
     this.textContent = '';
+    this.attributeWrites = new Map();
   }
 
   setAttribute(name, value) {
     this.attributes.set(name, String(value));
+    this.attributeWrites.set(name, (this.attributeWrites.get(name) ?? 0) + 1);
   }
 
   getAttribute(name) {
@@ -85,6 +87,25 @@ test('createToggleControl still supports keyboard or programmatic click activati
     const control = createToggleControl({ checked: false });
     control.dispatchEvent(new Event('click'));
     assert.equal(control.checked, true);
+  } finally {
+    globalThis.document = originalDocument;
+  }
+});
+
+test('createToggleControl does not rewrite switch state when checked is unchanged', () => {
+  const originalDocument = globalThis.document;
+  globalThis.document = new FakeDocument();
+
+  try {
+    const control = createToggleControl({ checked: true, onLabel: 'On', offLabel: 'Off' });
+    const initialAriaWrites = control.attributeWrites.get('aria-checked') ?? 0;
+    const text = control.children.find((child) => child.className === 'helios-ui-toggle__text');
+    const initialText = text.textContent;
+
+    control.checked = true;
+
+    assert.equal(control.attributeWrites.get('aria-checked') ?? 0, initialAriaWrites);
+    assert.equal(text.textContent, initialText);
   } finally {
     globalThis.document = originalDocument;
   }

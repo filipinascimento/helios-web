@@ -1045,6 +1045,15 @@ test('layout tuning model predicts only finite clamped output scale', () => {
   );
 });
 
+test('GPU force layout and delegate default to 3D mode', () => {
+  const layout = new GpuForceLayout(createStubNetwork(), {}, {});
+  assert.equal(layout.options.mode, '3d');
+  assert.equal(layout.positionDelegate?.options?.mode, '3d');
+
+  const delegate = new GpuForcePositionDelegate();
+  assert.equal(delegate.options.mode, '3d');
+});
+
 test('GpuForceLayout applies layout tuning model by default and supports opt-out and custom models', () => {
   const autoLayout = new GpuForceLayout(createStubNetwork(), {}, { mode: '2d' });
   approx(autoLayout.options.linkDistance, 1);

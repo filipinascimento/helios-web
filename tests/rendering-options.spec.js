@@ -200,6 +200,36 @@ test.describe('theme defaults', () => {
     expect(result.quickControlsTheme).toBe('light');
   });
 
+  test('demo shell and startup overlay follow light browser theme before Helios is ready', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    await page.route('**/docs/app/main.js', async (route) => {
+      const response = await route.fetch();
+      const source = await response.text();
+      await route.fulfill({
+        response,
+        body: source.replace(
+          'demoStartupOverlay?.remove?.();',
+          'await new Promise((resolve) => setTimeout(resolve, 5000)); demoStartupOverlay?.remove?.();',
+        ),
+      });
+    });
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    const shellBackground = await page.evaluate(() => {
+      const match = getComputedStyle(document.body).backgroundColor.match(/\d+/g);
+      return match ? match.slice(0, 3).map(Number) : null;
+    });
+    expect(shellBackground?.[0]).toBeGreaterThanOrEqual(240);
+    expect(shellBackground?.[1]).toBeGreaterThanOrEqual(240);
+    expect(shellBackground?.[2]).toBeGreaterThanOrEqual(240);
+    const overlay = page.locator('.helios-demo-startup-overlay').first();
+    await expect(overlay).toBeVisible();
+    await expect(overlay).toHaveAttribute('data-theme', 'light');
+    await expect(overlay).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+    const spinner = page.locator('.helios-demo-startup-spinner').first();
+    await expect(spinner).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await expect(spinner).toHaveCSS('border-top-color', 'rgb(94, 124, 185)');
+  });
+
   test('keeps dark renderer and control defaults for dark browser theme', async ({ page }) => {
     await page.emulateMedia({ colorScheme: 'dark' });
     const result = await createThemeProbe(page);

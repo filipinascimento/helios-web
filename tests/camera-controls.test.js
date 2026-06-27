@@ -49,6 +49,14 @@ function projectBounds(camera, bounds) {
   return corners;
 }
 
+function projectFitPoints(camera, points) {
+  const projected = [];
+  for (let i = 0; (i + 2) < points.length; i += 3) {
+    projected.push(projectPoint(camera.getUniforms(), [points[i], points[i + 1], points[i + 2]]));
+  }
+  return projected;
+}
+
 test('2D camera pose capture and restore normalize to orthographic projection', () => {
   const camera = createCamera('2d');
   camera.projection = 'perspective';
@@ -430,6 +438,42 @@ test('3D frameNetwork fit reserves room for billboard node radius', () => {
   const withRadius = helios._resolveCameraFitPose(bounds, { resetOrientation: true });
 
   assert.ok(withRadius.distance > withoutRadius.distance);
+});
+
+test('3D frameNetwork fits sampled points instead of empty synthetic bbox corners', () => {
+  const helios = Object.create(Helios.prototype);
+  const camera = createCamera('3d', 300, 300);
+  camera.maxDistance = 100000;
+  helios.renderer = { camera };
+  helios.size = { width: 300, height: 300 };
+
+  const bounds = {
+    paddingPx: 0,
+    nodeRadiusWorld: 5,
+    fitMinX: -100,
+    fitMaxX: 100,
+    fitMinY: 0,
+    fitMaxY: 0,
+    fitMinZ: -100,
+    fitMaxZ: 100,
+    bboxCenter: [0, 0, 0],
+    centroid: [0, 0, 0],
+    fitPoints: new Float32Array([
+      -100, 0, -100,
+      100, 0, -100,
+      0, 0, 100,
+    ]),
+  };
+
+  const cornerPose = helios._resolveCameraFitPose({ ...bounds, fitPoints: null }, { resetOrientation: false });
+  const sampledPose = helios._resolveCameraFitPose(bounds, { resetOrientation: false });
+
+  assert.ok(
+    sampledPose.distance < cornerPose.distance,
+    `expected sampled fit distance ${sampledPose.distance} below corner fit distance ${cornerPose.distance}`,
+  );
+  applyCameraPose(camera, sampledPose);
+  assertFitsViewport(projectFitPoints(camera, bounds.fitPoints), 300, 300);
 });
 
 test('constructor UI panel option maps requested panels to HeliosUI creators', () => {
@@ -1642,6 +1686,26 @@ test('initial camera fit requests a non-animated frame before first render', () 
   }]);
 });
 
+test('startup initial camera fit can be skipped for explicit startup poses', () => {
+  const helios = Object.create(Helios.prototype);
+  let calls = 0;
+  helios._requestInitialCameraFit = () => { calls += 1; };
+
+  helios._sessionRestoreResult = null;
+  helios._startupConfig = { initialCameraFit: true };
+  helios._requestStartupInitialCameraFit();
+  assert.equal(calls, 1);
+
+  helios._startupConfig = { initialCameraFit: false };
+  helios._requestStartupInitialCameraFit();
+  assert.equal(calls, 1);
+
+  helios._sessionRestoreResult = { restored: true };
+  helios._startupConfig = { initialCameraFit: true };
+  helios._requestStartupInitialCameraFit();
+  assert.equal(calls, 1);
+});
+
 test('startup render gate waits for layout iterations or elapsed startup time', () => {
   const helios = Object.create(Helios.prototype);
   helios._layout = {};
@@ -1773,6 +1837,68 @@ test('camera control render pump queues auto fit while orbit is composed analyti
   assert.notEqual(queued[0].pose.distance, initialDistance);
   assert.notDeepEqual(Array.from(camera.rotation), initialRotation);
   assert.equal(helios._cameraControlRuntime.autoFitDirty, false);
+});
+
+test('3D auto fit interpolation preserves live orbit rotation', () => {
+  const helios = Object.create(Helios.prototype);
+  const camera = createCamera('3d');
+  helios.renderer = { camera };
+  helios.scheduler = { requestRender() {} };
+  helios._cameraControlConfig = {
+    autoFit: true,
+    autoFitCoverage: 1,
+    autoFitPaddingRatio: 0,
+    autoFitIntervalMs: 100,
+    autoFitMinIntervalMs: 100,
+    autoFitMaxIntervalMs: 100,
+    autoFitLargeNetworkScale: 1,
+    autoFitIntervalNodeCountRef: 5000,
+    autoFitMaxSamples: 1000,
+    animation: true,
+    animationDurationMs: 1000,
+    orbit: false,
+    orbitAngle: 0,
+    orbitSpeed: 0,
+    orbitDirection: 1,
+    targetNodeIndices: null,
+  };
+  helios._cameraControlRuntime = {
+    lastAutoFitAt: Number.NEGATIVE_INFINITY,
+    lastOrbitAt: 0,
+    lastFitSignature: '',
+    lastEffectiveIntervalMs: 0,
+    autoFitDirty: false,
+    appliedOrbitAngle: 0,
+    suspended: false,
+    controlPoseActive: false,
+    controlPoseFrom: null,
+    controlPoseTo: null,
+    controlPoseStartedAt: 0,
+    controlPoseDurationMs: 0,
+    controlPoseSignature: '',
+    controlPosePreserveRotation: false,
+  };
+
+  const targetPose = captureCameraPose(camera);
+  targetPose.distance = camera.distance * 0.5;
+  assert.equal(helios._queueCameraControlPose(targetPose, {
+    animate: true,
+    durationMs: 1000,
+    preserveRotation: true,
+  }), true);
+  helios._cameraControlRuntime.controlPoseStartedAt = 1000;
+
+  const orbitRotation = helios._composeOrbitRotation(camera.rotation, {
+    yawRadians: 0.35,
+    pitchRadians: 0,
+    axis: [0, 1, 0],
+  });
+  camera.rotation = new Float32Array(orbitRotation);
+
+  helios._stepCameraControlRenderPump(1500);
+
+  assert.deepEqual(Array.from(camera.rotation), Array.from(orbitRotation));
+  assert.ok(camera.distance < targetPose.distance * 2, `expected distance to interpolate toward fit target, got ${camera.distance}`);
 });
 
 test('auto fit render pump stays idle until a graph change marks it dirty', () => {

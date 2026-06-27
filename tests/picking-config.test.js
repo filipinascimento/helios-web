@@ -204,6 +204,46 @@ test('touch drag marks picking gesture as moved for click suppression', () => {
   assert.equal(helios._picking.gesture.cameraMoved, true);
 });
 
+test('native double-click still emits graph events while previous camera motion is settling', async () => {
+  const { helios, calls } = createPickingHarness();
+  helios._picking.node.enabled = true;
+  helios._getInteractionCanvas = () => ({
+    getBoundingClientRect() {
+      return { left: 0, top: 0, width: 100, height: 80 };
+    },
+  });
+  helios.indexPickingTracker = {
+    async pick() {
+      return { node: -1, edge: -1, nodeDepth: null, edgeDepth: null };
+    },
+  };
+  helios._picking.gesture.cameraMoved = true;
+
+  await Helios.prototype._handlePointerClick.call(helios, {
+    clientX: 30,
+    clientY: 20,
+    button: 0,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+  }, false, { synthetic: false });
+  assert.equal(calls.emit?.length ?? 0, 0);
+
+  await Helios.prototype._handlePointerClick.call(helios, {
+    clientX: 30,
+    clientY: 20,
+    button: 0,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+  }, true, { synthetic: false });
+  const graphDoubleClicks = calls.emit.filter(([type]) => type === 'graph:dblclick');
+  assert.equal(graphDoubleClicks.length, 1);
+  assert.equal(graphDoubleClicks[0][1].kind, null);
+});
+
 test('second touch tap within the threshold emits synthetic double-click', async () => {
   const { helios, calls } = createPickingHarness();
   helios._picking.node.enabled = true;
