@@ -88,10 +88,20 @@ export function resolveWebGLContextAttributes(options = {}) {
 }
 
 export function resolveWebGPUAdapterOptions(options = {}) {
-  return {
-    powerPreference: resolveGraphicsPowerPreference(options),
-    ...objectOption(options.webgpuAdapterOptions),
-  };
+  const adapterOptions = { ...objectOption(options.webgpuAdapterOptions) };
+  if (Object.prototype.hasOwnProperty.call(options, 'powerPreference')
+    && !Object.prototype.hasOwnProperty.call(adapterOptions, 'powerPreference')) {
+    adapterOptions.powerPreference = options.powerPreference;
+  }
+  if (adapterOptions.powerPreference == null) {
+    delete adapterOptions.powerPreference;
+  }
+  return adapterOptions;
+}
+
+export function resolveWebGPURequestAdapterArgument(options = {}) {
+  const adapterOptions = resolveWebGPUAdapterOptions(options);
+  return Object.keys(adapterOptions).length ? adapterOptions : undefined;
 }
 
 export function resolveWebGPUCanvasSampleCount(options = {}) {

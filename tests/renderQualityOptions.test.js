@@ -10,6 +10,7 @@ import {
   resolveWebGLAntialiasEnabled,
   resolveWebGPUAdapterOptions,
   resolveWebGPUCanvasSampleCount,
+  resolveWebGPURequestAdapterArgument,
   supersamplingPresetToOption,
 } from '../src/rendering/qualityOptions.js';
 
@@ -53,9 +54,10 @@ test('antialias options normalize per backend', () => {
   assert.equal(resolveWebGPUCanvasSampleCount({ antialias: 8 }), 4);
 });
 
-test('graphics initialization defaults prefer high-performance adapters', () => {
+test('graphics initialization defaults keep WebGPU adapter selection neutral', () => {
   assert.equal(resolveGraphicsPowerPreference({}), 'high-performance');
-  assert.deepEqual(resolveWebGPUAdapterOptions({}), { powerPreference: 'high-performance' });
+  assert.deepEqual(resolveWebGPUAdapterOptions({}), {});
+  assert.equal(resolveWebGPURequestAdapterArgument({}), undefined);
   assert.deepEqual(resolveWebGLContextAttributes({}), {
     antialias: true,
     premultipliedAlpha: true,
@@ -64,6 +66,16 @@ test('graphics initialization defaults prefer high-performance adapters', () => 
 });
 
 test('graphics initialization options allow backend-specific overrides', () => {
+  assert.deepEqual(resolveWebGPUAdapterOptions({
+    powerPreference: 'high-performance',
+  }), {
+    powerPreference: 'high-performance',
+  });
+  assert.deepEqual(resolveWebGPURequestAdapterArgument({
+    powerPreference: 'high-performance',
+  }), {
+    powerPreference: 'high-performance',
+  });
   assert.deepEqual(resolveWebGPUAdapterOptions({
     powerPreference: 'high-performance',
     webgpuAdapterOptions: { powerPreference: 'low-power', forceFallbackAdapter: true },

@@ -1,6 +1,6 @@
 import { bumpCounter } from '../../utilities/counters.js';
 import { ResourceCache } from '../resources/ResourceCache.js';
-import { resolveWebGPUAdapterOptions, resolveWebGPUCanvasSampleCount } from '../qualityOptions.js';
+import { resolveWebGPUAdapterOptions, resolveWebGPUCanvasSampleCount, resolveWebGPURequestAdapterArgument } from '../qualityOptions.js';
 
 const PRESENT_WGSL = /* wgsl */ `
 struct VertexOut {
@@ -68,7 +68,7 @@ export class WebGPUDevice {
       throw new Error('WebGPU is not available in this environment');
     }
     this.adapterOptions = resolveWebGPUAdapterOptions(this.options);
-    this.adapter = await navigator.gpu.requestAdapter(this.adapterOptions);
+    this.adapter = await navigator.gpu.requestAdapter(resolveWebGPURequestAdapterArgument(this.options));
     if (!this.adapter) {
       throw new Error('Unable to acquire GPU adapter');
     }
