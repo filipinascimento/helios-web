@@ -781,13 +781,20 @@ export class HeliosUI {
 
     const doc = this.container.ownerDocument ?? document;
     const win = doc.defaultView ?? globalThis;
+    const fallbackIndicators = new Set();
+    const groupRecords = new Map();
+    const rowIndicators = new WeakMap();
     const createStaticIndicator = () => {
       const indicator = createDirtyIndicator({
         helios: this.helios,
         path: '',
       });
       indicator.classList.add('helios-ui-dirty-indicator--fallback');
-      this._controlCleanups.add(() => indicator.destroy?.());
+      fallbackIndicators.add(indicator);
+      this._controlCleanups.add(() => {
+        fallbackIndicators.delete(indicator);
+        indicator.destroy?.();
+      });
       return indicator;
     };
     const createGroupIndicator = () => {
@@ -797,71 +804,116 @@ export class HeliosUI {
       indicator.setAttribute('aria-hidden', 'true');
       return indicator;
     };
+    const setIndicatorState = (indicator, state) => {
+      if (indicator?.dataset?.state !== state) indicator.dataset.state = state;
+    };
     const syncGroupIndicator = (indicator, scope) => {
       const changed = Boolean(scope?.querySelector?.('.helios-ui-row .helios-ui-dirty-indicator[data-state="changed"]'));
-      indicator.dataset.state = changed ? 'partial' : 'default';
+      setIndicatorState(indicator, changed ? 'partial' : 'default');
     };
 
-    const apply = () => {
+    const registerRow = (row) => {
+      if (!row || rowIndicators.has(row)) return;
+      if (row.querySelector?.(':scope .helios-ui-dirty-indicator')) return;
+      const titleRow = row.querySelector?.(':scope .helios-ui-label__title-row');
+      const target = titleRow ?? row.querySelector?.(':scope .helios-ui-label__title')?.parentElement;
+      if (!target) return;
+      const indicator = createStaticIndicator();
+      target.appendChild(indicator);
+      rowIndicators.set(row, indicator);
+    };
+
+    const registerPanel = (panel) => {
+      if (!panel) return;
+      const titleWrap = panel.querySelector?.(':scope > .helios-ui-panel__header .helios-ui-panel__title-wrap');
+      if (!titleWrap) return;
+      const existingHeaderIndicator = panel.querySelector?.(':scope > .helios-ui-panel__header .helios-ui-panel__persistence-indicator')
+        ?? panel.querySelector?.(':scope > .helios-ui-panel__header .helios-ui-dirty-indicator--schema');
+      if (existingHeaderIndicator) {
+        titleWrap.querySelector?.(':scope > .helios-ui-dirty-indicator--group')?.remove();
+        return;
+      }
+      let indicator = titleWrap.querySelector?.(':scope > .helios-ui-dirty-indicator--group');
+      if (!indicator) {
+        indicator = createGroupIndicator();
+        titleWrap.appendChild(indicator);
+      }
+      const body = panel.querySelector?.(':scope > .helios-ui-panel__body');
+      groupRecords.set(panel, { root: panel, body, indicator });
+      syncGroupIndicator(indicator, body);
+    };
+
+    const registerSubpanel = (subpanel) => {
+      if (!subpanel) return;
+      const header = subpanel.querySelector?.(':scope > .helios-ui-subpanel__header-row > .helios-ui-subpanel__header');
+      if (!header) return;
+      const headerRow = subpanel.querySelector?.(':scope > .helios-ui-subpanel__header-row');
+      const existingHeaderIndicator = headerRow?.querySelector?.(':scope > .helios-ui-subpanel__header-controls .helios-ui-dirty-indicator')
+        ?? header.querySelector?.(':scope > .helios-ui-dirty-indicator--schema');
+      if (existingHeaderIndicator) {
+        header.querySelector?.(':scope > .helios-ui-dirty-indicator--group')?.remove();
+        return;
+      }
+      let indicator = header.querySelector?.(':scope > .helios-ui-dirty-indicator--group');
+      if (!indicator) {
+        indicator = createGroupIndicator();
+        header.appendChild(indicator);
+      }
+      const body = subpanel.querySelector?.(':scope > .helios-ui-subpanel__body');
+      groupRecords.set(subpanel, { root: subpanel, body, indicator });
+      syncGroupIndicator(indicator, body);
+    };
+
+    const registerSubtree = (node) => {
+      if (!node || node.nodeType !== 1) return;
+      if (node.matches?.('.helios-ui-row')) registerRow(node);
+      for (const row of node.querySelectorAll?.('.helios-ui-row') ?? []) registerRow(row);
+      if (node.matches?.('.helios-ui-panel')) registerPanel(node);
+      for (const panel of node.querySelectorAll?.('.helios-ui-panel') ?? []) registerPanel(panel);
+      if (node.matches?.('.helios-ui-subpanel')) registerSubpanel(node);
+      for (const subpanel of node.querySelectorAll?.('.helios-ui-subpanel') ?? []) registerSubpanel(subpanel);
+    };
+
+    const unregisterSubtree = (node) => {
+      if (!node || node.nodeType !== 1) return;
+      for (const indicator of Array.from(fallbackIndicators)) {
+        if (node === indicator || node.contains?.(indicator)) {
+          fallbackIndicators.delete(indicator);
+          indicator.destroy?.();
+        }
+      }
+      for (const [root, record] of Array.from(groupRecords.entries())) {
+        if (node === record.root || node.contains?.(record.root)) groupRecords.delete(root);
+      }
+    };
+
+    const refreshGroups = () => {
       this._persistenceIndicatorFrame = null;
-      for (const row of this.container.querySelectorAll('.helios-ui-row')) {
-        if (row.querySelector('.helios-ui-dirty-indicator')) continue;
-        const titleRow = row.querySelector('.helios-ui-label__title-row');
-        if (titleRow) {
-          titleRow.appendChild(createStaticIndicator());
+      for (const [root, record] of Array.from(groupRecords.entries())) {
+        if (!record.root?.isConnected) {
+          groupRecords.delete(root);
           continue;
         }
-        const title = row.querySelector('.helios-ui-label__title');
-        if (title?.parentElement) {
-          title.parentElement.appendChild(createStaticIndicator());
-        }
-      }
-      for (const panel of this.container.querySelectorAll('.helios-ui-panel')) {
-        const titleWrap = panel.querySelector(':scope > .helios-ui-panel__header .helios-ui-panel__title-wrap');
-        if (!titleWrap) continue;
-        if (
-          panel.querySelector(':scope > .helios-ui-panel__header .helios-ui-panel__persistence-indicator')
-          || panel.querySelector(':scope > .helios-ui-panel__header .helios-ui-dirty-indicator--schema')
-        ) {
-          titleWrap.querySelector(':scope > .helios-ui-dirty-indicator--group')?.remove();
-          continue;
-        }
-        let indicator = titleWrap.querySelector(':scope > .helios-ui-dirty-indicator--group');
-        if (!indicator) {
-          indicator = createGroupIndicator();
-          titleWrap.appendChild(indicator);
-        }
-        syncGroupIndicator(indicator, panel.querySelector(':scope > .helios-ui-panel__body'));
-      }
-      for (const subpanel of this.container.querySelectorAll('.helios-ui-subpanel')) {
-        const header = subpanel.querySelector(':scope > .helios-ui-subpanel__header-row > .helios-ui-subpanel__header');
-        if (!header) continue;
-        const headerRow = subpanel.querySelector(':scope > .helios-ui-subpanel__header-row');
-        if (
-          headerRow?.querySelector?.(':scope > .helios-ui-subpanel__header-controls .helios-ui-dirty-indicator')
-          || header.querySelector(':scope > .helios-ui-dirty-indicator--schema')
-        ) {
-          header.querySelector(':scope > .helios-ui-dirty-indicator--group')?.remove();
-          continue;
-        }
-        let indicator = header.querySelector(':scope > .helios-ui-dirty-indicator--group');
-        if (!indicator) {
-          indicator = createGroupIndicator();
-          header.appendChild(indicator);
-        }
-        syncGroupIndicator(indicator, subpanel.querySelector(':scope > .helios-ui-subpanel__body'));
+        syncGroupIndicator(record.indicator, record.body);
       }
     };
 
     const schedule = () => {
       if (this._persistenceIndicatorFrame != null) return;
-      this._persistenceIndicatorFrame = win.requestAnimationFrame?.(apply)
-        ?? win.setTimeout?.(apply, 0);
+      this._persistenceIndicatorFrame = win.requestAnimationFrame?.(refreshGroups)
+        ?? win.setTimeout?.(refreshGroups, 0);
     };
 
+    registerSubtree(this.container);
     schedule();
     if (typeof win.MutationObserver === 'function') {
-      this._persistenceIndicatorObserver = new win.MutationObserver(schedule);
+      this._persistenceIndicatorObserver = new win.MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          for (const node of mutation.removedNodes ?? []) unregisterSubtree(node);
+          for (const node of mutation.addedNodes ?? []) registerSubtree(node);
+        }
+        schedule();
+      });
       this._persistenceIndicatorObserver.observe(this.container, {
         childList: true,
         subtree: true,
@@ -1813,10 +1865,11 @@ export class HeliosUI {
         const showPersistenceSync = options.showPersistenceSync !== false && storageSupportsPersistentUI(this.helios);
         const showSessionTab = options.showSessionTab !== false && storageSupportsSessions(this.helios);
 
-        const syncPersistenceStatus = () => {
+        let lastPersistenceStatusSignature = '';
+        const syncPersistenceStatus = (statusOverride = null) => {
           if (!showPersistenceSync) return;
           const storage = this.helios?.storage ?? null;
-          const status = storage?.persistenceStatus?.() ?? storage?.status?.() ?? null;
+          const status = statusOverride ?? storage?.persistenceStatus?.() ?? storage?.status?.() ?? null;
           const networkData = status?.networkData ?? {};
           const backendStatus = status?.backendStatus ?? [];
           const failed = backendStatus.find((entry) => entry?.ok === false) ?? null;
@@ -1851,9 +1904,29 @@ export class HeliosUI {
           };
           const savedAt = resolveNetworkPayloadSavedAt(status);
           const hasSavedAt = savedAt != null;
+          const signature = JSON.stringify({
+            syncing: status?.syncing === true,
+            sessionStatus: status?.sessionSync?.status ?? null,
+            sessionSavedAt: status?.sessionSync?.savedAt ?? null,
+            networkStatus: networkData.status ?? null,
+            dirty: networkData.dirty === true,
+            networkDirty: networkData.networkDirty === true,
+            positionsDirty: networkData.positionsDirty === true,
+            autosyncDisabled: networkData.autosyncDisabled === true,
+            autosyncDisabledReason: networkData.autosyncDisabledReason?.message ?? '',
+            enabled: networkData.enabled !== false,
+            autosave: networkData.autosave !== false,
+            savedAt,
+            lastError: status?.lastError ?? null,
+            lastWarning: status?.lastWarning ?? null,
+            remoteWarning: networkData.remoteWarning ?? null,
+            timeBucket: hasSavedAt ? Math.floor(Date.now() / 10000) : 0,
+          });
+          if (signature === lastPersistenceStatusSignature) return;
+          lastPersistenceStatusSignature = signature;
           const cleanSyncedText = hasSavedAt ? 'Synced' : null;
           const lastSyncedText = hasSavedAt ? `Last synced ${formatRelativeSyncTime(savedAt)}.` : '';
-          const networkPersistenceEnabled = this.helios?.states?.get?.('network.persistence.enabled', networkData.enabled !== false) !== false;
+          const networkPersistenceEnabled = networkData.enabled !== false;
           const autosyncDisabledReason = networkData.autosyncDisabledReason?.message
             ?? (networkData.autosyncDisabled === true
               ? 'Auto sync is disabled for this session. Use manual Sync to save changes.'
@@ -1861,7 +1934,7 @@ export class HeliosUI {
           const autosyncDisabled = networkData.autosyncDisabled === true;
           autoSyncToggle.checked = autosyncDisabled
             ? false
-            : this.helios?.states?.get?.('network.persistence.autosave', true) !== false;
+            : networkData.autosave !== false;
           autoSyncToggle.disabled = !networkPersistenceEnabled || autosyncDisabled;
           autoSyncGroup.title = autosyncDisabledReason;
           autoSyncToggle.title = autosyncDisabledReason;
@@ -1928,7 +2001,11 @@ export class HeliosUI {
             || reason === 'session-restore-error'
             || reason === 'explicit-session-missing';
           if (reason === 'load' || reason === 'autosync-size-limit' || reason === 'autosync-disabled' || syncEvent || cleanSaved || failed) {
-            syncPersistenceStatus();
+            syncPersistenceStatus(detail.status ?? null);
+            return;
+          }
+          if (networkStatus && (networkStatus.dirty === true || networkStatus.positionsDirty === true || networkStatus.status === 'dirty')) {
+            syncPersistenceStatus(detail.status ?? null);
             return;
           }
           const entries = Array.isArray(detail.entries) ? detail.entries : [];
@@ -1936,7 +2013,7 @@ export class HeliosUI {
             const path = String(entry?.path ?? '');
             return path.startsWith('network.persistence') || path.startsWith('positions.persistence');
           })) {
-            syncPersistenceStatus();
+            syncPersistenceStatus(detail.status ?? null);
           }
         };
 
@@ -3124,6 +3201,7 @@ export class HeliosUI {
               disposeOld: true,
               recreateRenderer: true,
               keepCamera: false,
+              showLoadingOverlay: true,
               confirmUnsyncedSession: (detail) => confirmContinueWithoutSync({
                 ...detail,
                 sourceName: file.name,

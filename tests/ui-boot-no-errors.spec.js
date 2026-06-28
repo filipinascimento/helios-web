@@ -23,7 +23,7 @@ test.describe('ui boot', () => {
       errors.push(new Error(`console.error: ${msg.text()}`));
     });
 
-    await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=2000');
+    await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=2000&debugPanel=1');
 
     await page.waitForFunction(() => Boolean(window.__helios && window.__helios.ready));
     await page.waitForFunction(() => Boolean(window.__heliosUI));

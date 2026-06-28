@@ -969,6 +969,17 @@ function normalizeReadbackNodeIds(nodeIds) {
   return values.length ? Uint32Array.from(values) : createEmptyUintArray();
 }
 
+function filterReadableNodeIds(ids, capacity) {
+  const limit = Math.max(0, Math.floor(Number(capacity) || 0));
+  if (!ids?.length || limit <= 0) return createEmptyUintArray();
+  const readable = [];
+  for (let i = 0; i < ids.length; i += 1) {
+    const id = ids[i] >>> 0;
+    if (id !== 0xffffffff && id < limit) readable.push(id);
+  }
+  return readable.length === ids.length ? ids : (readable.length ? Uint32Array.from(readable) : createEmptyUintArray());
+}
+
 function resolveReadbackOut(out, length) {
   if (out instanceof Float32Array && out.length >= length) return out;
   return new Float32Array(Math.max(0, length));
@@ -1019,6 +1030,28 @@ function centroidFromPackedPositions(positions, count, out = null) {
     centroid[2] = sumZ / found;
   }
   return { centroid, count: found };
+}
+
+function readbackNow() {
+  return typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
+}
+
+function readbackIdsSignature(ids) {
+  if (!ids?.length) return '';
+  return Array.from(ids, (id) => String(id >>> 0)).join(',');
+}
+
+function cloneFloat32(value) {
+  return value instanceof Float32Array ? new Float32Array(value) : null;
+}
+
+function copyCachedFloat32(value, out = null) {
+  if (!(value instanceof Float32Array)) return null;
+  const target = resolveReadbackOut(out, value.length);
+  target.set(value.subarray(0, Math.min(value.length, target.length)), 0);
+  return target;
 }
 
 function readScalarViewValue(view, index, fallback = 0) {
@@ -3381,7 +3414,8 @@ class WebGLTextureComputePath {
 
   readNodeCentroidById(nodeIds, options = {}) {
     const ids = normalizeReadbackNodeIds(nodeIds);
-    const count = ids.length;
+    const readableIds = filterReadableNodeIds(ids, this.nodeCapacity);
+    const count = readableIds.length;
     if (count <= 0) {
       const centroid = resolveReadbackOut(options.out, 3);
       centroid[0] = 0;
@@ -3391,11 +3425,11 @@ class WebGLTextureComputePath {
     }
     if (count > PARTIAL_CENTROID_CPU_THRESHOLD && count > Math.max(1, this.nodeCapacity * 0.25)) {
       const snapshot = this.readPositionSnapshot();
-      const packed = copyPositionsFromFullSnapshot(snapshot, ids, this._centroidPositionScratch);
+      const packed = copyPositionsFromFullSnapshot(snapshot, readableIds, this._centroidPositionScratch);
       this._centroidPositionScratch = packed;
       return centroidFromPackedPositions(packed, count, options.out);
     }
-    const packed = this.readNodePositionsById(ids, { out: this._centroidPositionScratch });
+    const packed = this.readNodePositionsById(readableIds, { out: this._centroidPositionScratch });
     this._centroidPositionScratch = packed;
     return centroidFromPackedPositions(packed, count, options.out);
   }
@@ -4476,7 +4510,8 @@ class WebGPUForceComputeBackend {
 
   async _readNodeCentroidById(nodeIds, options = {}) {
     const ids = normalizeReadbackNodeIds(nodeIds);
-    const count = ids.length;
+    const readableIds = filterReadableNodeIds(ids, this.nodeCapacity);
+    const count = readableIds.length;
     if (count <= 0) {
       const centroid = resolveReadbackOut(options.out, 3);
       centroid[0] = 0;
@@ -4485,12 +4520,12 @@ class WebGPUForceComputeBackend {
       return { centroid, count: 0 };
     }
     if (count <= PARTIAL_CENTROID_CPU_THRESHOLD) {
-      const packed = await this._readNodePositionsById(ids);
+      const packed = await this._readNodePositionsById(readableIds);
       return centroidFromPackedPositions(packed, count, options.out);
     }
-    const reduced = await this._readNodeCentroidByIdGpuReduction(ids, options);
+    const reduced = await this._readNodeCentroidByIdGpuReduction(readableIds, options);
     if (reduced) return reduced;
-    const packed = await this._readNodePositionsById(ids);
+    const packed = await this._readNodePositionsById(readableIds);
     return centroidFromPackedPositions(packed, count, options.out);
   }
 
@@ -4750,7 +4785,21 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       packedPositions: createEmptyFloatArray(),
       packedOutputPositions: createEmptyFloatArray(),
     };
+    this._sparseReadbackCache = new Map();
+    this._sparseReadbackLatest = new Map();
+    this._sparseReadbackPending = new Set();
     this._sampleDebugFrameInterval = 30;
+  }
+
+  markTopologyDirty(reason = 'manual') {
+    super.markTopologyDirty(reason);
+    this._clearSparseReadbackCache();
+  }
+
+  _clearSparseReadbackCache() {
+    this._sparseReadbackCache?.clear?.();
+    this._sparseReadbackLatest?.clear?.();
+    this._sparseReadbackPending?.clear?.();
   }
 
   didDetach() {
@@ -4835,6 +4884,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       packedPositions: createEmptyFloatArray(),
       packedOutputPositions: createEmptyFloatArray(),
     };
+    this._clearSparseReadbackCache();
   }
 
   resetDynamicStateFromNetwork(context = {}) {
@@ -5367,27 +5417,151 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     return new Float32Array(view);
   }
 
+  _sparseReadbackKey(kind, version, idsKey) {
+    return `${kind}:${version}:${idsKey}`;
+  }
+
+  _sparseReadbackLatestKey(kind, idsKey) {
+    return `${kind}:${idsKey}`;
+  }
+
+  _getSparseReadbackCache(kind, idsKey, version, options = {}) {
+    const exact = this._sparseReadbackCache.get(this._sparseReadbackKey(kind, version, idsKey));
+    if (exact) return exact;
+    if (options.allowStaleVersion === false) return null;
+    return this._sparseReadbackLatest.get(this._sparseReadbackLatestKey(kind, idsKey)) ?? null;
+  }
+
+  _storeSparseReadbackCache(kind, idsKey, version, entry) {
+    const cached = {
+      ...entry,
+      version,
+      at: readbackNow(),
+    };
+    this._sparseReadbackCache.set(this._sparseReadbackKey(kind, version, idsKey), cached);
+    this._sparseReadbackLatest.set(this._sparseReadbackLatestKey(kind, idsKey), cached);
+    if (this._sparseReadbackCache.size > 64) {
+      const entries = Array.from(this._sparseReadbackCache.entries())
+        .sort((a, b) => (b[1]?.at ?? 0) - (a[1]?.at ?? 0));
+      this._sparseReadbackCache.clear();
+      for (let i = 0; i < Math.min(32, entries.length); i += 1) {
+        this._sparseReadbackCache.set(entries[i][0], entries[i][1]);
+      }
+    }
+    if (this._sparseReadbackLatest.size > 32) {
+      const entries = Array.from(this._sparseReadbackLatest.entries())
+        .sort((a, b) => (b[1]?.at ?? 0) - (a[1]?.at ?? 0));
+      this._sparseReadbackLatest.clear();
+      for (let i = 0; i < Math.min(16, entries.length); i += 1) {
+        this._sparseReadbackLatest.set(entries[i][0], entries[i][1]);
+      }
+    }
+  }
+
+  _scheduleSparseReadbackRefresh(kind, context, ids, idsKey, options = {}) {
+    const pendingKey = this._sparseReadbackLatestKey(kind, idsKey);
+    if (this._sparseReadbackPending.has(pendingKey)) return;
+    this._sparseReadbackPending.add(pendingKey);
+    const refreshOptions = {
+      ...options,
+      out: null,
+      preferCached: false,
+      deferReadback: false,
+      allowStaleVersion: false,
+    };
+    Promise.resolve()
+      .then(() => (kind === 'centroid'
+        ? this._snapshotNodeCentroidByIdImmediate(context, ids, refreshOptions)
+        : this._snapshotNodePositionsByIdImmediate(context, ids, refreshOptions)))
+      .then(() => {
+        context.helios?._labels?.requestFullReselect?.(`delegate-${kind}-readback-cache`);
+        context.scheduler?.requestRender?.();
+      })
+      .catch((error) => {
+        warnOnce(
+          this,
+          `sparse-readback-refresh:${kind}`,
+          `GpuForcePositionDelegate: failed to refresh sparse ${kind} readback cache.`,
+          { error },
+        );
+      })
+      .finally(() => {
+        this._sparseReadbackPending.delete(pendingKey);
+      });
+  }
+
   async snapshotNodePositionsById(context = {}, nodeIds = [], options = {}) {
     this._markDirtyForBackend(context);
     this.ensureSynchronized(context);
     const ids = normalizeReadbackNodeIds(nodeIds);
     const count = ids.length;
     const version = this.version;
+    const idsKey = readbackIdsSignature(ids);
+    if ((options.preferCached === true || options.deferReadback === true) && idsKey) {
+      const cached = this._getSparseReadbackCache('positions', idsKey, version, options);
+      if (cached?.positions instanceof Float32Array) {
+        this._scheduleSparseReadbackRefresh('positions', context, ids, idsKey, options);
+        return {
+          ids,
+          positions: copyCachedFloat32(cached.positions, options.out),
+          count: cached.count ?? count,
+          version: cached.version ?? version,
+          source: `${cached.source ?? 'delegate'}-cache`,
+          cached: true,
+          stale: cached.version !== version,
+        };
+      }
+      if (options.deferReadback === true) {
+        this._scheduleSparseReadbackRefresh('positions', context, ids, idsKey, options);
+        return { ids, positions: null, count, version, source: this._webgpu ? 'webgpu-deferred' : this._webgl ? 'webgl2-deferred' : 'cpu-deferred', deferred: true };
+      }
+    }
+    return this._snapshotNodePositionsByIdImmediate(context, ids, options);
+  }
+
+  async _snapshotNodePositionsByIdImmediate(context = {}, ids = createEmptyUintArray(), options = {}) {
+    const count = ids.length;
+    const version = this.version;
+    const idsKey = readbackIdsSignature(ids);
     if (this._webgpu) {
       const positions = await this._webgpu.readNodePositionsById(ids, options);
-      return positions
+      const result = positions
         ? { ids, positions, count, version, source: 'webgpu' }
         : { ids, positions: resolveReadbackOut(options.out, count * 3), count, version, source: 'webgpu' };
+      if (idsKey && result.positions instanceof Float32Array) {
+        this._storeSparseReadbackCache('positions', idsKey, version, {
+          positions: cloneFloat32(result.positions),
+          count,
+          source: result.source,
+        });
+      }
+      return result;
     }
     if (this._webgl) {
       const positions = this._webgl.readNodePositionsById(ids, options);
-      return positions
+      const result = positions
         ? { ids, positions, count, version, source: 'webgl2' }
         : { ids, positions: resolveReadbackOut(options.out, count * 3), count, version, source: 'webgl2' };
+      if (idsKey && result.positions instanceof Float32Array) {
+        this._storeSparseReadbackCache('positions', idsKey, version, {
+          positions: cloneFloat32(result.positions),
+          count,
+          source: result.source,
+        });
+      }
+      return result;
     }
     const view = this.getNodePositionView(context);
     const positions = copyPositionsFromFullSnapshot(view, ids, options.out);
-    return { ids, positions, count, version, source: 'cpu' };
+    const result = { ids, positions, count, version, source: 'cpu' };
+    if (idsKey) {
+      this._storeSparseReadbackCache('positions', idsKey, version, {
+        positions: cloneFloat32(positions),
+        count,
+        source: result.source,
+      });
+    }
+    return result;
   }
 
   async snapshotNodeCentroidById(context = {}, nodeIds = [], options = {}) {
@@ -5403,28 +5577,79 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       centroid[2] = 0;
       return { centroid, count: 0, version, source: this._webgpu ? 'webgpu' : this._webgl ? 'webgl2' : 'cpu' };
     }
+    const idsKey = readbackIdsSignature(ids);
+    if ((options.preferCached === true || options.deferReadback === true) && idsKey) {
+      const cached = this._getSparseReadbackCache('centroid', idsKey, version, options);
+      if (cached?.centroid instanceof Float32Array) {
+        this._scheduleSparseReadbackRefresh('centroid', context, ids, idsKey, options);
+        return {
+          centroid: copyCachedFloat32(cached.centroid, options.out),
+          count: cached.count ?? count,
+          version: cached.version ?? version,
+          source: `${cached.source ?? 'delegate'}-cache`,
+          cached: true,
+          stale: cached.version !== version,
+        };
+      }
+      if (options.deferReadback === true) {
+        this._scheduleSparseReadbackRefresh('centroid', context, ids, idsKey, options);
+        return { centroid: null, count: 0, version, source: this._webgpu ? 'webgpu-deferred' : this._webgl ? 'webgl2-deferred' : 'cpu-deferred', deferred: true };
+      }
+    }
+    return this._snapshotNodeCentroidByIdImmediate(context, ids, options);
+  }
+
+  async _snapshotNodeCentroidByIdImmediate(context = {}, ids = createEmptyUintArray(), options = {}) {
+    const count = ids.length;
+    const version = this.version;
+    const idsKey = readbackIdsSignature(ids);
     if (this._webgpu) {
       const result = await this._webgpu.readNodeCentroidById(ids, options);
-      return {
+      const resolved = {
         centroid: result?.centroid ?? resolveReadbackOut(options.out, 3),
         count: result?.count ?? 0,
         version,
         source: 'webgpu',
       };
+      if (idsKey && resolved.centroid instanceof Float32Array) {
+        this._storeSparseReadbackCache('centroid', idsKey, version, {
+          centroid: cloneFloat32(resolved.centroid),
+          count: resolved.count,
+          source: resolved.source,
+        });
+      }
+      return resolved;
     }
     if (this._webgl) {
       const result = this._webgl.readNodeCentroidById(ids, options);
-      return {
+      const resolved = {
         centroid: result?.centroid ?? resolveReadbackOut(options.out, 3),
         count: result?.count ?? 0,
         version,
         source: 'webgl2',
       };
+      if (idsKey && resolved.centroid instanceof Float32Array) {
+        this._storeSparseReadbackCache('centroid', idsKey, version, {
+          centroid: cloneFloat32(resolved.centroid),
+          count: resolved.count,
+          source: resolved.source,
+        });
+      }
+      return resolved;
     }
     const view = this.getNodePositionView(context);
-    const packed = copyPositionsFromFullSnapshot(view, ids);
-    const result = centroidFromPackedPositions(packed, count, options.out);
-    return { centroid: result.centroid, count: result.count, version, source: 'cpu' };
+    const readableIds = filterReadableNodeIds(ids, Math.floor((view?.length ?? 0) / 3));
+    const packed = copyPositionsFromFullSnapshot(view, readableIds);
+    const result = centroidFromPackedPositions(packed, readableIds.length, options.out);
+    const resolved = { centroid: result.centroid, count: result.count, version, source: 'cpu' };
+    if (idsKey) {
+      this._storeSparseReadbackCache('centroid', idsKey, version, {
+        centroid: cloneFloat32(result.centroid),
+        count: result.count,
+        source: resolved.source,
+      });
+    }
+    return resolved;
   }
 
   writePositionSnapshot(snapshot, options = {}) {

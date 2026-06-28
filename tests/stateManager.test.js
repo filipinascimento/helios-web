@@ -2,7 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   HeliosStateManager,
+  valuesEqual,
 } from '../src/state/index.js';
+
+test('valuesEqual compares serializable state without JSON stringify', () => {
+  assert.equal(valuesEqual(1, 1), true);
+  assert.equal(valuesEqual(1, '1'), false);
+  assert.equal(valuesEqual([1, { a: true }], [1, { a: true }]), true);
+  assert.equal(valuesEqual([1, 2], [2, 1]), false);
+  assert.equal(valuesEqual(new Float32Array([1, 2, 3]), new Float32Array([1, 2, 3])), true);
+  assert.equal(valuesEqual(new Float32Array([1, 2, 3]), new Float32Array([1, 2, 4])), false);
+  assert.equal(valuesEqual({ camera: { target: [1, 2, 3], zoom: 4 } }, { camera: { target: [1, 2, 3], zoom: 4 } }), true);
+  assert.equal(valuesEqual({ a: undefined }, {}), false);
+});
 
 test('HeliosStateManager tracks overrides independently from value equality', () => {
   const states = new HeliosStateManager({ now: () => 1 });
@@ -21,6 +33,29 @@ test('HeliosStateManager tracks overrides independently from value equality', ()
   assert.deepEqual(states.getOverrides({ aliases: false }), {
     'appearance.nodeStyle.sizeScale': 1,
   });
+});
+
+test('HeliosStateManager only serializes overrides when override tracking needs them', () => {
+  const states = new HeliosStateManager();
+  let serializeCalls = 0;
+  states.register(null, 'camera', {
+    pose: {
+      default: { target: [0, 0, 0], zoom: 1 },
+      type: 'object',
+      serialize(value) {
+        serializeCalls += 1;
+        return { ...value, serialized: true };
+      },
+    },
+  });
+
+  states.set('camera.pose', { target: [1, 0, 0], zoom: 2 }, { source: 'restore' });
+  assert.equal(serializeCalls, 0);
+  assert.equal(states.status('camera.pose').state, 'default');
+
+  states.set('camera.pose', { target: [1, 0, 0], zoom: 2 }, { source: 'ui' });
+  assert.equal(serializeCalls, 1);
+  assert.equal(states.status('camera.pose').state, 'changed');
 });
 
 test('HeliosStateManager setDefault updates heuristic defaults without creating overrides', () => {

@@ -21,12 +21,62 @@ export function cloneStateValue(value) {
 }
 
 export function valuesEqual(a, b) {
-  if (Object.is(a, b)) return true;
-  try {
-    return JSON.stringify(a) === JSON.stringify(b);
-  } catch (_) {
-    return false;
+  return valuesEqualInternal(a, b, new WeakMap());
+}
+
+function isPlainSerializableObject(value) {
+  if (!value || typeof value !== 'object') return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function typedArrayValuesEqual(a, b) {
+  if (!ArrayBuffer.isView(a) || !ArrayBuffer.isView(b)) return false;
+  if (a.constructor !== b.constructor || a.byteLength !== b.byteLength) return false;
+  if (a instanceof DataView || b instanceof DataView) {
+    const bytesA = new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
+    const bytesB = new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
+    for (let i = 0; i < bytesA.length; i += 1) {
+      if (bytesA[i] !== bytesB[i]) return false;
+    }
+    return true;
   }
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (!Object.is(a[i], b[i])) return false;
+  }
+  return true;
+}
+
+function valuesEqualInternal(a, b, seen) {
+  if (Object.is(a, b)) return true;
+  if (a == null || b == null) return false;
+  if (typeof a !== typeof b) return false;
+  if (typeof a !== 'object') return false;
+  if (ArrayBuffer.isView(a) || ArrayBuffer.isView(b)) return typedArrayValuesEqual(a, b);
+
+  const seenForA = seen.get(a);
+  if (seenForA?.has(b)) return true;
+  if (seenForA) seenForA.add(b);
+  else seen.set(a, new WeakSet([b]));
+
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 1) {
+      if (!valuesEqualInternal(a[i], b[i], seen)) return false;
+    }
+    return true;
+  }
+
+  if (!isPlainSerializableObject(a) || !isPlainSerializableObject(b)) return false;
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  for (const key of keysA) {
+    if (!Object.prototype.hasOwnProperty.call(b, key)) return false;
+    if (!valuesEqualInternal(a[key], b[key], seen)) return false;
+  }
+  return true;
 }
 
 export function normalizeStateKey(key) {
@@ -561,14 +611,19 @@ export class HeliosStateManager extends EventTarget {
     }
     const nextValue = entry.deserialize ? entry.deserialize(value, options) : value;
     const oldValue = this.values.has(target) ? this.values.get(target) : entry.default;
-    const serializedOverride = entry.serialize ? entry.serialize(nextValue, options) : nextValue;
     const trackOverride = entry.persist !== false && this._shouldTrackOverride(options);
     const origin = normalizeStateChangeOrigin(options);
     const hadOverride = this.overrides.has(target);
-    const overrideChanged = trackOverride
-      ? (!hadOverride || !entry.equals(this.overrides.get(target), serializedOverride))
-      : options.clearOverride === true && hadOverride;
-    if (entry.equals(oldValue, nextValue) && !overrideChanged) {
+    const valueChanged = !entry.equals(oldValue, nextValue);
+    let serializedOverride;
+    let overrideChanged = false;
+    if (trackOverride) {
+      serializedOverride = entry.serialize ? entry.serialize(nextValue, options) : nextValue;
+      overrideChanged = !hadOverride || !entry.equals(this.overrides.get(target), serializedOverride);
+    } else {
+      overrideChanged = options.clearOverride === true && hadOverride;
+    }
+    if (!valueChanged && !overrideChanged) {
       return { changed: false, key: target, value: nextValue, state: this.status(target).state };
     }
     this.values.set(target, nextValue);

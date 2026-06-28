@@ -219,6 +219,52 @@ test('frameNetwork trims outliers when using 95% auto-fit coverage', () => {
   assert.ok(Math.abs(camera.pan2D[1]) < 10);
 });
 
+test('frameNetwork percentile coverage avoids full Array.sort in camera bounds sampling', () => {
+  const helios = Object.create(Helios.prototype);
+  const camera = createCamera('2d');
+  const positions = new Float32Array(1200 * 3);
+  for (let i = 0; i < 1200; i += 1) {
+    const offset = i * 3;
+    positions[offset] = (i % 80) - 40;
+    positions[offset + 1] = Math.floor(i / 80) - 8;
+    positions[offset + 2] = 0;
+  }
+
+  helios.renderer = { camera };
+  helios.size = { width: 400, height: 400 };
+  helios.scheduler = { requestRender() {} };
+  helios._cameraControlConfig = {
+    autoFitCoverage: 0.95,
+    autoFitPaddingRatio: 0,
+    autoFitMaxSamples: 1200,
+    animationDurationMs: 0,
+  };
+  helios._cameraControlRuntime = {
+    lastAutoFitAt: Number.NEGATIVE_INFINITY,
+    lastOrbitAt: 0,
+    lastFitSignature: '',
+    lastEffectiveIntervalMs: 0,
+    autoFitDirty: false,
+  };
+  helios._getRenderNetwork = () => ({
+    nodeCount: 1200,
+    nodeIndices: Array.from({ length: 1200 }, (_, index) => index),
+  });
+  helios._withPositionBufferAccess = (fn) => fn();
+  helios._readNodePositionViewUnsafe = () => positions;
+  helios._resolveActiveCameraTargetNodeIndices = () => null;
+
+  const originalSort = Array.prototype.sort;
+  Array.prototype.sort = function sortShouldNotRun() {
+    throw new Error('camera bounds percentile sampling should not use Array.sort');
+  };
+  try {
+    assert.equal(helios.frameNetwork({ coverage: 0.95, paddingRatio: 0, resetOrientation: false }), true);
+  } finally {
+    Array.prototype.sort = originalSort;
+  }
+});
+
 test('camera bounds read visual radius attributes inside render-network buffer access for delegate positions', () => {
   const helios = Object.create(Helios.prototype);
   const camera = createCamera('2d');
@@ -930,12 +976,14 @@ test('cameraTargetNodes uses delegate centroid readback for GPU-only target node
   let centroidCalls = 0;
   let fullSnapshotCalls = 0;
   let renderRequests = 0;
+  let centroidOptions = null;
   const delegate = {
     getNodePositionView() {
       return null;
     },
-    async snapshotNodeCentroidById(_context, ids) {
+    async snapshotNodeCentroidById(_context, ids, options = {}) {
       centroidCalls += 1;
+      centroidOptions = options;
       assert.deepEqual(Array.from(ids), [1, 2]);
       return { centroid: new Float32Array([10, -4, 0]), count: ids.length, version: 3, source: 'test' };
     },
@@ -979,11 +1027,34 @@ test('cameraTargetNodes uses delegate centroid readback for GPU-only target node
     delegateSnapshotPending: false,
     delegateSnapshotDelegate: null,
     delegateSnapshotRequestId: 0,
-    delegateTargetBounds: null,
-    delegateTargetBoundsAt: Number.NEGATIVE_INFINITY,
+    delegateTargetBounds: {
+      paddingPx: 24,
+      coverage: 1,
+      sourceCount: 2,
+      sampledCount: 2,
+      minX: 0,
+      minY: 0,
+      minZ: 0,
+      maxX: 0,
+      maxY: 0,
+      maxZ: 0,
+      fitMinX: 0,
+      fitMinY: 0,
+      fitMinZ: 0,
+      fitMaxX: 0,
+      fitMaxY: 0,
+      fitMaxZ: 0,
+      sumX: 0,
+      sumY: 0,
+      sumZ: 0,
+      count: 2,
+      bboxCenter: [0, 0, 0],
+      centroid: [0, 0, 0],
+    },
+    delegateTargetBoundsAt: performance.now(),
     delegateTargetBoundsPending: false,
-    delegateTargetBoundsDelegate: null,
-    delegateTargetBoundsSignature: '',
+    delegateTargetBoundsDelegate: delegate,
+    delegateTargetBoundsSignature: '1,2',
     delegateTargetBoundsRequestId: 0,
     orbitBaseRotation: null,
     controlPoseActive: false,
@@ -1000,6 +1071,10 @@ test('cameraTargetNodes uses delegate centroid readback for GPU-only target node
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.equal(centroidCalls, 1);
+  assert.equal(centroidOptions.exactReadback, true);
+  assert.equal(centroidOptions.preferCached, false);
+  assert.equal(centroidOptions.allowStaleVersion, false);
+  assert.equal(centroidOptions.deferReadback, false);
   assert.equal(fullSnapshotCalls, 0);
   assert.equal(renderRequests > 0, true);
   assert.deepEqual(Array.from(camera.target), [10, -4, 0]);
@@ -1727,6 +1802,87 @@ test('startup render gate waits for layout iterations or elapsed startup time', 
 
   helios._startupGate.layoutIterations = 0;
   assert.equal(helios._shouldSuppressStartupRender(1600), false);
+});
+
+test('network-load startup gate blocks rendering until load is released', () => {
+  const helios = Object.create(Helios.prototype);
+  const canvas = { style: { visibility: 'visible' } };
+  let renderRequests = 0;
+  let geometryRequests = 0;
+
+  helios.layers = { canvas };
+  helios.network = { nodeCount: 10, edgeCount: 0 };
+  helios._layout = {};
+  helios._startupConfig = {
+    loadingOverlay: true,
+    hideCanvasUntilFirstFrame: true,
+    layoutIterations: 100,
+    layoutDurationMs: 1000,
+    initialCameraFit: true,
+    _layoutIterationsExplicit: false,
+    _layoutDurationMsExplicit: false,
+  };
+  helios._cameraControlConfig = {
+    largeNetworkStartupNodeThreshold: 1000000,
+    largeNetworkStartupEdgeThreshold: 1000000,
+  };
+  helios.scheduler = {
+    layoutEnabled: true,
+    requestRender() { renderRequests += 1; },
+    requestGeometry() { geometryRequests += 1; },
+  };
+  helios._queuePendingLargeNetworkStartupSettle = () => {};
+
+  const gate = helios._beginNetworkLoadStartupGate();
+
+  assert.equal(canvas.style.visibility, 'hidden');
+  assert.equal(helios._shouldSuppressStartupRender(1100), true);
+  assert.equal(renderRequests, 1);
+
+  helios.network = { nodeCount: 1000000, edgeCount: 0 };
+  helios._releaseNetworkLoadStartupGate(gate);
+
+  assert.notEqual(helios._startupGate, gate);
+  assert.equal(helios._startupGate.blockRendering, false);
+  assert.equal(helios._startupGate.targetLayoutDurationMs, 5000);
+  assert.equal(helios._shouldSuppressStartupRender(1200), true);
+  assert.equal(geometryRequests, 1);
+  assert.equal(renderRequests, 2);
+
+  helios._startupGate.layoutIterations = helios._startupGate.targetLayoutIterations;
+  assert.equal(helios._shouldSuppressStartupRender(1300), false);
+  helios._finishStartupFirstVisibleFrame();
+  assert.equal(canvas.style.visibility, 'visible');
+});
+
+test('network-load startup gate restores canvas when load fails', () => {
+  const helios = Object.create(Helios.prototype);
+  const canvas = { style: { visibility: 'visible' } };
+
+  helios.layers = { canvas };
+  helios.network = { nodeCount: 10, edgeCount: 0 };
+  helios._startupConfig = {
+    loadingOverlay: true,
+    hideCanvasUntilFirstFrame: true,
+    layoutIterations: 0,
+    layoutDurationMs: 0,
+    initialCameraFit: true,
+    _layoutIterationsExplicit: true,
+    _layoutDurationMsExplicit: true,
+  };
+  helios.scheduler = { requestRender() {} };
+  helios._queuePendingLargeNetworkStartupSettle = () => {};
+
+  const gate = helios._beginNetworkLoadStartupGate();
+
+  assert.equal(canvas.style.visibility, 'hidden');
+  assert.equal(helios._shouldSuppressStartupRender(1100), true);
+
+  helios._cancelNetworkLoadStartupGate(gate);
+
+  assert.equal(gate.active, false);
+  assert.equal(gate.blockRendering, false);
+  assert.equal(canvas.style.visibility, 'visible');
 });
 
 test('startup gate defaults to 100 layout iterations or 1000 ms', () => {

@@ -236,11 +236,13 @@ export function createPanelSchemaIndicator({
 
   const update = () => {
     const stateManager = helios?.states ?? null;
+    let nextState = 'default';
     if (sectionId != null) {
-      indicator.dataset.state = panelSchemaSectionStatus(schema, sectionId, stateManager);
-      return;
+      nextState = panelSchemaSectionStatus(schema, sectionId, stateManager);
+    } else {
+      nextState = panelSchemaStatus(schema, stateManager).panel;
     }
-    indicator.dataset.state = panelSchemaStatus(schema, stateManager).panel;
+    if (indicator.dataset.state !== nextState) indicator.dataset.state = nextState;
   };
   const onChange = () => update();
   const stateManager = helios?.states ?? null;

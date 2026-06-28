@@ -1587,6 +1587,10 @@ test('BrowserStorageManager disables autosync for oversized position payloads bu
     },
     restore: false,
   });
+  const changeReasons = [];
+  storage.addEventListener('change', (event) => {
+    changeReasons.push(event.detail?.reason ?? '');
+  });
 
   try {
     await storage.saveSession({
@@ -1605,6 +1609,13 @@ test('BrowserStorageManager disables autosync for oversized position payloads bu
     assert.equal(storage.states.get('network.persistence.autosave'), false);
     assert.equal(records.has('large-position-autosync-session::position-data'), false);
     assert.equal(snapshotOptions.length, 0);
+    const changeCountAfterDisable = changeReasons.length;
+
+    storage.markPositionsDirty('layout-update-repeat');
+    await wait(50);
+
+    assert.equal(changeReasons.length, changeCountAfterDisable);
+    assert.equal(storage.status().networkData.positionsDirty, true);
 
     await storage.sync({
       includeNetwork: true,

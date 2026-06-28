@@ -274,7 +274,10 @@ export class LayoutPanel {
     const setAttributeIfChanged = (element, name, value) => {
       if (!element) return;
       const next = String(value ?? '');
-      if (element.getAttribute(name) !== next) element.setAttribute(name, next);
+      const current = typeof element.getAttribute === 'function'
+        ? element.getAttribute(name)
+        : element.attributes?.get?.(String(name));
+      if (current !== next) element.setAttribute(name, next);
     };
     const setDatasetIfChanged = (element, key, value) => {
       if (!element?.dataset) return;

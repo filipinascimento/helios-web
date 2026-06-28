@@ -2659,6 +2659,79 @@ test('GpuForcePositionDelegate WebGPU narrow position readback copies only reque
   );
 });
 
+test('GpuForcePositionDelegate returns cached sparse readbacks during deferred interaction policy', async () => {
+  const network = createTopologyNetwork([
+    0, 0, 0,
+    10, 0, 0,
+    20, 0, 0,
+    30, 0, 0,
+  ]);
+  const { device } = createFakeWebGPUDevice();
+  const delegate = new GpuForcePositionDelegate({ mode: '2d', outputScale: 1 });
+  const context = { network, backend: 'webgpu', device };
+
+  delegate.onAttach(context);
+  const exact = await delegate.snapshotNodePositionsById(context, [2, 0]);
+  delegate.bumpVersion();
+  const cached = await delegate.snapshotNodePositionsById(context, [2, 0], {
+    preferCached: true,
+    deferReadback: true,
+  });
+
+  assert.equal(cached.cached, true);
+  assert.equal(cached.stale, true);
+  assert.match(cached.source, /cache$/);
+  assert.deepEqual(Array.from(cached.positions), Array.from(exact.positions));
+});
+
+test('GpuForcePositionDelegate sparse CPU centroid ignores unreadable ids', async () => {
+  const network = createTopologyNetwork([
+    0, 0, 0,
+    10, 0, 0,
+    20, 4, 0,
+    30, 0, 0,
+  ]);
+  const delegate = new GpuForcePositionDelegate({ mode: '2d', outputScale: 1 });
+  const context = { network };
+
+  delegate.onAttach(context);
+
+  const mixed = await delegate.snapshotNodeCentroidById(context, [2, 999]);
+  assert.equal(mixed.count, 1);
+  assert.deepEqual(Array.from(mixed.centroid), [20, 4, 0]);
+
+  const missing = await delegate.snapshotNodeCentroidById(context, [999]);
+  assert.equal(missing.count, 0);
+  assert.deepEqual(Array.from(missing.centroid), [0, 0, 0]);
+});
+
+test('GpuForcePositionDelegate WebGPU sparse centroid skips copy work for unreadable ids', async () => {
+  const network = createTopologyNetwork([
+    0, 0, 0,
+    10, 0, 0,
+    20, 0, 0,
+    30, 0, 0,
+  ]);
+  const { device, copyCalls } = createFakeWebGPUDevice();
+  const delegate = new GpuForcePositionDelegate({ mode: '2d', outputScale: 1 });
+  const context = { network, backend: 'webgpu', device };
+
+  delegate.onAttach(context);
+
+  const mixed = await delegate.snapshotNodeCentroidById(context, [2, 999]);
+  const partialCopies = copyCalls.filter((entry) => entry.destinationLabel === 'layout:gpu-force:positions-readback');
+
+  assert.equal(mixed.count, 1);
+  assert.deepEqual(
+    partialCopies.map((entry) => [entry.sourceOffset, entry.destinationOffset, entry.size]),
+    [[24, 0, 12]],
+  );
+
+  const missing = await delegate.snapshotNodeCentroidById(context, [999]);
+  assert.equal(missing.count, 0);
+  assert.equal(copyCalls.filter((entry) => entry.destinationLabel === 'layout:gpu-force:positions-readback').length, 1);
+});
+
 test('GpuForcePositionDelegate WebGPU large centroid uses compute reduction', async () => {
   const network = createSizedStubNetwork(300);
   const { device, dispatchCalls, writes } = createFakeWebGPUDevice();

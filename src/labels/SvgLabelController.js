@@ -1628,7 +1628,12 @@ export class SvgLabelController {
     this._sparsePositionSignature = signature;
     this._sparsePositionPendingSignatures.add(signature);
     Promise.resolve()
-      .then(() => this.helios.snapshotNodePositions(ids, { delegate }))
+      .then(() => this.helios.snapshotNodePositions(ids, {
+        delegate,
+        preferCached: true,
+        allowStaleVersion: true,
+        deferReadback: this.helios?._shouldDeferDelegateReadbacks?.() === true,
+      }))
       .then((result) => {
         const positions = result?.positions ?? null;
         if (!(positions instanceof Float32Array)) return;

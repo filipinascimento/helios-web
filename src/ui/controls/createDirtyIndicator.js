@@ -60,7 +60,8 @@ export function createDirtyIndicator({
   }
 
   const update = () => {
-    indicator.dataset.state = resolvePersistenceState(helios, path, scope, mode);
+    const nextState = resolvePersistenceState(helios, path, scope, mode);
+    if (indicator.dataset.state !== nextState) indicator.dataset.state = nextState;
   };
 
   const buildMenu = () => {

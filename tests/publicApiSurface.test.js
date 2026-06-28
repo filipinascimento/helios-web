@@ -14,6 +14,10 @@ test('package root exposes the stabilized public API and omits renderer internal
   assert.equal(typeof heliosWeb.BrowserStorageManager, 'function');
   assert.equal(typeof heliosWeb.RemoteStorageManager, 'function');
   assert.equal(typeof heliosWeb.HeliosUI, 'function');
+  assert.equal(typeof heliosWeb.createFpsThrottle, 'function');
+  assert.equal(typeof heliosWeb.LogSliderControls, 'function');
+  assert.equal(typeof heliosWeb.TwoHandleRange, 'function');
+  assert.equal(typeof heliosWeb.createTooltipManager, 'function');
 
   assert.equal('LayeredRenderer' in heliosWeb, false);
   assert.equal('Camera' in heliosWeb, false);

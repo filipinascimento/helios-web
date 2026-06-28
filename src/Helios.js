@@ -40,7 +40,7 @@ import {
   serializePersistenceEnvelope,
 } from './persistence/index.js';
 import { createHeliosStorageManager } from './storage/index.js';
-import { HeliosStateManager } from './state/index.js';
+import { HeliosStateManager, valuesEqual } from './state/index.js';
 import {
   AMBIENT_OCCLUSION_BIAS_DEFAULT,
   AMBIENT_OCCLUSION_INTENSITY_SCALE_DEFAULT,
@@ -283,6 +283,37 @@ function cloneSerializable(value) {
     return next;
   }
   return value;
+}
+
+function arrayLikeValuesEqual(a, b) {
+  if (Object.is(a, b)) return true;
+  if (!(Array.isArray(a) || ArrayBuffer.isView(a)) || !(Array.isArray(b) || ArrayBuffer.isView(b))) return false;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (!Object.is(Number(a[i]), Number(b[i]))) return false;
+  }
+  return true;
+}
+
+function cameraPoseValuesEqual(a, b) {
+  if (Object.is(a, b)) return true;
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+  const arrayFields = new Set(['target', 'pan2D', 'pan3D', 'rotation', 'viewport']);
+  const scalarFields = new Set(['mode', 'projection', 'zoom', 'distance']);
+  for (const field of scalarFields) {
+    if (!Object.is(a[field], b[field])) return false;
+  }
+  for (const field of arrayFields) {
+    if (!arrayLikeValuesEqual(a[field] ?? [], b[field] ?? [])) return false;
+  }
+  const knownFields = new Set([...scalarFields, ...arrayFields]);
+  const extraA = Object.keys(a).filter((key) => !knownFields.has(key));
+  const extraB = Object.keys(b).filter((key) => !knownFields.has(key));
+  if (extraA.length !== extraB.length) return false;
+  for (const key of extraA) {
+    if (!Object.prototype.hasOwnProperty.call(b, key) || !valuesEqual(a[key], b[key])) return false;
+  }
+  return true;
 }
 
 function normalizeInsets(insets) {
@@ -1748,16 +1779,71 @@ function copyCameraControlConfig(config = {}) {
   };
 }
 
-function quantileFromSorted(sorted, t) {
-  if (!Array.isArray(sorted) || sorted.length === 0) return NaN;
-  if (sorted.length === 1) return sorted[0];
+function swapNumericValue(values, a, b) {
+  if (a === b) return;
+  const tmp = values[a];
+  values[a] = values[b];
+  values[b] = tmp;
+}
+
+function medianIndexOfThree(values, a, b, c) {
+  const av = values[a];
+  const bv = values[b];
+  const cv = values[c];
+  if (av < bv) {
+    if (bv < cv) return b;
+    return av < cv ? c : a;
+  }
+  if (av < cv) return a;
+  return bv < cv ? c : b;
+}
+
+function selectKthNumericValue(values, length, k) {
+  const count = Math.max(0, Math.min(Math.floor(Number(length) || 0), values?.length ?? 0));
+  if (count <= 0) return NaN;
+  const target = Math.max(0, Math.min(count - 1, Math.floor(Number(k) || 0)));
+  let left = 0;
+  let right = count - 1;
+  while (left < right) {
+    const mid = left + ((right - left) >> 1);
+    const pivotIndex = medianIndexOfThree(values, left, mid, right);
+    const pivotValue = values[pivotIndex];
+    let lt = left;
+    let i = left;
+    let gt = right;
+    while (i <= gt) {
+      const value = values[i];
+      if (value < pivotValue) {
+        swapNumericValue(values, lt, i);
+        lt += 1;
+        i += 1;
+      } else if (value > pivotValue) {
+        swapNumericValue(values, i, gt);
+        gt -= 1;
+      } else {
+        i += 1;
+      }
+    }
+    if (target < lt) right = lt - 1;
+    else if (target > gt) left = gt + 1;
+    else return values[target];
+  }
+  return values[left];
+}
+
+function quantileFromValues(values, length, t) {
+  const count = Math.max(0, Math.min(Math.floor(Number(length) || 0), values?.length ?? 0));
+  if (count === 0) return NaN;
+  if (count === 1) return values[0];
   const clamped = clamp(Number(t), 0, 1);
-  const index = clamped * (sorted.length - 1);
+  const index = clamped * (count - 1);
   const lo = Math.floor(index);
   const hi = Math.ceil(index);
-  if (lo === hi) return sorted[lo];
+  const loValue = selectKthNumericValue(values, count, lo);
+  if (lo === hi) return loValue;
+  const hiValue = selectKthNumericValue(values, count, hi);
   const factor = index - lo;
-  return sorted[lo] + ((sorted[hi] - sorted[lo]) * factor);
+  return loValue + ((hiValue - loValue) * factor);
 }
 
 function quatNormalizeInto(out, q) {
@@ -3398,12 +3484,16 @@ export class Helios extends EventTarget {
       }
     }
     return {
-      active: config.hideCanvasUntilFirstFrame !== false || config.loadingOverlay !== false || layoutIterations > 0 || layoutDurationMs > 0,
+      active: config.blockRendering === true || config.hideCanvasUntilFirstFrame !== false || config.loadingOverlay !== false || layoutIterations > 0 || layoutDurationMs > 0,
       firstVisibleFrameDrawn: false,
       startedAt: 0,
       layoutIterations: 0,
       targetLayoutIterations: layoutIterations,
       targetLayoutDurationMs: layoutDurationMs,
+      blockRendering: config.blockRendering === true,
+      hideCanvasUntilFirstFrame: config.hideCanvasUntilFirstFrame !== false,
+      loadingOverlay: config.loadingOverlay !== false,
+      config,
     };
   }
 
@@ -3473,12 +3563,71 @@ export class Helios extends EventTarget {
   }
 
   _applyStartupCanvasVisibility() {
-    if (this._startupConfig?.hideCanvasUntilFirstFrame === false) return;
     const canvas = this.layers?.canvas ?? null;
     const gate = this._startupGate ?? null;
-    if (!canvas || !gate?.active) return;
-    this._startupCanvasPreviousVisibility = canvas.style.visibility;
+    if (!canvas || !gate?.active || gate.hideCanvasUntilFirstFrame === false) return;
+    if (canvas.style.visibility !== 'hidden') {
+      this._startupCanvasPreviousVisibility = canvas.style.visibility;
+    }
     canvas.style.visibility = 'hidden';
+  }
+
+  _beginNetworkLoadStartupGate(options = {}) {
+    const base = this._startupConfig ?? STARTUP_DEFAULTS;
+    const config = {
+      ...base,
+      loadingOverlay: options.loadingOverlay !== false,
+      hideCanvasUntilFirstFrame: options.hideCanvasUntilFirstFrame !== false,
+      blockRendering: true,
+    };
+    if (Object.prototype.hasOwnProperty.call(options, 'layoutIterations')) {
+      config.layoutIterations = options.layoutIterations;
+      config._layoutIterationsExplicit = true;
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'layoutDurationMs')) {
+      config.layoutDurationMs = options.layoutDurationMs;
+      config._layoutDurationMsExplicit = true;
+    }
+    this._startupOverlay?.remove?.();
+    this._startupOverlay = null;
+    this._startupGate = this._createStartupGate(config);
+    this._startupOverlay = this._createStartupOverlay(config);
+    this._applyStartupCanvasVisibility();
+    this.scheduler?.requestRender?.();
+    return this._startupGate;
+  }
+
+  _releaseNetworkLoadStartupGate(gate) {
+    if (!gate || this._startupGate !== gate) return;
+    const config = {
+      ...(gate.config ?? this._startupConfig ?? STARTUP_DEFAULTS),
+      blockRendering: false,
+    };
+    const previousVisibility = this._startupCanvasPreviousVisibility;
+    this._startupGate = this._createStartupGate(config);
+    this._startupGate.startedAt = performance.now();
+    this._startupCanvasPreviousVisibility = previousVisibility;
+    if (this._startupGate.active === true) {
+      if (!this._startupOverlay && this._startupGate.loadingOverlay !== false) {
+        this._startupOverlay = this._createStartupOverlay(config);
+      }
+      this._applyStartupCanvasVisibility();
+    } else {
+      this._startupOverlay?.remove?.();
+      this._startupOverlay = null;
+      const canvas = this.layers?.canvas ?? null;
+      if (canvas && this._startupGate.hideCanvasUntilFirstFrame !== false) {
+        canvas.style.visibility = previousVisibility ?? '';
+      }
+    }
+    this.scheduler?.requestGeometry?.();
+    this.scheduler?.requestRender?.();
+  }
+
+  _cancelNetworkLoadStartupGate(gate) {
+    if (!gate || this._startupGate !== gate) return;
+    gate.blockRendering = false;
+    this._finishStartupFirstVisibleFrame();
   }
 
   _recordStartupLayoutUpdate() {
@@ -3493,6 +3642,9 @@ export class Helios extends EventTarget {
     const timestamp = Number.isFinite(now) ? now : performance.now();
     if (!Number.isFinite(gate.startedAt) || gate.startedAt <= 0) {
       gate.startedAt = timestamp;
+    }
+    if (gate.blockRendering === true) {
+      return true;
     }
     const hasIterationTarget = gate.targetLayoutIterations > 0;
     const hasTimeTarget = gate.targetLayoutDurationMs > 0;
@@ -3528,8 +3680,9 @@ export class Helios extends EventTarget {
     if (!gate || gate.firstVisibleFrameDrawn === true) return;
     gate.firstVisibleFrameDrawn = true;
     gate.active = false;
+    gate.blockRendering = false;
     const canvas = this.layers?.canvas ?? null;
-    if (canvas && this._startupConfig?.hideCanvasUntilFirstFrame !== false) {
+    if (canvas && gate.hideCanvasUntilFirstFrame !== false) {
       canvas.style.visibility = this._startupCanvasPreviousVisibility ?? '';
     }
     this._startupOverlay?.remove?.();
@@ -3817,6 +3970,7 @@ export class Helios extends EventTarget {
     return this.loadNetwork(file, {
       ...replaceOptions,
       format,
+      showLoadingOverlay: replaceOptions.showLoadingOverlay !== false,
       confirmUnsyncedSession,
     });
   }
@@ -4132,6 +4286,7 @@ export class Helios extends EventTarget {
           debounceMs: 240,
         },
         getter: () => this._snapshotCameraState({ includeViewport: false }),
+        equals: cameraPoseValuesEqual,
         setter: (pose, detail = {}) => this._restoreCameraState(pose, {
           source: detail.source ?? 'state',
           restoreViewport: detail.restoreViewport === true,
@@ -4445,12 +4600,28 @@ export class Helios extends EventTarget {
       });
   }
 
+  _shouldDeferDelegateReadbacks(options = {}) {
+    if (options.exactReadback === true || options.applyFocusOnResolve === true || options.deferReadback === false) return false;
+    if (options.deferReadback === true) return true;
+    const now = performance.now();
+    const gesture = this._picking?.gesture ?? null;
+    if (gesture?.active === true || this._picking?.suppressHover === true) return true;
+    if (Number.isFinite(gesture?.lastCameraMoveAt) && now - gesture.lastCameraMoveAt < 250) return true;
+    if (Number.isFinite(gesture?.lastWheelAt) && now - gesture.lastWheelAt < 250) return true;
+    const edgeAdaptiveRuntime = this._edgeAdaptiveRuntime ?? null;
+    if (Number.isFinite(edgeAdaptiveRuntime?.cameraMovingUntil) && now < edgeAdaptiveRuntime.cameraMovingUntil) return true;
+    return this._cameraControlRuntime?.controlPoseActive === true;
+  }
+
   _cameraNodeIndexSignature(nodeIndices) {
     if (!nodeIndices?.length) return '';
     return Array.from(nodeIndices, (id) => Math.max(0, Math.floor(Number(id) || 0))).join(',');
   }
 
   _boundsFromCentroid(centroid, sourceCount = 0, options = {}) {
+    if (!Number.isFinite(sourceCount) || sourceCount <= 0) {
+      return null;
+    }
     if (!centroid || !Number.isFinite(centroid[0]) || !Number.isFinite(centroid[1]) || !Number.isFinite(centroid[2])) {
       return null;
     }
@@ -4495,10 +4666,12 @@ export class Helios extends EventTarget {
     if (!runtime || !delegate || !nodeIndices?.length || typeof this.snapshotNodeCentroid !== 'function') return;
     const signature = this._cameraNodeIndexSignature(nodeIndices);
     if (!signature) return;
+    const exactReadback = options.exactReadback === true;
     if (
       runtime.delegateTargetBoundsPending
       && runtime.delegateTargetBoundsDelegate === delegate
       && runtime.delegateTargetBoundsSignature === signature
+      && exactReadback !== true
     ) {
       return;
     }
@@ -4519,6 +4692,7 @@ export class Helios extends EventTarget {
       && runtime.delegateTargetBoundsSignature === signature
       && Number.isFinite(runtime.delegateTargetBoundsAt)
       && (now - runtime.delegateTargetBoundsAt) < minIntervalMs
+      && exactReadback !== true
     ) {
       return;
     }
@@ -4530,7 +4704,13 @@ export class Helios extends EventTarget {
     runtime.delegateTargetBoundsRequestId = requestId;
 
     Promise.resolve()
-      .then(() => this.snapshotNodeCentroid(nodeIndices, { ...options, delegate }))
+      .then(() => this.snapshotNodeCentroid(nodeIndices, {
+        ...options,
+        delegate,
+        preferCached: options.preferCached ?? !exactReadback,
+        allowStaleVersion: options.allowStaleVersion ?? !exactReadback,
+        deferReadback: options.deferReadback ?? (exactReadback ? false : this._shouldDeferDelegateReadbacks(options)),
+      }))
       .then((result) => {
         if (
           runtime.delegateTargetBoundsRequestId !== requestId
@@ -4539,7 +4719,7 @@ export class Helios extends EventTarget {
         ) {
           return;
         }
-        const bounds = this._boundsFromCentroid(result?.centroid, nodeIndices.length, options);
+        const bounds = this._boundsFromCentroid(result?.centroid, result?.count ?? nodeIndices.length, options);
         if (!bounds) return;
         runtime.delegateTargetBounds = bounds;
         runtime.delegateTargetBoundsAt = performance.now();
@@ -4655,9 +4835,9 @@ export class Helios extends EventTarget {
     let count = 0;
     let nodeRadiusWorld = 0;
     let found = false;
-    const sampleX = coverage < 0.999999 ? [] : null;
-    const sampleY = coverage < 0.999999 ? [] : null;
-    const sampleZ = coverage < 0.999999 ? [] : null;
+    const sampleX = coverage < 0.999999 ? new Float32Array(Math.max(1, sampledPointCapacity)) : null;
+    const sampleY = coverage < 0.999999 ? new Float32Array(Math.max(1, sampledPointCapacity)) : null;
+    const sampleZ = coverage < 0.999999 ? new Float32Array(Math.max(1, sampledPointCapacity)) : null;
     const graphLayer = this.renderer?.graphLayer ?? null;
     const network = this._getRenderNetwork?.() ?? null;
     const nodeAttributeAccess = options.nodeAttributeAccess instanceof Map ? options.nodeAttributeAccess : null;
@@ -4695,26 +4875,23 @@ export class Helios extends EventTarget {
       if (y < minY) minY = y; if (y > maxY) maxY = y;
       if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
       if (sampleX) {
-        sampleX.push(x);
-        sampleY.push(y);
-        sampleZ.push(z);
+        sampleX[count - 1] = x;
+        sampleY[count - 1] = y;
+        sampleZ[count - 1] = z;
       }
     }
     if (!found) return null;
 
     let fitMinX = minX; let fitMinY = minY; let fitMinZ = minZ;
     let fitMaxX = maxX; let fitMaxY = maxY; let fitMaxZ = maxZ;
-    if (sampleX?.length >= 4) {
+    if (sampleX && count >= 4) {
       const trim = (1 - coverage) * 0.5;
-      sampleX.sort((a, b) => a - b);
-      sampleY.sort((a, b) => a - b);
-      sampleZ.sort((a, b) => a - b);
-      fitMinX = quantileFromSorted(sampleX, trim);
-      fitMaxX = quantileFromSorted(sampleX, 1 - trim);
-      fitMinY = quantileFromSorted(sampleY, trim);
-      fitMaxY = quantileFromSorted(sampleY, 1 - trim);
-      fitMinZ = quantileFromSorted(sampleZ, trim);
-      fitMaxZ = quantileFromSorted(sampleZ, 1 - trim);
+      fitMinX = quantileFromValues(sampleX, count, trim);
+      fitMaxX = quantileFromValues(sampleX, count, 1 - trim);
+      fitMinY = quantileFromValues(sampleY, count, trim);
+      fitMaxY = quantileFromValues(sampleY, count, 1 - trim);
+      fitMinZ = quantileFromValues(sampleZ, count, trim);
+      fitMaxZ = quantileFromValues(sampleZ, count, 1 - trim);
     }
 
     const bboxCx = (fitMinX + fitMaxX) * 0.5;
@@ -4867,6 +5044,9 @@ export class Helios extends EventTarget {
       if (!resolved?.view) {
         const delegate = this._positionsConfig?.delegate ?? this._activePositionDelegate ?? null;
         this._scheduleCameraDelegateTargetBounds(delegate, requestedNodeIndices, sampleOptions);
+        if (sampleOptions.exactReadback === true) {
+          return null;
+        }
         const runtime = this._cameraControlRuntime ?? null;
         const signature = this._cameraNodeIndexSignature(requestedNodeIndices);
         if (
@@ -7002,6 +7182,9 @@ export class Helios extends EventTarget {
    * @param {object} [options] - Load and replacement options.
    * @param {'xnet'|'zxnet'|'bxnet'|'gml'|'gt'} [options.format] - Input format when it
    * cannot be inferred from `source.name`.
+   * @param {boolean} [options.showLoadingOverlay=false] - Hide the canvas,
+   * show the startup spinner, and suppress rendering until the loaded network
+   * has replaced the active graph and state restoration has finished.
    * @returns {Promise<HeliosNetwork>} Loaded network instance.
    * @example
    * const network = await helios.loadNetwork(file, { format: 'bxnet' });
@@ -7021,57 +7204,66 @@ export class Helios extends EventTarget {
     if (!format) {
       throw new Error('loadNetwork requires a format ("xnet", "zxnet", "bxnet", "gml", "gt") or a filename with a supported extension such as ".gt.zst"');
     }
-    const { default: HeliosNetwork } = await import('helios-network');
-    const normalized = format.toLowerCase();
-    let next = null;
-    if (normalized === 'bxnet') next = await HeliosNetwork.fromBXNet(source);
-    else if (normalized === 'zxnet') next = await HeliosNetwork.fromZXNet(source);
-    else if (normalized === 'xnet') next = await HeliosNetwork.fromXNet(source);
-    else if (normalized === 'gml') next = await HeliosNetwork.fromGML(source);
-    else if (normalized === 'gt') next = await HeliosNetwork.fromGT(source);
-    else throw new Error(`Unsupported network format: ${format}`);
-    const sourceName = sourceNameForMetadata;
-    const sourceBase = sourceName ? getBaseFilename(sourceName) : null;
-    const sessionNickname = options.sessionNickname ?? sourceBase ?? sourceName ?? `${normalized.toUpperCase()} network`;
-    const shouldCreateSession = options.allowDuringInitialize !== true
-      && options.preserveSession !== true
-      && options.createSession !== false
-      && options.newSession !== false;
-    if (shouldCreateSession && typeof this.storage?.startNewSession === 'function') {
-      await this.storage.startNewSession({
-        nickname: sessionNickname,
-        name: sourceName,
-        flushPrevious: options.flushPreviousSession !== false,
-        saveInitialSession: false,
-        replaceUrlSession: options.replaceUrlSession !== false,
-        confirmUnsyncedSession: options.confirmUnsyncedSession,
-        continueOnFlushError: options.continueOnFlushError,
-        discardPreviousUnsynced: options.discardPreviousUnsynced,
-        confirmedDiscardPrevious: options.confirmedDiscardPrevious,
-        previousFlushReason: options.previousFlushReason ?? 'network-load-session-switch',
-      });
-    }
-    if (sourceName) {
-      this._lastLoadedNetworkName = sourceName;
-      this._lastLoadedNetworkBase = sourceBase;
-      this._lastLoadedNetworkFormat = inferNetworkFormatFromName(sourceName);
-    } else {
-      this._lastLoadedNetworkName = null;
-      this._lastLoadedNetworkBase = null;
-      this._lastLoadedNetworkFormat = normalized;
-    }
-    await this.replaceNetwork(next, options);
-    if (options.restoreVisualizationState !== false) {
-      const attachedState = this.getAttachedVisualizationState(next);
-      if (attachedState) {
-        await this.importVisualizationState(attachedState, { reason: 'network-load' });
+    const loadStartupGate = options.showLoadingOverlay === true || options.blockRenderingDuringLoad === true
+      ? this._beginNetworkLoadStartupGate(options.loadingOverlayOptions)
+      : null;
+    try {
+      const { default: HeliosNetwork } = await import('helios-network');
+      const normalized = format.toLowerCase();
+      let next = null;
+      if (normalized === 'bxnet') next = await HeliosNetwork.fromBXNet(source);
+      else if (normalized === 'zxnet') next = await HeliosNetwork.fromZXNet(source);
+      else if (normalized === 'xnet') next = await HeliosNetwork.fromXNet(source);
+      else if (normalized === 'gml') next = await HeliosNetwork.fromGML(source);
+      else if (normalized === 'gt') next = await HeliosNetwork.fromGT(source);
+      else throw new Error(`Unsupported network format: ${format}`);
+      const sourceName = sourceNameForMetadata;
+      const sourceBase = sourceName ? getBaseFilename(sourceName) : null;
+      const sessionNickname = options.sessionNickname ?? sourceBase ?? sourceName ?? `${normalized.toUpperCase()} network`;
+      const shouldCreateSession = options.allowDuringInitialize !== true
+        && options.preserveSession !== true
+        && options.createSession !== false
+        && options.newSession !== false;
+      if (shouldCreateSession && typeof this.storage?.startNewSession === 'function') {
+        await this.storage.startNewSession({
+          nickname: sessionNickname,
+          name: sourceName,
+          flushPrevious: options.flushPreviousSession !== false,
+          saveInitialSession: false,
+          replaceUrlSession: options.replaceUrlSession !== false,
+          confirmUnsyncedSession: options.confirmUnsyncedSession,
+          continueOnFlushError: options.continueOnFlushError,
+          discardPreviousUnsynced: options.discardPreviousUnsynced,
+          confirmedDiscardPrevious: options.confirmedDiscardPrevious,
+          previousFlushReason: options.previousFlushReason ?? 'network-load-session-switch',
+        });
       }
-      await this.storage?.restorePortableStateFromNetwork?.({ network: next });
+      if (sourceName) {
+        this._lastLoadedNetworkName = sourceName;
+        this._lastLoadedNetworkBase = sourceBase;
+        this._lastLoadedNetworkFormat = inferNetworkFormatFromName(sourceName);
+      } else {
+        this._lastLoadedNetworkName = null;
+        this._lastLoadedNetworkBase = null;
+        this._lastLoadedNetworkFormat = normalized;
+      }
+      await this.replaceNetwork(next, options);
+      if (options.restoreVisualizationState !== false) {
+        const attachedState = this.getAttachedVisualizationState(next);
+        if (attachedState) {
+          await this.importVisualizationState(attachedState, { reason: 'network-load' });
+        }
+        await this.storage?.restorePortableStateFromNetwork?.({ network: next });
+      }
+      if (shouldCreateSession) {
+        await this.storage?.setSessionNickname?.(sessionNickname);
+      }
+      this._releaseNetworkLoadStartupGate(loadStartupGate);
+      return next;
+    } catch (error) {
+      this._cancelNetworkLoadStartupGate(loadStartupGate);
+      throw error;
     }
-    if (shouldCreateSession) {
-      await this.storage?.setSessionNickname?.(sessionNickname);
-    }
-    return next;
   }
 
   /**
@@ -11188,6 +11380,7 @@ export class Helios extends EventTarget {
       : Number.isFinite(options.zoomFactor)
         ? Number(options.zoomFactor)
         : 1;
+    const exactReadback = normalized?.length > 0 && options.exactReadback !== false;
     const animate = options.animate ?? this._cameraControlConfig?.animation === true;
     const durationMs = options.durationMs ?? this._cameraControlConfig?.animationDurationMs;
     const bounds = this._sampleRenderBounds({
@@ -11195,6 +11388,10 @@ export class Helios extends EventTarget {
       coverage: 1,
       maxSamples: this._cameraControlConfig?.autoFitMaxSamples ?? CAMERA_FIT_DEFAULT_MAX_SAMPLES,
       applyFocusOnResolve: normalized?.length > 0,
+      exactReadback,
+      preferCached: options.preferCached ?? !exactReadback,
+      allowStaleVersion: options.allowStaleVersion ?? !exactReadback,
+      deferReadback: options.deferReadback ?? (exactReadback ? false : undefined),
       zoomScale,
       maxFocusZoom: options.maxFocusZoom,
       minFocusDistance: options.minFocusDistance,
@@ -13872,6 +14069,16 @@ export class Helios extends EventTarget {
       const context = this._buildPositionDelegateContext(options);
       if (typeof delegate.snapshotNodePositionsById === 'function') {
         const result = await delegate.snapshotNodePositionsById(context, ids, options);
+        if (result?.deferred === true) {
+          return {
+            ids: result.ids ?? Uint32Array.from(ids),
+            positions: null,
+            count: Number.isFinite(result.count) ? result.count : count,
+            version: Number.isFinite(result.version) ? result.version : delegate.version ?? 0,
+            source: result.source ?? 'delegate-deferred',
+            deferred: true,
+          };
+        }
         if (result?.positions instanceof Float32Array) {
           return {
             ids: result.ids ?? Uint32Array.from(ids),
@@ -13980,6 +14187,15 @@ export class Helios extends EventTarget {
     if (delegate && (options?.delegate || source.source === 'delegate') && typeof delegate.snapshotNodeCentroidById === 'function') {
       const context = this._buildPositionDelegateContext(options);
       const result = await delegate.snapshotNodeCentroidById(context, ids, options);
+      if (result?.deferred === true) {
+        return {
+          centroid: null,
+          count: Number.isFinite(result.count) ? result.count : 0,
+          version: Number.isFinite(result.version) ? result.version : delegate.version ?? 0,
+          source: result.source ?? 'delegate-deferred',
+          deferred: true,
+        };
+      }
       if (result?.centroid instanceof Float32Array) {
         return {
           centroid: result.centroid,

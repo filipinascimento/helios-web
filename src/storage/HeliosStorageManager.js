@@ -828,6 +828,7 @@ export class HeliosStorageManager extends EventTarget {
     );
     this.autosyncDisabled = false;
     this.autosyncDisabledReason = null;
+    this._lastPersistenceStatus = null;
     this.ready = Promise.resolve(null);
     this._registryChange = (event) => {
       const detail = event.detail ?? {};
@@ -1097,6 +1098,12 @@ export class HeliosStorageManager extends EventTarget {
   }
 
   markNetworkDirty(reason = 'network-change') {
+    const alreadyDirty = this.networkData?.dirty === true
+      && this.networkData?.networkDirty === true
+      && this.networkData?.status === 'dirty';
+    if (alreadyDirty && this.autosyncDisabled === true) {
+      return this._lastPersistenceStatus ?? this.persistenceStatus();
+    }
     const dirtyAt = this.networkData?.dirty === true && Number.isFinite(Number(this.networkData?.dirtyAt))
       ? Number(this.networkData.dirtyAt)
       : this._now();
@@ -1125,6 +1132,12 @@ export class HeliosStorageManager extends EventTarget {
     this._positionDirtyVersion = (this._positionDirtyVersion + 1) % Number.MAX_SAFE_INTEGER;
     if (this._positionDirtyVersion <= 0) this._positionDirtyVersion = 1;
     const positionDirtyVersion = this._positionDirtyVersion;
+    const alreadyDirty = this.networkData?.dirty === true
+      && this.networkData?.positionsDirty === true
+      && this.networkData?.status === 'dirty';
+    if (alreadyDirty && this.autosyncDisabled === true) {
+      return this._lastPersistenceStatus ?? this.persistenceStatus();
+    }
     const dirtyAt = this.networkData?.dirty === true && Number.isFinite(Number(this.networkData?.dirtyAt))
       ? Number(this.networkData.dirtyAt)
       : this._now();
@@ -1346,12 +1359,15 @@ export class HeliosStorageManager extends EventTarget {
       return;
     }
     if (this.autosyncDisabled && options.autosync !== false) {
+      const alreadyReported = this.networkData?.autosyncDisabled === true;
       this.networkData = {
         ...this.networkData,
         autosyncDisabled: true,
         autosyncDisabledReason: this.autosyncDisabledReason,
       };
-      this._emit('change', { reason: 'autosync-disabled', status: this.persistenceStatus() });
+      if (!alreadyReported) {
+        this._emit('change', { reason: 'autosync-disabled', status: this.persistenceStatus() });
+      }
       return;
     }
     if (!keepExistingPayloadTimer) {
@@ -2140,7 +2156,7 @@ export class HeliosStorageManager extends EventTarget {
       ? Array.from(this._sessionSaveInFlight.values()).sort((a, b) => a.startedAt - b.startedAt)[0]
       : null;
     const lastError = this.sessionSaveError ?? this.sessionRestoreError ?? null;
-    return {
+    const status = {
       type: this.type,
       capabilities: { ...this.capabilities },
       workspaceId: this.workspaceId,
@@ -2168,6 +2184,8 @@ export class HeliosStorageManager extends EventTarget {
         reason: oldestSave?.reason ?? null,
       },
     };
+    this._lastPersistenceStatus = status;
+    return status;
   }
 
   serializeSnapshot(options = {}) {

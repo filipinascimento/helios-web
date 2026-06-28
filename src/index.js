@@ -101,6 +101,10 @@ export {
 
 // Optional UI layer.
 export { HeliosUI } from './ui/HeliosUI.js';
+export { createFpsThrottle } from './ui/controls/createFpsThrottle.js';
+export { LogSliderControls } from './ui/controls/LogSliderControls.js';
+export { TwoHandleRange } from './ui/controls/TwoHandleRange.js';
+export { createTooltipManager } from './ui/controls/createTooltipManager.js';
 export { UIAttribute } from './ui/state/UIAttribute.js';
 export { TabbedPanel } from './ui/panels/TabbedPanel.js';
 export { PanelStack } from './ui/panels/PanelStack.js';
