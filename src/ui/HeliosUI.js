@@ -5,6 +5,7 @@ import { ensureDefaultStyles } from './style/defaultStyles.js';
 import { defineHeliosWebComponents } from './web-components/defineHeliosWebComponents.js';
 import { createSliderRow } from './controls/createSliderRow.js';
 import { createAlignedRowEl } from './controls/createAlignedRowEl.js';
+import { SuggestedSliderControls } from './controls/SuggestedSliderControls.js';
 import { createDirtyIndicator } from './controls/createDirtyIndicator.js';
 import { createFpsThrottle } from './controls/createFpsThrottle.js';
 import { createTooltipManager } from './controls/createTooltipManager.js';
@@ -4477,6 +4478,7 @@ export class HeliosUI {
           scope: layoutCheckbox.checked ? FILTER_SCOPE_RENDER_LAYOUT : FILTER_SCOPE_RENDER,
           nodeRules: nodeEditor.collectRules(),
           edgeRules: edgeEditor.collectRules(),
+          minComponentSize: Math.max(1, Math.floor(Number(minComponentControls.input.value) || 1)),
         });
       } catch (error) {
         // eslint-disable-next-line no-console
@@ -4590,17 +4592,52 @@ export class HeliosUI {
     layoutCheckbox.dataset.testid = 'controls-filter-layout';
     layoutCheckbox.addEventListener('change', scheduleApply);
 
+    const minComponentControls = new SuggestedSliderControls({
+      value: Math.max(1, Math.floor(Number(options.minComponentSize) || 1)),
+      suggested: [1, 10],
+      step: 1,
+      inputMin: 1,
+      inputMax: null,
+      onCommit: (value) => {
+        const next = Math.max(1, Math.floor(Number(value) || 1));
+        minComponentControls.set(next);
+        scheduleApply();
+      },
+    });
+    minComponentControls.slider.dataset.testid = 'controls-filter-min-component-size-slider';
+    minComponentControls.input.dataset.testid = 'controls-filter-min-component-size';
+    minComponentControls.input.inputMode = 'numeric';
+    minComponentControls.input.setAttribute('aria-label', 'Minimum component size');
+
+    const minComponentRow = createAlignedRowEl({
+      title: 'Comp. size',
+      hint: 'Minimum connected-component size to keep. Set to 1 to keep all components.',
+      controls: minComponentControls.element,
+      dirtyIndicator: this.createStateIndicator('filters.minComponentSize', 'filters.minComponentSize'),
+    });
+
     const layoutWrap = document.createElement('div');
     layoutWrap.style.display = 'inline-flex';
     layoutWrap.style.alignItems = 'center';
     layoutWrap.style.gap = '6px';
     layoutWrap.style.marginTop = '6px';
+    layoutWrap.style.flexWrap = 'wrap';
     layoutWrap.style.userSelect = 'none';
     layoutWrap.appendChild(layoutCheckbox);
 
     const syncScopeFromFilter = () => {
       const filter = filterBehavior?.filters?.() ?? this.helios?.getGraphFilter?.() ?? null;
       layoutCheckbox.checked = filter?.scope === FILTER_SCOPE_RENDER_LAYOUT;
+      const minComponentSize = Math.max(
+        1,
+        Math.floor(Number(filter?.minComponentSize ?? filter?.options?.minComponentSize) || 1),
+      );
+      if (
+        document.activeElement !== minComponentControls.slider
+        && document.activeElement !== minComponentControls.input
+      ) {
+        minComponentControls.set(minComponentSize);
+      }
     };
 
     const refreshFromNetwork = () => {
@@ -4678,6 +4715,7 @@ export class HeliosUI {
       clearApplyTimer();
       nodeEditor.destroy();
       edgeEditor.destroy();
+      minComponentControls.destroy();
     });
 
     syncScopeFromFilter();
@@ -4685,6 +4723,7 @@ export class HeliosUI {
 
     content.appendChild(tabs.element);
     content.appendChild(layoutWrap);
+    content.appendChild(minComponentRow.row);
 
     return this.createPanel({
       id: options.id ?? 'helios-ui-filter',

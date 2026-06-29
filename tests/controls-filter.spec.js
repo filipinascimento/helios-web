@@ -87,6 +87,21 @@ test.describe('filter panel', () => {
     expect(filterAfterLayoutScope.filter.scope).toBe('render+layout');
     expect(filterAfterLayoutScope.layoutUsesFilteredNetwork).toBe(true);
 
+    const minComponentInput = filterPanel.locator('[data-testid="controls-filter-min-component-size"]').first();
+    const minComponentSlider = filterPanel.locator('[data-testid="controls-filter-min-component-size-slider"]').first();
+    await expect(minComponentSlider).toBeVisible();
+    await expect(minComponentInput).toBeVisible();
+    await expect(minComponentInput).toHaveValue('1');
+    await minComponentInput.evaluate((el) => {
+      el.value = '3';
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    await page.waitForFunction(() => window.__helios?.getGraphFilter?.()?.options?.minComponentSize === 3);
+    await expect.poll(async () => page.evaluate(() => (
+      window.__filterBehaviorCalls.at(-1)?.minComponentSize
+    ))).toBe(3);
+
     await filterPanel.getByRole('button', { name: 'Edges' }).first().click();
     const edgeAttr = filterPanel.locator('[data-testid="controls-filter-edge-attribute"]').first();
     await expect(edgeAttr).toBeVisible();
@@ -112,6 +127,10 @@ test.describe('filter panel', () => {
     await filterPanel.locator('[data-testid="controls-filter-edge-numeric-remove"]').first().click();
     await filterPanel.getByRole('button', { name: 'Nodes' }).first().click();
     await filterPanel.locator('[data-testid="controls-filter-node-numeric-remove"]').first().click();
+    await minComponentInput.evaluate((el) => {
+      el.value = '1';
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    });
 
     await page.waitForFunction(() => {
       const filter = window.__helios?.getGraphFilter?.();

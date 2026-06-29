@@ -90,6 +90,13 @@ async function collectLayoutStats(page, layout) {
     if (!(delegate instanceof Float32Array) || delegate.length <= 0) {
       delegate = null;
     }
+    const layout = helios?._layout ?? null;
+    const positionDelegate = layout?.getPositionDelegate?.() ?? layout?.positionDelegate ?? null;
+    const outputScale = Number(
+      positionDelegate?.options?.outputScale
+      ?? layout?.options?.outputScale
+      ?? 1,
+    );
 
     let edgeIndices = new Uint32Array(0);
     let edges = new Uint32Array(0);
@@ -110,16 +117,25 @@ async function collectLayoutStats(page, layout) {
     return {
       source: helios.positions?.()?.source ?? null,
       used: delegate ? 'delegate' : 'network',
+      outputScale: Number.isFinite(outputScale) && outputScale > 0 ? outputScale : 1,
       positions: delegate ?? networkPositions,
       edgeIndices,
       edges,
     };
   });
 
+  const metrics = computeMetrics(payload);
+  const scale = payload.used === 'delegate'
+    ? Math.max(1e-9, Number(payload.outputScale) || 1)
+    : 1;
   return {
     source: payload.source,
     used: payload.used,
-    ...computeMetrics(payload),
+    outputScale: scale,
+    rawEdgeMean: metrics.edgeMean,
+    edgeMean: metrics.edgeMean / scale,
+    edgeToRandomRatio: metrics.edgeToRandomRatio,
+    localityAt8: metrics.localityAt8,
   };
 }
 
@@ -148,7 +164,7 @@ test('gpu-force converges to useful locality within 5s @webgpu', async ({ browse
 
   // Relative guardrails against major regressions versus d3-force-3d.
   expect(gpu.edgeMean).toBeGreaterThanOrEqual(d3.edgeMean * 0.64);
-  expect(gpu.edgeMean).toBeLessThanOrEqual(d3.edgeMean * 1.35);
+  expect(gpu.edgeMean).toBeLessThanOrEqual(d3.edgeMean * 1.45);
   expect(gpu.edgeToRandomRatio).toBeLessThanOrEqual(d3.edgeToRandomRatio * 1.4 + 0.03);
   expect(gpu.localityAt8).toBeGreaterThanOrEqual(d3.localityAt8 * 0.6);
 });

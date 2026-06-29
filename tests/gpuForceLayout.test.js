@@ -6,6 +6,8 @@ import { D3Force3DLayout } from '../src/layouts/d3force3dLayoutWorker.js';
 import { GpuForceLayout, resolveGpuForceAutoTuning } from '../src/layouts/GpuForceLayout.js';
 import { predictLayoutTuningOptions } from '../src/layouts/layoutTuningModel.generated.js';
 import {
+  applyComponentAwareInitialPositions,
+  buildActiveComponentMetadata,
   GpuForcePositionDelegate,
   resolveUmapEpochCount,
   warmStartUmapPositionsFromTopology,
@@ -783,7 +785,7 @@ test('GpuForceLayout exposes shared parameter bindings and can reheat alpha', ()
   assert.equal(layout.options.eta, 0.4);
   assert.equal(layout.options.damping, 0.82);
   assert.equal(layout.options.kGravity, 0.001);
-  assert.equal(layout.options.alphaDecay, 0.001);
+  assert.equal(layout.options.alphaDecay, 0.003);
   assert.equal(layout.options.rotationDamping, 0.6);
   assert.equal(layout.options.layoutScheduling, 'auto');
   assert.equal(layout.options.layoutChunkCount, 2);
@@ -837,6 +839,15 @@ test('GpuForceLayout exposes shared parameter bindings and can reheat alpha', ()
   chunkBinding.set(6);
   assert.equal(layout.options.layoutChunkCount, 6);
   assert.equal(layout.positionDelegate.options.layoutChunkCount, 6);
+
+  const componentForcesBinding = descriptor.bindings.find((binding) => binding.key === 'componentForces');
+  assert.equal(componentForcesBinding.type, 'select');
+  assert.deepEqual(componentForcesBinding.options.map((entry) => entry.value), ['auto', 'off', 'halo']);
+  layout.positionDelegate.alpha = 0.05;
+  componentForcesBinding.set('off');
+  assert.equal(layout.options.componentForces, 'off');
+  assert.equal(layout.positionDelegate.options.componentForces, 'off');
+  assert.equal(layout.positionDelegate.alpha, 0.75);
 
   const outputScaleBinding = descriptor.bindings.find((binding) => binding.key === 'outputScale');
   assert.equal(outputScaleBinding.scale, 'log');
@@ -999,7 +1010,7 @@ test('Helios.createLayout resolves gpu-force into GpuForceLayout', () => {
   assert.equal(layout.options.mode, '3d');
   assert.equal(layout.options.eta, 0.4);
   assert.equal(layout.options.kGravity, 0.001);
-  assert.equal(layout.options.alphaDecay, 0.001);
+  assert.equal(layout.options.alphaDecay, 0.003);
 });
 
 test('resolveGpuForceAutoTuning scales GPU force defaults by log-sized node count', () => {
@@ -1736,8 +1747,9 @@ test('GpuForcePositionDelegate WebGL2 strength specialization binds scalar textu
 
   assert.equal(changed, true);
   assert.ok(getShaderSources().some((source) => source.includes('endpointStrengthNorm') && source.includes('fetchScalarEdge')));
-  assert.ok(getUniformCalls().some((call) => call.location === 'u_neighborEdges' && call.value === 7));
-  assert.ok(getUniformCalls().some((call) => call.location === 'u_scalarValues' && call.value === 8));
+  assert.ok(getUniformCalls().some((call) => call.location === 'u_componentGravityScale' && call.value === 7));
+  assert.ok(getUniformCalls().some((call) => call.location === 'u_neighborEdges' && call.value === 8));
+  assert.ok(getUniformCalls().some((call) => call.location === 'u_scalarValues' && call.value === 9));
   assert.ok(getUniformCalls().some((call) => call.location === 'u_forceNormalizationMode' && call.value === 2));
 });
 
@@ -2390,6 +2402,354 @@ test('warmStartUmapPositionsFromTopology separates disconnected components', () 
 
   assert.ok(centroidDistance > 40);
   assert.ok(centroidDistance > (meanRadius * 2));
+});
+
+test('buildActiveComponentMetadata labels active filtered weak components', () => {
+  const nodeCapacity = 6;
+  const activeIds = new Uint32Array([0, 1, 3, 4, 5]);
+  const activeMask = new Uint32Array([1, 1, 0, 1, 1, 1]);
+  const neighborStarts = new Uint32Array([0, 1, 2, 2, 2, 3]);
+  const neighborCounts = new Uint32Array([1, 1, 0, 0, 1, 1]);
+  const neighbors = new Uint32Array([1, 0, 5, 4]);
+
+  const metadata = buildActiveComponentMetadata({
+    nodeCapacity,
+    activeIds,
+    activeCount: activeIds.length,
+    activeMask,
+    neighborStarts,
+    neighborCounts,
+    neighbors,
+    options: {
+      componentForces: 'halo',
+      componentMainGravityScale: 1.5,
+      componentSingletonGravityScale: 0.25,
+    },
+    scratch: {},
+  });
+
+  assert.equal(metadata.componentCount, 3);
+  assert.equal(metadata.componentIds[0], metadata.componentIds[1]);
+  assert.notEqual(metadata.componentIds[0], metadata.componentIds[3]);
+  assert.equal(metadata.componentIds[4], metadata.componentIds[5]);
+  assert.notEqual(metadata.componentIds[0], metadata.componentIds[4]);
+  assert.equal(metadata.nodeComponentSize[3], 1);
+  assert.equal(metadata.componentGravityEnabled, true);
+  assert.equal(metadata.componentGravityScale[0], 1.5);
+  assert.ok(metadata.componentGravityScale[3] < metadata.componentGravityScale[0]);
+});
+
+test('buildActiveComponentMetadata auto stays passive without a dominant component', () => {
+  const nodeCapacity = 6;
+  const activeIds = new Uint32Array([0, 1, 2, 3, 4, 5]);
+  const activeMask = new Uint32Array([1, 1, 1, 1, 1, 1]);
+  const neighborStarts = new Uint32Array([0, 1, 2, 3, 4, 5]);
+  const neighborCounts = new Uint32Array([1, 1, 1, 1, 1, 1]);
+  const neighbors = new Uint32Array([1, 0, 3, 2, 5, 4]);
+
+  const metadata = buildActiveComponentMetadata({
+    nodeCapacity,
+    activeIds,
+    activeCount: activeIds.length,
+    activeMask,
+    neighborStarts,
+    neighborCounts,
+    neighbors,
+    options: { componentForces: 'auto' },
+    scratch: {},
+  });
+
+  assert.equal(metadata.componentCount, 3);
+  assert.equal(metadata.largestComponentSize, 2);
+  assert.equal(metadata.secondLargestComponentSize, 2);
+  assert.equal(metadata.componentForcesActive, false);
+  assert.equal(metadata.componentSeedingEnabled, false);
+  assert.equal(metadata.componentGravityEnabled, false);
+});
+
+test('buildActiveComponentMetadata auto activates when one component is dominant', () => {
+  const nodeCapacity = 10;
+  const activeIds = new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  const activeMask = new Uint32Array(10);
+  activeMask.fill(1);
+  const neighborStarts = new Uint32Array([0, 1, 3, 5, 7, 9, 11, 12, 12, 13]);
+  const neighborCounts = new Uint32Array([1, 2, 2, 2, 2, 2, 1, 0, 1, 1]);
+  const neighbors = new Uint32Array([
+    1,
+    0, 2,
+    1, 3,
+    2, 4,
+    3, 5,
+    4, 6,
+    5,
+    9,
+    8,
+  ]);
+
+  const metadata = buildActiveComponentMetadata({
+    nodeCapacity,
+    activeIds,
+    activeCount: activeIds.length,
+    activeMask,
+    neighborStarts,
+    neighborCounts,
+    neighbors,
+    options: { componentForces: 'auto' },
+    scratch: {},
+  });
+
+  assert.equal(metadata.componentCount, 3);
+  assert.equal(metadata.largestComponentSize, 7);
+  assert.equal(metadata.secondLargestComponentSize, 2);
+  assert.equal(metadata.componentForcesActive, true);
+  assert.equal(metadata.componentSeedingEnabled, false);
+  assert.equal(metadata.componentGravityEnabled, true);
+});
+
+test('applyComponentAwareInitialPositions moves smaller components into a halo', () => {
+  const nodeCapacity = 6;
+  const activeIds = new Uint32Array([0, 1, 2, 3, 4, 5]);
+  const activeMask = new Uint32Array([1, 1, 1, 1, 1, 1]);
+  const neighborStarts = new Uint32Array([0, 2, 4, 6, 6, 7]);
+  const neighborCounts = new Uint32Array([2, 2, 2, 0, 1, 1]);
+  const neighbors = new Uint32Array([
+    1, 2,
+    0, 2,
+    0, 1,
+    5,
+    4,
+  ]);
+  const metadata = buildActiveComponentMetadata({
+    nodeCapacity,
+    activeIds,
+    activeCount: activeIds.length,
+    activeMask,
+    neighborStarts,
+    neighborCounts,
+    neighbors,
+    options: { componentForces: 'auto' },
+    scratch: {},
+  });
+  const positions = new Float32Array([
+    -2, 0, 0,
+    0, 1, 0,
+    2, 0, 0,
+    3, 0, 0,
+    4, 0, 0,
+    5, 0, 0,
+  ]);
+
+  const applied = applyComponentAwareInitialPositions({
+    positions,
+    nodeCapacity,
+    activeIds,
+    activeCount: activeIds.length,
+    componentIds: metadata.componentIds,
+    componentRanks: metadata.componentRanks,
+    componentSizes: metadata.componentSizes,
+    componentCount: metadata.componentCount,
+    largestComponentId: metadata.largestComponentId,
+    center: [0, 0, 0],
+    radius: 120,
+    mode: '2d',
+    scratch: {},
+  });
+
+  assert.equal(applied, true);
+  const mainCentroidX = (positions[0] + positions[3] + positions[6]) / 3;
+  const mainCentroidY = (positions[1] + positions[4] + positions[7]) / 3;
+  const singletonDistance = Math.hypot(positions[9], positions[10]);
+  const pairCentroidX = (positions[12] + positions[15]) / 2;
+  const pairCentroidY = (positions[13] + positions[16]) / 2;
+  assert.ok(Math.hypot(mainCentroidX, mainCentroidY) < 1e-5);
+  assert.ok(singletonDistance > 40);
+  assert.ok(Math.hypot(pairCentroidX, pairCentroidY) > 40);
+});
+
+test('GpuForcePositionDelegate uploads component gravity for active filtered WebGPU components', () => {
+  const positionView = new Float32Array([
+    0, 0, 0,
+    1, 0, 0,
+    2, 0, 0,
+    3, 0, 0,
+    4, 0, 0,
+    5, 0, 0,
+  ]);
+  const network = {
+    nodeCapacity: 6,
+    edgeCapacity: 3,
+    nodeIndices: new Uint32Array([0, 1, 3, 4, 5]),
+    edgeIndices: new Uint32Array([0, 1, 2]),
+    edgesView: new Uint32Array([
+      0, 1,
+      1, 2,
+      4, 5,
+    ]),
+    withBufferAccess: (fn) => fn(),
+    getTopologyVersions: () => ({ node: 1, edge: 1 }),
+    getNodeAttributeBuffer: (name) => {
+      if (name === '_helios_visuals_position') return { view: positionView, version: 1 };
+      if (name === '$index') return { version: 1 };
+      return null;
+    },
+    getEdgeAttributeBuffer: (name) => (name === '$index' ? { version: 1 } : null),
+  };
+  const { device, writes } = createFakeWebGPUDevice();
+  const delegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    outputScale: 1,
+    recenter: false,
+    componentForces: 'halo',
+  });
+
+  delegate.onAttach({ network, backend: 'webgpu', device });
+  assert.equal(delegate._componentCount, 3);
+  assert.equal(delegate._componentGravityEnabled, true);
+
+  const gravityWrite = writes.find((entry) => entry.label === 'layout:gpu-force:component-gravity-scale');
+  assert.ok(gravityWrite?.data);
+  const gravityScales = gravityWrite.data instanceof Float32Array
+    ? gravityWrite.data
+    : new Float32Array(
+      gravityWrite.data.buffer.slice(
+        gravityWrite.data.byteOffset,
+        gravityWrite.data.byteOffset + gravityWrite.data.byteLength,
+      ),
+    );
+  assert.equal(gravityScales[0], 1.5);
+  assert.equal(gravityScales[1], 1.5);
+  assert.ok(gravityScales[3] < gravityScales[0]);
+
+  delegate.step({ network, backend: 'webgpu', device, deltaMs: 16 });
+  const paramsWrite = writes.findLast((entry) => entry.label === 'layout:gpu-force:params');
+  assert.ok(paramsWrite?.data instanceof Uint8Array);
+  const params = new Uint32Array(
+    paramsWrite.data.buffer.slice(
+      paramsWrite.data.byteOffset,
+      paramsWrite.data.byteOffset + paramsWrite.data.byteLength,
+    ),
+  );
+  assert.equal(params[30], 1);
+});
+
+test('GpuForcePositionDelegate componentForces off skips component gravity upload', () => {
+  const network = createIsolatedTopologyNetwork([
+    0, 0, 0,
+    1, 0, 0,
+    2, 0, 0,
+  ]);
+  const { device, writes } = createFakeWebGPUDevice();
+  const delegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    outputScale: 1,
+    recenter: false,
+    componentForces: 'off',
+  });
+
+  delegate.onAttach({ network, backend: 'webgpu', device });
+  assert.equal(delegate._componentGravityEnabled, false);
+  assert.ok(!writes.some((entry) => entry.label === 'layout:gpu-force:component-gravity-scale'));
+
+  delegate.step({ network, backend: 'webgpu', device, deltaMs: 16 });
+  const paramsWrite = writes.findLast((entry) => entry.label === 'layout:gpu-force:params');
+  const params = new Uint32Array(
+    paramsWrite.data.buffer.slice(
+      paramsWrite.data.byteOffset,
+      paramsWrite.data.byteOffset + paramsWrite.data.byteLength,
+    ),
+  );
+  assert.equal(params[30], 0);
+});
+
+test('GpuForcePositionDelegate changing componentForces preserves WebGPU positions', () => {
+  const network = createIsolatedTopologyNetwork([
+    0, 0, 0,
+    1, 0, 0,
+    2, 0, 0,
+    3, 0, 0,
+  ]);
+  const { device, writes } = createFakeWebGPUDevice();
+  const delegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    outputScale: 1,
+    recenter: false,
+    componentForces: 'off',
+  });
+
+  delegate.onAttach({ network, backend: 'webgpu', device });
+  assert.equal(delegate._componentGravityEnabled, false);
+  const initialOutputWrites = writes.filter((entry) => entry.label === 'layout:gpu-force:positions-output').length;
+
+  delegate.updateOptions({ componentForces: 'halo' });
+  delegate.ensureSynchronized({ network, backend: 'webgpu', device });
+
+  assert.equal(delegate._componentGravityEnabled, true);
+  assert.equal(
+    writes.filter((entry) => entry.label === 'layout:gpu-force:positions-output').length,
+    initialOutputWrites,
+  );
+  assert.ok(writes.some((entry) => entry.label === 'layout:gpu-force:component-gravity-scale'));
+});
+
+test('GpuForcePositionDelegate preserves WebGPU positions when an active filter splits components', () => {
+  const positionView = new Float32Array([
+    0, 0, 0,
+    1, 0, 0,
+    2, 0, 0,
+    3, 0, 0,
+    4, 0, 0,
+    5, 0, 0,
+  ]);
+  let nodeIndexVersion = 1;
+  let activeNodeIndices = new Uint32Array([0, 1, 2, 3, 4, 5]);
+  activeNodeIndices.version = nodeIndexVersion;
+  const edgeIndices = new Uint32Array([0, 1, 2, 3, 4]);
+  edgeIndices.version = 1;
+  const network = {
+    nodeCapacity: 6,
+    edgeCapacity: 5,
+    get nodeIndices() {
+      return activeNodeIndices;
+    },
+    edgeIndices,
+    edgesView: new Uint32Array([
+      0, 1,
+      1, 2,
+      2, 3,
+      3, 4,
+      4, 5,
+    ]),
+    withBufferAccess: (fn) => fn(),
+    getTopologyVersions: () => ({ node: 1, edge: 1 }),
+    getNodeAttributeBuffer: (name) => {
+      if (name === '_helios_visuals_position') return { view: positionView, version: 1 };
+      if (name === '$index') return { version: nodeIndexVersion };
+      return null;
+    },
+    getEdgeAttributeBuffer: (name) => (name === '$index' ? { version: 1 } : null),
+  };
+  const { device, writes } = createFakeWebGPUDevice();
+  const delegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    outputScale: 1,
+    recenter: false,
+    componentForces: 'auto',
+  });
+
+  delegate.onAttach({ network, backend: 'webgpu', device });
+  assert.equal(delegate._componentCount, 1);
+  const initialOutputWrites = writes.filter((entry) => entry.label === 'layout:gpu-force:positions-output').length;
+
+  nodeIndexVersion += 1;
+  activeNodeIndices = new Uint32Array([0, 1, 2, 4, 5]);
+  activeNodeIndices.version = nodeIndexVersion;
+  delegate.ensureSynchronized({ network, backend: 'webgpu', device });
+
+  assert.equal(delegate._componentCount, 2);
+  assert.equal(delegate._componentGravityEnabled, true);
+  const outputWrites = writes.filter((entry) => entry.label === 'layout:gpu-force:positions-output');
+  assert.equal(outputWrites.length, initialOutputWrites);
+  assert.ok(writes.some((entry) => entry.label === 'layout:gpu-force:component-gravity-scale'));
 });
 
 test('GpuForcePositionDelegate reads edgesView after position buffer lookup during topology sync', () => {

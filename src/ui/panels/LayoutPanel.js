@@ -337,6 +337,14 @@ export class LayoutPanel {
     statusControls.appendChild(statusVisual);
     statusControls.appendChild(runButton);
 
+    const pauseOnInteractionToggle = createToggleControl({
+      checked: layoutBehavior.pauseOnInteraction?.() === true,
+      onLabel: 'On',
+      offLabel: 'Off',
+      ariaLabel: 'Pause layout on manual camera input',
+    });
+    pauseOnInteractionToggle.dataset.testid = 'controls-layout-pause-on-input';
+
     const bindingsRoot = document.createElement('div');
     bindingsRoot.className = 'helios-ui-layout__bindings';
 
@@ -499,6 +507,16 @@ export class LayoutPanel {
       })),
     });
     content.appendChild(runRow.row);
+
+    const pauseOnInteractionRow = createAlignedRowEl({
+      title: 'Pause on input',
+      hint: 'Pauses layout updates during manual pan, rotate, wheel zoom, or pinch. Automatic orbit and camera transitions keep the layout running.',
+      controls: pauseOnInteractionToggle,
+      dirtyIndicator: trackStaticIndicator(createStateIndicator('layout.pauseOnInteraction', 'layout', {
+        defaultValue: storageEntryForKey('layout.pauseOnInteraction')?.default ?? (layoutBehavior.pauseOnInteraction?.() === true),
+      })),
+    });
+    content.appendChild(pauseOnInteractionRow.row);
     content.appendChild(bindingsRoot);
 
     const panel = this.ui.createPanel({
@@ -596,6 +614,11 @@ export class LayoutPanel {
       }
       if (runButtonIconWrap.parentElement !== runButton) runButton.appendChild(runButtonIconWrap);
       setAttributeIfChanged(runButton, 'aria-busy', running ? 'true' : 'false');
+    };
+
+    const refreshPauseOnInteraction = () => {
+      if (document.activeElement === pauseOnInteractionToggle) return;
+      pauseOnInteractionToggle.checked = layoutBehavior.pauseOnInteraction?.() === true;
     };
 
     const resetStatusHistory = () => {
@@ -945,6 +968,7 @@ export class LayoutPanel {
       }
       refreshBindingValues();
       refreshRunState();
+      refreshPauseOnInteraction();
     };
 
     const applySelectedPositionAttribute = () => {
@@ -980,6 +1004,14 @@ export class LayoutPanel {
         return;
       }
       activateRunButton();
+    });
+
+    pauseOnInteractionToggle.addEventListener('change', () => {
+      layoutBehavior.pauseOnInteraction?.(pauseOnInteractionToggle.checked);
+      persistLayoutValue('layout.pauseOnInteraction', pauseOnInteractionToggle.checked, {
+        reason: 'layout-pause-on-input',
+      });
+      sync(false);
     });
 
     layoutSelect.addEventListener('change', () => {

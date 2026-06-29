@@ -160,6 +160,20 @@ test('setGraphFilter() with render+layout scope updates layout network', () => {
   assert.ok(getLayoutUpdates() >= 1);
 });
 
+test('setGraphFilter() passes component-size pruning to network filterSubgraph', () => {
+  const harness = createHarness({ filteredNodes: [0, 1, 2], filteredEdges: [0, 1] });
+  const { helios, getFilterInputs } = harness;
+
+  helios.setGraphFilter({
+    minComponentSize: 3,
+    scope: 'render+layout',
+  });
+
+  assert.equal(getFilterInputs()[0].minComponentSize, 3);
+  assert.equal(getFilterInputs()[0].asSelector, true);
+  assert.equal(helios.getGraphFilter().options.minComponentSize, 3);
+});
+
 test('layout-owned position delegates stay bound to the layout network under render-only filters', () => {
   const harness = createHarness({ filteredNodes: [1], filteredEdges: [0] });
   const { helios, network } = harness;

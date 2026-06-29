@@ -119,7 +119,7 @@ WebGL2 path:
 
 For each active node `i`, total force is:
 
-`F_i = F_repulsion_i + F_spring_i + F_gravity_i`
+`F_i = F_repulsion_i + F_spring_i + (componentGravityScale_i * F_gravity_i)`
 
 with velocity-position update:
 
@@ -280,7 +280,37 @@ with `degreeNorm = max(1, localNeighborLimit)`.
 
 In 2D, the `z` component is suppressed.
 
-### 4.6 Post-step rigid rotation damping
+### 4.6 Component-aware disconnected layout
+
+For the linear GPU-force model, the topology sync computes weak connected
+components over the active layout graph. That means `render+layout` filters are
+honored: filtered-out nodes and edges do not participate in component labels.
+
+When more than one active component exists, component labels are computed for
+`componentForces: 'auto'`, `'halo'`, and `'supernode-experimental'`, but the
+gravity behavior is activated conservatively:
+
+- `'auto'` activates only when there is a clear largest component for smaller
+  components to orbit
+- `'halo'` enables component gravity even when components are equal-sized
+- `'off'` skips component metadata and preserves the previous behavior
+
+When activated:
+
+- the largest component receives a stronger gravity multiplier
+- singleton and small components receive weaker gravity, leaving sampled
+  repulsion room to scatter them around the main component instead of pulling
+  them into one shared basin
+
+Component-aware placement seeding exists only as an opt-in
+`componentSeeding: true` path. Changing `componentForces` preserves current
+positions and only updates component metadata/gravity buffers.
+
+This is intentionally not a per-frame component-centroid solver. Component
+labels and gravity scales are topology-time metadata, and the WebGPU hot loop
+adds only a conditional scalar multiplier to the existing gravity term.
+
+### 4.7 Post-step rigid rotation damping
 
 After the main force update, the optional recenter pass estimates a coarse
 rigid-body angular velocity from the active-set positions and per-step motion
@@ -381,12 +411,18 @@ From `GpuForceLayout` / `GpuForcePositionDelegate`:
 - `kGravity`: `0.001`
 - `edgeWeightAttribute`: `null`
 - `forceNormalizationType`: `'local-degree'`
+- `componentForces`: `'auto'` (`'halo'` enables component gravity unconditionally; `'off'` disables component metadata)
+- `componentMode`: `'weak'`
+- `componentSeeding`: `false` (opt-in placement seed; force controls do not reseed by default)
+- `componentGravity`: `true`
+- `componentMainGravityScale`: `1.5`
+- `componentSingletonGravityScale`: `0.25`
 - `eta`: `0.4`
 - `damping`: `0.82`
 - `maxStep`: `2.5`
 - `minDistance`: `0.15`
 - `alpha`: `1`
-- `alphaDecay`: `0.001`
+- `alphaDecay`: `0.003`
 - `alphaTarget`: `0`
 - `alphaMin`: `0.001`
 - `umapA`: `1.5769434601962196`
@@ -415,6 +451,7 @@ CPU responsibilities:
 
 - topology extraction from network buffers
 - adjacency list build (`neighborStarts/counts/neighbors`)
+- active weak connected-component labeling for component-aware seeding/gravity
 - parameter/command encoding and queue submission each tick, including WebGPU
   chunk range selection when chunked scheduling is active
 - optional readback/sync methods

@@ -490,6 +490,29 @@ test.describe('scene panel: tabs and appearance controls', () => {
     expect(markerMatchesRegistry).toBe(true);
   });
 
+  test('layout panel exposes pause-on-input setting', async ({ page }) => {
+    const workspaceId = `layout-pause-input-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    await page.goto(`/?renderer=webgl&layout=gpuforce&mode=2d&nodes=120&session=1&workspaceId=${workspaceId}`);
+    await waitForHelios(page);
+
+    const layoutPanel = panelByTitle(page, 'Layout');
+    await expect(layoutPanel).toBeVisible();
+    const pauseRow = rowByTitle(layoutPanel, 'Pause on input');
+    await expect(pauseRow).toBeVisible();
+    const pauseToggle = pauseRow.locator('[role="switch"]').first();
+    await expect(pauseToggle).toBeVisible();
+    await expect(pauseToggle).toHaveAttribute('aria-checked', 'false');
+    await expect.poll(() => page.evaluate(() => (
+      window.__helios.states.entry('layout.pauseOnInteraction')?.default
+    ))).toBe(false);
+
+    await pauseToggle.click();
+    await expect(pauseToggle).toHaveAttribute('aria-checked', 'true');
+    await expect.poll(() => page.evaluate(() => (
+      window.__helios.states.get('layout.pauseOnInteraction')
+    ))).toBe(true);
+  });
+
   test('groups controls into Scene tabs and keeps renderer bindings working', async ({ page }) => {
     await page.goto('/?renderer=webgl&layout=none&mode=2d&nodes=500');
     await waitForHelios(page);

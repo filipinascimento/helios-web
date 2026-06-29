@@ -105,11 +105,14 @@ test('filter behavior owns rule updates and restores serializable filter state',
     scope: 'render+layout',
     nodeRules: [{ id: 'weight', scope: 'node', type: 'numeric', attribute: 'weight', min: 0.25, max: 1 }],
     edgeRules: [{ id: 'query', scope: 'edge', type: 'query', query: 'intensity >= 0.5' }],
+    minComponentSize: 4,
   });
 
   assert.equal(helios.getGraphFilter().enabled, true);
   assert.equal(helios.getGraphFilter().scope, 'render+layout');
+  assert.equal(helios.getGraphFilter().options.minComponentSize, 4);
   assert.equal(behavior.state.rules.length, 2);
+  assert.equal(behavior.state.minComponentSize, 4);
 
   const snapshot = behavior.serialize();
 
@@ -121,8 +124,10 @@ test('filter behavior owns rule updates and restores serializable filter state',
 
   assert.equal(restored.state.scope, 'render+layout');
   assert.equal(restored.state.rules.length, 2);
+  assert.equal(restored.state.minComponentSize, 4);
   assert.equal(restoredHelios.getGraphFilter().enabled, true);
   assert.equal(restoredHelios.getGraphFilter().scope, 'render+layout');
+  assert.equal(restoredHelios.getGraphFilter().options.minComponentSize, 4);
 });
 
 test('filter behavior syncs from direct raw helios filter activation', () => {
@@ -138,4 +143,21 @@ test('filter behavior syncs from direct raw helios filter activation', () => {
   assert.equal(behavior.state.enabled, true);
   assert.equal(behavior.state.scope, 'render+layout');
   assert.deepEqual(behavior.state.rules.map((rule) => rule.attribute ?? rule.query), ['category']);
+});
+
+test('filter behavior resets component-size state when external graph filter clears it', () => {
+  const helios = new MockHelios();
+  const behavior = new FilterBehavior();
+  const behaviors = new Map([['filters', behavior]]);
+  behavior.attach(createContext(helios, behaviors));
+
+  behavior.replaceRules({ minComponentSize: 5 });
+  assert.equal(behavior.state.enabled, true);
+  assert.equal(behavior.state.minComponentSize, 5);
+
+  helios.clearGraphFilter();
+
+  assert.equal(behavior.state.enabled, false);
+  assert.equal(behavior.state.minComponentSize, 1);
+  assert.equal(behavior.minComponentSize, 1);
 });

@@ -122,10 +122,11 @@ schemas are exported as `SCENE_PANEL_SCHEMA`, `LABELS_PANEL_SCHEMA`,
 `LAYOUT_PANEL_SCHEMA`, and `SELECTION_PANEL_SCHEMA`; their panel and tab markers
 are computed from those declared keys and custom `keyPrefix` items.
 Scene/Appearance controls resolve state entry metadata where available, the
-Layout panel writes layout type, running state, and active layout parameter
-subkeys through `helios.states`. Its `Set from` position-source control is an
-action that copies coordinates into layout positions, so the source selector is
-not tracked as durable state. Complex Mappers, Filters, Selection, and Labels
+Layout panel writes layout type, running state, `layout.pauseOnInteraction`,
+and active layout parameter subkeys through `helios.states`. Its `Set from`
+position-source control is an action that copies coordinates into layout
+positions, so the source selector is not tracked as durable state. Complex
+Mappers, Filters, Selection, and Labels
 panels aggregate stable state prefixes such as
 `mappers.node.*`, `filters.*`, `selection.*`, and `labels.*`.
 Panel item labels are resolved as UI metadata: an item-level `label` in the
@@ -320,7 +321,7 @@ always stays non-tracking.
 Built-in behaviors are bound automatically by Helios. Layout, legend, filter,
 mapper, and selection changes are stored through canonical behavior keys with
 panel-friendly aliases such as `layout.layoutType`,
-`layout.parameters.gravity`, `legends.enabled`, `filters.rules`, and
+`layout.pauseOnInteraction`, `layout.parameters.gravity`, `legends.enabled`, `filters.rules`, and
 `selection.selectedNodes`. Layout parameter controls use fine-grained
 `layout.parameters.<name>` aliases instead of relying on a single opaque
 `layout.parameters` object. Programmatic calls, CLI commands, restored sparse

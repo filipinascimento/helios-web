@@ -519,6 +519,7 @@ export const FILTERS_PANEL_SCHEMA = Object.freeze({
         'filters.enabled',
         'filters.scope',
         'filters.rules',
+        'filters.minComponentSize',
       ],
     },
   ],
@@ -540,6 +541,7 @@ export const LAYOUT_PANEL_SCHEMA = Object.freeze({
       items: [
         'layout.layoutType',
         'layout.running',
+        'layout.pauseOnInteraction',
       ],
     },
     {

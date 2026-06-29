@@ -50,7 +50,7 @@ const DEFAULT_OPTIONS = {
   maxStep: 2.5,
   minDistance: 0.15,
   alpha: 1,
-  alphaDecay: 0.001,
+  alphaDecay: 0.003,
   alphaTarget: 0,
   alphaMin: 0.001,
   recenter: true,
@@ -58,6 +58,12 @@ const DEFAULT_OPTIONS = {
   resetAlphaOnTopologyChange: true,
   seed: 0,
   umapHasInitialPositions: false,
+  componentForces: 'auto',
+  componentMode: 'weak',
+  componentSeeding: false,
+  componentGravity: true,
+  componentMainGravityScale: 1.5,
+  componentSingletonGravityScale: 0.25,
 };
 
 function warnOnce(owner, key, message, detail = undefined) {
@@ -106,11 +112,12 @@ struct Params {
 @group(0) @binding(6) var<storage, read> neighborStarts : array<u32>;
 @group(0) @binding(7) var<storage, read> neighborCounts : array<u32>;
 @group(0) @binding(8) var<storage, read> neighbors : array<u32>;
+@group(0) @binding(9) var<storage, read> componentGravityScale : array<f32>;
 ${umap
-  ? '@group(0) @binding(9) var<storage, read> scalarWeights : array<f32>;\n@group(0) @binding(10) var<uniform> params : Params;'
+  ? '@group(0) @binding(10) var<storage, read> scalarWeights : array<f32>;\n@group(0) @binding(11) var<uniform> params : Params;'
   : scalar
-    ? '@group(0) @binding(9) var<storage, read> neighborEdges : array<u32>;\n@group(0) @binding(10) var<storage, read> scalarValues : array<f32>;\n@group(0) @binding(11) var<uniform> params : Params;'
-    : '@group(0) @binding(9) var<uniform> params : Params;'}
+    ? '@group(0) @binding(10) var<storage, read> neighborEdges : array<u32>;\n@group(0) @binding(11) var<storage, read> scalarValues : array<f32>;\n@group(0) @binding(12) var<uniform> params : Params;'
+    : '@group(0) @binding(10) var<uniform> params : Params;'}
 
 fn hash32(value : u32) -> u32 {
   var x = value;
@@ -425,7 +432,8 @@ ${scalar
   if (use3D == 0u) {
     gravityDelta.z = 0.0;
   }
-  force = force + gravityDelta * params.constantsA.z;
+  let gravityScale = select(1.0, componentGravityScale[nodeId], params.chunk.z != 0u);
+  force = force + gravityDelta * params.constantsA.z * gravityScale;
 
 ${umap
   ? `  let eta = params.constantsA.w;
@@ -901,6 +909,51 @@ function normalizeLayoutScheduling(value) {
   return 'auto';
 }
 
+function normalizeComponentForces(value) {
+  if (value === false) return 'off';
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'off' || normalized === 'false' || normalized === 'disabled' || normalized === 'none') {
+    return 'off';
+  }
+  if (normalized === 'halo') return 'halo';
+  if (normalized === 'supernode' || normalized === 'supernode-experimental') return 'supernode-experimental';
+  return 'auto';
+}
+
+function shouldUseComponentMetadata(options = {}, umapModel = false) {
+  return !umapModel && normalizeComponentForces(options.componentForces) !== 'off';
+}
+
+function shouldActivateComponentForces({
+  componentForces = 'auto',
+  componentCount = 0,
+  activeCount = 0,
+  largestComponentSize = 0,
+  secondLargestComponentSize = 0,
+} = {}) {
+  if (componentCount <= 1 || activeCount <= 1 || largestComponentSize <= 0) return false;
+  const mode = normalizeComponentForces(componentForces);
+  if (mode === 'off') return false;
+  if (mode === 'halo' || mode === 'supernode-experimental') return true;
+
+  const safeActiveCount = Math.max(1, Math.floor(Number(activeCount) || 1));
+  const largest = Math.max(0, Math.floor(Number(largestComponentSize) || 0));
+  const second = Math.max(0, Math.floor(Number(secondLargestComponentSize) || 0));
+  if (safeActiveCount < 32) {
+    return largest > second;
+  }
+
+  const largestRatio = largest / safeActiveCount;
+  const smallRatio = (safeActiveCount - largest) / safeActiveCount;
+  const dominanceRatio = second > 0 ? largest / second : largest;
+  return (
+    largest >= 8
+    && largestRatio >= 0.08
+    && smallRatio >= 0.02
+    && (largestRatio >= 0.5 || dominanceRatio >= 2)
+  );
+}
+
 function resolveLayoutChunkNodeCount(value) {
   const numeric = Math.floor(Number(value));
   if (!Number.isFinite(numeric) || numeric <= 0) return DEFAULT_LAYOUT_CHUNK_NODE_COUNT;
@@ -1220,6 +1273,7 @@ function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
     nodeStrengthView = null,
   } = topologyInputs ?? {};
   const umapModel = isUmapForceModel(options.forceModel);
+  const componentMetadataEnabled = shouldUseComponentMetadata(options, umapModel);
   const forceNormalizationType = normalizeForceNormalizationType(options.forceNormalizationType);
   const useLinearScalarInputs = !umapModel && (
     Boolean(normalizeAttributeName(options.edgeWeightAttribute))
@@ -1375,6 +1429,41 @@ function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
     nodeMass.fill(1, 0, nodeCapacity);
   }
 
+  let componentMetadata = null;
+  if (componentMetadataEnabled) {
+    componentMetadata = buildActiveComponentMetadata({
+      nodeCapacity,
+      activeIds,
+      activeCount,
+      activeMask,
+      neighborStarts,
+      neighborCounts,
+      neighbors,
+      options,
+      scratch,
+    });
+  } else {
+    const componentGravityScale = ensureFloat32Capacity(scratch.componentGravityScale, nodeCapacity);
+    scratch.componentGravityScale = componentGravityScale;
+    componentGravityScale.fill(1, 0, nodeCapacity);
+    componentMetadata = {
+      componentIds: createEmptyUintArray(),
+      componentRanks: createEmptyUintArray(),
+      nodeComponentRank: createEmptyUintArray(),
+      nodeComponentSize: createEmptyUintArray(),
+      componentSizes: createEmptyUintArray(),
+      componentGravityScale,
+      componentCount: 0,
+      largestComponentId: 0,
+      largestComponentSize: 0,
+      secondLargestComponentSize: 0,
+      singletonComponentCount: 0,
+      componentForcesActive: false,
+      componentSeedingEnabled: false,
+      componentGravityEnabled: false,
+    };
+  }
+
   const center = normalizeCenter(options.center);
   const radius = Math.max(1, toFinite(options.radius, DEFAULT_OPTIONS.radius));
   const depth = Math.max(0, toFinite(options.depth, DEFAULT_OPTIONS.depth));
@@ -1418,6 +1507,51 @@ function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
       packedPositions[targetOffset] = seedX;
       packedPositions[targetOffset + 1] = seedY;
       packedPositions[targetOffset + 2] = seedZ;
+    }
+  }
+
+  let componentSeedingApplied = false;
+  if (
+    componentMetadataEnabled
+    && componentMetadata.componentCount > 1
+    && componentMetadata.componentSeedingEnabled === true
+    && options.componentSeeding !== false
+    && options.forceInitialPositions !== true
+  ) {
+    componentSeedingApplied = applyComponentAwareInitialPositions({
+      positions: packedOutputPositions,
+      nodeCapacity,
+      activeIds,
+      activeCount,
+      componentIds: componentMetadata.componentIds,
+      componentRanks: componentMetadata.componentRanks,
+      componentSizes: componentMetadata.componentSizes,
+      componentCount: componentMetadata.componentCount,
+      largestComponentId: componentMetadata.largestComponentId,
+      center,
+      radius,
+      depth,
+      mode: options.mode,
+      scratch,
+    });
+    if (componentSeedingApplied) {
+      for (let nodeId = 0; nodeId < nodeCapacity; nodeId += 1) {
+        const offset = nodeId * 3;
+        const seedX = packedOutputPositions[offset];
+        const seedY = packedOutputPositions[offset + 1];
+        const seedZ = packedOutputPositions[offset + 2];
+        if (normalizeInputByOutputScale) {
+          packedPositions[offset] = center[0] + ((seedX - center[0]) / outputScale);
+          packedPositions[offset + 1] = center[1] + ((seedY - center[1]) / outputScale);
+          packedPositions[offset + 2] = is3D
+            ? (center[2] + ((seedZ - center[2]) / outputScale))
+            : center[2];
+        } else {
+          packedPositions[offset] = seedX;
+          packedPositions[offset + 1] = seedY;
+          packedPositions[offset + 2] = is3D ? seedZ : center[2];
+        }
+      }
     }
   }
 
@@ -1513,6 +1647,21 @@ function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
     linearScalarInputs: useLinearScalarInputs,
     linearNormalizedInputs: !umapModel && !useLinearScalarInputs && forceNormalizationType !== 'local-degree',
     linearHasEdgeWeights: !umapModel && Boolean(edgeWeightAttribute),
+    componentIds: componentMetadata.componentIds,
+    componentRanks: componentMetadata.componentRanks,
+    nodeComponentRank: componentMetadata.nodeComponentRank,
+    nodeComponentSize: componentMetadata.nodeComponentSize,
+    componentSizes: componentMetadata.componentSizes,
+    componentGravityScale: componentMetadata.componentGravityScale,
+    componentCount: componentMetadata.componentCount,
+    largestComponentId: componentMetadata.largestComponentId,
+    largestComponentSize: componentMetadata.largestComponentSize,
+    secondLargestComponentSize: componentMetadata.secondLargestComponentSize,
+    singletonComponentCount: componentMetadata.singletonComponentCount,
+    componentForcesActive: componentMetadata.componentForcesActive,
+    componentSeedingEnabled: componentMetadata.componentSeedingEnabled,
+    componentGravityEnabled: componentMetadata.componentGravityEnabled,
+    componentSeedingApplied,
     packedPositions,
     packedOutputPositions,
     neighborLength,
@@ -1637,6 +1786,309 @@ function recenterActivePositions(positions, activeIds, activeCount, center, is3D
     positions[base + 1] -= shiftY;
     positions[base + 2] = is3D ? (positions[base + 2] - shiftZ) : center[2];
   }
+}
+
+function findComponentParent(parent, nodeId) {
+  let root = nodeId >>> 0;
+  while (parent[root] !== root) {
+    root = parent[root] >>> 0;
+  }
+  let current = nodeId >>> 0;
+  while (parent[current] !== current) {
+    const next = parent[current] >>> 0;
+    parent[current] = root;
+    current = next;
+  }
+  return root >>> 0;
+}
+
+function unionComponentParents(parent, size, a, b) {
+  let rootA = findComponentParent(parent, a);
+  let rootB = findComponentParent(parent, b);
+  if (rootA === rootB) return rootA;
+  if ((size[rootA] ?? 0) < (size[rootB] ?? 0)) {
+    const swap = rootA;
+    rootA = rootB;
+    rootB = swap;
+  }
+  parent[rootB] = rootA;
+  size[rootA] = (size[rootA] ?? 0) + (size[rootB] ?? 0);
+  return rootA;
+}
+
+export function buildActiveComponentMetadata({
+  nodeCapacity = 0,
+  activeIds = createEmptyUintArray(),
+  activeCount = 0,
+  activeMask = createEmptyUintArray(),
+  neighborStarts = createEmptyUintArray(),
+  neighborCounts = createEmptyUintArray(),
+  neighbors = createEmptyUintArray(),
+  options = {},
+  scratch = {},
+} = {}) {
+  const safeNodeCapacity = Math.max(0, Math.floor(Number(nodeCapacity) || 0));
+  const safeActiveCount = Math.max(0, Math.floor(Number(activeCount) || 0));
+  const componentIds = ensureUint32Capacity(scratch.componentIds, safeNodeCapacity);
+  const componentRanks = ensureUint32Capacity(scratch.componentRanks, safeNodeCapacity);
+  const nodeComponentRank = ensureUint32Capacity(scratch.nodeComponentRank, safeNodeCapacity);
+  const nodeComponentSize = ensureUint32Capacity(scratch.nodeComponentSize, safeNodeCapacity);
+  const componentSizes = ensureUint32Capacity(scratch.componentSizes, Math.max(1, safeActiveCount));
+  const componentGravityScale = ensureFloat32Capacity(scratch.componentGravityScale, safeNodeCapacity);
+  scratch.componentIds = componentIds;
+  scratch.componentRanks = componentRanks;
+  scratch.nodeComponentRank = nodeComponentRank;
+  scratch.nodeComponentSize = nodeComponentSize;
+  scratch.componentSizes = componentSizes;
+  scratch.componentGravityScale = componentGravityScale;
+
+  componentIds.fill(0, 0, safeNodeCapacity);
+  componentRanks.fill(0, 0, safeNodeCapacity);
+  nodeComponentRank.fill(0, 0, safeNodeCapacity);
+  nodeComponentSize.fill(0, 0, safeNodeCapacity);
+  componentSizes.fill(0, 0, Math.max(1, safeActiveCount));
+  componentGravityScale.fill(1, 0, safeNodeCapacity);
+
+  if (safeNodeCapacity <= 0 || safeActiveCount <= 0) {
+    return {
+      componentIds,
+      componentRanks,
+      nodeComponentRank,
+      nodeComponentSize,
+      componentSizes,
+      componentGravityScale,
+      componentCount: 0,
+      largestComponentId: 0,
+      largestComponentSize: 0,
+      componentGravityEnabled: false,
+    };
+  }
+
+  const parent = ensureUint32Capacity(scratch.componentParent, safeNodeCapacity);
+  const unionSize = ensureUint32Capacity(scratch.componentUnionSize, safeNodeCapacity);
+  const rootToComponent = ensureUint32Capacity(scratch.componentRootToId, safeNodeCapacity);
+  scratch.componentParent = parent;
+  scratch.componentUnionSize = unionSize;
+  scratch.componentRootToId = rootToComponent;
+
+  const sentinel = 0xffffffff;
+  parent.fill(sentinel, 0, safeNodeCapacity);
+  unionSize.fill(0, 0, safeNodeCapacity);
+  rootToComponent.fill(sentinel, 0, safeNodeCapacity);
+
+  for (let i = 0; i < safeActiveCount; i += 1) {
+    const nodeId = activeIds[i] >>> 0;
+    if (nodeId >= safeNodeCapacity) continue;
+    parent[nodeId] = nodeId;
+    unionSize[nodeId] = 1;
+  }
+
+  for (let i = 0; i < safeActiveCount; i += 1) {
+    const nodeId = activeIds[i] >>> 0;
+    if (nodeId >= safeNodeCapacity || parent[nodeId] === sentinel) continue;
+    const start = neighborStarts[nodeId] >>> 0;
+    const degree = neighborCounts[nodeId] >>> 0;
+    for (let n = 0; n < degree; n += 1) {
+      const offset = start + n;
+      if (offset >= neighbors.length) break;
+      const otherId = neighbors[offset] >>> 0;
+      if (
+        otherId < safeNodeCapacity
+        && parent[otherId] !== sentinel
+        && (activeMask?.[otherId] ?? 0) !== 0
+      ) {
+        unionComponentParents(parent, unionSize, nodeId, otherId);
+      }
+    }
+  }
+
+  let componentCount = 0;
+  let largestComponentId = 0;
+  let largestComponentSize = 0;
+  for (let i = 0; i < safeActiveCount; i += 1) {
+    const nodeId = activeIds[i] >>> 0;
+    if (nodeId >= safeNodeCapacity || parent[nodeId] === sentinel) continue;
+    const root = findComponentParent(parent, nodeId);
+    let componentId = rootToComponent[root] >>> 0;
+    if (componentId === sentinel) {
+      componentId = componentCount;
+      rootToComponent[root] = componentId;
+      componentSizes[componentId] = 0;
+      componentCount += 1;
+    }
+    componentIds[nodeId] = componentId;
+    const nextSize = (componentSizes[componentId] + 1) >>> 0;
+    componentSizes[componentId] = nextSize;
+    if (nextSize > largestComponentSize) {
+      largestComponentSize = nextSize;
+      largestComponentId = componentId;
+    }
+  }
+
+  let nextRank = 1;
+  for (let componentId = 0; componentId < componentCount; componentId += 1) {
+    componentRanks[componentId] = componentId === largestComponentId ? 0 : nextRank++;
+  }
+
+  let secondLargestComponentSize = 0;
+  let singletonComponentCount = 0;
+  for (let componentId = 0; componentId < componentCount; componentId += 1) {
+    const componentSize = componentSizes[componentId] >>> 0;
+    if (componentSize === 1) singletonComponentCount += 1;
+    if (componentId !== largestComponentId && componentSize > secondLargestComponentSize) {
+      secondLargestComponentSize = componentSize;
+    }
+  }
+
+  const mainScale = Math.max(0, toFinite(options.componentMainGravityScale, DEFAULT_OPTIONS.componentMainGravityScale));
+  const singletonScale = clamp(
+    options.componentSingletonGravityScale,
+    0,
+    Math.max(1, mainScale),
+    DEFAULT_OPTIONS.componentSingletonGravityScale,
+  );
+  const componentForcesActive = shouldActivateComponentForces({
+    componentForces: options.componentForces,
+    componentCount,
+    activeCount: safeActiveCount,
+    largestComponentSize,
+    secondLargestComponentSize,
+  });
+  const seedingEnabled = componentForcesActive && options.componentSeeding === true;
+  const gravityEnabled = componentForcesActive && options.componentGravity !== false;
+  const largestLog = Math.max(1, Math.log2(Math.max(2, largestComponentSize + 1)));
+
+  for (let i = 0; i < safeActiveCount; i += 1) {
+    const nodeId = activeIds[i] >>> 0;
+    if (nodeId >= safeNodeCapacity) continue;
+    const componentId = componentIds[nodeId] >>> 0;
+    const componentSize = componentSizes[componentId] >>> 0;
+    nodeComponentRank[nodeId] = componentRanks[componentId] >>> 0;
+    nodeComponentSize[nodeId] = componentSize;
+    if (!gravityEnabled) {
+      componentGravityScale[nodeId] = 1;
+    } else if (componentId === largestComponentId) {
+      componentGravityScale[nodeId] = mainScale;
+    } else {
+      const sizeMix = Math.min(1, Math.log2(Math.max(2, componentSize + 1)) / largestLog);
+      componentGravityScale[nodeId] = singletonScale + ((1 - singletonScale) * sizeMix);
+    }
+  }
+
+  return {
+    componentIds,
+    componentRanks,
+    nodeComponentRank,
+    nodeComponentSize,
+    componentSizes,
+    componentGravityScale,
+    componentCount,
+    largestComponentId,
+    largestComponentSize,
+    secondLargestComponentSize,
+    singletonComponentCount,
+    componentForcesActive,
+    componentSeedingEnabled: seedingEnabled,
+    componentGravityEnabled: gravityEnabled,
+  };
+}
+
+export function applyComponentAwareInitialPositions({
+  positions = null,
+  nodeCapacity = 0,
+  activeIds = createEmptyUintArray(),
+  activeCount = 0,
+  componentIds = createEmptyUintArray(),
+  componentRanks = createEmptyUintArray(),
+  componentSizes = createEmptyUintArray(),
+  componentCount = 0,
+  largestComponentId = 0,
+  center = [0, 0, 0],
+  radius = DEFAULT_OPTIONS.radius,
+  depth = DEFAULT_OPTIONS.depth,
+  mode = '2d',
+  scratch = {},
+} = {}) {
+  if (!(positions instanceof Float32Array) || activeCount <= 1 || componentCount <= 1 || nodeCapacity <= 1) {
+    return false;
+  }
+
+  const is3D = mode === '3d';
+  const centroidX = ensureFloat32Capacity(scratch.componentCentroidX, componentCount);
+  const centroidY = ensureFloat32Capacity(scratch.componentCentroidY, componentCount);
+  const centroidZ = ensureFloat32Capacity(scratch.componentCentroidZ, componentCount);
+  scratch.componentCentroidX = centroidX;
+  scratch.componentCentroidY = centroidY;
+  scratch.componentCentroidZ = centroidZ;
+  centroidX.fill(0, 0, componentCount);
+  centroidY.fill(0, 0, componentCount);
+  centroidZ.fill(0, 0, componentCount);
+
+  for (let i = 0; i < activeCount; i += 1) {
+    const nodeId = activeIds[i] >>> 0;
+    if (nodeId >= nodeCapacity) continue;
+    const componentId = componentIds[nodeId] >>> 0;
+    if (componentId >= componentCount) continue;
+    const base = nodeId * 3;
+    centroidX[componentId] += positions[base] ?? center[0];
+    centroidY[componentId] += positions[base + 1] ?? center[1];
+    centroidZ[componentId] += positions[base + 2] ?? center[2];
+  }
+
+  for (let componentId = 0; componentId < componentCount; componentId += 1) {
+    const size = Math.max(1, componentSizes[componentId] >>> 0);
+    centroidX[componentId] /= size;
+    centroidY[componentId] /= size;
+    centroidZ[componentId] /= size;
+  }
+
+  const shiftX = ensureFloat32Capacity(scratch.componentShiftX, componentCount);
+  const shiftY = ensureFloat32Capacity(scratch.componentShiftY, componentCount);
+  const shiftZ = ensureFloat32Capacity(scratch.componentShiftZ, componentCount);
+  scratch.componentShiftX = shiftX;
+  scratch.componentShiftY = shiftY;
+  scratch.componentShiftZ = shiftZ;
+  shiftX.fill(0, 0, componentCount);
+  shiftY.fill(0, 0, componentCount);
+  shiftZ.fill(0, 0, componentCount);
+
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+  const safeRadius = Math.max(1, toFinite(radius, DEFAULT_OPTIONS.radius));
+  const safeDepth = Math.max(0, toFinite(depth, DEFAULT_OPTIONS.depth));
+  const baseHaloRadius = safeRadius * 0.42;
+  const ringSpacing = safeRadius * 0.2;
+  for (let componentId = 0; componentId < componentCount; componentId += 1) {
+    let targetX = center[0];
+    let targetY = center[1];
+    let targetZ = center[2];
+    if (componentId !== largestComponentId) {
+      const rank = Math.max(1, componentRanks[componentId] >>> 0);
+      const size = Math.max(1, componentSizes[componentId] >>> 0);
+      const angle = rank * goldenAngle;
+      const haloRadius = baseHaloRadius + (ringSpacing * Math.sqrt(Math.max(0, rank - 1) / 16));
+      const sizeOffset = Math.log2(size + 1) * safeRadius * 0.015;
+      targetX += Math.cos(angle) * (haloRadius + sizeOffset);
+      targetY += Math.sin(angle) * (haloRadius + sizeOffset);
+      if (is3D && safeDepth > 0) {
+        targetZ += hashToSignedUnit(Math.imul((componentId + 1) >>> 0, 2246822519)) * safeDepth * 0.18;
+      }
+    }
+    shiftX[componentId] = targetX - centroidX[componentId];
+    shiftY[componentId] = targetY - centroidY[componentId];
+    shiftZ[componentId] = is3D ? (targetZ - centroidZ[componentId]) : (center[2] - centroidZ[componentId]);
+  }
+
+  for (let i = 0; i < activeCount; i += 1) {
+    const nodeId = activeIds[i] >>> 0;
+    if (nodeId >= nodeCapacity) continue;
+    const componentId = componentIds[nodeId] >>> 0;
+    if (componentId >= componentCount) continue;
+    const base = nodeId * 3;
+    positions[base] += shiftX[componentId];
+    positions[base + 1] += shiftY[componentId];
+    positions[base + 2] = is3D ? (positions[base + 2] + shiftZ[componentId]) : center[2];
+  }
+  return true;
 }
 
 export function warmStartUmapPositionsFromTopology({
@@ -1880,6 +2332,7 @@ uniform usampler2D u_activeMask;
 uniform usampler2D u_neighborStarts;
 uniform usampler2D u_neighborCounts;
 uniform usampler2D u_neighbors;
+uniform sampler2D u_componentGravityScale;
 ${umap ? 'uniform sampler2D u_nodeMass;\nuniform sampler2D u_neighborWeights;\n' : ''}
 ${scalar ? 'uniform usampler2D u_neighborEdges;\nuniform sampler2D u_scalarValues;\n' : ''}
 
@@ -1897,6 +2350,7 @@ uniform int u_exactRepulsionThreshold;
 uniform int u_sampleChurnCount;
 uniform int u_forceNormalizationMode;
 uniform int u_hasEdgeWeights;
+uniform int u_componentGravityEnabled;
 
 uniform uint u_seed;
 uniform uint u_sampleFrame;
@@ -1994,6 +2448,10 @@ uint fetchNodeUint(usampler2D source, int nodeId) {
 
 uint fetchNeighborValue(int index) {
   return texelFetch(u_neighbors, textureCoord(u_neighborTexSize, index), 0).x;
+}
+
+float fetchComponentGravityScale(int nodeId) {
+  return texelFetch(u_componentGravityScale, textureCoord(u_nodeTexSize, nodeId), 0).x;
 }
 
 ${scalar ? `uint fetchNeighborEdge(int index) {
@@ -2198,7 +2656,8 @@ ${scalar
   if (u_use3D == 0) {
     gravityDelta.z = 0.0;
   }
-  force += gravityDelta * u_kGravity;
+  float gravityScale = u_componentGravityEnabled != 0 ? fetchComponentGravityScale(nodeId) : 1.0;
+  force += gravityDelta * u_kGravity * gravityScale;
 
 ${umap
   ? `  vec3 nextDelta = vec3(
@@ -2540,6 +2999,7 @@ class WebGLTextureComputePath {
     this.neighborStartsTexture = null;
     this.neighborCountsTexture = null;
     this.neighborsTexture = null;
+    this.componentGravityScaleTexture = null;
     this.neighborEdgesTexture = null;
     this.nodeMassTexture = null;
     this.neighborWeightsTexture = null;
@@ -2560,6 +3020,7 @@ class WebGLTextureComputePath {
     this._outputUploadScratch = new Float32Array(0);
     this._nodeMassUploadScratch = new Float32Array(0);
     this._neighborWeightUploadScratch = new Float32Array(0);
+    this._componentGravityScaleUploadScratch = new Float32Array(0);
     this._scalarValuesUploadScratch = new Float32Array(0);
     this._scalarValuesLinearScratch = new Float32Array(0);
     this._uintUploadScratch = new Uint32Array(0);
@@ -2675,6 +3136,7 @@ class WebGLTextureComputePath {
       'u_neighborStarts',
       'u_neighborCounts',
       'u_neighbors',
+      'u_componentGravityScale',
       'u_nodeTexSize',
       'u_activeIdsTexSize',
       'u_neighborTexSize',
@@ -2688,6 +3150,7 @@ class WebGLTextureComputePath {
       'u_sampleChurnCount',
       'u_forceNormalizationMode',
       'u_hasEdgeWeights',
+      'u_componentGravityEnabled',
       'u_seed',
       'u_sampleFrame',
       'u_center',
@@ -2976,12 +3439,27 @@ class WebGLTextureComputePath {
     this._ensureUintTexture('neighborStartsTexture', this.nodeLayout.width, this.nodeLayout.height);
     this._ensureUintTexture('neighborCountsTexture', this.nodeLayout.width, this.nodeLayout.height);
     this._ensureUintTexture('neighborsTexture', this.neighborLayout.width, this.neighborLayout.height);
+    this._ensureFloatTexture('componentGravityScaleTexture', this.nodeLayout.width, this.nodeLayout.height);
 
     this._uploadUintTexture(this.activeIdsTexture, this.activeLayout, payload.activeIds);
     this._uploadUintTexture(this.activeMaskTexture, this.nodeLayout, payload.activeMask);
     this._uploadUintTexture(this.neighborStartsTexture, this.nodeLayout, payload.neighborStarts);
     this._uploadUintTexture(this.neighborCountsTexture, this.nodeLayout, payload.neighborCounts);
     this._uploadUintTexture(this.neighborsTexture, this.neighborLayout, payload.neighbors);
+    if (payload.componentGravityEnabled === true) {
+      const componentGravityScalePacked = this._packScalarSource(
+        payload.componentGravityScale,
+        this.nodeCapacity,
+        this.nodeLayout.width * this.nodeLayout.height,
+        '_componentGravityScaleUploadScratch',
+      );
+      this._uploadPackedFloatTexture(
+        this.componentGravityScaleTexture,
+        componentGravityScalePacked,
+        this.nodeLayout.width,
+        this.nodeLayout.height,
+      );
+    }
     if (useLinearScalar) {
       this._ensureUintTexture('neighborEdgesTexture', this.neighborLayout.width, this.neighborLayout.height);
       this._ensureFloatTexture('scalarValuesTexture', this.scalarLayout.width, this.scalarLayout.height);
@@ -3211,6 +3689,7 @@ class WebGLTextureComputePath {
       this._bindTexture(4, this.neighborStartsTexture);
       this._bindTexture(5, this.neighborCountsTexture);
       this._bindTexture(6, this.neighborsTexture);
+      this._bindTexture(7, this.componentGravityScaleTexture);
       gl.uniform1i(computeUniforms.u_positions, 0);
       gl.uniform1i(computeUniforms.u_velocities, 1);
       gl.uniform1i(computeUniforms.u_activeIds, 2);
@@ -3218,16 +3697,17 @@ class WebGLTextureComputePath {
       gl.uniform1i(computeUniforms.u_neighborStarts, 4);
       gl.uniform1i(computeUniforms.u_neighborCounts, 5);
       gl.uniform1i(computeUniforms.u_neighbors, 6);
+      gl.uniform1i(computeUniforms.u_componentGravityScale, 7);
       if (useUmap) {
-        this._bindTexture(7, this.nodeMassTexture);
-        this._bindTexture(8, this.neighborWeightsTexture);
-        gl.uniform1i(computeUniforms.u_nodeMass, 7);
-        gl.uniform1i(computeUniforms.u_neighborWeights, 8);
+        this._bindTexture(8, this.nodeMassTexture);
+        this._bindTexture(9, this.neighborWeightsTexture);
+        gl.uniform1i(computeUniforms.u_nodeMass, 8);
+        gl.uniform1i(computeUniforms.u_neighborWeights, 9);
       } else if (useLinearScalar) {
-        this._bindTexture(7, this.neighborEdgesTexture);
-        this._bindTexture(8, this.scalarValuesTexture);
-        gl.uniform1i(computeUniforms.u_neighborEdges, 7);
-        gl.uniform1i(computeUniforms.u_scalarValues, 8);
+        this._bindTexture(8, this.neighborEdgesTexture);
+        this._bindTexture(9, this.scalarValuesTexture);
+        gl.uniform1i(computeUniforms.u_neighborEdges, 8);
+        gl.uniform1i(computeUniforms.u_scalarValues, 9);
       }
       gl.uniform2i(computeUniforms.u_nodeTexSize, this.nodeLayout.width, this.nodeLayout.height);
       gl.uniform2i(computeUniforms.u_activeIdsTexSize, this.activeLayout.width, this.activeLayout.height);
@@ -3246,6 +3726,7 @@ class WebGLTextureComputePath {
         gl.uniform1i(computeUniforms.u_forceNormalizationMode, forceNormalizationMode(stepOptions.forceNormalizationType));
         gl.uniform1i(computeUniforms.u_hasEdgeWeights, stepOptions.hasEdgeWeights ? 1 : 0);
       }
+      gl.uniform1i(computeUniforms.u_componentGravityEnabled, stepOptions.componentGravityEnabled ? 1 : 0);
       gl.uniform1ui(computeUniforms.u_seed, this.seed >>> 0);
       gl.uniform1ui(computeUniforms.u_sampleFrame, this.sampleFrame >>> 0);
       gl.uniform3f(computeUniforms.u_center, center[0], center[1], center[2]);
@@ -3491,6 +3972,7 @@ class WebGLTextureComputePath {
     if (this.neighborStartsTexture) gl.deleteTexture(this.neighborStartsTexture);
     if (this.neighborCountsTexture) gl.deleteTexture(this.neighborCountsTexture);
     if (this.neighborsTexture) gl.deleteTexture(this.neighborsTexture);
+    if (this.componentGravityScaleTexture) gl.deleteTexture(this.componentGravityScaleTexture);
     if (this.neighborEdgesTexture) gl.deleteTexture(this.neighborEdgesTexture);
     if (this.nodeMassTexture) gl.deleteTexture(this.nodeMassTexture);
     if (this.neighborWeightsTexture) gl.deleteTexture(this.neighborWeightsTexture);
@@ -3676,6 +4158,7 @@ class WebGPUForceComputeBackend {
     this.neighborStartsBuffer = null;
     this.neighborCountsBuffer = null;
     this.neighborsBuffer = null;
+    this.componentGravityScaleBuffer = null;
     this.neighborEdgesBuffer = null;
     this.scalarWeightsBuffer = null;
     this.nodeCapacity = 0;
@@ -3726,15 +4209,16 @@ class WebGPUForceComputeBackend {
       { binding: 6, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
       { binding: 7, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
       { binding: 8, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
+      { binding: 9, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
       ...(useUmap
-        ? [{ binding: 9, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } }]
+        ? [{ binding: 10, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } }]
         : useLinearScalar
           ? [
-            { binding: 9, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
             { binding: 10, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
+            { binding: 11, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
           ]
         : []),
-      { binding: useUmap ? 10 : useLinearScalar ? 11 : 9, visibility: this.shaderVisibility, buffer: { type: 'uniform' } },
+      { binding: useUmap ? 11 : useLinearScalar ? 12 : 10, visibility: this.shaderVisibility, buffer: { type: 'uniform' } },
     ];
     this[layoutField] = this.device.createBindGroupLayout({ entries });
     const module = this.device.createShaderModule({
@@ -3851,12 +4335,13 @@ class WebGPUForceComputeBackend {
       { binding: 6, resource: { buffer: this.neighborStartsBuffer } },
       { binding: 7, resource: { buffer: this.neighborCountsBuffer } },
       { binding: 8, resource: { buffer: this.neighborsBuffer } },
-      ...(useUmap ? [{ binding: 9, resource: { buffer: this.scalarWeightsBuffer } }] : []),
+      { binding: 9, resource: { buffer: this.componentGravityScaleBuffer } },
+      ...(useUmap ? [{ binding: 10, resource: { buffer: this.scalarWeightsBuffer } }] : []),
       ...(!useUmap && useLinearScalar ? [
-        { binding: 9, resource: { buffer: this.neighborEdgesBuffer } },
-        { binding: 10, resource: { buffer: this.scalarWeightsBuffer } },
+        { binding: 10, resource: { buffer: this.neighborEdgesBuffer } },
+        { binding: 11, resource: { buffer: this.scalarWeightsBuffer } },
       ] : []),
-      { binding: useUmap ? 10 : useLinearScalar ? 11 : 9, resource: { buffer: this.paramsBuffer } },
+      { binding: useUmap ? 11 : useLinearScalar ? 12 : 10, resource: { buffer: this.paramsBuffer } },
     ];
     const bindGroup = this.device.createBindGroup({ layout, entries });
     if (useUmap) this.umapBindGroup = bindGroup;
@@ -3935,6 +4420,7 @@ class WebGPUForceComputeBackend {
       neighborCounts,
       neighbors,
       neighborEdges,
+      componentGravityScale,
       nodeMass,
       neighborWeights,
       nodeStrength,
@@ -3967,6 +4453,7 @@ class WebGPUForceComputeBackend {
     this._ensureBuffer('neighborStartsBuffer', nodeU32Bytes, this.storageUsage, 'layout:gpu-force:neighbor-starts');
     this._ensureBuffer('neighborCountsBuffer', nodeU32Bytes, this.storageUsage, 'layout:gpu-force:neighbor-counts');
     this._ensureBuffer('neighborsBuffer', Math.max(1, neighbors.length) * 4, this.storageUsage, 'layout:gpu-force:neighbors');
+    this._ensureBuffer('componentGravityScaleBuffer', Math.max(1, this.nodeCapacity) * 4, this.storageUsage, 'layout:gpu-force:component-gravity-scale');
     if (useLinearScalar) {
       this._ensureBuffer(
         'neighborEdgesBuffer',
@@ -4034,6 +4521,9 @@ class WebGPUForceComputeBackend {
       queue.writeBuffer(this.activeMaskBuffer, 0, activeMask.buffer, activeMask.byteOffset, nodeU32BytesUsed);
       queue.writeBuffer(this.neighborStartsBuffer, 0, neighborStarts.buffer, neighborStarts.byteOffset, nodeU32BytesUsed);
       queue.writeBuffer(this.neighborCountsBuffer, 0, neighborCounts.buffer, neighborCounts.byteOffset, nodeU32BytesUsed);
+      if (payload.componentGravityEnabled === true) {
+        queue.writeBuffer(this.componentGravityScaleBuffer, 0, componentGravityScale.buffer, componentGravityScale.byteOffset, this.nodeCapacity * 4);
+      }
     }
     if (payload.neighborLength > 0) {
       queue.writeBuffer(this.neighborsBuffer, 0, neighbors.buffer, neighbors.byteOffset, payload.neighborLength * 4);
@@ -4282,6 +4772,7 @@ class WebGPUForceComputeBackend {
     );
     paramsU32[28] = chunkState.start >>> 0;
     paramsU32[29] = chunkState.count >>> 0;
+    paramsU32[30] = stepOptions.componentGravityEnabled ? 1 : 0;
 
     const outputScale = Math.max(0.0001, toFinite(stepOptions.outputScale, DEFAULT_OPTIONS.outputScale));
     const rotationDamping = clamp(stepOptions.rotationDamping, 0, 1, DEFAULT_OPTIONS.rotationDamping);
@@ -4672,6 +5163,7 @@ class WebGPUForceComputeBackend {
     this.neighborStartsBuffer?.destroy?.();
     this.neighborCountsBuffer?.destroy?.();
     this.neighborsBuffer?.destroy?.();
+    this.componentGravityScaleBuffer?.destroy?.();
     this._releaseUmapBuffer();
     this.paramsBuffer?.destroy?.();
     this.outputScaleParamsBuffer?.destroy?.();
@@ -4692,6 +5184,7 @@ class WebGPUForceComputeBackend {
     this.neighborStartsBuffer = null;
     this.neighborCountsBuffer = null;
     this.neighborsBuffer = null;
+    this.componentGravityScaleBuffer = null;
     this.scalarWeightsBuffer = null;
     this.paramsBuffer = null;
     this.outputScaleParamsBuffer = null;
@@ -4753,6 +5246,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       layoutChunkNodeCount: options.layoutChunkNodeCount == null
         ? null
         : resolveLayoutChunkNodeCount(options.layoutChunkNodeCount),
+      componentForces: normalizeComponentForces(options.componentForces ?? DEFAULT_OPTIONS.componentForces),
     };
     if (isUmapForceModel(normalizedOptions.forceModel)) {
       if (options.kRepulsion == null) normalizedOptions.kRepulsion = 1;
@@ -4772,6 +5266,8 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     this._webgl = null;
     this._activeCount = 0;
     this._nodeCapacity = 0;
+    this._componentCount = 0;
+    this._componentGravityEnabled = false;
     this._topologyScratch = {
       activeIds: createEmptyUintArray(),
       activeMask: createEmptyUintArray(),
@@ -4782,6 +5278,15 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       neighborWeights: createEmptyFloatArray(),
       nodeMass: createEmptyFloatArray(),
       cursor: createEmptyUintArray(),
+      componentIds: createEmptyUintArray(),
+      componentRanks: createEmptyUintArray(),
+      nodeComponentRank: createEmptyUintArray(),
+      nodeComponentSize: createEmptyUintArray(),
+      componentSizes: createEmptyUintArray(),
+      componentGravityScale: createEmptyFloatArray(),
+      componentParent: createEmptyUintArray(),
+      componentUnionSize: createEmptyUintArray(),
+      componentRootToId: createEmptyUintArray(),
       packedPositions: createEmptyFloatArray(),
       packedOutputPositions: createEmptyFloatArray(),
     };
@@ -4817,6 +5322,11 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     const prevLayoutScheduling = this.options.layoutScheduling;
     const prevLayoutChunkCount = this.options.layoutChunkCount;
     const prevLayoutChunkNodeCount = this.options.layoutChunkNodeCount;
+    const prevComponentForces = this.options.componentForces;
+    const prevComponentSeeding = this.options.componentSeeding;
+    const prevComponentGravity = this.options.componentGravity;
+    const prevComponentMainGravityScale = this.options.componentMainGravityScale;
+    const prevComponentSingletonGravityScale = this.options.componentSingletonGravityScale;
     this.options = {
       ...this.options,
       ...next,
@@ -4827,6 +5337,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       layoutChunkNodeCount: next.layoutChunkNodeCount == null
         ? (Object.prototype.hasOwnProperty.call(next, 'layoutChunkCount') ? null : this.options.layoutChunkNodeCount)
         : resolveLayoutChunkNodeCount(next.layoutChunkNodeCount),
+      componentForces: normalizeComponentForces(next.componentForces ?? this.options.componentForces),
     };
     if (isUmapForceModel(this.options.forceModel) && !isUmapForceModel(prevForceModel)) {
       if (next.kRepulsion == null) this.options.kRepulsion = 1;
@@ -4848,7 +5359,14 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     const edgeWeightChanged = prevEdgeWeightAttribute !== this.options.edgeWeightAttribute;
     const nodeMassChanged = prevNodeMassAttribute !== this.options.nodeMassAttribute;
     const forceNormalizationChanged = prevForceNormalizationType !== this.options.forceNormalizationType;
-    if (prevMode !== this.options.mode || centerChanged || modelChanged || edgeWeightChanged || nodeMassChanged || forceNormalizationChanged) {
+    const componentOptionsChanged = (
+      prevComponentForces !== this.options.componentForces
+      || prevComponentSeeding !== this.options.componentSeeding
+      || prevComponentGravity !== this.options.componentGravity
+      || prevComponentMainGravityScale !== this.options.componentMainGravityScale
+      || prevComponentSingletonGravityScale !== this.options.componentSingletonGravityScale
+    );
+    if (prevMode !== this.options.mode || centerChanged || modelChanged || edgeWeightChanged || nodeMassChanged || forceNormalizationChanged || componentOptionsChanged) {
       this.markTopologyDirty('options');
     }
     if (
@@ -4871,6 +5389,8 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     this._backendGlRef = null;
     this._activeCount = 0;
     this._nodeCapacity = 0;
+    this._componentCount = 0;
+    this._componentGravityEnabled = false;
     this._topologyScratch = {
       activeIds: createEmptyUintArray(),
       activeMask: createEmptyUintArray(),
@@ -4881,6 +5401,15 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       neighborWeights: createEmptyFloatArray(),
       nodeMass: createEmptyFloatArray(),
       cursor: createEmptyUintArray(),
+      componentIds: createEmptyUintArray(),
+      componentRanks: createEmptyUintArray(),
+      nodeComponentRank: createEmptyUintArray(),
+      nodeComponentSize: createEmptyUintArray(),
+      componentSizes: createEmptyUintArray(),
+      componentGravityScale: createEmptyFloatArray(),
+      componentParent: createEmptyUintArray(),
+      componentUnionSize: createEmptyUintArray(),
+      componentRootToId: createEmptyUintArray(),
       packedPositions: createEmptyFloatArray(),
       packedOutputPositions: createEmptyFloatArray(),
     };
@@ -5119,6 +5648,16 @@ export class GpuForcePositionDelegate extends PositionDelegate {
 
     this._activeCount = payload.activeCount;
     this._nodeCapacity = payload.nodeCapacity;
+    this._componentCount = payload.componentCount ?? 0;
+    this._componentGravityEnabled = payload.componentGravityEnabled === true;
+    const activeSelectionChanged = Boolean(previousVersionSnapshot && versionSnapshot && (
+      Number(previousVersionSnapshot.nodeIndicesVersion) !== Number(versionSnapshot.nodeIndicesVersion)
+      || Number(previousVersionSnapshot.edgeIndicesVersion) !== Number(versionSnapshot.edgeIndicesVersion)
+      || Number(previousVersionSnapshot.nodeIndicesCount) !== Number(versionSnapshot.nodeIndicesCount)
+      || Number(previousVersionSnapshot.edgeIndicesCount) !== Number(versionSnapshot.edgeIndicesCount)
+    ));
+    const resetForComponentSeeding = payload.componentSeedingApplied === true
+      && (synchronizeReason !== 'version-change' || activeSelectionChanged);
     const shouldPreferPreserve = synchronizeReason !== 'attach'
       && synchronizeReason !== 'backend-change'
       && synchronizeReason !== 'network:replaced'
@@ -5127,6 +5666,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
     const preserveDynamicState = Boolean(shouldPreferPreserve
       && this._nodeCapacity > 0
       && topologyInputs.nodeCapacity === this._nodeCapacity
+      && !resetForComponentSeeding
       && (
         (this._webgpu && this._webgpu.getPositionBuffer?.())
         || (this._webgl && this._webgl.getPositionTexture?.())
@@ -5246,6 +5786,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       kRepulsion: toFinite(this.options.kRepulsion, DEFAULT_OPTIONS.kRepulsion) * this.alpha * exactRepulsionScale,
       kAttraction: toFinite(this.options.kAttraction, DEFAULT_OPTIONS.kAttraction) * this.alpha,
       kGravity: toFinite(this.options.kGravity, DEFAULT_OPTIONS.kGravity) * this.alpha,
+      componentGravityEnabled: this._componentGravityEnabled,
       umapA: Math.max(0.000001, toFinite(this.options.umapA, DEFAULT_OPTIONS.umapA)),
       umapB: Math.max(0.000001, toFinite(this.options.umapB, DEFAULT_OPTIONS.umapB)),
       umapGamma: Math.max(0, toFinite(this.options.umapGamma, DEFAULT_OPTIONS.umapGamma)),

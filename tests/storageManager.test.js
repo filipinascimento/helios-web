@@ -3255,6 +3255,7 @@ test('built-in panel schemas aggregate key and prefix marker status from state',
   });
   storage.states.register(null, 'layout', {
     layoutType: { default: 'static', type: 'string' },
+    pauseOnInteraction: { default: false, type: 'boolean' },
     'parameters.gravity': { default: 0.5, type: 'number' },
   });
   storage.states.register(null, 'mappers', {
@@ -3262,6 +3263,7 @@ test('built-in panel schemas aggregate key and prefix marker status from state',
   });
 
   assert.ok(panelSchemaKeys(SCENE_PANEL_SCHEMA).includes('appearance.nodeStyle.sizeScale'));
+  assert.ok(panelSchemaKeys(LAYOUT_PANEL_SCHEMA).includes('layout.pauseOnInteraction'));
   assert.ok(panelSchemaSectionKeys(SCENE_PANEL_SCHEMA, 'appearance').includes('mappers.node'));
   assert.equal(panelSchemaSectionStatus(SCENE_PANEL_SCHEMA, 'appearance', storage.states), 'default');
   assert.equal(panelSchemaStatus(LEGENDS_PANEL_SCHEMA, storage.states).panel, 'default');
@@ -3316,6 +3318,7 @@ test('complex panel schemas aggregate mapper, filter, selection, and labels keys
 
   assert.ok(panelSchemaSectionKeys(MAPPERS_PANEL_SCHEMA, 'nodes').includes('mappers.node.color'));
   assert.ok(panelSchemaSectionKeys(FILTERS_PANEL_SCHEMA, 'runtime').includes('filters.rules'));
+  assert.ok(panelSchemaSectionKeys(FILTERS_PANEL_SCHEMA, 'runtime').includes('filters.minComponentSize'));
   assert.ok(panelSchemaSectionKeys(SELECTION_PANEL_SCHEMA, 'selectors').includes('selection.selectors.node.rules'));
   assert.ok(panelSchemaSectionKeys(LABELS_PANEL_SCHEMA, 'style').includes('labels.fill'));
 

@@ -20,12 +20,18 @@ function createFilterModel(options = {}) {
   });
 }
 
+function normalizeMinComponentSize(value) {
+  const numeric = Math.floor(Number(value));
+  return Number.isFinite(numeric) && numeric > 1 ? numeric : 1;
+}
+
 function summarizeFilter(helios, model) {
   const graphFilter = helios?.getGraphFilter?.() ?? null;
   return {
     enabled: graphFilter?.enabled === true,
     scope: model?.getScope?.() ?? graphFilter?.scope ?? 'render',
     rules: cloneRules(model?.getRules?.() ?? []),
+    minComponentSize: normalizeMinComponentSize(graphFilter?.options?.minComponentSize),
     options: graphFilter?.options ? { ...graphFilter.options } : null,
     nodeCount: graphFilter?.nodeCount ?? null,
     edgeCount: graphFilter?.edgeCount ?? null,
@@ -53,6 +59,7 @@ export class FilterBehavior extends Behavior {
   constructor(options = {}) {
     super(options);
     this._muteGraphSync = 0;
+    this.minComponentSize = normalizeMinComponentSize(options.minComponentSize);
     this.filterModel = createFilterModel(options.filterModel ?? options);
     this.state = summarizeFilter(null, this.filterModel);
   }
@@ -86,6 +93,9 @@ export class FilterBehavior extends Behavior {
         ? options.rules
         : this.filterModel?.getRules?.(),
     });
+    if (Object.prototype.hasOwnProperty.call(options, 'minComponentSize')) {
+      this.minComponentSize = normalizeMinComponentSize(options.minComponentSize);
+    }
     return this.setFilterModel(nextModel, { reason: 'options' });
   }
 
@@ -98,6 +108,7 @@ export class FilterBehavior extends Behavior {
       filter: {
         scope: this.filterModel?.getScope?.() ?? 'render',
         rules: cloneRules(this.filterModel?.getRules?.() ?? []),
+        minComponentSize: this.minComponentSize,
       },
     };
   }
@@ -118,7 +129,7 @@ export class FilterBehavior extends Behavior {
         getter: () => this.state.enabled === true,
         setter: (value) => {
           if (value === false) this.clear();
-          else if (this.filterModel?.hasCriteria?.()) this.setFilterModel(this.filterModel, { reason: 'enabled' });
+          else if (this.filterModel?.hasCriteria?.() || this.minComponentSize > 1) this.setFilterModel(this.filterModel, { reason: 'enabled' });
         },
         subscribe,
       },
@@ -155,6 +166,20 @@ export class FilterBehavior extends Behavior {
         }),
         subscribe,
       },
+      minComponentSize: {
+        description: 'Minimum active connected-component size to keep in the graph filter.',
+        default: this.minComponentSize,
+        type: 'number',
+        scope: 'workspace',
+        aliases: ['filters.minComponentSize'],
+        ui: {
+          label: 'Min component size',
+          controller: 'number',
+        },
+        getter: () => this.minComponentSize,
+        setter: (value) => this.setMinComponentSize(value),
+        subscribe,
+      },
     };
   }
 
@@ -167,6 +192,7 @@ export class FilterBehavior extends Behavior {
       scope: filter.scope ?? this.filterModel?.getScope?.(),
       rules: filter.rules ?? [],
     });
+    this.minComponentSize = normalizeMinComponentSize(filter.minComponentSize);
     this.setFilterModel(restored, { reason: 'restore', trackOverride: false });
     this.emitChange('restore', { source: 'restore', trackOverride: false });
     return this;
@@ -201,6 +227,11 @@ export class FilterBehavior extends Behavior {
     return this.setFilterModel(next, { reason: 'scope' });
   }
 
+  setMinComponentSize(value) {
+    this.minComponentSize = normalizeMinComponentSize(value);
+    return this.setFilterModel(this.filterModel, { reason: 'min-component-size' });
+  }
+
   /**
    * Replace all active node and edge filter rules.
    *
@@ -214,13 +245,16 @@ export class FilterBehavior extends Behavior {
    * @remarks `render+layout` changes the graph view consumed by dynamic
    * layouts. Use `render` when hiding items should not change layout forces.
    */
-  replaceRules({ nodeRules = [], edgeRules = [], scope } = {}) {
+  replaceRules({ nodeRules = [], edgeRules = [], scope, minComponentSize } = {}) {
     const next = createFilterModel({
       id: this.filterModel?.id,
       name: this.filterModel?.name,
       scope: scope ?? this.filterModel?.getScope?.(),
       rules: [...cloneRules(nodeRules), ...cloneRules(edgeRules)],
     });
+    if (minComponentSize != null) {
+      this.minComponentSize = normalizeMinComponentSize(minComponentSize);
+    }
     return this.setFilterModel(next, { reason: 'rules' });
   }
 
@@ -239,6 +273,7 @@ export class FilterBehavior extends Behavior {
       scope: 'render',
       rules: [],
     });
+    this.minComponentSize = 1;
     if (helios?.clearGraphFilter) {
       this._muteGraphSync += 1;
       try {
@@ -255,10 +290,14 @@ export class FilterBehavior extends Behavior {
   setFilterModel(model, { reason = 'model', trackOverride = true } = {}) {
     this.filterModel = createFilterModel(model);
     const helios = this.context?.helios ?? null;
-    if (helios?.activateHeliosFilter) {
+    const graphOptions = this.filterModel.toGraphFilterOptions();
+    if (this.minComponentSize > 1) {
+      graphOptions.minComponentSize = this.minComponentSize;
+    }
+    if (helios?.setGraphFilter) {
       this._muteGraphSync += 1;
       try {
-        if (this.filterModel.hasCriteria()) helios.activateHeliosFilter(this.filterModel.clone());
+        if (this.filterModel.hasCriteria() || this.minComponentSize > 1) helios.setGraphFilter(graphOptions);
         else helios.clearGraphFilter?.();
       } finally {
         this._muteGraphSync -= 1;
@@ -267,7 +306,7 @@ export class FilterBehavior extends Behavior {
     this.state = summarizeFilter(helios, this.filterModel);
     this.emitChange(reason, {
       trackOverride: trackOverride !== false,
-      storageKeys: ['filters.enabled', 'filters.scope', 'filters.rules'],
+      storageKeys: ['filters.enabled', 'filters.scope', 'filters.rules', 'filters.minComponentSize'],
     });
     return this;
   }
@@ -279,6 +318,12 @@ export class FilterBehavior extends Behavior {
       this.filterModel = activeModel.clone();
     } else if (!this.filterModel) {
       this.filterModel = createFilterModel();
+    }
+    const graphFilter = helios?.getGraphFilter?.() ?? null;
+    if (Object.prototype.hasOwnProperty.call(graphFilter?.options ?? {}, 'minComponentSize')) {
+      this.minComponentSize = normalizeMinComponentSize(graphFilter.options.minComponentSize);
+    } else if (graphFilter?.enabled === false || graphFilter?.options) {
+      this.minComponentSize = 1;
     }
     this.state = summarizeFilter(helios, this.filterModel);
     if (!silent) this.emitChange('sync');

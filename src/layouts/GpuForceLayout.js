@@ -35,12 +35,18 @@ const DEFAULT_OPTIONS = {
   maxStep: 2.5,
   minDistance: 0.15,
   alpha: 1,
-  alphaDecay: 0.001,
+  alphaDecay: 0.003,
   alphaTarget: 0,
   alphaMin: 0.001,
   autoStopAtAlphaMin: true,
   recenter: true,
   rotationDamping: 0.6,
+  componentForces: 'auto',
+  componentMode: 'weak',
+  componentSeeding: false,
+  componentGravity: true,
+  componentMainGravityScale: 1.5,
+  componentSingletonGravityScale: 0.25,
 };
 
 const DEFAULT_UMAP_OUTPUT_SCALE = 24;
@@ -114,6 +120,17 @@ function normalizeLayoutScheduling(value) {
   const normalized = String(value ?? '').trim().toLowerCase();
   if (normalized === 'chunk' || normalized === 'chunked') return 'chunked';
   if (normalized === 'full' || normalized === 'legacy' || normalized === 'off') return 'full';
+  return 'auto';
+}
+
+function normalizeComponentForces(value) {
+  if (value === false) return 'off';
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'off' || normalized === 'false' || normalized === 'disabled' || normalized === 'none') {
+    return 'off';
+  }
+  if (normalized === 'halo') return 'halo';
+  if (normalized === 'supernode' || normalized === 'supernode-experimental') return 'supernode-experimental';
   return 'auto';
 }
 
@@ -274,6 +291,7 @@ export class GpuForceLayout extends Layout {
       layoutChunkNodeCount: options.layoutChunkNodeCount == null
         ? null
         : resolveLayoutChunkNodeCount(options.layoutChunkNodeCount),
+      componentForces: normalizeComponentForces(options.componentForces ?? DEFAULT_OPTIONS.componentForces),
     };
     if (isUmapForceModel(normalized.forceModel)) {
       if (options.outputScale == null) normalized.outputScale = DEFAULT_UMAP_OUTPUT_SCALE;
@@ -405,6 +423,7 @@ export class GpuForceLayout extends Layout {
       layoutChunkNodeCount: next.layoutChunkNodeCount == null
         ? (hasOwn(next, 'layoutChunkCount') ? null : this.options.layoutChunkNodeCount)
         : resolveLayoutChunkNodeCount(next.layoutChunkNodeCount),
+      componentForces: normalizeComponentForces(next.componentForces ?? this.options.componentForces),
     };
     if (isUmapForceModel(this.options.forceModel) && !isUmapForceModel(prevForceModel)) {
       if (next.outputScale == null) this.options.outputScale = DEFAULT_UMAP_OUTPUT_SCALE;
@@ -535,6 +554,19 @@ export class GpuForceLayout extends Layout {
         step: 1,
         get: () => resolveLayoutChunkCount(this.options.layoutChunkCount),
         set: (value) => this.setSettings({ layoutChunkCount: resolveLayoutChunkCount(value) }),
+      },
+      {
+        key: 'componentForces',
+        label: 'Components',
+        hint: 'Auto scales gravity for singleton-heavy layouts without changing dense connected layouts. Off disables component metadata. Force halo applies component gravity unconditionally without reseeding positions.',
+        type: 'select',
+        options: [
+          { value: 'auto', label: 'Auto' },
+          { value: 'off', label: 'Off' },
+          { value: 'halo', label: 'Force halo' },
+        ],
+        get: () => normalizeComponentForces(this.options.componentForces ?? DEFAULT_OPTIONS.componentForces),
+        set: (value) => this.setSettings({ componentForces: normalizeComponentForces(value) }, { reheat: true }),
       },
     ];
 

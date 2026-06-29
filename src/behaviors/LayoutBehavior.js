@@ -5,6 +5,9 @@ import { GpuForceLayout } from '../layouts/GpuForceLayout.js';
 
 const CURRENT_POSITION_ATTRIBUTE = '_helios_visuals_position';
 const RANDOM_LAYOUT_POSITION_CHOICE = '$random';
+const CAMERA_MOVE_EVENT = 'camera:move';
+const PAUSE_ON_INTERACTION_NODE_COUNT = 1_000_000;
+const PAUSE_ON_INTERACTION_RESUME_DELAY_MS = 300;
 
 function cloneSerializable(value) {
   if (Array.isArray(value)) return value.map((entry) => cloneSerializable(entry));
@@ -79,6 +82,44 @@ function getLayoutRunState(helios) {
     return scheduler.getLayoutState();
   }
   return scheduler.layoutEnabled !== false ? 'running' : 'stopped';
+}
+
+function graphSizeForInteractionPause(helios) {
+  const network = helios?.network ?? null;
+  const nodeCount = Number(network?.nodeCount);
+  const nodeCapacity = Number(network?.nodeCapacity);
+  return Math.max(
+    Number.isFinite(nodeCount) ? nodeCount : 0,
+    Number.isFinite(nodeCapacity) ? nodeCapacity : 0,
+  );
+}
+
+function defaultPauseOnInteraction(helios) {
+  return graphSizeForInteractionPause(helios) >= PAUSE_ON_INTERACTION_NODE_COUNT;
+}
+
+function normalizeOptionalBoolean(value) {
+  if (value === true) return true;
+  if (value === false) return false;
+  return null;
+}
+
+function normalizeNonNegativeNumber(value, fallback, max = Number.POSITIVE_INFINITY) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) return fallback;
+  return Math.min(numeric, max);
+}
+
+function interactionNow() {
+  return typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
+}
+
+function isManualCameraMove(detail = {}) {
+  const source = String(detail?.origin ?? detail?.source ?? '').toLowerCase();
+  if (source === 'interaction') return true;
+  return detail?.manual === true || detail?.change?.manual === true;
 }
 
 function buildLayoutInstance(helios, value) {
@@ -301,19 +342,37 @@ export class LayoutBehavior extends Behavior {
     super(options);
     this.state = {
       positionAttribute: CURRENT_POSITION_ATTRIBUTE,
+      pauseOnInteraction: false,
     };
+    this._pauseOnInteractionExplicit = Object.prototype.hasOwnProperty.call(options, 'pauseOnInteraction')
+      && normalizeOptionalBoolean(options.pauseOnInteraction) !== null;
+    this._pauseOnInteractionResumeDelayMs = PAUSE_ON_INTERACTION_RESUME_DELAY_MS;
+    this._interactionPauseTimer = null;
+    this._interactionPauseActive = false;
+    this._interactionPointerIds = new Set();
+    this._lastInteractionAt = 0;
     this.update(options);
   }
 
   attach(context) {
     super.attach(context);
     const helios = this.context?.helios ?? null;
+    this._refreshPauseOnInteractionDefault({ emit: false, rebaseline: false });
+    this.addCleanup(() => {
+      this._clearInteractionPauseTimer();
+      this._resumeAfterCameraInteraction();
+    });
+    this._attachInteractionDebounceListeners(helios);
     this.addCleanup(this.context.subscribe(helios, 'layout:changed', () => this.emitChange('layout-changed', { source: 'refresh', trackOverride: false })));
     this.addCleanup(this.context.subscribe(helios, 'layout:start', () => this.emitChange('layout-start', { source: 'refresh', trackOverride: false })));
     this.addCleanup(this.context.subscribe(helios, 'layout:stop', () => this.emitChange('layout-stop', { source: 'refresh', trackOverride: false })));
     this.addCleanup(this.context.subscribe(helios, 'network:replaced', () => {
+      this._refreshPauseOnInteractionDefault({ emit: true });
       this.refreshParameterStateEntries();
       this.emitChange('network-replaced', { trackOverride: false });
+    }));
+    this.addCleanup(this.context.subscribe(helios, CAMERA_MOVE_EVENT, (event) => {
+      this._maybePauseForCameraInteraction(event?.detail ?? event ?? {});
     }));
     this.emitChange('attach', { source: 'default', trackOverride: false });
     return this;
@@ -327,6 +386,20 @@ export class LayoutBehavior extends Behavior {
       this.state.positionAttribute = typeof value === 'string' && value.trim()
         ? value.trim()
         : CURRENT_POSITION_ATTRIBUTE;
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'pauseOnInteraction')) {
+      const value = normalizeOptionalBoolean(options.pauseOnInteraction);
+      if (value !== null) {
+        this.state.pauseOnInteraction = value;
+        this._pauseOnInteractionExplicit = true;
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'pauseOnInteractionResumeDelayMs')) {
+      this._pauseOnInteractionResumeDelayMs = normalizeNonNegativeNumber(
+        options.pauseOnInteractionResumeDelayMs,
+        PAUSE_ON_INTERACTION_RESUME_DELAY_MS,
+        10_000,
+      );
     }
     if (Object.prototype.hasOwnProperty.call(options, 'layoutType')) {
       this.type(options.layoutType, { preserveRunState: options.preserveRunState !== false });
@@ -349,6 +422,7 @@ export class LayoutBehavior extends Behavior {
         layoutType: this.type(),
         parameters: snapshotLayoutBindingValues(layout),
         running: this.runState() !== 'stopped',
+        pauseOnInteraction: this.pauseOnInteraction(),
       },
     };
   }
@@ -411,6 +485,7 @@ export class LayoutBehavior extends Behavior {
           notify(undefined, detail);
         }),
       },
+      pauseOnInteraction: this._pauseOnInteractionStateEntry(),
       parameters: {
         description: 'Active layout parameter values.',
         default: this.parameters(),
@@ -440,6 +515,15 @@ export class LayoutBehavior extends Behavior {
     return this;
   }
 
+  refreshPauseOnInteractionStateEntry() {
+    const stateManager = this.context?.helios?.states ?? this.context?.helios?.storage ?? null;
+    if (typeof stateManager?.register !== 'function') return this;
+    stateManager.register(this, 'behaviors.layout', {
+      pauseOnInteraction: this._pauseOnInteractionStateEntry(),
+    });
+    return this;
+  }
+
   restore(snapshot = {}) {
     const options = snapshot?.options && typeof snapshot.options === 'object' ? snapshot.options : {};
     if (options.layoutType) {
@@ -448,6 +532,13 @@ export class LayoutBehavior extends Behavior {
     if (options.parameters && typeof options.parameters === 'object') {
       this.parameters(options.parameters, { silent: true });
     }
+    if (Object.prototype.hasOwnProperty.call(options, 'pauseOnInteraction')) {
+      const value = normalizeOptionalBoolean(options.pauseOnInteraction);
+      if (value !== null) {
+        this.state.pauseOnInteraction = value;
+        this._pauseOnInteractionExplicit = true;
+      }
+    }
     if (options.running === true && this.isDynamic()) {
       this.start();
     } else if (options.running === false || !this.isDynamic()) {
@@ -455,6 +546,27 @@ export class LayoutBehavior extends Behavior {
     }
     this.emitChange('restore', { source: 'restore', trackOverride: false });
     return this;
+  }
+
+  _pauseOnInteractionStateEntry() {
+    return {
+      description: 'Pause layout updates during manual camera pan, zoom, or rotation.',
+      default: this.pauseOnInteraction(),
+      type: 'boolean',
+      scope: 'workspace',
+      aliases: ['layout.pauseOnInteraction'],
+      ui: {
+        label: 'Pause On Input',
+        controller: 'toggle',
+      },
+      getter: () => this.pauseOnInteraction(),
+      setter: (value) => this.pauseOnInteraction(value),
+      subscribe: (notify) => this.on('change', (event) => {
+        const detail = event?.detail ?? event ?? {};
+        if (!layoutEventTargetsPath(detail, 'layout.pauseOnInteraction')) return;
+        notify(undefined, detail);
+      }),
+    };
   }
 
   emitChange(reason, detail = {}) {
@@ -472,6 +584,8 @@ export class LayoutBehavior extends Behavior {
       dynamic,
       runState,
       running: runState !== 'stopped',
+      pauseOnInteraction: this.pauseOnInteraction(),
+      pauseOnInteractionAuto: this._pauseOnInteractionExplicit !== true,
       positionAttribute: this.state.positionAttribute,
       effectivePositionAttribute: dynamic && runState !== 'stopped'
         ? CURRENT_POSITION_ATTRIBUTE
@@ -552,6 +666,167 @@ export class LayoutBehavior extends Behavior {
       storageKeys: keys.map((key) => `layout.parameters.${key}`),
     });
     return this;
+  }
+
+  pauseOnInteraction(value, options = {}) {
+    if (arguments.length === 0) return this.state.pauseOnInteraction === true;
+    const normalized = normalizeOptionalBoolean(value);
+    if (normalized === null) return this;
+    const changed = this.state.pauseOnInteraction !== normalized;
+    this.state.pauseOnInteraction = normalized;
+    this._pauseOnInteractionExplicit = true;
+    if (normalized === false) {
+      this._clearInteractionPauseTimer();
+      this._resumeAfterCameraInteraction({ force: true });
+    }
+    if (changed || options.forceEmit === true) {
+      this.emitChange('pause-on-interaction', {
+        trackOverride: options.trackOverride !== false,
+        storageKeys: ['layout.pauseOnInteraction'],
+      });
+    }
+    return this;
+  }
+
+  _refreshPauseOnInteractionDefault(options = {}) {
+    if (this._pauseOnInteractionExplicit === true) return this;
+    const next = defaultPauseOnInteraction(this.context?.helios ?? null);
+    if (this.state.pauseOnInteraction === next) return this;
+    this.state.pauseOnInteraction = next;
+    if (options.rebaseline !== false) {
+      this.refreshPauseOnInteractionStateEntry();
+    }
+    if (options.emit === true) {
+      this.emitChange('pause-on-interaction-default', {
+        source: 'default',
+        trackOverride: false,
+      });
+    }
+    return this;
+  }
+
+  _clearInteractionPauseTimer() {
+    if (this._interactionPauseTimer == null) return this;
+    clearTimeout(this._interactionPauseTimer);
+    this._interactionPauseTimer = null;
+    return this;
+  }
+
+  _attachInteractionDebounceListeners(helios = null) {
+    const canvas = helios?.layers?.canvas ?? helios?.renderer?.canvas ?? null;
+    if (!canvas || typeof canvas.addEventListener !== 'function') return this;
+    const onPointerDown = (event) => {
+      const pointerId = event?.pointerId;
+      if (pointerId != null) this._interactionPointerIds.add(pointerId);
+      this._recordManualInteractionActivity();
+    };
+    const onPointerMove = (event) => {
+      const pointerId = event?.pointerId;
+      if (pointerId != null && !this._interactionPointerIds.has(pointerId)) return;
+      this._recordManualInteractionActivity();
+    };
+    const onPointerEnd = (event) => {
+      const pointerId = event?.pointerId;
+      if (pointerId != null) this._interactionPointerIds.delete(pointerId);
+      this._recordManualInteractionActivity();
+      if (this._interactionPauseActive) this._scheduleInteractionResume();
+    };
+    const onPointerLeave = (event) => {
+      if (event?.buttons != null && event.buttons !== 0) return;
+      const pointerId = event?.pointerId;
+      if (pointerId != null) this._interactionPointerIds.delete(pointerId);
+      this._recordManualInteractionActivity();
+      if (this._interactionPauseActive) this._scheduleInteractionResume();
+    };
+    const onWheel = () => {
+      this._recordManualInteractionActivity();
+      if (this._interactionPauseActive) this._scheduleInteractionResume();
+    };
+    canvas.addEventListener('pointerdown', onPointerDown, { passive: true });
+    canvas.addEventListener('pointermove', onPointerMove, { passive: true });
+    canvas.addEventListener('pointerup', onPointerEnd, { passive: true });
+    canvas.addEventListener('pointercancel', onPointerEnd, { passive: true });
+    canvas.addEventListener('pointerleave', onPointerLeave, { passive: true });
+    canvas.addEventListener('wheel', onWheel, { passive: true });
+    this.addCleanup(() => {
+      canvas.removeEventListener?.('pointerdown', onPointerDown);
+      canvas.removeEventListener?.('pointermove', onPointerMove);
+      canvas.removeEventListener?.('pointerup', onPointerEnd);
+      canvas.removeEventListener?.('pointercancel', onPointerEnd);
+      canvas.removeEventListener?.('pointerleave', onPointerLeave);
+      canvas.removeEventListener?.('wheel', onWheel);
+      this._interactionPointerIds.clear();
+    });
+    return this;
+  }
+
+  _recordManualInteractionActivity() {
+    this._lastInteractionAt = interactionNow();
+    if (this._interactionPauseActive && this._interactionPointerIds.size > 0) {
+      this._clearInteractionPauseTimer();
+    }
+    return this;
+  }
+
+  _scheduleInteractionResume() {
+    this._clearInteractionPauseTimer();
+    if (this._interactionPointerIds.size > 0) return this;
+    const delayMs = this._pauseOnInteractionResumeDelayMs;
+    this._interactionPauseTimer = setTimeout(() => {
+      this._interactionPauseTimer = null;
+      const elapsed = interactionNow() - this._lastInteractionAt;
+      if (elapsed < delayMs || this._interactionPointerIds.size > 0) {
+        this._scheduleInteractionResume();
+        return;
+      }
+      this._resumeAfterCameraInteraction();
+    }, delayMs);
+    return this;
+  }
+
+  _pauseLayoutForCameraInteraction() {
+    const helios = this.context?.helios ?? null;
+    const scheduler = helios?.scheduler ?? null;
+    if (!scheduler || typeof scheduler.setLayoutEnabled !== 'function') return false;
+    scheduler.setLayoutEnabled(false, 'idle');
+    scheduler.requestRender?.();
+    this._interactionPauseActive = true;
+    this.emitChange('interaction-pause', {
+      source: 'interaction',
+      trackOverride: false,
+    });
+    return true;
+  }
+
+  _resumeAfterCameraInteraction(options = {}) {
+    if (!this._interactionPauseActive) return false;
+    this._interactionPauseActive = false;
+    if (options.force !== true && this.pauseOnInteraction() !== true) return false;
+    if (!this.isDynamic()) return false;
+    if (this.runState() !== 'idle') return false;
+    const scheduler = this.context?.helios?.scheduler ?? null;
+    if (!scheduler || typeof scheduler.setLayoutEnabled !== 'function') return false;
+    scheduler.setLayoutEnabled(true, 'camera-interaction');
+    scheduler.requestLayout?.('camera-interaction');
+    this.emitChange('interaction-resume', {
+      source: 'interaction',
+      trackOverride: false,
+    });
+    return true;
+  }
+
+  _maybePauseForCameraInteraction(detail = {}) {
+    if (this.pauseOnInteraction() !== true) return false;
+    if (!isManualCameraMove(detail)) return false;
+    if (!this.isDynamic()) return false;
+    this._recordManualInteractionActivity();
+    const state = this.runState();
+    if (state === 'stopped') return false;
+    if (state === 'running') {
+      this._pauseLayoutForCameraInteraction();
+    }
+    this._scheduleInteractionResume();
+    return this._interactionPauseActive;
   }
 
   positionAttribute(value, options = {}) {

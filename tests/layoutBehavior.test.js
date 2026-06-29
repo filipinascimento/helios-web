@@ -105,14 +105,16 @@ class MockHelios extends EventTarget {
     this.network = { nodeCount: 32, nodeCapacity: 32 };
     this.options = { mode: '2d' };
     this.renderer = { device: { type: 'webgpu' } };
+    this.layers = { canvas: new EventTarget() };
     this.states = new HeliosStateManager();
     this.scheduler = {
       layoutEnabled: true,
       state: 'running',
-      requestRender() {},
       getLayoutState() {
         return this.state;
       },
+      requestRender() {},
+      requestLayout() {},
       setLayoutEnabled: (enabled, reason = 'user') => {
         this.scheduler.layoutEnabled = enabled !== false;
         this.scheduler.state = enabled !== false
@@ -198,10 +200,18 @@ class MockHelios extends EventTarget {
   }
 }
 
-function attachLayoutBehavior(helios = new MockHelios()) {
+function attachLayoutBehavior(helios = new MockHelios(), options = {}) {
   const manager = new BehaviorManager(helios, new BehaviorRegistry().register('layout', LayoutBehavior));
-  const layout = manager.use('layout');
+  const layout = manager.use('layout', options);
   return { helios, manager, layout };
+}
+
+function dispatchCanvasEvent(helios, type, props = {}) {
+  const event = new Event(type);
+  for (const [key, value] of Object.entries(props)) {
+    event[key] = value;
+  }
+  helios.layers.canvas.dispatchEvent(event);
 }
 
 test('layout behavior registers, attaches, and exposes public lifecycle state', () => {
@@ -253,6 +263,83 @@ test('layout behavior rebaselines heuristic parameter defaults after network cha
 
   assert.equal(helios.states.get('layout.parameters.strength'), 3);
   assert.equal(helios.states.status('layout.parameters.strength').state, 'changed');
+});
+
+test('layout behavior defaults pause-on-interaction from active network size', () => {
+  const small = attachLayoutBehavior();
+  assert.equal(small.layout.pauseOnInteraction(), false);
+  assert.equal(small.helios.states.get('layout.pauseOnInteraction'), false);
+
+  const largeHelios = new MockHelios();
+  largeHelios.network = { nodeCount: 1_000_000, nodeCapacity: 1_000_000 };
+  const large = attachLayoutBehavior(largeHelios);
+  assert.equal(large.layout.pauseOnInteraction(), true);
+  assert.equal(largeHelios.states.get('layout.pauseOnInteraction'), true);
+});
+
+test('layout behavior temporarily pauses running dynamic layout on manual camera moves when enabled', async () => {
+  const helios = new MockHelios();
+  helios.network = { nodeCount: 1_000_000, nodeCapacity: 1_000_000 };
+  const { layout } = attachLayoutBehavior(helios, { pauseOnInteractionResumeDelayMs: 40 });
+
+  helios.emit('camera:move', { origin: 'program', action: 'pan' });
+  assert.equal(layout.runState(), 'running');
+
+  helios.emit('camera:move', { origin: 'interaction', action: 'pan' });
+  assert.equal(layout.runState(), 'idle');
+  assert.equal(helios.scheduler.layoutEnabled, false);
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  helios.emit('camera:move', { origin: 'interaction', action: 'pan' });
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(layout.runState(), 'idle');
+
+  await new Promise((resolve) => setTimeout(resolve, 35));
+  assert.equal(layout.runState(), 'running');
+  assert.equal(helios.scheduler.layoutEnabled, true);
+});
+
+test('layout behavior waits for pointer interaction to end before debounced resume', async () => {
+  const helios = new MockHelios();
+  helios.network = { nodeCount: 1_000_000, nodeCapacity: 1_000_000 };
+  const { layout } = attachLayoutBehavior(helios, { pauseOnInteractionResumeDelayMs: 40 });
+
+  dispatchCanvasEvent(helios, 'pointerdown', { pointerId: 1 });
+  helios.emit('camera:move', { origin: 'interaction', action: 'rotate' });
+  assert.equal(layout.runState(), 'idle');
+
+  await new Promise((resolve) => setTimeout(resolve, 70));
+  assert.equal(layout.runState(), 'idle');
+
+  dispatchCanvasEvent(helios, 'pointerup', { pointerId: 1 });
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(layout.runState(), 'running');
+});
+
+test('layout behavior respects explicit pause-on-interaction choices across network replacement', () => {
+  const helios = new MockHelios();
+  const { layout } = attachLayoutBehavior(helios);
+
+  helios.network = { nodeCount: 1_200_000, nodeCapacity: 1_200_000 };
+  helios.emit('network:replaced', { reason: 'large-network' });
+  assert.equal(layout.pauseOnInteraction(), true);
+  assert.equal(helios.states.get('layout.pauseOnInteraction'), true);
+  assert.equal(helios.states.status('layout.pauseOnInteraction').state, 'default');
+
+  layout.pauseOnInteraction(false);
+  assert.equal(helios.states.status('layout.pauseOnInteraction').state, 'changed');
+  helios.scheduler.state = 'running';
+  helios.emit('camera:move', { origin: 'interaction', action: 'zoom' });
+  assert.equal(layout.runState(), 'running');
+
+  helios.emit('network:replaced', { reason: 'large-network-again' });
+  assert.equal(layout.pauseOnInteraction(), false);
+
+  layout.pauseOnInteraction(true);
+  helios.emit('camera:move', { origin: 'interaction', action: 'zoom' });
+  assert.equal(layout.runState(), 'idle');
+  layout.pauseOnInteraction(false);
+  assert.equal(layout.runState(), 'running');
 });
 
 test('layout behavior registers gpu-force chunk scheduling parameters as state entries', () => {
@@ -400,6 +487,10 @@ function createFakeDomEnvironment() {
 
     setAttribute(name, value) {
       this.attributes.set(String(name), String(value));
+    }
+
+    getAttribute(name) {
+      return this.attributes.get(String(name)) ?? null;
     }
 
     removeAttribute(name) {
@@ -560,6 +651,97 @@ test('layout panel routes layout controls through LayoutBehavior', () => {
         ['applyPositionAttribute', 'embedding2d'],
         ['stop', 'ui:layout-panel'],
       ]);
+    } finally {
+      panel.destroy();
+    }
+  } finally {
+    globalThis.document = originalDocument;
+    globalThis.window = originalWindow;
+  }
+});
+
+test('layout panel writes pause-on-interaction through behavior and state', () => {
+  const { document, window } = createFakeDomEnvironment();
+  const originalDocument = globalThis.document;
+  const originalWindow = globalThis.window;
+  globalThis.document = document;
+  globalThis.window = window;
+
+  try {
+    const behaviorCalls = [];
+    const writes = [];
+    let pauseOnInteraction = false;
+    const layoutBehavior = {
+      descriptor() {
+        return { key: 'worker:force3d', label: 'Force (worker)', dynamic: true, bindings: [] };
+      },
+      choices() {
+        return [{ value: 'worker:force3d', label: 'Force (worker)' }];
+      },
+      runState() {
+        return 'running';
+      },
+      positionAttribute() {
+        return '_helios_visuals_position';
+      },
+      positionAttributeChoices() {
+        return [{ value: '_helios_visuals_position', label: 'Current positions', dimension: 3 }];
+      },
+      pauseOnInteraction(value) {
+        if (arguments.length === 0) return pauseOnInteraction;
+        pauseOnInteraction = value === true;
+        behaviorCalls.push(['pauseOnInteraction', pauseOnInteraction]);
+      },
+      on() {
+        return () => {};
+      },
+    };
+
+    const ui = {
+      helios: {
+        behavior: { layout: layoutBehavior },
+        on() {
+          return () => {};
+        },
+      },
+      _controlCleanups: new Set(),
+      registerStateControl() {},
+      writeStateControl(path, value, options) {
+        writes.push({ path, value, options });
+      },
+      createPanel(config) {
+        return {
+          ...config,
+          destroy() {},
+        };
+      },
+    };
+
+    const panel = new LayoutPanel(ui, {}).create();
+    try {
+      const toggle = findFirst(
+        panel.content,
+        (element) => element.dataset?.testid === 'controls-layout-pause-on-input',
+      );
+      assert.ok(toggle);
+      assert.equal(toggle.checked, false);
+
+      toggle.dispatchEvent(new Event('click'));
+
+      assert.equal(pauseOnInteraction, true);
+      assert.deepEqual(behaviorCalls, [
+        ['pauseOnInteraction', true],
+      ]);
+      assert.deepEqual(writes.at(-1), {
+        path: 'layout.pauseOnInteraction',
+        value: true,
+        options: {
+          scope: 'network',
+          source: 'ui',
+          reason: 'layout-pause-on-input',
+          debounceMs: 150,
+        },
+      });
     } finally {
       panel.destroy();
     }

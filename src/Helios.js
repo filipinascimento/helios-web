@@ -2116,6 +2116,7 @@ const GRAPH_FILTER_ALLOWED_OPTION_KEYS = Object.freeze([
   'edgeSelection',
   'orderNodesBy',
   'orderEdgesBy',
+  'minComponentSize',
 ]);
 
 function normalizeGraphFilterScope(value, fallback = GRAPH_FILTER_SCOPE_RENDER) {
@@ -2131,6 +2132,14 @@ function normalizeGraphFilterOptions(options = {}) {
   for (const key of GRAPH_FILTER_ALLOWED_OPTION_KEYS) {
     if (Object.prototype.hasOwnProperty.call(options, key)) {
       out[key] = options[key];
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(out, 'minComponentSize')) {
+    const minComponentSize = Math.floor(Number(out.minComponentSize));
+    if (Number.isFinite(minComponentSize) && minComponentSize > 1) {
+      out.minComponentSize = minComponentSize;
+    } else {
+      delete out.minComponentSize;
     }
   }
   return out;
@@ -6257,9 +6266,11 @@ export class Helios extends EventTarget {
     const edgeSelector = options?.edgeSelector ?? null;
     const nodeSelection = options?.nodeSelection ?? null;
     const edgeSelection = options?.edgeSelection ?? null;
+    const minComponentSize = Math.max(0, Math.floor(Number(options?.minComponentSize) || 0));
     return {
       topologyNode,
       topologyEdge,
+      minComponentSize,
       nodeSelectorRef: nodeSelector,
       edgeSelectorRef: edgeSelector,
       nodeSelectorVersion: safeNumber(nodeSelector?.version, 0),
@@ -6278,6 +6289,7 @@ export class Helios extends EventTarget {
     return (
       a.topologyNode === b.topologyNode
       && a.topologyEdge === b.topologyEdge
+      && a.minComponentSize === b.minComponentSize
       && a.nodeSelectorRef === b.nodeSelectorRef
       && a.edgeSelectorRef === b.edgeSelectorRef
       && a.nodeSelectorVersion === b.nodeSelectorVersion

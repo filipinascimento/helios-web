@@ -87,6 +87,13 @@ The Data panel now includes an `Attributes` tab with a live table of node, edge,
 
 Layout parameter bindings can describe how a control should be rendered. Numeric bindings may opt into `scale: 'log'` and `notation: 'scientific'`, which makes the Layout panel render a log slider with scientific-notation input while keeping the binding contract layout-agnostic.
 
+The Layout panel includes a `Pause on input` toggle. It is enabled by default
+when the active network has at least one million nodes and disabled below that
+threshold until the user chooses otherwise. When enabled, manual camera pan,
+rotate, wheel zoom, and pinch gestures pause layout updates while the gesture is
+active, then resume after a short camera-idle delay. Automatic camera orbit and
+camera transitions do not trigger the pause.
+
 Storage-backed panel controls resolve display labels from panel item labels first,
 then storage `ui.label` metadata, then a humanized fallback. Internal accessor
 names such as `edgeAdaptiveQualitySlowFrameThresholdMs` are not shown directly
@@ -105,6 +112,14 @@ rule collection and tests. Numeric ranges and raw query controls continue to use
 the shared debounced rule editor, so changing a categorical checklist does not
 force a network serialization; it only updates filter rules through the normal
 throttled filter path.
+
+The Filter panel also exposes a `Comp. size` slider for minimum
+connected-component size. A value of `1` keeps all components and disables the
+extra component-size pruning work. Values above `1` are stored as
+`filters.minComponentSize` and passed to the active graph filter independently
+of node and edge rules. This lets `render+layout` filters hide singleton or
+small active components while preserving the same filtered topology used by
+dynamic layouts.
 
 Categorical node-color legend rows can be hovered to highlight matching nodes, clicked to keep a category highlighted, and Shift-clicked to add or remove categories from the persistent legend highlight. Set `legendClickAction: 'select'` to make clicks replace or extend the selection instead. Hovered rows show a gray outline; active categories keep a theme-aware gray outline without changing label size or style. Density defaults to `interactionFilter: 'auto'`, which focuses on selected nodes first, then real highlighted nodes, then all active nodes.
 
