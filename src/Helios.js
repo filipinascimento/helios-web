@@ -8354,6 +8354,18 @@ export class Helios extends EventTarget {
     return await this._composeFigurePng(bitmapCanvas, overlaySvg, previewExportOptions);
   }
 
+  /**
+   * Capture a small PNG thumbnail from the current interaction canvas.
+   *
+   * @public
+   * @apiSection Figure Export
+   * @param {{maxWidth?:number,maxHeight?:number,type?:string,quality?:number}} [options]
+   * Thumbnail output constraints.
+   * @returns {Promise<Blob|null>} PNG thumbnail blob, or `null` when the
+   * current runtime cannot capture the canvas.
+   * @remarks Session storage uses this method to attach compact visual
+   * thumbnails to saved session payloads without running a full figure export.
+   */
   async captureSessionThumbnailBlob(options = {}) {
     try {
       const blob = await scaledCanvasThumbnailBlob(this._getInteractionCanvas?.(), options);
