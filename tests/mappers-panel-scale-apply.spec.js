@@ -100,4 +100,49 @@ test.describe('mappers panel', () => {
       range: [1, 20],
     });
   });
+
+  test('refreshes open editor when mapper changes externally', async ({ page }) => {
+    await page.goto('/tests/fixtures/demo.html?renderer=webgl&layout=none&nodes=60&mappers=1');
+    await waitForHelios(page);
+
+    const panel = await ensurePanelVisible(page, 'helios-ui-mappers');
+    const attributeSelect = panel.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'Attribute' }),
+    }).locator('select').first();
+    const typeSelect = panel.locator('.helios-ui-row', {
+      has: page.locator('.helios-ui-label__title', { hasText: 'Type' }),
+    }).locator('select').first();
+
+    await expect(attributeSelect).toHaveValue('$index');
+    await expect(typeSelect).toHaveValue('colormap');
+
+    await page.evaluate(() => {
+      const helios = window.__helios;
+      const network = helios?.network;
+      if (!network) throw new Error('Network unavailable');
+      network.defineNodeAttribute('panel_class', 0, 1);
+      const labels = ['Alpha', 'Beta', 'Gamma'];
+      for (let i = 0; i < network.nodeCount; i += 1) {
+        network.setNodeStringAttribute('panel_class', i, labels[i % labels.length]);
+      }
+      network.categorizeNodeAttribute('panel_class', { sortOrder: 'natural' });
+      helios.behavior.mappers.setChannelConfig('node', 'color', {
+        type: 'categorical',
+        attributes: 'panel_class',
+        domain: [0, 1, 2],
+        range: ['#1f77b4ff', '#ff7f0eff', '#2ca02cff'],
+        defaultValue: '#888888ff',
+        meta: {
+          categorical: {
+            palette: 'category18',
+            preferScheme: true,
+          },
+        },
+      });
+    });
+
+    await expect(attributeSelect).toHaveValue('panel_class');
+    await expect(typeSelect).toHaveValue('categorical');
+    await expect(panel.getByText('Others')).toBeVisible();
+  });
 });

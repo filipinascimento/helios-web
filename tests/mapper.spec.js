@@ -66,6 +66,20 @@ test('categorical color mapping defaults unmatched values to gray', () => {
   expect(fallback.color).toBe('#888888ff');
 });
 
+test('categorical color mapping does not repeat a short range', () => {
+  const mapper = new Mapper({ mode: 'node' });
+  mapper.setChannel('color', {
+    attributes: 'community',
+    type: 'categorical',
+    domain: ['A', 'B', 'C'],
+    range: ['red', 'blue'],
+    defaultValue: 'gray',
+  });
+
+  const overflow = mapper.mapItem({ attributes: { community: 'C' } });
+  expect(overflow.color).toBe('gray');
+});
+
 test('nodeToEdge passthrough returns endpoint values', () => {
   const edgeMapper = new Mapper({ mode: 'edge' });
   edgeMapper.channel('color').from('@node.community').nodeToEdge().done();

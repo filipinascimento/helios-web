@@ -4419,6 +4419,17 @@ export class MappersPanel {
         resetPendingFromLive();
       };
 
+      const refreshFromLiveIfClean = (event) => {
+        const detail = event?.detail ?? event ?? {};
+        if (detail.mode && detail.mode !== mode) return;
+        if (detail.channel && detail.channel !== state.channel) return;
+        if (state.dirty) {
+          syncApplyEnabled();
+          return;
+        }
+        resetPendingFromLive();
+      };
+
       revertButton.addEventListener('click', () => {
         resetPendingFromLive();
       });
@@ -4584,16 +4595,30 @@ export class MappersPanel {
       const onNetworkReplaced = () => {
         updateAutoDomainFromNetwork();
         attachNetworkAttributeListeners();
-        renderEditor();
+        if (state.dirty) renderEditor();
+        else resetPendingFromLive();
       };
-      let unsub = null;
+      const unsubs = [];
       if (helios?.on) {
-        unsub = helios.on('network:replaced', onNetworkReplaced);
+        unsubs.push(helios.on('network:replaced', onNetworkReplaced));
+        unsubs.push(helios.on('mappers:changed', refreshFromLiveIfClean));
       } else if (helios?.addEventListener) {
         helios.addEventListener('network:replaced', onNetworkReplaced);
-        unsub = () => helios.removeEventListener('network:replaced', onNetworkReplaced);
+        helios.addEventListener('mappers:changed', refreshFromLiveIfClean);
+        unsubs.push(() => helios.removeEventListener('network:replaced', onNetworkReplaced));
+        unsubs.push(() => helios.removeEventListener('mappers:changed', refreshFromLiveIfClean));
       }
-      if (unsub) ui._controlCleanups.add(unsub);
+      if (typeof mappersBehavior?.on === 'function') {
+        unsubs.push(mappersBehavior.on('change', refreshFromLiveIfClean));
+      } else if (typeof mappersBehavior?.addEventListener === 'function') {
+        mappersBehavior.addEventListener('change', refreshFromLiveIfClean);
+        unsubs.push(() => mappersBehavior.removeEventListener('change', refreshFromLiveIfClean));
+      }
+      if (unsubs.length) {
+        ui._controlCleanups.add(() => {
+          for (const unsub of unsubs) unsub?.();
+        });
+      }
 
       attachNetworkAttributeListeners();
       if (networkAttributeUnsub) ui._controlCleanups.add(() => networkAttributeUnsub?.());

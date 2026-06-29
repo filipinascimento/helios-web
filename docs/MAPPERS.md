@@ -48,6 +48,9 @@ Note: mapper configs that rely on arbitrary JavaScript functions (for example `.
 ## Categorical mapping
 
 Categorical channels map discrete attribute values to a fixed palette.
+The range is not repeated: if a domain entry has no matching range entry, the
+channel uses `defaultValue` instead. UI legends label that fallback as
+`Others`.
 
 `helios-web` also includes a built-in `category18` categorical palette for
 community- or cluster-style labeling.
@@ -82,7 +85,7 @@ In `HeliosUI`, the Mappers panel provides:
 - A `Special sources` group for fixed values, generated indices, and layout positions without exposing internal source tokens.
 - Attribute selection for categorical fields (including string attributes that can be converted to categorical).
 - Sorting by frequency, alphabetical, natural, or manual order.
-- Palette selection (with scheme preference) and optional max category limits.
+- Palette selection (with scheme preference) and optional max category limits. The default categorical palette is `category18`; by default the UI uses its 18 colors once and routes overflow categories to the mapper default value shown as `Others`.
 - Manual color edits and category reordering.
 
 ## Built-in transforms

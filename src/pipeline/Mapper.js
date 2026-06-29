@@ -239,7 +239,8 @@ function linearScale(value, domain, range) {
 function categoricalScale(value, domain = [], range = []) {
   const index = domain.findIndex((entry) => entry === value);
   if (index === -1) return undefined;
-  return range[index % range.length];
+  if (index >= range.length) return undefined;
+  return range[index];
 }
 
 function applyBuiltinTransform(transformType, value, power = 1) {
