@@ -204,6 +204,8 @@ When UMAP mode is active:
 - `sampleChurn` remains available as negative-sample churn for the interactive solver
 - `linkDistance` and exposed `minDistance` tuning are hidden because the force
   law is driven by the exported UMAP parameters instead
+- component-aware layout controls are disabled: UMAP does not compute component
+  metadata, seed components, or apply component gravity
 
 ### 4.2 Linear force normalization specializations
 
@@ -436,6 +438,8 @@ Notes:
 - In UMAP mode, `sampleCount2D/3D` is ignored and repulsion sampling is derived from `umapNegativeSampleRate` instead.
 - In UMAP mode, `sampleChurn` means negative-sample churn for the interactive approximation.
 - In UMAP mode, `kGravity` defaults to `0` unless explicitly overridden.
+- In UMAP mode, `componentForces`, `componentSeeding`, and `componentGravity`
+  are forced off and are not exposed as parameter bindings.
 - `recenter` is currently plumbed in uniforms but not used by the WGSL step logic.
 
 ## 8. GPU vs CPU Responsibility Matrix

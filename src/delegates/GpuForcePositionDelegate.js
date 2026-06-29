@@ -112,12 +112,11 @@ struct Params {
 @group(0) @binding(6) var<storage, read> neighborStarts : array<u32>;
 @group(0) @binding(7) var<storage, read> neighborCounts : array<u32>;
 @group(0) @binding(8) var<storage, read> neighbors : array<u32>;
-@group(0) @binding(9) var<storage, read> componentGravityScale : array<f32>;
 ${umap
-  ? '@group(0) @binding(10) var<storage, read> scalarWeights : array<f32>;\n@group(0) @binding(11) var<uniform> params : Params;'
+  ? '@group(0) @binding(9) var<storage, read> scalarWeights : array<f32>;\n@group(0) @binding(10) var<uniform> params : Params;'
   : scalar
-    ? '@group(0) @binding(10) var<storage, read> neighborEdges : array<u32>;\n@group(0) @binding(11) var<storage, read> scalarValues : array<f32>;\n@group(0) @binding(12) var<uniform> params : Params;'
-    : '@group(0) @binding(10) var<uniform> params : Params;'}
+    ? '@group(0) @binding(9) var<storage, read> componentGravityScale : array<f32>;\n@group(0) @binding(10) var<storage, read> neighborEdges : array<u32>;\n@group(0) @binding(11) var<storage, read> scalarValues : array<f32>;\n@group(0) @binding(12) var<uniform> params : Params;'
+    : '@group(0) @binding(9) var<storage, read> componentGravityScale : array<f32>;\n@group(0) @binding(10) var<uniform> params : Params;'}
 
 fn hash32(value : u32) -> u32 {
   var x = value;
@@ -432,8 +431,10 @@ ${scalar
   if (use3D == 0u) {
     gravityDelta.z = 0.0;
   }
-  let gravityScale = select(1.0, componentGravityScale[nodeId], params.chunk.z != 0u);
-  force = force + gravityDelta * params.constantsA.z * gravityScale;
+${umap
+  ? '  force = force + gravityDelta * params.constantsA.z;'
+  : `  let gravityScale = select(1.0, componentGravityScale[nodeId], params.chunk.z != 0u);
+  force = force + gravityDelta * params.constantsA.z * gravityScale;`}
 
 ${umap
   ? `  let eta = params.constantsA.w;
@@ -922,6 +923,14 @@ function normalizeComponentForces(value) {
 
 function shouldUseComponentMetadata(options = {}, umapModel = false) {
   return !umapModel && normalizeComponentForces(options.componentForces) !== 'off';
+}
+
+function disableUmapComponentOptions(options) {
+  if (!isUmapForceModel(options?.forceModel)) return options;
+  options.componentForces = 'off';
+  options.componentSeeding = false;
+  options.componentGravity = false;
+  return options;
 }
 
 function shouldActivateComponentForces({
@@ -1443,9 +1452,11 @@ function buildTopologyPayload(topologyInputs, options = {}, scratch = {}) {
       scratch,
     });
   } else {
-    const componentGravityScale = ensureFloat32Capacity(scratch.componentGravityScale, nodeCapacity);
+    const componentGravityScale = umapModel
+      ? createEmptyFloatArray()
+      : ensureFloat32Capacity(scratch.componentGravityScale, nodeCapacity);
     scratch.componentGravityScale = componentGravityScale;
-    componentGravityScale.fill(1, 0, nodeCapacity);
+    if (!umapModel) componentGravityScale.fill(1, 0, nodeCapacity);
     componentMetadata = {
       componentIds: createEmptyUintArray(),
       componentRanks: createEmptyUintArray(),
@@ -2332,7 +2343,7 @@ uniform usampler2D u_activeMask;
 uniform usampler2D u_neighborStarts;
 uniform usampler2D u_neighborCounts;
 uniform usampler2D u_neighbors;
-uniform sampler2D u_componentGravityScale;
+${umap ? '' : 'uniform sampler2D u_componentGravityScale;\n'}
 ${umap ? 'uniform sampler2D u_nodeMass;\nuniform sampler2D u_neighborWeights;\n' : ''}
 ${scalar ? 'uniform usampler2D u_neighborEdges;\nuniform sampler2D u_scalarValues;\n' : ''}
 
@@ -2350,7 +2361,7 @@ uniform int u_exactRepulsionThreshold;
 uniform int u_sampleChurnCount;
 uniform int u_forceNormalizationMode;
 uniform int u_hasEdgeWeights;
-uniform int u_componentGravityEnabled;
+${umap ? '' : 'uniform int u_componentGravityEnabled;\n'}
 
 uniform uint u_seed;
 uniform uint u_sampleFrame;
@@ -2450,10 +2461,11 @@ uint fetchNeighborValue(int index) {
   return texelFetch(u_neighbors, textureCoord(u_neighborTexSize, index), 0).x;
 }
 
-float fetchComponentGravityScale(int nodeId) {
+${umap ? '' : `float fetchComponentGravityScale(int nodeId) {
   return texelFetch(u_componentGravityScale, textureCoord(u_nodeTexSize, nodeId), 0).x;
 }
 
+`}
 ${scalar ? `uint fetchNeighborEdge(int index) {
   return texelFetch(u_neighborEdges, textureCoord(u_neighborTexSize, index), 0).x;
 }
@@ -2656,8 +2668,10 @@ ${scalar
   if (u_use3D == 0) {
     gravityDelta.z = 0.0;
   }
-  float gravityScale = u_componentGravityEnabled != 0 ? fetchComponentGravityScale(nodeId) : 1.0;
-  force += gravityDelta * u_kGravity * gravityScale;
+${umap
+  ? '  force += gravityDelta * u_kGravity;'
+  : `  float gravityScale = u_componentGravityEnabled != 0 ? fetchComponentGravityScale(nodeId) : 1.0;
+  force += gravityDelta * u_kGravity * gravityScale;`}
 
 ${umap
   ? `  vec3 nextDelta = vec3(
@@ -3136,7 +3150,7 @@ class WebGLTextureComputePath {
       'u_neighborStarts',
       'u_neighborCounts',
       'u_neighbors',
-      'u_componentGravityScale',
+      ...(useUmap ? [] : ['u_componentGravityScale']),
       'u_nodeTexSize',
       'u_activeIdsTexSize',
       'u_neighborTexSize',
@@ -3150,7 +3164,7 @@ class WebGLTextureComputePath {
       'u_sampleChurnCount',
       'u_forceNormalizationMode',
       'u_hasEdgeWeights',
-      'u_componentGravityEnabled',
+      ...(useUmap ? [] : ['u_componentGravityEnabled']),
       'u_seed',
       'u_sampleFrame',
       'u_center',
@@ -3356,6 +3370,15 @@ class WebGLTextureComputePath {
     this._neighborWeightUploadScratch = new Float32Array(0);
   }
 
+  _releaseComponentGravityTexture() {
+    const gl = this.gl;
+    if (!gl) return;
+    if (this.componentGravityScaleTexture) gl.deleteTexture(this.componentGravityScaleTexture);
+    this.componentGravityScaleTexture = null;
+    this._textureSizes.delete('componentGravityScaleTexture');
+    this._componentGravityScaleUploadScratch = new Float32Array(0);
+  }
+
   _releaseLinearScalarTextures() {
     const gl = this.gl;
     if (!gl) return;
@@ -3439,14 +3462,18 @@ class WebGLTextureComputePath {
     this._ensureUintTexture('neighborStartsTexture', this.nodeLayout.width, this.nodeLayout.height);
     this._ensureUintTexture('neighborCountsTexture', this.nodeLayout.width, this.nodeLayout.height);
     this._ensureUintTexture('neighborsTexture', this.neighborLayout.width, this.neighborLayout.height);
-    this._ensureFloatTexture('componentGravityScaleTexture', this.nodeLayout.width, this.nodeLayout.height);
+    if (useUmap) {
+      this._releaseComponentGravityTexture();
+    } else {
+      this._ensureFloatTexture('componentGravityScaleTexture', this.nodeLayout.width, this.nodeLayout.height);
+    }
 
     this._uploadUintTexture(this.activeIdsTexture, this.activeLayout, payload.activeIds);
     this._uploadUintTexture(this.activeMaskTexture, this.nodeLayout, payload.activeMask);
     this._uploadUintTexture(this.neighborStartsTexture, this.nodeLayout, payload.neighborStarts);
     this._uploadUintTexture(this.neighborCountsTexture, this.nodeLayout, payload.neighborCounts);
     this._uploadUintTexture(this.neighborsTexture, this.neighborLayout, payload.neighbors);
-    if (payload.componentGravityEnabled === true) {
+    if (!useUmap && payload.componentGravityEnabled === true) {
       const componentGravityScalePacked = this._packScalarSource(
         payload.componentGravityScale,
         this.nodeCapacity,
@@ -3689,7 +3716,6 @@ class WebGLTextureComputePath {
       this._bindTexture(4, this.neighborStartsTexture);
       this._bindTexture(5, this.neighborCountsTexture);
       this._bindTexture(6, this.neighborsTexture);
-      this._bindTexture(7, this.componentGravityScaleTexture);
       gl.uniform1i(computeUniforms.u_positions, 0);
       gl.uniform1i(computeUniforms.u_velocities, 1);
       gl.uniform1i(computeUniforms.u_activeIds, 2);
@@ -3697,17 +3723,21 @@ class WebGLTextureComputePath {
       gl.uniform1i(computeUniforms.u_neighborStarts, 4);
       gl.uniform1i(computeUniforms.u_neighborCounts, 5);
       gl.uniform1i(computeUniforms.u_neighbors, 6);
-      gl.uniform1i(computeUniforms.u_componentGravityScale, 7);
       if (useUmap) {
-        this._bindTexture(8, this.nodeMassTexture);
-        this._bindTexture(9, this.neighborWeightsTexture);
-        gl.uniform1i(computeUniforms.u_nodeMass, 8);
-        gl.uniform1i(computeUniforms.u_neighborWeights, 9);
+        this._bindTexture(7, this.nodeMassTexture);
+        this._bindTexture(8, this.neighborWeightsTexture);
+        gl.uniform1i(computeUniforms.u_nodeMass, 7);
+        gl.uniform1i(computeUniforms.u_neighborWeights, 8);
       } else if (useLinearScalar) {
+        this._bindTexture(7, this.componentGravityScaleTexture);
         this._bindTexture(8, this.neighborEdgesTexture);
         this._bindTexture(9, this.scalarValuesTexture);
+        gl.uniform1i(computeUniforms.u_componentGravityScale, 7);
         gl.uniform1i(computeUniforms.u_neighborEdges, 8);
         gl.uniform1i(computeUniforms.u_scalarValues, 9);
+      } else {
+        this._bindTexture(7, this.componentGravityScaleTexture);
+        gl.uniform1i(computeUniforms.u_componentGravityScale, 7);
       }
       gl.uniform2i(computeUniforms.u_nodeTexSize, this.nodeLayout.width, this.nodeLayout.height);
       gl.uniform2i(computeUniforms.u_activeIdsTexSize, this.activeLayout.width, this.activeLayout.height);
@@ -3726,7 +3756,9 @@ class WebGLTextureComputePath {
         gl.uniform1i(computeUniforms.u_forceNormalizationMode, forceNormalizationMode(stepOptions.forceNormalizationType));
         gl.uniform1i(computeUniforms.u_hasEdgeWeights, stepOptions.hasEdgeWeights ? 1 : 0);
       }
-      gl.uniform1i(computeUniforms.u_componentGravityEnabled, stepOptions.componentGravityEnabled ? 1 : 0);
+      if (!useUmap) {
+        gl.uniform1i(computeUniforms.u_componentGravityEnabled, stepOptions.componentGravityEnabled ? 1 : 0);
+      }
       gl.uniform1ui(computeUniforms.u_seed, this.seed >>> 0);
       gl.uniform1ui(computeUniforms.u_sampleFrame, this.sampleFrame >>> 0);
       gl.uniform3f(computeUniforms.u_center, center[0], center[1], center[2]);
@@ -4209,16 +4241,16 @@ class WebGPUForceComputeBackend {
       { binding: 6, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
       { binding: 7, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
       { binding: 8, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
-      { binding: 9, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
+      ...(!useUmap ? [{ binding: 9, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } }] : []),
       ...(useUmap
-        ? [{ binding: 10, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } }]
+        ? [{ binding: 9, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } }]
         : useLinearScalar
           ? [
             { binding: 10, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
             { binding: 11, visibility: this.shaderVisibility, buffer: { type: 'read-only-storage' } },
           ]
         : []),
-      { binding: useUmap ? 11 : useLinearScalar ? 12 : 10, visibility: this.shaderVisibility, buffer: { type: 'uniform' } },
+      { binding: useUmap ? 10 : useLinearScalar ? 12 : 10, visibility: this.shaderVisibility, buffer: { type: 'uniform' } },
     ];
     this[layoutField] = this.device.createBindGroupLayout({ entries });
     const module = this.device.createShaderModule({
@@ -4322,6 +4354,13 @@ class WebGPUForceComputeBackend {
     this.linearScalarBindGroup = null;
   }
 
+  _releaseComponentGravityBuffer() {
+    this.componentGravityScaleBuffer?.destroy?.();
+    this.componentGravityScaleBuffer = null;
+    this.linearBindGroup = null;
+    this.linearScalarBindGroup = null;
+  }
+
   _rebuildBindGroup(useUmap = false, useLinearScalar = false) {
     const layout = useUmap ? this.umapBindGroupLayout : useLinearScalar ? this.linearScalarBindGroupLayout : this.linearBindGroupLayout;
     if (!layout) return;
@@ -4335,13 +4374,13 @@ class WebGPUForceComputeBackend {
       { binding: 6, resource: { buffer: this.neighborStartsBuffer } },
       { binding: 7, resource: { buffer: this.neighborCountsBuffer } },
       { binding: 8, resource: { buffer: this.neighborsBuffer } },
-      { binding: 9, resource: { buffer: this.componentGravityScaleBuffer } },
-      ...(useUmap ? [{ binding: 10, resource: { buffer: this.scalarWeightsBuffer } }] : []),
+      ...(!useUmap ? [{ binding: 9, resource: { buffer: this.componentGravityScaleBuffer } }] : []),
+      ...(useUmap ? [{ binding: 9, resource: { buffer: this.scalarWeightsBuffer } }] : []),
       ...(!useUmap && useLinearScalar ? [
         { binding: 10, resource: { buffer: this.neighborEdgesBuffer } },
         { binding: 11, resource: { buffer: this.scalarWeightsBuffer } },
       ] : []),
-      { binding: useUmap ? 11 : useLinearScalar ? 12 : 10, resource: { buffer: this.paramsBuffer } },
+      { binding: useUmap ? 10 : useLinearScalar ? 12 : 10, resource: { buffer: this.paramsBuffer } },
     ];
     const bindGroup = this.device.createBindGroup({ layout, entries });
     if (useUmap) this.umapBindGroup = bindGroup;
@@ -4453,7 +4492,11 @@ class WebGPUForceComputeBackend {
     this._ensureBuffer('neighborStartsBuffer', nodeU32Bytes, this.storageUsage, 'layout:gpu-force:neighbor-starts');
     this._ensureBuffer('neighborCountsBuffer', nodeU32Bytes, this.storageUsage, 'layout:gpu-force:neighbor-counts');
     this._ensureBuffer('neighborsBuffer', Math.max(1, neighbors.length) * 4, this.storageUsage, 'layout:gpu-force:neighbors');
-    this._ensureBuffer('componentGravityScaleBuffer', Math.max(1, this.nodeCapacity) * 4, this.storageUsage, 'layout:gpu-force:component-gravity-scale');
+    if (useUmap) {
+      this._releaseComponentGravityBuffer();
+    } else {
+      this._ensureBuffer('componentGravityScaleBuffer', Math.max(1, this.nodeCapacity) * 4, this.storageUsage, 'layout:gpu-force:component-gravity-scale');
+    }
     if (useLinearScalar) {
       this._ensureBuffer(
         'neighborEdgesBuffer',
@@ -4521,7 +4564,7 @@ class WebGPUForceComputeBackend {
       queue.writeBuffer(this.activeMaskBuffer, 0, activeMask.buffer, activeMask.byteOffset, nodeU32BytesUsed);
       queue.writeBuffer(this.neighborStartsBuffer, 0, neighborStarts.buffer, neighborStarts.byteOffset, nodeU32BytesUsed);
       queue.writeBuffer(this.neighborCountsBuffer, 0, neighborCounts.buffer, neighborCounts.byteOffset, nodeU32BytesUsed);
-      if (payload.componentGravityEnabled === true) {
+      if (!useUmap && payload.componentGravityEnabled === true) {
         queue.writeBuffer(this.componentGravityScaleBuffer, 0, componentGravityScale.buffer, componentGravityScale.byteOffset, this.nodeCapacity * 4);
       }
     }
@@ -4772,7 +4815,7 @@ class WebGPUForceComputeBackend {
     );
     paramsU32[28] = chunkState.start >>> 0;
     paramsU32[29] = chunkState.count >>> 0;
-    paramsU32[30] = stepOptions.componentGravityEnabled ? 1 : 0;
+    paramsU32[30] = !useUmap && stepOptions.componentGravityEnabled ? 1 : 0;
 
     const outputScale = Math.max(0.0001, toFinite(stepOptions.outputScale, DEFAULT_OPTIONS.outputScale));
     const rotationDamping = clamp(stepOptions.rotationDamping, 0, 1, DEFAULT_OPTIONS.rotationDamping);
@@ -5256,6 +5299,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       if (options.alphaDecay == null) normalizedOptions.alphaDecay = DEFAULT_UMAP_ALPHA_DECAY;
       if (options.sampleChurn == null) normalizedOptions.sampleChurn = DEFAULT_UMAP_SAMPLE_CHURN;
     }
+    disableUmapComponentOptions(normalizedOptions);
     this.options = normalizedOptions;
     this.alpha = clamp(this.options.alpha, 0, 1, DEFAULT_OPTIONS.alpha);
     this.debug = options.debug ?? options.helios?.debug ?? null;
@@ -5347,6 +5391,7 @@ export class GpuForcePositionDelegate extends PositionDelegate {
       if (next.alphaDecay == null) this.options.alphaDecay = DEFAULT_UMAP_ALPHA_DECAY;
       if (next.sampleChurn == null) this.options.sampleChurn = DEFAULT_UMAP_SAMPLE_CHURN;
     }
+    disableUmapComponentOptions(this.options);
     if (next.alpha != null) {
       this.alpha = clamp(next.alpha, 0, 1, this.alpha);
     }

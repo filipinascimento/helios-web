@@ -138,8 +138,8 @@ These tables describe the storage-buffer inputs used by the GPU-force layout com
 | `neighborStartsBuffer` | Per-node adjacency start offsets. | Yes | Always. |
 | `neighborCountsBuffer` | Per-node adjacency counts. | Yes | Always. |
 | `neighborsBuffer` | Flattened adjacency ids. | Yes | Always. |
-| `componentGravityScaleBuffer` | Per-node component gravity multiplier. | Yes | Always allocated for the compute binding; uploaded/fetched only when active component gravity is enabled. |
-| `scalarWeightsBuffer` | Packed node mass and neighbor weights. | No | UMAP force model is active. |
+| `componentGravityScaleBuffer` | Per-node component gravity multiplier. | No | Non-UMAP GPU-force only; uploaded/fetched only when active component gravity is enabled. |
+| `scalarWeightsBuffer` | Packed node mass and neighbor weights. | No | UMAP force model is active; uses the old binding slot where component gravity is absent. |
 | `neighborEdgesBuffer` | Original sparse edge id for each flattened neighbor slot. | No | Non-UMAP GPU-force uses weighted attraction or strength normalization. |
 | `scalarWeightsBuffer` | Packed node strength values followed by sparse edge weights. | No | Non-UMAP GPU-force uses weighted attraction or strength normalization. |
 
@@ -325,7 +325,7 @@ These tables describe the texture inputs used by the GPU-force layout texture-co
 | `neighborStartsTexture` | Per-node adjacency start offsets. | Yes | Always. |
 | `neighborCountsTexture` | Per-node adjacency counts. | Yes | Always. |
 | `neighborsTexture` | Flattened adjacency ids. | Yes | Always. |
-| `componentGravityScaleTexture` | Per-node component gravity multiplier. | Yes | Always allocated for the compute binding; uploaded/fetched only when active component gravity is enabled. |
+| `componentGravityScaleTexture` | Per-node component gravity multiplier. | No | Non-UMAP GPU-force only; uploaded/fetched only when active component gravity is enabled. |
 | `nodeMassTexture` | Per-node mass values. | No | UMAP force model is active. |
 | `neighborWeightsTexture` | Per-neighbor UMAP weights. | No | UMAP force model is active. |
 | `neighborEdgesTexture` | Original sparse edge id for each flattened neighbor slot. | No | Non-UMAP GPU-force uses weighted attraction or strength normalization. |

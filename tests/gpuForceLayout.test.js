@@ -1543,16 +1543,26 @@ test('GpuForceLayout exposes UMAP-specific controls without altering linear defa
     helios,
     forceModel: 'umap',
     mode: '2d',
+    componentForces: 'halo',
+    componentSeeding: true,
+    componentGravity: true,
   });
 
   const descriptor = layout.getParameterBindings();
   const bindingKeys = descriptor.bindings.map((binding) => binding.key);
 
   assert.equal(descriptor.label, 'UMAP Force (GPU)');
+  assert.equal(layout.options.componentForces, 'off');
+  assert.equal(layout.options.componentSeeding, false);
+  assert.equal(layout.options.componentGravity, false);
+  assert.equal(layout.positionDelegate.options.componentForces, 'off');
+  assert.equal(layout.positionDelegate.options.componentSeeding, false);
+  assert.equal(layout.positionDelegate.options.componentGravity, false);
   assert.ok(bindingKeys.includes('umapA'));
   assert.ok(bindingKeys.includes('umapB'));
   assert.ok(bindingKeys.includes('umapGamma'));
   assert.ok(bindingKeys.includes('umapNegativeSampleRate'));
+  assert.ok(!bindingKeys.includes('componentForces'));
   assert.ok(!bindingKeys.includes('sampleCount2D'));
   assert.ok(!bindingKeys.includes('linkDistance'));
   assert.ok(!bindingKeys.includes('minDistance'));
@@ -1570,6 +1580,13 @@ test('GpuForceLayout exposes UMAP-specific controls without altering linear defa
   assert.equal(descriptor.bindings.find((binding) => binding.key === 'kAttraction')?.label, 'Attraction importance');
   assert.equal(layout.options.outputScale, 24);
   assert.equal(layout.options.alphaDecay, 0.0025);
+  layout.setSettings({ componentForces: 'halo', componentSeeding: true, componentGravity: true });
+  assert.equal(layout.options.componentForces, 'off');
+  assert.equal(layout.options.componentSeeding, false);
+  assert.equal(layout.options.componentGravity, false);
+  assert.equal(layout.positionDelegate.options.componentForces, 'off');
+  assert.equal(layout.positionDelegate.options.componentSeeding, false);
+  assert.equal(layout.positionDelegate.options.componentGravity, false);
   layout.positionDelegate._webgl = { sampleFrame: 17 };
   assert.equal(descriptor.bindings.find((binding) => binding.key === 'umapEpochCurrent')?.get?.(), 17);
   assert.equal(descriptor.bindings.find((binding) => binding.key === 'umapEpochCurrent')?.format?.(17.9), '17');
@@ -2652,6 +2669,72 @@ test('GpuForcePositionDelegate componentForces off skips component gravity uploa
 
   delegate.step({ network, backend: 'webgpu', device, deltaMs: 16 });
   const paramsWrite = writes.findLast((entry) => entry.label === 'layout:gpu-force:params');
+  const params = new Uint32Array(
+    paramsWrite.data.buffer.slice(
+      paramsWrite.data.byteOffset,
+      paramsWrite.data.byteOffset + paramsWrite.data.byteLength,
+    ),
+  );
+  assert.equal(params[30], 0);
+});
+
+test('GpuForcePositionDelegate disables component force options for UMAP', () => {
+  const delegate = new GpuForcePositionDelegate({
+    forceModel: 'umap',
+    componentForces: 'halo',
+    componentSeeding: true,
+    componentGravity: true,
+  });
+
+  assert.equal(delegate.options.componentForces, 'off');
+  assert.equal(delegate.options.componentSeeding, false);
+  assert.equal(delegate.options.componentGravity, false);
+
+  delegate.updateOptions({
+    componentForces: 'halo',
+    componentSeeding: true,
+    componentGravity: true,
+  });
+  assert.equal(delegate.options.componentForces, 'off');
+  assert.equal(delegate.options.componentSeeding, false);
+  assert.equal(delegate.options.componentGravity, false);
+});
+
+test('GpuForcePositionDelegate UMAP path skips component WebGPU resources', () => {
+  const network = createWeightedTopologyNetwork({
+    positions: [
+      0, 0, 0,
+      10, 0, 0,
+    ],
+    edgeWeights: [0.75],
+    edgeWeightAttribute: 'umap_weight',
+  });
+  const { device, writes, shaderModules } = createFakeWebGPUDevice();
+  const delegate = new GpuForcePositionDelegate({
+    mode: '2d',
+    forceModel: 'umap',
+    edgeWeightAttribute: 'umap_weight',
+    nodeMassAttribute: null,
+    outputScale: 1,
+    recenter: false,
+    componentForces: 'halo',
+    componentSeeding: true,
+    componentGravity: true,
+  });
+
+  delegate.onAttach({ network, backend: 'webgpu', device });
+
+  assert.equal(delegate._componentGravityEnabled, false);
+  assert.ok(!writes.some((entry) => entry.label === 'layout:gpu-force:component-gravity-scale'));
+  assert.ok(writes.some((entry) => entry.label === 'layout:gpu-force:scalar-weights'));
+  const umapShader = shaderModules.find((source) => source.includes('@binding(9) var<storage, read> scalarWeights'));
+  assert.ok(umapShader);
+  assert.ok(!umapShader.includes('componentGravityScale'));
+  assert.ok(umapShader.includes('@binding(10) var<uniform> params'));
+
+  delegate.step({ network, backend: 'webgpu', device, deltaMs: 16 });
+  const paramsWrite = writes.findLast((entry) => entry.label === 'layout:gpu-force:params');
+  assert.ok(paramsWrite?.data instanceof Uint8Array);
   const params = new Uint32Array(
     paramsWrite.data.buffer.slice(
       paramsWrite.data.byteOffset,

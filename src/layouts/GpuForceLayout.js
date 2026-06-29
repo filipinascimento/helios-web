@@ -134,6 +134,14 @@ function normalizeComponentForces(value) {
   return 'auto';
 }
 
+function disableUmapComponentOptions(options) {
+  if (!isUmapForceModel(options?.forceModel)) return options;
+  options.componentForces = 'off';
+  options.componentSeeding = false;
+  options.componentGravity = false;
+  return options;
+}
+
 function resolveLayoutChunkNodeCount(value) {
   const numeric = Math.floor(Number(value));
   if (!Number.isFinite(numeric) || numeric <= 0) return 65_536;
@@ -302,6 +310,7 @@ export class GpuForceLayout extends Layout {
       if (options.alphaDecay == null) normalized.alphaDecay = DEFAULT_UMAP_ALPHA_DECAY;
       if (options.sampleChurn == null) normalized.sampleChurn = DEFAULT_UMAP_SAMPLE_CHURN;
     }
+    disableUmapComponentOptions(normalized);
     this._autoTuneExplicitKeys = new Set(
       AUTO_TUNED_OPTION_KEYS.filter((key) => hasOwn(options, key)),
     );
@@ -434,6 +443,7 @@ export class GpuForceLayout extends Layout {
       if (next.alphaDecay == null) this.options.alphaDecay = DEFAULT_UMAP_ALPHA_DECAY;
       if (next.sampleChurn == null) this.options.sampleChurn = DEFAULT_UMAP_SAMPLE_CHURN;
     }
+    disableUmapComponentOptions(this.options);
     if (!explicitKeys.has('sampleChurn')) {
       baseAutoTuneOptions.sampleChurn = this.options.sampleChurn;
     }
@@ -555,7 +565,10 @@ export class GpuForceLayout extends Layout {
         get: () => resolveLayoutChunkCount(this.options.layoutChunkCount),
         set: (value) => this.setSettings({ layoutChunkCount: resolveLayoutChunkCount(value) }),
       },
-      {
+    ];
+
+    if (!umapModel) {
+      bindings.push({
         key: 'componentForces',
         label: 'Components',
         hint: 'Auto scales gravity for singleton-heavy layouts without changing dense connected layouts. Off disables component metadata. Force halo applies component gravity unconditionally without reseeding positions.',
@@ -567,8 +580,8 @@ export class GpuForceLayout extends Layout {
         ],
         get: () => normalizeComponentForces(this.options.componentForces ?? DEFAULT_OPTIONS.componentForces),
         set: (value) => this.setSettings({ componentForces: normalizeComponentForces(value) }, { reheat: true }),
-      },
-    ];
+      });
+    }
 
     if (umapModel) {
       bindings.push(
