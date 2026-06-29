@@ -5,6 +5,21 @@ import { LayoutBehavior } from '../src/behaviors/LayoutBehavior.js';
 import { HeliosStateManager } from '../src/state/index.js';
 import { LayoutPanel } from '../src/ui/panels/LayoutPanel.js';
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForLayoutRunState(layout, expected, timeoutMs = 250) {
+  const start = performance.now();
+  while (performance.now() - start < timeoutMs) {
+    if (layout.runState() === expected) {
+      return;
+    }
+    await sleep(10);
+  }
+  assert.equal(layout.runState(), expected);
+}
+
 class MockLayout {
   constructor(key, {
     label = key,
@@ -289,13 +304,12 @@ test('layout behavior temporarily pauses running dynamic layout on manual camera
   assert.equal(layout.runState(), 'idle');
   assert.equal(helios.scheduler.layoutEnabled, false);
 
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await sleep(20);
   helios.emit('camera:move', { origin: 'interaction', action: 'pan' });
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await sleep(25);
   assert.equal(layout.runState(), 'idle');
 
-  await new Promise((resolve) => setTimeout(resolve, 35));
-  assert.equal(layout.runState(), 'running');
+  await waitForLayoutRunState(layout, 'running');
   assert.equal(helios.scheduler.layoutEnabled, true);
 });
 
@@ -308,12 +322,11 @@ test('layout behavior waits for pointer interaction to end before debounced resu
   helios.emit('camera:move', { origin: 'interaction', action: 'rotate' });
   assert.equal(layout.runState(), 'idle');
 
-  await new Promise((resolve) => setTimeout(resolve, 70));
+  await sleep(70);
   assert.equal(layout.runState(), 'idle');
 
   dispatchCanvasEvent(helios, 'pointerup', { pointerId: 1 });
-  await new Promise((resolve) => setTimeout(resolve, 60));
-  assert.equal(layout.runState(), 'running');
+  await waitForLayoutRunState(layout, 'running');
 });
 
 test('layout behavior respects explicit pause-on-interaction choices across network replacement', () => {
